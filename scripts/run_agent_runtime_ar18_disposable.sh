@@ -6,13 +6,95 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 || command -v python)}"
 PYTEST_ARGS=(-q --tb=short -p no:warnings -p testing.pytest_policy)
 
+MEDIA_MIGRATION_FILES=(
+  backend/migrations/228_01_agent_runtime_action_hash_canonicalization.sql
+  backend/migrations/228_02_agent_runtime_batch_media_release.sql
+  backend/migrations/228_03_agent_runtime_media_authorization_group.sql
+  backend/migrations/228_04_agent_runtime_media_action_bindings.sql
+  backend/migrations/228_05_agent_runtime_media_manifest_readback.sql
+  backend/migrations/228_06_agent_runtime_media_projection.sql
+  backend/migrations/228_07_agent_runtime_media_controls.sql
+  backend/migrations/rollback/228_01_agent_runtime_action_hash_canonicalization_rollback.sql
+  backend/migrations/rollback/228_02_agent_runtime_batch_media_release_rollback.sql
+  backend/migrations/rollback/228_03_agent_runtime_media_authorization_group_rollback.sql
+  backend/migrations/rollback/228_04_agent_runtime_media_action_bindings_rollback.sql
+  backend/migrations/rollback/228_05_agent_runtime_media_manifest_readback_rollback.sql
+  backend/migrations/rollback/228_06_agent_runtime_media_projection_rollback.sql
+  backend/migrations/rollback/228_07_agent_runtime_media_controls_rollback.sql
+)
+
+MEDIA_UNIT_TESTS=(
+  backend/tests/test_agent_runtime_batch_media_model.py
+  backend/tests/test_agent_runtime_batch_media_release.py
+  backend/tests/test_agent_runtime_chat_media_owner.py
+  backend/tests/test_agent_runtime_kie_media_provider.py
+  backend/tests/test_agent_runtime_media_completion.py
+  backend/tests/test_agent_runtime_media_controls_composition_contract.py
+  backend/tests/test_agent_runtime_media_ingress.py
+  backend/tests/test_agent_runtime_media_production_composition.py
+  backend/tests/test_agent_runtime_media_projection_worker.py
+  backend/tests/test_agent_runtime_media_task_port.py
+  backend/tests/test_file_upload_runtime_media.py
+  backend/tests/test_media_tool_executor.py
+  backend/tests/test_message_image_preparation.py
+  backend/tests/test_message_video_preparation.py
+  backend/tests/test_runtime_media_message_control.py
+  backend/tests/test_worker_media_failure_settlement.py
+  backend/tests/test_worker_media_task_control.py
+)
+
+MEDIA_MIGRATION_TESTS=(
+  backend/tests/test_agent_runtime_action_hash_canonicalization_migration.py
+  backend/tests/test_agent_runtime_batch_media_release.py
+  backend/tests/test_agent_runtime_media_authorization_group_migration.py
+  backend/tests/test_agent_runtime_media_action_bindings_migration.py
+  backend/tests/test_agent_runtime_media_manifest_readback_migration.py
+  backend/tests/test_agent_runtime_media_projection_migration.py
+  backend/tests/test_agent_runtime_media_controls_migration.py
+  backend/tests/test_agent_runtime_media_controls_composition_contract.py
+)
+
+MEDIA_EXTERNAL_TESTS=(
+  backend/tests/test_agent_runtime_action_hash_canonicalization_postgres_external.py
+  backend/tests/test_agent_runtime_batch_media_release.py
+  backend/tests/test_agent_runtime_media_authorization_group_postgres_external.py
+  backend/tests/test_agent_runtime_media_action_bindings_postgres_external.py
+  backend/tests/test_agent_runtime_media_action_binding_serial_postgres_external.py
+  backend/tests/test_agent_runtime_media_manifest_readback_postgres_external.py
+  backend/tests/test_agent_runtime_media_projection_postgres_external.py
+  backend/tests/test_agent_runtime_media_projection_controls_postgres_external.py
+  backend/tests/test_agent_runtime_media_controls_postgres_external.py
+  backend/tests/test_agent_runtime_media_controls_concurrency_postgres_external.py
+  backend/tests/test_agent_runtime_media_controls_composition_postgres_external.py
+)
+
+require_files() {
+  local path
+  for path in "$@"; do
+    if [[ ! -f "${path}" ]]; then
+      echo "required Runtime media CI dependency is missing: ${path}" >&2
+      exit 3
+    fi
+  done
+}
+
+require_media_batch_closure() {
+  require_files \
+    "${MEDIA_MIGRATION_FILES[@]}" \
+    "${MEDIA_UNIT_TESTS[@]}" \
+    "${MEDIA_MIGRATION_TESTS[@]}" \
+    "${MEDIA_EXTERNAL_TESTS[@]}"
+}
+
 run_tests() {
   local mode="$1"
   shift
   local marker_args=()
   if [[ "${mode}" == external ]]; then
     marker_args=(-m external)
-  elif [[ "${mode}" != unit && "${mode}" != migration ]]; then
+  elif [[ "${mode}" == unit || "${mode}" == migration ]]; then
+    marker_args=(-m "not external")
+  else
     echo "usage: $0 {unit|migration|external}" >&2
     exit 2
   fi
@@ -25,6 +107,7 @@ run_tests() {
 }
 
 cd "${ROOT_DIR}"
+require_media_batch_closure
 
 case "${1:-}" in
   unit)
@@ -55,7 +138,8 @@ case "${1:-}" in
       backend/tests/test_agent_runtime_model_attempt_domain.py \
       backend/tests/test_agent_runtime_model_attempt_migration.py \
       backend/tests/test_agent_runtime_model_attempt_migration_order.py \
-      backend/tests/test_agent_runtime_model_attempt_repository.py
+      backend/tests/test_agent_runtime_model_attempt_repository.py \
+      "${MEDIA_UNIT_TESTS[@]}"
     ;;
   migration)
     run_tests migration \
@@ -77,7 +161,8 @@ case "${1:-}" in
       backend/tests/test_agent_runtime_scheduled_adoption_contract_migration.py \
       backend/tests/test_agent_runtime_scheduled_owner_convergence_migration.py \
       backend/tests/test_agent_runtime_model_attempt_migration.py \
-      backend/tests/test_agent_runtime_model_attempt_migration_order.py
+      backend/tests/test_agent_runtime_model_attempt_migration_order.py \
+      "${MEDIA_MIGRATION_TESTS[@]}"
     ;;
   external)
     run_tests external \
@@ -124,7 +209,8 @@ case "${1:-}" in
       backend/tests/test_agent_runtime_model_attempt_credits_postgres_external.py \
       backend/tests/test_agent_runtime_ar18_migration_continuity_postgres_external.py \
       backend/tests/test_agent_runtime_scheduled_adoption_postgres_external.py \
-      backend/tests/test_agent_runtime_wecom_owner_closure_postgres_external.py
+      backend/tests/test_agent_runtime_wecom_owner_closure_postgres_external.py \
+      "${MEDIA_EXTERNAL_TESTS[@]}"
     ;;
   *)
     echo "usage: $0 {unit|migration|external}" >&2

@@ -8,6 +8,8 @@ on:
       - "backend/agent_runtime_worker_main.py"
       - "backend/wecom_ws_runner.py"
       - "backend/api/routes/message_chat_preparation.py"
+      - "backend/api/routes/message_image_preparation.py"
+      - "backend/api/routes/message_video_preparation.py"
       - "backend/core/config.py"
       - "backend/core/db_scope.py"
       - "backend/core/redis.py"
@@ -15,7 +17,17 @@ on:
       - "backend/services/configuration/**"
       - "backend/migrations/227_*.sql"
       - "backend/migrations/rollback/227_*.sql"
+      - "backend/migrations/228_*.sql"
+      - "backend/migrations/rollback/228_*.sql"
       - "backend/services/agent/runtime/**"
+      - "backend/services/agent/tool_executor.py"
+      - "backend/services/async_retry_service.py"
+      - "backend/services/background_task_worker.py"
+      - "backend/services/media_tool_executor.py"
+      - "backend/services/task_completion_service.py"
+      - "backend/services/handlers/image_handler.py"
+      - "backend/services/handlers/image_prepared_submission.py"
+      - "backend/services/handlers/video_prepared_submission.py"
       - "backend/services/wecom/**"
       - "backend/tests/test_agent_runtime_*.py"
       - "backend/tests/agent_runtime_deploy_test_support.py"
@@ -25,6 +37,19 @@ on:
       - "backend/tests/test_scheduled_wecom_*.py"
       - "backend/tests/test_wecom_ws_runner*.py"
       - "scripts/run_agent_runtime_ar18_disposable.sh"
+      - "frontend/package.json"
+      - "frontend/package-lock.json"
+      - "frontend/src/components/chat/media/AiImageGrid.tsx"
+      - "frontend/src/components/chat/message/MessageMedia.tsx"
+      - "frontend/src/components/chat/__tests__/AiImageGrid.test.tsx"
+      - "frontend/src/components/chat/__tests__/MessageMedia.test.tsx"
+      - "frontend/src/components/chat/__tests__/RuntimeMediaMessageItem.test.tsx"
+      - "frontend/src/contexts/wsTaskMessageHandlers.ts"
+      - "frontend/src/contexts/__tests__/wsRuntimeMediaSlots.test.ts"
+      - "frontend/src/schemas/messageProtocol.ts"
+      - "frontend/src/schemas/__tests__/messageProtocol.test.ts"
+      - "frontend/src/utils/runtimeMediaSlots.ts"
+      - "frontend/src/utils/__tests__/runtimeMediaSlots.test.ts"
       - "deploy/everydayai-agent-*.service"
       - "deploy/everydayai-wecom.service"
       - "deploy/everydayai-sandbox-worker.service"
@@ -64,6 +89,9 @@ jobs:
       AGENT_RUNTIME_INGRESS_ENABLED: "false"
       AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED: "false"
       AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED: "false"
+      AGENT_RUNTIME_MEDIA_ENABLED: "false"
+      AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED: "false"
+      AGENT_RUNTIME_MEDIA_PRODUCTION_READY: "false"
       C7_QUALITY_BASELINE: "25513882a76efdfc77cc9ea6031ed1d52282f18b"
 
     steps:
@@ -79,6 +107,10 @@ jobs:
           test "$AGENT_RUNTIME_INGRESS_ENABLED" = false
           test "$AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED" = false
           test "$AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED" = false
+          test "$AGENT_RUNTIME_MEDIA_ENABLED" = false
+          test "$AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED" = false
+          test "$AGENT_RUNTIME_MEDIA_PRODUCTION_READY" = false
+          test -z "${KIE_API_KEY:-}"
           git cat-file -e "$C7_QUALITY_BASELINE^{commit}"
 
       - name: Configure disposable Python environment
@@ -105,6 +137,17 @@ jobs:
           "$RUNNER_TEMP/ar17-venv/bin/pip" install --disable-pip-version-check \
             -r backend/requirements.txt
           echo "$RUNNER_TEMP/ar17-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Configure frontend Node environment
+        uses: actions/setup-node@1e60f620b9541d7c243d22f54075a5cc0b1d
+        with:
+          node-version: "20.19.0"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
 
       - name: Prepare evidence directory
         run: mkdir -p "$RUNNER_TEMP/ar17-evidence"
@@ -290,6 +333,22 @@ jobs:
             backend/tests/test_agent_runtime_ar173_specialists.py::test_isolated_harness_invokes_all_23_distinct_provider_adapters \
             backend/tests/test_agent_runtime_ar173_specialists.py::test_http_mock_server_proves_media_query_and_cancel_semantics \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/http-mock.log"
+
+      - name: Run Runtime media frontend contracts and build
+        if: always()
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          npm run test:run -- \
+            src/components/chat/__tests__/AiImageGrid.test.tsx \
+            src/components/chat/__tests__/MessageMedia.test.tsx \
+            src/components/chat/__tests__/RuntimeMediaMessageItem.test.tsx \
+            src/contexts/__tests__/wsRuntimeMediaSlots.test.ts \
+            src/schemas/__tests__/messageProtocol.test.ts \
+            src/utils/__tests__/runtimeMediaSlots.test.ts \
+            2>&1 | tee "$RUNNER_TEMP/ar17-evidence/runtime-media-frontend.log"
+          npm run build \
+            2>&1 | tee "$RUNNER_TEMP/ar17-evidence/runtime-media-frontend-build.log"
 
       - name: Run migration and quality checks
         if: always()

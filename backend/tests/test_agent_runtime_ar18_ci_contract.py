@@ -19,10 +19,94 @@ def test_ar18_runner_is_the_ci_entrypoint_and_keeps_flags_off() -> None:
     assert 'AGENT_RUNTIME_INGRESS_ENABLED: "false"' in WORKFLOW
     assert 'AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED: "false"' in WORKFLOW
     assert 'AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED: "false"' in WORKFLOW
+    assert 'AGENT_RUNTIME_MEDIA_ENABLED: "false"' in WORKFLOW
+    assert 'AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED: "false"' in WORKFLOW
+    assert 'AGENT_RUNTIME_MEDIA_PRODUCTION_READY: "false"' in WORKFLOW
     assert 'test "$AGENT_RUNTIME_INGRESS_ENABLED" = false' in WORKFLOW
     assert 'test "$AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED" = false' in WORKFLOW
     assert 'test "$AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED" = false' in WORKFLOW
+    assert 'test "$AGENT_RUNTIME_MEDIA_ENABLED" = false' in WORKFLOW
+    assert 'test "$AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED" = false' in WORKFLOW
+    assert 'test "$AGENT_RUNTIME_MEDIA_PRODUCTION_READY" = false' in WORKFLOW
+    assert 'test -z "${KIE_API_KEY:-}"' in WORKFLOW
     assert "production_ready=false" in WORKFLOW
+
+
+def test_runtime_media_changes_trigger_the_disposable_lane() -> None:
+    required_paths = (
+        "backend/migrations/228_*.sql",
+        "backend/migrations/rollback/228_*.sql",
+        "backend/api/routes/message_image_preparation.py",
+        "backend/api/routes/message_video_preparation.py",
+        "backend/services/background_task_worker.py",
+        "backend/services/async_retry_service.py",
+        "backend/services/task_completion_service.py",
+        "backend/services/agent/tool_executor.py",
+        "backend/services/media_tool_executor.py",
+        "frontend/src/components/chat/media/AiImageGrid.tsx",
+        "frontend/src/components/chat/message/MessageMedia.tsx",
+        "frontend/src/contexts/wsTaskMessageHandlers.ts",
+        "frontend/src/schemas/messageProtocol.ts",
+        "frontend/src/utils/runtimeMediaSlots.ts",
+    )
+    for path in required_paths:
+        assert f'- "{path}"' in WORKFLOW
+
+
+def test_runtime_media_runner_fails_closed_when_composition_is_incomplete() -> None:
+    assert "require_media_batch_closure" in RUNNER
+    assert "required Runtime media CI dependency is missing" in RUNNER
+    for sequence in range(1, 8):
+        prefix = f"228_{sequence:02d}_agent_runtime_"
+        assert f"backend/migrations/{prefix}" in RUNNER
+        assert f"backend/migrations/rollback/{prefix}" in RUNNER
+
+    for dependency in (
+        "test_agent_runtime_media_manifest_readback_migration.py",
+        "test_agent_runtime_media_projection_migration.py",
+        "test_agent_runtime_media_controls_migration.py",
+        "test_agent_runtime_media_controls_composition_contract.py",
+        "test_agent_runtime_media_controls_composition_postgres_external.py",
+    ):
+        assert dependency in RUNNER
+
+
+def test_runtime_media_unit_migration_and_external_contracts_are_wired() -> None:
+    required = (
+        "test_agent_runtime_batch_media_model.py",
+        "test_agent_runtime_batch_media_release.py",
+        "test_agent_runtime_media_authorization_group_postgres_external.py",
+        "test_agent_runtime_media_action_bindings_postgres_external.py",
+        "test_agent_runtime_kie_media_provider.py",
+        "test_agent_runtime_media_projection_worker.py",
+        "test_agent_runtime_media_projection_controls_postgres_external.py",
+        "test_agent_runtime_media_controls_postgres_external.py",
+        "test_agent_runtime_media_controls_concurrency_postgres_external.py",
+        "test_agent_runtime_chat_media_owner.py",
+        "test_media_tool_executor.py",
+        "test_message_image_preparation.py",
+        "test_message_video_preparation.py",
+        "test_worker_media_failure_settlement.py",
+        "test_worker_media_task_control.py",
+    )
+    for test_name in required:
+        assert test_name in RUNNER
+    assert 'marker_args=(-m "not external")' in RUNNER
+    assert "marker_args=(-m external)" in RUNNER
+
+
+def test_runtime_media_frontend_contracts_and_build_are_wired() -> None:
+    for test_name in (
+        "AiImageGrid.test.tsx",
+        "MessageMedia.test.tsx",
+        "RuntimeMediaMessageItem.test.tsx",
+        "wsRuntimeMediaSlots.test.ts",
+        "messageProtocol.test.ts",
+        "runtimeMediaSlots.test.ts",
+    ):
+        assert test_name in WORKFLOW
+    assert "npm run test:run --" in WORKFLOW
+    assert "npm run build" in WORKFLOW
 
 
 def test_ar18_runner_contains_each_required_lane() -> None:
