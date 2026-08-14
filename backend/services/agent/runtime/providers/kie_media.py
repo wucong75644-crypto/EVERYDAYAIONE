@@ -19,8 +19,9 @@ from services.agent.runtime.providers.kie_media_receipts import (
     unknown as _unknown,
 )
 from services.agent.runtime.providers.kie_media_facts import (
-    cancel_requested_fact, create_fact, latest_fact, readback_fact,
-    receipt_identity, rejected_fact, submitted_fact, unknown_fact, with_fact,
+    KieFactIdentity, cancel_requested_fact, create_fact, latest_fact,
+    readback_fact, receipt_identity, rejected_fact, submitted_fact,
+    unknown_fact, with_fact,
 )
 
 
@@ -176,24 +177,44 @@ class RuntimeKieMediaProvider(SpecialistProvider):
             or self._facts is None
         ):
             return _unknown(attempt, "KIE_MEDIA_PROVIDER_NOT_READY")
-        provider_ref = _provider_ref(receipt)
         try:
-            fact = receipt_identity(receipt)
-            provider_key = _receipt_evidence_text(
-                receipt, "provider_idempotency_key",
-            )
-            fact = await latest_fact(
-                self._facts, attempt, fact, provider_key,
-            )
-            provider_ref = fact.provider_task_ref or provider_ref
-            persisted_hash = _receipt_evidence_text(
-                receipt, "provider_request_hash",
+            fact, provider_ref, persisted_hash, provider_key = (
+                await self._latest_fact(attempt, receipt)
             )
         except Exception:
             return _unknown(
                 attempt, "KIE_PROVIDER_FACT_IDENTITY_REQUIRED",
-                provider_task_ref=provider_ref,
+                provider_task_ref=_provider_ref(receipt),
             )
+        return await self._readback(
+            attempt, receipt, fact=fact, provider_ref=provider_ref,
+            persisted_hash=persisted_hash, provider_key=provider_key,
+            cancel_unproven=_cancel_unproven(receipt) or fact.cancel_requested,
+        )
+
+    async def _latest_fact(
+        self, attempt: ActionAttempt, receipt: Mapping[str, object],
+    ) -> tuple[KieFactIdentity, str | None, str, str]:
+        if self._facts is None:
+            raise RuntimeError("KIE_PROVIDER_FACTS_REQUIRED")
+        fact = receipt_identity(receipt)
+        provider_key = _receipt_evidence_text(
+            receipt, "provider_idempotency_key",
+        )
+        persisted_hash = _receipt_evidence_text(
+            receipt, "provider_request_hash",
+        )
+        fact = await latest_fact(self._facts, attempt, fact, provider_key)
+        return (
+            fact, fact.provider_task_ref or _provider_ref(receipt),
+            persisted_hash, provider_key,
+        )
+
+    async def _readback(
+        self, attempt: ActionAttempt, receipt: Mapping[str, object], *,
+        fact: KieFactIdentity, provider_ref: str | None,
+        persisted_hash: str, provider_key: str, cancel_unproven: bool,
+    ) -> ProviderReceipt:
         if provider_ref is None:
             return with_fact(
                 _unknown(
@@ -203,7 +224,7 @@ class RuntimeKieMediaProvider(SpecialistProvider):
                 ),
                 fact, provider_request_hash=persisted_hash,
                 provider_idempotency_key=provider_key,
-                cancel_unproven=_cancel_unproven(receipt),
+                cancel_unproven=cancel_unproven,
             )
         try:
             request_facts = await self._task_port.read(
@@ -231,7 +252,7 @@ class RuntimeKieMediaProvider(SpecialistProvider):
                 ),
                 fact, provider_request_hash=persisted_hash,
                 provider_idempotency_key=provider_key,
-                cancel_unproven=_cancel_unproven(receipt),
+                cancel_unproven=cancel_unproven,
             )
         try:
             response = await self._transport.query(
@@ -247,12 +268,11 @@ class RuntimeKieMediaProvider(SpecialistProvider):
                 ),
                 fact, provider_request_hash=provider_hash,
                 provider_idempotency_key=provider_key,
-                cancel_unproven=_cancel_unproven(receipt),
+                cancel_unproven=cancel_unproven,
             )
         provider_receipt = _readback_receipt(
             attempt, response, provider_ref, provider_hash, self._kind,
         )
-        cancel_unproven = _cancel_unproven(receipt)
         try:
             fact = await readback_fact(
                 self._facts, attempt, fact, provider_receipt,
@@ -284,19 +304,15 @@ class RuntimeKieMediaProvider(SpecialistProvider):
         # Never infer cancellation and never issue an unverified network call.
         provider_ref = _provider_ref(receipt)
         try:
-            fact = receipt_identity(receipt)
-            provider_hash = _receipt_evidence_text(
-                receipt, "provider_request_hash",
+            fact, provider_ref, provider_hash, provider_key = (
+                await self._latest_fact(attempt, receipt)
             )
-            provider_key = _receipt_evidence_text(
-                receipt, "provider_idempotency_key",
-            )
-            if self._facts is None:
-                raise RuntimeError("KIE_PROVIDER_FACTS_REQUIRED")
-            fact = await latest_fact(
-                self._facts, attempt, fact, provider_key,
-            )
-            provider_ref = fact.provider_task_ref or provider_ref
+            if fact.cancel_requested:
+                return await self._readback(
+                    attempt, receipt, fact=fact, provider_ref=provider_ref,
+                    persisted_hash=provider_hash, provider_key=provider_key,
+                    cancel_unproven=True,
+                )
             fact = await cancel_requested_fact(
                 self._facts, attempt, fact,
             )

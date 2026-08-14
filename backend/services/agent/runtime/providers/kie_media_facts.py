@@ -18,6 +18,7 @@ class KieFactIdentity:
     state: str
     state_version: int
     provider_task_ref: str | None = None
+    cancel_requested: bool = False
 
 
 async def create_fact(
@@ -105,7 +106,10 @@ async def cancel_requested_fact(
         expected_state_version=identity.state_version,
         reason="runtime_cancel_unproven",
     )
-    return _identity(value, provider_task_ref=identity.provider_task_ref)
+    return _identity(
+        value, provider_task_ref=identity.provider_task_ref,
+        cancel_requested=True,
+    )
 
 
 async def readback_fact(
@@ -122,18 +126,26 @@ async def readback_fact(
         provider_task_ref=receipt.provider_task_ref,
         evidence=dict(receipt.evidence),
     )
-    return _identity(value, provider_task_ref=receipt.provider_task_ref)
+    return _identity(
+        value, provider_task_ref=receipt.provider_task_ref,
+        cancel_requested=identity.cancel_requested,
+    )
 
 
 def receipt_identity(receipt: Mapping[str, object]) -> KieFactIdentity:
     evidence = receipt.get("evidence")
     if not isinstance(evidence, Mapping):
         raise RuntimeError("KIE_PROVIDER_FACT_IDENTITY_REQUIRED")
+    state = str(evidence.get("provider_fact_state", "unknown"))
     return KieFactIdentity(
         submission_id=_text(evidence.get("submission_id")),
-        state=str(evidence.get("provider_fact_state", "unknown")),
+        state=state,
         state_version=_integer(evidence.get("state_version")),
         provider_task_ref=_optional_text(receipt.get("provider_task_ref")),
+        cancel_requested=(
+            state == "cancel_requested"
+            or evidence.get("cancel_unproven") is True
+        ),
     )
 
 
@@ -172,14 +184,20 @@ def with_fact(
 
 def _identity(
     value: object, *, provider_task_ref: str | None = None,
+    cancel_requested: bool = False,
 ) -> KieFactIdentity:
+    state = _text(_value(value, "state"))
     return KieFactIdentity(
         submission_id=_text(_value(value, "submission_id")),
-        state=_text(_value(value, "state")),
+        state=state,
         state_version=_integer(_value(value, "state_version")),
         provider_task_ref=(
             _optional_text(_value(value, "provider_task_ref"))
             or provider_task_ref
+        ),
+        cancel_requested=(
+            cancel_requested or state == "cancel_requested"
+            or _value(value, "cancel_requested_at") is not None
         ),
     )
 

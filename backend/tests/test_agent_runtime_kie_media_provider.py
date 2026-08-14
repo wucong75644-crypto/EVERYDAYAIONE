@@ -101,10 +101,16 @@ class FakeCredentials:
 class FakeProviderFacts:
     def __init__(self):
         self.version = 0
+        self.state = "submitted"
+        self.provider_task_ref = "kie-1"
+        self.cancel_requested = False
         self.calls: list[str] = []
 
     def _result(self, state, *, provider_task_ref=None):
         self.version += 1
+        self.state = state
+        if provider_task_ref is not None:
+            self.provider_task_ref = provider_task_ref
         return {
             "outcome": state, "submission_id": "submission-1",
             "state": state, "state_version": self.version,
@@ -122,8 +128,11 @@ class FakeProviderFacts:
         self.calls.append("read")
         return {
             "outcome": "readback", "submission_id": submission_id,
-            "state": "submitted", "state_version": self.version,
-            "provider_task_ref": "kie-1",
+            "state": self.state, "state_version": self.version,
+            "provider_task_ref": self.provider_task_ref,
+            "cancel_requested_at": (
+                "persisted" if self.cancel_requested else None
+            ),
         }
 
     async def submitted(self, **params):
@@ -142,6 +151,7 @@ class FakeProviderFacts:
 
     async def request_cancel(self, **params):
         self.calls.append("request_cancel")
+        self.cancel_requested = True
         self.version = params["expected_state_version"]
         return self._result("cancel_requested", provider_task_ref="kie-1")
 
@@ -385,6 +395,7 @@ async def test_cancel_recovers_provider_ref_from_durable_fact():
 @pytest.mark.parametrize(("state", "expected"), [
     ("success", ProviderState.COMPLETED),
     ("fail", ProviderState.FAILED),
+    ("cancelled", ProviderState.CANCELLED),
     ("waiting", ProviderState.UNKNOWN),
 ])
 async def test_cancel_unproven_next_operation_is_record_info_readback(
@@ -402,18 +413,28 @@ async def test_cancel_unproven_next_operation_is_record_info_readback(
     ))
     facts = FakeProviderFacts()
     kie = provider(transport, facts=facts)
-    cancelled = await kie.cancel(attempt(), provider_receipt())
-    readback_input = {
-        **receipt_facts(cancelled),
-        "reconciliation_token": "reconcile-token",
-        "reconciliation_state_version": 5,
-    }
-    readback = await kie.reconcile(attempt(), readback_input)
+    await kie.cancel(attempt(), provider_receipt())
+    stale_receipt = provider_receipt()
+    stale_receipt["provider_task_ref"] = None
+    stale_receipt["evidence"]["state_version"] = 0
+    stale_receipt["evidence"]["provider_fact_state"] = "submitted"
+    readback = await kie.cancel(attempt(), stale_receipt)
 
     assert readback.state is expected
     assert [name for name, _ in transport.calls] == ["query"]
     assert facts.calls == ["read", "request_cancel", "read", "readback"]
     assert readback.evidence["cancel_unproven"] is True
+    assert readback.provider_task_ref == "kie-1"
+    if state == "waiting":
+        assert readback.evidence["error_code"] == (
+            "KIE_CANCEL_UNPROVEN_PROVIDER_PENDING"
+        )
+        repeated = await kie.cancel(attempt(), stale_receipt)
+        assert repeated.state is ProviderState.UNKNOWN
+        assert [name for name, _ in transport.calls] == ["query", "query"]
+        assert facts.calls == [
+            "read", "request_cancel", "read", "readback", "read", "readback",
+        ]
 
 
 @pytest.mark.asyncio
