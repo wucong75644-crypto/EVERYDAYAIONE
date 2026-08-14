@@ -7,6 +7,10 @@
 - 独立 DetailPage 电商分析、`image-ecom` 专业模式和管理员主动推送不进入本次通用批量链路。
 - 本方案基于候选分支 `codex/runtime-batch-media-v1`，基线合并提交 `4f59d1ee`。
 - 生产开关继续默认关闭；本阶段不推送、不部署、不调用真实 Provider。
+- 候选实现已完成 `228_01`～`228_07`、`228_08a`～`228_08i2`（含
+  `228_06a/06b/06c`）并通过本地 unit、migration、前端构建、定向数据库测试及
+  零跳过 disposable PostgreSQL 基线门禁；当前状态是
+  “可集成候选”，不是“已生产发布”。
 
 ## 2. 现有事实
 
@@ -20,13 +24,13 @@
   Workspace 持久化和 `image_partial_update`。
 - 前端已有多图网格，但当前依赖内容数组下标，不具备稳定混排槽位合同。
 
-### 2.2 必须补齐
+### 2.2 候选实现已关闭的基线缺口
 
-1. Runtime ModelLoop 当前只投影文本，输入参考图没有进入生产模型消息。
+1. Runtime ModelLoop 原先只投影文本，输入参考图没有进入生产模型消息。
 2. `generate_image` 冻结 schema 只有 `prompt/model`，不能表达参考图片索引、比例和分辨率。
 3. raw Action 完成 RPC 没有把数据库计算的 canonical hash 回填给底层原子写入函数。
 4. `generate_image` 的 `explicit_intent` 与现有 persisted interaction 恢复合同不一致。
-5. 生产 Composition 中 `runtime.media` 仍 disabled；现有 Provider 只是 sidecar 合同，不是实际 KIE 接线。
+5. 生产 Composition 原先只注册 sidecar 合同，没有实际 KIE Runtime 接线。
 6. 模型 Action 没有与既有媒体 Task、积分交易和输出槽位原子绑定。
 7. Action progress 尚未投影到消息、Asset 和积分；Run 最终文本会覆盖已有媒体内容。
 8. 前端乱序完成会错写槽位，第一张完成后其余占位可能消失，图片与最终文本不能稳定混排。
@@ -154,13 +158,20 @@ RLS/FORCE RLS 和最小角色 EXECUTE ACL。
 
 ## 5. Provider、恢复与唯一 Owner
 
-- ActionLoop 是 `generate_image` 唯一 Provider submit Owner。
+- ActionLoop 是普通对话 `generate_image`/`generate_video` 的唯一 Provider submit Owner。
 - 复用现有 KIE 图片请求、查询和结果映射，但提交接口禁止普通网络自动重派。
 - Provider 请求只包含业务参数和 Provider 幂等事实，不包含 Runtime 的 user/org/credit 内部字段。
 - dispatch 前失败可按既有规则处理；dispatch 后失去确定性立即进入 unknown。
 - accepted/unknown 只能 readback、reconcile 或 cancel。
 - 旧 BackgroundTaskWorker、CompletionService 和 AsyncRetryService 继续跳过 Runtime Task；
-  discovery SQL 也直接排除 Runtime binding，避免无效发现和潜在双 Owner。
+  discovery SQL 也直接排除 Runtime binding，并要求 `session_user=everydayai_worker` 与
+  `app.access_kind=worker`，避免无效发现和潜在双 Owner。
+- 普通 Web 图片/视频在 Runtime 未就绪时失败关闭，不再回退旧 handler/Provider；
+  独立 `image-ecom` 路由保持原产品链路。
+- ModelLoop `generate_video` 绑定独立 child video Task、积分与 Provider 请求事实；当前仅允许
+  单个视频 Action，多视频或图片/视频混合批次失败关闭。
+- WeCom 媒体只在 Run completed/failed/cancelled 的 Projection 终态幂等创建
+  `assistant_terminal` delivery；Action progress 和 Web 不创建该投递。
 
 ## 6. 消息与前端槽位合同
 
@@ -198,9 +209,12 @@ slot_revision
 
 每个批次独立提交；数据库、授权、Provider 和 Projection 由独立复核验证。
 
-批次 E 已在独立分支实现第 4 项及对应 discovery SQL fence：`228_04` 冻结服务器图片定价，
-原子准备 Action/既有 Task/逐项积分交易/固定槽位，并提供 prepare/readback 与逐项结算退款基础 RPC。
-真实 Provider、终态消息/Asset 投影和前端仍按第 5～7 项独立实施。
+候选分支已经按上述顺序完成全部八项：`228_04/228_05` 绑定既有 Task、积分和 Provider
+请求事实；`228_06/06a/06b/06c` 完成唯一 Projection Owner、隔离恢复、数据库 readiness
+和持久槽位释放；`228_07` 完成单槽重试与批量取消；`228_08a`～`228_08i2` 继续关闭
+ModelLoop 视频、WeCom 终态投递、旧媒体 Worker scope、原子图片批次、prepared ingress、
+真实 Provider 事件归一化、scheduled Web claim 顺序及模型图片 WeCom outbox。前端使用稳定
+`slot_id/slot_revision` 合并乱序事件，真实 KIE 调用只存在于 Runtime Provider 边界。
 
 ## 8. 验收
 
