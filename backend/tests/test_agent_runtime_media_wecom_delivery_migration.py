@@ -34,7 +34,11 @@ def test_media_wecom_delivery_is_additive_single_owner_and_fail_closed() -> None
 def test_media_wecom_delivery_rollback_is_exact_and_guarded() -> None:
     rollback = ROLLBACK.read_text(encoding="utf-8")
     assert "AGENT_RUNTIME_MEDIA_WECOM_DELIVERY_IN_FLIGHT" in rollback
-    assert "AGENT_RUNTIME_MEDIA_WECOM_DELIVERY_HISTORY_PRESENT" in rollback
+    assert "AGENT_RUNTIME_MEDIA_WECOM_DELIVERY_NOT_DRAINED" in rollback
+    assert "attempt.status IN" in rollback
+    assert "'claimed','dispatching','accepted','unknown'" in rollback
+    assert "outbox.status='delivered'" in rollback
+    assert "delivery.status='delivered'" in rollback
     assert "DROP TRIGGER agent_runtime_media_wecom_delivery_v1" in rollback
     assert "DROP FUNCTION _project_agent_runtime_media_wecom_delivery_v1()" in rollback
     assert "DROP TABLE" not in rollback

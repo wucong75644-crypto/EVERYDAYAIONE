@@ -159,7 +159,7 @@ def test_wecom_run_terminal_delivery_completed_failed_cancelled_and_replay(
         connection.execute("SET ROLE everydayai_owner")
         with pytest.raises(
             psycopg.errors.ObjectNotInPrerequisiteState,
-            match="AGENT_RUNTIME_MEDIA_WECOM_DELIVERY_HISTORY_PRESENT",
+            match="AGENT_RUNTIME_MEDIA_WECOM_DELIVERY_",
         ):
             connection.execute(ROLLBACK.read_text(encoding="utf-8"))
         connection.rollback()

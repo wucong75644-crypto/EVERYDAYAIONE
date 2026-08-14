@@ -46,6 +46,10 @@ def test_projection_patch_separates_action_run_and_wecom_owners() -> None:
     assert "BEFORE INSERT ON agent_runtime_media_projection_results" in sql
     assert "agent_runtime_media_model_video_wecom_delivery_v1" in sql
     assert "AGENT_RUNTIME_228_08E2_ACTIVE_MODEL_VIDEO_FACTS" in rollback
+    assert "AGENT_RUNTIME_228_08G1_MUST_ROLL_BACK_FIRST" in rollback
+    assert rollback.index("AGENT_RUNTIME_228_08G1_MUST_ROLL_BACK_FIRST") < (
+        rollback.index("AGENT_RUNTIME_228_08E2_ACTIVE_MODEL_VIDEO_FACTS")
+    )
     assert "RENAME TO _agent_runtime_media_prepared_action_projection_v1" in rollback
     assert "AGENT_RUNTIME_228_08E2_MUST_ROLL_BACK_FIRST" in E1_ROLLBACK.read_text(
         encoding="utf-8"

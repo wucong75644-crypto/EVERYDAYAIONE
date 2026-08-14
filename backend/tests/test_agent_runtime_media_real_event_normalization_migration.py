@@ -58,6 +58,20 @@ def test_wecom_outbox_is_terminal_scoped_and_has_exact_guard() -> None:
     assert "FORCE ROW LEVEL SECURITY" in sql
     assert "current_setting('app.access_kind',TRUE)" in sql
     assert "AGENT_RUNTIME_228_08G2_WECOM_OUTBOX_IN_USE" in rollback
+    assert "AGENT_RUNTIME_228_08G2_WECOM_DELIVERY_NOT_DRAINED" in rollback
+    assert "'claimed','dispatching','accepted','unknown'" in rollback
+    assert "source_outbox.status='delivered'" in rollback
+    assert "delivery_outbox.status='delivered'" in rollback
+    assert "delivery.status='delivered'" in rollback
+
+
+def test_normalization_rollback_requires_action_projection_drain() -> None:
+    rollback = _sql(G1_ROLLBACK)
+    assert "AGENT_RUNTIME_228_08G1_MODEL_VIDEO_NOT_DRAINED" in rollback
+    assert "AGENT_RUNTIME_228_08G1_EVENT_PROJECTION_NOT_DRAINED" in rollback
+    assert "'claimed','dispatching','accepted','unknown'" in rollback
+    assert "outbox.status<>'delivered'" in rollback
+    assert "result.action_id=action.id" in rollback
 
 
 def test_08a_rollback_refuses_installed_08e1_wrapper() -> None:

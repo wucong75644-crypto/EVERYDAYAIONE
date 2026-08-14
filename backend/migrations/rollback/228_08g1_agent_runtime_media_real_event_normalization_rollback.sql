@@ -1,4 +1,4 @@
-/* Roll back 228.08g1 after 228.08g2 and before projected logical events exist. */
+/* Roll back 228.08g1 only after ModelLoop video Action projection is drained. */
 SET LOCAL ROLE everydayai_owner;
 
 DO $guard$
@@ -10,18 +10,89 @@ BEGIN
             USING ERRCODE='55000';
     END IF;
     IF EXISTS(
-        SELECT 1
-          FROM agent_runtime_media_projection_results result
-          JOIN agent_runtime_events event ON event.id=result.event_id
-          JOIN agent_runtime_prepared_media_action_bindings binding
-            ON binding.action_id=result.action_id
-         WHERE event.action_id IS NULL
-           AND event.correlation_id=result.action_id
-           AND _agent_runtime_prepared_media_source_v1(binding.action_id)='model_loop'
-    ) OR EXISTS(
         SELECT 1 FROM agent_runtime_media_normalized_projection_inputs_v1
     ) THEN
-        RAISE EXCEPTION 'AGENT_RUNTIME_228_08G1_NORMALIZED_EVENTS_IN_USE'
+        RAISE EXCEPTION 'AGENT_RUNTIME_228_08G1_PROJECTION_IN_FLIGHT'
+            USING ERRCODE='55000';
+    END IF;
+    IF EXISTS(
+        SELECT 1
+          FROM agent_runtime_prepared_media_action_bindings binding
+          JOIN agent_actions action ON action.id=binding.action_id
+          JOIN tasks child_task ON child_task.id=binding.task_id
+         WHERE binding.media_kind='video'
+           AND _agent_runtime_prepared_media_source_v1(binding.action_id)='model_loop'
+           AND (
+               action.status NOT IN ('completed','failed','rejected','cancelled')
+               OR child_task.status NOT IN ('completed','failed','cancelled')
+               OR binding.credit_state='pending'
+               OR EXISTS(
+                   SELECT 1 FROM agent_action_attempts attempt
+                    WHERE attempt.action_id=action.id
+                      AND attempt.status IN (
+                          'claimed','dispatching','accepted','unknown'
+                      )
+               )
+           )
+    ) THEN
+        RAISE EXCEPTION 'AGENT_RUNTIME_228_08G1_MODEL_VIDEO_NOT_DRAINED'
+            USING ERRCODE='55000';
+    END IF;
+    IF EXISTS(
+        SELECT 1
+          FROM agent_runtime_events event
+          JOIN agent_actions action ON action.id=event.correlation_id
+          JOIN agent_runtime_prepared_media_action_bindings binding
+            ON binding.action_id=action.id
+          JOIN agent_projection_outbox outbox ON outbox.event_id=event.id
+         WHERE event.action_id IS NULL
+           AND event.event_version=1
+           AND event.event_type IN (
+               'action.requested','action.accepted','action.unknown',
+               'action.completed','action.failed','action.rejected',
+               'action.cancelled','action.provider.accepted',
+               'action.provider.unknown','action.completed_after_cancel',
+               'action.failed_after_cancel'
+           )
+           AND action.tool_name='generate_video'
+           AND binding.media_kind='video'
+           AND _agent_runtime_prepared_media_source_v1(action.id)='model_loop'
+           AND action.session_id=event.session_id
+           AND action.run_id=event.run_id
+           AND action.model_step_id=event.model_step_id
+           AND action.org_id IS NOT DISTINCT FROM event.org_id
+           AND action.user_id IS NOT DISTINCT FROM event.user_id
+           AND binding.session_id=action.session_id
+           AND binding.run_id=action.run_id
+           AND binding.model_step_id=action.model_step_id
+           AND binding.org_id IS NOT DISTINCT FROM action.org_id
+           AND binding.user_id IS NOT DISTINCT FROM action.user_id
+           AND (
+               (event.event_type='action.requested' AND event.actor_type='model')
+               OR (event.event_type='action.cancelled'
+                   AND event.actor_type='system')
+               OR (event.event_type IN (
+                       'action.completed_after_cancel','action.failed_after_cancel'
+                   ) AND event.actor_type='reconciler')
+               OR (event.event_type NOT IN (
+                       'action.requested','action.cancelled',
+                       'action.completed_after_cancel','action.failed_after_cancel'
+                   ) AND event.actor_type='executor')
+           )
+           AND outbox.projection_kind IN ('web_runtime','wecom')
+           AND (
+               outbox.status<>'delivered'
+               OR NOT EXISTS(
+                   SELECT 1
+                     FROM agent_runtime_media_projection_results result
+                    WHERE result.outbox_id=outbox.id
+                      AND result.event_id=event.id
+                      AND result.action_id=action.id
+                      AND result.projection_action='action_progress'
+               )
+           )
+    ) THEN
+        RAISE EXCEPTION 'AGENT_RUNTIME_228_08G1_EVENT_PROJECTION_NOT_DRAINED'
             USING ERRCODE='55000';
     END IF;
 END
