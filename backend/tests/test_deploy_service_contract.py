@@ -45,6 +45,10 @@ def test_backend_deploy_has_bounded_readiness_check() -> None:
     assert "后端 readiness 超时" in SCRIPT
 
 
+def test_deploy_does_not_kill_kernel_workers_by_global_process_match() -> None:
+    assert "pkill -f kernel_worker" not in SCRIPT
+
+
 def test_rsync_preserves_runtime_and_sensitive_files() -> None:
     for excluded in (
         ".env*",
@@ -57,6 +61,21 @@ def test_rsync_preserves_runtime_and_sensitive_files() -> None:
     ):
         assert f"--exclude '{excluded}'" in SCRIPT
     assert "--exclude 'config.env*'" in SCRIPT
+
+
+def test_frontend_release_keeps_old_hashed_assets_during_transition() -> None:
+    assert "frontend/dist/assets/" in SCRIPT
+    assert "--exclude 'assets/'" in SCRIPT
+    assert "-mtime +14 -delete" in SCRIPT
+    assert SCRIPT.index("frontend/dist/assets/") < SCRIPT.index("--exclude 'assets/'")
+
+
+def test_nginx_does_not_fallback_missing_assets_to_spa_html() -> None:
+    nginx = (Path(__file__).resolve().parents[2] / "deploy/nginx.conf").read_text()
+    assert "location ^~ /assets/" in nginx
+    assert "try_files $uri =404;" in nginx
+    assert "location = /index.html" in nginx
+    assert 'Cache-Control "no-cache"' in nginx
 
 
 def test_missing_required_service_fails_deployment() -> None:
@@ -89,6 +108,84 @@ def test_deploy_fails_closed_and_requires_pushed_release_source() -> None:
     assert "部署目录含未提交内容" in DEPLOY_HELPERS
     assert "verify_public_endpoints" in SCRIPT
     assert '"https://${DOMAIN}/api/health"' in DEPLOY_HELPERS
+
+
+def test_deploy_uses_bounded_stage_output_and_keeps_full_log() -> None:
+    assert "run_stage" in SCRIPT
+    assert 'tail -n "${DEPLOY_FAILURE_LINES:-80}"' in DEPLOY_HELPERS
+    assert "DEPLOY_LOG_FILE" in DEPLOY_HELPERS
+    assert "show_status" not in SCRIPT
+    assert "systemctl status nginx" not in SCRIPT
+    assert "rsync -avz" not in SCRIPT
+    assert "DEPLOY_RESULT" in SCRIPT
+
+
+def _run_stage_simulation(tmp_path: Path, command: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            """
+log_info() { printf 'INFO:%s\\n' "$1"; }
+log_success() { printf 'SUCCESS:%s\\n' "$1"; }
+log_error() { printf 'ERROR:%s\\n' "$1" >&2; }
+source "$1"
+init_deploy_log
+run_stage simulated bash -e -c "$2"
+stage_status=$?
+printf 'LOG:%s\\n' "$DEPLOY_LOG_FILE"
+exit "$stage_status"
+""",
+            "stage-simulation",
+            str(Path(__file__).resolve().parents[2] / "deploy/deploy-helpers.sh"),
+            command,
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "TMPDIR": str(tmp_path)},
+    )
+
+
+def test_run_stage_hides_success_output_but_preserves_full_log(
+    tmp_path: Path,
+) -> None:
+    result = _run_stage_simulation(tmp_path, "printf 'large-success-payload\\n'")
+
+    assert result.returncode == 0
+    assert "large-success-payload" not in result.stdout
+    log_path = Path(
+        next(line.removeprefix("LOG:") for line in result.stdout.splitlines()
+             if line.startswith("LOG:"))
+    )
+    assert "large-success-payload" in log_path.read_text()
+
+
+def test_run_stage_limits_failure_output_and_preserves_full_log(
+    tmp_path: Path,
+) -> None:
+    result = _run_stage_simulation(
+        tmp_path,
+        "for i in $(seq 1 120); do echo line-$i; done; exit 7",
+    )
+
+    assert result.returncode == 7
+    assert "line-1\n" not in result.stderr
+    assert "line-41" in result.stderr
+    assert "line-120" in result.stderr
+    assert "完整日志:" in result.stderr
+
+
+def test_run_stage_preserves_fail_fast_behavior(tmp_path: Path) -> None:
+    result = _run_stage_simulation(
+        tmp_path,
+        "echo before-failure; false; echo should-not-run",
+    )
+
+    assert result.returncode != 0
+    assert "before-failure" in result.stderr
+    assert "should-not-run" not in result.stderr
 
 
 def test_unified_release_uses_an_isolated_git_worktree() -> None:

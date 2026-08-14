@@ -102,6 +102,8 @@ bash /tmp/setup-env.sh
 - **SSL**：Let's Encrypt自动证书
 - **同步**：rsync高效文件传输
 
+前端发布先同步带哈希的 `assets/`，再更新入口文件，并保留 14 天旧资源供已打开页面平滑过渡。Nginx 对缺失资源返回 404，只有前端页面路由才回退到 `index.html`。
+
 ---
 
 ## 支持

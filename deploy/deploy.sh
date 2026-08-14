@@ -226,14 +226,22 @@ build_backend() {
 sync_frontend() {
     log_info "同步前端文件到服务器..."
 
-    rsync -avz --delete \
+    # 先上传所有带哈希资源，确保新版入口发布时依赖已经就绪。
+    rsync -az \
         -e "ssh -p ${SERVER_PORT}" \
-        --exclude 'node_modules' \
-        --exclude '.env' \
-        --exclude '.env.local' \
+        frontend/dist/assets/ \
+        ${SERVER_USER}@${SERVER_HOST}:${REMOTE_FRONTEND_DIR}/assets/
+
+    # 最后发布入口文件；assets 排除在删除范围外，在线旧页面仍可加载旧 chunk。
+    rsync -az --delete \
+        -e "ssh -p ${SERVER_PORT}" \
+        --exclude 'assets/' \
         --exclude '.DS_Store' \
         frontend/dist/ \
         ${SERVER_USER}@${SERVER_HOST}:${REMOTE_FRONTEND_DIR}/
+
+    # 仅清理超过保留窗口的旧资源，避免目录无限增长。
+    remote_exec find "${REMOTE_FRONTEND_DIR}/assets" -type f -mtime +14 -delete
 
     log_success "前端文件同步完成"
 }
@@ -242,7 +250,7 @@ sync_frontend() {
 sync_backend() {
     log_info "同步后端文件到服务器..."
 
-    rsync -avz --delete \
+    rsync -az --delete \
         -e "ssh -p ${SERVER_PORT}" \
         --exclude 'venv' \
         --exclude '__pycache__' \
@@ -262,7 +270,7 @@ sync_backend() {
         ${SERVER_USER}@${SERVER_HOST}:${REMOTE_BACKEND_DIR}/
 
     # 同步部署配置（sandbox.cfg 等）
-    rsync -avz \
+    rsync -az \
         -e "ssh -p ${SERVER_PORT}" \
         --exclude '.env*' \
         --exclude 'config.env*' \
@@ -301,7 +309,6 @@ deploy_backend() {
         source .env.worker-client
         set +a
         ./venv/bin/python scripts/verify_runtime_generation_capabilities.py
-        pkill -f kernel_worker 2>/dev/null || true
         services=(
             everydayai-backend
             everydayai-sync
@@ -351,17 +358,10 @@ deploy_frontend() {
     remote_exec bash << 'ENDSSH'
         set -e
 
-        echo "1. 检查前端文件"
-        ls -lh /var/www/everydayai/frontend/
-
-        echo "2. 测试Nginx配置"
+        test -f /var/www/everydayai/frontend/index.html
         sudo nginx -t
-
-        echo "3. 重载Nginx"
         sudo systemctl reload nginx
-
-        echo "4. 检查Nginx状态"
-        sudo systemctl status nginx --no-pager
+        sudo systemctl is-active --quiet nginx
 ENDSSH
 
     log_success "前端部署完成"
@@ -390,15 +390,6 @@ ENDSSH
 
 # 主函数
 main() {
-    echo -e "${GREEN}"
-    cat << 'EOF'
-╔═══════════════════════════════════════════════╗
-║   EVERYDAYAIONE 自动部署脚本                 ║
-║   前后端分离 + Nginx + Systemd + SSL         ║
-╚═══════════════════════════════════════════════╝
-EOF
-    echo -e "${NC}"
-
     # 解析命令行参数
     SETUP_MODE=false
     FRONTEND_ONLY=false
@@ -454,41 +445,40 @@ EOF
         exit 1
     fi
 
-    # 检查配置和依赖
-    check_release_source
-    check_config
-    check_dependencies
-    test_ssh_connection
+    init_deploy_log
+    run_stage "发布来源校验" check_release_source
+    EXPECTED_SHA="$(git rev-parse HEAD)"
+    run_stage "部署配置校验" check_config
+    source deploy/config.env
+    run_stage "本地依赖校验" check_dependencies
+    PYTHON_BIN="$(command -v python3.12 || command -v python3)"
+    run_stage "SSH 连接校验" test_ssh_connection
 
     # 首次部署模式
     if [ "$SETUP_MODE" = true ]; then
-        setup_server
+        run_stage "服务器初始化" setup_server
     fi
 
     # 部署流程
     if [ "$BACKEND_ONLY" != true ]; then
-        build_frontend
-        sync_frontend
-        deploy_frontend
+        run_stage "前端测试与构建" build_frontend
+        run_stage "前端文件同步" sync_frontend
+        run_stage "前端服务发布" deploy_frontend
     fi
 
     if [ "$FRONTEND_ONLY" != true ]; then
-        build_backend
-        sync_backend
-        deploy_backend
+        run_stage "后端测试与检查" build_backend
+        run_stage "后端文件同步" sync_backend
+        run_stage "后端迁移与服务发布" deploy_backend
     fi
 
-    # 显示状态
-    show_status
-    verify_public_endpoints
+    run_stage "公网只读健康检查" verify_public_endpoints
 
-    # 完成提示
-    echo ""
-    log_success "========== 部署完成 =========="
-    log_info "前端访问地址: https://${DOMAIN}"
-    log_info "后端API地址: https://${DOMAIN}/api"
-    log_info "查看实时日志: ssh ${SERVER_USER}@${SERVER_HOST} -p ${SERVER_PORT} 'sudo journalctl -u everydayai-backend -f'"
-    echo ""
+    local deploy_scope="frontend+backend"
+    [ "$FRONTEND_ONLY" = true ] && deploy_scope="frontend"
+    [ "$BACKEND_ONLY" = true ] && deploy_scope="backend"
+    printf 'DEPLOY_RESULT sha=%s scope=%s technical=passed automatic_validation=passed business_acceptance=pending_user log=%s\n' \
+        "$EXPECTED_SHA" "$deploy_scope" "$DEPLOY_LOG_FILE"
 }
 
 # 执行主函数

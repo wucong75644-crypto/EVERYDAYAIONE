@@ -3,6 +3,23 @@
 
 set -euo pipefail
 
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+log_info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+log_success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $1" >&2
+}
+
 fail() {
     echo "错误：$1" >&2
     exit 1
@@ -20,6 +37,8 @@ EOF
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" \
     || fail "当前目录不在 Git 仓库中"
+source "$REPO_ROOT/deploy/deploy-helpers.sh"
+init_deploy_log
 COMMIT_ARGS=()
 DEPLOY_ARGS=()
 scope_count=0
@@ -52,7 +71,7 @@ done
 
 (( scope_count <= 1 )) || fail "不能同时选择仅前端和仅后端"
 
-"$REPO_ROOT/git-push.sh" "${COMMIT_ARGS[@]}"
+run_stage "提交并推送任务文件" "$REPO_ROOT/git-push.sh" "${COMMIT_ARGS[@]}"
 release_sha="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 release_dir="$(mktemp -d "${TMPDIR:-/tmp}/everydayai-release.XXXXXX")"
 
@@ -61,7 +80,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-git -C "$REPO_ROOT" worktree add --detach "$release_dir" "$release_sha"
+run_stage "创建隔离发布工作树" \
+    git -C "$REPO_ROOT" worktree add --detach "$release_dir" "$release_sha"
 cp "$REPO_ROOT/deploy/config.env" "$release_dir/deploy/config.env"
 
 (
@@ -73,4 +93,4 @@ cp "$REPO_ROOT/deploy/config.env" "$release_dir/deploy/config.env"
     fi
 )
 
-echo "提交部署完成: $release_sha"
+echo "RELEASE_RESULT sha=$release_sha status=passed log=$DEPLOY_LOG_FILE"

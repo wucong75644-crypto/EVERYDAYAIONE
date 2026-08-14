@@ -1,5 +1,56 @@
 #!/bin/bash
 
+DEPLOY_LOG_DIR="${DEPLOY_LOG_DIR:-}"
+DEPLOY_LOG_FILE="${DEPLOY_LOG_FILE:-}"
+DEPLOY_STAGE_INDEX=0
+
+init_deploy_log() {
+    if [ -z "$DEPLOY_LOG_DIR" ]; then
+        DEPLOY_LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/everydayai-deploy.XXXXXX")"
+    fi
+    DEPLOY_LOG_FILE="${DEPLOY_LOG_FILE:-$DEPLOY_LOG_DIR/deployment.log}"
+    : > "$DEPLOY_LOG_FILE"
+}
+
+# 成功时只返回阶段摘要；失败时保留完整日志并展开末尾关键内容。
+run_stage() {
+    local label="$1"
+    local stage_log
+    local status
+    shift
+
+    [ -n "$DEPLOY_LOG_FILE" ] || init_deploy_log
+    DEPLOY_STAGE_INDEX=$((DEPLOY_STAGE_INDEX + 1))
+    stage_log="$DEPLOY_LOG_DIR/stage-${DEPLOY_STAGE_INDEX}.log"
+    log_info "$label..."
+
+    set +e
+    (
+        set -e
+        "$@"
+    ) >"$stage_log" 2>&1
+    status=$?
+    set -e
+
+    if [ "$status" -eq 0 ]; then
+        {
+            printf '\n===== %s =====\n' "$label"
+            cat "$stage_log"
+        } >> "$DEPLOY_LOG_FILE"
+        log_success "$label"
+        return 0
+    fi
+
+    {
+        printf '\n===== %s (failed: %s) =====\n' "$label" "$status"
+        cat "$stage_log"
+    } >> "$DEPLOY_LOG_FILE"
+    log_error "${label}（退出码: ${status}）"
+    tail -n "${DEPLOY_FAILURE_LINES:-80}" "$stage_log" >&2
+    log_error "完整日志: $DEPLOY_LOG_FILE"
+    return "$status"
+}
+
 # 确认部署来源是远端已有的确定提交，且部署目录没有额外工作区变更。
 check_release_source() {
     local head_sha
@@ -25,45 +76,6 @@ check_release_source() {
     fi
 
     log_success "发布来源校验通过: $EXPECTED_SHA"
-}
-
-# 输出远端服务、磁盘和近期日志状态。
-show_status() {
-    log_info "检查部署状态..."
-
-    remote_exec bash << 'ENDSSH'
-        echo "========== 服务状态 =========="
-
-        echo -e "\n【后端服务】"
-        sudo systemctl status everydayai-backend --no-pager | head -n 10
-
-        echo -e "\n【同步服务】"
-        if systemctl is-enabled everydayai-sync &>/dev/null; then
-            sudo systemctl status everydayai-sync --no-pager | head -n 10
-        else
-            echo "（未安装）"
-        fi
-
-        echo -e "\n【企微与 Actor】"
-        sudo systemctl status everydayai-wecom --no-pager | head -n 10
-        sudo systemctl status everydayai-conversation-actor --no-pager | head -n 10
-
-        echo -e "\n【Nginx服务】"
-        sudo systemctl status nginx --no-pager | head -n 10
-
-        echo -e "\n【磁盘使用】"
-        df -h /var/www/everydayai
-
-        echo -e "\n【最近日志】"
-        echo "后端日志（最后10行）:"
-        sudo journalctl -u everydayai-backend -n 10 --no-pager
-        if systemctl is-enabled everydayai-sync &>/dev/null; then
-            echo -e "\n同步日志（最后10行）:"
-            sudo journalctl -u everydayai-sync -n 10 --no-pager
-        fi
-ENDSSH
-
-    log_success "状态检查完成"
 }
 
 # 从公网入口验证前端和后端健康状态。
