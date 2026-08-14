@@ -71,7 +71,16 @@ class BackgroundTaskWorker(BackgroundPeriodicTasksMixin):
 
     def __init__(self, db, runtime_db=None):
         self.db = db
-        self._media_tasks = WorkerMediaTasks(db)
+        media_db = ScopedDatabaseClient(
+            db,
+            DatabaseScope(
+                actor_user_id=None,
+                org_id=None,
+                access_kind=DatabaseAccessKind.WORKER,
+                request_id="legacy-media-worker",
+            ),
+        )
+        self._media_tasks = WorkerMediaTasks(media_db)
         self.settings: Settings = get_settings()
         self.poll_interval = _resolve_poll_interval(self.settings)
         self.is_running = False

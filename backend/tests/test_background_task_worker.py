@@ -47,15 +47,21 @@ class FakeMockDB:
 
     def rpc(self, name: str, params: dict = None):
         self.rpc_calls.append((name, params))
-        mock = MagicMock()
+        caller = MagicMock()
         if name == "worker_discover_legacy_active_tasks":
             data = self._table_mock.execute.return_value.data
         elif name == "worker_fail_legacy_stale_task":
             data = self._rpc_results.get(name, {"outcome": "failed"})
         else:
             data = self._rpc_results.get(name, {})
-        mock.execute.return_value = MagicMock(data=data)
-        return mock
+        caller._func_name = name
+        caller._params = params or {}
+        connection = caller._pool.connection.return_value.__enter__.return_value
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.description = [object()]
+        cursor.fetchall.return_value = [{name: data}]
+        caller.execute.return_value = MagicMock(data=data)
+        return caller
 
 
 @pytest.fixture
