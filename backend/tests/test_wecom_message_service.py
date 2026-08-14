@@ -11,70 +11,22 @@ backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from typing import Dict
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
 from schemas.wecom import (
     WecomChatType,
-    WecomIncomingMessage,
     WecomMsgType,
-    WecomReplyContext,
 )
 from services.wecom.wecom_message_service import WecomMessageService
+from tests.wecom_message_service_test_support import (
+    make_db_mock as _make_db_mock,
+    make_message as _make_msg,
+    make_reply_context as _make_reply_ctx,
+)
 
 USER_ID = "f566f6cc-3e7a-4383-befe-42c05fbfbff8"
-
-def _make_db_mock():
-    """按表名隔离的 DB mock"""
-    db = MagicMock()
-    table_mocks: Dict[str, MagicMock] = {}
-
-    def _table(name: str):
-        if name not in table_mocks:
-            table_mocks[name] = MagicMock(name=f"table({name})")
-        return table_mocks[name]
-
-    db.table = MagicMock(side_effect=_table)
-    db.rpc = MagicMock(return_value=MagicMock(execute=MagicMock()))
-    db._table_mocks = table_mocks
-    return db
-
-
-def _make_msg(
-    msgtype: str = WecomMsgType.TEXT,
-    text: str = "你好",
-    channel: str = "smart_robot",
-) -> WecomIncomingMessage:
-    return WecomIncomingMessage(
-        msgid="msg001",
-        wecom_userid="user_abc",
-        corp_id="corp1",
-        chatid="user_abc",
-        chattype=WecomChatType.SINGLE,
-        msgtype=msgtype,
-        channel=channel,
-        text_content=text,
-    )
-
-
-def _make_reply_ctx(channel: str = "smart_robot") -> WecomReplyContext:
-    if channel == "smart_robot":
-        return WecomReplyContext(
-            channel="smart_robot",
-            ws_client=AsyncMock(),
-            req_id="req001",
-        )
-    return WecomReplyContext(
-        channel="app",
-        wecom_userid="user_abc",
-        agent_id=1000006,
-        org_id="org_test",
-        corp_id="corp_test",
-        agent_secret="secret_test",
-    )
-
 
 # ============================================================
 # TestReplyText# ============================================================

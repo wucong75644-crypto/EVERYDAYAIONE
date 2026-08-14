@@ -9,7 +9,7 @@ from services.agent.runtime.domain import ActionAttempt, ActionAttemptStatus, Ac
 from services.agent.runtime.executors.contracts import canonical_request_hash
 from services.agent.runtime.executors.materializer import ArtifactMaterializer, MaterializeCheckpoint
 from services.agent.runtime.executors.specialist_contracts import (
-    CostReservation, NetworkRule, ProviderReceipt, ProviderState,
+    CostReservation, NetworkRule, ProviderState,
     ReconciliationContext, validate_public_request,
 )
 from services.agent.runtime.executors.specialist_executor import SpecialistExecutor
@@ -36,6 +36,17 @@ from services.agent.runtime.executors.resource_contracts import (
 from services.agent.runtime.infrastructure.postgres.specialist_repository import (
     PostgresSpecialistRepository, SpecialistRpcConflict,
 )
+from tests.agent_runtime_ar173_specialist_test_support import (
+    AcceptedSpecialistProvider as _AcceptedProvider,
+    FakeCallbackRepository as _CallbackRepository,
+    FakeErpDispatcher as _Dispatcher,
+    FakeObjectStore as _ObjectStore,
+    FakeRpcDatabase as _RpcDatabase,
+    FakeSpecialistFacts as _Facts,
+    FakeSpecialistProvider as _Provider,
+    UnknownSpecialistProvider as _UnknownProvider,
+    resolved_value as _value,
+)
 
 
 def _attempt(request: dict[str, object], status: ActionAttemptStatus = ActionAttemptStatus.DISPATCHING) -> ActionAttempt:
@@ -55,100 +66,6 @@ def _reconciliation_context() -> ReconciliationContext:
         token="reconcile-1", lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
         state_version=2,
     )
-
-
-class _Provider:
-    async def submit(self, attempt, request, *, idempotency_key):
-        return ProviderReceipt(state=ProviderState.COMPLETED, provider="fake", request_hash=attempt.request_hash, result={"summary": "ok", "count": 1})
-
-    async def reconcile(self, attempt, receipt):
-        return ProviderReceipt(state=ProviderState.COMPLETED, provider="fake", request_hash=attempt.request_hash, result={"summary": "reconciled"})
-
-    async def cancel(self, attempt, receipt):
-        return ProviderReceipt(state=ProviderState.CANCELLED, provider="fake", request_hash=attempt.request_hash, evidence={"cancelled": True})
-
-
-class _UnknownProvider(_Provider):
-    async def submit(self, attempt, request, *, idempotency_key):
-        raise TimeoutError("response lost")
-
-
-class _AcceptedProvider(_Provider):
-    async def submit(self, attempt, request, *, idempotency_key):
-        return ProviderReceipt(state=ProviderState.ACCEPTED, provider="fake", request_hash=attempt.request_hash, provider_task_ref="task-1", evidence={"accepted": True})
-
-
-class _Dispatcher:
-    async def execute(self, tool_name, action, params):
-        from services.kuaimai.registry import TOOL_REGISTRIES
-        assert action in TOOL_REGISTRIES[tool_name]
-        return type("Result", (), {"status": "success", "summary": f"{tool_name}:{action}", "data": []})()
-
-
-class _CallbackRepository:
-    def __init__(self):
-        self.events = []
-
-    async def callback(self, **kwargs):
-        self.events.append(kwargs)
-        return {"outcome": "accepted"}
-
-
-class _Facts:
-    def __init__(self):
-        self.calls = []
-
-    async def cost(self, operation, item, **extra):
-        self.calls.append(("cost", operation))
-        return {"outcome": "applied"}
-
-    async def provider_terminal(self, **params):
-        self.calls.append(("provider", params["state"]))
-        return {"outcome": params["state"]}
-
-    async def provider_reconcile(self, **params):
-        self.calls.append(("reconcile", params["resolution"]))
-        return {"outcome": params["resolution"]}
-
-
-class _RpcResponse:
-    def __init__(self, data):
-        self.data = data
-
-    async def execute(self):
-        return self
-
-
-class _RpcDatabase:
-    def __init__(self, data):
-        self.data = data
-        self.calls = []
-
-    def rpc(self, name, params):
-        self.calls.append((name, params))
-        return _RpcResponse(self.data)
-
-    async def provider_unknown(self, **params):
-        self.calls.append(("provider", "unknown"))
-        return {"outcome": "unknown"}
-
-
-class _ObjectStore:
-    def __init__(self):
-        self.items = {}
-
-    async def put_verified(self, key, content, *, content_hash):
-        import hashlib
-        actual = hashlib.sha256(content).hexdigest()
-        self.items[key] = content
-        return {"verified": actual == content_hash, "content_hash": actual}
-
-    async def get(self, key):
-        return self.items[key]
-
-
-async def _value(value):
-    return value
 
 
 def test_specialist_registry_has_exact_23_unique_descriptors() -> None:
