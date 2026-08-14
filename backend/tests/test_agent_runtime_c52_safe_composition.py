@@ -194,6 +194,39 @@ def test_safe_composition_does_not_claim_unstarted_runtime_owners() -> None:
     assert composition.readiness.capabilities["runtime.action"].ready
 
 
+def test_production_safe_composition_is_ready_only_with_required_capabilities() -> None:
+    required = frozenset({
+        "runtime.read", "runtime.erp.read", "runtime.model",
+        "runtime.action", "runtime.data.read",
+    })
+    composition = build_safe_runtime_composition(
+        resources=RuntimeReadResources(database=object()),
+        model_call_factory=lambda _snapshot: None,
+        model_port=object(), action_loop=object(),
+        erp_dispatcher_factory=object(), local_data=object(),
+        file_analyze=object(), fetch_all_pages=object(),
+        production_ready=True, required_capabilities=required,
+    )
+
+    assert composition.readiness.ready
+    assert composition.readiness.production_ready
+    assert composition.readiness.required_capabilities == required
+    assert composition.readiness.error_code is None
+
+
+def test_production_safe_composition_rejects_missing_required_capability() -> None:
+    with pytest.raises(
+        ValueError, match="RUNTIME_REQUIRED_CAPABILITY_NOT_READY",
+    ):
+        build_safe_runtime_composition(
+            resources=RuntimeReadResources(database=object()),
+            model_call_factory=lambda _snapshot: None, model_port=object(),
+            action_loop=object(), erp_dispatcher_factory=object(),
+            production_ready=True,
+            required_capabilities=frozenset({"runtime.data.read"}),
+        )
+
+
 def test_safe_composition_missing_read_service_fails_closed() -> None:
     with pytest.raises(RuntimeError, match="SAFE_READ_SERVICE_WIRING"):
         build_safe_runtime_composition(resources=None)

@@ -66,6 +66,14 @@ from services.agent.runtime.application.scheduled_finalizer import (
 
 logger = logging.getLogger(__name__)
 
+_PRODUCTION_SAFE_REQUIRED_CAPABILITIES = frozenset({
+    "runtime.read",
+    "runtime.erp.read",
+    "runtime.model",
+    "runtime.action",
+    "runtime.data.read",
+})
+
 
 class RuntimeOwner:
     def __init__(
@@ -346,6 +354,8 @@ def build_runtime(
         model_call_factory=model_factory, model_loop=model_loop,
         action_loop=action_loop, model_port=model,
         erp_dispatcher_factory=erp_factory,
+        production_ready=True,
+        required_capabilities=_PRODUCTION_SAFE_REQUIRED_CAPABILITIES,
         **data_adapters,
     )
     finalizer = ScheduledRuntimeFinalizer(

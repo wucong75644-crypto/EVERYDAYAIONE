@@ -120,8 +120,8 @@ def build_safe_runtime_composition(
     credential_broker: object | None = None, model_port: object | None = None,
     erp_dispatcher_factory: ErpDispatcherFactoryPort | None = None,
     local_data: ArtifactPort | None = None,
-    file_analyze: ArtifactPort | None = None,
-    fetch_all_pages: ArtifactPort | None = None,
+    file_analyze: ArtifactPort | None = None, fetch_all_pages: ArtifactPort | None = None,
+    production_ready: bool = False, required_capabilities: frozenset[str] = frozenset(),
 ) -> SafeRuntimeComposition:
     """Compose safe reads and explicitly supplied Runtime loop seams."""
     if resources is None or resources.database is None:
@@ -199,9 +199,9 @@ def build_safe_runtime_composition(
         credential_available=model_ready,
         capability_enabled=True,
         probe_passed=True,
-        production_ready=False,
-        error_code="PRODUCTION_READINESS_DISABLED",
-        capabilities=capabilities,
+        production_ready=production_ready,
+        error_code=(None if production_ready else "PRODUCTION_READINESS_DISABLED"),
+        capabilities=capabilities, required_capabilities=required_capabilities,
     )
     return SafeRuntimeComposition(
         registry=registry, catalog=catalog, readiness=readiness,
