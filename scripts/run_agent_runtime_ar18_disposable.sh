@@ -56,6 +56,7 @@ MEDIA_MIGRATION_FILES=(
 )
 
 MEDIA_UNIT_TESTS=(
+  backend/tests/test_agent_runtime_task_quality_gate.py
   backend/tests/test_agent_runtime_batch_media_model.py
   backend/tests/test_agent_runtime_batch_media_release.py
   backend/tests/test_agent_runtime_chat_media_owner.py

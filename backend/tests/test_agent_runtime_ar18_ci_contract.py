@@ -55,6 +55,16 @@ def test_runtime_media_changes_trigger_the_disposable_lane() -> None:
     for path in required_paths:
         assert f'- "{path}"' in WORKFLOW
 
+    for support_path in (
+        "backend/tests/agent_runtime_ar173_specialist_test_support.py",
+        "backend/tests/agent_runtime_kie_media_provider_test_support.py",
+        "backend/tests/agent_runtime_media_manifest_test_support.py",
+        "backend/tests/scheduled_tasks_routes_cases.py",
+        "backend/tests/scheduled_tasks_routes_test_support.py",
+        "backend/tests/wecom_message_service_test_support.py",
+    ):
+        assert f'- "{support_path}"' in WORKFLOW
+
 
 def test_runtime_media_runner_fails_closed_when_composition_is_incomplete() -> None:
     assert "require_media_batch_closure" in RUNNER
@@ -122,6 +132,7 @@ def test_runtime_media_runner_fails_closed_when_composition_is_incomplete() -> N
 
 def test_runtime_media_unit_migration_and_external_contracts_are_wired() -> None:
     required = (
+        "test_agent_runtime_task_quality_gate.py",
         "test_agent_runtime_batch_media_model.py",
         "test_agent_runtime_batch_media_release.py",
         "test_agent_runtime_media_authorization_group_postgres_external.py",
