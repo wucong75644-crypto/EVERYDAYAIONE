@@ -111,7 +111,8 @@ async def test_send_prepares_stable_messages_and_reuses_task_anchor(monkeypatch)
     assert prepared["input_message"]["id"] is not None
     assert prepared["tasks"][0]["id"] == task_id
     assert prepared["tasks"][0]["delivery_context"] == {
-        "actor": True, "runtime": False, "channel": "web",
+        "actor": False, "runtime": False, "runtime_pending": True,
+        "channel": "web",
     }
     handler.start.assert_not_awaited()
     assert response.user_message.id == "input-1"
@@ -238,7 +239,8 @@ async def test_runtime_gate_closed_fails_closed_without_actor_start(monkeypatch)
         )
 
     assert lifecycle.calls[0]["tasks"][0]["delivery_context"] == {
-        "actor": True, "runtime": False, "channel": "web",
+        "actor": False, "runtime": False, "runtime_pending": True,
+        "channel": "web",
     }
     handler.start.assert_not_awaited()
 
@@ -280,6 +282,7 @@ async def test_runtime_receipt_transfers_owner_without_actor_start(monkeypatch):
     )
 
     assert lifecycle.calls[0]["tasks"][0]["delivery_context"] == {
-        "actor": True, "runtime": False, "channel": "web",
+        "actor": False, "runtime": False, "runtime_pending": True,
+        "channel": "web",
     }
     handler.start.assert_not_awaited()

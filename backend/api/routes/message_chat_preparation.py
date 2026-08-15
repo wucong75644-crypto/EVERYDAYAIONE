@@ -133,9 +133,15 @@ def _build_task_payload(
     payload.update({
         "id": internal_task_id,
         "execution_mode": "serial",
-        # The required-owner RPC atomically flips this handoff marker to
-        # actor=false/runtime=true before Runtime can execute the task.
-        "delivery_context": {"actor": True, "runtime": False, "channel": "web"},
+        # Runtime-required Web tasks are never visible to the legacy Actor.
+        # The required-owner RPC resolves this pending marker to Runtime-owned
+        # or fail-closed rejected state after the durable ingress succeeds.
+        "delivery_context": {
+            "actor": False,
+            "runtime": False,
+            "runtime_pending": True,
+            "channel": "web",
+        },
     })
     return payload
 

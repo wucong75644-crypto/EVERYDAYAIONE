@@ -94,6 +94,9 @@ class TestConversationServiceCreate:
         # Assert
         assert result["id"] == conversation["id"]
         assert result["title"] == "新对话"
+        inserted = mock_query.insert.call_args.args[0]
+        assert inserted["scope_type"] == "user"
+        assert inserted["scope_id"] == user["id"]
 
     @pytest.mark.asyncio
     async def test_create_conversation_db_error(self, conversation_service, mock_db):
@@ -113,6 +116,25 @@ class TestConversationServiceCreate:
                 title="新对话"
             )
         assert exc_info.value.code == "CONVERSATION_CREATE_ERROR"
+
+    @pytest.mark.asyncio
+    async def test_wecom_creation_does_not_invent_external_scope(
+        self, conversation_service, mock_db,
+    ):
+        user = create_test_user()
+        conversation = create_test_conversation(user_id=user["id"])
+        mock_query = MagicMock()
+        mock_query.insert.return_value = mock_query
+        mock_query.execute.return_value = MagicMock(data=[conversation])
+        mock_db.table = MagicMock(return_value=mock_query)
+
+        await conversation_service.create_conversation(
+            user_id=user["id"], source="wecom",
+        )
+
+        inserted = mock_query.insert.call_args.args[0]
+        assert "scope_type" not in inserted
+        assert "scope_id" not in inserted
 
 
 class TestConversationServiceGet:
