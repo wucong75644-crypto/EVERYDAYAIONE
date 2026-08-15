@@ -413,7 +413,7 @@
 | `ChatGenerateMixin._get_conv_source` | `backend/services/handlers/chat_generate_mixin.py` | 读取并缓存 conversations.source（Web/企微分流用） | conversation_id | str |
 | `ChatGenerateMixin.generate_complete` | `backend/services/handlers/chat_generate_mixin.py` | 企微非流式兼容门面；调用统一 Chat 执行内核并把执行异常转换为通道友好提示 | content, user_id, conversation_id, model_id, context_anchor | GenerateResult |
 | `execute_chat` | `backend/services/handlers/chat/execution_engine.py` | 通道无关模型流、工具循环、预算、结构化产物和 usage 执行内核；不提交任务终态 | handler, request, cancellation_event?, sink? | ChatExecutionResult |
-| `ChatGenerationExecutor.execute` | `backend/services/handlers/chat/executor.py` | 校验 Actor task/claim，从输入消息恢复完整 ContentPart 与固定 ContextAnchor，返回纯 GenerationOutcome | task, claim, cancellation_event | GenerationOutcome |
+| `ChatGenerationExecutor.execute` | `backend/services/handlers/chat/executor.py` | 校验 Actor task/claim，通过 HandlerFactory 注入不可变 RequestContext，从输入消息恢复完整 ContentPart 与固定 ContextAnchor，返回纯 GenerationOutcome | task, claim, cancellation_event | GenerationOutcome |
 | `CollectingExecutionSink` | `backend/services/handlers/chat/execution_sink.py` | 无 WebSocket、无数据库副作用的文本、思考和内容块过程事件收集器 | - | ExecutionSink |
 | `ActorWebSink` | `backend/services/handlers/chat/actor_sink.py` | 推送 Actor 流式过程事件；临时进度通过 execution token 条件 RPC 持久化，WS 故障不改变执行结果 | db, delivery, cancellation_event, websocket | ExecutionSink |
 | `ActorTerminalDelivery.notify` | `backend/services/conversation_delivery.py` | 数据库终态确认后释放任务槽；所有通道均向 Web best-effort 推送终态，企微结果另由事务 Outbox 投递 | task, terminal_result | None |
@@ -1863,7 +1863,8 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `list_governed_member_assignments` / `list_governed_wecom_assignments` | `backend/migrations/194_governed_assignment_management.sql` | 数据库核验 owner/admin 后聚合 active 成员、脱敏手机号、企微映射和主任职展示，不向应用开放权限模型表 |
 | `_validate_governed_assignment_change` / `update_governed_member_assignment` | `backend/migrations/194_governed_assignment_management.sql` | 校验企业归属、角色层级、职位、部门和数据范围后原子 upsert 主任职、递增权限版本并记录治理审计 |
 | `update_governed_member_display_name` | `backend/migrations/195_organization_member_display_name.sql` | owner/admin 在企业 Scope 内更新成员企业显示名；admin 不可修改 owner/admin，且不写用户个人昵称 |
-| `record_runtime_tool_audit` | `backend/migrations/196_runtime_tool_audit_capability.sql` | 仅 Runtime 可按当前 Scope 的 task 写工具审计；conversation/user/org 均由任务事实反查，不接受调用方覆盖 |
+| `record_runtime_tool_audit` | `backend/migrations/196_runtime_tool_audit_capability.sql`、`229_tool_audit_partition_lifecycle.sql` | 仅 Runtime 可按当前 Scope 的 task 写工具审计；conversation/user/org 均由任务事实反查，写入前由 owner-only 函数确保分区生命周期 |
+| `maintain_tool_audit_partitions` | `backend/migrations/229_tool_audit_partition_lifecycle.sql` | Owner-only、自维护当前月与未来两月分区，以事务 advisory lock 收敛并发，并删除完整超过 90 天的月分区；服务角色不可直接执行 |
 | `record_tool_audit` | `backend/services/agent/tool_audit.py` | 将工具审计条目投影为任务绑定 RPC 参数并在线程中执行；失败只记录 warning，不阻塞工具响应 |
 | `tenant_knowledge_visible` / `tenant_knowledge_writable` | `backend/migrations/197_runtime_knowledge_tenant_boundary.sql` | 区分双空系统知识、org 企业知识与 owner_user_id 散客知识，并校验 Runtime Actor/Org Scope 和 active membership |
 | `worker_model_scoring_snapshot` | `backend/migrations/198_worker_model_scoring_capabilities.sql` | Worker 按当前 org Scope 聚合七日指标和最近评分；散客按 user_id 独立分组 |

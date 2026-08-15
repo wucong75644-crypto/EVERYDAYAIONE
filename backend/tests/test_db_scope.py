@@ -190,6 +190,25 @@ def test_not_filter_keeps_scope_wrapper_until_execute() -> None:
     assert '"status" != %s' in cursor.execute.call_args_list[1].args[0]
 
 
+def test_not_in_filter_keeps_scope_and_expands_parameters() -> None:
+    pool, _, cursor, _ = _sync_db()
+    scope = _scope()
+    cursor.description = [("id",)]
+    cursor.fetchall.return_value = []
+
+    result = (
+        ScopedQueryBuilder(QueryBuilder(pool, "items"), scope)
+        .select("*")
+        .not_.in_("status", ["deleted", "archived"])
+        .execute()
+    )
+
+    assert result.data == []
+    sql, params = cursor.execute.call_args_list[1].args
+    assert '"status" NOT IN (%s, %s)' in sql
+    assert params == ["deleted", "archived"]
+
+
 def test_sync_query_error_exits_scope_transaction() -> None:
     pool, _, cursor, transaction = _sync_db()
     cursor.execute.side_effect = [None, RuntimeError("query failed")]

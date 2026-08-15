@@ -196,7 +196,7 @@ async def add_knowledge(
             async with conn.cursor() as cur:
                 # Hash 去重
                 dup_id = await dedup_by_hash(
-                    cur, conn, content_hash, source, org_id=org_id,
+                    cur, content_hash, source, org_id=org_id,
                     owner_user_id=owner_user_id,
                 )
                 if dup_id:
@@ -206,7 +206,7 @@ async def add_knowledge(
                 embedding = await compute_embedding(f"{title} {content}")
                 if embedding:
                     dup_id = await dedup_by_vector(
-                        cur, conn,
+                        cur,
                         category=category, embedding=embedding,
                         source=source, title=title, content=content,
                         content_hash=content_hash, metadata=metadata,

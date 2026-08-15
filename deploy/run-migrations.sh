@@ -69,3 +69,6 @@ elif [ -n "$migration_plan" ]; then
     printf '%s\n' "$migration_plan"
     exit 1
 fi
+
+MIGRATION_DATABASE_URL="$MIGRATION_DATABASE_URL" \
+    "$migration_python" scripts/verify_tool_audit_partition_contract.py

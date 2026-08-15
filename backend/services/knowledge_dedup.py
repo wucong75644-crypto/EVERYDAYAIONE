@@ -8,8 +8,8 @@
 - evict_global: 全局节点上限淘汰（kb_max_nodes）
 - evict_by_dimension: 通用单维度淘汰（按 category 或 node_type）
 
-所有函数都接收已打开的 cursor 和 conn，不创建新连接。
-所有写操作都在函数内自行 commit，调用方无需关心事务边界。
+所有函数都接收已打开的 cursor，不创建连接或结束事务。
+事务由调用方持有的 Scoped Connection 统一提交或回滚。
 """
 
 from typing import Any, Dict, Optional
@@ -24,7 +24,7 @@ from services.knowledge_config import invalidate_search_cache
 
 
 async def dedup_by_hash(
-    cur, conn, content_hash: str, source: str,
+    cur, content_hash: str, source: str,
     org_id: Optional[str] = None, owner_user_id: Optional[str] = None,
 ) -> Optional[str]:
     """Hash 完全匹配去重：匹配则更新 confidence + hit_count，返回已有节点 ID。
@@ -63,13 +63,12 @@ async def dedup_by_hash(
         """,
         {"conf": new_conf, "id": existing_id},
     )
-    await conn.commit()
     invalidate_search_cache()
     return str(existing_id)
 
 
 async def dedup_by_vector(
-    cur, conn, *, category: str, embedding: list,
+    cur, *, category: str, embedding: list,
     source: str, title: str, content: str,
     content_hash: str, metadata: Optional[Dict[str, Any]],
     org_id: Optional[str] = None, owner_user_id: Optional[str] = None,
@@ -128,7 +127,6 @@ async def dedup_by_vector(
             "id": sim_id,
         },
     )
-    await conn.commit()
     invalidate_search_cache()
     return str(sim_id)
 

@@ -320,13 +320,13 @@ def test_migrations_run_before_service_restart_and_fail_closed() -> None:
         "scripts/verify_runtime_generation_capabilities.py"
     )
     restart = SCRIPT.index('sudo systemctl restart "$service"')
-
     assert migration_gate < generation_gate < restart
     assert "source .env.runtime" in SCRIPT
     assert "source .env.worker-client" in SCRIPT
     assert "scripts/migration_runner.py plan" in MIGRATION_SCRIPT
     assert "scripts/migration_runner.py apply" in MIGRATION_SCRIPT
     assert "scripts/verify_worker_control_preconditions.py" in MIGRATION_SCRIPT
+    assert "scripts/verify_tool_audit_partition_contract.py" in MIGRATION_SCRIPT
     assert 'elif [ -n "$migration_plan" ]; then' in MIGRATION_SCRIPT
     assert "存在待执行迁移" in MIGRATION_SCRIPT
 
@@ -383,11 +383,11 @@ def test_migration_gate_plans_then_applies_when_enabled(tmp_path: Path) -> None:
         text=True,
         check=False,
     )
-
     assert result.returncode == 0
     assert calls.read_text(encoding="utf-8").splitlines() == [
         "scripts/migration_runner.py plan --applied-by deploy-script",
         "scripts/migration_runner.py apply --applied-by deploy-script",
+        "scripts/verify_tool_audit_partition_contract.py",
     ]
 
 
@@ -427,12 +427,12 @@ def test_migration_gate_checks_worker_control_ownership_before_apply(
         text=True,
         check=False,
     )
-
     assert result.returncode == 0
     assert calls.read_text(encoding="utf-8").splitlines() == [
         "scripts/migration_runner.py plan --applied-by deploy-script",
         "scripts/verify_worker_control_preconditions.py",
         "scripts/migration_runner.py apply --applied-by deploy-script",
+        "scripts/verify_tool_audit_partition_contract.py",
     ]
 
 

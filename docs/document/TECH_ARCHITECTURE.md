@@ -2430,7 +2430,21 @@ async def stream_chat(prompt: str):
 
 ---
 
+### 13.10 Runtime 数据库执行边界
+
+- Conversation Actor 创建 ChatHandler 时必须经过 HandlerFactory，由入口一次性注入
+  `org_id` 和不可变 `RequestContext`；工具层 fallback 只用于暴露装配违约。
+- Scoped Connection context 是事务唯一 Owner，去重、淘汰和领域 helper 不得显式
+  `commit`、`rollback` 或修改 autocommit。
+- LocalDB 查询构造器负责统一 SQL 参数合同，`IN` 与 `NOT IN` 必须逐值绑定。
+- 分区审计表由唯一 SECURITY DEFINER 写入边界自维护，Runtime 仅获窄 RPC EXECUTE，
+  不获得表权限、DDL 或维护函数执行权。
+
+详见 [Runtime 执行边界与工具审计分区根治](./TECH_Runtime执行边界与工具审计分区根治.md)。
+
+---
+
 **文档状态**：✅ 设计完成
-**最后更新**：2026-01-20
+**最后更新**：2026-08-15
 **维护者**：技术团队
 **关联文档**：[产品设计文档](./PAGE_DESIGN.md) | [开发规则](../../.cursorrules)

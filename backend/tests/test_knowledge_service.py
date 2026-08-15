@@ -191,6 +191,34 @@ class TestAddKnowledge:
             )
 
             assert result == existing_id
+            mock_conn.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_add_duplicate_vector_does_not_commit_inner_scope(
+        self, mock_pg_connection, mock_conn, mock_cursor,
+    ):
+        """向量去重更新也必须由外层 Scoped Transaction 提交。"""
+        existing_id = str(uuid4())
+        mock_cursor.fetchone = AsyncMock(side_effect=[
+            None,
+            (existing_id, "auto", 0.5),
+        ])
+
+        with patch("services.knowledge_service.is_kb_available", return_value=True), \
+             patch("services.knowledge_service.get_pg_connection", return_value=mock_pg_connection), \
+             patch("services.knowledge_service.compute_embedding", return_value=[0.1, 0.2]), \
+             patch("services.knowledge_service.invalidate_search_cache"):
+            from services.knowledge_service import add_knowledge
+
+            result = await add_knowledge(
+                category="model",
+                node_type="capability",
+                title="Similar",
+                content="Similar content",
+            )
+
+        assert result == existing_id
+        mock_conn.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_add_skips_seed_overwrite(self, mock_pg_connection, mock_conn, mock_cursor):

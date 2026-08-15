@@ -260,9 +260,9 @@ class QueryBuilder:
         for col, op, val in self._filters:
             if op in ("IS NULL", "IS NOT NULL"):
                 clauses.append(f'{self._quote_col(col)} {op}')
-            elif op == "IN":
+            elif op in ("IN", "NOT IN"):
                 placeholders = ", ".join(["%s"] * len(val))
-                clauses.append(f'{self._quote_col(col)} IN ({placeholders})')
+                clauses.append(f'{self._quote_col(col)} {op} ({placeholders})')
                 params.extend(val)
             else:
                 clauses.append(f'{self._quote_col(col)} {op} %s')

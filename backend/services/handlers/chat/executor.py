@@ -36,7 +36,7 @@ class ChatGenerationExecutor:
         ] | None = None,
     ) -> None:
         self._db = db
-        self._handler_factory = handler_factory or _create_handler
+        self._handler_factory = handler_factory
         self._handler_db_factory = handler_db_factory or _get_handler_db
         self._sink_factory = sink_factory
 
@@ -51,7 +51,17 @@ class ChatGenerationExecutor:
             self._load_input_content(claim),
             resolve_execution_scope(self._db, task, claim.conversation_id),
         )
-        handler = self._handler_factory(self._handler_db_factory())
+        handler_db = self._handler_db_factory()
+        handler = (
+            self._handler_factory(handler_db)
+            if self._handler_factory is not None
+            else _create_handler(
+                handler_db,
+                org_id=task.get("org_id"),
+                user_id=str(task["user_id"]),
+                request_id=claim.task_id,
+            )
+        )
         handler.org_id = task.get("org_id")
         handler.execution_scope = execution_scope
         handler._workspace_user_id = execution_scope.workspace_owner_id
@@ -336,10 +346,23 @@ def _build_anchor(
     )
 
 
-def _create_handler(db: Any) -> Any:
-    from services.handlers.chat_handler import ChatHandler
+def _create_handler(
+    db: Any,
+    *,
+    org_id: Any,
+    user_id: str,
+    request_id: str,
+) -> Any:
+    from schemas.message import GenerationType
+    from services.handlers.factory import get_handler
 
-    return ChatHandler(db)
+    return get_handler(
+        GenerationType.CHAT,
+        db,
+        org_id=str(org_id) if org_id else None,
+        user_id=user_id,
+        request_id=request_id,
+    )
 
 
 def _get_handler_db() -> Any:

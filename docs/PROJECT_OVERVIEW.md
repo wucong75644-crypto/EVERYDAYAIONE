@@ -399,6 +399,10 @@ Agent Runtime AR-13 Command Claim与Coordinator骨架：
 - `backend/migrations/196_runtime_tool_audit_capability.sql`：Runtime 工具审计改为
   由 task 反查 conversation/user/org 的窄 RPC；分区维护函数固定以 owner 身份执行，
   防止未来分区重新归属旧角色。
+- `backend/migrations/229_tool_audit_partition_lifecycle.sql`：工具审计写入边界以 owner-only
+  函数自动维护当前月和未来两月分区、并发创建锁及 90 天保留策略；不依赖 pg_cron，
+  Runtime 仍无 DDL 权限。`backend/scripts/verify_tool_audit_partition_contract.py` 作为发布
+  后置门禁核验分区、Owner 和函数授权。
 - `backend/migrations/197_runtime_knowledge_tenant_boundary.sql`：为知识节点和关系边增加
   明确的个人所有者，系统、企业、散客事实分别使用双空、org、owner 三类身份；Runtime
   RLS 与唯一索引同步隔离，Worker 收口前暂不 FORCE。
@@ -419,6 +423,8 @@ Agent Runtime AR-13 Command Claim与Coordinator骨架：
   owner policy、启用 FORCE RLS，并固定四类服务角色的最小表级权限。
 - `deploy/preflight/knowledge-audit-completion.sh`：最终撤销旧 owner 能力前独立核验
   Knowledge/Audit 的 owner policy、FORCE RLS 与 Runtime/WeCom/Worker/Sync ACL。
+- `docs/document/TECH_Runtime执行边界与工具审计分区根治.md`：记录 Actor 上下文、Scoped
+  Transaction、LocalDB `NOT IN` 与工具审计分区的唯一 Owner、失败和回滚合同。
 - `backend/tests/test_model_scorer_rpc.py`、`test_model_scorer_formatting.py`：分别覆盖
   Worker Snapshot/Commit 主链与评分时间格式；原评分测试文件保持结构门限以内。
 - `backend/api/routes/scheduled_task_support.py`：承载定时任务请求模型、频率解析和
