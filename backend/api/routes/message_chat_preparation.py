@@ -6,6 +6,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from loguru import logger
+
+from core.exceptions import AppException
 from schemas.message import (
     GenerateRequest,
     GenerateResponse,
@@ -68,7 +71,8 @@ async def prepare_and_start_chat_generation(
         user_id=user_id,
         placeholder_at=placeholder_at,
     )
-    preparation = GenerationLifecycle(db).prepare(
+    lifecycle = GenerationLifecycle(db)
+    preparation = lifecycle.prepare(
         request_id=request_id,
         operation=body.operation.value,
         conversation_id=conversation_id,
@@ -79,14 +83,42 @@ async def prepare_and_start_chat_generation(
         output_message=_output_payload(body, assistant_message_id, placeholder_at),
         tasks=[task_payload],
     )
-    ingress = await _submit_runtime_ingress(
-        db=db, handler=handler, conversation_id=conversation_id,
-        user_id=user_id, org_id=org_id, request_id=request_id, body=body,
-        preparation=preparation, business_params=business_params,
-        internal_task_id=internal_task_id,
-    )
-    if not ingress.accepted or ingress.runtime_owned is not True:
-        raise RuntimeError(f"RUNTIME_INGRESS_{ingress.outcome.upper()}")
+    try:
+        ingress = await _submit_runtime_ingress(
+            db=db, handler=handler, conversation_id=conversation_id,
+            user_id=user_id, org_id=org_id, request_id=request_id, body=body,
+            preparation=preparation, business_params=business_params,
+            internal_task_id=internal_task_id,
+        )
+        if not ingress.accepted or ingress.runtime_owned is not True:
+            raise RuntimeError(f"RUNTIME_INGRESS_{ingress.outcome.upper()}")
+    except Exception as error:
+        failure_code = _runtime_ingress_failure_code(error)
+        try:
+            lifecycle.fail_web_runtime_ingress(
+                task_id=internal_task_id,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                org_id=org_id,
+                input_message_id=preparation.input_message_id,
+                output_message_id=preparation.output_message_id,
+                turn_id=preparation.turn_id,
+                client_task_id=client_task_id,
+                failure_code=failure_code,
+            )
+        except Exception:
+            logger.exception(
+                "web_runtime_ingress_failure_finalization_failed | "
+                f"task_id={internal_task_id} | conversation_id={conversation_id}"
+            )
+            raise RuntimeError(
+                "RUNTIME_INGRESS_FAILURE_FINALIZATION_FAILED"
+            ) from error
+        raise AppException(
+            code="RUNTIME_INGRESS_UNAVAILABLE",
+            message="生成服务暂未就绪，请稍后重试",
+            status_code=503,
+        ) from error
     user_message = _build_user_message(
         body, conversation_id, preparation.input_message_id,
         preparation.turn_id, created_at,
@@ -277,3 +309,12 @@ def _required_identity(value: str | None) -> str:
     if not value:
         raise RuntimeError("GENERATION_REQUEST_IDENTITY_MISSING")
     return value
+
+
+def _runtime_ingress_failure_code(error: Exception) -> str:
+    marker = str(error).upper()
+    if "RUNTIME_REQUIRED_UNAVAILABLE" in marker:
+        return "RUNTIME_REQUIRED_UNAVAILABLE"
+    if "BINDING" in marker:
+        return "RUNTIME_BINDING_REJECTED"
+    return "RUNTIME_INGRESS_EXCEPTION"

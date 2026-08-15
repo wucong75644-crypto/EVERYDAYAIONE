@@ -104,6 +104,14 @@ class PreparedTaskFailure:
 
 
 @dataclass(frozen=True)
+class WebRuntimeIngressFailure:
+    """Web Runtime ingress 失败收尾结果。"""
+
+    task_id: str
+    already_failed: bool
+
+
+@dataclass(frozen=True)
 class PreparedCreditRefund:
     """供应商拒绝前已锁定积分的退款结果。"""
 
@@ -239,6 +247,43 @@ class GenerationLifecycle:
             f"terminal_reason={terminal_reason} | already_failed={result[1]}"
         )
         return PreparedTaskFailure(result[0], result[1])
+
+    def fail_web_runtime_ingress(
+        self,
+        *,
+        task_id: str,
+        conversation_id: str,
+        user_id: str,
+        org_id: str | None,
+        input_message_id: str,
+        output_message_id: str,
+        turn_id: str,
+        client_task_id: str,
+        failure_code: str,
+    ) -> WebRuntimeIngressFailure:
+        """原子终止未被 Runtime 接管的 Web task 与占位消息。"""
+        response = self._db.rpc(
+            "fail_web_runtime_ingress_task",
+            {
+                "p_task_id": task_id,
+                "p_conversation_id": conversation_id,
+                "p_user_id": user_id,
+                "p_org_id": org_id,
+                "p_input_message_id": input_message_id,
+                "p_output_message_id": output_message_id,
+                "p_turn_id": turn_id,
+                "p_client_task_id": client_task_id,
+                "p_failure_code": failure_code,
+            },
+        ).execute()
+        data = response.data if response else None
+        result = _parse_transition_result(data, "already_failed", task_id)
+        logger.warning(
+            "web_runtime_ingress_failed | "
+            f"task_id={task_id} | org_id={org_id} | user_id={user_id} | "
+            f"failure_code={failure_code} | already_failed={result[1]}"
+        )
+        return WebRuntimeIngressFailure(result[0], result[1])
 
     def refund_prepared_credits(
         self,
