@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -192,7 +193,9 @@ class ExistingProviderModelAdapter:
             f"model_step_id={request.model_step_id} | "
             f"model_id={request.model_id} | provider={provider} | "
             f"request_hash={request.request_hash} | outcome={outcome} | "
-            f"error={type(error).__name__}"
+            f"error={type(error).__name__} | "
+            f"error_code={_safe_error_code(error)} | "
+            f"status_code={getattr(error, 'status_code', None)}"
         )
 
     @staticmethod
@@ -218,6 +221,23 @@ def _provider_name(model_id: str) -> str:
     if config is None:
         raise ValueError(f"unknown model_id: {model_id}")
     return config.provider.value
+
+
+def _safe_error_code(error: Exception) -> str:
+    """Keep stable diagnostics while excluding provider response text/secrets."""
+    value = getattr(error, "error_code", None)
+    if not isinstance(value, str) or not value.strip():
+        candidates = [part.strip() for part in str(error).split(":")]
+        value = next(
+            (part for part in reversed(candidates) if re.fullmatch(
+                r"[A-Za-z0-9_\-]{1,100}", part,
+            )),
+            "",
+        )
+    value = value.upper()
+    if re.fullmatch(r"[A-Z0-9_\-]{1,100}", value):
+        return value
+    return type(error).__name__.upper()
 
 
 def _log_cancelled(request: ModelStepRequest, provider: str) -> None:

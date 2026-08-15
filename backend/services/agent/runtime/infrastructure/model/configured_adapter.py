@@ -49,8 +49,11 @@ class RuntimeConfiguredAdapterFactory:
                 "p_request_hash": request.request_hash,
                 "p_bundle_name": bundle_name,
             })
-        except ConfigurationResolutionError:
-            raise RuntimeError("RUNTIME_MODEL_CONFIGURATION_UNAVAILABLE") from None
+        except ConfigurationResolutionError as error:
+            code = str(error).strip() or "CONFIG_BUNDLE_UNAVAILABLE"
+            raise RuntimeError(
+                f"RUNTIME_MODEL_CONFIGURATION_UNAVAILABLE:{code}"
+            ) from None
         api_key = _api_key(bundle.values.get(config_key))
         return self._adapter_factory(
             request.model_id,
@@ -71,10 +74,10 @@ def _provider_for(model_id: str) -> str:
 
 def _api_key(value: object) -> str:
     if not isinstance(value, Mapping):
-        raise RuntimeError("RUNTIME_MODEL_CONFIGURATION_UNAVAILABLE")
+        raise RuntimeError("RUNTIME_MODEL_API_KEY_MISSING")
     api_key = value.get("api_key")
-    if not isinstance(api_key, str) or not api_key:
-        raise RuntimeError("RUNTIME_MODEL_CONFIGURATION_UNAVAILABLE")
+    if not isinstance(api_key, str) or not api_key.strip():
+        raise RuntimeError("RUNTIME_MODEL_API_KEY_MISSING")
     return api_key
 
 

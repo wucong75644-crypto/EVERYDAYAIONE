@@ -9,6 +9,14 @@ ROLLBACK = (
     ROOT
     / "migrations/rollback/228_08n_agent_runtime_web_terminal_projection_rollback.sql"
 ).read_text()
+NOTIFICATION_SQL = (
+    ROOT
+    / "migrations/228_08o_agent_runtime_web_terminal_notification.sql"
+).read_text()
+NOTIFICATION_ROLLBACK = (
+    ROOT
+    / "migrations/rollback/228_08o_agent_runtime_web_terminal_notification_rollback.sql"
+).read_text()
 
 
 def test_terminal_projection_closes_bound_assistant_placeholder() -> None:
@@ -33,3 +41,11 @@ def test_rollback_removes_repair_and_restores_task_only_projection() -> None:
     assert "DROP FUNCTION repair_agent_runtime_web_terminal_projection_v1" in ROLLBACK
     assert "UPDATE messages SET status='failed'" not in ROLLBACK
     assert "UPDATE tasks SET status=v_status" in ROLLBACK
+
+
+def test_projection_notification_is_narrow_and_worker_scoped() -> None:
+    assert "get_agent_runtime_web_terminal_notification_v1" in NOTIFICATION_SQL
+    assert "current_setting('app.access_kind', TRUE)" in NOTIFICATION_SQL
+    assert "TO everydayai_projection_worker" in NOTIFICATION_SQL
+    assert "FROM PUBLIC, everydayai" in NOTIFICATION_SQL
+    assert "DROP FUNCTION get_agent_runtime_web_terminal_notification_v1" in NOTIFICATION_ROLLBACK

@@ -9,6 +9,7 @@ from services.agent.runtime.application.model_loop import ModelLoopDriver
 from services.agent.runtime.infrastructure.model.configured_adapter import (
     RuntimeConfiguredAdapterFactory,
 )
+from services.configuration.resolver import ConfigurationResolutionError
 from services.agent.runtime.ports.model import (
     ModelExecutionBinding,
     ModelInputReceipt,
@@ -102,6 +103,25 @@ async def test_factory_rejects_unbound_request_before_config_read() -> None:
         await factory(_request(bound=False))
 
     assert resolver.calls == []
+
+
+@pytest.mark.asyncio
+async def test_factory_preserves_configuration_authority_error_code() -> None:
+    class Resolver(_Resolver):
+        async def runtime_model(self, _name, _params):
+            raise ConfigurationResolutionError(
+                "CONFIG_BUNDLE_AUTHORITY_DENIED",
+            )
+
+    factory = RuntimeConfiguredAdapterFactory(
+        Resolver(), adapter_factory=lambda *_args, **_kwargs: object(),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="RUNTIME_MODEL_CONFIGURATION_UNAVAILABLE:CONFIG_BUNDLE_AUTHORITY_DENIED",
+    ):
+        await factory(_request())
 
 
 @pytest.mark.asyncio

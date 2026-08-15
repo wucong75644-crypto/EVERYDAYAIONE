@@ -317,6 +317,10 @@ deploy_backend() {
             everydayai-sync
             everydayai-wecom
             everydayai-conversation-actor
+            everydayai-agent-runtime
+            everydayai-agent-projection
+            everydayai-agent-authorization
+            everydayai-sandbox-worker
         )
         for service in "${services[@]}"; do
             if ! systemctl list-unit-files "${service}.service" --no-legend \
@@ -329,6 +333,26 @@ deploy_backend() {
                 sudo journalctl -u "$service" -n 50 --no-pager
                 exit 1
             }
+        done
+        runtime_health_sockets=(
+            /run/everydayai-agent-runtime/health.sock
+            /run/everydayai-agent-projection/health.sock
+            /run/everydayai-agent-authorization/health.sock
+            /run/everydayai-sandbox-worker/health.sock
+        )
+        for socket_path in "${runtime_health_sockets[@]}"; do
+            for attempt in $(seq 1 20); do
+                if [ -S "$socket_path" ]; then
+                    break
+                fi
+                if [ "$attempt" -eq 20 ]; then
+                    echo "❌ Runtime health socket 未就绪: $socket_path"
+                    sudo systemctl --no-pager --full status \
+                        "$(basename "${socket_path%/health.sock}")" || true
+                    exit 1
+                fi
+                sleep 1
+            done
         done
         for attempt in $(seq 1 20); do
             if curl --fail --silent http://127.0.0.1:8000/api/health \
@@ -348,7 +372,7 @@ deploy_backend() {
                 echo "❌ backend 仍在启动 ERP 同步"
                 exit 1
             }
-        echo "✅ 后端四服务和 readiness 检查通过"
+        echo "✅ 后端与 Runtime 控制面服务和 readiness 检查通过"
 ENDSSH
 
     log_success "后端部署完成"

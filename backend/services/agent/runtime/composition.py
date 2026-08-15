@@ -193,7 +193,7 @@ def build_projection(
         ToolConfirmationNotificationWorker,
     )
     from services.agent.runtime.application.projection_worker import (
-        CompatibilityProjectionWorker,
+        CompatibilityProjectionNotifier, CompatibilityProjectionWorker,
     )
     from services.agent.runtime.infrastructure.postgres.compat_projection import (
         PostgresCompatibilityProjection,
@@ -237,7 +237,10 @@ def build_projection(
             PostgresScheduledDeliveryProjection(db, worker_id), ws_manager,
         )
     return ProjectionOwner(
-        CompatibilityProjectionWorker(PostgresCompatibilityProjection(db)),
+        CompatibilityProjectionWorker(
+            PostgresCompatibilityProjection(db),
+            CompatibilityProjectionNotifier(db, ws_manager),
+        ),
         ToolConfirmationNotificationWorker(
             database=db, service=tool_confirmation_service,
             websocket_manager=ws_manager, worker_id=worker_id,
