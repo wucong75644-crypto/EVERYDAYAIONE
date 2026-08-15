@@ -55,6 +55,7 @@ def test_inventory_matches_production_rollback_boundary() -> None:
     assert "221_worker_media_rpc_bigint_compatibility.sql" in target
     assert module.BOUNDARY in target
     assert module.FIRST not in target
+    assert "229_tool_audit_partition_lifecycle.sql" not in target
     assert len(lane) == 89
     assert lane[0].identity == module.FIRST
     assert lane[-1].identity == module.LAST

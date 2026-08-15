@@ -124,7 +124,7 @@ def _sort_key(name: str) -> tuple[int, str]:
 
 def _target_migrations() -> dict[str, str]:
     result: dict[str, str] = {}
-    paths = [*MIGRATIONS.glob("*.sql"), *MIGRATIONS.glob("*.py")]
+    paths = filter(lambda path: _sort_key(path.name) <= _sort_key(BOUNDARY), [*MIGRATIONS.glob("*.sql"), *MIGRATIONS.glob("*.py")])
     for path in sorted(paths, key=lambda value: _sort_key(value.name)):
         result[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
     if len(result) != EXPECTED_TARGET_MIGRATIONS or BOUNDARY not in result:
