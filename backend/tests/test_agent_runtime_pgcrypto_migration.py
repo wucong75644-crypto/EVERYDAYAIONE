@@ -15,6 +15,8 @@ def test_pgcrypto_prerequisite_precedes_catalog_seed() -> None:
     )
 
 
-def test_pgcrypto_migration_has_matching_rollback() -> None:
+def test_pgcrypto_rollback_preserves_shared_platform_extension() -> None:
     assert "CREATE EXTENSION IF NOT EXISTS pgcrypto" in MIGRATION.read_text()
-    assert "DROP EXTENSION IF EXISTS pgcrypto" in ROLLBACK.read_text()
+    rollback = ROLLBACK.read_text()
+    assert "DROP EXTENSION" not in rollback
+    assert "shared database-platform capability" in rollback
