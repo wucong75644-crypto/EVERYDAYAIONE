@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from core.org_scoped_db import OrgScopedDB
 from services.agent.runtime.ingress import RuntimeIngress
 
 
@@ -104,6 +105,41 @@ async def test_runtime_required_prepared_task_uses_v6_without_legacy_fallback() 
     assert result.outcome == "runtime_required_unavailable"
     assert result.owner_state == "runtime_required_unavailable"
     assert result.runtime_owned is False
+    assert database.calls[-1][0] == "runtime_submit_ingress_v6_required"
+
+
+@pytest.mark.asyncio
+async def test_runtime_required_org_scope_reaches_v6_capability() -> None:
+    database = _Database({
+        "get_agent_runtime_ingress_capability": {
+            "outcome": "available", "ingress_version": 5,
+        },
+        "runtime_submit_ingress_v6_required": {
+            "outcome": "created", "runtime_owned": True,
+        },
+        "get_agent_runtime_definition_fact": {
+            "definition_hash": "definition", "catalog_revision": "catalog",
+        },
+    })
+    result = await RuntimeIngress(
+        OrgScopedDB(database, "org"),
+        contract_revision=3,
+        require_runtime_owner=True,
+    ).submit(
+        conversation_id="conversation", org_id="org", user_id="user",
+        scope_kind="user", scope_id="user", agent_definition_id="agent",
+        agent_definition_revision="v1", command_type="submit_input",
+        idempotency_key="request", payload={
+            "channel": "web", "input_message_id": "message",
+            "output_message_id": "output", "turn_id": "turn",
+            "task_id": "task", "client_task_id": "client",
+            "request_id": "request",
+        },
+    )
+
+    assert result.accepted
+    capability_call = database.calls[1]
+    assert capability_call == ("get_agent_runtime_ingress_capability", {})
     assert database.calls[-1][0] == "runtime_submit_ingress_v6_required"
 
 

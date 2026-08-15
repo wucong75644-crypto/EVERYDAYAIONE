@@ -398,6 +398,12 @@ class TestRPCAutoInjection:
             },
         )
 
+    def test_runtime_ingress_capability_rpc_does_not_receive_org_argument(self):
+        self.db.rpc("get_agent_runtime_ingress_capability")
+        self.raw_db.rpc.assert_called_once_with(
+            "get_agent_runtime_ingress_capability", {},
+        )
+
     def test_explicit_org_id_not_overwritten(self):
         """已有 p_org_id 不覆盖"""
         other_org = "other-org-id"
