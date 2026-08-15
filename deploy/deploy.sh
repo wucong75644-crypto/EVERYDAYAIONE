@@ -320,7 +320,6 @@ deploy_backend() {
             everydayai-agent-runtime
             everydayai-agent-projection
             everydayai-agent-authorization
-            everydayai-sandbox-worker
         )
         for service in "${services[@]}"; do
             if ! systemctl list-unit-files "${service}.service" --no-legend \
@@ -338,7 +337,6 @@ deploy_backend() {
             /run/everydayai-agent-runtime/health.sock
             /run/everydayai-agent-projection/health.sock
             /run/everydayai-agent-authorization/health.sock
-            /run/everydayai-sandbox-worker/health.sock
         )
         for socket_path in "${runtime_health_sockets[@]}"; do
             for attempt in $(seq 1 20); do
@@ -354,6 +352,32 @@ deploy_backend() {
                 sleep 1
             done
         done
+        sandbox_env=/etc/everydayai/sandbox-worker.env
+        if [ -f "$sandbox_env" ]; then
+            sudo systemctl restart everydayai-sandbox-worker
+            sudo systemctl is-active --quiet everydayai-sandbox-worker || {
+                sudo journalctl -u everydayai-sandbox-worker -n 50 --no-pager
+                exit 1
+            }
+            for attempt in $(seq 1 20); do
+                if [ -S /run/everydayai-sandbox-worker/health.sock ]; then
+                    break
+                fi
+                if [ "$attempt" -eq 20 ]; then
+                    echo "❌ Sandbox health socket 未就绪"
+                    sudo journalctl -u everydayai-sandbox-worker -n 80 --no-pager
+                    exit 1
+                fi
+                sleep 1
+            done
+        else
+            if systemctl is-active --quiet everydayai-sandbox-worker; then
+                echo "❌ Sandbox 环境文件缺失但服务仍在运行: $sandbox_env"
+                exit 1
+            fi
+            sudo systemctl reset-failed everydayai-sandbox-worker || true
+            echo "ℹ️ Sandbox 环境文件未配置，保持 Sandbox 停用"
+        fi
         for attempt in $(seq 1 20); do
             if curl --fail --silent http://127.0.0.1:8000/api/health \
                 | grep -q '"status":"ok"'; then
