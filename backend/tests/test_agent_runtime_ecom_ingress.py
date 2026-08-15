@@ -26,7 +26,8 @@ async def test_ecom_ingress_submits_to_shared_runtime_ingress(monkeypatch) -> No
         agent_definition_revision="v1", input_message_id="input-1",
         output_message_id="output-1", idempotency_key="ecom-1",
         model_id="qwen-vl-max", messages=[{"role": "user", "content": "x"}],
-        feature="ecom_plan", source_id="project-1",
+        feature="ecom_plan", source_id="project-1", task_id="task-1",
+        client_task_id="client-task-1", turn_id="turn-1",
     )
 
     assert receipt.accepted is True
@@ -45,7 +46,8 @@ async def test_ecom_ingress_rejects_unknown_feature() -> None:
             scope_id="u", agent_definition_id="chat", agent_definition_revision="v1",
             input_message_id="i", output_message_id="o", idempotency_key="k",
             model_id="m", messages=[{"role": "user", "content": "x"}],
-            feature="unknown", source_id="s",
+            feature="unknown", source_id="s", task_id="t",
+            client_task_id="ct", turn_id="turn",
         )
 
 

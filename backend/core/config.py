@@ -82,7 +82,6 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     conversation_actor_worker_enabled: bool = False
-    agent_runtime_ingress_enabled: bool = False
     agent_runtime_scheduled_wecom_enabled: bool = False
     agent_runtime_scheduled_wecom_worker_id: str = "scheduled-wecom-01"
     # AR-17.4 remains closed until an explicit, injected production

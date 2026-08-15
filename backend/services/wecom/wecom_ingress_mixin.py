@@ -27,7 +27,6 @@ class WecomIngressMixin:
         if msg.msgtype in _ACTOR_MESSAGE_TYPES:
             await self._enqueue_actor_message(
                 msg, reply_ctx, user_id, conversation_id, image_urls,
-                runtime_required=True,
             )
             return
 
@@ -81,7 +80,6 @@ class WecomIngressMixin:
         await self._enqueue_actor_message(
             msg, reply_ctx, user_id, conversation_id, [],
             file_payload=file_payload,
-            runtime_required=True,
             notify_web=False,
             acknowledgement="文件已收到，请告诉我需要如何处理。",
         )
@@ -95,7 +93,6 @@ class WecomIngressMixin:
         image_urls: List[str],
         *,
         file_payload: dict | None = None,
-        runtime_required: bool = False,
         notify_web: bool = True,
         acknowledgement: str | None = None,
     ) -> None:
@@ -153,7 +150,6 @@ class WecomIngressMixin:
                 image_urls=image_urls,
                 file_payload=file_payload,
                 stream_context=stream_context,
-                runtime_required=runtime_required,
             )
         except Exception:
             if keepalive_registered:

@@ -101,7 +101,6 @@ jobs:
       PYTHONDONTWRITEBYTECODE: "1"
       PYTEST_ADDOPTS: -p no:cacheprovider
       RUN_AR17_1_DB_TEST: "1"
-      AGENT_RUNTIME_INGRESS_ENABLED: "false"
       AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED: "false"
       AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED: "false"
       AGENT_RUNTIME_MEDIA_ENABLED: "false"
@@ -119,7 +118,6 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$AGENT_RUNTIME_INGRESS_ENABLED" = false
           test "$AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED" = false
           test "$AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED" = false
           test "$AGENT_RUNTIME_MEDIA_ENABLED" = false

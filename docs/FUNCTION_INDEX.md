@@ -508,7 +508,7 @@
 | `update_wecom_conversation_setting` | `backend/migrations/126_wecom_conversation_settings.sql` | 行锁内按 user/org/source 校验并原子更新模型或思考模式 | conversation_id, user_id, setting_key/value, org_id | JSONB |
 | Actor tenant RPC facades | `backend/migrations/127_actor_tenant_rpc_contract.sql` | 接收 OrgScopedDB 注入的 p_org_id，强校验租户后委托既有原子核心 | 原核心参数 + org_id | JSONB |
 | `get_wecom_conversation_setting` / `set_wecom_conversation_setting` | `backend/services/wecom/conversation_settings.py` | 读取企微对话设置并通过原子 RPC 持久化，数据库为唯一事实源 | db, conversation/user/key/value/org | str \| dict |
-| `enqueue_wecom_message` | `backend/services/wecom/actor_enqueue.py` | 从企微 msgid 派生稳定 task/message/turn ID，将文件/图片/文本内容写入 Runtime ingress payload；文件入口可要求 Runtime 成为唯一 Owner | handler, msg, user_id, conversation_id, image_urls, file_payload, stream_context, runtime_required | WecomActorEnqueueResult |
+| `enqueue_wecom_message` | `backend/services/wecom/actor_enqueue.py` | 从企微 msgid 派生稳定 task/message/turn ID，将文件/图片/文本内容写入唯一 Runtime ingress；不可用时失败关闭，不回退 Actor generation Owner | handler, msg, user_id, conversation_id, image_urls, file_payload, stream_context | WecomActorEnqueueResult |
 | `stable_wecom_task_id` | `backend/services/wecom/actor_enqueue.py` | 返回与企微原子入队完全一致的稳定 task ID，供入站在唤醒 Worker 前注册 stream 保活 | msg, user_id | str |
 | `identify_file` | `backend/services/assets/file_identity.py` | 依据解密后内容识别 CSV/TSV、Office、PDF 和媒体类型，生成安全规范名、MIME 与 SHA-256 | data, stable_id, provider_name?, content_disposition? | AssetIdentity |
 | `resolve_asset_identity` | `backend/services/assets/asset_identity.py` | 将可信 Workspace/OSS URL 与 owner key 解析为不受 CDN 域名和 query 影响的 canonical provider/key | original_url, workspace_path?, org/scope/owner, allowed_hosts? | CanonicalAssetIdentity |
@@ -797,7 +797,7 @@
 | `MessageIdempotencyService.complete` / `fail` | `backend/services/message_idempotency_service.py` | 持久化可重放的成功或业务失败终态 | claim, response/error | None |
 | `MessageIdempotencyService.fail_unexpected` | `backend/services/message_idempotency_service.py` | 最佳努力持久化脱敏的未知异常终态且不覆盖原异常 | claim, error | None |
 | `prepare_and_start_chat_generation` | `backend/api/routes/message_chat_preparation.py` | 原子准备 Web Chat 的消息、Turn、本地 task 和 ContextAnchor 后入队 Actor | db, handler, conversation/user/org/request, body | GenerateResponse |
-| `prepare_and_start_image_generation` | `backend/api/routes/message_image_preparation.py` | 原子准备 Web 普通图片的消息、Turn 和 1–4 个 preparing task，再启动供应商提交 | db, handler, conversation service, scope/request/body | GenerateResponse |
+| `prepare_and_start_image_generation` | `backend/api/routes/message_image_preparation.py` | 原子准备 Web 普通图片的消息、Turn 和 1–10 个 preparing task，再交给 Runtime image batch ingress | db, handler, conversation service, scope/request/body | GenerateResponse |
 | `submit_prepared_image_task` | `backend/services/handlers/image_prepared_submission.py` | 使用稳定本地 task 锁积分、提交图片供应商，并 attach 成功结果或记录失败终态 | handler, local task, adapter, batch/model/credit/request context | str \| None |
 | `resolve_prepared_batch` | `backend/services/handlers/image_request_settings.py` | fail-closed 验证已准备 task 数量和 batch ID，禁止退回到供应商先调用路径 | metadata, num_images | tuple |
 | `prepare_and_start_video_generation` | `backend/api/routes/message_video_preparation.py` | 原子准备 Web 视频消息、Turn 和 preparing task，再启动供应商提交 | db, handler, conversation service, scope/request/body | GenerateResponse |
@@ -814,6 +814,7 @@
 | `ImageHandler.start` | `backend/services/handlers/image_handler.py` | 启动图片生成任务（异步） | message_id, conversation_id, user_id, content, params | task_id |
 | `ImageHandler.preflight` | `backend/services/handlers/image_handler.py` | 图片消息变更前校验本次请求总积分 | user_id, content, params | None |
 | `resolve_image_generation_settings` | `backend/services/handlers/image_request_settings.py` | 统一解析图片提交与计费参数 | params, has_image_urls | Dict[str, Any] |
+| `build_canonical_image_request` | `backend/services/handlers/image_request_settings.py` | 以已解析 prompt/model 构建唯一图片请求，禁止序列化原始参数覆盖 image-to-image 模型身份 | prompt, model_id, serialized_params | Dict[str, Any] |
 | `VideoHandler.start` | `backend/services/handlers/video_handler.py` | 提交入口已原子准备的视频任务（缺少 prepared task 时关闭失败） | message_id, conversation_id, user_id, content, params, metadata | client_task_id |
 | `_reset_message_for_retry` | `backend/api/routes/message.py` | 重置失败消息用于重试 | db, message_id, gen_type, model, params | Message |
 | `_create_assistant_placeholder` | `backend/api/routes/message.py` | 创建助手消息占位符 | db, conversation_id, message_id, gen_type, model, params | Message |
@@ -2059,7 +2060,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 
 | 函数/类 | 文件 | 说明 |
 |---|---|---|
-| `RuntimeIngress.submit` | `backend/services/agent/runtime/ingress.py` | 以幂等键持久化 Session/Command，并支持响应丢失后的同键回读 |
+| `RuntimeIngress.submit` | `backend/services/agent/runtime/ingress.py` | 校验完整 Web task/message/turn/request 绑定后直接调用唯一 required ingress；不探测版本、不读取 rollout、不回退 Legacy Owner |
 | `resolve_runtime_model` / `snapshot_from_resolution` | `backend/services/agent/runtime/model_resolution.py` | 沿用聊天模型选择链解析有效显式模型或 `DEFAULT_MODEL_ID`，冻结 model/provider/revision；不读取订阅选择 |
 | `_resolve_model_selection` | `backend/services/agent/runtime/production_model.py` | 优先使用 Run config snapshot 的 resolved model，并兼容旧 WeCom task 模型回退，不受 definition 固定模型覆盖 |
 | `build_runtime` / `build_projection` / `build_authorization` / `build_sandbox` | `backend/services/agent/runtime/composition.py` | 四个互斥进程的生产 composition roots |
@@ -2073,7 +2074,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `agent_runtime_worker_main.main` | `backend/agent_runtime_worker_main.py` | Worker gate、Unix health、heartbeat、drain 与 shutdown |
 | `AgentRuntimeProcessSettings` / `_load_process_settings` | `backend/agent_runtime_worker_main.py` | Runtime Owner 的最小 typed settings；`env_file=None`，不读取 Backend `.env`，Projection/Authorization 保持既有配置边界 |
 | `RuntimeConfiguredAdapterFactory.create` | `backend/services/agent/runtime/infrastructure/model/configured_adapter.py` | 仅在 227_53 fenced ModelAttempt 下读取现有 encrypted Bundle，以 Runtime 私有 KEK consumer 构造请求局部的既有 chat adapter；不读取通用 Settings 或 `.env` |
-| `runtime_status` / `update_runtime_control` / `update_runtime_rollout` / `requeue_projection_dead` | `backend/api/routes/runtime_admin.py` | super_admin、租户作用域、幂等审计的 Runtime 运维入口 |
+| `runtime_status` / `update_runtime_control` / `requeue_projection_dead` | `backend/api/routes/runtime_admin.py` | super_admin、租户作用域、幂等审计的 Runtime 运维入口；灰度写入口已删除，保留 kill epoch 和能力控制 |
 | `probe_tool_confirmation_redis` | `backend/services/tool_confirmation/capability_probe.py` | Tool Confirmation V3 Redis 原子能力探针 |
 | `NsJailSubprocessLauncher` | `backend/services/agent/runtime/sandbox/nsjail.py` | 固定哈希、cgroup v2、网络隔离与进程树清理的 Sandbox 启动器 |
 | `create_manifest` / `verify_manifest` | `backend/services/agent/runtime/sandbox/rootfs_manifest.py` | 创建并验证包含类型、权限、owner、大小和文件哈希的完整 rootfs manifest |
@@ -2099,13 +2100,12 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `submit_agent_runtime_model_gateway_operation` / `claim_agent_runtime_model_gateway_operation` | `backend/migrations/227_18_agent_runtime_model_gateway.sql` | BG2 历史 RPC 保持不可变；227_20 撤销 Runtime/Gateway EXECUTE，防止绕过 atomic dispatch binding |
 | `_agent_model_gateway_parent_active_v1` / `_lock_agent_model_gateway_cancel_scope_v1` / `_cancel_agent_run_action_work` / `cancel_agent_run` | `backend/migrations/227_25_agent_runtime_model_gateway_cancel_fence.sql` | 私有固定锁序 helper与最终 cancel wrapper：Gateway mutation 重新验证父 Run/ModelAttempt；Run cancel 先锁 Model 链再锁 Action链，将 pre-dispatch operation 终结为 failed、dispatching 保守终结为 unknown，且不改写既有终态 |
 | `read_agent_runtime_model_gateway_operation` / `mark_agent_runtime_model_gateway_dispatched` / `renew_agent_runtime_model_gateway_operation` / `finalize_agent_runtime_model_gateway_operation` / `recover_agent_runtime_model_gateway_operations` | `backend/migrations/227_18_agent_runtime_model_gateway.sql`，由 `227_25_agent_runtime_model_gateway_cancel_fence.sql` 收紧 mutation | 保留的 Gateway operation readback、父级 fence、lease CAS、Provider dispatch fact、UNKNOWN 保守恢复与终态事实合同；finalize 不终结 Runtime ModelAttempt |
-| `activate_agent_safe_action` | `backend/migrations/227_17_agent_runtime_safe_policy_activation.sql` | 为 SAFE/NONE Action 创建 attempt-bound durable PolicyReceipt；严格校验 Toolset、token、request hash、revision 与 kill epoch，且不替代 `gate_agent_action_dispatch_v2` |
+| `claim_agent_action_dispatch_final_v1` / `gate_agent_action_dispatch_final_v1` | `backend/migrations/228_08q_agent_runtime_single_owner_convergence.sql` | ActionLoop 唯一 claim/gate；claim 内恢复未开始 transport 的过期 Attempt，gate 内为 SAFE/NONE 创建 Attempt-bound PolicyReceipt 并完成最终 dispatch 授权，不读取 rollout 或独立 Activation 状态 |
 | `build_runtime_context` | `backend/services/agent/runtime/context/runtime_builder.py` | 从 Run 冻结事实构建确定性 Provider ContextPlan，并重复 tool_call/result |
 | `runtime_submit_ingress_v2` / `get_agent_runtime_model_context_v2` | `backend/migrations/224_01_agent_runtime_ar17_core.sql` | 原子 v2 ingress、gate 漂移幂等 readback 与严格 Run anchor context RPC；版本 seed 在 `224_02_agent_runtime_ar17_version_seed.sql` |
 | `set_agent_runtime_tenant_gate` / `get_agent_runtime_tenant_gate_status` | `backend/migrations/227_06_agent_runtime_tenant_kill_control.sql` | Tenant/provider/capability kill gate 的租户作用域 CAS、单调 epoch、脱敏不可变审计与只读状态；不接入 Runtime dispatch |
 | `get_agent_runtime_owner_fence` | `backend/migrations/227_06_agent_runtime_tenant_kill_control.sql` | 仅按 owner、execution token 返回脱敏 owner fence；Worker 无新事实表直权 |
-| `runtime_submit_ingress_v5` / `runtime_submit_ingress_v6_required` / `get_agent_runtime_ingress_capability` | `backend/migrations/227_13_agent_runtime_additive_ingress_compatibility.sql`、`backend/migrations/227_61_agent_runtime_web_ingress_required.sql` | v5 保留通用 Runtime ingress；v6_required 专用于 Web，Runtime gate 失败时隔离 prepared task，不恢复旧 Actor Owner；v4/v3 保留为回滚入口 |
-| `restore_prepared_task_to_legacy_actor` / `mark_prepared_task_runtime_owned` / `runtime_submit_ingress_v5_owner_transition` / `enqueue_wecom_runtime_turn_v6` | `backend/migrations/227_14_agent_runtime_owner_transition.sql`（ACL 由 `227_15_agent_runtime_owner_rpc_acl_closure.sql` 收口） | C5.1-R 受控 Web/WeCom owner transition；严格校验 tenant、task/message/turn/through anchor 与 idempotency。当前 WeCom 文本/语音/图片/混合/文件 ingress 固定经 Runtime facade 调用 v6；Runtime 不可用时 fail-closed，不回退旧 generation RPC；raw v5 与 restore/mark helper 不向应用角色开放 |
+| `submit_runtime_ingress_required_v1` / `enqueue_wecom_runtime_turn_required_v1` | `backend/migrations/228_08q_agent_runtime_single_owner_convergence.sql` | Web/WeCom 最终唯一 ingress facade；直接建立 Runtime Session/Command 和 task ownership，失败关闭，不探测 capability、不读取 rollout、不调用 legacy fallback |
 
 ### Agent Runtime AR-17.3 专业 Executor（仅非生产）
 

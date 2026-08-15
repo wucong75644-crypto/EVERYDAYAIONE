@@ -39,12 +39,6 @@ class RuntimeControlRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
-class RuntimeRolloutRequest(BaseModel):
-    org_id: UUID
-    enabled: bool
-    reason: str = Field(min_length=1, max_length=500)
-
-
 class ProviderOperationsQuery(BaseModel):
     provider: str | None = Field(default=None, max_length=200)
     capability: str | None = Field(default=None, max_length=200)
@@ -270,25 +264,6 @@ async def update_runtime_control(
         "p_request_id": str(idempotency_key),
         "p_expected_state_version": body.expected_state_version,
         "p_patch": body.patch,
-        "p_reason": body.reason,
-    }).execute()
-    return {"success": True, "data": response.data}
-
-
-@router.post("/rollout")
-async def update_runtime_rollout(
-    body: RuntimeRolloutRequest,
-    user_id: CurrentUserId,
-    db: Database,
-    idempotency_key: UUID = Header(..., alias="Idempotency-Key"),
-) -> dict:
-    _require_super_admin(user_id, db)
-    response = _admin_db(
-        user_id, str(body.org_id), str(idempotency_key),
-    ).rpc("set_agent_runtime_org_rollout", {
-        "p_request_id": str(idempotency_key),
-        "p_org_id": str(body.org_id),
-        "p_enabled": body.enabled,
         "p_reason": body.reason,
     }).execute()
     return {"success": True, "data": response.data}

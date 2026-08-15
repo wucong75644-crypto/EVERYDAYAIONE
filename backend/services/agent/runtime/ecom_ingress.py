@@ -46,11 +46,8 @@ class RuntimeEcomReadback:
 class RuntimeEcomModelIngress:
     """Convert e-commerce model requests into the shared Runtime ingress."""
 
-    def __init__(self, database: Any, *, require_runtime_owner: bool = True) -> None:
-        self._ingress = RuntimeIngress(
-            database, contract_revision=3,
-            require_runtime_owner=require_runtime_owner,
-        )
+    def __init__(self, database: Any) -> None:
+        self._ingress = RuntimeIngress(database)
 
     async def submit(
         self, *, conversation_id: str, org_id: str | None, user_id: str,
@@ -58,7 +55,7 @@ class RuntimeEcomModelIngress:
         agent_definition_revision: str, input_message_id: str,
         output_message_id: str, idempotency_key: str, model_id: str,
         messages: list[Mapping[str, Any]], feature: str,
-        source_id: str, task_id: str | None = None,
+        source_id: str, task_id: str, client_task_id: str, turn_id: str,
     ) -> RuntimeEcomIngressReceipt:
         if feature not in {"ecom_plan", "requirement_assist"}:
             raise ValueError("RUNTIME_ECOM_FEATURE_INVALID")
@@ -75,7 +72,9 @@ class RuntimeEcomModelIngress:
                 "channel": "web", "model_id": model_id,
                 "input_message_id": input_message_id,
                 "output_message_id": output_message_id,
-                "task_id": task_id, "feature": feature,
+                "task_id": task_id, "client_task_id": client_task_id,
+                "turn_id": turn_id, "request_id": idempotency_key,
+                "feature": feature,
                 "source_id": source_id, "messages": list(messages),
                 "response_contract": "ecom-runtime-v1",
             },

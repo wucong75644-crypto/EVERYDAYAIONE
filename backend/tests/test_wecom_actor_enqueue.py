@@ -65,7 +65,6 @@ async def test_enqueue_is_stable_atomic_and_contains_no_secret():
         )
     )
     settings = SimpleNamespace(
-        agent_runtime_ingress_enabled=False,
         agent_runtime_agent_definition_id="agent",
         agent_runtime_agent_definition_revision="v1",
         agent_runtime_release_revision="release",
@@ -101,7 +100,11 @@ async def test_enqueue_is_stable_atomic_and_contains_no_secret():
     assert first_params["p_input_message_id"] == second_params["p_input_message_id"]
     assert first_params["p_output_message_id"] == second_params["p_output_message_id"]
     assert isinstance(first_params["p_input_content"], Jsonb)
-    assert handler.db.rpc.call_args.args[0] == "enqueue_wecom_runtime_turn_v6"
+    assert handler.db.rpc.call_args.args[0] == (
+        "enqueue_wecom_runtime_turn_required_v1"
+    )
+    assert first_params["p_agent_definition_id"] == "agent"
+    assert first_params["p_agent_definition_revision"] == "v1"
     delivery = first_params["p_delivery_context"].obj
     assert delivery["channel"] == "wecom"
     assert delivery["chatid"] == "chat"
@@ -129,7 +132,7 @@ async def test_enqueue_requires_provider_message_id():
 
 
 @pytest.mark.asyncio
-async def test_runtime_required_routes_file_payload_to_runtime_owner():
+async def test_file_payload_routes_to_runtime_owner():
     handler = _handler()
     handler.db.rpc.side_effect = (
         lambda name, params: MagicMock(
@@ -141,7 +144,6 @@ async def test_runtime_required_routes_file_payload_to_runtime_owner():
         )
     )
     settings = SimpleNamespace(
-        agent_runtime_ingress_enabled=False,
         agent_runtime_agent_definition_id="agent",
         agent_runtime_agent_definition_revision="v1",
         agent_runtime_release_revision="release",
@@ -161,17 +163,18 @@ async def test_runtime_required_routes_file_payload_to_runtime_owner():
             conversation_id="conversation",
             image_urls=[],
             file_payload=payload,
-            runtime_required=True,
         )
 
     assert result.owner_state == "runtime_owned"
-    assert handler.db.rpc.call_args_list[-1].args[0] == "enqueue_wecom_runtime_turn_v6"
+    assert handler.db.rpc.call_args_list[-1].args[0] == (
+        "enqueue_wecom_runtime_turn_required_v1"
+    )
     input_content = handler.db.rpc.call_args_list[-1].args[1]["p_input_content"].obj
     assert {"type": "file", **payload} in input_content
 
 
 @pytest.mark.asyncio
-async def test_runtime_required_rejects_legacy_fallback():
+async def test_runtime_owner_rejects_non_runtime_result():
     handler = _handler()
     handler.db.rpc.side_effect = (
         lambda name, params: MagicMock(
@@ -183,7 +186,6 @@ async def test_runtime_required_rejects_legacy_fallback():
         )
     )
     settings = SimpleNamespace(
-        agent_runtime_ingress_enabled=False,
         agent_runtime_agent_definition_id="agent",
         agent_runtime_agent_definition_revision="v1",
         agent_runtime_release_revision="release",
@@ -198,7 +200,6 @@ async def test_runtime_required_rejects_legacy_fallback():
             user_id="user",
             conversation_id="conversation",
             image_urls=[],
-            runtime_required=True,
         )
 
 
@@ -215,7 +216,6 @@ async def test_runtime_owner_transition_rejects_non_runtime_owner():
         )
     )
     settings = SimpleNamespace(
-        agent_runtime_ingress_enabled=True,
         agent_runtime_agent_definition_id="agent",
         agent_runtime_agent_definition_revision="v1",
         agent_runtime_release_revision="release",
@@ -243,7 +243,6 @@ async def test_enqueue_file_uses_structured_filepart_without_scanned_text():
         "size": 10,
     }
     settings = SimpleNamespace(
-        agent_runtime_ingress_enabled=False,
         agent_runtime_agent_definition_id="agent",
         agent_runtime_agent_definition_revision="v1",
         agent_runtime_release_revision="release",

@@ -16,13 +16,11 @@ def test_ar18_runner_is_the_ci_entrypoint_and_keeps_flags_off() -> None:
     assert "scripts/run_agent_runtime_ar18_disposable.sh unit" in WORKFLOW
     assert "scripts/run_agent_runtime_ar18_disposable.sh migration" in WORKFLOW
     assert "scripts/run_agent_runtime_ar18_disposable.sh external" in WORKFLOW
-    assert 'AGENT_RUNTIME_INGRESS_ENABLED: "false"' in WORKFLOW
     assert 'AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED: "false"' in WORKFLOW
     assert 'AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED: "false"' in WORKFLOW
     assert 'AGENT_RUNTIME_MEDIA_ENABLED: "false"' in WORKFLOW
     assert 'AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED: "false"' in WORKFLOW
     assert 'AGENT_RUNTIME_MEDIA_PRODUCTION_READY: "false"' in WORKFLOW
-    assert 'test "$AGENT_RUNTIME_INGRESS_ENABLED" = false' in WORKFLOW
     assert 'test "$AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED" = false' in WORKFLOW
     assert 'test "$AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED" = false' in WORKFLOW
     assert 'test "$AGENT_RUNTIME_MEDIA_ENABLED" = false' in WORKFLOW

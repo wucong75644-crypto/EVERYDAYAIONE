@@ -155,14 +155,12 @@ validate_role_file() {
 
 runtime_keys=(
     DATABASE_URL
-    AGENT_RUNTIME_INGRESS_ENABLED
     TOOL_CONFIRMATION_V3_ENABLED
     AGENT_RUNTIME_AGENT_DEFINITION_ID
     AGENT_RUNTIME_AGENT_DEFINITION_REVISION
 )
 wecom_runtime_keys=(
     DATABASE_URL
-    AGENT_RUNTIME_INGRESS_ENABLED
     AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED
     AGENT_RUNTIME_SCHEDULED_WECOM_WORKER_ID
     AGENT_RUNTIME_AGENT_DEFINITION_ID
@@ -209,12 +207,10 @@ fi
 if [ "$validation_mode" = runtime-flags-off-v3 ]; then
     runtime_path="${env_directory}/.env.runtime"
     wecom_runtime_path="${env_directory}/.env.wecom-runtime"
-    require_exact_value "$runtime_path" AGENT_RUNTIME_INGRESS_ENABLED false
     require_exact_value "$runtime_path" TOOL_CONFIRMATION_V3_ENABLED false
     require_exact_value "$runtime_path" \
         AGENT_RUNTIME_AGENT_DEFINITION_ID everydayai-default
     require_exact_value "$runtime_path" AGENT_RUNTIME_AGENT_DEFINITION_REVISION v3
-    require_exact_value "$wecom_runtime_path" AGENT_RUNTIME_INGRESS_ENABLED false
     require_exact_value \
         "$wecom_runtime_path" AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED false
     require_exact_value "$wecom_runtime_path" \

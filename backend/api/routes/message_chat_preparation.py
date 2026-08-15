@@ -194,9 +194,7 @@ async def _submit_runtime_ingress(
     if not isinstance(conversation, dict):
         raise RuntimeError("RUNTIME_INGRESS_CONVERSATION_MISSING")
     settings = get_settings()
-    return await RuntimeIngress(
-        db, contract_revision=3, require_runtime_owner=True,
-    ).submit(
+    return await RuntimeIngress(db).submit(
         conversation_id=conversation_id, org_id=org_id, user_id=user_id,
         scope_kind=str(conversation["scope_type"]),
         scope_id=str(conversation["scope_id"]),

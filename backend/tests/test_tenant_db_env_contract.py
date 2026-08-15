@@ -17,7 +17,6 @@ def _write_env_files(directory: Path) -> None:
         ".env.runtime": (
             "DATABASE_URL="
             "postgresql://everydayai_runtime:runtime-secret@localhost/everydayai\n"
-            "AGENT_RUNTIME_INGRESS_ENABLED=false\n"
             "TOOL_CONFIRMATION_V3_ENABLED=false\n"
             "AGENT_RUNTIME_AGENT_DEFINITION_ID=everydayai-default\n"
             "AGENT_RUNTIME_AGENT_DEFINITION_REVISION=v3"
@@ -25,7 +24,6 @@ def _write_env_files(directory: Path) -> None:
         ".env.wecom-runtime": (
             "DATABASE_URL=postgresql://everydayai_wecom_runtime:"
             "wecom-runtime-secret@localhost/everydayai\n"
-            "AGENT_RUNTIME_INGRESS_ENABLED=false\n"
             "AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED=false\n"
             "AGENT_RUNTIME_SCHEDULED_WECOM_WORKER_ID=scheduled-wecom-01\n"
             "AGENT_RUNTIME_AGENT_DEFINITION_ID=everydayai-default\n"
@@ -150,9 +148,7 @@ def test_flags_off_v3_contract_accepts_exact_runtime_files(tmp_path: Path) -> No
 @pytest.mark.parametrize(
     ("filename", "key"),
     (
-        (".env.runtime", "AGENT_RUNTIME_INGRESS_ENABLED"),
         (".env.runtime", "TOOL_CONFIRMATION_V3_ENABLED"),
-        (".env.wecom-runtime", "AGENT_RUNTIME_INGRESS_ENABLED"),
         (".env.wecom-runtime", "AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED"),
     ),
 )
@@ -177,7 +173,7 @@ def test_flags_off_v3_contract_rejects_unknown_and_duplicate_keys(
 ) -> None:
     for extra, expected in (
         ("UNKNOWN_RUNTIME_FLAG=false\n", "未知配置键"),
-        ("AGENT_RUNTIME_INGRESS_ENABLED=false\n", "重复配置键"),
+        ("TOOL_CONFIRMATION_V3_ENABLED=false\n", "重复配置键"),
     ):
         _write_env_files(tmp_path)
         path = tmp_path / ".env.runtime"

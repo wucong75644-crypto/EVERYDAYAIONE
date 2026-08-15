@@ -5,7 +5,10 @@ from types import SimpleNamespace
 import pytest
 
 from api.routes.message_media_failure import read_prepared_media_ownership
-from services.handlers.image_request_settings import resolve_image_generation_settings
+from services.handlers.image_request_settings import (
+    build_canonical_image_request,
+    resolve_image_generation_settings,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -66,6 +69,24 @@ def test_regenerate_single_stays_one_image():
     })
 
     assert settings["num_images"] == 1
+
+
+def test_canonical_image_request_keeps_resolved_image_to_image_model():
+    request = build_canonical_image_request(
+        prompt="edit this image",
+        model_id="gpt-image-2-image-to-image",
+        serialized_params={
+            "prompt": "stale prompt",
+            "model": "gpt-image-2-text-to-image",
+            "image_urls": ["https://cdn.example/input.png"],
+        },
+    )
+
+    assert request == {
+        "prompt": "edit this image",
+        "model": "gpt-image-2-image-to-image",
+        "image_urls": ["https://cdn.example/input.png"],
+    }
 
 
 class _TasksQuery:

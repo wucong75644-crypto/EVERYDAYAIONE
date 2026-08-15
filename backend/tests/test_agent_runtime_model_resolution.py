@@ -73,14 +73,15 @@ class _Database:
 
     def rpc(self, name, params):
         self.calls.append((name, params))
+        if name == "get_agent_runtime_definition_fact":
+            return _Rpc({
+                "definition_hash": "definition",
+                "catalog_revision": "catalog",
+            })
         return _Rpc({
-            "outcome": "created", "entity_id": "command", "result_entity_id": "run",
+            "outcome": "marked", "runtime_owned": True,
+            "entity_id": "command", "result_entity_id": "run",
         })
-
-
-class _Versions:
-    def resolve_for_agent(self, *_args):
-        return SimpleNamespace(definition_hash="definition"), SimpleNamespace(revision="catalog")
 
 
 @pytest.mark.asyncio
@@ -91,19 +92,23 @@ async def test_ingress_freezes_resolved_model_snapshot(monkeypatch) -> None:
     )
     database = _Database()
 
-    await RuntimeIngress(
-        database, version_registry=_Versions(), contract_revision=2,
-    ).submit(
+    await RuntimeIngress(database).submit(
         conversation_id="conversation", org_id="org", user_id="user",
         scope_kind="user", scope_id="user", agent_definition_id="agent",
         agent_definition_revision="v1", command_type="submit_input",
         idempotency_key="request", payload={
-            "channel": "web", "input_message_id": "message",
+            "channel": "web", "task_id": "task", "client_task_id": "client",
+            "input_message_id": "message", "output_message_id": "output",
+            "turn_id": "turn", "request_id": "request",
             "model_id": "deepseek-v3.2",
         },
     )
 
-    config = database.calls[0][1]["p_config_snapshot"]
+    assert [name for name, _ in database.calls] == [
+        "get_agent_runtime_definition_fact",
+        "submit_runtime_ingress_required_v1",
+    ]
+    config = database.calls[1][1]["p_config_snapshot"]
     assert config["resolved_model"]["model_id"] == "deepseek-v3.2"
     assert config["provider"] == config["resolved_model"]["provider"]
     assert config["revision"] == config["resolved_model"]["revision"]

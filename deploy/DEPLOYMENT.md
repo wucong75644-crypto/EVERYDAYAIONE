@@ -201,8 +201,8 @@ bash deploy/validate-tenant-db-env.sh /var/www/everydayai/backend
 ```
 
 安装 production flags-off v3 单元前必须执行严格入口；该入口额外要求两个 Runtime
-文件使用 `everydayai-default/v3`，且 `AGENT_RUNTIME_INGRESS_ENABLED`、
-`TOOL_CONFIRMATION_V3_ENABLED` 全部为 `false`：
+文件使用 `everydayai-default/v3`，且尚未启用的 Tool Confirmation 与 Scheduled WeCom
+能力保持 `false`。Runtime ingress 已是唯一入口，不再使用环境灰度开关：
 
 ```bash
 bash deploy/validate-tenant-db-env.sh \

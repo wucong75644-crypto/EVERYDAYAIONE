@@ -158,16 +158,19 @@ class PostgresCoordinatorRecoveryRepository(CoordinatorRecoveryPort):
         self, *, worker_id: str, claim_request_id: str,
         batch_size: int = 10, lease_seconds: int = 120,
     ) -> tuple[ActionDispatchSnapshot, ...]:
+        params = {
+            "p_worker_id": worker_id,
+            "p_claim_request_id": claim_request_id,
+            "p_batch_size": batch_size,
+            "p_lease_seconds": lease_seconds,
+        }
         try:
-            raw = await self._rpc("claim_ready_agent_action_snapshots_v2", {
-                "p_worker_id": worker_id,
-                "p_claim_request_id": claim_request_id,
-                "p_batch_size": batch_size,
-                "p_lease_seconds": lease_seconds,
-            })
+            raw = await self._rpc(
+                "claim_agent_action_dispatch_final_v1", params,
+            )
         except (OperationalError, InterfaceError):
-            return await self.get_action_dispatch_batch(
-                worker_id=worker_id, claim_request_id=claim_request_id,
+            raw = await self._rpc(
+                "claim_agent_action_dispatch_final_v1", params,
             )
         return _snapshot_batch(raw, {"claimed"})
 

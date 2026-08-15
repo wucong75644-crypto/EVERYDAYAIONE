@@ -39,7 +39,6 @@ async def enqueue_wecom_message(
     image_urls: list[str],
     file_payload: dict[str, Any] | None = None,
     stream_context: Mapping[str, Any] | None = None,
-    runtime_required: bool = True,
 ) -> WecomActorEnqueueResult:
     """使用稳定 ID 原子创建消息并交给 Runtime；不可用时直接失败。"""
     if not msg.msgid:
@@ -77,42 +76,39 @@ async def enqueue_wecom_message(
     from core.config import get_settings
 
     settings = get_settings()
-    rpc_name = "enqueue_wecom_runtime_turn_v6"
     params = {
-            "p_task_data": Jsonb(task_data),
-            "p_input_message_id": ids["input"],
-            "p_output_message_id": ids["output"],
-            "p_turn_id": ids["turn"],
-            "p_input_content": Jsonb(input_content),
-            "p_delivery_context": Jsonb(delivery_context),
+        "p_task_data": Jsonb(task_data),
+        "p_input_message_id": ids["input"],
+        "p_output_message_id": ids["output"],
+        "p_turn_id": ids["turn"],
+        "p_input_content": Jsonb(input_content),
+        "p_delivery_context": Jsonb(delivery_context),
     }
-    if rpc_name == "enqueue_wecom_runtime_turn_v3":
-        params.update({
-            "p_agent_definition_id": settings.agent_runtime_agent_definition_id,
-            "p_agent_definition_revision":
-                settings.agent_runtime_agent_definition_revision,
-            "p_idempotency_key": f"wecom:{msg.msgid}",
-        })
-    if rpc_name == "enqueue_wecom_runtime_turn_v6":
-        fact_response = handler.db.rpc("get_agent_runtime_definition_fact", {
-            "p_agent_key": settings.agent_runtime_agent_definition_id,
-            "p_definition_revision": settings.agent_runtime_agent_definition_revision,
-        }).execute()
-        fact = fact_response.data if fact_response else None
-        if not isinstance(fact, dict) or fact.get("outcome") == "not_found":
-            raise RuntimeError("WECOM_RUNTIME_DEFINITION_FACT_UNAVAILABLE")
-        definition_hash = str(fact.get("definition_hash") or "")
-        catalog_revision = str(fact.get("catalog_revision") or "")
-        if not definition_hash or not catalog_revision:
-            raise RuntimeError("WECOM_RUNTIME_DEFINITION_FACT_INVALID")
-        params.update({
-            "p_agent_definition_hash": definition_hash,
-            "p_effective_toolset_revision": catalog_revision,
-            "p_effective_toolset_hash": None,
-            "p_release_revision": settings.agent_runtime_release_revision,
-            "p_idempotency_key": f"wecom:{msg.msgid}",
-        })
-    response = handler.db.rpc(rpc_name, params).execute()
+    fact_response = handler.db.rpc("get_agent_runtime_definition_fact", {
+        "p_agent_key": settings.agent_runtime_agent_definition_id,
+        "p_definition_revision": settings.agent_runtime_agent_definition_revision,
+    }).execute()
+    fact = fact_response.data if fact_response else None
+    if not isinstance(fact, dict) or fact.get("outcome") == "not_found":
+        raise RuntimeError("WECOM_RUNTIME_DEFINITION_FACT_UNAVAILABLE")
+    definition_hash = str(fact.get("definition_hash") or "")
+    catalog_revision = str(fact.get("catalog_revision") or "")
+    if not definition_hash or not catalog_revision:
+        raise RuntimeError("WECOM_RUNTIME_DEFINITION_FACT_INVALID")
+    params.update({
+        "p_agent_definition_id": settings.agent_runtime_agent_definition_id,
+        "p_agent_definition_revision": (
+            settings.agent_runtime_agent_definition_revision
+        ),
+        "p_agent_definition_hash": definition_hash,
+        "p_effective_toolset_revision": catalog_revision,
+        "p_effective_toolset_hash": None,
+        "p_release_revision": settings.agent_runtime_release_revision,
+        "p_idempotency_key": f"wecom:{msg.msgid}",
+    })
+    response = handler.db.rpc(
+        "enqueue_wecom_runtime_turn_required_v1", params,
+    ).execute()
     result = response.data if response else None
     if not isinstance(result, dict) or not result.get("task_id"):
         raise RuntimeError("WECOM_ACTOR_ENQUEUE_RESULT_INVALID")

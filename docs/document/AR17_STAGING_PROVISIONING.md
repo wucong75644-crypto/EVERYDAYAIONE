@@ -38,7 +38,6 @@ C6 Disposable Freeze Candidate Verified
 WORKER_DATABASE_URL=<staging runtime role URL>
 RUNTIME_ADMIN_DATABASE_URL=<staging runtime admin URL>
 AGENT_RUNTIME_PROCESS_ROLE=agent_runtime
-AGENT_RUNTIME_INGRESS_ENABLED=false
 AGENT_RUNTIME_PRODUCTION_ENABLED=false
 CREDENTIAL_BACKEND_PROFILE=<approved non-production profile>
 OBJECT_STORE_PROFILE=<tenant-scoped staging profile>

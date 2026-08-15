@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, NoReturn
 
+from loguru import logger
+
 from schemas.message import (
     GenerateRequest, GenerateResponse, GenerationParams, GenerationType,
     Message, MessageOperation, MessageRole, MessageStatus,
@@ -15,6 +17,7 @@ from schemas.message import (
 from services.generation_lifecycle import GenerationLifecycle
 from services.handlers.base import TaskMetadata
 from services.handlers.image_request_settings import (
+    build_canonical_image_request,
     ImageCountValidationError,
     resolve_image_generation_settings,
 )
@@ -229,6 +232,10 @@ async def _close_or_isolate_runtime_submit_error(
     message_id: str, operation: MessageOperation,
     params: dict[str, Any] | None, org_id: str | None, user_id: str,
 ) -> NoReturn:
+    logger.error(
+        "runtime_media_image_submit_failed | error_type={} | sqlstate={}",
+        type(error).__name__, _sqlstate(error),
+    )
     ownership = await read_prepared_media_ownership(db, task_ids)
     if ownership == "none":
         await fail_closed_prepared_media(
@@ -282,10 +289,10 @@ def _task_payloads(
     for offset, task_id in enumerate(task_ids):
         prompt = prompts[offset].get("prompt", default_prompt) if offset < len(prompts) else default_prompt
         image_index = single_index if body.operation == MessageOperation.REGENERATE_SINGLE else offset
-        request_params = {
-            "prompt": prompt, "model": settings["model_id"],
-            **handler._serialize_params(params),
-        }
+        request_params = build_canonical_image_request(
+            prompt=prompt, model_id=settings["model_id"],
+            serialized_params=handler._serialize_params(params),
+        )
         payloads.append({
             "id": task_id, "client_task_id": body.client_task_id,
             "user_id": user_id, "org_id": org_id,
@@ -387,3 +394,12 @@ def _required(value: str | None) -> str:
     if not value:
         raise RuntimeError("GENERATION_REQUEST_IDENTITY_MISSING")
     return value
+
+
+def _sqlstate(error: Exception) -> str:
+    value = getattr(error, "sqlstate", None)
+    if isinstance(value, str) and value:
+        return value
+    diagnostic = getattr(error, "diag", None)
+    value = getattr(diagnostic, "sqlstate", None)
+    return value if isinstance(value, str) and value else "unknown"

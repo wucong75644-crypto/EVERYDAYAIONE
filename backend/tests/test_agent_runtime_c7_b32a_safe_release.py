@@ -143,11 +143,6 @@ class _Database:
 
     def rpc(self, name: str, params: dict[str, object]) -> _Query:
         self.calls.append((name, params))
-        if name == "activate_agent_safe_action":
-            return _Query(_Response({
-                "outcome": "activated",
-                "policy_receipt_id": "66666666-6666-6666-6666-666666666666",
-            }))
         return _Query(_Response({
             "outcome": "dispatch_authorized",
             "intent_id": "77777777-7777-7777-7777-777777777777",
@@ -158,7 +153,7 @@ class _Database:
 
 
 @pytest.mark.asyncio
-async def test_safe_action_activates_receipt_before_dispatch_gate() -> None:
+async def test_safe_action_uses_one_final_dispatch_gate() -> None:
     database = _Database()
     repository = PostgresActionAuthorizationRepository(database)
     snapshot = ActionDispatchSnapshot(
@@ -179,8 +174,6 @@ async def test_safe_action_activates_receipt_before_dispatch_gate() -> None:
     )
     assert receipt.state_version == 1
     assert [name for name, _ in database.calls] == [
-        "activate_agent_safe_action", "gate_agent_action_dispatch_v2",
+        "gate_agent_action_dispatch_final_v1",
     ]
-    assert database.calls[1][1]["p_policy_receipt_id"] == (
-        "66666666-6666-6666-6666-666666666666"
-    )
+    assert database.calls[0][1]["p_policy_receipt_id"] is None

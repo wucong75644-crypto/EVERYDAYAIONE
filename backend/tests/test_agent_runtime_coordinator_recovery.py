@@ -54,6 +54,8 @@ class _Call:
     async def execute(self) -> _Response:
         self.database.calls.append((self.name, self.params))
         value = self.database.responses[self.name]
+        if isinstance(value, list):
+            value = value.pop(0)
         if isinstance(value, BaseException):
             raise value
         return _Response(value)
@@ -121,6 +123,29 @@ async def test_uncertain_run_claim_reads_back_worker_token() -> None:
     assert [name for name, _ in database.calls] == [
         "claim_next_agent_run", "get_claimed_agent_run",
     ]
+
+
+@pytest.mark.asyncio
+async def test_uncertain_action_claim_replays_one_final_contract() -> None:
+    database = _Database({
+        "claim_agent_action_dispatch_final_v1": [
+            OperationalError("response lost"),
+            {"outcome": "not_found"},
+        ],
+    })
+
+    snapshots = await PostgresCoordinatorRecoveryRepository(
+        database,
+    ).claim_action_dispatch(
+        worker_id="worker-1", claim_request_id="claim-1",
+    )
+
+    assert snapshots == ()
+    assert [name for name, _ in database.calls] == [
+        "claim_agent_action_dispatch_final_v1",
+        "claim_agent_action_dispatch_final_v1",
+    ]
+    assert database.calls[0][1] == database.calls[1][1]
 
 
 @pytest.mark.asyncio

@@ -57,18 +57,15 @@ class PostgresActionAuthorizationRepository(ActionAuthorizationPort):
             raise PermissionError("AGENT_RUNTIME_DISPATCH_GATE_REQUIRED")
         action = snapshot.action
         attempt = snapshot.attempt
-        receipt_id = await self._receipt_id(
-            snapshot=snapshot, descriptor=descriptor,
-        )
         response = await self._database.rpc(
-            "gate_agent_action_dispatch_v2", {
+            "gate_agent_action_dispatch_final_v1", {
                 "p_attempt_id": _text(attempt, "id"),
                 "p_execution_token": _text(attempt, "execution_token"),
                 "p_expected_attempt_version": _integer(
                     attempt, "state_version",
                 ),
                 "p_request_hash": _text(attempt, "request_hash"),
-                "p_policy_receipt_id": receipt_id,
+                "p_policy_receipt_id": _optional_receipt_id(action),
                 "p_executor_type": descriptor.executor_type,
                 "p_executor_revision": descriptor.revision,
                 "p_policy_revision": _text(action, "policy_revision"),
@@ -96,35 +93,6 @@ class PostgresActionAuthorizationRepository(ActionAuthorizationPort):
             ),
             recovery_mode=_text(row, "recovery_mode"),
         )
-
-    async def _receipt_id(
-        self, *, snapshot: ActionDispatchSnapshot,
-        descriptor: ExecutorDescriptor,
-    ) -> str:
-        try:
-            return _receipt_id(snapshot.action)
-        except ValueError:
-            if descriptor.authorization.value != "none":
-                raise
-        attempt = snapshot.attempt
-        action = snapshot.action
-        response = await self._database.rpc(
-            "activate_agent_safe_action", {
-                "p_attempt_id": _text(attempt, "id"),
-                "p_execution_token": _text(attempt, "execution_token"),
-                "p_expected_attempt_version": _integer(
-                    attempt, "state_version",
-                ),
-                "p_request_hash": _text(attempt, "request_hash"),
-                "p_executor_type": descriptor.executor_type,
-                "p_executor_revision": descriptor.revision,
-                "p_policy_revision": _text(action, "policy_revision"),
-            },
-        ).execute()
-        row = _mapping(response.data)
-        if row.get("outcome") not in {"activated", "already_activated"}:
-            raise DispatchGateDenied(str(row.get("outcome")))
-        return _uuid(row.get("policy_receipt_id"))
 
     async def claim_recovery(
         self, *, worker_id: str, lease_seconds: int = 120,
@@ -216,14 +184,15 @@ class PostgresActionAuthorizationRepository(ActionAuthorizationPort):
             raise PermissionError("AUTHORIZATION_RECOVERY_OWNER_REQUIRED")
 
 
-def _receipt_id(action: Mapping[str, object]) -> str:
+def _optional_receipt_id(action: Mapping[str, object]) -> str | None:
     direct = action.get("policy_receipt_id")
     if direct is not None:
         return _uuid(direct)
     snapshot = action.get("policy_snapshot")
     if not isinstance(snapshot, Mapping):
         raise ValueError("Action policy_snapshot required")
-    return _uuid(snapshot.get("dispatch_policy_receipt_id"))
+    receipt_id = snapshot.get("dispatch_policy_receipt_id")
+    return None if receipt_id is None else _uuid(receipt_id)
 
 
 def _mapping(value: object) -> Mapping[str, object]:

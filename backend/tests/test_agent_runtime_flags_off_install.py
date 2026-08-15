@@ -30,14 +30,12 @@ def _write_backend_envs(directory: Path) -> None:
     values = {
         ".env.runtime": (
             "DATABASE_URL=postgresql://everydayai_runtime:runtime-secret@localhost/db\n"
-            "AGENT_RUNTIME_INGRESS_ENABLED=false\n"
             "TOOL_CONFIRMATION_V3_ENABLED=false\n"
             "AGENT_RUNTIME_AGENT_DEFINITION_ID=everydayai-default\n"
             "AGENT_RUNTIME_AGENT_DEFINITION_REVISION=v3\n"
         ),
         ".env.wecom-runtime": (
             "DATABASE_URL=postgresql://everydayai_wecom_runtime:wecom-secret@localhost/db\n"
-            "AGENT_RUNTIME_INGRESS_ENABLED=false\n"
             "AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED=false\n"
             "AGENT_RUNTIME_SCHEDULED_WECOM_WORKER_ID=scheduled-wecom-01\n"
             "AGENT_RUNTIME_AGENT_DEFINITION_ID=everydayai-default\n"

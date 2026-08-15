@@ -1,6 +1,7 @@
 # Agent Runtime 单一运行时收敛方案
 
-状态：已确认并实施 S1 模型链收敛与 S2-ERP-R1 企业 ERP 只读接线。
+状态：已确认并实施 S1 模型链、S2-ERP-R1，以及 S4 的 Web/WeCom 单入口和
+Action 最终 claim/gate 收敛；Scheduler 与旧执行 Owner 的清理仍按后续批次推进。
 
 ## 1. 最终边界
 
@@ -105,6 +106,12 @@ Executor，合并专属 delivery/recovery 状态，移除双发送 Owner。
 Web、WeCom、Scheduler 只进入最终 Runtime ingress；迁移全部真实调用方后删除 Legacy
 fallback、Conversation Actor generation Owner、ToolLoop 和旧 Scheduler execution Owner。
 
+Web 与 WeCom 已通过 228.08q 切到各自唯一的 required ingress facade；生产角色不再拥有
+capability probe、v5/v6 owner transition、legacy fallback 或 rollout setter。ActionLoop
+只调用最终 claim 与最终 dispatch gate：claim 内恢复 transport 尚未开始的过期 Attempt，
+SAFE/NONE 的 Attempt-bound PolicyReceipt 在最终 gate 内创建，不再依赖独立 Activation
+状态机。灰度表和旧 RPC 仅保留为历史 migration/回滚事实，不参与生产调用链。
+
 ### S5 数据库与部署清理
 
 基于生产当前最高 migration 生成唯一 Runtime 安装清单。先迁移 Python 调用方，再在
@@ -120,7 +127,7 @@ DANGEROUS、cancel、UNKNOWN/reconcile、crash recovery、费用与 Projection�
 - 只有一套模型、ERP、Media、Scheduler、WeCom 配置事实源；
 - 只有一套 ModelAttempt、Provider submission、Scheduler CAS 和 delivery 事实；
 - Legacy 进程、RPC、fallback 和直接副作用入口不存在；
-- production flags 默认关闭，未授权前不部署。
+- 缺少 Worker readiness、kill epoch、租户/能力 gate 或真实 Executor 时失败关闭。
 
 ## 4. 数据库与回滚
 
@@ -128,9 +135,10 @@ DANGEROUS、cancel、UNKNOWN/reconcile、crash recovery、费用与 Projection�
 存在函数重命名和对象依赖。每批先切调用方，再形成最终对象清单和收敛 migration；在
 disposable PostgreSQL 验证 apply、权限、RLS、回滚和从生产基线升级。
 
-生产尚未安装这些 227 对象，因此最终发布包不得把已经判定无用的“创建后再删除”临时链
-带入生产。发布前应生成经过核验的最终 install manifest；历史开发 migration 仍保留在
-Git 审计记录中，但不得成为生产安装事实。
+生产数据库保留历史 227/228 migration 事实，不回写或删除已应用 migration。228.08q 通过
+新增最终 facade 并撤销旧应用角色权限完成前向收敛；回滚只恢复旧权限和调用方，不删除
+Attempt-bound 审计事实。新的全新安装清单应直接以最终对象与权限为准，不再把历史
+rollout/legacy facade 暴露给应用角色。
 
 ## 5. 停止条件
 

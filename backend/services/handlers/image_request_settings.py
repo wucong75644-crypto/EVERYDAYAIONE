@@ -10,6 +10,18 @@ class ImageCountValidationError(ValueError):
     """Requested image count cannot be represented by the active product path."""
 
 
+def build_canonical_image_request(
+    *, prompt: str, model_id: str, serialized_params: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build one resolved request without allowing raw identity overrides."""
+    request = {
+        key: value for key, value in serialized_params.items()
+        if key not in {"prompt", "model"}
+    }
+    request.update({"prompt": prompt, "model": model_id})
+    return request
+
+
 def resolve_image_generation_settings(
     params: Dict[str, Any],
     has_image_urls: bool,

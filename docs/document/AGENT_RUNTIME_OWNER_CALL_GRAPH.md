@@ -14,7 +14,7 @@
 |---|---|---|
 | Web Runtime ingress | `message_chat_preparation` 调用 `RuntimeIngress(require_runtime_owner=True)` → `runtime_submit_ingress_v6_required`; Runtime gate/command 失败时 fail-closed 隔离 prepared task，不恢复旧 Actor | Runtime command claim → ModelLoop/ActionLoop |
 | WeCom ingress（文本/语音/图片/混合） | `services/wecom/wecom_ingress_mixin.py` 统一调用 Runtime facade；`services/wecom/actor_enqueue.py` 固定调用 `enqueue_wecom_runtime_turn_v6` | Runtime；定义事实、RPC 或 owner readback 不可用即 fail-closed |
-| WeCom 文件 ingress | `services/wecom/wecom_ingress_mixin.py` 先暂存附件，再以 `runtime_required=True` 进入同一 Runtime facade | Runtime；文件暂存语义由 `aa583e40` 保留 |
+| WeCom 文件 ingress | `services/wecom/wecom_ingress_mixin.py` 先暂存附件，再进入唯一 Runtime facade | Runtime；不可用时失败关闭，文件暂存语义由 `aa583e40` 保留 |
 | 定时任务手动执行 | 有 `runtime_action_id` 时调用 `request_agent_runtime_scheduled_execution_v1`；无该事实时保留旧 route | Runtime submission 或 legacy executor |
 | 定时扫描 | `worker_claim_due_scheduled_executions_v1` 返回 `owner_kind=runtime` 时 Scanner 不再启动旧 Executor；`owner_kind=legacy` 才进入 `ScheduledTaskExecutor` | Runtime submission 或 legacy scheduler |
 | Runtime scheduled command | Runtime Worker 领取 command，后续由 Runtime ActionLoop 和 scheduled finalizer 收敛 | Runtime |
