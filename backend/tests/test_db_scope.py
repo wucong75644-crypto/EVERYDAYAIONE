@@ -112,6 +112,22 @@ def test_rpc_keeps_json_lists_but_supports_explicit_postgres_arrays() -> None:
     assert params[1] == [UUID("00000000-0000-0000-0000-000000000001")]
 
 
+def test_rpc_uses_uuid_fence_for_command_claims_only() -> None:
+    from core.db_scope import _rpc_sql
+
+    command_sql, _ = _rpc_sql(
+        "finish_agent_command_claim",
+        {"p_fencing_token": "00000000-0000-0000-0000-000000000001"},
+    )
+    sandbox_sql, _ = _rpc_sql(
+        "finish_agent_runtime_sandbox_job",
+        {"p_fencing_token": 1},
+    )
+
+    assert "p_fencing_token := %s::uuid" in command_sql
+    assert "p_fencing_token := %s::bigint" in sandbox_sql
+
+
 def test_postgres_array_rejects_non_uuid_values() -> None:
     with pytest.raises(ValueError):
         PostgresArray(["not-a-uuid"])

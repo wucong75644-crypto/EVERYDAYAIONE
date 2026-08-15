@@ -123,6 +123,11 @@ _SCHEDULED_WECOM_UUID_KEYS = {
     "p_recovery_request_id",
 }
 
+_COMMAND_CLAIM_UUID_FENCING_RPCS = frozenset({
+    "renew_agent_command_claim",
+    "finish_agent_command_claim",
+})
+
 
 def _rpc_sql(name: str, params: dict[str, Any]) -> tuple[str, list[Any]]:
     if not params:
@@ -135,7 +140,6 @@ def _rpc_sql(name: str, params: dict[str, Any]) -> tuple[str, list[Any]]:
         "p_expected_action_version": "bigint",
         "p_expected_attempt_version": "bigint",
         "p_expected_version": "bigint",
-        "p_fencing_token": "bigint",
         "p_executor_revision": "integer",
         "p_lease_seconds": "integer",
         "p_attempt_state_version": "bigint",
@@ -162,6 +166,10 @@ def _rpc_sql(name: str, params: dict[str, Any]) -> tuple[str, list[Any]]:
         "p_action_id", "p_attempt_id", "p_dispatch_intent_id", "p_job_id",
         "p_claim_token", "p_receipt_id", "p_policy_receipt_id",
     }
+    if name in _COMMAND_CLAIM_UUID_FENCING_RPCS:
+        uuid_keys.add("p_fencing_token")
+    else:
+        numeric_types["p_fencing_token"] = "bigint"
     if name in _SCHEDULED_WECOM_UUID_RPCS:
         uuid_keys.update(_SCHEDULED_WECOM_UUID_KEYS)
     text_keys = {
