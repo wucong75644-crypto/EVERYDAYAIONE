@@ -26,7 +26,19 @@ TERMINAL_MIGRATION = "228_08k_agent_runtime_web_ingress_binding_terminal.sql"
 TERMINAL_ROLLBACK = (
     "228_08k_agent_runtime_web_ingress_binding_terminal_rollback.sql"
 )
+REPAIR_MIGRATION = "228_08l_agent_runtime_web_partial_failure_repair.sql"
+REPAIR_ROLLBACK = "228_08l_agent_runtime_web_partial_failure_repair_rollback.sql"
 LEGACY_USER = UUID("77777777-7777-7777-7777-777777777777")
+WEB_RUNTIME_DEPENDENCIES = (
+    "227_01_agent_runtime_production_closure.sql",
+    "227_02_agent_runtime_production_catalog_seed.sql",
+    "227_06_agent_runtime_tenant_kill_control.sql",
+    "227_07_agent_runtime_kill_epoch_fence.sql",
+    "227_13_agent_runtime_additive_ingress_compatibility.sql",
+    "227_14_agent_runtime_owner_transition.sql",
+    "227_15_agent_runtime_owner_rpc_acl_closure.sql",
+    "227_61_agent_runtime_web_ingress_required.sql",
+)
 
 
 def _execute(url: str, path: Path) -> None:
@@ -50,16 +62,7 @@ def _scope(url: str, conversation_id: UUID) -> str | None:
 def test_apply_readback_rollback_reapply_preserves_legacy_scope(
     database: str,
 ) -> None:
-    for name in (
-        "227_01_agent_runtime_production_closure.sql",
-        "227_02_agent_runtime_production_catalog_seed.sql",
-        "227_06_agent_runtime_tenant_kill_control.sql",
-        "227_07_agent_runtime_kill_epoch_fence.sql",
-        "227_13_agent_runtime_additive_ingress_compatibility.sql",
-        "227_14_agent_runtime_owner_transition.sql",
-        "227_15_agent_runtime_owner_rpc_acl_closure.sql",
-        "227_61_agent_runtime_web_ingress_required.sql",
-    ):
+    for name in WEB_RUNTIME_DEPENDENCIES:
         _apply(database, name)
 
     legacy_conversation = uuid4()
@@ -79,6 +82,7 @@ def test_apply_readback_rollback_reapply_preserves_legacy_scope(
 
     _apply(database, MIGRATION)
     _apply(database, TERMINAL_MIGRATION)
+    _apply(database, REPAIR_MIGRATION)
     assert _scope(database, legacy_conversation) == str(LEGACY_USER)
     with psycopg.connect(database) as connection:
         assert connection.execute(
@@ -125,6 +129,7 @@ def test_apply_readback_rollback_reapply_preserves_legacy_scope(
                     (uuid4(), USER),
                 )
 
+    _execute(database, ROOT / "migrations/rollback" / REPAIR_ROLLBACK)
     _execute(database, ROOT / "migrations/rollback" / TERMINAL_ROLLBACK)
     with psycopg.connect(database) as connection:
         assert connection.execute(
@@ -143,27 +148,22 @@ def test_apply_readback_rollback_reapply_preserves_legacy_scope(
 
     _apply(database, MIGRATION)
     _apply(database, TERMINAL_MIGRATION)
+    _apply(database, REPAIR_MIGRATION)
     assert _scope(database, legacy_conversation) == str(LEGACY_USER)
 
 
 def _prepare_web_runtime_tasks(database: str) -> tuple[UUID, ...]:
-    for name in (
-        "227_01_agent_runtime_production_closure.sql",
-        "227_02_agent_runtime_production_catalog_seed.sql",
-        "227_06_agent_runtime_tenant_kill_control.sql",
-        "227_07_agent_runtime_kill_epoch_fence.sql",
-        "227_13_agent_runtime_additive_ingress_compatibility.sql",
-        "227_14_agent_runtime_owner_transition.sql",
-        "227_15_agent_runtime_owner_rpc_acl_closure.sql",
-        "227_61_agent_runtime_web_ingress_required.sql",
-    ):
+    for name in WEB_RUNTIME_DEPENDENCIES:
         _apply(database, name)
 
-    task_id, failed_task_id = uuid4(), uuid4()
-    input_id, output_id, failed_input_id, failed_output_id = (
-        uuid4() for _ in range(4)
+    task_id, failed_task_id, partial_task_id = (uuid4() for _ in range(3))
+    (
+        input_id, output_id, failed_input_id, failed_output_id,
+        partial_input_id, partial_output_id,
+    ) = (
+        uuid4() for _ in range(6)
     )
-    turn_id, failed_turn_id = uuid4(), uuid4()
+    turn_id, failed_turn_id, partial_turn_id = (uuid4() for _ in range(3))
     with psycopg.connect(database) as connection:
         connection.execute("SET ROLE everydayai_owner")
         connection.execute(
@@ -190,6 +190,7 @@ def _prepare_web_runtime_tasks(database: str) -> tuple[UUID, ...]:
         connection.commit()
     _apply(database, MIGRATION)
     _apply(database, TERMINAL_MIGRATION)
+    _apply(database, REPAIR_MIGRATION)
 
     with psycopg.connect(database) as connection:
         connection.execute("SET ROLE everydayai_owner")
@@ -215,11 +216,22 @@ def _prepare_web_runtime_tasks(database: str) -> tuple[UUID, ...]:
         connection.execute(
             "UPDATE agent_runtime_control SET ingress_enabled=true WHERE singleton"
         )
-        for current_task, current_input, current_output, current_turn, key in (
-            (task_id, input_id, output_id, turn_id, "web-null-anchor"),
+        for (
+            current_task, current_input, current_output, current_turn,
+            key, status, terminal_reason,
+        ) in (
+            (
+                task_id, input_id, output_id, turn_id, "web-null-anchor",
+                "pending", None,
+            ),
             (
                 failed_task_id, failed_input_id, failed_output_id,
-                failed_turn_id, "web-failure",
+                failed_turn_id, "web-failure", "pending", None,
+            ),
+            (
+                partial_task_id, partial_input_id, partial_output_id,
+                partial_turn_id, "web-partial", "failed",
+                "startup_recovery_failed",
             ),
         ):
             connection.execute(
@@ -238,20 +250,25 @@ def _prepare_web_runtime_tasks(database: str) -> tuple[UUID, ...]:
                 "INSERT INTO tasks"
                 "(id,client_task_id,user_id,org_id,conversation_id,type,status,"
                 "assistant_message_id,input_message_id,turn_id,"
-                "context_through_message_id,delivery_context) VALUES"
-                "(%s,%s,%s,%s,%s,'chat','pending',%s,%s,%s,NULL,"
+                "context_through_message_id,delivery_context,terminal_reason,"
+                "error_message,completed_at) VALUES"
+                "(%s,%s,%s,%s,%s,'chat',%s,%s,%s,%s,NULL,"
                 "'{\"actor\":false,\"runtime\":false,"
-                "\"runtime_pending\":true}'::jsonb)",
+                "\"runtime_pending\":true}'::jsonb,%s,"
+                "CASE WHEN %s::text IS NULL THEN NULL ELSE 'recovered' END,"
+                "CASE WHEN %s::text IS NULL THEN NULL ELSE clock_timestamp() END)",
                 (
                     current_task, key, USER, ORG, CONVERSATION,
-                    current_output, current_input, current_turn,
+                    status, current_output, current_input, current_turn,
+                    terminal_reason, terminal_reason, terminal_reason,
                 ),
             )
         connection.commit()
 
     return (
-        task_id, failed_task_id, input_id, output_id, failed_input_id,
-        failed_output_id, turn_id, failed_turn_id,
+        task_id, failed_task_id, partial_task_id, input_id, output_id,
+        failed_input_id, failed_output_id, partial_input_id, partial_output_id,
+        turn_id, failed_turn_id, partial_turn_id,
     )
 
 
@@ -259,8 +276,9 @@ def test_web_runtime_accepts_legacy_null_anchor_and_failure_closes_placeholder(
     database: str,
 ) -> None:
     (
-        task_id, failed_task_id, input_id, output_id, failed_input_id,
-        failed_output_id, turn_id, failed_turn_id,
+        task_id, failed_task_id, partial_task_id, input_id, output_id,
+        failed_input_id, failed_output_id, partial_input_id, partial_output_id,
+        turn_id, failed_turn_id, partial_turn_id,
     ) = _prepare_web_runtime_tasks(database)
 
     with _connect(database, "everydayai_runtime") as connection:
@@ -290,6 +308,14 @@ def test_web_runtime_accepts_legacy_null_anchor_and_failure_closes_placeholder(
                 failed_output_id, failed_turn_id,
             ),
         ).fetchone()[0]
+        partial_failure = connection.execute(
+            "SELECT fail_web_runtime_ingress_task("
+            "%s,%s,%s,%s,%s,%s,%s,'web-partial','STARTUP_RECOVERY_REPAIR')",
+            (
+                partial_task_id, CONVERSATION, USER, ORG, partial_input_id,
+                partial_output_id, partial_turn_id,
+            ),
+        ).fetchone()[0]
         connection.commit()
 
     with psycopg.connect(database) as connection:
@@ -303,9 +329,21 @@ def test_web_runtime_accepts_legacy_null_anchor_and_failure_closes_placeholder(
             "ON message.id=task.assistant_message_id WHERE task.id=%s",
             (failed_task_id,),
         ).fetchone()
+        partial = connection.execute(
+            "SELECT task.status,task.terminal_reason,task.error_message,"
+            "message.status,message.is_error FROM tasks task JOIN messages message "
+            "ON message.id=task.assistant_message_id WHERE task.id=%s",
+            (partial_task_id,),
+        ).fetchone()
     assert receipt["outcome"] == "marked"
     assert accepted[0] is None
     assert accepted[1]["runtime"] is True
     assert accepted[1]["actor"] is False
     assert failure == {"task_id": str(failed_task_id), "already_failed": False}
     assert failed == ("failed", "runtime_ingress_failed", "failed", True)
+    assert partial_failure == {
+        "task_id": str(partial_task_id), "already_failed": False,
+    }
+    assert partial == (
+        "failed", "startup_recovery_failed", "recovered", "failed", True,
+    )
