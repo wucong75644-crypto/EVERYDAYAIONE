@@ -151,7 +151,6 @@ async def _heartbeat_loop(conn_id: str, websocket: WebSocket):
 
 async def _handle_tool_confirm_response(
     *, conn_id: str, payload: dict, user_id: str, org_id: str | None,
-    db: Any,
 ) -> None:
     confirmation_id = payload.get("confirmation_id")
     if not confirmation_id or "approved" not in payload:
@@ -177,7 +176,7 @@ async def _handle_tool_confirm_response(
         from services.tool_confirmation import tool_confirmation_service
         result = await tool_confirmation_service.consume_response(
             confirmation_id=response.confirmation_id, user_id=user_id,
-            org_id=org_id, approved=response.approved, database=db,
+            org_id=org_id, approved=response.approved,
         )
         if result.startswith("WON:"):
             ws_manager.forget_confirmation_delivery(response.confirmation_id)
@@ -230,7 +229,6 @@ async def _handle_message(
     elif msg_type == WSMessageType.TOOL_CONFIRM_RESPONSE.value:
         await _handle_tool_confirm_response(
             conn_id=conn_id, payload=payload, user_id=user_id, org_id=org_id,
-            db=db,
         )
 
     elif msg_type == WSMessageType.USER_STEER.value:

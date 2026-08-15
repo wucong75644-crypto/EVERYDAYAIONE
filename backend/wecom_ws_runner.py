@@ -12,8 +12,6 @@ import sys
 from typing import Any
 from pathlib import Path
 
-import httpx
-
 # 确保 backend 目录在 sys.path 中（systemd 启动时 cwd 可能不同）
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -26,13 +24,11 @@ if __name__ == "__main__" and "wecom_ws_runner" not in sys.modules:
 
 from loguru import logger
 
-from core.config import settings
 from core.database import (
-    close_async_db,
     close_async_worker_db,
     close_db,
     close_worker_db,
-    get_async_db,
+    get_async_worker_db,
     get_db,
     get_worker_db,
 )
@@ -210,206 +206,47 @@ def get_ws_client(org_id: str | None = None) -> WecomWSClient | None:
 # ── 主入口 ─────────────────────────────────────────────
 
 
-class _ScheduledWecomRuntimeOwner:
-    """Supervise one worker and exclusively own its process-level resources."""
-
-    def __init__(
-        self, worker: Any, task: asyncio.Task[None], http_client: httpx.AsyncClient,
-    ) -> None:
-        self.worker = worker
-        self.task = task
-        self._http_client = http_client
-        self._stop_requested = False
-        self._stop_lock = asyncio.Lock()
-        self._stop_task: asyncio.Task[None] | None = None
-        self._supervisor_task = asyncio.create_task(
-            self._supervise(),
-            name="scheduled_runtime_wecom_supervisor",
-        )
-
-    async def stop(self) -> None:
-        async with self._stop_lock:
-            if self._stop_task is None:
-                self._stop_requested = not self.task.done()
-                self._stop_task = asyncio.create_task(
-                    self._request_worker_stop(),
-                    name="scheduled_runtime_wecom_stop",
-                )
-            stop_task = self._stop_task
-        try:
-            await asyncio.shield(stop_task)
-        except asyncio.CancelledError:
-            await asyncio.shield(stop_task)
-            raise
-
-    async def _request_worker_stop(self) -> None:
-        try:
-            await self.worker.stop()
-        except (asyncio.CancelledError, Exception) as error:
-            self.task.cancel()
-            logger.error(
-                "scheduled_runtime_wecom_stop_failed | category={}",
-                type(error).__name__,
-            )
-        finally:
-            await asyncio.gather(self.task, return_exceptions=True)
-            await asyncio.shield(self._supervisor_task)
-
-    async def _supervise(self) -> None:
-        result = (await asyncio.gather(self.task, return_exceptions=True))[0]
-        if not self._stop_requested:
-            category = (
-                type(result).__name__
-                if isinstance(result, BaseException)
-                else "UnexpectedExit"
-            )
-            logger.error(
-                "scheduled_runtime_wecom_worker_failed | category={}",
-                category,
-            )
-        await _close_scheduled_wecom_dependencies(
-            self._http_client,
-            runtime_db_opened=True,
-        )
-
-
-async def _start_scheduled_wecom_runtime(
-) -> _ScheduledWecomRuntimeOwner | None:
-    if not settings.agent_runtime_scheduled_wecom_enabled:
-        return None
-
-    http_client: httpx.AsyncClient | None = None
-    runtime_db_opened = False
-    worker_task: asyncio.Task[None] | None = None
-    try:
-        from services.configuration.envelope import LocalKEKProvider
-        from services.configuration.material_service import SecretMaterialService
-        from services.wecom.access_token_manager import get_access_token
-        from services.wecom.scheduled_runtime_composition import (
-            build_scheduled_wecom_runtime_components,
-        )
-
-        material_service = SecretMaterialService(
-            LocalKEKProvider.from_environment(),
-        )
-        runtime_db_opened = True
-        runtime_db = await get_async_db()
-        http_client = httpx.AsyncClient()
-        components = build_scheduled_wecom_runtime_components(
-            database=runtime_db,
-            get_ws_client=get_ws_client,
-            material_service=material_service,
-            get_access_token=get_access_token,
-            outbound_http_client=http_client,
-            worker_id=settings.agent_runtime_scheduled_wecom_worker_id,
-        )
-        worker_task = asyncio.create_task(
-            components.worker.start(),
-            name="scheduled_runtime_wecom_worker",
-        )
-        owner = _ScheduledWecomRuntimeOwner(
-            components.worker, worker_task, http_client,
-        )
-        worker_task = None
-        http_client = None
-        runtime_db_opened = False
-        return owner
-    except (asyncio.CancelledError, Exception) as error:
-        if worker_task is not None:
-            worker_task.cancel()
-            await asyncio.gather(worker_task, return_exceptions=True)
-        await _close_scheduled_wecom_dependencies(
-            http_client,
-            runtime_db_opened=runtime_db_opened,
-        )
-        if isinstance(error, asyncio.CancelledError):
-            raise
-        logger.error(
-            "scheduled_runtime_wecom_start_failed | category={}",
-            type(error).__name__,
-        )
-        return None
-
-
-async def _stop_scheduled_wecom_runtime(
-    owner: _ScheduledWecomRuntimeOwner | None,
-) -> None:
-    if owner is not None:
-        await owner.stop()
-
-
-async def _start_scheduled_wecom_until_stop(
-    stop_event: asyncio.Event,
-) -> _ScheduledWecomRuntimeOwner | None:
-    start_task = asyncio.create_task(
-        _start_scheduled_wecom_runtime(),
-        name="scheduled_runtime_wecom_start",
-    )
-    stop_task = asyncio.create_task(
-        stop_event.wait(),
-        name="scheduled_runtime_wecom_start_stop_wait",
-    )
-    try:
-        done, _ = await asyncio.wait(
-            (start_task, stop_task),
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        if start_task in done:
-            return start_task.result()
-        start_task.cancel()
-        await asyncio.gather(start_task, return_exceptions=True)
-        return None
-    finally:
-        for task in (start_task, stop_task):
-            if not task.done():
-                task.cancel()
-        await asyncio.gather(start_task, stop_task, return_exceptions=True)
-
-
-async def _close_scheduled_wecom_dependencies(
-    http_client: httpx.AsyncClient | None,
-    *,
-    runtime_db_opened: bool,
-) -> None:
-    if http_client is not None:
-        try:
-            await http_client.aclose()
-        except Exception as error:
-            logger.error(
-                "scheduled_runtime_wecom_http_close_failed | category={}",
-                type(error).__name__,
-            )
-    if runtime_db_opened:
-        try:
-            await close_async_db()
-        except Exception as error:
-            logger.error(
-                "scheduled_runtime_wecom_db_close_failed | category={}",
-                type(error).__name__,
-            )
-
-
-async def _stop_existing_wecom_components(
-    *,
-    callback_task: asyncio.Task[Any] | None,
-    manager: WecomWSManager | None,
-) -> None:
-    background_tasks = [task for task in (callback_task,) if task is not None]
-    for task in background_tasks:
-        task.cancel()
-    if background_tasks:
-        await asyncio.gather(*background_tasks, return_exceptions=True)
-
-    if manager is not None:
-        await manager.stop()
-    await close_async_worker_db()
-    close_worker_db()
-    close_db()
-
-
 async def main() -> None:
     setup_logging()
 
+    runtime_db = get_db()
+    control_db = get_worker_db()
+    async_db = await get_async_worker_db()
+
+    global _manager
+    _manager = WecomWSManager(control_db, runtime_db)
+    await _manager.start()
+
+    from services.wecom.delivery_sender import WecomDeliverySender
+    from services.wecom.delivery_worker import (
+        WecomDeliveryWorker,
+        build_wecom_delivery_worker_db,
+    )
+    delivery_db = build_wecom_delivery_worker_db(async_db)
+    delivery_worker = WecomDeliveryWorker(
+        delivery_db,
+        WecomDeliverySender(delivery_db, get_ws_client),
+    )
+    delivery_task = asyncio.create_task(
+        delivery_worker.start(),
+        name="wecom_delivery_worker",
+    )
+
+    # 定时任务推送订阅器（跨进程 IPC：web 进程 publish → ws_runner 这里 subscribe）
+    # 设计文档: docs/document/TECH_定时任务心跳系统.md §4.4
+    from services.scheduler.push_dispatcher import start_proactive_subscriber
+    proactive_task = asyncio.create_task(start_proactive_subscriber())
+    from services.wecom.callback_inbox_worker import WecomCallbackInboxWorker
+    callback_worker = WecomCallbackInboxWorker(runtime_db, control_db)
+    callback_task = asyncio.create_task(
+        callback_worker.run(),
+        name="wecom_callback_inbox_worker",
+    )
+
+    if not _manager.clients:
+        logger.warning("No bots to run, ws_runner will wait for signal")
+
+    # 优雅关闭
     stop_event = asyncio.Event()
 
     def _signal_handler() -> None:
@@ -420,40 +257,30 @@ async def main() -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, _signal_handler)
 
-    scheduled_runtime = None
-    callback_task = None
-    manager = None
+    logger.info(f"Wecom WS runner started | {len(_manager.clients)} bot(s)")
+
+    # 阻塞直到收到关闭信号
+    await stop_event.wait()
+
+    proactive_task.cancel()
+    callback_task.cancel()
     try:
-        runtime_db = get_db()
-        control_db = get_worker_db()
-        global _manager
-        manager = _manager = WecomWSManager(control_db, runtime_db)
-        await manager.start()
+        await proactive_task
+    except asyncio.CancelledError:
+        pass
+    await asyncio.gather(callback_task, return_exceptions=True)
 
-        from services.wecom.callback_inbox_worker import WecomCallbackInboxWorker
-        callback_worker = WecomCallbackInboxWorker(runtime_db, control_db)
-        callback_task = asyncio.create_task(
-            callback_worker.run(),
-            name="wecom_callback_inbox_worker",
-        )
-        scheduled_runtime = await _start_scheduled_wecom_until_stop(stop_event)
-        if stop_event.is_set():
-            return
-
-        if not manager.clients:
-            logger.warning("No bots to run, ws_runner will wait for signal")
-
-        logger.info(f"Wecom WS runner started | {len(manager.clients)} bot(s)")
-        await stop_event.wait()
-    finally:
-        try:
-            await _stop_scheduled_wecom_runtime(scheduled_runtime)
-        finally:
-            await _stop_existing_wecom_components(
-                callback_task=callback_task,
-                manager=manager,
-            )
-        logger.info("Wecom WS runner stopped")
+    await delivery_worker.stop()
+    try:
+        await asyncio.wait_for(delivery_task, timeout=10)
+    except asyncio.TimeoutError:
+        delivery_task.cancel()
+        await asyncio.gather(delivery_task, return_exceptions=True)
+    await _manager.stop()
+    await close_async_worker_db()
+    close_worker_db()
+    close_db()
+    logger.info("Wecom WS runner stopped")
 
 
 if __name__ == "__main__":

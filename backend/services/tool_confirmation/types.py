@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from enum import Enum
 from typing import Any, Mapping
 
@@ -27,18 +26,12 @@ class ConfirmationOutcome(str, Enum):
 
 @dataclass(frozen=True)
 class ConfirmationBinding:
-    action_id: str
-    interaction_id: str
-    interaction_version: int
     task_id: str
     tool_call_id: str
     tool_name: str
     arguments_hash: str
     user_id: str
     org_id: str
-    expires_at: datetime
-    confirmation_group_hash: str = ""
-    confirmation_group_size: int = 1
 
 
 @dataclass(frozen=True)

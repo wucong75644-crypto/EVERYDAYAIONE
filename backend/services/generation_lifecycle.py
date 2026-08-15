@@ -104,14 +104,6 @@ class PreparedTaskFailure:
 
 
 @dataclass(frozen=True)
-class WebRuntimeIngressFailure:
-    """Web Runtime ingress 失败收尾结果。"""
-
-    task_id: str
-    already_failed: bool
-
-
-@dataclass(frozen=True)
 class PreparedCreditRefund:
     """供应商拒绝前已锁定积分的退款结果。"""
 
@@ -248,43 +240,6 @@ class GenerationLifecycle:
         )
         return PreparedTaskFailure(result[0], result[1])
 
-    def fail_web_runtime_ingress(
-        self,
-        *,
-        task_id: str,
-        conversation_id: str,
-        user_id: str,
-        org_id: str | None,
-        input_message_id: str,
-        output_message_id: str,
-        turn_id: str,
-        client_task_id: str,
-        failure_code: str,
-    ) -> WebRuntimeIngressFailure:
-        """原子终止未被 Runtime 接管的 Web task 与占位消息。"""
-        response = self._db.rpc(
-            "fail_web_runtime_ingress_task",
-            {
-                "p_task_id": task_id,
-                "p_conversation_id": conversation_id,
-                "p_user_id": user_id,
-                "p_org_id": org_id,
-                "p_input_message_id": input_message_id,
-                "p_output_message_id": output_message_id,
-                "p_turn_id": turn_id,
-                "p_client_task_id": client_task_id,
-                "p_failure_code": failure_code,
-            },
-        ).execute()
-        data = response.data if response else None
-        result = _parse_transition_result(data, "already_failed", task_id)
-        logger.warning(
-            "web_runtime_ingress_failed | "
-            f"task_id={task_id} | org_id={org_id} | user_id={user_id} | "
-            f"failure_code={failure_code} | already_failed={result[1]}"
-        )
-        return WebRuntimeIngressFailure(result[0], result[1])
-
     def refund_prepared_credits(
         self,
         *,
@@ -318,96 +273,6 @@ class GenerationLifecycle:
         )
         logger.info(
             "prepared_generation_credits_refund | "
-            f"task_id={task_id} | transaction_id={transaction_id} | "
-            f"org_id={org_id} | user_id={user_id} | "
-            f"refunded={result.refunded} | reason={result.reason}"
-        )
-        return result
-
-    async def attach_external_task_async(
-        self, *, task_id: str, external_task_id: str,
-        credit_transaction_id: str | None, org_id: str | None,
-        user_id: str, provider: str,
-        actual_model_id: str | None = None,
-        actual_request_params: Mapping[str, Any] | None = None,
-    ) -> ExternalTaskAttachment:
-        """Async counterpart for Runtime Worker media submission."""
-        response = await self._db.rpc(
-            "attach_generation_external_task", {
-                "p_task_id": task_id,
-                "p_external_task_id": external_task_id,
-                "p_credit_transaction_id": credit_transaction_id,
-                "p_org_id": org_id,
-                "p_actual_model_id": actual_model_id,
-                "p_actual_request_params": (
-                    Jsonb(dict(actual_request_params))
-                    if actual_request_params is not None else None
-                ),
-            },
-        ).execute()
-        data = response.data if response else None
-        task, replayed = _parse_transition_result(
-            data, "already_attached", task_id,
-        )
-        logger.info(
-            "media_submission_attached_async | "
-            f"task_id={task} | external_task_id={external_task_id} | "
-            f"org_id={org_id} | user_id={user_id} | provider={provider} | "
-            f"already_attached={replayed}"
-        )
-        return ExternalTaskAttachment(task, replayed)
-
-    async def fail_prepared_task_async(
-        self, *, task_id: str, terminal_reason: str,
-        error_message: str | None, org_id: str | None, user_id: str,
-    ) -> PreparedTaskFailure:
-        """Async counterpart for Runtime Worker media failures."""
-        response = await self._db.rpc(
-            "fail_prepared_generation_task", {
-                "p_task_id": task_id,
-                "p_terminal_reason": terminal_reason,
-                "p_error_message": error_message,
-                "p_org_id": org_id,
-            },
-        ).execute()
-        data = response.data if response else None
-        task, replayed = _parse_transition_result(
-            data, "already_failed", task_id,
-        )
-        logger.warning(
-            "prepared_task_failed_async | "
-            f"task_id={task} | org_id={org_id} | user_id={user_id} | "
-            f"terminal_reason={terminal_reason}"
-        )
-        return PreparedTaskFailure(task, replayed)
-
-    async def refund_prepared_credits_async(
-        self, *, task_id: str, transaction_id: str,
-        org_id: str | None, user_id: str,
-    ) -> PreparedCreditRefund:
-        """Async counterpart for Runtime Worker credit compensation."""
-        response = await self._db.rpc(
-            "refund_prepared_generation_credits", {
-                "p_task_id": task_id,
-                "p_transaction_id": transaction_id,
-                "p_org_id": org_id,
-            },
-        ).execute()
-        data = response.data if response else None
-        if (
-            not isinstance(data, dict)
-            or not isinstance(data.get("refunded"), bool)
-            or (
-                not data["refunded"]
-                and not isinstance(data.get("reason"), str)
-            )
-        ):
-            raise RuntimeError("GENERATION_REFUND_RESULT_INVALID")
-        result = PreparedCreditRefund(
-            refunded=data["refunded"], reason=data.get("reason"),
-        )
-        logger.info(
-            "prepared_generation_credits_refund_async | "
             f"task_id={task_id} | transaction_id={transaction_id} | "
             f"org_id={org_id} | user_id={user_id} | "
             f"refunded={result.refunded} | reason={result.reason}"

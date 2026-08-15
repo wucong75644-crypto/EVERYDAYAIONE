@@ -82,14 +82,10 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     conversation_actor_worker_enabled: bool = False
-    agent_runtime_scheduled_wecom_enabled: bool = False
-    agent_runtime_scheduled_wecom_worker_id: str = "scheduled-wecom-01"
+    agent_runtime_ingress_enabled: bool = False
     # AR-17.4 remains closed until an explicit, injected production
     # composition has passed its provider/readiness checks.
     agent_runtime_production_composition_enabled: bool = False
-    agent_runtime_media_enabled: bool = False
-    agent_runtime_media_provider_probe_passed: bool = False
-    agent_runtime_media_production_ready: bool = False
     agent_runtime_agent_definition_id: str = "everydayai-default"
     agent_runtime_agent_definition_revision: str = "v1"
     agent_runtime_release_revision: str = "development"
@@ -382,15 +378,5 @@ def get_settings() -> Settings:
     return Settings()
 
 
-class _LazySettings:
-    """Preserve legacy attribute access without loading `.env` on import."""
-
-    def __getattr__(self, name: str):
-        return getattr(get_settings(), name)
-
-    def __setattr__(self, name: str, value) -> None:
-        setattr(get_settings(), name, value)
-
-
-# Existing callers keep `settings.attribute`; loading occurs on first use.
-settings = _LazySettings()
+# 全局配置实例
+settings = get_settings()

@@ -9,10 +9,6 @@ from typing import Any, Mapping
 from core.db_scope import DatabaseAccessKind, database_scope_from_client
 from services.agent.runtime.executors.specialist_contracts import CostReservation
 from services.agent.runtime.executors.contracts import canonical_json
-from services.agent.runtime.scheduler_cas import (
-    PostgresSchedulerControlStore,
-    scheduler_control_result,
-)
 
 
 class SpecialistRpcError(RuntimeError):
@@ -37,7 +33,6 @@ class PostgresSpecialistRepository:
         if scope is None or scope.access_kind is not DatabaseAccessKind.AGENT_RUNTIME:
             raise ValueError("WORKER_SCOPED_DATABASE_CLIENT_REQUIRED")
         self._database = database
-        self._scheduler_control = PostgresSchedulerControlStore(database)
 
     async def _rpc(self, name: str, params: Mapping[str, object], *, allowed: set[str]) -> Mapping[str, object]:
         payload = (await self._database.rpc(name, dict(params)).execute()).data
@@ -88,16 +83,6 @@ class PostgresSpecialistRepository:
             "p_external_receipt": dict(external_receipt or {}),
         }, allowed={"accepted"})
 
-    async def media_provider_submission(self, **params: object) -> object:
-        return await self._rpc(
-            "record_agent_runtime_media_provider_submission_v1",
-            {
-                f"p_{key}": value
-                for key, value in params.items()
-            },
-            allowed={"accepted"},
-        )
-
     async def provider_unknown(
         self, *, attempt_id: str, execution_token: str, request_hash: str,
         ambiguity_evidence: Mapping[str, object],
@@ -107,13 +92,6 @@ class PostgresSpecialistRepository:
             "p_request_hash": request_hash,
             "p_ambiguity_evidence": dict(ambiguity_evidence),
         }, allowed={"unknown"})
-
-    async def media_provider_unknown(self, **params: object) -> object:
-        return await self._rpc(
-            "record_agent_runtime_media_provider_unknown_v1",
-            {f"p_{key}": value for key, value in params.items()},
-            allowed={"unknown"},
-        )
 
     async def provider_terminal(
         self, *, attempt_id: str, execution_token: str, request_hash: str,
@@ -143,25 +121,10 @@ class PostgresSpecialistRepository:
         }, allowed={resolution})
 
     async def still_accepted(self, **params: object) -> object:
-        return await self._rpc(
-            "record_agent_action_provider_still_accepted",
-            {f"p_{key}": value for key, value in params.items()},
-            allowed={"still_accepted"},
-        )
+        return await self._rpc("record_agent_action_provider_still_accepted", params, allowed={"still_accepted"})
 
     async def still_unknown(self, **params: object) -> object:
-        return await self._rpc(
-            "record_agent_action_provider_still_unknown",
-            {f"p_{key}": value for key, value in params.items()},
-            allowed={"still_unknown"},
-        )
-
-    async def media_cancel_unproven(self, **params: object) -> object:
-        return await self._rpc(
-            "record_agent_runtime_media_cancel_unproven_v1",
-            {f"p_{key}": value for key, value in params.items()},
-            allowed={"still_unknown"},
-        )
+        return await self._rpc("record_agent_action_provider_still_unknown", params, allowed={"still_unknown"})
 
     async def link_artifact(self, **params: object) -> object:
         return await self._rpc("link_agent_action_artifact", params, allowed={"linked"})
@@ -170,99 +133,32 @@ class PostgresSpecialistRepository:
         return await self._rpc("checkpoint_agent_artifact_materialization", params, allowed={"checkpointed"})
 
     async def create_child_run(self, **params: object) -> object:
-        return await self._rpc(
-            "create_agent_child_run_strict_v2", params,
-            allowed={"created", "already_exists", "cancel_fenced"},
-        )
+        return await self._rpc("create_agent_child_run_strict", params, allowed={"created", "already_exists"})
 
-    async def read_child_run(self, *, child_run_id: str | None, parent_run_id: str, parent_action_id: str,
+    async def read_child_run(self, *, child_run_id: str, parent_run_id: str, parent_action_id: str,
                              parent_attempt_id: str, parent_request_hash: str,
                              ownership_token: str, expected_state_version: int,
-                             child_ordinal: int | None = None) -> object:
-        del child_ordinal
-        return await self._rpc("read_agent_child_run_binding_v3", {
+                             child_ordinal: int) -> object:
+        return await self._rpc("read_agent_child_run_strict_v2", {
             "p_child_run_id": child_run_id, "p_parent_run_id": parent_run_id,
             "p_parent_action_id": parent_action_id, "p_parent_attempt_id": parent_attempt_id,
             "p_parent_request_hash": parent_request_hash, "p_ownership_token": ownership_token,
-            "p_expected_state_version": expected_state_version,
-        }, allowed={"readback", "not_found"})
+            "p_expected_state_version": expected_state_version, "p_child_ordinal": child_ordinal,
+        }, allowed={"readback"})
 
     async def complete_child_run(self, **params: object) -> object:
-        return await self._rpc(
-            "aggregate_agent_child_run_strict_v2", params,
-            allowed={"completed", "cancel_pending"},
-        )
+        return await self._rpc("aggregate_agent_child_run_strict", params, allowed={"completed"})
 
     async def cancel_child_run(self, **params: object) -> object:
-        return await self._rpc(
-            "read_agent_child_run_cancel_intent_v1", params,
-            allowed={"confirmed", "pending", "not_found"},
-        )
+        return await self._rpc("cancel_agent_child_run_strict_v2", params, allowed={"cancelled"})
 
     async def mutate_resource(self, operation: str, **params: object) -> object:
-        if operation == "manage_scheduled_task":
-            attempt = params.pop("_attempt", None)
-            if attempt is None:
-                raise ValueError("SCHEDULER_ATTEMPT_REQUIRED")
-            result = await self.mutate_scheduler_task(
-                attempt=attempt,
-                task_id=str(params["p_task_id"]),
-                expected_version=int(params["p_expected_state_version"]),
-                operation=str(params["p_operation"]),
-                payload=dict(params.get("p_payload", {})),
-                dispatch_intent_id=str(params["p_dispatch_intent_id"]),
-                attempt_state_version=int(params["p_attempt_state_version"]),
-            )
-            return result
-        names = {"file_delete": "runtime_delete_workspace_resource", "restore_file": "runtime_restore_workspace_resource"}
+        names = {"file_delete": "runtime_delete_workspace_resource", "restore_file": "runtime_restore_workspace_resource", "manage_scheduled_task": "runtime_mutate_scheduled_task"}
         if operation not in names:
             raise ValueError("SPECIALIST_RESOURCE_OPERATION_INVALID")
         if "p_execution_token" not in params:
             raise ValueError("SPECIALIST_FENCING_TOKEN_REQUIRED")
         return await self._rpc(names[operation], params, allowed={"bound", "updated"})
-
-    async def mutate_scheduler_task(
-        self, *, attempt: object, task_id: str, expected_version: int,
-        operation: str, payload: Mapping[str, object], dispatch_intent_id: str,
-        attempt_state_version: int,
-    ) -> Mapping[str, object]:
-        response = await self._scheduler_control.mutate(
-            attempt=attempt, task_id=task_id, expected_version=expected_version,
-            operation=operation, payload=payload,
-            dispatch_intent_id=dispatch_intent_id,
-            attempt_state_version=attempt_state_version,
-        )
-        return scheduler_control_result(response)
-
-    async def readback_scheduler_task(
-        self, *, attempt: object, ownership_token: str,
-        expected_state_version: int,
-    ) -> Mapping[str, object]:
-        return scheduler_control_result(await self._scheduler_control.readback(
-            attempt=attempt, idempotency_key=str(attempt.idempotency_key),
-            ownership_token=ownership_token,
-            expected_state_version=expected_state_version,
-        ))
-
-    async def cancel_scheduler_task(
-        self, *, attempt: object, reason: str, ownership_token: str,
-        expected_state_version: int,
-    ) -> Mapping[str, object]:
-        return scheduler_control_result(await self._scheduler_control.cancel(
-            attempt=attempt, idempotency_key=str(attempt.idempotency_key), reason=reason,
-            ownership_token=ownership_token,
-            expected_state_version=expected_state_version,
-        ))
-
-    async def reconcile_scheduler_task(
-        self, *, attempt: object, ownership_token: str,
-        expected_state_version: int,
-    ) -> Mapping[str, object]:
-        return scheduler_control_result(await self._scheduler_control.reconcile(
-            attempt=attempt, idempotency_key=str(attempt.idempotency_key),
-            ownership_token=ownership_token,
-            expected_state_version=expected_state_version,
-        ))
 
     async def finalize(
         self, *, attempt_id: str, execution_token: str | None,
@@ -283,13 +179,6 @@ class PostgresSpecialistRepository:
             "p_actual_amount": actual_amount, "p_currency": currency,
             "p_reason_code": reason_code, "p_provider_receipt_hash": provider_receipt_hash or hashlib.sha256(canonical_json(provider_receipt).encode("utf-8")).hexdigest(),
         }, allowed={terminal_state})
-
-    async def media_cancel_readback_terminal(self, **params: object) -> object:
-        return await self._rpc(
-            "finalize_agent_runtime_media_after_cancel_v1",
-            {f"p_{name}": value for name, value in params.items()},
-            allowed={str(params["terminal_state"])},
-        )
 
     async def sync_phase(self, **params: object) -> Mapping[str, object]:
         return await self._rpc("record_agent_sync_phase_v3", params, allowed={"recorded"})

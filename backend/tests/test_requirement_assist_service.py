@@ -95,13 +95,9 @@ def test_conflict_gate_removes_claim_and_evasive_marketing_but_keeps_original() 
 
 
 @pytest.mark.asyncio
-async def test_generate_returns_primary_model_result_through_page_model() -> None:
-    adapter = AsyncMock(
-        chat_sync=AsyncMock(return_value=SimpleNamespace(
-            content=json.dumps(_payload(), ensure_ascii=False),
-        )),
-        close=AsyncMock(),
-    )
+async def test_generate_returns_primary_model_result_and_closes_adapter() -> None:
+    adapter = AsyncMock()
+    adapter.chat_sync.return_value = SimpleNamespace(content=json.dumps(_payload(), ensure_ascii=False))
     settings = SimpleNamespace(
         image_enhance_vl_model="primary", image_enhance_fallback_model="fallback",
         dashscope_api_key="key", dashscope_base_url="https://example.com",
@@ -113,28 +109,31 @@ async def test_generate_returns_primary_model_result_through_page_model() -> Non
         outcome = await RequirementAssistService().generate(_input())
     assert outcome.model == "primary"
     assert outcome.fallback_used is False
-    adapter.chat_sync.assert_awaited_once()
+    adapter.close.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_generate_falls_back_after_invalid_primary_output() -> None:
-    chat_sync = AsyncMock(side_effect=[
-        SimpleNamespace(content="invalid"),
-        SimpleNamespace(content=json.dumps(_payload(), ensure_ascii=False)),
-    ])
-    adapter = AsyncMock(chat_sync=chat_sync, close=AsyncMock())
+    primary = AsyncMock()
+    fallback = AsyncMock()
+    primary.chat_sync.return_value = SimpleNamespace(content="invalid")
+    fallback.chat_sync.return_value = SimpleNamespace(content=json.dumps(_payload(), ensure_ascii=False))
     settings = SimpleNamespace(
         image_enhance_vl_model="primary", image_enhance_fallback_model="fallback",
         dashscope_api_key="key", dashscope_base_url="https://example.com",
     )
     with (
         patch("services.agent.image.requirement_assist_service.get_settings", return_value=settings),
-        patch("services.agent.image.requirement_assist_service.DashScopeChatAdapter", return_value=adapter),
+        patch(
+            "services.agent.image.requirement_assist_service.DashScopeChatAdapter",
+            side_effect=[primary, fallback],
+        ),
     ):
         outcome = await RequirementAssistService().generate(_input())
     assert outcome.model == "fallback"
     assert outcome.fallback_used is True
-    assert chat_sync.await_count == 2
+    primary.close.assert_awaited_once()
+    fallback.close.assert_awaited_once()
 
 
 @pytest.mark.asyncio

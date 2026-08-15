@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from contextlib import suppress
 from typing import Callable, Mapping, Protocol
 
@@ -18,7 +18,6 @@ from services.agent.runtime.ports.coordinator_recovery import (
 )
 from services.agent.runtime.ports.model import (
     ModelCallUnknownError,
-    ModelExecutionBinding,
     ModelOutputKind,
     ModelPort,
     ModelProviderError,
@@ -29,10 +28,7 @@ from services.agent.runtime.ports.model_attempt import (
     ModelAttemptOutcome,
     ModelAttemptRepositoryPort,
 )
-from services.agent.runtime.ports.repository import (
-    MutationOutcome,
-    RuntimeRepositoryPort,
-)
+from services.agent.runtime.ports.repository import RuntimeRepositoryPort
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -164,19 +160,6 @@ class ModelLoopDriver:
                 request_receipt=plan.request_receipt,
                 reserved_credits=plan.reserved_credits,
             )
-            if prepared.outcome is ModelAttemptOutcome.BUDGET_EXHAUSTED:
-                failed = await self._runtime.fail_model_step(
-                    step_id, run_execution_token, step_version,
-                    "budget_exhausted",
-                )
-                if failed.outcome not in {
-                    MutationOutcome.FAILED,
-                    MutationOutcome.ALREADY_FAILED,
-                }:
-                    raise RuntimeError(
-                        "MODEL_STEP_BUDGET_FAILURE_RECEIPT_REJECTED"
-                    )
-                return None
             if prepared.outcome not in {
                 ModelAttemptOutcome.PREPARED,
                 ModelAttemptOutcome.ALREADY_PREPARED,
@@ -186,32 +169,14 @@ class ModelLoopDriver:
             attempt_version = _required_int(
                 prepared.state_version, "attempt state_version",
             )
-            attempt_token = prepared.execution_token or run_execution_token
+            attempt_token = _required(
+                prepared.execution_token, "attempt execution_token",
+            )
         else:
             attempt_id = str(attempt["id"])
             attempt_version = _version(attempt)
             attempt_token = str(attempt["execution_token"])
 
-        dispatched = await self._start_dispatch(
-            request=request,
-            attempt_id=attempt_id, attempt_version=attempt_version,
-            run_id=run_id, run_execution_token=run_execution_token,
-            worker_id=worker_id,
-        )
-        if dispatched is None:
-            return None
-        request, dispatch_version = dispatched
-        return _ActiveModelCall(
-            plan=plan, request=request, step_version=step_version,
-            attempt_id=attempt_id, attempt_version=dispatch_version,
-            attempt_token=attempt_token,
-        )
-
-    async def _start_dispatch(
-        self, *, request: ModelStepRequest,
-        attempt_id: str, attempt_version: int,
-        run_id: str, run_execution_token: str, worker_id: str,
-    ) -> tuple[ModelStepRequest, int] | None:
         dispatch = await self._attempts.start_dispatch(
             attempt_id=attempt_id,
             run_execution_token=run_execution_token,
@@ -222,16 +187,15 @@ class ModelLoopDriver:
             ModelAttemptOutcome.DISPATCHING,
             ModelAttemptOutcome.ALREADY_DISPATCHING,
         }:
-            return None
+            return
         dispatch_version = _required_int(
             dispatch.state_version, "dispatch state_version",
         )
-        binding = ModelExecutionBinding(
-            run_id=run_id, attempt_id=attempt_id, worker_id=worker_id,
-            execution_token=run_execution_token,
-            attempt_state_version=dispatch_version,
+        return _ActiveModelCall(
+            plan=plan, request=request, step_version=step_version,
+            attempt_id=attempt_id, attempt_version=dispatch_version,
+            attempt_token=attempt_token,
         )
-        return replace(request, execution_binding=binding), dispatch_version
 
     async def _dispatch(
         self, *, active: _ActiveModelCall, run_execution_token: str,

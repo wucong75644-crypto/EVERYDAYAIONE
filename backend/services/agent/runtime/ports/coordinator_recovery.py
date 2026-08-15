@@ -16,14 +16,6 @@ class RecoveryOutcome(StrEnum):
     COMPLETED = "completed"
     ALREADY_COMPLETED = "already_completed"
     RUN_CANCELLED_USE_LATE_RECEIPT = "run_cancelled_use_late_receipt"
-    APPLIED = "applied"
-    CONFIRMED = "confirmed"
-    OWNERSHIP_LOST = "ownership_lost"
-
-
-class ActionRecoveryOperation(StrEnum):
-    RECONCILE = "reconcile"
-    CANCEL = "cancel"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -53,23 +45,11 @@ class ActionDispatchSnapshot:
 @dataclass(frozen=True, kw_only=True)
 class ActionRecoveryClaim:
     outcome: RecoveryOutcome
-    operation: ActionRecoveryOperation | None = None
-    parent_run_id: str | None = None
-    parent_run_status: str | None = None
-    parent_run_state_version: int | None = None
     attempt_id: str | None = None
     execution_token: str | None = None
     state_version: int | None = None
     lease_expires_at: datetime | None = None
     snapshot: ActionDispatchSnapshot | None = None
-
-
-@dataclass(frozen=True, kw_only=True)
-class ChildCancelRecoveryClaim:
-    outcome: RecoveryOutcome
-    intent_id: str | None = None
-    claim_token: str | None = None
-    state_version: int | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -118,12 +98,3 @@ class CoordinatorRecoveryPort(Protocol):
     async def claim_action_reconciliation(
         self, *, worker_id: str, lease_seconds: int = 120,
     ) -> ActionRecoveryClaim: ...
-
-    async def claim_child_cancel(
-        self, *, worker_id: str, lease_seconds: int = 120,
-    ) -> ChildCancelRecoveryClaim: ...
-
-    async def apply_child_cancel(
-        self, *, intent_id: str, claim_token: str,
-        expected_state_version: int, reason: str,
-    ) -> RecoveryOutcome: ...

@@ -183,14 +183,53 @@ MIGRATION_DATABASE_URL=postgresql://everydayai_migrator:<独立密码>@127.0.0.1
 # 仅部署迁移使用；不得复用 Backend/Worker 的 DATABASE_URL
 ```
 
+## 2026-08 Runtime 接管回退（一次性）
+
+该流程只用于把生产环境从 Runtime 接管状态恢复到迁移 `227_12` 和旧
+AgentLoop。它会删除已确认的 3 个 Runtime 测试会话并恢复 18 积分，不能作为
+通用 migration rollback 使用。
+
+执行前必须满足：
+
+- 已完成并校验一份全库 custom-format `pg_dump`；
+- 已停止 Backend、Conversation Actor、WeCom、Sync 以及 Runtime、Projection、
+  Authorization、Sandbox 服务，禁止任何新写入；
+- Runtime worker heartbeat 已进入 `ready=false`、`draining=true`、
+  `status_code=draining`；
+- 服务器上的代码和 `backend/migrations/rollback` 来自本回退提交；
+- 普通 `deploy.sh` 尚未启动服务。
+
+先只读检查：
+
+```bash
+cd /var/www/everydayai
+TENANT_DB_ADMIN_URL='postgresql://postgres@%2Fvar%2Frun%2Fpostgresql/everydayai' \
+  backend/venv/bin/python deploy/runtime-cutover-rollback.py
+```
+
+输出必须是 `data_state=present`、`remaining_migrations=89`。随后显式执行：
+
+```bash
+ALLOW_RUNTIME_CUTOVER_ROLLBACK=true \
+TENANT_DB_ADMIN_URL='postgresql://postgres@%2Fvar%2Frun%2Fpostgresql/everydayai' \
+  backend/venv/bin/python deploy/runtime-cutover-rollback.py --execute
+```
+
+脚本使用与正常迁移相同的 advisory lock；业务数据清理在单个事务中完成，
+每个 rollback SQL 与对应迁移账本删除也在同一事务中完成。中断后可用同一命令
+继续，账本只允许保持为反向回退形成的连续前缀。完成输出必须包含
+`data_state=cleaned`（再次 plan 时）、`remaining_migrations=0`，账本总数为 280。
+
+数据库回退完成后才能执行普通部署并启动 Backend、Sync、WeCom、Conversation
+Actor。四个 Runtime 服务必须保持 disabled/inactive。验收至少覆盖登录、普通
+对话、连续两轮工具调用、同轮多个工具、附件恢复和企微消息；任何门禁失败都应
+保持维护状态，禁止运行 forward migration。
+
 数据库角色环境文件模板位于 `deploy/env-templates/`。真实文件必须安装为：
 
-- `backend/.env.runtime`：包含 runtime `DATABASE_URL` 及模板白名单内的 Runtime
-  ingress、confirmation、definition 配置；禁止未知键和重复键
-- `backend/.env.wecom-runtime`：包含 WeCom runtime `DATABASE_URL` 及模板白名单内的
-  ingress、definition 配置；禁止未知键和重复键
+- `backend/.env.runtime`：仅包含 runtime `DATABASE_URL`
+- `backend/.env.wecom-runtime`：仅包含 WeCom runtime `DATABASE_URL`
 - `backend/.env.worker`：仅包含 worker `DATABASE_URL`
-- `backend/.env.worker-client`：仅包含 worker `WORKER_DATABASE_URL`
 - `backend/.env.sync`：仅包含 Sync `everydayai_sync` 的 `DATABASE_URL`
 - `backend/.env.migrator`：仅包含 `MIGRATION_DATABASE_URL`
 
@@ -198,15 +237,6 @@ MIGRATION_DATABASE_URL=postgresql://everydayai_migrator:<独立密码>@127.0.0.1
 
 ```bash
 bash deploy/validate-tenant-db-env.sh /var/www/everydayai/backend
-```
-
-安装 production flags-off v3 单元前必须执行严格入口；该入口额外要求两个 Runtime
-文件使用 `everydayai-default/v3`，且尚未启用的 Tool Confirmation 与 Scheduled WeCom
-能力保持 `false`。Runtime ingress 已是唯一入口，不再使用环境灰度开关：
-
-```bash
-bash deploy/validate-tenant-db-env.sh \
-  /var/www/everydayai/backend --runtime-flags-off-v3
 ```
 
 Secret-capable 服务另使用 `backend/.env.kek`，格式参考
@@ -220,84 +250,8 @@ bash deploy/validate-kek-env.sh /var/www/everydayai/backend/.env.kek
 Backend 配置管理接口与 Sync Bundle 解析均需要加解密，因此两个服务单元必须加载
 `.env.kek`；Actor、WeCom 和普通 Worker 不得加载该文件。
 
-独立 Agent Runtime Worker 加载 `/etc/everydayai/agent-runtime-worker.env` 和
-`/etc/everydayai/agent-runtime-model.env`。前者只包含窄数据库角色、进程身份、release、
-health socket 与 Sandbox 路径；后者只包含批准的 KEK current version/keyring，归属
-`root:everydayai-runtime-model-secret`、mode `0640`，且只有 Runtime user 属于该组。
-两者都不得包含 Provider API Key 或原始租户凭证。Runtime 使用现有配置 Bundle 解析企业/
-用户/平台选择，并在一次请求局部解密后构造现有模型 adapter；缺少 fenced Attempt、配置、
-KEK 或有效 SecretReference 时失败关闭。Systemd 继续禁止访问 Backend `.env` 与 `.env.kek`。
-
 在 Agent Runtime grant、policy 和测试库 RLS 验证完成前，不得修改 Systemd
 `EnvironmentFile` 指向这些角色文件。
-
-### Production flags-off 单元安装
-
-`--runtime-flags-off-install` 是与前端、后端、setup 和 skip 选项互斥的安装路径。
-它只同步 flags-off 安装文件，并安装以下四个单元及 Sandbox cgroup wrapper：
-
-- `everydayai-agent-runtime.service`
-- `everydayai-agent-projection.service`
-- `everydayai-agent-authorization.service`
-- `everydayai-sandbox-worker.service`
-
-执行前必须由运维人员准备 `/etc/everydayai/` 下 Runtime Worker、Runtime Model、
-Projection、Authorization 与 Sandbox 环境文件，权限为 `0640`；每个文件必须与仓库模板
-键集合完全一致、无重复键或占位符。所有 Worker 使用
-`AGENT_RUNTIME_RELEASE_REVISION` 并等于本次 40 位 release SHA。Runtime composition
-production flag 必须保持 `false`；Sandbox 配置也必须包含 release revision。
-
-发布脚本会在任何远端写入前执行明确的 unit 状态合同：已存在 unit 只接受
-`inactive + disabled`，尚不存在 unit 只接受 `inactive + not-found`。安装完成后再次
-检查，四个 unit 必须全部严格为 `inactive + disabled`。随后安装入口调用：
-
-旧 `everydayai-agent-model-gateway` unit 必须严格为 `inactive + not-found`，旧
-`agent-model-gateway.env` 与 `agent-model-gateway-kek.env` 也必须不存在。发现任一旧资产时
-安装失败关闭，不自动停止、删除或改权；应先执行单独审核并可恢复的退役操作，防止新旧模型
-执行 Owner 并存或旧 Secret 被通用文件授权逻辑扩大可读范围。
-
-```bash
-bash deploy/install-service-units.sh \
-  /var/www/everydayai/backend agent-runtime-only <40位-release-sha>
-```
-
-该模式只执行 `systemctl daemon-reload`，不运行 migration，不重启旧服务，不启停或
-enable 新服务，也不切换数据库 Owner。若任一已有 unit 或 wrapper 与发布内容不同，
-安装会在写入任何目标前失败，原文件保持不变；需先人工审查差异并制定恢复方案，禁止
-通过该入口直接覆盖。
-
-生产已有三个控制面 unit 与候选不同时，使用独立的
-`--runtime-control-plane-flags-off-update`，并提供审查时记录的当前 target SHA-256
-manifest（精确三行 `SHA256  unit-name.service`）：
-
-```bash
-bash deploy/deploy.sh \
-  --runtime-control-plane-flags-off-update \
-  --expected-unit-manifest /secure/reviewed-control-plane-units.sha256 \
-  --expected-sha <40位候选提交SHA>
-```
-
-该模式先验证三个 unit 严格 `inactive + disabled`，并通过 stdin 发送只读 checker，
-在 rsync 前核对 reviewed target SHA-256；随后由服务器上的
-`provision-control-plane-worker-envs.py` 直接读取 `backend/.env`、
-`backend/.env.migrator` 和 `backend/.env.kek`。Secret 不通过命令行、日志或同步文件传递；
-Runtime/Projection/Authorization env 以 `root:everydayai-app`，仅两个批准键的 Runtime
-Model KEK env 以 `root:everydayai-runtime-model-secret`，全部 `0640` 原子替换。安装预检
-校验精确 UID/GID，并验证 Runtime 是该 secret group 的唯一服务成员，任一偏差失败关闭。
-数据库 DSN 仅替换 URL-encoded 角色与密码，其余 migrator host/port/database/query 参数
-保持不变。Runtime composition production flag 固定为 `false`，Sandbox revision 标记为
-`unprovisioned`。
-
-随后 `control-plane-only` 再次校验 reviewed manifest，将三个旧 unit 与四份 env 全部
-备份到 `/var/backups/everydayai/control-plane-updates/<release-sha>/` 后才逐项原子替换。
-中途失败或内部 postcheck 失败会自动恢复全部旧 env/unit 并按需 `daemon-reload`；部署入口的
-外层 postcheck 失败也会触发相同恢复。该路径不读取、生成、同步或检查 Sandbox env、
-unit、wrapper、nsjail、policy 或 rootfs，不同步生产 code/backend，不运行 migration，
-不启停、enable、restart 服务，也不切换 Owner。
-
-代码验收入口为 Agent Runtime disposable workflow：使用 disposable PostgreSQL 与 mock
-Provider，覆盖 227_53 原子 dispatch/config facade、crash/response loss/UNKNOWN/drain 和
-部署事务。它不执行本节安装命令，也不表示 `production_ready=true`。
 
 首次所有权转移必须由 PostgreSQL 管理员执行，且必须先完成数据库备份：
 

@@ -16,10 +16,6 @@ from services.agent.runtime.ports.sandbox_job import (
 
 from .contracts import SandboxResourceLimits
 from .checkpoint import resolve_terminal_checkpoint
-from .cancel_handoff import (
-    finish_active_cancel, finish_unstarted_cancel,
-    reconcile_unstarted_cancel,
-)
 from .launcher import IsolationProbe, SandboxLauncherPort, SandboxLaunchRequest
 from .receipt import build_receipt
 from .workspace import SandboxWorkspaceStore
@@ -50,10 +46,6 @@ class SandboxJobWorker:
     def drain(self) -> None:
         self._draining = True
 
-    @property
-    def draining(self) -> bool:
-        return self._draining
-
     def probe(self) -> IsolationProbe:
         """Expose the launcher's single authoritative readiness probe."""
         return self._launcher.probe()
@@ -78,21 +70,11 @@ class SandboxJobWorker:
                 lease_seconds=self._lease_seconds,
             )
         if claimed.outcome is SandboxJobOutcome.NOT_FOUND:
-            claimed = await self._jobs.claim_cancel(
-                worker_id=self._worker_id,
-                lease_seconds=self._lease_seconds,
-            )
-        if claimed.outcome is SandboxJobOutcome.NOT_FOUND:
             return WorkerCycleResult(worked=False, outcome="idle")
         if claimed.outcome is not SandboxJobOutcome.CLAIMED or claimed.job is None:
             return WorkerCycleResult(worked=False, outcome="claim_rejected")
         job = claimed.job
         try:
-            if job.status is SandboxJobStatus.CANCEL_REQUESTED:
-                outcome = await finish_unstarted_cancel(self, job)
-                return WorkerCycleResult(
-                    worked=True, outcome=outcome, job_id=job.job_id,
-                )
             return await self._execute(job)
         except Exception as error:
             logger.exception(
@@ -126,15 +108,6 @@ class SandboxJobWorker:
 
     async def _reconcile_claimed(self, job) -> WorkerCycleResult:
         job_id = job.job_id
-        if (
-            job.cancel_confirmed_at is not None
-            and job.starting_at is None
-            and job.started_at is None
-        ):
-            outcome = await reconcile_unstarted_cancel(self, job)
-            return WorkerCycleResult(
-                worked=True, outcome=outcome, job_id=job.job_id,
-            )
         checkpoint = self._workspace.read_terminal_checkpoint(job_id)
         if checkpoint is not None:
             outcome = await resolve_terminal_checkpoint(
@@ -242,10 +215,7 @@ class SandboxJobWorker:
             await process.prove_terminated()
             raise
         if cancelled:
-            outcome = await finish_active_cancel(self, job, process, result)
-            return WorkerCycleResult(
-                worked=True, outcome=outcome, job_id=job.job_id,
-            )
+            return await self._finish_cancel(job, process, result)
         if result.outcome != "succeeded":
             logger.error(
                 "SANDBOX_EXECUTION_RESULT | sandbox_job_id={} | outcome={}"
@@ -299,6 +269,75 @@ class SandboxJobWorker:
             )
             job = _job(renewed)
         return await task, job, False
+
+    async def _finish_cancel(self, job, process, result) -> WorkerCycleResult:
+        accepted = await process.request_cancel()
+        if not accepted:
+            await self._mark_unknown(job, "SANDBOX_CANCEL_SIGNAL_UNPROVEN")
+            return WorkerCycleResult(
+                worked=True, outcome="unknown", job_id=job.job_id,
+            )
+        signal = await self._jobs.record_cancel_signal(
+            job_id=job.job_id, claim_token=_claim(job),
+            fencing_token=job.fencing_token,
+            expected_version=job.state_version,
+            signal_state="accepted",
+        )
+        job = _job(signal)
+        if not await process.prove_terminated():
+            await self._mark_unknown(job, "SANDBOX_PROCESS_TREE_UNPROVEN")
+            return WorkerCycleResult(
+                worked=True, outcome="unknown", job_id=job.job_id,
+            )
+        confirmed = await self._jobs.record_cancel_signal(
+            job_id=job.job_id, claim_token=_claim(job),
+            fencing_token=job.fencing_token,
+            expected_version=job.state_version, signal_state="confirmed",
+        )
+        job = _job(confirmed)
+        _, output_dir = self._workspace.prepare_job(job.job_id)
+        limits = SandboxResourceLimits.from_request(job.resource_limits)
+        partials = self._workspace.quarantine(
+            job.job_id, output_dir,
+            max_bytes=limits.disk_bytes, max_files=limits.file_count,
+        )
+        digest, receipt = build_receipt(
+            execution_outcome="interrupted",
+            stdout=result.stdout, stderr=result.stderr,
+            partials=partials, cleaned=True,
+        )
+        await self._write_checkpoint(
+            job, "cancelled", "PROCESS_TREE_TERMINATED", digest, receipt,
+        )
+        if partials:
+            await self._mark_unknown(
+                job, "SANDBOX_CANCELLED_PENDING_CLEANUP",
+                partials=partials,
+            )
+            return WorkerCycleResult(
+                worked=True, outcome="unknown", job_id=job.job_id,
+            )
+        if (
+            not self._workspace.cleanup_job(job.job_id)
+            or not self._cleanup_inputs(job)
+        ):
+            await self._mark_unknown(job, "SANDBOX_CANCEL_CLEANUP_UNPROVEN")
+            return WorkerCycleResult(
+                worked=True, outcome="unknown", job_id=job.job_id,
+            )
+        terminal = await self._jobs.finish(
+            job_id=job.job_id, claim_token=_claim(job),
+            fencing_token=job.fencing_token,
+            expected_version=job.state_version,
+            terminal_status="cancelled",
+            terminal_reason="PROCESS_TREE_TERMINATED",
+            receipt_hash=digest, receipt=receipt,
+        )
+        if terminal.outcome.value in {"cancelled", "already_terminal"}:
+            self._workspace.cleanup_terminal_checkpoint(job.job_id)
+        return WorkerCycleResult(
+            worked=True, outcome=terminal.outcome.value, job_id=job.job_id,
+        )
 
     async def _finish(self, job, result, output_dir, limits) -> WorkerCycleResult:
         if result.outcome == "succeeded":
@@ -366,13 +405,6 @@ class SandboxJobWorker:
             self._workspace.cleanup_terminal_checkpoint(job.job_id)
         return WorkerCycleResult(
             worked=True, outcome=terminal.outcome.value, job_id=job.job_id,
-        )
-
-    async def _finish_cancel(self, job, process, result) -> WorkerCycleResult:
-        """Compatibility seam; cancellation ownership lives in cancel_handoff."""
-        outcome = await finish_active_cancel(self, job, process, result)
-        return WorkerCycleResult(
-            worked=True, outcome=outcome, job_id=job.job_id,
         )
 
     async def _write_checkpoint(

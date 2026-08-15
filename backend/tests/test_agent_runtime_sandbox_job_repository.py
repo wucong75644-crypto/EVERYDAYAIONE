@@ -58,7 +58,6 @@ def _job(status: str = "queued") -> dict[str, object]:
         "terminal_at": None,
         "artifact_manifest": {"schema_revision": 1, "items": []},
         "partial_effects": {"schema_revision": 1, "items": []},
-        "cleanup_evidence": {},
     }
 
 
@@ -130,30 +129,6 @@ async def test_runtime_adapter_forwards_immutable_create_binding() -> None:
 
 
 @pytest.mark.asyncio
-async def test_runtime_cancel_adapter_uses_only_fenced_v1_facade() -> None:
-    database = _Database(DatabaseAccessKind.AGENT_RUNTIME, {
-        "request_agent_runtime_sandbox_cancel_v1": {
-            "outcome": "cancel_requested", "job": _job("cancel_requested"),
-        },
-    })
-    repository = PostgresSandboxJobRepository(database)
-    receipt = await repository.request_runtime_cancel(
-        job_id=JOB_ID, attempt_id=ATTEMPT_ID,
-        reconciliation_token=TOKEN, expected_action_state_version=7,
-        request_hash="a" * 64,
-    )
-    assert receipt.outcome is SandboxJobOutcome.CANCEL_REQUESTED
-    assert database.calls == [(
-        "request_agent_runtime_sandbox_cancel_v1", {
-            "p_job_id": JOB_ID, "p_attempt_id": ATTEMPT_ID,
-            "p_reconciliation_token": TOKEN,
-            "p_expected_action_state_version": 7,
-            "p_request_hash": "a" * 64,
-        },
-    )]
-
-
-@pytest.mark.asyncio
 async def test_worker_adapter_cannot_call_runtime_mutation() -> None:
     database = _Database(DatabaseAccessKind.SANDBOX_WORKER, {})
     repository = PostgresSandboxJobRepository(database)
@@ -175,7 +150,6 @@ async def test_worker_adapter_maps_narrow_rpc_arguments() -> None:
         "get_sandbox_job",
         "get_owned_sandbox_job",
         "claim_next_sandbox_job",
-        "claim_next_sandbox_cancel_v1",
         "renew_sandbox_job_lease",
         "mark_sandbox_job_started",
         "recover_expired_sandbox_job",
@@ -198,7 +172,6 @@ async def test_worker_adapter_maps_narrow_rpc_arguments() -> None:
         claim_token=TOKEN, fencing_token=1,
     )
     await repository.claim(worker_id="sandbox-1")
-    await repository.claim_cancel(worker_id="sandbox-1")
     ownership = {
         "job_id": JOB_ID, "claim_token": TOKEN, "fencing_token": 1,
         "expected_version": 2,

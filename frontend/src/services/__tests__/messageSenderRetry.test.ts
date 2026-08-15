@@ -72,10 +72,7 @@ describe('sendMessage idempotent retry', () => {
     expect(requestMock).toHaveBeenCalledTimes(2);
     expect(requestMock.mock.calls[0][0]).toEqual(requestMock.mock.calls[1][0]);
     expect(requestMock.mock.calls[0][0]).toMatchObject({
-      headers: {
-        'Idempotency-Key': 'request-1',
-        'X-Request-Id': 'request-1',
-      },
+      headers: { 'Idempotency-Key': 'request-1' },
       data: {
         client_request_id: 'request-1', client_task_id: 'task-1',
         assistant_message_id: 'assistant-1',
@@ -189,51 +186,6 @@ describe('sendMessage idempotent retry', () => {
         generation_params: { type: 'image', model: 'gpt-image-2' },
       }),
     );
-  });
-
-  it('preserves stable Runtime slots during a single-slot retry', async () => {
-    const originalContent = [
-      { type: 'text', text: '批次结果' },
-      { type: 'image', url: 'https://x/0.png', slot_id: 'slot-0', slot_index: 0,
-        slot_status: 'completed', slot_revision: 1 },
-      { type: 'image', url: null, slot_id: 'slot-4', slot_index: 4,
-        slot_status: 'failed', slot_revision: 2, failed: true, error_code: 'failed' },
-    ];
-    const serverContent = [originalContent[0], originalContent[1], {
-      type: 'image', url: null, slot_id: 'slot-4', slot_index: 4,
-      slot_status: 'pending', slot_revision: 3,
-    }];
-    store.getMessage.mockReturnValue({
-      id: 'assistant-1', conversation_id: 'conv-1', role: 'assistant',
-      content: originalContent, status: 'failed',
-      created_at: '2026-07-16T00:00:00.000Z',
-      generation_params: { runtime_media_batch: { slot_count: 2 } },
-    });
-    requestMock.mockResolvedValue({
-      ...response,
-      operation: 'regenerate_single',
-      generation_type: 'image',
-      assistant_message: {
-        ...response.assistant_message,
-        content: serverContent,
-        generation_params: { runtime_media_batch: { slot_count: 2 } },
-      },
-    });
-
-    await sendMessage({
-      conversationId: 'conv-1', content: [], generationType: 'image',
-      operation: 'regenerate_single', originalMessageId: 'assistant-1', identifiers,
-      params: { image_index: 4, runtime_slot_id: 'slot-4', runtime_slot_revision: 2 },
-    });
-
-    expect(store.updateMessage).toHaveBeenCalledWith('assistant-1', expect.objectContaining({
-      content: [originalContent[0], originalContent[1], expect.objectContaining({
-        slot_id: 'slot-4', slot_index: 4, slot_status: 'pending', slot_revision: 3,
-      })],
-    }));
-    expect(store.updateMessage).toHaveBeenLastCalledWith('assistant-1', expect.objectContaining({
-      content: serverContent,
-    }));
   });
 
   it('retries an in-progress idempotency claim after the backend delay', async () => {

@@ -177,27 +177,6 @@ class ModelResponseReceipt:
 
 
 @dataclass(frozen=True, kw_only=True)
-class ModelExecutionBinding:
-    run_id: str
-    attempt_id: str
-    worker_id: str
-    execution_token: str
-    attempt_state_version: int
-
-    def __post_init__(self) -> None:
-        require_stable_value(self.run_id, "run_id")
-        require_stable_value(self.attempt_id, "attempt_id")
-        require_stable_value(self.worker_id, "worker_id")
-        require_stable_value(self.execution_token, "execution_token")
-        if (
-            isinstance(self.attempt_state_version, bool)
-            or not isinstance(self.attempt_state_version, int)
-            or self.attempt_state_version < 0
-        ):
-            raise ValueError("attempt_state_version must be non-negative")
-
-
-@dataclass(frozen=True, kw_only=True)
 class ModelStepRequest:
     model_step_id: ModelStepId
     model_id: str
@@ -209,7 +188,15 @@ class ModelStepRequest:
     tool_catalog_revision: str
     options: ModelRequestOptions
     org_id: str | None = None
-    execution_binding: ModelExecutionBinding | None = field(
+    # These fields are process-local builder inputs.  They are deliberately
+    # excluded from repr/equality and are never part of the request hash.
+    credential_lease: object | None = field(
+        default=None, repr=False, compare=False,
+    )
+    credential_scope: object | None = field(
+        default=None, repr=False, compare=False,
+    )
+    credential_purpose: str | None = field(
         default=None, repr=False, compare=False,
     )
 
@@ -250,15 +237,6 @@ class ModelStepResult:
             raise ValueError("response receipt tool count does not match result")
         if self.stop_reason is StopReason.TOOL_CALLS and not self.tool_calls:
             raise ValueError("tool_calls stop requires tool descriptors")
-        if self.tool_calls and self.stop_reason not in {
-            StopReason.TOOL_CALLS,
-            StopReason.MODEL_REFUSAL,
-        }:
-            raise ValueError("tool descriptors require tool_calls or model_refusal stop")
-        if self.stop_reason is StopReason.FINAL and (
-            self.output is None or self.output.kind is not ModelOutputKind.TEXT
-        ):
-            raise ValueError("final requires text output")
         if self.stop_reason is StopReason.STRUCTURED_FINAL and (
             self.output is None
             or self.output.kind is not ModelOutputKind.STRUCTURED

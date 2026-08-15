@@ -41,7 +41,6 @@ _ACTION_PROGRESS = {
     "action.unknown",
     "action.completed",
     "action.failed",
-    "action.rejected",
     "action.cancelled",
 }
 _RUN_ACTIONS = {

@@ -134,7 +134,7 @@ class TestExecuteSingleTool:
         )
         tc_out, text, is_error, _display = result
         assert is_error is True
-        assert "Agent Runtime" in text
+        assert "拒绝" in text or "超时" in text
         # 不应该调用 executor
         executor.execute.assert_not_called()
 
@@ -300,7 +300,7 @@ class TestExecuteSingleToolAgentResult:
             source="erp_agent", tokens_used=500,
         ))
 
-        tc = {"name": "search_knowledge", "id": "tc1", "arguments": '{"query":"查订单"}'}
+        tc = {"name": "erp_agent", "id": "tc1", "arguments": '{"task":"查订单"}'}
         tc_out, result, is_error, _display = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
@@ -325,7 +325,7 @@ class TestExecuteSingleToolAgentResult:
             source="erp_agent", error_message="查询超时",
         ))
 
-        tc = {"name": "search_knowledge", "id": "tc1", "arguments": '{"query":"查订单"}'}
+        tc = {"name": "erp_agent", "id": "tc1", "arguments": '{"task":"查订单"}'}
         tc_out, result, is_error, _display = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
@@ -349,12 +349,13 @@ class TestExecuteSingleToolAgentResult:
             source="erp_agent",
         ))
 
-        tc = {"name": "search_knowledge", "id": "tc1", "arguments": '{"query":"查"}'}
+        tc = {"name": "erp_agent", "id": "tc1", "arguments": '{"task":"查"}'}
         await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
 
-        mock_ws.send_tool_confirmation.assert_not_awaited()
+        # Confirmation uses its acknowledged channel; result and step use normal WS.
+        mock_ws.send_tool_confirmation.assert_awaited_once()
         assert mock_ws.send_to_task_or_user.call_count == 2
 
     @pytest.mark.asyncio
@@ -369,7 +370,7 @@ class TestExecuteSingleToolAgentResult:
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value="搜索结果：3条")
 
-        tc = {"name": "search_knowledge", "id": "tc1", "arguments": '{"query":"天气"}'}
+        tc = {"name": "web_search", "id": "tc1", "arguments": '{"query":"天气"}'}
         tc_out, result, is_error, _display = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
@@ -417,3 +418,264 @@ class TestExecuteToolCallsAgentResult:
         assert mixin._pending_emit_payloads[0]["url"] == "/tmp/a.parquet"
         assert mixin._pending_emit_payloads[0]["kind"] == "file"
         assert mixin._erp_agent_tokens == 300
+
+
+
+# ============================================================
+# FormBlockResult 通道（content_block_add 推送）
+# ============================================================
+
+
+class TestFormBlockResultChannel:
+    """_execute_single_tool 收到 FormBlockResult 时的短路路径
+
+    FormBlockResult 与 AgentResult 平级：
+    - 推送 content_block_add 到前端（表单渲染）
+    - 推送 tool_result（表单已展示）
+    - 返回 llm_hint 给 LLM（不展示给用户）
+    """
+
+    @pytest.mark.asyncio
+    @patch("services.handlers.chat_tool_mixin.ws_manager")
+    async def test_form_block_stores_pending_and_returns_hint(self, mock_ws):
+        """FormBlockResult → 暂存到 _pending_form_block + 返回 llm_hint
+
+        content_block_add 推送由 chat_handler 统一处理（复用 _pending_file_parts 模式），
+        _execute_single_tool 只负责暂存和发 tool_result。
+        """
+        from services.scheduler.chat_task_manager import FormBlockResult
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = _make_mixin()
+        mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.send_tool_confirmation = AsyncMock(return_value=True)
+        executor = AsyncMock()
+
+        form_data = {
+            "type": "form",
+            "form_type": "scheduled_task_create",
+            "form_id": "test_form_1",
+            "title": "创建定时任务",
+            "fields": [],
+        }
+        executor.execute = AsyncMock(return_value=FormBlockResult(
+            form=form_data,
+            llm_hint="已向用户展示创建定时任务，等待用户确认。",
+        ))
+
+        tc = {"name": "manage_scheduled_task", "id": "tc1",
+              "arguments": '{"action":"create","description":"每天9点推日报"}'}
+        tc_out, result, is_error, _display = await ChatToolMixin._execute_single_tool(
+            mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
+        )
+
+        # 返回 llm_hint 字符串
+        assert is_error is False
+        assert isinstance(result, str)
+        assert "等待用户确认" in result
+        # form 暂存到 _pending_form_block（chat_handler 统一处理）
+        assert mixin._pending_form_block is not None
+        assert mixin._pending_form_block["form_type"] == "scheduled_task_create"
+        # Confirmation uses its acknowledged channel.
+        mock_ws.send_tool_confirmation.assert_awaited_once()
+        ws_calls = mock_ws.send_to_task_or_user.call_args_list
+        assert len(ws_calls) == 2
+        assert ws_calls[0][0][2]["type"] == "tool_result"
+
+    @pytest.mark.asyncio
+    @patch("services.handlers.chat_tool_mixin.ws_manager")
+    async def test_form_block_emits_audit(self, mock_ws):
+        """FormBlockResult → 审计日志记录"""
+        from services.scheduler.chat_task_manager import FormBlockResult
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = _make_mixin()
+        mixin._emit_tool_audit = MagicMock()
+        mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.send_tool_confirmation = AsyncMock(return_value=True)
+        executor = AsyncMock()
+        executor.execute = AsyncMock(return_value=FormBlockResult(
+            form={"type": "form", "form_type": "scheduled_task_update", "fields": []},
+        ))
+
+        tc = {"name": "manage_scheduled_task", "id": "tc2",
+              "arguments": '{"action":"update","task_name":"日报"}'}
+        await ChatToolMixin._execute_single_tool(
+            mixin, tc, executor, "task1", "conv1", "msg1", "user1", 2,
+        )
+
+        mixin._emit_tool_audit.assert_called_once()
+        audit_args = mixin._emit_tool_audit.call_args[0]
+        assert audit_args[3] == "manage_scheduled_task"  # tool_name
+        assert audit_args[9] == "success"  # status (index 9)
+
+
+class TestPushToolStepUpdate:
+    """_push_tool_step_update() — tool_step 完成/失败更新推送"""
+
+    @pytest.mark.asyncio
+    @patch("services.handlers.chat_tool_mixin.ws_manager")
+    async def test_completed_step_pushes_content_block_add(self, mock_ws):
+        """成功完成 → 推送 content_block_add(status=completed)"""
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = _make_mixin()
+        mixin.org_id = "org-1"
+        mock_ws.send_to_task_or_user = AsyncMock()
+
+        await ChatToolMixin._push_tool_step_update(
+            mixin, "task1", "conv1", "msg1", "user1",
+            "web_search", "tc_1",
+            success=True, output="找到3条结果", elapsed_ms=1500,
+        )
+
+        mock_ws.send_to_task_or_user.assert_called_once()
+        assert mock_ws.send_to_task_or_user.call_args.kwargs["org_id"] == "org-1"
+        call_args = mock_ws.send_to_task_or_user.call_args[0]
+        ws_msg = call_args[2]
+        assert ws_msg["type"] == "content_block_add"
+        block = ws_msg["payload"]["block"]
+        assert block["type"] == "tool_step"
+        assert block["tool_call_id"] == "tc_1"
+        assert block["status"] == "completed"
+        assert block["output"] == "找到3条结果"
+        assert block["elapsed_ms"] == 1500
+
+    @pytest.mark.asyncio
+    @patch("services.handlers.chat_tool_mixin.ws_manager")
+    async def test_error_step_pushes_error_status(self, mock_ws):
+        """执行失败 → 推送 status=error"""
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = _make_mixin()
+        mock_ws.send_to_task_or_user = AsyncMock()
+
+        await ChatToolMixin._push_tool_step_update(
+            mixin, "task1", "conv1", "msg1", "user1",
+            "erp_agent", "tc_2",
+            success=False, output="连接超时", elapsed_ms=30000,
+        )
+
+        block = mock_ws.send_to_task_or_user.call_args[0][2]["payload"]["block"]
+        assert block["status"] == "error"
+        assert block["output"] == "连接超时"
+
+    @pytest.mark.asyncio
+    @patch("services.handlers.chat_tool_mixin.ws_manager")
+    async def test_code_execute_includes_output(self, mock_ws):
+        """code_execute → 附带 output 字段"""
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = _make_mixin()
+        mock_ws.send_to_task_or_user = AsyncMock()
+
+        await ChatToolMixin._push_tool_step_update(
+            mixin, "task1", "conv1", "msg1", "user1",
+            "code_execute", "tc_3",
+            success=True, output="图表已生成\n处理了120条数据\n图表已保存", elapsed_ms=5000,
+        )
+
+        block = mock_ws.send_to_task_or_user.call_args[0][2]["payload"]["block"]
+        assert "图表已生成" in block["output"]
+
+    @pytest.mark.asyncio
+    @patch("services.handlers.chat_tool_mixin.ws_manager")
+    async def test_ws_failure_does_not_raise(self, mock_ws):
+        """WS 推送失败 → 不抛异常（降级为 warning 日志）"""
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = _make_mixin()
+        mock_ws.send_to_task_or_user = AsyncMock(side_effect=ConnectionError("WS断开"))
+
+        # 不应抛异常
+        await ChatToolMixin._push_tool_step_update(
+            mixin, "task1", "conv1", "msg1", "user1",
+            "web_search", "tc_4",
+            success=True, output="ok", elapsed_ms=100,
+        )
+
+    @pytest.mark.asyncio
+    @patch("services.handlers.chat_tool_mixin.ws_manager")
+    async def test_output_none_omitted_from_block(self, mock_ws):
+        """output=None 时不出现在 block 中"""
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = _make_mixin()
+        mock_ws.send_to_task_or_user = AsyncMock()
+
+        await ChatToolMixin._push_tool_step_update(
+            mixin, "task1", "conv1", "msg1", "user1",
+            "web_search", "tc_5",
+            success=True, output="", elapsed_ms=100,
+        )
+
+        block = mock_ws.send_to_task_or_user.call_args[0][2]["payload"]["block"]
+        # output 为空字符串时仍存在于 block 中（函数总是设置该字段）
+        assert block["output"] == ""
+
+
+# ============================================================
+# request_ctx fallback warning
+# ============================================================
+
+
+class TestRequestCtxFallback:
+    """request_ctx 未注入时的 fallback 行为"""
+
+    @pytest.mark.asyncio
+    async def test_fallback_logs_warning_when_request_ctx_missing(self):
+        """handler 无 request_ctx 时，_execute_tool_calls 应走 fallback 并 warning"""
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = MagicMock(spec=ChatToolMixin)
+        mixin.db = MagicMock()
+        mixin.org_id = None
+        # 关键：不设置 request_ctx → getattr 返回 None → 触发 fallback
+        del mixin.request_ctx
+
+        with patch("services.agent.tool_executor.ToolExecutor") as MockExecutor, \
+             patch("services.handlers.chat_tool_mixin.logger") as mock_logger:
+            mock_exec = MagicMock()
+            # emit_payloads 由 tool_loop_executor 处理 (沙盒 IO 统一协议)
+            MockExecutor.return_value = mock_exec
+
+            # 调用真实方法
+            await ChatToolMixin._execute_tool_calls(
+                mixin,
+                tool_calls=[],
+                task_id="t1", conversation_id="c1",
+                message_id="m1", user_id="u1",
+                turn=0, messages=[], budget=None,
+            )
+
+            # 验证 warning 日志被触发
+            mock_logger.warning.assert_called_once()
+            assert "fallback" in mock_logger.warning.call_args[0][0].lower()
+
+    @pytest.mark.asyncio
+    async def test_no_warning_when_request_ctx_present(self):
+        """handler 有 request_ctx 时，不应触发 fallback warning"""
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+        from utils.time_context import RequestContext
+
+        mixin = MagicMock(spec=ChatToolMixin)
+        mixin.db = MagicMock()
+        mixin.org_id = None
+        mixin.request_ctx = RequestContext.build(user_id="u1")
+
+        with patch("services.agent.tool_executor.ToolExecutor") as MockExecutor, \
+             patch("services.handlers.chat_tool_mixin.logger") as mock_logger:
+            mock_exec = MagicMock()
+            # emit_payloads 由 tool_loop_executor 处理 (沙盒 IO 统一协议)
+            MockExecutor.return_value = mock_exec
+
+            await ChatToolMixin._execute_tool_calls(
+                mixin,
+                tool_calls=[],
+                task_id="t1", conversation_id="c1",
+                message_id="m1", user_id="u1",
+                turn=0, messages=[], budget=None,
+            )
+
+            # 不应有 warning
+            mock_logger.warning.assert_not_called()

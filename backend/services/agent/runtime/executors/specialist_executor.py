@@ -42,13 +42,8 @@ class SpecialistExecutor:
             self.capability.assert_valid(attempt, self.executor_type, self.revision)
         try:
             validate_public_request(snapshot.request)
-            provider_request = dict(snapshot.request)
-            if getattr(self.provider, "requires_dispatch_context", False):
-                provider_request["_dispatch_context"] = dict(
-                    snapshot.dispatch_context,
-                )
             receipt = await self.provider.submit(
-                attempt, provider_request,
+                attempt, snapshot.request,
                 idempotency_key=action_idempotency_key(attempt, self.executor_type),
             )
             if receipt.request_hash != snapshot.request_hash:

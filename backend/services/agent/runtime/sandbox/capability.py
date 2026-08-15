@@ -127,20 +127,6 @@ class SandboxJobCapability:
             job_id=job_id, expected_version=expected_version,
         )
 
-    async def request_runtime_cancel(
-        self, *, action_id: str, attempt_id: str, job_id: str,
-        reconciliation_token: str, expected_action_state_version: int,
-        request_hash: str,
-    ) -> SandboxJobReceipt:
-        self._assert_operation("cancel")
-        self.binding.assert_live(action_id, attempt_id)
-        return await self._jobs.request_runtime_cancel(
-            job_id=job_id, attempt_id=attempt_id,
-            reconciliation_token=reconciliation_token,
-            expected_action_state_version=expected_action_state_version,
-            request_hash=request_hash,
-        )
-
     def cleanup_staged_attempt(
         self, *, action_id: str, attempt_id: str,
     ) -> bool:

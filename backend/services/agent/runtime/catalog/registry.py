@@ -59,20 +59,13 @@ class RuntimeToolCatalog:
         from config.code_tools import CODE_TOOL_SCHEMAS
         from config.runtime_read_tools import RUNTIME_READ_TOOL_SCHEMAS
         from config.tool_safety import get_safety_level
-        from services.agent.runtime.catalog.specialist_schemas import (
-            SPECIALIST_TOOL_SCHEMAS,
-        )
         from services.agent.runtime.executors.sandbox_job import (
             SANDBOX_EXECUTOR_TYPE,
         )
         result = cls()
         for descriptor in registry.descriptors():
             for name in sorted(descriptor.action_kinds):
-                schema = (
-                    CODE_TOOL_SCHEMAS.get(name)
-                    or RUNTIME_READ_TOOL_SCHEMAS.get(name)
-                    or SPECIALIST_TOOL_SCHEMAS.get(name)
-                )
+                schema = CODE_TOOL_SCHEMAS.get(name) or RUNTIME_READ_TOOL_SCHEMAS.get(name)
                 if schema is None:
                     raise ValueError(f"RUNTIME_TOOL_SCHEMA_MISSING:{name}")
                 safety = get_safety_level(name).value
@@ -119,13 +112,6 @@ class RuntimeToolCatalog:
 
 def _read_tool_group(tool_name: str) -> str:
     from services.agent.runtime.executors.read_registry import READ_TOOL_SPECS
-    from services.agent.runtime.executors.specialist_registry import (
-        ERP_RUNTIME_READ_TOOLS,
-    )
-    if tool_name in ERP_RUNTIME_READ_TOOLS:
-        return "erp"
-    if tool_name in {"local_data", "file_analyze", "fetch_all_pages"}:
-        return "artifact"
     try:
         return READ_TOOL_SPECS[tool_name][1]
     except KeyError as exc:
@@ -134,11 +120,6 @@ def _read_tool_group(tool_name: str) -> str:
 
 def _read_scope_kinds(tool_name: str) -> frozenset[str]:
     from services.agent.runtime.executors.read_registry import READ_SCOPE_KINDS
-    from services.agent.runtime.executors.specialist_registry import (
-        ERP_RUNTIME_READ_TOOLS,
-    )
-    if tool_name in ERP_RUNTIME_READ_TOOLS:
-        return frozenset({"user", "channel"})
     try:
         return READ_SCOPE_KINDS[tool_name]
     except KeyError as exc:

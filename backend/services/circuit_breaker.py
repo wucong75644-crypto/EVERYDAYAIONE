@@ -7,7 +7,7 @@ Provider 级别熔断器
 
 import time
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Dict, List
 
 from loguru import logger
 
@@ -23,32 +23,18 @@ _DEFAULT_FAILURE_WINDOW: float = 60.0
 _DEFAULT_OPEN_DURATION: float = 30.0
 
 
-def _get_config(settings: Any | None = None):
+def _get_config():
     """懒加载配置，避免循环导入"""
-    if settings is None:
-        try:
-            from core.config import get_settings
-            settings = get_settings()
-        except Exception:
-            return (
-                _DEFAULT_FAILURE_THRESHOLD,
-                _DEFAULT_FAILURE_WINDOW,
-                _DEFAULT_OPEN_DURATION,
-            )
-    return (
-        getattr(
-            settings, "circuit_breaker_failure_threshold",
-            _DEFAULT_FAILURE_THRESHOLD,
-        ),
-        getattr(
-            settings, "circuit_breaker_failure_window",
-            _DEFAULT_FAILURE_WINDOW,
-        ),
-        getattr(
-            settings, "circuit_breaker_open_duration",
-            _DEFAULT_OPEN_DURATION,
-        ),
-    )
+    try:
+        from core.config import get_settings
+        s = get_settings()
+        return (
+            s.circuit_breaker_failure_threshold,
+            s.circuit_breaker_failure_window,
+            s.circuit_breaker_open_duration,
+        )
+    except Exception:
+        return _DEFAULT_FAILURE_THRESHOLD, _DEFAULT_FAILURE_WINDOW, _DEFAULT_OPEN_DURATION
 
 
 class CircuitState(str, Enum):
@@ -61,15 +47,13 @@ class CircuitState(str, Enum):
 class CircuitBreaker:
     """单个 Provider 的熔断器"""
 
-    def __init__(
-        self, provider: ModelProvider, *, settings: Any | None = None,
-    ) -> None:
+    def __init__(self, provider: ModelProvider) -> None:
         self._provider = provider
         self._state = CircuitState.CLOSED
         self._failure_timestamps: list = []
         self._opened_at: float = 0.0
         # 读取配置
-        threshold, window, duration = _get_config(settings)
+        threshold, window, duration = _get_config()
         self._failure_threshold = threshold
         self._failure_window = window
         self._open_duration = duration
@@ -134,20 +118,16 @@ class CircuitBreaker:
 _breakers: Dict[ModelProvider, CircuitBreaker] = {}
 
 
-def get_breaker(
-    provider: ModelProvider, *, settings: Any | None = None,
-) -> CircuitBreaker:
+def get_breaker(provider: ModelProvider) -> CircuitBreaker:
     """获取指定 provider 的熔断器（懒初始化）"""
     if provider not in _breakers:
-        _breakers[provider] = CircuitBreaker(provider, settings=settings)
+        _breakers[provider] = CircuitBreaker(provider)
     return _breakers[provider]
 
 
-def is_provider_available(
-    provider: ModelProvider, *, settings: Any | None = None,
-) -> bool:
+def is_provider_available(provider: ModelProvider) -> bool:
     """快捷方法：检查 provider 是否可用"""
-    return get_breaker(provider, settings=settings).is_available()
+    return get_breaker(provider).is_available()
 
 
 def get_available_providers() -> List[ModelProvider]:

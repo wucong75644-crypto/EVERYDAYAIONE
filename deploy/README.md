@@ -77,6 +77,7 @@ bash /tmp/setup-env.sh
 | `setup-env.sh` | 环境变量配置助手（在服务器上运行） |
 | `nginx.conf` | Nginx配置模板 |
 | `everydayai-backend.service` | Systemd服务配置 |
+| `runtime-cutover-rollback.py` | 2026-08 Runtime 接管的一次性、失败关闭回退工具 |
 | `config.env` | 部署配置文件（需手动创建） |
 | `DEPLOYMENT.md` | 完整部署文档 |
 

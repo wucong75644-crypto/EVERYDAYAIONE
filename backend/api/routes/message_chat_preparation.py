@@ -6,9 +6,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from loguru import logger
-
-from core.exceptions import AppException
 from schemas.message import (
     GenerateRequest,
     GenerateResponse,
@@ -71,8 +68,7 @@ async def prepare_and_start_chat_generation(
         user_id=user_id,
         placeholder_at=placeholder_at,
     )
-    lifecycle = GenerationLifecycle(db)
-    preparation = lifecycle.prepare(
+    preparation = GenerationLifecycle(db).prepare(
         request_id=request_id,
         operation=body.operation.value,
         conversation_id=conversation_id,
@@ -83,42 +79,22 @@ async def prepare_and_start_chat_generation(
         output_message=_output_payload(body, assistant_message_id, placeholder_at),
         tasks=[task_payload],
     )
-    try:
-        ingress = await _submit_runtime_ingress(
-            db=db, handler=handler, conversation_id=conversation_id,
-            user_id=user_id, org_id=org_id, request_id=request_id, body=body,
-            preparation=preparation, business_params=business_params,
-            internal_task_id=internal_task_id,
-        )
-        if not ingress.accepted or ingress.runtime_owned is not True:
-            raise RuntimeError(f"RUNTIME_INGRESS_{ingress.outcome.upper()}")
-    except Exception as error:
-        failure_code = _runtime_ingress_failure_code(error)
-        try:
-            lifecycle.fail_web_runtime_ingress(
-                task_id=internal_task_id,
-                conversation_id=conversation_id,
-                user_id=user_id,
-                org_id=org_id,
-                input_message_id=preparation.input_message_id,
-                output_message_id=preparation.output_message_id,
-                turn_id=preparation.turn_id,
-                client_task_id=client_task_id,
-                failure_code=failure_code,
-            )
-        except Exception:
-            logger.exception(
-                "web_runtime_ingress_failure_finalization_failed | "
-                f"task_id={internal_task_id} | conversation_id={conversation_id}"
-            )
-            raise RuntimeError(
-                "RUNTIME_INGRESS_FAILURE_FINALIZATION_FAILED"
-            ) from error
-        raise AppException(
-            code="RUNTIME_INGRESS_UNAVAILABLE",
-            message="生成服务暂未就绪，请稍后重试",
-            status_code=503,
-        ) from error
+    metadata = TaskMetadata(
+        client_task_id=client_task_id,
+        placeholder_created_at=placeholder_at,
+        input_message_id=preparation.input_message_id,
+        turn_id=preparation.turn_id,
+        execution_mode="serial",
+        context_anchor=preparation.context_anchor(internal_task_id, org_id),
+    )
+    external_task_id = await handler.start(
+        message_id=preparation.output_message_id,
+        conversation_id=conversation_id,
+        user_id=user_id,
+        content=body.content,
+        params=business_params,
+        metadata=metadata,
+    )
     user_message = _build_user_message(
         body, conversation_id, preparation.input_message_id,
         preparation.turn_id, created_at,
@@ -130,7 +106,7 @@ async def prepare_and_start_chat_generation(
             metadata={"conversation_id": conversation_id},
         )
     return GenerateResponse(
-        task_id=client_task_id,
+        task_id=client_task_id or external_task_id,
         user_message=user_message,
         assistant_message=_build_assistant_message(
             body, conversation_id, preparation.output_message_id,
@@ -165,59 +141,9 @@ def _build_task_payload(
     payload.update({
         "id": internal_task_id,
         "execution_mode": "serial",
-        # Runtime-required Web tasks are never visible to the legacy Actor.
-        # The required-owner RPC resolves this pending marker to Runtime-owned
-        # or fail-closed rejected state after the durable ingress succeeds.
-        "delivery_context": {
-            "actor": False,
-            "runtime": False,
-            "runtime_pending": True,
-            "channel": "web",
-        },
+        "delivery_context": {"actor": True, "channel": "web"},
     })
     return payload
-
-
-async def _submit_runtime_ingress(
-    *, db: Any, handler: Any, conversation_id: str, user_id: str,
-    org_id: str | None, request_id: str, body: GenerateRequest,
-    preparation: Any, business_params: dict[str, Any],
-    internal_task_id: str,
-):
-    from core.config import get_settings
-    from services.agent.runtime.ingress import RuntimeIngress
-
-    row = db.table("conversations").select(
-        "scope_type,scope_id",
-    ).eq("id", conversation_id).single().execute()
-    conversation = row.data if row else None
-    if not isinstance(conversation, dict):
-        raise RuntimeError("RUNTIME_INGRESS_CONVERSATION_MISSING")
-    settings = get_settings()
-    return await RuntimeIngress(db).submit(
-        conversation_id=conversation_id, org_id=org_id, user_id=user_id,
-        scope_kind=str(conversation["scope_type"]),
-        scope_id=str(conversation["scope_id"]),
-        agent_definition_id=settings.agent_runtime_agent_definition_id,
-        agent_definition_revision=settings.agent_runtime_agent_definition_revision,
-        command_type="submit_input", idempotency_key=request_id,
-        payload={
-            "schema_revision": 1, "channel": "web",
-            "text": handler._extract_text_content(body.content),
-            "task_id": internal_task_id,
-            "client_task_id": body.client_task_id,
-            "input_message_id": preparation.input_message_id,
-            "output_message_id": preparation.output_message_id,
-            "turn_id": preparation.turn_id,
-            "content": serialize_content_parts(body.content),
-            "model_id": body.model or DEFAULT_MODEL_ID,
-            "params": business_params,
-            "delivery_context": {
-                "actor": False, "runtime": True, "channel": "web",
-            },
-            "request_id": request_id,
-        },
-    )
 
 
 def _business_params(body: GenerateRequest) -> dict[str, Any]:
@@ -307,12 +233,3 @@ def _required_identity(value: str | None) -> str:
     if not value:
         raise RuntimeError("GENERATION_REQUEST_IDENTITY_MISSING")
     return value
-
-
-def _runtime_ingress_failure_code(error: Exception) -> str:
-    marker = str(error).upper()
-    if "RUNTIME_REQUIRED_UNAVAILABLE" in marker:
-        return "RUNTIME_REQUIRED_UNAVAILABLE"
-    if "BINDING" in marker:
-        return "RUNTIME_BINDING_REJECTED"
-    return "RUNTIME_INGRESS_EXCEPTION"

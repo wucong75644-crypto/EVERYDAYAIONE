@@ -48,14 +48,12 @@ show_help() {
     --skip-build           跳过构建步骤
     --skip-test            跳过测试
     --expected-sha SHA     只部署指定且已推送的 Git 提交
-    --runtime-flags-off-install  仅安装 flags-off Runtime 单元，不迁移或启停服务
-    --runtime-control-plane-flags-off-update --expected-unit-manifest PATH  reviewed 更新三控制面 unit
+
 示例:
     $0 -s                   首次部署（包含服务器初始化）
     $0                      正常部署（前后端都部署）
     $0 -f                   仅部署前端
     $0 -b                   仅部署后端
-    $0 --runtime-flags-off-install  安装四个关闭状态的 Runtime 单元
 EOF
 }
 
@@ -317,9 +315,6 @@ deploy_backend() {
             everydayai-sync
             everydayai-wecom
             everydayai-conversation-actor
-            everydayai-agent-runtime
-            everydayai-agent-projection
-            everydayai-agent-authorization
         )
         for service in "${services[@]}"; do
             if ! systemctl list-unit-files "${service}.service" --no-legend \
@@ -333,51 +328,6 @@ deploy_backend() {
                 exit 1
             }
         done
-        runtime_health_sockets=(
-            /run/everydayai-agent-runtime/health.sock
-            /run/everydayai-agent-projection/health.sock
-            /run/everydayai-agent-authorization/health.sock
-        )
-        for socket_path in "${runtime_health_sockets[@]}"; do
-            for attempt in $(seq 1 20); do
-                if [ -S "$socket_path" ]; then
-                    break
-                fi
-                if [ "$attempt" -eq 20 ]; then
-                    echo "❌ Runtime health socket 未就绪: $socket_path"
-                    sudo systemctl --no-pager --full status \
-                        "$(basename "${socket_path%/health.sock}")" || true
-                    exit 1
-                fi
-                sleep 1
-            done
-        done
-        sandbox_env=/etc/everydayai/sandbox-worker.env
-        if [ -f "$sandbox_env" ]; then
-            sudo systemctl restart everydayai-sandbox-worker
-            sudo systemctl is-active --quiet everydayai-sandbox-worker || {
-                sudo journalctl -u everydayai-sandbox-worker -n 50 --no-pager
-                exit 1
-            }
-            for attempt in $(seq 1 20); do
-                if [ -S /run/everydayai-sandbox-worker/health.sock ]; then
-                    break
-                fi
-                if [ "$attempt" -eq 20 ]; then
-                    echo "❌ Sandbox health socket 未就绪"
-                    sudo journalctl -u everydayai-sandbox-worker -n 80 --no-pager
-                    exit 1
-                fi
-                sleep 1
-            done
-        else
-            if systemctl is-active --quiet everydayai-sandbox-worker; then
-                echo "❌ Sandbox 环境文件缺失但服务仍在运行: $sandbox_env"
-                exit 1
-            fi
-            sudo systemctl reset-failed everydayai-sandbox-worker || true
-            echo "ℹ️ Sandbox 环境文件未配置，保持 Sandbox 停用"
-        fi
         for attempt in $(seq 1 20); do
             if curl --fail --silent http://127.0.0.1:8000/api/health \
                 | grep -q '"status":"ok"'; then
@@ -396,7 +346,7 @@ deploy_backend() {
                 echo "❌ backend 仍在启动 ERP 同步"
                 exit 1
             }
-        echo "✅ 后端与 Runtime 控制面服务和 readiness 检查通过"
+        echo "✅ 后端四服务和 readiness 检查通过"
 ENDSSH
 
     log_success "后端部署完成"
@@ -531,8 +481,6 @@ main() {
     printf 'DEPLOY_RESULT sha=%s scope=%s technical=passed automatic_validation=passed business_acceptance=pending_user log=%s\n' \
         "$EXPECTED_SHA" "$deploy_scope" "$DEPLOY_LOG_FILE"
 }
-if [[ " $* " == *" --runtime-flags-off-install "* ]] \
-    || [[ " $* " == *" --runtime-control-plane-flags-off-update "* ]]; then
-    exec bash deploy/runtime-flags-off-install.sh "$@"
-fi
+
+# 执行主函数
 main "$@"

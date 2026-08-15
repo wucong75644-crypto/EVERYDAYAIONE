@@ -92,10 +92,6 @@ class SandboxJobRepositoryPort(Protocol):
         self, *, worker_id: str, lease_seconds: int = 60,
     ) -> SandboxJobReceipt: ...
 
-    async def claim_cancel(
-        self, *, worker_id: str, lease_seconds: int = 60,
-    ) -> SandboxJobReceipt: ...
-
     async def claim_next_reconciliation(
         self, *, worker_id: str, lease_seconds: int = 60,
     ) -> SandboxJobReceipt: ...
@@ -116,12 +112,6 @@ class SandboxJobRepositoryPort(Protocol):
 
     async def request_cancel(
         self, *, job_id: str, expected_version: int,
-    ) -> SandboxJobReceipt: ...
-
-    async def request_runtime_cancel(
-        self, *, job_id: str, attempt_id: str,
-        reconciliation_token: str, expected_action_state_version: int,
-        request_hash: str,
     ) -> SandboxJobReceipt: ...
 
     async def record_cancel_signal(

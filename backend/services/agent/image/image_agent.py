@@ -12,25 +12,23 @@
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
+
 
 from config.kie_models import calculate_image_cost
 from core.exceptions import InsufficientCreditsError
 from services.adapters.factory import create_image_adapter
 from services.agent.agent_result import AgentResult
 from services.agent.safe_tool_logging import log_agent_event
-from services.agent.runtime.ecom_capability import get_runtime_ecom_capability
 from services.handlers.mixins.credit_mixin import CreditMixin
-from .image_agent_helpers import (
-    build_image_error_result,
-    parse_image_plan,
-    validate_image_request,
-)
 from .image_processor import detect_aspect_ratio, detect_dimensions
 from .prompt_builder import PromptBuilder
-
-
+# CDN 域名白名单（防 SSRF）
+_ALLOWED_IMAGE_HOSTS = frozenset({"cdn.everydayai.com.cn", "img.everydayai.com.cn"})
 class ImageAgent(CreditMixin):
     """电商图片生成 Agent — 单张图片生成器。
 
@@ -47,7 +45,6 @@ class ImageAgent(CreditMixin):
         task_id: str | None = None,
         message_id: str | None = None,
         workspace_user_id: str | None = None,
-        runtime_owned: bool = True,
     ) -> None:
         self.db = db
         self.user_id = user_id
@@ -56,7 +53,6 @@ class ImageAgent(CreditMixin):
         self.org_id = org_id
         self.task_id = task_id
         self.message_id = message_id
-        self.runtime_owned = runtime_owned
         self._prompt_builder = PromptBuilder()
 
     # ----------------------------------------------------------
@@ -208,59 +204,43 @@ class ImageAgent(CreditMixin):
         messages: list[dict[str, Any]],
         has_images: bool,
     ) -> tuple[Any | None, str, AgentResult | None]:
+        from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
+
         model = (
             settings.image_enhance_vl_model
             if has_images else settings.image_enhance_model
         )
-        if not self.runtime_owned:
-            from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
-
-            models = [model, settings.image_enhance_fallback_model]
-            last_error: Exception | None = None
-            for index, candidate in enumerate(models):
-                adapter = DashScopeChatAdapter(
-                    api_key=settings.dashscope_api_key or "",
-                    model=candidate,
-                    base_url=settings.dashscope_base_url,
-                    stream_timeout=settings.image_enhance_timeout,
+        models = [model, settings.image_enhance_fallback_model]
+        last_error: Exception | None = None
+        for index, candidate in enumerate(models):
+            adapter = DashScopeChatAdapter(
+                api_key=settings.dashscope_api_key or "",
+                model=candidate,
+                base_url=settings.dashscope_base_url,
+                stream_timeout=settings.image_enhance_timeout,
+            )
+            try:
+                return (
+                    await adapter.chat_sync(messages=messages),
+                    candidate,
+                    None,
                 )
-                try:
-                    return await adapter.chat_sync(messages=messages), candidate, None
-                except Exception as error:
-                    last_error = error
-                    log_agent_event(
-                        "warning" if index == 0 else "error", "ecom_plan model failed",
-                        self, "image_agent", "IMAGE_PLAN_MODEL_FAILED", type(error).__name__,
-                    )
-                finally:
-                    await adapter.close()
-            return None, models[-1], AgentResult(
-                status="error", summary="方案生成失败，请稍后重试",
-                source="image_agent", error_message=f"LLM调用失败: {last_error}",
-            )
-        try:
-            return (
-                await get_runtime_ecom_capability().invoke_model(
-                    messages=messages, model=model,
-                    timeout_seconds=settings.image_enhance_timeout,
-                    org_id=self.org_id,
-                ),
-                model,
-                None,
-            )
-        except RuntimeEcomCapabilityUnavailable as error:
-            log_agent_event(
-                "warning", "ecom_plan blocked by Runtime capability",
-                self, "image_agent", "RUNTIME_ECOM_MODEL_UNAVAILABLE",
-                type(error).__name__,
-            )
+            except Exception as error:
+                last_error = error
+                log_agent_event(
+                    "warning" if index == 0 else "error", "ecom_plan model failed",
+                    self, "image_agent",
+                    "IMAGE_PLAN_MODEL_FAILED", type(error).__name__,
+                )
+            finally:
+                await adapter.close()
         error_result = AgentResult(
             status="error",
-            summary="方案生成服务暂未接入 Runtime，请稍后重试",
+            summary="方案生成失败，请稍后重试",
             source="image_agent",
-            error_message="RUNTIME_ECOM_MODEL_INGRESS_UNAVAILABLE",
+            error_message=f"LLM调用失败: {last_error}",
         )
-        return None, model, error_result
+        return None, models[-1], error_result
 
     # ----------------------------------------------------------
     # Phase 2：单张图片生成（原 execute，保持不变）
@@ -292,15 +272,7 @@ class ImageAgent(CreditMixin):
                 error_message=err,
             )
 
-        # 2. Runtime capability gate 必须先于积分锁定，避免 blocked 请求产生账务副作用。
-        capability = get_runtime_ecom_capability()
-        if self.runtime_owned and not getattr(capability, "ready", False):
-            return self._error_result(
-                "图片生成服务暂未接入 Runtime，请稍后重试",
-                task, image_urls, platform, style_directive,
-            )
-
-        # 3. 计算并锁定积分（复用 CreditMixin，含乐观锁+重试）
+        # 2. 计算并锁定积分（复用 CreditMixin，含乐观锁+重试）
         model_id = self._select_model(image_urls)
         try:
             cost = calculate_image_cost(model_name=model_id, image_count=1)
@@ -369,30 +341,18 @@ class ImageAgent(CreditMixin):
         final_prompt = self._prompt_builder.build_final_prompt(
             task, style_directive,
         )
-        if self.runtime_owned:
-            result = await get_runtime_ecom_capability().invoke_image(
+        adapter = create_image_adapter(model_id)
+        try:
+            result = await adapter.generate(
                 prompt=final_prompt,
                 image_urls=image_urls or None,
-                model=model_id,
-                org_id=self.org_id,
                 size=detect_aspect_ratio(task),
                 wait_for_result=True,
                 max_wait_time=90.0,
                 poll_interval=2.0,
             )
-        else:
-            adapter = create_image_adapter(model_id)
-            try:
-                result = await adapter.generate(
-                    prompt=final_prompt,
-                    image_urls=image_urls or None,
-                    size=detect_aspect_ratio(task),
-                    wait_for_result=True,
-                    max_wait_time=90.0,
-                    poll_interval=2.0,
-                )
-            finally:
-                await adapter.close()
+        finally:
+            await adapter.close()
         if not result.image_urls:
             self._refund_credits(tx_id)
             return self._error_result(
@@ -447,7 +407,21 @@ class ImageAgent(CreditMixin):
 
     def _parse_plan_json(self, content: str) -> dict[str, Any]:
         """解析千问输出的方案 JSON（三层兜底）。"""
-        return parse_image_plan(content, self)
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            pass
+        match = re.search(r"\{[\s\S]*\}", content)
+        if match:
+            try:
+                return json.loads(match.group())
+            except json.JSONDecodeError:
+                pass
+        log_agent_event(
+            "warning", "ImageAgent plan parse failed", self, "image_agent",
+            "IMAGE_PLAN_PARSE_FAILED",
+        )
+        return {"product_insight": "", "visual_strategy": "", "images": []}
 
     def _read_style_directive(self) -> str:
         """从 DB 读取会话级风格。"""
@@ -486,13 +460,40 @@ class ImageAgent(CreditMixin):
 
     def _validate_input(self, task: str, image_urls: list[str]) -> str | None:
         """输入校验。返回错误信息或 None（通过）。"""
-        return validate_image_request(task, image_urls)
+        if not task or not task.strip():
+            return "提示词不能为空"
+        if len(task) > 2000:
+            return "提示词过长，请精简到 2000 字以内"
+        for url in image_urls:
+            host = urlparse(url).hostname or ""
+            if host and host not in _ALLOWED_IMAGE_HOSTS:
+                return f"不支持的图片来源: {host}"
+        return None
 
     def _error_result(
         self, summary: str,
         task: str, image_urls: list[str], platform: str, style_directive: str,
     ) -> AgentResult:
         """构建失败结果（含 failed ImagePart + retry_context）。"""
-        return build_image_error_result(
-            summary, task, image_urls, platform, style_directive,
+        width, height = detect_dimensions(task, platform)
+        return AgentResult(
+            status="error",
+            summary=summary,
+            source="image_agent",
+            error_message=summary,
+            emit_payloads=[{
+                "kind": "image",
+                "url": None,
+                "width": width,
+                "height": height,
+                "alt": task[:50],
+                "failed": True,
+                "error": summary,
+                "retry_context": {
+                    "task": task,
+                    "image_urls": image_urls,
+                    "platform": platform,
+                    "style_directive": style_directive,
+                },
+            }],
         )

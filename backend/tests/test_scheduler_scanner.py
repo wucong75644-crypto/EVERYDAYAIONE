@@ -333,21 +333,161 @@ class TestTaskExecutor:
         assert len(run.execution_token) == 36
 
     @pytest.mark.asyncio
-    async def test_legacy_owner_is_fail_closed(self):
-        """旧调度器不创建 run、不扣积分、不进入 Agent/ToolLoop。"""
-        executor = ScheduledTaskExecutor(self._make_db())
+    async def test_success_flow(self):
+        """成功执行：积分锁 → Agent → 按量计费 → 推送 → 更新"""
+        db = self._make_db()
+        runtime_db = MagicMock(name="runtime_db")
+        executor = ScheduledTaskExecutor(db, runtime_db=runtime_db)
+        task = make_task(
+            user_id="11111111-1111-1111-1111-111111111111",
+            org_id="22222222-2222-2222-2222-222222222222",
+        )
         executor._store = MagicMock()
+        executor._store.create_run.return_value = ScheduledRunLease(
+            "11111111-1111-1111-1111-111111111111",
+            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        )
+        executor._store.get_task.return_value = task
+        executor._store.complete_run.return_value = True
+
+        # mock credit_lock — yield CreditLockHandle
+        from contextlib import asynccontextmanager
+        from services.credit_service import CreditLockHandle
+
+        @asynccontextmanager
+        async def fake_lock(**kwargs):
+            yield CreditLockHandle("txn_123", kwargs.get("amount", 10))
         executor._credits = MagicMock()
-        executor._create_run = AsyncMock()
+        executor._credits.lock = lambda *_args: fake_lock(amount=10)
 
-        with patch(
-            "services.agent.scheduled_task_agent.ScheduledTaskAgent"
-        ) as agent_cls:
-            await executor.execute(make_task())
+        # mock ScheduledTaskAgent
+        from services.agent.scheduled_task_agent import ScheduledTaskResult
+        fake_result = ScheduledTaskResult(
+            text="日报内容",
+            summary="销售额 10w",
+            status="success",
+            tokens_used=1500,
+            turns_used=3,
+            tools_called=["erp_agent"],
+            files=[],
+        )
 
-        executor._create_run.assert_not_called()
-        executor._credits.lock.assert_not_called()
-        agent_cls.assert_not_called()
+        with patch("services.credit_service.CreditService") as mock_credit_cls:
+            mock_credit_inst = MagicMock()
+            mock_credit_inst.credit_lock = fake_lock
+            mock_credit_cls.return_value = mock_credit_inst
+
+            with patch(
+                "services.agent.scheduled_task_agent.ScheduledTaskAgent"
+            ) as mock_agent_cls:
+                mock_agent = MagicMock()
+                mock_agent.execute = AsyncMock(return_value=fake_result)
+                mock_agent_cls.return_value = mock_agent
+
+                # push_dispatcher Phase 5 才实现，这里 mock 整个 _push_result
+                executor._push_result = AsyncMock(return_value="pushed")
+
+                # mock _calc_actual_credits 避免导入 adapter
+                with patch.object(
+                    ScheduledTaskExecutor, "_calc_actual_credits", return_value=3
+                ):
+                    await executor.execute(task)
+
+        executor._store.complete_run.assert_called_once()
+        application_db = mock_agent_cls.call_args.args[0]
+        assert application_db._db._client is runtime_db
+        assert application_db._db.scope.actor_user_id == task["user_id"]
+        assert application_db._db.scope.org_id == task["org_id"]
+        assert application_db._db.scope.request_id == (
+            f"scheduled:{task['id']}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_failure_first_time_retry(self):
+        """第一次失败 → 5 分钟后重试"""
+        db = self._make_db()
+        executor = ScheduledTaskExecutor(db)
+        executor._store = MagicMock()
+        executor._store.create_run.return_value = ScheduledRunLease(
+            "11111111-1111-1111-1111-111111111111",
+            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        )
+        executor._store.fail_run.return_value = True
+
+        from contextlib import asynccontextmanager
+        from services.credit_service import CreditLockHandle
+
+        @asynccontextmanager
+        async def fake_lock(**kwargs):
+            yield CreditLockHandle("txn_123", kwargs.get("amount", 10))
+        executor._credits = MagicMock()
+        executor._credits.lock = lambda *_args: fake_lock(amount=10)
+
+        with patch("services.credit_service.CreditService") as mock_credit_cls:
+            mock_credit_inst = MagicMock()
+            mock_credit_inst.credit_lock = fake_lock
+            mock_credit_cls.return_value = mock_credit_inst
+
+            with patch(
+                "services.agent.scheduled_task_agent.ScheduledTaskAgent"
+            ) as mock_agent_cls:
+                mock_agent = MagicMock()
+                mock_agent.execute = AsyncMock(side_effect=RuntimeError("ERP down"))
+                mock_agent_cls.return_value = mock_agent
+
+                # 不会抛异常（被 except 捕获）
+                await executor.execute(make_task(retry_count=2))
+
+        executor._store.fail_run.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_failure_three_times_pause(self):
+        """连续 3 次失败 → 暂停 + 通知"""
+        db = self._make_db()
+        executor = ScheduledTaskExecutor(db)
+        executor._store = MagicMock()
+        executor._store.create_run.return_value = ScheduledRunLease(
+            "11111111-1111-1111-1111-111111111111",
+            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        )
+        executor._store.fail_run.return_value = True
+
+        notify_calls = []
+        async def fake_notify(task, _run, msg):
+            notify_calls.append((task["id"], msg))
+
+        executor._notify_owner = fake_notify
+
+        from contextlib import asynccontextmanager
+        from services.credit_service import CreditLockHandle
+
+        @asynccontextmanager
+        async def fake_lock(**kwargs):
+            yield CreditLockHandle("txn_123", kwargs.get("amount", 10))
+        executor._credits = MagicMock()
+        executor._credits.lock = lambda *_args: fake_lock(amount=10)
+
+        task = make_task(consecutive_failures=2)  # 已经 2 次失败了
+
+        with patch("services.credit_service.CreditService") as mock_credit_cls:
+            mock_credit_inst = MagicMock()
+            mock_credit_inst.credit_lock = fake_lock
+            mock_credit_cls.return_value = mock_credit_inst
+
+            with patch(
+                "services.agent.scheduled_task_agent.ScheduledTaskAgent"
+            ) as mock_agent_cls:
+                mock_agent = MagicMock()
+                mock_agent.execute = AsyncMock(side_effect=RuntimeError("第 3 次失败"))
+                mock_agent_cls.return_value = mock_agent
+
+                await executor.execute(task)
+
+        # 触发了通知
+        assert len(notify_calls) == 1
+        assert task["id"] in notify_calls[0][0]
+        assert "已自动暂停" in notify_calls[0][1]
+
 
 class TestCalcActualCredits:
     """_calc_actual_credits 独立测试"""

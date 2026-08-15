@@ -136,25 +136,9 @@ export async function deleteMessage(messageId: string): Promise<DeleteMessageRes
  * 用于删除 streaming/pending 占位符时清理后端 tasks 表中的记录
  * @param messageId 占位符消息 ID（对应 tasks 表的 placeholder_message_id 或 assistant_message_id）
  */
-export interface CancelTaskByMessageResult {
-  success: boolean;
-  runtime_media?: boolean;
-  outcome?: string;
-  cancelled_count?: number;
-  reconcile_count?: number;
-  completed_count?: number;
-  partial?: boolean;
-  failure_codes?: string[];
-}
-
-export async function cancelTaskByMessageId(messageId: string): Promise<CancelTaskByMessageResult> {
-  const requestId = crypto.randomUUID();
-  return request<CancelTaskByMessageResult>({
+export async function cancelTaskByMessageId(messageId: string): Promise<void> {
+  await request({
     url: `/tasks/cancel-by-message/${messageId}`,
     method: 'POST',
-    headers: {
-      'Idempotency-Key': requestId,
-      'X-Request-Id': requestId,
-    },
   });
 }

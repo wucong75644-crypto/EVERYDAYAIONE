@@ -70,8 +70,6 @@ class OrgScopedDB:
         "get_ai_kie_bundle",
         "get_ai_openrouter_bundle",
         "get_erp_runtime_bundle",
-        "get_agent_runtime_definition_fact",
-        "get_agent_runtime_ingress_capability",
         "get_wecom_bot_admin_test_bundle",
         "list_actor_organizations",
         "list_actor_pending_invitations",

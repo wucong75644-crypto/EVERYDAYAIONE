@@ -237,27 +237,14 @@ class WebSocketManager(RedisPubSubMixin, WebSocketInteractionMixin):
         if not confirmation_ids:
             return
         from services.tool_confirmation import tool_confirmation_service
-        from core.database import get_db
-        from core.db_scope import (
-            DatabaseAccessKind, DatabaseScope, ScopedDatabaseClient,
-        )
 
         for confirmation_id in confirmation_ids:
             try:
-                database = ScopedDatabaseClient(
-                    get_db(), DatabaseScope(
-                        actor_user_id=connection.user_id,
-                        org_id=connection.org_id,
-                        access_kind=DatabaseAccessKind.RUNTIME,
-                        request_id=f"ws-close:{confirmation_id}"[:128],
-                    ),
-                )
                 await tool_confirmation_service.consume_response(
                     confirmation_id=confirmation_id,
                     user_id=connection.user_id,
                     org_id=connection.org_id,
                     approved=False,
-                    database=database,
                 )
             except Exception as exc:
                 logger.warning(
@@ -271,10 +258,9 @@ class WebSocketManager(RedisPubSubMixin, WebSocketInteractionMixin):
     async def send_to_user(
         self, user_id: str, message: Dict[str, Any],
         org_id: str | None = None,
-    ) -> bool:
+    ):
         """仅发送到用户在精确企业上下文中的连接；None 表示个人空间。"""
         connections = self._connections.get(user_id, {})
-        delivered = False
 
         logger.debug(
             f"send_to_user | user={user_id} | org={org_id} | "
@@ -285,10 +271,9 @@ class WebSocketManager(RedisPubSubMixin, WebSocketInteractionMixin):
         for conn_id, conn in list(connections.items()):
             if conn.org_id != org_id:
                 continue
-            delivered = await self.send_to_connection(conn_id, message) or delivered
+            await self.send_to_connection(conn_id, message)
 
         await self._publish("user", user_id, message, org_id=org_id)
-        return delivered
 
     async def send_to_task_subscribers(
         self,

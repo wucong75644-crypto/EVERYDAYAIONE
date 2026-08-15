@@ -12,7 +12,6 @@ const nullEquivalentFields: Record<string, readonly string[]> = {
     'original_url', 'thumbnail_url', 'preview_url', 'download_url', 'asset_id',
     'width', 'height', 'alt', 'failed', 'error', 'error_code', 'name',
     'workspace_path', 'size', 'mime_type',
-    'slot_id', 'slot_index', 'slot_status', 'slot_revision',
   ],
   video: ['duration', 'thumbnail'],
   audio: ['duration', 'transcript'],
@@ -73,11 +72,7 @@ const formFieldSchema = z.object({
   visible_when: z.object({ field: z.string(), value: z.string() }).optional(),
 }).passthrough();
 
-const runtimeMediaSlotStatusSchema = z.enum([
-  'pending', 'accepted', 'unknown', 'completed', 'failed', 'cancelled',
-]);
-
-const contentPartUnion = z.discriminatedUnion('type', [
+const contentPartSchema = z.preprocess(normalizeNullEquivalentFields, z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string() }).passthrough(),
   z.object({
     type: z.literal('image'),
@@ -97,10 +92,6 @@ const contentPartUnion = z.discriminatedUnion('type', [
     workspace_path: optionalString,
     size: optionalNumber,
     mime_type: optionalString,
-    slot_id: z.string().min(1).max(128).optional(),
-    slot_index: z.number().int().min(0).max(9).optional(),
-    slot_status: runtimeMediaSlotStatusSchema.optional(),
-    slot_revision: z.number().int().min(0).optional(),
   }).passthrough(),
   z.object({
     type: z.literal('video'),
@@ -200,22 +191,7 @@ const contentPartUnion = z.discriminatedUnion('type', [
     interrupted_at: z.string(),
     reason: z.enum(['user_cancel', 'system_timeout', 'network_error']),
   }).passthrough(),
-]);
-
-const contentPartSchema = z.preprocess(
-  normalizeNullEquivalentFields,
-  contentPartUnion.superRefine((part, context) => {
-    if (part.type !== 'image') return;
-    const slotFields = [part.slot_id, part.slot_index, part.slot_status, part.slot_revision];
-    const providedCount = slotFields.filter((value) => value !== undefined).length;
-    if (providedCount !== 0 && providedCount !== slotFields.length) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'runtime media slot fields must be provided together',
-      });
-    }
-  }),
-);
+]));
 
 export interface MessageProtocolContext {
   messageId?: string;

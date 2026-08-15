@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import fields
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from services.agent.runtime.domain import ModelStepId
+from services.agent.runtime.credential_broker import (
+    BackendCredential, CredentialBroker, InMemoryCredentialAuditSink,
+    InMemoryCredentialBackend,
+)
+from services.agent.runtime.domain import ModelStepId, RuntimeScope, ScopeKind
 from services.agent.runtime.infrastructure.model import (
     ExistingProviderModelAdapter, compute_request_hash, resolve_model_revision,
 )
@@ -17,7 +22,13 @@ from services.agent.runtime.ports import (
 from services.agent.runtime.context import ProviderContextPlan
 
 
-def _request() -> ModelStepRequest:
+def _scope() -> RuntimeScope:
+    return RuntimeScope(
+        kind=ScopeKind.USER, scope_id="user:u-1", user_id="u-1", org_id="org-a",
+    )
+
+
+def _request(*, lease: object | None = None) -> ModelStepRequest:
     model_id = "qwen3.5-plus"
     plan = ProviderContextPlan.build(
         messages=[{"role": "user", "content": "fixture"}], tools=[],
@@ -40,23 +51,50 @@ def _request() -> ModelStepRequest:
         ),
         context_plan=plan, model_revision=revision,
         prompt_revision="prompt-1", tool_catalog_revision="tools-1",
-        options=options, org_id="org-a",
+        options=options, org_id="org-a", credential_lease=lease,
+        credential_scope=_scope(), credential_purpose="model.invoke",
     )
 
 
 @pytest.mark.asyncio
-async def test_runtime_provider_builder_requires_configured_factory() -> None:
+async def test_default_model_builder_consumes_only_a_bound_lease(monkeypatch) -> None:
+    material = "fixture-secret-must-not-escape"
+    backend = InMemoryCredentialBackend()
+    backend.put(BackendCredential(
+        tenant_id="org-a", handle="test:model", provider="dashscope",
+        revision=resolve_model_revision("qwen3.5-plus"), purpose="model.invoke",
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+        _material=material,
+    ))
+    broker = CredentialBroker(backend, InMemoryCredentialAuditSink())
+    lease = await broker.resolve(
+        scope=_scope(), credential_handle="test:model", provider="dashscope",
+        revision=resolve_model_revision("qwen3.5-plus"), purpose="model.invoke",
+    )
+    captured: dict[str, object] = {}
+
+    def builder(*_args, **kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr("services.adapters.factory.create_chat_adapter", builder)
     adapter = ExistingProviderModelAdapter(db=object())
-    with pytest.raises(ValueError, match="RUNTIME_MODEL_ADAPTER_FACTORY_REQUIRED"):
+    created = await adapter._create_adapter(_request(lease=lease))
+
+    assert created is not None
+    assert captured["api_key_override"] == material
+    assert material not in repr(_request(lease=lease))
+
+
+@pytest.mark.asyncio
+async def test_default_model_builder_fails_closed_without_lease() -> None:
+    adapter = ExistingProviderModelAdapter(db=object())
+    with pytest.raises(ValueError, match="RUNTIME_CREDENTIAL_LEASE_REQUIRED"):
         await adapter._create_adapter(_request())
 
 
 def test_model_request_has_no_raw_api_key_field() -> None:
-    names = {item.name for item in fields(ModelStepRequest)}
-    assert not names & {
-        "provider_api_key", "credential_lease", "credential_scope",
-        "credential_purpose", "credential_handle", "credential_material",
-    }
+    assert "provider_api_key" not in {item.name for item in fields(ModelStepRequest)}
 
 
 def test_runtime_credential_sources_are_not_imported_by_provider_boundary() -> None:
@@ -65,27 +103,16 @@ def test_runtime_credential_sources_are_not_imported_by_provider_boundary() -> N
         root / "production_model.py",
         root / "infrastructure/model/adapter.py",
         root / "production_composition.py",
+        root / "production_services.py",
         root / "composition.py",
     )
     forbidden = (
-        "get_settings()", "provider_api_key",
+        "AsyncSecretBundleResolver", "get_settings()", "provider_api_key",
         "get_oss_service", "OrgConfigResolver", "RedisClient",
     )
     for source in sources:
         text = source.read_text()
         assert not any(item in text for item in forbidden), source
-    adapter_source = (root / "infrastructure/model/adapter.py").read_text()
-    assert "create_chat_adapter" not in adapter_source
-    strict_sources = (
-        root / "production_model.py", root / "production_factory.py",
-    )
-    strict_forbidden = (
-        "CredentialBroker", "CredentialLease", "LocalKEKProvider",
-        "create_chat_adapter",
-    )
-    for source in strict_sources:
-        text = source.read_text()
-        assert not any(item in text for item in strict_forbidden), source
 
 
 def test_credential_available_requires_a_broker() -> None:

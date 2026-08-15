@@ -95,9 +95,6 @@ class ProviderSubmissionFacts(Protocol):
 
     async def create(self, context: ProviderSubmissionContext) -> tuple[str, ProviderSubmissionFact]: ...
 
-    async def read(self, context: ProviderSubmissionContext,
-                   submission_id: str) -> ProviderSubmissionFact: ...
-
     async def submitted(self, *, submission_id: str, execution_token: str,
                         request_hash: str, expected_state_version: int,
                         provider_task_ref: str, status_locator: str | None = None,
@@ -106,10 +103,6 @@ class ProviderSubmissionFacts(Protocol):
     async def unknown(self, *, submission_id: str, execution_token: str,
                       request_hash: str, expected_state_version: int,
                       evidence: Mapping[str, object]) -> ProviderSubmissionFact: ...
-
-    async def rejected(self, *, submission_id: str, execution_token: str,
-                       request_hash: str, expected_state_version: int,
-                       evidence: Mapping[str, object]) -> ProviderSubmissionFact: ...
 
     async def request_cancel(self, *, submission_id: str, execution_token: str,
                              request_hash: str, expected_state_version: int,
@@ -164,14 +157,6 @@ class MockProviderSubmissionFacts:
             provider_receipt_hash=params.get("provider_receipt_hash"),
         )
 
-    async def read(
-        self, context: ProviderSubmissionContext, submission_id: str,
-    ) -> ProviderSubmissionFact:
-        fact = await self.recover(submission_id)
-        if fact.context != context:
-            raise ProviderFactsError("PROVIDER_FACT_CONTEXT_CONFLICT")
-        return fact
-
     async def unknown(self, **params: object) -> ProviderSubmissionFact:
         evidence = params.get("evidence")
         _validate_evidence(evidence)
@@ -182,15 +167,6 @@ class MockProviderSubmissionFacts:
                              ProviderFactState.ACCEPTED, ProviderFactState.UNKNOWN,
                              ProviderFactState.RECONCILE_REQUIRED},
             state=ProviderFactState.UNKNOWN, ambiguity_evidence=evidence,
-        )
-
-    async def rejected(self, **params: object) -> ProviderSubmissionFact:
-        evidence = params.get("evidence")
-        _validate_evidence(evidence)
-        return self._mutate(
-            params, allowed={ProviderFactState.SUBMISSION_PENDING},
-            state=ProviderFactState.FAILED,
-            ambiguity_evidence=evidence,
         )
 
     async def request_cancel(self, **params: object) -> ProviderSubmissionFact:
@@ -315,30 +291,11 @@ class PostgresProviderSubmissionFacts:
             "p_external_idempotency_key": context.external_idempotency_key,
         })
 
-    async def read(
-        self, context: ProviderSubmissionContext, submission_id: str,
-    ) -> Mapping[str, object]:
-        return await self._rpc("read_agent_runtime_provider_submission", {
-            "p_submission_id": submission_id,
-            "p_attempt_id": context.attempt_id,
-            "p_action_id": context.action_id, "p_run_id": context.run_id,
-            "p_org_id": context.org_id, "p_user_id": context.user_id,
-            "p_scope_kind": context.scope_kind, "p_scope_id": context.scope_id,
-            "p_execution_token": context.execution_token,
-            "p_request_hash": context.request_hash,
-        })
-
     async def submitted(self, **params: object) -> Mapping[str, object]:
         return await self._rpc("record_agent_runtime_provider_submitted", _prefix(params))
 
     async def unknown(self, **params: object) -> Mapping[str, object]:
         return await self._rpc("record_agent_runtime_provider_unknown", _prefix(params, evidence="p_ambiguity_evidence"))
-
-    async def rejected(self, **params: object) -> Mapping[str, object]:
-        return await self._rpc(
-            "record_agent_runtime_media_provider_rejected_v1",
-            _prefix(params, evidence="p_evidence"),
-        )
 
     async def request_cancel(self, **params: object) -> Mapping[str, object]:
         return await self._rpc("request_agent_runtime_provider_cancel", _prefix(params))

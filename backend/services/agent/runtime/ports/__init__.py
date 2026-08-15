@@ -4,7 +4,6 @@ from services.agent.runtime.ports.action_repository import (
     ActionMutationOutcome,
     ActionMutationReceipt,
     ActionRepositoryPort,
-    ChatActionSubmissionPort,
 )
 from services.agent.runtime.ports.event import RuntimeEventPort
 from services.agent.runtime.ports.executor import (
@@ -15,7 +14,6 @@ from services.agent.runtime.ports.executor import (
 from services.agent.runtime.ports.model import (
     ModelCallError,
     ModelCallUnknownError,
-    ModelExecutionBinding,
     ModelInputReceipt,
     ModelOutput,
     ModelOutputKind,
@@ -66,13 +64,11 @@ __all__ = [
     "ActionMutationOutcome",
     "ActionMutationReceipt",
     "ActionRepositoryPort",
-    "ChatActionSubmissionPort",
     "ExecutionOutcome",
     "ExecutionReceipt",
     "ExecutorPort",
     "ModelCallError",
     "ModelCallUnknownError",
-    "ModelExecutionBinding",
     "ModelInputReceipt",
     "ModelOutput",
     "ModelOutputKind",

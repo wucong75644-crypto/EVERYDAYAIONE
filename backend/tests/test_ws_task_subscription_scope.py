@@ -124,13 +124,12 @@ async def test_v3_confirm_response_uses_authenticated_actor() -> None:
         await _handle_message(
             "conn-1", "user-1", "org-a",
             {"type": "tool_confirm_response", "payload": {
-                "protocol_version": 3,
                 "confirmation_id": confirmation_id, "approved": True,
             }},
         )
     service.consume_response.assert_awaited_once_with(
         confirmation_id=confirmation_id, user_id="user-1",
-        org_id="org-a", approved=True, database=None,
+        org_id="org-a", approved=True,
     )
     manager.send_to_connection.assert_not_awaited()
 
@@ -147,7 +146,6 @@ async def test_wrong_actor_does_not_clear_disconnect_tracking() -> None:
         await _handle_message(
             "conn-1", "user-1", "wrong-org",
             {"type": "tool_confirm_response", "payload": {
-                "protocol_version": 3,
                 "confirmation_id": "c" * 43, "approved": True,
             }},
         )
@@ -163,7 +161,6 @@ async def test_v3_confirm_response_rejects_coerced_boolean() -> None:
         await _handle_message(
             "conn-1", "user-1", "org-a",
             {"type": "tool_confirm_response", "payload": {
-                "protocol_version": 3,
                 "confirmation_id": "c" * 43, "approved": "true",
             }},
         )

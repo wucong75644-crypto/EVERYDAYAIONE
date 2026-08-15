@@ -9,11 +9,7 @@ import pytest
 
 from api.routes.message_chat_preparation import prepare_and_start_chat_generation
 from schemas.message import GenerateRequest, MessageOperation, TextPart
-from services.generation_lifecycle import (
-    GenerationPreparation,
-    WebRuntimeIngressFailure,
-)
-from services.agent.runtime.ingress import RuntimeIngressReceipt
+from services.generation_lifecycle import GenerationPreparation
 from services.handlers.chat.actor_enqueue import stable_actor_task_id
 
 
@@ -47,24 +43,10 @@ class _Lifecycle:
     def __init__(self, result: GenerationPreparation) -> None:
         self.result = result
         self.calls = []
-        self.failure_calls = []
 
     def prepare(self, **kwargs):
         self.calls.append(kwargs)
         return self.result
-
-    def fail_web_runtime_ingress(self, **kwargs):
-        self.failure_calls.append(kwargs)
-        return WebRuntimeIngressFailure(
-            task_id=kwargs["task_id"], already_failed=False,
-        )
-
-
-def _runtime_receipt() -> RuntimeIngressReceipt:
-    return RuntimeIngressReceipt(
-        outcome="created", session_id="session", command_id="command",
-        run_id="run", owner_state="runtime_owned", runtime_owned=True,
-    )
 
 
 def _body(operation: MessageOperation = MessageOperation.SEND) -> GenerateRequest:
@@ -104,10 +86,6 @@ async def test_send_prepares_stable_messages_and_reuses_task_anchor(monkeypatch)
     monkeypatch.setattr(
         "api.routes.message_chat_preparation.record_user_activity", lambda *a, **k: None,
     )
-    monkeypatch.setattr(
-        "api.routes.message_chat_preparation._submit_runtime_ingress",
-        AsyncMock(return_value=_runtime_receipt()),
-    )
     handler = _Handler()
 
     response = await prepare_and_start_chat_generation(
@@ -120,11 +98,9 @@ async def test_send_prepares_stable_messages_and_reuses_task_anchor(monkeypatch)
     assert prepared["turn_id"] is not None
     assert prepared["input_message"]["id"] is not None
     assert prepared["tasks"][0]["id"] == task_id
-    assert prepared["tasks"][0]["delivery_context"] == {
-        "actor": False, "runtime": False, "runtime_pending": True,
-        "channel": "web",
-    }
-    handler.start.assert_not_awaited()
+    assert prepared["tasks"][0]["delivery_context"] == {"actor": True, "channel": "web"}
+    metadata = handler.start.await_args.kwargs["metadata"]
+    assert metadata.context_anchor.task_id == task_id
     assert response.user_message.id == "input-1"
     assert response.assistant_message.reply_to_message_id == "input-1"
 
@@ -151,10 +127,6 @@ async def test_existing_output_operation_uses_database_anchor_without_new_input(
     lifecycle = _Lifecycle(result)
     monkeypatch.setattr(
         "api.routes.message_chat_preparation.GenerationLifecycle", lambda db: lifecycle,
-    )
-    monkeypatch.setattr(
-        "api.routes.message_chat_preparation._submit_runtime_ingress",
-        AsyncMock(return_value=_runtime_receipt()),
     )
     handler = _Handler()
 
@@ -191,10 +163,6 @@ async def test_duplicate_request_preserves_prepared_task_and_response_ids(monkey
     monkeypatch.setattr(
         "api.routes.message_chat_preparation.record_user_activity", lambda *a, **k: None,
     )
-    monkeypatch.setattr(
-        "api.routes.message_chat_preparation._submit_runtime_ingress",
-        AsyncMock(return_value=_runtime_receipt()),
-    )
     handler = _Handler()
 
     response = await prepare_and_start_chat_generation(
@@ -203,139 +171,10 @@ async def test_duplicate_request_preserves_prepared_task_and_response_ids(monkey
         body=_body(),
     )
 
-    handler.start.assert_not_awaited()
+    metadata = handler.start.await_args.kwargs["metadata"]
+    assert metadata.context_anchor.task_id == task_id
+    assert metadata.turn_id == "existing-turn"
+    assert metadata.input_message_id == "existing-input"
     assert response.task_id == "client-task"
     assert response.user_message.id == "existing-input"
     assert response.assistant_message.id == result.output_message_id
-
-
-@pytest.mark.asyncio
-@pytest.mark.asyncio
-async def test_runtime_gate_closed_fails_closed_without_actor_start(monkeypatch):
-    task_id = stable_actor_task_id(
-        user_id="user-1", conversation_id="conversation-1",
-        external_task_id="client-task",
-    )
-    lifecycle = _Lifecycle(GenerationPreparation(
-        request_id="request-row", conversation_id="conversation-1",
-        turn_id="turn-1", input_message_id="input-1",
-        output_message_id="00000000-0000-0000-0000-000000000002",
-        base_context_revision=1, context_through_message_id=None,
-        task_ids=(task_id,), already_prepared=False,
-    ))
-    monkeypatch.setattr(
-        "api.routes.message_chat_preparation.GenerationLifecycle",
-        lambda db: lifecycle,
-    )
-    monkeypatch.setattr(
-        "api.routes.message_chat_preparation.record_user_activity",
-        lambda *a, **k: None,
-    )
-    monkeypatch.setattr(
-        "api.routes.message_chat_preparation._submit_runtime_ingress",
-        AsyncMock(return_value=RuntimeIngressReceipt(
-            outcome="runtime_required_unavailable",
-            owner_state="runtime_required_unavailable",
-            runtime_owned=False,
-        )),
-    )
-    handler = _Handler()
-
-    with pytest.raises(Exception, match="生成服务暂未就绪"):
-        await prepare_and_start_chat_generation(
-            db=object(), handler=handler, conversation_id="conversation-1",
-            user_id="user-1", org_id="org-1", request_id="request-row",
-            body=_body(),
-        )
-
-    assert lifecycle.calls[0]["tasks"][0]["delivery_context"] == {
-        "actor": False, "runtime": False, "runtime_pending": True,
-        "channel": "web",
-    }
-    assert lifecycle.failure_calls == [{
-        "task_id": task_id,
-        "conversation_id": "conversation-1",
-        "user_id": "user-1",
-        "org_id": "org-1",
-        "input_message_id": "input-1",
-        "output_message_id": "00000000-0000-0000-0000-000000000002",
-        "turn_id": "turn-1",
-        "client_task_id": "client-task",
-        "failure_code": "RUNTIME_REQUIRED_UNAVAILABLE",
-    }]
-    handler.start.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_runtime_ingress_exception_fails_closed(monkeypatch):
-    task_id = stable_actor_task_id(
-        user_id="user-1", conversation_id="conversation-1",
-        external_task_id="client-task",
-    )
-    lifecycle = _Lifecycle(GenerationPreparation(
-        request_id="request-row", conversation_id="conversation-1",
-        turn_id="turn-1", input_message_id="input-1",
-        output_message_id="00000000-0000-0000-0000-000000000002",
-        base_context_revision=1, context_through_message_id=None,
-        task_ids=(task_id,), already_prepared=False,
-    ))
-    monkeypatch.setattr(
-        "api.routes.message_chat_preparation.GenerationLifecycle",
-        lambda db: lifecycle,
-    )
-    monkeypatch.setattr(
-        "api.routes.message_chat_preparation._submit_runtime_ingress",
-        AsyncMock(side_effect=RuntimeError("RUNTIME_OWNER_TASK_BINDING_MISMATCH")),
-    )
-
-    with pytest.raises(Exception, match="生成服务暂未就绪"):
-        await prepare_and_start_chat_generation(
-            db=object(), handler=_Handler(), conversation_id="conversation-1",
-            user_id="user-1", org_id="org-1", request_id="request-row",
-            body=_body(),
-        )
-
-    assert lifecycle.failure_calls[0]["failure_code"] == "RUNTIME_BINDING_REJECTED"
-
-
-@pytest.mark.asyncio
-async def test_runtime_receipt_transfers_owner_without_actor_start(monkeypatch):
-    task_id = stable_actor_task_id(
-        user_id="user-1", conversation_id="conversation-1",
-        external_task_id="client-task",
-    )
-    lifecycle = _Lifecycle(GenerationPreparation(
-        request_id="request-row", conversation_id="conversation-1",
-        turn_id="turn-1", input_message_id="input-1",
-        output_message_id="00000000-0000-0000-0000-000000000002",
-        base_context_revision=1, context_through_message_id=None,
-        task_ids=(task_id,), already_prepared=False,
-    ))
-    monkeypatch.setattr(
-        "api.routes.message_chat_preparation.GenerationLifecycle",
-        lambda db: lifecycle,
-    )
-    monkeypatch.setattr(
-        "api.routes.message_chat_preparation.record_user_activity",
-        lambda *a, **k: None,
-    )
-    monkeypatch.setattr(
-        "api.routes.message_chat_preparation._submit_runtime_ingress",
-        AsyncMock(return_value=RuntimeIngressReceipt(
-            outcome="created", session_id="session", command_id="command",
-            run_id="run", owner_state="runtime_owned", runtime_owned=True,
-        )),
-    )
-    handler = _Handler()
-
-    await prepare_and_start_chat_generation(
-        db=object(), handler=handler, conversation_id="conversation-1",
-        user_id="user-1", org_id="org-1", request_id="request-row",
-        body=_body(),
-    )
-
-    assert lifecycle.calls[0]["tasks"][0]["delivery_context"] == {
-        "actor": False, "runtime": False, "runtime_pending": True,
-        "channel": "web",
-    }
-    handler.start.assert_not_awaited()

@@ -9,8 +9,6 @@ from typing import Mapping, Protocol, Sequence
 
 
 class ActionMutationOutcome(StrEnum):
-    CREATED = "created"
-    ALREADY_EXISTS = "already_exists"
     COMPLETED = "completed"
     ALREADY_COMPLETED = "already_completed"
     FAILED = "failed"
@@ -77,6 +75,7 @@ class ActionRepositoryPort(Protocol):
     async def get_action(
         self, *, action_id: str,
     ) -> ActionMutationReceipt: ...
+
     async def renew(
         self, *, attempt_id: str, execution_token: str,
         expected_state_version: int, lease_seconds: int = 120,
@@ -136,27 +135,4 @@ class ActionRepositoryPort(Protocol):
         expected_state_version: int, request_hash: str, resolution: str,
         result: Mapping[str, object] | None = None,
         ambiguity_evidence: Mapping[str, object] | None = None,
-    ) -> ActionMutationReceipt: ...
-
-    async def finalize_sandbox_cancel(
-        self, *, attempt_id: str, reconciliation_token: str,
-        expected_state_version: int, request_hash: str,
-        sandbox_job_id: str, expected_job_state_version: int,
-        receipt_hash: str,
-    ) -> ActionMutationReceipt: ...
-
-    async def finalize_child_cancel(
-        self, *, attempt_id: str, reconciliation_token: str,
-        expected_state_version: int, request_hash: str,
-        intent_id: str, proof_hash: str, reserved_amount: int,
-    ) -> ActionMutationReceipt: ...
-
-
-class ChatActionSubmissionPort(Protocol):
-    """Persist one chat tool call before Runtime dispatch claims it."""
-
-    async def submit_chat_action(
-        self, *, request: Mapping[str, object],
-        policy_snapshot: Mapping[str, object], policy_revision: str,
-        executor_type: str, executor_revision: int,
     ) -> ActionMutationReceipt: ...

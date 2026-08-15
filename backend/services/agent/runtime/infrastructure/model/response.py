@@ -86,12 +86,11 @@ class ResponseAccumulator:
             calls = ()
             output = None
             stop_reason = StopReason.PROTOCOL_ERROR
-            response_hash = canonical_response_hash(
-                stop_reason=stop_reason,
-                output=output,
-                tool_calls=calls,
-                usage=self.usage,
-                provider_stop_reason=self.finish_reason,
+            response_hash = _invalid_response_hash(
+                self.text,
+                self.tool_calls,
+                self.usage,
+                self.finish_reason,
             )
             receipt = ModelResponseReceipt(
                 output_kind=None,
@@ -110,8 +109,7 @@ class ResponseAccumulator:
             structured_output=structured_output,
             explicit_refusal=self.explicit_refusal,
         )
-        response_hash = canonical_response_hash(
-            stop_reason=stop_reason,
+        response_hash = _response_hash(
             output=output,
             tool_calls=calls,
             usage=self.usage,
@@ -227,16 +225,14 @@ def map_stop_reason(
     return StopReason.PROTOCOL_ERROR
 
 
-def canonical_response_hash(
+def _response_hash(
     *,
-    stop_reason: StopReason,
     output: ModelOutput | None,
     tool_calls: tuple[ModelToolCall, ...],
     usage: ModelUsage,
     provider_stop_reason: str | None,
 ) -> str:
     value = {
-        "stop_reason": stop_reason.value,
         "output": asdict(output) if output else None,
         "tool_calls": [asdict(call) for call in tool_calls],
         "usage": asdict(usage),
@@ -250,6 +246,33 @@ def canonical_response_hash(
         default=str,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _invalid_response_hash(
+    text: str,
+    tool_calls: dict[int, dict[str, Any]],
+    usage: ModelUsage,
+    provider_stop_reason: str | None,
+) -> str:
+    value = {
+        "text_hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "tool_call_hash": hashlib.sha256(
+            json.dumps(
+                tool_calls,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest(),
+        "usage": asdict(usage),
+        "provider_stop_reason": provider_stop_reason,
+    }
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def _token_value(chunk: Any, field_name: str) -> int:

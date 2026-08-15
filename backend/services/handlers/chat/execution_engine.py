@@ -29,7 +29,6 @@ from services.handlers.chat.tool_loop import (
     prepare_tool_turn,
 )
 from services.handlers.chat_tool_mixin import accumulate_tool_call_delta
-from services.agent.runtime.application.chat_model_loop import RuntimeChatModelLoop
 
 
 @dataclass(frozen=True)
@@ -81,7 +80,7 @@ async def execute_chat(
     try:
         await output.start()
         try:
-            await RuntimeChatModelLoop().run(
+            await _run_loop(
                 handler=handler,
                 request=request,
                 prepared=prepared,
@@ -130,7 +129,7 @@ async def execute_chat(
         await prepared.adapter.close()
 
 
-async def _execute_model_turns(
+async def _run_loop(
     *,
     handler: Any,
     request: ChatExecutionRequest,

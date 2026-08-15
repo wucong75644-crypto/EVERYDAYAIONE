@@ -157,17 +157,97 @@ class TestRequestUserConfirm:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_legacy_owner_rejects_even_if_v3_service_is_available(self):
-        """Redis confirmation never grants the legacy loop execution rights."""
+    async def test_confirm_execution_claim_returns_true(self):
+        """Only a V3 execution claim returns true."""
         executor = self._make_executor()
         ctx = self._make_hook_ctx(task_id="task_001")
+
+        request = MagicMock(
+            confirmation_id="confirmation", summary={"description": "ERP操作"},
+            safety_level="dangerous",
+        )
         service = MagicMock()
+        service.create = AsyncMock(return_value=request)
+        service.await_and_claim = AsyncMock(return_value=MagicMock(can_execute=True))
         with patch(
+            "services.websocket_manager.ws_manager.send_tool_confirmation",
+            new_callable=AsyncMock,
+            return_value=True,
+        ), patch(
+            "services.tool_confirmation.tool_confirmation_service", service,
+        ):
+            result = await executor._request_user_confirm(
+                "erp_execute", {"action": "test"}, "tc_001", ctx,
+            )
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_confirm_rejected_returns_false(self):
+        executor = self._make_executor()
+        ctx = self._make_hook_ctx(task_id="task_001")
+
+        request = MagicMock(
+            confirmation_id="confirmation", summary={"description": "ERP操作"},
+            safety_level="dangerous",
+        )
+        service = MagicMock()
+        service.create = AsyncMock(return_value=request)
+        service.await_and_claim = AsyncMock(return_value=MagicMock(can_execute=False))
+        with patch(
+            "services.websocket_manager.ws_manager.send_tool_confirmation",
+            new_callable=AsyncMock,
+            return_value=True,
+        ), patch(
             "services.tool_confirmation.tool_confirmation_service", service,
         ):
             result = await executor._request_user_confirm(
                 "erp_execute", {"action": "test"}, "tc_001", ctx,
             )
             assert result is False
-        service.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_confirm_send_error_fails_closed(self):
+        """Confirmation transport failure never authorizes execution."""
+        executor = self._make_executor()
+        ctx = self._make_hook_ctx(task_id="task_001")
+
+        request = MagicMock(
+            confirmation_id="confirmation", summary={"description": "ERP操作"},
+            safety_level="dangerous",
+        )
+        service = MagicMock()
+        service.create = AsyncMock(return_value=request)
+        service.reject_unavailable = AsyncMock()
+        with patch(
+            "services.websocket_manager.ws_manager.send_tool_confirmation",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("ws broken"),
+        ), patch("services.tool_confirmation.tool_confirmation_service", service):
+            result = await executor._request_user_confirm(
+                "erp_execute", {"action": "test"}, "tc_001", ctx,
+            )
+            assert result is False
+            service.reject_unavailable.assert_awaited_once_with(request)
+
+    @pytest.mark.asyncio
+    async def test_confirm_delivery_false_fails_closed(self):
+        executor = self._make_executor()
+        ctx = self._make_hook_ctx(task_id="task_001")
+        request = MagicMock(
+            confirmation_id="confirmation", summary={"description": "ERP操作"},
+            safety_level="dangerous",
+        )
+        service = MagicMock()
+        service.create = AsyncMock(return_value=request)
+        service.reject_unavailable = AsyncMock()
+        with patch(
+            "services.websocket_manager.ws_manager.send_tool_confirmation",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch("services.tool_confirmation.tool_confirmation_service", service):
+            result = await executor._request_user_confirm(
+                "erp_execute", {"action": "test"}, "tc_001", ctx,
+            )
+        assert result is False
+        service.reject_unavailable.assert_awaited_once_with(request)
         service.await_and_claim.assert_not_called()

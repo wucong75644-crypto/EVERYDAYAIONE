@@ -21,7 +21,7 @@ export type ImageOutputFormat = 'png' | 'jpeg' | 'jpg';
 export type VideoFrames = '10' | '15' | '25';
 
 /** 生成数量（图片） */
-export type ImageCount = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+export type ImageCount = 1 | 2 | 3 | 4;
 
 /** 视频宽高比 */
 export type VideoAspectRatio = 'portrait' | 'landscape';
@@ -64,12 +64,6 @@ export const IMAGE_COUNTS: { value: ImageCount; label: string }[] = [
   { value: 2, label: '2张' },
   { value: 3, label: '3张' },
   { value: 4, label: '4张' },
-  { value: 5, label: '5张' },
-  { value: 6, label: '6张' },
-  { value: 7, label: '7张' },
-  { value: 8, label: '8张' },
-  { value: 9, label: '9张' },
-  { value: 10, label: '10张' },
 ];
 
 /** 视频时长选项 */

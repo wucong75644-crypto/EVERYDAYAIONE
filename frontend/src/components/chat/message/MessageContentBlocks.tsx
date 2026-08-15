@@ -5,7 +5,6 @@ import api from '../../../services/api';
 import { useMessageStore, type Message } from '../../../stores/useMessageStore';
 import { resolveImageOriginalUrl } from '../../../utils/messageUtils';
 import type { FilePart, ImageAsset, ImagePart } from '../../../types/message';
-import { isRuntimeMediaImageSlot } from '../../../utils/runtimeMediaSlots';
 import { FailedMediaPlaceholder } from '../media/MediaPlaceholder';
 import FileCardList from '../media/FileCard';
 import ChartBlock from './ChartBlock';
@@ -51,7 +50,6 @@ export default function MessageContentBlocks({
   return (
     <div className="space-y-1">
       {message.content.map((part, idx) => {
-        if (isRuntimeMediaImageSlot(part)) return null;
         if (part.type === 'thinking') {
           const tp = part as { text?: string; duration_ms?: number };
           if (!tp.text && tp.duration_ms == null) return null;

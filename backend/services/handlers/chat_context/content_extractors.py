@@ -52,43 +52,6 @@ def extract_image_urls_from_content(content: Any) -> List[str]:
     return []
 
 
-def project_user_image_urls(
-    messages: List[Dict[str, Any]],
-    image_urls: List[str],
-    *,
-    include_reference_indexes: bool = False,
-) -> List[Dict[str, Any]]:
-    """把用户图片合并进 OAI 消息，保持已有文本和工具消息顺序。"""
-    if not image_urls:
-        return messages
-    projected = [dict(message) for message in messages]
-    text_index = next(
-        (
-            index for index, message in enumerate(projected)
-            if message.get("role") == "user"
-            and isinstance(message.get("content"), str)
-        ),
-        None,
-    )
-    text_value = projected[text_index]["content"] if text_index is not None else ""
-    parts: List[Dict[str, Any]] = []
-    if text_value:
-        parts.append({"type": "text", "text": text_value})
-    for index, url in enumerate(image_urls):
-        if include_reference_indexes:
-            parts.append({
-                "type": "text",
-                "text": f"[reference_image_index={index}]",
-            })
-        parts.append({"type": "image_url", "image_url": {"url": url}})
-    user_message = {"role": "user", "content": parts}
-    if text_index is None:
-        projected.insert(0, user_message)
-    else:
-        projected[text_index] = user_message
-    return projected
-
-
 def extract_interrupt_marker(content: Any) -> Dict[str, Any] | None:
     """从 DB content 字段提取 interrupt_marker block（如有）。
 

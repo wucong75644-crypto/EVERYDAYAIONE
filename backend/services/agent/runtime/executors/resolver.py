@@ -81,7 +81,6 @@ class PostgresActionExecutorResolver:
                     expires_at=_datetime(attempt, "lease_expires_at"),
                 ),
                 started_at=_datetime(attempt, "claimed_at"),
-                state_version=_nonnegative_integer(attempt, "state_version"),
                 accepted_at=_optional_datetime(attempt.get("accepted_at")),
                 ended_at=_optional_datetime(attempt.get("ended_at")),
                 session_id=_text(action, "session_id"),
@@ -118,13 +117,6 @@ def _integer(value: Mapping[str, object], field: str) -> int:
     item = value.get(field)
     if isinstance(item, bool) or not isinstance(item, int) or item < 1:
         raise ValueError(f"{field} must be a positive integer")
-    return item
-
-
-def _nonnegative_integer(value: Mapping[str, object], field: str) -> int:
-    item = value.get(field, 0)
-    if isinstance(item, bool) or not isinstance(item, int) or item < 0:
-        raise ValueError(f"{field} must be a nonnegative integer")
     return item
 
 

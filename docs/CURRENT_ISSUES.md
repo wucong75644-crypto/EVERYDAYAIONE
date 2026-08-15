@@ -1,5 +1,20 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-08-15 Runtime 生产接管回退 — 已实现，待维护窗口执行
+
+- 生产 Chat Owner 恢复为 Conversation Actor 与旧 AgentLoop；原提示词、工具注册、
+  多轮及同轮多工具循环保持为唯一生产聊天主链。Runtime 持久基础设施保留至迁移
+  `227_12`，但不接管 Web、企微或定时任务入口。
+- 非 SAFE 工具恢复由旧 AgentLoop/ChatTool 发起 V3 用户确认并在确认 claim 后执行；
+  WebSocket 确认响应不再依赖 Runtime Action/Interaction 身份，避免回退后只读工具
+  可用而写工具被 `RUNTIME_OWNER_REQUIRED` 拒绝。
+- 一次性回退工具精确清理本次上线产生的 3 个测试会话、15 个任务、30 条消息和
+  Runtime 事实，恢复净扣的 18 积分，并逆序回退 `227_13` 至 `228_08q` 共 89 个迁移。
+- 迁移账本从 369 条收敛到 280 条；保留已应用的
+  `221_worker_media_rpc_bigint_compatibility.sql`，避免回退代码产生迁移身份漂移。
+- 执行前必须完成全库备份、停止全部写入并确认 Runtime worker drain。当前只完成代码、
+  隔离 PostgreSQL 演练和维护说明，尚未对生产执行删除、Schema 回退或部署。
+
 ## 2026-07-28 Sandbox专业Executor — 本地合同实施中，Linux隔离待远程验证
 
 - migration 222_01/222_02/222_03建立 PostgreSQL Job SSOT、全局外部幂等键、execution 与
@@ -1653,13 +1668,3 @@
 - `org_id=NULL` personal ingress is intentionally rejected because 224 still
   requires an enabled organization rollout row. This remains a pre-AR-17
   completion blocker and is not treated as covered by the organization path.
-
-# 2026-08-14 Runtime 批量媒体授权 — grouped confirmation 已实现
-
-- `generate_image` 新执行 Descriptor 使用 `persisted_interaction`；同一 ModelStep/Batch
-  的 2～10 个 Action 只投递一个 leader，但保留每 Action 独立 interaction、grant、
-  grant use 和 PolicyReceipt。
-- 普通 `generationType=chat` 仍没有可验证的结构化 explicit-intent ingress fact，
-  因此当前图片批次不会仅凭模型工具调用自动花费积分，而是整批确认一次。
-- 后续若要恢复“明确图片命令自动执行”，必须先新增绑定 command、输入消息、意图类型和
-  请求数量的不可伪造 ingress 事实；提示词或模型自行判断不能代替授权证据。

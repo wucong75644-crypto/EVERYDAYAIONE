@@ -17,6 +17,8 @@ from tenacity import (
     retry_if_exception_type,
 )
 
+from core.config import settings
+
 from .models import (
     CreateTaskRequest,
     CreateTaskResponse,
@@ -101,7 +103,6 @@ class KieClient:
         api_key: str,
         timeout: float = DEFAULT_TIMEOUT,
         stream_timeout: Optional[float] = None,
-        environment: Optional[str] = None,
     ):
         """
         初始化 KIE 客户端
@@ -114,7 +115,6 @@ class KieClient:
         self.api_key = api_key
         self.timeout = timeout
         self._stream_timeout = stream_timeout or self.STREAM_TIMEOUT
-        self._environment = environment
         self._client: Optional[httpx.AsyncClient] = None
 
     @property
@@ -164,14 +164,7 @@ class KieClient:
                 error_code=str(code),
             )
         elif status_code == 402:
-            if (environment := self._environment) is None:
-                from core.config import get_settings
-                environment = get_settings().app_env
-            message = (
-                f"KIE_INSUFFICIENT_BALANCE | env={environment} | "
-                f"provider=kie | model={model} | code=402"
-            )
-            logger.error(message)
+            logger.error(f"KIE_INSUFFICIENT_BALANCE | env={settings.app_env} | provider=kie | model={model} | code=402")
             raise KieInsufficientBalanceError(
                 f"Insufficient balance: {msg}",
                 status_code=status_code,

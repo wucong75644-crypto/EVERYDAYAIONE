@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 
 import pytest
 from redis.asyncio import Redis
@@ -49,7 +48,6 @@ redis.call("HSET", KEYS[1], "state", target)
 redis.call("EXPIRE", KEYS[1], ARGV[2])
 return "WON:" .. target
 """
-_CONFIRMATION_EXPIRY = datetime(2030, 1, 1, tzinfo=timezone.utc)
 
 
 async def _redis_time_ms(client: Redis) -> int:
@@ -246,9 +244,7 @@ def v3_store(redis_external: RedisExternalHarness, monkeypatch):
 
 def _binding(arguments_hash: str = "args-hash") -> ConfirmationBinding:
     return ConfirmationBinding(
-        "action-1", "interaction-1", 0, "task-1", "call-1",
-        "restore_file", arguments_hash, "user-1", "org-1",
-        _CONFIRMATION_EXPIRY,
+        "task-1", "call-1", "restore_file", arguments_hash, "user-1", "org-1",
     )
 
 
@@ -282,31 +278,6 @@ async def test_v3_create_retry_is_strictly_idempotent(
     assert first == "CREATED:PENDING"
     assert retry == "IDEMPOTENT:PENDING"
     assert changed == "MALFORMED_STATE"
-
-
-@pytest.mark.asyncio
-async def test_v3_group_binding_round_trips_hash_and_size(
-    v3_store: ToolConfirmationRedisStore,
-) -> None:
-    binding = ConfirmationBinding(
-        "action-1", "interaction-1", 0, "task-1", "call-1",
-        "generate_image", "a" * 64, "user-1", "org-1",
-        _CONFIRMATION_EXPIRY, "b" * 64, 10,
-    )
-    waiter_hash = hash_waiter_token("group-waiter")
-
-    assert await v3_store.create(
-        "group-confirmation", binding, waiter_hash,
-    ) == "CREATED:PENDING"
-    assert await v3_store.create(
-        "group-confirmation", binding, waiter_hash,
-    ) == "IDEMPOTENT:PENDING"
-    record = await v3_store.read("group-confirmation", binding)
-    assert record["confirmation_group_hash"] == "b" * 64
-    assert record["confirmation_group_size"] == "10"
-    assert await v3_store.consume(
-        "group-confirmation", binding, "user-1", "org-1", True,
-    ) == "WON:APPROVED"
 
 
 @pytest.mark.asyncio

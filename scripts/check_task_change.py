@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import hashlib
 import io
 import re
 import subprocess
@@ -19,12 +18,6 @@ MARKER_RE = re.compile(r"\b(?:TODO|FIXME|HACK|workaround)\b", re.IGNORECASE)
 MIGRATION_RE = re.compile(r"^\d+_.+\.sql$")
 MAX_FILE_LINES = 500
 MAX_FUNCTION_LINES = 120
-FROZEN_MIGRATION_LINE_EXCEPTIONS = {
-    "backend/migrations/228_04_agent_runtime_media_action_bindings.sql":
-        "bb496f0eb047219a13a038569fdc395618149de0b9fb4d3915088c4e6da63340",
-    "backend/migrations/228_05_agent_runtime_media_manifest_readback.sql":
-        "019a78af9ae679d04e2b63a972804fb63c8e22a3bb9259bbaa2ed94dadcb2a45",
-}
 
 
 def parse_args() -> argparse.Namespace:
@@ -86,19 +79,6 @@ def migration_pair_violation(root: Path, path: Path) -> str | None:
     return None
 
 
-def frozen_migration_line_exception(
-    root: Path, path: Path,
-) -> tuple[bool, str | None]:
-    relative = path.relative_to(root).as_posix()
-    expected = FROZEN_MIGRATION_LINE_EXCEPTIONS.get(relative)
-    if expected is None:
-        return False, None
-    actual = hashlib.sha256(path.read_bytes()).hexdigest()
-    if actual != expected:
-        return True, f"{path}: frozen migration checksum drift"
-    return True, None
-
-
 def check_file(root: Path, path: Path) -> list[str]:
     if not path.exists():
         return []
@@ -108,12 +88,7 @@ def check_file(root: Path, path: Path) -> list[str]:
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
     failures: list[str] = []
-    frozen_line_exception, checksum_failure = frozen_migration_line_exception(
-        root, path,
-    )
-    if checksum_failure:
-        failures.append(checksum_failure)
-    if len(lines) > MAX_FILE_LINES and not frozen_line_exception:
+    if len(lines) > MAX_FILE_LINES:
         failures.append(f"{path}: {len(lines)} lines (max {MAX_FILE_LINES})")
 
     failures.extend(unfinished_markers(path, text))

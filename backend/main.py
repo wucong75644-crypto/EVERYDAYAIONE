@@ -20,7 +20,6 @@ from slowapi.errors import RateLimitExceeded
 from api.routes import (
     admin_users, audio, auth, conversation, detail_project, ecom_requirement, error_monitor, file, health, image, image_ecom,
     kuaimai_external, memory, message, models, org, org_members_assignments,
-    runtime_admin,
     pdd, qimen, scheduled_tasks, subscription, task, webhook, wecom, wecom_auth,
     wecom_chat_targets, ws,
 )
@@ -187,7 +186,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     启动时初始化资源，关闭时清理资源。
     """
     settings = get_settings()
-    tool_probe_task: asyncio.Task | None = None
     logger.info(f"Starting EVERYDAYAI API | env={settings.app_env}")
 
     # 初始化 Redis 连接
@@ -196,8 +194,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("Redis 连接初始化成功")
     except Exception as e:
         logger.warning(f"Redis 连接失败，限流功能降级 | error={e}")
-
-    tool_probe_task = await _start_tool_confirmation_probe(settings)
 
     # 启动 WebSocket Redis Pub/Sub 监听（跨 Worker 消息投递）
     await ws_manager.start_redis_listener()
@@ -219,13 +215,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
-    if tool_probe_task is not None:
-        tool_probe_task.cancel()
-        try:
-            await tool_probe_task
-        except asyncio.CancelledError:
-            pass
-
     # 优雅关闭：通知所有 WebSocket 客户端服务即将重启
     from schemas.websocket import build_server_restarting
     await ws_manager.broadcast_all(build_server_restarting())
@@ -239,76 +228,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 关闭 Redis 连接
     await RedisClient.close()
     logger.info("Shutting down EVERYDAYAI API")
-
-
-async def _start_tool_confirmation_probe(settings) -> asyncio.Task | None:
-    from services.tool_confirmation import tool_confirmation_service
-
-    if not settings.tool_confirmation_v3_enabled:
-        tool_confirmation_service.set_available(False)
-        return None
-    from services.tool_confirmation.capability_probe import (
-        probe_tool_confirmation_redis,
-    )
-    probe = await probe_tool_confirmation_redis()
-    tool_confirmation_service.set_available(probe.ready)
-    if not probe.ready:
-        logger.error("Tool Confirmation V3 remains closed | code={}", probe.code)
-    try:
-        capability_db = await _tool_confirmation_capability_db()
-        await _report_tool_confirmation_capability(capability_db, probe)
-
-        async def probe_loop() -> None:
-            while True:
-                await asyncio.sleep(30)
-                current = await probe_tool_confirmation_redis()
-                try:
-                    await _report_tool_confirmation_capability(
-                        capability_db, current,
-                    )
-                    tool_confirmation_service.set_available(current.ready)
-                except Exception as error:
-                    tool_confirmation_service.set_available(False)
-                    logger.error(
-                        "Tool Confirmation capability refresh failed | type={}",
-                        type(error).__name__,
-                    )
-
-        return asyncio.create_task(probe_loop())
-    except Exception as error:
-        tool_confirmation_service.set_available(False)
-        logger.error(
-            "Tool Confirmation capability fact unavailable | type={}",
-            type(error).__name__,
-        )
-        return None
-
-
-async def _tool_confirmation_capability_db():
-    from core.database import get_async_db
-    from core.db_scope import (
-        AsyncScopedDatabaseClient,
-        DatabaseAccessKind,
-        DatabaseScope,
-    )
-    return AsyncScopedDatabaseClient(
-        await get_async_db(),
-        DatabaseScope(
-            actor_user_id=None, org_id=None,
-            access_kind=DatabaseAccessKind.RUNTIME,
-            request_id="startup-tool-confirmation-v3-probe",
-        ),
-    )
-
-
-async def _report_tool_confirmation_capability(database, probe) -> None:
-    await database.rpc(
-        "report_agent_runtime_capability", {
-            "p_capability_name": "tool_confirmation_v3_redis",
-            "p_ready": probe.ready,
-            "p_evidence": {"code": probe.code},
-        },
-    ).execute()
 
 
 def create_app() -> FastAPI:
@@ -337,7 +256,7 @@ def create_app() -> FastAPI:
         allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization", "Idempotency-Key"],
+        allow_headers=["Content-Type", "Authorization"],
     )
 
     # 安全响应头
@@ -512,7 +431,6 @@ def register_routers(app: FastAPI) -> None:
 
     # 管理员用户管理面板（仅 super_admin）
     app.include_router(admin_users.router, prefix="/api")
-    app.include_router(runtime_admin.router, prefix="/api")
 
     # 快麦 Web 数据接入（智库 + viperp）
     app.include_router(kuaimai_external.router, prefix="/api")

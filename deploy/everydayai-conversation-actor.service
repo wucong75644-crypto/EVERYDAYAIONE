@@ -13,7 +13,6 @@ Environment="EVERYDAYAI_LOG_DIR=/var/log/everydayai/conversation-actor"
 EnvironmentFile=/var/www/everydayai/backend/.env
 EnvironmentFile=/var/www/everydayai/backend/.env.runtime
 EnvironmentFile=/var/www/everydayai/backend/.env.worker-client
-EnvironmentFile=/var/www/everydayai/backend/.env.kek
 ExecStart=/var/www/everydayai/backend/venv/bin/python conversation_worker_main.py
 
 KillMode=mixed

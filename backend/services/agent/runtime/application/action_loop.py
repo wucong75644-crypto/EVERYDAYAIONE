@@ -24,7 +24,6 @@ from services.agent.runtime.ports.authorization import (
 from services.agent.runtime.ports.action_repository import ActionRepositoryPort
 from services.agent.runtime.ports.coordinator_recovery import (
     ActionDispatchSnapshot,
-    ActionRecoveryOperation,
     CoordinatorRecoveryPort,
     RecoveryOutcome,
 )
@@ -42,16 +41,12 @@ from services.agent.runtime.application.action_loop_support import (
     CostReserveFailure as _CostReserveFailure,
     failure_result as _failure_result,
     int_value as _int,
-    next_reconcile_at as _next_reconcile_at,
-    persist_specialist_unknown as _persist_specialist_unknown,
-    provider_idempotency_key as _provider_idempotency_key,
     required as _required,
     required_int as _required_int,
     required_result as _required_result,
     required_time as _required_time,
     reserved_amount as _reserved_amount,
     result as _result,
-    specialist_finalizer as _specialist_finalizer,
 )
 
 
@@ -116,15 +111,6 @@ class ActionLoopDriver:
             reconciliation=True,
         )
         try:
-            if claim.operation is ActionRecoveryOperation.CANCEL:
-                from services.agent.runtime.application.action_cancel import (
-                    cancel_requires_readback,
-                )
-                if not cancel_requires_readback(claim.snapshot):
-                    await self.cancel_action(claim.snapshot, lease=lease)
-                    return True
-            elif claim.operation is not ActionRecoveryOperation.RECONCILE:
-                raise RuntimeError("ACTION_RECOVERY_OPERATION_REQUIRED")
             resolved = self._resolver.resolve(claim.snapshot)
             reconciled_attempt = self._with_capabilities(
                 resolved.attempt, resolved.descriptor, "reconcile",
@@ -157,12 +143,62 @@ class ActionLoopDriver:
         ):
             pass
         return True
-    async def cancel_action(self, snapshot: ActionDispatchSnapshot, *,
-                            lease: _ActionLease | None = None) -> ExecutionOutcome:
-        from services.agent.runtime.application.action_cancel import (
-            cancel_action,
+
+    async def cancel_action(self, snapshot: ActionDispatchSnapshot) -> ExecutionOutcome:
+        """Cancel one claimed specialist attempt through the application owner."""
+        resolved = self._resolver.resolve(snapshot)
+        if not isinstance(resolved.executor, SpecialistExecutor):
+            raise TypeError("SPECIALIST_CANCEL_APPLICATION_PATH_REQUIRED")
+        attempt = resolved.attempt
+        raw_attempt = snapshot.attempt
+        status = str(raw_attempt.get("status", ""))
+        reconciliation = status in {"accepted", "unknown"}
+        token_key = "reconciliation_token" if reconciliation else "execution_token"
+        token = _required(raw_attempt.get(token_key), token_key)
+        state_version = _required_int(
+            raw_attempt.get("state_version"), "cancel state version",
         )
-        return await cancel_action(self, snapshot, lease=lease)
+        if reconciliation:
+            context = ReconciliationContext(
+                token=token,
+                lease_expires_at=_required_time(
+                    raw_attempt.get("reconciliation_lease_expires_at"),
+                ),
+                state_version=state_version,
+            )
+            attempt = replace(attempt, status=ActionAttemptStatus(status))
+            receipt = await resolved.executor.cancel(attempt, context)
+        else:
+            receipt = await resolved.executor.cancel(attempt)
+        request_hash = str(raw_attempt["request_hash"])
+        if receipt.outcome is ExecutionOutcome.CANCELLED:
+            if not await self._try_specialist_finalize(
+                receipt, attempt_id=str(raw_attempt["id"]), token=token,
+                state_version=state_version, request_hash=request_hash,
+                reconciliation=reconciliation,
+                reserved_amount=_reserved_amount(snapshot), specialist=True,
+            ):
+                raise RuntimeError("SPECIALIST_CANCEL_FINALIZE_REQUIRED")
+        elif receipt.outcome is ExecutionOutcome.UNKNOWN:
+            if reconciliation:
+                await self._specialist_facts.still_unknown(
+                    attempt_id=str(raw_attempt["id"]),
+                    reconciliation_token=token,
+                    expected_state_version=state_version,
+                    request_hash=request_hash,
+                    provider_receipt=dict(receipt.external_receipt),
+                    ambiguity_evidence=receipt.ambiguity_evidence,
+                )
+            else:
+                await self._actions.record_unknown(
+                    attempt_id=str(raw_attempt["id"]), execution_token=token,
+                    expected_state_version=state_version,
+                    request_hash=request_hash,
+                    ambiguity_evidence=receipt.ambiguity_evidence,
+                )
+        else:
+            raise RuntimeError("SPECIALIST_CANCEL_UNEXPECTED_OUTCOME")
+        return receipt.outcome
 
     async def _dispatch(self, snapshot: ActionDispatchSnapshot) -> None:
         attempt = snapshot.attempt
@@ -373,15 +409,11 @@ class ActionLoopDriver:
         amount = cost.get("credits", cost.get("actual_credits", 0))
         if isinstance(amount, bool) or not isinstance(amount, int) or amount < 0:
             amount = 0
-        result = _result(receipt) or {
-            "status": "empty", "summary": "cancelled", "data": {},
-            "artifact_ids": [], "usage": {}, "cost": {}, "external_receipt": external,
-        }
-        finalizer = _specialist_finalizer(self._specialist_facts, receipt, external)
+        result = _result(receipt)
         provider_receipt_hash = hashlib.sha256(
             canonical_json(external).encode("utf-8")
         ).hexdigest()
-        await finalizer(
+        await self._specialist_facts.finalize(
             attempt_id=attempt_id,
             execution_token=None if reconciliation else token,
             reconciliation_token=token if reconciliation else None,
@@ -389,7 +421,7 @@ class ActionLoopDriver:
             request_hash=request_hash,
             terminal_state=receipt.outcome.value,
             provider_receipt=external,
-            result=result,
+            result=result or {"status": "empty", "summary": "cancelled", "data": {}, "artifact_ids": [], "usage": {}, "cost": {}, "external_receipt": external},
             cost_kind=("settle" if receipt.outcome is ExecutionOutcome.COMPLETED
                        else "release" if receipt.outcome is ExecutionOutcome.FAILED
                        else "refund"),
@@ -424,67 +456,34 @@ class ActionLoopDriver:
         if receipt.outcome not in {ExecutionOutcome.ACCEPTED, ExecutionOutcome.UNKNOWN}:
             return False
         if reconciliation:
-            common = dict(
+            method = ("still_accepted" if receipt.outcome is ExecutionOutcome.ACCEPTED
+                      else "still_unknown")
+            await getattr(self._specialist_facts, method)(
                 attempt_id=attempt_id, reconciliation_token=token,
                 expected_state_version=state_version, request_hash=request_hash,
                 provider_receipt=dict(receipt.external_receipt),
-                next_reconcile_at=_next_reconcile_at(self._lease_seconds),
+                ambiguity_evidence=receipt.ambiguity_evidence,
             )
-            if receipt.outcome is ExecutionOutcome.ACCEPTED:
-                await self._specialist_facts.still_accepted(**common)
-            else:
-                await self._specialist_facts.still_unknown(
-                    **common,
-                    ambiguity_evidence=dict(receipt.ambiguity_evidence),
-                )
             return True
         external = dict(receipt.external_receipt)
         if receipt.outcome is ExecutionOutcome.UNKNOWN:
-            await _persist_specialist_unknown(
-                self._specialist_facts, external=external,
-                attempt_id=attempt_id, token=token,
-                state_version=state_version, request_hash=request_hash,
+            await self._specialist_facts.provider_unknown(
+                attempt_id=attempt_id, execution_token=token,
+                request_hash=request_hash,
                 ambiguity_evidence=receipt.ambiguity_evidence,
-                next_reconcile_at=_next_reconcile_at(self._lease_seconds),
             )
             return True
         provider_ref = external.get("provider_task_ref")
         provider = external.get("provider")
         if not isinstance(provider_ref, str) or not isinstance(provider, str):
             raise RuntimeError("SPECIALIST_PROVIDER_IDENTITY_REQUIRED")
-        submission = self._specialist_facts.provider_submission
-        if provider == "kie" and hasattr(
-            self._specialist_facts, "media_provider_submission",
-        ):
-            submission = self._specialist_facts.media_provider_submission
-        await submission(
+        await self._specialist_facts.provider_submission(
             attempt_id=attempt_id, execution_token=token, request_hash=request_hash,
             provider=provider, provider_task_ref=provider_ref,
             status_locator=external.get("status_locator"),
             callback_correlation=external.get("callback_correlation"),
-            provider_idempotency_key=_provider_idempotency_key(
-                external, attempt_id,
-            ),
-            provider_request_hash=_provider_request_hash(
-                external, request_hash,
-            ),
+            provider_idempotency_key=external.get("provider_idempotency_key", attempt_id),
+            provider_request_hash=str(external.get("request_hash", request_hash)),
             external_receipt=external,
-            next_reconcile_at=_next_reconcile_at(self._lease_seconds),
         )
         return True
-
-
-def _provider_request_hash(
-    external: Mapping[str, object], fallback: str,
-) -> str:
-    evidence = external.get("evidence")
-    value = evidence.get("provider_request_hash") if isinstance(
-        evidence, Mapping
-    ) else None
-    if not isinstance(value, str):
-        value = external.get("request_hash", fallback)
-    if not isinstance(value, str) or len(value) != 64 or any(
-        char not in "0123456789abcdef" for char in value
-    ):
-        raise RuntimeError("SPECIALIST_PROVIDER_REQUEST_HASH_INVALID")
-    return value

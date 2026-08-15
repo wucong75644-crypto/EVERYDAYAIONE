@@ -1,4 +1,4 @@
-"""企业微信消息到 Agent Runtime 的原子幂等门面。"""
+"""企业微信消息到 Conversation Actor 的原子幂等入口。"""
 
 from __future__ import annotations
 
@@ -27,7 +27,6 @@ class WecomActorEnqueueResult:
     input_message_id: str
     output_message_id: str
     already_enqueued: bool
-    owner_state: str
 
 
 async def enqueue_wecom_message(
@@ -40,7 +39,7 @@ async def enqueue_wecom_message(
     file_payload: dict[str, Any] | None = None,
     stream_context: Mapping[str, Any] | None = None,
 ) -> WecomActorEnqueueResult:
-    """使用稳定 ID 原子创建消息并交给 Runtime；不可用时直接失败。"""
+    """使用稳定 ID 原子创建消息和 Actor task，并 best-effort 唤醒 Worker。"""
     if not msg.msgid:
         raise RuntimeError("WECOM_ACTOR_MSGID_MISSING")
     ids = _stable_ids(msg, user_id)
@@ -73,55 +72,29 @@ async def enqueue_wecom_message(
     )
     task_data["id"] = ids["task"]
     delivery_context = _delivery_context(msg, ids["task"], stream_context)
-    from core.config import get_settings
-
-    settings = get_settings()
-    params = {
-        "p_task_data": Jsonb(task_data),
-        "p_input_message_id": ids["input"],
-        "p_output_message_id": ids["output"],
-        "p_turn_id": ids["turn"],
-        "p_input_content": Jsonb(input_content),
-        "p_delivery_context": Jsonb(delivery_context),
-    }
-    fact_response = handler.db.rpc("get_agent_runtime_definition_fact", {
-        "p_agent_key": settings.agent_runtime_agent_definition_id,
-        "p_definition_revision": settings.agent_runtime_agent_definition_revision,
-    }).execute()
-    fact = fact_response.data if fact_response else None
-    if not isinstance(fact, dict) or fact.get("outcome") == "not_found":
-        raise RuntimeError("WECOM_RUNTIME_DEFINITION_FACT_UNAVAILABLE")
-    definition_hash = str(fact.get("definition_hash") or "")
-    catalog_revision = str(fact.get("catalog_revision") or "")
-    if not definition_hash or not catalog_revision:
-        raise RuntimeError("WECOM_RUNTIME_DEFINITION_FACT_INVALID")
-    params.update({
-        "p_agent_definition_id": settings.agent_runtime_agent_definition_id,
-        "p_agent_definition_revision": (
-            settings.agent_runtime_agent_definition_revision
-        ),
-        "p_agent_definition_hash": definition_hash,
-        "p_effective_toolset_revision": catalog_revision,
-        "p_effective_toolset_hash": None,
-        "p_release_revision": settings.agent_runtime_release_revision,
-        "p_idempotency_key": f"wecom:{msg.msgid}",
-    })
     response = handler.db.rpc(
-        "enqueue_wecom_runtime_turn_required_v1", params,
+        "enqueue_wecom_generation_turn_v2",
+        {
+            "p_task_data": Jsonb(task_data),
+            "p_input_message_id": ids["input"],
+            "p_output_message_id": ids["output"],
+            "p_turn_id": ids["turn"],
+            "p_input_content": Jsonb(input_content),
+            "p_delivery_context": Jsonb(delivery_context),
+        },
     ).execute()
     result = response.data if response else None
     if not isinstance(result, dict) or not result.get("task_id"):
         raise RuntimeError("WECOM_ACTOR_ENQUEUE_RESULT_INVALID")
 
-    runtime_owned = bool(result.get("runtime_owned"))
-    if not runtime_owned:
-        raise RuntimeError("WECOM_RUNTIME_OWNERSHIP_REQUIRED")
+    from services.conversation_worker import RedisConversationWakeup
+
+    await RedisConversationWakeup().publish(conversation_id, msg.org_id)
     return WecomActorEnqueueResult(
         task_id=str(result["task_id"]),
         input_message_id=str(result.get("input_message_id") or ids["input"]),
         output_message_id=str(result.get("output_message_id") or ids["output"]),
         already_enqueued=bool(result.get("already_enqueued")),
-        owner_state="runtime_owned",
     )
 
 
@@ -149,9 +122,7 @@ def _load_chat_settings(db: Any, conversation_id: str) -> tuple[str, dict[str, A
     settings = row.get("chat_settings")
     if not isinstance(settings, dict):
         settings = {}
-    from services.agent.runtime.model_resolution import resolve_runtime_model
-
-    return resolve_runtime_model(row.get("model_id")).model_id, settings
+    return str(row.get("model_id") or "auto"), settings
 
 
 def _build_content(

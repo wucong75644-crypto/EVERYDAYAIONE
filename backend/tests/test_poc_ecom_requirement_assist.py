@@ -120,15 +120,7 @@ async def test_run_scenario_records_usage_and_closes_adapter(tmp_path: Path) -> 
     )
 
     with (
-        patch(
-            "scripts.poc_ecom_requirement_assist.settings",
-            SimpleNamespace(
-                dashscope_api_key="test-key",
-                image_enhance_vl_model="qwen-vl-max",
-                dashscope_base_url=None,
-                image_enhance_timeout=60,
-            ),
-        ),
+        patch("scripts.poc_ecom_requirement_assist.settings.dashscope_api_key", "test-key"),
         patch("scripts.poc_ecom_requirement_assist.DashScopeChatAdapter", return_value=adapter),
     ):
         report = await run_scenario(
@@ -152,10 +144,7 @@ async def test_run_scenario_records_usage_and_closes_adapter(tmp_path: Path) -> 
 async def test_run_scenario_requires_api_key(tmp_path: Path) -> None:
     product = tmp_path / "product.png"
     product.write_bytes(b"product")
-    with patch(
-        "scripts.poc_ecom_requirement_assist.settings",
-        SimpleNamespace(dashscope_api_key=""),
-    ):
+    with patch("scripts.poc_ecom_requirement_assist.settings.dashscope_api_key", ""):
         with pytest.raises(RuntimeError, match="DASHSCOPE_API_KEY"):
             await run_scenario(
                 name="text_only",

@@ -6,7 +6,7 @@
 - LiteLLM: model_list 配置驱动
 """
 
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 from loguru import logger
 
@@ -501,7 +501,7 @@ def create_chat_adapter(
     stream_timeout: Optional[float] = None,
     org_id: Optional[str] = None,
     db=None,
-    api_key_override: Optional[str] = None, adapter_settings: Any | None = None,
+    api_key_override: Optional[str] = None,
 ) -> BaseChatAdapter:
     """
     根据模型 ID 创建对应的聊天适配器
@@ -518,7 +518,7 @@ def create_chat_adapter(
     Raises:
         ValueError: 模型不存在或 Provider 未实现
     """
-    settings = adapter_settings if adapter_settings is not None else get_settings()
+    settings = get_settings()
 
     # 获取模型配置
     actual_model_id = model_id if model_id in MODEL_REGISTRY else DEFAULT_MODEL_ID
@@ -526,7 +526,7 @@ def create_chat_adapter(
 
     # 熔断器检查
     from services.circuit_breaker import is_provider_available
-    if not is_provider_available(config.provider, settings=settings):
+    if not is_provider_available(config.provider):
         raise ProviderUnavailableError(
             f"Provider {config.provider.value} 熔断中，模型 {actual_model_id} 暂不可用",
             provider=config.provider,

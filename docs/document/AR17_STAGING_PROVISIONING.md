@@ -7,10 +7,10 @@
 仓库内的 GitHub Actions disposable workflow 只允许产生以下结论：
 
 ```text
-C6 Disposable Freeze Candidate Verified
+T5-CI Disposable Verified
 ```
 
-该 workflow 使用 disposable PostgreSQL、LocalNonProductionCredentialBackend、LocalNonProductionObjectStore 和 isolated mock Provider，并覆盖 C1～C6.2、227_13～227_15 及既有 A1～A10 合同。它只冻结本地/CI 候选证据，不能产生 `T5-Staging Ready`、production verified 或 production readiness 结论。
+该 workflow 使用 disposable PostgreSQL、LocalNonProductionCredentialBackend、LocalNonProductionObjectStore 和 isolated mock Provider。它不能产生 `T5-Staging Ready` 或 production readiness 结论。
 
 `T5-Staging Ready` 仍要求独立外部 staging 资源、真实 readback、Worker heartbeat、rollback 权限和完整观察证据。对应 workflow 失败时，不得通过跳过测试、删除断言或修改 production contract 绕过。
 
@@ -38,6 +38,7 @@ C6 Disposable Freeze Candidate Verified
 WORKER_DATABASE_URL=<staging runtime role URL>
 RUNTIME_ADMIN_DATABASE_URL=<staging runtime admin URL>
 AGENT_RUNTIME_PROCESS_ROLE=agent_runtime
+AGENT_RUNTIME_INGRESS_ENABLED=false
 AGENT_RUNTIME_PRODUCTION_ENABLED=false
 CREDENTIAL_BACKEND_PROFILE=<approved non-production profile>
 OBJECT_STORE_PROFILE=<tenant-scoped staging profile>

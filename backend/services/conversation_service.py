@@ -50,11 +50,6 @@ class ConversationService:
                 "org_id": org_id,
                 "source": source,
             }
-            if source == "web":
-                conversation_data.update({
-                    "scope_type": "user",
-                    "scope_id": user_id,
-                })
 
             if model_id:
                 conversation_data["model_id"] = model_id
@@ -174,7 +169,6 @@ class ConversationService:
                 self.db.table("conversations")
                 .select("id, title, last_message_preview, model_id, chat_settings, updated_at, source", count="exact")
                 .eq("user_id", user_id)
-                .in_("source", ["web", "wecom"])
             )
             if org_id:
                 query = query.eq("org_id", org_id)

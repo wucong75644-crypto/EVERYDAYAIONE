@@ -1,10 +1,6 @@
 from pathlib import Path
 
-import psycopg
-import pytest
-
 from scripts.migration_runner import discover_migrations
-from tests.test_agent_runtime_ar17_postgres_external import database
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,25 +16,5 @@ def test_pgcrypto_prerequisite_precedes_catalog_seed() -> None:
 
 
 def test_pgcrypto_migration_has_matching_rollback() -> None:
-    migration_sql = MIGRATION.read_text(encoding="utf-8")
-    rollback_sql = ROLLBACK.read_text(encoding="utf-8")
-
-    assert "CREATE EXTENSION IF NOT EXISTS pgcrypto" in migration_sql
-    assert "DROP EXTENSION" not in rollback_sql.upper()
-    assert "Intentional no-op" in rollback_sql
-    assert "database platform" in rollback_sql
-
-
-@pytest.mark.external
-def test_pgcrypto_rollback_preserves_preexisting_extension(database: str) -> None:
-    with psycopg.connect(database) as connection:
-        assert connection.execute(
-            "SELECT extname FROM pg_extension WHERE extname = 'pgcrypto'"
-        ).fetchone() == ("pgcrypto",)
-
-        connection.execute(MIGRATION.read_text(encoding="utf-8"))
-        connection.execute(ROLLBACK.read_text(encoding="utf-8"))
-
-        assert connection.execute(
-            "SELECT digest('shared-capability', 'sha256') IS NOT NULL"
-        ).fetchone() == (True,)
+    assert "CREATE EXTENSION IF NOT EXISTS pgcrypto" in MIGRATION.read_text()
+    assert "DROP EXTENSION IF EXISTS pgcrypto" in ROLLBACK.read_text()

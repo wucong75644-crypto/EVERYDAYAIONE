@@ -88,7 +88,6 @@ class EcomImageHandler(ImageHandler):
                 db=self.db,
                 user_id=user_id,
                 conversation_id=conversation_id,
-                runtime_owned=False,
             )
             result = await agent.ecom_plan(
                 user_text=user_text,

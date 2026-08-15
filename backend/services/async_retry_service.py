@@ -39,9 +39,6 @@ class AsyncRetryService:
         Returns:
             True = 重试已提交，False = 不重试
         """
-        delivery_context = task.get("delivery_context")
-        if isinstance(delivery_context, dict) and delivery_context.get("runtime") is True:
-            return False
         request_params = task.get("request_params") or {}
         if isinstance(request_params, str):
             request_params = json.loads(request_params)

@@ -103,8 +103,7 @@ def test_production_composition_covers_exactly_42_executor_backed_tools() -> Non
         ProductionSpecialistPorts(
             transport=object(), erp_dispatcher=object(), erp_search=object(),
             artifact=object(), media_task=object(), resource_mutation=object(),
-            child_run=object(), local_data=object(), file_analyze=object(),
-            fetch_all_pages=object(),
+            child_run=object(),
         ),
         facts=object(),
     )
@@ -155,26 +154,15 @@ def test_disabled_production_toolset_keeps_only_safe_local_tools() -> None:
     assert [item.canonical_name for item in toolset.definitions] == ["safe_tool"]
 
 
-def test_frozen_ar174_seed_remains_immutable() -> None:
+def test_generated_sql_catalog_matches_descriptor_seed() -> None:
     from services.agent.runtime.catalog.production_seed import build_seed_snapshot
-    from services.agent.runtime.catalog.specialist_schemas import SPECIALIST_TOOL_SCHEMAS
 
     sql = (Path(__file__).parents[1] / "migrations" /
            "227_02_agent_runtime_production_catalog_seed.sql").read_text()
     match = re.search(r"catalog_doc JSONB := \$seed\$(.*?)\$seed\$::JSONB", sql)
     assert match is not None
     stored = json.loads(match.group(1))
-    current = build_seed_snapshot().receipt.document()
-    stored_local = next(
-        item for item in stored["tools"] if item["canonical_name"] == "local_data"
-    )
-    current_local = next(
-        item for item in current["tools"] if item["canonical_name"] == "local_data"
-    )
-    assert stored["catalog_revision"] != current["catalog_revision"]
-    assert "query_type" not in stored_local["schema"]["properties"]
-    assert "query_type" in current_local["schema"]["properties"]
-    assert "query_type" in SPECIALIST_TOOL_SCHEMAS["local_data"]["properties"]
+    assert stored == build_seed_snapshot().receipt.document()
     assert "Do not edit facts by hand" in sql
     assert "'schema_hash','cd1a463c" not in sql
 

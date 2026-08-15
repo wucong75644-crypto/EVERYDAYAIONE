@@ -17,8 +17,6 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from services.agent.scheduled_task_agent import (
-    LEGACY_SCHEDULED_TASK_OWNER_DISABLED,
-    LegacyScheduledTaskOwnerDisabled,
     ScheduledTaskAgent,
     ScheduledTaskResult,
 )
@@ -99,28 +97,36 @@ class TestBuildLightContext:
 
 class TestGenerateSummary:
     @pytest.mark.asyncio
-    async def test_legacy_summary_fails_closed(self):
+    async def test_short_text_returned_as_is(self):
+        agent = ScheduledTaskAgent(MagicMock(), make_task())
+        text = "短文本，不需要摘要"
+        adapter = MagicMock()
+        summary = await agent._generate_summary(text, adapter)
+        assert summary == text
+
+    @pytest.mark.asyncio
+    async def test_long_text_calls_llm(self):
+        agent = ScheduledTaskAgent(MagicMock(), make_task())
+        text = "x" * 1000  # 长文本
+
+        # mock adapter.stream_chat
+        async def fake_stream(messages, **kwargs):
+            class Chunk:
+                def __init__(self, c):
+                    self.content = c
+            yield Chunk("摘要：测试结果")
+
+        adapter = MagicMock()
+        adapter.stream_chat = fake_stream
+
+        summary = await agent._generate_summary(text, adapter)
+        assert summary == "摘要：测试结果"
+
+    @pytest.mark.asyncio
+    async def test_empty_text(self):
         agent = ScheduledTaskAgent(MagicMock(), make_task())
         adapter = MagicMock()
-        with pytest.raises(LegacyScheduledTaskOwnerDisabled) as exc_info:
-            await agent._generate_summary("短文本，不需要摘要", adapter)
-        assert exc_info.value.code == LEGACY_SCHEDULED_TASK_OWNER_DISABLED
-        adapter.stream_chat.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_legacy_execute_fails_closed_before_provider(self):
-        agent = ScheduledTaskAgent(MagicMock(), make_task())
-        with pytest.raises(LegacyScheduledTaskOwnerDisabled) as exc_info:
-            await agent.execute()
-        assert exc_info.value.code == LEGACY_SCHEDULED_TASK_OWNER_DISABLED
-
-    @pytest.mark.asyncio
-    async def test_legacy_template_and_tool_loop_fail_closed(self):
-        agent = ScheduledTaskAgent(MagicMock(), make_task())
-        with pytest.raises(LegacyScheduledTaskOwnerDisabled):
-            await agent._prepare_template()
-        with pytest.raises(LegacyScheduledTaskOwnerDisabled):
-            agent._build_tool_loop(None, None, [])
+        assert await agent._generate_summary("", adapter) == ""
 
 
 # ════════════════════════════════════════════════════════
@@ -150,4 +156,3 @@ class TestScheduledTaskResult:
         )
         assert result.tokens_used == 1500
         assert len(result.files) == 1
-

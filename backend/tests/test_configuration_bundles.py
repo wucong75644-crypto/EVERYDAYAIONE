@@ -8,7 +8,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from services.configuration.bundles import (
-    AsyncSecretBundleResolver,
     SecretBundleResolver,
     WecomBotTargetResolver,
 )
@@ -33,16 +32,6 @@ class FakeDB:
         return SimpleNamespace(
             execute=lambda: SimpleNamespace(data=self.data)
         )
-
-
-class AsyncFakeDB(FakeDB):
-    def rpc(self, name: str, params: object = None) -> SimpleNamespace:
-        self.calls.append((name, params))
-
-        async def execute() -> SimpleNamespace:
-            return SimpleNamespace(data=self.data)
-
-        return SimpleNamespace(execute=execute)
 
 
 def _erp_response() -> dict[str, object]:
@@ -142,28 +131,6 @@ def test_erp_bundle_decrypts_with_database_selected_scope_and_version() -> None:
     assert first_call.kwargs["scope_id"] == ORG_ID
     assert first_call.kwargs["secret_name"] == "erp.app_credentials"
     assert first_call.args[0].payload_version == 1
-
-
-@pytest.mark.asyncio
-async def test_runtime_erp_uses_attempt_fenced_facade() -> None:
-    db = AsyncFakeDB(_erp_response())
-    material = MagicMock()
-    material.decrypt_payload.side_effect = (
-        {"app_key": "app", "app_secret": "secret"},
-        {"access_token": "access", "refresh_token": "refresh"},
-    )
-    params = {
-        "p_attempt_id": "attempt-1", "p_worker_id": "worker-1",
-        "p_execution_token": "token-1", "p_expected_attempt_version": 3,
-        "p_request_hash": "a" * 64,
-    }
-
-    result = await AsyncSecretBundleResolver(
-        db, material,
-    ).runtime_erp(params)
-
-    assert result.name == "erp.runtime"
-    assert db.calls == [("get_agent_runtime_erp_configuration_v1", params)]
 
 
 def test_decrypted_payload_schema_mismatch_fails_closed() -> None:
@@ -281,20 +248,6 @@ def test_public_methods_call_only_their_fixed_rpc(
         getattr(SecretBundleResolver(db, MagicMock(), effective), method)()
 
     assert db.calls == [(rpc_name, None)]
-
-
-@pytest.mark.asyncio
-async def test_async_wecom_app_calls_only_fixed_parameterless_rpc() -> None:
-    effective = MagicMock()
-    effective.parse.side_effect = ConfigurationResolutionError("stop")
-    db = AsyncFakeDB({})
-
-    with pytest.raises(ConfigurationResolutionError, match="stop"):
-        await AsyncSecretBundleResolver(
-            db, MagicMock(), effective,
-        ).wecom_app()
-
-    assert db.calls == [("get_wecom_app_bundle", None)]
 
 
 def test_wecom_targets_use_discovery_then_exact_org_bundle() -> None:

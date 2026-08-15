@@ -4,11 +4,6 @@ import { getPlaceholderText } from '../constants/placeholder';
 import { useMessageStore, type ContentPart, type Message } from '../stores/useMessageStore';
 import { logger } from '../utils/logger';
 import { toApiRequestError } from './api';
-import {
-  findImagePartContentIndex,
-  findRuntimeMediaSlotContentIndex,
-  isRuntimeMediaImageSlot,
-} from '../utils/runtimeMediaSlots';
 
 export type GenerationType = 'chat' | 'image' | 'image_ecom' | 'video' | 'audio';
 export type MessageOperation = 'send' | 'regenerate' | 'retry' | 'regenerate_single';
@@ -103,27 +98,8 @@ export function applyOptimisticUpdate(options: SendOptions, ctx: SendContext): v
     const existing = store.getMessage(ctx.assistantMessageId);
     if (existing) {
       const contentCopy = [...existing.content];
-      const runtimeIndex = findRuntimeMediaSlotContentIndex(
-        contentCopy,
-        typeof params?.runtime_slot_id === 'string' ? params.runtime_slot_id : undefined,
-        imageIndex,
-      );
-      const contentIndex = runtimeIndex >= 0
-        ? runtimeIndex
-        : findImagePartContentIndex(contentCopy, imageIndex);
-      if (contentIndex >= 0) {
-        const current = contentCopy[contentIndex];
-        contentCopy[contentIndex] = isRuntimeMediaImageSlot(current)
-          ? {
-              ...current,
-              url: null,
-              slot_status: 'pending',
-              slot_revision: current.slot_revision + 1,
-              failed: undefined,
-              error: undefined,
-              error_code: undefined,
-            }
-          : { type: 'image', url: null } as ContentPart;
+      if (imageIndex < contentCopy.length) {
+        contentCopy[imageIndex] = { type: 'image', url: null } as ContentPart;
       }
       store.updateMessage(ctx.assistantMessageId, {
         content: contentCopy,
@@ -149,19 +125,10 @@ export function processApiResponse(
 ): void {
   const { conversationId, generationType, operation = 'send', subscribeTask } = options;
   const store = useMessageStore.getState();
-  const actualType = response.generation_type;
 
   store.updateMessage(ctx.assistantMessageId, { task_id: response.task_id });
 
-  if (actualType === 'image' && operation === 'regenerate_single') {
-    store.updateMessage(ctx.assistantMessageId, {
-      content: response.assistant_message.content,
-      status: response.assistant_message.status,
-      generation_params: response.assistant_message.generation_params,
-      task_id: response.task_id,
-    });
-  }
-
+  const actualType = response.generation_type;
   if (actualType && actualType !== 'chat' && operation === 'retry') {
     replaceWithMediaPlaceholder(
       response,

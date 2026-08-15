@@ -112,22 +112,6 @@ def test_rpc_keeps_json_lists_but_supports_explicit_postgres_arrays() -> None:
     assert params[1] == [UUID("00000000-0000-0000-0000-000000000001")]
 
 
-def test_rpc_uses_uuid_fence_for_command_claims_only() -> None:
-    from core.db_scope import _rpc_sql
-
-    command_sql, _ = _rpc_sql(
-        "finish_agent_command_claim",
-        {"p_fencing_token": "00000000-0000-0000-0000-000000000001"},
-    )
-    sandbox_sql, _ = _rpc_sql(
-        "finish_agent_runtime_sandbox_job",
-        {"p_fencing_token": 1},
-    )
-
-    assert "p_fencing_token := %s::uuid" in command_sql
-    assert "p_fencing_token := %s::bigint" in sandbox_sql
-
-
 def test_postgres_array_rejects_non_uuid_values() -> None:
     with pytest.raises(ValueError):
         PostgresArray(["not-a-uuid"])
@@ -266,96 +250,6 @@ async def test_async_rpc_sets_scope_in_transaction() -> None:
 
     assert result.data == {"ok": True}
     assert cursor.execute.await_args_list[0].args[1] == scope.settings
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("rpc_name", "uuid_keys"),
-    (
-        (
-            "recover_agent_runtime_scheduled_wecom_prepared_dispatch_v1",
-            ("p_recovery_request_id",),
-        ),
-        (
-            "start_agent_runtime_scheduled_wecom_dispatch_v2",
-            (
-                "p_intent_id", "p_item_id", "p_attempt_id",
-                "p_claim_request_id", "p_lease_token",
-            ),
-        ),
-        (
-            "record_agent_runtime_scheduled_wecom_reconcile_definitive_result_v1",
-            (
-                "p_request_id", "p_claim_request_id", "p_intent_id",
-                "p_item_id", "p_attempt_id", "p_reconcile_token",
-            ),
-        ),
-        (
-            "read_agent_runtime_scheduled_wecom_dispatch_payload_v1",
-            (
-                "p_intent_id", "p_item_id", "p_claim_request_id", "p_lease_token",
-            ),
-        ),
-        (
-            "terminalize_agent_runtime_scheduled_wecom_unsupported_item_v1",
-            (
-                "p_request_id", "p_intent_id", "p_item_id",
-                "p_claim_request_id", "p_lease_token",
-            ),
-        ),
-        (
-            "recover_agent_runtime_scheduled_wecom_started_dispatch_v1",
-            ("p_request_id",),
-        ),
-    ),
-)
-async def test_async_scheduled_wecom_rpc_casts_exact_uuid_params(
-    rpc_name: str, uuid_keys: tuple[str, ...],
-) -> None:
-    pool, _, cursor, _ = _async_db()
-    cursor.description = None
-    scope = DatabaseScope(
-        actor_user_id=None,
-        org_id=None,
-        access_kind=DatabaseAccessKind.WORKER,
-        request_id="scheduled-wecom-rpc",
-    )
-
-    await AsyncScopedRpcCaller(
-        AsyncRpcCaller(pool, rpc_name, {key: str(uuid4()) for key in uuid_keys}),
-        scope,
-    ).execute()
-
-    scope_sql, scope_values = cursor.execute.await_args_list[0].args
-    rpc_sql = cursor.execute.await_args_list[1].args[0]
-    assert scope_sql == SET_DATABASE_SCOPE_SQL
-    assert scope_values[2] == "worker"
-    for key in uuid_keys:
-        assert f"{key} := %s::uuid" in rpc_sql
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("rpc_name", "text_key"),
-    (
-        ("claim_ready_agent_actions_v2", "p_claim_request_id"),
-        ("request_agent_runtime_scheduled_execution_v1", "p_request_id"),
-    ),
-)
-async def test_async_non_wecom_rpc_keeps_overloaded_request_params_text(
-    rpc_name: str, text_key: str,
-) -> None:
-    pool, _, cursor, _ = _async_db()
-    cursor.description = None
-
-    await AsyncScopedRpcCaller(
-        AsyncRpcCaller(pool, rpc_name, {text_key: "text-request-id"}),
-        DatabaseScope(None, None, DatabaseAccessKind.WORKER),
-    ).execute()
-
-    rpc_sql, values = cursor.execute.await_args_list[1].args
-    assert f"{text_key} := %s::uuid" not in rpc_sql
-    assert values == ["text-request-id"]
 
 
 @pytest.mark.asyncio

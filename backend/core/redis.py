@@ -10,6 +10,8 @@ import uuid
 from redis.asyncio import Redis
 from loguru import logger
 
+from core.config import settings
+
 
 async def get_redis() -> Optional[Redis]:
     """获取 Redis 客户端的便捷函数"""
@@ -24,48 +26,19 @@ class RedisClient:
     """Redis 连接管理（单例模式）"""
 
     _instance: Optional[Redis] = None
-    _explicit_configuration: tuple[str, int, str | None, int, bool] | None = None
-
-    @classmethod
-    def configure_explicit(
-        cls, *, host: str, port: int, password: str | None, db: int, ssl: bool,
-    ) -> None:
-        """Set process-owned Redis without loading application settings."""
-        configuration = (host, port, password, db, ssl)
-        if (
-            cls._instance is not None
-            and cls._explicit_configuration != configuration
-        ):
-            raise RuntimeError("REDIS_CONFIGURATION_ALREADY_ACTIVE")
-        if (
-            cls._explicit_configuration is not None
-            and cls._explicit_configuration != configuration
-        ):
-            raise RuntimeError("REDIS_CONFIGURATION_CONFLICT")
-        cls._explicit_configuration = configuration
 
     @classmethod
     async def get_client(cls) -> Redis:
         """获取 Redis 客户端"""
         if cls._instance is None:
-            if cls._explicit_configuration is None:
-                from core.config import get_settings
-
-                cls._instance = Redis.from_url(
-                    get_settings().redis_url,
-                    encoding="utf-8",
-                    decode_responses=True,
-                    socket_timeout=5.0,
-                    socket_connect_timeout=5.0,
-                )
-            else:
-                host, port, password, db, ssl = cls._explicit_configuration
-                cls._instance = Redis(
-                    host=host, port=port, password=password, db=db, ssl=ssl,
-                    encoding="utf-8", decode_responses=True,
-                    socket_timeout=5.0, socket_connect_timeout=5.0,
-                )
-            logger.info("Redis 连接已建立")
+            cls._instance = Redis.from_url(
+                settings.redis_url,
+                encoding="utf-8",
+                decode_responses=True,
+                socket_timeout=5.0,
+                socket_connect_timeout=5.0,
+            )
+            logger.info("Redis 连接已建立", url=settings.redis_url.split("@")[-1])
         return cls._instance
 
     @classmethod

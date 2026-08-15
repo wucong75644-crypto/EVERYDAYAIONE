@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -46,7 +46,6 @@ class _IdleDatabase:
     def rpc(self, name, _params):
         if name in {
             "claim_next_sandbox_job", "claim_next_recoverable_sandbox_job",
-            "claim_next_sandbox_cancel_v1",
         }:
             self.claim_calls += 1
         elif name == "claim_next_sandbox_job_reconciliation":
@@ -79,7 +78,7 @@ async def test_sandbox_entrypoint_uses_real_components_and_cycle_surface(
     components, jobs, launcher = _components(
         tmp_path, IsolationProbe(ready=True, code="SANDBOX_ISOLATION_READY"),
     )
-    monkeypatch.setattr(entrypoint, "build_sandbox", lambda *_args, **_kwargs: components)
+    monkeypatch.setattr(entrypoint, "build_sandbox", lambda *_args: components)
     settings = SimpleNamespace(sandbox_partial_retention_seconds=86400)
 
     owner, cycle = await entrypoint._build_owner_and_cycle(
@@ -88,7 +87,7 @@ async def test_sandbox_entrypoint_uses_real_components_and_cycle_surface(
     assert owner is components
     assert await cycle() is False
     assert launcher.probe_calls == 2
-    assert jobs.claim_calls == 3
+    assert jobs.claim_calls == 2
     assert jobs.reconcile_calls == 1
 
 
@@ -101,7 +100,7 @@ async def test_sandbox_probe_failure_is_startup_fatal_and_cannot_claim(
             ready=False, code="SANDBOX_ROOTFS_CONTENT_MISMATCH",
         ),
     )
-    monkeypatch.setattr(entrypoint, "build_sandbox", lambda *_args, **_kwargs: components)
+    monkeypatch.setattr(entrypoint, "build_sandbox", lambda *_args: components)
     with pytest.raises(
         RuntimeError,
         match="SANDBOX_CAPABILITY_PROBE_FAILED:SANDBOX_ROOTFS_CONTENT_MISMATCH",
@@ -114,58 +113,29 @@ async def test_sandbox_probe_failure_is_startup_fatal_and_cannot_claim(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("role", "owner_factory", "stop_path"),
-    (
-        ("agent_runtime", lambda: SimpleNamespace(drain=Mock()), "drain"),
-        ("projection", lambda: SimpleNamespace(), None),
-        ("authorization", lambda: SimpleNamespace(stop=Mock()), "stop"),
-        (
-            "sandbox",
-            lambda: SimpleNamespace(service=SimpleNamespace(stop=Mock())),
-            "service.stop",
-        ),
-    ),
-)
-async def test_shutdown_stops_owner_removes_health_socket_and_closes_db_once(
-    tmp_path, role, owner_factory, stop_path,
+async def test_shutdown_stops_service_removes_health_socket_and_closes_db(
+    tmp_path, monkeypatch,
 ):
-    owner = owner_factory()
+    components, _, _ = _components(
+        tmp_path, IsolationProbe(ready=False, code="not-used"),
+    )
     socket_path = tmp_path / "health.sock"
     socket_path.write_text("socket", encoding="utf-8")
     server = SimpleNamespace(
-        close=Mock(), wait_closed=AsyncMock(),
+        close=lambda: None, wait_closed=AsyncMock(),
+    )
+    control_db = SimpleNamespace(
+        rpc=lambda *_args, **_kwargs: SimpleNamespace(
+            execute=AsyncMock(side_effect=RuntimeError("closed")),
+        ),
     )
     close_db = AsyncMock()
+    monkeypatch.setattr(entrypoint, "close_async_worker_db", close_db)
 
     await entrypoint._shutdown(
-        owner, server, str(socket_path), close_db,
+        "sandbox", components, control_db, SimpleNamespace(),
+        server, str(socket_path),
     )
-    server.close.assert_called_once_with()
-    server.wait_closed.assert_awaited_once_with()
+    assert components.worker._draining is True
     assert not socket_path.exists()
-    close_db.assert_awaited_once_with()
-    if stop_path == "drain":
-        owner.drain.assert_called_once_with()
-    elif stop_path == "stop":
-        owner.stop.assert_called_once_with()
-    elif stop_path == "service.stop":
-        owner.service.stop.assert_called_once_with()
-
-
-@pytest.mark.asyncio
-async def test_shutdown_does_not_stop_owner_twice_after_signal_drain(tmp_path):
-    owner = SimpleNamespace(drain=Mock())
-    socket_path = tmp_path / "health.sock"
-    socket_path.write_text("socket", encoding="utf-8")
-    server = SimpleNamespace(close=Mock(), wait_closed=AsyncMock())
-    close_db = AsyncMock()
-
-    owner.drain()
-    await entrypoint._shutdown(
-        owner, server, str(socket_path), close_db,
-        owner_already_drained=True,
-    )
-
-    owner.drain.assert_called_once_with()
-    close_db.assert_awaited_once_with()
+    close_db.assert_awaited_once()

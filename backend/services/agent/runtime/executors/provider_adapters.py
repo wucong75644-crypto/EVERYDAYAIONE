@@ -19,6 +19,7 @@ from services.agent.runtime.executors.contracts import canonical_json
 from services.agent.runtime.executors.specialist_contracts import (
     NetworkRule, ProviderReceipt, ProviderState, SpecialistProvider,
 )
+from services.kuaimai.registry import TOOL_REGISTRIES
 
 
 class ProviderTransport(Protocol):
@@ -31,17 +32,11 @@ class ProviderTransport(Protocol):
 class ErpDispatcherPort(Protocol):
     async def execute(self, tool_name: str, action: str, params: dict[str, object]) -> object: ...
 
-    async def execute_raw(
-        self, tool_name: str, action: str, params: dict[str, object],
-    ) -> dict[str, object]: ...
-
     async def close(self) -> None: ...
 
 
 class ErpDispatcherFactoryPort(Protocol):
-    async def create(
-        self, attempt: ActionAttempt, request: Mapping[str, object],
-    ) -> ErpDispatcherPort: ...
+    async def create(self, scope: RuntimeScope) -> ErpDispatcherPort: ...
 
 
 class HttpProviderTransport:
@@ -101,23 +96,13 @@ class ArtifactPort(Protocol):
 
 
 class MediaTaskPort(Protocol):
-    async def prepare(
-        self, attempt: ActionAttempt, *, kind: str,
-    ) -> Mapping[str, object]: ...
-
-    async def read(
-        self, attempt: ActionAttempt, *, kind: str,
-        owner_token: str | None = None,
-        expected_state_version: int | None = None,
-    ) -> Mapping[str, object]: ...
+    async def prepare(self, attempt: ActionAttempt, request: Mapping[str, object], *, kind: str) -> Mapping[str, object]: ...
 
 
 class ResourceMutationPort(Protocol):
     async def mutate(self, attempt: ActionAttempt, request: Mapping[str, object], *, operation: str) -> Mapping[str, object]: ...
 
     async def reconcile(self, attempt: ActionAttempt, receipt: Mapping[str, object], *, operation: str) -> Mapping[str, object]: ...
-
-    async def cancel(self, attempt: ActionAttempt, receipt: Mapping[str, object], *, operation: str) -> Mapping[str, object]: ...
 
 
 class ChildRunPort(Protocol):
@@ -235,8 +220,6 @@ class _HTTPProvider(SpecialistProvider):
 
 
 class ERPQueryProvider(_HTTPProvider):
-    requires_dispatch_context = True
-
     def __init__(
         self, dispatcher: ErpDispatcherPort | None = None, *, tool_name: str,
         write: bool = False, dispatcher_factory: ErpDispatcherFactoryPort | None = None,
@@ -252,23 +235,13 @@ class ERPQueryProvider(_HTTPProvider):
     async def submit(self, attempt: ActionAttempt, request: Mapping[str, object], *, idempotency_key: str) -> ProviderReceipt:
         action = request.get("action")
         if not isinstance(action, str) or not _valid_erp_action(self.tool_name, action, write=self.write):
-            return _provider_failed(
-                "erp", attempt.request_hash, "ERP_ACTION_NOT_REGISTERED",
-            )
+            return _unknown("erp", attempt.request_hash, "ERP_ACTION_NOT_REGISTERED")
         dispatcher = self.dispatcher
         owned = False
         if self.dispatcher_factory is not None and not self.write:
             if not attempt.scope.org_id:
                 raise ValueError("ERP_ORG_SCOPE_REQUIRED")
-            try:
-                dispatcher = await self.dispatcher_factory.create(
-                    attempt, request,
-                )
-            except Exception:
-                return _provider_failed(
-                    "erp", attempt.request_hash,
-                    "ERP_CONFIGURATION_UNAVAILABLE",
-                )
+            dispatcher = await self.dispatcher_factory.create(attempt.scope)
             owned = True
         if dispatcher is None:
             raise RuntimeError("ERP_DISPATCHER_NOT_READY")
@@ -302,11 +275,18 @@ class KieMediaProvider(_HTTPProvider):
         super().__init__(transport, provider="kie", submit_path=path, reconcile_path=status, cancel_path=cancel)
 
     async def submit(self, attempt: ActionAttempt, request: Mapping[str, object], *, idempotency_key: str) -> ProviderReceipt:
+        task_facts = {}
         if self.task_port is not None:
-            await self.task_port.prepare(attempt, kind=self.kind)
-        return await super().submit(
-            attempt, request, idempotency_key=idempotency_key,
-        )
+            task_facts = dict(await self.task_port.prepare(attempt, request, kind=self.kind))
+        receipt = await super().submit(attempt, {**request, "runtime_task": task_facts}, idempotency_key=idempotency_key)
+        if task_facts:
+            receipt = ProviderReceipt(
+                state=receipt.state, provider=receipt.provider, request_hash=receipt.request_hash,
+                provider_task_ref=receipt.provider_task_ref, status_locator=receipt.status_locator,
+                callback_correlation=receipt.callback_correlation, result={**receipt.result, "runtime_task": task_facts},
+                cost=receipt.cost, evidence=receipt.evidence,
+            )
+        return receipt
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -332,20 +312,9 @@ class LocalArtifactProvider(SpecialistProvider):
     port: ArtifactPort
     operation: str
 
-    @property
-    def requires_dispatch_context(self) -> bool:
-        return True
-
     async def submit(self, attempt: ActionAttempt, request: Mapping[str, object], *, idempotency_key: str) -> ProviderReceipt:
         result = await self.port.prepare(attempt, {**request, "operation": self.operation, "idempotency_key": idempotency_key})
-        failed = str(result.get("status", "")).lower() in {
-            "error", "rejected", "timeout",
-        }
-        return ProviderReceipt(
-            state=ProviderState.FAILED if failed else ProviderState.COMPLETED,
-            provider="artifact", request_hash=attempt.request_hash,
-            result=result,
-        )
+        return ProviderReceipt(state=ProviderState.COMPLETED, provider="artifact", request_hash=attempt.request_hash, result=result)
 
     async def reconcile(self, attempt: ActionAttempt, receipt: Mapping[str, object]) -> ProviderReceipt:
         return _unknown("artifact", attempt.request_hash, "ARTIFACT_RECONCILE_UNAVAILABLE")
@@ -360,11 +329,6 @@ class PortBackedProvider(SpecialistProvider):
     operation: str
     provider: str
 
-    @property
-    def requires_dispatch_context(self) -> bool:
-        """Only the Runtime-owned Scheduler port receives gate metadata."""
-        return self.provider == "scheduler"
-
     async def submit(self, attempt: ActionAttempt, request: Mapping[str, object], *, idempotency_key: str) -> ProviderReceipt:
         if self.provider == "media":
             result = await self.port.prepare(attempt, {**request, "idempotency_key": idempotency_key}, kind=self.operation)  # type: ignore[attr-defined]
@@ -375,10 +339,6 @@ class PortBackedProvider(SpecialistProvider):
         return ProviderReceipt(state=ProviderState(str(result.get("state", "completed"))), provider=self.provider, request_hash=attempt.request_hash, provider_task_ref=_text(result.get("provider_task_ref")), result=result, evidence=_object(result.get("evidence")))
 
     async def reconcile(self, attempt: ActionAttempt, receipt: Mapping[str, object]) -> ProviderReceipt:
-        if self.provider == "scheduler" and hasattr(self.port, "reconcile"):
-            result = await self.port.reconcile(attempt, receipt, operation=self.operation)  # type: ignore[attr-defined]
-            if isinstance(result, Mapping):
-                return ProviderReceipt(state=ProviderState(str(result.get("state", "unknown"))), provider=self.provider, request_hash=attempt.request_hash, result=dict(result), evidence=_object(result.get("evidence")))
         if self.provider == "erp_sync" and hasattr(self.port, "reconcile"):
             result = await self.port.reconcile(attempt, receipt, operation=self.operation)  # type: ignore[attr-defined]
             if isinstance(result, Mapping):
@@ -390,15 +350,10 @@ class PortBackedProvider(SpecialistProvider):
         return _unknown(self.provider, attempt.request_hash, "PORT_RECONCILE_UNAVAILABLE")
 
     async def cancel(self, attempt: ActionAttempt, receipt: Mapping[str, object]) -> ProviderReceipt:
-        if self.provider == "scheduler" and hasattr(self.port, "cancel"):
-            result = await self.port.cancel(attempt, receipt, operation=self.operation)  # type: ignore[attr-defined]
-            if isinstance(result, Mapping):
-                return ProviderReceipt(state=ProviderState(str(result.get("state", "unknown"))), provider=self.provider, request_hash=attempt.request_hash, result=dict(result), evidence=_object(result.get("evidence")))
         if self.provider == "child_run" and hasattr(self.port, "cancel"):
             result = await self.port.cancel(attempt, receipt)  # type: ignore[attr-defined]
             if isinstance(result, Mapping) and result.get("state") == "cancelled" and result.get("fencing_confirmed") is True:
-                evidence = _object(result.get("evidence"))
-                return ProviderReceipt(state=ProviderState.CANCELLED, provider=self.provider, request_hash=attempt.request_hash, result=dict(result), evidence={**evidence, "cancel_confirmed": True, "fencing_confirmed": True})
+                return ProviderReceipt(state=ProviderState.CANCELLED, provider=self.provider, request_hash=attempt.request_hash, result=dict(result), evidence={"cancel_confirmed": True, "fencing_confirmed": True})
         return _unknown(self.provider, attempt.request_hash, "PORT_CANCEL_UNPROVEN")
 
 
@@ -422,21 +377,11 @@ def _unknown(provider: str, request_hash_value: str, code: str) -> ProviderRecei
     return ProviderReceipt(state=ProviderState.UNKNOWN, provider=provider, request_hash=request_hash_value, evidence={"error_code": code})
 
 
-def _provider_failed(
-    provider: str, request_hash_value: str, code: str,
-) -> ProviderReceipt:
-    return ProviderReceipt(
-        state=ProviderState.FAILED, provider=provider,
-        request_hash=request_hash_value, evidence={"error_code": code},
-    )
-
-
 def _has_provider_identity(receipt: Mapping[str, object]) -> bool:
     return bool(receipt.get("provider_task_ref") or receipt.get("status_locator") or receipt.get("callback_correlation"))
 
 
 def _valid_erp_action(tool_name: str, action: str, *, write: bool) -> bool:
-    from services.kuaimai.registry import TOOL_REGISTRIES
     entry = TOOL_REGISTRIES.get(tool_name, {}).get(action)
     return entry is not None and entry.is_write is write
 

@@ -32,7 +32,6 @@ READ_TOOL_SPECS: dict[str, tuple[str, str]] = {
     "local_warehouse_list": ("erp.local.warehouse_list", "erp_local"),
     "local_supplier_list": ("erp.local.supplier_list", "erp_local"),
 }
-SAFE_READ_TOOL_NAMES = frozenset(READ_TOOL_SPECS) - {"file_search"}
 READ_SCOPE_KINDS = {
     name: frozenset({"channel"}) if group == "erp_local"
     else frozenset({"user", "channel"})
@@ -63,15 +62,10 @@ def read_descriptor(tool_name: str) -> ExecutorDescriptor:
 
 def build_read_executor_registry(
     capabilities: Mapping[str, ReadCapability],
-    *, tool_names: frozenset[str] | None = None,
 ) -> ExecutorRegistry:
     """Build an isolated registry; production composition does not call this."""
-    selected = frozenset(READ_TOOL_SPECS) if tool_names is None else tool_names
-    unknown = selected - frozenset(READ_TOOL_SPECS)
-    if unknown:
-        raise ValueError(f"READ_TOOL_SET_UNKNOWN:{sorted(unknown)}")
     registry = ExecutorRegistry()
-    for tool_name in sorted(selected):
+    for tool_name in sorted(READ_TOOL_SPECS):
         descriptor = read_descriptor(tool_name)
         capability = capabilities.get(tool_name)
         if capability is None:

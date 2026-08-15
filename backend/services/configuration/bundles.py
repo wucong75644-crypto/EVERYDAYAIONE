@@ -202,12 +202,6 @@ class AsyncSecretBundleResolver(SecretBundleResolver):
             "get_erp_runtime_bundle",
         )
 
-    async def wecom_app(self) -> ResolvedConfigurationBundle:
-        return await self._resolve_async(
-            "wecom.app",
-            "get_wecom_app_bundle",
-        )
-
     async def kuaimai_thinktank(self) -> ResolvedConfigurationBundle:
         return await self._resolve_async(
             "kuaimai_external.thinktank",
@@ -230,36 +224,6 @@ class AsyncSecretBundleResolver(SecretBundleResolver):
             raise ConfigurationResolutionError("CONFIG_BUNDLE_UNKNOWN")
         return await self._resolve_async(
             bundle_name, "get_agent_runtime_ai_bundle", params,
-        )
-
-    async def runtime_model(
-        self, bundle_name: str, params: Mapping[str, object],
-    ) -> ResolvedConfigurationBundle:
-        """Resolve one claimed Run's model Bundle through the final Worker RPC."""
-        if bundle_name not in {
-            "ai.provider.dashscope", "ai.provider.openrouter",
-            "ai.provider.kie", "ai.provider.google",
-        }:
-            raise ConfigurationResolutionError("CONFIG_BUNDLE_UNKNOWN")
-        return await self._resolve_async(
-            bundle_name, "get_agent_runtime_model_configuration_v1", params,
-        )
-
-    async def runtime_erp(
-        self, params: Mapping[str, object],
-    ) -> ResolvedConfigurationBundle:
-        """Resolve ERP credentials for one fenced Runtime ActionAttempt."""
-        return await self._resolve_async(
-            "erp.runtime", "get_agent_runtime_erp_configuration_v1", params,
-        )
-
-    async def runtime_media(
-        self, params: Mapping[str, object],
-    ) -> ResolvedConfigurationBundle:
-        """Resolve KIE only for one fenced Runtime media ActionAttempt."""
-        return await self._resolve_async(
-            "ai.provider.kie", "get_agent_runtime_media_configuration_v1",
-            params,
         )
 
     async def _resolve_async(

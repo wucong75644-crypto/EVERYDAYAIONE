@@ -55,10 +55,7 @@ class TestSendToUserOrgFilter:
     @pytest.mark.asyncio
     async def test_org_a_only_sends_to_org_a(self):
         """指定 org_id=A 只发给 A 的连接"""
-        delivered = await self.manager.send_to_user(
-            "user1", {"type": "test"}, org_id=ORG_A,
-        )
-        assert delivered is True
+        await self.manager.send_to_user("user1", {"type": "test"}, org_id=ORG_A)
         self.manager.send_to_connection.assert_called_once_with("conn_a", {"type": "test"})
 
     @pytest.mark.asyncio
@@ -78,10 +75,9 @@ class TestSendToUserOrgFilter:
     @pytest.mark.asyncio
     async def test_nonexistent_org_sends_nothing(self):
         """不存在的 org_id 不发给任何人"""
-        delivered = await self.manager.send_to_user(
+        await self.manager.send_to_user(
             "user1", {"type": "test"}, org_id="nonexistent",
         )
-        assert delivered is False
         self.manager.send_to_connection.assert_not_called()
 
     @pytest.mark.asyncio
@@ -166,12 +162,11 @@ class TestSendToUserOrgFilter:
     async def test_disconnect_denies_delivered_confirmation(self):
         from services.websocket_manager import Connection
 
-        user_id = "bbbb2222-0000-0000-0000-000000000002"
         connection = Connection(
-            websocket=MagicMock(), user_id=user_id,
+            websocket=MagicMock(), user_id="user1",
             conn_id="conn_a", org_id=ORG_A,
         )
-        self.manager._connections = {user_id: {"conn_a": connection}}
+        self.manager._connections = {"user1": {"conn_a": connection}}
         self.manager._conn_index = {"conn_a": connection}
         self.manager._delivered_confirmations = {"conn_a": {"opaque"}}
         with patch(
@@ -181,13 +176,10 @@ class TestSendToUserOrgFilter:
         ) as consume:
             await self.manager.disconnect("conn_a")
 
-        consume.assert_awaited_once()
-        kwargs = consume.await_args.kwargs
-        assert kwargs["confirmation_id"] == "opaque"
-        assert kwargs["user_id"] == user_id
-        assert kwargs["org_id"] == ORG_A
-        assert kwargs["approved"] is False
-        assert kwargs["database"] is not None
+        consume.assert_awaited_once_with(
+            confirmation_id="opaque", user_id="user1",
+            org_id=ORG_A, approved=False,
+        )
 
     @pytest.mark.asyncio
     async def test_subscribe_and_unsubscribe_use_composite_task_scope(self):

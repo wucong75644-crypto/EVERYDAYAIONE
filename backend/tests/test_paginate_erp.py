@@ -75,20 +75,6 @@ class TestPaginateErp:
         assert "warning" in result
 
     @pytest.mark.asyncio
-    async def test_natural_end_on_last_allowed_page_is_not_partial(self):
-        """最后允许页不足一页，证明自然结束，不应误报截断。"""
-        mock_dispatcher = AsyncMock()
-        mock_dispatcher.execute_raw.return_value = {
-            "list": [{"id": 1}] * 50,
-        }
-        result = await paginate_erp(
-            "erp_trade_query", "order_list", {"page_size": 100},
-            max_pages=1, _dispatcher=mock_dispatcher,
-        )
-        assert len(result["list"]) == 50
-        assert "warning" not in result
-
-    @pytest.mark.asyncio
     async def test_error_on_first_page(self):
         mock_dispatcher = AsyncMock()
         mock_dispatcher.execute_raw.return_value = {"error": "接口错误"}
@@ -120,9 +106,6 @@ class TestPaginateErp:
         )
         # 应返回第一页的数据
         assert len(result["list"]) == 100
-        assert result["partial_error"] == {
-            "error_code": "ERP_PAGE_PROVIDER_PARTIAL", "failed_page": 2,
-        }
 
     @pytest.mark.asyncio
     async def test_semaphore_concurrency(self):

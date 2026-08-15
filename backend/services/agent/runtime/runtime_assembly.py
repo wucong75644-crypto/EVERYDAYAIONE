@@ -1,8 +1,7 @@
 """A6 Runtime-owned production assembly and failure-closed readiness."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from enum import StrEnum
+from dataclasses import dataclass
 from typing import Mapping
 
 
@@ -15,30 +14,6 @@ class RuntimeAssemblyReadiness:
     probe_passed: bool
     production_ready: bool
     error_code: str | None = None
-    capabilities: Mapping[str, "CapabilityReadiness"] = field(default_factory=dict)
-    required_capabilities: frozenset[str] = field(default_factory=frozenset)
-
-    def __post_init__(self) -> None:
-        missing = self.required_capabilities - self.capabilities.keys()
-        if missing:
-            raise ValueError("RUNTIME_REQUIRED_CAPABILITY_NOT_REGISTERED")
-        if any(
-            self.capabilities[name].state is CapabilityReadinessState.DISABLED
-            for name in self.required_capabilities
-        ):
-            raise ValueError("RUNTIME_REQUIRED_CAPABILITY_DISABLED")
-        dependencies_ready = all((
-            self.service_wiring_ready, self.tenant_binding_ready,
-            self.credential_available, self.capability_enabled,
-            self.probe_passed,
-        ))
-        if self.production_ready and not dependencies_ready:
-            raise ValueError("RUNTIME_PRODUCTION_READINESS_INCONSISTENT")
-        if self.production_ready and any(
-            not self.capabilities[name].ready
-            for name in self.required_capabilities
-        ):
-            raise ValueError("RUNTIME_REQUIRED_CAPABILITY_NOT_READY")
 
     @property
     def ready(self) -> bool:
@@ -65,34 +40,6 @@ class RuntimeProductionAssembly:
     def require_ready(self) -> None:
         if not self.readiness.ready:
             raise RuntimeError(self.readiness.error_code or "SERVICE_WIRING_NOT_READY")
-
-
-class CapabilityReadinessState(StrEnum):
-    READY = "ready"
-    UNAVAILABLE = "unavailable"
-    DISABLED = "disabled"
-
-
-@dataclass(frozen=True, kw_only=True)
-class CapabilityReadiness:
-    """Readiness for one capability, independent of production activation."""
-
-    state: CapabilityReadinessState
-    error_code: str | None = None
-
-    @property
-    def ready(self) -> bool:
-        return self.state is CapabilityReadinessState.READY
-
-    def __post_init__(self) -> None:
-        if self.state is CapabilityReadinessState.UNAVAILABLE and not self.error_code:
-            raise ValueError("RUNTIME_CAPABILITY_UNAVAILABLE_REASON_REQUIRED")
-
-    def to_dict(self) -> dict[str, str]:
-        result = {"state": self.state.value}
-        if self.error_code:
-            result["error_code"] = self.error_code
-        return result
 
 
 def build_runtime_production_assembly(*, credential_broker: object | None,
@@ -145,6 +92,5 @@ def first_readiness_error(readiness: RuntimeAssemblyReadiness) -> str | None:
     return None
 
 
-__all__ = ["CapabilityReadiness", "CapabilityReadinessState",
-           "RuntimeAssemblyReadiness", "RuntimeProductionAssembly",
+__all__ = ["RuntimeAssemblyReadiness", "RuntimeProductionAssembly",
            "build_runtime_production_assembly", "first_readiness_error"]

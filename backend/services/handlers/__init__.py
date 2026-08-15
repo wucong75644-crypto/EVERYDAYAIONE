@@ -1,26 +1,17 @@
-"""统一消息处理器模块，公共导出按需加载。"""
+"""
+统一消息处理器模块
 
-from importlib import import_module
+提供不同类型消息的处理器：
+- ChatHandler: 聊天消息（流式）
+- ImageHandler: 图片生成（异步任务）
+- VideoHandler: 视频生成（异步任务）
+"""
 
-
-_EXPORTS = {
-    "BaseHandler": ("services.handlers.base", "BaseHandler"),
-    "ChatHandler": ("services.handlers.chat_handler", "ChatHandler"),
-    "ImageHandler": ("services.handlers.image_handler", "ImageHandler"),
-    "VideoHandler": ("services.handlers.video_handler", "VideoHandler"),
-    "get_handler": ("services.handlers.factory", "get_handler"),
-    "HandlerFactory": ("services.handlers.factory", "HandlerFactory"),
-}
-
-
-def __getattr__(name: str):
-    try:
-        module_name, attribute = _EXPORTS[name]
-    except KeyError as error:
-        raise AttributeError(name) from error
-    value = getattr(import_module(module_name), attribute)
-    globals()[name] = value
-    return value
+from .base import BaseHandler
+from .chat_handler import ChatHandler
+from .image_handler import ImageHandler
+from .video_handler import VideoHandler
+from .factory import get_handler, HandlerFactory
 
 __all__ = [
     "BaseHandler",

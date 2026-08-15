@@ -58,7 +58,6 @@ class ActionSnapshot:
     fencing_token: str
     executor_type: str
     executor_revision: int
-    dispatch_context: Mapping[str, object]
 
     @classmethod
     def from_attempt(
@@ -66,10 +65,6 @@ class ActionSnapshot:
         executor_type: str, executor_revision: int,
     ) -> "ActionSnapshot":
         public_request = dict(request)
-        raw_context = public_request.get("_dispatch_context")
-        dispatch_context = (
-            dict(raw_context) if isinstance(raw_context, Mapping) else {}
-        )
         public_request.pop("external_idempotency_key", None)
         public_request.pop("_dispatch_context", None)
         request_hash = canonical_request_hash(public_request)
@@ -81,7 +76,6 @@ class ActionSnapshot:
             request_hash=request_hash, executor_type=executor_type,
             executor_revision=executor_revision,
             fencing_token=str(attempt.lease.fencing_token),
-            dispatch_context=dispatch_context,
         )
 
 

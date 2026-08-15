@@ -186,26 +186,4 @@ describe('MessageMedia', () => {
     expect(screen.getByTestId('ai-image-grid')).toHaveAttribute('data-num-images', '3');
     expect(screen.queryByTestId('failed-placeholder')).not.toBeInTheDocument();
   });
-
-  it('无 URL 的 Runtime 稳定槽位仍渲染网格', () => {
-    render(
-      <MessageMedia
-        messageId="runtime-pending"
-        isUser={false}
-        onImageClick={vi.fn()}
-        isGenerating={false}
-        numImages={10}
-        content={Array.from({ length: 10 }, (_, index) => ({
-          type: 'image' as const,
-          url: null,
-          slot_id: `slot-${index}`,
-          slot_index: index,
-          slot_status: 'pending' as const,
-          slot_revision: 0,
-        }))}
-      />,
-    );
-
-    expect(screen.getByTestId('ai-image-grid')).toHaveAttribute('data-num-images', '10');
-  });
 });

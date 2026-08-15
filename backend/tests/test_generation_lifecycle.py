@@ -215,40 +215,6 @@ def test_fail_prepared_task_returns_typed_result() -> None:
     assert db.calls[0][0] == "fail_prepared_generation_task"
 
 
-def test_fail_web_runtime_ingress_returns_typed_result() -> None:
-    db = _DB([{"task_id": "task-1", "already_failed": False}])
-    lifecycle = GenerationLifecycle(db)
-
-    result = lifecycle.fail_web_runtime_ingress(
-        task_id="task-1",
-        conversation_id="conversation-1",
-        user_id="user-1",
-        org_id="org-1",
-        input_message_id="input-1",
-        output_message_id="output-1",
-        turn_id="turn-1",
-        client_task_id="client-task-1",
-        failure_code="RUNTIME_INGRESS_EXCEPTION",
-    )
-
-    assert result.task_id == "task-1"
-    assert result.already_failed is False
-    assert db.calls == [(
-        "fail_web_runtime_ingress_task",
-        {
-            "p_task_id": "task-1",
-            "p_conversation_id": "conversation-1",
-            "p_user_id": "user-1",
-            "p_org_id": "org-1",
-            "p_input_message_id": "input-1",
-            "p_output_message_id": "output-1",
-            "p_turn_id": "turn-1",
-            "p_client_task_id": "client-task-1",
-            "p_failure_code": "RUNTIME_INGRESS_EXCEPTION",
-        },
-    )]
-
-
 def test_refund_prepared_credits_returns_typed_result() -> None:
     db = _DB([{"refunded": True, "amount": 5}])
     lifecycle = GenerationLifecycle(db)

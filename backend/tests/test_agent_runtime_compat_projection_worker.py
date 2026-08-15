@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from types import SimpleNamespace
 import pytest
 
 from services.agent.runtime.application.projection_worker import (
-    CompatibilityProjectionNotifier, CompatibilityProjectionWorker,
+    CompatibilityProjectionWorker,
 )
 from services.agent.runtime.domain import (
     EventDurability,
@@ -91,68 +90,3 @@ async def test_uncommitted_failure_releases_outbox_for_retry() -> None:
     await CompatibilityProjectionWorker(projection).run_once()
 
     assert projection.failed == ["apply_runtimeerror"]
-
-
-class _Query:
-    def __init__(self, data):
-        self.data = data
-
-    def select(self, _fields):
-        return self
-
-    def eq(self, _field, _value):
-        return self
-
-    def maybe_single(self):
-        return self
-
-    async def execute(self):
-        return SimpleNamespace(data=self.data)
-
-
-class _Database:
-    def __init__(self, rows):
-        self.rows = rows
-
-    def rpc(self, _name, _params):
-        return _Query(self.rows)
-
-
-class _Websocket:
-    def __init__(self):
-        self.calls = []
-
-    async def send_to_task_or_user(self, **kwargs):
-        self.calls.append(kwargs)
-
-
-@pytest.mark.asyncio
-async def test_notifier_publishes_failed_terminal_message() -> None:
-    websocket = _Websocket()
-    notifier = CompatibilityProjectionNotifier(
-        _Database({
-            "outcome": "found",
-            "task": {
-                "id": "task", "client_task_id": None,
-                "external_task_id": "external-task", "user_id": "user",
-                "org_id": None, "conversation_id": "conversation",
-                "status": "failed", "error_message": "provider denied",
-            },
-            "message": {"id": "message"},
-        }),
-        websocket,
-    )
-
-    await notifier.notify(_claim("run.failed"), {
-        "outcome": "applied",
-        "result": {
-            "projection_action": "run_failed",
-            "task_id": "task", "message_id": "message",
-        },
-    })
-
-    assert len(websocket.calls) == 1
-    event = websocket.calls[0]["message"]
-    assert event["type"] == "message_error"
-    assert event["task_id"] == "external-task"
-    assert event["message_id"] == "message"

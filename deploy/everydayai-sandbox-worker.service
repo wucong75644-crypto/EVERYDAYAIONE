@@ -12,7 +12,6 @@ WorkingDirectory=/var/www/everydayai/backend
 Environment="PATH=/var/www/everydayai/backend/venv/bin:/usr/bin:/bin"
 Environment="EVERYDAYAI_LOG_DIR=/var/log/everydayai/sandbox"
 EnvironmentFile=/etc/everydayai/sandbox-worker.env
-InaccessiblePaths=-/var/www/everydayai/backend/.env -/var/www/everydayai/backend/.env.kek -/etc/everydayai/agent-runtime-model.env
 ExecStartPre=/usr/local/libexec/everydayai-sandbox-worker-cgroup-wrapper /var/www/everydayai/deploy/runtime-capability-probe.sh sandbox
 ExecStart=/usr/local/libexec/everydayai-sandbox-worker-cgroup-wrapper /var/www/everydayai/backend/venv/bin/python agent_runtime_worker_main.py
 RuntimeDirectory=everydayai-sandbox-worker

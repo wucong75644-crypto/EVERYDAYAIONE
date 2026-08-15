@@ -63,9 +63,9 @@ async def prepare_chat_stream(
         f"context={int((context_ready_at - started_at) * 1000)}ms"
     )
 
-    from services.agent.runtime.chat_model import create_runtime_chat_model
+    from services.adapters.factory import create_chat_adapter
 
-    adapter = create_runtime_chat_model(
+    adapter = create_chat_adapter(
         model_id,
         org_id=handler.org_id,
         db=handler.db,

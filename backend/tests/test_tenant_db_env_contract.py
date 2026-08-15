@@ -4,8 +4,6 @@ from pathlib import Path
 import os
 import subprocess
 
-import pytest
-
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "deploy/validate-tenant-db-env.sh"
@@ -16,18 +14,11 @@ def _write_env_files(directory: Path) -> None:
     values = {
         ".env.runtime": (
             "DATABASE_URL="
-            "postgresql://everydayai_runtime:runtime-secret@localhost/everydayai\n"
-            "TOOL_CONFIRMATION_V3_ENABLED=false\n"
-            "AGENT_RUNTIME_AGENT_DEFINITION_ID=everydayai-default\n"
-            "AGENT_RUNTIME_AGENT_DEFINITION_REVISION=v3"
+            "postgresql://everydayai_runtime:runtime-secret@localhost/everydayai"
         ),
         ".env.wecom-runtime": (
             "DATABASE_URL=postgresql://everydayai_wecom_runtime:"
-            "wecom-runtime-secret@localhost/everydayai\n"
-            "AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED=false\n"
-            "AGENT_RUNTIME_SCHEDULED_WECOM_WORKER_ID=scheduled-wecom-01\n"
-            "AGENT_RUNTIME_AGENT_DEFINITION_ID=everydayai-default\n"
-            "AGENT_RUNTIME_AGENT_DEFINITION_REVISION=v3"
+            "wecom-runtime-secret@localhost/everydayai"
         ),
         ".env.worker": (
             "DATABASE_URL="
@@ -55,14 +46,9 @@ def _write_env_files(directory: Path) -> None:
 def _run(
     directory: Path,
     env: dict[str, str] | None = None,
-    *,
-    flags_off_v3: bool = False,
 ) -> subprocess.CompletedProcess[str]:
-    command = ["bash", str(SCRIPT), str(directory)]
-    if flags_off_v3:
-        command.append("--runtime-flags-off-v3")
     return subprocess.run(
-        command,
+        ["bash", str(SCRIPT), str(directory)],
         env=env or os.environ,
         capture_output=True,
         text=True,
@@ -114,15 +100,6 @@ def test_role_env_templates_are_safe_placeholders() -> None:
         content = (TEMPLATES / filename).read_text(encoding="utf-8")
         assert placeholder in content
         assert "127.0.0.1:5432/everydayai" in content
-    assert "AGENT_RUNTIME_AGENT_DEFINITION_REVISION=v3" in (
-        TEMPLATES / "runtime.env.template"
-    ).read_text(encoding="utf-8")
-    assert "AGENT_RUNTIME_AGENT_DEFINITION_REVISION=v3" in (
-        TEMPLATES / "wecom-runtime.env.template"
-    ).read_text(encoding="utf-8")
-    assert "AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED=false" in (
-        TEMPLATES / "wecom-runtime.env.template"
-    ).read_text(encoding="utf-8")
 
 
 def test_role_env_contract_accepts_isolated_role_files(tmp_path: Path) -> None:
@@ -133,73 +110,6 @@ def test_role_env_contract_accepts_isolated_role_files(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert "合同验证通过" in result.stdout
     assert "secret" not in result.stdout + result.stderr
-
-
-def test_flags_off_v3_contract_accepts_exact_runtime_files(tmp_path: Path) -> None:
-    _write_env_files(tmp_path)
-
-    result = _run(tmp_path, flags_off_v3=True)
-
-    assert result.returncode == 0
-    assert "flags-off v3 环境合同验证通过" in result.stdout
-    assert "secret" not in result.stdout + result.stderr
-
-
-@pytest.mark.parametrize(
-    ("filename", "key"),
-    (
-        (".env.runtime", "TOOL_CONFIRMATION_V3_ENABLED"),
-        (".env.wecom-runtime", "AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED"),
-    ),
-)
-def test_flags_off_v3_contract_rejects_every_enabled_switch(
-    tmp_path: Path,
-    filename: str,
-    key: str,
-) -> None:
-    _write_env_files(tmp_path)
-    path = tmp_path / filename
-    content = path.read_text(encoding="utf-8")
-    path.write_text(content.replace(f"{key}=false", f"{key}=true"), encoding="utf-8")
-
-    result = _run(tmp_path, flags_off_v3=True)
-
-    assert result.returncode == 1
-    assert key in result.stderr
-
-
-def test_flags_off_v3_contract_rejects_unknown_and_duplicate_keys(
-    tmp_path: Path,
-) -> None:
-    for extra, expected in (
-        ("UNKNOWN_RUNTIME_FLAG=false\n", "未知配置键"),
-        ("TOOL_CONFIRMATION_V3_ENABLED=false\n", "重复配置键"),
-    ):
-        _write_env_files(tmp_path)
-        path = tmp_path / ".env.runtime"
-        path.write_text(path.read_text(encoding="utf-8") + extra, encoding="utf-8")
-
-        result = _run(tmp_path, flags_off_v3=True)
-
-        assert result.returncode == 1
-        assert expected in result.stderr
-
-
-def test_flags_off_v3_contract_rejects_non_database_placeholder(
-    tmp_path: Path,
-) -> None:
-    _write_env_files(tmp_path)
-    path = tmp_path / ".env.wecom-runtime"
-    content = path.read_text(encoding="utf-8")
-    path.write_text(
-        content.replace("everydayai-default", "<agent-definition-id>"),
-        encoding="utf-8",
-    )
-
-    result = _run(tmp_path, flags_off_v3=True)
-
-    assert result.returncode == 1
-    assert "模板占位符" in result.stderr
 
 
 def test_role_env_contract_accepts_gnu_stat(tmp_path: Path) -> None:

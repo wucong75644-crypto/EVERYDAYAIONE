@@ -31,7 +31,6 @@ class ChatGenerationExecutor:
         db: Any,
         handler_factory: Callable[[Any], Any] | None = None,
         handler_db_factory: Callable[[], Any] | None = None,
-        runtime_action_executor_factory: Callable[[Any], Any] | None = None,
         sink_factory: Callable[
             [Mapping[str, Any], GenerationClaim, asyncio.Event], Any
         ] | None = None,
@@ -39,7 +38,6 @@ class ChatGenerationExecutor:
         self._db = db
         self._handler_factory = handler_factory or _create_handler
         self._handler_db_factory = handler_db_factory or _get_handler_db
-        self._runtime_action_executor_factory = runtime_action_executor_factory
         self._sink_factory = sink_factory
 
     async def execute(
@@ -54,10 +52,6 @@ class ChatGenerationExecutor:
             resolve_execution_scope(self._db, task, claim.conversation_id),
         )
         handler = self._handler_factory(self._handler_db_factory())
-        if self._runtime_action_executor_factory is not None:
-            handler._runtime_action_executor = (
-                self._runtime_action_executor_factory(self._db)
-            )
         handler.org_id = task.get("org_id")
         handler.execution_scope = execution_scope
         handler._workspace_user_id = execution_scope.workspace_owner_id

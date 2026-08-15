@@ -3,7 +3,7 @@
 职责：
 1. 创建执行记录
 2. 用 credit_lock 锁定积分
-3. 旧 Owner 已封存；Runtime Worker 通过受控 Runtime Scheduled Run 执行
+3. 调用 ScheduledTaskAgent 执行
 4. 推送结果（push_dispatcher）
 5. 更新任务状态 + 写日志
 6. 失败处理（重试/暂停/通知）
@@ -87,18 +87,34 @@ class ScheduledTaskExecutor:
             logger.warning(f"_push_ws_event failed | event={event_type} | error={e}")
 
     async def execute(self, task: Dict[str, Any]) -> None:
-        """拒绝旧 Scheduler Owner 执行任务。
+        """执行单个定时任务（被 Scanner.poll 调用）"""
+        run = await self._create_run(task)
+        if run is None:
+            # 无法记录执行历史 → 放弃执行（防止 update WHERE id 全部静默失效）
+            logger.error(
+                f"ScheduledTask aborted: cannot create run record | "
+                f"task={task['id']}"
+            )
+            return
 
-        Runtime worker 通过受控 RPC 领取并提交执行，不再进入这个旧的
-        Agent/ToolLoop 链。保留本类及其方法是为了兼容历史非运行代码引用，
-        但任何实际调度调用都必须在这里 fail-closed。
-        """
-        logger.error(
-            "ScheduledTask aborted: legacy scheduler owner disabled | "
-            f"task={task.get('id')}"
+        result = None
+        agent_run_started_at = datetime.now(timezone.utc)
+
+        # 推送"开始执行"事件
+        await self._push_ws_event(task["user_id"], task["org_id"], "scheduled_task_started", {
+            "task_id": task["id"],
+            "task_name": task["name"],
+            "run_id": run.run_id,
+        })
+
+        from services.scheduler.run_lease import execute_with_scheduled_lease
+
+        await execute_with_scheduled_lease(
+            self._store,
+            task["id"],
+            run,
+            self._execute_owned(task, run, agent_run_started_at),
         )
-        return
-        return
 
     async def _execute_owned(
         self,
@@ -106,11 +122,46 @@ class ScheduledTaskExecutor:
         run: ScheduledRunLease,
         agent_run_started_at: datetime,
     ) -> None:
-        """旧执行 Owner 的不可达封存边界。"""
-        from services.agent.scheduled_task_agent import (
-            LegacyScheduledTaskOwnerDisabled,
-        )
-        raise LegacyScheduledTaskOwnerDisabled(task_id=str(task.get("id") or "unknown"))
+        """在同一持续租约内完成 Agent、消息、积分和数据库终态。"""
+        result = None
+        credit_handle = None
+        push_status = "skipped"
+        try:
+            application_db = self._build_application_db(task)
+            # 1. 用 credit_lock 上下文管理器锁定积分（支持按量计费）
+            async with self._credits.lock(
+                task["id"], run,
+            ) as credit_handle:
+                # 2. 跑 Agent
+                from services.agent.scheduled_task_agent import ScheduledTaskAgent
+                agent = ScheduledTaskAgent(application_db, task)
+                result = await agent.execute()
+
+                if result.status in ("error", "timeout"):
+                    raise RuntimeError(
+                        f"Agent 执行失败: {result.text or result.error_message}"
+                    )
+
+                # 3. 按量计费：用 token 换算实际积分
+                actual_credits = self._calc_actual_credits(
+                    result.tokens_used, task
+                )
+                credit_handle.set_actual(actual_credits)
+
+                # 4. 推送
+                push_status = await self._push_result(
+                    task, run, result,
+                )
+
+            # 5. 成功收尾（在 credit_lock 之后，退回已完成，可读取最终状态）
+            await self._on_success(
+                task, run, result, push_status,
+                agent_run_started_at, credit_handle.final_credits_used,
+            )
+
+        except Exception as e:
+            # credit_lock 会自动 refund
+            await self._on_failure(task, run, e, result, agent_run_started_at)
 
     # ════════════════════════════════════════════════════════
     # 内部方法

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -12,15 +13,22 @@ from schemas.message import (
     serialize_content_parts,
 )
 from services.generation_lifecycle import GenerationLifecycle
+from services.handlers.base import TaskMetadata
 from services.handlers.video_prepared_submission import resolve_video_submission_settings
 from services.user_activity_service import record_user_activity
-
-from api.routes.message_media_failure import fail_closed_prepared_media
 
 
 _VIDEO_TURN_NAMESPACE = uuid.UUID("03a0586f-21b1-4a9d-9870-d4ab734ebac2")
 _VIDEO_INPUT_NAMESPACE = uuid.UUID("5acb9221-ddab-4dbc-b22c-34179699f4b2")
 _VIDEO_TASK_NAMESPACE = uuid.UUID("81a55bef-5dc8-4712-83ba-dc5d2c50997a")
+
+
+@dataclass
+class PreparedVideoTaskMetadata(TaskMetadata):
+    """VideoHandler 消费的已准备本地 task。"""
+
+    prepared_task_id: str | None = None
+
 
 async def prepare_and_start_video_generation(
     *, db: Any, handler: Any, conversation_service: Any,
@@ -49,44 +57,35 @@ async def prepare_and_start_video_generation(
         "prompt": settings.prompt, "model": settings.model_id,
         **handler._serialize_params(params),
     }
-    task_payload = {
-        "id": task_id, "client_task_id": body.client_task_id,
-        "user_id": user_id, "org_id": org_id,
-        "conversation_id": conversation_id, "type": "video",
-        "status": "preparing", "model_id": settings.model_id,
-        "request_params": request_params,
-        "placeholder_created_at": placeholder_at.isoformat(),
-        "execution_mode": "serial", "delivery_context": {"channel": "web"},
-    }
-    lifecycle = GenerationLifecycle(db)
-    preparation = lifecycle.prepare(
+    preparation = GenerationLifecycle(db).prepare(
         request_id=request_id, operation=body.operation.value,
         conversation_id=conversation_id, user_id=user_id, org_id=org_id,
         turn_id=turn_id,
         input_message=_input_payload(body, input_id, created_at),
         output_message=_output_payload(body, placeholder_at),
-        tasks=[task_payload],
+        tasks=[{
+            "id": task_id, "client_task_id": body.client_task_id,
+            "user_id": user_id, "org_id": org_id,
+            "conversation_id": conversation_id, "type": "video",
+            "status": "preparing", "model_id": settings.model_id,
+            "request_params": request_params,
+            "placeholder_created_at": placeholder_at.isoformat(),
+            "execution_mode": "serial", "delivery_context": {"channel": "web"},
+        }],
     )
-    from api.routes.message_media_runtime import submit_runtime_media_ingress
-    receipt = await submit_runtime_media_ingress(
-        db=db, conversation_id=conversation_id, user_id=user_id, org_id=org_id,
-        task_id=task_id, input_message_id=preparation.input_message_id,
-        output_message_id=preparation.output_message_id,
-        turn_id=preparation.turn_id, idempotency_key=request_id, kind="video",
-        request=task_payload["request_params"], model_id=settings.model_id,
+    metadata = PreparedVideoTaskMetadata(
+        client_task_id=_required(body.client_task_id),
+        placeholder_created_at=placeholder_at,
+        input_message_id=preparation.input_message_id,
+        turn_id=preparation.turn_id,
+        context_anchor=preparation.context_anchor(task_id, org_id),
+        prepared_task_id=task_id,
     )
-    if not receipt.runtime_owned:
-        await fail_closed_prepared_media(
-            db=db, lifecycle=lifecycle, task_ids=(task_id,),
-            task_payloads=(task_payload,),
-            message_id=preparation.output_message_id,
-            operation=body.operation, params=body.params, media_kind="video",
-            outcome=receipt.outcome, org_id=org_id, user_id=user_id,
-        )
-    elif not receipt.accepted:
-        raise RuntimeError("RUNTIME_MEDIA_INGRESS_NOT_OWNED")
-    else:
-        external_task_id = receipt.run_id or task_id
+    external_task_id = await handler.start(
+        message_id=preparation.output_message_id,
+        conversation_id=conversation_id, user_id=user_id,
+        content=body.content, params=params, metadata=metadata,
+    )
     user_message = _user_message(
         body, conversation_id, preparation.input_message_id,
         preparation.turn_id, created_at,

@@ -34,7 +34,6 @@ _SAFE_KEYS = frozenset({
     "kill_epoch", "state_version", "owner_fence_count",
     "provider_kill_epoch", "capability_kill_epoch", "reconcile_age_seconds",
     "cleanup_count", "recovery_count", "settlement_mismatch",
-    "runtime_owned", "legacy_fallback", "gate_blocked", "transition_count",
 })
 _SENSITIVE_PARTS = (
     "secret", "token", "password", "credential", "api_key", "authorization",
@@ -76,7 +75,6 @@ class RuntimeStatusSnapshot:
     composition: DomainStatus
     workers: DomainStatus
     tenant_control: DomainStatus
-    owner_transition: DomainStatus
     claim_gate: DomainStatus
     production: DomainStatus
     provider: DomainStatus
@@ -90,7 +88,6 @@ class RuntimeStatusSnapshot:
     sandbox: DomainStatus
     failure_closed_reasons: tuple[str, ...]
     schema_version: int = 1
-    capabilities: Mapping[str, DomainStatus] = field(default_factory=dict)
 
     @classmethod
     def from_admin_payload(
@@ -125,19 +122,14 @@ class RuntimeStatusSnapshot:
         }
         production = _production_status(control, payload)
         tenant_control = _tenant_control(control)
-        owner_transition = _owner_transition(payload, supplied)
         claim_gate = _claim_gate(control)
         reasons = _failure_reasons(
             payload, control, production, claim_gate, workers, domains,
-            _capabilities(payload, supplied), owner_transition,
         )
-        if tenant_control.state is RuntimeStatusState.UNAVAILABLE and tenant_control.error_code:
-            reasons.append(tenant_control.error_code)
         return cls(
             tenant_id=tenant,
             composition=_composition(payload), workers=workers,
             tenant_control=tenant_control,
-            owner_transition=owner_transition,
             claim_gate=claim_gate, production=production,
             provider=domains["provider"], submissions=unknown,
             scheduler=domains["scheduler"], artifact=domains["artifact"],
@@ -145,7 +137,6 @@ class RuntimeStatusSnapshot:
             projection=projection, cost=domains["cost"],
             sandbox=domains["sandbox"],
             failure_closed_reasons=tuple(dict.fromkeys(reasons)),
-            capabilities=_capabilities(payload, supplied),
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -156,7 +147,6 @@ class RuntimeStatusSnapshot:
             "composition": self.composition.to_dict(),
             "workers": self.workers.to_dict(),
             "tenant_control": self.tenant_control.to_dict(),
-            "owner_transition": self.owner_transition.to_dict(),
             "claim_gate": self.claim_gate.to_dict(),
             "production": self.production.to_dict(),
             "provider": self.provider.to_dict(),
@@ -168,10 +158,6 @@ class RuntimeStatusSnapshot:
             "projection": self.projection.to_dict(),
             "cost": self.cost.to_dict(),
             "sandbox": self.sandbox.to_dict(),
-            "capabilities": {
-                name: status.to_dict()
-                for name, status in sorted(self.capabilities.items())
-            },
             "failure_closed_reasons": list(self.failure_closed_reasons),
         }
 
@@ -210,8 +196,6 @@ def _claim_gate(control: Mapping[str, object]) -> DomainStatus:
 
 
 def _tenant_control(control: Mapping[str, object]) -> DomainStatus:
-    if control.get("tenant_gate_unavailable") is True:
-        return _unavailable("TENANT_GATE_STATUS_UNAVAILABLE")
     if not control:
         return _unavailable("RUNTIME_CONTROL_STATUS_UNAVAILABLE")
     summary = _safe_summary(control)
@@ -221,16 +205,6 @@ def _tenant_control(control: Mapping[str, object]) -> DomainStatus:
         summary=summary,
         error_code="RUNTIME_TENANT_KILL_SWITCH_ACTIVE" if blocked else None,
     )
-
-
-def _owner_transition(
-    payload: Mapping[str, object],
-    supplied: Mapping[str, Mapping[str, object]],
-) -> DomainStatus:
-    value = supplied.get("owner_transition") or payload.get("owner_transition")
-    if not isinstance(value, Mapping):
-        return _unavailable("OWNER_TRANSITION_STATUS_UNAVAILABLE")
-    return _status_from_mapping(value)
 
 
 def _production_status(control: Mapping[str, object], payload: Mapping[str, object]) -> DomainStatus:
@@ -260,21 +234,6 @@ def _supplied_domain(value: Mapping[str, object] | None, unavailable_code: str) 
     return _status_from_mapping(value)
 
 
-def _capabilities(
-    payload: Mapping[str, object],
-    supplied: Mapping[str, Mapping[str, object]],
-) -> dict[str, DomainStatus]:
-    raw = supplied.get("capabilities") or payload.get("capabilities")
-    if not isinstance(raw, Mapping):
-        return {}
-    result: dict[str, DomainStatus] = {}
-    for name, value in raw.items():
-        if not isinstance(name, str) or not isinstance(value, Mapping):
-            continue
-        result[name] = _status_from_mapping(value)
-    return result
-
-
 def _status_from_mapping(value: Mapping[str, object]) -> DomainStatus:
     raw_state = str(value.get("state", "degraded"))
     try:
@@ -299,8 +258,6 @@ def _failure_reasons(
     payload: Mapping[str, object], control: Mapping[str, object],
     production: DomainStatus, claim_gate: DomainStatus, workers: DomainStatus,
     domains: Mapping[str, DomainStatus],
-    capabilities: Mapping[str, DomainStatus],
-    owner_transition: DomainStatus,
 ) -> list[str]:
     reasons: list[str] = []
     if production.state is not RuntimeStatusState.READY:
@@ -309,14 +266,9 @@ def _failure_reasons(
         reasons.append("RUNTIME_CLAIM_GATE_CLOSED")
     if workers.state is RuntimeStatusState.UNAVAILABLE:
         reasons.append("WORKER_STATUS_UNAVAILABLE")
-    if owner_transition.state is RuntimeStatusState.UNAVAILABLE:
-        reasons.append("OWNER_TRANSITION_STATUS_UNAVAILABLE")
     for domain in domains.values():
         if domain.state is RuntimeStatusState.UNAVAILABLE and domain.error_code:
             reasons.append(domain.error_code)
-    for capability in capabilities.values():
-        if capability.state is RuntimeStatusState.UNAVAILABLE and capability.error_code:
-            reasons.append(capability.error_code)
     if not payload.get("composition"):
         reasons.append("COMPOSITION_STATUS_UNAVAILABLE")
     if not control:

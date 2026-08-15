@@ -81,30 +81,6 @@ describe('messageProtocol', () => {
     });
   });
 
-  it('accepts complete runtime slots and rejects partial or eleventh slots', () => {
-    expect(parseContentPart({
-      type: 'image',
-      url: null,
-      slot_id: 'slot-10',
-      slot_index: 9,
-      slot_status: 'unknown',
-      slot_revision: 4,
-    })).toMatchObject({
-      slot_id: 'slot-10',
-      slot_index: 9,
-      slot_status: 'unknown',
-      slot_revision: 4,
-    });
-
-    expect(parseContentPart({
-      type: 'image', url: null, slot_id: 'partial-slot',
-    })).toBeNull();
-    expect(parseContentPart({
-      type: 'image', url: null, slot_id: 'slot-11', slot_index: 10,
-      slot_status: 'pending', slot_revision: 0,
-    })).toBeNull();
-  });
-
   it('rejects malformed known blocks without throwing', () => {
     expect(parseContentPart({ type: 'tool_result', tool_name: 'erp_agent', text: {} }))
       .toBeNull();

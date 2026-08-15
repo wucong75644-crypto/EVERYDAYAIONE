@@ -117,13 +117,63 @@ class ToolLoopExecutionMixin:
         tool_call_id: str,
         hook_ctx: HookContext,
     ) -> bool:
-        """Legacy ToolLoop is never an execution owner for non-SAFE tools."""
-        logger.warning(
-            "legacy_tool_owner_rejected | "
-            f"tool={tool_name} | task_id={hook_ctx.task_id or ''} | "
-            f"tool_call_id={tool_call_id} | error_code=RUNTIME_OWNER_REQUIRED"
-        )
-        return False
+        """Return true only after V3 atomically claims this execution."""
+        if not hook_ctx.task_id:
+            return False
+
+        try:
+            from schemas.websocket_builders import build_tool_confirm_request
+            from services.websocket_manager import ws_manager
+            from services.tool_confirmation import tool_confirmation_service
+            from config.chat_tools import get_safety_level
+
+            request = await tool_confirmation_service.create(
+                task_id=hook_ctx.task_id, tool_call_id=tool_call_id,
+                tool_name=tool_name, arguments=args,
+                user_id=hook_ctx.user_id, org_id=hook_ctx.org_id,
+                safety_level=get_safety_level(tool_name).value,
+            )
+
+            try:
+                delivered = await ws_manager.send_tool_confirmation(
+                    hook_ctx.task_id,
+                    hook_ctx.user_id,
+                    build_tool_confirm_request(
+                        task_id=hook_ctx.task_id,
+                        conversation_id=hook_ctx.conversation_id,
+                        message_id="",
+                        confirmation_id=request.confirmation_id,
+                        tool_name=tool_name,
+                        confirmation_summary=dict(request.summary),
+                        safety_level=request.safety_level,
+                        timeout=60,
+                    ),
+                    org_id=hook_ctx.org_id,
+                )
+                if not delivered:
+                    await tool_confirmation_service.reject_unavailable(request)
+                    return False
+            except Exception:
+                await tool_confirmation_service.reject_unavailable(request)
+                raise
+            decision = await tool_confirmation_service.await_and_claim(
+                request,
+                is_cancelled=lambda: (
+                    ws_manager.is_cancelled(hook_ctx.task_id)
+                    or ws_manager.is_in_cancelled_gate(
+                        hook_ctx.task_id, hook_ctx.org_id,
+                    )
+                ),
+            )
+            return decision.can_execute
+        except Exception as exc:
+            logger.warning(
+                "tool_confirm_gate_failed | "
+                f"tool={tool_name} | task_id={hook_ctx.task_id} | "
+                f"tool_call_id={tool_call_id} | error_code=CONFIRMATION_UNAVAILABLE | "
+                f"exception_type={type(exc).__name__}"
+            )
+            return False
 
     async def _execute_tools(
         self,
@@ -225,20 +275,21 @@ class ToolLoopExecutionMixin:
                 accumulated = validation_error
                 continue
             if safety != SafetyLevel.SAFE:
-                await self._request_user_confirm(
+                approved = await self._request_user_confirm(
                     tool_name, args, tc["id"], hook_ctx,
                 )
-                confirm_result = (
-                    f"⚠ 工具 {tool_name} 仅允许由 Agent Runtime "
-                    "在持久授权与 Dispatch Gate 后执行。"
-                )
-                hook_ctx.messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": confirm_result,
-                })
-                accumulated = confirm_result
-                continue
+                if not approved:
+                    confirm_result = (
+                        f"⚠ 用户拒绝、确认超时或授权服务不可用，"
+                        f"工具 {tool_name} 未执行。"
+                    )
+                    hook_ctx.messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": confirm_result,
+                    })
+                    accumulated = confirm_result
+                    continue
             ready.append((tc, tool_name, args))
         return ready, accumulated, False
 

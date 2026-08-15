@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from api.routes.message_video_preparation import prepare_and_start_video_generation
-from core.exceptions import AppException
 from schemas.message import GenerateRequest, GenerationType, TextPart
 from services.generation_lifecycle import GenerationPreparation
 from services.handlers.video_handler import VideoHandler
@@ -164,7 +163,7 @@ def test_video_settings_resolve_model_duration_and_cost(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_video_task_routes_to_runtime_when_accepted(monkeypatch):
+async def test_video_task_is_prepared_before_handler_start(monkeypatch):
     _Lifecycle.instances.clear()
     monkeypatch.setattr("api.routes.message_video_preparation.GenerationLifecycle", _Lifecycle)
     monkeypatch.setattr(
@@ -175,13 +174,6 @@ async def test_video_task_routes_to_runtime_when_accepted(monkeypatch):
         "api.routes.message_video_preparation.record_user_activity",
         lambda *args, **kwargs: None,
     )
-    async def _ingress(**kwargs):
-        return SimpleNamespace(
-            accepted=True, runtime_owned=True, outcome="created", run_id="run-1",
-        )
-    monkeypatch.setattr(
-        "api.routes.message_media_runtime.submit_runtime_media_ingress", _ingress,
-    )
     handler = _Handler()
     body = GenerateRequest(
         content=[TextPart(text="dance")], generation_type=GenerationType.VIDEO,
@@ -190,74 +182,16 @@ async def test_video_task_routes_to_runtime_when_accepted(monkeypatch):
     )
 
     response = await prepare_and_start_video_generation(
-        db=MagicMock(), handler=handler, conversation_service=_ConversationService(),
+        db=object(), handler=handler, conversation_service=_ConversationService(),
         conversation_id="conv-1", user_id="user-1", org_id="org-1",
         request_id="request-row", body=body,
     )
 
     task = _Lifecycle.instances[0].calls[0]["tasks"][0]
     assert task["status"] == "preparing"
-    handler.start.assert_not_awaited()
-    assert _Lifecycle.instances[0].fail_calls == []
+    metadata = handler.start.await_args.kwargs["metadata"]
+    assert metadata.prepared_task_id == task["id"]
     assert response.user_message.id == "input-1"
-
-
-@pytest.mark.asyncio
-async def test_video_media_not_ready_fails_prepared_state_without_legacy_provider(
-    monkeypatch,
-):
-    _Lifecycle.instances.clear()
-    monkeypatch.setattr(
-        "api.routes.message_video_preparation.GenerationLifecycle", _Lifecycle,
-    )
-    monkeypatch.setattr(
-        "api.routes.message_video_preparation.resolve_video_submission_settings",
-        lambda *args: _settings(),
-    )
-    ingress = AsyncMock(return_value=SimpleNamespace(
-        accepted=False, runtime_owned=False, outcome="media_not_ready", run_id=None,
-    ))
-    release_slot = AsyncMock()
-    monkeypatch.setattr(
-        "api.routes.message_media_runtime.submit_runtime_media_ingress", ingress,
-    )
-    monkeypatch.setattr(
-        "api.routes.message_media_failure.release_task_slot_checked", release_slot,
-    )
-    handler = _Handler()
-    body = GenerateRequest(
-        content=[TextPart(text="dance")], generation_type=GenerationType.VIDEO,
-        model="video-model", params={"_task_slot_id": "slot-1"},
-        client_request_id="request", client_task_id="client-task",
-        assistant_message_id="00000000-0000-0000-0000-000000000002",
-    )
-    db = MagicMock()
-
-    with pytest.raises(AppException) as captured:
-        await prepare_and_start_video_generation(
-            db=db, handler=handler, conversation_service=_ConversationService(),
-            conversation_id="conv-1", user_id="user-1", org_id="org-1",
-            request_id="request-row", body=body,
-        )
-
-    assert captured.value.code == "RUNTIME_MEDIA_UNAVAILABLE"
-    assert captured.value.status_code == 503
-    assert captured.value.details == {"outcome": "media_not_ready"}
-    handler.start.assert_not_awaited()
-    handler._lock_credits.assert_not_called()
-    assert ingress.await_count == 1
-    lifecycle = _Lifecycle.instances[0]
-    assert [call["task_id"] for call in lifecycle.fail_calls] == [
-        lifecycle.calls[0]["tasks"][0]["id"],
-    ]
-    assert lifecycle.refund_calls == []
-    message_update = db.table.return_value.update.call_args.args[0]
-    assert message_update == {
-        "content": [{"type": "text", "text": "生成服务暂未就绪，请稍后重试"}],
-        "status": "failed", "is_error": True,
-    }
-    release_slot.assert_awaited_once()
-    assert release_slot.await_args.args[0]["request_params"]["_task_slot_id"] == "slot-1"
 
 
 @pytest.mark.asyncio

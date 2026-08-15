@@ -92,43 +92,6 @@ SELECT
 """
 
 
-_SCHEDULED_WECOM_UUID_RPCS = frozenset({
-    "claim_agent_runtime_scheduled_wecom_delivery_v1",
-    "renew_agent_runtime_scheduled_wecom_delivery_lease_v1",
-    "read_agent_runtime_scheduled_wecom_claim_v1",
-    "read_agent_runtime_scheduled_wecom_dispatch_context_v1",
-    "recover_agent_runtime_scheduled_wecom_prepared_dispatch_v1",
-    "prepare_agent_runtime_scheduled_wecom_dispatch_v1",
-    "start_agent_runtime_scheduled_wecom_dispatch_v1",
-    "read_agent_runtime_scheduled_wecom_dispatch_attempt_v1",
-    "record_agent_runtime_scheduled_wecom_dispatch_outcome_v1",
-    "claim_agent_runtime_scheduled_wecom_reconcile_v1",
-    "renew_agent_runtime_scheduled_wecom_reconcile_lease_v1",
-    "read_agent_runtime_scheduled_wecom_reconcile_v1",
-    "claim_agent_runtime_scheduled_wecom_delivery_v2",
-    "record_agent_runtime_scheduled_wecom_reconcile_result_v1",
-    "record_agent_runtime_scheduled_wecom_reconcile_definitive_result_v1",
-    "prepare_agent_runtime_scheduled_wecom_dispatch_v2",
-    "start_agent_runtime_scheduled_wecom_dispatch_v2",
-    "read_agent_runtime_scheduled_wecom_dispatch_attempt_v2",
-    "read_agent_runtime_scheduled_wecom_dispatch_payload_v1",
-    "read_agent_runtime_scheduled_wecom_prepared_payload_v1",
-    "terminalize_agent_runtime_scheduled_wecom_unsupported_item_v1",
-    "recover_agent_runtime_scheduled_wecom_started_dispatch_v1",
-})
-
-_SCHEDULED_WECOM_UUID_KEYS = {
-    "p_request_id", "p_intent_id", "p_item_id", "p_attempt_id",
-    "p_claim_request_id", "p_lease_token", "p_reconcile_token",
-    "p_recovery_request_id",
-}
-
-_COMMAND_CLAIM_UUID_FENCING_RPCS = frozenset({
-    "renew_agent_command_claim",
-    "finish_agent_command_claim",
-})
-
-
 def _rpc_sql(name: str, params: dict[str, Any]) -> tuple[str, list[Any]]:
     if not params:
         return f'SELECT public."{name}"()', []
@@ -140,38 +103,14 @@ def _rpc_sql(name: str, params: dict[str, Any]) -> tuple[str, list[Any]]:
         "p_expected_action_version": "bigint",
         "p_expected_attempt_version": "bigint",
         "p_expected_version": "bigint",
+        "p_fencing_token": "bigint",
         "p_executor_revision": "integer",
         "p_lease_seconds": "integer",
-        "p_attempt_state_version": "bigint",
-        "p_capability_kill_epoch": "bigint",
-        "p_expected_operation_version": "bigint",
-        "p_expected_delivery_state_version": "bigint",
-        "p_expected_item_state_version": "bigint",
-        "p_limit": "integer",
-        "p_delay_seconds": "integer",
-        "p_provider_kill_epoch": "bigint",
-        "p_tenant_kill_epoch": "bigint",
     }
-    bigint_provider_revision_rpcs = {
-        "prepare_agent_runtime_scheduled_wecom_dispatch_v2",
-        "start_agent_runtime_scheduled_wecom_dispatch_v2",
-        "read_agent_runtime_scheduled_wecom_dispatch_attempt_v2",
-        "record_agent_runtime_scheduled_wecom_dispatch_outcome_v1",
-        "record_agent_runtime_scheduled_wecom_reconcile_result_v1",
-        "record_agent_runtime_scheduled_wecom_reconcile_definitive_result_v1",
-    }
-    if name in bigint_provider_revision_rpcs:
-        numeric_types["p_provider_revision"] = "bigint"
     uuid_keys = {
         "p_action_id", "p_attempt_id", "p_dispatch_intent_id", "p_job_id",
         "p_claim_token", "p_receipt_id", "p_policy_receipt_id",
     }
-    if name in _COMMAND_CLAIM_UUID_FENCING_RPCS:
-        uuid_keys.add("p_fencing_token")
-    else:
-        numeric_types["p_fencing_token"] = "bigint"
-    if name in _SCHEDULED_WECOM_UUID_RPCS:
-        uuid_keys.update(_SCHEDULED_WECOM_UUID_KEYS)
     text_keys = {
         "p_external_idempotency_key", "p_request_hash", "p_executor_type",
         "p_runtime_revision", "p_workspace_scope_ref", "p_code_sha256",

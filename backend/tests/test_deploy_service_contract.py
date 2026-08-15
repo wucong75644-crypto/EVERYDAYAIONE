@@ -25,6 +25,7 @@ RELEASE_SCRIPT = (
 RELEASE_POLICY_PATH = (
     Path(__file__).resolve().parents[2] / "deploy/release-policy.conf"
 )
+DEPLOY_DIR = Path(__file__).resolve().parents[2] / "deploy"
 
 
 def test_backend_deploy_restarts_all_required_services() -> None:
@@ -37,6 +38,21 @@ def test_backend_deploy_restarts_all_required_services() -> None:
         assert service in SCRIPT
     assert 'sudo systemctl restart "$service"' in SCRIPT
     assert 'sudo systemctl is-active --quiet "$service"' in SCRIPT
+
+
+def test_application_services_keep_isolated_log_directories() -> None:
+    expected = {
+        "everydayai-backend.service": "/var/log/everydayai/backend",
+        "everydayai-sync.service": "/var/log/everydayai/sync",
+        "everydayai-conversation-actor.service": "/var/log/everydayai/conversation-actor",
+        "everydayai-wecom.service": "/var/log/everydayai/wecom",
+    }
+    provisioner = (DEPLOY_DIR / "provision-runtime-users.sh").read_text()
+    for name, log_dir in expected.items():
+        unit = (DEPLOY_DIR / name).read_text()
+        assert f'Environment="EVERYDAYAI_LOG_DIR={log_dir}"' in unit
+        assert "UMask=0027" in unit
+        assert log_dir in provisioner
 
 
 def test_backend_deploy_has_bounded_readiness_check() -> None:
@@ -96,12 +112,6 @@ def test_backend_deploy_validates_migration_mode() -> None:
     assert "source .env.migrator" in MIGRATION_SCRIPT
     assert "RECONCILE_FAILED_MIGRATION" in MIGRATION_SCRIPT
     assert "ACKNOWLEDGE_MIGRATION_ROLLBACK" in MIGRATION_SCRIPT
-    policy_notice = "生产 Schema 仅允许 forward migration；禁止执行 rollback SQL"
-    assert policy_notice in MIGRATION_SCRIPT
-    assert "回退 N-1 兼容二进制" in MIGRATION_SCRIPT
-    assert MIGRATION_SCRIPT.index(policy_notice) < MIGRATION_SCRIPT.index(
-        "migration_plan=$("
-    )
     assert "provision-runtime-users.sh" in SCRIPT
     assert "venv/bin/python -m pytest" in SCRIPT
     assert 'command -v python3.12 || command -v python3' in SCRIPT

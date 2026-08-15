@@ -38,19 +38,10 @@ class ArtifactJobExecutor(FamilyExecutor):
 
     def validate_request(self, request):
         super().validate_request(request)
-        if self.action_kind == "local_data" and not isinstance(
-            request.get("doc_type"), str,
-        ):
-            raise ValueError("LOCAL_DATA_DOC_TYPE_REQUIRED")
-        if self.action_kind == "file_analyze" and not any(
-            key in request for key in ("file_id", "path")
-        ):
-            raise ValueError("FILE_ANALYZE_RESOURCE_REQUIRED")
-        if self.action_kind == "fetch_all_pages" and not (
-            isinstance(request.get("tool") or request.get("tool_name"), str)
-            and isinstance(request.get("action"), str)
-        ):
-            raise ValueError("ERP_PAGE_ACTION_REQUIRED")
+        if self.action_kind == "local_data" and not any(key in request for key in ("path", "artifact_ref", "source_handle")):
+            raise ValueError("LOCAL_DATA_SOURCE_REQUIRED")
+        if self.action_kind in {"file_analyze", "fetch_all_pages"} and not any(key in request for key in ("artifact_ref", "url", "source_handle")):
+            raise ValueError("ARTIFACT_SOURCE_REQUIRED")
 
 
 class MediaGenerationExecutor(FamilyExecutor):
@@ -95,10 +86,8 @@ class ScheduledTaskExecutor(FamilyExecutor):
     def validate_request(self, request):
         super().validate_request(request)
         operation = request.get("operation")
-        if operation not in {"create", "update", "delete", "pause", "resume"}:
+        if operation not in {"create", "update", "delete", "pause", "resume", "list"}:
             raise ValueError("SCHEDULED_OPERATION_INVALID")
-        if operation != "create" and not isinstance(request.get("task_id"), str):
-            raise ValueError("SCHEDULED_TASK_ID_REQUIRED")
         if operation in {"update", "delete", "pause", "resume"} and "state_version" not in request:
             raise ValueError("SCHEDULED_STATE_VERSION_REQUIRED")
 

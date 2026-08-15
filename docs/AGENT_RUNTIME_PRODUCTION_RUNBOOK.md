@@ -76,19 +76,14 @@ timeout. Backlog does not affect readiness.
   rollback: schema, ACLs, gates, audit and failure-closed rollback.
 - `deploy/everydayai-agent-*.service`,
   `deploy/everydayai-sandbox-worker.service`: non-root process roles.
-- `deploy/bootstrap-agent-runtime-roles.sh` creates the four active Runtime
-  LOGIN roles. The historical Gateway bootstrap is retained only so a disposable
-  database can traverse frozen 227_18 migration history; it does not provision an
-  active service or current execution owner.
+- `deploy/bootstrap-agent-runtime-roles.sh`: the only creator of the four new
+  LOGIN roles. Migration 223 contains no password or LOGIN creation.
 
 ## Environment and secrets
 
 Install `/etc/everydayai/*.env` from `deploy/env-templates`, owned by root and
-mode 0640. Runtime loads `agent-runtime-worker.env` and the two-key
-`agent-runtime-model.env`. The model file is `root:everydayai-runtime-model-secret`;
-only the Runtime user joins that group. It contains KEK metadata only, never a
-Provider API key. Projection, Authorization and Sandbox cannot read it.
-The Sandbox template is deliberately limited to its database URL,
+mode 0640. The Runtime model credential file is loaded only by the Runtime
+Worker. The Sandbox template is deliberately limited to its database URL,
 immutable hashes, local paths, limits and Sentry; it must not contain Redis,
 OSS, model, JWT or WeCom values. `RUNTIME_ADMIN_DATABASE_URL` is available only
 to the API process. Local ingress flags and every database control switch stay
@@ -152,24 +147,8 @@ admin audit rows supply actor, tenant, request id, reason and result.
 
 ## Ordered release
 
-Single-Runtime code validation is flags-off only. The reviewed control-plane
-manifest contains exactly Runtime, Projection and Authorization units.
-Provisioning stages four env files in one release transaction; any env publish,
-unit install, daemon-reload or state postcheck failure restores all envs and
-units. Runtime must be `inactive:disabled`, all production flags remain false,
-and Sandbox assets must have zero diff. The disposable workflow validates 227_53,
-the direct model adapter, existing Runtime recovery contracts and mock Providers.
-It does not consume production `DATABASE_URL` and does not authorize installation,
-migration, service start or Owner switch.
-
-Before any install, the historical `everydayai-agent-model-gateway` unit must be
-`inactive:not-found`, and its two env files must be absent. The installer fails
-closed when legacy assets remain; retirement is a separate reviewed, recoverable
-operation and is never performed implicitly by provisioning.
-
-1. Bootstrap and verify the four active Runtime database LOGIN roles; inject
-   secrets outside migration tooling. Create the historical Gateway role only
-   inside disposable migration-chain verification when 227_18 requires it.
+1. Bootstrap and verify the four database LOGIN roles; inject secrets outside
+   migration tooling.
 2. Apply migration 223. Verify all control switches are false and ACL tests
    pass.
 3. Run the Redis V3 capability probe.
@@ -190,11 +169,6 @@ operation and is never performed implicitly by provisioning.
    may never regain dispatch.
 
 ## Rollback and recovery
-
-- **Runtime model rollback:** keep production flags false, drain without
-  redispatching `dispatching` ambiguity, and restore only through the
-  release-bound env/unit journal. Preserve ModelAttempt facts; 227_53 rollback
-  is disposable-only and fails when captured epoch facts exist.
 
 - **Migration rollback:** run the exact 223 rollback only before any Runtime,
   Authorization, Projection, Sandbox, heartbeat, capability or admin facts

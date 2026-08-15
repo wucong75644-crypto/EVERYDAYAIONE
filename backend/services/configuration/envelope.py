@@ -79,24 +79,6 @@ class LocalKEKProvider(KeyEncryptionProvider):
         self._current_version = current_version
         self._keyring = normalized
 
-    def __repr__(self) -> str:
-        return "LocalKEKProvider(<redacted>)"
-
-    def __getstate__(self) -> Mapping[str, object]:
-        raise TypeError("LOCAL_KEK_PROVIDER_NOT_SERIALIZABLE")
-
-    def __reduce__(self) -> object:
-        raise TypeError("LOCAL_KEK_PROVIDER_NOT_SERIALIZABLE")
-
-    def __reduce_ex__(self, _protocol: int) -> object:
-        raise TypeError("LOCAL_KEK_PROVIDER_NOT_SERIALIZABLE")
-
-    def __copy__(self) -> "LocalKEKProvider":
-        raise TypeError("LOCAL_KEK_PROVIDER_NOT_COPYABLE")
-
-    def __deepcopy__(self, _memo: object) -> "LocalKEKProvider":
-        raise TypeError("LOCAL_KEK_PROVIDER_NOT_COPYABLE")
-
     @classmethod
     def from_environment(
         cls,

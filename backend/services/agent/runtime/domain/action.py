@@ -76,7 +76,6 @@ class ActionAttempt:
     request_hash: str
     lease: Lease
     started_at: datetime
-    state_version: int = 0
     accepted_at: datetime | None = None
     ended_at: datetime | None = None
     session_id: str | None = None
@@ -96,8 +95,6 @@ class ActionAttempt:
         _require_sha256(self.request_hash, "request_hash")
         if self.attempt_number < 1:
             raise ValueError("attempt_number must be positive")
-        if self.state_version < 0:
-            raise ValueError("state_version must not be negative")
         require_aware_datetime(self.started_at, "started_at")
         require_aware_datetime(self.accepted_at, "accepted_at")
         require_aware_datetime(self.ended_at, "ended_at")

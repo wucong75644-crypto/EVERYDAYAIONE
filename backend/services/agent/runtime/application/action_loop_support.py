@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from datetime import datetime, timedelta, timezone
 from typing import Mapping
 
 from services.agent.runtime.ports.action_repository import ActionRepositoryPort
@@ -49,45 +48,6 @@ def failure_result(receipt: ExecutionReceipt) -> Mapping[str, object]:
     }
 
 
-def specialist_finalizer(
-    facts: object, receipt: ExecutionReceipt,
-    external: Mapping[str, object],
-):
-    evidence = external.get("evidence")
-    if (
-        receipt.outcome in {ExecutionOutcome.COMPLETED, ExecutionOutcome.FAILED}
-        and external.get("provider") == "kie"
-        and isinstance(evidence, Mapping)
-        and evidence.get("cancel_unproven") is True
-        and hasattr(facts, "media_cancel_readback_terminal")
-    ):
-        return facts.media_cancel_readback_terminal
-    return facts.finalize
-
-
-async def persist_specialist_unknown(
-    facts: object, *, external: Mapping[str, object], attempt_id: str,
-    token: str, state_version: int, request_hash: str,
-    ambiguity_evidence: Mapping[str, object], next_reconcile_at: datetime,
-) -> None:
-    if external.get("provider") == "kie" and hasattr(
-        facts, "media_provider_unknown",
-    ):
-        await facts.media_provider_unknown(
-            attempt_id=attempt_id, execution_token=token,
-            expected_state_version=state_version, request_hash=request_hash,
-            provider_receipt=dict(external),
-            ambiguity_evidence=dict(ambiguity_evidence),
-            next_reconcile_at=next_reconcile_at,
-        )
-        return
-    await facts.provider_unknown(
-        attempt_id=attempt_id, execution_token=token,
-        request_hash=request_hash,
-        ambiguity_evidence=dict(ambiguity_evidence),
-    )
-
-
 def int_value(value: Mapping[str, object], field: str) -> int:
     item = value.get(field)
     if isinstance(item, bool) or not isinstance(item, int):
@@ -110,13 +70,6 @@ def required_int(value: int | None, name: str) -> int:
 def required_time(value):
     if value is None:
         raise RuntimeError("RECONCILIATION_LEASE_EXPIRY_REQUIRED")
-    if isinstance(value, str):
-        try:
-            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            raise RuntimeError("RECONCILIATION_LEASE_EXPIRY_INVALID") from None
-    if not isinstance(value, datetime) or value.utcoffset() is None:
-        raise RuntimeError("RECONCILIATION_LEASE_EXPIRY_INVALID")
     return value
 
 
@@ -126,24 +79,6 @@ def reserved_amount(snapshot: ActionDispatchSnapshot) -> int:
         return 0
     value = arguments.get("reserved_credits", 0)
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
-
-
-def next_reconcile_at(lease_seconds: int) -> datetime:
-    return datetime.now(timezone.utc) + timedelta(seconds=max(60, lease_seconds))
-
-
-def provider_idempotency_key(
-    external: Mapping[str, object], fallback: str,
-) -> str:
-    evidence = external.get("evidence")
-    value = evidence.get("provider_idempotency_key") if isinstance(
-        evidence, Mapping
-    ) else None
-    if not isinstance(value, str):
-        value = external.get("provider_idempotency_key", fallback)
-    if not isinstance(value, str) or not 1 <= len(value.strip()) <= 300:
-        raise RuntimeError("SPECIALIST_PROVIDER_IDEMPOTENCY_KEY_INVALID")
-    return value.strip()
 
 
 class ActionLease:

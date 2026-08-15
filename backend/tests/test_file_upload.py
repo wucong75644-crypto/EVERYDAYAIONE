@@ -345,6 +345,7 @@ class TestDownloadUrlToWorkspace:
         assert p1["name"] == "fixed.png"
         assert p2["name"] == "fixed_1.png"
 
+
 class TestPersistMediaUrlsToWorkspace:
     """persist_media_urls_to_workspace 公共并发 helper。"""
 

@@ -396,22 +396,3 @@ class TestReleaseTaskSlot:
         with patch.dict(sys.modules, {"api.deps": deps_mock}):
             from services.task_limit_service import release_task_slot
             await release_task_slot(task)  # 不应抛异常
-
-    @pytest.mark.asyncio
-    async def test_checked_release_propagates_service_error(self):
-        mock_service = AsyncMock()
-        mock_service.release_checked.side_effect = ConnectionError("Redis down")
-        deps_mock = self._mock_deps(mock_service)
-        task = {
-            "user_id": "u1", "conversation_id": "conv1", "org_id": "org1",
-            "request_params": {"_task_slot_id": "slot-durable"},
-        }
-
-        with patch.dict(sys.modules, {"api.deps": deps_mock}):
-            from services.task_limit_service import release_task_slot_checked
-            with pytest.raises(ConnectionError, match="Redis down"):
-                await release_task_slot_checked(task)
-
-        mock_service.release_checked.assert_awaited_once_with(
-            "u1", "conv1", org_id="org1", slot_id="slot-durable",
-        )

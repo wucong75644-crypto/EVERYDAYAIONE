@@ -16,8 +16,6 @@ from services.agent.runtime.domain.errors import (
 from services.agent.runtime.ports.coordinator_recovery import (
     ActionDispatchSnapshot,
     ActionRecoveryClaim,
-    ActionRecoveryOperation,
-    ChildCancelRecoveryClaim,
     CoordinatorRecoveryPort,
     ModelResultDraft,
     RecoveryOutcome,
@@ -158,19 +156,16 @@ class PostgresCoordinatorRecoveryRepository(CoordinatorRecoveryPort):
         self, *, worker_id: str, claim_request_id: str,
         batch_size: int = 10, lease_seconds: int = 120,
     ) -> tuple[ActionDispatchSnapshot, ...]:
-        params = {
-            "p_worker_id": worker_id,
-            "p_claim_request_id": claim_request_id,
-            "p_batch_size": batch_size,
-            "p_lease_seconds": lease_seconds,
-        }
         try:
-            raw = await self._rpc(
-                "claim_agent_action_dispatch_final_v1", params,
-            )
+            raw = await self._rpc("claim_ready_agent_action_snapshots_v2", {
+                "p_worker_id": worker_id,
+                "p_claim_request_id": claim_request_id,
+                "p_batch_size": batch_size,
+                "p_lease_seconds": lease_seconds,
+            })
         except (OperationalError, InterfaceError):
-            raw = await self._rpc(
-                "claim_agent_action_dispatch_final_v1", params,
+            return await self.get_action_dispatch_batch(
+                worker_id=worker_id, claim_request_id=claim_request_id,
             )
         return _snapshot_batch(raw, {"claimed"})
 
@@ -201,102 +196,23 @@ class PostgresCoordinatorRecoveryRepository(CoordinatorRecoveryPort):
                     "p_worker_id": worker_id,
                 },
             )
-        return _action_recovery_claim(raw)
-
-    async def claim_child_cancel(
-        self, *, worker_id: str, lease_seconds: int = 120,
-    ) -> ChildCancelRecoveryClaim:
-        try:
-            raw = await self._rpc(
-                "claim_next_agent_child_run_cancel_intent_v1", {
-                    "p_worker_id": worker_id,
-                    "p_lease_seconds": lease_seconds,
-                },
-            )
-        except (OperationalError, InterfaceError):
-            raw = await self._rpc(
-                "get_claimed_agent_child_run_cancel_intent_v1", {
-                    "p_worker_id": worker_id,
-                },
-            )
-        row = _mapping(raw, "Child cancel claim")
+        row = _mapping(raw, "Action reconciliation")
         name = _outcome(row, {"claimed", "found", "not_found"})
-        if name == "not_found":
-            return ChildCancelRecoveryClaim(
-                outcome=RecoveryOutcome.NOT_FOUND,
-            )
-        intent = _mapping(row.get("intent"), "Child cancel intent")
-        intent_id = _uuid(intent.get("id"))
-        token = _uuid(intent.get("claim_token"))
-        version = _integer(intent.get("state_version"))
-        if None in (intent_id, token, version):
-            raise PersistenceContractError(
-                "Child cancel claim binding required",
-            )
-        return ChildCancelRecoveryClaim(
-            outcome=RecoveryOutcome.CLAIMED, intent_id=intent_id,
-            claim_token=token, state_version=version,
+        outcome = (
+            RecoveryOutcome.CLAIMED
+            if name in {"claimed", "found"} else RecoveryOutcome.NOT_FOUND
         )
-
-    async def apply_child_cancel(
-        self, *, intent_id: str, claim_token: str,
-        expected_state_version: int, reason: str,
-    ) -> RecoveryOutcome:
-        row = _mapping(await self._rpc(
-            "apply_agent_child_run_cancel_intent_v1", {
-                "p_intent_id": intent_id,
-                "p_claim_token": claim_token,
-                "p_expected_state_version": expected_state_version,
-                "p_reason": reason,
-            },
-        ), "Child cancel apply")
-        return RecoveryOutcome(_outcome(
-            row, {"applied", "confirmed", "ownership_lost"},
-        ))
-
-
-def _action_recovery_claim(value: object) -> ActionRecoveryClaim:
-    row = _mapping(value, "Action reconciliation")
-    name = _outcome(row, {"claimed", "found", "not_found"})
-    if name == "not_found":
-        return ActionRecoveryClaim(outcome=RecoveryOutcome.NOT_FOUND)
-    try:
-        operation = ActionRecoveryOperation(row.get("operation"))
-    except (TypeError, ValueError):
-        raise PersistenceContractError(
-            "Action reconciliation operation required",
-        ) from None
-    snapshot = _snapshot(row.get("snapshot"))
-    attempt_id = _uuid(row.get("attempt_id"))
-    token = _uuid(row.get("execution_token"))
-    state_version = _integer(row.get("state_version"))
-    lease_expires_at = _time(row.get("lease_expires_at"))
-    run_id = _uuid(row.get("parent_run_id"))
-    run_status = row.get("parent_run_status")
-    run_version = _integer(row.get("parent_run_state_version"))
-    required = (attempt_id, token, state_version, lease_expires_at,
-                run_id, run_version)
-    if None in required or not isinstance(run_status, str):
-        raise PersistenceContractError("Action reconciliation binding required")
-    if str(snapshot.attempt.get("id")) != attempt_id:
-        raise PersistenceContractError("Action reconciliation attempt mismatch")
-    if str(snapshot.attempt.get("reconciliation_token")) != token:
-        raise PersistenceContractError("Action reconciliation token mismatch")
-    if snapshot.attempt.get("state_version") != state_version:
-        raise PersistenceContractError("Action reconciliation version mismatch")
-    if str(snapshot.action.get("run_id")) != run_id:
-        raise PersistenceContractError("Action reconciliation run mismatch")
-    expected = (ActionRecoveryOperation.CANCEL if run_status == "cancelled"
-                else ActionRecoveryOperation.RECONCILE)
-    if operation is not expected:
-        raise PersistenceContractError("Action reconciliation operation mismatch")
-    return ActionRecoveryClaim(
-        outcome=RecoveryOutcome.CLAIMED, operation=operation,
-        parent_run_id=run_id, parent_run_status=run_status,
-        parent_run_state_version=run_version, attempt_id=attempt_id,
-        execution_token=token, state_version=state_version,
-        lease_expires_at=lease_expires_at, snapshot=snapshot,
-    )
+        return ActionRecoveryClaim(
+            outcome=outcome,
+            attempt_id=_uuid(row.get("attempt_id")),
+            execution_token=_uuid(row.get("execution_token")),
+            state_version=_integer(row.get("state_version")),
+            lease_expires_at=_time(row.get("lease_expires_at")),
+            snapshot=(
+                _snapshot(row.get("snapshot"))
+                if row.get("snapshot") is not None else None
+            ),
+        )
 
 
 def _snapshot_batch(

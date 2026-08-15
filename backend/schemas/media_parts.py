@@ -2,17 +2,7 @@
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
-
-
-RuntimeMediaSlotStatus = Literal[
-    "pending",
-    "accepted",
-    "unknown",
-    "completed",
-    "failed",
-    "cancelled",
-]
+from pydantic import BaseModel
 
 
 class TextPart(BaseModel):
@@ -43,25 +33,6 @@ class ImagePart(BaseModel):
     workspace_path: Optional[str] = None
     size: Optional[int] = None
     mime_type: Optional[str] = None
-    slot_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
-    slot_index: Optional[int] = Field(default=None, ge=0, le=9)
-    slot_status: Optional[RuntimeMediaSlotStatus] = None
-    slot_revision: Optional[int] = Field(default=None, ge=0)
-
-    @model_validator(mode="after")
-    def validate_runtime_slot_identity(self) -> "ImagePart":
-        """Runtime 槽位字段必须完整出现，历史图片则全部省略。"""
-        slot_fields = (
-            self.slot_id,
-            self.slot_index,
-            self.slot_status,
-            self.slot_revision,
-        )
-        if any(value is not None for value in slot_fields) and any(
-            value is None for value in slot_fields
-        ):
-            raise ValueError("runtime media slot fields must be provided together")
-        return self
 
 
 class VideoPart(BaseModel):

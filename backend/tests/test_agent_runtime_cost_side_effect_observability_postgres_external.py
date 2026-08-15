@@ -3,10 +3,6 @@ from pathlib import Path
 import psycopg
 import pytest
 
-from tests.agent_runtime_migration_test_support import (
-    migration_paths_through,
-    unique_migration_path,
-)
 from tests.test_agent_runtime_ar173_postgres_external import _seed_specialist_action, _worker_rpc, database
 from tests.test_agent_runtime_tenant_kill_control_postgres_external import _admin_call
 
@@ -35,12 +31,10 @@ def test_cost_side_effect_snapshot_and_rollback(database: str) -> None:
         )
         conn.commit()
     for index in range(1, 20):
-        _apply(database, unique_migration_path(ROOT, f"226_{index:02d}_"))
+        _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")))
     ids = _seed_specialist_action(database)
-    for path in migration_paths_through(
-        ROOT, "227_12_agent_runtime_cost_side_effect_observability.sql"
-    ):
-        _apply(database, path)
+    for index in range(1, 13):
+        _apply(database, next((ROOT / "migrations").glob(f"227_{index:02d}_*.sql")))
     with psycopg.connect(database) as conn:
         conn.execute("SET ROLE everydayai_owner")
         conn.execute(

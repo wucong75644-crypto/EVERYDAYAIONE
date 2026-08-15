@@ -1,43 +1,14 @@
-from inspect import Parameter, signature
 from pathlib import Path
-from types import SimpleNamespace
-from typing import get_type_hints
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
-import agent_runtime_worker_main as entrypoint
-from agent_runtime_worker_main import AgentRuntimeProcessSettings
-from services.agent.runtime.executors.registry import ExecutorRegistry
-from services.agent.runtime.executors.sandbox_job import (
-    SandboxJobExecutor,
-    register_sandbox_job_executor,
-)
-from services.agent.runtime.production_factory import (
-    ProductionCompositionNotReady,
-    build_agent_runtime_production_components,
-)
 from services.agent.runtime.production_composition import (
-    ProductionRuntimeComponents,
     build_production_components_for_worker,
-)
-from services.agent.runtime.runtime_assembly import (
-    CapabilityReadinessState,
-    RuntimeAssemblyReadiness,
-)
-from services.agent.runtime.composition import (
-    build_authorization, build_projection, build_runtime, build_sandbox,
 )
 
 
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "deploy"
-
-
-def _sandbox_registry() -> ExecutorRegistry:
-    registry = ExecutorRegistry()
-    register_sandbox_job_executor(registry, SandboxJobExecutor())
-    return registry
 
 
 def test_all_production_services_are_non_root() -> None:
@@ -57,25 +28,6 @@ def test_all_production_services_are_non_root() -> None:
         assert "Group=root" not in text
 
 
-def test_shared_application_services_have_isolated_log_directories() -> None:
-    expected = {
-        "everydayai-backend.service": "/var/log/everydayai/backend",
-        "everydayai-sync.service": "/var/log/everydayai/sync",
-        "everydayai-conversation-actor.service": (
-            "/var/log/everydayai/conversation-actor"
-        ),
-        "everydayai-wecom.service": "/var/log/everydayai/wecom",
-    }
-    for name, log_dir in expected.items():
-        text = (DEPLOY / name).read_text()
-        assert f'Environment="EVERYDAYAI_LOG_DIR={log_dir}"' in text
-        assert "UMask=0027" in text
-
-    provisioner = (DEPLOY / "provision-runtime-users.sh").read_text()
-    for log_dir in expected.values():
-        assert log_dir in provisioner
-
-
 def test_sandbox_environment_has_no_forbidden_credentials() -> None:
     text = (DEPLOY / "env-templates/sandbox-worker.env.template").read_text()
     for forbidden in ("REDIS", "OSS_", "MODEL_", "JWT", "WECOM"):
@@ -84,204 +36,23 @@ def test_sandbox_environment_has_no_forbidden_credentials() -> None:
     entrypoint = (ROOT / "backend" / "agent_runtime_worker_main.py").read_text()
     assert "class SandboxProcessSettings" in entrypoint
     assert "env_file=None" in entrypoint
-    assert '"liveness": True' in entrypoint
-    assert '"status": "unavailable"' in entrypoint
-    assert 'HEARTBEAT_FAILED' in entrypoint
+    assert '"ready": ready and not draining and not stopping.is_set()' in entrypoint
 
 
-def test_runtime_worker_has_no_dynamic_composition_setting() -> None:
-    fields = set(AgentRuntimeProcessSettings.model_fields)
-    assert not any("factory" in name or "components" in name for name in fields)
-
-
-def test_runtime_worker_environment_does_not_receive_provider_secrets() -> None:
-    unit = (DEPLOY / "everydayai-agent-runtime.service").read_text()
-    environment_files = tuple(
-        line.removeprefix("EnvironmentFile=").strip()
-        for line in unit.splitlines()
-        if line.startswith("EnvironmentFile=")
-    )
-
-    assert environment_files == (
-        "/etc/everydayai/agent-runtime-worker.env",
-        "/etc/everydayai/agent-runtime-model.env",
-    )
-    model_template = DEPLOY / "env-templates/agent-runtime-model.env.template"
-    assert model_template.exists()
-    assert "CONFIG_KEK_CURRENT_VERSION=" in model_template.read_text()
-
-    worker_template = (
-        DEPLOY / "env-templates/agent-runtime-worker.env.template"
-    ).read_text()
-    forbidden = (
-        "KIE_API_KEY", "GOOGLE_API_KEY", "DASHSCOPE_API_KEY",
-        "APP_OPENROUTER_API_KEY", "CONFIG_KEK", "credential",
-    )
-    runtime_environment = worker_template.lower()
-    assert not any(item.lower() in runtime_environment for item in forbidden)
-    assert "class AgentRuntimeProcessSettings" in (
-        ROOT / "backend" / "agent_runtime_worker_main.py"
-    ).read_text()
-    assert "AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED=false" in worker_template
+def test_runtime_worker_requires_explicit_production_composition() -> None:
+    entrypoint = (ROOT / "backend" / "agent_runtime_worker_main.py").read_text()
+    assert "agent_runtime_production_composition_enabled" in entrypoint
+    assert "build_production_components_for_worker" in entrypoint
+    assert "production_components=production_components" in entrypoint
 
 
 def test_production_factory_fails_closed_until_scoped_services_exist() -> None:
-    with pytest.raises(ProductionCompositionNotReady) as caught:
+    with pytest.raises(
+        RuntimeError, match="RUNTIME_PRODUCTION_COMPONENT_FACTORY_NOT_READY",
+    ):
         build_production_components_for_worker(
-            database=object(), settings=object(),
-            sandbox_registry=_sandbox_registry(),
+            database=object(), settings=object(), sandbox_registry=object(),
         )
-    assert caught.value.readiness.production_ready is False
-    assert caught.value.readiness.error_code == "SAFETY_SERVICE_WIRING_NOT_READY"
-    assert caught.value.readiness.capabilities["runtime.model"].state is (
-        CapabilityReadinessState.UNAVAILABLE
-    )
-    assert caught.value.readiness.capabilities["runtime.media"].state is (
-        CapabilityReadinessState.DISABLED
-    )
-
-
-def test_production_factory_ignores_injected_callable() -> None:
-    calls = []
-
-    def injected(**_kwargs):
-        calls.append(True)
-        raise AssertionError("dynamic factory must be unreachable")
-
-    hook_name = "_".join(("agent", "runtime", "production", "service", "factory"))
-    settings = SimpleNamespace(**{hook_name: injected})
-    with pytest.raises(ProductionCompositionNotReady):
-        build_production_components_for_worker(
-            database=object(), settings=settings,
-            sandbox_registry=_sandbox_registry(),
-        )
-    assert calls == []
-
-
-def test_production_factory_requires_sandbox_registry() -> None:
-    with pytest.raises(
-        ProductionCompositionNotReady,
-        match="RUNTIME_PRODUCTION_COMPOSITION_NOT_READY:SANDBOX_REGISTRY_REQUIRED",
-    ) as caught:
-        build_agent_runtime_production_components(object(), object(), None)
-    assert caught.value.readiness.production_ready is False
-    assert caught.value.readiness.capabilities["runtime.sandbox"].state is (
-        CapabilityReadinessState.UNAVAILABLE
-    )
-
-
-def test_production_factory_requires_sandbox_executor() -> None:
-    with pytest.raises(
-        ProductionCompositionNotReady,
-        match="RUNTIME_PRODUCTION_COMPOSITION_NOT_READY:SANDBOX_EXECUTOR_REQUIRED",
-    ) as caught:
-        build_agent_runtime_production_components(
-            object(), object(), ExecutorRegistry(),
-        )
-    assert caught.value.readiness.capabilities["runtime.sandbox"].error_code == (
-        "SANDBOX_EXECUTOR_REQUIRED"
-    )
-
-
-def test_production_components_require_typed_readiness_and_explicit_bundle() -> None:
-    parameters = signature(ProductionRuntimeComponents).parameters
-    assert get_type_hints(ProductionRuntimeComponents)["readiness"] is (
-        RuntimeAssemblyReadiness
-    )
-    assert parameters["readiness"].default is Parameter.empty
-    assert parameters["service_bundle"].default is Parameter.empty
-
-
-@pytest.mark.asyncio
-async def test_runtime_worker_entry_cannot_promote_unwired_composition(tmp_path) -> None:
-    class DatabaseWithoutGateRead:
-        def __getattr__(self, _name):
-            raise AssertionError("database gates must not manufacture readiness")
-
-    settings = SimpleNamespace(
-        agent_runtime_process_role="agent_runtime",
-        agent_runtime_worker_id="c7-b31-worker",
-        agent_runtime_release_revision="c7-b31",
-        agent_runtime_production_composition_enabled=True,
-        sandbox_job_root=str(tmp_path / "jobs"),
-        sandbox_runtime_revision="sandbox-c7-b31",
-    )
-
-    with pytest.raises(
-        RuntimeError, match="RUNTIME_MODEL_CONFIGURATION_NOT_READY",
-    ):
-        await entrypoint._build_owner_and_cycle(
-            "agent_runtime", DatabaseWithoutGateRead(), settings,
-        )
-
-
-def test_runtime_rejects_explicit_component_injection() -> None:
-    settings = SimpleNamespace(
-        agent_runtime_production_composition_enabled=True,
-        sandbox_runtime_revision="sandbox-c7-b31",
-    )
-    with pytest.raises(
-        RuntimeError, match="RUNTIME_PRODUCTION_COMPONENT_INJECTION_FORBIDDEN",
-    ):
-        build_runtime(
-            object(), settings, production_components=object(),
-            process_role="agent_runtime",
-        )
-
-
-@pytest.mark.asyncio
-async def test_projection_process_starts_supervised_media_owner() -> None:
-    settings = SimpleNamespace(
-        agent_runtime_worker_id="projection-test",
-        agent_runtime_scheduled_web_projection_enabled=False,
-        agent_runtime_media_enabled=True,
-        agent_runtime_media_provider_probe_passed=True,
-        media_workspace_root="/mnt/nas-workspace",
-        media_cdn_domain="cdn.example.test",
-        media_result_allowed_hosts="provider.example.test,*.provider-cdn.test",
-    )
-    owner = MagicMock(run_once=AsyncMock(return_value=True))
-    probe = SimpleNamespace(ready=True, code="READY")
-
-    with patch.object(entrypoint, "_configure_projection_redis"), patch.object(
-        entrypoint, "build_projection", return_value=owner,
-    ) as builder, patch(
-        "services.tool_confirmation.capability_probe.probe_tool_confirmation_redis",
-        new=AsyncMock(return_value=probe),
-    ):
-        built, cycle = await entrypoint._build_owner_and_cycle(
-            "projection", object(), settings,
-        )
-
-    assert built is owner
-    assert await cycle() is True
-    builder.assert_called_once_with(
-        ANY, "projection-test", process_role="projection",
-        scheduled_web_projection_enabled=False,
-        media_projection_enabled=True,
-        media_workspace_root="/mnt/nas-workspace",
-        media_cdn_domain="cdn.example.test",
-        media_result_allowed_hosts=(
-            "provider.example.test", "*.provider-cdn.test",
-        ),
-    )
-
-
-@pytest.mark.parametrize(
-    ("builder", "args", "expected"),
-    (
-        (build_runtime, (object(), object()), "agent_runtime"),
-        (build_projection, (object(), "worker"), "projection"),
-        (build_authorization, (object(), "worker"), "authorization"),
-        (build_sandbox, (object(), object()), "sandbox"),
-    ),
-)
-def test_composition_roots_reject_wrong_process_role(builder, args, expected) -> None:
-    with pytest.raises(
-        RuntimeError,
-        match=f"RUNTIME_COMPOSITION_ROLE_MISMATCH:{expected}:wrong-role",
-    ):
-        builder(*args, process_role="wrong-role")
 
 
 def test_sandbox_probe_checks_fixed_capabilities() -> None:
@@ -303,23 +74,6 @@ def test_sandbox_probe_checks_fixed_capabilities() -> None:
         'grep -qx "$$" "$SANDBOX_CGROUP_V2_RUNNER/cgroup.procs"',
     ):
         assert contract in text
-
-
-def test_worker_db_probe_never_loads_application_settings() -> None:
-    text = (DEPLOY / "runtime-worker-db-probe.py").read_text()
-    assert 'os.environ.get("WORKER_DATABASE_URL")' in text
-    assert "from core.local_db import LocalDBClient" in text
-    assert "from core.database" not in text
-    assert "get_settings" not in text
-
-
-def test_projection_confirmation_uses_settings_free_safety_registry() -> None:
-    text = (
-        ROOT
-        / "backend/services/agent/runtime/application/confirmation_notification.py"
-    ).read_text()
-    assert "from config.tool_safety import get_safety_level" in text
-    assert "from config.chat_tools" not in text
 
 
 def test_sandbox_unit_delegates_only_required_cgroup_controllers() -> None:
