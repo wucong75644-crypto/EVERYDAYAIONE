@@ -5,9 +5,9 @@ ALTER TABLE agent_policy_receipts ADD COLUMN IF NOT EXISTS attempt_id UUID
 DO $$
 DECLARE constraint_name NAME;
 BEGIN
-    SELECT constraint.conname INTO constraint_name FROM pg_constraint constraint
-     WHERE constraint.conrelid='agent_policy_receipts'::regclass AND constraint.contype='u'
-       AND pg_get_constraintdef(constraint.oid)='UNIQUE (action_id, arguments_hash, executor_type, executor_revision, policy_revision)';
+    SELECT item.conname INTO constraint_name FROM pg_constraint item
+     WHERE item.conrelid='agent_policy_receipts'::regclass AND item.contype='u'
+       AND pg_get_constraintdef(item.oid)='UNIQUE (action_id, arguments_hash, executor_type, executor_revision, policy_revision)';
     IF constraint_name IS NOT NULL THEN
         EXECUTE format('ALTER TABLE agent_policy_receipts DROP CONSTRAINT %I',constraint_name);
     END IF;
@@ -479,21 +479,21 @@ REVOKE EXECUTE ON FUNCTION
  get_agent_runtime_ingress_capability(),
  runtime_submit_ingress_v4(UUID,UUID,UUID,TEXT,TEXT,UUID,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,UUID,TEXT,TEXT,TEXT,JSONB,JSONB,TEXT,JSONB),
  runtime_submit_ingress_v6_required(UUID,UUID,UUID,TEXT,TEXT,UUID,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,UUID,TEXT,TEXT,TEXT,JSONB,JSONB,TEXT,JSONB,UUID,TEXT,UUID,UUID,UUID,TEXT),
- runtime_submit_ingress_v5_owner_transition(UUID,UUID,UUID,TEXT,TEXT,UUID,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,UUID,TEXT,TEXT,TEXT,JSONB,JSONB,TEXT,JSONB,UUID,TEXT,UUID,UUID,UUID,TEXT) FROM everydayai_runtime;
+ runtime_submit_ingress_v5_owner_transition(UUID,UUID,UUID,TEXT,TEXT,UUID,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,UUID,TEXT,TEXT,TEXT,JSONB,JSONB,TEXT,JSONB,UUID,TEXT,UUID,UUID,UUID,TEXT) FROM PUBLIC,everydayai_runtime;
 REVOKE EXECUTE ON FUNCTION
  get_agent_runtime_ingress_capability(),
  enqueue_wecom_runtime_turn_v3(JSONB,UUID,UUID,UUID,JSONB,JSONB,TEXT,TEXT,TEXT),
  enqueue_wecom_runtime_turn_v4(JSONB,UUID,UUID,UUID,JSONB,JSONB,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT),
  enqueue_wecom_runtime_turn_v5(JSONB,UUID,UUID,UUID,JSONB,JSONB,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT),
- enqueue_wecom_runtime_turn_v6(JSONB,UUID,UUID,UUID,JSONB,JSONB,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT) FROM everydayai_wecom_runtime;
+ enqueue_wecom_runtime_turn_v6(JSONB,UUID,UUID,UUID,JSONB,JSONB,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT) FROM PUBLIC,everydayai_wecom_runtime;
 REVOKE EXECUTE ON FUNCTION
  claim_ready_agent_action_snapshots_v2(TEXT,TEXT,INTEGER,INTEGER),
  claim_ready_agent_actions_v2(TEXT,TEXT,INTEGER,INTEGER),
  gate_agent_action_dispatch_v2(UUID,UUID,BIGINT,TEXT,UUID,TEXT,INTEGER,TEXT,TEXT),
- activate_agent_safe_action(UUID,UUID,BIGINT,TEXT,TEXT,INTEGER,TEXT) FROM everydayai_agent_runtime_worker;
-REVOKE EXECUTE ON FUNCTION activate_agent_safe_action(UUID,UUID,BIGINT,TEXT,TEXT,INTEGER,TEXT) FROM everydayai_authorization_worker;
+ activate_agent_safe_action(UUID,UUID,BIGINT,TEXT,TEXT,INTEGER,TEXT) FROM PUBLIC,everydayai_agent_runtime_worker;
+REVOKE EXECUTE ON FUNCTION activate_agent_safe_action(UUID,UUID,BIGINT,TEXT,TEXT,INTEGER,TEXT) FROM PUBLIC,everydayai_authorization_worker;
 REVOKE EXECUTE ON FUNCTION
  set_agent_runtime_org_rollout(UUID,UUID,BOOLEAN,TEXT),
- set_agent_runtime_rollout_subject(TEXT,TEXT,TEXT,BOOLEAN,JSONB) FROM everydayai_runtime_admin;
+ set_agent_runtime_rollout_subject(TEXT,TEXT,TEXT,BOOLEAN,JSONB) FROM PUBLIC,everydayai_runtime_admin;
 
 RESET ROLE;

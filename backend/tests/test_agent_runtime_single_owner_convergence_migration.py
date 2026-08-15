@@ -22,6 +22,11 @@ def test_final_production_contracts_do_not_read_rollout_state() -> None:
     assert "claim_agent_action_dispatch_final_v1" in definitions
 
 
+def test_migration_does_not_use_constraint_keyword_as_table_alias() -> None:
+    assert "FROM pg_constraint constraint" not in SQL
+    assert "constraint.conname" not in SQL
+
+
 def test_final_safe_dispatch_has_no_activation_table_dependency() -> None:
     definitions = SQL.split("REVOKE ALL ON FUNCTION", 1)[0]
 

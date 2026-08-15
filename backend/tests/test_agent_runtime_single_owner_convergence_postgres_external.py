@@ -39,6 +39,12 @@ ROLLBACK = "228_08q_agent_runtime_single_owner_convergence_rollback.sql"
 def test_expired_safe_claim_recovers_without_rollout_or_new_activation(
     database: str,
 ) -> None:
+    with psycopg.connect(database) as connection:
+        connection.execute(
+            "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS "
+            "source TEXT DEFAULT 'web'",
+        )
+        connection.commit()
     for name in PREREQUISITES:
         _apply(database, name)
     ids = _seed_safe_action(database)
@@ -79,10 +85,11 @@ def test_expired_safe_claim_recovers_without_rollout_or_new_activation(
             ("everydayai_agent_runtime_worker", "gate_agent_action_dispatch_final_v1(uuid,uuid,bigint,text,uuid,text,integer,text,text)", True),
         )
         for role, signature, expected in privileges:
-            assert connection.execute(
+            actual = connection.execute(
                 "SELECT has_function_privilege(%s,%s,'EXECUTE')",
                 (role, signature),
-            ).fetchone()[0] is expected
+            ).fetchone()[0]
+            assert actual is expected, (role, signature, actual)
     claim = _worker_call(
         database,
         "claim_agent_action_dispatch_final_v1",
