@@ -74,6 +74,7 @@ class OrgScopedDB:
         "list_actor_organizations",
         "list_actor_pending_invitations",
         "list_all_governed_organizations",
+        "record_runtime_tool_audit",
         "search_governed_user_by_phone",
         "suspend_governed_organization",
         "restore_governed_organization",

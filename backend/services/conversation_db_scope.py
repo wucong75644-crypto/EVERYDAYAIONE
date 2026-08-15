@@ -42,22 +42,28 @@ def build_actor_task_databases(
     *,
     handler_db: Any | None = None,
 ) -> ActorTaskDatabases:
-    """从已认领任务构造不可共享的精确用户/企业 Worker Scope。"""
+    """为同一任务分别构造 Worker 控制面与 Runtime 业务执行面。"""
     task_id = task.get("id")
     user_id = task.get("user_id")
     if not task_id or not user_id:
         raise RuntimeError("ACTOR_TASK_DATABASE_SCOPE_MISSING")
     org_id = task.get("org_id")
-    scope = DatabaseScope(
+    control_scope = DatabaseScope(
         actor_user_id=str(user_id),
         org_id=str(org_id) if org_id else None,
         access_kind=DatabaseAccessKind.WORKER,
         request_id=f"actor:{task_id}"[:128],
     )
-    control = AsyncScopedDatabaseClient(db, scope)
-    handler_control = ScopedDatabaseClient(handler_db or db, scope)
+    execution_scope = DatabaseScope(
+        actor_user_id=str(user_id),
+        org_id=str(org_id) if org_id else None,
+        access_kind=DatabaseAccessKind.RUNTIME,
+        request_id=f"agent:{task_id}"[:128],
+    )
+    control = AsyncScopedDatabaseClient(db, control_scope)
+    handler_control = ScopedDatabaseClient(handler_db or db, execution_scope)
     return ActorTaskDatabases(
         control=control,
-        application=OrgScopedDB(control, scope.org_id),
-        handler=OrgScopedDB(handler_control, scope.org_id),
+        application=OrgScopedDB(control, control_scope.org_id),
+        handler=OrgScopedDB(handler_control, execution_scope.org_id),
     )

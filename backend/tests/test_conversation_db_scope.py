@@ -45,7 +45,9 @@ def test_task_scope_builds_control_and_application_clients() -> None:
     assert databases.application.org_id == ORG_ID
     assert isinstance(databases.handler, OrgScopedDB)
     assert databases.handler._db._client is handler_db
-    assert databases.handler._db.scope == databases.control.scope
+    assert databases.handler._db.scope.settings == (
+        USER_ID, ORG_ID, "runtime", f"agent:{TASK_ID}",
+    )
     assert databases.control.scope.settings == (
         USER_ID, ORG_ID, "worker", f"actor:{TASK_ID}",
     )

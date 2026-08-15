@@ -9,7 +9,9 @@ from services.conversation_runtime import (
     ConversationActorRuntime,
     _build_delivery,
     _get_handler_db,
+    create_kernel_manager,
 )
+from services.sandbox.kernel_manager import KernelManager
 from services.handlers.chat.actor_sink import ActorWebSink
 from services.sandbox.kernel_manager import get_kernel_manager
 
@@ -42,7 +44,7 @@ class _Worker:
 
 
 @pytest.mark.asyncio
-async def test_runtime_starts_worker_without_becoming_sandbox_owner():
+async def test_runtime_owns_agent_loop_sandbox_lifecycle():
     kernel = _Kernel()
     runtime = ConversationActorRuntime(
         object(), object(), kernel, worker_factory=_Worker,
@@ -52,9 +54,13 @@ async def test_runtime_starts_worker_without_becoming_sandbox_owner():
     await asyncio.sleep(0)
     await runtime.stop()
 
-    assert kernel.started is False
-    assert kernel.stopped is False
+    assert kernel.started is True
+    assert kernel.stopped is True
     assert get_kernel_manager() is None
+
+
+def test_create_kernel_manager_restores_local_sandbox_owner():
+    assert isinstance(create_kernel_manager(), KernelManager)
 
 
 def test_build_delivery_uses_external_task_id():
@@ -136,17 +142,17 @@ def test_runtime_routes_worker_and_task_databases_by_scope():
     assert observer._post_handler_factory().db is handler
 
 
-def test_default_handler_database_uses_worker_role(monkeypatch):
-    worker_db = object()
-    runtime_db_called = False
+def test_default_handler_database_uses_runtime_role(monkeypatch):
+    runtime_db = object()
+    worker_db_called = False
 
-    def fail_runtime_db():
-        nonlocal runtime_db_called
-        runtime_db_called = True
-        raise AssertionError("Actor Handler must not use runtime DB")
+    def fail_worker_db():
+        nonlocal worker_db_called
+        worker_db_called = True
+        raise AssertionError("AgentLoop Handler must not use Worker DB")
 
-    monkeypatch.setattr("core.database.get_db", fail_runtime_db)
-    monkeypatch.setattr("core.database.get_worker_db", lambda: worker_db)
+    monkeypatch.setattr("core.database.get_db", lambda: runtime_db)
+    monkeypatch.setattr("core.database.get_worker_db", fail_worker_db)
 
-    assert _get_handler_db() is worker_db
-    assert runtime_db_called is False
+    assert _get_handler_db() is runtime_db
+    assert worker_db_called is False

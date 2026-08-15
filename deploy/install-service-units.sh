@@ -43,5 +43,14 @@ cmp --silent "$wrapper" "$wrapper_target" || {
     exit 1
 }
 
+actor_cgroup_helper="${deploy_dir}/actor-sandbox-cgroup.sh"
+actor_cgroup_target=/usr/local/libexec/everydayai-actor-sandbox-cgroup
+test -x "$actor_cgroup_helper"
+sudo install -m 0755 "$actor_cgroup_helper" "$actor_cgroup_target"
+cmp --silent "$actor_cgroup_helper" "$actor_cgroup_target" || {
+    echo "❌ Actor sandbox cgroup helper installation mismatch" >&2
+    exit 1
+}
+
 sudo systemctl daemon-reload
 echo "✅ Systemd 服务单元已安装并验证"

@@ -386,6 +386,12 @@ class TestRPCAutoInjection:
             "atomic_refund_credits", {"p_transaction_id": "tx1"},
         )
 
+    def test_runtime_tool_audit_rpc_no_injection(self):
+        self.db.rpc("record_runtime_tool_audit", {"p_task_id": "task1"})
+        self.raw_db.rpc.assert_called_once_with(
+            "record_runtime_tool_audit", {"p_task_id": "task1"},
+        )
+
     def test_explicit_org_id_not_overwritten(self):
         """已有 p_org_id 不覆盖"""
         other_org = "other-org-id"

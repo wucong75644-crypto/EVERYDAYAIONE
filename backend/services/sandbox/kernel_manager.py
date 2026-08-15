@@ -1,18 +1,4 @@
-"""
-Kernel 进程池管理器
-
-按 conversation_id 分配持久 Python 进程，变量跨调用保留。
-空闲超时回收，最大进程数限制，超出降级为无状态 subprocess。
-
-生命周期：
-  - main.py lifespan 启动时初始化（start）
-  - main.py lifespan 关闭时清理（shutdown）
-  - cleanup_idle 定时任务每 60 秒扫描回收
-
-通信协议：
-  - 通过 stdin/stdout JSON-Line 与 kernel_worker.py 交互
-  - 详见 kernel_worker.py 文档
-"""
+"""按 conversation_id 管理持久 Python Kernel 及其 JSON-Line 通信。"""
 
 import asyncio
 import json
@@ -141,18 +127,7 @@ class KernelManager:
         output_dir: str,
         skills_dir: str = "",
     ) -> bool:
-        """获取或创建 Kernel
-
-        Args:
-            conversation_id: 对话 ID
-            workspace_dir: 宿主机 workspace 路径
-            staging_dir: 宿主机 staging 路径
-            output_dir: 宿主机 output 路径
-            skills_dir: 文件处理技能目录（只读）
-
-        Returns:
-            True = Kernel 可用，False = 降级为无状态
-        """
+        """获取或创建 Kernel；资源不足或启动失败时返回 False。"""
         # 复用已有 Kernel
         kernel = self._kernels.get(conversation_id)
         if kernel and self._is_alive(kernel):
@@ -192,22 +167,7 @@ class KernelManager:
         code: str,
         timeout: float,
     ) -> Tuple[str, str, list]:
-        """向 Kernel 发送代码并等待结果
-
-        Args:
-            conversation_id: 对话 ID
-            code: 用户代码
-            timeout: 执行超时（秒）
-
-        Returns:
-            (status, stdout, emit_payloads):
-              - status: "ok" | "error" | "timeout" | "crashed" | "interrupted"
-              - stdout: 文本输出(截断后,进 LLM 上下文)
-              - emit_payloads: 结构化产物 list[dict](完整,走前端独立通道)
-
-        Raises:
-            KeyError: conversation_id 对应的 Kernel 不存在
-        """
+        """执行代码并返回 ``(status, stdout, emit_payloads)``。"""
         kernel = self._kernels.get(conversation_id)
         if not kernel or not self._is_alive(kernel):
             if kernel:
@@ -267,6 +227,8 @@ class KernelManager:
         skills_dir: str = "",
     ) -> Kernel:
         """启动 Kernel 子进程"""
+        from services.sandbox.functions import build_sandbox_environment
+
         cmd = self._build_command(workspace_dir, staging_dir, output_dir, skills_dir=skills_dir)
 
         process = await asyncio.create_subprocess_exec(
@@ -281,6 +243,7 @@ class KernelManager:
             limit=10 * 1024 * 1024,
             cwd=self._backend_dir,
             preexec_fn=self._pdeathsig_fn,
+            env=build_sandbox_environment(),
         )
 
         # 等待 ready 信号

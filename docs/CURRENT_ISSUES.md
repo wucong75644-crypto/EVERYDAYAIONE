@@ -1,6 +1,6 @@
 # 当前问题 (CURRENT_ISSUES)
 
-## 2026-08-15 Runtime 生产接管回退 — 已实现，待维护窗口执行
+## 2026-08-15 Runtime 生产接管回退 — 已执行，能力收口待部署
 
 - 生产 Chat Owner 恢复为 Conversation Actor 与旧 AgentLoop；原提示词、工具注册、
   多轮及同轮多工具循环保持为唯一生产聊天主链。Runtime 持久基础设施保留至迁移
@@ -12,10 +12,18 @@
   Runtime 事实，恢复净扣的 18 积分，并逆序回退 `227_13` 至 `228_08q` 共 89 个迁移。
 - 迁移账本从 369 条收敛到 280 条；保留已应用的
   `221_worker_media_rpc_bigint_compatibility.sql`，避免回退代码产生迁移身份漂移。
-- 执行前必须完成全库备份、停止全部写入并确认 Runtime worker drain。当前只完成代码、
-  隔离 PostgreSQL 演练和维护说明，尚未对生产执行删除、Schema 回退或部署。
+- 生产已执行数据清理、Schema 回退和旧 AgentLoop 部署。复测暴露的剩余根因不是提示词
+  或工具选择逻辑，而是 Actor 同时承担“队列控制”和“Agent 执行”后仍全程使用 Worker
+  数据库身份，且旧本地 Sandbox Owner、Runtime 记忆连接池、工具审计 RPC 及模型密钥
+  能力未同步恢复。
+- 当前收口代码将 Actor 控制面固定为 Worker Scope，将 ChatHandler/AgentLoop/工具调用固定为
+  Runtime Scope；恢复 Actor 独占的旧 Kernel 沙盒生命周期、按 Scope 选择的记忆连接池、
+  无隐式 org 参数的工具审计 RPC，以及 Actor 对受治理模型密钥的读取。待提交部署后做
+  Web 多轮、多工具、代码执行、ERP 只读、记忆和审计生产验收。
+- 快麦 ERP 当前生产凭证另有 `invalid_session` 失效，必须重新授权后才能验证最新数据同步；
+  该外部凭证问题与本次执行架构收口相互独立。
 
-## 2026-07-28 Sandbox专业Executor — 本地合同实施中，Linux隔离待远程验证
+## 2026-07-28 Sandbox专业Executor — 历史 Runtime 方案，生产已回退
 
 - migration 222_01/222_02/222_03建立 PostgreSQL Job SSOT、全局外部幂等键、execution 与
   reconciliation fencing、unknown-only恢复、partial 24小时清理上限及窄RPC。
@@ -34,6 +42,8 @@
 - 本地macOS只证明缺Linux/nsjail/cgroup时不领取。真实namespace、cgroup v2、mount、
   默认无网络、进程树终止和零残留仍需无生产Secret的托管临时Linux runner；通过前
   禁止启用code_execute或宣称Sandbox生产安全。
+- 2026-08-15 回退后，此专业 Sandbox Worker 不再是生产 `code_execute` 路径；生产恢复
+  旧 AgentLoop 的 Actor 内本地 Kernel 沙盒，仍受既有 Tool Confirmation V3 门禁约束。
 
 ## 2026-07-28 旧 ToolLoop Tool Confirmation V3 — 本地实现，待生产切换
 

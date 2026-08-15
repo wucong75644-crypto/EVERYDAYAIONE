@@ -2,7 +2,7 @@
 代码执行沙盒工具 Mixin
 
 从 tool_executor.py 拆出（500 行红线），承载：
-- 旧 code_execute 的明确拒绝
+- code_execute（沙盒执行、文件注册与失败观测）
 - workspace 备份注册（供 restore_file 查找）
 
 通过 Mixin 继承组合到 ToolExecutor。
@@ -22,14 +22,149 @@ class SandboxToolMixin:
     """代码执行沙盒工具 Mixin"""
 
     async def _code_execute(self, args: Dict[str, Any]) -> "AgentResult":
-        """Reject legacy direct execution; persistent Action Runtime owns it."""
+        """在旧 AgentLoop 的安全沙盒中执行 Python 代码。"""
+        import time as time_module
+
+        from core.config import get_settings
         from services.agent.agent_result import AgentResult
-        return AgentResult(
-            summary="代码执行正在迁移到安全任务运行时，当前入口不可用",
-            status="error",
-            error_message="CODE_EXECUTE_REQUIRES_ACTION_RUNTIME",
-            metadata={"retryable": False},
-        )
+        from services.sandbox.functions import build_sandbox_executor
+
+        settings = get_settings()
+        if not settings.sandbox_enabled:
+            return AgentResult(
+                summary="代码执行功能已关闭，请联系管理员启用",
+                status="error",
+                error_message="Feature disabled: sandbox_enabled=false",
+                metadata={"retryable": False},
+            )
+
+        code = args.get("code", "")
+        description = args.get("description", "")
+        if not code:
+            return AgentResult(
+                summary="代码不能为空",
+                status="error",
+                error_message="Validation: code is required",
+                metadata={"retryable": True},
+            )
+
+        started_ms = int(time_module.monotonic() * 1000)
+        status = "success"
+        result: AgentResult | str = ""
+        try:
+            timeout = settings.sandbox_timeout
+            budget = getattr(self, "_budget", None)
+            if budget is not None and hasattr(budget, "remaining"):
+                timeout = min(timeout, max(budget.remaining, 5.0))
+
+            from services.agent.file_path_cache import get_file_cache
+
+            cache = get_file_cache(self.conversation_id)
+            if not cache._staging_dir:
+                staging_dir = self._get_staging_dir()
+                if staging_dir:
+                    cache.set_staging_dir(staging_dir)
+
+            from services.sandbox.kernel_manager import get_kernel_manager
+
+            executor = build_sandbox_executor(
+                timeout=timeout,
+                max_result_chars=settings.sandbox_max_result_chars,
+                user_id=self.workspace_user_id,
+                org_id=self.org_id,
+                conversation_id=self.conversation_id,
+                kernel_manager=get_kernel_manager(),
+            )
+            result = await executor.execute(code, description)
+            if result.status == "success" and result.summary:
+                self._register_files_from_output(result.summary)
+            if result.is_failure:
+                status = "timeout" if result.status == "timeout" else "failed"
+            return result
+        except Exception as error:
+            status = "failed"
+            result = AgentResult(
+                summary=f"沙盒执行异常: {error}",
+                status="error",
+                error_message=str(error),
+                metadata={"retryable": False},
+            )
+            return result
+        finally:
+            elapsed_ms = int(time_module.monotonic() * 1000) - started_ms
+            result_text = (
+                result.summary if isinstance(result, AgentResult) else str(result)
+            )
+            self._record_sandbox_metric(
+                description=description,
+                code=code,
+                status=status,
+                elapsed_ms=elapsed_ms,
+                result_length=len(result_text),
+            )
+            if status == "failed":
+                self._record_sandbox_knowledge(description, result_text)
+
+    def _record_sandbox_metric(
+        self,
+        description: str,
+        code: str,
+        status: str,
+        elapsed_ms: int,
+        result_length: int,
+    ) -> None:
+        """异步记录沙盒执行指标，不阻塞工具结果。"""
+        import asyncio
+
+        from services.sandbox.functions import compute_code_hash
+
+        try:
+            from services.knowledge_metrics import record_metric
+
+            asyncio.create_task(record_metric(
+                db_source=self.db,
+                task_type="sandbox_execution",
+                model_id="python_sandbox",
+                status=status,
+                cost_time_ms=elapsed_ms,
+                params={
+                    "description": description,
+                    "code_hash": compute_code_hash(code),
+                    "code_length": len(code),
+                    "result_length": result_length,
+                },
+                user_id=self.user_id,
+                org_id=self.org_id,
+            ))
+        except Exception as error:
+            logger.debug(
+                "SANDBOX_METRIC_RECORD_SKIPPED | exception_type={}",
+                type(error).__name__,
+            )
+
+    def _record_sandbox_knowledge(
+        self,
+        description: str,
+        error_result: str,
+    ) -> None:
+        """异步记录沙盒失败知识，不阻塞工具结果。"""
+        import asyncio
+
+        try:
+            from services.knowledge_extractor import extract_and_save
+
+            asyncio.create_task(extract_and_save(
+                db_source=self.db,
+                task_type="sandbox_execution",
+                model_id="python_sandbox",
+                status="failed",
+                error_message=f"[{description}] {error_result[:500]}",
+            ))
+        except Exception as error:
+            logger.debug(
+                "SANDBOX_KNOWLEDGE_RECORD_SKIPPED | exception_type={}",
+                type(error).__name__,
+            )
 
     def _record_deleted_files(self, deleted_meta: list[dict]) -> None:
         """Fire-and-forget 记录文件删除事件到 deleted_files 表（OSS 30 天延迟清理）"""
@@ -84,6 +219,33 @@ class SandboxToolMixin:
         except Exception:
             pass
 
+    def _register_files_from_output(self, stdout: str) -> None:
+        """将沙盒输出中真实存在的文件注册到会话路径缓存。"""
+        import os
+        import re
+
+        from services.agent.file_path_cache import get_file_cache
+
+        workspace_dir = self._get_workspace_dir()
+        if not workspace_dir:
+            return
+        data_exts = (
+            r"\.(?:xlsx|xls|csv|tsv|parquet|pdf|docx|pptx|txt|json|png|jpg)"
+        )
+        file_pattern = re.compile(
+            rf"['\"]([^'\"]*{data_exts})['\"]",
+            re.IGNORECASE,
+        )
+        cache = get_file_cache(self.conversation_id)
+        for match in file_pattern.finditer(stdout):
+            filename = match.group(1)
+            candidate = os.path.join(workspace_dir, filename)
+            if os.path.exists(candidate):
+                cache.register(
+                    os.path.basename(filename),
+                    workspace=os.path.realpath(candidate),
+                )
+
     def _register_staging_files(self, result: "AgentResult") -> None:
         """从工具结果中提取 staging 文件路径，注册到共享路径缓存。"""
         import os
@@ -132,6 +294,21 @@ class SandboxToolMixin:
                 self.workspace_user_id,
                 self.org_id,
                 self.conversation_id or "default",
+            )
+        except Exception:
+            return ""
+
+    def _get_workspace_dir(self) -> str:
+        """获取当前用户的工作区目录。"""
+        try:
+            from core.config import get_settings
+            from core.workspace import resolve_workspace_dir
+
+            settings = get_settings()
+            return resolve_workspace_dir(
+                settings.file_workspace_root,
+                self.workspace_user_id,
+                self.org_id,
             )
         except Exception:
             return ""

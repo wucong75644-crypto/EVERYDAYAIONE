@@ -8,9 +8,23 @@ from unittest.mock import patch
 import pytest
 
 from services.sandbox.functions import (
+    build_sandbox_environment,
     build_sandbox_executor,
     compute_code_hash,
 )
+
+
+def test_sandbox_environment_excludes_parent_secrets(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://secret")
+    monkeypatch.setenv("CONFIG_KEK_KEYRING_JSON", '{"v1":"secret"}')
+    monkeypatch.setenv("LANG", "C.UTF-8")
+
+    environment = build_sandbox_environment()
+
+    assert "DATABASE_URL" not in environment
+    assert "CONFIG_KEK_KEYRING_JSON" not in environment
+    assert environment["LANG"] == "C.UTF-8"
+    assert environment["MPLCONFIGDIR"] == "/tmp/everydayai-matplotlib"
 
 
 class TestBuildSandboxExecutor:

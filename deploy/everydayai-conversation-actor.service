@@ -13,7 +13,11 @@ Environment="EVERYDAYAI_LOG_DIR=/var/log/everydayai/conversation-actor"
 EnvironmentFile=/var/www/everydayai/backend/.env
 EnvironmentFile=/var/www/everydayai/backend/.env.runtime
 EnvironmentFile=/var/www/everydayai/backend/.env.worker-client
+EnvironmentFile=/var/www/everydayai/backend/.env.kek
+ExecStartPre=+/usr/local/libexec/everydayai-actor-sandbox-cgroup prepare
+ExecStartPre=/usr/local/bin/nsjail --config /var/www/everydayai/deploy/sandbox.cfg -- /usr/bin/true
 ExecStart=/var/www/everydayai/backend/venv/bin/python conversation_worker_main.py
+ExecStopPost=+/usr/local/libexec/everydayai-actor-sandbox-cgroup cleanup
 
 KillMode=mixed
 KillSignal=SIGTERM
@@ -25,6 +29,10 @@ StartLimitBurst=5
 
 LimitNOFILE=65535
 LimitNPROC=4096
+Delegate=yes
+CPUAccounting=true
+MemoryAccounting=true
+TasksAccounting=true
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true

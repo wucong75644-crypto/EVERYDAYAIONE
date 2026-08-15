@@ -15,6 +15,7 @@ from core.org_scoped_db import OrgScopedDB
 from services.memory.memory_service_v2 import (
     MemoryServiceV2,
     _PsycopgAdapter,
+    _get_memory_db,
     get_scheduler,
 )
 
@@ -62,6 +63,31 @@ async def test_memory_service_wraps_global_pool_with_calling_scope() -> None:
     assert isinstance(adapter._pool, AsyncScopedConnectionPool)
     assert adapter._pool._pool is raw_pool
     assert adapter._pool.scope == client._db.scope
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("access_kind", "expected_pool"),
+    [
+        (DatabaseAccessKind.RUNTIME, "runtime-pool"),
+        (DatabaseAccessKind.WORKER, "worker-pool"),
+    ],
+)
+async def test_memory_pool_matches_calling_database_role(
+    access_kind: DatabaseAccessKind,
+    expected_pool: str,
+) -> None:
+    with (
+        patch(
+            "services.knowledge_config._get_pg_pool",
+            new=AsyncMock(return_value="runtime-pool"),
+        ),
+        patch(
+            "services.knowledge_config._get_worker_pg_pool",
+            new=AsyncMock(return_value="worker-pool"),
+        ),
+    ):
+        assert await _get_memory_db(access_kind) == expected_pool
 
 
 @pytest.mark.asyncio

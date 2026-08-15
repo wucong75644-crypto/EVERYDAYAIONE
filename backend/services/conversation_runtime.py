@@ -18,7 +18,7 @@ from services.handlers.chat.executor import ChatGenerationExecutor, _normalize_m
 
 
 class ConversationActorRuntime:
-    """装配 Actor 执行链；Actor 永不持有 Sandbox 执行权。"""
+    """装配 Actor 执行链，并管理 AgentLoop 使用的本地沙盒生命周期。"""
 
     def __init__(
         self,
@@ -31,7 +31,7 @@ class ConversationActorRuntime:
     ) -> None:
         self._db = db
         self._websocket = websocket
-        del kernel_manager
+        self._kernel_manager = kernel_manager
         self._handler_db_factory = handler_db_factory or _get_handler_db
         worker_db = build_actor_worker_db(db)
         execution = ConversationExecutionService(
@@ -52,6 +52,11 @@ class ConversationActorRuntime:
     async def start(self) -> None:
         if self._worker_task is not None:
             return
+        if self._kernel_manager is not None:
+            from services.sandbox.kernel_manager import set_kernel_manager
+
+            await self._kernel_manager.start()
+            set_kernel_manager(self._kernel_manager)
         self._worker_task = asyncio.create_task(
             self._worker.start(),
             name="conversation_actor_worker",
@@ -64,6 +69,11 @@ class ConversationActorRuntime:
             if not worker_task.done():
                 worker_task.cancel()
             await asyncio.gather(worker_task, return_exceptions=True)
+        if self._kernel_manager is not None:
+            from services.sandbox.kernel_manager import set_kernel_manager
+
+            await self._kernel_manager.shutdown()
+            set_kernel_manager(None)
 
     def _create_sink(
         self,
@@ -147,9 +157,18 @@ def _build_delivery(
         org_id=str(task["org_id"]) if task.get("org_id") else None,
         model_id=_normalize_model_id(task.get("model_id")),
     )
+
+
 def create_kernel_manager() -> Any:
-    """Legacy constructor retained for wiring compatibility; execution is disabled."""
-    return None
+    """创建 Actor 进程独占的本地代码执行 Kernel 管理器。"""
+    import os
+    from pathlib import Path
+
+    from services.sandbox.kernel_manager import KernelManager
+
+    sandbox_config = Path(__file__).resolve().parents[2] / "deploy" / "sandbox.cfg"
+    nsjail_config = str(sandbox_config) if os.path.exists(sandbox_config) else None
+    return KernelManager(nsjail_cfg=nsjail_config)
 
 
 def _create_post_handler(db: Any) -> Any:
@@ -159,6 +178,6 @@ def _create_post_handler(db: Any) -> Any:
 
 
 def _get_handler_db() -> Any:
-    from core.database import get_worker_db
+    from core.database import get_db
 
-    return get_worker_db()
+    return get_db()

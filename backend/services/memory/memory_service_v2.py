@@ -18,6 +18,7 @@ from loguru import logger
 
 from core.db_scope import (
     AsyncScopedConnectionPool,
+    DatabaseAccessKind,
     database_scope_from_client,
 )
 
@@ -27,10 +28,15 @@ async def get_scheduler(db_pool=None) -> PipelineScheduler:
     return PipelineScheduler(db_pool=await _resolve_memory_db(db_pool))
 
 
-async def _get_memory_db():
-    """获取记忆系统的 psycopg 异步连接池（复用 knowledge_config 的池）"""
-    from services.knowledge_config import _get_pg_pool
-    return await _get_pg_pool()
+async def _get_memory_db(access_kind: DatabaseAccessKind):
+    """按调用身份选择与 DatabaseScope 一致的底层连接池。"""
+    from services.knowledge_config import _get_pg_pool, _get_worker_pg_pool
+
+    if access_kind == DatabaseAccessKind.WORKER:
+        return await _get_worker_pg_pool()
+    if access_kind == DatabaseAccessKind.RUNTIME:
+        return await _get_pg_pool()
+    raise RuntimeError("MEMORY_DATABASE_ACCESS_KIND_FORBIDDEN")
 
 
 class _PsycopgAdapter:
@@ -89,7 +95,7 @@ async def _resolve_memory_db(db_source):
     scope = database_scope_from_client(db_source)
     if scope is None:
         raise RuntimeError("MEMORY_DATABASE_SCOPE_REQUIRED")
-    pool = await _get_memory_db()
+    pool = await _get_memory_db(scope.access_kind)
     if pool is None:
         raise RuntimeError("Memory V2: database pool not available")
     return _PsycopgAdapter(AsyncScopedConnectionPool(pool, scope))

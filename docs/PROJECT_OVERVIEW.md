@@ -1655,3 +1655,11 @@ The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict f
     逆序回退 `227_13`～`228_08q` 并将迁移账本收敛到 280 条
   - Skill 与 MCP 后续通过旧 AgentLoop 的 instruction resolver 和 tool gateway 接入，
     不再以替换聊天推理主链为前提
+  - Actor 数据库职责按单个任务拆分：Worker Scope 仅领取、续租和提交队列状态，
+    Runtime Scope 承载 ChatHandler、AgentLoop、ERP/记忆/审计等业务能力
+  - `code_execute` 恢复旧 AgentLoop 的本地 Kernel 沙盒，由 Conversation Actor 进程
+    独占启动和关闭；独立 Agent Runtime/Sandbox Worker 继续保持停用
+  - Actor 仅获自身 systemd cgroup 子树的委派；root 安装的固定 helper 只准备和清理
+    该服务的 nsjail 子目录，Kernel 使用 Actor UID/GID，启动探针失败时服务失败关闭
+  - Actor 加载 `.env.kek` 只用于解析 AgentLoop 的受治理模型配置；普通控制面 Worker
+    连接不取得密钥表或业务表权限

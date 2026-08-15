@@ -247,8 +247,15 @@ current/previous keyring 中每个值均为 base64 编码的 32 字节 KEK。安
 bash deploy/validate-kek-env.sh /var/www/everydayai/backend/.env.kek
 ```
 
-Backend 配置管理接口与 Sync Bundle 解析均需要加解密，因此两个服务单元必须加载
-`.env.kek`；Actor、WeCom 和普通 Worker 不得加载该文件。
+Backend 配置管理接口、Sync Bundle 解析以及 Conversation Actor 内的 AgentLoop
+均需要解析受治理的模型配置，因此这些服务必须加载 `.env.kek`。普通 Worker
+不得加载该文件；Actor 的 Worker 数据库连接仅负责队列控制，业务执行使用独立的
+Runtime Scope。
+
+Conversation Actor 同时拥有旧 AgentLoop 的本地 Kernel 沙盒，但仍以非 root 身份运行。
+`install-service-units.sh` 会安装固定目标的 cgroup 准备器；Systemd 只委派 Actor 自身
+服务 cgroup，启动探针必须在该子树内成功创建受限 nsjail，任何权限或清理异常均阻断
+服务启动/停止。不得删除启动探针、改回宿主 root UID/GID 映射或降级为裸 Python。
 
 在 Agent Runtime grant、policy 和测试库 RLS 验证完成前，不得修改 Systemd
 `EnvironmentFile` 指向这些角色文件。
