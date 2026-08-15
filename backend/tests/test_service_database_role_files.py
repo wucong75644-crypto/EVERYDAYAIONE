@@ -41,6 +41,7 @@ def test_actor_uses_runtime_and_worker_clients() -> None:
         "/var/www/everydayai/backend/.env",
         "/var/www/everydayai/backend/.env.runtime",
         "/var/www/everydayai/backend/.env.worker-client",
+        "/var/www/everydayai/backend/.env.kek",
     ]
 
 
