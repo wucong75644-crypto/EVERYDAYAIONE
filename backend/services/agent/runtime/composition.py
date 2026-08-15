@@ -268,12 +268,11 @@ def build_runtime(
     from services.agent.runtime.production_composition import (
         build_safe_runtime_composition,
     )
-    from services.adapters.factory import create_chat_adapter
     from services.agent.runtime.infrastructure.model.adapter import (
         ExistingProviderModelAdapter,
     )
     from services.agent.runtime.infrastructure.model.configured_adapter import (
-        RuntimeConfiguredAdapterFactory,
+        build_runtime_configured_adapter_factory,
     )
     from services.configuration.bundles import AsyncSecretBundleResolver
     from services.configuration.envelope import LocalKEKProvider
@@ -297,10 +296,7 @@ def build_runtime(
     except ValueError:
         raise RuntimeError("RUNTIME_MODEL_CONFIGURATION_NOT_READY") from None
     bundle_resolver = AsyncSecretBundleResolver(db, material_service)
-    configured_factory = RuntimeConfiguredAdapterFactory(
-        bundle_resolver,
-        adapter_factory=create_chat_adapter,
-    )
+    configured_factory = build_runtime_configured_adapter_factory(bundle_resolver)
     model = ExistingProviderModelAdapter(
         request_adapter_factory=configured_factory,
     )

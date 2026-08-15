@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -8,7 +9,9 @@ from services.agent.runtime.context import ProviderContextPlan
 from services.agent.runtime.application.model_loop import ModelLoopDriver
 from services.agent.runtime.infrastructure.model.configured_adapter import (
     RuntimeConfiguredAdapterFactory,
+    build_runtime_configured_adapter_factory,
 )
+from services.circuit_breaker import reset_all
 from services.configuration.resolver import ConfigurationResolutionError
 from services.agent.runtime.ports.model import (
     ModelExecutionBinding,
@@ -122,6 +125,27 @@ async def test_factory_preserves_configuration_authority_error_code() -> None:
         match="RUNTIME_MODEL_CONFIGURATION_UNAVAILABLE:CONFIG_BUNDLE_AUTHORITY_DENIED",
     ):
         await factory(_request())
+
+
+@pytest.mark.asyncio
+async def test_runtime_factory_never_reads_common_application_settings() -> None:
+    reset_all()
+    factory = build_runtime_configured_adapter_factory(_Resolver())
+    try:
+        with patch(
+            "services.adapters.factory.get_settings",
+            side_effect=PermissionError("application dotenv blocked"),
+        ), patch(
+            "core.config.get_settings",
+            side_effect=PermissionError("application dotenv blocked"),
+        ):
+            adapter = await factory(_request())
+        assert adapter.provider.value == "dashscope"
+        assert adapter._base_url == (
+            "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        )
+    finally:
+        reset_all()
 
 
 @pytest.mark.asyncio

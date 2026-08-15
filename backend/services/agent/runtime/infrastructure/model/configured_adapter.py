@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 from services.agent.runtime.ports.model import ModelStepRequest
@@ -16,6 +18,17 @@ _PROVIDER_BUNDLES = {
     "kie": ("ai.provider.kie", "ai.kie.api_key"),
     "google": ("ai.provider.google", "ai.google.api_key"),
 }
+
+
+@dataclass(frozen=True)
+class RuntimeProviderAdapterSettings:
+    """Non-secret Provider transport settings owned by Runtime."""
+
+    dashscope_base_url: str = (
+        "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    )
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_app_title: str = "EverydayAI"
 
 
 class RuntimeConfiguredAdapterFactory:
@@ -63,6 +76,21 @@ class RuntimeConfiguredAdapterFactory:
         )
 
 
+def build_runtime_configured_adapter_factory(
+    resolver: AsyncSecretBundleResolver,
+) -> RuntimeConfiguredAdapterFactory:
+    """Build the Runtime adapter boundary without application Settings."""
+    from services.adapters.factory import create_chat_adapter
+
+    return RuntimeConfiguredAdapterFactory(
+        resolver,
+        adapter_factory=partial(
+            create_chat_adapter,
+            adapter_settings=RuntimeProviderAdapterSettings(),
+        ),
+    )
+
+
 def _provider_for(model_id: str) -> str:
     from services.adapters.factory import get_model_config
 
@@ -81,4 +109,8 @@ def _api_key(value: object) -> str:
     return api_key
 
 
-__all__ = ["RuntimeConfiguredAdapterFactory"]
+__all__ = [
+    "RuntimeConfiguredAdapterFactory",
+    "RuntimeProviderAdapterSettings",
+    "build_runtime_configured_adapter_factory",
+]
