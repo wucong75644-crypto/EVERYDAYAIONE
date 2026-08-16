@@ -190,6 +190,36 @@ def run() -> None:
                 raise RuntimeError(
                     "MEDIA_ACTIVATION_NOT_APPLIED:" + json.dumps(result, sort_keys=True)
                 )
+            control_result = None
+            for _ in range(5):
+                cursor.execute(
+                    "SELECT state_version FROM agent_runtime_control WHERE singleton"
+                )
+                control_version = cursor.fetchone()[0]
+                cursor.execute(
+                    "SELECT set_agent_runtime_control(%s,%s,%s,%s)",
+                    (
+                        uuid4(), control_version,
+                        json.dumps({
+                            "safe_actions_enabled": True,
+                            "non_safe_actions_enabled": True,
+                            "tool_confirmation_enabled": True,
+                            "code_execute_enabled": True,
+                        }),
+                        "enable Runtime v3 production control flags",
+                    ),
+                )
+                control_result = cursor.fetchone()[0]
+                if control_result.get("outcome") != "stale_version":
+                    break
+                time.sleep(0.2)
+            if control_result is None or control_result.get("outcome") not in {
+                "applied", "already_applied"
+            }:
+                raise RuntimeError(
+                    "MEDIA_CONTROL_ACTIVATION_NOT_APPLIED:"
+                    + json.dumps(control_result, sort_keys=True)
+                )
             final_readiness = result.get("readiness", {})
             if not final_readiness.get("ready"):
                 raise RuntimeError("MEDIA_ACTIVATION_READINESS_NOT_READY")
