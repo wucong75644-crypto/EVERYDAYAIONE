@@ -41,9 +41,14 @@ echo "$SANDBOX_SECCOMP_SHA256  $SANDBOX_SECCOMP_POLICY" | sha256sum -c -
 "$SANDBOX_NSJAIL_PATH" --help 2>&1 | grep -q -- --cgroup_mem_swap_max
 test -r "$SANDBOX_ROOTFS/usr/bin/python3.12"
 cleanup_empty_nsjail_cgroups() {
-  local group
-  for group in "$SANDBOX_CGROUP_V2_MOUNT"/NSJAIL.*; do
+  local group name
+  for group in "$SANDBOX_CGROUP_V2_MOUNT"/NSJAIL*; do
     test -d "$group" || continue
+    name=${group##*/}
+    case "$name" in
+      NSJAIL.*|NSJAIL_SELF.*) ;;
+      *) continue ;;
+    esac
     test -z "$(cat "$group/cgroup.procs")"
     rmdir -- "$group"
   done

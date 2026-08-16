@@ -301,6 +301,7 @@ def test_sandbox_probe_checks_fixed_capabilities() -> None:
         'test -d "$SANDBOX_CGROUP_V2_MOUNT"',
         'test -w "$SANDBOX_CGROUP_V2_MOUNT"',
         'cleanup_empty_nsjail_cgroups',
+        'NSJAIL_SELF.*',
         'rmdir -- "$group"',
     ):
         assert contract in text
