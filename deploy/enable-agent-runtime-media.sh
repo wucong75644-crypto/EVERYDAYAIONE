@@ -192,10 +192,13 @@ def run() -> None:
                 )
             control_result = None
             for _ in range(5):
-                cursor.execute(
-                    "SELECT state_version FROM agent_runtime_control WHERE singleton"
+                cursor.execute("SELECT get_agent_runtime_admin_status()")
+                admin_status = cursor.fetchone()[0]
+                control_version = admin_status.get("control", {}).get(
+                    "state_version"
                 )
-                control_version = cursor.fetchone()[0]
+                if control_version is None:
+                    raise RuntimeError("RUNTIME_CONTROL_STATE_VERSION_MISSING")
                 cursor.execute(
                     "SELECT set_agent_runtime_control(%s,%s,%s,%s)",
                     (
