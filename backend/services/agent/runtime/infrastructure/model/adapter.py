@@ -21,6 +21,7 @@ from services.agent.runtime.ports.model import (
     ModelCallUnknownError,
     ModelProviderError,
     ModelResponseStartObserver,
+    ModelResponseStreamObserver,
     ModelStepRequest,
     ModelStepResult,
     ProviderAttemptOutcome,
@@ -61,6 +62,7 @@ class ExistingProviderModelAdapter:
         request: ModelStepRequest,
         *,
         observer: ModelResponseStartObserver | None = None,
+        stream_observer: ModelResponseStreamObserver | None = None,
     ) -> ModelStepResult:
         validate_request_projection(request)
         provider = _provider_name(request.model_id)
@@ -76,6 +78,7 @@ class ExistingProviderModelAdapter:
                 tools=tools,
                 options=request.options,
                 observer=observer,
+                stream_observer=stream_observer,
             ):
                 if isinstance(update, CompletedProviderStream):
                     return update.result

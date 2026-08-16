@@ -177,6 +177,19 @@ class ModelResponseReceipt:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ModelStreamDelta:
+    """Secret-free incremental output emitted during one model step."""
+
+    kind: str
+    value: Mapping[str, object]
+
+    def __post_init__(self) -> None:
+        require_stable_value(self.kind, "stream delta kind")
+        if not isinstance(self.value, Mapping):
+            raise ValueError("stream delta value must be a mapping")
+
+
+@dataclass(frozen=True, kw_only=True)
 class ModelExecutionBinding:
     run_id: str
     attempt_id: str
@@ -303,6 +316,7 @@ class ModelPort(Protocol):
         request: ModelStepRequest,
         *,
         observer: ModelResponseStartObserver | None = None,
+        stream_observer: ModelResponseStreamObserver | None = None,
     ) -> ModelStepResult:
         """执行一次逻辑 ModelStep；重试细节由 adapter receipt 描述。"""
 
@@ -316,3 +330,9 @@ class ModelResponseStartObserver(Protocol):
         provider: str,
         provider_request_id: str | None,
     ) -> None: ...
+
+
+class ModelResponseStreamObserver(Protocol):
+    """Receives normalized deltas without owning model-step completion."""
+
+    async def stream_delta(self, *, delta: ModelStreamDelta) -> None: ...

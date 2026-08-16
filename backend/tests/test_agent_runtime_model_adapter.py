@@ -20,6 +20,7 @@ from services.agent.runtime.ports import (
     ModelCallUnknownError,
     ModelInputReceipt,
     ModelRequestOptions,
+    ModelStreamDelta,
     ModelStepRequest,
 )
 
@@ -140,6 +141,59 @@ async def test_normal_text_usage_and_provider_projection() -> None:
     assert adapter.payload["tools"] == _plan().project()[1]
     assert "org-secret" not in str(adapter.payload)
     assert adapter.closed is True
+
+
+@pytest.mark.asyncio
+async def test_stream_observer_receives_normalized_text_and_tool_deltas() -> None:
+    class Observer:
+        def __init__(self) -> None:
+            self.deltas: list[ModelStreamDelta] = []
+
+        async def stream_delta(self, *, delta: ModelStreamDelta) -> None:
+            self.deltas.append(delta)
+
+    observer = Observer()
+    adapter = FakeAdapter([
+        StreamChunk(content="partial "),
+        StreamChunk(
+            finish_reason="tool_calls",
+            tool_calls=[ToolCallDelta(0, "call-1", "lookup", '{"x":1}')],
+        ),
+    ])
+
+    result = await _port([adapter]).complete(
+        _request(), stream_observer=observer,
+    )
+
+    assert result.stop_reason is StopReason.TOOL_CALLS
+    assert [(delta.kind, dict(delta.value)) for delta in observer.deltas] == [
+        ("text", {"text": "partial "}),
+        ("tool_call", {
+            "index": 0,
+            "id": "call-1",
+            "name": "lookup",
+            "arguments": '{"x":1}',
+        }),
+        ("provider_metadata", {"provider_stop_reason": "tool_calls"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_observer_failure_does_not_discard_final_result() -> None:
+    class Observer:
+        async def stream_delta(self, *, delta: ModelStreamDelta) -> None:
+            del delta
+            raise RuntimeError("stream sink unavailable")
+
+    adapter = FakeAdapter([
+        StreamChunk(content="answer", finish_reason="stop"),
+    ])
+
+    result = await _port([adapter]).complete(
+        _request(), stream_observer=Observer(),
+    )
+
+    assert result.output and result.output.content == "answer"
 
 
 @pytest.mark.asyncio

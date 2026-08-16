@@ -6,12 +6,16 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Mapping
 
+from loguru import logger
+
 from services.adapters.google.models import GoogleContentFilterError
 from services.agent.runtime.infrastructure.model.projection import provider_kwargs
 from services.agent.runtime.infrastructure.model.response import ResponseAccumulator
 from services.agent.runtime.ports.model import (
     ModelRequestOptions,
     ModelResponseStartObserver,
+    ModelResponseStreamObserver,
+    ModelStreamDelta,
     ModelStepResult,
     ProviderAttemptOutcome,
     ProviderAttemptReceipt,
@@ -60,6 +64,7 @@ async def iterate_provider_stream(
     tools: list[dict[str, Any]],
     options: ModelRequestOptions,
     observer: ModelResponseStartObserver | None = None,
+    stream_observer: ModelResponseStreamObserver | None = None,
 ) -> AsyncIterator[StreamUpdate]:
     """Consume one adapter stream and expose only normalized, Secret-free state."""
     accumulator = ResponseAccumulator(model_step_id)
@@ -82,6 +87,8 @@ async def iterate_provider_stream(
                         )
                 accumulator.add(chunk)
                 for delta in _normalize_chunk(chunk, provider_request_id):
+                    if stream_observer is not None:
+                        await _observe_stream_delta(stream_observer, delta)
                     yield delta
     except asyncio.CancelledError:
         raise
@@ -133,6 +140,23 @@ async def _observe_response_start(
             provider_request_id=provider_request_id,
             error_code="GATEWAY_RESPONSE_START_PERSIST_FAILED",
         ) from None
+
+
+async def _observe_stream_delta(
+    observer: ModelResponseStreamObserver,
+    delta: NormalizedStreamDelta,
+) -> None:
+    try:
+        await observer.stream_delta(
+            delta=ModelStreamDelta(kind=delta.kind, value=delta.value),
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:
+        logger.warning(
+            "model_stream_observer_failed | "
+            f"delta_kind={delta.kind} | error={type(error).__name__}"
+        )
 
 
 def _complete_result(
