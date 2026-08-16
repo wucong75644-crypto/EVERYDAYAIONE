@@ -70,6 +70,7 @@ class AgentRuntimeProcessSettings(BaseSettings):
     agent_runtime_production_composition_enabled: bool = False
     agent_runtime_media_enabled: bool = False
     agent_runtime_media_provider_probe_passed: bool = False
+    agent_runtime_media_production_ready: bool = False
     agent_runtime_agent_definition_id: str = "everydayai-default"
     agent_runtime_agent_definition_revision: str = "v1"
     sandbox_job_root: str
@@ -160,7 +161,6 @@ async def _run() -> None:
     if role == "sandbox" and settings.sandbox_worker_concurrency != 1:
         raise RuntimeError("SANDBOX_WORKER_CONCURRENCY_MUST_BE_ONE")
     from core.database import close_async_worker_db, get_async_worker_db
-
     raw = await get_async_worker_db(
         settings.worker_database_url,
         min_size=1 if role == "sandbox" else None,

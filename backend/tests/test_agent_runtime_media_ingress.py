@@ -8,6 +8,7 @@ from core.db_scope import DatabaseAccessKind, DatabaseScope
 from services.agent.runtime.media_composition import (
     build_runtime_media_composition,
 )
+from services.agent.runtime.catalog.image_release import IMAGE_DEFINITION_REVISION
 from services.agent.runtime.media_ingress import RuntimeMediaIngress
 from api.routes.message_media_runtime import (
     submit_runtime_image_batch_ingress,
@@ -295,3 +296,6 @@ async def test_route_image_batch_uses_conversation_scope_once(monkeypatch):
     submit.assert_awaited_once()
     assert submit.await_args.kwargs["scope_kind"] == "user"
     assert submit.await_args.kwargs["scope_id"] == "u"
+    assert submit.await_args.kwargs["agent_definition_revision"] == (
+        IMAGE_DEFINITION_REVISION
+    )

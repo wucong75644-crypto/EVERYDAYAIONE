@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
+from services.agent.runtime.catalog.image_release import IMAGE_DEFINITION_REVISION
+
 
 async def submit_runtime_media_ingress(
     *, db: Any, conversation_id: str, user_id: str, org_id: str | None,
@@ -29,7 +31,12 @@ async def submit_runtime_media_ingress(
         scope_kind=str(conversation["scope_type"]),
         scope_id=str(conversation["scope_id"]),
         agent_definition_id=settings.agent_runtime_agent_definition_id,
-        agent_definition_revision=settings.agent_runtime_agent_definition_revision,
+        # Image ingress has its own frozen v13 media definition. Video keeps
+        # the existing revision until its own Runtime release is approved.
+        agent_definition_revision=(
+            IMAGE_DEFINITION_REVISION if kind == "image"
+            else settings.agent_runtime_agent_definition_revision
+        ),
         task_id=task_id, input_message_id=input_message_id,
         output_message_id=output_message_id, turn_id=turn_id,
         idempotency_key=idempotency_key, kind=kind, request=request,
@@ -61,7 +68,7 @@ async def submit_runtime_image_batch_ingress(
         scope_kind=str(conversation["scope_type"]),
         scope_id=str(conversation["scope_id"]),
         agent_definition_id=settings.agent_runtime_agent_definition_id,
-        agent_definition_revision=settings.agent_runtime_agent_definition_revision,
+        agent_definition_revision=IMAGE_DEFINITION_REVISION,
         input_message_id=input_message_id, output_message_id=output_message_id,
         turn_id=turn_id, batch_id=batch_id, model_id=model_id, items=items,
     )

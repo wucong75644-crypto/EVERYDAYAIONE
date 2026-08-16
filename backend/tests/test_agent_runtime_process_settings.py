@@ -35,6 +35,7 @@ def test_agent_runtime_settings_field_allowlist() -> None:
         "agent_runtime_production_composition_enabled",
         "agent_runtime_media_enabled",
         "agent_runtime_media_provider_probe_passed",
+        "agent_runtime_media_production_ready",
         "agent_runtime_agent_definition_id",
         "agent_runtime_agent_definition_revision",
         "sandbox_job_root",
@@ -45,6 +46,9 @@ def test_agent_runtime_settings_field_allowlist() -> None:
     ].default is False
     assert AgentRuntimeProcessSettings.model_fields[
         "agent_runtime_media_provider_probe_passed"
+    ].default is False
+    assert AgentRuntimeProcessSettings.model_fields[
+        "agent_runtime_media_production_ready"
     ].default is False
 
 
