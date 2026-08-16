@@ -28,8 +28,9 @@ def create_manifest(root: str | Path) -> list[dict[str, object]]:
             "mode": stat.S_IMODE(metadata.st_mode),
             "uid": metadata.st_uid,
             "gid": metadata.st_gid,
-            "size": metadata.st_size,
         }
+        if kind != "directory":
+            entry["size"] = metadata.st_size
         if kind == "file":
             entry["sha256"] = _sha256(path)
         elif kind == "symlink":

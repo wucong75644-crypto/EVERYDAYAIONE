@@ -1,3 +1,4 @@
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -74,9 +75,12 @@ def test_rootfs_manifest_detects_content_mode_and_extra_file(tmp_path) -> None:
     payload = root / "python"
     payload.write_bytes(b"runtime")
     payload.chmod(0o555)
+    (root / "etc").mkdir()
     manifest = tmp_path / "rootfs.manifest"
     write_manifest(root, manifest)
     assert verify_manifest(root, manifest)
+    entries = json.loads(manifest.read_text())
+    assert "size" not in next(entry for entry in entries if entry["kind"] == "directory")
     payload.chmod(0o755)
     assert not verify_manifest(root, manifest)
     payload.chmod(0o555)
