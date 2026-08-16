@@ -83,7 +83,7 @@ class RuntimeToolCatalog:
                     canonical_name=name, tool_group=(
                         "code" if name == "code_execute" else
                         _read_tool_group(name)
-                    ), schema={
+                    ), description=_legacy_description(name), schema={
                         "type": "object", "additionalProperties": False, **schema,
                     }, safety_level=safety,
                     executor_type=descriptor.executor_type,
@@ -243,9 +243,13 @@ def restore_catalog(document: Mapping[str, object]) -> RuntimeToolCatalog:
     for raw in document.get("tools", []):
         if not isinstance(raw, Mapping):
             raise ValueError("RUNTIME_CATALOG_FACT_INVALID")
+        description = raw.get("description")
+        if description is None:
+            description = _legacy_description(str(raw["canonical_name"]))
         tools.append(RuntimeToolDefinition(
             canonical_name=str(raw["canonical_name"]),
             tool_group=str(raw["tool_group"]), schema=raw["schema"],
+            description=str(description),
             safety_level=str(raw["safety_level"]),
             executor_type=str(raw["executor_type"]),
             executor_revision=int(raw["executor_revision"]),
@@ -315,3 +319,11 @@ def restore_frozen_toolset(
             toolset_hash=toolset_hash,
         )
     return restored
+
+
+def _legacy_description(tool_name: str) -> str:
+    from services.agent.runtime.catalog.legacy_contract import (
+        legacy_tool_description,
+    )
+
+    return legacy_tool_description(tool_name)

@@ -245,6 +245,7 @@ def _production_specialist_catalog(registry: ExecutorRegistry) -> RuntimeToolCat
             family = SPECIALIST_FAMILIES[name]
             catalog.register(RuntimeToolDefinition(
                 canonical_name=name, tool_group=_specialist_group(family),
+                description=_legacy_description(name),
                 schema=schema, safety_level=SPECIALIST_SAFETY[name],
                 executor_type=descriptor.executor_type,
                 executor_revision=descriptor.revision,
@@ -271,3 +272,11 @@ def _specialist_group(family: str) -> str:
         "erp_sync": "erp_sync", "workspace_mutation": "workspace",
         "scheduled_task": "scheduler",
     }[family]
+
+
+def _legacy_description(tool_name: str) -> str:
+    from services.agent.runtime.catalog.legacy_contract import (
+        legacy_tool_description,
+    )
+
+    return legacy_tool_description(tool_name)

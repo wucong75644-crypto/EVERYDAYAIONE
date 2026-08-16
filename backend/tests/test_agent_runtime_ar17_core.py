@@ -124,6 +124,30 @@ def test_effective_toolset_is_fail_closed_and_executor_backed() -> None:
     toolset.validate_call("code_execute", {"code": "print(1)", "description": "test"})
 
 
+def test_runtime_provider_projection_preserves_legacy_tool_descriptions() -> None:
+    from config.chat_tools import get_chat_tools
+    from services.agent.runtime.catalog.production_seed import build_seed_snapshot
+
+    legacy = {
+        item["function"]["name"]: item["function"].get("description", "")
+        for item in get_chat_tools("audit-org")
+    }
+    snapshot = build_seed_snapshot(scope="channel")
+    catalog = {
+        item.canonical_name: item
+        for item in snapshot.receipt.catalog.definitions()
+    }
+    projected = {
+        item["function"]["name"]: item["function"]
+        for item in snapshot.toolset.provider_tools()
+    }
+    assert set(legacy) <= set(catalog)
+    for name, description in legacy.items():
+        assert description
+        assert catalog[name].description == description
+        assert projected[name]["description"] == description
+
+
 def test_effective_toolset_validates_nested_schema_and_json_values() -> None:
     tool = RuntimeToolDefinition(
         canonical_name="nested", tool_group="code",

@@ -48,6 +48,7 @@ class EffectiveToolset:
     def provider_tools(self) -> list[dict[str, object]]:
         return [{"type": "function", "function": {
             "name": tool.canonical_name,
+            "description": tool.description,
             "parameters": dict(tool.schema),
         }} for tool in self.definitions]
 

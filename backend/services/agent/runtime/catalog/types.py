@@ -26,10 +26,13 @@ class RuntimeToolDefinition:
     allowed_scope_kinds: frozenset[str] = frozenset({"user", "channel"})
     allowed_channels: frozenset[str] = frozenset({"web", "wecom"})
     schema_hash: str = ""
+    description: str = ""
 
     def __post_init__(self) -> None:
         if not self.canonical_name or not self.executor_type:
             raise ValueError("tool identity is required")
+        if not isinstance(self.description, str):
+            raise ValueError("tool description must be text")
         schema_hash = hashlib.sha256(json.dumps(
             self.schema, ensure_ascii=False, sort_keys=True,
             separators=(",", ":"),
@@ -46,6 +49,7 @@ class RuntimeToolDefinition:
         return {
             "canonical_name": self.canonical_name,
             "tool_group": self.tool_group,
+            "description": self.description,
             "schema": self.schema,
             "schema_hash": self.schema_hash,
             "safety_level": self.safety_level,
