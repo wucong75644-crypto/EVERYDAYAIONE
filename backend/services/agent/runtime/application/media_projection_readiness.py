@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 async def report_media_projection_readiness(
     control_db, settings, role: str, *, ready: bool, draining: bool,
@@ -25,17 +29,34 @@ async def report_media_projection_readiness(
                 "p_heartbeat_ttl_seconds": ttl_seconds,
             },
         ).execute()
-    except Exception:
+    except Exception as error:
+        logger.warning(
+            "runtime_media_projection_readiness_rpc_failed role=%s error_type=%s",
+            role, type(error).__name__,
+        )
         return False, False
     result = response.data if response is not None else None
     if not isinstance(result, dict) or not isinstance(result.get("ready"), bool):
+        logger.warning(
+            "runtime_media_projection_readiness_invalid_result role=%s result_type=%s",
+            role, type(result).__name__,
+        )
         return False, False
     projection_ready = result.get(
         "projection_owner_ready", result.get("ready"),
     )
     heartbeat_fresh = result.get("projection_heartbeat_fresh", True)
     if not isinstance(projection_ready, bool) or not isinstance(heartbeat_fresh, bool):
+        logger.warning(
+            "runtime_media_projection_readiness_invalid_projection_state role=%s",
+            role,
+        )
         return False, False
+    logger.info(
+        "runtime_media_projection_readiness role=%s effective_ready=%s "
+        "projection_ready=%s heartbeat_fresh=%s global_ready=%s",
+        role, effective_ready, projection_ready, heartbeat_fresh, result["ready"],
+    )
     return True, projection_ready and heartbeat_fresh
 
 
