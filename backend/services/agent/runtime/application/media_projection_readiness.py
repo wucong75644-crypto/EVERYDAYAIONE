@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import logging
-
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 async def report_media_projection_readiness(
     control_db, settings, role: str, *, ready: bool, draining: bool,
