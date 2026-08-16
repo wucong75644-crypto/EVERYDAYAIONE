@@ -235,7 +235,7 @@ async def _run() -> None:
             if now - last_heartbeat >= settings.agent_runtime_heartbeat_seconds:
                 heartbeat_ok = await _report_heartbeat(
                     control_db, settings, role,
-                    ready=bool(_composition_ready(owner) and enabled),
+                    ready=bool(_composition_ready(owner) and enabled), media_ready=_composition_ready(owner),
                     draining=bool(state["draining"]),
                     status_code=(
                         "accepting" if _composition_ready(owner) and enabled
@@ -378,7 +378,7 @@ async def _build_owner_and_cycle(role, raw, settings):
 
 async def _report_heartbeat(
     control_db, settings, role, *, ready: bool, draining: bool,
-    status_code: str,
+    status_code: str, media_ready: bool | None = None,
 ) -> bool:
     try:
         await control_db.rpc(
@@ -403,7 +403,7 @@ async def _report_heartbeat(
             },
         ).execute()
         media_rpc_ok, _ = await _report_media_projection_readiness(
-            control_db, settings, role, ready=ready, draining=draining,
+            control_db, settings, role, ready=ready if media_ready is None else media_ready, draining=draining,
         )
         if not media_rpc_ok:
             return False
