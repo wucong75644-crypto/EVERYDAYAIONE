@@ -27,6 +27,8 @@ class RuntimeToolDefinition:
     allowed_channels: frozenset[str] = frozenset({"web", "wecom"})
     schema_hash: str = ""
     description: str = ""
+    provider_schema: Mapping[str, object] | None = None
+    provider_schema_hash: str = ""
 
     def __post_init__(self) -> None:
         if not self.canonical_name or not self.executor_type:
@@ -40,6 +42,15 @@ class RuntimeToolDefinition:
         if self.schema_hash and self.schema_hash != schema_hash:
             raise ValueError("tool schema hash mismatch")
         object.__setattr__(self, "schema_hash", schema_hash)
+        provider_schema = self.provider_schema or self.schema
+        provider_schema_hash = hashlib.sha256(json.dumps(
+            provider_schema, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"),
+        ).encode()).hexdigest()
+        if self.provider_schema_hash and self.provider_schema_hash != provider_schema_hash:
+            raise ValueError("provider schema hash mismatch")
+        object.__setattr__(self, "provider_schema", provider_schema)
+        object.__setattr__(self, "provider_schema_hash", provider_schema_hash)
 
     @property
     def revision(self) -> str:
@@ -52,6 +63,8 @@ class RuntimeToolDefinition:
             "description": self.description,
             "schema": self.schema,
             "schema_hash": self.schema_hash,
+            "provider_schema": self.provider_schema,
+            "provider_schema_hash": self.provider_schema_hash,
             "safety_level": self.safety_level,
             "executor_type": self.executor_type,
             "executor_revision": self.executor_revision,

@@ -148,6 +148,28 @@ def test_runtime_provider_projection_preserves_legacy_tool_descriptions() -> Non
         assert projected[name]["description"] == description
 
 
+def test_runtime_first_schema_batch_preserves_legacy_parameters() -> None:
+    from config.chat_tools import get_chat_tools
+    from services.agent.runtime.catalog.legacy_contract import (
+        LEGACY_SCHEMA_COMPATIBLE_TOOLS,
+    )
+    from services.agent.runtime.catalog.production_seed import build_seed_snapshot
+
+    legacy = {
+        item["function"]["name"]: item["function"]["parameters"]
+        for item in get_chat_tools("audit-org")
+    }
+    snapshot = build_seed_snapshot(scope="channel")
+    projected = {
+        item["function"]["name"]: item["function"]["parameters"]
+        for item in snapshot.toolset.provider_tools()
+    }
+    expected = LEGACY_SCHEMA_COMPATIBLE_TOOLS & legacy.keys()
+    assert expected
+    for name in expected:
+        assert projected[name] == legacy[name]
+
+
 def test_effective_toolset_validates_nested_schema_and_json_values() -> None:
     tool = RuntimeToolDefinition(
         canonical_name="nested", tool_group="code",

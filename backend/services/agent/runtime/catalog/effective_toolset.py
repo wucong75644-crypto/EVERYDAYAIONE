@@ -49,7 +49,7 @@ class EffectiveToolset:
         return [{"type": "function", "function": {
             "name": tool.canonical_name,
             "description": tool.description,
-            "parameters": dict(tool.schema),
+            "parameters": dict(tool.provider_schema),
         }} for tool in self.definitions]
 
     def validate_call(self, name: str, arguments: Mapping[str, object],
@@ -58,6 +58,7 @@ class EffectiveToolset:
                      if item.canonical_name == name), None)
         if tool is None or schema_hash not in (None, tool.schema_hash):
             raise ValueError("RUNTIME_TOOL_CALL_NOT_OFFERED")
+        _validate_json_value(arguments, tool.provider_schema, path="$" )
         _validate_json_value(arguments, tool.schema, path="$" )
 
 

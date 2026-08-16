@@ -6,6 +6,18 @@ from functools import lru_cache
 from typing import Any
 
 
+# This first batch contains tools whose legacy argument names are identical to
+# the current Runtime executor contract.  Semantic adapters for renamed or
+# expanded arguments are intentionally handled in later batches.
+LEGACY_SCHEMA_COMPATIBLE_TOOLS = frozenset({
+    "artifact_get", "artifact_read", "artifact_search",
+    "code_execute", "evidence_get", "evidence_search",
+    "erp_api_search", "file_search", "get_conversation_context",
+    "local_product_identify", "memory_get", "memory_search",
+    "search_knowledge", "web_search",
+})
+
+
 @lru_cache(maxsize=1)
 def legacy_tool_definitions() -> dict[str, dict[str, Any]]:
     """Return the legacy model-facing definitions indexed by tool name."""
@@ -47,4 +59,16 @@ def legacy_tool_description(tool_name: str) -> str:
     return str(definition.get("description") or "") if definition else ""
 
 
-__all__ = ["legacy_tool_definitions", "legacy_tool_description"]
+def legacy_tool_parameters(tool_name: str) -> dict[str, Any] | None:
+    """Return the exact legacy parameters for the compatible first batch."""
+    if tool_name not in LEGACY_SCHEMA_COMPATIBLE_TOOLS:
+        return None
+    definition = legacy_tool_definitions().get(tool_name)
+    parameters = definition.get("parameters") if definition else None
+    return dict(parameters) if isinstance(parameters, dict) else None
+
+
+__all__ = [
+    "LEGACY_SCHEMA_COMPATIBLE_TOOLS", "legacy_tool_definitions",
+    "legacy_tool_description", "legacy_tool_parameters",
+]

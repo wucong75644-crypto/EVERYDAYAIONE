@@ -31,6 +31,7 @@ def build_nonproduction_specialist_catalog(registry: "ExecutorRegistry") -> Runt
             catalog.register(RuntimeToolDefinition(
                 canonical_name=name, tool_group=_group(name), schema=schema,
                 description=_legacy_description(name),
+                provider_schema=_legacy_provider_schema(name),
                 safety_level=SPECIALIST_SAFETY[name],
                 executor_type=descriptor.executor_type,
                 executor_revision=descriptor.revision,
@@ -72,3 +73,11 @@ def _legacy_description(tool_name: str) -> str:
     )
 
     return legacy_tool_description(tool_name)
+
+
+def _legacy_provider_schema(tool_name: str):
+    from services.agent.runtime.catalog.legacy_contract import (
+        legacy_tool_parameters,
+    )
+
+    return legacy_tool_parameters(tool_name)

@@ -83,7 +83,8 @@ class RuntimeToolCatalog:
                     canonical_name=name, tool_group=(
                         "code" if name == "code_execute" else
                         _read_tool_group(name)
-                    ), description=_legacy_description(name), schema={
+                    ), description=_legacy_description(name),
+                    provider_schema=_legacy_provider_schema(name), schema={
                         "type": "object", "additionalProperties": False, **schema,
                     }, safety_level=safety,
                     executor_type=descriptor.executor_type,
@@ -246,10 +247,17 @@ def restore_catalog(document: Mapping[str, object]) -> RuntimeToolCatalog:
         description = raw.get("description")
         if description is None:
             description = _legacy_description(str(raw["canonical_name"]))
+        provider_schema = raw.get("provider_schema")
+        if not isinstance(provider_schema, Mapping):
+            provider_schema = _legacy_provider_schema(
+                str(raw["canonical_name"]),
+            ) or raw["schema"]
         tools.append(RuntimeToolDefinition(
             canonical_name=str(raw["canonical_name"]),
             tool_group=str(raw["tool_group"]), schema=raw["schema"],
             description=str(description),
+            provider_schema=provider_schema,
+            provider_schema_hash=str(raw.get("provider_schema_hash", "")),
             safety_level=str(raw["safety_level"]),
             executor_type=str(raw["executor_type"]),
             executor_revision=int(raw["executor_revision"]),
@@ -327,3 +335,11 @@ def _legacy_description(tool_name: str) -> str:
     )
 
     return legacy_tool_description(tool_name)
+
+
+def _legacy_provider_schema(tool_name: str) -> Mapping[str, object] | None:
+    from services.agent.runtime.catalog.legacy_contract import (
+        legacy_tool_parameters,
+    )
+
+    return legacy_tool_parameters(tool_name)
