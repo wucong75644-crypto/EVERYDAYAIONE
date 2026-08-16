@@ -73,7 +73,9 @@ def test_runtime_discovers_workspace_skill_on_first_model_step(tmp_path, monkeyp
 
     monkeypatch.setattr(
         "core.config.get_settings",
-        lambda: SimpleNamespace(file_workspace_root=str(tmp_path)),
+        lambda: (_ for _ in ()).throw(
+            AssertionError("Runtime Skill loading must not read backend settings")
+        ),
     )
     workspace = resolve_workspace_dir(str(tmp_path), "user-1", None)
     skill_file = Path(workspace) / "Skills" / "report" / "SKILL.md"
@@ -97,7 +99,7 @@ def test_runtime_discovers_workspace_skill_on_first_model_step(tmp_path, monkeyp
         },
         definition=SimpleNamespace(system_prompt="Runtime base"),
         payload={"params": {}}, model_id="qwen3.5-plus",
-        input_message_id="m1",
+        input_message_id="m1", workspace_root=str(tmp_path),
     )
 
     assert Path(workspace).is_dir()

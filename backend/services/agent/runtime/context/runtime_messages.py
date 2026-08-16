@@ -65,12 +65,14 @@ def _runtime_messages(
     *, snapshot: RunAggregateSnapshot, context: dict, definition: object,
     payload: dict, model_id: str, input_message_id: str | None,
     supports_vision: bool = True,
+    workspace_root: str = "/mnt/nas-workspace",
 ) -> tuple[list[dict], str, SkillContext]:
     params = _mapping(payload.get("params") or {}, "params")
     permission_mode = normalize_permission_mode(params.get("permission_mode"))
     skill_context = resolve_runtime_skill_context(
         snapshot=snapshot, context=context, params=params,
         input_message_id=input_message_id,
+        workspace_root=workspace_root,
     )
     prompt_blocks = [
         str(definition.system_prompt),
@@ -91,11 +93,13 @@ def _runtime_prompt_inputs(
     *, snapshot: RunAggregateSnapshot, context: dict, definition: object,
     payload: dict, model_id: str, input_message_id: str | None,
     supports_vision: bool = True,
+    workspace_root: str = "/mnt/nas-workspace",
 ) -> tuple[list[dict], str, dict[str, object]]:
     messages, permission_mode, skill_context = _runtime_messages(
         snapshot=snapshot, context=context, definition=definition,
         payload=payload, model_id=model_id,
         input_message_id=input_message_id, supports_vision=supports_vision,
+        workspace_root=workspace_root,
     )
     return messages, permission_mode, skill_context_snapshot(skill_context)
 

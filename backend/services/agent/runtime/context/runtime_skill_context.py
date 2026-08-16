@@ -13,10 +13,13 @@ from services.agent.runtime.ports.coordinator_recovery import (
     RunAggregateSnapshot,
 )
 
+_RUNTIME_WORKSPACE_ROOT = "/mnt/nas-workspace"
+
 
 def resolve_runtime_skill_context(
     *, snapshot: RunAggregateSnapshot, context: dict,
     params: Mapping[str, object], input_message_id: str | None,
+    workspace_root: str = _RUNTIME_WORKSPACE_ROOT,
 ) -> SkillContext:
     """Load Skills once, then reuse the persisted snapshot for later steps."""
     previous_step = snapshot.latest_model_step
@@ -38,11 +41,10 @@ def resolve_runtime_skill_context(
     org_id = _optional_text(session_value.get("org_id"))
     query = _current_user_query(context.get("messages"), input_message_id)
 
-    from core.config import get_settings
     from core.workspace import resolve_workspace_dir
 
     workspace_dir = resolve_workspace_dir(
-        get_settings().file_workspace_root, user_id, org_id,
+        workspace_root, user_id, org_id,
     )
     try:
         return build_skill_context(workspace_dir, query)
