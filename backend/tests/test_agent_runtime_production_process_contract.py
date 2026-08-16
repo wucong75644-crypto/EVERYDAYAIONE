@@ -298,9 +298,8 @@ def test_sandbox_probe_checks_fixed_capabilities() -> None:
         'test "$(id -g)" -ne 0',
         '65534:$(id -u):1',
         '65534:$(id -g):1',
-        'SANDBOX_CGROUP_V2_RUNNER',
-        'test -z "$(cat "$SANDBOX_CGROUP_V2_MOUNT/cgroup.procs")"',
-        'grep -qx "$$" "$SANDBOX_CGROUP_V2_RUNNER/cgroup.procs"',
+        'test -d "$SANDBOX_CGROUP_V2_MOUNT"',
+        'test -w "$SANDBOX_CGROUP_V2_MOUNT"',
         'cleanup_empty_nsjail_cgroups',
         'rmdir -- "$group"',
     ):
@@ -343,8 +342,9 @@ def test_sandbox_unit_delegates_only_required_cgroup_controllers() -> None:
     assert "User=everydayai-sandbox" in text
     assert "Group=everydayai-sandbox" in text
     assert "SupplementaryGroups=everydayai-sandbox-io" in text
+    assert "ExecStartPre=/var/www/everydayai/deploy/runtime-capability-probe.sh sandbox" in text
     assert "/usr/local/libexec/everydayai-sandbox-worker-cgroup-wrapper" in text
-    assert text.count("/usr/local/libexec/everydayai-sandbox-worker-cgroup-wrapper") == 2
+    assert text.count("/usr/local/libexec/everydayai-sandbox-worker-cgroup-wrapper") == 1
     wrapper = DEPLOY / "sandbox-worker-cgroup-wrapper.sh"
     assert wrapper.stat().st_mode & 0o111
     wrapper_text = wrapper.read_text()
