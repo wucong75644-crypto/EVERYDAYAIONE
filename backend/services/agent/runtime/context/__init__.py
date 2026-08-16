@@ -42,6 +42,15 @@ from services.agent.runtime.context.skill_discovery import (
     render_skill_catalog,
     workspace_skill_root,
 )
+from services.agent.runtime.context.skill_activation import (
+    ActivatedSkill,
+    SkillContext,
+    SkillActivationError,
+    build_skill_context,
+    load_skill_content,
+    render_active_skill_instructions,
+    select_skill_metadata,
+)
 from services.agent.runtime.context.runtime_builder import (
     RuntimeContextV2, build_runtime_context,
 )
@@ -60,6 +69,10 @@ __all__ = [
     "SkillDiscoveryIssue",
     "SkillDiscoveryResult",
     "SkillMetadata",
+    "ActivatedSkill",
+    "SkillContext",
+    "SkillActivationError",
+    "build_skill_context",
     "RuntimeContextV2",
     "build_runtime_context",
     "PruningReceipt",
@@ -80,6 +93,9 @@ __all__ = [
     "discover_skill_metadata",
     "discover_skill_metadata_from_roots",
     "discover_workspace_skill_metadata",
+    "load_skill_content",
+    "render_active_skill_instructions",
     "render_skill_catalog",
+    "select_skill_metadata",
     "workspace_skill_root",
 ]

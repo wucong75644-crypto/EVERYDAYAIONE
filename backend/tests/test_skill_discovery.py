@@ -6,6 +6,8 @@ from services.agent.runtime.context import (
     discover_skill_metadata_from_roots,
     discover_workspace_skill_metadata,
     render_skill_catalog,
+    render_active_skill_instructions,
+    select_skill_metadata,
     workspace_skill_root,
 )
 
@@ -150,6 +152,7 @@ def test_prompt_builder_places_catalog_before_history_and_user() -> None:
             user_message={"role": "user", "content": "当前请求"},
         ),
         skill_catalog="<available_skills><skill /></available_skills>",
+        skill_instructions="<active_skills><skill_instructions /></active_skills>",
         cache_control_enabled=False,
     )
 
@@ -160,5 +163,9 @@ def test_prompt_builder_places_catalog_before_history_and_user() -> None:
     assert messages[-1] == {"role": "user", "content": "当前请求"}
     assert any(
         message.get("content") == "<available_skills><skill /></available_skills>"
+        for message in messages
+    )
+    assert any(
+        message.get("content") == "<active_skills><skill_instructions /></active_skills>"
         for message in messages
     )

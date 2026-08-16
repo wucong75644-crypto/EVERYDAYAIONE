@@ -171,7 +171,7 @@ class PromptBuilder:
             ),
         )
         turn_dynamic_content = TurnDynamicLayer.render(turn_dynamic_ctx)
-        skill_catalog = self._discover_skill_catalog()
+        skill_catalog, skill_instructions = self._discover_skill_context()
 
         # ── Step 4: Layer 3 用户层 ──
         attachments_xml = (
@@ -211,6 +211,7 @@ class PromptBuilder:
                 else None
             ),
             skill_catalog=skill_catalog,
+            skill_instructions=skill_instructions,
             cache_control_enabled=cache_control_enabled,
         )
 
@@ -241,18 +242,17 @@ class PromptBuilder:
             request_id=self.inp.conversation_id or "",
         )
 
-    def _discover_skill_catalog(self) -> Optional[str]:
-        """Discover metadata for the current workspace without loading bodies."""
+    def _discover_skill_context(self) -> tuple[Optional[str], Optional[str]]:
+        """Discover metadata and load only Skills relevant to this request."""
         if self.inp.skill_catalog is not None:
-            return self.inp.skill_catalog
+            return self.inp.skill_catalog, None
         if not self.inp.personal_context_allowed:
-            return None
+            return None, None
         try:
             from core.config import get_settings
             from core.workspace import resolve_workspace_dir
             from services.agent.runtime.context import (
-                discover_workspace_skill_metadata,
-                render_skill_catalog,
+                build_skill_context,
             )
 
             workspace_dir = resolve_workspace_dir(
@@ -260,15 +260,10 @@ class PromptBuilder:
                 self.inp.workspace_user_id or self.inp.user_id,
                 self.inp.org_id,
             )
-            result = discover_workspace_skill_metadata(workspace_dir)
-            if result.issues:
-                logger.warning(
-                    "Skill metadata discovery skipped invalid entries | "
-                    "conversation_id={} | issue_count={}",
-                    self.inp.conversation_id,
-                    len(result.issues),
-                )
-            return render_skill_catalog(result.skills)
+            skill_context = build_skill_context(
+                workspace_dir, self.inp.text_content,
+            )
+            return skill_context.catalog, skill_context.instructions
         except Exception as error:
             logger.warning(
                 "Skill metadata discovery failed | conversation_id={} | "
@@ -276,7 +271,7 @@ class PromptBuilder:
                 self.inp.conversation_id,
                 type(error).__name__,
             )
-            return None
+            return None, None
 
     async def _assemble_history(
         self,
@@ -309,6 +304,7 @@ class PromptBuilder:
         user_result: Any,
         data_context_prompt: Optional[str] = None,
         skill_catalog: Optional[str] = None,
+        skill_instructions: Optional[str] = None,
         cache_control_enabled: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
         """按稳定缓存边界拼接 system、历史、附件和当前 user。"""
@@ -340,6 +336,11 @@ class PromptBuilder:
             messages.append({
                 "role": "system",
                 "content": skill_catalog,
+            })
+        if skill_instructions:
+            messages.append({
+                "role": "system",
+                "content": skill_instructions,
             })
         messages.extend(history_messages)
         if history_messages:
