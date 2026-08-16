@@ -39,6 +39,7 @@ from services.agent.runtime.context.skill_discovery import (
     discover_skill_metadata,
     discover_skill_metadata_from_roots,
     discover_workspace_skill_metadata,
+    render_skill_catalog,
     workspace_skill_root,
 )
 from services.agent.runtime.context.runtime_builder import (
@@ -79,5 +80,6 @@ __all__ = [
     "discover_skill_metadata",
     "discover_skill_metadata_from_roots",
     "discover_workspace_skill_metadata",
+    "render_skill_catalog",
     "workspace_skill_root",
 ]

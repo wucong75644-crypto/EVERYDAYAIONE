@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,8 @@ _SKILL_FILE_LIMIT = 5 * 1024 * 1024
 _MAX_SCAN_DEPTH = 5
 _MAX_NAME_LENGTH = 64
 _MAX_DESCRIPTION_LENGTH = 1024
+_MAX_CATALOG_SKILLS = 50
+_MAX_CATALOG_CHARS = 12_000
 _NAME_PATTERN = re.compile(r"^[^/\\\x00-\x1f\x7f]+$")
 SKILLS_DIRECTORY = "Skills"
 
@@ -117,6 +120,53 @@ def discover_workspace_skill_metadata(
         workspace_skill_root(workspace_root),
         source="workspace",
         max_depth=max_depth,
+    )
+
+
+def render_skill_catalog(
+    skills: Iterable[SkillMetadata],
+    *,
+    max_skills: int = _MAX_CATALOG_SKILLS,
+    max_chars: int = _MAX_CATALOG_CHARS,
+) -> str | None:
+    """Render bounded Skill metadata for the first model context.
+
+    The catalog contains paths and descriptions only. It does not grant
+    permissions and it deliberately does not include the body of any Skill.
+    """
+    if max_skills <= 0 or max_chars <= 0:
+        raise ValueError("SKILL_CATALOG_LIMIT_INVALID")
+    entries: list[str] = []
+    for skill in sorted(skills, key=lambda item: (item.name, item.relative_path)):
+        if len(entries) >= max_skills:
+            break
+        path = skill.relative_path
+        if skill.source == "workspace":
+            path = f"{SKILLS_DIRECTORY}/{path}"
+        when_to_use = (
+            f"    <when_to_use>{html.escape(skill.when_to_use)}</when_to_use>\n"
+            if skill.when_to_use else ""
+        )
+        entry = "".join((
+            "  <skill>\n",
+            f"    <name>{html.escape(skill.name)}</name>\n",
+            f"    <description>{html.escape(skill.description)}</description>\n",
+            when_to_use,
+            f"    <path>{html.escape(path)}</path>\n",
+            f"    <source>{html.escape(skill.source)}</source>\n",
+            "  </skill>",
+        ))
+        candidate = "<available_skills>\n" + "\n".join(entries + [entry]) + "\n</available_skills>"
+        if len(candidate) > max_chars:
+            break
+        entries.append(entry)
+    if not entries:
+        return None
+    return (
+        "<available_skills>\n"
+        "  <!-- Metadata only; Skill content must be read through existing workspace tools. -->\n"
+        + "\n".join(entries)
+        + "\n</available_skills>"
     )
 
 

@@ -90,9 +90,7 @@ class ChatContextMixin:
         effective_org_id = (
             org_id if org_id is not None else getattr(self, "org_id", None)
         )
-        personal_context_allowed = getattr(
-            self, "_personal_context_allowed", True,
-        )
+        personal_context_allowed = getattr(self, "_personal_context_allowed", True)
 
         # 注册 workspace 文件到会话级路径缓存 (保留旧逻辑, PromptBuilder 不负责文件管理)
         if workspace_files:
@@ -148,12 +146,13 @@ class ChatContextMixin:
             permission_mode=permission_mode,
             model_id=model_id,
             user_location=user_location,
-            user_preferences=None,  # TODO 阶段 4.4: 从 user_preferences 表读取
+            user_preferences=None,  # User preferences are loaded outside this builder.
             db=self.db,
             context_snapshot=context_snapshot,
             request_ctx=getattr(self, "request_ctx", None),
             attachments_as_system=get_settings().messages_attachments_as_system,
             personal_context_allowed=personal_context_allowed,
+            workspace_user_id=workspace_user_id,
         )
 
         builder = PromptBuilder(inp)

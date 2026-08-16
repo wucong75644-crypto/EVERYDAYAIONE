@@ -1,9 +1,11 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from services.agent.runtime.context import (
     discover_skill_metadata,
     discover_skill_metadata_from_roots,
     discover_workspace_skill_metadata,
+    render_skill_catalog,
     workspace_skill_root,
 )
 
@@ -110,3 +112,53 @@ def test_workspace_discovery_uses_user_visible_skills_directory(
     assert [skill.relative_path for skill in result.skills] == [
         "personal/SKILL.md",
     ]
+
+
+def test_catalog_contains_metadata_and_workspace_path_only(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "customer/SKILL.md",
+        "---\nname: customer\ndescription: 客户 & 分析\n---\n"
+        "完整正文不应进入目录\n",
+    )
+    result = discover_skill_metadata(tmp_path)
+
+    catalog = render_skill_catalog(result.skills)
+
+    assert catalog is not None
+    assert "<name>customer</name>" in catalog
+    assert "客户 &amp; 分析" in catalog
+    assert "<path>Skills/customer/SKILL.md</path>" in catalog
+    assert "完整正文" not in catalog
+
+
+def test_catalog_is_bounded_and_empty_when_no_skill() -> None:
+    assert render_skill_catalog([]) is None
+
+
+def test_prompt_builder_places_catalog_before_history_and_user() -> None:
+    from services.prompt_builder.builder import PromptBuilder
+
+    messages = PromptBuilder._compose_messages(
+        static_content="<static />",
+        session_stable_content="<session />",
+        turn_dynamic_content="<turn />",
+        history_messages=[],
+        user_result=SimpleNamespace(
+            workspace_system_block=None,
+            attachments_system_block=None,
+            user_message={"role": "user", "content": "当前请求"},
+        ),
+        skill_catalog="<available_skills><skill /></available_skills>",
+        cache_control_enabled=False,
+    )
+
+    assert messages[-2] == {
+        "role": "system",
+        "content": "<turn />",
+    }
+    assert messages[-1] == {"role": "user", "content": "当前请求"}
+    assert any(
+        message.get("content") == "<available_skills><skill /></available_skills>"
+        for message in messages
+    )
