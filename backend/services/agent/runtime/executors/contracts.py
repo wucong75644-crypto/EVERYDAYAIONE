@@ -38,7 +38,7 @@ def canonical_json(value: object) -> str:
 
 
 def canonical_request_hash(request: Mapping[str, object]) -> str:
-    """Hash public request facts, excluding Runtime-injected dispatch facts."""
+    """Hash public request facts for callers that own request canonicalization."""
     public = {
         key: value for key, value in request.items()
         if key not in _INTERNAL_REQUEST_KEYS and not key.startswith("_")
@@ -72,13 +72,12 @@ class ActionSnapshot:
         )
         public_request.pop("external_idempotency_key", None)
         public_request.pop("_dispatch_context", None)
-        request_hash = canonical_request_hash(public_request)
-        if request_hash != attempt.request_hash:
-            raise ValueError("EXECUTOR_REQUEST_HASH_CONFLICT")
+        # The durable Action hash covers the persisted lifecycle envelope;
+        # it is not a second hash of the provider argument object.
         return cls(
             action_id=str(attempt.action_id), attempt_id=str(attempt.attempt_id),
             scope=attempt.scope, request=public_request,
-            request_hash=request_hash, executor_type=executor_type,
+            request_hash=attempt.request_hash, executor_type=executor_type,
             executor_revision=executor_revision,
             fencing_token=str(attempt.lease.fencing_token),
             dispatch_context=dispatch_context,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -158,6 +159,19 @@ def _attempt(tool: str, request: dict[str, object], number: int = 1) -> ActionAt
         lease=Lease(fencing_token=f"token-{number}", expires_at=now + timedelta(minutes=1)),
         started_at=now, capabilities={"tool": tool},
     )
+
+
+def test_action_snapshot_preserves_persisted_runtime_request_hash() -> None:
+    request = {"prompt": "generate", "model": "image-model"}
+    attempt = replace(_attempt("generate_image", request), request_hash="a" * 64)
+
+    snapshot = ActionSnapshot.from_attempt(
+        attempt, request, executor_type="runtime_media_generation:generate_image",
+        executor_revision=1,
+    )
+
+    assert snapshot.request == request
+    assert snapshot.request_hash == "a" * 64
 
 
 @pytest.mark.asyncio
