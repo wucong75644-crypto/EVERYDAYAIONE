@@ -55,7 +55,9 @@ def legacy_tool_definitions() -> dict[str, dict[str, Any]]:
 
 def legacy_tool_description(tool_name: str) -> str:
     """Return a stable legacy description, or empty for test-only tools."""
-    definition = legacy_tool_definitions().get(tool_name)
+    definition = _runtime_safe_definition(tool_name)
+    if definition is None:
+        definition = legacy_tool_definitions().get(tool_name)
     return str(definition.get("description") or "") if definition else ""
 
 
@@ -63,9 +65,33 @@ def legacy_tool_parameters(tool_name: str) -> dict[str, Any] | None:
     """Return the exact legacy parameters for the compatible first batch."""
     if tool_name not in LEGACY_SCHEMA_COMPATIBLE_TOOLS:
         return None
-    definition = legacy_tool_definitions().get(tool_name)
+    definition = _runtime_safe_definition(tool_name)
+    if definition is None:
+        definition = legacy_tool_definitions().get(tool_name)
     parameters = definition.get("parameters") if definition else None
     return dict(parameters) if isinstance(parameters, dict) else None
+
+
+@lru_cache(maxsize=None)
+def _runtime_safe_definition(tool_name: str) -> dict[str, Any] | None:
+    """Read Runtime's built-in legacy definition without app wiring.
+
+    The Runtime worker is intentionally denied the application ``.env``.
+    ``legacy_tool_definitions`` remains the compatibility path for the
+    full ChatHandler surface, but importing it also imports provider
+    registries that require application Settings.  The production Runtime
+    bootstrap currently needs the code tool definition only, so load that
+    pure definition directly and keep the full legacy path lazy.
+    """
+    if tool_name != "code_execute":
+        return None
+    from config.code_tools import build_code_tools
+
+    for item in build_code_tools(include_workspace=True):
+        function = item.get("function")
+        if isinstance(function, dict) and function.get("name") == tool_name:
+            return dict(function)
+    return None
 
 
 __all__ = [
