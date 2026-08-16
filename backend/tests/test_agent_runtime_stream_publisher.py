@@ -12,6 +12,7 @@ from services.agent.runtime.infrastructure.stream_publisher import (
     RedisRuntimeStreamPublisher,
     RuntimeWebSocketStreamObserver,
 )
+from services.agent.runtime.application.model_stream_hooks import await_model_work
 from services.agent.runtime.infrastructure.stream_composition import (
     build_runtime_stream_components,
 )
@@ -117,6 +118,44 @@ async def test_tool_call_does_not_end_stream_before_next_model_turn() -> None:
     assert [message["type"] for message in publisher.messages] == [
         "message_start", "tool_call",
     ]
+
+
+@pytest.mark.asyncio
+async def test_stream_failure_emits_terminal_message_error() -> None:
+    publisher = FakePublisher()
+    observer = RuntimeWebSocketStreamObserver(
+        publisher=publisher, target=TARGET, model_id="model-1",
+    )
+
+    await observer.stream_failed(error_code="RUNTIME_MODEL_STREAM_FAILED")
+
+    assert publisher.messages[0]["type"] == "message_error"
+    assert publisher.messages[0]["payload"] == {
+        "error": {
+            "code": "RUNTIME_MODEL_STREAM_FAILED",
+            "message": "生成服务暂时不可用，请稍后重试",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_model_failure_notifies_observer_before_error_propagates() -> None:
+    class Observer:
+        def __init__(self) -> None:
+            self.error_codes: list[str] = []
+
+        async def stream_failed(self, *, error_code: str) -> None:
+            self.error_codes.append(error_code)
+
+    observer = Observer()
+
+    async def fail() -> ModelStepResult:
+        raise RuntimeError("provider unavailable")
+
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        await await_model_work(fail(), observer)
+
+    assert observer.error_codes == ["RUNTIME_MODEL_STREAM_FAILED"]
 
 
 @pytest.mark.asyncio

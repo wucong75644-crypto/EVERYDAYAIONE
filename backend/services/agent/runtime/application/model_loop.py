@@ -26,7 +26,9 @@ from services.agent.runtime.ports.model import (
     ModelStepRequest,
     ModelStepResult,
 )
-from services.agent.runtime.application.model_stream_hooks import notify_stream_completed, notify_stream_started
+from services.agent.runtime.application.model_stream_hooks import (
+    await_model_work, notify_stream_completed, notify_stream_started,
+)
 from services.agent.runtime.ports.model_attempt import (
     ModelAttemptOutcome,
     ModelAttemptRepositoryPort,
@@ -458,7 +460,7 @@ class _ModelAttemptLease:
                 if error is not None:
                     raise error
                 raise RuntimeError("MODEL_ATTEMPT_LEASE_LOST")
-            result = await work
+            result = await await_model_work(work, self._stream_observer)
             if self._stream_observer is not None:
                 await notify_stream_completed(self._stream_observer, result)
             async with self._lock:

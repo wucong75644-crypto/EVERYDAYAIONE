@@ -305,6 +305,8 @@ deploy_backend() {
             exit 1
         fi
         sudo bash ../deploy/provision-runtime-users.sh
+        sudo bash ../deploy/ensure-runtime-stream-env.sh \
+            /var/www/everydayai/backend /etc/everydayai/agent-runtime-worker.env
         bash ../deploy/install-service-units.sh /var/www/everydayai/backend
         bash ../deploy/run-migrations.sh
         set -a

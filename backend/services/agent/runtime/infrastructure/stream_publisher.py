@@ -11,6 +11,7 @@ from redis.asyncio import Redis
 
 from schemas.websocket import (
     build_message_chunk,
+    build_message_error,
     build_message_start,
     build_stream_end,
     build_thinking_chunk,
@@ -170,6 +171,18 @@ class RuntimeWebSocketStreamObserver(ModelResponseStreamObserver):
                     message_id=self._target.message_id,
                 ),
             )
+
+    async def stream_failed(self, *, error_code: str) -> None:
+        await self._publisher.publish(
+            target=self._target,
+            message=build_message_error(
+                task_id=self._target.task_id,
+                conversation_id=self._target.conversation_id,
+                message_id=self._target.message_id,
+                error_code=error_code,
+                error_message="生成服务暂时不可用，请稍后重试",
+            ),
+        )
 
 
 def _text_value(value: Any) -> str:
