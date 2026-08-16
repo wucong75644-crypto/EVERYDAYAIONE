@@ -282,6 +282,11 @@ def _task_payloads(
     user_id: str, org_id: str | None, placeholder_at: datetime,
 ) -> list[dict[str, Any]]:
     params = _business_params(body)
+    serialized_params = handler._serialize_params(params)
+    serialized_params["aspect_ratio"] = settings["aspect_ratio"]
+    serialized_params.pop("resolution", None)
+    if settings["resolution"] is not None:
+        serialized_params["resolution"] = settings["resolution"]
     default_prompt = handler._extract_text_content(body.content)
     prompts = params.get("_batch_prompts") or []
     single_index = int(params.get("image_index", 0))
@@ -291,7 +296,7 @@ def _task_payloads(
         image_index = single_index if body.operation == MessageOperation.REGENERATE_SINGLE else offset
         request_params = build_canonical_image_request(
             prompt=prompt, model_id=settings["model_id"],
-            serialized_params=handler._serialize_params(params),
+            serialized_params=serialized_params,
         )
         payloads.append({
             "id": task_id, "client_task_id": body.client_task_id,
