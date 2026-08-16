@@ -49,6 +49,9 @@ def build_image_catalog() -> RuntimeToolCatalog:
     )
 
 
+IMAGE_CATALOG_REVISION = build_image_catalog().revision
+
+
 def build_image_definition() -> AgentDefinition:
     return AgentDefinition(
         canonical_key="everydayai-default",
@@ -110,7 +113,8 @@ def build_image_snapshot(
 
 
 __all__ = [
-    "IMAGE_DEFINITION_REVISION", "IMAGE_PROMPT_REVISION", "IMAGE_TOOL_NAMES",
+    "IMAGE_CATALOG_REVISION", "IMAGE_DEFINITION_REVISION",
+    "IMAGE_PROMPT_REVISION", "IMAGE_TOOL_NAMES",
     "ImageReleaseSnapshot", "build_image_catalog", "build_image_definition",
     "build_image_registry", "build_image_snapshot",
 ]

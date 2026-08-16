@@ -10,6 +10,8 @@ import inspect
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
+from services.agent.runtime.catalog.image_release import IMAGE_CATALOG_REVISION
+
 
 @dataclass(frozen=True, kw_only=True)
 class RuntimeMediaIngressReceipt:
@@ -85,7 +87,9 @@ class RuntimeMediaIngress:
             "p_model_id": model_id,
             "p_model_provider": model_provider,
             "p_model_revision": model_revision,
-            "p_catalog_revision": "runtime-media-v1",
+            "p_catalog_revision": (
+                IMAGE_CATALOG_REVISION if kind == "image" else "runtime-media-v1"
+            ),
             "p_policy_revision": "runtime-media-v1",
             "p_idempotency_key": idempotency_key,
         }
@@ -156,7 +160,7 @@ class RuntimeMediaIngress:
             "p_model_id": model_id,
             "p_model_provider": model_provider,
             "p_model_revision": model_revision,
-            "p_catalog_revision": "runtime-media-v1",
+            "p_catalog_revision": IMAGE_CATALOG_REVISION,
             "p_policy_revision": "runtime-media-v1",
             "p_items": encoded_items,
         }

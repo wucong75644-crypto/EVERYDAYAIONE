@@ -8,7 +8,9 @@ from core.db_scope import DatabaseAccessKind, DatabaseScope
 from services.agent.runtime.media_composition import (
     build_runtime_media_composition,
 )
-from services.agent.runtime.catalog.image_release import IMAGE_DEFINITION_REVISION
+from services.agent.runtime.catalog.image_release import (
+    IMAGE_CATALOG_REVISION, IMAGE_DEFINITION_REVISION,
+)
 from services.agent.runtime.media_ingress import RuntimeMediaIngress
 from api.routes.message_media_runtime import (
     submit_runtime_image_batch_ingress,
@@ -147,6 +149,7 @@ async def test_media_ingress_calls_only_narrow_rpc():
     assert receipt.runtime_owned is True
     rpc.execute.assert_awaited_once()
     assert rpc.execute.await_args.args[0] == "submit_agent_runtime_media_action_v1"
+    assert rpc.execute.await_args.args[1]["p_catalog_revision"] == IMAGE_CATALOG_REVISION
 
 
 @pytest.mark.asyncio
@@ -185,6 +188,7 @@ async def test_image_batch_ingress_calls_one_atomic_narrow_rpc():
     rpc.execute.assert_awaited_once()
     name, params = rpc.execute.await_args.args
     assert name == "submit_agent_runtime_media_image_batch_v2"
+    assert params["p_catalog_revision"] == IMAGE_CATALOG_REVISION
     assert [item["task_id"] for item in params["p_items"]] == ["t1", "t2"]
 
 
