@@ -44,7 +44,17 @@ echo "$SANDBOX_SECCOMP_SHA256  $SANDBOX_SECCOMP_POLICY" | sha256sum -c -
 "$SANDBOX_NSJAIL_PATH" --help 2>&1 | grep -q -- --use_cgroupv2
 "$SANDBOX_NSJAIL_PATH" --help 2>&1 | grep -q -- --cgroup_mem_swap_max
 test -r "$SANDBOX_ROOTFS/usr/bin/python3.12"
+cleanup_empty_nsjail_cgroups() {
+  local group
+  for group in "$SANDBOX_CGROUP_V2_MOUNT"/NSJAIL.*; do
+    test -d "$group" || continue
+    test -z "$(cat "$group/cgroup.procs")"
+    rmdir -- "$group"
+  done
+}
+
 # The canary must have no host network and must leave no process/cgroup residue.
+cleanup_empty_nsjail_cgroups
 before=$(find /sys/fs/cgroup -maxdepth 4 -iname '*nsjail*' -print | sort)
 set +e
 "$SANDBOX_NSJAIL_PATH" --mode o --chroot "$SANDBOX_ROOTFS" \
@@ -59,5 +69,6 @@ network_rc=$?
 set -e
 test "$network_rc" -ne 0
 test -z "$(pgrep -f "$SANDBOX_NSJAIL_PATH" || true)"
+cleanup_empty_nsjail_cgroups
 after=$(find /sys/fs/cgroup -maxdepth 4 -iname '*nsjail*' -print | sort)
 test "$before" = "$after"

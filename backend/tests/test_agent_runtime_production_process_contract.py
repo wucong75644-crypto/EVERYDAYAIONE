@@ -301,6 +301,8 @@ def test_sandbox_probe_checks_fixed_capabilities() -> None:
         'SANDBOX_CGROUP_V2_RUNNER',
         'test -z "$(cat "$SANDBOX_CGROUP_V2_MOUNT/cgroup.procs")"',
         'grep -qx "$$" "$SANDBOX_CGROUP_V2_RUNNER/cgroup.procs"',
+        'cleanup_empty_nsjail_cgroups',
+        'rmdir -- "$group"',
     ):
         assert contract in text
 
