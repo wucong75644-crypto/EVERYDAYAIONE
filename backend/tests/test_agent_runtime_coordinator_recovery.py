@@ -360,6 +360,7 @@ class _Recovery:
 class _Runtime:
     def __init__(self) -> None:
         self.completed: list[tuple[str, str]] = []
+        self.failed: list[tuple[str, str]] = []
 
     async def renew_run(self, *_args: object) -> MutationReceipt:
         return MutationReceipt(MutationOutcome.RENEWED)
@@ -370,9 +371,20 @@ class _Runtime:
         self.completed.append((run_id, result_hash))
         return MutationReceipt(MutationOutcome.COMPLETED)
 
+    async def fail_run(
+        self, run_id: str, _token: str, _version: int, error_code: str,
+    ) -> MutationReceipt:
+        self.failed.append((run_id, error_code))
+        return MutationReceipt(MutationOutcome.FAILED)
+
 
 class _ModelLoop:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+
     async def advance(self, **_kwargs: object) -> None:
+        if self.error is not None:
+            raise self.error
         return None
 
 
@@ -411,3 +423,22 @@ async def test_final_model_result_completes_run_by_authoritative_hash() -> None:
 
     assert await coordinator.run_once() is True
     assert runtime.completed == [(RUN_ID, "b" * 64)]
+
+
+@pytest.mark.asyncio
+async def test_model_context_failure_fails_run_without_crashing_coordinator() -> None:
+    before = RunAggregateSnapshot(
+        run={"id": RUN_ID, "state_version": 1},
+        latest_model_step=None, unresolved_model_attempt=None,
+        latest_model_result=None, model_steps=(), actions=(),
+    )
+    runtime = _Runtime()
+    coordinator = RuntimeLoopCoordinator(
+        recovery_repository=_Recovery([before, before]),
+        runtime_repository=runtime,
+        model_loop=_ModelLoop(RuntimeError("RUNTIME_VERSION_FACTS_INVALID")),
+        action_loop=_ActionLoop(), worker_id="worker-1",
+    )
+
+    assert await coordinator.run_once() is True
+    assert runtime.failed == [(RUN_ID, "runtime_version_facts_invalid")]

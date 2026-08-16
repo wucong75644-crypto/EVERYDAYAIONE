@@ -100,6 +100,51 @@ def test_frozen_toolset_restores_sql_fact_documents() -> None:
     assert restored.toolset_hash == toolset.toolset_hash
 
 
+def test_frozen_toolset_restores_legacy_sql_fact_documents() -> None:
+    definition = _definition()
+    tool = next(iter(build_default_runtime_catalog().definitions()))
+    restored = restore_frozen_toolset(
+        {
+            "canonical_key": definition.canonical_key,
+            "revision": definition.revision,
+            "prompt_revision": definition.prompt_revision,
+            "requested_tool_groups": sorted(definition.requested_tool_groups),
+            "model_policy": dict(definition.model_policy),
+            "context_policy": dict(definition.context_policy),
+            "channel_restrictions": sorted(definition.channel_restrictions),
+            "system_prompt": definition.system_prompt,
+            "definition_hash": definition.definition_hash,
+        },
+        {"tools": [{
+            "canonical_name": tool.canonical_name,
+            "tool_group": tool.tool_group,
+            "schema": tool.schema,
+            "safety_level": tool.safety_level,
+            "executor_type": tool.executor_type,
+            "executor_revision": tool.executor_revision,
+            "capability_requirements": sorted(tool.capability_requirements),
+            "side_effect": tool.side_effect,
+            "authorization_requirement": tool.authorization_requirement,
+            "retry_semantics": tool.retry_semantics,
+            "reconcile_semantics": tool.reconcile_semantics,
+            "cancel_semantics": tool.cancel_semantics,
+            "result_schema_revision": tool.result_schema_revision,
+            "allowed_scope_kinds": sorted(tool.allowed_scope_kinds),
+            "allowed_channels": sorted(tool.allowed_channels),
+            "schema_hash": tool.schema_hash,
+        }]},
+        {
+            "scope_kind": "user", "channel": "web",
+            "entitled_groups": [], "tool_names": [],
+        },
+        catalog_revision="legacy-catalog-revision",
+        effective_toolset_hash="a" * 64,
+    )
+    assert restored.catalog_revision == "legacy-catalog-revision"
+    assert restored.toolset_hash == "a" * 64
+    assert restored.definitions == ()
+
+
 def test_definition_fact_drives_prompt_revision_and_system_message() -> None:
     from services.agent.runtime.production_model import _messages
 

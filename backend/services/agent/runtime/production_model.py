@@ -196,6 +196,7 @@ def _frozen_runtime_facts(context: dict):
             facts[0]["definition_document"], facts[1]["catalog_document"],
             facts[2]["toolset_document"],
             catalog_revision=facts[1].get("catalog_revision"),
+            effective_toolset_hash=facts[2].get("effective_toolset_hash"),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise RuntimeError("RUNTIME_VERSION_FACTS_INVALID") from exc

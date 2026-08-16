@@ -287,10 +287,33 @@ class RuntimeLoopCoordinator:
             run_id=run_id, worker_id=self._worker_id,
             execution_token=token,
         )
-        await self._model_loop.advance(
-            snapshot=snapshot, worker_id=self._worker_id,
-            run_id=run_id, run_execution_token=token,
-        )
+        try:
+            await self._model_loop.advance(
+                snapshot=snapshot, worker_id=self._worker_id,
+                run_id=run_id, run_execution_token=token,
+            )
+        except FencingTokenMismatchError:
+            return
+        except Exception as exc:
+            try:
+                failed_snapshot = await self._recovery.get_run_aggregate(
+                    run_id=run_id, worker_id=self._worker_id,
+                    execution_token=token,
+                )
+            except FencingTokenMismatchError:
+                return
+            receipt = await self._runtime.fail_run(
+                run_id, token, _state_version(failed_snapshot.run),
+                _runtime_failure_code(exc),
+            )
+            if receipt.outcome not in {
+                MutationOutcome.FAILED,
+                MutationOutcome.ALREADY_FAILED,
+            }:
+                raise RuntimeError(
+                    f"RUN_FAILURE_REJECTED:{receipt.outcome.value}",
+                ) from exc
+            return
         try:
             refreshed = await self._recovery.get_run_aggregate(
                 run_id=run_id, worker_id=self._worker_id,
@@ -386,3 +409,14 @@ def _state_version(value: object) -> int:
     if isinstance(version, bool) or not isinstance(version, int):
         raise RuntimeError("RUN_STATE_VERSION_REQUIRED")
     return version
+
+
+def _runtime_failure_code(error: BaseException) -> str:
+    value = str(error).strip()
+    if (
+        value.startswith(("RUNTIME_", "AGENT_RUNTIME_"))
+        and len(value) <= 120
+        and all(char.isalnum() or char in "_:-" for char in value)
+    ):
+        return value.lower()
+    return "runtime_model_failure"

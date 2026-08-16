@@ -238,17 +238,19 @@ def build_runtime_version_registry() -> RuntimeVersionRegistry:
     )
 
 
-def restore_catalog(document: Mapping[str, object]) -> RuntimeToolCatalog:
+def restore_catalog(
+    document: Mapping[str, object], *, legacy_fact: bool = False,
+) -> RuntimeToolCatalog:
     """Rebuild a catalog from persisted facts, independent of executors."""
     tools = []
     for raw in document.get("tools", []):
         if not isinstance(raw, Mapping):
             raise ValueError("RUNTIME_CATALOG_FACT_INVALID")
         description = raw.get("description")
-        if description is None:
+        if description is None and not legacy_fact:
             description = _legacy_description(str(raw["canonical_name"]))
         provider_schema = raw.get("provider_schema")
-        if not isinstance(provider_schema, Mapping):
+        if not legacy_fact and not isinstance(provider_schema, Mapping):
             provider_schema = _legacy_provider_schema(
                 str(raw["canonical_name"]),
             ) or raw["schema"]
@@ -294,14 +296,30 @@ def restore_frozen_toolset(
     catalog_document: Mapping[str, object],
     toolset_document: Mapping[str, object],
     *, catalog_revision: str | None = None,
+    effective_toolset_hash: str | None = None,
 ) -> object:
     from services.agent.runtime.catalog.effective_toolset import EffectiveToolset
     agent = restore_agent_definition(definition_document)
+    legacy_candidate = (
+        "catalog_revision" not in catalog_document
+        and "schema_revision" not in catalog_document
+    )
     catalog = restore_catalog(catalog_document)
+    legacy_fact = (
+        legacy_candidate
+        and catalog_revision is not None
+        and catalog_revision != catalog.revision
+    )
+    if legacy_fact:
+        catalog = restore_catalog(catalog_document, legacy_fact=True)
     stored_catalog_revision = str(
         catalog_document.get("catalog_revision") or catalog.revision
     )
-    if catalog_revision is not None and stored_catalog_revision != catalog_revision:
+    if (
+        catalog_revision is not None
+        and not legacy_fact
+        and stored_catalog_revision != catalog_revision
+    ):
         raise ValueError("RUNTIME_CATALOG_FACT_HASH_MISMATCH")
     scope = str(toolset_document.get("scope_kind", ""))
     channel = str(toolset_document.get("channel", ""))
@@ -311,6 +329,18 @@ def restore_frozen_toolset(
         entitled_groups=frozenset(toolset_document.get("entitled_groups", [])),
         authorized_names=names,
     )
+    if legacy_fact:
+        if (
+            not isinstance(effective_toolset_hash, str)
+            or len(effective_toolset_hash) != 64
+            or any(char not in "0123456789abcdef" for char in effective_toolset_hash.lower())
+        ):
+            raise ValueError("RUNTIME_EFFECTIVE_TOOLSET_FACT_INVALID")
+        return EffectiveToolset(
+            definitions=restored.definitions,
+            catalog_revision=catalog_revision,
+            toolset_hash=effective_toolset_hash,
+        )
     stored_tools = toolset_document.get("tools")
     if isinstance(stored_tools, list):
         facts = {
