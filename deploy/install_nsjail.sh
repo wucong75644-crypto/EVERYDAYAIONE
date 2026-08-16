@@ -43,7 +43,9 @@ echo "=== 4. 安装 ==="
 install -D -o root -g root -m 0755 nsjail "$NSJAIL_DEST"
 
 echo "=== 5. 验证 ==="
-"$NSJAIL_DEST" --version || "$NSJAIL_DEST" --help 2>&1 | head -3
+if ! "$NSJAIL_DEST" --version >/dev/null 2>&1; then
+    "$NSJAIL_DEST" --help >/dev/null 2>&1
+fi
 sha256sum "$NSJAIL_DEST"
 
 echo "=== 6. 清理编译产物（保留源码以备重新编译） ==="

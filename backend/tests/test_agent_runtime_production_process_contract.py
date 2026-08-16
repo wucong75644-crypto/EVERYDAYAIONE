@@ -309,6 +309,7 @@ def test_nsjail_installer_accepts_alinux_epel_provider() -> None:
     text = (DEPLOY / "install_nsjail.sh").read_text()
     assert "epel-aliyuncs-release" in text
     assert "rpm -q --quiet epel-release" in text
+    assert "| head -3" not in text
 
 
 def test_worker_db_probe_never_loads_application_settings() -> None:
