@@ -20,6 +20,8 @@ ROLES = {
     "agent-projection-worker.env": "everydayai_projection_worker",
     "agent-authorization-worker.env": "everydayai_authorization_worker",
 }
+MEDIA_CDN_DOMAIN = "cdn.everydayai.com.cn"
+MEDIA_RESULT_ALLOWED_HOSTS = "file.aiquickdraw.com,tempfile.aiquickdraw.com"
 
 
 class ProvisioningError(RuntimeError):
@@ -162,6 +164,10 @@ def render_envs(
     media_enabled_value = str(media_enabled).lower()
     media_probe_value = str(media_provider_probe_passed).lower()
     media_ready_value = str(media_production_ready).lower()
+    media_cdn_domain = MEDIA_CDN_DOMAIN if media_enabled else ""
+    media_result_allowed_hosts = (
+        MEDIA_RESULT_ALLOWED_HOSTS if media_enabled else ""
+    )
     passwords = {name: backend[key] for name, key in PASSWORD_KEYS.items()}
     if any(len(value) < 24 or "\n" in value or "\r" in value
            for value in passwords.values()):
@@ -200,8 +206,8 @@ def render_envs(
             "AGENT_RUNTIME_MEDIA_ENABLED": media_enabled_value,
             "AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED": media_probe_value,
             "MEDIA_WORKSPACE_ROOT": "/mnt/nas-workspace",
-            "MEDIA_CDN_DOMAIN": "",
-            "MEDIA_RESULT_ALLOWED_HOSTS": "",
+            "MEDIA_CDN_DOMAIN": media_cdn_domain,
+            "MEDIA_RESULT_ALLOWED_HOSTS": media_result_allowed_hosts,
             "AGENT_RUNTIME_POLL_INTERVAL_SECONDS": "1", "AGENT_RUNTIME_HEARTBEAT_SECONDS": "10", **shared,
         },
         "agent-authorization-worker.env": {

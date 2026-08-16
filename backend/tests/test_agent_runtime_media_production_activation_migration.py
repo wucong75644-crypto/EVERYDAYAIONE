@@ -23,3 +23,11 @@ def test_media_activation_context_and_rollback_are_runtime_admin_only() -> None:
     assert "TO everydayai_runtime_admin" in sql
     assert "DROP FUNCTION IF EXISTS set_agent_runtime_media_production_state_v1" in rollback
     assert "DROP FUNCTION IF EXISTS get_agent_runtime_media_admin_context_v1" in rollback
+
+
+def test_media_on_render_uses_explicit_storage_and_provider_hosts() -> None:
+    source = (ROOT.parent / "deploy/control_plane_env_source.py").read_text(
+        encoding="utf-8",
+    )
+    assert 'MEDIA_CDN_DOMAIN = "cdn.everydayai.com.cn"' in source
+    assert 'MEDIA_RESULT_ALLOWED_HOSTS = "file.aiquickdraw.com,tempfile.aiquickdraw.com"' in source
