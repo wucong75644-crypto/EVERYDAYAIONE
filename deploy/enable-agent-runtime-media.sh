@@ -95,6 +95,7 @@ set +a
 "$python_bin" - <<'PY'
 import json
 import os
+import socket
 import time
 from uuid import uuid4
 
@@ -119,6 +120,21 @@ def run() -> None:
                 time.sleep(1)
             readiness = context.get("readiness", {}) if context else {}
             if not readiness.get("projection_heartbeat_fresh"):
+                try:
+                    health_socket = socket.socket(socket.AF_UNIX)
+                    health_socket.settimeout(3)
+                    health_socket.connect(
+                        "/run/everydayai-agent-projection/health.sock",
+                    )
+                    health_socket.sendall(b"x")
+                    health = health_socket.recv(4096).decode()
+                    health_socket.close()
+                except Exception as error:
+                    health = type(error).__name__
+                print(json.dumps({
+                    "media_context": context,
+                    "projection_health": health,
+                }, sort_keys=True))
                 raise RuntimeError("PROJECTION_MEDIA_READINESS_TIMEOUT")
             actor = context["actor_user_id"]
             org = context["org_id"]
