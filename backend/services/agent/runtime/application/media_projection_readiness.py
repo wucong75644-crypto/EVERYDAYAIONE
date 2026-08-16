@@ -50,9 +50,12 @@ async def report_media_projection_readiness(
         )
         return False, False
     logger.info(
-        "runtime_media_projection_readiness role={} effective_ready={} "
+        "runtime_media_projection_readiness role={} input_ready={} draining={} "
+        "media_enabled={} provider_probe_passed={} effective_ready={} "
         "projection_ready={} heartbeat_fresh={} global_ready={}",
-        role, effective_ready, projection_ready, heartbeat_fresh, result["ready"],
+        role, ready, draining, settings.agent_runtime_media_enabled,
+        settings.agent_runtime_media_provider_probe_passed, effective_ready,
+        projection_ready, heartbeat_fresh, result["ready"],
     )
     return True, projection_ready and heartbeat_fresh
 
