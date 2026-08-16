@@ -114,12 +114,11 @@ def run() -> None:
             for _ in range(30):
                 cursor.execute("SELECT get_agent_runtime_media_admin_context_v1()")
                 context = cursor.fetchone()[0]
-                readiness = context.get("readiness", {})
-                if readiness.get("projection_heartbeat_fresh"):
+                if context.get("readiness", {}).get("projection_heartbeat_fresh"):
                     break
                 time.sleep(1)
-            readiness = context.get("readiness", {}) if context else {}
-            if not readiness.get("projection_heartbeat_fresh"):
+            readiness = context.get("readiness", {})
+            if not readiness.get("ready"):
                 try:
                     health_socket = socket.socket(socket.AF_UNIX)
                     health_socket.settimeout(3)

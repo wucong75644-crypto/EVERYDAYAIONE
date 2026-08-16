@@ -30,7 +30,13 @@ async def report_media_projection_readiness(
     result = response.data if response is not None else None
     if not isinstance(result, dict) or not isinstance(result.get("ready"), bool):
         return False, False
-    return True, result["ready"]
+    projection_ready = result.get(
+        "projection_owner_ready", result.get("ready"),
+    )
+    heartbeat_fresh = result.get("projection_heartbeat_fresh", True)
+    if not isinstance(projection_ready, bool) or not isinstance(heartbeat_fresh, bool):
+        return False, False
+    return True, projection_ready and heartbeat_fresh
 
 
 def set_media_owner_readiness(owner, role: str, ready: bool) -> bool:

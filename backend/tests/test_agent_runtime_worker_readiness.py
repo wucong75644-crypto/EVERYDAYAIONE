@@ -177,6 +177,34 @@ async def test_projection_media_readiness_fails_closed_without_provider_probe() 
 
 
 @pytest.mark.asyncio
+async def test_projection_readiness_does_not_depend_on_global_media_gate() -> None:
+    class Rpc:
+        async def execute(self):
+            return SimpleNamespace(data={
+                "ready": False,
+                "projection_owner_ready": True,
+                "projection_heartbeat_fresh": True,
+            })
+
+    class Db:
+        def rpc(self, name, params):
+            del name, params
+            return Rpc()
+
+    settings = SimpleNamespace(
+        agent_runtime_worker_id="projection-worker",
+        agent_runtime_release_revision="release-1",
+        agent_runtime_heartbeat_seconds=10,
+        agent_runtime_media_enabled=True,
+        agent_runtime_media_provider_probe_passed=True,
+    )
+    rpc_ok, persisted_ready = await _report_media_projection_readiness(
+        Db(), settings, "projection", ready=True, draining=False,
+    )
+    assert (rpc_ok, persisted_ready) == (True, True)
+
+
+@pytest.mark.asyncio
 async def test_runtime_owner_drain_is_idempotent_and_stops_next_claim() -> None:
     events = []
 
