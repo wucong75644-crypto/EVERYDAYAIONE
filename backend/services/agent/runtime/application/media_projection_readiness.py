@@ -28,14 +28,14 @@ async def report_media_projection_readiness(
         ).execute()
     except Exception as error:
         logger.warning(
-            "runtime_media_projection_readiness_rpc_failed role=%s error_type=%s",
+            "runtime_media_projection_readiness_rpc_failed role={} error_type={}",
             role, type(error).__name__,
         )
         return False, False
     result = response.data if response is not None else None
     if not isinstance(result, dict) or not isinstance(result.get("ready"), bool):
         logger.warning(
-            "runtime_media_projection_readiness_invalid_result role=%s result_type=%s",
+            "runtime_media_projection_readiness_invalid_result role={} result_type={}",
             role, type(result).__name__,
         )
         return False, False
@@ -45,13 +45,13 @@ async def report_media_projection_readiness(
     heartbeat_fresh = result.get("projection_heartbeat_fresh", True)
     if not isinstance(projection_ready, bool) or not isinstance(heartbeat_fresh, bool):
         logger.warning(
-            "runtime_media_projection_readiness_invalid_projection_state role=%s",
+            "runtime_media_projection_readiness_invalid_projection_state role={}",
             role,
         )
         return False, False
     logger.info(
-        "runtime_media_projection_readiness role=%s effective_ready=%s "
-        "projection_ready=%s heartbeat_fresh=%s global_ready=%s",
+        "runtime_media_projection_readiness role={} effective_ready={} "
+        "projection_ready={} heartbeat_fresh={} global_ready={}",
         role, effective_ready, projection_ready, heartbeat_fresh, result["ready"],
     )
     return True, projection_ready and heartbeat_fresh
