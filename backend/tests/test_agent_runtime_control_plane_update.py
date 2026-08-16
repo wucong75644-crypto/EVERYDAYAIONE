@@ -71,7 +71,7 @@ def _write_source_envs(backend_dir: Path) -> str:
     return query
 def _read_env(path: Path) -> dict[str, str]:
     return dict(line.split("=", 1) for line in path.read_text().splitlines())
-def test_provisioner_keeps_secrets_off_argv_and_output_and_encodes_dsn(
+def test_provisioner_defaults_flags_off_and_explicitly_enables_runtime_media(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     provisioner = _load_provisioner()
@@ -134,6 +134,26 @@ def test_provisioner_keeps_secrets_off_argv_and_output_and_encodes_dsn(
     assert projection["SENTRY_DSN"] == "https://public@example.invalid/42"
     assert projection["ENVIRONMENT"] == "production-c7"
     assert not (env_dir / "sandbox-worker.env").exists()
+
+    runtime_release = "d" * 40
+    on_argv = [
+        "prepare",
+        "--backend-dir", str(backend_dir), "--env-dir", str(env_dir),
+        "--release-sha", runtime_release, "--transaction-root", str(transaction_root),
+        "--media-on", "--runtime-on",
+    ]
+    assert provisioner.main(on_argv) == 0
+    assert provisioner.main([
+        "publish", "--env-dir", str(env_dir), "--release-sha", runtime_release,
+        "--transaction-root", str(transaction_root),
+    ]) == 0
+    runtime_enabled = _read_env(env_dir / "agent-runtime-worker.env")
+    projection_enabled = _read_env(env_dir / "agent-projection-worker.env")
+    assert runtime_enabled["AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED"] == "true"
+    assert runtime_enabled["AGENT_RUNTIME_MEDIA_ENABLED"] == "true"
+    assert runtime_enabled["AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED"] == "true"
+    assert projection_enabled["AGENT_RUNTIME_MEDIA_ENABLED"] == "true"
+    assert projection_enabled["AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED"] == "true"
 def _write_fake_commands(fake_bin: Path, calls: Path) -> None:
     fake_bin.mkdir()
     install = fake_bin / "install"

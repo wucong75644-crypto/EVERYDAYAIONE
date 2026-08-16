@@ -1,4 +1,4 @@
-"""Read approved production sources and render flags-off control-plane envs."""
+"""Read approved production sources and render scoped control-plane envs."""
 from __future__ import annotations
 
 import ast
@@ -154,6 +154,7 @@ def render_envs(
     kek: dict[str, str], *, media_enabled: bool = False,
     media_provider_probe_passed: bool = False,
     media_production_ready: bool = False,
+    production_composition_enabled: bool = False,
 ) -> dict[str, str]:
     if media_production_ready and not (
         media_enabled and media_provider_probe_passed
@@ -164,6 +165,7 @@ def render_envs(
     media_enabled_value = str(media_enabled).lower()
     media_probe_value = str(media_provider_probe_passed).lower()
     media_ready_value = str(media_production_ready).lower()
+    production_composition_value = str(production_composition_enabled).lower()
     media_cdn_domain = MEDIA_CDN_DOMAIN if media_enabled else ""
     media_result_allowed_hosts = (
         MEDIA_RESULT_ALLOWED_HOSTS if media_enabled else ""
@@ -186,7 +188,7 @@ def render_envs(
             "AGENT_RUNTIME_PROCESS_ROLE": "agent_runtime", "AGENT_RUNTIME_WORKER_ID": "agent-runtime-01",
             "AGENT_RUNTIME_RELEASE_REVISION": release_sha,
             "AGENT_RUNTIME_HEALTH_SOCKET": "/run/everydayai-agent-runtime/health.sock",
-            "AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED": "false",
+            "AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED": production_composition_value,
             "AGENT_RUNTIME_STREAM_ENABLED": "true",
             "REDIS_HOST": backend["REDIS_HOST"],
             "REDIS_PORT": backend["REDIS_PORT"],

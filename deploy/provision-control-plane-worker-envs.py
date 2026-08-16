@@ -49,6 +49,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--media-on", action="store_true",
         help="显式渲染 Runtime/Projection 媒体生产开启态",
     )
+    parser.add_argument(
+        "--runtime-on", action="store_true",
+        help="显式开启 Runtime 生产组合与 Model/Action 主循环",
+    )
     return parser.parse_args(argv)
 def _resolve_owner(name: str | None = None) -> tuple[int, int]:
     group = RUNTIME_MODEL_SECRET_GROUP if name == "agent-runtime-model.env" else GROUP
@@ -284,6 +288,7 @@ def _prepare(
             kek, media_enabled=args.media_on,
             media_provider_probe_passed=args.media_on,
             media_production_ready=args.media_on,
+            production_composition_enabled=args.runtime_on,
         ).items()
     }
     _ensure_transaction_root(args.transaction_root, tx_uid, tx_gid)

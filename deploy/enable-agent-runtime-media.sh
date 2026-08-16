@@ -63,7 +63,8 @@ trap 'rollback $?' EXIT
 
 "$python_bin" "$provisioner" prepare \
     --backend-dir "$backend_dir" --env-dir "$env_dir" \
-    --release-sha "$release_sha" --transaction-root "$transaction_root" --media-on
+    --release-sha "$release_sha" --transaction-root "$transaction_root" \
+    --media-on --runtime-on
 "$python_bin" "$provisioner" preflight \
     --env-dir "$env_dir" --release-sha "$release_sha" \
     --transaction-root "$transaction_root"
