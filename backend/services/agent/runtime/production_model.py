@@ -11,8 +11,11 @@ from services.agent.runtime.application.model_loop import PreparedModelCall
 from services.agent.runtime.context import (
     build_context_receipt,
     build_runtime_context,
-    normalize_permission_mode,
-    render_runtime_mode_prompt,
+)
+from services.agent.runtime.context.runtime_messages import (
+    _messages,
+    _runtime_messages,
+    _runtime_prompt_inputs,
 )
 from services.agent.runtime.domain import StopReason
 from services.agent.runtime.catalog import (
@@ -45,8 +48,7 @@ class PostgresModelCallFactory:
     async def __call__(
         self, snapshot: RunAggregateSnapshot,
     ) -> PreparedModelCall:
-        run_id = str(snapshot.run["id"])
-        token = str(snapshot.run["execution_token"])
+        run_id, token = str(snapshot.run["id"]), str(snapshot.run["execution_token"])
         response = await self._database.rpc(
             "get_agent_runtime_model_context_v2", {
                 "p_run_id": run_id,
@@ -66,20 +68,20 @@ class PostgresModelCallFactory:
         )
         model_id = model_resolution.model_id
         input_message_id = _optional_text(payload.get("input_message_id"))
-        reference_image_count = _current_input_image_count(
-            context.get("messages"), input_message_id,
+        reference_image_count = _current_input_image_count(context.get("messages"), input_message_id)
+        messages, permission_mode, skill_receipt = _runtime_prompt_inputs(
+            snapshot=snapshot, context=context, definition=definition,
+            payload=payload, model_id=model_id,
+            input_message_id=input_message_id,
+            supports_vision=_supports_vision(model_id),
         )
-        messages, permission_mode = _runtime_messages(
-            context=context, definition=definition, payload=payload,
-            model_id=model_id, input_message_id=input_message_id,
-        )
-        step_number = len(snapshot.model_steps) + 1
-        stable_prefix_blocks = _stable_prefix_blocks(definition.context_policy)
+        step_number, stable_prefix_blocks = len(snapshot.model_steps) + 1, _stable_prefix_blocks(definition.context_policy)
         runtime_context = build_runtime_context(
             run=dict(snapshot.run), session=session, messages=messages,
             actions=_list(context.get("actions")), toolset=toolset,
             model_step=step_number, stable_prefix_blocks=stable_prefix_blocks,
             permission_mode=permission_mode,
+            skill_snapshot_hash=skill_receipt["snapshot_hash"],
         )
         plan = runtime_context.plan
         tools = toolset.provider_tools()
@@ -98,6 +100,7 @@ class PostgresModelCallFactory:
         receipt_data = receipt.to_log_fields()
         org_id = str(session["org_id"])
         receipt_data["org_id"] = org_id
+        receipt_data["skill_context"] = skill_receipt
         revision = resolve_model_revision(model_id)
         provider = _provider(model_id)
         receipt_data.update({
@@ -169,66 +172,6 @@ async def retain_unknown_model_attempt(
 ) -> None:
     """Keep direct model ambiguity durable and reconcile-only without churn."""
     del snapshot
-
-
-def _messages(
-    value: object,
-    system_prompt: str,
-    *,
-    current_input_message_id: str | None = None,
-    supports_vision: bool = True,
-) -> list[dict]:
-    if not isinstance(value, list):
-        raise RuntimeError("AGENT_RUNTIME_MESSAGES_INVALID")
-    from services.handlers.chat_context.content_extractors import (
-        extract_image_urls_from_content,
-        extract_oai_messages_from_content,
-        project_user_image_urls,
-    )
-    if not system_prompt:
-        raise RuntimeError("RUNTIME_DEFINITION_PROMPT_MISSING")
-    result = [{"role": "system", "content": system_prompt}]
-    for item in value:
-        row = _mapping(item, "message")
-        role = str(row.get("role") or "")
-        if role not in {"system", "user", "assistant"}:
-            continue
-        projected = extract_oai_messages_from_content(
-            row.get("content"), role, safe_completed_tools_only=True,
-        )
-        is_current_input = (
-            role == "user"
-            and current_input_message_id is not None
-            and str(row.get("id") or "") == current_input_message_id
-        )
-        if is_current_input:
-            image_urls = extract_image_urls_from_content(row.get("content"))
-            if image_urls and not supports_vision:
-                raise RuntimeError("RUNTIME_MODEL_VISION_REQUIRED")
-            projected = project_user_image_urls(
-                projected, image_urls, include_reference_indexes=True,
-            )
-        result.extend(projected)
-    if len(result) == 1:
-        raise RuntimeError("AGENT_RUNTIME_MESSAGES_EMPTY")
-    return result
-
-
-def _runtime_messages(
-    *, context: dict, definition: object, payload: dict,
-    model_id: str, input_message_id: str | None,
-) -> tuple[list[dict], str]:
-    params = _mapping(payload.get("params") or {}, "params")
-    permission_mode = normalize_permission_mode(params.get("permission_mode"))
-    system_prompt = "\n\n".join((
-        str(definition.system_prompt),
-        render_runtime_mode_prompt(permission_mode),
-    ))
-    return _messages(
-        context.get("messages"), system_prompt,
-        current_input_message_id=input_message_id,
-        supports_vision=_supports_vision(model_id),
-    ), permission_mode
 
 
 def _code_execute_tools(org_id: object) -> list[dict]:

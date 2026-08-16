@@ -82,7 +82,7 @@ Runtime：ModelStep → Action → Worker → Executor
 - `backend/services/agent/runtime/production_model.py`
 - `backend/services/agent/runtime/policy/evaluator.py`
 
-状态：第一批实现完成，定向测试通过，已提交；待部署验证。
+状态：第一批实现完成，定向测试通过，已提交并部署验证。
 
 验收重点：三种模式可进入 Runtime Run；模型能看到当前模式；Plan 不产生副作用 Action；Ask 确认后可继续；Plan 退出可恢复原模式。
 
@@ -110,6 +110,8 @@ Runtime：ModelStep → Action → Worker → Executor
 - 当前 Run 固定 Skill 内容哈希，下一 Run 才使用修改后的内容。
 
 详细阶段以 [`PLAN_AGENT_RUNTIME_Skill系统分阶段实施.md`](./PLAN_AGENT_RUNTIME_Skill系统分阶段实施.md) 为准。
+
+当前实现范围：Runtime v3 首次 ModelStep 扫描工作区 `Skills/` 目录，先注入元数据目录，再按请求匹配并加载最多 3 个 Skill 正文；Skill 快照写入 ModelStep 回执，后续 ModelStep 复用快照，不热更新。工具清单、Action 权限和 Skill 创建/修改仍由后续板块接入。
 
 ### 工具接入总流程
 
@@ -327,8 +329,8 @@ Runtime：ModelStep → Action → Worker → Executor
 | 板块 | 状态 |
 |---|---|
 | 板块 0：基线与差异清单 | 已完成只读调查 |
-| 板块 1：三种模式与提示词 | 第一批实现完成，定向测试通过，已提交，待部署验证 |
-| 板块 2：Skill 目录与上下文 | 已有分阶段计划，待板块 1 完成后接入 |
+| 板块 1：三种模式与提示词 | 已实现、测试、提交并部署验证 |
+| 板块 2：Skill 目录与上下文 | 第一批实现完成，定向测试通过，待提交部署验证 |
 | 板块 3：Tool Catalog 与契约 | 待板块 1、2 的上下文边界确认 |
 | 板块 4：Scope、可见性和权限 | 待板块 3 |
 | 板块 5：Executor Adapter | 待板块 3、4 |
@@ -340,3 +342,4 @@ Runtime：ModelStep → Action → Worker → Executor
 
 - 2026-08-16：建立 Runtime v3 兼容迁移与 Skill 接入总计划；确定每个板块逐项确认、验证、提交、部署后再推进。
 - 2026-08-16：完成板块 1 第一批实现：Runtime v3 读取并规范化 `permission_mode`，将共享模式规则和当前模式注入 Runtime Context，并记录模式事实。
+- 2026-08-16：完成板块 2 第一批实现：接入工作区 Skill 目录渐进发现、按需加载、内容哈希快照和 ModelStep 回执恢复。

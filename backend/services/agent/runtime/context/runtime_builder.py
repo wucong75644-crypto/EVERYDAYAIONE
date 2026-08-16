@@ -18,6 +18,7 @@ class RuntimeContextV2:
     plan: ProviderContextPlan
     receipt_facts: Mapping[str, object]
     permission_mode: str = "auto"
+    skill_snapshot_hash: str | None = None
 
 
 def build_runtime_context(
@@ -25,6 +26,7 @@ def build_runtime_context(
     messages: list[dict[str, object]], actions: list[Mapping[str, object]],
     toolset: EffectiveToolset, model_step: int, stable_prefix_blocks: int = 0,
     permission_mode: str = "auto",
+    skill_snapshot_hash: str | None = None,
 ) -> RuntimeContextV2:
     run_id = _required(run, "id")
     session_id = _required(session, "id")
@@ -52,8 +54,10 @@ def build_runtime_context(
             "catalog_revision": toolset.catalog_revision,
             "context_plan_hash": plan.plan_hash,
             "permission_mode": permission_mode,
+            "skill_snapshot_hash": skill_snapshot_hash,
         },
         permission_mode=permission_mode,
+        skill_snapshot_hash=skill_snapshot_hash,
     )
 
 

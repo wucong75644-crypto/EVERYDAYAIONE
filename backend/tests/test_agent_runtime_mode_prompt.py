@@ -4,7 +4,18 @@ from services.agent.runtime.context.mode_prompt import (
     normalize_permission_mode,
     render_runtime_mode_prompt,
 )
+from services.agent.runtime.ports.coordinator_recovery import (
+    RunAggregateSnapshot,
+)
 from services.agent.runtime.production_model import _runtime_messages
+
+
+def _snapshot(latest_model_step=None) -> RunAggregateSnapshot:
+    return RunAggregateSnapshot(
+        run={}, latest_model_step=latest_model_step,
+        unresolved_model_attempt=None, latest_model_result=None,
+        model_steps=(), actions=(),
+    )
 
 
 def test_normalize_permission_mode_keeps_legacy_inputs() -> None:
@@ -28,7 +39,8 @@ def test_runtime_mode_prompt_contains_shared_rules_and_current_mode() -> None:
 def test_runtime_model_messages_use_run_permission_mode() -> None:
     from types import SimpleNamespace
 
-    messages, mode = _runtime_messages(
+    messages, mode, skill_context = _runtime_messages(
+        snapshot=_snapshot(),
         context={"messages": [{"role": "user", "content": "先规划"}]},
         definition=SimpleNamespace(system_prompt="Runtime base"),
         payload={"params": {"permission_mode": "plan"}},
@@ -40,3 +52,4 @@ def test_runtime_model_messages_use_run_permission_mode() -> None:
     assert messages[0]["role"] == "system"
     assert "Runtime base" in messages[0]["content"]
     assert "<current_mode>plan</current_mode>" in messages[0]["content"]
+    assert skill_context.catalog is None

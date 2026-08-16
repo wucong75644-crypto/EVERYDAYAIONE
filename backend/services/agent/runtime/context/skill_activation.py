@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from services.agent.runtime.context.skill_discovery import (
     SkillMetadata,
@@ -32,12 +33,31 @@ class ActivatedSkill:
 
 
 @dataclass(frozen=True, kw_only=True)
+class SkillSnapshot:
+    """The immutable identity of one Skill loaded into a Run context."""
+
+    name: str
+    relative_path: str
+    source: str
+    content_hash: str
+
+
+class SkillActivationError(ValueError):
+    """A selected Skill cannot be safely loaded for this context."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+@dataclass(frozen=True, kw_only=True)
 class SkillContext:
     """Metadata catalog and selected instruction block for one request."""
 
     catalog: str | None
     instructions: str | None
     issue_count: int
+    active_skills: tuple[SkillSnapshot, ...] = ()
 
 
 def build_skill_context(
@@ -60,15 +80,82 @@ def build_skill_context(
         catalog=catalog,
         instructions=render_active_skill_instructions(active),
         issue_count=len(result.issues),
+        active_skills=tuple(
+            SkillSnapshot(
+                name=item.metadata.name,
+                relative_path=item.metadata.relative_path,
+                source=item.metadata.source,
+                content_hash=item.metadata.content_hash,
+            )
+            for item in active
+        ),
     )
 
 
-class SkillActivationError(ValueError):
-    """A selected Skill cannot be safely loaded for this context."""
+def skill_context_snapshot(context: SkillContext) -> dict[str, object]:
+    """Serialize selected Skill context for the current Run receipt."""
+    payload: dict[str, object] = {
+        "schema_version": 1,
+        "catalog": context.catalog,
+        "instructions": context.instructions,
+        "issue_count": context.issue_count,
+        "active_skills": [
+            {
+                "name": skill.name,
+                "relative_path": skill.relative_path,
+                "source": skill.source,
+                "content_hash": skill.content_hash,
+            }
+            for skill in context.active_skills
+        ],
+    }
+    payload["snapshot_hash"] = hashlib.sha256(
+        _canonical_json(payload).encode("utf-8")
+    ).hexdigest()
+    return payload
 
-    def __init__(self, code: str) -> None:
-        super().__init__(code)
-        self.code = code
+
+def restore_skill_context(value: object) -> SkillContext:
+    """Restore a persisted Skill context without touching the workspace."""
+    if not isinstance(value, Mapping) or value.get("schema_version") != 1:
+        raise SkillActivationError("SKILL_CONTEXT_RECEIPT_INVALID")
+    payload = dict(value)
+    snapshot_hash = payload.pop("snapshot_hash", None)
+    expected_hash = hashlib.sha256(
+        _canonical_json(payload).encode("utf-8")
+    ).hexdigest()
+    if not isinstance(snapshot_hash, str) or expected_hash != snapshot_hash:
+        raise SkillActivationError("SKILL_CONTEXT_RECEIPT_HASH_INVALID")
+    catalog = _optional_bounded_text(payload.get("catalog"), 12_000)
+    instructions = _optional_bounded_text(
+        payload.get("instructions"), 240_000,
+    )
+    issue_count = payload.get("issue_count")
+    active = payload.get("active_skills")
+    if not isinstance(issue_count, int) or issue_count < 0:
+        raise SkillActivationError("SKILL_CONTEXT_RECEIPT_INVALID")
+    if not isinstance(active, list) or len(active) > _MAX_ACTIVE_SKILLS:
+        raise SkillActivationError("SKILL_CONTEXT_RECEIPT_INVALID")
+    snapshots: list[SkillSnapshot] = []
+    for item in active:
+        if not isinstance(item, Mapping):
+            raise SkillActivationError("SKILL_CONTEXT_RECEIPT_INVALID")
+        fields = {
+            key: item.get(key)
+            for key in ("name", "relative_path", "source", "content_hash")
+        }
+        if any(
+            not isinstance(field, str) or not field
+            for field in fields.values()
+        ):
+            raise SkillActivationError("SKILL_CONTEXT_RECEIPT_INVALID")
+        snapshots.append(SkillSnapshot(**fields))
+    return SkillContext(
+        catalog=catalog,
+        instructions=instructions,
+        issue_count=issue_count,
+        active_skills=tuple(snapshots),
+    )
 
 
 def select_skill_metadata(
@@ -193,4 +280,18 @@ def _xml_escape(value: str) -> str:
         .replace("<", "&lt;")
         .replace(">", "&gt;")
         .replace('"', "&quot;")
+    )
+
+
+def _optional_bounded_text(value: object, limit: int) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) > limit:
+        raise SkillActivationError("SKILL_CONTEXT_RECEIPT_INVALID")
+    return value
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
     )

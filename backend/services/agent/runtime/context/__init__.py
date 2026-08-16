@@ -44,12 +44,15 @@ from services.agent.runtime.context.skill_discovery import (
 )
 from services.agent.runtime.context.skill_activation import (
     ActivatedSkill,
+    SkillSnapshot,
     SkillContext,
     SkillActivationError,
     build_skill_context,
     load_skill_content,
     render_active_skill_instructions,
+    restore_skill_context,
     select_skill_metadata,
+    skill_context_snapshot,
 )
 from services.agent.runtime.context.runtime_builder import (
     RuntimeContextV2, build_runtime_context,
@@ -75,9 +78,12 @@ __all__ = [
     "SkillDiscoveryResult",
     "SkillMetadata",
     "ActivatedSkill",
+    "SkillSnapshot",
     "SkillContext",
     "SkillActivationError",
     "build_skill_context",
+    "restore_skill_context",
+    "skill_context_snapshot",
     "RuntimeContextV2",
     "build_runtime_context",
     "VALID_PERMISSION_MODES",
