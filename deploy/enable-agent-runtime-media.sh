@@ -5,7 +5,7 @@ set -Eeuo pipefail
 deploy_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 backend_dir=${REMOTE_BACKEND_DIR:-/var/www/everydayai/backend}
 env_dir=${AGENT_RUNTIME_ENV_DIR:-/etc/everydayai}
-transaction_root=${CONTROL_PLANE_TRANSACTION_ROOT:-/var/backups/everydayai/control-plane-updates}
+transaction_root=${CONTROL_PLANE_TRANSACTION_ROOT:-/var/backups/everydayai-media-activation}
 release_sha=
 remote_mode=false
 
