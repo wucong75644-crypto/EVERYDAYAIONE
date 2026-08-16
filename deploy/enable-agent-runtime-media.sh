@@ -158,21 +158,34 @@ def run() -> None:
                     "projection_process_media_env": process_media_env,
                 }, sort_keys=True))
                 raise RuntimeError("PROJECTION_MEDIA_READINESS_TIMEOUT")
-            actor = context["actor_user_id"]
-            org = context["org_id"]
-            cursor.execute("SELECT set_config('app.actor_user_id',%s,false)", (str(actor),))
-            cursor.execute("SELECT set_config('app.org_id',%s,false)", (str(org),))
-            request_id = uuid4()
-            cursor.execute(
-                "SELECT set_agent_runtime_media_production_state_v1(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (
-                    request_id, actor, org,
-                    readiness["state_version"], True, True, True, True,
-                    "enable frozen image v13 production release",
-                ),
-            )
-            result = cursor.fetchone()[0]
-            if result.get("outcome") != "applied":
+            result = None
+            for _ in range(5):
+                cursor.execute("SELECT get_agent_runtime_media_admin_context_v1()")
+                context = cursor.fetchone()[0]
+                readiness = context.get("readiness", {})
+                if not (
+                    readiness.get("projection_owner_ready")
+                    and readiness.get("projection_heartbeat_fresh")
+                ):
+                    raise RuntimeError("PROJECTION_MEDIA_READINESS_LOST")
+                actor = context["actor_user_id"]
+                org = context["org_id"]
+                cursor.execute("SELECT set_config('app.actor_user_id',%s,false)", (str(actor),))
+                cursor.execute("SELECT set_config('app.org_id',%s,false)", (str(org),))
+                request_id = uuid4()
+                cursor.execute(
+                    "SELECT set_agent_runtime_media_production_state_v1(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (
+                        request_id, actor, org,
+                        readiness["state_version"], True, True, True, True,
+                        "enable frozen image v13 production release",
+                    ),
+                )
+                result = cursor.fetchone()[0]
+                if result.get("outcome") != "stale_version":
+                    break
+                time.sleep(0.2)
+            if result is None or result.get("outcome") != "applied":
                 raise RuntimeError(
                     "MEDIA_ACTIVATION_NOT_APPLIED:" + json.dumps(result, sort_keys=True)
                 )
