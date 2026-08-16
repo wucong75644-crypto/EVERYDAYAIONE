@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from loguru import logger
 
 async def report_media_projection_readiness(
@@ -51,11 +53,14 @@ async def report_media_projection_readiness(
         return False, False
     logger.info(
         "runtime_media_projection_readiness role={} input_ready={} draining={} "
-        "media_enabled={} provider_probe_passed={} effective_ready={} "
+        "media_enabled={} provider_probe_passed={} raw_media_enabled={} "
+        "raw_provider_probe_passed={} effective_ready={} "
         "projection_ready={} heartbeat_fresh={} global_ready={}",
         role, ready, draining, settings.agent_runtime_media_enabled,
-        settings.agent_runtime_media_provider_probe_passed, effective_ready,
-        projection_ready, heartbeat_fresh, result["ready"],
+        settings.agent_runtime_media_provider_probe_passed,
+        os.environ.get("AGENT_RUNTIME_MEDIA_ENABLED"),
+        os.environ.get("AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED"),
+        effective_ready, projection_ready, heartbeat_fresh, result["ready"],
     )
     return True, projection_ready and heartbeat_fresh
 
