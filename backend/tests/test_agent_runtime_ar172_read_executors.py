@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -66,7 +67,7 @@ async def test_read_executor_uses_snapshot_hash_and_bounded_json() -> None:
     seen = []
 
     async def read(snapshot, params):
-        seen.append((snapshot.scope.org_id, params))
+        seen.append((snapshot.scope.org_id, params, snapshot.request_hash))
         return {"summary": "ok", "count": 1, "rows": [{"id": "r1"}]}
 
     executor = ReadOnlyExecutor(
@@ -79,8 +80,12 @@ async def test_read_executor_uses_snapshot_hash_and_bounded_json() -> None:
         "summary": "ok", "count": 1, "rows": [{"id": "r1"}],
     }
     assert seen[0][0] is None
-    with pytest.raises(ValueError, match="REQUEST_HASH_CONFLICT"):
-        await executor.dispatch(_attempt({"query": "different"}), request)
+
+    persisted_hash = "f" * 64
+    persisted_attempt = replace(_attempt(request), request_hash=persisted_hash)
+    receipt = await executor.dispatch(persisted_attempt, request)
+    assert receipt.outcome is ExecutionOutcome.COMPLETED
+    assert seen[1][2] == persisted_hash
 
 
 @pytest.mark.asyncio
