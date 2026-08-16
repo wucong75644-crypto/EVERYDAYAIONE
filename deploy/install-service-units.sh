@@ -250,7 +250,7 @@ validate_runtime_worker_envs() {
     require_database_role "$sandbox_path" everydayai_sandbox_worker
     require_env_value "$runtime_path" AGENT_RUNTIME_PROCESS_ROLE agent_runtime
     require_env_value "$runtime_path" \
-        AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED true
+        AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED false
     require_env_value "$runtime_path" AGENT_RUNTIME_MEDIA_ENABLED false
     require_env_value "$runtime_path" \
         AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED false
