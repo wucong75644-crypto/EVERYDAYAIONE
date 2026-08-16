@@ -114,21 +114,20 @@ def test_definition_fact_drives_prompt_revision_and_system_message() -> None:
     assert first[0]["content"] != second[0]["content"]
 
 
-def test_runtime_catalog_does_not_load_application_settings_for_code_tool() -> None:
+def test_runtime_catalog_does_not_load_application_settings_for_code_tool(
+    monkeypatch,
+) -> None:
     import core.config as core_config
 
     def fail_if_loaded():
         raise PermissionError("application .env must stay inaccessible")
 
-    original = core_config.get_settings
-    core_config.get_settings = fail_if_loaded
-    try:
-        versions = build_runtime_version_registry()
-        definition, catalog = versions.resolve_for_agent(
-            "everydayai-default", "v1",
-        )
-    finally:
-        core_config.get_settings = original
+    monkeypatch.setenv("AGENT_RUNTIME_PROCESS_ROLE", "agent_runtime")
+    monkeypatch.setattr(core_config, "get_settings", fail_if_loaded)
+    versions = build_runtime_version_registry()
+    definition, catalog = versions.resolve_for_agent(
+        "everydayai-default", "v1",
+    )
 
     assert definition.revision == "v1"
     assert catalog.resolve("code_execute").description

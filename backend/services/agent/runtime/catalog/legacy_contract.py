@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import os
 from typing import Any
 
 
@@ -55,7 +56,11 @@ def legacy_tool_definitions() -> dict[str, dict[str, Any]]:
 
 def legacy_tool_description(tool_name: str) -> str:
     """Return a stable legacy description, or empty for test-only tools."""
-    definition = _runtime_safe_definition(tool_name)
+    definition = (
+        _runtime_safe_definition(tool_name)
+        if os.environ.get("AGENT_RUNTIME_PROCESS_ROLE") == "agent_runtime"
+        else None
+    )
     if definition is None:
         definition = legacy_tool_definitions().get(tool_name)
     return str(definition.get("description") or "") if definition else ""
@@ -65,7 +70,11 @@ def legacy_tool_parameters(tool_name: str) -> dict[str, Any] | None:
     """Return the exact legacy parameters for the compatible first batch."""
     if tool_name not in LEGACY_SCHEMA_COMPATIBLE_TOOLS:
         return None
-    definition = _runtime_safe_definition(tool_name)
+    definition = (
+        _runtime_safe_definition(tool_name)
+        if os.environ.get("AGENT_RUNTIME_PROCESS_ROLE") == "agent_runtime"
+        else None
+    )
     if definition is None:
         definition = legacy_tool_definitions().get(tool_name)
     parameters = definition.get("parameters") if definition else None
@@ -91,6 +100,7 @@ def _runtime_safe_definitions() -> dict[str, dict[str, Any]]:
     from config.evidence_tools import build_evidence_tools
     from config.file_tools import build_file_tools
     from config.memory_tools import build_memory_tools
+    from config.tool_registry import TOOL_REGISTRY
 
     definitions: dict[str, dict[str, Any]] = {}
     builders = (
@@ -120,6 +130,10 @@ def _runtime_safe_definitions() -> dict[str, dict[str, Any]]:
     }
     for name, description in _RUNTIME_SAFE_REMOTE_DESCRIPTIONS.items():
         definitions[name] = {"name": name, "description": description}
+    for name, entry in TOOL_REGISTRY.items():
+        definitions.setdefault(
+            name, {"name": name, "description": entry.description},
+        )
     return definitions
 
 
