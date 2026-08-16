@@ -13,7 +13,11 @@ NSJAIL_SRC="/opt/nsjail-src"
 NSJAIL_DEST="/usr/local/lib/everydayai/nsjail/$NSJAIL_VERSION/nsjail"
 
 echo "=== 1. 安装编译依赖 ==="
-dnf install -y epel-release
+if rpm -q --quiet epel-aliyuncs-release || rpm -q --quiet epel-release; then
+    echo "EPEL release 已由系统提供，跳过重复安装"
+else
+    dnf install -y epel-release
+fi
 dnf install -y gcc-c++ make git protobuf-compiler protobuf-devel libnl3-devel libcap-devel
 
 echo "=== 2. 克隆 nsjail 源码 ==="

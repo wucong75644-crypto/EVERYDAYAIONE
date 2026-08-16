@@ -305,6 +305,12 @@ def test_sandbox_probe_checks_fixed_capabilities() -> None:
         assert contract in text
 
 
+def test_nsjail_installer_accepts_alinux_epel_provider() -> None:
+    text = (DEPLOY / "install_nsjail.sh").read_text()
+    assert "epel-aliyuncs-release" in text
+    assert "rpm -q --quiet epel-release" in text
+
+
 def test_worker_db_probe_never_loads_application_settings() -> None:
     text = (DEPLOY / "runtime-worker-db-probe.py").read_text()
     assert 'os.environ.get("WORKER_DATABASE_URL")' in text
