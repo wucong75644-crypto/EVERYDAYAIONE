@@ -131,9 +131,29 @@ def run() -> None:
                     health_socket.close()
                 except Exception as error:
                     health = type(error).__name__
+                process_media_env = {}
+                try:
+                    import subprocess
+                    pid = subprocess.check_output(
+                        ["systemctl", "show", "everydayai-agent-projection",
+                         "-p", "MainPID", "--value"], text=True,
+                    ).strip()
+                    raw_env = open(f"/proc/{pid}/environ", "rb").read()
+                    for item in raw_env.split(b"\0"):
+                        key, separator, value = item.partition(b"=")
+                        if separator and key.decode() in {
+                            "AGENT_RUNTIME_MEDIA_ENABLED",
+                            "AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED",
+                            "MEDIA_CDN_DOMAIN",
+                            "MEDIA_RESULT_ALLOWED_HOSTS",
+                        }:
+                            process_media_env[key.decode()] = value.decode()
+                except Exception as error:
+                    process_media_env = {"read_error": type(error).__name__}
                 print(json.dumps({
                     "media_context": context,
                     "projection_health": health,
+                    "projection_process_media_env": process_media_env,
                 }, sort_keys=True))
                 raise RuntimeError("PROJECTION_MEDIA_READINESS_TIMEOUT")
             actor = context["actor_user_id"]
