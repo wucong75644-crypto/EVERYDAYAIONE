@@ -42,6 +42,7 @@ MAX_RUNTIME_IMAGE_ACTIONS = 10
 class PostgresModelCallFactory:
     def __init__(
         self, database, worker_id: str, *, version_registry=None,
+        executor_registry=None,
         stream_observer_builder: Callable[
             [RuntimeStreamTarget, str], ModelResponseStreamObserver
         ] | None = None,
@@ -49,6 +50,7 @@ class PostgresModelCallFactory:
         self._database = database
         self._worker_id = worker_id
         self._versions = version_registry
+        self._executor_registry = executor_registry
         self._stream_observer_builder = stream_observer_builder
 
     async def __call__(
@@ -69,6 +71,7 @@ class PostgresModelCallFactory:
         session = _mapping(context.get("session"), "session")
         payload = _mapping(command.get("payload"), "payload")
         definition, toolset = _frozen_runtime_facts(context)
+        _assert_executor_coverage(toolset, self._executor_registry)
         model_resolution = _resolve_model_selection(
             snapshot=snapshot, context=context, definition=definition,
         )
@@ -170,6 +173,17 @@ class PostgresModelCallFactory:
             ),
             stream_observer=_build_stream_observer(self._stream_observer_builder, payload, session, org_id, model_id),
         )
+
+
+def _assert_executor_coverage(toolset: EffectiveToolset, registry: object) -> None:
+    if registry is None:
+        return
+    from services.agent.runtime.catalog.consistency import (
+        assert_model_tools_have_executors,
+    )
+    assert_model_tools_have_executors(
+        {tool.canonical_name for tool in toolset.definitions}, registry,
+    )
 
 
 def _build_stream_observer(

@@ -63,7 +63,7 @@ def test_enabled_media_composition_without_provider_readiness_fails_closed():
     assert composition.registry.descriptors() == ()
 
 
-def test_enabled_media_composition_registers_both_actions():
+def test_enabled_media_composition_registers_both_actions_by_default():
     database = SimpleNamespace(scope=DatabaseScope(
         actor_user_id=None, org_id=None,
         access_kind=DatabaseAccessKind.AGENT_RUNTIME,
@@ -85,6 +85,28 @@ def test_enabled_media_composition_registers_both_actions():
     _, executor = composition.registry.resolve("generate_image")
     assert executor.provider.production_ready is False
     assert executor.provider.recovery_ready is True
+
+
+def test_runtime_production_media_composition_can_expose_image_only():
+    database = SimpleNamespace(scope=DatabaseScope(
+        actor_user_id=None, org_id=None,
+        access_kind=DatabaseAccessKind.AGENT_RUNTIME,
+    ))
+    composition = build_runtime_media_composition(
+        database=database, transport=object(), credentials=object(),
+        enabled=True, provider_probe_passed=True,
+        tool_names=frozenset({"generate_image"}),
+    )
+    assert {name for descriptor in composition.registry.descriptors()
+            for name in descriptor.action_kinds} == {"generate_image"}
+
+
+def test_runtime_media_composition_rejects_non_media_tool_selection():
+    with pytest.raises(ValueError, match="TOOL_SELECTION_INVALID"):
+        build_runtime_media_composition(
+            database=object(), transport=object(), enabled=False,
+            tool_names=frozenset({"code_execute"}),
+        )
 
 
 def test_local_production_flag_does_not_claim_database_readiness():

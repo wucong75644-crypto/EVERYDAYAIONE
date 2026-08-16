@@ -14,6 +14,7 @@ CURRENT_RELEASES = (
     ("230_03_agent_runtime_catalog_erp_read_v10.sql", "v10"),
     ("230_04_agent_runtime_catalog_data_read_v11.sql", "v11"),
     ("230_05_agent_runtime_catalog_batch_media_v12.sql", "v12"),
+    ("230_06_agent_runtime_catalog_image_v13.sql", "v13"),
 )
 
 
@@ -25,7 +26,7 @@ def test_current_catalog_releases_use_global_definition_revisions() -> None:
 
 
 def test_batch_media_release_is_safe_after_production_release() -> None:
-    forward = (MIGRATIONS / CURRENT_RELEASES[-1][0]).read_text(encoding="utf-8")
+    forward = (MIGRATIONS / CURRENT_RELEASES[4][0]).read_text(encoding="utf-8")
     rollback = (
         ROLLBACKS / "230_05_agent_runtime_catalog_batch_media_v12_rollback.sql"
     ).read_text(encoding="utf-8")

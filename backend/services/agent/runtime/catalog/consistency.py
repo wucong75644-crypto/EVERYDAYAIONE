@@ -12,6 +12,23 @@ EXPECTED_SPECIALIST_COUNT = 23
 EXPECTED_RUNTIME_TOOL_COUNT = 42
 
 
+def assert_model_tools_have_executors(
+    tool_names: set[str] | frozenset[str], registry: ExecutorRegistry,
+) -> None:
+    """Fail closed when the frozen model toolset outruns the worker registry."""
+    missing: list[str] = []
+    for name in sorted(tool_names):
+        try:
+            registry.resolve(name)
+        except LookupError:
+            missing.append(name)
+    if missing:
+        raise RuntimeError(
+            "RUNTIME_MODEL_TOOL_EXECUTOR_COVERAGE_MISMATCH:"
+            + ",".join(missing),
+        )
+
+
 def build_nonproduction_full_catalog(
     read_registry: ExecutorRegistry,
     specialist_registry: ExecutorRegistry,

@@ -229,11 +229,14 @@ __all__ = [
     "EXPECTED_PRODUCTION_TOOL_COUNT", "ProductionCatalogReceipt",
     "ProductionFactSnapshot", "ProductionToolBinding",
     "build_production_catalog", "build_production_fact_snapshot",
+    "build_production_specialist_catalog",
     "build_production_toolset",
 ]
 
 
-def _production_specialist_catalog(registry: ExecutorRegistry) -> RuntimeToolCatalog:
+def build_production_specialist_catalog(
+    registry: ExecutorRegistry, *, require_full: bool = True,
+) -> RuntimeToolCatalog:
     catalog = RuntimeToolCatalog()
     for descriptor in registry.descriptors():
         for name in sorted(descriptor.action_kinds):
@@ -260,9 +263,12 @@ def _production_specialist_catalog(registry: ExecutorRegistry) -> RuntimeToolCat
                 cancel_semantics=descriptor.cancellation.value,
                 result_schema_revision=descriptor.result_schema_revision,
             ))
-    if {tool.canonical_name for tool in catalog.definitions()} != set(SPECIALIST_TOOLS):
+    if require_full and {tool.canonical_name for tool in catalog.definitions()} != set(SPECIALIST_TOOLS):
         raise ValueError("RUNTIME_SPECIALIST_CATALOG_INCOMPLETE")
     return catalog
+
+
+_production_specialist_catalog = build_production_specialist_catalog
 
 
 def _specialist_group(family: str) -> str:

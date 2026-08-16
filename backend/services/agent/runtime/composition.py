@@ -333,6 +333,7 @@ def build_runtime(
     )
     model_factory = PostgresModelCallFactory(
         db, worker_id, version_registry=versions,
+        executor_registry=registry,
         stream_observer_builder=stream_observer_builder,
     )
     model_loop = ModelLoopDriver(
@@ -494,4 +495,5 @@ def _build_runtime_media(*, database: Any, settings: Any,
         production_ready=bool(getattr(
             settings, "agent_runtime_media_production_ready", False,
         )),
+        tool_names=frozenset({"generate_image"}),
     )

@@ -29,10 +29,14 @@ def build_runtime_media_composition(
     credentials: Any | None = None, specialist_facts: object | None = None,
     enabled: bool = False, provider_probe_passed: bool = False,
     production_ready: bool = False,
+    tool_names: frozenset[str] | None = None,
 ) -> RuntimeMediaComposition:
     """Register local wiring; only the database may report owner readiness."""
     registry = ExecutorRegistry()
     registry.specialist_facts = specialist_facts
+    selected_tools = MEDIA_TOOLS if tool_names is None else frozenset(tool_names)
+    if not selected_tools.issubset(MEDIA_TOOLS):
+        raise ValueError("RUNTIME_MEDIA_TOOL_SELECTION_INVALID")
     if not enabled:
         return RuntimeMediaComposition(
             registry=registry, enabled=False, production_ready=False,
@@ -47,7 +51,7 @@ def build_runtime_media_composition(
         raise RuntimeError("RUNTIME_MEDIA_COMPOSITION_WIRING_REQUIRED")
     task_port = build_runtime_media_task_port(database)
     provider_facts = PostgresProviderSubmissionFacts(database)
-    for tool in sorted(MEDIA_TOOLS):
+    for tool in sorted(selected_tools):
         descriptor = specialist_descriptor(tool)
         provider = RuntimeKieMediaProvider(
             transport, task_port=task_port, credentials=credentials,
