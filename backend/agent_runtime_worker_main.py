@@ -9,7 +9,7 @@ import signal
 import time
 from contextlib import suppress
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from core.db_scope import DatabaseAccessKind
@@ -68,9 +68,9 @@ class AgentRuntimeProcessSettings(BaseSettings):
     agent_runtime_heartbeat_seconds: float = 10.0
     agent_runtime_drain_timeout_seconds: float = 3600.0
     agent_runtime_production_composition_enabled: bool = False
-    agent_runtime_media_enabled: bool = False
-    agent_runtime_media_provider_probe_passed: bool = False
-    agent_runtime_media_production_ready: bool = False
+    agent_runtime_media_enabled: bool = Field(False, validation_alias="AGENT_RUNTIME_MEDIA_ENABLED")
+    agent_runtime_media_provider_probe_passed: bool = Field(False, validation_alias="AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED")
+    agent_runtime_media_production_ready: bool = Field(False, validation_alias="AGENT_RUNTIME_MEDIA_PRODUCTION_READY")
     agent_runtime_agent_definition_id: str = "everydayai-default"
     agent_runtime_agent_definition_revision: str = "v1"
     sandbox_job_root: str
@@ -98,8 +98,8 @@ class ProjectionProcessSettings(AuthorizationProcessSettings):
     """Projection config plus its explicit Tool Confirmation Redis scope."""
 
     agent_runtime_scheduled_web_projection_enabled: bool = False
-    agent_runtime_media_enabled: bool = False
-    agent_runtime_media_provider_probe_passed: bool = False
+    agent_runtime_media_enabled: bool = Field(False, validation_alias="AGENT_RUNTIME_MEDIA_ENABLED")
+    agent_runtime_media_provider_probe_passed: bool = Field(False, validation_alias="AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED")
     redis_host: str = "127.0.0.1"
     redis_port: int = 6379
     redis_password: SecretStr | None = None
