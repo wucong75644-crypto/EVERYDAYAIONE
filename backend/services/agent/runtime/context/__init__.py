@@ -32,6 +32,15 @@ from services.agent.runtime.context.provider_receipt import (
     prepare_provider_context_plan,
 )
 from services.agent.runtime.context.provider_plan import ProviderContextPlan
+from services.agent.runtime.context.skill_discovery import (
+    SkillDiscoveryIssue,
+    SkillDiscoveryResult,
+    SkillMetadata,
+    discover_skill_metadata,
+    discover_skill_metadata_from_roots,
+    discover_workspace_skill_metadata,
+    workspace_skill_root,
+)
 from services.agent.runtime.context.runtime_builder import (
     RuntimeContextV2, build_runtime_context,
 )
@@ -47,6 +56,9 @@ __all__ = [
     "CompactionReceipt",
     "HistoryAssemblyPlan",
     "ProviderContextPlan",
+    "SkillDiscoveryIssue",
+    "SkillDiscoveryResult",
+    "SkillMetadata",
     "RuntimeContextV2",
     "build_runtime_context",
     "PruningReceipt",
@@ -64,4 +76,8 @@ __all__ = [
     "finish_loop_compaction",
     "resolve_context_budget",
     "record_context_event",
+    "discover_skill_metadata",
+    "discover_skill_metadata_from_roots",
+    "discover_workspace_skill_metadata",
+    "workspace_skill_root",
 ]
