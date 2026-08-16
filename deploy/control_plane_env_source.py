@@ -149,8 +149,19 @@ def validate_kek(values: dict[str, str]) -> dict[str, str]:
 
 def render_envs(
     backend: dict[str, str], migrator_dsn: str, release_sha: str,
-    kek: dict[str, str],
+    kek: dict[str, str], *, media_enabled: bool = False,
+    media_provider_probe_passed: bool = False,
+    media_production_ready: bool = False,
 ) -> dict[str, str]:
+    if media_production_ready and not (
+        media_enabled and media_provider_probe_passed
+    ):
+        raise ProvisioningError(
+            "媒体 production_ready 必须同时满足 enabled 和 provider probe"
+        )
+    media_enabled_value = str(media_enabled).lower()
+    media_probe_value = str(media_provider_probe_passed).lower()
+    media_ready_value = str(media_production_ready).lower()
     passwords = {name: backend[key] for name, key in PASSWORD_KEYS.items()}
     if any(len(value) < 24 or "\n" in value or "\r" in value
            for value in passwords.values()):
@@ -176,9 +187,9 @@ def render_envs(
             "REDIS_PASSWORD": backend["REDIS_PASSWORD"],
             "REDIS_DB": backend["REDIS_DB"],
             "REDIS_SSL": backend["REDIS_SSL"],
-            "AGENT_RUNTIME_MEDIA_ENABLED": "false",
-            "AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED": "false",
-            "AGENT_RUNTIME_MEDIA_PRODUCTION_READY": "false",
+            "AGENT_RUNTIME_MEDIA_ENABLED": media_enabled_value,
+            "AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED": media_probe_value,
+            "AGENT_RUNTIME_MEDIA_PRODUCTION_READY": media_ready_value,
             "SANDBOX_JOB_ROOT": "/var/lib/everydayai/sandbox-jobs", "SANDBOX_RUNTIME_REVISION": "unprovisioned",
         },
         "agent-projection-worker.env": {
@@ -186,8 +197,8 @@ def render_envs(
             "AGENT_RUNTIME_PROCESS_ROLE": "projection", "AGENT_RUNTIME_WORKER_ID": "agent-projection-01",
             "AGENT_RUNTIME_RELEASE_REVISION": release_sha,
             "AGENT_RUNTIME_HEALTH_SOCKET": "/run/everydayai-agent-projection/health.sock",
-            "AGENT_RUNTIME_MEDIA_ENABLED": "false",
-            "AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED": "false",
+            "AGENT_RUNTIME_MEDIA_ENABLED": media_enabled_value,
+            "AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED": media_probe_value,
             "MEDIA_WORKSPACE_ROOT": "/mnt/nas-workspace",
             "MEDIA_CDN_DOMAIN": "",
             "MEDIA_RESULT_ALLOWED_HOSTS": "",

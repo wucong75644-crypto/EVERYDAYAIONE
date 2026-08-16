@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provision the four flags-off control-plane environment files."""
+"""Provision the four control-plane environment files."""
 from __future__ import annotations
 import argparse
 import grp
@@ -45,6 +45,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--env-dir", type=Path, required=True)
     parser.add_argument("--release-sha", required=True)
     parser.add_argument("--transaction-root", type=Path, default=DEFAULT_TRANSACTION_ROOT)
+    parser.add_argument(
+        "--media-on", action="store_true",
+        help="显式渲染 Runtime/Projection 媒体生产开启态",
+    )
     return parser.parse_args(argv)
 def _resolve_owner(name: str | None = None) -> tuple[int, int]:
     group = RUNTIME_MODEL_SECRET_GROUP if name == "agent-runtime-model.env" else GROUP
@@ -277,7 +281,9 @@ def _prepare(
     rendered = {
         name: content.encode() for name, content in render_envs(
             backend, migrator["MIGRATION_DATABASE_URL"], args.release_sha,
-            kek,
+            kek, media_enabled=args.media_on,
+            media_provider_probe_passed=args.media_on,
+            media_production_ready=args.media_on,
         ).items()
     }
     _ensure_transaction_root(args.transaction_root, tx_uid, tx_gid)

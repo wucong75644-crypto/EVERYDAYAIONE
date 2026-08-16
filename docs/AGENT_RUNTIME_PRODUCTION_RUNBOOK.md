@@ -94,6 +94,19 @@ OSS, model, JWT or WeCom values. `RUNTIME_ADMIN_DATABASE_URL` is available only
 to the API process. Local ingress flags and every database control switch stay
 false until the ordered cutover.
 
+## Image v13 production activation
+
+The image release is isolated from chat `v1`. After the release commit has
+passed migration and worker checks, run
+`deploy/enable-agent-runtime-media.sh --expected-sha <release-sha>`. The
+script atomically provisions the Runtime and Projection media env flags,
+restarts only those two workers, waits for a fresh Projection heartbeat, and
+then calls the audited `set_agent_runtime_media_production_state_v1` RPC. That
+RPC uses a state-version compare-and-set, records an immutable admin audit
+entry, and enables only `everydayai-default/v13` for image ingress. Failure
+rolls the env transaction back and leaves image ingress closed; chat `v1` is
+not changed.
+
 ## Sandbox production contract
 
 The binary is nsjail 3.4 commit
