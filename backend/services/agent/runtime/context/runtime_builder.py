@@ -17,12 +17,14 @@ class RuntimeContextV2:
     through_message_id: str
     plan: ProviderContextPlan
     receipt_facts: Mapping[str, object]
+    permission_mode: str = "auto"
 
 
 def build_runtime_context(
     *, run: Mapping[str, object], session: Mapping[str, object],
     messages: list[dict[str, object]], actions: list[Mapping[str, object]],
     toolset: EffectiveToolset, model_step: int, stable_prefix_blocks: int = 0,
+    permission_mode: str = "auto",
 ) -> RuntimeContextV2:
     run_id = _required(run, "id")
     session_id = _required(session, "id")
@@ -49,7 +51,9 @@ def build_runtime_context(
             "effective_toolset_hash": toolset.toolset_hash,
             "catalog_revision": toolset.catalog_revision,
             "context_plan_hash": plan.plan_hash,
+            "permission_mode": permission_mode,
         },
+        permission_mode=permission_mode,
     )
 
 

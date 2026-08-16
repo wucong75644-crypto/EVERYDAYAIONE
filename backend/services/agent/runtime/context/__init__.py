@@ -54,6 +54,11 @@ from services.agent.runtime.context.skill_activation import (
 from services.agent.runtime.context.runtime_builder import (
     RuntimeContextV2, build_runtime_context,
 )
+from services.agent.runtime.context.mode_prompt import (
+    VALID_PERMISSION_MODES,
+    normalize_permission_mode,
+    render_runtime_mode_prompt,
+)
 from services.agent.runtime.context.pruning import PruningReceipt, prune_context
 from services.agent.runtime.context.telemetry import record_context_event
 
@@ -75,6 +80,9 @@ __all__ = [
     "build_skill_context",
     "RuntimeContextV2",
     "build_runtime_context",
+    "VALID_PERMISSION_MODES",
+    "normalize_permission_mode",
+    "render_runtime_mode_prompt",
     "PruningReceipt",
     "acquire_loop_compaction",
     "accumulate_provider_context_usage",

@@ -8,7 +8,12 @@ import math
 from uuid import UUID, uuid5
 
 from services.agent.runtime.application.model_loop import PreparedModelCall
-from services.agent.runtime.context import build_runtime_context, build_context_receipt
+from services.agent.runtime.context import (
+    build_context_receipt,
+    build_runtime_context,
+    normalize_permission_mode,
+    render_runtime_mode_prompt,
+)
 from services.agent.runtime.domain import StopReason
 from services.agent.runtime.catalog import (
     EffectiveToolset, restore_agent_definition, restore_frozen_toolset,
@@ -64,10 +69,9 @@ class PostgresModelCallFactory:
         reference_image_count = _current_input_image_count(
             context.get("messages"), input_message_id,
         )
-        messages = _messages(
-            context.get("messages"), definition.system_prompt,
-            current_input_message_id=input_message_id,
-            supports_vision=_supports_vision(model_id),
+        messages, permission_mode = _runtime_messages(
+            context=context, definition=definition, payload=payload,
+            model_id=model_id, input_message_id=input_message_id,
         )
         step_number = len(snapshot.model_steps) + 1
         stable_prefix_blocks = _stable_prefix_blocks(definition.context_policy)
@@ -75,6 +79,7 @@ class PostgresModelCallFactory:
             run=dict(snapshot.run), session=session, messages=messages,
             actions=_list(context.get("actions")), toolset=toolset,
             model_step=step_number, stable_prefix_blocks=stable_prefix_blocks,
+            permission_mode=permission_mode,
         )
         plan = runtime_context.plan
         tools = toolset.provider_tools()
@@ -207,6 +212,23 @@ def _messages(
     if len(result) == 1:
         raise RuntimeError("AGENT_RUNTIME_MESSAGES_EMPTY")
     return result
+
+
+def _runtime_messages(
+    *, context: dict, definition: object, payload: dict,
+    model_id: str, input_message_id: str | None,
+) -> tuple[list[dict], str]:
+    params = _mapping(payload.get("params") or {}, "params")
+    permission_mode = normalize_permission_mode(params.get("permission_mode"))
+    system_prompt = "\n\n".join((
+        str(definition.system_prompt),
+        render_runtime_mode_prompt(permission_mode),
+    ))
+    return _messages(
+        context.get("messages"), system_prompt,
+        current_input_message_id=input_message_id,
+        supports_vision=_supports_vision(model_id),
+    ), permission_mode
 
 
 def _code_execute_tools(org_id: object) -> list[dict]:

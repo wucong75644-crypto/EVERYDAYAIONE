@@ -34,6 +34,12 @@ def _read_template(filename: str) -> str:
 
 
 @lru_cache(maxsize=1)
+def render_permission_mode_section() -> str:
+    """Render the shared mode policy section for Runtime contexts."""
+    return f"<permission_mode>\n{_read_template('modes.md')}\n</permission_mode>"
+
+
+@lru_cache(maxsize=1)
 def render_static_system() -> str:
     """渲染 Layer 1 完整内容。
 
@@ -51,6 +57,9 @@ def render_static_system() -> str:
     """
     sections = []
     for tag, filename in _SECTION_TAGS:
+        if tag == "permission_mode":
+            sections.append(render_permission_mode_section())
+            continue
         body = _read_template(filename)
         sections.append(f"<{tag}>\n{body}\n</{tag}>")
     return "\n\n".join(sections)
