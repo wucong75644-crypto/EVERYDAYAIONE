@@ -26,6 +26,7 @@ from services.agent.runtime.ports.model import (
     ModelStepRequest,
     ModelStepResult,
 )
+from services.agent.runtime.application.model_stream_hooks import notify_stream_completed, notify_stream_started
 from services.agent.runtime.ports.model_attempt import (
     ModelAttemptOutcome,
     ModelAttemptRepositoryPort,
@@ -50,6 +51,7 @@ class PreparedModelCall:
     build_actions: Callable[
         [ModelStepResult], tuple[str, tuple[Mapping[str, object], ...]]
     ]
+    stream_observer: ModelResponseStreamObserver | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -83,7 +85,6 @@ class ModelLoopDriver:
         recovery_repository: CoordinatorRecoveryPort,
         model: ModelPort, call_factory: ModelCallFactory,
         reconciler: ModelAttemptReconciler,
-        stream_observer: ModelResponseStreamObserver | None = None,
         attempt_lease_seconds: int = 120,
         attempt_renew_interval: float = 40.0,
     ) -> None:
@@ -96,7 +97,6 @@ class ModelLoopDriver:
         self._model = model
         self._call_factory = call_factory
         self._reconciler = reconciler
-        self._stream_observer = stream_observer
         self._attempt_lease_seconds = attempt_lease_seconds
         self._attempt_renew_interval = attempt_renew_interval
 
@@ -246,7 +246,7 @@ class ModelLoopDriver:
             attempt_execution_token=active.attempt_token,
             state_version=active.attempt_version,
             request_hash=active.request.request_hash,
-            stream_observer=self._stream_observer,
+            stream_observer=active.plan.stream_observer,
             lease_seconds=self._attempt_lease_seconds,
             renew_interval=self._attempt_renew_interval,
         )
@@ -440,10 +440,11 @@ class _ModelAttemptLease:
     async def complete(
         self, model: ModelPort, request: ModelStepRequest,
     ) -> ModelStepResult:
-        model_kwargs: dict[str, object] = {"observer": self}
         if self._stream_observer is not None:
-            model_kwargs["stream_observer"] = self._stream_observer
-        work = asyncio.create_task(model.complete(request, **model_kwargs))
+            await notify_stream_started(self._stream_observer, request.model_id)
+        work = asyncio.create_task(model.complete(
+            request, observer=self, stream_observer=self._stream_observer,
+        ))
         renewal = asyncio.create_task(self._renew())
         try:
             done, _ = await asyncio.wait(
@@ -458,6 +459,8 @@ class _ModelAttemptLease:
                     raise error
                 raise RuntimeError("MODEL_ATTEMPT_LEASE_LOST")
             result = await work
+            if self._stream_observer is not None:
+                await notify_stream_completed(self._stream_observer, result)
             async with self._lock:
                 pass
             return result

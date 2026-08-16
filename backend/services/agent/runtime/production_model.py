@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Callable, Mapping
 from uuid import UUID, uuid5
 
 from services.agent.runtime.application.model_loop import PreparedModelCall
@@ -28,8 +29,9 @@ from services.agent.runtime.model_resolution import resolve_runtime_model
 from services.agent.runtime.ports.coordinator_recovery import RunAggregateSnapshot
 from services.agent.runtime.ports.model import (
     ModelInputReceipt, ModelRequestOptions, ModelStepId, ModelStepRequest,
-    ModelStepResult,
+    ModelResponseStreamObserver, ModelStepResult,
 )
+from services.agent.runtime.ports.stream import RuntimeStreamTarget
 
 
 _ACTION_NAMESPACE = UUID("76bc769a-a201-43aa-8ee9-cd13f009f12d")
@@ -40,10 +42,14 @@ MAX_RUNTIME_IMAGE_ACTIONS = 10
 class PostgresModelCallFactory:
     def __init__(
         self, database, worker_id: str, *, version_registry=None,
+        stream_observer_builder: Callable[
+            [RuntimeStreamTarget, str], ModelResponseStreamObserver
+        ] | None = None,
     ) -> None:
         self._database = database
         self._worker_id = worker_id
         self._versions = version_registry
+        self._stream_observer_builder = stream_observer_builder
 
     async def __call__(
         self, snapshot: RunAggregateSnapshot,
@@ -118,9 +124,7 @@ class PostgresModelCallFactory:
             timeout_seconds=120,
             max_provider_attempts=1,
         )
-        reserved = _reserved_credits(
-            model_id, receipt.estimated_prompt_tokens,
-        )
+        reserved = _reserved_credits(model_id, receipt.estimated_prompt_tokens)
 
         def build_request(step_id: str) -> ModelStepRequest:
             input_receipt = ModelInputReceipt(
@@ -164,7 +168,24 @@ class PostgresModelCallFactory:
                 result, run_id, toolset,
                 reference_image_count=reference_image_count,
             ),
+            stream_observer=_build_stream_observer(self._stream_observer_builder, payload, session, org_id, model_id),
         )
+
+
+def _build_stream_observer(
+    builder: Callable[[RuntimeStreamTarget, str], ModelResponseStreamObserver] | None,
+    payload: Mapping[str, object], session: Mapping[str, object],
+    org_id: str, model_id: str,
+) -> ModelResponseStreamObserver | None:
+    if builder is None or payload.get("channel") != "web":
+        return None
+    target = RuntimeStreamTarget(
+        task_id=str(payload.get("client_task_id") or payload["task_id"]),
+        user_id=str(session["user_id"]),
+        conversation_id=str(session["conversation_id"]),
+        message_id=str(payload["output_message_id"]), org_id=org_id,
+    )
+    return builder(target, model_id)
 
 
 async def retain_unknown_model_attempt(

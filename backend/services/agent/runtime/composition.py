@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -62,6 +63,7 @@ from services.agent.runtime.executors.real_base import RuntimeReadResources
 from services.agent.runtime.application.scheduled_finalizer import (
     ScheduledRuntimeFinalizer,
 )
+from services.agent.runtime.infrastructure.stream_composition import build_runtime_stream_components
 
 
 logger = logging.getLogger(__name__)
@@ -77,12 +79,13 @@ _PRODUCTION_SAFE_REQUIRED_CAPABILITIES = frozenset({
 
 class RuntimeOwner:
     def __init__(
-        self, commands, runtime, *, finalizer=None, readiness=None,
+        self, commands, runtime, *, finalizer=None, readiness=None, stream_publisher=None,
     ) -> None:
         self.commands = commands
         self.runtime = runtime
         self.finalizer = finalizer
         self.readiness = readiness
+        self._stream_publisher = stream_publisher
         self._draining = False
 
     @property
@@ -126,6 +129,8 @@ class RuntimeOwner:
         self._draining = True
         self.commands.stop()
         self.runtime.stop()
+        if self._stream_publisher is not None:
+            asyncio.create_task(self._stream_publisher.close())
 
     def stop(self) -> None:
         self.drain()
@@ -300,6 +305,7 @@ def build_runtime(
     model = ExistingProviderModelAdapter(
         request_adapter_factory=configured_factory,
     )
+    stream_publisher, stream_observer_builder = build_runtime_stream_components(settings, worker_id=worker_id)
     erp_factory = OrgScopedErpDispatcherFactory(
         db, worker_id=worker_id, material_service=material_service,
     )
@@ -327,6 +333,7 @@ def build_runtime(
     )
     model_factory = PostgresModelCallFactory(
         db, worker_id, version_registry=versions,
+        stream_observer_builder=stream_observer_builder,
     )
     model_loop = ModelLoopDriver(
         runtime_repository=runtime_repository,
@@ -360,10 +367,7 @@ def build_runtime(
     finalizer = ScheduledRuntimeFinalizer(
         PostgresScheduledFinalizationRepository(db), worker_id,
     )
-    return RuntimeOwner(
-        commands, runtime, finalizer=finalizer,
-        readiness=composition.readiness,
-    )
+    return RuntimeOwner(commands, runtime, finalizer=finalizer, readiness=composition.readiness, stream_publisher=stream_publisher)
 
 
 def build_safe_runtime_components(

@@ -58,6 +58,10 @@ from services.agent.runtime.ports.repository import (
     RuntimeRepositoryPort,
     SessionSnapshot,
 )
+from services.agent.runtime.ports.stream import (
+    RuntimeStreamPublisher,
+    RuntimeStreamTarget,
+)
 from services.agent.runtime.ports.sandbox_job import (
     SandboxJobOutcome,
     SandboxJobReceipt,
@@ -112,4 +116,6 @@ __all__ = [
     "SandboxJobReceipt",
     "SandboxJobRepositoryPort",
     "SessionSnapshot",
+    "RuntimeStreamPublisher",
+    "RuntimeStreamTarget",
 ]
