@@ -118,7 +118,10 @@ def run() -> None:
                     break
                 time.sleep(1)
             readiness = context.get("readiness", {})
-            if not readiness.get("ready"):
+            if not (
+                readiness.get("projection_owner_ready")
+                and readiness.get("projection_heartbeat_fresh")
+            ):
                 try:
                     health_socket = socket.socket(socket.AF_UNIX)
                     health_socket.settimeout(3)
