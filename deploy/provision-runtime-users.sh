@@ -41,6 +41,13 @@ install -d -o root -g everydayai-sandbox-io -m 2770 \
 install -d -o root -g everydayai-sandbox-io -m 0750 \
   /var/lib/everydayai/sandbox-rootfs
 install -d -o root -g everydayai-app -m 2770 /var/log/everydayai
+command -v setfacl >/dev/null 2>&1 || {
+  echo "setfacl required for sandbox log directory traversal" >&2
+  exit 1
+}
+# Sandbox may traverse to its own log directory, but cannot list or read
+# sibling service log directories under this parent.
+setfacl -m u:everydayai-sandbox:--x /var/log/everydayai
 install -d -o everydayai-api -g everydayai-app -m 0750 \
   /var/log/everydayai/backend
 install -d -o everydayai-sync -g everydayai-app -m 0750 \

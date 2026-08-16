@@ -64,9 +64,9 @@ install_basics() {
         # 配合 systemd unit 的 Environment=TZ=Asia/Shanghai 使用。
         # 参见 docs/document/TECH_ERP时间准确性架构.md §17
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            curl wget git vim unzip software-properties-common tzdata
+            curl wget git vim unzip software-properties-common tzdata acl
     elif [ "$OS" = "centos" ] || [ "$OS" = "rhel" ]; then
-        yum install -y curl wget git vim unzip epel-release tzdata
+        yum install -y curl wget git vim unzip epel-release tzdata acl
     fi
 
     # 系统时区软链兜底（systemd 的 TZ 已是主防线，此处仅防御性同步）

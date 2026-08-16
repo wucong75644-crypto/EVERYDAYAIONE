@@ -74,6 +74,7 @@ def test_shared_application_services_have_isolated_log_directories() -> None:
     provisioner = (DEPLOY / "provision-runtime-users.sh").read_text()
     for log_dir in expected.values():
         assert log_dir in provisioner
+    assert "setfacl -m u:everydayai-sandbox:--x /var/log/everydayai" in provisioner
 
 
 def test_sandbox_environment_has_no_forbidden_credentials() -> None:
