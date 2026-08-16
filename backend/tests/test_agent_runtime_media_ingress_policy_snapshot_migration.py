@@ -25,7 +25,9 @@ def test_media_activation_opens_runtime_v3_control_flags() -> None:
     )
     assert '"non_safe_actions_enabled": True' in script
     assert '"tool_confirmation_enabled": True' in script
-    assert '"code_execute_enabled": True' in script
+    assert '"code_execute_enabled": True' not in script
+    assert "TOOL_CONFIRMATION_V3_ENABLED" in script
+    assert "TOOL_CONFIRMATION_CAPABILITY_NOT_READY" in script
     assert "set_agent_runtime_control" in script
 
 

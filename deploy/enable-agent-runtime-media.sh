@@ -8,6 +8,9 @@ env_dir=${AGENT_RUNTIME_ENV_DIR:-/etc/everydayai}
 transaction_root=${CONTROL_PLANE_TRANSACTION_ROOT:-/var/backups/everydayai-media-activation}
 release_sha=
 remote_mode=false
+runtime_env_path=
+runtime_env_backup=
+runtime_env_changed=false
 
 usage() {
     echo "usage: $0 --expected-sha SHA [--remote]" >&2
@@ -30,6 +33,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]] || { usage; exit 2; }
+runtime_env_path="${backend_dir}/.env.runtime"
+runtime_env_backup="${transaction_root}/${release_sha}/backend.env.runtime.before"
 
 if [ "$remote_mode" = false ]; then
     source "${deploy_dir}/config.env"
@@ -54,6 +59,29 @@ rollback() {
         "$python_bin" "$provisioner" rollback \
             --env-dir "$env_dir" --release-sha "$release_sha" \
             --transaction-root "$transaction_root"
+        if [ "$runtime_env_changed" = true ]; then
+            "$python_bin" - "$runtime_env_path" "$runtime_env_backup" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+target = Path(sys.argv[1])
+backup = Path(sys.argv[2])
+if not backup.is_file() or backup.is_symlink():
+    raise SystemExit("TOOL_CONFIRMATION_ENV_BACKUP_MISSING")
+temporary = target.with_name(f".{target.name}.rollback")
+try:
+    temporary.write_bytes(backup.read_bytes())
+    stat_result = target.stat()
+    os.chown(temporary, stat_result.st_uid, stat_result.st_gid)
+    os.chmod(temporary, stat_result.st_mode & 0o7777)
+    os.replace(temporary, target)
+finally:
+    temporary.unlink(missing_ok=True)
+backup.unlink()
+PY
+            systemctl restart everydayai-backend
+        fi
         systemctl restart everydayai-agent-runtime everydayai-agent-projection
         exit "$result"
     fi
@@ -75,6 +103,75 @@ trap 'rollback $?' EXIT
     --env-dir "$env_dir" --release-sha "$release_sha" \
     --transaction-root "$transaction_root"
 published=true
+
+# Confirm-level tools (including image generation) need the Redis-backed
+# confirmation capability. This is deliberately independent from the
+# code_execute/Sandbox gate.
+set +e
+"$python_bin" - "$runtime_env_path" "$runtime_env_backup" <<'PY'
+import os
+import stat
+import sys
+import tempfile
+from pathlib import Path
+
+target = Path(sys.argv[1])
+backup = Path(sys.argv[2])
+key = "TOOL_CONFIRMATION_V3_ENABLED"
+if target.is_symlink() or not target.is_file():
+    raise SystemExit("RUNTIME_ENV_INVALID")
+raw = target.read_bytes()
+text = raw.decode("utf-8")
+lines = text.splitlines(keepends=True)
+matches = [index for index, line in enumerate(lines)
+           if line.partition("=")[0] == key]
+if len(matches) > 1:
+    raise SystemExit("RUNTIME_ENV_DUPLICATE_TOOL_CONFIRMATION_FLAG")
+if matches and lines[matches[0]].partition("=")[2].strip().lower() == "true":
+    raise SystemExit(0)
+
+backup.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+if backup.exists() or backup.is_symlink():
+    raise SystemExit("RUNTIME_ENV_BACKUP_ALREADY_EXISTS")
+backup.write_bytes(raw)
+os.chmod(backup, 0o600)
+
+replacement = f"{key}=true\n"
+if matches:
+    lines[matches[0]] = replacement
+else:
+    if lines and not lines[-1].endswith(("\n", "\r")):
+        lines[-1] += "\n"
+    lines.append(replacement)
+updated = "".join(lines).encode("utf-8")
+original_stat = target.stat()
+mode = stat.S_IMODE(original_stat.st_mode)
+descriptor, temporary_name = tempfile.mkstemp(
+    prefix=f".{target.name}.", dir=target.parent,
+)
+temporary = Path(temporary_name)
+try:
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(updated)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chown(temporary, original_stat.st_uid, original_stat.st_gid)
+    os.chmod(temporary, mode)
+    os.replace(temporary, target)
+finally:
+    temporary.unlink(missing_ok=True)
+raise SystemExit(10)
+PY
+runtime_env_result=$?
+set -e
+case "$runtime_env_result" in
+    0) ;;
+    10) runtime_env_changed=true ;;
+    *) exit "$runtime_env_result" ;;
+esac
+
+systemctl restart everydayai-backend
+systemctl is-active --quiet everydayai-backend
 
 systemctl restart everydayai-agent-runtime everydayai-agent-projection
 for socket_path in /run/everydayai-agent-runtime/health.sock \
@@ -159,6 +256,24 @@ def run() -> None:
                     "projection_process_media_env": process_media_env,
                 }, sort_keys=True))
                 raise RuntimeError("PROJECTION_MEDIA_READINESS_TIMEOUT")
+            actor = context["actor_user_id"]
+            org = context["org_id"]
+            cursor.execute("SELECT set_config('app.actor_user_id',%s,false)", (str(actor),))
+            cursor.execute("SELECT set_config('app.org_id',%s,false)", (str(org),))
+            capability_ready = False
+            for _ in range(30):
+                cursor.execute("SELECT get_agent_runtime_admin_status()")
+                admin_status = cursor.fetchone()[0]
+                capability_ready = any(
+                    item.get("capability_name") == "tool_confirmation_v3_redis"
+                    and item.get("ready") is True
+                    for item in admin_status.get("capabilities", [])
+                )
+                if capability_ready:
+                    break
+                time.sleep(1)
+            if not capability_ready:
+                raise RuntimeError("TOOL_CONFIRMATION_CAPABILITY_NOT_READY")
             result = None
             for _ in range(5):
                 cursor.execute("SELECT get_agent_runtime_media_admin_context_v1()")
@@ -207,9 +322,8 @@ def run() -> None:
                             "safe_actions_enabled": True,
                             "non_safe_actions_enabled": True,
                             "tool_confirmation_enabled": True,
-                            "code_execute_enabled": True,
                         }),
-                        "enable Runtime v3 production control flags",
+                        "enable Runtime v3 image control flags",
                     ),
                 )
                 control_result = cursor.fetchone()[0]
@@ -236,6 +350,11 @@ def run() -> None:
 
 run()
 PY
+
+if [ "$runtime_env_changed" = true ]; then
+    rm -f "$runtime_env_backup"
+    runtime_env_changed=false
+fi
 
 published=false
 trap - EXIT
