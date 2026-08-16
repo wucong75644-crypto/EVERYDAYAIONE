@@ -17,8 +17,8 @@ from scripts.generate_agent_runtime_data_read_seed import main as generate_seed
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MIGRATION = ROOT / "migrations/227_58_agent_runtime_data_read_release.sql"
-ROLLBACK = ROOT / "migrations/rollback/227_58_agent_runtime_data_read_release_rollback.sql"
+MIGRATION = ROOT / "migrations/230_04_agent_runtime_catalog_data_read_v11.sql"
+ROLLBACK = ROOT / "migrations/rollback/230_04_agent_runtime_catalog_data_read_v11_rollback.sql"
 
 
 def test_data_read_release_is_exact_and_read_only() -> None:
@@ -58,7 +58,7 @@ def test_data_read_release_seed_matches_python_ssot() -> None:
     ).catalog_document
     assert stored == expected
     assert sql.count("FALSE, TRUE") == 8
-    assert "definition_revision='v6'" in ROLLBACK.read_text(encoding="utf-8")
+    assert "definition_revision='v11'" in ROLLBACK.read_text(encoding="utf-8")
 
 
 def test_data_read_release_generator_is_byte_deterministic(tmp_path: Path) -> None:

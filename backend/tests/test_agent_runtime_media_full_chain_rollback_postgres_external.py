@@ -30,7 +30,6 @@ pytestmark = pytest.mark.external
 ROOT = Path(__file__).resolve().parents[1]
 FORWARD_NAMES = (
     "228_01_agent_runtime_action_hash_canonicalization.sql",
-    "228_02_agent_runtime_batch_media_release.sql",
     "228_03_agent_runtime_media_authorization_group.sql",
     "228_04_agent_runtime_media_action_bindings.sql",
     "228_05_agent_runtime_media_manifest_readback.sql",
@@ -51,6 +50,7 @@ FORWARD_NAMES = (
     "228_08g2_agent_runtime_media_model_video_wecom_outbox.sql",
     "228_08i1_agent_runtime_media_real_image_event_normalization.sql",
     "228_08i2_agent_runtime_media_model_image_wecom_outbox.sql",
+    "230_05_agent_runtime_catalog_batch_media_v12.sql",
 )
 FORWARDS = tuple(ROOT / "migrations" / name for name in FORWARD_NAMES)
 ROLLBACKS = tuple(
@@ -185,7 +185,7 @@ def _assert_rolled_back(database_url: str) -> None:
         """).fetchone()
         release_count = connection.execute(
             "SELECT count(*) FROM agent_runtime_definition_facts "
-            "WHERE definition_revision='v7'",
+            "WHERE definition_revision='v12'",
         ).fetchone()[0]
         group_column = connection.execute(
             "SELECT count(*) FROM information_schema.columns "

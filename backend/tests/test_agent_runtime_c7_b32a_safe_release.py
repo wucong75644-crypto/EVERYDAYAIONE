@@ -63,7 +63,7 @@ def test_safe_release_preserves_existing_scope_contract() -> None:
 
 
 def test_generated_safe_release_matches_python_ssot() -> None:
-    sql = (ROOT / "migrations/227_16_agent_runtime_safe_read_release.sql").read_text()
+    sql = (ROOT / "migrations/230_02_agent_runtime_catalog_safe_read_v9.sql").read_text()
     match = re.search(
         r"INSERT INTO agent_runtime_catalog_facts.*?\$seed\$(.*?)\$seed\$::JSONB",
         sql, re.DOTALL,

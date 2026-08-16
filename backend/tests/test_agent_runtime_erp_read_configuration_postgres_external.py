@@ -16,8 +16,8 @@ pytestmark = pytest.mark.external
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "migrations/227_54_agent_runtime_erp_read_configuration.sql"
 ROLLBACK = ROOT / "migrations/rollback/227_54_agent_runtime_erp_read_configuration_rollback.sql"
-RELEASE = ROOT / "migrations/227_55_agent_runtime_erp_read_release.sql"
-RELEASE_ROLLBACK = ROOT / "migrations/rollback/227_55_agent_runtime_erp_read_release_rollback.sql"
+RELEASE = ROOT / "migrations/230_03_agent_runtime_catalog_erp_read_v10.sql"
+RELEASE_ROLLBACK = ROOT / "migrations/rollback/230_03_agent_runtime_catalog_erp_read_v10_rollback.sql"
 ORG = "22222222-2222-2222-2222-222222222222"
 USER = "44444444-4444-4444-4444-444444444444"
 CONVERSATION = "55555555-5555-5555-5555-555555555555"
@@ -270,19 +270,19 @@ def test_erp_read_configuration_acl_fencing_token_cas_and_rollback(
         connection.execute("SET ROLE everydayai_owner")
         connection.execute(
             "UPDATE agent_runtime_definition_facts SET used_by_ingress=TRUE "
-            "WHERE agent_key='everydayai-default' AND definition_revision='v5'",
+            "WHERE agent_key='everydayai-default' AND definition_revision='v10'",
         )
         connection.commit()
     with pytest.raises(
         psycopg.errors.RaiseException,
-        match="AGENT_RUNTIME_ERP_READ_RELEASE_FACTS_EXIST",
+        match="AGENT_RUNTIME_CATALOG_ERP_READ_V10_ROLLBACK_GUARD",
     ):
         _apply(database, RELEASE_ROLLBACK)
     with psycopg.connect(database) as connection:
         connection.execute("SET ROLE everydayai_owner")
         connection.execute(
             "UPDATE agent_runtime_definition_facts SET used_by_ingress=FALSE "
-            "WHERE agent_key='everydayai-default' AND definition_revision='v5'",
+            "WHERE agent_key='everydayai-default' AND definition_revision='v10'",
         )
         connection.commit()
     _apply(database, RELEASE_ROLLBACK)

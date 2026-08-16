@@ -72,7 +72,7 @@ def test_generate_image_uses_persisted_interaction_without_rewriting_v7() -> Non
     )
     assert image.authorization_requirement == "explicit_intent"
     assert (
-        ROOT / "migrations/228_02_agent_runtime_batch_media_release.sql"
+        ROOT / "migrations/230_05_agent_runtime_catalog_batch_media_v12.sql"
     ).is_file()
 
 

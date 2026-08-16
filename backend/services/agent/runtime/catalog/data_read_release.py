@@ -18,7 +18,7 @@ from services.agent.runtime.executors.specialist_registry import (
 )
 
 
-DATA_READ_DEFINITION_REVISION = "v6"
+DATA_READ_DEFINITION_REVISION = "v11"
 DATA_READ_PROMPT_REVISION = "agent-runtime-data-read-v1"
 
 

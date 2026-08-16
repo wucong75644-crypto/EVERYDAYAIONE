@@ -16,7 +16,7 @@ from services.agent.runtime.executors.read_registry import (
 from services.agent.runtime.executors.registry import ExecutorRegistry
 
 
-SAFE_READ_DEFINITION_REVISION = "v4"
+SAFE_READ_DEFINITION_REVISION = "v9"
 SAFE_READ_PROMPT_REVISION = "agent-runtime-safe-read-v1"
 
 

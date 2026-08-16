@@ -114,7 +114,7 @@ def build_seed_snapshot(
 
 def build_seed_agent() -> AgentDefinition:
     return AgentDefinition(
-        canonical_key="everydayai-default", revision="v3",
+        canonical_key="everydayai-default", revision="v8",
         prompt_revision="agent-runtime-production-v3",
         requested_tool_groups=frozenset({
             "artifact", "code", "composite", "erp_catalog", "erp_local",

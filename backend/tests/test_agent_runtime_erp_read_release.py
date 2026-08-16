@@ -15,8 +15,8 @@ from scripts.generate_agent_runtime_erp_read_seed import main as generate_seed
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MIGRATION = ROOT / "migrations/227_55_agent_runtime_erp_read_release.sql"
-ROLLBACK = ROOT / "migrations/rollback/227_55_agent_runtime_erp_read_release_rollback.sql"
+MIGRATION = ROOT / "migrations/230_03_agent_runtime_catalog_erp_read_v10.sql"
+ROLLBACK = ROOT / "migrations/rollback/230_03_agent_runtime_catalog_erp_read_v10_rollback.sql"
 
 
 def test_erp_read_release_is_exact_and_excludes_unapproved_tools() -> None:
@@ -37,7 +37,7 @@ def test_erp_read_release_is_exact_and_excludes_unapproved_tools() -> None:
             })
 
 
-def test_erp_read_release_seed_matches_python_ssot_and_rolls_back_v5() -> None:
+def test_erp_read_release_seed_matches_python_ssot_and_rolls_back_v10() -> None:
     sql = MIGRATION.read_text(encoding="utf-8")
     match = re.search(
         r"INSERT INTO agent_runtime_catalog_facts.*?\$seed\$(.*?)\$seed\$::JSONB",
@@ -51,8 +51,8 @@ def test_erp_read_release_seed_matches_python_ssot_and_rolls_back_v5() -> None:
     assert stored == expected
     assert sql.count("FALSE, TRUE") == 8
     rollback = ROLLBACK.read_text(encoding="utf-8")
-    assert "definition_revision='v5'" in rollback
-    assert "AGENT_RUNTIME_ERP_READ_RELEASE_FACTS_EXIST" in rollback
+    assert "definition_revision='v10'" in rollback
+    assert "AGENT_RUNTIME_CATALOG_ERP_READ_V10_ROLLBACK_GUARD" in rollback
 
 
 def test_erp_read_release_generator_is_byte_deterministic(tmp_path: Path) -> None:

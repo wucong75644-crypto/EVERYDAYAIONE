@@ -25,7 +25,7 @@ STACK = (
     "227_06_agent_runtime_tenant_kill_control.sql",
     "227_07_agent_runtime_kill_epoch_fence.sql",
     "227_09_agent_runtime_claim_fence_ambiguity_fix.sql",
-    "227_16_agent_runtime_safe_read_release.sql",
+    "230_02_agent_runtime_catalog_safe_read_v9.sql",
     "227_17_agent_runtime_safe_policy_activation.sql",
 )
 
@@ -99,7 +99,7 @@ def _seed_safe_action(url: str, *, tool_name: str = "search_knowledge") -> dict[
             "INSERT INTO agent_runtime_sessions("
             "id,conversation_id,org_id,user_id,scope_kind,scope_id,created_by_user_id,"
             "agent_definition_id,agent_definition_revision) "
-            "VALUES(%s,%s,%s,NULL,'channel',%s,%s,'everydayai-default','v4')",
+            "VALUES(%s,%s,%s,NULL,'channel',%s,%s,'everydayai-default','v9')",
             (ids["session"], CONVERSATION, ORG, f"channel:{ids['session']}", USER),
         )
         connection.execute(
@@ -273,8 +273,8 @@ def test_safe_policy_activation_dispatch_acl_and_rollback(database: str) -> None
         )
         connection.commit()
     _rollback(database, "227_17_agent_runtime_safe_policy_activation_rollback.sql")
-    _rollback(database, "227_16_agent_runtime_safe_read_release_rollback.sql")
-    _apply(database, "227_16_agent_runtime_safe_read_release.sql")
+    _rollback(database, "230_02_agent_runtime_catalog_safe_read_v9_rollback.sql")
+    _apply(database, "230_02_agent_runtime_catalog_safe_read_v9.sql")
     _apply(database, "227_17_agent_runtime_safe_policy_activation.sql")
     _rollback(database, "227_17_agent_runtime_safe_policy_activation_rollback.sql")
-    _rollback(database, "227_16_agent_runtime_safe_read_release_rollback.sql")
+    _rollback(database, "230_02_agent_runtime_catalog_safe_read_v9_rollback.sql")

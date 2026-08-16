@@ -11,7 +11,7 @@ from services.agent.runtime.catalog.production_seed import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGET = ROOT / "migrations/227_02_agent_runtime_production_catalog_seed.sql"
+TARGET = ROOT / "migrations/230_01_agent_runtime_catalog_production_v8.sql"
 
 
 def main() -> None:
@@ -40,7 +40,7 @@ def main() -> None:
                 document["entitled_groups"] = sorted(agent.requested_tool_groups)
                 rows.append(
                     "      (" + ", ".join([
-                        sql_text("everydayai-default"), sql_text("v3"),
+                        sql_text("everydayai-default"), sql_text(agent.revision),
                         sql_text(catalog_revision), sql_text(scope),
                         sql_text(channel), sql_text(gate),
                         sql_text(str(document["toolset_hash"])),
@@ -71,7 +71,8 @@ BEGIN
     agent_key,definition_revision,definition_hash,prompt_revision,catalog_revision,
     effective_toolset_hash,definition_document,enabled_for_new_ingress,recoverable
   ) VALUES(
-    'everydayai-default','v3',definition_hash,'agent-runtime-production-v3',catalog_rev,
+    'everydayai-default',{sql_text(agent.revision)},definition_hash,
+    {sql_text(agent.prompt_revision)},catalog_rev,
     {sql_text(toolset_hash)},definition_doc,FALSE,TRUE
   );
 

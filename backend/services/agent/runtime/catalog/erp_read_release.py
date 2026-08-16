@@ -18,7 +18,7 @@ from services.agent.runtime.executors.specialist_registry import (
 )
 
 
-ERP_READ_DEFINITION_REVISION = "v5"
+ERP_READ_DEFINITION_REVISION = "v10"
 ERP_READ_PROMPT_REVISION = "agent-runtime-erp-read-v1"
 
 

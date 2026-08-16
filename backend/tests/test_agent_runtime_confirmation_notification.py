@@ -39,9 +39,9 @@ def test_runtime_action_snapshot_binds_registry_safety_level():
         "capability_revision":
             "6a247874257a1ebb5c7689f1f767d705b22d897f28309dc7b05ca8118fd605b0",
         "catalog_revision":
-            "9ef52c52816e357a4cb2bf03a9893e41127105a3ffb4c2cba18489fa880ce874",
+            "adbc6951b3086af2bf999fe630f4f2edd607dbd7d19d5c40344085a449cb6ea1",
         "effective_toolset_hash":
-            "407113c665c9c28d9f34f47a8f1cf6783da8723b44e47773ac1f0403613d651c",
+            "c4056990ab91c4a3728f19408199dc408ef891f881d1b7c4e029c1ab63a5064b",
         "schema_hash": "6a247874257a1ebb5c7689f1f767d705b22d897f28309dc7b05ca8118fd605b0",
         "executor_revision": 1,
     }

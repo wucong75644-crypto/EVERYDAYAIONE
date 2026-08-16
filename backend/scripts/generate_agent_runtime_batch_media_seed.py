@@ -1,4 +1,4 @@
-"""Generate the immutable Runtime v7 batch-media release seed."""
+"""Generate the immutable Runtime v12 batch-media release seed."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from services.agent.runtime.catalog.batch_media_release import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGET = ROOT / "migrations/228_02_agent_runtime_batch_media_release.sql"
+TARGET = ROOT / "migrations/230_05_agent_runtime_catalog_batch_media_v12.sql"
 
 
 def main(target: Path = TARGET) -> None:
@@ -69,7 +69,8 @@ def _toolset_row(snapshot: object, catalog_revision: str) -> str:
         build_batch_media_definition_document()["requested_tool_groups"],
     )
     return "      (" + ", ".join([
-        sql_text("everydayai-default"), sql_text("v7"),
+        sql_text("everydayai-default"),
+        sql_text(str(build_batch_media_definition_document()["revision"])),
         sql_text(catalog_revision), sql_text(str(document["scope_kind"])),
         sql_text(str(document["channel"])), sql_text(str(document["gate_state"])),
         sql_text(str(document["toolset_hash"])), sql_json(document) + "::JSONB",
@@ -82,7 +83,7 @@ def _migration_sql(
     definition: dict[str, object], effective_toolset_hash: str,
     rows: list[str],
 ) -> str:
-    return f"""-- Runtime v7 batch-media release. Do not edit facts by hand.
+    return f"""-- Runtime v12 batch-media release. Do not edit facts by hand.
 -- Source: services/agent/runtime/catalog/batch_media_release.py
 SET LOCAL ROLE everydayai_owner;
 
@@ -93,14 +94,16 @@ DECLARE
 BEGIN
   INSERT INTO agent_runtime_catalog_facts(
     catalog_revision,catalog_hash,catalog_document,enabled_for_new_ingress,recoverable
-  ) VALUES(catalog_rev,catalog_rev,catalog_doc,FALSE,TRUE);
+  ) VALUES(catalog_rev,catalog_rev,catalog_doc,FALSE,TRUE)
+  ON CONFLICT (catalog_revision) DO NOTHING;
 
   INSERT INTO agent_runtime_definition_facts(
     agent_key,definition_revision,definition_hash,prompt_revision,catalog_revision,
     effective_toolset_hash,definition_document,enabled_for_new_ingress,recoverable
   ) VALUES(
-    'everydayai-default','v7',{sql_text(str(definition['definition_hash']))},
-    'agent-runtime-batch-media-v1',catalog_rev,
+    'everydayai-default',{sql_text(str(definition['revision']))},
+    {sql_text(str(definition['definition_hash']))},
+    {sql_text(str(definition['prompt_revision']))},catalog_rev,
     {sql_text(effective_toolset_hash)},{sql_json(definition)}::JSONB,FALSE,TRUE
   );
 
@@ -118,7 +121,8 @@ BEGIN
       THEN NULL ELSE 'secret-binding:'||(tool->>'canonical_name') END,
     encode(digest(('readiness:'||(tool->>'canonical_name')||':'||
       (tool->>'provider_revision'))::bytea,'sha256'),'hex'),FALSE
-  FROM jsonb_array_elements(catalog_doc->'tools') tool;
+  FROM jsonb_array_elements(catalog_doc->'tools') tool
+  ON CONFLICT (catalog_revision,tool_name) DO NOTHING;
 END $$;
 
 RESET ROLE;

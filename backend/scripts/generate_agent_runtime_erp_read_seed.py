@@ -11,7 +11,7 @@ from services.agent.runtime.catalog.erp_read_release import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGET = ROOT / "migrations/227_55_agent_runtime_erp_read_release.sql"
+TARGET = ROOT / "migrations/230_03_agent_runtime_catalog_erp_read_v10.sql"
 
 
 def main(target: Path = TARGET) -> None:

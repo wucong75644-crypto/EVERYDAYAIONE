@@ -15,8 +15,8 @@ from tests.test_agent_runtime_ar17_postgres_external import database
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MIGRATION = ROOT / "migrations/228_02_agent_runtime_batch_media_release.sql"
-ROLLBACK = ROOT / "migrations/rollback/228_02_agent_runtime_batch_media_release_rollback.sql"
+MIGRATION = ROOT / "migrations/230_05_agent_runtime_catalog_batch_media_v12.sql"
+ROLLBACK = ROOT / "migrations/rollback/230_05_agent_runtime_catalog_batch_media_v12_rollback.sql"
 
 
 def test_batch_media_release_uses_full_catalog_and_standard_image_ingress() -> None:
@@ -48,10 +48,13 @@ def test_batch_media_release_is_disabled_and_rollback_is_guarded() -> None:
     assert stored == expected
     assert sql.count("FALSE, TRUE") == 8
     assert sql.count("FALSE,TRUE") == 2
-    assert "definition_revision='v7'" in rollback
+    assert "definition_revision='v12'" in rollback
     assert "agent_runs" in rollback
     assert "agent_actions" in rollback
     assert "agent_runtime_tenant_provider_bindings" in rollback
+    assert "catalog_revision=rev AND definition_revision='v12'" in rollback
+    assert "ON CONFLICT (catalog_revision) DO NOTHING" in sql
+    assert "ON CONFLICT (catalog_revision,tool_name) DO NOTHING" in sql
 
 
 def test_batch_media_release_generator_is_byte_deterministic(tmp_path: Path) -> None:
@@ -78,7 +81,7 @@ def test_batch_media_release_apply_readback_rollback_reapply(database: str) -> N
         connection.commit()
         assert connection.execute(
             "SELECT count(*) FROM agent_runtime_definition_facts "
-            "WHERE definition_revision='v7'",
+            "WHERE definition_revision='v12'",
         ).fetchone()[0] == 0
         connection.execute(MIGRATION.read_text())
         connection.commit()
@@ -90,7 +93,7 @@ def _assert_release_readback(database: str) -> None:
         definition = connection.execute(
             "SELECT catalog_revision,enabled_for_new_ingress,recoverable "
             "FROM agent_runtime_definition_facts "
-            "WHERE agent_key='everydayai-default' AND definition_revision='v7'",
+            "WHERE agent_key='everydayai-default' AND definition_revision='v12'",
         ).fetchone()
         assert definition is not None
         assert definition[1:] == (False, True)
@@ -102,7 +105,7 @@ def _assert_release_readback(database: str) -> None:
         assert catalog == (42, False, True)
         names = connection.execute(
             "SELECT toolset_document->'tool_names' FROM "
-            "agent_runtime_effective_toolset_facts WHERE definition_revision='v7' "
+            "agent_runtime_effective_toolset_facts WHERE definition_revision='v12' "
             "AND scope_kind='user' AND channel='web' AND gate_state='enabled'",
         ).fetchone()[0]
         assert "generate_image" in names

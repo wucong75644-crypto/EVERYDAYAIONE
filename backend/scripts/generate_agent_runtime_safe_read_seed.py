@@ -11,7 +11,7 @@ from services.agent.runtime.catalog.safe_read_release import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGET = ROOT / "migrations/227_16_agent_runtime_safe_read_release.sql"
+TARGET = ROOT / "migrations/230_02_agent_runtime_catalog_safe_read_v9.sql"
 
 
 def main() -> None:

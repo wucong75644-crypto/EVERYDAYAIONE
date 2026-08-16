@@ -7,7 +7,7 @@ from services.agent.runtime.catalog.production import ProductionFactSnapshot
 from services.agent.runtime.catalog.production_seed import build_seed_snapshot
 
 
-BATCH_MEDIA_DEFINITION_REVISION = "v7"
+BATCH_MEDIA_DEFINITION_REVISION = "v12"
 BATCH_MEDIA_PROMPT_REVISION = "agent-runtime-batch-media-v1"
 EXCLUDED_INGRESS_TOOLS = frozenset({"image_agent"})
 
@@ -42,7 +42,7 @@ def build_batch_media_definition() -> AgentDefinition:
 def build_batch_media_snapshot(
     *, scope: str, channel: str, gate_state: str,
 ) -> ProductionFactSnapshot:
-    """Build v7 from the complete production descriptor/schema registry."""
+    """Build v12 from the complete production descriptor/schema registry."""
     return build_seed_snapshot(
         scope=scope,
         channel=channel,
