@@ -33,7 +33,7 @@ jobs:
             create rootfs rootfs.manifest
           sudo chown "$USER:$USER" rootfs.manifest
           sudo tar --sort=name --mtime='UTC 2024-04-25' \
-            --owner=0 --group=0 --numeric-owner -C rootfs -czf rootfs.tar.gz .
+            --numeric-owner -C rootfs -czf rootfs.tar.gz .
           sha256sum rootfs.tar.gz rootfs.manifest > SHA256SUMS
       - name: Upload immutable private release assets
         env:
