@@ -97,6 +97,14 @@ class RuntimeKieMediaProvider(SpecialistProvider):
             return _failed(attempt, "KIE_MEDIA_PROVIDER_NOT_READY")
         try:
             facts = await self._task_port.prepare(attempt, kind=self._kind)
+        except Exception as error:
+            return _failed(
+                attempt,
+                _known_runtime_media_error(
+                    error, default="KIE_MEDIA_REQUEST_PREPARATION_UNAVAILABLE",
+                ),
+            )
+        try:
             provider_request, provider_hash = _request_facts(facts)
             api_key = ""
             if self._legacy_adapter_factory is None:
@@ -106,9 +114,12 @@ class RuntimeKieMediaProvider(SpecialistProvider):
                 api_key = await credentials.api_key(
                     attempt, provider_request_hash=provider_hash,
                 )
-        except Exception:
+        except Exception as error:
             return _failed(
-                attempt, "KIE_MEDIA_CONFIGURATION_UNAVAILABLE",
+                attempt,
+                _known_runtime_media_error(
+                    error, default="KIE_MEDIA_CONFIGURATION_UNAVAILABLE",
+                ),
             )
         try:
             fact_outcome, fact = await create_fact(
@@ -269,7 +280,7 @@ class RuntimeKieMediaProvider(SpecialistProvider):
                         receipt, "reconciliation_state_version",
                     ),
                 )
-        except Exception:
+        except Exception as error:
             return with_fact(
                 _unknown(
                     attempt, "KIE_READBACK_CONFIGURATION_UNAVAILABLE",
@@ -416,6 +427,38 @@ def _model_id(provider_request: Mapping[str, object]) -> str:
     if not isinstance(model_id, str) or not model_id.strip():
         raise RuntimeError("KIE_PROVIDER_MODEL_REQUIRED")
     return model_id.strip()
+
+
+_KNOWN_RUNTIME_MEDIA_ERRORS = (
+    "AGENT_RUNTIME_MEDIA_ATTEMPT_SCOPE_INVALID",
+    "AGENT_RUNTIME_MEDIA_OWNER_NOT_READY",
+    "AGENT_RUNTIME_MEDIA_ATTEMPT_FENCED",
+    "AGENT_RUNTIME_PREPARED_MEDIA_SCOPE_INVALID",
+    "AGENT_RUNTIME_PREPARED_MEDIA_BINDING_CONFLICT",
+    "AGENT_RUNTIME_PREPARED_MEDIA_CREDIT_CONFLICT",
+    "AGENT_RUNTIME_MEDIA_MANIFEST_INCOMPLETE",
+    "AGENT_RUNTIME_MEDIA_MANIFEST_CONFLICT",
+    "AGENT_RUNTIME_MEDIA_PROVIDER_REQUEST_CONFLICT",
+    "AGENT_RUNTIME_MEDIA_PROVIDER_REQUEST_INVALID",
+    "AGENT_RUNTIME_MEDIA_PRICING_UNAVAILABLE",
+    "AGENT_RUNTIME_MEDIA_INSUFFICIENT_CREDITS",
+    "AGENT_RUNTIME_MEDIA_REQUEST_UNAVAILABLE",
+    "MEDIA_RETRY_BINDING_RESPONSE_INVALID",
+    "MEDIA_DISPATCH_PREPARE_FAILED",
+    "MEDIA_PROVIDER_REQUEST_RESPONSE_INVALID",
+    "MEDIA_PROVIDER_REQUEST_UNAVAILABLE",
+    "MEDIA_PROVIDER_REQUEST_SOURCE_INVALID",
+    "MEDIA_PROVIDER_REQUEST_HASH_INVALID",
+)
+
+
+def _known_runtime_media_error(error: Exception, *, default: str) -> str:
+    """Keep known fenced/database errors visible without exposing raw errors."""
+    message = str(error)
+    return next(
+        (code for code in _KNOWN_RUNTIME_MEDIA_ERRORS if code in message),
+        default,
+    )
 
 
 async def _close_legacy_adapter(adapter: Any) -> None:

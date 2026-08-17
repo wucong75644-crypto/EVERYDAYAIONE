@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from services.adapters.factory import create_image_adapter, create_video_adapter
+from services.adapters.kie import KieClient, KieImageAdapter, KieVideoAdapter
 
 
 class RuntimeLegacyKieAdapterFactory:
@@ -13,11 +13,12 @@ class RuntimeLegacyKieAdapterFactory:
     def create(
         self, kind: str, model_id: str, api_key: str | None = None,
     ) -> Any:
-        del api_key
+        if not isinstance(api_key, str) or not api_key.strip():
+            raise ValueError("RUNTIME_LEGACY_KIE_API_KEY_REQUIRED")
         if kind == "image":
-            return create_image_adapter(model_id)
+            return KieImageAdapter(KieClient(api_key), model_id)
         if kind == "video":
-            return create_video_adapter(model_id)
+            return KieVideoAdapter(KieClient(api_key), model_id)
         raise ValueError("RUNTIME_LEGACY_KIE_MEDIA_KIND_INVALID")
 
 
