@@ -34,6 +34,10 @@ class EcomImageHandler(ImageHandler):
     def handler_type(self) -> GenerationType:
         return GenerationType.IMAGE_ECOM
 
+    def _legacy_provider_submission_allowed(self) -> bool:
+        """电商图仍是独立产品链路，不属于普通图片迁移范围。"""
+        return True
+
     async def start(
         self,
         message_id: str,

@@ -44,6 +44,10 @@ class ImageHandler(BaseHandler):
     def handler_type(self) -> GenerationType:
         return GenerationType.IMAGE
 
+    def _legacy_provider_submission_allowed(self) -> bool:
+        """普通图片的 Provider Owner 已迁移到 Agent Runtime。"""
+        return False
+
     def preflight(
         self,
         user_id: str,
@@ -77,6 +81,9 @@ class ImageHandler(BaseHandler):
         3. 循环创建 N 个任务（锁积分 → API 调用 → 保存 task）
         4. 返回 client_task_id
         """
+        if not self._legacy_provider_submission_allowed():
+            raise RuntimeError("RUNTIME_IMAGE_HANDLER_DISABLED")
+
         # 1. 提取参数
         prompt = self._extract_text_content(content)
         image_urls = self._extract_image_urls(content)
@@ -189,6 +196,8 @@ class ImageHandler(BaseHandler):
         prepared_task_id: str,
     ) -> Optional[str]:
         """使用已原子准备的本地 task 锁积分并提交供应商。"""
+        if not self._legacy_provider_submission_allowed():
+            raise RuntimeError("RUNTIME_IMAGE_HANDLER_DISABLED")
         from services.handlers.image_prepared_submission import submit_prepared_image_task
         return await submit_prepared_image_task(
             handler=self, local_task_id=prepared_task_id, adapter=adapter,

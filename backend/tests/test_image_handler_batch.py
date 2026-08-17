@@ -126,14 +126,13 @@ def test_resolve_prepared_batch_rejects_count_mismatch():
 
 
 @pytest.mark.asyncio
-async def test_start_without_prepared_batch_never_creates_adapter():
+async def test_ordinary_image_handler_is_closed_before_provider_access():
     db = MockImageDB()
     db.set_users([{"id": "user_1", "credits": 1000, "status": "active"}])
     handler = ImageHandler(db)
     with (
-        patch("config.kie_models.calculate_image_cost", return_value={"user_credits": 5}),
         patch("services.adapters.factory.create_image_adapter") as create_adapter,
-        pytest.raises(RuntimeError, match="IMAGE_PREPARED_TASKS_MISSING"),
+        pytest.raises(RuntimeError, match="RUNTIME_IMAGE_HANDLER_DISABLED"),
     ):
         await handler.start(
             message_id="msg_1", conversation_id="conv_1", user_id="user_1",
@@ -144,33 +143,27 @@ async def test_start_without_prepared_batch_never_creates_adapter():
 
 
 @pytest.mark.asyncio
-async def test_start_submits_only_prepared_local_task():
+async def test_ordinary_image_handler_never_submits_prepared_local_task():
     db = MockImageDB()
     db.set_users([{"id": "user_1", "credits": 1000, "status": "active"}])
     handler = ImageHandler(db)
-    adapter = MagicMock(provider=MagicMock(value="kie"), supports_resolution=False)
-    adapter.close = AsyncMock()
     metadata = MagicMock(
         client_task_id="client_1", prepared_task_ids=("local-1",),
         prepared_batch_id="batch-1",
     )
     with (
-        patch("config.kie_models.calculate_image_cost", return_value={"user_credits": 5}),
-        patch("services.adapters.factory.create_image_adapter", return_value=adapter),
-        patch.object(handler, "_build_callback_url", return_value="https://callback"),
         patch(
             "services.handlers.image_prepared_submission.submit_prepared_image_task",
             new_callable=AsyncMock, return_value="external-1",
         ) as submit,
+        pytest.raises(RuntimeError, match="RUNTIME_IMAGE_HANDLER_DISABLED"),
     ):
         result = await handler.start(
             message_id="msg_1", conversation_id="conv_1", user_id="user_1",
             content=[], params={"model": "nano-banana"}, metadata=metadata,
         )
 
-    assert result == "client_1"
-    assert submit.await_args.kwargs["local_task_id"] == "local-1"
-    adapter.close.assert_awaited_once()
+    submit.assert_not_awaited()
 
 class TestBuildTaskDataMultiImage:
     """测试 _build_task_data 的 image_index/batch_id 参数"""
