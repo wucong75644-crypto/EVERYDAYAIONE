@@ -37,6 +37,9 @@ from services.agent.runtime.ports.executor import (
 from services.agent.runtime.executors.specialist_contracts import ReconciliationContext, CostReservation
 from services.agent.runtime.executors.specialist_executor import SpecialistExecutor
 from services.agent.runtime.executors.contracts import canonical_json
+from services.agent.runtime.infrastructure.postgres.specialist_repository import (
+    SpecialistRpcConflict,
+)
 from services.agent.runtime.application.action_loop_support import (
     ActionLease as _ActionLease,
     CostReserveFailure as _CostReserveFailure,
@@ -93,6 +96,7 @@ class ActionLoopDriver:
                 FencingTokenMismatchError,
                 LeaseExpiredError,
                 StaleVersionError,
+                SpecialistRpcConflict,
             ):
                 continue
         return True
@@ -154,6 +158,7 @@ class ActionLoopDriver:
             FencingTokenMismatchError,
             LeaseExpiredError,
             StaleVersionError,
+            SpecialistRpcConflict,
         ):
             pass
         return True

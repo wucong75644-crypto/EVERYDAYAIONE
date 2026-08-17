@@ -15,6 +15,9 @@ from services.agent.runtime.executors.specialist_contracts import (
     ProviderReceipt, ProviderState,
 )
 from services.agent.runtime.executors.specialist_executor import SpecialistExecutor
+from services.agent.runtime.infrastructure.postgres.specialist_repository import (
+    SpecialistRpcConflict,
+)
 from services.agent.runtime.ports.coordinator_recovery import (
     ActionDispatchSnapshot, ActionRecoveryClaim, ActionRecoveryOperation,
     RecoveryOutcome,
@@ -118,6 +121,15 @@ class _Facts:
         self.accepted = kwargs
 
 
+class _FencedFacts(_Facts):
+    async def still_unknown(self, **_kwargs):
+        raise SpecialistRpcConflict(
+            "record_agent_action_provider_still_unknown", "fenced", {
+                "outcome": "fenced",
+            },
+        )
+
+
 class _Resolver:
     def __init__(self, provider, facts):
         self.specialist_facts = facts
@@ -169,6 +181,15 @@ async def test_cancel_unknown_stays_reconcile_only_with_safe_due_time() -> None:
     assert facts.finalized is None
     assert facts.unknown["next_reconcile_at"] > datetime.now(timezone.utc)
     assert provider.reconcile_calls == provider.submit_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_fenced_reconcile_fact_does_not_crash_runtime_worker() -> None:
+    provider = _Provider(ProviderState.UNKNOWN)
+    facts, actions = _FencedFacts(), _Actions()
+
+    assert await _driver(provider, facts, actions).reconcile_once()
+    assert provider.cancel_calls == 1
 
 
 @pytest.mark.asyncio
