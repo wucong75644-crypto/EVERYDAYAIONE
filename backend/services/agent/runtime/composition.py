@@ -223,7 +223,7 @@ def build_projection(
         media_projection = build_runtime_media_projection_worker(
             db,
             build_runtime_media_persistence(
-                asset_registry=RuntimeMediaAssetRegistry(db),
+                asset_registry=RuntimeMediaAssetRegistry(db, allowed_asset_hosts=frozenset({media_cdn_domain.split("://", 1)[-1].split("/", 1)[0].lower().rstrip(".")})),
                 workspace_root=media_workspace_root,
                 cdn_domain=media_cdn_domain,
                 allowed_result_hosts=media_result_allowed_hosts,

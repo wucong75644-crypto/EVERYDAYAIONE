@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 from typing import Mapping
 from uuid import uuid4
 
@@ -10,7 +11,9 @@ from services.agent.runtime.application.media_projection_worker import (
     RuntimeMediaProjectionWorker, WebsocketMediaProjectionNotifier,
     _projection_action,
 )
-from services.agent.runtime.application.media_persistence import RuntimeMediaPersistence
+from services.agent.runtime.application.media_persistence import (
+    RuntimeMediaAssetRegistry, RuntimeMediaPersistence,
+)
 from services.agent.runtime.domain import (
     EventDurability, EventSequence, RuntimeActorType, RuntimeEvent,
     RuntimeScope, ScopeKind,
@@ -146,6 +149,24 @@ class _AssetRegistry:
         return {"asset": {"id": "asset-1"}}
 
 
+class _RpcResponse:
+    data = {"asset": {"id": "asset-1"}}
+
+
+class _RpcCall:
+    async def execute(self):
+        return _RpcResponse()
+
+
+class _Database:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def rpc(self, name, params):
+        self.calls.append((name, params))
+        return _RpcCall()
+
+
 def _facts() -> dict[str, object]:
     return {
         "outcome": "found",
@@ -270,6 +291,43 @@ async def test_persistence_and_asset_registration_are_identity_idempotent() -> N
     assert first == second
     assert len(workspace_calls) == 1
     assert len(registry.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_asset_registry_uses_injected_cdn_without_loading_app_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = "00000000-0000-4000-8000-000000000001"
+    owner_hash = hashlib.md5(
+        user_id.encode(), usedforsecurity=False,
+    ).hexdigest()[:8]
+    monkeypatch.setattr(
+        "services.assets.asset_identity.configured_asset_hosts",
+        lambda: (_ for _ in ()).throw(PermissionError(".env")),
+    )
+    database = _Database()
+    registry = RuntimeMediaAssetRegistry(
+        database, allowed_asset_hosts=frozenset({"cdn.example.test"}),
+    )
+    request = MediaProjectionAssetRequest(
+        action_id="action", slot_id="slot", slot_index=0,
+        source_url="https://provider.example/result.png", user_id=user_id,
+        org_id=None, conversation_id="conversation", message_id="message",
+        task_id="task", model_id="model", prompt="p", aspect_ratio="1:1",
+        resolution=None,
+    )
+
+    result = await registry.register_runtime_media_asset(request, {
+        "url": (
+            "https://cdn.example.test/workspace/personal/"
+            f"{owner_hash}/下载/result.png"
+        ),
+        "workspace_path": "下载/result.png",
+        "name": "result.png", "mime_type": "image/png", "size": 1,
+    })
+
+    assert result["asset"]["id"] == "asset-1"
+    assert database.calls[0][0] == "register_agent_runtime_media_asset_v1"
 
 
 @pytest.mark.asyncio

@@ -137,8 +137,11 @@ def build_runtime_media_persistence(
 class RuntimeMediaAssetRegistry:
     """Projection-scoped wrapper over the canonical asset registry RPC."""
 
-    def __init__(self, database: Any) -> None:
+    def __init__(
+        self, database: Any, *, allowed_asset_hosts: frozenset[str] | None = None,
+    ) -> None:
         self._database = database
+        self._allowed_asset_hosts = allowed_asset_hosts
 
     async def register_runtime_media_asset(
         self, request: MediaProjectionAssetRequest,
@@ -152,6 +155,7 @@ class RuntimeMediaAssetRegistry:
             original_url=url, workspace_path=workspace_path,
             org_id=request.org_id, storage_scope="user",
             storage_owner_key=request.user_id,
+            allowed_hosts=self._allowed_asset_hosts,
         )
         rpc_payload = {
             **dict(payload),
