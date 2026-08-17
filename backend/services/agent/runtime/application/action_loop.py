@@ -200,6 +200,7 @@ class ActionLoopDriver:
                 replace(
                     resolved.attempt,
                     status=ActionAttemptStatus.DISPATCHING,
+                    state_version=gate.state_version,
                 )
                 if isinstance(resolved.attempt, ActionAttempt)
                 else resolved.attempt

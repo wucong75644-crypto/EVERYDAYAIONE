@@ -74,6 +74,7 @@ class _Executor:
 
     async def dispatch(self, attempt, request):
         assert self.authorization.gated
+        assert attempt.state_version == 1
         assert request["external_idempotency_key"].startswith("action:")
         assert request["_dispatch_context"] == {
             "dispatch_intent_id": "77777777-7777-7777-7777-777777777777",
