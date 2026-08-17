@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import pytest
+from types import SimpleNamespace
 
 from services.agent.runtime.executors.specialist_contracts import (
     ProviderState, receipt_facts,
@@ -21,6 +22,83 @@ from tests.agent_runtime_kie_media_provider_test_support import (
     provider,
     provider_receipt,
 )
+
+
+class _LegacyKieClient:
+    def __init__(self, *, query_data=None):
+        self.create_requests = []
+        self.query_refs = []
+        self.query_data = query_data or {
+            "taskId": "kie-1", "state": "waiting",
+        }
+
+    async def create_task(self, request):
+        self.create_requests.append(request)
+        return SimpleNamespace(
+            code=200, msg="ok", data={"taskId": "legacy-kie-1"},
+        )
+
+    async def query_task(self, task_ref):
+        self.query_refs.append(task_ref)
+        return SimpleNamespace(
+            code=200, msg="ok", data=self.query_data,
+        )
+
+    async def close(self):
+        return None
+
+
+class _LegacyKieAdapter:
+    def __init__(self, *, query_data=None):
+        self.client = _LegacyKieClient(query_data=query_data)
+
+    async def close(self):
+        return None
+
+
+class _LegacyKieAdapterFactory:
+    def __init__(self, *, query_data=None):
+        self.calls = []
+        self.adapter = _LegacyKieAdapter(query_data=query_data)
+
+    def create(self, kind, model_id, api_key):
+        self.calls.append((kind, model_id, api_key))
+        return self.adapter
+
+
+@pytest.mark.asyncio
+async def test_production_media_submit_uses_legacy_kie_client():
+    legacy = _LegacyKieAdapterFactory()
+    transport = FakeTransport()
+    receipt = await provider(
+        transport, legacy_adapter_factory=legacy,
+    ).submit(attempt(), {}, idempotency_key="legacy-submit")
+
+    assert receipt.state is ProviderState.ACCEPTED
+    assert receipt.provider_task_ref == "legacy-kie-1"
+    assert legacy.calls == [(
+        "image", "gpt-image-2-image-to-image", "fixture-key",
+    )]
+    assert len(legacy.adapter.client.create_requests) == 1
+    assert legacy.adapter.client.create_requests[0].input["prompt"] == "make it blue"
+    assert transport.calls == []
+
+
+@pytest.mark.asyncio
+async def test_production_media_readback_uses_legacy_kie_client():
+    legacy = _LegacyKieAdapterFactory(query_data={
+        "taskId": "kie-1", "state": "success",
+        "resultJson": '{"resultUrls":["https://cdn.example/result.png"]}',
+    })
+    receipt = await provider(
+        FakeTransport(), legacy_adapter_factory=legacy,
+    ).reconcile(attempt(), provider_receipt())
+
+    assert receipt.state is ProviderState.COMPLETED
+    assert receipt.result["image_urls"] == [
+        "https://cdn.example/result.png",
+    ]
+    assert legacy.adapter.client.query_refs == ["kie-1"]
 
 
 @pytest.mark.asyncio

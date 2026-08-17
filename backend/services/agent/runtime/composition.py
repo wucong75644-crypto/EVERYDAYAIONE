@@ -482,7 +482,7 @@ def _build_runtime_media(*, database: Any, settings: Any,
     from services.agent.runtime.media_composition import build_runtime_media_composition
     from services.agent.runtime.providers.kie_credentials import PostgresRuntimeKieCredentialSource
     from services.agent.runtime.providers.kie_transport import HttpxKieOneShotTransport
-
+    from services.agent.runtime.providers.legacy_kie_adapter import RuntimeLegacyKieAdapterFactory
     enabled = bool(getattr(settings, "agent_runtime_media_enabled", False))
     return build_runtime_media_composition(
         database=database,
@@ -496,4 +496,5 @@ def _build_runtime_media(*, database: Any, settings: Any,
             settings, "agent_runtime_media_production_ready", False,
         )),
         tool_names=frozenset({"generate_image"}),
+        legacy_adapter_factory=RuntimeLegacyKieAdapterFactory(),
     )

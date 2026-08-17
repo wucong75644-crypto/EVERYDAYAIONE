@@ -30,6 +30,7 @@ def build_runtime_media_composition(
     enabled: bool = False, provider_probe_passed: bool = False,
     production_ready: bool = False,
     tool_names: frozenset[str] | None = None,
+    legacy_adapter_factory: Any | None = None,
 ) -> RuntimeMediaComposition:
     """Register local wiring; only the database may report owner readiness."""
     registry = ExecutorRegistry()
@@ -59,6 +60,7 @@ def build_runtime_media_composition(
             production_ready=production_ready,
             recovery_ready=provider_probe_passed,
             facts=provider_facts,
+            legacy_adapter_factory=legacy_adapter_factory,
         )
         registry.register(
             descriptor,

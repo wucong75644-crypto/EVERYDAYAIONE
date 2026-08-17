@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Mapping, Protocol
+from typing import Any, Mapping, Protocol
 
+from services.adapters.kie.models import CreateTaskRequest
 from services.agent.runtime.domain import ActionAttempt
 from services.agent.runtime.executors.specialist_contracts import (
     ProviderReceipt, ProviderState, SpecialistProvider,
 )
-from services.agent.runtime.providers.kie_transport import KieOneShotTransport
+from services.agent.runtime.providers.kie_transport import (
+    KieHttpResponse, KieOneShotTransport,
+)
 from services.agent.runtime.providers.kie_media_receipts import (
     STATUS_LOCATOR, cancel_unproven as _cancel_unproven,
     failed as _failed, provider_ref as _provider_ref,
@@ -45,6 +48,10 @@ class RuntimeKieCredentialSource(Protocol):
     ) -> str: ...
 
 
+class RuntimeLegacyKieAdapterFactory(Protocol):
+    def create(self, kind: str, model_id: str, api_key: str) -> Any: ...
+
+
 class RuntimeKieMediaProvider(SpecialistProvider):
     provider = "kie"
     status_locator = STATUS_LOCATOR
@@ -54,6 +61,7 @@ class RuntimeKieMediaProvider(SpecialistProvider):
         credentials: RuntimeKieCredentialSource | None, kind: str,
         production_ready: bool = False, recovery_ready: bool | None = None,
         facts: object | None = None,
+        legacy_adapter_factory: RuntimeLegacyKieAdapterFactory | None = None,
     ) -> None:
         if kind not in {"image", "video"}:
             raise ValueError("KIE_MEDIA_KIND_INVALID")
@@ -62,6 +70,7 @@ class RuntimeKieMediaProvider(SpecialistProvider):
         self._credentials = credentials
         self._facts = facts
         self._kind = kind
+        self._legacy_adapter_factory = legacy_adapter_factory
         self.production_ready = production_ready
         self.recovery_ready = (
             production_ready if recovery_ready is None else recovery_ready
@@ -109,8 +118,8 @@ class RuntimeKieMediaProvider(SpecialistProvider):
                 provider_idempotency_key=idempotency_key,
             )
         try:
-            response = await self._transport.submit(
-                api_key=api_key, body=provider_request,
+            response = await self._submit_external(
+                provider_request, api_key=api_key,
                 idempotency_key=idempotency_key,
             )
         except Exception:
@@ -234,7 +243,7 @@ class RuntimeKieMediaProvider(SpecialistProvider):
                     receipt, "reconciliation_state_version",
                 ),
             )
-            _, provider_hash = _request_facts(request_facts)
+            provider_request, provider_hash = _request_facts(request_facts)
             api_key = await self._credentials.api_key(
                 attempt, provider_request_hash=provider_hash,
                 owner_token=_receipt_text(receipt, "reconciliation_token"),
@@ -255,8 +264,9 @@ class RuntimeKieMediaProvider(SpecialistProvider):
                 cancel_unproven=cancel_unproven,
             )
         try:
-            response = await self._transport.query(
-                api_key=api_key, provider_task_ref=provider_ref,
+            response = await self._query_external(
+                provider_request, api_key=api_key,
+                provider_task_ref=provider_ref,
             )
         except Exception:
             return with_fact(
@@ -297,6 +307,57 @@ class RuntimeKieMediaProvider(SpecialistProvider):
             cancel_unproven=cancel_unproven,
         )
 
+    async def _submit_external(
+        self, provider_request: Mapping[str, object], *, api_key: str,
+        idempotency_key: str,
+    ) -> Any:
+        if self._legacy_adapter_factory is None:
+            return await self._transport.submit(
+                api_key=api_key, body=provider_request,
+                idempotency_key=idempotency_key,
+            )
+        adapter = self._legacy_adapter_factory.create(
+            self._kind, _model_id(provider_request), api_key,
+        )
+        try:
+            response = await adapter.client.create_task(
+                CreateTaskRequest.model_validate(dict(provider_request)),
+            )
+            return KieHttpResponse(
+                status_code=200,
+                payload={
+                    "code": response.code,
+                    "msg": response.msg,
+                    "data": response.data or {},
+                },
+            )
+        finally:
+            await _close_legacy_adapter(adapter)
+
+    async def _query_external(
+        self, provider_request: Mapping[str, object], *, api_key: str,
+        provider_task_ref: str,
+    ) -> Any:
+        if self._legacy_adapter_factory is None:
+            return await self._transport.query(
+                api_key=api_key, provider_task_ref=provider_task_ref,
+            )
+        adapter = self._legacy_adapter_factory.create(
+            self._kind, _model_id(provider_request), api_key,
+        )
+        try:
+            response = await adapter.client.query_task(provider_task_ref)
+            return KieHttpResponse(
+                status_code=200,
+                payload={
+                    "code": response.code,
+                    "msg": response.msg,
+                    "data": response.data or {},
+                },
+            )
+        finally:
+            await _close_legacy_adapter(adapter)
+
     async def cancel(
         self, attempt: ActionAttempt, receipt: Mapping[str, object],
     ) -> ProviderReceipt:
@@ -332,7 +393,25 @@ class RuntimeKieMediaProvider(SpecialistProvider):
         )
 
 
+def _model_id(provider_request: Mapping[str, object]) -> str:
+    model_id = provider_request.get("model")
+    if not isinstance(model_id, str) or not model_id.strip():
+        raise RuntimeError("KIE_PROVIDER_MODEL_REQUIRED")
+    return model_id.strip()
+
+
+async def _close_legacy_adapter(adapter: Any) -> None:
+    close_adapter = getattr(adapter, "close", None)
+    if callable(close_adapter):
+        await close_adapter()
+    client = getattr(adapter, "client", None)
+    close_client = getattr(client, "close", None)
+    if callable(close_client):
+        await close_client()
+
+
 __all__ = [
     "RuntimeKieCredentialSource", "RuntimeKieMediaProvider",
+    "RuntimeLegacyKieAdapterFactory",
     "RuntimeMediaTaskPort",
 ]

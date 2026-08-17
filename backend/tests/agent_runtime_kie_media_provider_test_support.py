@@ -219,6 +219,7 @@ def provider(
     task_port=None,
     facts=None,
     kind="image",
+    legacy_adapter_factory=None,
 ):
     return RuntimeKieMediaProvider(
         transport,
@@ -227,6 +228,7 @@ def provider(
         kind=kind,
         production_ready=True,
         facts=facts or FakeProviderFacts(),
+        legacy_adapter_factory=legacy_adapter_factory,
     )
 
 
