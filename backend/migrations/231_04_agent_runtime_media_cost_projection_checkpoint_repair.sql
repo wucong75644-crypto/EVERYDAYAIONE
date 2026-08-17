@@ -10,6 +10,8 @@ ALTER TABLE agent_runtime_media_projection_results
     DISABLE TRIGGER agent_runtime_media_image_zbatch_result_v1;
 ALTER TABLE agent_runtime_media_projection_results
     DISABLE TRIGGER agent_runtime_media_model_video_normalized_event_v1;
+ALTER TABLE agent_runtime_media_projection_results
+    DISABLE TRIGGER agent_runtime_media_wecom_delivery_v1;
 
 DO $repair$
 DECLARE
@@ -96,5 +98,7 @@ ALTER TABLE agent_runtime_media_projection_results
     ENABLE TRIGGER agent_runtime_media_image_zbatch_result_v1;
 ALTER TABLE agent_runtime_media_projection_results
     ENABLE TRIGGER agent_runtime_media_model_video_normalized_event_v1;
+ALTER TABLE agent_runtime_media_projection_results
+    ENABLE TRIGGER agent_runtime_media_wecom_delivery_v1;
 
 RESET ROLE;
