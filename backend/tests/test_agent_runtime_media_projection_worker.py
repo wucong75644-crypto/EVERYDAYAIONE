@@ -8,6 +8,7 @@ import pytest
 
 from services.agent.runtime.application.media_projection_worker import (
     RuntimeMediaProjectionWorker, WebsocketMediaProjectionNotifier,
+    _projection_action,
 )
 from services.agent.runtime.application.media_persistence import RuntimeMediaPersistence
 from services.agent.runtime.domain import (
@@ -165,6 +166,22 @@ def _facts() -> dict[str, object]:
             "result_urls": ["https://provider.example/result.png"],
         },
     }
+
+
+@pytest.mark.parametrize(
+    ("event_type", "expected"),
+    (
+        ("action.cost.reserve", "checkpoint_only"),
+        ("action.cost.settle", "checkpoint_only"),
+        ("action.provider.accepted", "action_progress"),
+        ("action.completed", "action_progress"),
+        ("run.completed", "run_completed"),
+    ),
+)
+def test_projection_action_matches_runtime_media_event_contract(
+    event_type: str, expected: str,
+) -> None:
+    assert _projection_action(event_type) == expected
 
 
 @pytest.mark.asyncio

@@ -112,7 +112,13 @@ class RuntimeMediaProjectionWorker:
 
 
 def _projection_action(event_type: str) -> str:
-    if event_type.startswith("action."):
+    if event_type in {
+        "action.requested", "action.accepted", "action.unknown",
+        "action.completed", "action.failed", "action.rejected",
+        "action.cancelled", "action.provider.accepted",
+        "action.provider.unknown", "action.completed_after_cancel",
+        "action.failed_after_cancel",
+    }:
         return "action_progress"
     return {
         "run.created": "run_pending",
