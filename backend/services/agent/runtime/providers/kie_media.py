@@ -59,7 +59,7 @@ class RuntimeKieMediaProvider(SpecialistProvider):
     status_locator = STATUS_LOCATOR
 
     def __init__(
-        self, transport: KieOneShotTransport, *, task_port: RuntimeMediaTaskPort,
+        self, transport: KieOneShotTransport | None, *, task_port: RuntimeMediaTaskPort,
         credentials: RuntimeKieCredentialSource | None, kind: str,
         production_ready: bool = False, recovery_ready: bool | None = None,
         facts: object | None = None,
@@ -89,10 +89,8 @@ class RuntimeKieMediaProvider(SpecialistProvider):
             raise RuntimeError("KIE_MEDIA_SUBMIT_PHASE_INVALID")
         if (
             not self.production_ready or self._facts is None
-            or (
-                self._legacy_adapter_factory is None
-                and self._credentials is None
-            )
+            or self._credentials is None
+            or (self._legacy_adapter_factory is None and self._transport is None)
         ):
             return _failed(attempt, "KIE_MEDIA_PROVIDER_NOT_READY")
         try:
@@ -106,14 +104,12 @@ class RuntimeKieMediaProvider(SpecialistProvider):
             )
         try:
             provider_request, provider_hash = _request_facts(facts)
-            api_key = ""
-            if self._legacy_adapter_factory is None:
-                credentials = self._credentials
-                if credentials is None:
-                    raise RuntimeError("KIE_CREDENTIAL_UNAVAILABLE")
-                api_key = await credentials.api_key(
-                    attempt, provider_request_hash=provider_hash,
-                )
+            credentials = self._credentials
+            if credentials is None:
+                raise RuntimeError("KIE_CREDENTIAL_UNAVAILABLE")
+            api_key = await credentials.api_key(
+                attempt, provider_request_hash=provider_hash,
+            )
         except Exception as error:
             return _failed(
                 attempt,
@@ -204,10 +200,8 @@ class RuntimeKieMediaProvider(SpecialistProvider):
             return _unknown(attempt, "KIE_MEDIA_RECONCILE_PHASE_INVALID")
         if (
             not self.recovery_ready or self._facts is None
-            or (
-                self._legacy_adapter_factory is None
-                and self._credentials is None
-            )
+            or self._credentials is None
+            or (self._legacy_adapter_factory is None and self._transport is None)
         ):
             return _unknown(attempt, "KIE_MEDIA_PROVIDER_NOT_READY")
         try:
@@ -268,18 +262,16 @@ class RuntimeKieMediaProvider(SpecialistProvider):
                 ),
             )
             provider_request, provider_hash = _request_facts(request_facts)
-            api_key = ""
-            if self._legacy_adapter_factory is None:
-                credentials = self._credentials
-                if credentials is None:
-                    raise RuntimeError("KIE_CREDENTIAL_UNAVAILABLE")
-                api_key = await credentials.api_key(
-                    attempt, provider_request_hash=provider_hash,
-                    owner_token=_receipt_text(receipt, "reconciliation_token"),
-                    expected_state_version=_receipt_integer(
-                        receipt, "reconciliation_state_version",
-                    ),
-                )
+            credentials = self._credentials
+            if credentials is None:
+                raise RuntimeError("KIE_CREDENTIAL_UNAVAILABLE")
+            api_key = await credentials.api_key(
+                attempt, provider_request_hash=provider_hash,
+                owner_token=_receipt_text(receipt, "reconciliation_token"),
+                expected_state_version=_receipt_integer(
+                    receipt, "reconciliation_state_version",
+                ),
+            )
         except Exception as error:
             return with_fact(
                 _unknown(
@@ -341,6 +333,8 @@ class RuntimeKieMediaProvider(SpecialistProvider):
         idempotency_key: str,
     ) -> Any:
         if self._legacy_adapter_factory is None:
+            if self._transport is None:
+                raise RuntimeError("KIE_TRANSPORT_UNAVAILABLE")
             return await self._transport.submit(
                 api_key=api_key, body=provider_request,
                 idempotency_key=idempotency_key,
@@ -368,6 +362,8 @@ class RuntimeKieMediaProvider(SpecialistProvider):
         provider_task_ref: str,
     ) -> Any:
         if self._legacy_adapter_factory is None:
+            if self._transport is None:
+                raise RuntimeError("KIE_TRANSPORT_UNAVAILABLE")
             return await self._transport.query(
                 api_key=api_key, provider_task_ref=provider_task_ref,
             )

@@ -40,6 +40,7 @@ from services.agent.runtime.providers.callback_inbox import (
     CallbackInbox, CallbackSignatureVerifier,
 )
 from services.agent.runtime.providers.kie_media import RuntimeKieMediaProvider
+from services.agent.runtime.providers.legacy_kie_adapter import RuntimeLegacyKieAdapterFactory
 from services.agent.runtime.provider_facts import PostgresProviderSubmissionFacts
 from services.agent.runtime.production_services import ProductionServiceBundle
 from services.agent.runtime.application.action_loop import ActionLoopDriver
@@ -59,7 +60,6 @@ def build_production_components_for_worker(
     from services.agent.runtime.production_factory import (
         build_agent_runtime_production_components,
     )
-
     components = build_agent_runtime_production_components(
         database, settings, sandbox_registry,
     )
@@ -299,12 +299,12 @@ def build_production_specialist_registry(
     providers["generate_image"] = RuntimeKieMediaProvider(
         ports.kie_transport or ports.transport, task_port=ports.media_task,
         credentials=ports.kie_credentials, kind="image",
-        production_ready=media_ready, facts=ports.provider_facts,
+        production_ready=media_ready, facts=ports.provider_facts, legacy_adapter_factory=RuntimeLegacyKieAdapterFactory(),
     )
     providers["generate_video"] = RuntimeKieMediaProvider(
         ports.kie_transport or ports.transport, task_port=ports.media_task,
         credentials=ports.kie_credentials, kind="video",
-        production_ready=media_ready, facts=ports.provider_facts,
+        production_ready=media_ready, facts=ports.provider_facts, legacy_adapter_factory=RuntimeLegacyKieAdapterFactory(),
     )
     for tool in CHILD_RUN_TOOLS:
         providers[tool] = PortBackedProvider(

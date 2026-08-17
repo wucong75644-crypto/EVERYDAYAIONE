@@ -104,6 +104,23 @@ def test_runtime_production_media_composition_can_expose_image_only():
             for name in descriptor.action_kinds} == {"generate_image"}
 
 
+def test_runtime_media_composition_accepts_legacy_tool_provider_without_transport():
+    database = SimpleNamespace(scope=DatabaseScope(
+        actor_user_id=None, org_id=None,
+        access_kind=DatabaseAccessKind.AGENT_RUNTIME,
+    ))
+    legacy_factory = object()
+    composition = build_runtime_media_composition(
+        database=database, transport=None, credentials=object(),
+        enabled=True, provider_probe_passed=True,
+        specialist_facts=object(), legacy_adapter_factory=legacy_factory,
+        tool_names=frozenset({"generate_image"}),
+    )
+
+    _, executor = composition.registry.resolve("generate_image")
+    assert executor.provider._legacy_adapter_factory is legacy_factory
+
+
 def test_runtime_media_composition_rejects_non_media_tool_selection():
     with pytest.raises(ValueError, match="TOOL_SELECTION_INVALID"):
         build_runtime_media_composition(

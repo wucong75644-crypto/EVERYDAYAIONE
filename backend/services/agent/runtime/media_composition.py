@@ -48,7 +48,9 @@ def build_runtime_media_composition(
             registry=registry, enabled=False, production_ready=False,
             error_code="RUNTIME_MEDIA_PROVIDER_NOT_READY",
         )
-    if database is None or transport is None or credentials is None:
+    if database is None or credentials is None or (
+        transport is None and legacy_adapter_factory is None
+    ):
         raise RuntimeError("RUNTIME_MEDIA_COMPOSITION_WIRING_REQUIRED")
     task_port = build_runtime_media_task_port(database)
     provider_facts = PostgresProviderSubmissionFacts(database)

@@ -481,12 +481,12 @@ def _build_runtime_media(*, database: Any, settings: Any,
                          specialist_facts: object):
     from services.agent.runtime.media_composition import build_runtime_media_composition
     from services.agent.runtime.providers.kie_credentials import PostgresRuntimeKieCredentialSource
-    from services.agent.runtime.providers.kie_transport import HttpxKieOneShotTransport
     from services.agent.runtime.providers.legacy_kie_adapter import RuntimeLegacyKieAdapterFactory
     enabled = bool(getattr(settings, "agent_runtime_media_enabled", False))
     return build_runtime_media_composition(
         database=database,
-        transport=HttpxKieOneShotTransport() if enabled else None,
+        # Runtime governs; generate_image owns the KIE wire contract.
+        transport=None,
         credentials=PostgresRuntimeKieCredentialSource(bundle_resolver) if enabled else None,
         specialist_facts=specialist_facts, enabled=enabled,
         provider_probe_passed=bool(getattr(
