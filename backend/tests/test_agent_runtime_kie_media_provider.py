@@ -71,13 +71,15 @@ async def test_production_media_submit_uses_legacy_kie_client():
     legacy = _LegacyKieAdapterFactory()
     transport = FakeTransport()
     receipt = await provider(
-        transport, legacy_adapter_factory=legacy,
+        transport,
+        credentials=FakeCredentials(RuntimeError("new resolver unavailable")),
+        legacy_adapter_factory=legacy,
     ).submit(attempt(), {}, idempotency_key="legacy-submit")
 
     assert receipt.state is ProviderState.ACCEPTED
     assert receipt.provider_task_ref == "legacy-kie-1"
     assert legacy.calls == [(
-        "image", "gpt-image-2-image-to-image", "fixture-key",
+        "image", "gpt-image-2-image-to-image", "",
     )]
     assert len(legacy.adapter.client.create_requests) == 1
     assert legacy.adapter.client.create_requests[0].input["prompt"] == "make it blue"
@@ -91,7 +93,9 @@ async def test_production_media_readback_uses_legacy_kie_client():
         "resultJson": '{"resultUrls":["https://cdn.example/result.png"]}',
     })
     receipt = await provider(
-        FakeTransport(), legacy_adapter_factory=legacy,
+        FakeTransport(),
+        credentials=FakeCredentials(RuntimeError("new resolver unavailable")),
+        legacy_adapter_factory=legacy,
     ).reconcile(attempt(), provider_receipt())
 
     assert receipt.state is ProviderState.COMPLETED

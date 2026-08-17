@@ -49,7 +49,9 @@ class RuntimeKieCredentialSource(Protocol):
 
 
 class RuntimeLegacyKieAdapterFactory(Protocol):
-    def create(self, kind: str, model_id: str, api_key: str) -> Any: ...
+    def create(
+        self, kind: str, model_id: str, api_key: str | None = None,
+    ) -> Any: ...
 
 
 class RuntimeKieMediaProvider(SpecialistProvider):
@@ -86,16 +88,24 @@ class RuntimeKieMediaProvider(SpecialistProvider):
         if status_value is not None and str(status_value) not in {"claimed", "dispatching"}:
             raise RuntimeError("KIE_MEDIA_SUBMIT_PHASE_INVALID")
         if (
-            not self.production_ready or self._credentials is None
-            or self._facts is None
+            not self.production_ready or self._facts is None
+            or (
+                self._legacy_adapter_factory is None
+                and self._credentials is None
+            )
         ):
             return _failed(attempt, "KIE_MEDIA_PROVIDER_NOT_READY")
         try:
             facts = await self._task_port.prepare(attempt, kind=self._kind)
             provider_request, provider_hash = _request_facts(facts)
-            api_key = await self._credentials.api_key(
-                attempt, provider_request_hash=provider_hash,
-            )
+            api_key = ""
+            if self._legacy_adapter_factory is None:
+                credentials = self._credentials
+                if credentials is None:
+                    raise RuntimeError("KIE_CREDENTIAL_UNAVAILABLE")
+                api_key = await credentials.api_key(
+                    attempt, provider_request_hash=provider_hash,
+                )
         except Exception:
             return _failed(
                 attempt, "KIE_MEDIA_CONFIGURATION_UNAVAILABLE",
@@ -182,8 +192,11 @@ class RuntimeKieMediaProvider(SpecialistProvider):
         if status_value is not None and str(status_value) not in {"accepted", "unknown"}:
             return _unknown(attempt, "KIE_MEDIA_RECONCILE_PHASE_INVALID")
         if (
-            not self.recovery_ready or self._credentials is None
-            or self._facts is None
+            not self.recovery_ready or self._facts is None
+            or (
+                self._legacy_adapter_factory is None
+                and self._credentials is None
+            )
         ):
             return _unknown(attempt, "KIE_MEDIA_PROVIDER_NOT_READY")
         try:
@@ -244,13 +257,18 @@ class RuntimeKieMediaProvider(SpecialistProvider):
                 ),
             )
             provider_request, provider_hash = _request_facts(request_facts)
-            api_key = await self._credentials.api_key(
-                attempt, provider_request_hash=provider_hash,
-                owner_token=_receipt_text(receipt, "reconciliation_token"),
-                expected_state_version=_receipt_integer(
-                    receipt, "reconciliation_state_version",
-                ),
-            )
+            api_key = ""
+            if self._legacy_adapter_factory is None:
+                credentials = self._credentials
+                if credentials is None:
+                    raise RuntimeError("KIE_CREDENTIAL_UNAVAILABLE")
+                api_key = await credentials.api_key(
+                    attempt, provider_request_hash=provider_hash,
+                    owner_token=_receipt_text(receipt, "reconciliation_token"),
+                    expected_state_version=_receipt_integer(
+                        receipt, "reconciliation_state_version",
+                    ),
+                )
         except Exception:
             return with_fact(
                 _unknown(
