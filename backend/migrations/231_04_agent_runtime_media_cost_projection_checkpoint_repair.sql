@@ -1,6 +1,14 @@
 /* 231.04: finish the audited cost-event repair before worker replay. */
 SET LOCAL ROLE everydayai_owner;
 
+/* The normal result triggers require the projection worker session.  This
+ * owner-scoped repair already has the exact checkpoint-only payload, so skip
+ * those normalization triggers only for this transactional data repair. */
+ALTER TABLE agent_runtime_media_projection_results
+    DISABLE TRIGGER agent_runtime_media_image_normalized_event_v1;
+ALTER TABLE agent_runtime_media_projection_results
+    DISABLE TRIGGER agent_runtime_media_image_zbatch_result_v1;
+
 DO $repair$
 DECLARE
     item RECORD;
@@ -79,5 +87,10 @@ BEGIN
     END LOOP;
 END
 $repair$;
+
+ALTER TABLE agent_runtime_media_projection_results
+    ENABLE TRIGGER agent_runtime_media_image_normalized_event_v1;
+ALTER TABLE agent_runtime_media_projection_results
+    ENABLE TRIGGER agent_runtime_media_image_zbatch_result_v1;
 
 RESET ROLE;
