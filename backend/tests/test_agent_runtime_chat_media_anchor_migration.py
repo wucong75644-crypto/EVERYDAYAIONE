@@ -6,6 +6,8 @@ MIGRATION = ROOT / "migrations/230_13_agent_runtime_chat_media_anchor.sql"
 ROLLBACK = ROOT / "migrations/rollback/230_13_agent_runtime_chat_media_anchor_rollback.sql"
 COMPATIBILITY_MIGRATION = ROOT / "migrations/230_14_agent_runtime_media_direct_anchor_compatibility.sql"
 COMPATIBILITY_ROLLBACK = ROOT / "migrations/rollback/230_14_agent_runtime_media_direct_anchor_compatibility_rollback.sql"
+ELSIF_COMPATIBILITY_MIGRATION = ROOT / "migrations/230_15_agent_runtime_media_anchor_elsif_compatibility.sql"
+ELSIF_COMPATIBILITY_ROLLBACK = ROOT / "migrations/rollback/230_15_agent_runtime_media_anchor_elsif_compatibility_rollback.sql"
 
 
 def test_chat_media_anchor_migration_carries_all_runtime_media_anchors():
@@ -39,3 +41,14 @@ def test_direct_media_compatibility_migration_patches_applied_function_only():
     assert "p_policy_snapshot->>'source', '') <> 'media_ingress'" in sql
     assert "pg_get_functiondef(target)" in rollback
     assert "AGENT_RUNTIME_CHAT_MEDIA_ANCHOR_FUNCTION_DRIFT" in rollback
+
+
+def test_media_ingress_elsif_compatibility_guards_only_chat_anchor_rejection():
+    sql = ELSIF_COMPATIBILITY_MIGRATION.read_text()
+    rollback = ELSIF_COMPATIBILITY_ROLLBACK.read_text()
+
+    assert "AGENT_RUNTIME_CHAT_MEDIA_ELSIF_FUNCTION_DRIFT" in sql
+    assert "AGENT_RUNTIME_CHAT_MEDIA_ELSIF_FUNCTION_DRIFT" in rollback
+    assert "p_context_receipt->>'source', '') <> 'media_ingress'" in sql
+    assert "p_policy_snapshot->>'source', '') <> 'media_ingress'" in sql
+    assert "ELSIF p_tool_name = 'generate_image' THEN" in rollback

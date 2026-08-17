@@ -32,6 +32,7 @@ MEDIA_MIGRATION_FILES=(
   backend/migrations/228_08i2_agent_runtime_media_model_image_wecom_outbox.sql
   backend/migrations/230_13_agent_runtime_chat_media_anchor.sql
   backend/migrations/230_14_agent_runtime_media_direct_anchor_compatibility.sql
+  backend/migrations/230_15_agent_runtime_media_anchor_elsif_compatibility.sql
   backend/migrations/rollback/228_01_agent_runtime_action_hash_canonicalization_rollback.sql
   backend/migrations/rollback/228_02_agent_runtime_batch_media_release_rollback.sql
   backend/migrations/rollback/228_03_agent_runtime_media_authorization_group_rollback.sql
@@ -57,6 +58,7 @@ MEDIA_MIGRATION_FILES=(
   backend/migrations/rollback/228_08i2_agent_runtime_media_model_image_wecom_outbox_rollback.sql
   backend/migrations/rollback/230_13_agent_runtime_chat_media_anchor_rollback.sql
   backend/migrations/rollback/230_14_agent_runtime_media_direct_anchor_compatibility_rollback.sql
+  backend/migrations/rollback/230_15_agent_runtime_media_anchor_elsif_compatibility_rollback.sql
 )
 
 MEDIA_UNIT_TESTS=(
