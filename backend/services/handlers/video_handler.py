@@ -14,6 +14,7 @@ from schemas.message import (
     ContentPart,
     GenerationType,
     Message,
+    serialize_content_part,
     VideoPart,
 )
 from config.smart_model_config import get_image_to_video_model
@@ -291,12 +292,7 @@ class VideoHandler(BaseHandler):
         content_dicts = []
         for part in result:
             if isinstance(part, VideoPart):
-                content_dicts.append({
-                    "type": "video",
-                    "url": part.url,
-                    "duration": part.duration,
-                    "thumbnail": part.thumbnail,
-                })
+                content_dicts.append(serialize_content_part(part))
             elif isinstance(part, dict):
                 content_dicts.append(part)
         return content_dicts

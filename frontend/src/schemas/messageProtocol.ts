@@ -7,6 +7,43 @@ import { logger } from '../utils/logger';
 const optionalString = z.string().optional();
 const optionalNumber = z.number().optional();
 
+// Older API responses were serialized with Pydantic's default model_dump(),
+// which emitted null for every optional media field. Treat those nulls as the
+// equivalent of an omitted field so historical user attachments remain
+// renderable after a refresh.
+const nullEquivalentFields: Record<string, readonly string[]> = {
+  image: [
+    'original_url', 'thumbnail_url', 'preview_url', 'download_url', 'asset_id',
+    'width', 'height', 'alt', 'failed', 'error', 'error_code', 'name',
+    'workspace_path', 'size', 'mime_type',
+  ],
+  video: ['duration', 'thumbnail'],
+  audio: ['duration', 'transcript'],
+  file: ['size', 'workspace_path', 'asset_id'],
+  thinking: ['duration_ms'],
+  tool_step: [
+    'summary', 'code', 'output', 'elapsed_ms', 'input', 'cancelled_at',
+  ],
+  tool_result: ['files'],
+  form: ['title', 'description', 'submit_text', 'cancel_text'],
+  chart: ['title', 'chart_type', 'spec_format'],
+  diagram: ['title'],
+  table: ['title', 'truncated'],
+  ecom_plan: ['cost_estimate'],
+};
+
+function normalizeNullEquivalentFields(input: unknown): unknown {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
+  const candidate = input as Record<string, unknown>;
+  const fields = nullEquivalentFields[String(candidate.type)] ?? [];
+  if (!fields.some((field) => candidate[field] === null)) return input;
+  const normalized = { ...candidate };
+  fields.forEach((field) => {
+    if (normalized[field] === null) delete normalized[field];
+  });
+  return normalized;
+}
+
 function normalizeChartFormat(
   value: string,
 ): 'echarts' | 'plotly' | 'vegalite' | 'unknown' {
@@ -39,7 +76,7 @@ const formFieldSchema = z.object({
   visible_when: z.object({ field: z.string(), value: z.string() }).optional(),
 }).passthrough();
 
-const contentPartSchema = z.discriminatedUnion('type', [
+const contentPartSchema = z.preprocess(normalizeNullEquivalentFields, z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string() }).passthrough(),
   z.object({
     type: z.literal('image'),
@@ -157,7 +194,7 @@ const contentPartSchema = z.discriminatedUnion('type', [
     interrupted_at: z.string(),
     reason: z.enum(['user_cancel', 'system_timeout', 'network_error']),
   }).passthrough(),
-]);
+]));
 
 export interface MessageProtocolContext {
   messageId?: string;

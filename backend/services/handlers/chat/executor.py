@@ -8,8 +8,11 @@ from typing import Any, Callable, Mapping
 
 from pydantic import TypeAdapter
 
-from schemas.message import ContentPart
+from schemas.message import ContentPart, serialize_content_parts
 from services.conversation_execution import GenerationClaim, GenerationOutcome
+from services.conversation_command_store import ConversationCommandStore
+from services.conversation_turn_runtime import ConversationTurnRuntime
+from services.conversation_subtasks import ConversationSubtaskStore
 from services.handlers.chat.execution_engine import (
     ChatExecutionRequest,
     execute_chat,
@@ -32,11 +35,15 @@ class ChatGenerationExecutor:
         sink_factory: Callable[
             [Mapping[str, Any], GenerationClaim, asyncio.Event], Any
         ] | None = None,
+        command_store: ConversationCommandStore | None = None,
+        subtask_store: ConversationSubtaskStore | None = None,
     ) -> None:
         self._db = db
         self._handler_factory = handler_factory or _create_handler
         self._handler_db_factory = handler_db_factory or _get_handler_db
         self._sink_factory = sink_factory
+        self._command_store = command_store
+        self._subtask_store = subtask_store
 
     async def execute(
         self,
@@ -45,11 +52,32 @@ class ChatGenerationExecutor:
         cancellation_event: asyncio.Event,
     ) -> GenerationOutcome:
         _validate_task(task, claim)
+        runtime = ConversationTurnRuntime(
+            conversation_id=claim.conversation_id,
+            task_id=claim.task_id,
+            turn_id=claim.turn_id,
+            cancellation_event=cancellation_event,
+            execution_token=claim.execution_token,
+            command_store=self._command_store,
+            subtask_store=self._subtask_store,
+        )
         content, execution_scope = await asyncio.gather(
             self._load_input_content(claim),
             resolve_execution_scope(self._db, task, claim.conversation_id),
         )
         handler = self._handler_factory(self._handler_db_factory())
+        # Actor 运行时上下文供跨进程审批等待器使用；普通 ChatHandler 不依赖这些字段。
+        handler._actor_runtime = runtime
+        handler._actor_command_store = self._command_store
+        handler._actor_execution_token = claim.execution_token
+        handler._actor_cancellation_event = cancellation_event
+        handler._actor_enabled = self._command_store is not None
+        handler._actor_turn_id = claim.turn_id
+        if handler._actor_enabled:
+            from services.tool_invocation_store import DatabaseToolInvocationStore
+            handler._actor_invocation_store = DatabaseToolInvocationStore(
+                handler.db,
+            )
         handler.org_id = task.get("org_id")
         handler.execution_scope = execution_scope
         handler._workspace_user_id = execution_scope.workspace_owner_id
@@ -77,11 +105,10 @@ class ChatGenerationExecutor:
                 self._sink_factory(task, claim, cancellation_event)
                 if self._sink_factory else None
             ),
+            runtime=runtime,
         )
         return GenerationOutcome(
-            result_content=[
-                part.model_dump(exclude_none=True) for part in result.parts
-            ],
+            result_content=serialize_content_parts(result.parts),
             usage=result.usage,
             credits_cost=result.credits_cost,
             tool_digest=result.tool_digest,

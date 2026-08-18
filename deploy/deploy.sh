@@ -152,7 +152,7 @@ build_frontend() {
     # 运行测试（可选）
     if [ "$SKIP_TEST" != true ]; then
         log_info "运行前端测试..."
-        npm run test:run || log_warning "前端测试失败，继续部署"
+        npm run test:run
     fi
 
     # 构建
@@ -195,7 +195,7 @@ build_backend() {
     # 运行测试（可选）
     if [ "$SKIP_TEST" != true ]; then
         log_info "运行后端测试..."
-        pytest || log_warning "后端测试失败，继续部署"
+        pytest
     fi
 
     # 语法检查
@@ -251,6 +251,8 @@ sync_backend() {
     # 同步部署配置（sandbox.cfg 等）
     rsync -avz \
         -e "ssh -p ${SERVER_PORT}" \
+        --exclude '.env*' \
+        --exclude 'config.env' \
         deploy/ \
         ${SERVER_USER}@${SERVER_HOST}:${REMOTE_BACKEND_DIR}/../deploy/
 

@@ -93,7 +93,10 @@ async def test_executor_loads_multimodal_content_from_input_message(monkeypatch)
     async def fake_execute_chat(**kwargs):
         captured["request"] = kwargs["request"]
         return ChatExecutionResult(
-            parts=[TextPart(text="完成")],
+            parts=[
+                TextPart(text="完成"),
+                ImagePart(url="https://cdn.example.com/result.png"),
+            ],
             content_blocks=[{"type": "text", "text": "完成"}],
             usage={"prompt_tokens": 3, "completion_tokens": 2},
             credits_cost=2,
@@ -128,7 +131,10 @@ async def test_executor_loads_multimodal_content_from_input_message(monkeypatch)
     assert received_db["handler"].execution_scope.context_scope == "user"
     assert received_db["handler"]._workspace_user_id == "user-1"
     assert received_db["handler"]._personal_context_allowed is True
-    assert outcome.result_content == [{"type": "text", "text": "完成"}]
+    assert outcome.result_content == [
+        {"type": "text", "text": "完成"},
+        {"type": "image", "url": "https://cdn.example.com/result.png"},
+    ]
     assert outcome.credits_cost == 2
 
 

@@ -157,8 +157,60 @@ class ChatToolMixin(ChatToolResultMixin):
             prepared, conversation_id, tc["name"],
         )
         started_at = time.monotonic()
+
+        invocation_store = getattr(self, "_actor_invocation_store", None)
+        invocation = await ChatToolMixin._begin_actor_tool_invocation(
+            self,
+            store=invocation_store,
+            task_id=task_id,
+            conversation_id=conversation_id,
+            tool_call_id=tc["id"],
+            tool_name=tc["name"],
+            args=args,
+        )
+        if invocation:
+            outcome = invocation.get("outcome")
+            if outcome == "replay":
+                from services.tool_invocation_store import deserialize_tool_result
+                result = deserialize_tool_result(invocation.get("result"))
+                return await ChatToolResultMixin._process_tool_result(
+                    self,
+                    tc,
+                    result,
+                    ToolResultContext(
+                        task_id=task_id,
+                        conversation_id=conversation_id,
+                        message_id=message_id,
+                        user_id=user_id,
+                        tool_name=tc["name"],
+                        tool_call_id=tc["id"],
+                        turn=turn,
+                        args=args,
+                        elapsed_ms=0,
+                    ),
+                )
+            if outcome in {"in_progress", "uncertain"}:
+                text = (
+                    "⚠ 该工具调用的外部副作用状态未知，已停止自动重试。"
+                    "请先核对业务系统结果，再决定是否重新发起操作。"
+                    if outcome == "uncertain" else
+                    "⚠ 该工具调用正在由另一执行者处理，已跳过重复执行。"
+                )
+                return tc, text, True, text
+            if outcome != "execute":
+                text = "⚠ 工具调用未获得当前执行权，未执行外部操作。"
+                return tc, text, True, text
         try:
             result = await executor.execute(tc["name"], args)
+            await ChatToolMixin._complete_actor_tool_invocation(
+                self,
+                store=invocation_store,
+                task_id=task_id,
+                turn_id=getattr(self, "_actor_turn_id", None),
+                tool_call_id=tc["id"],
+                status="succeeded",
+                result=result,
+            )
             elapsed_ms = int(
                 (time.monotonic() - started_at) * 1000
             )
@@ -178,6 +230,26 @@ class ChatToolMixin(ChatToolResultMixin):
                 ),
             )
         except Exception as error:
+            try:
+                await ChatToolMixin._complete_actor_tool_invocation(
+                    self,
+                    store=invocation_store,
+                    task_id=task_id,
+                    turn_id=getattr(self, "_actor_turn_id", None),
+                    tool_call_id=tc["id"],
+                    status="uncertain",
+                    result={
+                        "kind": "error",
+                        "summary": str(error)[:2000],
+                    },
+                    error_message=str(error),
+                )
+            except Exception as invocation_error:
+                logger.warning(
+                    "actor_tool_invocation_uncertain_write_failed | "
+                    f"tool_call_id={tc['id']} | "
+                    f"error={type(invocation_error).__name__}"
+                )
             elapsed_ms = int(
                 (time.monotonic() - started_at) * 1000
             )
@@ -196,6 +268,65 @@ class ChatToolMixin(ChatToolResultMixin):
                     elapsed_ms=elapsed_ms,
                 ),
             )
+
+    async def _begin_actor_tool_invocation(
+        self,
+        *,
+        store: Any,
+        task_id: str,
+        conversation_id: str,
+        tool_call_id: str,
+        tool_name: str,
+        args: Dict[str, Any],
+    ) -> Dict[str, Any] | None:
+        if (
+            getattr(self, "_actor_enabled", False) is not True
+            or store is None
+            or not getattr(self, "_actor_turn_id", None)
+            or not getattr(self, "_actor_execution_token", None)
+        ):
+            return None
+        from services.tool_invocation_store import hash_tool_arguments
+        return await asyncio.to_thread(
+            store.begin,
+            task_id=task_id,
+            conversation_id=conversation_id,
+            turn_id=self._actor_turn_id,
+            execution_token=self._actor_execution_token,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            args_hash=hash_tool_arguments(args),
+        )
+
+    async def _complete_actor_tool_invocation(
+        self,
+        *,
+        store: Any,
+        task_id: str,
+        turn_id: str | None,
+        tool_call_id: str,
+        status: str,
+        result: Any,
+        error_message: str = "",
+    ) -> None:
+        if (
+            getattr(self, "_actor_enabled", False) is not True
+            or store is None
+            or not turn_id
+            or not getattr(self, "_actor_execution_token", None)
+        ):
+            return
+        from services.tool_invocation_store import serialize_tool_result
+        await asyncio.to_thread(
+            store.complete,
+            task_id=task_id,
+            turn_id=turn_id,
+            tool_call_id=tool_call_id,
+            execution_token=self._actor_execution_token,
+            status=status,
+            result=serialize_tool_result(result),
+            error_message=error_message,
+        )
 
     async def _prepare_tool_arguments(
         self,
@@ -237,8 +368,12 @@ class ChatToolMixin(ChatToolResultMixin):
                 safety_level=safety.value,
             ),
         )
-        approved = await ws_manager.wait_for_confirm(
-            tc["id"], timeout=60.0,
+        approved = await ChatToolMixin._wait_for_tool_confirmation(
+            self,
+            tool_call_id=tc["id"],
+            task_id=task_id,
+            conversation_id=conversation_id,
+            timeout=60.0,
         )
         if approved:
             return args
@@ -247,6 +382,102 @@ class ChatToolMixin(ChatToolResultMixin):
             "请告知用户操作未执行，询问是否需要重新确认。"
         )
         return tc, rejected, True, rejected
+
+    async def _wait_for_tool_confirmation(
+        self,
+        *,
+        tool_call_id: str,
+        task_id: str,
+        conversation_id: str,
+        timeout: float,
+    ) -> bool:
+        """等待确认；Actor 进程与 WebSocket 进程分离时以控制事件恢复。"""
+        store = getattr(self, "_actor_command_store", None)
+        token = getattr(self, "_actor_execution_token", None)
+        if getattr(self, "_actor_enabled", False) is not True or store is None or not token:
+            return await ws_manager.wait_for_confirm(
+                tool_call_id,
+                timeout=timeout,
+                task_id=task_id,
+                conversation_id=conversation_id,
+            )
+
+        runtime = getattr(self, "_actor_runtime", None)
+        if runtime is not None:
+            from services.conversation_state import ConversationState
+            runtime.set_state(ConversationState.WAITING_APPROVAL)
+
+        local_wait = asyncio.create_task(
+            ws_manager.wait_for_confirm(
+                tool_call_id,
+                timeout=timeout,
+                task_id=task_id,
+                conversation_id=conversation_id,
+            )
+        )
+        durable_wait = asyncio.create_task(
+            self._poll_durable_tool_confirmation(
+                store=store,
+                token=token,
+                tool_call_id=tool_call_id,
+                task_id=task_id,
+                timeout=timeout,
+                runtime=runtime,
+            )
+        )
+        done, pending = await asyncio.wait(
+            (local_wait, durable_wait),
+            timeout=timeout,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        if not done:
+            return False
+        result = next(iter(done))
+        try:
+            return bool(result.result())
+        finally:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    async def _poll_durable_tool_confirmation(
+        self,
+        *,
+        store: Any,
+        token: str,
+        tool_call_id: str,
+        task_id: str,
+        timeout: float,
+        runtime: Any = None,
+    ) -> bool:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        cancellation_event = getattr(self, "_actor_cancellation_event", None)
+        while loop.time() < deadline:
+            if cancellation_event is not None and cancellation_event.is_set():
+                return False
+            commands = await store.load_pending(
+                task_id=task_id,
+                execution_token=token,
+            )
+            for command in commands:
+                if command.command_type.value != "approval_result":
+                    continue
+                payload = command.payload or {}
+                if payload.get("tool_call_id") != tool_call_id:
+                    continue
+                approved = bool(payload.get("approved"))
+                if runtime is not None:
+                    runtime.push(command)
+                elif command.event_id:
+                    await store.acknowledge(
+                        event_id=command.event_id,
+                        task_id=task_id,
+                        execution_token=token,
+                    )
+                return approved
+            await asyncio.sleep(min(0.5, max(0.05, deadline - loop.time())))
+        return False
 
     async def _push_tool_step_update(
         self, task_id: str, conversation_id: str, message_id: str,

@@ -8,6 +8,8 @@ from typing import Any, Callable, Mapping
 
 from services.conversation_delivery import ActorTerminalDelivery
 from services.conversation_execution import GenerationClaim, ConversationExecutionService
+from services.conversation_command_store import DatabaseConversationCommandStore
+from services.conversation_subtasks import DatabaseConversationSubtaskStore
 from services.conversation_worker import ConversationWorker, RedisConversationWakeup
 from services.handlers.chat.actor_sink import ActorDelivery, ActorWebSink
 from services.handlers.chat.executor import ChatGenerationExecutor, _normalize_model_id
@@ -27,7 +29,12 @@ class ConversationActorRuntime:
         self._db = db
         self._websocket = websocket
         self._kernel_manager = kernel_manager
-        executor = ChatGenerationExecutor(db, sink_factory=self._create_sink)
+        executor = ChatGenerationExecutor(
+            db,
+            sink_factory=self._create_sink,
+            command_store=DatabaseConversationCommandStore(db),
+            subtask_store=DatabaseConversationSubtaskStore(db),
+        )
         execution = ConversationExecutionService(
             db,
             executor,

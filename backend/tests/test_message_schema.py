@@ -21,9 +21,12 @@ from schemas.message import (
     Message,
     MessageResponse,
     MessageRole,
+    ImagePart,
     TextPart,
+    serialize_content_part,
 )
 from pydantic import TypeAdapter
+from unittest.mock import MagicMock
 
 
 # ============================================================
@@ -206,3 +209,52 @@ def test_message_response_preserves_turn_relationship_fields():
     assert response.reply_to_message_id == message.reply_to_message_id
     assert response.context_revision == 7
     assert response.message_kind == "conversation"
+
+
+def test_image_content_serialization_omits_absent_optional_metadata():
+    """User image blocks survive the API/DB wire boundary without null-shape loss."""
+    part = ImagePart(url="https://oss.example/input.png")
+
+    assert serialize_content_part(part) == {
+        "type": "image",
+        "url": "https://oss.example/input.png",
+    }
+    response = MessageResponse.from_message(Message(
+        id="msg-image",
+        conversation_id="conv-image",
+        role=MessageRole.USER,
+        content=[part],
+        created_at=datetime.now(timezone.utc),
+    ))
+
+    assert response.content == [{
+        "type": "image",
+        "url": "https://oss.example/input.png",
+    }]
+
+
+@pytest.mark.asyncio
+async def test_create_user_message_persists_image_without_nullable_metadata():
+    """The user-message DB write must use the same canonical wire shape."""
+    from api.routes.message_helpers import create_user_message
+
+    db = MagicMock()
+    db.table.return_value.insert.return_value.execute.return_value.data = [{
+        "id": "msg-image",
+        "conversation_id": "conv-image",
+        "role": "user",
+        "status": "completed",
+        "created_at": "2026-08-19T00:00:00+00:00",
+    }]
+
+    await create_user_message(
+        db=db,
+        conversation_id="conv-image",
+        content=[ImagePart(url="https://oss.example/input.png")],
+    )
+
+    inserted = db.table.return_value.insert.call_args.args[0]
+    assert inserted["content"] == [{
+        "type": "image",
+        "url": "https://oss.example/input.png",
+    }]

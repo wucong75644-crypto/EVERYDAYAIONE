@@ -6,6 +6,32 @@ vi.mock('../../utils/logger', () => ({
 }));
 
 describe('messageProtocol', () => {
+  it('keeps user images with legacy nullable metadata after refresh', () => {
+    const parsed = parseContentPart({
+      type: 'image',
+      url: 'https://oss.example/input.png',
+      original_url: null,
+      thumbnail_url: null,
+      preview_url: null,
+      download_url: null,
+      asset_id: null,
+      width: null,
+      height: null,
+      alt: null,
+      failed: null,
+      error: null,
+      name: null,
+      workspace_path: null,
+      size: null,
+      mime_type: null,
+    });
+
+    expect(parsed).toEqual({
+      type: 'image',
+      url: 'https://oss.example/input.png',
+    });
+  });
+
   it('accepts every core content block family', () => {
     const blocks = [
       { type: 'text', text: 'hello' },

@@ -62,7 +62,10 @@ class WebSocketManager(RedisPubSubMixin):
 
         # 工具确认等待机制（Phase 3 B5）
         # key = tool_call_id → (Event, approved: bool | None)
-        self._pending_confirms: Dict[str, Tuple[asyncio.Event, List]] = {}
+        self._pending_confirms: Dict[
+            str,
+            Tuple[asyncio.Event, List, Optional[str], Optional[str]],
+        ] = {}
 
         # 用户打断机制（Steer）
         # key = task_id → Event（打断信号）
@@ -335,6 +338,8 @@ class WebSocketManager(RedisPubSubMixin):
 
     async def wait_for_confirm(
         self, tool_call_id: str, timeout: float = 60.0,
+        *, task_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> bool:
         """等待用户确认写操作。
 
@@ -347,7 +352,9 @@ class WebSocketManager(RedisPubSubMixin):
         """
         event = asyncio.Event()
         result_holder: List = [None]  # [bool | None]
-        self._pending_confirms[tool_call_id] = (event, result_holder)
+        self._pending_confirms[tool_call_id] = (
+            event, result_holder, task_id, conversation_id,
+        )
         try:
             await asyncio.wait_for(event.wait(), timeout=timeout)
             return result_holder[0] is True
@@ -359,7 +366,14 @@ class WebSocketManager(RedisPubSubMixin):
         finally:
             self._pending_confirms.pop(tool_call_id, None)
 
-    def resolve_confirm(self, tool_call_id: str, approved: bool) -> bool:
+    def resolve_confirm(
+        self,
+        tool_call_id: str,
+        approved: bool,
+        *,
+        task_id: str | None = None,
+        conversation_id: str | None = None,
+    ) -> bool:
         """前端确认/拒绝后调用，唤醒等待方。
 
         Returns:
@@ -371,7 +385,21 @@ class WebSocketManager(RedisPubSubMixin):
                 f"Tool confirm resolve miss | tool_call_id={tool_call_id}"
             )
             return False
-        event, result_holder = pending
+        event, result_holder, expected_task_id, expected_conversation_id = pending
+        if (
+            task_id is not None
+            and expected_task_id is not None
+            and task_id != expected_task_id
+        ) or (
+            conversation_id is not None
+            and expected_conversation_id is not None
+            and conversation_id != expected_conversation_id
+        ):
+            logger.warning(
+                "Tool confirm resolve scope mismatch | "
+                f"tool_call_id={tool_call_id} | task_id={task_id}"
+            )
+            return False
         result_holder[0] = approved
         event.set()
         return True

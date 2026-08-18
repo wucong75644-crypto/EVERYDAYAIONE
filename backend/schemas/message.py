@@ -7,7 +7,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Annotated, Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, Iterable, List, Literal, Optional, Union
 from pydantic import BaseModel, Field, field_validator
 import json
 
@@ -137,6 +137,25 @@ ContentPart = Annotated[
           DiagramPart, EcomPlanPart],
     Field(discriminator="type"),
 ]
+
+
+def serialize_content_part(part: ContentPart) -> Dict[str, Any]:
+    """Serialize content using the wire format shared by DB and API responses.
+
+    Optional metadata is omitted when absent so clients do not have to treat
+    ``null`` and an omitted field as two different protocol shapes.  Image
+    placeholders are the exception: ``url: null`` is meaningful and must be
+    retained so an in-progress/failed slot remains visible.
+    """
+    serialized = part.model_dump(mode="json", exclude_none=True)
+    if isinstance(part, ImagePart) and part.url is None:
+        serialized["url"] = None
+    return serialized
+
+
+def serialize_content_parts(parts: Iterable[ContentPart]) -> List[Dict[str, Any]]:
+    """Serialize a content collection without dropping meaningful placeholders."""
+    return [serialize_content_part(part) for part in parts]
 
 
 # ============================================================
@@ -399,7 +418,7 @@ class MessageResponse(BaseModel):
         if len(msg.content) == 1 and isinstance(msg.content[0], TextPart):
             content_value: Union[str, List[Dict[str, Any]]] = text_content
         else:
-            content_value = [p.model_dump() for p in msg.content]
+            content_value = serialize_content_parts(msg.content)
 
         return cls(
             id=msg.id,

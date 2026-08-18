@@ -500,7 +500,10 @@ class ToolLoopExecutor:
             )
 
             approved = await ws_manager.wait_for_confirm(
-                tool_call_id, timeout=60.0,
+                tool_call_id,
+                timeout=60.0,
+                task_id=hook_ctx.task_id,
+                conversation_id=hook_ctx.conversation_id,
             )
             if approved:
                 logger.info(
