@@ -1,6 +1,6 @@
 # Conversation Actor 命令运行时升级
 
-> 状态：已确认，分阶段实施（阶段 1、阶段 2A/2B、阶段 3 完成；阶段 4 实施中）
+> 状态：代码实现完成，待生产 PostgreSQL 并发演练验收（阶段 1、阶段 2A/2B、阶段 3、阶段 4 协议与取消快照已完成）
 > 日期：2026-08-18
 > 基础设计：`TECH_Conversation_Actor持久执行架构.md`
 > 实施验收：`TECH_Conversation_Actor实施与验收附录.md`
@@ -45,13 +45,13 @@
 - `ActorWebSink` 使用 execution token 持久化过程进度。
 - PostgreSQL RPC 负责任务范围校验、积分、Turn revision 和 fencing。
 
-当前缺口：
+本轮审计前的缺口已按以下方式收敛：
 
-- 取消、工具完成、审批和子任务完成没有统一 Command 协议。
-- Runtime 状态分散在数据库字段、`asyncio.Event` 和执行循环局部变量中。
-- 安全检查已经存在，但没有统一的安全点和状态转换器。
-- 异步子任务缺少统一的父子关联和完成回传约定。
-- 具有外部副作用的工具需要稳定调用 ID 和恢复幂等记录。
+- 取消现在先写入持久 `CANCEL` Command，由当前 fencing owner 在安全点处理；不再由 API 直接抢写 Actor 终态。
+- 取消安全点先强制保存 Actor 的 `accumulated_content/accumulated_blocks`，再由带 execution token 的 RPC 将快照投影到 `messages.status='interrupted'`。
+- Runtime 的命令副作用在事件确认前执行；子任务完成结果在下一次模型安全点注入当前上下文。
+- 前端收到 `TASK_CANCELLED` 时保留 partial 内容并显示中断态，不再覆盖成失败文本。
+- 外部副作用工具使用持久调用记录；`uncertain` 仍然禁止盲重试。
 
 ## 3. 目标职责
 
@@ -141,7 +141,7 @@ CLAIMED
 
 ### 5.1 第一阶段
 
-不新增数据库表。用户消息继续由 `tasks` 持久化，取消继续由 `cancel_generation_turn` 表达，lease 继续由 `renew_generation_lease` 表达。
+第一阶段不新增数据库表。用户消息继续由 `tasks` 持久化，lease 继续由 `renew_generation_lease` 表达；取消和其他跨进程事件由控制事件表持久化。141 迁移新增的是快照物化与带 fencing token 的取消 RPC，不改变 PostgreSQL Actor 的所有权模型。
 
 ### 5.2 第二阶段控制事件
 
@@ -208,11 +208,11 @@ tool_name, args_hash, status, result
 
 ### 阶段 2：统一外部事件
 
-- 取消事件已由数据库终态事务记录为已应用的控制事实；现有 lease/终态信号继续负责尽快停止本地执行。
+- 取消入口统一追加持久 `CANCEL` Command；当前 owner 在安全点保存最新进度后调用带 execution token 的取消 RPC，事务内完成消息快照、任务终态和取消事件收敛。
 - 已增加控制事件表、fencing owner 读取/确认 RPC 和 Runtime 数据库适配器。
 - 审批结果已接入 WebSocket 入口：先校验用户、任务、会话、Actor 标记和 running 状态，再以 `approval:{tool_call_id}` 去重写入 PostgreSQL。
 - Actor 执行端同时保留同进程即时唤醒，并在 WebSocket 与 Actor 分进程时轮询当前 fencing token 下的审批事件；旧非 Actor 确认链路保持兼容。
-- 外部回调和子任务事件仍需在各自入口具备可靠的 task/conversation 关联后再接入。
+- 外部回调和子任务事件必须在各自入口具备可靠的 task/conversation 关联；无可靠关联时拒绝写入，不能靠 task_id 猜测归属。
 - Redis 继续只做唤醒，数据库负责恢复。
 
 ### 阶段 3：工具幂等
@@ -227,7 +227,27 @@ tool_name, args_hash, status, result
 - 已增加父子任务关联表和父 owner fencing 注册 RPC。
 - 子任务进入 completed/failed/cancelled 终态时，由数据库触发器写入去重的 `SUBTASK_COMPLETED` 事件；父任务已终态时事件直接记为 ignored。
 - 父 Runtime 继续只在安全点读取和确认完成事件；具体业务子 Agent 仍不自动改造成长期驻留任务。
-- 真实 PostgreSQL 父子任务并发/终态演练仍待部署验收阶段执行。
+- 子任务完成事件在确认前先由 Runtime 应用到下一轮模型上下文；真实 PostgreSQL 父子任务并发/终态演练仍待部署验收阶段执行。
+
+### 阶段 4A：取消快照与恢复语义
+
+- 取消链路：`API -> append CANCEL -> SafePoint -> persist_progress -> cancel_generation_turn_owned`。
+- `messages` 保存已生成的文本/内容块和 `interrupt_marker`，后续用户消息按普通新 turn 读取 `interrupted` 历史；这不是 token 级原地续流，而是可恢复的上下文续接。
+- WebSocket 只是 best-effort 投递；断线、重复通知或 Redis 丢唤醒不改变 PostgreSQL 事实。
+
+## 8.1 本轮行业标准逐条核对
+
+| 能力 | 当前结论 | 代码/数据库保证 |
+|---|---|---|
+| 单 Conversation 所有权 | 可实现 | PostgreSQL claim、lease、execution token 和原子 commit/fail |
+| 取消与完成竞态 | 可实现 | CANCEL 优先级高于普通完成事件；owner 取消 RPC 校验 token |
+| 取消后保留 partial | 可实现 | 141 先物化 `accumulated_*` 到 interrupted message，再结束 task |
+| 取消后继续对话 | 可实现 | 新 turn 读取 interrupted history；不承诺 token 级原地续流 |
+| Worker 崩溃恢复 | 可实现 | lease 过期后重新 claim；旧 token 不能提交 |
+| 重复控制事件 | 可实现 | dedupe key、事件状态和 fencing acknowledge |
+| 子任务结果回传 | 协议可实现，业务接入待验收 | DB 触发完成事件，Runtime 安全点注入；当前具体子 Agent 入口仍需真实演练 |
+| 任意外部副作用 exactly-once | 不可普遍实现 | 只能保证 invocation id、参数 hash、成功结果回放；`uncertain` 禁止盲重试，第三方必须提供幂等键 |
+| WebSocket/Redis 可靠性 | 可实现为 best-effort | DB 是事实源；断线重连靠消息查询/历史恢复，不把 WS 当提交确认 |
 
 ### 阶段 5：分阶段部署与收敛
 
@@ -236,7 +256,7 @@ tool_name, args_hash, status, result
 - 对比各阶段版本的终态、revision、积分、审批和投递结果。
 - 稳定后删除重复的旧控制分支；不采用并行灰度流量。
 
-## 8. 验收标准
+## 9. 验收标准
 
 - 同一 Conversation 同时只有一个有效 serial owner。
 - 取消与工具完成竞态时，取消优先且不产生新的 commit。
@@ -246,9 +266,11 @@ tool_name, args_hash, status, result
 - 副作用工具重试不重复执行。
 - 重复的审批、子任务完成和外部回调不会重复推进状态。
 - 子任务不能绕过父 Runtime 修改 Conversation。
+- 取消后的 `messages` 必须保留 partial content、已完成工具结果和中断标记。
 - WebSocket/企微投递失败不影响已提交数据库终态。
+- 不把任意第三方副作用宣称为 exactly-once；`uncertain` 任务不得自动盲重试。
 
-## 9. 验证与回滚
+## 10. 验证与回滚
 
 验证漏斗：
 
@@ -260,7 +282,7 @@ tool_name, args_hash, status, result
 
 第一阶段可通过 feature flag 关闭 Runtime 适配层并回到现有执行器；数据库迁移采用只增不删策略。第二阶段以后新增事件和幂等记录保留，不通过回滚删除已写入的事实数据。
 
-## 10. 未提前扩大范围的内容
+## 11. 未提前扩大范围的内容
 
 - 不新增 Kafka、Celery、Temporal 或新的进程模型。
 - 不把普通同步工具强行拆成独立 Actor。

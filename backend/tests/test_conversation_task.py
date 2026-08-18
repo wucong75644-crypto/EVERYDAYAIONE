@@ -12,24 +12,31 @@ def test_is_actor_task_accepts_jsonb_and_serialized_json():
     assert not is_actor_task({"delivery_context": "invalid"})
 
 
-def test_cancel_actor_task_uses_scoped_fencing_rpc():
+def test_cancel_actor_task_enqueues_durable_cancel_command():
     db = MagicMock()
-    db.rpc.return_value.execute.return_value.data = {"outcome": "cancelled"}
+    db.rpc.return_value.execute.return_value.data = {"outcome": "enqueued"}
 
     assert cancel_actor_task(
         db,
-        {"id": "internal"},
+        {
+            "id": "internal",
+            "conversation_id": "conversation",
+            "turn_id": "turn",
+        },
         "user",
         "org",
     )
-    db.rpc.assert_called_once_with(
-        "cancel_generation_turn",
-        {
-            "p_task_id": "internal",
-            "p_user_id": "user",
-            "p_org_id": "org",
-        },
-    )
+    name, params = db.rpc.call_args.args
+    assert name == "append_conversation_control_command"
+    assert params["p_conversation_id"] == "conversation"
+    assert params["p_task_id"] == "internal"
+    assert params["p_turn_id"] == "turn"
+    assert params["p_event_type"] == "cancel"
+    assert params["p_dedupe_key"] == "cancel:internal"
+    assert params["p_payload"].obj == {
+        "reason": "user_cancelled",
+        "user_id": "user",
+    }
 
 
 def test_cancel_actor_task_rejects_unknown_result():
@@ -37,4 +44,9 @@ def test_cancel_actor_task_rejects_unknown_result():
     db.rpc.return_value.execute.return_value.data = {"outcome": "invalid"}
 
     with pytest.raises(RuntimeError, match="ACTOR_CANCEL_FAILED"):
-        cancel_actor_task(db, {"id": "internal"}, "user", None)
+        cancel_actor_task(
+            db,
+            {"id": "internal", "conversation_id": "conversation"},
+            "user",
+            None,
+        )

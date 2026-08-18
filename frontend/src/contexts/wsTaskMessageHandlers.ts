@@ -205,14 +205,31 @@ export function handleMessageError(deps: HandlerDeps, msg: WSIncomingMessage): v
   });
 
   const store = deps.getStore();
-  if (message_id) failMessage(deps, message_id, error);
+  const cancelled = error?.code === 'TASK_CANCELLED';
+  if (message_id) {
+    if (cancelled) {
+      // 取消是正常的中断终态，不得把已有 partial content 覆盖成失败文本。
+      store.updateMessage(message_id, {
+        status: 'interrupted',
+        is_error: false,
+        error: undefined,
+      });
+    } else {
+      failMessage(deps, message_id, error);
+    }
+  }
 
-  if (task_id) handleTaskFailure(deps, task_id, error);
+  if (task_id) {
+    if (cancelled) cleanupTaskSubscription(deps, task_id);
+    else handleTaskFailure(deps, task_id, error);
+  }
   if (conversation_id) store.completeStreaming(conversation_id);
   store.setIsSending(false);
-  import('react-hot-toast').then(({ default: toast }) => {
-    toast.error(error?.message || '生成失败');
-  });
+  if (!cancelled) {
+    import('react-hot-toast').then(({ default: toast }) => {
+      toast.error(error?.message || '生成失败');
+    });
+  }
 }
 
 export function handleImagePartialUpdate(

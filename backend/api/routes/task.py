@@ -275,7 +275,7 @@ async def cancel_task_by_message_id(
         for field in ("placeholder_message_id", "assistant_message_id"):
             q = db.table("tasks").select(
                 "id, external_task_id, client_task_id, user_id, conversation_id, "
-                "org_id, request_params, delivery_context"
+                "org_id, request_params, delivery_context, turn_id"
             ).eq(
                 field, message_id
             ).eq("user_id", ctx.user_id).in_(
@@ -294,6 +294,8 @@ async def cancel_task_by_message_id(
                     is_actor_task,
                 )
 
+                legacy_cancelled = False
+                legacy_conversation_id = None
                 for task in result.data:
                     actor_task = is_actor_task(task)
                     if actor_task:
@@ -302,6 +304,8 @@ async def cancel_task_by_message_id(
                         ):
                             continue
                     else:
+                        legacy_cancelled = True
+                        legacy_conversation_id = task.get("conversation_id")
                         db.table("tasks").update({
                             "status": "failed",
                             "error_message": "用户取消了任务",
@@ -334,14 +338,20 @@ async def cancel_task_by_message_id(
                         f"ext={ext_id} | message_id={message_id} | user_id={ctx.user_id}"
                     )
 
-                # 立即同步落锚 messages 表：marker + tool_step cancelled + status='interrupted'
+                # Legacy 执行器仍需在 API 进程里立即落锚。Actor 取消走持久
+                # CANCEL command，由当前 owner 在安全点保存最新进度并原子终止；
+                # 这里不能先写空 marker 覆盖 Actor 的累积快照。
                 # 防止 race condition：用户在 chat_handler 后台落锚前发"继续"，
                 # 导致 history_loader 检测不到 interrupt_marker → LLM 失忆。
                 # 传 conversation_id 让 _anchor 在 message 不存在时（chat lazy 创建）
                 # 主动创建 stub。
                 # 详见 docs/document/TECH_用户中断与恢复机制.md §四.2
-                _conv_id = result.data[0].get("conversation_id") if result.data else None
-                _anchor_messages_immediately(db, message_id, conversation_id=_conv_id)
+                if legacy_cancelled:
+                    _anchor_messages_immediately(
+                        db,
+                        message_id,
+                        conversation_id=legacy_conversation_id,
+                    )
 
                 return {"success": True, "cancelled_count": len(result.data)}
 

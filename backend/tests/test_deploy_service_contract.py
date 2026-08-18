@@ -29,6 +29,17 @@ def test_backend_deploy_has_bounded_readiness_check() -> None:
     assert "后端 readiness 超时" in SCRIPT
 
 
+def test_actor_migrations_are_atomic_and_include_cancel_snapshot() -> None:
+    assert "--single-transaction" in SCRIPT
+    for migration in (
+        "138_conversation_control_events.sql",
+        "139_tool_invocations.sql",
+        "140_conversation_subtasks.sql",
+        "141_conversation_actor_cancel_snapshot.sql",
+    ):
+        assert f"--file /var/www/everydayai/backend/migrations/{migration}" in SCRIPT
+
+
 def test_rsync_preserves_runtime_and_sensitive_files() -> None:
     for excluded in (
         ".env*",

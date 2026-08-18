@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -84,6 +85,10 @@ async def execute_chat(
         context_anchor=request.context_anchor,
     )
     handler._adapter = prepared.adapter
+    if runtime is not None:
+        runtime.set_command_applier(
+            lambda command: _apply_runtime_command(command, prepared.messages)
+        )
     handler._pending_emit_payloads = []
     handler._pending_form_block = None
     totals = StreamTotals()
@@ -380,6 +385,33 @@ async def _consume_emit_payloads(
         blocks.append(form)
         await sink.on_block(form)
         handler._pending_form_block = None
+
+
+async def _apply_runtime_command(
+    command: ConversationCommand,
+    messages: list[dict[str, Any]],
+) -> None:
+    """把需要进入下一轮模型上下文的持久事件应用到当前消息投影。"""
+    if command.command_type is not CommandType.SUBTASK_COMPLETED:
+        return
+    payload = command.payload or {}
+    child_task_id = str(payload.get("child_task_id") or "")
+    parent_command_id = str(payload.get("parent_command_id") or "")
+    if not child_task_id or not parent_command_id:
+        raise RuntimeError("ACTOR_SUBTASK_RESULT_INVALID")
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        result = {}
+    messages.append({
+        "role": "tool",
+        "tool_call_id": parent_command_id,
+        "content": json.dumps({
+            "child_task_id": child_task_id,
+            "status": payload.get("status") or "completed",
+            "result": result,
+            "error_message": payload.get("error_message") or "",
+        }, ensure_ascii=False),
+    })
 
 
 async def _apply_budget_stop(

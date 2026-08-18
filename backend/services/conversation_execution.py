@@ -9,6 +9,8 @@ from typing import Any, Mapping, Protocol
 from loguru import logger
 from psycopg.types.json import Jsonb
 
+from services.conversation_state import ConversationStopRequested
+
 
 @dataclass(frozen=True)
 class GenerationClaim:
@@ -100,6 +102,10 @@ class _OwnershipLost(RuntimeError):
     pass
 
 
+class _CancellationRequested(RuntimeError):
+    pass
+
+
 class ConversationExecutionService:
     """协调 claim、租约、纯执行器和数据库原子终态。"""
 
@@ -173,6 +179,10 @@ class ConversationExecutionService:
                 )
             except _OwnershipLost:
                 return {"outcome": "ownership_lost"}
+            except _CancellationRequested:
+                result = await self._cancel(claim)
+                await self._notify_terminal(task, result)
+                return result
             except asyncio.CancelledError:
                 raise
             except Exception as error:
@@ -220,7 +230,16 @@ class ConversationExecutionService:
                 except asyncio.CancelledError:
                     pass
                 raise _OwnershipLost
-            outcome = await execution_task
+            try:
+                outcome = await execution_task
+            except ConversationStopRequested as error:
+                if ownership_lost.is_set():
+                    raise _OwnershipLost from error
+                raise _CancellationRequested from error
+            except asyncio.CancelledError:
+                if ownership_lost.is_set():
+                    raise _OwnershipLost
+                raise
             if not isinstance(outcome, GenerationOutcome):
                 raise TypeError("executor must return GenerationOutcome")
             return outcome
@@ -310,6 +329,16 @@ class ConversationExecutionService:
                 "p_execution_token": claim.execution_token,
                 "p_error_code": type(error).__name__.upper()[:50],
                 "p_error_message": str(error) or type(error).__name__,
+            },
+        )
+
+    async def _cancel(self, claim: GenerationClaim) -> dict[str, Any]:
+        return await self._rpc(
+            "cancel_generation_turn_owned",
+            {
+                "p_task_id": claim.task_id,
+                "p_execution_token": claim.execution_token,
+                "p_reason": "user_cancelled",
             },
         )
 

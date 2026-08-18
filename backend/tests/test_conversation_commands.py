@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -86,6 +87,24 @@ async def test_runtime_only_stops_cancel_at_safe_point():
 
 
 @pytest.mark.asyncio
+async def test_runtime_checkpoints_before_stopping_for_cancel_command():
+    checkpoint = AsyncMock()
+    runtime = ConversationTurnRuntime(
+        conversation_id="conversation-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        cancellation_event=asyncio.Event(),
+        checkpoint=checkpoint,
+    )
+    runtime.push(_command("cancel", CommandType.CANCEL))
+
+    with pytest.raises(ConversationStopRequested):
+        await runtime.safe_point(SafePoint.AFTER_MODEL)
+
+    checkpoint.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_runtime_scope_checks_commands():
     runtime = ConversationTurnRuntime(
         conversation_id="conversation-1",
@@ -166,6 +185,34 @@ async def test_runtime_loads_and_acknowledges_durable_command():
 
     assert runtime.state is ConversationState.RUNNING_MODEL
     assert store.acks == ["event-1"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_applies_command_before_acknowledging_it():
+    command = ConversationCommand(
+        command_id="event-subtask",
+        event_id="event-subtask",
+        command_type=CommandType.SUBTASK_COMPLETED,
+        conversation_id="conversation-1",
+        task_id="task-1",
+        payload={"child_task_id": "child-1"},
+    )
+    store = _Store(command)
+    applier = AsyncMock()
+    runtime = ConversationTurnRuntime(
+        conversation_id="conversation-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        cancellation_event=asyncio.Event(),
+        execution_token="token-1",
+        command_store=store,
+    )
+    runtime.set_command_applier(applier)
+
+    await runtime.safe_point(SafePoint.AFTER_SUBTASK_COMPLETE)
+
+    applier.assert_awaited_once_with(command)
+    assert store.acks == ["event-subtask"]
 
 
 @pytest.mark.asyncio

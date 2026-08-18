@@ -110,6 +110,10 @@ class ActorWebSink:
             )
         )
 
+    async def persist_progress(self) -> None:
+        """在取消安全点强制保存当前内存快照，不发送完成事件。"""
+        await self._persist()
+
     async def _persist(self) -> None:
         self._chunks_since_persist = 0
         try:

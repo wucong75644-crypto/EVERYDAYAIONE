@@ -455,6 +455,22 @@ describe('wsMessageHandlers', () => {
       expect(store.setIsSending).toHaveBeenCalledWith(false);
     });
 
+    it('should preserve interrupted partial content for cancelled tasks', () => {
+      handlers.message_error({
+        task_id: 'task_1',
+        message_id: 'msg_1',
+        conversation_id: 'conv_1',
+        error: { code: 'TASK_CANCELLED', message: '任务已取消' },
+      });
+
+      expect(store.updateMessage).toHaveBeenCalledWith('msg_1', expect.objectContaining({
+        status: 'interrupted',
+        is_error: false,
+      }));
+      expect(store.failTask).not.toHaveBeenCalled();
+      expect(store.completeStreaming).toHaveBeenCalledWith('conv_1');
+    });
+
     it('should keep image errors as failed media content', () => {
       vi.mocked(store.getMessage).mockReturnValue({
         id: 'msg_1',

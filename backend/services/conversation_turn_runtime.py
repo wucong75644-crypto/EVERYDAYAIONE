@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 
 from services.conversation_commands import (
     CommandInbox,
@@ -32,6 +33,7 @@ class ConversationTurnRuntime:
         execution_token: str | None = None,
         command_store: ConversationCommandStore | None = None,
         subtask_store: ConversationSubtaskStore | None = None,
+        checkpoint: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self.conversation_id = conversation_id
         self.task_id = task_id
@@ -40,6 +42,8 @@ class ConversationTurnRuntime:
         self.execution_token = execution_token
         self.command_store = command_store
         self.subtask_store = subtask_store
+        self._checkpoint = checkpoint
+        self._command_applier: Callable[[ConversationCommand], Awaitable[None]] | None = None
         self.inbox = CommandInbox()
         self.state = ConversationState.CLAIMED
         self.last_safe_point: SafePoint | None = None
@@ -61,6 +65,17 @@ class ConversationTurnRuntime:
         if command.task_id != self.task_id:
             raise ValueError("command task scope mismatch")
         return self.inbox.push(command)
+
+    def set_checkpoint(self, checkpoint: Callable[[], Awaitable[None]] | None) -> None:
+        """注册取消安全点使用的最新进度快照回调。"""
+        self._checkpoint = checkpoint
+
+    def set_command_applier(
+        self,
+        applier: Callable[[ConversationCommand], Awaitable[None]] | None,
+    ) -> None:
+        """注册命令副作用应用器；确认事件前必须先完成应用。"""
+        self._command_applier = applier
 
     async def safe_point(self, point: SafePoint) -> None:
         """在执行边界归约命令；终止命令只在这里改变控制流。"""
@@ -89,7 +104,18 @@ class ConversationTurnRuntime:
                 ConversationState.CANCELLING,
                 ConversationState.OWNERSHIP_LOST,
             }:
+                if (
+                    self.state is ConversationState.CANCELLING
+                    and command.command_type is CommandType.CANCEL
+                    and self._checkpoint is not None
+                ):
+                    await self._checkpoint()
                 raise ConversationStopRequested
+            if (
+                self._command_applier is not None
+                and command.command_type is not CommandType.USER_TURN
+            ):
+                await self._command_applier(command)
             if command.event_id and self.command_store and self.execution_token:
                 await self.command_store.acknowledge(
                     event_id=command.event_id,

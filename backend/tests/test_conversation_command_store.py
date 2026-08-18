@@ -68,6 +68,23 @@ async def test_store_appends_typed_approval_event():
 
 
 @pytest.mark.asyncio
+async def test_store_appends_durable_cancel_event():
+    db = _DB()
+    store = DatabaseConversationCommandStore(db)
+
+    await store.append(
+        conversation_id="conversation-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        command_type=CommandType.CANCEL,
+        dedupe_key="cancel:task-1",
+        payload={"reason": "user_cancelled"},
+    )
+
+    assert db.calls[0][1]["p_event_type"] == "cancel"
+
+
+@pytest.mark.asyncio
 async def test_store_loads_typed_commands_from_rpc():
     db = _DB()
     store = DatabaseConversationCommandStore(db)

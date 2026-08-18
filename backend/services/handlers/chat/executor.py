@@ -85,6 +85,14 @@ class ChatGenerationExecutor:
             execution_scope.personal_context_allowed
         )
         params = _parse_params(task.get("request_params"))
+        sink = (
+            self._sink_factory(task, claim, cancellation_event)
+            if self._sink_factory else None
+        )
+        if sink is not None:
+            checkpoint = getattr(sink, "persist_progress", None)
+            if checkpoint is not None:
+                runtime.set_checkpoint(checkpoint)
         result = await execute_chat(
             handler=handler,
             request=ChatExecutionRequest(
@@ -101,10 +109,7 @@ class ChatGenerationExecutor:
                 execution_scope=execution_scope,
             ),
             cancellation_event=cancellation_event,
-            sink=(
-                self._sink_factory(task, claim, cancellation_event)
-                if self._sink_factory else None
-            ),
+            sink=sink,
             runtime=runtime,
         )
         return GenerationOutcome(

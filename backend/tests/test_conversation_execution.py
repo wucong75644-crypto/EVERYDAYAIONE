@@ -14,6 +14,7 @@ from services.conversation_execution import (
     GenerationClaim,
     GenerationOutcome,
 )
+from services.conversation_state import ConversationStopRequested
 
 
 def _claimed(mode: str = "serial") -> dict[str, Any]:
@@ -115,6 +116,11 @@ class _BlockingExecutor:
 class _InvalidExecutor:
     async def execute(self, task, claim, cancellation_event):
         return {"content": "invalid"}
+
+
+class _CancellationExecutor:
+    async def execute(self, task, claim, cancellation_event) -> GenerationOutcome:
+        raise ConversationStopRequested()
 
 
 class _Observer:
@@ -242,6 +248,27 @@ async def test_executor_failure_uses_atomic_fail_rpc() -> None:
     failure = next(call for call in db.calls if call[0] == "fail_generation_turn")
     assert failure[1]["p_error_code"] == "VALUEERROR"
     assert not any(name == "commit_generation_turn" for name, _ in db.calls)
+
+
+@pytest.mark.asyncio
+async def test_safe_point_cancellation_uses_owned_cancel_rpc() -> None:
+    db = _FakeDB()
+    db.queue("cancel_generation_turn_owned", {"outcome": "cancelled"})
+    service = ConversationExecutionService(db, _CancellationExecutor())
+
+    result = await service.execute_claim(
+        GenerationClaim.from_rpc(_claimed(), "conv-1", "serial")
+    )
+
+    assert result == {"outcome": "cancelled"}
+    cancel = next(
+        call for call in db.calls if call[0] == "cancel_generation_turn_owned"
+    )
+    assert cancel[1] == {
+        "p_task_id": "task-1",
+        "p_execution_token": "token-1",
+        "p_reason": "user_cancelled",
+    }
 
 
 @pytest.mark.asyncio

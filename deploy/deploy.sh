@@ -286,14 +286,14 @@ build_backend() {
 }
 
 # 执行本次 Actor 版本需要的数据库正向迁移。
-# 三份迁移在同一个 PostgreSQL 事务中执行；失败时不会留下半套 schema。
+# 四份迁移在同一个 PostgreSQL 事务中执行；失败时不会留下半套 schema。
 run_actor_migrations() {
     if [ "${RUN_MIGRATIONS:-false}" != true ]; then
         log_warning "RUN_MIGRATIONS 不是 true，跳过 Actor 数据库迁移"
         return
     fi
 
-    log_info "执行 Actor 数据库迁移（138 → 139 → 140）..."
+    log_info "执行 Actor 数据库迁移（138 → 139 → 140 → 141）..."
 
     remote_exec bash << 'ENDSSH'
         set -e
@@ -317,7 +317,8 @@ run_actor_migrations() {
             --single-transaction \
             --file /var/www/everydayai/backend/migrations/138_conversation_control_events.sql \
             --file /var/www/everydayai/backend/migrations/139_tool_invocations.sql \
-            --file /var/www/everydayai/backend/migrations/140_conversation_subtasks.sql
+            --file /var/www/everydayai/backend/migrations/140_conversation_subtasks.sql \
+            --file /var/www/everydayai/backend/migrations/141_conversation_actor_cancel_snapshot.sql
 ENDSSH
 
     log_success "Actor 数据库迁移完成"

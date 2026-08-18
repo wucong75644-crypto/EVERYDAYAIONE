@@ -280,7 +280,9 @@ class TestTaskRouteSlotRelease:
 
         assert result["cancelled_count"] == 1
         mock_cancel.assert_called_once_with(db, task_row, "u1", None)
-        chain.update.assert_called()
+        # Actor 取消现在由持久 CANCEL Command + owner safe point 完成；
+        # API 不能直接 UPDATE tasks，避免覆盖 owner 尚未投影的进度快照。
+        chain.update.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_mark_task_failed_releases_slot(self):

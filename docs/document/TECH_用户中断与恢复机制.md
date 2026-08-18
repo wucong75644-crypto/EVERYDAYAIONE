@@ -7,6 +7,13 @@
 > - 区别于 [TECH_AI主动沟通与打断机制.md](TECH_AI主动沟通与打断机制.md)（AI 主动追问 ask_user / 用户发新消息 Steer / FollowUp）
 > - 三者互不冲突，共享同一套 `ExecutionBudget` / `frozen_messages` / WS 基础设施
 
+> **Conversation Actor 实现说明（2026-08）**：Actor 任务的取消入口已升级为
+> `append CANCEL -> SafePoint -> persist_progress -> cancel_generation_turn_owned`。
+> 因此 Actor 不再由 API 直接覆盖 `tasks` 或用空内容落锚；141 迁移会把
+> `accumulated_content/accumulated_blocks` 原子物化到 `messages` 的
+> `interrupted` 历史。本文中“立即落锚”的描述仍适用于旧非 Actor 执行器，
+> Actor 以该命令运行时链路为准。
+
 ---
 
 ## 一、问题定义
