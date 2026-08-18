@@ -10,6 +10,7 @@ WebSocket 端点
 
 import asyncio
 import json
+import uuid
 from typing import Any, Dict, Optional, Tuple
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
@@ -27,6 +28,9 @@ from schemas.websocket import (
 )
 from services.websocket_manager import HEARTBEAT_INTERVAL, ws_manager
 from core.database import get_db
+from core.database import get_async_db
+from services.conversation_command_store import DatabaseConversationCommandStore
+from services.conversation_commands import CommandType
 
 router = APIRouter(tags=["WebSocket"])
 
@@ -205,10 +209,53 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
         # 用户确认/拒绝写操作
         tool_call_id = payload.get("tool_call_id")
         approved = payload.get("approved", False)
-        if tool_call_id:
-            resolved = ws_manager.resolve_confirm(tool_call_id, bool(approved))
+        task_id = payload.get("task_id")
+        conversation_id = payload.get("conversation_id")
+        if tool_call_id and task_id and conversation_id:
+            persisted, error_code = await _persist_actor_tool_confirmation(
+                user_id=user_id,
+                task_id=str(task_id),
+                conversation_id=str(conversation_id),
+                tool_call_id=str(tool_call_id),
+                approved=bool(approved),
+            )
+            if not persisted and error_code == "CONFIRM_LEGACY":
+                # 仍由旧 ChatGenerateMixin 管理的任务：上下文用于本地 scope 校验，
+                # 但不强制要求其已升级到 Actor 控制事件表。
+                resolved = ws_manager.resolve_confirm(
+                    str(tool_call_id),
+                    bool(approved),
+                    task_id=str(task_id),
+                    conversation_id=str(conversation_id),
+                )
+                logger.info(
+                    f"Legacy scoped tool confirm response | conn={conn_id} | "
+                    f"tool_call_id={tool_call_id} | resolved={resolved}"
+                )
+                return
+            if not persisted:
+                await ws_manager.send_to_connection(conn_id, build_error(
+                    "Confirmation scope is invalid or task is no longer running",
+                    code=error_code,
+                ))
+                return
+            # 同进程的传统等待器立即唤醒；跨进程执行器会从 PostgreSQL 事件恢复。
+            resolved = ws_manager.resolve_confirm(
+                str(tool_call_id),
+                bool(approved),
+                task_id=str(task_id),
+                conversation_id=str(conversation_id),
+            )
             logger.info(
                 f"Tool confirm response | conn={conn_id} | "
+                f"tool_call_id={tool_call_id} | approved={approved} | "
+                f"resolved={resolved} | persisted={persisted}"
+            )
+        elif tool_call_id:
+            # 老客户端/非 Actor 工具仍走原有内存协议；Actor 前端会发送完整上下文。
+            resolved = ws_manager.resolve_confirm(tool_call_id, bool(approved))
+            logger.info(
+                f"Legacy tool confirm response | conn={conn_id} | "
                 f"tool_call_id={tool_call_id} | approved={approved} | "
                 f"resolved={resolved}"
             )
@@ -234,6 +281,7 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
                 code="MISSING_STEER_PARAMS",
             ))
 
+
     elif msg_type == WSMessageType.FORM_SUBMIT.value:
         # 用户在聊天中提交表单（定时任务创建/修改等）
         form_type = payload.get("form_type", "")
@@ -251,6 +299,80 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
 
     else:
         logger.warning(f"Unknown message type | conn={conn_id} | type={msg_type}")
+
+
+async def _persist_actor_tool_confirmation(
+    *,
+    user_id: str,
+    task_id: str,
+    conversation_id: str,
+    tool_call_id: str,
+    approved: bool,
+) -> tuple[bool, str]:
+    """校验审批归属并写入 PostgreSQL；非 Actor 任务不进入控制事件表。"""
+    try:
+        db = await get_async_db()
+        task = await _find_task_for_confirmation(db, task_id, user_id)
+        if not task:
+            return False, "CONFIRM_TASK_NOT_FOUND"
+        is_actor = (
+            task.get("type") == "chat"
+            and isinstance(task.get("delivery_context"), dict)
+            and task["delivery_context"].get("actor")
+        )
+        if not is_actor:
+            return False, "CONFIRM_LEGACY"
+        if task.get("conversation_id") != conversation_id:
+            return False, "CONFIRM_SCOPE_INVALID"
+        if task.get("status") != "running":
+            return False, "CONFIRM_SCOPE_INVALID"
+
+        result = await DatabaseConversationCommandStore(db).append(
+            conversation_id=conversation_id,
+            task_id=str(task["id"]),
+            turn_id=str(task["turn_id"]) if task.get("turn_id") else None,
+            command_type=CommandType.APPROVAL_RESULT,
+            dedupe_key=f"approval:{tool_call_id}",
+            payload={
+                "tool_call_id": tool_call_id,
+                "approved": approved,
+                "user_id": user_id,
+            },
+        )
+        # 第一个响应胜出；同值重试幂等，冲突响应不覆盖原决定。
+        if result.get("already_enqueued") is True:
+            existing = result.get("payload")
+            if not isinstance(existing, dict) or bool(existing.get("approved")) != approved:
+                return False, "CONFIRM_SCOPE_INVALID"
+        return True, ""
+    except Exception as error:
+        logger.warning(
+            "Actor tool confirmation persistence failed | "
+            f"task_id={task_id} | error={type(error).__name__}"
+        )
+        return False, "CONFIRM_PERSIST_FAILED"
+
+
+async def _find_task_for_confirmation(
+    db: Any,
+    task_id: str,
+    user_id: str,
+) -> Optional[Dict[str, Any]]:
+    """按前端可能使用的任务标识查找任务，避免直接把非 UUID cast 成 id。"""
+    for field in ("client_task_id", "external_task_id"):
+        result = await db.table("tasks").select("*").eq(
+            field, task_id
+        ).eq("user_id", user_id).maybe_single().execute()
+        if result and result.data:
+            return result.data
+    try:
+        uuid.UUID(task_id)
+    except (ValueError, AttributeError):
+        return None
+    result = await db.table("tasks").select("*").eq(
+        "id", task_id
+    ).eq("user_id", user_id).maybe_single().execute()
+    return result.data if result and result.data else None
 
 
 async def _handle_form_submit(

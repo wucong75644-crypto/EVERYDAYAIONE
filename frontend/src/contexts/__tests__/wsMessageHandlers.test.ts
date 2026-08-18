@@ -77,6 +77,7 @@ function createMockStore(): MessageStoreActions {
     markConversationCompleted: vi.fn(),
     setIsSending: vi.fn(),
     getMessage: vi.fn(),
+    getStreamingMessageId: vi.fn().mockReturnValue('msg_1'),
     setStreamingContent: vi.fn(),
     restoreStreamingBlocks: vi.fn(),
     replaceLastTextBlock: vi.fn(),

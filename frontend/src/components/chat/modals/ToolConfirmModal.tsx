@@ -22,6 +22,9 @@ const TOOL_LABELS: Record<string, string> = {
 
 export interface ToolConfirmRequest {
   toolCallId: string;
+  /** 审批响应的任务归属；旧测试/旧调用方可暂不提供。 */
+  taskId?: string;
+  conversationId?: string;
   toolName: string;
   arguments: Record<string, unknown>;
   description: string;

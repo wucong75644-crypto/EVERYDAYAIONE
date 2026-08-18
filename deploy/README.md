@@ -66,6 +66,23 @@ bash /tmp/setup-env.sh
 ./deploy.sh --help
 ```
 
+## 安全发布
+
+正式发布使用 `release.sh`。它会校验工作区范围，提交并推送明确列出的文件，
+再从该提交的隔离工作树执行完整部署；工作区存在未列入范围的变更时会直接停止。
+
+```bash
+./release.sh --message "feat: upgrade conversation actor runtime" \
+  --file backend/services/conversation_commands.py \
+  --file backend/migrations/138_conversation_control_events.sql
+```
+
+应用版本需要回退时，使用历史提交重新部署；数据库迁移不随应用版本回退：
+
+```bash
+./release.sh --rollback <commit-sha>
+```
+
 ---
 
 ## 文件说明

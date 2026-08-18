@@ -73,6 +73,8 @@ export interface StreamingSlice {
   // 工具写操作确认请求（Phase 3 B5）
   toolConfirmRequest: {
     toolCallId: string;
+    taskId: string;
+    conversationId: string;
     toolName: string;
     arguments: Record<string, unknown>;
     description: string;

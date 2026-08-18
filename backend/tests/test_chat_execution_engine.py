@@ -11,8 +11,11 @@ import pytest
 from schemas.message import TextPart
 from services.handlers.chat.execution_engine import (
     ChatExecutionRequest,
+    _stable_actor_tool_call_id,
     execute_chat,
 )
+from services.conversation_commands import SafePoint
+from services.conversation_turn_runtime import ConversationTurnRuntime
 
 
 def _request() -> ChatExecutionRequest:
@@ -25,6 +28,16 @@ def _request() -> ChatExecutionRequest:
         model_id="model-1",
         context_anchor=object(),
     )
+
+
+def test_actor_tool_call_id_is_stable_for_same_turn_and_arguments():
+    first = _stable_actor_tool_call_id("turn-1", 0, "erp_execute", '{"a":1}')
+    second = _stable_actor_tool_call_id("turn-1", 0, "erp_execute", '{"a":1}')
+    different_args = _stable_actor_tool_call_id("turn-1", 0, "erp_execute", '{"a":2}')
+
+    assert first == second
+    assert first != different_args
+    assert first.startswith("actor-call:turn-1:0:")
 
 
 @pytest.mark.asyncio
@@ -81,8 +94,18 @@ async def test_execute_chat_collects_usage_and_closes_adapter(monkeypatch):
         _adapter=None,
         _calculate_credits=lambda usage: usage["completion_tokens"],
     )
+    runtime = ConversationTurnRuntime(
+        conversation_id="conv-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        cancellation_event=asyncio.Event(),
+    )
 
-    result = await execute_chat(handler=handler, request=_request())
+    result = await execute_chat(
+        handler=handler,
+        request=_request(),
+        runtime=runtime,
+    )
 
     assert result.parts[0].text == "你好"
     assert result.usage == {
@@ -91,6 +114,8 @@ async def test_execute_chat_collects_usage_and_closes_adapter(monkeypatch):
     }
     assert result.credits_cost == 2
     adapter.close.assert_awaited_once()
+    assert runtime.last_safe_point is SafePoint.AFTER_MODEL
+    assert len(runtime.applied_commands) == 1
 
 
 @pytest.mark.asyncio

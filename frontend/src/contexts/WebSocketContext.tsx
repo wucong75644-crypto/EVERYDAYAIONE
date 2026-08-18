@@ -270,17 +270,31 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   const toolConfirmRequest = useMessageStore((s) => s.toolConfirmRequest);
 
   const handleToolConfirm = useCallback((toolCallId: string) => {
+    const request = useMessageStore.getState().toolConfirmRequest;
+    if (!request || request.toolCallId !== toolCallId) return;
     ws.send({
       type: 'tool_confirm_response' as const,
-      payload: { tool_call_id: toolCallId, approved: true },
+      payload: {
+        tool_call_id: toolCallId,
+        task_id: request.taskId,
+        conversation_id: request.conversationId,
+        approved: true,
+      },
     });
     useMessageStore.getState().setToolConfirmRequest(null);
   }, [ws]);
 
   const handleToolReject = useCallback((toolCallId: string) => {
+    const request = useMessageStore.getState().toolConfirmRequest;
+    if (!request || request.toolCallId !== toolCallId) return;
     ws.send({
       type: 'tool_confirm_response' as const,
-      payload: { tool_call_id: toolCallId, approved: false },
+      payload: {
+        tool_call_id: toolCallId,
+        task_id: request.taskId,
+        conversation_id: request.conversationId,
+        approved: false,
+      },
     });
     useMessageStore.getState().setToolConfirmRequest(null);
   }, [ws]);

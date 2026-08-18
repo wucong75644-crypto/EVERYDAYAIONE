@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -25,6 +26,13 @@ from services.handlers.chat.tool_loop import (
     prepare_tool_turn,
 )
 from services.handlers.chat_tool_mixin import accumulate_tool_call_delta
+from services.conversation_commands import (
+    CommandType,
+    ConversationCommand,
+    SafePoint,
+)
+from services.conversation_turn_runtime import ConversationTurnRuntime
+from services.conversation_state import ConversationState
 
 
 @dataclass(frozen=True)
@@ -58,6 +66,7 @@ async def execute_chat(
     request: ChatExecutionRequest,
     cancellation_event: asyncio.Event | None = None,
     sink: ExecutionSink | None = None,
+    runtime: ConversationTurnRuntime | None = None,
 ) -> ChatExecutionResult:
     """执行固定上下文的一次生成，不提交任务、消息或 revision 终态。"""
     event = cancellation_event or asyncio.Event()
@@ -89,6 +98,7 @@ async def execute_chat(
             sink=output,
             totals=totals,
             blocks=blocks,
+            runtime=runtime,
         )
         await _apply_budget_stop(prepared, totals, blocks)
         await _consume_emit_payloads(handler, blocks, output)
@@ -125,8 +135,12 @@ async def _run_loop(
     sink: ExecutionSink,
     totals: StreamTotals,
     blocks: list[dict[str, Any]],
+    runtime: ConversationTurnRuntime | None,
 ) -> None:
     while not prepared.budget.stop_reason:
+        if runtime:
+            runtime.set_state(ConversationState.RUNNING_MODEL)
+            await runtime.safe_point(SafePoint.BEFORE_MODEL)
         _raise_if_cancelled(cancellation_event)
         prepared.budget.use_turn()
         turn = prepared.budget.turns_used - 1
@@ -145,7 +159,10 @@ async def _run_loop(
             cancellation_event,
             sink,
             totals,
+            runtime,
         )
+        if runtime:
+            await runtime.safe_point(SafePoint.AFTER_MODEL)
         await _append_turn_blocks(
             blocks,
             sink,
@@ -164,6 +181,7 @@ async def _run_loop(
             cancellation_event=cancellation_event,
             sink=sink,
             blocks=blocks,
+            runtime=runtime,
         )
 
 
@@ -173,6 +191,7 @@ async def _read_turn(
     cancellation_event: asyncio.Event,
     sink: ExecutionSink,
     totals: StreamTotals,
+    runtime: ConversationTurnRuntime | None,
 ) -> tuple[str, str, list[dict[str, Any]]]:
     turn_text = ""
     turn_thinking = ""
@@ -182,6 +201,8 @@ async def _read_turn(
         tools=tools,
         **prepared.stream_kwargs,
     ):
+        if runtime:
+            await runtime.safe_point(SafePoint.MODEL_CHUNK)
         _raise_if_cancelled(cancellation_event)
         if chunk.thinking_content:
             turn_thinking += chunk.thinking_content
@@ -194,11 +215,31 @@ async def _read_turn(
         if chunk.tool_calls:
             accumulate_tool_call_delta(calls, chunk.tool_calls)
         _accumulate_usage(totals, chunk)
-    return (
-        turn_text,
-        turn_thinking,
-        sorted(calls.values(), key=lambda call: call.get("id", "")),
-    )
+    ordered_calls = [calls[index] for index in sorted(calls)]
+    if runtime:
+        for index, call in enumerate(ordered_calls):
+            call["id"] = _stable_actor_tool_call_id(
+                runtime.turn_id,
+                index,
+                call.get("name", ""),
+                call.get("arguments", ""),
+            )
+    else:
+        ordered_calls.sort(key=lambda call: call.get("id", ""))
+    return turn_text, turn_thinking, ordered_calls
+
+
+def _stable_actor_tool_call_id(
+    turn_id: str,
+    index: int,
+    tool_name: str,
+    arguments: str,
+) -> str:
+    """为 Actor 重试生成稳定调用 ID，避免供应商 call ID 变化导致重复副作用。"""
+    fingerprint = hashlib.sha256(
+        f"{tool_name}\n{arguments}".encode("utf-8")
+    ).hexdigest()[:24]
+    return f"actor-call:{turn_id}:{index}:{fingerprint}"
 
 
 async def _append_turn_blocks(
@@ -228,6 +269,7 @@ async def _execute_tools(
     cancellation_event: asyncio.Event,
     sink: ExecutionSink,
     blocks: list[dict[str, Any]],
+    runtime: ConversationTurnRuntime | None,
 ) -> None:
     prepared.messages.append(_assistant_tool_message(turn_text, calls))
     start_times: dict[str, float] = {}
@@ -236,6 +278,9 @@ async def _execute_tools(
         blocks.append(block)
         start_times[call["id"]] = time.monotonic()
         await sink.on_block(block)
+    if runtime:
+        runtime.set_state(ConversationState.WAITING_TOOL)
+        await runtime.safe_point(SafePoint.BEFORE_TOOL)
     _raise_if_cancelled(cancellation_event)
     results = await handler._execute_tool_calls(
         calls,
@@ -247,6 +292,32 @@ async def _execute_tools(
         messages=prepared.messages,
         budget=prepared.budget,
     )
+    if runtime:
+        tool_call_ids = [call["id"] for call in calls]
+        command_id = (
+            f"tool-batch:{request.task_id}:{runtime.turn_id}:"
+            f"{','.join(tool_call_ids)}"
+        )
+        command = ConversationCommand(
+            command_id=command_id,
+            command_type=CommandType.TOOL_COMPLETED,
+            conversation_id=request.conversation_id,
+            task_id=request.task_id,
+            turn_id=runtime.turn_id,
+            payload={"tool_call_ids": tool_call_ids},
+        )
+        if runtime.command_store and runtime.execution_token:
+            append = getattr(runtime.command_store, "append", None)
+            if append is not None:
+                await append(
+                    conversation_id=request.conversation_id,
+                    task_id=request.task_id,
+                    turn_id=runtime.turn_id,
+                    command_type=CommandType.TOOL_COMPLETED,
+                    dedupe_key=command_id,
+                    payload=command.payload or {},
+                )
+        runtime.push(command)
     _raise_if_cancelled(cancellation_event)
     image_urls = apply_tool_results(
         tool_results=results,
@@ -262,6 +333,8 @@ async def _execute_tools(
         conversation_source=handler._get_conv_source(request.conversation_id),
         turn=turn,
     )
+    if runtime:
+        await runtime.safe_point(SafePoint.AFTER_TOOL)
     logger.info(
         f"Headless tool turn complete | task={request.task_id} | "
         f"turn={turn + 1} | tools={[call['name'] for call in calls]}"

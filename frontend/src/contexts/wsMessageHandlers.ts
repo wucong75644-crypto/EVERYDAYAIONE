@@ -307,7 +307,14 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       const description = msg.payload?.description as string | undefined;
       const args = (msg.payload?.arguments ?? {}) as Record<string, unknown>;
       const timeout = (msg.payload?.timeout as number) || 60;
-      if (!conversation_id || !toolCallId || !toolName) return;
+      if (!conversation_id || !task_id || !toolCallId || !toolName) {
+        logger.warn('ws:tool', 'confirm_request_missing_scope', {
+          taskId: task_id,
+          conversationId: conversation_id,
+          toolCallId,
+        });
+        return;
+      }
 
       // 显示步骤提示
       deps.getStore().setAgentStepHint(conversation_id, `⚠ ${description || toolName} — 等待确认`);
@@ -315,6 +322,8 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       // 触发确认弹窗
       deps.getStore().setToolConfirmRequest({
         toolCallId,
+        taskId: task_id,
+        conversationId: conversation_id,
         toolName,
         arguments: args,
         description: description || `AI 要执行: ${toolName}`,
