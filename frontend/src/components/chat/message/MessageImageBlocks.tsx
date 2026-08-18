@@ -4,6 +4,7 @@ import { useInView } from 'react-intersection-observer';
 import { Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { downloadImage } from '../../../utils/downloadImage';
+import { useThumbnailFallback } from '../../../hooks/useThumbnailFallback';
 import { toThumbnailImageUrl } from '../../../utils/imageUrlRules';
 import MediaPlaceholder from '../media/MediaPlaceholder';
 import ImageContextMenu from '../media/ImageContextMenu';
@@ -235,10 +236,7 @@ function UserImage({
   onImageClick: (index: number) => void;
 }) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
-  const displayImageUrl = useMemo(
-    () => imageAsset.thumbnailUrl || toThumbnailImageUrl(imageAsset.originalUrl, 360),
-    [imageAsset],
-  );
+  const thumbnail = useThumbnailFallback(imageAsset.thumbnailUrl, imageAsset.originalUrl);
 
   const handleClick = useCallback(() => {
     onImageClick(index);
@@ -261,12 +259,17 @@ function UserImage({
       onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY }); }}
       aria-label={`查看图片 ${index + 1}`}
     >
-      <img
-        src={displayImageUrl}
-        alt={`上传的图片 ${index + 1}`}
-        className="rounded-xl shadow-sm w-full h-auto block"
-        onLoad={onMediaLoaded}
-      />
+      {thumbnail.failed ? (
+        <div className="rounded-xl bg-hover text-text-tertiary px-6 py-10">图片加载失败</div>
+      ) : (
+        <img
+          src={thumbnail.src}
+          alt={`上传的图片 ${index + 1}`}
+          className="rounded-xl shadow-sm w-full h-auto block"
+          onLoad={onMediaLoaded}
+          onError={thumbnail.onError}
+        />
+      )}
       {contextMenu && createPortal(
         <ImageContextMenu
           x={contextMenu.x}

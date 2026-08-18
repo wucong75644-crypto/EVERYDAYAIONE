@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import MessageMedia from '../message/MessageMedia';
 
 // Mock 子组件，只关注 props 传递
@@ -98,6 +98,25 @@ describe('MessageMedia', () => {
       />,
     );
     expect(screen.queryByTestId('ai-image-grid')).not.toBeInTheDocument();
+  });
+
+  it('用户图片缩略图加载失败时回退到原图', () => {
+    render(
+      <MessageMedia
+        imageAssets={[{
+          originalUrl: 'https://cdn.example.com/original.png',
+          thumbnailUrl: 'https://cdn.example.com/thumbnail.webp',
+        }]}
+        messageId="msg-user-image"
+        isUser
+        onImageClick={vi.fn()}
+      />,
+    );
+
+    const image = screen.getByRole('img');
+    expect(image).toHaveAttribute('src', 'https://cdn.example.com/thumbnail.webp');
+    fireEvent.error(image);
+    expect(screen.getByRole('img')).toHaveAttribute('src', 'https://cdn.example.com/original.png');
   });
 
   it('无媒体内容时不渲染', () => {
