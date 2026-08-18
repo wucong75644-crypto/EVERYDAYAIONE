@@ -160,7 +160,11 @@ chmod +x deploy/deploy.sh
 deploy_args=()
 [[ "$frontend_only" == true ]] && deploy_args+=(--frontend-only)
 [[ "$backend_only" == true ]] && deploy_args+=(--backend-only)
-bash deploy/deploy.sh "${deploy_args[@]}"
+if [[ ${#deploy_args[@]} -gt 0 ]]; then
+    bash deploy/deploy.sh "${deploy_args[@]}"
+else
+    bash deploy/deploy.sh
+fi
 popd >/dev/null
 
 release_mode=normal
