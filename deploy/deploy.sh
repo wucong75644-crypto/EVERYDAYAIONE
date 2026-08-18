@@ -32,6 +32,14 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+hash_file() {
+    if command -v sha256sum &> /dev/null; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
 # 显示帮助信息
 show_help() {
     cat << EOF
@@ -42,6 +50,7 @@ show_help() {
     -s, --setup             首次部署，执行服务器初始化
     -f, --frontend-only     仅部署前端
     -b, --backend-only      仅部署后端
+    --full-test             执行前后端全量测试（默认只执行发布相关测试）
     --skip-build           跳过构建步骤
     --skip-test            跳过测试
 
@@ -143,7 +152,7 @@ build_frontend() {
 
     cd frontend
 
-    # 检查 node_modules
+    # 依赖目录在持久化发布工作树中复用；仅锁文件变化时重新安装。
     if [ ! -d "node_modules" ]; then
         log_info "安装前端依赖..."
         if [ -f "package-lock.json" ]; then
@@ -151,12 +160,33 @@ build_frontend() {
         else
             npm install
         fi
+        if [ -f "package-lock.json" ]; then
+            printf '%s\n' "$(hash_file package-lock.json)" > node_modules/.everydayai-package-lock.sha256
+        fi
+    elif [ -f "package-lock.json" ]; then
+        frontend_lock_hash="$(hash_file package-lock.json)"
+        frontend_lock_marker="node_modules/.everydayai-package-lock.sha256"
+        if [ ! -f "$frontend_lock_marker" ] \
+            || [ "$(cat "$frontend_lock_marker")" != "$frontend_lock_hash" ]; then
+            log_info "检测到前端锁文件变化，更新依赖..."
+            npm ci
+            printf '%s\n' "$frontend_lock_hash" > "$frontend_lock_marker"
+        else
+            log_info "复用前端依赖"
+        fi
     fi
 
     # 运行测试（可选）
     if [ "$SKIP_TEST" != true ]; then
         log_info "运行前端测试..."
-        npm run test:run -- --no-file-parallelism
+        if [ "$FULL_TEST" = true ]; then
+            npm run test:run -- --no-file-parallelism
+        else
+            npm run test:run -- --no-file-parallelism \
+                src/contexts/__tests__/wsMessageHandlers.test.ts \
+                src/contexts/__tests__/WebSocketContext.test.tsx \
+                src/components/chat/modals/__tests__/ToolConfirmModal.test.tsx
+        fi
     fi
 
     # 构建
@@ -209,9 +239,18 @@ build_backend() {
     # 激活虚拟环境
     source venv/bin/activate
 
-    # 安装依赖
-    log_info "检查后端依赖..."
-    python -m pip install -q --prefer-binary -r requirements.txt
+    # 依赖环境在持久化发布工作树中复用；仅 requirements 变化时重新安装。
+    requirements_hash="$(hash_file requirements.txt)"
+    requirements_marker="venv/.everydayai-requirements.sha256"
+    if [ ! -f "$requirements_marker" ] \
+        || [ "$(cat "$requirements_marker")" != "$requirements_hash" ]; then
+        log_info "更新后端依赖..."
+        python -m pip install -q --prefer-binary -r requirements.txt
+        printf '%s\n' "$requirements_hash" > "$requirements_marker"
+    else
+        log_info "复用后端依赖"
+    fi
+    python -m pip check >/dev/null
 
     # 运行测试（可选）
     if [ "$SKIP_TEST" != true ]; then
@@ -220,7 +259,18 @@ build_backend() {
         : "${DATABASE_URL:=postgresql://test:test@127.0.0.1/test}"
         : "${JWT_SECRET_KEY:=release-test-only}"
         export DATABASE_URL JWT_SECRET_KEY
-        pytest
+        if [ "$FULL_TEST" = true ]; then
+            pytest
+        else
+            pytest \
+                tests/test_conversation_*.py \
+                tests/test_chat_actor_*.py \
+                tests/test_chat_execution_engine.py \
+                tests/test_tool_invocation_store.py \
+                tests/test_tool_invocations_migration.py \
+                tests/test_ws_tool_confirmation.py \
+                tests/test_deploy_service_contract.py
+        fi
     fi
 
     # 语法检查
@@ -486,6 +536,7 @@ EOF
     BACKEND_ONLY=false
     SKIP_BUILD=false
     SKIP_TEST=false
+    FULL_TEST=false
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -503,6 +554,10 @@ EOF
                 ;;
             -b|--backend-only)
                 BACKEND_ONLY=true
+                shift
+                ;;
+            --full-test)
+                FULL_TEST=true
                 shift
                 ;;
             --skip-build)

@@ -83,6 +83,16 @@ bash /tmp/setup-env.sh
 ./release.sh --rollback <commit-sha>
 ```
 
+发布入口会复用持久化隔离工作树中的前端和后端依赖，只有锁文件或
+`requirements.txt` 变化时才重新安装。默认只运行本次发布相关的测试；需要完整验证时使用：
+
+```bash
+./release.sh --full-test --rollback <commit-sha>
+```
+
+默认隔离工作树位于项目目录旁边，由脚本管理，不应手动修改。若需指定其他位置，
+可设置 `EVERYDAYAI_RELEASE_WORKTREE`。
+
 正常后端发布会在本地前后端构建和测试全部通过后才同步线上。后端同步完成后，
 若 `deploy/config.env` 中 `RUN_MIGRATIONS=true`，会按顺序将本次 Actor 的
 138、139、140 三份正向迁移放在同一个 PostgreSQL 事务中执行，成功后才重启后端服务。

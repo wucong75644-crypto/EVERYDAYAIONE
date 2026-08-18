@@ -6,6 +6,9 @@ from pathlib import Path
 SCRIPT = (
     Path(__file__).resolve().parents[2] / "deploy/deploy.sh"
 ).read_text()
+RELEASE_SCRIPT = (
+    Path(__file__).resolve().parents[2] / "deploy/release.sh"
+).read_text()
 
 
 def test_backend_deploy_restarts_all_required_services() -> None:
@@ -47,3 +50,15 @@ def test_missing_required_service_fails_deployment() -> None:
 def test_backend_deploy_does_not_install_chart_runtime() -> None:
     assert "setup-chart-runtime" not in SCRIPT
     assert "playwright" not in SCRIPT
+
+
+def test_deploy_reuses_dependencies_and_supports_full_test_override() -> None:
+    assert ".everydayai-package-lock.sha256" in SCRIPT
+    assert ".everydayai-requirements.sha256" in SCRIPT
+    assert "tests/test_conversation_*.py" in SCRIPT
+    assert "--full-test" in SCRIPT
+
+
+def test_release_reuses_a_persistent_isolated_worktree() -> None:
+    assert "release_worktree=\"${EVERYDAYAI_RELEASE_WORKTREE:-$repo_parent/${repo_name}-release-worktree}\"" in RELEASE_SCRIPT
+    assert "git -C \"$release_worktree\" checkout --detach \"$commit_sha\"" in RELEASE_SCRIPT

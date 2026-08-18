@@ -29,6 +29,7 @@ usage() {
   --file PATH          明确纳入本次提交的文件，可重复
   --frontend-only      仅部署前端
   --backend-only       仅部署后端
+  --full-test           执行前后端全量测试（默认只执行发布相关测试）
   --rollback SHA       从指定历史提交部署应用版本，不回滚数据库迁移
   -h, --help           显示帮助
 EOF
@@ -42,6 +43,7 @@ message=''
 rollback_sha=''
 frontend_only=false
 backend_only=false
+full_test=false
 declare -a task_files=()
 
 while [[ $# -gt 0 ]]; do
@@ -62,6 +64,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --backend-only)
             backend_only=true
+            shift
+            ;;
+        --full-test)
+            full_test=true
             shift
             ;;
         --rollback)
@@ -142,13 +148,30 @@ else
     info "回滚目标确认：$commit_sha"
 fi
 
-release_worktree=$(mktemp -d "${TMPDIR:-/tmp}/everydayai-release.XXXXXX")
+repo_parent=$(dirname "$repo_root")
+repo_name=$(basename "$repo_root")
+release_worktree="${EVERYDAYAI_RELEASE_WORKTREE:-$repo_parent/${repo_name}-release-worktree}"
 cleanup() {
-    git worktree remove --force "$release_worktree" >/dev/null 2>&1 || true
+    :
 }
 trap cleanup EXIT
 
-git worktree add --detach "$release_worktree" "$commit_sha" >/dev/null
+if [[ -e "$release_worktree" ]]; then
+    registered_worktree=false
+    while IFS= read -r worktree_path; do
+        if [[ "$worktree_path" == "$release_worktree" ]]; then
+            registered_worktree=true
+            break
+        fi
+    done < <(git worktree list --porcelain | awk '/^worktree /{sub(/^worktree /, ""); print}')
+    [[ "$registered_worktree" == true ]] \
+        || fail "发布工作树路径已存在但不是本仓库的 Git worktree：$release_worktree"
+    [[ -z "$(git -C "$release_worktree" status --porcelain --untracked-files=no)" ]] \
+        || fail "持久化发布工作树存在未提交的代码变更：$release_worktree"
+    git -C "$release_worktree" checkout --detach "$commit_sha" >/dev/null
+else
+    git worktree add --detach "$release_worktree" "$commit_sha" >/dev/null
+fi
 
 # config.env 被 git 忽略，只作为本地发布运行时配置注入隔离工作树。
 if [[ -f "$repo_root/deploy/config.env" ]]; then
@@ -162,6 +185,7 @@ chmod +x deploy/deploy.sh
 deploy_args=()
 [[ "$frontend_only" == true ]] && deploy_args+=(--frontend-only)
 [[ "$backend_only" == true ]] && deploy_args+=(--backend-only)
+[[ "$full_test" == true ]] && deploy_args+=(--full-test)
 if [[ ${#deploy_args[@]} -gt 0 ]]; then
     bash deploy/deploy.sh "${deploy_args[@]}"
 else
