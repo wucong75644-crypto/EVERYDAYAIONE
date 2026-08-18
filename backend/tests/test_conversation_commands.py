@@ -15,6 +15,7 @@ from services.conversation_commands import (
 )
 from services.conversation_state import (
     ConversationState,
+    ConversationPauseRequested,
     ConversationStopRequested,
 )
 from services.conversation_turn_runtime import ConversationTurnRuntime
@@ -101,6 +102,25 @@ async def test_runtime_checkpoints_before_stopping_for_cancel_command():
     with pytest.raises(ConversationStopRequested):
         await runtime.safe_point(SafePoint.AFTER_MODEL)
 
+    checkpoint.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_runtime_checkpoints_and_pauses_for_resume_command():
+    checkpoint = AsyncMock(return_value=7)
+    runtime = ConversationTurnRuntime(
+        conversation_id="conversation-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        cancellation_event=asyncio.Event(),
+        checkpoint=checkpoint,
+    )
+    runtime.push(_command("pause", CommandType.PAUSE))
+
+    with pytest.raises(ConversationPauseRequested):
+        await runtime.safe_point(SafePoint.BEFORE_COMMIT)
+
+    assert runtime.state is ConversationState.PAUSED
     checkpoint.assert_awaited_once()
 
 

@@ -190,7 +190,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     type VARCHAR(20) NOT NULL CHECK (type IN ('chat', 'image', 'video')),
     status VARCHAR(20) NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
+        CHECK (status IN ('pending', 'running', 'paused', 'completed', 'failed', 'cancelled')),
     credits_locked INTEGER DEFAULT 0,
     credits_used INTEGER DEFAULT 0,
     error_message TEXT,
@@ -229,7 +229,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_conversation ON tasks(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tasks_external_id ON tasks(external_task_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status_type ON tasks(status, type);
-CREATE INDEX IF NOT EXISTS idx_tasks_user_pending ON tasks(user_id, status) WHERE status IN ('pending', 'running');
+CREATE INDEX IF NOT EXISTS idx_tasks_user_pending ON tasks(user_id, status) WHERE status IN ('pending', 'running', 'paused');
 CREATE INDEX IF NOT EXISTS idx_tasks_assistant_message_id ON tasks(assistant_message_id) WHERE assistant_message_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_tasks_client_task_id ON tasks(client_task_id) WHERE client_task_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_tasks_batch_id ON tasks(batch_id) WHERE batch_id IS NOT NULL;

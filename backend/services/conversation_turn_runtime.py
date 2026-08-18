@@ -13,6 +13,7 @@ from services.conversation_commands import (
 )
 from services.conversation_state import (
     ConversationState,
+    ConversationPauseRequested,
     ConversationStopRequested,
     reduce_command,
 )
@@ -33,7 +34,7 @@ class ConversationTurnRuntime:
         execution_token: str | None = None,
         command_store: ConversationCommandStore | None = None,
         subtask_store: ConversationSubtaskStore | None = None,
-        checkpoint: Callable[[], Awaitable[None]] | None = None,
+        checkpoint: Callable[[], Awaitable[int | None]] | None = None,
     ) -> None:
         self.conversation_id = conversation_id
         self.task_id = task_id
@@ -66,7 +67,7 @@ class ConversationTurnRuntime:
             raise ValueError("command task scope mismatch")
         return self.inbox.push(command)
 
-    def set_checkpoint(self, checkpoint: Callable[[], Awaitable[None]] | None) -> None:
+    def set_checkpoint(self, checkpoint: Callable[[], Awaitable[int | None]] | None) -> None:
         """注册取消安全点使用的最新进度快照回调。"""
         self._checkpoint = checkpoint
 
@@ -102,6 +103,7 @@ class ConversationTurnRuntime:
             self.state = reduce_command(self.state, command)
             if self.state in {
                 ConversationState.CANCELLING,
+                ConversationState.PAUSING,
                 ConversationState.OWNERSHIP_LOST,
             }:
                 if (
@@ -110,6 +112,16 @@ class ConversationTurnRuntime:
                     and self._checkpoint is not None
                 ):
                     await self._checkpoint()
+                if (
+                    self.state is ConversationState.PAUSING
+                    and command.command_type is CommandType.PAUSE
+                    and self._checkpoint is not None
+                ):
+                    await self._checkpoint()
+                    self.state = ConversationState.PAUSED
+                    raise ConversationPauseRequested
+                if self.state is ConversationState.PAUSING:
+                    raise ConversationPauseRequested
                 raise ConversationStopRequested
             if (
                 self._command_applier is not None
@@ -129,6 +141,7 @@ class ConversationTurnRuntime:
             ConversationState.COMPLETED,
             ConversationState.FAILED,
             ConversationState.CANCELLED,
+            ConversationState.PAUSED,
             ConversationState.OWNERSHIP_LOST,
         }:
             return

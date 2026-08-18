@@ -6,6 +6,7 @@
 
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any
+from uuid import UUID
 
 from fastapi import APIRouter, Path, Request
 from loguru import logger
@@ -46,6 +47,7 @@ async def get_pending_tasks(
 
     返回：
     - 进行中的任务 (status in ['pending', 'running'])
+    - 可恢复的 Actor 任务 (status = 'paused')
     - 最近 5 分钟内终结的任务 (status in ['completed', 'failed', 'cancelled'])
 
     速率限制：每分钟最多 30 次请求
@@ -63,7 +65,7 @@ async def get_pending_tasks(
         # 查询进行中的任务（OrgScopedDB 自动加 org_id 过滤）
         pending_response = db.table("tasks").select(task_fields).eq(
             "user_id", ctx.user_id
-        ).in_("status", ["pending", "running"]).order(
+        ).in_("status", ["pending", "running", "paused"]).order(
             "started_at", desc=False
         ).execute()
 
@@ -98,6 +100,86 @@ async def get_pending_tasks(
         )
 
 
+@router.post("/{task_id}/resume", summary="恢复已暂停的 Actor 任务")
+@limiter.limit("60/minute")
+async def resume_task(
+    request: Request,
+    ctx: OrgCtx,
+    db: ScopedDB,
+    task_id: str = Path(
+        ...,
+        regex=r"^[a-zA-Z0-9_-]{1,100}$",
+        description="任务 ID",
+    ),
+) -> Dict[str, Any]:
+    """恢复同一 task 的最近安全检查点，不创建新的用户 turn。"""
+    try:
+        # 前端消息里的 task_id 是 client_task_id；RPC 的 fencing 主键是 tasks.id。
+        # 先在用户/org 范围内解析，避免把公共任务 ID 直接当 UUID 传入数据库。
+        resolved_task_id: str | None = None
+        for public_field in ("client_task_id", "external_task_id"):
+            task_query = db.table("tasks").select("id").eq(
+                public_field, task_id
+            ).eq("user_id", ctx.user_id)
+            if ctx.org_id:
+                task_query = task_query.eq("org_id", ctx.org_id)
+            else:
+                task_query = task_query.is_("org_id", "null")
+            task_row = task_query.maybe_single().execute()
+            if task_row.data:
+                resolved_task_id = str(task_row.data["id"])
+                break
+        if resolved_task_id is None:
+            try:
+                resolved_task_id = str(UUID(task_id))
+            except ValueError:
+                raise NotFoundError(resource="任务", resource_id=task_id)
+
+        result = db.rpc(
+            "resume_paused_generation_turn",
+            {
+                "p_task_id": resolved_task_id,
+                "p_user_id": ctx.user_id,
+                "p_org_id": ctx.org_id,
+            },
+        ).execute()
+        data = result.data if result else None
+        if not isinstance(data, dict):
+            raise RuntimeError("ACTOR_RESUME_RESULT_INVALID")
+        if data.get("outcome") == "terminal":
+            return {"success": False, **data}
+
+        from services.websocket_manager import ws_manager
+        for push_task_id in {
+            data.get("client_task_id"),
+            data.get("external_task_id"),
+            data.get("task_id"),
+        }:
+            if push_task_id:
+                await ws_manager.resume_task(str(push_task_id), ctx.org_id)
+        from services.conversation_worker import RedisConversationWakeup
+        await RedisConversationWakeup().publish(
+            str(data.get("conversation_id") or ""),
+            ctx.org_id,
+        )
+        return {"success": True, **data}
+    except (
+        ValidationError,
+        NotFoundError,
+        PermissionDeniedError,
+        AppException,
+    ):
+        raise
+    except Exception as e:
+        logger.error(
+            f"Resume task failed | task_id={task_id} | "
+            f"user_id={ctx.user_id} | error={str(e)}"
+        )
+        raise AppException(
+            code="RESUME_TASK_ERROR",
+            message="恢复任务失败",
+            status_code=500,
+        )
 @router.get("/{task_id}/content", summary="获取聊天任务累积内容")
 @limiter.limit("60/minute")
 async def get_chat_task_content(
@@ -329,17 +411,19 @@ async def cancel_task_by_message_id(
                         record_cancel_event(ext_id, org_id=ctx.org_id)
                         ws_manager.cancel_task(ext_id, org_id=ctx.org_id)
 
-                    # 直接 UPDATE 改 task 终态后，webhook/worker 都会因状态检查跳过 release，
-                    # 必须由 cancel 路径主动释放 Redis 槽位（SREM 幂等，handler 再次释放也安全）
-                    await release_task_slot(task)
+                    # Legacy 任务此处已直接进入 failed，必须主动释放槽位。
+                    # Actor 的 PAUSE 会保留原 slot reservation，待同一 task 完成
+                    # 后由 ActorTerminalDelivery 释放，避免恢复时绕过并发上限。
+                    if not actor_task:
+                        await release_task_slot(task)
 
                     logger.info(
-                        f"Task cancelled by user | task_id={task['id']} | "
+                        f"Task {'paused' if actor_task else 'cancelled'} by user | task_id={task['id']} | "
                         f"ext={ext_id} | message_id={message_id} | user_id={ctx.user_id}"
                     )
 
-                # Legacy 执行器仍需在 API 进程里立即落锚。Actor 取消走持久
-                # CANCEL command，由当前 owner 在安全点保存最新进度并原子终止；
+                # Legacy 执行器仍需在 API 进程里立即落锚。Actor 停止走持久
+                # PAUSE command，由当前 owner 在安全点保存检查点并暂停；
                 # 这里不能先写空 marker 覆盖 Actor 的累积快照。
                 # 防止 race condition：用户在 chat_handler 后台落锚前发"继续"，
                 # 导致 history_loader 检测不到 interrupt_marker → LLM 失忆。

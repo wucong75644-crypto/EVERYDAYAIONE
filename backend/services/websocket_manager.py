@@ -460,6 +460,10 @@ class WebSocketManager(RedisPubSubMixin):
     def unregister_cancel_listener(self, task_id: str) -> None:
         self._cancel.unregister_listener(task_id)
 
+    async def resume_task(self, task_id: str, org_id: str | None = None) -> None:
+        """清除同一 task 的取消闸门，供暂停恢复使用。"""
+        await self._cancel.resume(task_id, org_id)
+
     async def mark_cancelled_gate(
         self, task_id: str, org_id: str | None = None,
     ) -> None:

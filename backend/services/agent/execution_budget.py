@@ -146,3 +146,21 @@ class ExecutionBudget:
             )
             return False
         return True
+
+    def snapshot(self) -> dict[str, float | int]:
+        """返回可持久化的预算状态；恢复时保留已消耗轮次和墙钟。"""
+        return {
+            "turns_used": self._turns_used,
+            "elapsed": min(self.elapsed, self._max_wall_time),
+        }
+
+    def restore(self, snapshot: object) -> None:
+        """从检查点恢复预算，拒绝越界数据以避免绕过执行上限。"""
+        if not isinstance(snapshot, dict):
+            return
+        turns = snapshot.get("turns_used")
+        elapsed = snapshot.get("elapsed")
+        if isinstance(turns, int) and 0 <= turns <= self._max_turns:
+            self._turns_used = turns
+        if isinstance(elapsed, (int, float)) and elapsed >= 0:
+            self._start = time.monotonic() - min(float(elapsed), self._max_wall_time)

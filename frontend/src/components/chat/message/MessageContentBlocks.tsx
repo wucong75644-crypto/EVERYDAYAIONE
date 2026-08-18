@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import toast from 'react-hot-toast';
 import { formatRelativeCN } from '../../../utils/formatRelativeCN';
 import api from '../../../services/api';
@@ -47,6 +47,22 @@ export default function MessageContentBlocks({
   onImageClick,
   onRegenerateSingle,
 }: MessageContentBlocksProps) {
+  const [resuming, setResuming] = useState(false);
+  const canResume = message.status === 'interrupted' && !!message.task_id;
+
+  const handleResume = () => {
+    if (!message.task_id || resuming) return;
+    setResuming(true);
+    window.dispatchEvent(new CustomEvent('chat:resume-task', {
+      detail: {
+        taskId: message.task_id,
+        conversationId: message.conversation_id,
+        messageId: message.id,
+      },
+    }));
+    window.setTimeout(() => setResuming(false), 1500);
+  };
+
   return (
     <div className="space-y-1">
       {message.content.map((part, idx) => {
@@ -232,6 +248,17 @@ export default function MessageContentBlocks({
             data-testid="interrupt-hint"
           >
             停止于 {ago}
+            {canResume && (
+              <button
+                type="button"
+                className="ml-2 text-text-secondary hover:text-text-primary underline underline-offset-2"
+                onClick={handleResume}
+                disabled={resuming}
+                data-testid="resume-task-button"
+              >
+                {resuming ? '恢复中…' : '继续当前任务'}
+              </button>
+            )}
           </div>
         );
       })()}

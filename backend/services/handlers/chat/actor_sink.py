@@ -114,6 +114,23 @@ class ActorWebSink:
         """在取消安全点强制保存当前内存快照，不发送完成事件。"""
         await self._persist()
 
+    def restore_progress(self, state: dict[str, Any]) -> None:
+        """用数据库检查点恢复同一消息的推送累积器。"""
+        text = state.get("text")
+        thinking = state.get("thinking")
+        blocks = state.get("blocks")
+        if isinstance(text, str):
+            self._text = text
+        if isinstance(thinking, str):
+            self._thinking = thinking
+        if isinstance(blocks, list):
+            self._blocks = [dict(block) for block in blocks if isinstance(block, dict)]
+
+    async def persist_checkpoint(self, state: dict[str, Any]) -> None:
+        """把稳定检查点投影到 tasks，避免把未完成模型回合写回去。"""
+        self.restore_progress(state)
+        await self._persist()
+
     async def _persist(self) -> None:
         self._chunks_since_persist = 0
         try:

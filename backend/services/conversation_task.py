@@ -33,16 +33,16 @@ def cancel_actor_task(
             "p_conversation_id": str(task["conversation_id"]),
             "p_task_id": task_id,
             "p_turn_id": str(task["turn_id"]) if task.get("turn_id") else None,
-            "p_event_type": CommandType.CANCEL.value,
-            "p_dedupe_key": f"cancel:{task_id}",
-            "p_payload": Jsonb({"reason": "user_cancelled", "user_id": user_id}),
+            "p_event_type": CommandType.PAUSE.value,
+            "p_dedupe_key": f"pause:{task_id}",
+            "p_payload": Jsonb({"reason": "user_paused", "user_id": user_id}),
         },
     ).execute()
     result = response.data if response else None
     if not isinstance(result, dict):
         raise RuntimeError("ACTOR_CANCEL_RESULT_INVALID")
     outcome = result.get("outcome")
-    if outcome in {"enqueued", "already_enqueued", "already_cancelled"}:
+    if outcome in {"enqueued", "already_enqueued", "already_paused"}:
         return True
     if outcome == "terminal":
         return False

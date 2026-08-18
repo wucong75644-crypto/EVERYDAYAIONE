@@ -12,7 +12,7 @@ def test_is_actor_task_accepts_jsonb_and_serialized_json():
     assert not is_actor_task({"delivery_context": "invalid"})
 
 
-def test_cancel_actor_task_enqueues_durable_cancel_command():
+def test_cancel_actor_task_enqueues_durable_pause_command():
     db = MagicMock()
     db.rpc.return_value.execute.return_value.data = {"outcome": "enqueued"}
 
@@ -31,10 +31,10 @@ def test_cancel_actor_task_enqueues_durable_cancel_command():
     assert params["p_conversation_id"] == "conversation"
     assert params["p_task_id"] == "internal"
     assert params["p_turn_id"] == "turn"
-    assert params["p_event_type"] == "cancel"
-    assert params["p_dedupe_key"] == "cancel:internal"
+    assert params["p_event_type"] == "pause"
+    assert params["p_dedupe_key"] == "pause:internal"
     assert params["p_payload"].obj == {
-        "reason": "user_cancelled",
+        "reason": "user_paused",
         "user_id": "user",
     }
 

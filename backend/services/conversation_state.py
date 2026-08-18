@@ -16,6 +16,8 @@ class ConversationState(str, Enum):
     WAITING_TOOL = "waiting_tool"
     WAITING_APPROVAL = "waiting_approval"
     WAITING_SUBTASK = "waiting_subtask"
+    PAUSING = "pausing"
+    PAUSED = "paused"
     CANCELLING = "cancelling"
     COMMITTING = "committing"
     COMPLETED = "completed"
@@ -28,6 +30,10 @@ class ConversationStopRequested(asyncio.CancelledError):
     """Runtime 在安全点确认需要停止当前执行。"""
 
 
+class ConversationPauseRequested(asyncio.CancelledError):
+    """Runtime 已在安全点保存检查点，当前 turn 可以暂停。"""
+
+
 def reduce_command(
     state: ConversationState,
     command: ConversationCommand,
@@ -37,6 +43,10 @@ def reduce_command(
         return ConversationState.OWNERSHIP_LOST
     if command.command_type in {CommandType.CANCEL, CommandType.SHUTDOWN}:
         return ConversationState.CANCELLING
+    if command.command_type == CommandType.PAUSE:
+        return ConversationState.PAUSING
+    if command.command_type == CommandType.RESUME:
+        return ConversationState.RUNNING_MODEL
     if command.command_type == CommandType.APPROVAL_RESULT:
         return ConversationState.RUNNING_MODEL
     if command.command_type == CommandType.SUBTASK_COMPLETED:

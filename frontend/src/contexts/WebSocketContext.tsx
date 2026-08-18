@@ -20,7 +20,7 @@ import {
   fetchPendingTasks,
   type RestorationResult,
 } from '../utils/taskRestoration';
-import { getMessages } from '../services/message';
+import { getMessages, resumeTask } from '../services/message';
 import { logger } from '../utils/logger';
 import { createWSMessageHandlers } from './wsMessageHandlers';
 import ToolConfirmModal from '../components/chat/modals/ToolConfirmModal';
@@ -105,6 +105,39 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- handler 通过 getState() 获取最新 store，无需依赖 messageStore
   }, [ws]);
+
+  // 暂停任务恢复：先恢复数据库 task，再重新建立同一 task 的 WS 订阅。
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent).detail as {
+        taskId?: string;
+        conversationId?: string;
+        messageId?: string;
+      } | undefined;
+      if (!detail?.taskId || !detail.conversationId) return;
+      void (async () => {
+        try {
+          await resumeTask(detail.taskId!);
+          const store = useMessageStore.getState();
+          if (detail.messageId) {
+            store.updateMessage(detail.messageId, { status: 'streaming' });
+            store.registerStreamingId(detail.conversationId!, detail.messageId);
+          }
+          subscribeTaskWithMappingRef.current(detail.taskId!, detail.conversationId!);
+          store.setIsSending(true);
+        } catch (error) {
+          logger.error('ws:resume', 'failed to resume task', error, {
+            taskId: detail.taskId,
+          });
+          import('react-hot-toast').then(({ default: toast }) => {
+            toast.error('恢复任务失败，请稍后重试');
+          });
+        }
+      })();
+    };
+    window.addEventListener('chat:resume-task', handler);
+    return () => window.removeEventListener('chat:resume-task', handler);
+  }, []);
 
   // 订阅任务（带映射）
   const subscribeTaskWithMapping = useCallback((taskId: string, conversationId: string) => {

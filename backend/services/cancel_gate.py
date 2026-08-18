@@ -110,3 +110,9 @@ class CancelManager:
         if expired:
             logger.debug(f"Cancelled gates cleaned | count={len(expired)}")
         return len(expired)
+
+    async def resume(self, task_id: str, org_id: str | None = None) -> None:
+        """清除暂停任务的本地取消闸门，允许同一 task 继续推送。"""
+        self._signals.pop(task_id, None)
+        async with self._gates_lock:
+            self._gates.pop((org_id or "", task_id), None)

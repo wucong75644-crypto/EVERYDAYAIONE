@@ -142,3 +142,15 @@ export async function cancelTaskByMessageId(messageId: string): Promise<void> {
     method: 'POST',
   });
 }
+
+/** 恢复同一 Actor task 的最近安全检查点。 */
+export async function resumeTask(taskId: string): Promise<{
+  task_id: string;
+  conversation_id?: string;
+  assistant_message_id?: string;
+}> {
+  return request({
+    url: `/tasks/${taskId}/resume`,
+    method: 'POST',
+  });
+}

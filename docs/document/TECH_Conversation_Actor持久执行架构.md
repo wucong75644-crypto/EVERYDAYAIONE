@@ -435,3 +435,25 @@ status
 
 可观测性、部署回滚、任务拆分和完整测试矩阵见
 `TECH_Conversation_Actor实施与验收附录.md`。主设计与附录共同构成本架构的实施基线。
+
+## 17. 可恢复 turn 升级（migration 142）
+
+Actor 的用户停止操作分为两种语义：
+
+- `CANCEL`：不可恢复的终止，适用于明确放弃任务。
+- `PAUSE`：在安全点保存检查点后暂停，允许恢复同一个 task 和 assistant message。
+
+`conversation_turn_checkpoints` 保存最近稳定边界的可序列化状态：LLM messages、已形成的内容 blocks、累计文本/思考、usage 和 ExecutionBudget。暂停流程为：
+
+```text
+PAUSE command
+  → BEFORE_MODEL / AFTER_MODEL / BEFORE_TOOL / AFTER_TOOL / BEFORE_COMMIT
+  → save checkpoint + materialize interrupted snapshot
+  → task = paused，释放 execution token
+  → RESUME RPC 将同一 task 重新置为 pending
+  → Worker 重新 claim，加载 checkpoint，从 before_model 继续
+```
+
+该协议提供的是“同一逻辑 turn 恢复”，不是 token 级原地续流。模型回合在检查点前未完成时会从最近稳定边界重跑；工具调用继续使用稳定 invocation ID 和既有幂等/未知状态规则，不能宣称第三方副作用 exactly-once。
+
+实现文件：`142_conversation_actor_turn_checkpoints.sql`、`conversation_turn_runtime.py`、`conversation_execution.py`、`handlers/chat/execution_engine.py`、`/tasks/{task_id}/resume`。部署脚本将 138—142 放入同一事务，失败时不留下半套 schema。

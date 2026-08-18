@@ -293,7 +293,7 @@ run_actor_migrations() {
         return
     fi
 
-    log_info "执行 Actor 数据库迁移（138 → 139 → 140 → 141）..."
+    log_info "执行 Actor 数据库迁移（138 → 139 → 140 → 141 → 142）..."
 
     remote_exec bash << 'ENDSSH'
         set -e
@@ -318,7 +318,8 @@ run_actor_migrations() {
             --file /var/www/everydayai/backend/migrations/138_conversation_control_events.sql \
             --file /var/www/everydayai/backend/migrations/139_tool_invocations.sql \
             --file /var/www/everydayai/backend/migrations/140_conversation_subtasks.sql \
-            --file /var/www/everydayai/backend/migrations/141_conversation_actor_cancel_snapshot.sql
+            --file /var/www/everydayai/backend/migrations/141_conversation_actor_cancel_snapshot.sql \
+            --file /var/www/everydayai/backend/migrations/142_conversation_actor_turn_checkpoints.sql
 ENDSSH
 
     log_success "Actor 数据库迁移完成"

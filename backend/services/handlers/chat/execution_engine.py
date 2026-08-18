@@ -50,6 +50,7 @@ class ChatExecutionRequest:
     needs_google_search: bool = False
     calculate_credits: bool = True
     execution_scope: Any = None
+    resume_state: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -89,12 +90,62 @@ async def execute_chat(
         runtime.set_command_applier(
             lambda command: _apply_runtime_command(command, prepared.messages)
         )
+    if request.resume_state:
+        _restore_resume_state(prepared, request.resume_state)
     handler._pending_emit_payloads = []
     handler._pending_form_block = None
     totals = StreamTotals()
     blocks: list[dict[str, Any]] = []
+    if request.resume_state:
+        _restore_output_state(totals, blocks, prepared, request.resume_state)
     try:
         await output.start()
+        stable_state: dict[str, Any] = {}
+
+        def capture_stable_state() -> None:
+            stable_state.clear()
+            stable_state.update(
+                _build_resume_state(prepared, blocks, totals, runtime)
+            )
+
+        capture_stable_state()
+        if runtime is not None:
+            async def persist_checkpoint() -> int | None:
+                capture_stable_state()
+                persist = getattr(output, "persist_checkpoint", None)
+                if persist is not None:
+                    await persist(stable_state)
+                else:
+                    persist_progress = getattr(output, "persist_progress", None)
+                    if persist_progress is not None:
+                        await persist_progress()
+                actor_db = getattr(handler, "db", None)
+                token = getattr(runtime, "execution_token", None)
+                if actor_db is None or not token or not hasattr(actor_db, "rpc"):
+                    return None
+                response = await actor_db.rpc(
+                    "save_generation_checkpoint",
+                    {
+                        "p_task_id": request.task_id,
+                        "p_execution_token": token,
+                        "p_safe_point": (
+                            runtime.last_safe_point.value
+                            if runtime.last_safe_point else "unknown"
+                        ),
+                        "p_state": stable_state,
+                    },
+                ).execute()
+                result = response.data if response else None
+                if not isinstance(result, dict):
+                    raise RuntimeError("ACTOR_CHECKPOINT_RESULT_INVALID")
+                if result.get("outcome") in {
+                    "ownership_lost", "lease_expired", "terminal",
+                }:
+                    raise asyncio.CancelledError
+                version = result.get("version")
+                return int(version) if isinstance(version, int) else None
+
+            runtime.set_checkpoint(persist_checkpoint)
         await _run_loop(
             handler=handler,
             request=request,
@@ -104,7 +155,10 @@ async def execute_chat(
             totals=totals,
             blocks=blocks,
             runtime=runtime,
+            capture_stable=capture_stable_state,
         )
+        if runtime is not None:
+            await runtime.safe_point(SafePoint.BEFORE_COMMIT)
         await _apply_budget_stop(prepared, totals, blocks)
         await _consume_emit_payloads(handler, blocks, output)
         await output.flush()
@@ -141,6 +195,7 @@ async def _run_loop(
     totals: StreamTotals,
     blocks: list[dict[str, Any]],
     runtime: ConversationTurnRuntime | None,
+    capture_stable: Any = None,
 ) -> None:
     while not prepared.budget.stop_reason:
         if runtime:
@@ -175,6 +230,8 @@ async def _run_loop(
             text=turn_text,
         )
         if not calls:
+            if capture_stable is not None:
+                capture_stable()
             return
         await _execute_tools(
             handler=handler,
@@ -187,6 +244,7 @@ async def _run_loop(
             sink=sink,
             blocks=blocks,
             runtime=runtime,
+            capture_stable=capture_stable,
         )
 
 
@@ -275,6 +333,7 @@ async def _execute_tools(
     sink: ExecutionSink,
     blocks: list[dict[str, Any]],
     runtime: ConversationTurnRuntime | None,
+    capture_stable: Any = None,
 ) -> None:
     prepared.messages.append(_assistant_tool_message(turn_text, calls))
     start_times: dict[str, float] = {}
@@ -338,12 +397,80 @@ async def _execute_tools(
         conversation_source=handler._get_conv_source(request.conversation_id),
         turn=turn,
     )
+    if capture_stable is not None:
+        capture_stable()
     if runtime:
         await runtime.safe_point(SafePoint.AFTER_TOOL)
     logger.info(
         f"Headless tool turn complete | task={request.task_id} | "
         f"turn={turn + 1} | tools={[call['name'] for call in calls]}"
     )
+
+
+def _restore_resume_state(prepared: Any, state: dict[str, Any]) -> None:
+    messages = state.get("messages")
+    if isinstance(messages, list) and all(isinstance(item, dict) for item in messages):
+        prepared.messages = [dict(item) for item in messages]
+    restore = getattr(prepared.budget, "restore", None)
+    if restore is not None:
+        restore(state.get("budget"))
+
+
+def _restore_output_state(
+    totals: StreamTotals,
+    blocks: list[dict[str, Any]],
+    prepared: Any,
+    state: dict[str, Any],
+) -> None:
+    raw_blocks = state.get("blocks")
+    if isinstance(raw_blocks, list):
+        blocks.extend(
+            dict(item) for item in raw_blocks if isinstance(item, dict)
+        )
+    text = state.get("text")
+    thinking = state.get("thinking")
+    if isinstance(text, str):
+        totals.text = text
+    if isinstance(thinking, str):
+        totals.thinking = thinking
+    usage = state.get("usage")
+    if isinstance(usage, dict):
+        totals.usage.update(usage)
+
+
+def _build_resume_state(
+    prepared: Any,
+    blocks: list[dict[str, Any]],
+    totals: StreamTotals,
+    runtime: ConversationTurnRuntime | None,
+) -> dict[str, Any]:
+    """只保存最近完成安全边界的状态；恢复从 before_model 重新进入。"""
+    safe_point = runtime.last_safe_point.value if runtime and runtime.last_safe_point else "initial"
+    return _json_safe({
+        "version": 1,
+        "resume_from": "before_model",
+        "safe_point": safe_point,
+        "messages": prepared.messages,
+        "blocks": blocks,
+        "text": totals.text,
+        "thinking": totals.thinking,
+        "usage": totals.usage,
+        "budget": (
+            prepared.budget.snapshot()
+            if hasattr(prepared.budget, "snapshot")
+            else {
+                "turns_used": getattr(prepared.budget, "turns_used", 0),
+                "elapsed": getattr(prepared.budget, "elapsed", 0.0),
+            }
+        ),
+    })
+
+
+def _json_safe(value: Any) -> Any:
+    try:
+        return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+    except (TypeError, ValueError):
+        return {}
 
 
 def _assistant_tool_message(

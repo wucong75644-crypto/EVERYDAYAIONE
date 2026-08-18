@@ -114,7 +114,7 @@ async def test_execute_chat_collects_usage_and_closes_adapter(monkeypatch):
     }
     assert result.credits_cost == 2
     adapter.close.assert_awaited_once()
-    assert runtime.last_safe_point is SafePoint.AFTER_MODEL
+    assert runtime.last_safe_point is SafePoint.BEFORE_COMMIT
     assert len(runtime.applied_commands) == 1
 
 

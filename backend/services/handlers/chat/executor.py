@@ -65,6 +65,7 @@ class ChatGenerationExecutor:
             self._load_input_content(claim),
             resolve_execution_scope(self._db, task, claim.conversation_id),
         )
+        resume_state = await self._load_resume_state(claim)
         handler = self._handler_factory(self._handler_db_factory())
         # Actor 运行时上下文供跨进程审批等待器使用；普通 ChatHandler 不依赖这些字段。
         handler._actor_runtime = runtime
@@ -90,8 +91,12 @@ class ChatGenerationExecutor:
             if self._sink_factory else None
         )
         if sink is not None:
+            restore = getattr(sink, "restore_progress", None)
+            if restore is not None and resume_state is not None:
+                restore(resume_state)
             checkpoint = getattr(sink, "persist_progress", None)
             if checkpoint is not None:
+                # execute_chat wraps this callback with a coherent turn snapshot.
                 runtime.set_checkpoint(checkpoint)
         result = await execute_chat(
             handler=handler,
@@ -107,6 +112,7 @@ class ChatGenerationExecutor:
                 permission_mode=str(params.get("permission_mode") or "auto"),
                 needs_google_search=bool(params.get("_needs_google_search")),
                 execution_scope=execution_scope,
+                resume_state=resume_state,
             ),
             cancellation_event=cancellation_event,
             sink=sink,
@@ -120,6 +126,28 @@ class ChatGenerationExecutor:
             credits_cost=result.credits_cost,
             tool_digest=result.tool_digest,
         )
+
+    async def _load_resume_state(
+        self,
+        claim: GenerationClaim,
+    ) -> dict[str, Any] | None:
+        # 兼容非 Actor/旧单元测试数据库适配器；真正 Actor DB 必须提供 RPC。
+        if not hasattr(self._db, "rpc"):
+            return None
+        response = await self._db.rpc(
+            "load_generation_checkpoint",
+            {
+                "p_task_id": claim.task_id,
+                "p_execution_token": claim.execution_token,
+            },
+        ).execute()
+        data = response.data if response else None
+        if not isinstance(data, dict):
+            raise RuntimeError("ACTOR_CHECKPOINT_RESULT_INVALID")
+        if data.get("outcome") in {"ownership_lost", "terminal"}:
+            raise RuntimeError("ACTOR_CHECKPOINT_" + str(data["outcome"]).upper())
+        state = data.get("state")
+        return state if isinstance(state, dict) else None
 
     async def _load_input_content(
         self,

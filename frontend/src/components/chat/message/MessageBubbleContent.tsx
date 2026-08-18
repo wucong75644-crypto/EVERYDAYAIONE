@@ -79,7 +79,7 @@ export default function MessageBubbleContent({
       <div className={isUser ? 'text-[15px] leading-relaxed whitespace-pre-wrap' : ''}>
         {((isRegenerating || isStreaming) && !textContent && !hasMultiBlocks) ? (
           <LoadingPlaceholder text={agentStepHint || 'AI 正在思考'} />
-        ) : (!isUser && !textContent && !hasImage && !hasVideo && !hasFiles && !hasMultiBlocks && !isErrorMessage && !isStreaming && !isRegenerating && !(suggestions && suggestions.length > 0)) ? (
+        ) : (!isUser && !textContent && !hasImage && !hasVideo && !hasFiles && !hasMultiBlocks && !isErrorMessage && !isStreaming && !isRegenerating && !(suggestions && suggestions.length > 0) && !(message.status === 'interrupted' && !!message.task_id)) ? (
           <span className="text-text-disabled text-sm italic">已取消，点击「重新生成」重试</span>
         ) : bubbleTextInfo ? (
           bubbleTextInfo.hasAnimation ? (
@@ -91,7 +91,7 @@ export default function MessageBubbleContent({
           <span className="text-[15px]">{textContent || 'Error occurred'}</span>
         ) : isUser ? (
           <>{textContent}</>
-        ) : hasMultiBlocks ? (
+        ) : hasMultiBlocks || (message.status === 'interrupted' && !!message.task_id) ? (
           <MessageContentBlocks
             message={message}
             imageAssets={imageAssets}
