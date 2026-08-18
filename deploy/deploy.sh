@@ -183,10 +183,27 @@ build_backend() {
 
     cd backend
 
+    # 3.14 当前没有 scipy 的可用 wheel，优先选择项目兼容的 3.12/3.11。
+    local build_python="${EVERYDAYAI_BUILD_PYTHON:-}"
+    if [ -z "$build_python" ]; then
+        if command -v python3.12 &> /dev/null; then
+            build_python="$(command -v python3.12)"
+        elif command -v python3.11 &> /dev/null; then
+            build_python="$(command -v python3.11)"
+        else
+            build_python="$(command -v python3 || true)"
+        fi
+    fi
+    if [ -z "$build_python" ] || [ ! -x "$build_python" ]; then
+        log_error "找不到可用的后端 Python 解释器"
+        exit 1
+    fi
+    log_info "后端构建 Python: $($build_python --version 2>&1)"
+
     # 检查虚拟环境
     if [ ! -d "venv" ]; then
         log_info "创建Python虚拟环境..."
-        python3 -m venv venv
+        "$build_python" -m venv venv
     fi
 
     # 激活虚拟环境
@@ -194,7 +211,7 @@ build_backend() {
 
     # 安装依赖
     log_info "检查后端依赖..."
-    pip install -q -r requirements.txt
+    python -m pip install -q --prefer-binary -r requirements.txt
 
     # 运行测试（可选）
     if [ "$SKIP_TEST" != true ]; then
@@ -204,7 +221,7 @@ build_backend() {
 
     # 语法检查
     log_info "Python语法检查..."
-    python3 -m py_compile main.py || {
+    python -m py_compile main.py || {
         log_error "Python语法检查失败"
         exit 1
     }
@@ -212,6 +229,44 @@ build_backend() {
     deactivate
     cd ..
     log_success "后端构建检查完成"
+}
+
+# 执行本次 Actor 版本需要的数据库正向迁移。
+# 三份迁移在同一个 PostgreSQL 事务中执行；失败时不会留下半套 schema。
+run_actor_migrations() {
+    if [ "${RUN_MIGRATIONS:-false}" != true ]; then
+        log_warning "RUN_MIGRATIONS 不是 true，跳过 Actor 数据库迁移"
+        return
+    fi
+
+    log_info "执行 Actor 数据库迁移（138 → 139 → 140）..."
+
+    remote_exec bash << 'ENDSSH'
+        set -e
+        if ! command -v psql &> /dev/null; then
+            echo "❌ 服务器缺少 psql，停止部署"
+            exit 1
+        fi
+        if [ ! -f "/var/www/everydayai/backend/.env" ]; then
+            echo "❌ 后端 .env 文件不存在，停止迁移"
+            exit 1
+        fi
+        set -a
+        source /var/www/everydayai/backend/.env
+        set +a
+        if [ -z "${DATABASE_URL:-}" ]; then
+            echo "❌ DATABASE_URL 未配置，停止迁移"
+            exit 1
+        fi
+        psql "$DATABASE_URL" \
+            --set ON_ERROR_STOP=1 \
+            --single-transaction \
+            --file /var/www/everydayai/backend/migrations/138_conversation_control_events.sql \
+            --file /var/www/everydayai/backend/migrations/139_tool_invocations.sql \
+            --file /var/www/everydayai/backend/migrations/140_conversation_subtasks.sql
+ENDSSH
+
+    log_success "Actor 数据库迁移完成"
 }
 
 # 同步前端文件到服务器
@@ -472,16 +527,24 @@ EOF
         setup_server
     fi
 
-    # 部署流程
+    # 先完成所有本地构建和测试，再进行任何线上同步，避免半发布。
     if [ "$BACKEND_ONLY" != true ]; then
         build_frontend
+    fi
+
+    if [ "$FRONTEND_ONLY" != true ]; then
+        build_backend
+    fi
+
+    # 本地前后端预检通过后，才开始线上同步和服务变更。
+    if [ "$BACKEND_ONLY" != true ]; then
         sync_frontend
         deploy_frontend
     fi
 
     if [ "$FRONTEND_ONLY" != true ]; then
-        build_backend
         sync_backend
+        run_actor_migrations
         deploy_backend
     fi
 
