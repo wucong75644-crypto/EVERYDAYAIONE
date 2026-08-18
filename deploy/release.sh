@@ -90,12 +90,14 @@ else
     [[ ${#task_files[@]} -gt 0 ]] || fail "提交发布必须至少提供一个 --file"
 fi
 
+set +u
 for path in "${task_files[@]}"; do
     [[ "$path" != /* && "$path" != ../* && "$path" != */../* && "$path" != .git/* ]] \
         || fail "非法发布路径：$path"
     [[ "$path" != .env* && "$path" != */.env* && "$path" != .cursor/* && "$path" != .codex/* ]] \
         || fail "发布禁止路径：$path"
 done
+set -u
 
 if [[ -z "$rollback_sha" ]]; then
     git diff --cached --quiet || fail "已有暂存内容，无法确认其是否属于本次发布"
