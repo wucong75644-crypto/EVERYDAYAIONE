@@ -146,13 +146,17 @@ build_frontend() {
     # 检查 node_modules
     if [ ! -d "node_modules" ]; then
         log_info "安装前端依赖..."
-        npm install
+        if [ -f "package-lock.json" ]; then
+            npm ci
+        else
+            npm install
+        fi
     fi
 
     # 运行测试（可选）
     if [ "$SKIP_TEST" != true ]; then
         log_info "运行前端测试..."
-        npm run test:run
+        npm run test:run -- --no-file-parallelism
     fi
 
     # 构建
