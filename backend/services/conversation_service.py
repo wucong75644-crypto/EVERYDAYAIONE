@@ -51,6 +51,12 @@ class ConversationService:
                 "source": source,
             }
 
+            if source == "web":
+                conversation_data.update({
+                    "scope_type": "user",
+                    "scope_id": user_id,
+                })
+
             if model_id:
                 conversation_data["model_id"] = model_id
             if chat_settings:
