@@ -216,6 +216,10 @@ build_backend() {
     # 运行测试（可选）
     if [ "$SKIP_TEST" != true ]; then
         log_info "运行后端测试..."
+        # 隔离发布工作树不携带 .env；只为测试进程提供非敏感占位配置。
+        : "${DATABASE_URL:=postgresql://test:test@127.0.0.1/test}"
+        : "${JWT_SECRET_KEY:=release-test-only}"
+        export DATABASE_URL JWT_SECRET_KEY
         pytest
     fi
 
