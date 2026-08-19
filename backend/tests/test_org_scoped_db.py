@@ -187,6 +187,17 @@ class TestOrgScopedDBWithOrgId:
             "atomic_refund_credits", {"p_transaction_id": "tx-123"},
         )
 
+    def test_actor_control_rpc_keeps_org_injection_for_scoped_overload(self):
+        """Actor 控制 RPC 使用带 p_org_id 的租户校验重载。"""
+        self.db.rpc(
+            "append_conversation_control_command",
+            {"p_task_id": "task-1"},
+        )
+        self.raw_db.rpc.assert_called_once_with(
+            "append_conversation_control_command",
+            {"p_task_id": "task-1", "p_org_id": ORG_ID},
+        )
+
     def test_rpc_preserves_explicit_org_id(self):
         """已有 p_org_id 不覆盖"""
         params = {"p_outer_id": "A01", "p_org_id": ORG_ID}

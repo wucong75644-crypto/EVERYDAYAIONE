@@ -374,6 +374,18 @@ describe('normalizeMessage', () => {
 
     expect(result.status).toBe('failed');
   });
+
+  it('should preserve interrupted status from the API', () => {
+    const msg = {
+      id: 'msg-interrupted',
+      content: [{ type: 'text', text: 'partial' }],
+      status: 'interrupted',
+    };
+
+    const result = normalizeMessage(msg);
+
+    expect(result.status).toBe('interrupted');
+  });
 });
 
 // ============================================================

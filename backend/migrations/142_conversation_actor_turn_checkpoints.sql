@@ -76,6 +76,47 @@ BEGIN
 END;
 $$;
 
+-- API 侧的 OrgScopedDB 会自动注入 p_org_id；保留六参数版本供 Actor
+-- 内部 raw DB 调用，同时用七参数重载在边界处校验租户归属。
+CREATE OR REPLACE FUNCTION append_conversation_control_command(
+    p_conversation_id UUID,
+    p_task_id UUID,
+    p_turn_id UUID,
+    p_event_type TEXT,
+    p_dedupe_key TEXT,
+    p_payload JSONB,
+    p_org_id UUID
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public
+AS $$
+DECLARE
+    v_task tasks%ROWTYPE;
+    v_conversation conversations%ROWTYPE;
+BEGIN
+    SELECT * INTO v_task
+      FROM tasks
+     WHERE id = p_task_id;
+    SELECT * INTO v_conversation
+      FROM conversations
+     WHERE id = p_conversation_id;
+    IF NOT FOUND
+       OR v_task.conversation_id IS DISTINCT FROM p_conversation_id
+       OR v_task.org_id IS DISTINCT FROM p_org_id
+       OR v_conversation.org_id IS DISTINCT FROM p_org_id THEN
+        RAISE EXCEPTION 'ACTOR_CONTROL_EVENT_SCOPE_MISMATCH'
+            USING ERRCODE = '42501';
+    END IF;
+
+    RETURN append_conversation_control_command(
+        p_conversation_id, p_task_id, p_turn_id, p_event_type,
+        p_dedupe_key, p_payload
+    );
+END;
+$$;
+
 CREATE TABLE IF NOT EXISTS conversation_turn_checkpoints (
     task_id UUID PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
     conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -346,3 +387,6 @@ REVOKE ALL ON FUNCTION save_generation_checkpoint(UUID, UUID, TEXT, JSONB) FROM 
 REVOKE ALL ON FUNCTION load_generation_checkpoint(UUID, UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION pause_generation_turn_owned(UUID, UUID, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION resume_paused_generation_turn(UUID, UUID, UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION append_conversation_control_command(
+    UUID, UUID, UUID, TEXT, TEXT, JSONB, UUID
+) FROM PUBLIC;

@@ -1,3 +1,4 @@
+DROP FUNCTION IF EXISTS append_conversation_control_command(UUID, UUID, UUID, TEXT, TEXT, JSONB, UUID);
 DROP FUNCTION IF EXISTS resume_paused_generation_turn(UUID, UUID, UUID);
 DROP FUNCTION IF EXISTS pause_generation_turn_owned(UUID, UUID, TEXT);
 DROP FUNCTION IF EXISTS load_generation_checkpoint(UUID, UUID);

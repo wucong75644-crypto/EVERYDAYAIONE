@@ -119,7 +119,7 @@ export interface RawApiMessage {
 
 /** 推断 MessageStatus：优先使用已有值，否则根据 is_error 推断 */
 function resolveStatus(status?: string, isError?: boolean): MessageStatus {
-  if (status === 'pending' || status === 'streaming' || status === 'completed' || status === 'failed') {
+  if (status === 'pending' || status === 'streaming' || status === 'completed' || status === 'failed' || status === 'interrupted') {
     return status;
   }
   return isError ? 'failed' : 'completed';
