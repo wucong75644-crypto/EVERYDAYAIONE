@@ -44,6 +44,40 @@ describe('message handlers error propagation', () => {
     expect(onMessageSent).not.toHaveBeenCalled();
   });
 
+  it('media handler keeps complete image metadata for persisted user content', async () => {
+    sendMessageMock.mockResolvedValueOnce('task-1');
+    const onMessagePending = vi.fn();
+    const { result } = renderHook(() => useMediaMessageHandler({
+      type: 'image',
+      selectedModel,
+      onMessagePending,
+      onMessageSent: vi.fn(),
+    }));
+
+    await result.current.handleMediaGeneration('conv-1', '基于这张图生成', [{
+      url: 'https://cdn.example.com/reference.png',
+      original_url: 'https://cdn.example.com/reference.png',
+      thumbnail_url: 'https://cdn.example.com/reference.thumb.webp',
+      asset_id: 'asset-1',
+      workspace_path: '生成/reference.png',
+      name: 'reference.png',
+    }]);
+
+    const pendingMessage = onMessagePending.mock.calls[0][0];
+    expect(pendingMessage.content[1]).toMatchObject({
+      type: 'image',
+      url: 'https://cdn.example.com/reference.png',
+      original_url: 'https://cdn.example.com/reference.png',
+      thumbnail_url: 'https://cdn.example.com/reference.thumb.webp',
+      asset_id: 'asset-1',
+      workspace_path: '生成/reference.png',
+      name: 'reference.png',
+    });
+    expect(sendMessageMock).toHaveBeenCalledWith(expect.objectContaining({
+      content: pendingMessage.content,
+    }));
+  });
+
   it('text handler rethrows a rejected send without creating a duplicate error message', async () => {
     const error = new Error('积分不足');
     sendMessageMock.mockRejectedValueOnce(error);

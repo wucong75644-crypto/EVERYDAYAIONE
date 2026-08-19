@@ -15,12 +15,14 @@ import { downloadImage } from '../../../utils/downloadImage';
 import { toOriginalImageUrl } from '../../../utils/imageUrlRules';
 import BaseContextMenu, { type ContextMenuItem } from '../menus/BaseContextMenu';
 import { useChatAttachmentContext } from '../attachments/ChatAttachmentContext';
+import type { ImagePart } from '../../../types/message';
 
 interface ImageContextMenuProps {
   x: number;
   y: number;
   imageUrl: string;
   thumbnailUrl?: string;
+  sourcePart?: ImagePart;
   messageId: string;
   closing?: boolean;
   onClose: () => void;
@@ -31,6 +33,7 @@ export default function ImageContextMenu({
   y,
   imageUrl,
   thumbnailUrl,
+  sourcePart,
   messageId,
   closing = false,
   onClose,
@@ -44,7 +47,15 @@ export default function ImageContextMenu({
       onClose();
       return;
     }
-    addQuotedImage({ url: originalUrl, thumbnailUrl });
+    addQuotedImage({
+      url: originalUrl,
+      thumbnailUrl,
+      assetId: sourcePart?.asset_id,
+      workspacePath: sourcePart?.workspace_path,
+      name: sourcePart?.name,
+      mimeType: sourcePart?.mime_type,
+      size: sourcePart?.size,
+    });
     onClose();
   };
 

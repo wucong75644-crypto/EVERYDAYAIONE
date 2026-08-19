@@ -46,6 +46,32 @@ describe('ImageContextMenu', () => {
     expect(defaultProps.onClose).toHaveBeenCalled();
   });
 
+  it('should carry stable source metadata into a quoted image', () => {
+    render(
+      <ImageContextMenu
+        {...defaultProps}
+        sourcePart={{
+          type: 'image',
+          url: defaultProps.imageUrl,
+          asset_id: 'asset-123',
+          workspace_path: '生成/asset-123.png',
+          name: 'asset-123.png',
+          mime_type: 'image/png',
+          size: 42,
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByText('引用'));
+
+    expect(attachmentMocks.addQuotedImage).toHaveBeenCalledWith(expect.objectContaining({
+      url: defaultProps.imageUrl,
+      thumbnailUrl: defaultProps.thumbnailUrl,
+      assetId: 'asset-123',
+      workspacePath: '生成/asset-123.png',
+      name: 'asset-123.png',
+    }));
+  });
+
   it('should not add a quote when only thumbnail URL is provided', () => {
     attachmentMocks.addQuotedImage.mockClear();
     render(
