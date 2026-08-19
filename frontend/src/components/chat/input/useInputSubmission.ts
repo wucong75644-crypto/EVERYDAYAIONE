@@ -36,13 +36,13 @@ export interface UseInputSubmissionOptions {
   handleImageGeneration: (
     conversationId: string,
     prompt: string,
-    imageUrls?: string[] | null,
+    images?: string[] | ImageInputInfo[] | null,
     params?: Record<string, unknown> | null,
   ) => Promise<void>;
   handleVideoGeneration: (
     conversationId: string,
     prompt: string,
-    imageUrls?: string[] | null,
+    images?: string[] | ImageInputInfo[] | null,
   ) => Promise<void>;
   isEcomMode: boolean;
   effectiveModelType: ModelType;
@@ -98,14 +98,14 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
     );
     if (state.disabled) return;
     const attachments = options.attachmentSnapshot;
-    const hasSubmissionImages = attachments.imageUrls.length > 0;
+    const hasSubmissionImages = attachments.imageInputs.length > 0;
     if (options.smartSubMode === 'image-i2i' && !hasSubmissionImages) {
       toast.error('图生图模式请先上传参考图片');
       return;
     }
     if (options.smartSubMode === 'image-ecom'
       && options.hasImages
-      && attachments.imageUrls.length === 0) {
+      && attachments.imageInputs.length === 0) {
       toast.error('图片还在上传中，请稍候');
       return;
     }
@@ -114,14 +114,13 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
       return;
     }
     const maxImages = options.selectedModel.capabilities?.maxImages;
-    if (maxImages && attachments.imageUrls.length > maxImages) {
+    if (maxImages && attachments.imageInputs.length > maxImages) {
       toast.error(`最多只能上传 ${maxImages} 张图片`);
       return;
     }
 
     const message = options.prompt.trim();
     if (options.isStreaming && message) options.sendSteer(message);
-    const imageUrls = attachments.imageUrls.length ? attachments.imageUrls : null;
     const imageInputs = attachments.imageInputs.length ? attachments.imageInputs : null;
     const fileData = attachments.files.length ? attachments.files : null;
 
@@ -144,15 +143,15 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
       }
 
       if (options.isEcomMode) {
-        await options.handleImageGeneration(currentId, message, imageUrls, {
+        await options.handleImageGeneration(currentId, message, imageInputs, {
           generation_type_override: 'image_ecom',
         });
       } else if (options.effectiveModelType === 'chat') {
-        await options.handleChatMessage(message, currentId, imageInputs ?? imageUrls, fileData);
+        await options.handleChatMessage(message, currentId, imageInputs, fileData);
       } else if (options.effectiveModelType === 'video') {
-        await options.handleVideoGeneration(currentId, message, imageUrls);
+        await options.handleVideoGeneration(currentId, message, imageInputs);
       } else {
-        await options.handleImageGeneration(currentId, message, imageUrls);
+        await options.handleImageGeneration(currentId, message, imageInputs);
       }
 
     } catch (error) {

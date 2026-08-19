@@ -9,6 +9,7 @@ interface ChatAttachmentBase {
   sourceId: string;
   status: ChatAttachmentStatus;
   name: string;
+  assetId?: string;
   workspacePath?: string;
   mimeType?: string;
   size?: number;
@@ -41,6 +42,11 @@ export interface AttachmentConstraints {
 export interface QuotedImageInput {
   url: string;
   thumbnailUrl?: string;
+  assetId?: string;
+  workspacePath?: string;
+  name?: string;
+  mimeType?: string;
+  size?: number;
 }
 
 export interface SubmissionFileInput {
@@ -54,7 +60,6 @@ export interface SubmissionFileInput {
 export interface AttachmentSubmissionSnapshot {
   attachments: ChatAttachment[];
   imageInputs: ImageInputInfo[];
-  imageUrls: string[];
   files: SubmissionFileInput[];
   invalidImages: ChatImageAttachment[];
 }

@@ -21,6 +21,7 @@ export function fromUploadedImage(image: UploadedImage): ChatImageAttachment {
     sourceId: image.id,
     status: toStatus(image.isUploading, image.error),
     name: image.name || image.file.name,
+    assetId: image.asset_id,
     previewUrl: toDisplayThumbnailUrl(image.thumbnail_url, image.preview),
     originalUrl,
     thumbnailUrl: image.thumbnail_url,

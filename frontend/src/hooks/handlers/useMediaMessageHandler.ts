@@ -6,7 +6,13 @@
 
 import { type UnifiedModel } from '../../constants/models';
 import { type Message } from '../../stores/useMessageStore';
-import { sendMessage, createTextContent, createTextWithImages, type GenerationType } from '../../services/messageSender';
+import {
+  sendMessage,
+  createTextContent,
+  createTextWithImages,
+  type GenerationType,
+  type ImageInputInfo,
+} from '../../services/messageSender';
 import { useWebSocketContext } from '../../contexts/WebSocketContext';
 import { logger } from '../../utils/logger';
 
@@ -53,13 +59,13 @@ export function useMediaMessageHandler(params: UseMediaMessageHandlerParams) {
   const handleMediaGeneration = async (
     conversationId: string,
     prompt: string,
-    imageUrls: string[] | null = null,
+    images: string[] | ImageInputInfo[] | null = null,
     extraParams: Record<string, unknown> | null = null,
   ) => {
     try {
       // 构建 content
-      const content = imageUrls?.length
-        ? createTextWithImages(prompt, imageUrls)
+      const content = images?.length
+        ? createTextWithImages(prompt, images)
         : createTextContent(prompt);
 
       // 立即触发侧边栏乐观更新（不等待 API 返回）

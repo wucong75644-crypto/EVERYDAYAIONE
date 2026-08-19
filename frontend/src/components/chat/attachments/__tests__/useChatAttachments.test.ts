@@ -53,7 +53,13 @@ describe('useChatAttachments', () => {
   it('通过统一入口添加引用图片和工作区图片', () => {
     const { result } = renderHook(() => useChatAttachments());
 
-    act(() => result.current.addQuotedImage({ url: 'https://cdn.example.com/quote.png' }));
+    act(() => result.current.addQuotedImage({
+      url: 'https://cdn.example.com/quote.png',
+      thumbnailUrl: 'https://cdn.example.com/quote.thumb.webp',
+      assetId: 'asset-quote',
+      workspacePath: '生成/quote.png',
+      name: 'quote.png',
+    }));
     act(() => result.current.addWorkspaceFile(workspaceImage));
 
     expect(result.current.attachments).toHaveLength(2);
@@ -61,6 +67,12 @@ describe('useChatAttachments', () => {
     expect(result.current.hasImages).toBe(true);
     expect(result.current.hasQuotedImage).toBe(true);
     expect(result.current.readyImageCount).toBe(2);
+    expect(result.current.submissionSnapshot.imageInputs[0]).toMatchObject({
+      url: 'https://cdn.example.com/quote.png',
+      thumbnail_url: 'https://cdn.example.com/quote.thumb.webp',
+      asset_id: 'asset-quote',
+      workspace_path: '生成/quote.png',
+    });
   });
 
   it('按工作区路径去重', () => {

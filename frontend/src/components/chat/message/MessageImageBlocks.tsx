@@ -191,6 +191,7 @@ export function AiGeneratedImage({
               y={contextMenu.y}
               imageUrl={imageUrl}
               thumbnailUrl={imageAsset?.thumbnailUrl}
+              sourcePart={imageAsset?.sourcePart}
               messageId={messageId}
               onClose={() => setContextMenu(null)}
             />,
@@ -276,6 +277,7 @@ function UserImage({
           y={contextMenu.y}
           imageUrl={imageAsset.originalUrl}
           thumbnailUrl={imageAsset.thumbnailUrl}
+          sourcePart={imageAsset.sourcePart}
           messageId={messageId}
           onClose={() => setContextMenu(null)}
         />,
