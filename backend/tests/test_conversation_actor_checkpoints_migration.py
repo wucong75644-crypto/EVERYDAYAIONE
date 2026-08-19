@@ -21,6 +21,8 @@ def test_checkpoint_migration_contains_pause_resume_contracts():
     assert "conversation_turn_checkpoints" in sql
     assert "status IN ('pending', 'running', 'paused'" in sql
     assert "'pause', 'resume'" in sql
+    assert '"closed_revision", v_closed_revision' in sql
+    assert "v_conversation.context_revision + 1" in sql
 
 
 def test_control_append_has_org_scoped_api_overload_and_rollback():

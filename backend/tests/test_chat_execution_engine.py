@@ -7,8 +7,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from psycopg.types.json import Jsonb
 
 from schemas.message import TextPart
+from services.conversation_commands import CommandType, ConversationCommand
+from services.conversation_state import ConversationPauseRequested
 from services.handlers.chat.execution_engine import (
     ChatExecutionRequest,
     _stable_actor_tool_call_id,
@@ -38,6 +41,72 @@ def test_actor_tool_call_id_is_stable_for_same_turn_and_arguments():
     assert first == second
     assert first != different_args
     assert first.startswith("actor-call:turn-1:0:")
+
+
+@pytest.mark.asyncio
+async def test_pause_checkpoint_wraps_resume_state_as_jsonb(monkeypatch):
+    adapter = SimpleNamespace(close=AsyncMock())
+    prepared = SimpleNamespace(
+        adapter=adapter,
+        permission=SimpleNamespace(need_exit_attachment=False),
+        core_tools=[],
+        stream_kwargs={},
+        tool_context=SimpleNamespace(discovered_tools=set()),
+        messages=[],
+        budget=SimpleNamespace(stop_reason=None, turns_used=0),
+    )
+
+    async def fake_prepare(**_kwargs):
+        return prepared
+
+    monkeypatch.setattr(
+        "services.handlers.chat.execution_engine.prepare_chat_stream",
+        fake_prepare,
+    )
+
+    class CheckpointDB:
+        def __init__(self):
+            self.calls = []
+
+        def rpc(self, name, params):
+            self.calls.append((name, params))
+            return SimpleNamespace(
+                execute=AsyncMock(
+                    return_value=SimpleNamespace(
+                        data={"outcome": "saved", "version": 1},
+                    )
+                )
+            )
+
+    db = CheckpointDB()
+    handler = SimpleNamespace(db=db, org_id="org-1", _adapter=None)
+    runtime = ConversationTurnRuntime(
+        conversation_id="conv-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        cancellation_event=asyncio.Event(),
+        execution_token="token-1",
+    )
+    runtime.push(ConversationCommand(
+        command_id="pause-1",
+        command_type=CommandType.PAUSE,
+        conversation_id="conv-1",
+        task_id="task-1",
+        turn_id="turn-1",
+    ))
+
+    with pytest.raises(ConversationPauseRequested):
+        await execute_chat(
+            handler=handler,
+            request=_request(),
+            runtime=runtime,
+        )
+
+    assert db.calls[0][0] == "save_generation_checkpoint"
+    state = db.calls[0][1]["p_state"]
+    assert isinstance(state, Jsonb)
+    assert state.obj["version"] == 1
+    adapter.close.assert_awaited_once()
 
 
 @pytest.mark.asyncio

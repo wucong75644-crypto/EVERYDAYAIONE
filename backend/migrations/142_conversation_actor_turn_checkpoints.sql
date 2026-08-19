@@ -253,6 +253,8 @@ DECLARE
     v_conversation conversations%ROWTYPE;
     v_snapshot JSONB;
     v_checkpoint conversation_turn_checkpoints%ROWTYPE;
+    v_output_context_revision BIGINT;
+    v_closed_revision BIGINT;
 BEGIN
     IF p_task_id IS NULL OR p_execution_token IS NULL THEN
         RAISE EXCEPTION 'ACTOR_PAUSE_OWNER_ARGUMENT_INVALID' USING ERRCODE = '22023';
@@ -261,6 +263,14 @@ BEGIN
     IF NOT FOUND OR v_task.type <> 'chat'
        OR NOT (v_task.delivery_context @> '{"actor": true}'::JSONB) THEN
         RAISE EXCEPTION 'ACTOR_PAUSE_OWNER_SCOPE_MISMATCH' USING ERRCODE = '42501';
+    END IF;
+    SELECT * INTO v_conversation
+      FROM conversations
+     WHERE id = v_task.conversation_id
+     FOR UPDATE;
+    IF NOT FOUND OR v_conversation.org_id IS DISTINCT FROM v_task.org_id THEN
+        RAISE EXCEPTION 'ACTOR_PAUSE_OWNER_CONVERSATION_SCOPE_MISMATCH'
+            USING ERRCODE = '42501';
     END IF;
     IF v_task.status = 'paused' THEN
         RETURN jsonb_build_object('outcome', 'already_paused', 'task_id', p_task_id);
@@ -281,6 +291,37 @@ BEGIN
     END IF;
 
     v_snapshot := materialize_actor_cancel_snapshot(p_task_id);
+
+    -- 中断不是已完成回答，但它必须成为后续新 turn 可读取的历史。
+    -- 同一 task 恢复时仍使用 checkpoint 中的固定消息快照；再次暂停时
+    -- 发现已有 revision 后保持幂等，不重复推进会话 revision。
+    SELECT context_revision INTO v_output_context_revision
+      FROM messages
+     WHERE id = v_task.assistant_message_id
+     FOR UPDATE;
+    IF v_output_context_revision IS NULL THEN
+        v_closed_revision := v_conversation.context_revision + 1;
+        UPDATE messages
+           SET context_revision = v_closed_revision,
+               message_kind = 'conversation'
+         WHERE id = v_task.input_message_id
+           AND conversation_id = v_task.conversation_id
+           AND context_revision IS NULL;
+        UPDATE messages
+           SET context_revision = v_closed_revision,
+               message_kind = 'conversation'
+         WHERE id = v_task.assistant_message_id
+           AND conversation_id = v_task.conversation_id
+           AND context_revision IS NULL;
+        UPDATE conversations
+           SET context_revision = v_closed_revision,
+               last_closed_message_id = v_task.assistant_message_id,
+               actor_updated_at = NOW()
+         WHERE id = v_conversation.id;
+    ELSE
+        v_closed_revision := v_output_context_revision;
+    END IF;
+
     UPDATE conversation_turn_checkpoints
        SET status = 'paused', updated_at = NOW()
      WHERE task_id = p_task_id AND version = v_checkpoint.version;
@@ -306,6 +347,7 @@ BEGIN
     RETURN jsonb_build_object(
         'outcome', 'paused', 'task_id', p_task_id,
         'checkpoint_version', v_checkpoint.version,
+        'closed_revision', v_closed_revision,
         'snapshot_saved', COALESCE((v_snapshot->>'saved')::BOOLEAN, FALSE)
     );
 END;

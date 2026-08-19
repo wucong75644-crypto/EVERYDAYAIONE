@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from loguru import logger
+from psycopg.types.json import Jsonb
 
 from schemas.message import ContentPart
 from services.handlers.chat.execution_sink import (
@@ -132,7 +133,7 @@ async def execute_chat(
                             runtime.last_safe_point.value
                             if runtime.last_safe_point else "unknown"
                         ),
-                        "p_state": stable_state,
+                        "p_state": Jsonb(stable_state),
                     },
                 ).execute()
                 result = response.data if response else None

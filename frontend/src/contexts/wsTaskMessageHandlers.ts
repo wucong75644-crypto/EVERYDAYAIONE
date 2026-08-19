@@ -181,10 +181,13 @@ function failMessage(
     });
     return;
   }
+  const existingContent = existing?.content;
+  const hasVisibleContent = Array.isArray(existingContent)
+    && existingContent.some((part) => part.type !== 'interrupt_marker');
   store.updateMessage(messageId, {
     status: 'failed', is_error: true,
     error: { code: error?.code ?? 'UNKNOWN', message: errorText },
-    content: [{ type: 'text', text: errorText }],
+    content: hasVisibleContent ? existingContent : [{ type: 'text', text: errorText }],
   });
 }
 

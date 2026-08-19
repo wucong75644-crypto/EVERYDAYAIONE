@@ -455,6 +455,33 @@ describe('wsMessageHandlers', () => {
       expect(store.setIsSending).toHaveBeenCalledWith(false);
     });
 
+    it('should preserve visible partial content when an interrupted task reports an error', () => {
+      const partialContent = [
+        { type: 'text', text: '已经生成的内容' },
+        { type: 'interrupt_marker', interrupted_at: '2026-08-19T00:00:00Z' },
+      ] as any;
+      vi.mocked(store.getMessage).mockReturnValue({
+        id: 'msg_1',
+        conversation_id: 'conv_1',
+        role: 'assistant',
+        status: 'interrupted',
+        created_at: new Date().toISOString(),
+        content: partialContent,
+      } as any);
+
+      handlers.message_error({
+        task_id: 'task_1',
+        message_id: 'msg_1',
+        conversation_id: 'conv_1',
+        error: { code: 'GENERATION_FAILED', message: 'checkpoint 写入失败' },
+      });
+
+      expect(store.updateMessage).toHaveBeenCalledWith('msg_1', expect.objectContaining({
+        status: 'failed',
+        content: partialContent,
+      }));
+    });
+
     it('should preserve interrupted partial content for cancelled tasks', () => {
       handlers.message_error({
         task_id: 'task_1',
