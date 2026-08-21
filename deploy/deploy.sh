@@ -32,6 +32,47 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# requirements.txt contains scientific packages with prebuilt wheels for the
+# supported deployment Python versions. Do not silently fall back to a newer
+# system Python that would trigger a local source build (for example Python
+# 3.14 with scipy==1.14.1).
+PYTHON_BIN="${PYTHON_BIN:-}"
+
+select_supported_python() {
+    if [ -n "$PYTHON_BIN" ]; then
+        if [ ! -x "$PYTHON_BIN" ]; then
+            log_error "PYTHON_BIN 不可执行: $PYTHON_BIN"
+            exit 1
+        fi
+    else
+        for candidate in python3.12 python3.11 python3.10; do
+            candidate_path="$(command -v "$candidate" 2>/dev/null || true)"
+            if [ -n "$candidate_path" ]; then
+                PYTHON_BIN="$candidate_path"
+                break
+            fi
+        done
+    fi
+
+    if [ -z "$PYTHON_BIN" ]; then
+        log_error "未找到兼容的 Python 解释器（需要 Python 3.10、3.11 或 3.12）"
+        log_info "可通过 PYTHON_BIN=/path/to/python3.12 指定解释器"
+        exit 1
+    fi
+
+    python_version="$($PYTHON_BIN -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')"
+    case "$python_version" in
+        3.10.*|3.11.*|3.12.*)
+            log_info "使用 Python $python_version: $PYTHON_BIN"
+            ;;
+        *)
+            log_error "不支持的 Python 版本: $python_version（需要 Python 3.10、3.11 或 3.12）"
+            log_info "请通过 PYTHON_BIN=/path/to/python3.12 指定兼容解释器"
+            exit 1
+            ;;
+    esac
+}
+
 # 显示帮助信息
 show_help() {
     cat << EOF
@@ -114,6 +155,8 @@ check_dependencies() {
         exit 1
     fi
 
+    select_supported_python
+
     log_success "本地依赖检查完成"
 }
 
@@ -182,7 +225,7 @@ build_backend() {
     # 检查虚拟环境
     if [ ! -d "venv" ]; then
         log_info "创建Python虚拟环境..."
-        python3 -m venv venv
+        "$PYTHON_BIN" -m venv venv
     fi
 
     # 激活虚拟环境
@@ -200,7 +243,7 @@ build_backend() {
 
     # 语法检查
     log_info "Python语法检查..."
-    python3 -m py_compile main.py || {
+    "$PYTHON_BIN" -m py_compile main.py || {
         log_error "Python语法检查失败"
         exit 1
     }
