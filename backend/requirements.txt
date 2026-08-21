@@ -1,5 +1,6 @@
 # FastAPI 框架
 fastapi==0.115.6
+python-multipart==0.0.21
 uvicorn[standard]==0.34.0
 
 # PostgreSQL 客户端（LocalDB 兼容层）
@@ -20,6 +21,11 @@ sentry-sdk==2.52.0
 # HTTP 客户端
 httpx[socks]==0.28.1
 socksio==1.0.0
+openai==2.26.0
+postgrest==0.19.3
+
+# 组织服务兼容客户端
+supabase==2.11.0
 
 # 阿里云 SDK（短信、OSS）
 alibabacloud-dysmsapi20170525==3.0.0
