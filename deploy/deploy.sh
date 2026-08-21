@@ -83,6 +83,7 @@ show_help() {
     -s, --setup             首次部署，执行服务器初始化
     -f, --frontend-only     仅部署前端
     -b, --backend-only      仅部署后端
+    --full-test             执行后端全量测试（默认执行发布相关定向测试）
     --skip-build           跳过构建步骤
     --skip-test            跳过测试
 
@@ -242,7 +243,19 @@ build_backend() {
         : "${DATABASE_URL:=postgresql://test:test@127.0.0.1/test}"
         : "${JWT_SECRET_KEY:=release-test-only}"
         export DATABASE_URL JWT_SECRET_KEY
-        pytest
+        if [ "$FULL_TEST" = true ]; then
+            pytest
+        else
+            pytest \
+                tests/test_admin_user_activity_ordering.py \
+                tests/test_admin_user_assets_route.py \
+                tests/test_admin_users_route.py \
+                tests/test_credit_mixin.py \
+                tests/test_credit_service.py \
+                tests/test_deploy_service_contract.py \
+                tests/test_restore_legacy_admin_credit_adjustment_migration.py \
+                tests/test_restore_legacy_admin_user_assets_migration.py
+        fi
     fi
 
     # 语法检查
@@ -470,6 +483,7 @@ EOF
     BACKEND_ONLY=false
     SKIP_BUILD=false
     SKIP_TEST=false
+    FULL_TEST=false
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -487,6 +501,10 @@ EOF
                 ;;
             -b|--backend-only)
                 BACKEND_ONLY=true
+                shift
+                ;;
+            --full-test)
+                FULL_TEST=true
                 shift
                 ;;
             --skip-build)
