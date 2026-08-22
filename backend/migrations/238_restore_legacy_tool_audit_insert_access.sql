@@ -2,7 +2,7 @@
 -- Memory tables and Agent-Runtime tables are intentionally untouched.
 
 BEGIN;
-SET LOCAL ROLE everydayai;
+SET LOCAL ROLE everydayai_owner;
 
 ALTER TABLE tool_audit_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tool_audit_log FORCE ROW LEVEL SECURITY;

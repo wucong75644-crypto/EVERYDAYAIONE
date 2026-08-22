@@ -15,6 +15,7 @@ def test_migration_restores_only_application_audit_access():
     assert "legacy_app_tool_audit_all" in sql
     assert "ON tool_audit_log" in sql
     assert "FOR ALL TO everydayai" in sql
+    assert "SET LOCAL ROLE everydayai_owner" in sql
     assert "USING (FALSE)" in sql
     assert "memory_" not in sql
     assert "everydayai_runtime" not in sql
