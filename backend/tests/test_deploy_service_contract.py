@@ -47,3 +47,14 @@ def test_missing_required_service_fails_deployment() -> None:
 def test_backend_deploy_does_not_install_chart_runtime() -> None:
     assert "setup-chart-runtime" not in SCRIPT
     assert "playwright" not in SCRIPT
+
+
+def test_deploy_pins_python_311_for_local_and_remote_builds() -> None:
+    assert 'EVERYDAYAI_PYTHON_BIN="${EVERYDAYAI_PYTHON_BIN:-python3.11}"' in SCRIPT
+    assert 'EVERYDAYAI_REQUIRED_PYTHON="3.11"' in SCRIPT
+    assert '"$EVERYDAYAI_PYTHON_BIN" -m venv venv' in SCRIPT
+    assert 'venv/bin/python -m pip install -q -r requirements.txt' in SCRIPT
+    assert 'python3.11 -m venv venv' in SCRIPT
+    assert 'python3 -m venv venv' not in SCRIPT
+    assert '\n    pip install -q -r requirements.txt' not in SCRIPT
+    assert '\n        pip install -q -r requirements.txt' not in SCRIPT

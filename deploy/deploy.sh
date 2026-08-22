@@ -87,11 +87,32 @@ EOF
     # 加载配置
     source deploy/config.env
 
+    # 发布环境与服务器统一使用 Python 3.11。不要依赖机器上的 python3：
+    # macOS 可能指向 3.14，服务器系统 python3 可能仍是 3.6。
+    EVERYDAYAI_PYTHON_BIN="${EVERYDAYAI_PYTHON_BIN:-python3.11}"
+    EVERYDAYAI_REQUIRED_PYTHON="3.11"
+
     # 验证必填配置
     if [ "$SERVER_HOST" = "your_server_ip_or_domain" ]; then
         log_error "请在 deploy/config.env 中配置 SERVER_HOST"
         exit 1
     fi
+}
+
+validate_release_python() {
+    if ! command -v "$EVERYDAYAI_PYTHON_BIN" >/dev/null 2>&1; then
+        log_error "缺少统一发布解释器: $EVERYDAYAI_PYTHON_BIN（要求 Python $EVERYDAYAI_REQUIRED_PYTHON）"
+        exit 1
+    fi
+
+    local actual_version
+    actual_version=$("$EVERYDAYAI_PYTHON_BIN" -c \
+        'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+    if [ "$actual_version" != "$EVERYDAYAI_REQUIRED_PYTHON" ]; then
+        log_error "发布解释器版本不匹配: $actual_version（要求 Python $EVERYDAYAI_REQUIRED_PYTHON）"
+        exit 1
+    fi
+    log_success "统一发布解释器: $EVERYDAYAI_PYTHON_BIN (Python $actual_version)"
 }
 
 # 检查必要工具
@@ -146,13 +167,17 @@ build_frontend() {
     # 检查 node_modules
     if [ ! -d "node_modules" ]; then
         log_info "安装前端依赖..."
-        npm install
+        if [ -f "package-lock.json" ]; then
+            npm ci
+        else
+            npm install
+        fi
     fi
 
     # 运行测试（可选）
     if [ "$SKIP_TEST" != true ]; then
         log_info "运行前端测试..."
-        npm run test:run
+        npm run test:run -- --no-file-parallelism
     fi
 
     # 构建
@@ -182,7 +207,20 @@ build_backend() {
     # 检查虚拟环境
     if [ ! -d "venv" ]; then
         log_info "创建Python虚拟环境..."
-        python3 -m venv venv
+        "$EVERYDAYAI_PYTHON_BIN" -m venv venv
+    fi
+
+    local venv_python="${PWD}/venv/bin/python"
+    if [ ! -x "$venv_python" ]; then
+        log_error "后端虚拟环境缺少解释器: $venv_python"
+        exit 1
+    fi
+    local venv_version
+    venv_version=$("$venv_python" -c \
+        'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+    if [ "$venv_version" != "$EVERYDAYAI_REQUIRED_PYTHON" ]; then
+        log_error "后端虚拟环境版本不匹配: $venv_version（要求 Python $EVERYDAYAI_REQUIRED_PYTHON）"
+        exit 1
     fi
 
     # 激活虚拟环境
@@ -190,17 +228,17 @@ build_backend() {
 
     # 安装依赖
     log_info "检查后端依赖..."
-    pip install -q -r requirements.txt
+    "$venv_python" -m pip install -q -r requirements.txt
 
     # 运行测试（可选）
     if [ "$SKIP_TEST" != true ]; then
         log_info "运行后端测试..."
-        pytest
+        "$venv_python" -m pytest
     fi
 
     # 语法检查
     log_info "Python语法检查..."
-    python3 -m py_compile main.py || {
+    "$venv_python" -m py_compile main.py || {
         log_error "Python语法检查失败"
         exit 1
     }
@@ -271,11 +309,19 @@ deploy_backend() {
     remote_exec bash << 'ENDSSH'
         set -e
         cd /var/www/everydayai/backend
-        if [ ! -d "venv" ]; then
-            python3 -m venv venv
+        if ! command -v python3.11 >/dev/null 2>&1; then
+            echo "❌ 服务器缺少统一发布解释器: python3.11"
+            exit 1
         fi
-        source venv/bin/activate
-        pip install -q -r requirements.txt
+        if [ ! -x "venv/bin/python" ]; then
+            python3.11 -m venv venv
+        fi
+        actual_python=$(venv/bin/python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+        if [ "$actual_python" != "3.11" ]; then
+            echo "❌ 服务器虚拟环境版本不匹配: $actual_python（要求 Python 3.11）"
+            exit 1
+        fi
+        venv/bin/python -m pip install -q -r requirements.txt
         if [ ! -f ".env" ]; then
             echo "❌ .env 文件不存在"
             exit 1
@@ -461,6 +507,9 @@ EOF
     # 检查配置和依赖
     check_config
     check_dependencies
+    if [ "$FRONTEND_ONLY" != true ]; then
+        validate_release_python
+    fi
     test_ssh_connection
 
     # 首次部署模式
