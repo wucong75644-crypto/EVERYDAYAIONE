@@ -63,4 +63,6 @@ def test_deploy_pins_python_311_for_local_and_remote_builds() -> None:
 def test_local_backend_tests_use_safe_configuration_without_real_database() -> None:
     assert 'DATABASE_URL="postgresql://test"' in SCRIPT
     assert 'JWT_SECRET_KEY="test"' in SCRIPT
+    assert 'DASHSCOPE_API_KEY="test"' in SCRIPT
+    assert 'FILE_WORKSPACE_ROOT="$test_workspace_root"' in SCRIPT
     assert '--ignore=tests/test_wecom_concurrent_safety.py' in SCRIPT

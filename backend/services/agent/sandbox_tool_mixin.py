@@ -294,7 +294,7 @@ class SandboxToolMixin:
             settings = get_settings()
             return resolve_staging_dir(
                 settings.file_workspace_root,
-                self.workspace_user_id,
+                getattr(self, "workspace_user_id", self.user_id),
                 self.org_id,
                 self.conversation_id or "default",
             )
@@ -309,7 +309,7 @@ class SandboxToolMixin:
             settings = get_settings()
             return resolve_workspace_dir(
                 settings.file_workspace_root,
-                self.workspace_user_id,
+                getattr(self, "workspace_user_id", self.user_id),
                 self.org_id,
             )
         except Exception:

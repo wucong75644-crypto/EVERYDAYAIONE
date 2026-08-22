@@ -236,11 +236,15 @@ build_backend() {
         # 隔离发布工作树不带生产 .env；使用无副作用的测试配置，且不触发
         # 需要真实数据库并会写入数据的企微并发集成测试。
         local test_mpl_config_dir="${TMPDIR:-/tmp}/everydayai-mpl-cache"
+        local test_workspace_root="${TMPDIR:-/tmp}/everydayai-test-workspace"
         mkdir -p "$test_mpl_config_dir"
+        mkdir -p "$test_workspace_root"
         DATABASE_URL="postgresql://test" \
         JWT_SECRET_KEY="test" \
         APP_ENV="testing" \
         MPLCONFIGDIR="$test_mpl_config_dir" \
+        DASHSCOPE_API_KEY="test" \
+        FILE_WORKSPACE_ROOT="$test_workspace_root" \
         "$venv_python" -m pytest \
             --ignore=tests/test_wecom_concurrent_safety.py
     fi
