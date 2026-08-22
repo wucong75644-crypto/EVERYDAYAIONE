@@ -131,6 +131,7 @@ async def build_context_snapshot(
         turn_id=anchor.turn_id,
         org_id=anchor.org_id,
         input_content=input_message.get("content"),
+        current_text=current_text,
     )
 
     logger.info(

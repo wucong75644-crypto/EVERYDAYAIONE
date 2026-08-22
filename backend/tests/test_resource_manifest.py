@@ -17,7 +17,7 @@ from schemas.message import FilePart
 
 def _query(data):
     query = MagicMock()
-    for method in ("select", "eq", "in_"):
+    for method in ("select", "eq", "in_", "order", "limit"):
         getattr(query, method).return_value = query
     query.execute.return_value = SimpleNamespace(data=data)
     return query
@@ -99,6 +99,52 @@ def test_web_input_message_is_immutable_fallback() -> None:
 
     assert manifest.source == "input_message"
     assert manifest.assets[0].asset_id == "input-web:0"
+
+
+def test_web_bare_number_selects_recent_conversation_asset() -> None:
+    refs = _query([])
+    history = _query([
+        {
+            "id": "newer-message",
+            "created_at": "2026-08-22T15:00:09+08:00",
+            "content": [{
+                "type": "file",
+                "name": "2026.4订单数.xlsx",
+                "workspace_path": "公摊/2026.4订单数.xlsx",
+                "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "url": "https://cdn.example/orders.xlsx",
+            }],
+        },
+        {
+            "id": "older-message",
+            "created_at": "2026-08-22T14:59:26+08:00",
+            "content": [{
+                "type": "file",
+                "name": "说明.docx",
+                "workspace_path": "上传/说明.docx",
+                "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "url": "https://cdn.example/readme.docx",
+            }],
+        },
+    ])
+    db = MagicMock()
+    db.table.side_effect = [refs, history]
+
+    manifest = build_resource_manifest(
+        db,
+        task_id="task-selection",
+        input_message_id="selection-message",
+        conversation_id="conv-web",
+        turn_id="turn-selection",
+        org_id="org-web",
+        input_content=[{"type": "text", "text": "1"}],
+        current_text="1",
+    )
+
+    assert manifest.source == "conversation_selection"
+    assert len(manifest.assets) == 1
+    assert manifest.assets[0].name == "2026.4订单数.xlsx"
+    assert manifest.allowed_paths == {"公摊/2026.4订单数.xlsx"}
 
 
 def test_filepart_reexport_preserves_asset_id() -> None:
