@@ -459,6 +459,32 @@ class TestFileSearchRouting:
         assert result.status == "error"
 
 
+class TestSearchFilesPathParsing:
+    """搜索结果中的 workspace 相对路径允许包含空格。"""
+
+    @pytest.mark.asyncio
+    async def test_search_registers_path_with_spaces(self, tmp_path):
+        ws = tmp_path / "workspace"
+        target = ws / "上传" / "4月 销售.csv"
+        target.parent.mkdir(parents=True)
+        target.write_text("月份,销售额\n4月,100")
+
+        mixin = FakeMixin(conversation_id="conv-search-space")
+        executor = MagicMock()
+        executor.file_search = AsyncMock(
+            return_value="搜索结果\n  [文件] 上传/4月 销售.csv:2 | 4月,100"
+        )
+        executor.resolve_safe_path = lambda path: ws / path
+
+        result = await mixin._search_files(executor, {"keyword": "销售"})
+
+        assert result.status == "success"
+        assert "[fid_" in result.summary
+        from services.agent.file_path_cache import get_file_cache
+        cache = get_file_cache("conv-search-space")
+        assert cache.resolve("上传/4月 销售.csv", usage="analyze") == str(target)
+
+
 class TestDescribeSingleFileMultimodal:
     """P1 file_search 多模态化：单文件路径命中图片时返回 FileReadResult(type=image)，
     chat_handler 据此在下一轮注入 image_url 多模态块给视觉模型直接看，

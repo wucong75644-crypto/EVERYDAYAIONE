@@ -282,13 +282,16 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
         cache = get_file_cache(self.conversation_id)
         from services.agent.file_id import compute_fid
         _org_id = getattr(self, "org_id", None)
-        _file_re = re.compile(r"\s+\[文件\]\s+(\S+)")
+        # 路径允许包含空格；内容搜索结果末尾的 :行号 和预览文本单独剥离。
+        _file_re = re.compile(
+            r"\s+\[文件\]\s+(.+?)(?::\d+)?(?:\s+\|.*)?$"
+        )
         # 同时为每行 [文件] xxx 前插入 [fid_xxx]，方便 LLM 后续调工具
         annotated_lines: list[str] = []
         for line in raw_result.split("\n"):
             m = _file_re.match(line)
             if m:
-                rel_path = m.group(1).split(":")[0]
+                rel_path = m.group(1)
                 try:
                     target = executor.resolve_safe_path(rel_path)
                     if target.is_file():
@@ -299,7 +302,7 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
                 fid = compute_fid(_org_id, rel_path)
                 # 替换 "[文件] rel_path" → "[文件] [fid_xxx] rel_path"
                 annotated_lines.append(
-                    line.replace(f"[文件] {rel_path}", f"[文件] [{fid}] {rel_path}", 1)
+                    line.replace("[文件]", f"[文件] [{fid}]", 1)
                 )
             else:
                 annotated_lines.append(line)

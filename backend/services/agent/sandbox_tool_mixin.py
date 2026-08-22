@@ -137,6 +137,7 @@ class SandboxToolMixin:
             from services.knowledge_metrics import record_metric
             asyncio.create_task(
                 record_metric(
+                    db_source=self.db,
                     task_type="sandbox_execution",
                     model_id="python_sandbox",
                     status=status,
@@ -154,8 +155,7 @@ class SandboxToolMixin:
         except Exception as e:
             logger.debug(f"Sandbox metric recording skipped | error={e}")
 
-    @staticmethod
-    def _record_sandbox_knowledge(description: str, error_result: str) -> None:
+    def _record_sandbox_knowledge(self, description: str, error_result: str) -> None:
         """Fire-and-forget 记录沙盒失败知识"""
         import asyncio
 
@@ -163,6 +163,7 @@ class SandboxToolMixin:
             from services.knowledge_extractor import extract_and_save
             asyncio.create_task(
                 extract_and_save(
+                    db_source=self.db,
                     task_type="sandbox_execution",
                     model_id="python_sandbox",
                     status="failed",
@@ -184,7 +185,7 @@ class SandboxToolMixin:
 
                 if not is_kb_available():
                     return
-                conn_ctx = await get_pg_connection()
+                conn_ctx = await get_pg_connection(self.db)
                 if conn_ctx is None:
                     return
 
@@ -247,7 +248,14 @@ class SandboxToolMixin:
             basename = os.path.basename(filename)
             candidate = os.path.join(workspace_dir, filename)
             if os.path.exists(candidate):
-                cache.register(basename, workspace=os.path.realpath(candidate))
+                resolved = os.path.realpath(candidate)
+                cache.register(basename, workspace=resolved)
+                try:
+                    rel_path = os.path.relpath(resolved, workspace_dir)
+                    if not rel_path.startswith(".."):
+                        cache.register(rel_path, workspace=resolved)
+                except ValueError:
+                    pass
 
     def _register_staging_files(self, result: "AgentResult") -> None:
         """从工具结果中提取 staging 文件路径，注册到共享路径缓存。"""

@@ -180,6 +180,7 @@ class GraphService:
         weight: float = 1.0,
         metadata: Optional[Dict[str, Any]] = None,
         org_id: Optional[str] = None,
+        db_source: Any = None,
     ) -> Optional[str]:
         """
         添加关系边（重复边则更新权重，按 org 隔离）
@@ -187,7 +188,7 @@ class GraphService:
         Returns:
             边的 ID，失败返回 None
         """
-        conn_ctx = await get_pg_connection()
+        conn_ctx = await get_pg_connection(db_source)
         if conn_ctx is None:
             return None
 

@@ -17,6 +17,7 @@ from api.deps import OrgCtx, ScopedDB
 from core.exceptions import AppException, ValidationError
 from schemas.file import UploadFileResponse
 from services.user_activity_service import record_user_activity
+from services.assets import register_web_upload_best_effort
 
 from .file_common import (
     WORKSPACE_ALLOWED_EXTENSIONS,
@@ -129,6 +130,16 @@ async def upload_file(
             resource_type="workspace_file",
             resource_id=upload_path,
             metadata={"filename": filename, "size": total_size},
+        )
+        register_web_upload_best_effort(
+            db,
+            user_id=user_id,
+            org_id=org_id,
+            url=cdn_url or "",
+            name=unique_name,
+            mime_type=mime_type,
+            size=total_size,
+            workspace_path=upload_path,
         )
 
         return UploadFileResponse(

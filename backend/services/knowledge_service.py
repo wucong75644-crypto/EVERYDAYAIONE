@@ -147,6 +147,7 @@ async def _insert_node_row(
 
 async def add_knowledge(
     *,
+    db_source: Any = None,
     category: str,
     subcategory: Optional[str] = None,
     node_type: str,
@@ -181,7 +182,7 @@ async def add_knowledge(
     if not is_kb_available():
         return None
 
-    conn_ctx = await get_pg_connection()
+    conn_ctx = await get_pg_connection(db_source)
     if conn_ctx is None:
         return None
 
@@ -259,6 +260,7 @@ async def search_relevant(
     min_confidence: Optional[float] = None,
     scope: str = "global",
     org_id: Optional[str] = None,
+    db_source: Any = None,
 ) -> List[Dict[str, Any]]:
     """
     向量检索相关知识（用于路由注入）
@@ -294,7 +296,7 @@ async def search_relevant(
     if not embedding:
         return []
 
-    conn_ctx = await get_pg_connection()
+    conn_ctx = await get_pg_connection(db_source)
     if conn_ctx is None:
         return []
 
@@ -371,12 +373,13 @@ async def get_node_by_metadata(
     value: str,
     category: Optional[str] = None,
     org_id: Optional[str] = None,
+    db_source: Any = None,
 ) -> Optional[Dict[str, Any]]:
     """根据 metadata 字段查找节点（用于查找模型/工具实体节点）"""
     if not is_kb_available():
         return None
 
-    conn_ctx = await get_pg_connection()
+    conn_ctx = await get_pg_connection(db_source)
     if conn_ctx is None:
         return None
 

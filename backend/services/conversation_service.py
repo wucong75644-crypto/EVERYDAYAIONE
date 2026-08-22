@@ -50,6 +50,11 @@ class ConversationService:
                 "org_id": org_id,
                 "source": source,
             }
+            # 128 号会话作用域约束要求 Web 对话的 scope_id 与 user_id 一致。
+            # 企微会话的 scope_id 由外部会话绑定流程写入，不能在这里覆盖。
+            if source == "web":
+                conversation_data["scope_type"] = "user"
+                conversation_data["scope_id"] = user_id
 
             if model_id:
                 conversation_data["model_id"] = model_id
