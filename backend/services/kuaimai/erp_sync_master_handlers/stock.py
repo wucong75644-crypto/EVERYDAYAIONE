@@ -284,9 +284,11 @@ async def sync_stock_full(svc: ErpSyncService) -> int:
 
     # 清理不在配置中的仓库残留数据（防止僵尸库存累积）
     try:
-        q = svc.db.table("erp_stock_status").delete().not_.in_(
-            "warehouse_id", warehouse_ids
-        )
+        q = svc.db.table("erp_stock_status").delete()
+        # supabase-py 的 not_.in_ 对 list 参数会生成错误的绑定参数；
+        # 多个 neq 条件等价于 NOT IN，且使用单值绑定参数。
+        for warehouse_id in warehouse_ids:
+            q = q.neq("warehouse_id", warehouse_id)
         result = await q.execute()
         deleted = len(result.data) if result.data else 0
         if deleted:

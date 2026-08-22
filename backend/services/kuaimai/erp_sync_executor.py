@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from loguru import logger
 
 from core.config import get_settings
+from services.kuaimai.erp_sync_utils import _normalize_archive_rows
 from utils.time_context import now_cn
 
 # 删除检测间隔（秒）：7天
@@ -118,7 +119,8 @@ class ErpSyncExecutor:
                     break
 
                 await self.db.table("erp_document_items_archive").upsert(
-                    rows, on_conflict="doc_type,doc_id,item_index,org_id",
+                    _normalize_archive_rows(rows),
+                    on_conflict="doc_type,doc_id,item_index,org_id",
                 ).execute()
 
                 ids = [r["id"] for r in rows]

@@ -10,6 +10,8 @@ ERP 同步共享工具函数
 from __future__ import annotations
 
 import asyncio
+import csv
+import json
 import re
 import time
 from datetime import datetime
@@ -117,6 +119,35 @@ def _to_float(val: Any) -> float:
         return float(val)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _normalize_archive_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize legacy ``exception_tags`` values before archive upsert."""
+    normalized: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        value = item.get("exception_tags")
+        if isinstance(value, tuple):
+            item["exception_tags"] = list(value)
+        elif isinstance(value, str):
+            text = value.strip()
+            if not text:
+                item["exception_tags"] = []
+            else:
+                parsed: Any = None
+                try:
+                    parsed = json.loads(text)
+                except (TypeError, ValueError):
+                    if text.startswith("{") and text.endswith("}"):
+                        parsed = next(csv.reader([text[1:-1]]), [])
+                if isinstance(parsed, list):
+                    item["exception_tags"] = [str(tag) for tag in parsed]
+                elif parsed is not None:
+                    item["exception_tags"] = [str(parsed)]
+                else:
+                    item["exception_tags"] = [text]
+        normalized.append(item)
+    return normalized
 
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
