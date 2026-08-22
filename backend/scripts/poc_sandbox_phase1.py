@@ -40,6 +40,7 @@ def section_a_nsjail_config() -> tuple[int, int]:
     text = cfg_path.read_text(encoding="utf-8")
     checks = [
         ("clone_newnet: true",            "网络完全切断"),
+        ("detect_cgroupv2: true",          "自动兼容 cgroup v2"),
         ("cgroup_mem_max:",               "内存 cgroup 限制"),
         ("cgroup_pids_max:",              "进程数 cgroup 限制"),
         ('mount { src: "/usr"',           "/usr ro bind"),
