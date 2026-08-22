@@ -14,9 +14,11 @@ describe('createAttachmentSubmissionSnapshot', () => {
 
     const result = createAttachmentSubmissionSnapshot(attachments);
 
-    expect(result.imageUrls).toEqual(sources.map((source) => `https://cdn.example.com/${source}.png`));
-    expect(result.imageInputs.map((image) => image.url)).toEqual(result.imageUrls);
+    expect(result.imageInputs.map((image) => image.url)).toEqual(
+      sources.map((source) => `https://cdn.example.com/${source}.png`),
+    );
     expect(result.imageInputs[0].thumbnail_url).toBe('https://cdn.example.com/upload.thumb.webp');
+    expect(result.orderedAttachments.map((item) => item.kind)).toEqual(['image', 'image', 'image']);
   });
 
   it('上传中图片不提交，失败图片进入无效集合', () => {
@@ -30,7 +32,8 @@ describe('createAttachmentSubmissionSnapshot', () => {
       { ...base, id: 'error', status: 'error' },
     ]);
 
-    expect(result.imageUrls).toEqual([]);
+    expect(result.imageInputs).toEqual([]);
+    expect(result.orderedAttachments).toEqual([]);
     expect(result.invalidImages.map((item) => item.id)).toEqual(['error']);
   });
 
@@ -45,5 +48,27 @@ describe('createAttachmentSubmissionSnapshot', () => {
       url: 'https://cdn.example.com/report.pdf', name: 'report.pdf',
       mime_type: 'application/pdf', size: 2048, workspace_path: 'docs/report.pdf',
     }]);
+  });
+
+  it('按附件数组顺序生成图片和文件混排提交内容', () => {
+    const result = createAttachmentSubmissionSnapshot([
+      {
+        id: 'image:a', sourceId: 'a', kind: 'image', source: 'upload', status: 'ready',
+        name: 'a.png', previewUrl: 'a', originalUrl: 'https://cdn/a.png',
+      },
+      {
+        id: 'file:b', sourceId: 'b', kind: 'file', source: 'upload', status: 'ready',
+        name: 'b.pdf', url: 'https://cdn/b.pdf', mimeType: 'application/pdf', size: 2,
+      },
+      {
+        id: 'image:c', sourceId: 'c', kind: 'image', source: 'upload', status: 'ready',
+        name: 'c.png', previewUrl: 'c', originalUrl: 'https://cdn/c.png',
+      },
+    ]);
+
+    expect(result.orderedAttachments.map((item) => item.kind)).toEqual(['image', 'file', 'image']);
+    expect(result.orderedAttachments.map((item) => (
+      item.kind === 'image' ? item.image.url : item.file.url
+    ))).toEqual(['https://cdn/a.png', 'https://cdn/b.pdf', 'https://cdn/c.png']);
   });
 });

@@ -224,16 +224,20 @@ export function AiGeneratedImage({
   );
 }
 
-function UserImage({
+export function UserImage({
   imageAsset,
   index,
   messageId,
   onImageClick,
   onMediaLoaded,
+  displayWidth,
+  displayHeight,
 }: ImageBlockProps & {
   imageAsset: ImageAsset;
   index: number;
   onImageClick: (index: number) => void;
+  displayWidth?: number;
+  displayHeight?: number;
 }) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const thumbnail = useThumbnailFallback(imageAsset.thumbnailUrl, imageAsset.originalUrl);
@@ -251,7 +255,8 @@ function UserImage({
 
   return (
     <div
-      className="group cursor-pointer relative"
+      className={`group cursor-pointer relative ${displayWidth && displayHeight ? 'overflow-hidden' : ''}`}
+      style={displayWidth && displayHeight ? { width: displayWidth, height: displayHeight } : undefined}
       role="button"
       tabIndex={0}
       onClick={handleClick}
@@ -265,7 +270,7 @@ function UserImage({
         <img
           src={thumbnail.src}
           alt={`上传的图片 ${index + 1}`}
-          className="rounded-xl shadow-sm w-full h-auto block"
+          className={`rounded-xl shadow-sm w-full block ${displayWidth && displayHeight ? 'h-full object-contain' : 'h-auto'}`}
           onLoad={onMediaLoaded}
           onError={thumbnail.onError}
         />
@@ -289,19 +294,31 @@ export function UserImageGallery({
   imageAssets,
   messageId,
   maxWidth,
+  maxHeight,
   onImageClick,
   onMediaLoaded,
 }: ImageBlockProps & {
   imageAssets: ImageAsset[];
   maxWidth: number;
+  maxHeight?: number;
   onImageClick: (index: number) => void;
 }) {
   if (imageAssets.length === 0) return null;
 
+  const tileWidth = imageAssets.length > 1 ? Math.min(maxWidth, 280) : maxWidth;
+  const tileHeight = imageAssets.length > 1 && maxHeight
+    ? Math.round(tileWidth * maxHeight / maxWidth)
+    : undefined;
+
   return (
     <div
       className="mt-4 grid gap-2 w-full justify-end"
-      style={{ gridTemplateColumns: `repeat(auto-fit, ${maxWidth}px)` }}
+      data-attachment-run="images"
+      style={{
+        gridTemplateColumns: imageAssets.length > 1
+          ? `repeat(auto-fit, ${tileWidth}px)`
+          : `minmax(0, ${maxWidth}px)`,
+      }}
     >
       {imageAssets.map((asset, index) => (
         <UserImage
@@ -311,6 +328,8 @@ export function UserImageGallery({
           messageId={messageId}
           onImageClick={onImageClick}
           onMediaLoaded={index === 0 ? onMediaLoaded : undefined}
+          displayWidth={tileHeight ? tileWidth : undefined}
+          displayHeight={tileHeight}
         />
       ))}
     </div>

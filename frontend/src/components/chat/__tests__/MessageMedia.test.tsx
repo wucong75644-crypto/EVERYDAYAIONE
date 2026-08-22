@@ -205,4 +205,85 @@ describe('MessageMedia', () => {
     expect(screen.getByTestId('ai-image-grid')).toHaveAttribute('data-num-images', '3');
     expect(screen.queryByTestId('failed-placeholder')).not.toBeInTheDocument();
   });
+
+  it('用户混合附件按 content 顺序分段展示', () => {
+    const { container } = render(
+      <MessageMedia
+        imageAssets={[
+          { originalUrl: 'https://cdn/a.png' },
+          { originalUrl: 'https://cdn/c.png' },
+        ]}
+        files={[
+          { type: 'file', url: 'https://cdn/b.pdf', name: 'b.pdf', mime_type: 'application/pdf', size: 10 },
+          { type: 'file', url: 'https://cdn/d.pdf', name: 'd.pdf', mime_type: 'application/pdf', size: 20 },
+        ]}
+        content={[
+          { type: 'text', text: '按顺序处理' },
+          { type: 'image', url: 'https://cdn/a.png' },
+          { type: 'file', url: 'https://cdn/b.pdf', name: 'b.pdf', mime_type: 'application/pdf', size: 10 },
+          { type: 'image', url: 'https://cdn/c.png' },
+          { type: 'file', url: 'https://cdn/d.pdf', name: 'd.pdf', mime_type: 'application/pdf', size: 20 },
+        ]}
+        messageId="msg-mixed"
+        isUser
+        onImageClick={vi.fn()}
+      />,
+    );
+
+    expect([...container.querySelectorAll('[data-attachment-run]')]
+      .map((element) => element.getAttribute('data-attachment-run')))
+      .toEqual(['visuals', 'files', 'visuals', 'files']);
+    expect(screen.getByText('b.pdf')).toBeInTheDocument();
+    expect(screen.getByText('d.pdf')).toBeInTheDocument();
+  });
+
+  it('用户多图使用统一固定卡片尺寸并横向排版', () => {
+    const { container } = render(
+      <MessageMedia
+        imageAssets={[
+          { originalUrl: 'https://cdn/a.png' },
+          { originalUrl: 'https://cdn/b.png' },
+        ]}
+        content={[
+          { type: 'image', url: 'https://cdn/a.png' },
+          { type: 'image', url: 'https://cdn/b.png' },
+        ]}
+        messageId="msg-two-images"
+        isUser
+        onImageClick={vi.fn()}
+      />,
+    );
+
+    const visualRun = container.querySelector('[data-attachment-run="visuals"]');
+    expect(visualRun?.getAttribute('style')).toContain(
+      'grid-template-columns: repeat(auto-fit, 180px)',
+    );
+    expect(container.querySelectorAll('[aria-label^="查看图片"]').length).toBe(2);
+    expect([...container.querySelectorAll('[aria-label^="查看图片"]')].map((element) => {
+      const style = (element as HTMLElement).style;
+      return [style.width, style.height];
+    })).toEqual([['180px', '180px'], ['180px', '180px']]);
+  });
+
+  it('用户多文件使用受控卡片宽度并横向排列，超出后换行', () => {
+    const { container } = render(
+      <MessageMedia
+        content={[
+          { type: 'file', url: 'https://cdn/a.xlsx', name: 'a.xlsx', mime_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', size: 10 },
+          { type: 'file', url: 'https://cdn/b.pdf', name: 'b.pdf', mime_type: 'application/pdf', size: 20 },
+          { type: 'file', url: 'https://cdn/c.docx', name: 'c.docx', mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 30 },
+        ]}
+        messageId="msg-three-files"
+        isUser
+        onImageClick={vi.fn()}
+      />,
+    );
+
+    const fileList = container.querySelector('[data-file-card-list]');
+    expect(fileList?.className).toContain('flex-wrap');
+    expect(fileList?.querySelectorAll('[data-file-card]')).toHaveLength(3);
+    expect([...fileList?.querySelectorAll('[data-file-card]') || []].every((card) => (
+      card.className.includes('max-w-[280px]') && card.className.includes('flex-[0_1_280px]')
+    ))).toBe(true);
+  });
 });

@@ -21,7 +21,12 @@ describe('useInputExternalEvents', () => {
     })));
 
     expect(handleImageGeneration).toHaveBeenCalledWith(
-      'conversation-1', '生成主图', ['https://cdn.example.com/product.png'],
+      'conversation-1',
+      '生成主图',
+      [expect.objectContaining({
+        url: 'https://cdn.example.com/product.png',
+        original_url: 'https://cdn.example.com/product.png',
+      })],
       expect.objectContaining({
         product_image_urls: ['https://cdn.example.com/product.png'],
       }),

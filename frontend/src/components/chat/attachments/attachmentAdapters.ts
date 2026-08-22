@@ -16,11 +16,13 @@ export function fromUploadedImage(image: UploadedImage): ChatImageAttachment {
     : null;
   return {
     id: `image:${image.id}`,
+    sequence: image.sequence,
     kind: 'image',
     source: image.isQuoted ? 'quote' : 'upload',
     sourceId: image.id,
     status: toStatus(image.isUploading, image.error),
     name: image.name || image.file.name,
+    assetId: image.asset_id,
     previewUrl: toDisplayThumbnailUrl(image.thumbnail_url, image.preview),
     originalUrl,
     thumbnailUrl: image.thumbnail_url,
@@ -34,6 +36,7 @@ export function fromUploadedImage(image: UploadedImage): ChatImageAttachment {
 export function fromUploadedFile(file: UploadedFile): ChatFileAttachment {
   return {
     id: `file:${file.id}`,
+    sequence: file.sequence,
     kind: 'file',
     source: 'upload',
     sourceId: file.id,
@@ -47,11 +50,12 @@ export function fromUploadedFile(file: UploadedFile): ChatFileAttachment {
   };
 }
 
-export function fromWorkspaceFile(file: WorkspaceFile): ChatAttachment {
+export function fromWorkspaceFile(file: WorkspaceFile, sequence?: number): ChatAttachment {
   const originalUrl = toOriginalImageUrl(file.cdn_url);
   if (categorize(file) === 'image') {
     return {
       id: `workspace:${file.workspace_path}`,
+      sequence,
       kind: 'image',
       source: 'workspace',
       sourceId: file.workspace_path,
@@ -67,6 +71,7 @@ export function fromWorkspaceFile(file: WorkspaceFile): ChatAttachment {
   }
   return {
     id: `workspace:${file.workspace_path}`,
+    sequence,
     kind: 'file',
     source: 'workspace',
     sourceId: file.workspace_path,

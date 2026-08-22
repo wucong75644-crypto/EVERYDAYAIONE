@@ -26,6 +26,7 @@ const DEFAULT_MAX_SIZE = 100 * 1024 * 1024; // 100MB（与后端 _WORKSPACE_MAX_
 
 export interface UploadedFile {
   id: string;
+  sequence?: number; // 统一聊天附件顺序（由 useChatAttachments 分配）
   file: File;
   name: string;
   size: number;
@@ -53,7 +54,11 @@ export function useFileUpload() {
     return null;
   };
 
-  const handleFileUpload = async (fileList: File[], maxSizeMB?: number) => {
+  const handleFileUpload = async (
+    fileList: File[],
+    maxSizeMB?: number,
+    sequenceByFile?: ReadonlyMap<File, number>,
+  ) => {
     setUploadError(null);
 
     for (const file of fileList) {
@@ -66,6 +71,7 @@ export function useFileUpload() {
 
     const newFiles: UploadedFile[] = fileList.map((file) => ({
       id: `${Date.now()}-${Math.random()}`,
+      sequence: sequenceByFile?.get(file),
       file,
       name: file.name,
       size: file.size,

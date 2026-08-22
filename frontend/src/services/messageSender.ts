@@ -203,6 +203,19 @@ export interface ImageInputInfo {
   height?: number;
 }
 
+export interface FileInputInfo {
+  url: string;
+  name: string;
+  mime_type: string;
+  size: number;
+  workspace_path?: string;
+}
+
+/** 用户提交时的附件顺序；顺序由输入区分配并贯穿到消息 content。 */
+export type OrderedAttachmentInput =
+  | { kind: 'image'; image: ImageInputInfo }
+  | { kind: 'file'; file: FileInputInfo };
+
 function createOriginalImagePart(url: string): ContentPart {
   return {
     type: 'image',
@@ -246,6 +259,28 @@ export function createTextWithImages(
   ];
 }
 
+/** 创建按用户加入顺序排列的图文/文件混合内容。 */
+export function createTextWithAttachments(
+  text: string,
+  attachments: OrderedAttachmentInput[],
+): ContentPart[] {
+  return [
+    { type: 'text', text },
+    ...attachments.map((attachment) => attachment.kind === 'image'
+      ? toImagePart(attachment.image)
+      : {
+        type: 'file' as const,
+        url: attachment.file.url,
+        name: attachment.file.name,
+        mime_type: attachment.file.mime_type,
+        size: attachment.file.size,
+        ...(attachment.file.workspace_path
+          ? { workspace_path: attachment.file.workspace_path }
+          : {}),
+      }),
+  ];
+}
+
 /**
  * 创建带文件（PDF）的混合内容
  *
@@ -254,7 +289,7 @@ export function createTextWithImages(
 export function createTextWithFiles(
   text: string,
   imageUrls: string[] | ImageInputInfo[] | null,
-  files: { url: string; name: string; mime_type: string; size: number; workspace_path?: string }[],
+  files: FileInputInfo[],
 ): ContentPart[] {
   const images = (imageUrls || []) as Array<string | ImageInputInfo>;
   return [

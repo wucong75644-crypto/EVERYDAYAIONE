@@ -50,6 +50,24 @@ describe('useChatAttachments', () => {
     expect(result.current.attachments.every((item) => item.status === 'ready')).toBe(true);
   });
 
+  it('跨图片和文件保留用户选择的原始顺序', async () => {
+    const { result } = renderHook(() => useChatAttachments());
+
+    await act(async () => result.current.addLocalFiles([
+      new File(['image-a'], 'a.png', { type: 'image/png' }),
+      new File(['pdf-b'], 'b.pdf', { type: 'application/pdf' }),
+      new File(['image-c'], 'c.webp', { type: 'image/webp' }),
+      new File(['text-d'], 'd.txt', { type: 'text/plain' }),
+    ]));
+
+    expect(result.current.attachments.map((item) => item.name)).toEqual([
+      'a.png', 'b.pdf', 'c.webp', 'd.txt',
+    ]);
+    expect(result.current.submissionSnapshot.orderedAttachments.map((item) => item.kind)).toEqual([
+      'image', 'file', 'image', 'file',
+    ]);
+  });
+
   it('通过统一入口添加引用图片和工作区图片', () => {
     const { result } = renderHook(() => useChatAttachments());
 

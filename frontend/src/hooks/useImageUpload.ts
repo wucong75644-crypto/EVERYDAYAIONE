@@ -8,9 +8,11 @@ import { useState } from 'react';
 import { uploadImageFile } from '../services/upload';
 import { pickOriginalImageUrl, toDisplayThumbnailUrl, toOriginalImageUrl } from '../utils/imageUrlRules';
 import { logger } from '../utils/logger';
+import type { QuotedImageInput } from '../components/chat/attachments/ChatAttachment.types';
 
 export interface UploadedImage {
   id: string; // 唯一标识
+  sequence?: number; // 统一聊天附件顺序（由 useChatAttachments 分配）
   file: File;
   preview: string; // ObjectURL 预览（本地 blob:// URL，性能优于 base64）；引用图直接用 CDN URL
   url: string | null; // 上传后的公网URL
@@ -18,6 +20,7 @@ export interface UploadedImage {
   thumbnail_url?: string;
   preview_url?: string;
   download_url?: string;
+  asset_id?: string;
   isUploading: boolean;
   error: string | null;
   isQuoted?: boolean; // 是否为引用图片（来自 AI 生成图片的引用，无需上传）
@@ -58,7 +61,8 @@ export function useImageUpload() {
   const handleImageFiles = async (
     files: FileList | File[],
     maxImages?: number,
-    maxFileSizeMB?: number
+    maxFileSizeMB?: number,
+    sequenceByFile?: ReadonlyMap<File, number>,
   ) => {
     const fileArray = Array.from(files);
 
@@ -87,6 +91,7 @@ export function useImageUpload() {
     // 为每个文件创建记录并开始上传
     const newImages: UploadedImage[] = fileArray.map((file) => ({
       id: `${Date.now()}-${Math.random()}`,
+      sequence: sequenceByFile?.get(file),
       file,
       preview: '', // 稍后填充
       url: null,
@@ -255,8 +260,11 @@ export function useImageUpload() {
    * - 支持多张引用图，同一 URL 不重复添加
    * - 引用图 preview 可使用缩略图，url/original_url 始终使用原图
    */
-  const addQuotedImage = (cdnUrl: string, thumbnailUrl?: string) => {
-    const originalUrl = toOriginalImageUrl(cdnUrl);
+  const addQuotedImage = (input: QuotedImageInput | string, legacyThumbnailUrl?: string) => {
+    const quotedInput: QuotedImageInput = typeof input === 'string'
+      ? { url: input, thumbnailUrl: legacyThumbnailUrl }
+      : input;
+    const originalUrl = toOriginalImageUrl(quotedInput.url);
     if (!originalUrl) {
       setUploadError('无法引用缩略图，请打开原图后再引用');
       return;
@@ -267,12 +275,18 @@ export function useImageUpload() {
       const quotedImage: UploadedImage = {
         id: `quoted-${crypto.randomUUID()}`,
         file: new File([], 'quoted-image'),
-        preview: toDisplayThumbnailUrl(thumbnailUrl, originalUrl),
+        preview: toDisplayThumbnailUrl(quotedInput.thumbnailUrl, originalUrl),
         url: originalUrl,
         original_url: originalUrl,
-        thumbnail_url: thumbnailUrl,
+        thumbnail_url: quotedInput.thumbnailUrl,
         preview_url: originalUrl,
         download_url: originalUrl,
+        asset_id: quotedInput.assetId,
+        sequence: quotedInput.sequence,
+        workspace_path: quotedInput.workspacePath,
+        name: quotedInput.name,
+        mime_type: quotedInput.mimeType,
+        size: quotedInput.size,
         isUploading: false,
         error: null,
         isQuoted: true,
