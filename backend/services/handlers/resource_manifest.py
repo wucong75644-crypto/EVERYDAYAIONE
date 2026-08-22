@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -39,6 +40,7 @@ def build_resource_manifest(
     turn_id: str,
     org_id: str | None,
     input_content: Any,
+    current_text: str = "",
 ) -> ResourceManifest:
     """优先读取 task_attachment_refs；Web/旧任务回退到固定输入消息。"""
     ref_query = (
@@ -53,11 +55,26 @@ def build_resource_manifest(
     response = ref_query.execute()
     refs = response.data if response and isinstance(response.data, list) else []
     if not refs:
+        input_assets = tuple(_assets_from_input(input_content, input_message_id))
+        if input_assets:
+            return ResourceManifest(
+                task_id=task_id,
+                input_message_id=input_message_id,
+                assets=input_assets,
+                source="input_message",
+            )
+
+        selected = _asset_selected_from_conversation(
+            db,
+            conversation_id=conversation_id,
+            org_id=org_id,
+            current_text=current_text,
+        )
         return ResourceManifest(
             task_id=task_id,
             input_message_id=input_message_id,
-            assets=tuple(_assets_from_input(input_content, input_message_id)),
-            source="input_message",
+            assets=tuple(selected),
+            source="conversation_selection" if selected else "input_message",
         )
 
     attachment_ids = [str(ref["attachment_id"]) for ref in refs]
@@ -143,3 +160,52 @@ def _assets_from_input(
         and part.get("type") in ("file", "image")
         and part.get("workspace_path")
     ]
+
+
+def _asset_selected_from_conversation(
+    db: Any,
+    *,
+    conversation_id: str,
+    org_id: str | None,
+    current_text: str,
+) -> list[ResourceAsset]:
+    """Resolve a bare list selection against recent conversation attachments.
+
+    The numbered list is presentation-only, so the backend must resolve it
+    before the model is allowed to invent a file ID.  Assets are ordered by
+    newest source message first, matching the conversation's recent-file UI.
+    """
+    match = re.fullmatch(r"\s*(\d{1,3})\s*", current_text or "")
+    if not match:
+        return []
+    selected_index = int(match.group(1)) - 1
+    if selected_index < 0:
+        return []
+
+    query = (
+        db.table("messages")
+        .select("id,content,created_at")
+        .eq("conversation_id", conversation_id)
+        .eq("role", "user")
+    )
+    if org_id:
+        query = query.eq("org_id", org_id)
+    try:
+        response = query.order("created_at", desc=True).limit(100).execute()
+    except Exception:
+        return []
+    rows = response.data if response and isinstance(response.data, list) else []
+
+    assets: list[ResourceAsset] = []
+    seen: set[str] = set()
+    for row in rows:
+        message_id = str(row.get("id") or "")
+        for asset in _assets_from_input(row.get("content"), message_id):
+            key = asset.workspace_path or asset.asset_id
+            if key in seen:
+                continue
+            seen.add(key)
+            assets.append(asset)
+    if selected_index >= len(assets):
+        return []
+    return [assets[selected_index]]

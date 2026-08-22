@@ -95,7 +95,40 @@ class ChatContextMixin:
             self, "_personal_context_allowed", True,
         )
 
-        # 注册 workspace 文件到会话级路径缓存 (保留旧逻辑, PromptBuilder 不负责文件管理)
+        # 调 PromptBuilder 统一构造
+        context_snapshot = None
+        if context_anchor is not None:
+            from services.handlers.context_snapshot import build_context_snapshot
+
+            context_snapshot = await build_context_snapshot(
+                self.db, context_anchor, text_content,
+            )
+            self._resource_manifest = context_snapshot.resource_manifest
+
+            # A bare selection such as "1" refers to the recent conversation
+            # file list. Rehydrate that selected asset into this task's prompt
+            # before tools are exposed; the model must never invent its ID.
+            manifest = context_snapshot.resource_manifest
+            if not workspace_files and manifest and manifest.source == "conversation_selection":
+                workspace_files = [
+                    {
+                        "asset_id": asset.asset_id,
+                        "workspace_path": asset.workspace_path,
+                        "name": asset.name,
+                        "size": asset.size,
+                        "mime_type": asset.mime_type,
+                        "url": asset.url,
+                    }
+                    for asset in manifest.assets
+                ]
+                image_urls.extend(
+                    asset.url
+                    for asset in manifest.assets
+                    if asset.mime_type.startswith("image/") and asset.url
+                )
+
+        # Register current or rehydrated workspace files in the conversation
+        # cache so file_analyze can resolve the same fid used in the prompt.
         if workspace_files:
             try:
                 from services.agent.file_path_cache import get_file_cache
@@ -119,6 +152,8 @@ class ChatContextMixin:
                         import os
                         _abs = os.path.join(_ws_dir, wp)
                         _cache.register(wp, workspace=_abs)
+                        if f.get("name"):
+                            _cache.register(f["name"], workspace=_abs)
             except Exception as e:
                 logger.debug(f"Workspace file cache registration failed | error={e}")
 
@@ -126,16 +161,6 @@ class ChatContextMixin:
         if workspace_files:
             ws_urls = {f["url"] for f in workspace_files if f.get("url")}
             file_urls = [u for u in file_urls if u not in ws_urls]
-
-        # 调 PromptBuilder 统一构造
-        context_snapshot = None
-        if context_anchor is not None:
-            from services.handlers.context_snapshot import build_context_snapshot
-
-            context_snapshot = await build_context_snapshot(
-                self.db, context_anchor, text_content,
-            )
-            self._resource_manifest = context_snapshot.resource_manifest
 
         inp = BuildInput(
             user_id=user_id,
