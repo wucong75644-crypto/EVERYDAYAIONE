@@ -108,6 +108,20 @@ def test_claimed_request_returns_execution_right() -> None:
     assert claim.replay_response is None
 
 
+def test_missing_or_inaccessible_conversation_is_a_not_found_error() -> None:
+    db = MagicMock()
+    db.rpc.return_value.execute.side_effect = RuntimeError(
+        "IDEMPOTENCY_CONVERSATION_ACCESS_DENIED"
+    )
+    service = MessageIdempotencyService(db, "user-1", None)
+
+    with pytest.raises(AppException) as caught:
+        service.claim(_request("request-1"), "conversation-1", _body())
+
+    assert caught.value.code == "CONVERSATION_NOT_FOUND"
+    assert caught.value.status_code == 404
+
+
 @pytest.mark.parametrize(
     ("outcome", "expected_code"),
     [

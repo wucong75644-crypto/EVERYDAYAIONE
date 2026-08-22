@@ -296,9 +296,12 @@ export default function Chat() {
             return;  // 丢弃过期错误
           }
           // 只有对话确实不存在（404）才跳转，其他错误（网络抖动、超时等）不跳走
-          const status = error?.response?.status;
+          const status = error?.status ?? error?.response?.status;
           if (status === 404) {
             logger.error('chat', '对话不存在', undefined, { conversationId: urlConversationId });
+            setCurrentConversationId(null);
+            setConversationModelId(null);
+            setConversationChatSettings(null);
             navigate('/chat');
           } else {
             logger.error('chat', '加载对话失败（非 404，不跳转）', error, { status });

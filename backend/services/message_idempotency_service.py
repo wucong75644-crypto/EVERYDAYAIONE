@@ -61,18 +61,27 @@ class MessageIdempotencyService:
             )
 
         fingerprint = self.build_fingerprint(conversation_id, body)
-        result = self.db.rpc(
-            "claim_message_generation_request",
-            {
-                "p_org_id": self.org_id,
-                "p_user_id": self.user_id,
-                "p_conversation_id": conversation_id,
-                "p_idempotency_key": key,
-                "p_request_fingerprint": fingerprint,
-                "p_client_task_id": body.client_task_id,
-                "p_assistant_message_id": body.assistant_message_id,
-            },
-        ).execute()
+        try:
+            result = self.db.rpc(
+                "claim_message_generation_request",
+                {
+                    "p_org_id": self.org_id,
+                    "p_user_id": self.user_id,
+                    "p_conversation_id": conversation_id,
+                    "p_idempotency_key": key,
+                    "p_request_fingerprint": fingerprint,
+                    "p_client_task_id": body.client_task_id,
+                    "p_assistant_message_id": body.assistant_message_id,
+                },
+            ).execute()
+        except Exception as exc:
+            if "IDEMPOTENCY_CONVERSATION_ACCESS_DENIED" in str(exc):
+                raise AppException(
+                    code="CONVERSATION_NOT_FOUND",
+                    message="对话不存在或无权访问",
+                    status_code=404,
+                ) from exc
+            raise
         data = result.data
         if not isinstance(data, dict) or not data.get("request_id"):
             raise AppException(

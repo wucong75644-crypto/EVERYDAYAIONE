@@ -102,7 +102,7 @@ describe('useInputSubmission', () => {
     expect(options.clearPromptForSubmission).toHaveBeenCalledOnce();
     expect(options.detachAttachmentsForSubmission).toHaveBeenCalledOnce();
     expect(options.restorePromptAfterRejection).not.toHaveBeenCalled();
-    expect(options.setSendError).not.toHaveBeenCalled();
+    expect(options.setSendError).toHaveBeenCalledWith(null);
   });
 
   it('发送结果未知时保持编辑器清空且不恢复附件', async () => {

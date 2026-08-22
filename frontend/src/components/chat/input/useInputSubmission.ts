@@ -97,6 +97,8 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
       !!(options.prompt.trim() || options.hasImages || options.hasFiles || hasAttachments),
     );
     if (state.disabled) return;
+    // 重试前清除上一次失败留下的输入框错误状态；新失败会在 catch 中重新设置。
+    options.setSendError(null);
     const attachments = options.attachmentSnapshot;
     const hasSubmissionImages = attachments.imageUrls.length > 0;
     if (options.smartSubMode === 'image-i2i' && !hasSubmissionImages) {
