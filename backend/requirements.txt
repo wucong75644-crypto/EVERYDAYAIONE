@@ -1,6 +1,8 @@
 # FastAPI 框架
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
+python-multipart==0.0.21       # FastAPI UploadFile/Form 解析
+aiofiles==24.1.0               # 异步工作区文件写入
 
 # PostgreSQL 客户端（LocalDB 兼容层）
 psycopg[binary,pool]==3.3.3
@@ -13,6 +15,12 @@ pydantic-settings==2.7.1
 python-jose[cryptography]==3.3.0
 bcrypt==4.2.1
 
+# 直接使用的第三方客户端（不能依赖其他包的传递安装）
+openai==2.26.0                 # DashScope 兼容 API / 错误摘要
+supabase==2.11.0               # 企业组织服务与历史迁移脚本
+postgrest==0.19.3              # 数据库错误分类
+python-dotenv==1.2.1           # 迁移、诊断和运维脚本配置
+
 # 日志
 loguru==0.7.3
 sentry-sdk==2.52.0
@@ -23,6 +31,7 @@ socksio==1.0.0
 
 # 阿里云 SDK（短信、OSS）
 alibabacloud-dysmsapi20170525==3.0.0
+alibabacloud-tea-openapi==0.4.3 # 短信服务直接导入
 oss2==2.19.1
 
 # Redis 客户端
@@ -46,6 +55,10 @@ psycopg[pool]==3.3.3
 websockets==14.2
 pycryptodome==3.21.0
 
+# 运维/数据脚本
+requests==2.32.5
+psycopg2-binary==2.9.11
+
 # 文件解析（企微文件消息）
 python-docx==1.2.0
 openpyxl==3.1.5
@@ -57,6 +70,7 @@ zipstream-ng==1.7.1
 duckdb==1.2.2
 
 # 数据分析（沙盒代码执行）
+numpy==2.2.6
 pandas==2.2.3
 pyarrow==23.0.1
 python-calamine==0.6.2
