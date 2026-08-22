@@ -51,6 +51,12 @@ class ConversationService:
                 "source": source,
             }
 
+            # Web conversations are user-scoped; keep the denormalized scope
+            # identity aligned with the database constraint.
+            if source == "web":
+                conversation_data["scope_type"] = "user"
+                conversation_data["scope_id"] = user_id
+
             if model_id:
                 conversation_data["model_id"] = model_id
             if chat_settings:

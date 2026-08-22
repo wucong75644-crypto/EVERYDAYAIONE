@@ -93,6 +93,9 @@ class TestConversationServiceCreate:
         # Assert
         assert result["id"] == conversation["id"]
         assert result["title"] == "新对话"
+        insert_data = mock_query.insert.call_args[0][0]
+        assert insert_data["scope_type"] == "user"
+        assert insert_data["scope_id"] == user["id"]
 
     @pytest.mark.asyncio
     async def test_create_conversation_db_error(self, conversation_service, mock_db):
