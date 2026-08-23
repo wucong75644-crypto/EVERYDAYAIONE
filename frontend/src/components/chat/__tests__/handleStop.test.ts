@@ -1,19 +1,19 @@
 /**
  * handleStop 停止生成逻辑单元测试
  *
- * 覆盖：消息状态更新、流式状态清理、后端取消调用、空值守卫
+ * 覆盖：消息状态更新、流式状态清理、后端暂停调用、空值守卫
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { create } from 'zustand';
 import { createStreamingSlice, type StreamingSlice, type StreamingSliceDeps } from '../../../stores/slices/streamingSlice';
 
-// Mock cancelTaskByMessageId
+// Mock pauseTaskByMessageId
 vi.mock('../../../services/message', () => ({
-  cancelTaskByMessageId: vi.fn(() => Promise.resolve()),
+  pauseTaskByMessageId: vi.fn(() => Promise.resolve()),
 }));
 
-import { cancelTaskByMessageId } from '../../../services/message';
+import { pauseTaskByMessageId } from '../../../services/message';
 
 type TestStore = StreamingSlice & StreamingSliceDeps & {
   updateMessage: (messageId: string, data: Record<string, unknown>) => void;
@@ -28,7 +28,7 @@ function createTestStore() {
 }
 
 /**
- * 模拟 handleStop 逻辑（与 InputArea.tsx 中实现一致）
+ * 模拟 handleStop 逻辑（与 useInputTaskControls.ts 中实现一致）
  */
 function executeHandleStop(
   store: ReturnType<typeof createTestStore>,
@@ -39,7 +39,7 @@ function executeHandleStop(
 
   store.getState().updateMessage(streamingMessageId, { status: 'interrupted' });
   store.getState().completeStreaming(conversationId);
-  cancelTaskByMessageId(streamingMessageId).catch(() => {});
+  pauseTaskByMessageId(streamingMessageId).catch(() => {});
 }
 
 describe('handleStop - 停止生成逻辑', () => {
@@ -69,26 +69,26 @@ describe('handleStop - 停止生成逻辑', () => {
     expect(store.getState().isSending).toBe(false);
   });
 
-  it('should call cancelTaskByMessageId with message id', () => {
+  it('should call pauseTaskByMessageId with message id', () => {
     store.getState().startStreaming('conv_1', 'msg_1');
 
     executeHandleStop(store, 'msg_1', 'conv_1');
 
-    expect(cancelTaskByMessageId).toHaveBeenCalledWith('msg_1');
+    expect(pauseTaskByMessageId).toHaveBeenCalledWith('msg_1');
   });
 
   it('should do nothing when streamingMessageId is null', () => {
     executeHandleStop(store, null, 'conv_1');
 
     expect(store.getState().updateMessage).not.toHaveBeenCalled();
-    expect(cancelTaskByMessageId).not.toHaveBeenCalled();
+    expect(pauseTaskByMessageId).not.toHaveBeenCalled();
   });
 
   it('should do nothing when conversationId is null', () => {
     executeHandleStop(store, 'msg_1', null);
 
     expect(store.getState().updateMessage).not.toHaveBeenCalled();
-    expect(cancelTaskByMessageId).not.toHaveBeenCalled();
+    expect(pauseTaskByMessageId).not.toHaveBeenCalled();
   });
 
   it('should also clear thinking and agentStepHint', () => {

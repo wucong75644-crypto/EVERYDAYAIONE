@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import { cancelTaskByMessageId, pauseTaskByMessageId } from '../../../services/message';
+import { pauseTaskByMessageId } from '../../../services/message';
 import { useMessageStore } from '../../../stores/useMessageStore';
 import { logger } from '../../../utils/logger';
 
@@ -65,9 +65,12 @@ export function useInputTaskControls({
 
   const handleStop = useCallback(() => {
     if (!streamingMessageId || !conversationId) return;
-    updateLocalInterruptedMessage('user_cancel');
-    cancelTaskByMessageId(streamingMessageId).catch(error => {
-      logger.error('inputArea', '取消任务失败', error);
+    // 生成中的显式停止是“暂停并保存进度”，让用户可以通过“继续”恢复。
+    // 最终取消只允许通过语义指令“取消/放弃”进入 cancel RPC，避免
+    // 旧的按钮入口把可恢复任务提前变成不可恢复的 cancelled。
+    updateLocalInterruptedMessage('user_pause');
+    pauseTaskByMessageId(streamingMessageId).catch(error => {
+      logger.error('inputArea', '暂停任务失败', error);
     });
   }, [streamingMessageId, conversationId, updateLocalInterruptedMessage]);
 
