@@ -12,6 +12,7 @@ from schemas.message import TextPart
 from services.handlers.chat.execution_engine import (
     ChatExecutionRequest,
     _stable_actor_tool_call_id,
+    _actor_tool_completion_command_id,
     execute_chat,
 )
 from services.conversation_commands import SafePoint
@@ -38,6 +39,21 @@ def test_actor_tool_call_id_is_stable_for_same_turn_and_arguments():
     assert first == second
     assert first != different_args
     assert first.startswith("actor-call:turn-1:0:")
+
+
+def test_actor_tool_completion_command_id_is_bounded_and_stable():
+    tool_call_ids = [f"actor-call:turn-1:{index}:" + "x" * 120 for index in range(8)]
+
+    first = _actor_tool_completion_command_id("task-1", "turn-1", tool_call_ids)
+    second = _actor_tool_completion_command_id("task-1", "turn-1", tool_call_ids)
+    reordered = _actor_tool_completion_command_id(
+        "task-1", "turn-1", list(reversed(tool_call_ids))
+    )
+
+    assert first == second
+    assert first != reordered
+    assert len(first) <= 200
+    assert first.startswith("tool-batch:task-1:turn-1:8:")
 
 
 @pytest.mark.asyncio

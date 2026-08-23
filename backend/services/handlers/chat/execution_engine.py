@@ -268,6 +268,21 @@ def _stable_actor_tool_call_id(
     return f"actor-call:{turn_id}:{index}:{fingerprint}"
 
 
+def _actor_tool_completion_command_id(
+    task_id: str,
+    turn_id: str,
+    tool_call_ids: list[str],
+) -> str:
+    """生成有界且稳定的工具批次去重键；原始 ID 仍保存在事件 payload。"""
+    encoded_ids = json.dumps(
+        tool_call_ids,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    fingerprint = hashlib.sha256(encoded_ids).hexdigest()[:32]
+    return f"tool-batch:{task_id}:{turn_id}:{len(tool_call_ids)}:{fingerprint}"
+
+
 async def _append_turn_blocks(
     blocks: list[dict[str, Any]],
     sink: ExecutionSink,
@@ -320,9 +335,10 @@ async def _execute_tools(
     )
     if runtime:
         tool_call_ids = [call["id"] for call in calls]
-        command_id = (
-            f"tool-batch:{request.task_id}:{runtime.turn_id}:"
-            f"{','.join(tool_call_ids)}"
+        command_id = _actor_tool_completion_command_id(
+            request.task_id,
+            runtime.turn_id,
+            tool_call_ids,
         )
         command = ConversationCommand(
             command_id=command_id,
