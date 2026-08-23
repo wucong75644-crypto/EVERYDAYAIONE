@@ -1,0 +1,2 @@
+-- 240 rollback deliberately leaves the compatibility functions in place.
+-- Application rollback must not reintroduce the production text/jsonb mismatch.

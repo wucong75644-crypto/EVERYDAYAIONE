@@ -54,3 +54,15 @@ def test_rollback_restores_pre_pause_contract():
     assert "non-destructive" in sql
     assert "DROP FUNCTION IF EXISTS public.mark_stale_tool_invocation_uncertain" in sql
     assert "DROP TABLE" not in sql
+
+
+def test_text_content_compatibility_migration_is_present():
+    migration = MIGRATIONS / "240_conversation_actor_text_content_compat.sql"
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "actor_message_text_to_blocks" in sql
+    assert "v_message.content" in sql
+    assert "v_content::TEXT" in sql
+    assert "DatatypeMismatch" in sql
+    assert "COALESCE(v_message.content, '[]'::JSONB)" not in sql
+    assert "ALTER TABLE" not in sql

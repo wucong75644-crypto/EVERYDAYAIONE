@@ -374,6 +374,33 @@ describe('normalizeMessage', () => {
 
     expect(result.status).toBe('failed');
   });
+
+  it('should preserve interrupted status for paused messages after refresh', () => {
+    const msg = {
+      id: 'msg-paused',
+      content: JSON.stringify([
+        { type: 'text', text: '已生成的部分' },
+        {
+          type: 'interrupt_marker',
+          interrupted_at: '2026-08-23T11:00:00.000Z',
+          reason: 'user_pause',
+        },
+      ]),
+      status: 'interrupted',
+    };
+
+    const result = normalizeMessage(msg);
+
+    expect(result.status).toBe('interrupted');
+    expect(result.content).toEqual([
+      { type: 'text', text: '已生成的部分' },
+      {
+        type: 'interrupt_marker',
+        interrupted_at: '2026-08-23T11:00:00.000Z',
+        reason: 'user_pause',
+      },
+    ]);
+  });
 });
 
 // ============================================================
