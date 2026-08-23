@@ -27,6 +27,7 @@ export interface MessageStoreActions {
   failTask: (taskId: string, error: string) => void;
   completeStreaming: (conversationId: string) => void;
   completeStreamingWithMessage: (conversationId: string, message: Message) => void;
+  getStreamingMessageId: (conversationId: string) => string | null;
   markConversationCompleted: (conversationId: string) => void;
   setIsSending: (isSending: boolean) => void;
   getMessage: (messageId: string) => Message | undefined;
@@ -42,6 +43,8 @@ export interface MessageStoreActions {
   setSuggestions: (conversationId: string, suggestions: string[]) => void;
   setToolConfirmRequest: (request: {
     toolCallId: string;
+    taskId: string;
+    conversationId: string;
     toolName: string;
     arguments: Record<string, unknown>;
     description: string;

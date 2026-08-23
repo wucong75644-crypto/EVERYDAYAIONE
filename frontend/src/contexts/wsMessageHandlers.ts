@@ -88,8 +88,8 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       }
     },
 
-    // stream_end：LLM 流结束信号（对标 Anthropic message_stop）
-    // 在 DB 持久化之前发送，前端立即退出 streaming 状态
+    // stream_end：仅表示模型流结束，不代表数据库 commit 成功。
+    // 真正的 completed 只能由 message_done（数据库终态之后）确认。
   stream_end: (deps, msg) => {
       const { message_id, conversation_id } = msg;
       logger.info('ws:message', 'stream_end received', { messageId: message_id, conversationId: conversation_id });
@@ -103,16 +103,12 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
         flushChunkBuffer(deps);
       }
 
-      const store = deps.getStore();
-      if (message_id) {
-        store.setStatus(message_id, 'completed');
-      }
-      if (conversation_id) {
-        store.completeStreaming(conversation_id);
-      }
-
-      // Agent 操作完成 → 通知工作区刷新（覆盖删除等无 file block 的场景）
-      window.dispatchEvent(new CustomEvent('workspace:changed'));
+      // 保持 streaming 状态，等待 message_done；暂停/取消没有 message_done，
+      // 因而不会被迟到的 stream_end 错误标成 completed。
+      logger.debug('ws:message', 'stream_end acknowledged; awaiting message_done', {
+        messageId: message_id,
+        conversationId: conversation_id,
+      });
     },
 
   message_progress: (deps, msg) => {
@@ -307,7 +303,14 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       const description = msg.payload?.description as string | undefined;
       const args = (msg.payload?.arguments ?? {}) as Record<string, unknown>;
       const timeout = (msg.payload?.timeout as number) || 60;
-      if (!conversation_id || !toolCallId || !toolName) return;
+      if (!conversation_id || !task_id || !toolCallId || !toolName) {
+        logger.warn('ws:tool', 'confirm_request_missing_scope', {
+          taskId: task_id,
+          conversationId: conversation_id,
+          toolCallId,
+        });
+        return;
+      }
 
       // 显示步骤提示
       deps.getStore().setAgentStepHint(conversation_id, `⚠ ${description || toolName} — 等待确认`);
@@ -315,6 +318,8 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       // 触发确认弹窗
       deps.getStore().setToolConfirmRequest({
         toolCallId,
+        taskId: task_id,
+        conversationId: conversation_id,
         toolName,
         arguments: args,
         description: description || `AI 要执行: ${toolName}`,

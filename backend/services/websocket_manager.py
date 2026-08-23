@@ -267,9 +267,17 @@ class WebSocketManager(RedisPubSubMixin):
 
         delivered = 0
         for conn_id in list(subscribers):
+            if self.is_in_cancelled_gate(task_id, org_id):
+                logger.debug(
+                    f"Drop cancelled task message during local delivery | "
+                    f"task={task_id} | type={message.get('type')}"
+                )
+                return delivered
             if await self.send_to_connection(conn_id, message):
                 delivered += 1
 
+        if self.is_in_cancelled_gate(task_id, org_id):
+            return delivered
         await self._publish("task", task_id, message, org_id=org_id)
 
         return delivered
@@ -305,6 +313,12 @@ class WebSocketManager(RedisPubSubMixin):
                 f"path=local_task | count={len(local_subscribers)}"
             )
             for conn_id in list(local_subscribers):
+                if self.is_in_cancelled_gate(task_id, org_id):
+                    logger.debug(
+                        f"Drop cancelled task message during local delivery | "
+                        f"task={task_id} | type={message.get('type')}"
+                    )
+                    return
                 await self.send_to_connection(conn_id, message)
         else:
             local_conns = self._connections.get(user_id, {})
@@ -314,9 +328,19 @@ class WebSocketManager(RedisPubSubMixin):
                     f"path=local_user | user={user_id}"
                 )
                 for conn_id in list(local_conns.keys()):
+                    if self.is_in_cancelled_gate(task_id, org_id):
+                        logger.debug(
+                            f"Drop cancelled task message during local delivery | "
+                            f"task={task_id} | type={message.get('type')}"
+                        )
+                        return
                     await self.send_to_connection(conn_id, message)
 
-        await self._publish("user", user_id, message, org_id=org_id)
+        if self.is_in_cancelled_gate(task_id, org_id):
+            return
+        await self._publish(
+            "user", user_id, message, org_id=org_id, task_id=task_id,
+        )
 
     async def broadcast_all(self, message: Dict[str, Any], org_id: str | None = None):
         """广播消息到所有连接（本地 + 跨进程）
@@ -464,6 +488,11 @@ class WebSocketManager(RedisPubSubMixin):
         self, task_id: str, org_id: str | None = None,
     ) -> None:
         await self._cancel.mark_gate(task_id, org_id)
+
+    async def clear_cancelled_gate(
+        self, task_id: str, org_id: str | None = None,
+    ) -> None:
+        await self._cancel.clear_gate(task_id, org_id)
 
     def is_in_cancelled_gate(
         self, task_id: str, org_id: str | None = None,

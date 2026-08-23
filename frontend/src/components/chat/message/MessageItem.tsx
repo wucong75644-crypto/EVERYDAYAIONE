@@ -32,6 +32,7 @@ export default memo(function MessageItem({
   isStreaming = false,
   isRegenerating = false,
   onRegenerate,
+  onResume,
   onDelete,
   onMediaLoaded,
   allImageAssets = [],
@@ -434,6 +435,7 @@ export default memo(function MessageItem({
           visible={showToolbar}
           markdownContent={!isUser ? textContent : undefined}
           onRegenerate={onRegenerate}
+          onResume={onResume}
           onDeleteClick={onDelete ? openDeleteModal : undefined}
           onMouseEnter={handleToolbarMouseEnter}
           onMouseLeave={handleToolbarMouseLeave}

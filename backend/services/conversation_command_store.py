@@ -59,6 +59,7 @@ class DatabaseConversationCommandStore:
     ) -> dict[str, Any]:
         if command_type not in {
             CommandType.CANCEL,
+            CommandType.PAUSE,
             CommandType.APPROVAL_RESULT,
             CommandType.SUBTASK_COMPLETED,
             CommandType.TOOL_COMPLETED,

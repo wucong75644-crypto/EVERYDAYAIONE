@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -49,6 +50,7 @@ class ChatExecutionRequest:
     needs_google_search: bool = False
     calculate_credits: bool = True
     execution_scope: Any = None
+    replay_context: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -58,6 +60,7 @@ class ChatExecutionResult:
     usage: dict[str, Any]
     credits_cost: int
     tool_digest: dict[str, Any] | None
+    replay_context: dict[str, Any] | None = None
 
 
 async def execute_chat(
@@ -71,6 +74,10 @@ async def execute_chat(
     """执行固定上下文的一次生成，不提交任务、消息或 revision 终态。"""
     event = cancellation_event or asyncio.Event()
     output = sink or CollectingExecutionSink()
+    if runtime:
+        checkpoint = getattr(output, "flush_progress", None)
+        if checkpoint is not None:
+            runtime.set_checkpoint_callback(checkpoint)
     prepared = await prepare_chat_stream(
         handler=handler,
         content=request.content,
@@ -82,12 +89,15 @@ async def execute_chat(
         needs_google_search=request.needs_google_search,
         params=request.params,
         context_anchor=request.context_anchor,
+        replay_context=request.replay_context,
     )
     handler._adapter = prepared.adapter
     handler._pending_emit_payloads = []
     handler._pending_form_block = None
     totals = StreamTotals()
-    blocks: list[dict[str, Any]] = []
+    blocks: list[dict[str, Any]] = _initial_replay_blocks(
+        request.replay_context,
+    )
     try:
         await output.start()
         await _run_loop(
@@ -121,6 +131,11 @@ async def execute_chat(
                 request.conversation_id,
                 prepared.budget.turns_used,
             ),
+            replay_context=_build_replay_context(
+                prepared.messages,
+                blocks,
+                prepared.budget.turns_used,
+            ),
         )
     finally:
         await prepared.adapter.close()
@@ -140,7 +155,18 @@ async def _run_loop(
     while not prepared.budget.stop_reason:
         if runtime:
             runtime.set_state(ConversationState.RUNNING_MODEL)
-            await runtime.safe_point(SafePoint.BEFORE_MODEL)
+            await runtime.safe_point(
+                SafePoint.BEFORE_MODEL,
+                replay_payload=_build_replay_context(
+                    prepared.messages,
+                    blocks,
+                    prepared.budget.turns_used,
+                ),
+            )
+            _inject_subtask_completions(
+                prepared.messages,
+                runtime.consume_subtask_completions(),
+            )
         _raise_if_cancelled(cancellation_event)
         prepared.budget.use_turn()
         turn = prepared.budget.turns_used - 1
@@ -334,7 +360,15 @@ async def _execute_tools(
         turn=turn,
     )
     if runtime:
-        await runtime.safe_point(SafePoint.AFTER_TOOL)
+        await runtime.safe_point(
+            SafePoint.AFTER_TOOL,
+            replay_payload=_build_replay_context(
+                prepared.messages,
+                blocks,
+                turn,
+                tool_call_ids=[call["id"] for call in calls],
+            ),
+        )
     logger.info(
         f"Headless tool turn complete | task={request.task_id} | "
         f"turn={turn + 1} | tools={[call['name'] for call in calls]}"
@@ -360,6 +394,68 @@ def _assistant_tool_message(
             for call in calls
         ],
     }
+
+
+def _build_replay_context(
+    messages: list[dict[str, Any]],
+    blocks: list[dict[str, Any]],
+    turn_index: int,
+    *,
+    tool_call_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """构造模型可重放上下文；不把 token 级 DeliveryProgress 当 checkpoint。"""
+    return {
+        "messages": json.loads(
+            json.dumps(messages, ensure_ascii=False, default=str),
+        ),
+        "content_blocks": json.loads(
+            json.dumps(blocks, ensure_ascii=False, default=str),
+        ),
+        "turn_index": turn_index,
+        "tool_call_ids": list(tool_call_ids or []),
+    }
+
+
+def _inject_subtask_completions(
+    messages: list[dict[str, Any]],
+    completions: list[dict[str, Any]],
+) -> None:
+    """把安全点归约后的子任务结果注入下一次模型输入。
+
+    子任务不是模型 tool_call，因此使用受控 system 事件承载结果，
+    避免伪造未发生的 tool_call/tool_result 配对；消费列表由 Runtime
+    一次性清空，重复 Redis/控制事件不会重复注入。
+    """
+    for completion in completions:
+        result = json.dumps(
+            completion.get("result") or {},
+            ensure_ascii=False,
+            default=str,
+        )
+        status = completion.get("status") or "failed"
+        error_message = completion.get("error_message") or ""
+        suffix = f"；错误：{error_message}" if error_message else ""
+        messages.append({
+            "role": "system",
+            "content": (
+                "[子任务完成回传] "
+                f"child_task_id={completion.get('child_task_id')} "
+                f"status={status} result={result}{suffix}"
+            ),
+        })
+
+
+def _initial_replay_blocks(
+    replay_context: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if replay_context is None:
+        return []
+    raw_blocks = replay_context.get("content_blocks", [])
+    if not isinstance(raw_blocks, list) or not all(
+        isinstance(block, dict) for block in raw_blocks
+    ):
+        raise RuntimeError("ACTOR_REPLAY_CONTEXT_BLOCKS_INVALID")
+    return [dict(block) for block in raw_blocks]
 
 
 async def _consume_emit_payloads(

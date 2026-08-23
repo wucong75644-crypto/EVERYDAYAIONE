@@ -275,11 +275,11 @@ async def cancel_task_by_message_id(
         for field in ("placeholder_message_id", "assistant_message_id"):
             q = db.table("tasks").select(
                 "id, external_task_id, client_task_id, user_id, conversation_id, "
-                "org_id, request_params, delivery_context"
+                "org_id, request_params, delivery_context, status"
             ).eq(
                 field, message_id
             ).eq("user_id", ctx.user_id).in_(
-                "status", ["pending", "running"]
+                "status", ["pending", "running", "paused"]
             )
             if ctx.org_id:
                 q = q.eq("org_id", ctx.org_id)
@@ -290,16 +290,21 @@ async def cancel_task_by_message_id(
             if result.data:
                 from services.websocket_manager import ws_manager
                 from services.conversation_task import (
-                    cancel_actor_task,
+                    control_actor_task,
                     is_actor_task,
                 )
 
+                actor_tasks_present = False
                 for task in result.data:
                     actor_task = is_actor_task(task)
+                    actor_control_outcome = None
                     if actor_task:
-                        if not cancel_actor_task(
-                            db, task, ctx.user_id, ctx.org_id,
-                        ):
+                        actor_tasks_present = True
+                        control = control_actor_task(
+                            db, task, ctx.user_id, ctx.org_id, "cancel",
+                        )
+                        actor_control_outcome = control.get("outcome")
+                        if actor_control_outcome == "terminal":
                             continue
                     else:
                         db.table("tasks").update({
@@ -327,7 +332,8 @@ async def cancel_task_by_message_id(
 
                     # 直接 UPDATE 改 task 终态后，webhook/worker 都会因状态检查跳过 release，
                     # 必须由 cancel 路径主动释放 Redis 槽位（SREM 幂等，handler 再次释放也安全）
-                    await release_task_slot(task)
+                    if not actor_task or actor_control_outcome != "requested":
+                        await release_task_slot(task)
 
                     logger.info(
                         f"Task cancelled by user | task_id={task['id']} | "
@@ -340,8 +346,9 @@ async def cancel_task_by_message_id(
                 # 传 conversation_id 让 _anchor 在 message 不存在时（chat lazy 创建）
                 # 主动创建 stub。
                 # 详见 docs/document/TECH_用户中断与恢复机制.md §四.2
-                _conv_id = result.data[0].get("conversation_id") if result.data else None
-                _anchor_messages_immediately(db, message_id, conversation_id=_conv_id)
+                if not actor_tasks_present:
+                    _conv_id = result.data[0].get("conversation_id") if result.data else None
+                    _anchor_messages_immediately(db, message_id, conversation_id=_conv_id)
 
                 return {"success": True, "cancelled_count": len(result.data)}
 
@@ -361,6 +368,164 @@ async def cancel_task_by_message_id(
         raise AppException(
             code="CANCEL_TASK_BY_MESSAGE_ERROR",
             message="取消任务失败",
+            status_code=500,
+        )
+
+
+@router.post("/pause-by-message/{message_id}", summary="通过消息ID暂停关联任务")
+@limiter.limit("60/minute")
+async def pause_task_by_message_id(
+    request: Request,
+    ctx: OrgCtx,
+    db: ScopedDB,
+    message_id: str = Path(
+        ...,
+        regex=r"^[a-zA-Z0-9_-]{1,100}$",
+        description="消息ID（占位符消息或助手消息）",
+    ),
+) -> Dict[str, Any]:
+    """请求暂停 Actor 任务；运行中任务在安全点保存快照。"""
+    try:
+        from services.conversation_task import is_actor_task, pause_actor_task
+        from services.websocket_manager import ws_manager
+
+        for field in ("placeholder_message_id", "assistant_message_id"):
+            query = db.table("tasks").select(
+                "id, external_task_id, client_task_id, user_id, conversation_id, "
+                "org_id, delivery_context"
+            ).eq(field, message_id).eq(
+                "user_id", ctx.user_id,
+            ).in_("status", ["pending", "running"])
+            if ctx.org_id:
+                query = query.eq("org_id", ctx.org_id)
+            else:
+                query = query.is_("org_id", "null")
+            result = query.execute()
+            if not result.data:
+                continue
+
+            paused_count = 0
+            requested_count = 0
+            for task in result.data:
+                if not is_actor_task(task):
+                    continue
+                control = pause_actor_task(db, task, ctx.user_id, ctx.org_id)
+                outcome = control.get("outcome")
+                if outcome in {"paused", "already_paused"}:
+                    paused_count += 1
+                    await release_task_slot(task)
+                elif outcome == "requested":
+                    requested_count += 1
+
+                push_task_id = task.get("client_task_id") or task.get("external_task_id")
+                if push_task_id:
+                    # 立即关闭前端显示闸门，但不提前覆盖数据库快照。
+                    ws_manager.cancel_task(push_task_id, org_id=ctx.org_id)
+
+            return {
+                "success": True,
+                "paused_count": paused_count,
+                "requested_count": requested_count,
+            }
+
+        return {"success": True, "paused_count": 0, "requested_count": 0}
+    except (
+        ValidationError,
+        NotFoundError,
+        PermissionDeniedError,
+        AppException,
+    ):
+        raise
+    except Exception as e:
+        logger.error(
+            f"Pause task by message_id failed | message_id={message_id} | "
+            f"user_id={ctx.user_id} | error={str(e)}"
+        )
+        raise AppException(
+            code="PAUSE_TASK_BY_MESSAGE_ERROR",
+            message="暂停任务失败",
+            status_code=500,
+        )
+
+
+@router.post("/resume-by-message/{message_id}", summary="通过消息ID继续关联任务")
+@limiter.limit("60/minute")
+async def resume_task_by_message_id(
+    request: Request,
+    ctx: OrgCtx,
+    db: ScopedDB,
+    message_id: str = Path(
+        ...,
+        regex=r"^[a-zA-Z0-9_-]{1,100}$",
+        description="消息ID（助手消息）",
+    ),
+) -> Dict[str, Any]:
+    """从最近 ReplayCheckpoint 继续 paused Actor task。"""
+    try:
+        from services.conversation_task import is_actor_task, resume_actor_task
+        from services.conversation_worker import RedisConversationWakeup
+        from services.websocket_manager import ws_manager
+
+        query = db.table("tasks").select(
+            "id, external_task_id, client_task_id, user_id, conversation_id, "
+            "org_id, delivery_context, status"
+        ).eq("assistant_message_id", message_id).eq(
+            "user_id", ctx.user_id,
+        ).eq("status", "paused")
+        if ctx.org_id:
+            query = query.eq("org_id", ctx.org_id)
+        else:
+            query = query.is_("org_id", "null")
+        result = query.execute()
+        if not result.data:
+            return {"success": True, "resumed_count": 0}
+
+        resumed: list[dict[str, Any]] = []
+        for task in result.data:
+            if not is_actor_task(task):
+                continue
+            outcome = resume_actor_task(db, task, ctx.user_id, ctx.org_id)
+            if outcome.get("outcome") in {
+                "resumed", "already_pending", "enqueued", "already_enqueued",
+            }:
+                push_task_id = task.get("client_task_id") or task.get("external_task_id")
+                if push_task_id:
+                    await ws_manager.clear_cancelled_gate(
+                        str(push_task_id), org_id=ctx.org_id,
+                    )
+                await RedisConversationWakeup().publish(
+                    str(task["conversation_id"]), ctx.org_id,
+                )
+                resumed.append({**outcome, "status": "pending"})
+            elif outcome.get("outcome") in {
+                "busy", "checkpoint_missing", "terminal", "not_resumable",
+            }:
+                resumed.append(outcome)
+
+        return {
+            "success": True,
+            "resumed_count": sum(
+                1 for item in resumed if item.get("outcome") in {
+                    "resumed", "already_pending", "enqueued", "already_enqueued",
+                }
+            ),
+            "tasks": resumed,
+        }
+    except (
+        ValidationError,
+        NotFoundError,
+        PermissionDeniedError,
+        AppException,
+    ):
+        raise
+    except Exception as e:
+        logger.error(
+            f"Resume task by message_id failed | message_id={message_id} | "
+            f"user_id={ctx.user_id} | error={str(e)}"
+        )
+        raise AppException(
+            code="RESUME_TASK_BY_MESSAGE_ERROR",
+            message="继续任务失败",
             status_code=500,
         )
 

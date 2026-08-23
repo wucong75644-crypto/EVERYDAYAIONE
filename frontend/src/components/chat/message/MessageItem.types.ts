@@ -8,6 +8,8 @@ export interface MessageItemProps {
   isRegenerating?: boolean;
   /** 重新生成回调 */
   onRegenerate?: (messageId: string) => void;
+  /** 从 ReplayCheckpoint 继续暂停的 Actor 任务 */
+  onResume?: (messageId: string) => void;
   /** 删除回调 */
   onDelete?: (messageId: string) => void;
   /** 媒体加载完成回调（用于滚动调整） */

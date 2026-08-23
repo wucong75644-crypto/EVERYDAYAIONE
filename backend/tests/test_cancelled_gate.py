@@ -110,7 +110,6 @@ class TestCancelTaskIntegration:
     async def test_cancel_task_marks_gate(self, manager):
         manager.register_cancel_listener("task_A")
         manager.cancel_task("task_A", org_id="org_x")
-        await asyncio.sleep(0.05)
         assert manager.is_in_cancelled_gate("task_A", "org_x") is True
 
     @pytest.mark.asyncio
@@ -123,15 +122,19 @@ class TestCancelTaskIntegration:
     async def test_cancel_task_without_listener_still_marks_gate(self, manager):
         result = manager.cancel_task("task_NEVER", org_id="org_x")
         assert result is False
-        await asyncio.sleep(0.05)
         assert manager.is_in_cancelled_gate("task_NEVER", "org_x") is True
 
     @pytest.mark.asyncio
     async def test_cancel_task_default_org_backward_compat(self, manager):
         manager.register_cancel_listener("task_A")
         manager.cancel_task("task_A")
-        await asyncio.sleep(0.05)
         assert manager.is_in_cancelled_gate("task_A", org_id=None) is True
+
+    @pytest.mark.asyncio
+    async def test_clear_gate_reopens_delivery_for_resume(self, manager):
+        await manager.mark_cancelled_gate("task_A", "org_x")
+        await manager.clear_cancelled_gate("task_A", "org_x")
+        assert manager.is_in_cancelled_gate("task_A", "org_x") is False
 
 
 class TestSendDropsCancelled:

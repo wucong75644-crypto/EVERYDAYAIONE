@@ -142,3 +142,34 @@ export async function cancelTaskByMessageId(messageId: string): Promise<void> {
     method: 'POST',
   });
 }
+
+/** 请求暂停 Actor 任务；运行中任务由 Runtime 在安全点保存快照。 */
+export async function pauseTaskByMessageId(messageId: string): Promise<void> {
+  await request({
+    url: `/tasks/pause-by-message/${messageId}`,
+    method: 'POST',
+  });
+}
+
+export interface ResumeTaskResponse {
+  success: boolean;
+  resumed_count: number;
+  tasks?: Array<{
+    outcome?: string;
+    task_id?: string;
+    client_task_id?: string;
+    external_task_id?: string;
+    conversation_id?: string;
+    assistant_message_id?: string;
+  }>;
+}
+
+/** 从最近 ReplayCheckpoint 继续暂停的 Actor 任务。 */
+export async function resumeTaskByMessageId(
+  messageId: string,
+): Promise<ResumeTaskResponse> {
+  return request<ResumeTaskResponse>({
+    url: `/tasks/resume-by-message/${messageId}`,
+    method: 'POST',
+  });
+}

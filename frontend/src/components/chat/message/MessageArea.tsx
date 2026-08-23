@@ -14,7 +14,11 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import { StickToBottom, useStickToBottomContext } from 'use-stick-to-bottom';
 import { ArrowDown, MessageSquare } from 'lucide-react';
-import { deleteMessage, cancelTaskByMessageId } from '../../../services/message';
+import {
+  deleteMessage,
+  cancelTaskByMessageId,
+  resumeTaskByMessageId,
+} from '../../../services/message';
 import { useMessageStore, type Message, type ImageAsset, getTextContent, getImageAssets } from '../../../stores/useMessageStore';
 import MessageItem from './MessageItem';
 import EmptyState from '../layout/EmptyState';
@@ -25,6 +29,7 @@ import { useMessageLoader } from '../../../hooks/useMessageLoader';
 import { useRegenerateHandlers } from '../../../hooks/useRegenerateHandlers';
 import { useUnifiedMessages } from '../../../hooks/useUnifiedMessages';
 import { useTaskRestorationStore } from '../../../stores/useTaskRestorationStore';
+import { useWebSocketContext } from '../../../contexts/WebSocketContext';
 
 interface MessageAreaProps {
   conversationId: string | null;
@@ -198,6 +203,7 @@ export default function MessageArea({
 }: MessageAreaProps) {
   // 使用消息加载 Hook（负责从后端加载并写入缓存）
   const { loading, hasMore, loadMessages, loadMore, loadingMore } = useMessageLoader({ conversationId });
+  const { subscribeTaskWithMapping } = useWebSocketContext();
 
   // Phase 1 占位符是否就绪（刷新后需要等 pending tasks API 返回才能渲染）
   const placeholdersReady = useTaskRestorationStore((s) => s.placeholdersReady);
@@ -384,6 +390,27 @@ export default function MessageArea({
     await doRegenerateSingle(pair.target, imageIndex, pair.user);
   }, [conversationId, findMessagePair, doRegenerateSingle]);
 
+  const handleResume = useCallback(async (messageId: string) => {
+    if (!conversationId) return;
+    try {
+      const response = await resumeTaskByMessageId(messageId);
+      const task = response.tasks?.find(
+        (item) => item.outcome === 'resumed' || item.outcome === 'already_pending',
+      );
+      const taskId = task?.client_task_id || task?.external_task_id;
+      if (!taskId) {
+        toast.error('该任务没有可用的恢复快照');
+        return;
+      }
+      const store = useMessageStore.getState();
+      store.registerStreamingId(conversationId, messageId);
+      subscribeTaskWithMapping(taskId, conversationId);
+    } catch (error) {
+      logger.error('messageArea', '继续任务失败', error);
+      toast.error('继续任务失败，请稍后重试');
+    }
+  }, [conversationId, subscribeTaskWithMapping]);
+
   // 空状态
   if (!conversationId && mergedMessages.length === 0) {
     return <EmptyState hasConversation={false} />;
@@ -437,6 +464,11 @@ export default function MessageArea({
 
               return mergedMessages.map((message) => {
                 const isMessageStreaming = message.status === 'streaming';
+                const isPausedMessage = message.status === 'interrupted'
+                  && message.content.some(
+                    (part) => part.type === 'interrupt_marker'
+                      && part.reason === 'user_pause',
+                  );
                 const imageIndex = getImageIndex(message);
                 const isLastAi = message.id === lastCompletedAiId;
 
@@ -448,6 +480,7 @@ export default function MessageArea({
                     agentStepHint={isMessageStreaming ? agentStepHint : undefined}
                     streamingThinking={isMessageStreaming ? streamingThinking : undefined}
                     onRegenerate={handleRegenerate}
+                    onResume={isPausedMessage ? handleResume : undefined}
                     onDelete={handleDelete}
                     onMediaLoaded={handleMediaLoaded}
                     allImageAssets={allImageAssets}

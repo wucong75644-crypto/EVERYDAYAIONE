@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import { cancelTaskByMessageId } from '../../../services/message';
+import { cancelTaskByMessageId, pauseTaskByMessageId } from '../../../services/message';
 import { useMessageStore } from '../../../stores/useMessageStore';
 import { logger } from '../../../utils/logger';
 
@@ -14,7 +14,7 @@ export function useInputTaskControls({
   isStreaming,
   streamingMessageId,
 }: UseInputTaskControlsOptions) {
-  const handleStop = useCallback(() => {
+  const updateLocalInterruptedMessage = useCallback((reason: 'user_cancel' | 'user_pause') => {
     if (!streamingMessageId || !conversationId) return;
 
     const store = useMessageStore.getState();
@@ -50,7 +50,7 @@ export function useInputTaskControls({
       content.push({
         type: 'interrupt_marker',
         interrupted_at: cancelledAt,
-        reason: 'user_cancel',
+        reason,
       });
       store.updateMessage(streamingMessageId, {
         status: 'interrupted',
@@ -61,10 +61,23 @@ export function useInputTaskControls({
     }
 
     store.completeStreaming(conversationId);
+  }, [streamingMessageId, conversationId]);
+
+  const handleStop = useCallback(() => {
+    if (!streamingMessageId || !conversationId) return;
+    updateLocalInterruptedMessage('user_cancel');
     cancelTaskByMessageId(streamingMessageId).catch(error => {
       logger.error('inputArea', '取消任务失败', error);
     });
-  }, [streamingMessageId, conversationId]);
+  }, [streamingMessageId, conversationId, updateLocalInterruptedMessage]);
+
+  const handlePause = useCallback(() => {
+    if (!streamingMessageId || !conversationId) return;
+    updateLocalInterruptedMessage('user_pause');
+    pauseTaskByMessageId(streamingMessageId).catch(error => {
+      logger.error('inputArea', '暂停任务失败', error);
+    });
+  }, [streamingMessageId, conversationId, updateLocalInterruptedMessage]);
 
   useEffect(() => {
     if (!isStreaming) return;
@@ -90,5 +103,5 @@ export function useInputTaskControls({
     logger.info('inputArea', '发送打断信号', { taskId, msgLen: message.length });
   }, [streamingMessageId, conversationId]);
 
-  return { handleStop, sendSteer };
+  return { handleStop, handlePause, sendSteer };
 }

@@ -49,6 +49,10 @@ class ConversationService:
                 "credits_consumed": 0,
                 "org_id": org_id,
                 "source": source,
+                # conversations.scope_id is required for user-scoped
+                # conversations by the WeCom channel compatibility schema.
+                "scope_type": "user",
+                "scope_id": user_id,
             }
 
             if model_id:

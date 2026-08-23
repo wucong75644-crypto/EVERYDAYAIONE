@@ -47,7 +47,10 @@ class CancelManager:
         Returns:
             True = 找到运行中的任务并 set 了 Event
         """
-        asyncio.create_task(self.mark_gate(task_id, org_id))
+        # 闸门必须在同步入口立即生效。若把 mark_gate 仅作为后台 task，
+        # 取消请求返回到旧 runtime 推送之间会存在一个事件循环窗口，
+        # 旧 chunk 可能先被本地或 Redis 发布出去。
+        self._set_gate(task_id, org_id)
 
         event = self._signals.get(task_id)
         if event:
@@ -60,18 +63,25 @@ class CancelManager:
         )
         return False
 
-    async def mark_gate(
-        self, task_id: str, org_id: str | None = None,
-    ) -> None:
-        """标记任务已取消，TTL 内 WS 推送一律 drop。"""
+    def _set_gate(self, task_id: str, org_id: str | None = None) -> None:
+        """在当前事件循环中立即写入闸门。
+
+        `_gates` 只由同一 Worker 的事件循环访问；异步批量清理仍通过
+        `_gates_lock` 保护。取消入口不能等待异步锁，否则会重新引入竞态。
+        """
         key = (org_id or "", task_id)
-        expire_at = time.time() + CANCELLED_GATE_TTL
-        async with self._gates_lock:
-            self._gates[key] = expire_at
+        self._gates[key] = time.time() + CANCELLED_GATE_TTL
         logger.info(
             f"Cancelled gate set | task={task_id} | org={org_id} | "
             f"expires_in={CANCELLED_GATE_TTL}s"
         )
+
+    async def mark_gate(
+        self, task_id: str, org_id: str | None = None,
+    ) -> None:
+        """标记任务已取消，TTL 内 WS 推送一律 drop。"""
+        async with self._gates_lock:
+            self._set_gate(task_id, org_id)
 
     def is_in_gate(
         self, task_id: str, org_id: str | None = None,
@@ -110,3 +120,11 @@ class CancelManager:
         if expired:
             logger.debug(f"Cancelled gates cleaned | count={len(expired)}")
         return len(expired)
+
+    async def clear_gate(
+        self, task_id: str, org_id: str | None = None,
+    ) -> None:
+        """为同一 task 的合法 RESUME 打开新的 WS 投递窗口。"""
+        key = (org_id or "", task_id)
+        async with self._gates_lock:
+            self._gates.pop(key, None)

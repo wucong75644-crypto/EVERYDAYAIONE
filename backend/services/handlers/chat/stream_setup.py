@@ -34,21 +34,32 @@ async def prepare_chat_stream(
     needs_google_search: bool,
     params: dict[str, Any],
     context_anchor: Any,
+    replay_context: dict[str, Any] | None = None,
 ) -> PreparedChatStream:
     """准备一次固定上下文的 Chat 流执行，不读取或写入任务终态。"""
     started_at = time.monotonic()
     text_content = handler._extract_text_content(content)
     permission_mode = _normalize_permission_mode(permission_mode)
-    messages = await handler._build_llm_messages(
-        content,
-        user_id,
-        conversation_id,
-        text_content,
-        prefetched_summary=params.get("_prefetched_summary"),
-        user_location=params.get("_user_location"),
-        permission_mode=permission_mode,
-        context_anchor=context_anchor,
-    )
+    if replay_context is not None:
+        raw_messages = replay_context.get("messages")
+        if not isinstance(raw_messages, list) or not all(
+            isinstance(message, dict) for message in raw_messages
+        ):
+            raise RuntimeError("ACTOR_REPLAY_CONTEXT_INVALID")
+        # ReplayCheckpoint 已经冻结了完整模型上下文；继续时不能再次从
+        # interrupted history 读取，否则会把旧 partial 当成新的上下文。
+        messages = [dict(message) for message in raw_messages]
+    else:
+        messages = await handler._build_llm_messages(
+            content,
+            user_id,
+            conversation_id,
+            text_content,
+            prefetched_summary=params.get("_prefetched_summary"),
+            user_location=params.get("_user_location"),
+            permission_mode=permission_mode,
+            context_anchor=context_anchor,
+        )
     context_ready_at = time.monotonic()
     logger.info(
         f"Pre-stream timing | task={task_id} | memory=0ms | "

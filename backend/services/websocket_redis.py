@@ -30,6 +30,12 @@ class RedisPubSubMixin:
     _listener_task: Optional[asyncio.Task]
     _redis_available: bool
 
+    def is_in_cancelled_gate(
+        self, task_id: str, org_id: str | None = None,
+    ) -> bool:
+        """由 WebSocketManager 提供的本地取消闸门查询。"""
+        raise NotImplementedError
+
     def _init_redis_state(self) -> None:
         """初始化 Redis 相关状态（由主类 __init__ 调用）"""
         self._pubsub = None
@@ -201,6 +207,20 @@ class RedisPubSubMixin:
         if not message:
             return
 
+        # Redis 是跨进程 at-least-once 投递，消息可能在取消前已发布、
+        # 取消后才抵达本 Worker。入站必须再次过闸门，不能只依赖发布端。
+        task_id = data.get("task_id")
+        if task_id is None and target_type == "task":
+            task_id = target_id
+        if task_id and self.is_in_cancelled_gate(
+            str(task_id), data.get("org_id")
+        ):
+            logger.debug(
+                f"Drop cancelled Redis task message | task={task_id} | "
+                f"type={message.get('type')}"
+            )
+            return
+
         if target_type == "task":
             subscribers = self._task_subscribers.get(target_id, set())
             for conn_id in list(subscribers):
@@ -230,6 +250,7 @@ class RedisPubSubMixin:
         target_id: str,
         message: Dict[str, Any],
         org_id: str | None = None,
+        task_id: str | None = None,
     ) -> None:
         """发布消息到 Redis Channel，供其他 Worker 接收。
 
@@ -247,6 +268,8 @@ class RedisPubSubMixin:
             }
             if org_id is not None:
                 data["org_id"] = org_id
+            if task_id is not None:
+                data["task_id"] = task_id
             payload = json.dumps(data, ensure_ascii=False)
             await client.publish(WS_CHANNEL, payload)
         except Exception as e:

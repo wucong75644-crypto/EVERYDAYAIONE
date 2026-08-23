@@ -101,7 +101,7 @@ class ActorWebSink:
         await self._persist()
 
     async def flush(self) -> None:
-        await self._persist()
+        await self.flush_progress()
         await self._send(
             build_stream_end(
                 task_id=self._delivery.push_task_id,
@@ -109,6 +109,22 @@ class ActorWebSink:
                 message_id=self._delivery.message_id,
             )
         )
+
+    async def flush_progress(self) -> None:
+        """在安全点前刷入最新进度，不发送 stream_end。"""
+        await self._persist()
+
+    def seed_progress(
+        self,
+        accumulated_content: str | None,
+        accumulated_blocks: list[dict[str, Any]] | None,
+    ) -> None:
+        """RESUME 时把 checkpoint 前已确认的 delivery 进度带入新 attempt。"""
+        self._text = accumulated_content or ""
+        self._blocks = [
+            dict(block) for block in (accumulated_blocks or [])
+            if isinstance(block, dict)
+        ]
 
     async def _persist(self) -> None:
         self._chunks_since_persist = 0

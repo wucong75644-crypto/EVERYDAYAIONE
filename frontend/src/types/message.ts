@@ -120,7 +120,7 @@ export interface ToolStepPart {
 export interface InterruptMarkerPart {
   type: 'interrupt_marker';
   interrupted_at: string;
-  reason: 'user_cancel' | 'system_timeout' | 'network_error';
+  reason: 'user_cancel' | 'user_pause' | 'system_timeout' | 'network_error';
 }
 
 /** 表单内容块（聊天内嵌表单，如定时任务创建/修改） */

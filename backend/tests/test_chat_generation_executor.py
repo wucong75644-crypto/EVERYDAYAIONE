@@ -50,6 +50,21 @@ class _DB:
         return _Query(self.rows[name])
 
 
+class _ReplayCheckpointStore:
+    def __init__(self):
+        self.calls = []
+        self.read_calls = []
+        self.read_result = {"outcome": "not_found"}
+
+    async def write(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"outcome": "written"}
+
+    async def read_latest(self, **kwargs):
+        self.read_calls.append(kwargs)
+        return self.read_result
+
+
 def _claim() -> GenerationClaim:
     return GenerationClaim(
         task_id="task-1",
@@ -239,6 +254,140 @@ async def test_executor_injects_task_scoped_sink(monkeypatch):
     await executor.execute(_task(), _claim(), asyncio.Event())
 
     assert captured["sink"] is sink
+
+
+@pytest.mark.asyncio
+async def test_executor_writes_before_commit_replay_checkpoint(monkeypatch):
+    row = {
+        "id": "input-1",
+        "conversation_id": "conv-1",
+        "turn_id": "turn-1",
+        "role": "user",
+        "content": [{"type": "text", "text": "test"}],
+    }
+    store = _ReplayCheckpointStore()
+
+    async def fake_execute_chat(**_kwargs):
+        return ChatExecutionResult(
+            parts=[TextPart(text="完成")],
+            content_blocks=[{"type": "text", "text": "完成"}],
+            usage={},
+            credits_cost=0,
+            tool_digest=None,
+            replay_context={
+                "messages": [{"role": "assistant", "content": "完成"}],
+                "content_blocks": [{"type": "text", "text": "完成"}],
+                "turn_index": 1,
+                "tool_call_ids": [],
+            },
+        )
+
+    monkeypatch.setattr(
+        "services.handlers.chat.executor.execute_chat",
+        fake_execute_chat,
+    )
+    executor = ChatGenerationExecutor(
+        _DB(row),
+        lambda _db: SimpleNamespace(org_id=None),
+        handler_db_factory=lambda: object(),
+        replay_checkpoint_store=store,
+    )
+
+    await executor.execute(_task(), _claim(), asyncio.Event())
+
+    assert len(store.calls) == 1
+    assert store.calls[0]["boundary"].value == "before_commit"
+    assert store.calls[0]["execution_token"] == "token-1"
+    assert store.calls[0]["payload"]["turn_index"] == 1
+
+
+@pytest.mark.asyncio
+async def test_executor_consumes_latest_replay_context(monkeypatch):
+    row = {
+        "id": "input-1",
+        "conversation_id": "conv-1",
+        "turn_id": "turn-1",
+        "role": "user",
+        "content": [{"type": "text", "text": "test"}],
+    }
+    store = _ReplayCheckpointStore()
+    store.read_result = {
+        "outcome": "found",
+        "boundary": "after_tool",
+        "payload": {
+            "messages": [{"role": "user", "content": "冻结上下文"}],
+            "content_blocks": [{"type": "tool_step", "tool_name": "search"}],
+            "turn_index": 1,
+            "tool_call_ids": ["actor-call:turn-1:0:abc"],
+        },
+    }
+    captured = {}
+
+    async def fake_execute_chat(**kwargs):
+        captured["request"] = kwargs["request"]
+        return ChatExecutionResult(
+            parts=[TextPart(text="继续完成")],
+            content_blocks=[{"type": "text", "text": "继续完成"}],
+            usage={},
+            credits_cost=0,
+            tool_digest=None,
+        )
+
+    monkeypatch.setattr(
+        "services.handlers.chat.executor.execute_chat",
+        fake_execute_chat,
+    )
+    executor = ChatGenerationExecutor(
+        _DB(row),
+        lambda _db: SimpleNamespace(org_id=None),
+        handler_db_factory=lambda: object(),
+        replay_checkpoint_store=store,
+    )
+
+    await executor.execute(_task(), _claim(), asyncio.Event())
+
+    assert store.read_calls[0]["task_id"] == "task-1"
+    assert captured["request"].replay_context["messages"][0]["content"] == "冻结上下文"
+
+
+@pytest.mark.asyncio
+async def test_executor_reuses_commit_ready_checkpoint_without_model_call(monkeypatch):
+    row = {
+        "id": "input-1",
+        "conversation_id": "conv-1",
+        "turn_id": "turn-1",
+        "role": "user",
+        "content": [{"type": "text", "text": "test"}],
+    }
+    store = _ReplayCheckpointStore()
+    store.read_result = {
+        "outcome": "found",
+        "boundary": "before_commit",
+        "payload": {
+            "checkpoint_kind": "commit_ready",
+            "result_content": [{"type": "text", "text": "已完成"}],
+            "usage": {"completion_tokens": 3},
+            "credits_cost": 2,
+            "tool_digest": None,
+        },
+    }
+    execute_chat = AsyncMock()
+    monkeypatch.setattr(
+        "services.handlers.chat.executor.execute_chat",
+        execute_chat,
+    )
+    executor = ChatGenerationExecutor(
+        _DB(row),
+        lambda _db: SimpleNamespace(org_id=None),
+        handler_db_factory=lambda: object(),
+        replay_checkpoint_store=store,
+    )
+
+    outcome = await executor.execute(_task(), _claim(), asyncio.Event())
+
+    assert outcome.result_content == [{"type": "text", "text": "已完成"}]
+    assert outcome.credits_cost == 2
+    execute_chat.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -77,6 +77,7 @@ function createMockStore(): MessageStoreActions {
     markConversationCompleted: vi.fn(),
     setIsSending: vi.fn(),
     getMessage: vi.fn(),
+    getStreamingMessageId: vi.fn().mockReturnValue('msg_1'),
     setStreamingContent: vi.fn(),
     restoreStreamingBlocks: vi.fn(),
     replaceLastTextBlock: vi.fn(),
@@ -289,6 +290,18 @@ describe('wsMessageHandlers', () => {
   // ========================================
   // 5. message_done
   // ========================================
+
+  describe('stream_end', () => {
+    it('does not mark message completed before message_done', () => {
+      handlers.stream_end({
+        message_id: 'msg_1',
+        conversation_id: 'conv_1',
+      });
+
+      expect(store.setStatus).not.toHaveBeenCalledWith('msg_1', 'completed');
+      expect(store.completeStreaming).not.toHaveBeenCalledWith('conv_1');
+    });
+  });
 
   describe('message_done', () => {
     it('should complete task with message data', () => {

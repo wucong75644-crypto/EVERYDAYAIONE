@@ -114,6 +114,7 @@ function createMockMessageStore() {
     markConversationCompleted: vi.fn(),
     setIsSending: vi.fn(),
     getMessage: vi.fn(),
+    getStreamingMessageId: vi.fn().mockReturnValue('msg_123'),
     setStreamingContent: vi.fn(),
     addMessage: vi.fn(),
   };

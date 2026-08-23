@@ -30,6 +30,7 @@ interface MessageActionsProps {
   visible: boolean;
   /** 重新生成回调 */
   onRegenerate?: (messageId: string) => void;
+  onResume?: (messageId: string) => void;
   /** 原始 Markdown 内容（用于表格导出检测） */
   markdownContent?: string;
   /** 删除回调（打开确认弹框） */
@@ -50,6 +51,7 @@ export default function MessageActions({
   visible,
   markdownContent,
   onRegenerate,
+  onResume,
   onDeleteClick,
   onMouseEnter,
   onMouseLeave,
@@ -204,6 +206,20 @@ export default function MessageActions({
             </svg>
           </button>
         </>
+      )}
+
+      {/* 重新生成/重试按钮（所有 AI 消息显示，生成中禁用） */}
+      {!isUser && onResume && (
+        <button
+          onClick={() => onResume(messageId)}
+          disabled={isRegenerating || isGenerating}
+          className="p-1.5 text-text-tertiary hover:text-accent hover:bg-hover rounded-lg transition-base disabled:opacity-50 disabled:cursor-not-allowed"
+          title="继续"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5v14l11-7L8 5z" />
+          </svg>
+        </button>
       )}
 
       {/* 重新生成/重试按钮（所有 AI 消息显示，生成中禁用） */}

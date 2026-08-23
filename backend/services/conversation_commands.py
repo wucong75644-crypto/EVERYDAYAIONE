@@ -13,6 +13,8 @@ class CommandType(str, Enum):
 
     USER_TURN = "user_turn"
     CANCEL = "cancel"
+    PAUSE = "pause"
+    RESUME = "resume"
     TOOL_COMPLETED = "tool_completed"
     APPROVAL_RESULT = "approval_result"
     SUBTASK_COMPLETED = "subtask_completed"
@@ -36,6 +38,8 @@ class SafePoint(str, Enum):
 _COMMAND_PRIORITY: dict[CommandType, int] = {
     CommandType.LEASE_LOST: 0,
     CommandType.CANCEL: 1,
+    CommandType.PAUSE: 1,
+    CommandType.RESUME: 1,
     CommandType.SHUTDOWN: 1,
     CommandType.APPROVAL_RESULT: 2,
     CommandType.SUBTASK_COMPLETED: 2,

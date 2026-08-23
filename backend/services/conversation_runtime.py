@@ -13,6 +13,7 @@ from services.conversation_subtasks import DatabaseConversationSubtaskStore
 from services.conversation_worker import ConversationWorker, RedisConversationWakeup
 from services.handlers.chat.actor_sink import ActorDelivery, ActorWebSink
 from services.handlers.chat.executor import ChatGenerationExecutor, _normalize_model_id
+from services.replay_checkpoint_store import DatabaseReplayCheckpointStore
 
 
 class ConversationActorRuntime:
@@ -34,6 +35,7 @@ class ConversationActorRuntime:
             sink_factory=self._create_sink,
             command_store=DatabaseConversationCommandStore(db),
             subtask_store=DatabaseConversationSubtaskStore(db),
+            replay_checkpoint_store=DatabaseReplayCheckpointStore(db),
         )
         execution = ConversationExecutionService(
             db,

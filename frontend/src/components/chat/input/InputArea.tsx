@@ -215,7 +215,7 @@ export default function InputArea({
     conversationId ? s.streamingMessages.get(conversationId) ?? null : null
   );
 
-  const { handleStop, sendSteer } = useInputTaskControls({
+  const { handleStop, handlePause, sendSteer } = useInputTaskControls({
     conversationId,
     isStreaming,
     streamingMessageId,
@@ -412,6 +412,7 @@ export default function InputArea({
           hasQuotedImage={hasQuotedImage}
           isStreaming={isStreaming}
           onStop={handleStop}
+          onPause={handlePause}
           effectiveModelType={effectiveModelType}
           smartSubMode={isSmart ? smartSubMode : undefined}
           onSmartSubModeChange={isSmart ? setSmartSubMode : undefined}

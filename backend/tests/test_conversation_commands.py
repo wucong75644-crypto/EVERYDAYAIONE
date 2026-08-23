@@ -86,6 +86,96 @@ async def test_runtime_only_stops_cancel_at_safe_point():
 
 
 @pytest.mark.asyncio
+async def test_runtime_pauses_at_safe_point_after_flushing_checkpoint():
+    flushed = []
+
+    async def checkpoint():
+        flushed.append(True)
+
+    runtime = ConversationTurnRuntime(
+        conversation_id="conversation-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        cancellation_event=asyncio.Event(),
+        checkpoint_callback=checkpoint,
+    )
+    runtime.push(_command("pause", CommandType.PAUSE))
+
+    with pytest.raises(Exception) as error:
+        await runtime.safe_point(SafePoint.AFTER_MODEL)
+
+    assert error.type.__name__ == "ConversationPauseRequested"
+    assert runtime.state is ConversationState.PAUSING
+    assert flushed == [True]
+
+
+@pytest.mark.asyncio
+async def test_runtime_writes_replay_checkpoint_only_at_replay_boundaries():
+    checkpoints = []
+
+    async def replay(point, payload):
+        checkpoints.append((point, payload))
+        return {"outcome": "written"}
+
+    runtime = ConversationTurnRuntime(
+        conversation_id="conversation-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        cancellation_event=asyncio.Event(),
+        replay_checkpoint_callback=replay,
+    )
+
+    await runtime.safe_point(
+        SafePoint.BEFORE_MODEL,
+        replay_payload={"messages": []},
+    )
+    await runtime.safe_point(
+        SafePoint.MODEL_CHUNK,
+        replay_payload={"messages": ["must not write per token"]},
+    )
+    await runtime.safe_point(
+        SafePoint.AFTER_TOOL,
+        replay_payload={"messages": [{"role": "tool"}]},
+    )
+
+    assert [point for point, _payload in checkpoints] == [
+        SafePoint.BEFORE_MODEL,
+        SafePoint.AFTER_TOOL,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_pause_replay_checkpoint_precedes_delivery_progress_flush():
+    order = []
+
+    async def replay(_point, _payload):
+        order.append("replay")
+        return {"outcome": "written"}
+
+    async def delivery_progress():
+        order.append("delivery")
+
+    runtime = ConversationTurnRuntime(
+        conversation_id="conversation-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        cancellation_event=asyncio.Event(),
+        checkpoint_callback=delivery_progress,
+        replay_checkpoint_callback=replay,
+    )
+    runtime.push(_command("pause-before-tool", CommandType.PAUSE))
+
+    with pytest.raises(Exception) as error:
+        await runtime.safe_point(
+            SafePoint.AFTER_TOOL,
+            replay_payload={"messages": [{"role": "tool"}]},
+        )
+
+    assert error.type.__name__ == "ConversationPauseRequested"
+    assert order == ["replay", "delivery"]
+
+
+@pytest.mark.asyncio
 async def test_runtime_scope_checks_commands():
     runtime = ConversationTurnRuntime(
         conversation_id="conversation-1",
@@ -151,6 +241,11 @@ async def test_runtime_loads_and_acknowledges_durable_command():
         command_type=CommandType.SUBTASK_COMPLETED,
         conversation_id="conversation-1",
         task_id="task-1",
+        payload={
+            "child_task_id": "child-1",
+            "status": "completed",
+            "result": {},
+        },
     )
     store = _Store(command)
     runtime: ConversationTurnRuntime = ConversationTurnRuntime(

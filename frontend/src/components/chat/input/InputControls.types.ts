@@ -75,6 +75,7 @@ export interface InputControlsProps {
   hasQuotedImage?: boolean;
   isStreaming?: boolean;
   onStop?: () => void;
+  onPause?: () => void;
   effectiveModelType?: 'chat' | 'image' | 'video';
   smartSubMode?: string;
   onSmartSubModeChange?: (mode: string) => void;

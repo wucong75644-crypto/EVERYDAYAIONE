@@ -14,6 +14,7 @@ from services.conversation_execution import (
     GenerationClaim,
     GenerationOutcome,
 )
+from services.conversation_state import ConversationPauseRequested
 
 
 def _claimed(mode: str = "serial") -> dict[str, Any]:
@@ -96,6 +97,11 @@ class _SuccessExecutor:
 class _FailingExecutor:
     async def execute(self, task, claim, cancellation_event) -> GenerationOutcome:
         raise ValueError("provider failed")
+
+
+class _PausingExecutor:
+    async def execute(self, task, claim, cancellation_event) -> GenerationOutcome:
+        raise ConversationPauseRequested
 
 
 class _BlockingExecutor:
@@ -241,6 +247,23 @@ async def test_executor_failure_uses_atomic_fail_rpc() -> None:
     assert result == {"outcome": "failed"}
     failure = next(call for call in db.calls if call[0] == "fail_generation_turn")
     assert failure[1]["p_error_code"] == "VALUEERROR"
+    assert not any(name == "commit_generation_turn" for name, _ in db.calls)
+
+
+@pytest.mark.asyncio
+async def test_pause_at_safe_point_uses_control_rpc_without_commit() -> None:
+    db = _FakeDB()
+    db.queue("pause_generation_turn_owned", {"outcome": "paused", "snapshot_saved": True})
+    service = ConversationExecutionService(db, _PausingExecutor())
+
+    result = await service.execute_claim(
+        GenerationClaim.from_rpc(_claimed(), "conv-1", "serial")
+    )
+
+    assert result["outcome"] == "paused"
+    control = next(call for call in db.calls if call[0] == "pause_generation_turn_owned")
+    assert control[1]["p_execution_token"] == "token-1"
+    assert control[1]["p_reason"] == "user_paused"
     assert not any(name == "commit_generation_turn" for name, _ in db.calls)
 
 

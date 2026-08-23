@@ -93,5 +93,6 @@ class TestSendToUserOrgFilter:
             "task-1", "user1", {"type": "message_chunk"}, org_id=ORG_A,
         )
         self.manager._publish.assert_called_once_with(
-            "user", "user1", {"type": "message_chunk"}, org_id=ORG_A,
+            "user", "user1", {"type": "message_chunk"},
+            org_id=ORG_A, task_id="task-1",
         )

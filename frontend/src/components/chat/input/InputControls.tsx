@@ -7,7 +7,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { m } from 'framer-motion';
-import { Send, Square, Settings, Upload, Brain, Paperclip, FolderOpen, ChevronUp, Zap, ShieldCheck, ListChecks } from 'lucide-react';
+import { Send, Square, Pause, Settings, Upload, Brain, Paperclip, FolderOpen, ChevronUp, Zap, ShieldCheck, ListChecks } from 'lucide-react';
 import { Popover, PopoverClose } from '../../primitives/Popover';
 import { cn } from '../../../utils/cn';
 import { SOFT_SPRING } from '../../../utils/motion';
@@ -39,7 +39,7 @@ export default function InputControls(props: InputControlsProps) {
     attachments, onRemoveAttachment, onOpenWorkspace, onUnifiedFiles, workspaceOpen = false,
     recordingState, audioBlob, audioDuration, onStartRecording, onStopRecording, onClearRecording,
     requiresImageUpload = false, sendError, hasQuotedImage = false,
-    isStreaming = false, onStop,
+    isStreaming = false, onStop, onPause,
     effectiveModelType = selectedModel.type, smartSubMode, onSmartSubModeChange,
     mentionDropdownVisible = false, mentionResults = [], mentionActiveIndex = 0,
     mentionLoading = false, onMentionSelect, onMentionHover, onMentionInputChange,
@@ -388,13 +388,26 @@ export default function InputControls(props: InputControlsProps) {
 
             {/* 停止按钮（生成中显示，替换所有其他按钮） */}
             {isStreaming && onStop ? (
-              <button
-                onClick={onStop}
-                className="p-2.5 rounded-full bg-error text-text-on-accent hover:bg-error/90 shadow-md hover:shadow-lg transition-all"
-                title="停止生成"
-              >
-                <Square className="w-4 h-4 fill-current" />
-              </button>
+              <div className="flex items-center gap-1">
+                {onPause && (
+                  <button
+                    onClick={onPause}
+                    className="p-2.5 rounded-full bg-warning text-text-on-accent hover:bg-warning/90 shadow-md hover:shadow-lg transition-all"
+                    title="暂停并保存进度"
+                    aria-label="暂停并保存进度"
+                  >
+                    <Pause className="w-4 h-4 fill-current" />
+                  </button>
+                )}
+                <button
+                  onClick={onStop}
+                  className="p-2.5 rounded-full bg-error text-text-on-accent hover:bg-error/90 shadow-md hover:shadow-lg transition-all"
+                  title="停止生成"
+                  aria-label="停止生成"
+                >
+                  <Square className="w-4 h-4 fill-current" />
+                </button>
+              </div>
             ) : showSendButton ? (
               <m.button
                 onClick={onSubmit}

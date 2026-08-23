@@ -30,10 +30,10 @@ class ActorTerminalDelivery:
             return
         current = await self._load_task(str(task["id"]))
         status = current.get("status")
-        if status not in {"completed", "failed", "cancelled"}:
+        if status not in {"completed", "failed", "cancelled", "paused"}:
             return
         await release_task_slot(current)
-        if status == "cancelled":
+        if status in {"cancelled", "paused"}:
             return
         if status == "completed":
             await self._send_completed(current)

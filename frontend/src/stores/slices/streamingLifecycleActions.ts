@@ -43,7 +43,20 @@ export function createStreamingLifecycleActions(
       set((state) => {
         const streamingMessages = new Map(state.streamingMessages);
         streamingMessages.set(conversationId, messageId);
-        return { streamingMessages, isSending: true };
+        const optimisticMessages = new Map(state.optimisticMessages);
+        const list = optimisticMessages.get(conversationId) || [];
+        if (!list.some((message) => message.id === messageId)) {
+          const existing = state.messages[conversationId]?.find(
+            (message) => message.id === messageId,
+          );
+          if (existing) {
+            optimisticMessages.set(conversationId, [
+              ...list,
+              { ...existing, status: 'streaming' },
+            ]);
+          }
+        }
+        return { streamingMessages, optimisticMessages, isSending: true };
       });
     },
     completeStreaming: (conversationId) => {
@@ -63,11 +76,32 @@ export function createStreamingLifecycleActions(
       set((state) => {
         const streamingMessages = new Map(state.streamingMessages);
         const streamingId = streamingMessages.get(conversationId);
-        streamingMessages.delete(conversationId);
+        const ownsStreamingSlot = streamingId === message.id;
+        if (ownsStreamingSlot) {
+          streamingMessages.delete(conversationId);
+        }
         const optimisticMessages = new Map(state.optimisticMessages);
         const list = optimisticMessages.get(conversationId) || [];
-        const filtered = list.filter((item) => item.id !== streamingId);
-        optimisticMessages.set(conversationId, [...filtered, normalizeMessage(message)]);
+        const targetIndex = list.findIndex((item) => item.id === message.id);
+        const normalized = normalizeMessage(message);
+        if (targetIndex === -1) {
+          optimisticMessages.set(conversationId, [...list, normalized]);
+        } else {
+          const originalCreatedAt = list[targetIndex].created_at;
+          optimisticMessages.set(
+            conversationId,
+            list
+              .map((item, index) => (
+                index === targetIndex
+                  ? { ...normalized, created_at: originalCreatedAt }
+                  : item
+              ))
+              .filter((item, index) => item.id !== message.id || index === targetIndex),
+          );
+        }
+        if (!ownsStreamingSlot) {
+          return { optimisticMessages };
+        }
         const streamingThinking = new Map(state.streamingThinking);
         streamingThinking.delete(conversationId);
         const agentStepHint = new Map(state.agentStepHint);

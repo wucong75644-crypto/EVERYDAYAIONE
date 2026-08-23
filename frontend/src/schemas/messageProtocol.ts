@@ -192,7 +192,7 @@ const contentPartSchema = z.preprocess(normalizeNullEquivalentFields, z.discrimi
   z.object({
     type: z.literal('interrupt_marker'),
     interrupted_at: z.string(),
-    reason: z.enum(['user_cancel', 'system_timeout', 'network_error']),
+    reason: z.enum(['user_cancel', 'user_pause', 'system_timeout', 'network_error']),
   }).passthrough(),
 ]));
 

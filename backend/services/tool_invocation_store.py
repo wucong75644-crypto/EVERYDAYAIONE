@@ -10,6 +10,17 @@ from psycopg.types.json import Jsonb
 
 
 class ToolInvocationStore(Protocol):
+    def mark_stale(
+        self,
+        *,
+        task_id: str,
+        turn_id: str,
+        tool_call_id: str,
+        execution_token: str,
+        stale_after_seconds: int = 900,
+    ) -> dict[str, Any]:
+        """将超时仍 running 的调用转为 uncertain。"""
+
     def begin(
         self,
         *,
@@ -69,6 +80,30 @@ class DatabaseToolInvocationStore:
         data = response.data if response else None
         if not isinstance(data, dict):
             raise RuntimeError("ACTOR_TOOL_INVOCATION_BEGIN_RESULT_INVALID")
+        return data
+
+    def mark_stale(
+        self,
+        *,
+        task_id: str,
+        turn_id: str,
+        tool_call_id: str,
+        execution_token: str,
+        stale_after_seconds: int = 900,
+    ) -> dict[str, Any]:
+        response = self._db.rpc(
+            "mark_stale_tool_invocation_uncertain",
+            {
+                "p_task_id": task_id,
+                "p_turn_id": turn_id,
+                "p_tool_call_id": tool_call_id,
+                "p_execution_token": execution_token,
+                "p_stale_after_seconds": stale_after_seconds,
+            },
+        ).execute()
+        data = response.data if response else None
+        if not isinstance(data, dict):
+            raise RuntimeError("ACTOR_TOOL_INVOCATION_STALE_RESULT_INVALID")
         return data
 
     def complete(

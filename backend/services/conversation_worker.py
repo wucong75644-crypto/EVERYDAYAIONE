@@ -127,6 +127,10 @@ class _Candidate:
     task_id: str
     conversation_id: str
     execution_mode: str
+    # None means the candidate came from the database scan.  A generation
+    # identifies the wakeup that produced a wake-only candidate, so completion
+    # does not echo the same wakeup back into the queue.
+    wake_generation: int | None = None
 
     @property
     def key(self) -> str:
@@ -165,6 +169,7 @@ class ConversationWorker:
         self._running = False
         self._wake_event = asyncio.Event()
         self._woken_conversations: set[str] = set()
+        self._wake_generations: dict[str, int] = {}
         self._active_keys: set[str] = set()
         self._execution_tasks: set[asyncio.Task[Any]] = set()
         self._listener_task: asyncio.Task[Any] | None = None
@@ -207,13 +212,22 @@ class ConversationWorker:
 
     async def wake(self, conversation_id: str) -> None:
         if conversation_id:
+            self._wake_generations[conversation_id] = (
+                self._wake_generations.get(conversation_id, 0) + 1
+            )
             self._woken_conversations.add(conversation_id)
             self._wake_event.set()
 
     async def scan_once(self) -> int:
         candidates = await self._load_candidates()
-        for conversation_id in self._drain_wakeups():
-            candidates.insert(0, _Candidate("", conversation_id, "serial"))
+        for conversation_id, wake_generation in self._drain_wakeups():
+            candidates.insert(
+                0,
+                _Candidate(
+                    "", conversation_id, "serial",
+                    wake_generation=wake_generation,
+                ),
+            )
 
         available = self._concurrency - len(self._execution_tasks)
         scheduled = 0
@@ -266,8 +280,11 @@ class ConversationWorker:
                 )
         return candidates
 
-    def _drain_wakeups(self) -> list[str]:
-        conversations = list(self._woken_conversations)
+    def _drain_wakeups(self) -> list[tuple[str, int]]:
+        conversations = [
+            (conversation_id, self._wake_generations.get(conversation_id, 0))
+            for conversation_id in self._woken_conversations
+        ]
         self._woken_conversations.clear()
         return conversations
 
@@ -289,7 +306,13 @@ class ConversationWorker:
                 )
             if claim is not None:
                 await self._execution.execute_claim(claim)
-                await self.wake(candidate.conversation_id)
+                # A database candidate may have produced another pending turn,
+                # so it needs an immediate follow-up scan.  A wake-only
+                # candidate already represents the wakeup currently being
+                # handled; echoing it here re-queues the same conversation and
+                # can duplicate a claim when the wake arrived during scan.
+                if candidate.wake_generation is None:
+                    await self.wake(candidate.conversation_id)
         except asyncio.CancelledError:
             raise
         except Exception as error:

@@ -41,6 +41,13 @@ def test_database_store_uses_begin_and_complete_rpc():
     db = _DB()
     store = DatabaseToolInvocationStore(db)
 
+    assert store.mark_stale(
+        task_id="task-1",
+        turn_id="turn-1",
+        tool_call_id="tool-1",
+        execution_token="token-1",
+    )["outcome"] == "execute"
+
     assert store.begin(
         task_id="task-1",
         conversation_id="conversation-1",
@@ -58,8 +65,9 @@ def test_database_store_uses_begin_and_complete_rpc():
         status="succeeded",
         result={"kind": "scalar", "value": "ok"},
     )["outcome"] == "execute"
-    assert db.calls[0][0] == "begin_tool_invocation"
-    assert db.calls[1][0] == "complete_tool_invocation"
+    assert db.calls[0][0] == "mark_stale_tool_invocation_uncertain"
+    assert db.calls[1][0] == "begin_tool_invocation"
+    assert db.calls[2][0] == "complete_tool_invocation"
 
 
 def test_agent_result_replay_preserves_tool_content_and_status():

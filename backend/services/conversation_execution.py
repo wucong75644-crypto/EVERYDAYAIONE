@@ -9,6 +9,11 @@ from typing import Any, Mapping, Protocol
 from loguru import logger
 from psycopg.types.json import Jsonb
 
+from services.conversation_state import (
+    ConversationPauseRequested,
+    ConversationStopRequested,
+)
+
 
 @dataclass(frozen=True)
 class GenerationClaim:
@@ -171,6 +176,20 @@ class ConversationExecutionService:
                 outcome = await self._execute_until_lost(
                     task, claim, ownership_lost,
                 )
+            except ConversationPauseRequested:
+                result = await self._finalize_control(
+                    claim, "pause",
+                )
+                await self._notify_terminal(task, result)
+                return result
+            except ConversationStopRequested as stop:
+                if stop.reason != "cancel":
+                    return {"outcome": "ownership_lost"}
+                result = await self._finalize_control(
+                    claim, "cancel",
+                )
+                await self._notify_terminal(task, result)
+                return result
             except _OwnershipLost:
                 return {"outcome": "ownership_lost"}
             except asyncio.CancelledError:
@@ -289,6 +308,30 @@ class ConversationExecutionService:
                 "p_tool_digest": (
                     Jsonb(outcome.tool_digest)
                     if outcome.tool_digest is not None else None
+                ),
+            },
+        )
+
+    async def _finalize_control(
+        self,
+        claim: GenerationClaim,
+        control: str,
+    ) -> dict[str, Any]:
+        """在 Runtime 安全点后，以当前 fencing token 保存快照并终止/暂停。"""
+        if control not in {"cancel", "pause"}:
+            raise ValueError("unsupported actor control")
+        rpc_name = (
+            "cancel_generation_turn_owned"
+            if control == "cancel"
+            else "pause_generation_turn_owned"
+        )
+        return await self._rpc(
+            rpc_name,
+            {
+                "p_task_id": claim.task_id,
+                "p_execution_token": claim.execution_token,
+                "p_reason": (
+                    "user_cancelled" if control == "cancel" else "user_paused"
                 ),
             },
         )

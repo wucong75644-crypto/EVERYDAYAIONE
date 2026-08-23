@@ -223,7 +223,10 @@ export default function MessageContentBlocks({
       {message.status === 'interrupted' && (() => {
         const marker = message.content.find(
           (p) => p.type === 'interrupt_marker'
-        ) as { interrupted_at?: string } | undefined;
+        ) as {
+          interrupted_at?: string;
+          reason?: 'user_cancel' | 'user_pause' | 'system_timeout' | 'network_error';
+        } | undefined;
         if (!marker?.interrupted_at) return null;
         const ago = formatRelativeCN(marker.interrupted_at);
         return (
@@ -231,7 +234,7 @@ export default function MessageContentBlocks({
             className="mt-1 text-[10px] text-text-tertiary leading-none"
             data-testid="interrupt-hint"
           >
-            停止于 {ago}
+            {marker.reason === 'user_pause' ? '暂停于' : '停止于'} {ago}
           </div>
         );
       })()}

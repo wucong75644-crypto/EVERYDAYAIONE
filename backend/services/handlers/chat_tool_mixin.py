@@ -158,7 +158,13 @@ class ChatToolMixin(ChatToolResultMixin):
         )
         started_at = time.monotonic()
 
+        # 只读工具允许按普通错误策略重试；只有可能产生外部副作用的工具
+        # 进入 invocation ledger，恢复时才需要 invocation ID/参数 hash/uncertain
+        # 保护，避免把一次查询故障误判成未知写入。
+        from config.chat_tools import SafetyLevel, get_safety_level
         invocation_store = getattr(self, "_actor_invocation_store", None)
+        if get_safety_level(tc["name"]) == SafetyLevel.SAFE:
+            invocation_store = None
         invocation = await ChatToolMixin._begin_actor_tool_invocation(
             self,
             store=invocation_store,
@@ -287,6 +293,15 @@ class ChatToolMixin(ChatToolResultMixin):
         ):
             return None
         from services.tool_invocation_store import hash_tool_arguments
+        mark_stale = getattr(store, "mark_stale", None)
+        if mark_stale is not None:
+            await asyncio.to_thread(
+                mark_stale,
+                task_id=task_id,
+                turn_id=self._actor_turn_id,
+                tool_call_id=tool_call_id,
+                execution_token=self._actor_execution_token,
+            )
         return await asyncio.to_thread(
             store.begin,
             task_id=task_id,

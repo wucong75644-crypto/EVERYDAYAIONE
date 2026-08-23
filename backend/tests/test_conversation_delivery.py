@@ -115,6 +115,26 @@ async def test_failed_delivery_pushes_message_error(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_paused_delivery_releases_slot_without_error_or_done(monkeypatch):
+    released = []
+
+    async def fake_release(task):
+        released.append(task["id"])
+
+    monkeypatch.setattr(
+        "services.conversation_delivery.release_task_slot",
+        fake_release,
+    )
+    websocket = _WebSocket()
+    delivery = ActorTerminalDelivery(_DB(_task("paused")), websocket)
+
+    await delivery.notify(_task("running"), {"outcome": "paused"})
+
+    assert released == ["task-1"]
+    assert websocket.messages == []
+
+
+@pytest.mark.asyncio
 async def test_ownership_loss_has_no_delivery_or_slot_release(monkeypatch):
     released = []
 

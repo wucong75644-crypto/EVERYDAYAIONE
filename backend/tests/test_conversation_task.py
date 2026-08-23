@@ -38,3 +38,23 @@ def test_cancel_actor_task_rejects_unknown_result():
 
     with pytest.raises(RuntimeError, match="ACTOR_CANCEL_FAILED"):
         cancel_actor_task(db, {"id": "internal"}, "user", None)
+
+
+def test_cancel_paused_actor_task_uses_final_cancel_rpc():
+    db = MagicMock()
+    db.rpc.return_value.execute.return_value.data = {"outcome": "cancelled"}
+
+    assert cancel_actor_task(
+        db,
+        {"id": "internal", "status": "paused"},
+        "user",
+        None,
+    )
+    db.rpc.assert_called_once_with(
+        "cancel_paused_generation_turn",
+        {
+            "p_task_id": "internal",
+            "p_user_id": "user",
+            "p_org_id": None,
+        },
+    )

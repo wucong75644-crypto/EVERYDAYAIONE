@@ -211,6 +211,85 @@ class TestExecuteSingleTool:
         executor.execute.assert_called_once()
 
 
+class TestActorInvocationRecovery:
+    """Actor 恢复前先把过期 running 调用封存为 uncertain。"""
+
+    @pytest.mark.asyncio
+    async def test_begin_marks_stale_before_begin(self):
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        calls = []
+
+        class Store:
+            def mark_stale(self, **kwargs):
+                calls.append(("mark_stale", kwargs))
+                return {"outcome": "uncertain"}
+
+            def begin(self, **kwargs):
+                calls.append(("begin", kwargs))
+                return {"outcome": "uncertain"}
+
+        mixin = MagicMock()
+        mixin._actor_enabled = True
+        mixin._actor_turn_id = "turn-1"
+        mixin._actor_execution_token = "token-1"
+
+        result = await ChatToolMixin._begin_actor_tool_invocation(
+            mixin,
+            store=Store(),
+            task_id="task-1",
+            conversation_id="conversation-1",
+            tool_call_id="tool-1",
+            tool_name="erp_execute",
+            args={"action": "write"},
+        )
+
+        assert result["outcome"] == "uncertain"
+        assert [name for name, _ in calls] == ["mark_stale", "begin"]
+
+    @pytest.mark.asyncio
+    async def test_uncertain_invocation_never_executes_external_tool(self):
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = _make_mixin()
+        mixin._actor_enabled = True
+        mixin._actor_turn_id = "turn-1"
+        mixin._actor_execution_token = "token-1"
+
+        class Store:
+            def mark_stale(self, **kwargs):
+                return {"outcome": "uncertain"}
+
+            def begin(self, **kwargs):
+                return {
+                    "outcome": "uncertain",
+                    "error_message": "external result unknown",
+                }
+
+        mixin._actor_invocation_store = Store()
+        executor = AsyncMock()
+
+        with patch.object(
+            ChatToolMixin,
+            "_prepare_tool_arguments",
+            new=AsyncMock(return_value={"action": "write"}),
+        ):
+            result = await ChatToolMixin._execute_single_tool(
+                mixin,
+                {"name": "erp_execute", "id": "tool-1", "arguments": '{"action":"write"}'},
+                executor,
+                "task-1",
+                "conversation-1",
+                "message-1",
+                "user-1",
+                1,
+            )
+
+        assert result[2] is True
+        assert "未知" in result[1]
+        executor.execute.assert_not_called()
+
+
 # ============================================================
 # _accumulate_tool_call_delta 增量累积
 # ============================================================
