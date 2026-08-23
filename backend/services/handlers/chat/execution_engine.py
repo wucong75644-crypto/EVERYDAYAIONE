@@ -222,11 +222,42 @@ async def _read_turn(
     turn_text = ""
     turn_thinking = ""
     calls: dict[int, dict[str, Any]] = {}
-    async for chunk in prepared.adapter.stream_chat(
+    stream = prepared.adapter.stream_chat(
         messages=prepared.messages,
         tools=tools,
         **prepared.stream_kwargs,
-    ):
+    )
+    stream_iterator = stream.__aiter__()
+    while True:
+        next_chunk = asyncio.create_task(stream_iterator.__anext__())
+        command_waiter = (
+            asyncio.create_task(runtime.wait_for_command())
+            if runtime is not None else None
+        )
+        wait_set = {next_chunk}
+        if command_waiter is not None:
+            wait_set.add(command_waiter)
+        done, _ = await asyncio.wait(
+            wait_set,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        # 命令先到时主动结束 provider stream；随后 safe_point 会刷盘并
+        # 把 PAUSE/CANCEL 归约为控制流异常。不会每个 token 查询数据库。
+        if command_waiter is not None and command_waiter in done and next_chunk not in done:
+            next_chunk.cancel()
+            await asyncio.gather(next_chunk, return_exceptions=True)
+            await runtime.safe_point(SafePoint.MODEL_CHUNK)
+            continue
+
+        if command_waiter is not None and not command_waiter.done():
+            command_waiter.cancel()
+            await asyncio.gather(command_waiter, return_exceptions=True)
+
+        try:
+            chunk = next_chunk.result()
+        except StopAsyncIteration:
+            break
         if runtime:
             await runtime.safe_point(SafePoint.MODEL_CHUNK)
         _raise_if_cancelled(cancellation_event)

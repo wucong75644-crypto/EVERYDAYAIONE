@@ -52,6 +52,9 @@ class ConversationTurnRuntime:
         self._checkpoint_callback = checkpoint_callback
         self._replay_checkpoint_callback = replay_checkpoint_callback
         self.inbox = CommandInbox()
+        self._command_event = asyncio.Event()
+        self._watcher_stop = asyncio.Event()
+        self._watcher_task: asyncio.Task[None] | None = None
         self.state = ConversationState.CLAIMED
         self.last_safe_point: SafePoint | None = None
         self.applied_commands: list[ConversationCommand] = []
@@ -72,7 +75,60 @@ class ConversationTurnRuntime:
             raise ValueError("command conversation scope mismatch")
         if command.task_id != self.task_id:
             raise ValueError("command task scope mismatch")
-        return self.inbox.push(command)
+        accepted = self.inbox.push(command)
+        if accepted:
+            self._command_event.set()
+        return accepted
+
+    def start_command_watcher(self, interval_seconds: float = 0.25) -> None:
+        """以受控频率读取持久命令，避免模型流期间逐 token 查库。"""
+        if (
+            self._watcher_task is not None
+            or self.command_store is None
+            or not self.execution_token
+        ):
+            return
+        if interval_seconds <= 0:
+            raise ValueError("command watcher interval must be positive")
+        self._watcher_stop.clear()
+        self._watcher_task = asyncio.create_task(
+            self._watch_commands(interval_seconds),
+        )
+
+    async def stop_command_watcher(self) -> None:
+        """停止当前 claim 的命令 watcher。"""
+        self._watcher_stop.set()
+        watcher = self._watcher_task
+        self._watcher_task = None
+        if watcher is None:
+            return
+        watcher.cancel()
+        await asyncio.gather(watcher, return_exceptions=True)
+
+    async def wait_for_command(self) -> None:
+        """等待 watcher 将外部命令放入当前 Runtime Inbox。"""
+        await self._command_event.wait()
+
+    async def _watch_commands(self, interval_seconds: float) -> None:
+        while not self._watcher_stop.is_set():
+            try:
+                commands = await self.command_store.load_pending(
+                    task_id=self.task_id,
+                    execution_token=self.execution_token,
+                )
+                for command in commands:
+                    self.push(command)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # 安全点仍保留同步兜底读取；短暂的 watcher 失败不能丢命令。
+                pass
+            try:
+                await asyncio.wait_for(
+                    self._watcher_stop.wait(), timeout=interval_seconds,
+                )
+            except asyncio.TimeoutError:
+                continue
 
     def set_checkpoint_callback(
         self,
@@ -147,6 +203,8 @@ class ConversationTurnRuntime:
                     task_id=self.task_id,
                     execution_token=self.execution_token,
                 )
+        if not self.inbox:
+            self._command_event.clear()
 
     def _record_subtask_completion(
         self, command: ConversationCommand,

@@ -111,26 +111,30 @@ class ChatGenerationExecutor:
                     task.get("accumulated_content"),
                     replay_context.get("content_blocks"),
                 )
-        result = await execute_chat(
-            handler=handler,
-            request=ChatExecutionRequest(
-                content=content,
-                user_id=str(task["user_id"]),
-                conversation_id=claim.conversation_id,
-                task_id=claim.task_id,
-                message_id=str(task["assistant_message_id"]),
-                model_id=_normalize_model_id(task.get("model_id")),
-                context_anchor=_build_anchor(claim, task.get("org_id")),
-                params=params,
-                permission_mode=str(params.get("permission_mode") or "auto"),
-                needs_google_search=bool(params.get("_needs_google_search")),
-                execution_scope=execution_scope,
-                replay_context=replay_context,
-            ),
-            cancellation_event=cancellation_event,
-            sink=sink,
-            runtime=runtime,
-        )
+        runtime.start_command_watcher()
+        try:
+            result = await execute_chat(
+                handler=handler,
+                request=ChatExecutionRequest(
+                    content=content,
+                    user_id=str(task["user_id"]),
+                    conversation_id=claim.conversation_id,
+                    task_id=claim.task_id,
+                    message_id=str(task["assistant_message_id"]),
+                    model_id=_normalize_model_id(task.get("model_id")),
+                    context_anchor=_build_anchor(claim, task.get("org_id")),
+                    params=params,
+                    permission_mode=str(params.get("permission_mode") or "auto"),
+                    needs_google_search=bool(params.get("_needs_google_search")),
+                    execution_scope=execution_scope,
+                    replay_context=replay_context,
+                ),
+                cancellation_event=cancellation_event,
+                sink=sink,
+                runtime=runtime,
+            )
+        finally:
+            await runtime.stop_command_watcher()
         replay_payload = result.replay_context or {
             "messages": [],
             "content_blocks": result.content_blocks,

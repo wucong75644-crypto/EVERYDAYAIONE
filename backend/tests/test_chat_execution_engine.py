@@ -16,6 +16,7 @@ from services.handlers.chat.execution_engine import (
     execute_chat,
 )
 from services.conversation_commands import SafePoint
+from services.conversation_commands import CommandType, ConversationCommand
 from services.conversation_turn_runtime import ConversationTurnRuntime
 
 
@@ -29,6 +30,25 @@ def _request() -> ChatExecutionRequest:
         model_id="model-1",
         context_anchor=object(),
     )
+
+
+class _PauseStore:
+    def __init__(self, ready: asyncio.Event):
+        self.ready = ready
+
+    async def load_pending(self, *, task_id: str, execution_token: str):
+        if not self.ready.is_set():
+            return []
+        return [ConversationCommand(
+            command_id="pause-event",
+            command_type=CommandType.PAUSE,
+            conversation_id="conv-1",
+            task_id=task_id,
+            turn_id="turn-1",
+        )]
+
+    async def acknowledge(self, **_kwargs):
+        return None
 
 
 def test_actor_tool_call_id_is_stable_for_same_turn_and_arguments():
@@ -166,6 +186,72 @@ async def test_execute_chat_stops_before_provider_when_cancelled(monkeypatch):
         )
 
     adapter.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_chat_interrupts_waiting_provider_when_command_arrives(monkeypatch):
+    provider_started = asyncio.Event()
+
+    async def stream_chat(**_kwargs):
+        provider_started.set()
+        await asyncio.Event().wait()
+        yield SimpleNamespace(
+            content="never reached",
+            thinking_content=None,
+            tool_calls=None,
+            prompt_tokens=0,
+            completion_tokens=0,
+            credits_consumed=None,
+            finish_reason="stop",
+        )
+
+    adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
+    prepared = SimpleNamespace(
+        adapter=adapter,
+        permission=SimpleNamespace(need_exit_attachment=False),
+        core_tools=[],
+        stream_kwargs={},
+        tool_context=SimpleNamespace(discovered_tools=set()),
+        messages=[],
+        budget=SimpleNamespace(
+            stop_reason=None,
+            turns_used=0,
+            use_turn=lambda: None,
+        ),
+    )
+
+    async def fake_prepare(**_kwargs):
+        return prepared
+
+    monkeypatch.setattr(
+        "services.handlers.chat.execution_engine.prepare_chat_stream",
+        fake_prepare,
+    )
+    handler = SimpleNamespace(org_id=None, _adapter=None)
+    runtime = ConversationTurnRuntime(
+        conversation_id="conv-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        cancellation_event=asyncio.Event(),
+        execution_token="token-1",
+        command_store=_PauseStore(provider_started),
+    )
+    runtime.start_command_watcher(interval_seconds=0.01)
+    try:
+        execution = asyncio.create_task(
+            execute_chat(
+                handler=handler,
+                request=_request(),
+                runtime=runtime,
+            )
+        )
+        await asyncio.wait_for(provider_started.wait(), timeout=0.2)
+        with pytest.raises(Exception) as error:
+            await asyncio.wait_for(execution, timeout=0.2)
+        assert error.type.__name__ == "ConversationPauseRequested"
+        adapter.close.assert_awaited_once()
+    finally:
+        await runtime.stop_command_watcher()
 
 
 @pytest.mark.asyncio

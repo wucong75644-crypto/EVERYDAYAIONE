@@ -264,6 +264,30 @@ async def test_runtime_loads_and_acknowledges_durable_command():
 
 
 @pytest.mark.asyncio
+async def test_runtime_watcher_delivers_command_without_waiting_for_model_chunk():
+    command = _command("pause-event", CommandType.PAUSE)
+    store = _Store(command)
+    runtime = ConversationTurnRuntime(
+        conversation_id="conversation-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        cancellation_event=asyncio.Event(),
+        execution_token="token-1",
+        command_store=store,
+    )
+
+    runtime.start_command_watcher(interval_seconds=0.01)
+    try:
+        # 构造函数中的 USER_TURN 也会唤醒 event；等待 watcher 的持久命令。
+        await asyncio.sleep(0.03)
+        with pytest.raises(Exception) as error:
+            await runtime.safe_point(SafePoint.MODEL_CHUNK)
+        assert error.type.__name__ == "ConversationPauseRequested"
+    finally:
+        await runtime.stop_command_watcher()
+
+
+@pytest.mark.asyncio
 async def test_runtime_does_not_ack_cancel_before_stopping():
     command = ConversationCommand(
         command_id="event-cancel",

@@ -25,14 +25,37 @@ export function mergeMessages(
   const persisted = messages || [];
   const optimistic = optimisticMessages || [];
 
-  // 收集已持久化消息的 ID
-  const persistedIds = new Set(persisted.map((m) => m.id));
+  const optimisticById = new Map(optimistic.map((message) => [message.id, message]));
 
-  // 过滤出不重复的乐观消息
+  // 刷新恢复时，数据库里的同 ID 占位符可能仍是空 streaming 消息。
+  // 这时必须用 Runtime 已确认的 partial 覆盖占位符，但不能覆盖 completed。
+  const mergedPersisted = persisted.map((message) => {
+    const optimisticMessage = optimisticById.get(message.id);
+    if (!optimisticMessage) return message;
+
+    const canOverlay = (
+      optimisticMessage.status === 'streaming'
+        && ['pending', 'streaming', 'generating'].includes(message.status)
+    ) || (
+      optimisticMessage.status === 'interrupted'
+        && !['completed', 'failed'].includes(message.status)
+    );
+    if (!canOverlay) return message;
+
+    return {
+      ...message,
+      ...optimisticMessage,
+      id: message.id,
+      conversation_id: message.conversation_id,
+      created_at: message.created_at,
+    };
+  });
+
+  const persistedIds = new Set(persisted.map((m) => m.id));
   const newOptimistic = optimistic.filter((m) => !persistedIds.has(m.id));
 
   // 持久化消息会按任务完成顺序写入 Store，因此即使没有乐观消息也必须排序。
-  const merged = [...persisted, ...newOptimistic];
+  const merged = [...mergedPersisted, ...newOptimistic];
   merged.sort((a, b) => {
     const timeDiff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
     if (timeDiff !== 0) return timeDiff;
