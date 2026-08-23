@@ -257,8 +257,8 @@ class TestTaskRouteSlotRelease:
         db, chain = self._make_scoped_db([task_row])
 
         with patch(
-            "services.conversation_task.cancel_actor_task",
-            return_value=True,
+            "services.conversation_task.control_actor_task",
+            return_value={"outcome": "cancelled"},
         ) as mock_cancel, patch(
             "api.routes.task.release_task_slot",
             new_callable=AsyncMock,
@@ -279,8 +279,9 @@ class TestTaskRouteSlotRelease:
             )
 
         assert result["cancelled_count"] == 1
-        mock_cancel.assert_called_once_with(db, task_row, "u1", None)
-        chain.update.assert_called()
+        mock_cancel.assert_called_once_with(db, task_row, "u1", None, "cancel")
+        # Actor 取消由原子 RPC 负责写入状态，路由不应再直接 UPDATE tasks。
+        chain.update.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_mark_task_failed_releases_slot(self):
