@@ -141,7 +141,7 @@ describe('streamingSlice - suggestions', () => {
       state.setSuggestions('conv_1', ['建议']);
 
       store.getState().completeStreamingWithMessage('conv_1', {
-        id: 'msg_done',
+        id: 'msg_1',
         conversation_id: 'conv_1',
         role: 'assistant',
         content: [{ type: 'text', text: '回复' }],
