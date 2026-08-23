@@ -41,6 +41,7 @@ class MessageStatus(str, Enum):
     GENERATING = "generating"
     COMPLETED = "completed"
     FAILED = "failed"
+    INTERRUPTED = "interrupted"
 
 
 class MessageOperation(str, Enum):

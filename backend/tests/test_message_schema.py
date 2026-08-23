@@ -21,6 +21,7 @@ from schemas.message import (
     Message,
     MessageResponse,
     MessageRole,
+    MessageStatus,
     ImagePart,
     TextPart,
     serialize_content_part,
@@ -209,6 +210,22 @@ def test_message_response_preserves_turn_relationship_fields():
     assert response.reply_to_message_id == message.reply_to_message_id
     assert response.context_revision == 7
     assert response.message_kind == "conversation"
+
+
+def test_message_response_accepts_interrupted_status_for_refresh():
+    """暂停后的历史消息必须能通过 API 响应模型校验。"""
+    message = Message(
+        id="msg-interrupted",
+        conversation_id="conv-interrupted",
+        role=MessageRole.ASSISTANT,
+        content=[TextPart(text="已生成的部分")],
+        status=MessageStatus.INTERRUPTED,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    response = MessageResponse.from_message(message)
+
+    assert response.status == MessageStatus.INTERRUPTED
 
 
 def test_image_content_serialization_omits_absent_optional_metadata():
