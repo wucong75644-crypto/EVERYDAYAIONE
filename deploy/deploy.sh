@@ -87,10 +87,11 @@ EOF
     # 加载配置
     source deploy/config.env
 
-    # 发布环境与服务器统一使用 Python 3.11。不要依赖机器上的 python3：
-    # macOS 可能指向 3.14，服务器系统 python3 可能仍是 3.6。
-    EVERYDAYAI_PYTHON_BIN="${EVERYDAYAI_PYTHON_BIN:-python3.11}"
-    EVERYDAYAI_REQUIRED_PYTHON="3.11"
+    # 本地隔离工作树使用 Python 3.12 做构建和测试；远端 venv 单独固定为
+    # Python 3.11。不要依赖机器上的 python3：macOS 可能指向 3.14，
+    # 服务器系统 python3 可能仍是 3.6。
+    EVERYDAYAI_PYTHON_BIN="${EVERYDAYAI_PYTHON_BIN:-python3.12}"
+    EVERYDAYAI_REQUIRED_PYTHON="${EVERYDAYAI_REQUIRED_PYTHON:-3.12}"
 
     # 验证必填配置
     if [ "$SERVER_HOST" = "your_server_ip_or_domain" ]; then
