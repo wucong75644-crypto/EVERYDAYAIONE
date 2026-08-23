@@ -29,6 +29,8 @@ import {
 } from '../config/task';
 import { getPlaceholderText, type MessageType } from '../constants/placeholder';
 import { parseContentParts, parseProtocolString } from '../schemas/messageProtocol';
+import { getMessages } from '../services/message';
+import { normalizeMessage } from '../stores/useMessageStore';
 
 interface TaskRequestParams {
   prompt?: string;
@@ -67,10 +69,10 @@ export interface PendingTask {
 }
 
 /**
- * 获取进行中的任务
+ * 获取需要前端恢复/对账的任务
  *
  * 返回值说明：
- * - PendingTask[]: 成功获取，可能为空数组
+ * - PendingTask[]: 成功获取，包含活跃、暂停和最近终态任务
  * - null: 请求失败（网络错误/超时等）
  *
  * 调用方应区分这两种情况：
@@ -201,7 +203,12 @@ export async function restoreTaskPlaceholders(): Promise<RestorationResult | nul
       return null;
     }
 
-    // 2. 分类任务
+    // 2. 先用数据库终态对账 paused/terminal 任务。
+    //    markForceRefresh 只是标记，不能替代实际加载；这里直接回读 messages，
+    //    确保刷新后不会因为错过 message_done 而残留 streaming/thinking。
+    await reconcileChatTaskStates(tasks);
+
+    // 3. 分类任务
     const chatTasks = tasks.filter(
       t => t.type === 'chat' && (t.status === 'pending' || t.status === 'running')
     );
@@ -214,14 +221,6 @@ export async function restoreTaskPlaceholders(): Promise<RestorationResult | nul
       chat: chatTasks.length,
       media: mediaTasks.length,
     });
-
-    // 3. 处理已终结的任务（标记强制刷新）
-    const terminatedTasks = tasks.filter(
-      t => t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled'
-    );
-    if (terminatedTasks.length > 0) {
-      handleTerminatedTasks(terminatedTasks);
-    }
 
     // 4. 创建聊天任务占位符（不订阅 WS）
     for (const task of chatTasks) {
@@ -248,6 +247,77 @@ export async function restoreTaskPlaceholders(): Promise<RestorationResult | nul
     logger.error('task:restore:p1', '任务恢复异常', error);
     return null;
   }
+}
+
+const ACTIVE_TASK_STATUSES = new Set(['pending', 'running']);
+const RECONCILE_TASK_STATUSES = new Set(['paused', 'completed', 'failed', 'cancelled']);
+
+/**
+ * 用后端任务状态校正前端聊天状态。
+ *
+ * 这是刷新和 WS 重连共同使用的终态对账入口：
+ * - active：保留 streaming，等待/继续订阅 WS
+ * - paused：清理 streaming，回读已保存的 interrupted partial
+ * - terminal：清理 streaming，回读数据库最终消息
+ *
+ * 同一对话如果同时存在旧 terminal task 和新 active task，以 active 为准，
+ * 避免旧任务的对账清掉新一轮生成。
+ */
+export async function reconcileChatTaskStates(
+  providedTasks?: PendingTask[] | null,
+): Promise<PendingTask[] | null> {
+  const tasks = providedTasks === undefined ? await fetchPendingTasks() : providedTasks;
+  if (!tasks) return null;
+
+  const activeConversations = new Set(
+    tasks
+      .filter((task) => task.type === 'chat' && ACTIVE_TASK_STATUSES.has(task.status))
+      .map((task) => task.conversation_id)
+      .filter(Boolean),
+  );
+  const conversations = new Set<string>();
+
+  for (const task of tasks) {
+    if (
+      task.type !== 'chat'
+      || !task.conversation_id
+      || !RECONCILE_TASK_STATUSES.has(task.status)
+      || activeConversations.has(task.conversation_id)
+    ) {
+      continue;
+    }
+    conversations.add(task.conversation_id);
+  }
+
+  if (conversations.size === 0) return tasks;
+
+  const store = useMessageStore.getState();
+  await Promise.all([...conversations].map(async (conversationId) => {
+    store.clearConversationStreaming(conversationId);
+    store.markForceRefresh(conversationId);
+
+    try {
+      const response = await getMessages(conversationId, 30, 0);
+      if (!response?.messages) return;
+
+      const messagesAsc = [...response.messages].map(normalizeMessage).reverse();
+      store.setMessagesForConversation(
+        conversationId,
+        messagesAsc,
+        response.messages.length >= 30,
+      );
+      logger.info('task:reconcile', '聊天任务状态已与数据库对账', {
+        conversationId,
+        messageCount: messagesAsc.length,
+      });
+    } catch (error) {
+      // 保留 forceRefresh，让当前对话下次加载时继续走 API；不能把网络失败
+      // 当成任务终态，也不能用空数据覆盖已有 partial。
+      logger.error('task:reconcile', '聊天任务消息对账失败', error, { conversationId });
+    }
+  }));
+
+  return tasks;
 }
 
 /**
@@ -345,37 +415,5 @@ export function subscribeRestoredTasks(
         conversationId: task.conversation_id,
       });
     }
-  }
-}
-
-/**
- * 处理刷新期间已终结的任务（聊天 + 媒体统一处理）
- *
- * 设计原则：只标记，不加载
- * - 标记相关对话需要强制刷新
- * - 实际加载由 loadMessages 统一处理
- * - 避免与 loadMessages 产生竞争条件
- *
- * 触发条件：
- * - /tasks/pending API 返回最近 5 分钟内完成/失败的任务
- * - 这些任务的消息可能不在当前缓存中
- */
-function handleTerminatedTasks(tasks: PendingTask[]) {
-  if (tasks.length === 0) return;
-
-  const store = useMessageStore.getState();
-
-  for (const task of tasks) {
-    if (!task.conversation_id) continue;
-
-    // 标记该对话需要强制刷新（loadMessages 会检查并处理）
-    store.markForceRefresh(task.conversation_id);
-
-    logger.info('task:restore', '任务已终结，标记强制刷新', {
-      taskId: task.id,
-      type: task.type,
-      status: task.status,
-      conversationId: task.conversation_id,
-    });
   }
 }

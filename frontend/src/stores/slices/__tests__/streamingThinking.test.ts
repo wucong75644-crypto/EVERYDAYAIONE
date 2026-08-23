@@ -75,6 +75,53 @@ describe('streamingSlice - thinking methods', () => {
       expect(store.getState().streamingThinking.get('conv_1')).toBeUndefined();
     });
   });
+
+  describe('clearConversationStreaming', () => {
+    it('clears transient stream state but preserves interrupted messages', () => {
+      const state = store.getState();
+      state.startStreaming('conv_1', 'msg_streaming');
+      state.appendStreamingThinking('conv_1', '思考中');
+      state.setAgentStepHint('conv_1', '正在调用工具');
+      state.setSuggestions('conv_1', ['继续']);
+      const interrupted = {
+        ...store.getState().optimisticMessages.get('conv_1')![0],
+        status: 'interrupted' as const,
+      };
+      store.setState({
+        optimisticMessages: new Map([['conv_1', [interrupted]]]),
+      });
+      state.addOptimisticMessage('conv_1', {
+        id: 'msg_completed',
+        conversation_id: 'conv_1',
+        role: 'assistant',
+        content: [{ type: 'text', text: '已提交' }],
+        status: 'completed',
+        created_at: new Date().toISOString(),
+      });
+      state.addOptimisticMessage('conv_1', {
+        id: 'msg_image_pending',
+        conversation_id: 'conv_1',
+        role: 'assistant',
+        content: [{ type: 'text', text: '图片生成中' }],
+        status: 'pending',
+        created_at: new Date().toISOString(),
+        generation_params: { type: 'image' },
+      });
+
+      state.clearConversationStreaming('conv_1');
+
+      const next = store.getState();
+      expect(next.streamingMessages.has('conv_1')).toBe(false);
+      expect(next.streamingThinking.has('conv_1')).toBe(false);
+      expect(next.agentStepHint.has('conv_1')).toBe(false);
+      expect(next.suggestions.has('conv_1')).toBe(false);
+      expect(next.optimisticMessages.get('conv_1')?.map((m) => m.id)).toEqual([
+        'msg_streaming',
+        'msg_completed',
+        'msg_image_pending',
+      ]);
+    });
+  });
 });
 
 // ============================================================

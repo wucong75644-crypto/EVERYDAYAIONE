@@ -42,10 +42,10 @@ async def get_pending_tasks(
     db: ScopedDB,
 ) -> Dict[str, Any]:
     """
-    获取当前用户的活跃任务
+    获取当前用户需要前端恢复/对账的任务
 
     返回：
-    - 进行中的任务 (status in ['pending', 'running'])
+    - 进行中的任务 (status in ['pending', 'running', 'paused'])
     - 最近 5 分钟内终结的任务 (status in ['completed', 'failed', 'cancelled'])
 
     速率限制：每分钟最多 30 次请求
@@ -63,7 +63,7 @@ async def get_pending_tasks(
         # 查询进行中的任务（OrgScopedDB 自动加 org_id 过滤）
         pending_response = db.table("tasks").select(task_fields).eq(
             "user_id", ctx.user_id
-        ).in_("status", ["pending", "running"]).order(
+        ).in_("status", ["pending", "running", "paused"]).order(
             "started_at", desc=False
         ).execute()
 

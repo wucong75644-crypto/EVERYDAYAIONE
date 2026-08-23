@@ -39,6 +39,8 @@ export interface StreamingSlice {
   /** 刷新恢复：设置结构化 content blocks + 剩余流式文字 */
   restoreStreamingBlocks: (conversationId: string, blocks: ContentPart[], remainingText: string) => void;
   completeStreaming: (conversationId: string) => void;
+  /** 刷新/终态对账：清理前端瞬态流状态，不删除已中断消息 */
+  clearConversationStreaming: (conversationId: string) => void;
   completeStreamingWithMessage: (conversationId: string, message: Message) => void;
   getStreamingMessageId: (conversationId: string) => string | null;
 

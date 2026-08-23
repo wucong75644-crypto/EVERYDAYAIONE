@@ -18,6 +18,7 @@ import {
   restoreTaskPlaceholders,
   subscribeRestoredTasks,
   fetchPendingTasks,
+  reconcileChatTaskStates,
   type RestorationResult,
 } from '../utils/taskRestoration';
 import { getMessages } from '../services/message';
@@ -179,8 +180,10 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     subscribeRestoredTasks(result, subscribeTaskWithMappingRef.current);
   }, [ws.isConnected]);
 
-  // WS 重连恢复：从 API 刷新断连期间已完成的媒体消息
-  async function recoverMissedMediaCompletions() {
+  // WS 重连恢复：聊天和媒体都以数据库状态为准，补偿可能遗漏的终态事件。
+  async function recoverMissedCompletions() {
+    await reconcileChatTaskStates();
+
     const store = useMessageStore.getState();
 
     // 1. 从 store 中找出有 pending 媒体消息的对话
@@ -204,7 +207,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       conversations: pendingMediaConversations.length,
     });
 
-    // 2. 调用 /tasks/pending 获取后端最新任务状态
+    // 媒体任务仍复用原有占位符检查；聊天任务由 reconcileChatTaskStates 统一处理。
     const tasks = await fetchPendingTasks();
     if (!tasks) return;
 
@@ -242,7 +245,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     }
   }
 
-  // Phase 3：WS 重连后，检查断连期间是否有媒体任务已完成
+  // Phase 3：WS 重连后，检查断连期间已完成的聊天/媒体任务
   // 区分首次连接 vs 重连：首次由 Phase 1/2 处理，重连才走此逻辑
   const wasEverConnectedRef = useRef(false);
 
@@ -255,9 +258,29 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       return;
     }
 
-    // 重连：检查是否有遗漏的媒体完成事件
-    recoverMissedMediaCompletions();
+    // 重连：检查是否有遗漏的终态事件
+    recoverMissedCompletions();
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ws.isConnected]);
+
+  // Phase 4：首次刷新或继续输出后，即使没有发生 WS 重连，也可能错过
+  // message_done（例如任务在订阅窗口内完成）。用低频任务状态对账兜底，
+  // 不按 token 查库，只在前端仍有 streaming 任务时轮询。
+  useEffect(() => {
+    if (!ws.isConnected) return;
+
+    const reconcile = () => {
+      const store = useMessageStore.getState();
+      if (store.streamingMessages.size === 0) return;
+      reconcileChatTaskStates();
+    };
+
+    const initialCheck = window.setTimeout(reconcile, 1500);
+    const interval = window.setInterval(reconcile, 3000);
+    return () => {
+      window.clearTimeout(initialCheck);
+      window.clearInterval(interval);
+    };
   }, [ws.isConnected]);
 
   // 注册操作上下文

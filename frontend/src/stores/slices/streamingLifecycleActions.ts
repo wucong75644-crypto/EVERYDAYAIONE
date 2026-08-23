@@ -11,6 +11,7 @@ type ActionKeys =
   | 'startStreaming'
   | 'registerStreamingId'
   | 'completeStreaming'
+  | 'clearConversationStreaming'
   | 'completeStreamingWithMessage'
   | 'getStreamingMessageId';
 
@@ -70,6 +71,51 @@ export function createStreamingLifecycleActions(
         const suggestions = new Map(state.suggestions);
         suggestions.delete(conversationId);
         return { streamingMessages, streamingThinking, agentStepHint, suggestions, isSending: false };
+      });
+    },
+    clearConversationStreaming: (conversationId) => {
+      set((state) => {
+        const streamingMessages = new Map(state.streamingMessages);
+        streamingMessages.delete(conversationId);
+
+        const optimisticMessages = new Map(state.optimisticMessages);
+        const optimistic = optimisticMessages.get(conversationId);
+        if (optimistic) {
+          const transientStatuses = new Set(['pending', 'streaming', 'generating']);
+          const retained = optimistic.filter((message) => (
+            !(
+              message.role === 'assistant'
+              && transientStatuses.has(message.status)
+              && (
+                message.id === state.streamingMessages.get(conversationId)
+                || !message.generation_params?.type
+                || message.generation_params.type === 'chat'
+              )
+            )
+          ));
+          if (retained.length === 0) optimisticMessages.delete(conversationId);
+          else optimisticMessages.set(conversationId, retained);
+        }
+
+        const streamingThinking = new Map(state.streamingThinking);
+        streamingThinking.delete(conversationId);
+        const agentStepHint = new Map(state.agentStepHint);
+        agentStepHint.delete(conversationId);
+        const suggestions = new Map(state.suggestions);
+        suggestions.delete(conversationId);
+        const toolConfirmRequest = state.toolConfirmRequest?.conversationId === conversationId
+          ? null
+          : state.toolConfirmRequest;
+
+        return {
+          streamingMessages,
+          optimisticMessages,
+          streamingThinking,
+          agentStepHint,
+          suggestions,
+          toolConfirmRequest,
+          isSending: streamingMessages.size > 0,
+        };
       });
     },
     completeStreamingWithMessage: (conversationId, message) => {
