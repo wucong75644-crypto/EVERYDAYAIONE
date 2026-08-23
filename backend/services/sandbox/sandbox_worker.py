@@ -19,6 +19,7 @@ import ast
 import io
 import math
 import json
+import signal
 import sys
 import time as _time
 import traceback
@@ -484,7 +485,9 @@ def _exec_code(
     if _emit_buf is not None:
         _emit_buf.clear()
 
-    # 超时 trace
+    # 超时 trace。它能中断大多数 Python 字节码循环，但在部分 CPython
+    # 版本/优化路径下不能可靠地产生 line event，因此再加 Unix 实时定时器
+    # 作为硬截止时间。两层都在这里收口，kernel worker 和直接调用保持一致。
     deadline = _time.monotonic() + timeout
 
     def _timeout_trace(frame, event, arg):
@@ -493,6 +496,25 @@ def _exec_code(
         return _timeout_trace
 
     old_trace = sys.gettrace()
+    alarm_installed = False
+    old_alarm_handler = None
+    old_alarm_timer = (0.0, 0.0)
+
+    def _signal_timeout(_signum, _frame):
+        raise TimeoutError("sandbox execution timeout")
+
+    try:
+        old_alarm_handler = signal.getsignal(signal.SIGALRM)
+        old_alarm_timer = signal.getitimer(signal.ITIMER_REAL)
+        signal.signal(signal.SIGALRM, _signal_timeout)
+        signal.setitimer(signal.ITIMER_REAL, max(float(timeout), 0.001))
+        alarm_installed = True
+    except (AttributeError, OSError, ValueError):
+        # Windows or a non-main thread cannot use SIGALRM; retain the trace
+        # fallback there. The surrounding process-level sandbox remains the
+        # final resource boundary.
+        alarm_installed = False
+
     sys.settrace(_timeout_trace)
     try:
         last_expr_value = None
@@ -528,6 +550,11 @@ def _exec_code(
         return TIMEOUT_MESSAGE.format(timeout=timeout), emit_snapshot
     finally:
         sys.settrace(old_trace)
+        if alarm_installed:
+            signal.setitimer(signal.ITIMER_REAL, 0.0)
+            signal.signal(signal.SIGALRM, old_alarm_handler)
+            if old_alarm_timer != (0.0, 0.0):
+                signal.setitimer(signal.ITIMER_REAL, *old_alarm_timer)
         if _MATPLOTLIB_AVAILABLE:
             _plt.close("all")
 
@@ -545,4 +572,3 @@ def _exec_code(
     stdout_result = "\n".join(parts) if parts else "代码执行成功（无输出）"
     emit_payloads = list(_emit_buf) if _emit_buf else []
     return stdout_result, emit_payloads
-

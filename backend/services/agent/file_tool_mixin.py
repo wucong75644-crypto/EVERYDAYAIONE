@@ -58,7 +58,9 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
 
         executor = FileExecutor(
             workspace_root=settings.file_workspace_root,
-            user_id=self.workspace_user_id,
+            # ToolExecutor exposes workspace_user_id; keep the Mixin usable by
+            # lightweight hosts/tests that only provide the legacy user_id.
+            user_id=getattr(self, "workspace_user_id", self.user_id),
             org_id=self.org_id,
         )
 
