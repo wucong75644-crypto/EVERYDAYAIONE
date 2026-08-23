@@ -51,7 +51,7 @@ export interface GenerationParams {
 }
 
 /** 消息状态（与后端保持一致） */
-export type MessageStatus = 'pending' | 'streaming' | 'completed' | 'failed';
+export type MessageStatus = 'pending' | 'streaming' | 'completed' | 'failed' | 'interrupted';
 
 /** 消息列表响应（原始 API 格式，需要通过 normalizeMessage 转换） */
 export interface MessageListResponse {

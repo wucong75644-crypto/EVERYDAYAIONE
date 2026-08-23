@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 
@@ -32,6 +33,13 @@ def _connect():
     import psycopg
 
     return psycopg.connect(_DATABASE_URL, autocommit=False)
+
+
+def _content_blocks(value):
+    """messages.content 在生产是 TEXT，测试统一投影成内容块。"""
+    if isinstance(value, str):
+        value = json.loads(value)
+    return value if isinstance(value, list) else []
 
 
 def _fixture(cur):
@@ -215,6 +223,7 @@ def test_pause_defers_running_task_then_owner_saves_snapshot_and_cancel_wins():
             )
             message_status, content = cur.fetchone()
             assert message_status == "interrupted"
+            content = _content_blocks(content)
             assert any(
                 "最后一段" in str(block.get("text") or "")
                 for block in content if isinstance(block, dict)
