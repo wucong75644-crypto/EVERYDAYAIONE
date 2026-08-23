@@ -278,3 +278,49 @@ export function handleImagePartialUpdate(
     window.dispatchEvent(new CustomEvent('workspace:changed'));
   }
 }
+
+/** Apply the acknowledgement for a natural-language pause/cancel command. */
+export function handleControlResult(
+  deps: HandlerDeps,
+  msg: WSIncomingMessage,
+): void {
+  const payload = (msg.payload || {}) as {
+    action?: 'pause' | 'resume' | 'cancel';
+    outcome?: string;
+  };
+  const action = payload.action;
+  const conversationId = msg.conversation_id;
+  const messageId = msg.message_id
+    || (conversationId ? deps.getStore().getStreamingMessageId(conversationId) : undefined);
+  if (!action || !conversationId) return;
+
+  logger.info('ws:control', 'control_result', {
+    action,
+    outcome: payload.outcome,
+    taskId: msg.task_id,
+    messageId,
+  });
+
+  if (action === 'resume') return;
+  if (messageId) {
+    const existing = deps.getStore().getMessage(messageId);
+    const alreadyMarked = existing?.content.some((part) => part.type === 'interrupt_marker');
+    const reason = action === 'pause' ? 'user_pause' : 'user_cancel';
+    deps.getStore().updateMessage(messageId, {
+      status: 'interrupted',
+      content: alreadyMarked
+        ? existing!.content
+        : [
+            ...(existing?.content || []),
+            {
+              type: 'interrupt_marker',
+              interrupted_at: new Date().toISOString(),
+              reason,
+            },
+          ],
+    });
+  }
+  if (msg.task_id) cleanupTaskSubscription(deps, msg.task_id);
+  deps.getStore().completeStreaming(conversationId);
+  deps.getStore().setIsSending(false);
+}

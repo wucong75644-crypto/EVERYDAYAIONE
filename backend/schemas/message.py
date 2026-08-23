@@ -41,6 +41,7 @@ class MessageStatus(str, Enum):
     GENERATING = "generating"
     COMPLETED = "completed"
     FAILED = "failed"
+    INTERRUPTED = "interrupted"
 
 
 class MessageOperation(str, Enum):
@@ -355,6 +356,24 @@ class GenerateResponse(BaseModel):
 
     # 后端路由确认的真实生成类型
     generation_type: str = "chat"
+
+
+class ConversationControlResponse(BaseModel):
+    """Response for a semantic pause/resume/cancel command.
+
+    A control command is not a new model turn, so it intentionally has no
+    user/assistant message pair.  The existing task/message IDs let the UI
+    re-subscribe to a resumed Actor task without creating a duplicate turn.
+    """
+
+    kind: Literal["control"] = "control"
+    action: Literal["pause", "resume", "cancel"]
+    outcome: str
+    conversation_id: str
+    task_id: Optional[str] = None
+    client_task_id: Optional[str] = None
+    external_task_id: Optional[str] = None
+    assistant_message_id: Optional[str] = None
 
 
 # ============================================================

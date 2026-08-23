@@ -29,12 +29,26 @@ export interface SendIdentifiers {
 }
 
 export interface GenerateResponse {
+  kind?: never;
   task_id: string;
   user_message: Message | null;
   assistant_message: Message;
   operation: MessageOperation;
   generation_type?: GenerationType;
 }
+
+export interface ConversationControlResponse {
+  kind: 'control';
+  action: 'pause' | 'resume' | 'cancel';
+  outcome: string;
+  conversation_id: string;
+  task_id?: string;
+  client_task_id?: string;
+  external_task_id?: string;
+  assistant_message_id?: string;
+}
+
+export type MessageSendResponse = GenerateResponse | ConversationControlResponse;
 
 export interface SendContext {
   clientRequestId: string;
@@ -118,12 +132,39 @@ export function applyOptimisticUpdate(options: SendOptions, ctx: SendContext): v
 
 /** Phase 3-5：替换占位状态、建立任务追踪并校验 task_id。 */
 export function processApiResponse(
-  response: GenerateResponse,
+  response: MessageSendResponse,
   options: SendOptions,
   ctx: SendContext,
 ): void {
-  const { conversationId, generationType, operation = 'send', subscribeTask } = options;
+  const {
+    conversationId,
+    generationType,
+    operation = 'send',
+    subscribeTask,
+    unsubscribeTask,
+  } = options;
   const store = useMessageStore.getState();
+
+  if (response.kind === 'control') {
+    // 控制文本不是新的业务消息。移除本次请求的乐观占位，避免刷新后
+    // 出现一条实际未写入 messages 的“假消息”。
+    store.removeMessage(ctx.userMessageId);
+    store.removeMessage(ctx.assistantMessageId);
+    store.removeOptimisticMessage(conversationId, ctx.userMessageId);
+    store.removeOptimisticMessage(conversationId, ctx.assistantMessageId);
+    store.completeStreaming(conversationId);
+    store.setIsSending(false);
+    unsubscribeTask?.(ctx.clientTaskId);
+
+    if (response.action === 'resume' && response.assistant_message_id) {
+      store.registerStreamingId(conversationId, response.assistant_message_id);
+      const taskId = response.client_task_id
+        || response.external_task_id
+        || response.task_id;
+      if (taskId) subscribeTask?.(taskId, conversationId);
+    }
+    return;
+  }
 
   store.updateMessage(ctx.assistantMessageId, { task_id: response.task_id });
 

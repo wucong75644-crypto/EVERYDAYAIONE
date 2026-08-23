@@ -38,7 +38,7 @@ export function useTextMessageHandler({
   onMessagePending,
 }: UseTextMessageHandlerParams) {
   // 获取 WebSocket 订阅函数
-  const { subscribeTaskWithMapping } = useWebSocketContext();
+  const { subscribeTaskWithMapping, unsubscribeTask } = useWebSocketContext();
 
   const handleChatMessage = async (
     messageContent: string,
@@ -85,6 +85,7 @@ export function useTextMessageHandler({
           ...extraParams,  // 电商图模式: image_task_meta 等
         },
         subscribeTask: subscribeTaskWithMapping,
+        unsubscribeTask,
       });
 
       // 注意：流式内容由 WebSocketContext 处理（message_chunk 消息）

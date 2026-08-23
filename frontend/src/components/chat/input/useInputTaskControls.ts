@@ -90,17 +90,18 @@ export function useInputTaskControls({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isStreaming, handleStop]);
 
-  const sendSteer = useCallback((message: string) => {
+  const sendSteer = useCallback((message: string): boolean => {
     const streamingMessage = streamingMessageId
       ? useMessageStore.getState().getMessage(streamingMessageId)
       : undefined;
     const taskId = streamingMessage?.task_id;
-    if (!taskId || !conversationId) return;
+    if (!taskId || !conversationId) return false;
 
     window.dispatchEvent(new CustomEvent('chat:user-steer', {
       detail: { taskId, conversationId, message },
     }));
     logger.info('inputArea', '发送打断信号', { taskId, msgLen: message.length });
+    return true;
   }, [streamingMessageId, conversationId]);
 
   return { handleStop, handlePause, sendSteer };

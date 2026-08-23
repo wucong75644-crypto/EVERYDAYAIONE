@@ -375,6 +375,32 @@ class IntentRouter:
         timeout: float,
     ) -> Optional[RoutingDecision]:
         """统一的千问调用方法（首次路由和重试路由共用）"""
+        data = await self.call_tool_model(
+            api_key=api_key,
+            model=model,
+            system_prompt=system_prompt,
+            text=text,
+            tools=tools,
+            timeout=timeout,
+        )
+        return self._parse_response(data)
+
+    async def call_tool_model(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        system_prompt: str,
+        text: str,
+        tools: List[Dict[str, Any]],
+        timeout: float,
+    ) -> Dict[str, Any]:
+        """Call the shared DashScope Function Calling transport.
+
+        This public transport method lets narrow routers (for example the
+        conversation-control router) reuse the existing client, timeout and
+        provider contract without reimplementing HTTP plumbing.
+        """
         client = await self._get_client(api_key, timeout)
         response = await client.post(
             "/chat/completions",
@@ -392,7 +418,10 @@ class IntentRouter:
             },
         )
         response.raise_for_status()
-        return self._parse_response(response.json())
+        data = response.json()
+        if not isinstance(data, dict):
+            raise RuntimeError("INTENT_ROUTER_RESPONSE_INVALID")
+        return data
 
     def _parse_response(self, data: Dict[str, Any]) -> Optional[RoutingDecision]:
         """解析模型响应中的 tool_calls"""

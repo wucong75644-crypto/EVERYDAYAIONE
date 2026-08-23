@@ -19,7 +19,7 @@ import {
   processApiResponse,
   rollbackOnError,
   getSendFailureDisposition,
-  type GenerateResponse,
+  type MessageSendResponse,
   type GenerationType,
   type MessageOperation,
   type SendContext,
@@ -118,9 +118,12 @@ export async function sendMessage(options: SendOptions): Promise<string> {
     });
 
     logger.info('messageSender', 'API response received', {
+      kind: response.kind || 'generation',
       taskId: response.task_id,
-      userMessageId: response.user_message?.id,
-      assistantMessageId: response.assistant_message.id,
+      userMessageId: response.kind === 'control' ? undefined : response.user_message?.id,
+      assistantMessageId: response.kind === 'control'
+        ? response.assistant_message_id
+        : response.assistant_message.id,
     });
 
     // Phase 3-5: 状态更新 + 任务创建 + task_id 验证
@@ -154,10 +157,10 @@ interface GenerateRequestConfig {
 
 async function requestWithIdempotentRetry(
   config: GenerateRequestConfig,
-): Promise<GenerateResponse> {
+): Promise<MessageSendResponse> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await request<GenerateResponse>(config);
+      return await request<MessageSendResponse>(config);
     } catch (error) {
       const apiError = toApiRequestError(error);
       if (attempt >= RETRY_DELAYS_MS.length || !isSafelyRetryable(apiError)) throw apiError;

@@ -50,6 +50,7 @@ class WSMessageType(str, Enum):
 
     # === 用户打断 ===
     USER_STEER = "user_steer"                     # 前端 → 后端：打断当前执行
+    CONTROL_RESULT = "control_result"             # 后端 → 前端：语义控制结果
 
     # === 积分变化 ===
     CREDITS_CHANGED = "credits_changed"

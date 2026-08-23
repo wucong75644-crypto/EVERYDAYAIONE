@@ -25,12 +25,18 @@ from schemas.websocket import (
     build_subscribed,
     build_message_done,
     build_message_error,
+    build_control_result,
 )
 from services.websocket_manager import HEARTBEAT_INTERVAL, ws_manager
 from core.database import get_db
 from core.database import get_async_db
 from services.conversation_command_store import DatabaseConversationCommandStore
 from services.conversation_commands import CommandType
+from services.conversation_control_router import ControlAction, ConversationControlRouter
+from services.conversation_control_service import (
+    execute_control_action,
+    load_control_tasks,
+)
 
 router = APIRouter(tags=["WebSocket"])
 
@@ -110,7 +116,7 @@ async def websocket_endpoint(
         while True:
             try:
                 data = await websocket.receive_json()
-                await _handle_message(conn_id, user_id, data)
+                await _handle_message(conn_id, user_id, data, verified_org_id)
             except json.JSONDecodeError:
                 await ws_manager.send_to_connection(conn_id, build_error(
                     "Invalid JSON",
@@ -149,7 +155,12 @@ async def _heartbeat_loop(conn_id: str, websocket: WebSocket):
         pass
 
 
-async def _handle_message(conn_id: str, user_id: str, data: dict):
+async def _handle_message(
+    conn_id: str,
+    user_id: str,
+    data: dict,
+    org_id: str | None = None,
+):
     """
     处理客户端消息
 
@@ -270,6 +281,61 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
         task_id = payload.get("task_id")
         message = payload.get("message", "")
         if task_id and message:
+            conversation_id = payload.get("conversation_id")
+            control_tasks = None
+            if conversation_id:
+                control_tasks = load_control_tasks(
+                    get_db(),
+                    conversation_id=str(conversation_id),
+                    user_id=user_id,
+                    org_id=org_id,
+                )
+            candidate_task = control_tasks.running or control_tasks.paused if control_tasks else None
+            candidate_ids = {
+                str(candidate_task.get(field))
+                for field in ("id", "client_task_id", "external_task_id")
+                if candidate_task and candidate_task.get(field)
+            }
+            if (
+                control_tasks
+                and candidate_task
+                and str(task_id) in candidate_ids
+            ):
+                decision = await ConversationControlRouter().route(
+                    str(message),
+                    control_tasks.to_router_state(),
+                    org_id=org_id,
+                )
+                if decision.action is not ControlAction.NONE:
+                    result = execute_control_action(
+                        get_db(),
+                        tasks=control_tasks,
+                        action=decision.action,
+                        user_id=user_id,
+                        org_id=org_id,
+                    )
+                    push_task_id = result.get("client_task_id") or result.get("external_task_id")
+                    if decision.action in {ControlAction.PAUSE, ControlAction.CANCEL} and push_task_id:
+                        ws_manager.cancel_task(str(push_task_id), org_id=org_id)
+                    if decision.action is ControlAction.RESUME:
+                        if push_task_id:
+                            await ws_manager.clear_cancelled_gate(
+                                str(push_task_id), org_id=org_id,
+                            )
+                        from services.conversation_worker import RedisConversationWakeup
+                        await RedisConversationWakeup().publish(
+                            str(conversation_id), org_id,
+                        )
+                    await ws_manager.send_to_connection(conn_id, build_control_result(
+                        action=decision.action.value,
+                        outcome=str(result.get("outcome") or "unknown"),
+                        conversation_id=str(conversation_id),
+                        task_id=push_task_id or result.get("task_id"),
+                        message_id=result.get("assistant_message_id"),
+                        client_task_id=result.get("client_task_id"),
+                        external_task_id=result.get("external_task_id"),
+                    ))
+                    return
             resolved = ws_manager.resolve_steer(task_id, message)
             logger.info(
                 f"User steer | conn={conn_id} | task={task_id} | "

@@ -12,7 +12,12 @@ from fastapi import Request
 from loguru import logger
 
 from core.exceptions import AppException
-from schemas.message import GenerateRequest, GenerateResponse, serialize_content_parts
+from schemas.message import (
+    ConversationControlResponse,
+    GenerateRequest,
+    GenerateResponse,
+    serialize_content_parts,
+)
 
 
 _RUNTIME_PARAM_KEYS = {
@@ -26,7 +31,7 @@ _RUNTIME_PARAM_KEYS = {
 @dataclass(frozen=True)
 class IdempotencyClaim:
     request_id: str
-    replay_response: GenerateResponse | None = None
+    replay_response: GenerateResponse | ConversationControlResponse | None = None
 
 
 class MessageIdempotencyService:
@@ -111,7 +116,10 @@ class MessageIdempotencyService:
                     message="消息请求的历史响应不可用",
                     status_code=500,
                 )
-            response = GenerateResponse.model_validate(response_body)
+            if response_body.get("kind") == "control":
+                response = ConversationControlResponse.model_validate(response_body)
+            else:
+                response = GenerateResponse.model_validate(response_body)
             return IdempotencyClaim(request_id=request_id, replay_response=response)
         if outcome == "failed":
             self._raise_stored_failure(data)
@@ -148,10 +156,15 @@ class MessageIdempotencyService:
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
-    def complete(self, claim: IdempotencyClaim | None, response: GenerateResponse) -> None:
+    def complete(
+        self,
+        claim: IdempotencyClaim | None,
+        response: GenerateResponse | ConversationControlResponse,
+    ) -> None:
         if claim is None:
             return
-        user_message_id = response.user_message.id if response.user_message else None
+        user_message = getattr(response, "user_message", None)
+        user_message_id = user_message.id if user_message else None
         self._update(
             claim.request_id,
             {

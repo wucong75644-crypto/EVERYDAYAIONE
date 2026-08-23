@@ -48,7 +48,7 @@ export interface UseInputSubmissionOptions {
   effectiveModelType: ModelType;
   smartSubMode: string;
   isStreaming: boolean;
-  sendSteer: (message: string) => void;
+  sendSteer: (message: string) => boolean;
   isUploading: boolean;
   hasImages: boolean;
   hasFiles: boolean;
@@ -120,7 +120,15 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
     }
 
     const message = options.prompt.trim();
-    if (options.isStreaming && message) options.sendSteer(message);
+    // 流式任务中的文本统一进入当前 Actor turn：后端会在同一条入口上
+    // 判断 pause/resume/cancel，普通文本则作为 steer 注入原任务。
+    // 成功发出 steer 后不能再创建第二个 HTTP turn。
+    if (options.isStreaming && message && !hasAttachments) {
+      if (options.sendSteer(message)) {
+        options.clearPromptForSubmission();
+        return;
+      }
+    }
     const imageUrls = attachments.imageUrls.length ? attachments.imageUrls : null;
     const imageInputs = attachments.imageInputs.length ? attachments.imageInputs : null;
     const fileData = attachments.files.length ? attachments.files : null;

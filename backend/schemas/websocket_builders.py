@@ -124,6 +124,31 @@ def build_message_error(
     )
 
 
+def build_control_result(
+    *,
+    action: str,
+    outcome: str,
+    conversation_id: str,
+    task_id: Optional[str] = None,
+    message_id: Optional[str] = None,
+    client_task_id: Optional[str] = None,
+    external_task_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build the acknowledgement for a natural-language control command."""
+    return _build_ws_message(
+        WSMessageType.CONTROL_RESULT,
+        {
+            "action": action,
+            "outcome": outcome,
+            "client_task_id": client_task_id,
+            "external_task_id": external_task_id,
+        },
+        task_id=task_id,
+        conversation_id=conversation_id,
+        message_id=message_id,
+    )
+
+
 def build_message_retry(
     task_id: str, conversation_id: str, new_model: str, attempt: int,
 ) -> Dict[str, Any]:

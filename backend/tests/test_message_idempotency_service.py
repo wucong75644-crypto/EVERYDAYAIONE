@@ -9,6 +9,7 @@ from starlette.requests import Request
 
 from core.exceptions import AppException
 from schemas.message import (
+    ConversationControlResponse,
     GenerateRequest,
     GenerateResponse,
     GenerationType,
@@ -139,6 +140,24 @@ def test_completed_claim_replays_original_response() -> None:
     assert claim is not None
     assert claim.replay_response is not None
     assert claim.replay_response.task_id == "task-1"
+
+
+def test_control_response_can_be_persisted_and_replayed() -> None:
+    response = ConversationControlResponse(
+        action="pause",
+        outcome="requested",
+        conversation_id="conversation-1",
+        task_id="client-task-1",
+    )
+    db = MagicMock()
+    service = MessageIdempotencyService(db, "user-1", None)
+    claim = SimpleNamespace(request_id="record-1")
+
+    service.complete(claim, response)
+
+    values = db.table.return_value.update.call_args.args[0]
+    assert values["response_body"]["kind"] == "control"
+    assert values["response_body"]["action"] == "pause"
 
 
 def test_failed_claim_replays_original_error() -> None:

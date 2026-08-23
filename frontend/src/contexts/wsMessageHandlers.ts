@@ -24,6 +24,7 @@ import {
   handleImagePartialUpdate,
   handleMessageDone,
   handleMessageError,
+  handleControlResult,
 } from './wsTaskMessageHandlers';
 
 export {
@@ -123,6 +124,8 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
   message_done: (deps, msg) => handleMessageDone(deps, msg),
 
   message_error: (deps, msg) => handleMessageError(deps, msg),
+
+  control_result: (deps, msg) => handleControlResult(deps, msg),
 
   image_partial_update: (deps, msg) => handleImagePartialUpdate(deps, msg),
 

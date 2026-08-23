@@ -16,6 +16,7 @@ from api.deps import CurrentUser, CurrentUserId, Database, OrgCtx, ScopedDB, Tas
 from core.limiter import limiter, RATE_LIMITS
 from core.exceptions import AppException
 from schemas.message import (
+    ConversationControlResponse,
     DeleteMessageResponse,
     GenerateRequest,
     GenerateResponse,
@@ -45,6 +46,14 @@ from api.routes.message_turn_anchors import resolve_existing_turn_anchor
 from api.routes.message_request_preparation import (
     prepare_generation_request,
     resolve_generation_context,
+)
+from services.conversation_control_router import (
+    ControlAction,
+    ConversationControlRouter,
+)
+from services.conversation_control_service import (
+    execute_control_action,
+    load_control_tasks,
 )
 
 # 向后兼容别名：test_placeholder_to_db.py 使用了带下划线前缀的名称
@@ -139,7 +148,11 @@ def _record_user_feedback_signal(
 # ============================================================
 
 
-@router.post("/generate", response_model=GenerateResponse, summary="统一消息生成")
+@router.post(
+    "/generate",
+    response_model=GenerateResponse | ConversationControlResponse,
+    summary="统一消息生成",
+)
 @limiter.limit(RATE_LIMITS["message_stream"])
 async def generate_message(
     request: Request,
@@ -191,7 +204,8 @@ async def generate_message(
             db=db,
             user_id=user_id,
         )
-        slot_handed_off = True
+        # 控制命令没有创建新任务，不能吞掉本次临时 slot。
+        slot_handed_off = not isinstance(response, ConversationControlResponse)
         idempotency_service.complete(idempotency_claim, response)
         return response
     except AppException as exc:
@@ -215,8 +229,65 @@ async def _do_generate_message(
     ctx: OrgCtx,
     db: ScopedDB,
     user_id: str,
-) -> GenerateResponse:
+) -> GenerateResponse | ConversationControlResponse:
     """generate_message 的实际执行逻辑（拆分以支持 try/except 槽位释放）"""
+
+    # 控制语义不是新的业务 turn。先读取现有 Actor 状态，再让专用
+    # Function Calling 路由器判断；普通消息继续沿用原生成链路。
+    if body.operation == MessageOperation.SEND:
+        control_text = " ".join(
+            str(getattr(part, "text", ""))
+            for part in body.content
+            if getattr(part, "text", None)
+        ).strip()
+        if control_text:
+            control_tasks = load_control_tasks(
+                db,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                org_id=ctx.org_id,
+            )
+            if control_tasks.running or control_tasks.paused:
+                decision = await ConversationControlRouter().route(
+                    control_text,
+                    control_tasks.to_router_state(),
+                    org_id=ctx.org_id,
+                )
+                if decision.action is not ControlAction.NONE:
+                    result = execute_control_action(
+                        db,
+                        tasks=control_tasks,
+                        action=decision.action,
+                        user_id=user_id,
+                        org_id=ctx.org_id,
+                    )
+                    task_id = result.get("client_task_id") or result.get("external_task_id")
+                    if decision.action in {ControlAction.PAUSE, ControlAction.CANCEL} and task_id:
+                        from services.websocket_manager import ws_manager
+                        ws_manager.cancel_task(str(task_id), org_id=ctx.org_id)
+                    if decision.action is ControlAction.RESUME:
+                        if task_id:
+                            from services.websocket_manager import ws_manager
+                            await ws_manager.clear_cancelled_gate(
+                                str(task_id), org_id=ctx.org_id,
+                            )
+                        from services.conversation_worker import RedisConversationWakeup
+                        await RedisConversationWakeup().publish(
+                            conversation_id, ctx.org_id,
+                        )
+                    return ConversationControlResponse(
+                        action=decision.action.value,
+                        outcome=str(result.get("outcome") or "unknown"),
+                        conversation_id=conversation_id,
+                        task_id=(
+                            result.get("client_task_id")
+                            or result.get("external_task_id")
+                            or result.get("task_id")
+                        ),
+                        client_task_id=result.get("client_task_id"),
+                        external_task_id=result.get("external_task_id"),
+                        assistant_message_id=result.get("assistant_message_id"),
+                    )
 
     # 1.5+2. 解析生成类型与请求位置上下文
     gen_type = await resolve_generation_context(request, body)
