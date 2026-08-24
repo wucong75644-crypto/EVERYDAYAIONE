@@ -156,11 +156,11 @@ if [[ -z "$rollback_sha" ]]; then
         [[ "$allowed" == true ]] || fail "工作区存在未列入发布范围的变更：$changed"
     done
 
-    for task_file in "${task_files[@]}"; do
+    for task_file in "${task_files[@]-}"; do
         [[ -e "$task_file" ]] || fail "发布文件不存在：$task_file"
     done
     if [[ -n ${migration_files[*]-} ]]; then
-        for migration_file in "${migration_files[@]}"; do
+        for migration_file in "${migration_files[@]-}"; do
             [[ -e "$migration_file" ]] || fail "迁移文件不存在：$migration_file"
         done
     fi
@@ -201,7 +201,7 @@ deploy_args=()
 [[ "$frontend_only" == true ]] && deploy_args+=(--frontend-only)
 [[ "$backend_only" == true ]] && deploy_args+=(--backend-only)
 if [[ "$frontend_only" != true ]]; then
-    for task_file in "${task_files[@]}"; do
+    for task_file in "${task_files[@]-}"; do
         case "$task_file" in
             backend/migrations/[0-9][0-9][0-9]_*.sql)
                 deploy_args+=(--migration-file "$task_file")
@@ -209,7 +209,7 @@ if [[ "$frontend_only" != true ]]; then
         esac
     done
     if [[ -n ${migration_files[*]-} ]]; then
-        for migration_file in "${migration_files[@]}"; do
+        for migration_file in "${migration_files[@]-}"; do
             deploy_args+=(--migration-file "$migration_file")
         done
     fi
