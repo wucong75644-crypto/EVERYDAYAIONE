@@ -1,6 +1,7 @@
 /** Ephemeral streaming UI actions extracted from the main Zustand slice factory. */
 
 import type { StateCreator } from 'zustand';
+import type { ToolStepPart } from '../../types/message';
 import type { StreamingSlice, StreamingSliceDeps } from './streamingSlice';
 
 type SliceState = StreamingSlice & StreamingSliceDeps;
@@ -30,11 +31,20 @@ export function createStreamingUiActions(
         const targetIndex = list.findIndex((message) => message.id === streamingId);
         if (targetIndex === -1) return state;
         const target = list[targetIndex];
+        const existingIndex = target.content.findIndex((block) => (
+          block.type === 'tool_step' && block.tool_call_id === toolCallId
+        ));
         const content = target.content.map((block) => (
           block.type === 'tool_step' && block.tool_call_id === toolCallId
             ? { ...block, ...updates }
             : block
         ));
+        // 回放可能只包含 terminal tool_step，或 terminal 事件先于 running
+        // 事件到达。此时用完整 block 建立它，而不是静默丢弃更新。
+        if (existingIndex === -1 && updates.type === 'tool_step'
+          && updates.tool_call_id === toolCallId) {
+          content.push(updates as ToolStepPart);
+        }
         const updatedList = [...list];
         updatedList[targetIndex] = { ...target, content };
         const optimisticMessages = new Map(state.optimisticMessages);
