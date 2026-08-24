@@ -268,5 +268,41 @@ describe('streamingSlice - suggestions', () => {
       ) as Record<string, unknown>;
       expect(block.status).toBe('running'); // 未匹配，不变
     });
+
+    it('should insert a complete tool block when terminal event arrives first', () => {
+      const state = store.getState();
+      state.startStreaming('conv_1', 'msg_1');
+
+      state.updateContentBlock('conv_1', 'tc_terminal', {
+        type: 'tool_step',
+        tool_name: 'erp_agent',
+        tool_call_id: 'tc_terminal',
+        status: 'completed',
+        output: 'done',
+      });
+
+      const msgs = store.getState().optimisticMessages.get('conv_1')!;
+      expect(msgs[0].content[1]).toEqual({
+        type: 'tool_step',
+        tool_name: 'erp_agent',
+        tool_call_id: 'tc_terminal',
+        status: 'completed',
+        output: 'done',
+      });
+    });
+
+    it('should create a streaming placeholder when binding is restored first', () => {
+      store.getState().registerStreamingId('conv_1', 'restored_msg');
+
+      expect(store.getState().streamingMessages.get('conv_1')).toBe('restored_msg');
+      expect(store.getState().optimisticMessages.get('conv_1')).toEqual([
+        expect.objectContaining({
+          id: 'restored_msg',
+          role: 'assistant',
+          status: 'streaming',
+          content: [],
+        }),
+      ]);
+    });
   });
 });

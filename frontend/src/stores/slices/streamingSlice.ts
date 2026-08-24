@@ -167,7 +167,19 @@ export const createStreamingSlice: StateCreator<
       if (targetIndex === -1) return state;
 
       const target = list[targetIndex];
-      const content = [...target.content, block];
+      const content = [...target.content];
+      if (block.type === 'tool_step' && block.tool_call_id) {
+        const existingIndex = content.findIndex((part) => (
+          part.type === 'tool_step' && part.tool_call_id === block.tool_call_id
+        ));
+        if (existingIndex >= 0) {
+          content[existingIndex] = { ...content[existingIndex], ...block };
+        } else {
+          content.push(block);
+        }
+      } else {
+        content.push(block);
+      }
 
       const updatedList = [...list];
       updatedList[targetIndex] = { ...target, content };
@@ -192,13 +204,17 @@ export const createStreamingSlice: StateCreator<
       const target = list[targetIndex];
       const content = [...target.content];
 
-      // 找最后一个 text block，替换为 content_block_add 的完整版
+      // 找最后一个 text block，替换为 content_block_add 的完整版。
+      // 如果实时 chunk 尚未落 Store，直接补一个 text block，避免静默丢失。
+      let replaced = false;
       for (let i = content.length - 1; i >= 0; i--) {
         if (content[i].type === 'text') {
           content[i] = block;
+          replaced = true;
           break;
         }
       }
+      if (!replaced) content.push(block);
 
       const updatedList = [...list];
       updatedList[targetIndex] = { ...target, content };

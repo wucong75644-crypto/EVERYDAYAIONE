@@ -62,6 +62,15 @@ export function createStreamingLifecycleActions(
               ...list,
               { ...existing, status: 'streaming' },
             ]);
+          } else {
+            optimisticMessages.set(conversationId, [...list, {
+              id: messageId,
+              conversation_id: conversationId,
+              role: 'assistant' as const,
+              content: [],
+              status: 'streaming' as const,
+              created_at: new Date().toISOString(),
+            }]);
           }
         }
         return { streamingMessages, optimisticMessages, isSending: true };

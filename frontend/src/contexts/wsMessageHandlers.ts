@@ -8,6 +8,7 @@
  */
 
 import { useAuthStore } from '../stores/useAuthStore';
+import { useMemoryStore } from '../stores/useMemoryStore';
 import { logger } from '../utils/logger';
 import { calcRemainingText } from '../utils/messageUtils';
 import { parseContentPart, parseContentParts, parseProtocolString } from '../schemas/messageProtocol';
@@ -17,11 +18,10 @@ import { getAgentStepText, getToolCallText } from '../constants/placeholder';
 import { handleRoutingComplete } from './wsRoutingCompleteHandler';
 import {
   flushChunkBuffer,
-  acceptDeliveryEvent,
-  setDeliveryCursor,
   type HandlerDeps,
   type WSIncomingMessage,
 } from './wsMessageHandlerShared';
+import { createMessageStreamProjection, type MessageStreamProjection } from './messageStreamProjection';
 import {
   handleImagePartialUpdate,
   handleMessageDone,
@@ -40,34 +40,42 @@ export {
  * 仅处理器内部使用，外部统一使用 WSMessage
  */
 
-type HandlerDefinition = (deps: HandlerDeps, msg: WSIncomingMessage) => void;
+type HandlerDefinition = (
+  deps: HandlerDeps,
+  msg: WSIncomingMessage,
+  projection: MessageStreamProjection,
+) => void;
 
 const handlerDefinitions: Record<string, HandlerDefinition> = {
-  message_start: (deps, msg) => {
+  message_start: (deps, msg, projection) => {
       const { message_id } = msg;
-      if (!message_id) return;
-      if (!acceptDeliveryEvent(deps, msg)) return;
+      if (!message_id && !projection.resolveMessageId(msg)) return;
 
-      const conversationId = msg.conversation_id
-        || (msg.task_id ? deps.taskConversationMapRef.current.get(msg.task_id) : undefined);
-      if (conversationId) {
-        // PAUSE 会主动清理前端流绑定；RESUME/重连的第一个事件必须重新绑定，
-        // 否则后续 chunk/block 只能等 message_done 才会整体覆盖显示。
-        deps.getStore().registerStreamingId(conversationId, message_id);
-      }
-      logger.info('ws:message', 'start received', { messageId: message_id });
-      deps.getStore().setStatus(message_id, 'streaming');
+      if (!projection.acceptDelivery(msg)) return;
+      const effectiveMessageId = projection.resolveMessageId(msg);
+      projection.ensureMessageBinding(msg);
+
+      logger.info('ws:message', 'start received', { messageId: effectiveMessageId });
+      if (effectiveMessageId) deps.getStore().setStatus(effectiveMessageId, 'streaming');
     },
 
-  message_chunk: (deps, msg) => {
-      const { message_id, task_id, conversation_id } = msg;
-      if (!acceptDeliveryEvent(deps, msg)) return;
+  message_chunk: (deps, msg, projection) => {
+      const { task_id } = msg;
+      const message_id = projection.resolveMessageId(msg);
+      const conversation_id = projection.ensureMessageBinding(msg);
       const chunk = parseProtocolString(msg.chunk ?? msg.payload?.chunk, 'chunk', {
         messageId: message_id,
         conversationId: conversation_id,
         source: 'ws:message_chunk',
       });
-      if (!message_id || !chunk || !conversation_id) return;
+      if (!message_id || !chunk) return;
+      if (!projection.acceptDelivery(msg)) return;
+
+      // 没有关联对话时保留历史的按 message_id 投影路径。
+      if (!conversation_id) {
+        deps.getStore().appendContent(message_id, chunk);
+        return;
+      }
 
       const bufferData = deps.chunkBufferRef.current.get(message_id);
       const prevChunk = bufferData?.chunk || '';
@@ -100,11 +108,12 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       }
     },
 
-    // stream_end：仅表示模型流结束，不代表数据库 commit 成功。
-    // 真正的 completed 只能由 message_done（数据库终态之后）确认。
+    // stream_end：LLM 流结束信号（对标 Anthropic message_stop）。
+    // 它只代表模型网络流结束，不代表数据库 commit 已成功；最终状态由
+    // message_done/message_error 或暂停/取消恢复事件确认。
   stream_end: (deps, msg) => {
       const { message_id, conversation_id } = msg;
-      if (!acceptDeliveryEvent(deps, msg)) return;
+      if (!projection.acceptDelivery(msg)) return;
       logger.info('ws:message', 'stream_end received', { messageId: message_id, conversationId: conversation_id });
 
       // flush 残留 chunk
@@ -116,12 +125,8 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
         flushChunkBuffer(deps);
       }
 
-      // 保持 streaming 状态，等待 message_done；暂停/取消没有 message_done，
-      // 因而不会被迟到的 stream_end 错误标成 completed。
-      logger.debug('ws:message', 'stream_end acknowledged; awaiting message_done', {
-        messageId: message_id,
-        conversationId: conversation_id,
-      });
+      // Agent 操作完成 → 通知工作区刷新（覆盖删除等无 file block 的场景）
+      window.dispatchEvent(new CustomEvent('workspace:changed'));
     },
 
   message_progress: (deps, msg) => {
@@ -153,17 +158,15 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       }
     },
 
-  subscribed: (deps, msg) => {
+  subscribed: (deps, msg, projection) => {
       const payload = msg.payload || {};
-      const task_id = typeof payload.task_id === 'string' ? payload.task_id : undefined;
+      const task_id = typeof payload.task_id === 'string' ? payload.task_id : msg.task_id;
+      if (!projection.acceptDelivery(msg)) return;
       const streamId = typeof payload.stream_id === 'string' ? payload.stream_id : undefined;
       const executionAttempt = typeof payload.execution_attempt === 'number'
         ? payload.execution_attempt : undefined;
       const snapshotSeq = typeof payload.snapshot_seq === 'number'
         ? payload.snapshot_seq : undefined;
-      const currentCursor = task_id
-        ? deps.deliveryCursorRef?.current.get(task_id)
-        : undefined;
       const accumulated = parseProtocolString(payload.accumulated, 'accumulated', {
         source: 'ws:subscribed',
       });
@@ -178,63 +181,51 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       });
 
       if (task_id) {
-        const conversationId = deps.taskConversationMapRef.current.get(task_id);
+        const conversationId = projection.resolveConversationId({ ...msg, task_id });
+        const messageId = projection.resolveMessageId(msg);
         if (conversationId) {
           const deliveryStatus = typeof payload.delivery_status === 'string'
             ? payload.delivery_status : undefined;
-          const messageId = typeof payload.message_id === 'string'
-            ? payload.message_id : undefined;
-          if (
-            messageId
+          const shouldBind = messageId
             && deliveryStatus !== 'paused'
             && deliveryStatus !== 'committed'
             && deliveryStatus !== 'failed'
-            && deliveryStatus !== 'cancelled'
-          ) {
-            deps.getStore().registerStreamingId(conversationId, messageId);
-          }
-          const shouldRestoreSnapshot = !currentCursor
+            && deliveryStatus !== 'cancelled';
+          if (shouldBind) projection.ensureBinding(conversationId, messageId);
+
+          const currentCursor = deps.deliveryCursorRef?.current.get(task_id);
+          const shouldRestore = !currentCursor
             || currentCursor.streamId !== streamId
             || !currentCursor.snapshotApplied
             || snapshotSeq === undefined
             || currentCursor.lastSeq <= snapshotSeq;
-          if (shouldRestoreSnapshot) {
+          if (shouldRestore) {
             if (accumulatedBlocks.length > 0) {
               const remaining = calcRemainingText(accumulatedBlocks, accumulated);
-              deps.getStore().restoreStreamingBlocks(conversationId, accumulatedBlocks, remaining);
+              projection.restore(conversationId, messageId, accumulatedBlocks, remaining);
             } else if (accumulated && accumulated.length > 0) {
               // 向后兼容：无 blocks 时仅恢复纯文字
-              deps.getStore().setStreamingContent(conversationId, accumulated);
+              projection.restore(conversationId, messageId, [], accumulated);
             }
           }
-          if (streamId && task_id) {
-            setDeliveryCursor(
-              deps, task_id, streamId, executionAttempt, snapshotSeq ?? 0, true,
+
+          if (task_id && streamId) {
+            projection.setDeliveryCursor(
+              task_id, streamId, executionAttempt, snapshotSeq ?? 0, true,
             );
           }
 
           const events = Array.isArray(payload.events) ? payload.events : [];
           for (const event of events) {
-            if (!event || typeof event !== 'object') continue;
-            const eventType = (event as { event_type?: unknown }).event_type;
-            const eventPayload = (event as { payload?: Record<string, unknown> }).payload;
-            const seq = (event as { delivery_seq?: unknown }).delivery_seq;
-            if (typeof eventPayload !== 'object' || !eventPayload) continue;
-            if (eventType === 'message_chunk' && typeof eventPayload.chunk === 'string') {
-              deps.getStore().appendStreamingContent(conversationId, eventPayload.chunk);
-            } else if (eventType === 'thinking_chunk' && typeof eventPayload.chunk === 'string') {
-              deps.getStore().appendStreamingThinking(conversationId, eventPayload.chunk);
-            } else if (eventType === 'content_block_add') {
-              const block = parseContentPart(eventPayload.block, {
-                messageId: msg.message_id,
-                conversationId,
-                source: 'ws:delivery_replay',
-              });
-              if (block) deps.getStore().appendContentBlock(conversationId, block);
-            }
-            if (typeof seq === 'number' && task_id && streamId) {
-              setDeliveryCursor(deps, task_id, streamId, executionAttempt, seq);
-            }
+            if (!event || typeof event !== 'object' || Array.isArray(event)) continue;
+            projection.projectReplayEvent(
+              conversationId,
+              messageId,
+              task_id,
+              streamId,
+              executionAttempt,
+              event as { event_type?: unknown; payload?: unknown; delivery_seq?: unknown },
+            );
           }
         }
       }
@@ -246,21 +237,21 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
 
       logger.info('ws:memory', 'memories extracted', { count: data.count });
 
-      import('../stores/useMemoryStore').then(({ useMemoryStore }) => {
-        useMemoryStore.getState().onMemoryExtracted(data.memories! as Array<{ id: string; memory: string }>);
-      });
+      useMemoryStore.getState().onMemoryExtracted(
+        data.memories as Array<{ id: string; memory: string }>,
+      );
     },
 
-  thinking_chunk: (deps, msg) => {
-      const { conversation_id } = msg;
-      if (!acceptDeliveryEvent(deps, msg)) return;
+  thinking_chunk: (_deps, msg, projection) => {
+      const conversation_id = projection.ensureMessageBinding(msg);
       const chunk = parseProtocolString(msg.chunk ?? msg.payload?.chunk, 'chunk', {
         conversationId: conversation_id,
         source: 'ws:thinking_chunk',
       });
       if (!conversation_id || !chunk) return;
+      if (!projection.acceptDelivery(msg)) return;
 
-      deps.getStore().appendStreamingThinking(conversation_id, chunk);
+      projection.appendThinkingChunk(conversation_id, chunk);
     },
 
   agent_step: (deps, msg) => {
@@ -320,21 +311,20 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       logger.info('ws:tool', 'tool_result', { conversationId: conversation_id, tool: toolName, success });
     },
 
-  content_block_add: (deps, msg) => {
-      const { conversation_id } = msg;
-      if (!acceptDeliveryEvent(deps, msg)) return;
+  content_block_add: (_deps, msg, projection) => {
+      const conversation_id = projection.ensureMessageBinding(msg);
       const block = parseContentPart(msg.payload?.block, {
         messageId: msg.message_id,
         conversationId: conversation_id,
         source: 'ws:content_block_add',
       });
       if (!conversation_id || !block) return;
+      if (!projection.acceptDelivery(msg)) return;
 
-      const store = deps.getStore();
-
-      // tool_step 状态更新：非 running 的 tool_step 是对已有 block 的更新
+      // 统一投影：工具 running/terminal、文本完整块和其他结构化 block
+      // 都经过同一入口，避免某种事件先到时被 Store 静默丢弃。
+      projection.projectBlock(conversation_id, block);
       if (block.type === 'tool_step' && block.tool_call_id && block.status !== 'running') {
-        store.updateContentBlock(conversation_id, block.tool_call_id, block);
         logger.info('ws:content', 'tool_step_update', {
           conversationId: conversation_id,
           toolCallId: block.tool_call_id,
@@ -343,16 +333,11 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
         return;
       }
 
-      // text block 去重：message_chunk 已逐字累积出相同的 text block，
-      // content_block_add 的 text 是完整版——替换最后一个 text block 而非追加
       if (block.type === 'text') {
-        store.replaceLastTextBlock(conversation_id, block);
         logger.info('ws:content', 'text_block_replace', { conversationId: conversation_id });
         return;
       }
 
-      // 其他 block（新增的 running tool_step、image、file 等）：直接追加
-      store.appendContentBlock(conversation_id, block);
       logger.info('ws:content', 'content_block_add', { conversationId: conversation_id, type: block.type });
 
       // 文件产出 → 通知工作区刷新
@@ -424,16 +409,22 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
   scheduled_task_completed: (_deps, msg) => {
       const data = (msg.data || msg.payload) as {
         task_id?: string;
-        task_name?: string;
+        run_id?: string;
+        task_status?: string;
+        status?: string;
         next_run_at?: string;
         summary?: string;
-        push_status?: string;
       };
       if (!data?.task_id) return;
+      const validStatuses: TaskStatus[] = ['active', 'paused', 'error', 'running'];
+      const taskStatus = data.task_status !== undefined
+        ? (validStatuses.includes(data.task_status as TaskStatus)
+          ? data.task_status as TaskStatus : undefined)
+        : (data.status === 'success' ? 'active' : undefined);
       logger.info('ws:scheduled-task', 'completed', data);
       import('../stores/useScheduledTaskStore').then(({ useScheduledTaskStore }) => {
         useScheduledTaskStore.getState().optimisticUpdate(data.task_id!, {
-          status: 'active',
+          ...(taskStatus ? { status: taskStatus } : {}),
           last_run_at: new Date().toISOString(),
           last_summary: data.summary || null,
           next_run_at: data.next_run_at || null,
@@ -446,22 +437,26 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
   scheduled_task_failed: (_deps, msg) => {
       const data = (msg.data || msg.payload) as {
         task_id?: string;
-        task_name?: string;
+        run_id?: string;
+        task_status?: string;
         status?: string;
-        error?: string;
+        reason?: string;
         consecutive_failures?: number;
-        will_retry?: boolean;
+        next_run_at?: string;
       };
       if (!data?.task_id) return;
       const validStatuses: TaskStatus[] = ['active', 'paused', 'error', 'running'];
-      const status = validStatuses.includes(data.status as TaskStatus)
-        ? data.status as TaskStatus
-        : 'error';
+      const taskStatus = data.task_status !== undefined
+        ? (validStatuses.includes(data.task_status as TaskStatus)
+          ? data.task_status as TaskStatus : undefined)
+        : (validStatuses.includes(data.status as TaskStatus)
+          ? data.status as TaskStatus : undefined);
       logger.warn('ws:scheduled-task', 'failed', data);
       import('../stores/useScheduledTaskStore').then(({ useScheduledTaskStore }) => {
         useScheduledTaskStore.getState().optimisticUpdate(data.task_id!, {
-          status,
+          ...(taskStatus ? { status: taskStatus } : {}),
           consecutive_failures: data.consecutive_failures || 0,
+          next_run_at: data.next_run_at || null,
         });
         useScheduledTaskStore.getState().fetchRuns(data.task_id!);
       });
@@ -481,10 +476,11 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
 };
 
 export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg: WSMessage) => void> {
+  const projection = createMessageStreamProjection(deps);
   return Object.fromEntries(
     Object.entries(handlerDefinitions).map(([type, handler]) => [
       type,
-      (msg: WSMessage) => handler(deps, msg as WSIncomingMessage),
+      (msg: WSMessage) => handler(deps, msg as WSIncomingMessage, projection),
     ]),
   );
 }

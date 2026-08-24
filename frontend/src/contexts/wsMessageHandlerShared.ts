@@ -7,6 +7,9 @@ import type { Message } from '../stores/useMessageStore';
 
 export interface WSIncomingMessage extends WSMessage {
   message_id?: string;
+  stream_id?: string;
+  execution_attempt?: number;
+  delivery_seq?: number;
   message?: unknown;
   chunk?: unknown;
   accumulated?: string;

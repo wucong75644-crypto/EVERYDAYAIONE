@@ -54,6 +54,7 @@ export type WSMessageType =
   | 'message_chunk'
   | 'message_progress'
   | 'message_done'
+  | 'stream_end'
   | 'message_error'
   | 'agent_step'
   | 'routing_complete'
