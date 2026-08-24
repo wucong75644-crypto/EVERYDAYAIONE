@@ -12,6 +12,7 @@ function toImageInput(image: ChatImageAttachment): ImageInputInfo {
     url,
     original_url: url,
     thumbnail_url: image.thumbnailUrl,
+    asset_id: image.assetId,
     name: image.name,
     workspace_path: image.workspacePath,
     mime_type: image.mimeType,
@@ -40,7 +41,6 @@ export function createAttachmentSubmissionSnapshot(
   return {
     attachments: [...attachments],
     imageInputs: readyImages.map(toImageInput),
-    imageUrls: readyImages.map((image) => image.originalUrl as string),
     files: attachments
       .filter((item): item is Extract<ChatAttachment, { kind: 'file' }> => item.kind === 'file')
       .filter((item) => item.status === 'ready')

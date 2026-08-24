@@ -185,6 +185,12 @@ async def create_credential(
     except curl_parser.CurlParseError as e:
         raise HTTPException(status_code=400, detail=f"cURL 解析失败: {e}")
 
+    if not curl_parser.is_kuaimai_host(parsed):
+        raise HTTPException(
+            status_code=400,
+            detail="请复制 erp.superboss.cc 的报表查询请求",
+        )
+
     if not parsed.companyid:
         raise HTTPException(
             status_code=400,
@@ -197,6 +203,11 @@ async def create_credential(
         )
 
     detected = curl_parser.detect_source(parsed)
+    if body.source and detected and body.source != detected:
+        raise HTTPException(
+            status_code=400,
+            detail="复制的请求与当前配置的数据源不匹配",
+        )
     source = body.source or detected
     if source not in ("thinktank", "viperp"):
         raise HTTPException(
@@ -204,14 +215,24 @@ async def create_credential(
             detail=f"无法识别数据源（URL: {parsed.url}），请显式指定 source 字段",
         )
 
-    cred_id = await credential_store.save_credential(
-        db,
-        org_id=org_id,
-        source=source,  # type: ignore
-        kuaimai_company_id=parsed.companyid,
-        censeid_cookie=parsed.censeid,
-        cookie_full=parsed.cookie_full,
-    )
+    try:
+        cred_id = await credential_store.save_credential(
+            db,
+            org_id=org_id,
+            source=source,  # type: ignore
+            kuaimai_company_id=parsed.companyid,
+            censeid_cookie=parsed.censeid,
+            cookie_full=parsed.cookie_full,
+        )
+    except Exception as error:
+        logger.exception(
+            "kuaimai_external credential save failed | "
+            f"org={org_id} source={source} user={org_ctx.user_id}"
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="快麦凭证保存失败，请稍后重试",
+        ) from error
 
     cred = await credential_store.get_credential(db, org_id=org_id, source=source)  # type: ignore
     if not cred:

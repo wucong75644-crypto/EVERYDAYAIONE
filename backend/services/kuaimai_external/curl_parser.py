@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 import shlex
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 
 
 @dataclass
@@ -36,6 +37,9 @@ class ParsedCurl:
 
 class CurlParseError(ValueError):
     """cURL 字符串无法解析（格式不对/缺关键字段）"""
+
+
+KUAIMAI_HOST = "erp.superboss.cc"
 
 
 def parse_cookie_string(cookie_str: str) -> dict[str, str]:
@@ -77,6 +81,8 @@ def parse_curl(curl_text: str) -> ParsedCurl:
 
     # 清理：去掉续行符 + 多余空白
     text = re.sub(r"\\\s*\n", " ", curl_text.strip())
+    # Safari 复制的 cURL 可能使用 ANSI-C 风格的 $'...' 引号。
+    text = re.sub(r"(?<!\S)\$'|(?<==)\$'", "'", text)
     text = re.sub(r"\s+", " ", text)
 
     # shlex 处理引号内的特殊字符（含 $、空格、$o55 这种）
@@ -85,16 +91,24 @@ def parse_curl(curl_text: str) -> ParsedCurl:
     except ValueError as e:
         raise CurlParseError(f"shlex 解析失败（可能引号未闭合）: {e}") from e
 
+    return _parse_tokens(tokens)
+
+
+def _parse_tokens(tokens: list[str]) -> ParsedCurl:
+    """遍历 shlex token，提取快麦凭证所需的请求字段。"""
     if not tokens or tokens[0].lower() != "curl":
         raise CurlParseError("不是 cURL 命令（应以 'curl' 开头）")
-
     result = ParsedCurl(url="")
     method_override: str | None = None
     data_parts: list[str] = []
-
     i = 1
     while i < len(tokens):
         tok = tokens[i]
+
+        if tok.startswith("--header="):
+            _parse_header_into(tok.partition("=")[2], result)
+            i += 1
+            continue
 
         if tok in ("-X", "--request"):
             if i + 1 < len(tokens):
@@ -117,11 +131,21 @@ def parse_curl(curl_text: str) -> ParsedCurl:
                 i += 2
                 continue
 
+        if tok.startswith("--cookie="):
+            _parse_cookie_into(tok.partition("=")[2], result)
+            i += 1
+            continue
+
         if tok in ("--data-raw", "--data", "-d", "--data-binary"):
             if i + 1 < len(tokens):
                 data_parts.append(tokens[i + 1])
                 i += 2
                 continue
+
+        if tok.startswith(("--data-raw=", "--data=", "--data-binary=")):
+            data_parts.append(tok.partition("=")[2])
+            i += 1
+            continue
 
         # 通用 flag 跳过（不消费下一个 token）
         if tok in (
@@ -162,6 +186,13 @@ def parse_curl(curl_text: str) -> ParsedCurl:
     return result
 
 
+def _parse_cookie_into(cookie_str: str, result: ParsedCurl) -> None:
+    """保存完整 Cookie，并提取快麦身份 Cookie。"""
+    result.cookie_full = cookie_str
+    result.cookies = parse_cookie_string(cookie_str)
+    result.censeid = result.cookies.get("_censeid", "")
+
+
 def _parse_header_into(header_str: str, result: ParsedCurl) -> None:
     """解析 'key: value' 写入 result.headers 和关键字段。"""
     if ":" not in header_str:
@@ -172,9 +203,7 @@ def _parse_header_into(header_str: str, result: ParsedCurl) -> None:
 
     # cookie 也可能通过 -H 'cookie: ...' 传
     if key_lower == "cookie":
-        result.cookie_full = value
-        result.cookies = parse_cookie_string(value)
-        result.censeid = result.cookies.get("_censeid", "")
+        _parse_cookie_into(value, result)
         return
 
     result.headers[key_lower] = value
@@ -200,3 +229,8 @@ def detect_source(parsed: ParsedCurl) -> str | None:
     if "/report/" in url_lower or "viperp" in url_lower:
         return "viperp"
     return None
+
+
+def is_kuaimai_host(parsed: ParsedCurl) -> bool:
+    """仅允许快麦 ERP 主站请求作为凭证材料。"""
+    return (urlparse(parsed.url).hostname or "").lower() == KUAIMAI_HOST

@@ -8,6 +8,7 @@
 
 import asyncio
 import mimetypes
+import stat
 from pathlib import Path
 from typing import List, Optional
 
@@ -70,8 +71,33 @@ async def list_workspace(
     )
 
     target = executor.resolve_safe_path(path)
-    if not target.exists() or not target.is_dir():
-        return WorkspaceListResponse(path=path, items=[], total=0)
+    try:
+        target_stat = target.stat()
+    except FileNotFoundError:
+        raise AppException(
+            code="WORKSPACE_DIRECTORY_NOT_FOUND",
+            message="工作区目录不存在",
+            status_code=404,
+        )
+    except OSError as exc:
+        logger.error(
+            "Workspace directory stat failed | user_id={} | org_id={} | path={} | error={}",
+            user_id,
+            org_id,
+            path,
+            type(exc).__name__,
+        )
+        raise AppException(
+            code="WORKSPACE_DIRECTORY_UNAVAILABLE",
+            message="工作区目录暂时无法访问，请稍后重试",
+            status_code=503,
+        ) from exc
+    if not stat.S_ISDIR(target_stat.st_mode):
+        raise AppException(
+            code="WORKSPACE_DIRECTORY_NOT_FOUND",
+            message="工作区目录不存在",
+            status_code=404,
+        )
 
     # 拼接相对路径前缀（用于 CDN URL 计算）
     path_prefix = path.strip("/").strip("\\")
