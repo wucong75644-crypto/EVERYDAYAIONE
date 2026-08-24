@@ -114,8 +114,6 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   const subscribeTaskWithMapping = useCallback((taskId: string, conversationId: string) => {
     if (subscribedTasksRef.current.has(taskId)) {
       logger.debug('ws:subscribe', 'already subscribed', { taskId });
-      const cursor = deliveryCursorRef.current.get(taskId);
-      wsRef.current.subscribeTask(taskId, cursor?.lastSeq ?? 0);
       return;
     }
 
