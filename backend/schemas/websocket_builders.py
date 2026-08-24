@@ -229,6 +229,7 @@ def build_subscribed(
     task_id: str, accumulated: str = "", current_index: int = -1,
     accumulated_blocks: Optional[list] = None,
     *,
+    message_id: Optional[str] = None,
     delivery_session_id: Optional[str] = None,
     stream_id: Optional[str] = None,
     execution_attempt: Optional[int] = None,
@@ -245,6 +246,8 @@ def build_subscribed(
     }
     if accumulated_blocks:
         payload["accumulated_blocks"] = accumulated_blocks
+    if message_id is not None:
+        payload["message_id"] = message_id
     _add_delivery_metadata(
         payload, delivery_session_id, stream_id, execution_attempt, None,
     )

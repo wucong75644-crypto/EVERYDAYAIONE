@@ -100,6 +100,9 @@ done
 [[ "$frontend_only" == true && "$backend_only" == true ]] \
     && fail "--frontend-only 与 --backend-only 不能同时使用"
 
+# macOS 自带 Bash 在 nounset 模式下对空数组的长度展开不兼容；发布入口
+# 必须允许“未指定迁移文件”的正常发布路径通过参数校验。
+set +u
 if [[ -n "$rollback_sha" ]]; then
     [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#migration_files[@]} -eq 0 ]] \
         || fail "回滚模式不能同时提交新文件"
@@ -107,6 +110,7 @@ else
     [[ -n "$message" ]] || fail "提交发布必须提供 --message"
     [[ ${#task_files[@]} -gt 0 ]] || fail "提交发布必须至少提供一个 --file"
 fi
+set -u
 
 set +u
 for path in "${task_files[@]}"; do
@@ -115,12 +119,14 @@ for path in "${task_files[@]}"; do
     [[ "$path" != .env* && "$path" != */.env* && "$path" != .cursor/* && "$path" != .codex/* ]] \
         || fail "发布禁止路径：$path"
 done
-for path in "${migration_files[@]}"; do
-    [[ "$path" != /* && "$path" != ../* && "$path" != */../* && "$path" != .git/* ]] \
-        || fail "非法迁移路径：$path"
-    [[ "$path" == backend/migrations/[0-9][0-9][0-9]_*.sql ]] \
-        || fail "迁移文件必须使用三位编号命名且位于 backend/migrations/：$path"
-done
+if [[ -n ${migration_files[*]-} ]]; then
+    for path in "${migration_files[@]}"; do
+        [[ "$path" != /* && "$path" != ../* && "$path" != */../* && "$path" != .git/* ]] \
+            || fail "非法迁移路径：$path"
+        [[ "$path" == backend/migrations/[0-9][0-9][0-9]_*.sql ]] \
+            || fail "迁移文件必须使用三位编号命名且位于 backend/migrations/：$path"
+    done
+fi
 set -u
 
 if [[ -z "$rollback_sha" ]]; then
@@ -153,9 +159,11 @@ if [[ -z "$rollback_sha" ]]; then
     for task_file in "${task_files[@]}"; do
         [[ -e "$task_file" ]] || fail "发布文件不存在：$task_file"
     done
-    for migration_file in "${migration_files[@]}"; do
-        [[ -e "$migration_file" ]] || fail "迁移文件不存在：$migration_file"
-    done
+    if [[ -n ${migration_files[*]-} ]]; then
+        for migration_file in "${migration_files[@]}"; do
+            [[ -e "$migration_file" ]] || fail "迁移文件不存在：$migration_file"
+        done
+    fi
 
     git add -- "${task_files[@]}"
     git diff --cached --quiet && fail "指定文件没有可提交的变更"
@@ -200,9 +208,11 @@ if [[ "$frontend_only" != true ]]; then
                 ;;
         esac
     done
-    for migration_file in "${migration_files[@]}"; do
-        deploy_args+=(--migration-file "$migration_file")
-    done
+    if [[ -n ${migration_files[*]-} ]]; then
+        for migration_file in "${migration_files[@]}"; do
+            deploy_args+=(--migration-file "$migration_file")
+        done
+    fi
 fi
 if [[ ${#deploy_args[@]} -gt 0 ]]; then
     bash deploy/deploy.sh "${deploy_args[@]}"

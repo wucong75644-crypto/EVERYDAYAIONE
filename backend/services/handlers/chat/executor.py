@@ -104,6 +104,9 @@ class ChatGenerationExecutor:
             self._sink_factory(task, claim, cancellation_event)
             if self._sink_factory else None
         )
+        # 工具结果需要复用 ActorWebSink 的 delivery session；否则工具完成事件
+        # 会绕过 delivery_seq/快照，只能等 message_done 才在页面上体现。
+        handler._actor_sink = sink
         if sink is not None and replay_context is not None:
             seed_progress = getattr(sink, "seed_progress", None)
             if seed_progress is not None:

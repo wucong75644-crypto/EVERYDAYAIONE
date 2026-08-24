@@ -145,6 +145,40 @@ class ActorWebSink:
         )
         await self._persist()
 
+    async def on_block_update(self, block: dict[str, Any]) -> None:
+        """更新已投递的结构化 block，并通过同一交付会话持久化。"""
+        updated = dict(block)
+        tool_call_id = updated.get("tool_call_id")
+        if tool_call_id is None:
+            await self.on_block(updated)
+            return
+
+        for index, existing in enumerate(self._blocks):
+            if existing.get("tool_call_id") == tool_call_id:
+                self._blocks[index] = updated
+                break
+        else:
+            self._blocks.append(updated)
+
+        delivery_seq = await self._append_event(
+            "content_block_add", {"block": updated},
+        )
+        await self._send(
+            build_content_block_add(
+                task_id=self._delivery.push_task_id,
+                conversation_id=self._delivery.conversation_id,
+                message_id=self._delivery.message_id,
+                block=updated,
+                delivery_session_id=self._session.session_id if self._session else None,
+                stream_id=self._session.stream_id if self._session else None,
+                execution_attempt=(
+                    self._session.execution_attempt if self._session else None
+                ),
+                delivery_seq=delivery_seq,
+            )
+        )
+        await self._persist()
+
     async def flush(self) -> None:
         await self.flush_progress()
         delivery_seq = await self._append_event("stream_end", {})

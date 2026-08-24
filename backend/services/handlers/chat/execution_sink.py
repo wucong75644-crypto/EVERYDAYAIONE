@@ -20,6 +20,9 @@ class ExecutionSink(Protocol):
     async def on_block(self, block: dict[str, Any]) -> None:
         """接收已形成的结构化内容块。"""
 
+    async def on_block_update(self, block: dict[str, Any]) -> None:
+        """接收对已有结构化内容块的更新。"""
+
     async def flush(self) -> None:
         """提交剩余过程状态并结束流。"""
 
@@ -42,6 +45,17 @@ class CollectingExecutionSink:
         self.thinking += text
 
     async def on_block(self, block: dict[str, Any]) -> None:
+        self.blocks.append(block)
+
+    async def on_block_update(self, block: dict[str, Any]) -> None:
+        tool_call_id = block.get("tool_call_id")
+        if tool_call_id is None:
+            self.blocks.append(block)
+            return
+        for index, existing in enumerate(self.blocks):
+            if existing.get("tool_call_id") == tool_call_id:
+                self.blocks[index] = dict(block)
+                return
         self.blocks.append(block)
 
     async def flush(self) -> None:

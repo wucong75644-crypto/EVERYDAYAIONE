@@ -74,6 +74,7 @@ function createMockStore(): MessageStoreActions {
     failTask: vi.fn(),
     completeStreaming: vi.fn(),
     completeStreamingWithMessage: vi.fn(),
+    registerStreamingId: vi.fn(),
     markConversationCompleted: vi.fn(),
     setIsSending: vi.fn(),
     getMessage: vi.fn(),
@@ -151,8 +152,9 @@ describe('wsMessageHandlers', () => {
   // ========================================
 
   describe('message_start', () => {
-    it('should set status to streaming', () => {
-      handlers.message_start({ message_id: 'msg_1' });
+    it('should rebind the active stream before setting status', () => {
+      handlers.message_start({ message_id: 'msg_1', conversation_id: 'conv_1' });
+      expect(store.registerStreamingId).toHaveBeenCalledWith('conv_1', 'msg_1');
       expect(store.setStatus).toHaveBeenCalledWith('msg_1', 'streaming');
     });
 
@@ -575,6 +577,37 @@ describe('wsMessageHandlers', () => {
   // ========================================
 
   describe('subscribed', () => {
+    it('should rebind the active message before restoring a running snapshot', () => {
+      deps.taskConversationMapRef.current.set('task_1', 'conv_1');
+
+      handlers.subscribed({
+        payload: {
+          task_id: 'task_1',
+          message_id: 'msg_1',
+          delivery_status: 'streaming',
+          accumulated: '已恢复',
+        },
+      });
+
+      expect(store.registerStreamingId).toHaveBeenCalledWith('conv_1', 'msg_1');
+      expect(store.setStreamingContent).toHaveBeenCalledWith('conv_1', '已恢复');
+    });
+
+    it('should not bind a paused snapshot as an active stream', () => {
+      deps.taskConversationMapRef.current.set('task_1', 'conv_1');
+
+      handlers.subscribed({
+        payload: {
+          task_id: 'task_1',
+          message_id: 'msg_1',
+          delivery_status: 'paused',
+          accumulated: '暂停内容',
+        },
+      });
+
+      expect(store.registerStreamingId).not.toHaveBeenCalled();
+    });
+
     it('should set streaming content from accumulated', () => {
       deps.taskConversationMapRef.current.set('task_1', 'conv_1');
 

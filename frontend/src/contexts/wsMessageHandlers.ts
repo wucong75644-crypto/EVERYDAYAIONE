@@ -48,6 +48,13 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       if (!message_id) return;
       if (!acceptDeliveryEvent(deps, msg)) return;
 
+      const conversationId = msg.conversation_id
+        || (msg.task_id ? deps.taskConversationMapRef.current.get(msg.task_id) : undefined);
+      if (conversationId) {
+        // PAUSE 会主动清理前端流绑定；RESUME/重连的第一个事件必须重新绑定，
+        // 否则后续 chunk/block 只能等 message_done 才会整体覆盖显示。
+        deps.getStore().registerStreamingId(conversationId, message_id);
+      }
       logger.info('ws:message', 'start received', { messageId: message_id });
       deps.getStore().setStatus(message_id, 'streaming');
     },
@@ -173,6 +180,19 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       if (task_id) {
         const conversationId = deps.taskConversationMapRef.current.get(task_id);
         if (conversationId) {
+          const deliveryStatus = typeof payload.delivery_status === 'string'
+            ? payload.delivery_status : undefined;
+          const messageId = typeof payload.message_id === 'string'
+            ? payload.message_id : undefined;
+          if (
+            messageId
+            && deliveryStatus !== 'paused'
+            && deliveryStatus !== 'committed'
+            && deliveryStatus !== 'failed'
+            && deliveryStatus !== 'cancelled'
+          ) {
+            deps.getStore().registerStreamingId(conversationId, messageId);
+          }
           const shouldRestoreSnapshot = !currentCursor
             || currentCursor.streamId !== streamId
             || !currentCursor.snapshotApplied

@@ -631,6 +631,26 @@ class TestPushToolStepUpdate:
 
     @pytest.mark.asyncio
     @patch("services.handlers.chat_tool_mixin.ws_manager")
+    async def test_actor_sink_receives_completion_update(self, mock_ws):
+        """Actor 执行时工具完成必须进入统一交付 Sink。"""
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = _make_mixin()
+        mixin._actor_enabled = True
+        mixin._actor_sink = MagicMock()
+        mixin._actor_sink.on_block_update = AsyncMock()
+
+        await ChatToolMixin._push_tool_step_update(
+            mixin, "task1", "conv1", "msg1", "user1",
+            "erp_agent", "tc_actor",
+            success=True, output="查询完成", elapsed_ms=1200,
+        )
+
+        mixin._actor_sink.on_block_update.assert_awaited_once()
+        mock_ws.send_to_task_or_user.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("services.handlers.chat_tool_mixin.ws_manager")
     async def test_error_step_pushes_error_status(self, mock_ws):
         """执行失败 → 推送 status=error"""
         from services.handlers.chat_tool_mixin import ChatToolMixin

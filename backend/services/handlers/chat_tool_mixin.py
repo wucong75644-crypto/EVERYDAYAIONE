@@ -508,6 +508,13 @@ class ChatToolMixin(ChatToolResultMixin):
             "output": output,
             "elapsed_ms": elapsed_ms,
         }
+        actor_sink = getattr(self, "_actor_sink", None)
+        on_block_update = getattr(actor_sink, "on_block_update", None)
+        if getattr(self, "_actor_enabled", False) is True and on_block_update is not None:
+            result = on_block_update(_step_update)
+            if hasattr(result, "__await__"):
+                await result
+                return
         try:
             await ws_manager.send_to_task_or_user(
                 task_id, user_id,

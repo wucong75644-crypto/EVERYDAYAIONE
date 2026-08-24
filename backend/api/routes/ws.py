@@ -200,6 +200,7 @@ async def _handle_message(
                     accumulated=accumulated or "",
                     accumulated_blocks=accumulated_blocks or [],
                     current_index=-1,
+                    message_id=task.get("assistant_message_id"),
                     delivery_session_id=delivery_state.get("session_id"),
                     stream_id=delivery_state.get("stream_id"),
                     execution_attempt=delivery_state.get("execution_attempt"),
