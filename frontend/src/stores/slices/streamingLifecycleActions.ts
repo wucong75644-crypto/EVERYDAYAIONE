@@ -43,7 +43,24 @@ export function createStreamingLifecycleActions(
       set((state) => {
         const streamingMessages = new Map(state.streamingMessages);
         streamingMessages.set(conversationId, messageId);
-        return { streamingMessages, isSending: true };
+        const optimisticMessages = new Map(state.optimisticMessages);
+        const list = optimisticMessages.get(conversationId) || [];
+        if (!list.some((message) => message.id === messageId)) {
+          const persisted = (state.messages[conversationId] || []).find(
+            (message) => message.id === messageId,
+          );
+          optimisticMessages.set(conversationId, [...list, persisted
+            ? { ...persisted, status: 'streaming' as const }
+            : {
+                id: messageId,
+                conversation_id: conversationId,
+                role: 'assistant' as const,
+                content: [],
+                status: 'streaming' as const,
+                created_at: new Date().toISOString(),
+              }]);
+        }
+        return { streamingMessages, optimisticMessages, isSending: true };
       });
     },
     completeStreaming: (conversationId) => {

@@ -24,6 +24,7 @@ import {
 import { getMessages } from '../services/message';
 import { logger } from '../utils/logger';
 import { createWSMessageHandlers } from './wsMessageHandlers';
+import type { DeliveryCursor } from './wsMessageHandlerShared';
 import ToolConfirmModal from '../components/chat/modals/ToolConfirmModal';
 
 /** 操作上下文（供完成回调使用） */
@@ -72,6 +73,8 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   // 改进：同时存储 conversationId，避免额外映射维护
   const chunkBufferRef = useRef<Map<string, { chunk: string; conversationId: string }>>(new Map());
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 每个 task 的回放游标，避免重连后重复显示或跳过工具事件。
+  const deliveryCursorRef = useRef<Map<string, DeliveryCursor>>(new Map());
 
   // ws ref（避免回调重建）
   const wsRef = useRef(ws);
@@ -89,6 +92,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       flushTimerRef,
       unsubscribeTask: ws.unsubscribeTask,
       send: ws.send,
+      deliveryCursorRef,
     };
 
     const handlers = createWSMessageHandlers(deps);
@@ -117,7 +121,9 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
     subscribedTasksRef.current.add(taskId);
     taskConversationMapRef.current.set(taskId, conversationId);
-    wsRef.current.subscribeTask(taskId);
+    const cursor = deliveryCursorRef.current.get(taskId);
+    if (cursor) wsRef.current.subscribeTask(taskId, cursor.lastSeq);
+    else wsRef.current.subscribeTask(taskId);
 
     logger.debug('ws:subscribe', 'subscribed', { taskId, conversationId });
   }, []);
@@ -137,6 +143,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     taskConversationMapRef.current.clear();
     operationContextRef.current.clear();
     chunkBufferRef.current.clear();
+    deliveryCursorRef.current.clear();
     restorationResultRef.current = null;
     if (flushTimerRef.current) {
       clearTimeout(flushTimerRef.current);
@@ -292,6 +299,17 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     });
     useMessageStore.getState().setToolConfirmRequest(null);
   }, [ws]);
+
+  // 断线重连后主动携带最后确认游标重新订阅，后端会回放缺失事件。
+  const subscribeTask = ws.subscribeTask;
+  useEffect(() => {
+    if (!ws.isConnected) return;
+    subscribedTasksRef.current.forEach((taskId) => {
+      const cursor = deliveryCursorRef.current.get(taskId);
+      if (cursor) subscribeTask(taskId, cursor.lastSeq);
+      else subscribeTask(taskId);
+    });
+  }, [ws.isConnected, subscribeTask]);
 
   const handleToolReject = useCallback((confirmationId: string) => {
     ws.send({

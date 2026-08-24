@@ -7,6 +7,9 @@ import type { Message } from '../stores/useMessageStore';
 
 export interface WSIncomingMessage extends WSMessage {
   message_id?: string;
+  stream_id?: string;
+  execution_attempt?: number;
+  delivery_seq?: number;
   message?: unknown;
   chunk?: unknown;
   accumulated?: string;
@@ -14,6 +17,13 @@ export interface WSIncomingMessage extends WSMessage {
   credits?: number;
   progress?: number;
   data?: Record<string, unknown>;
+}
+
+export interface DeliveryCursor {
+  streamId: string;
+  executionAttempt: number;
+  lastSeq: number;
+  snapshotApplied: boolean;
 }
 
 export interface MessageStoreActions {
@@ -28,6 +38,8 @@ export interface MessageStoreActions {
   completeStreaming: (conversationId: string) => void;
   completeStreamingWithMessage: (conversationId: string, message: Message) => void;
   getStreamingMessageId: (conversationId: string) => string | null;
+  /** 确保实时/回放事件到达时存在对应的 streaming 占位符。 */
+  registerStreamingId?: (conversationId: string, messageId: string) => void;
   markConversationCompleted: (conversationId: string) => void;
   setIsSending: (isSending: boolean) => void;
   getMessage: (messageId: string) => Message | undefined;
@@ -58,12 +70,14 @@ export interface HandlerDeps {
   flushTimerRef: React.RefObject<ReturnType<typeof setTimeout> | null>;
   unsubscribeTask: (taskId: string) => void;
   send: (message: Omit<WSMessage, 'timestamp'>) => void;
+  deliveryCursorRef?: React.RefObject<Map<string, DeliveryCursor>>;
 }
 
 export function cleanupTaskSubscription(deps: HandlerDeps, taskId: string): void {
   deps.subscribedTasksRef.current.delete(taskId);
   deps.taskConversationMapRef.current.delete(taskId);
   deps.unsubscribeTask(taskId);
+  deps.deliveryCursorRef?.current.delete(taskId);
 }
 
 export function flushChunkBuffer(deps: HandlerDeps): void {

@@ -75,6 +75,7 @@ function createMockStore(): MessageStoreActions {
     completeStreaming: vi.fn(),
     completeStreamingWithMessage: vi.fn(),
     getStreamingMessageId: vi.fn(() => 'msg_1'),
+    registerStreamingId: vi.fn(),
     markConversationCompleted: vi.fn(),
     setIsSending: vi.fn(),
     getMessage: vi.fn(),
@@ -100,6 +101,7 @@ function createMockDeps(store: MessageStoreActions): HandlerDeps {
     chunkBufferRef: { current: new Map() },
     flushTimerRef: { current: null },
     unsubscribeTask: vi.fn(),
+    send: vi.fn(),
   };
 }
 
@@ -159,6 +161,16 @@ describe('wsMessageHandlers', () => {
     it('should ignore messages without message_id', () => {
       handlers.message_start({});
       expect(store.setStatus).not.toHaveBeenCalled();
+    });
+
+    it('should bind the stream before status when conversation and message are present', () => {
+      handlers.message_start({
+        message_id: 'msg_1',
+        conversation_id: 'conv_1',
+      });
+
+      expect(store.registerStreamingId).not.toHaveBeenCalled();
+      expect(store.setStatus).toHaveBeenCalledWith('msg_1', 'streaming');
     });
   });
 
@@ -224,6 +236,32 @@ describe('wsMessageHandlers', () => {
       });
 
       expect(onStreamChunk).toHaveBeenCalledWith('Test', 'Test');
+    });
+
+    it('should resolve conversation from task mapping when event omits it', () => {
+      deps.taskConversationMapRef.current.set('task_1', 'conv_mapped');
+
+      handlers.message_chunk({
+        message_id: 'msg_1',
+        task_id: 'task_1',
+        chunk: 'mapped chunk',
+      });
+
+      expect(store.appendStreamingContent).toHaveBeenCalledWith('conv_mapped', 'mapped chunk');
+    });
+
+    it('should ignore a duplicate delivery sequence', () => {
+      const event = {
+        message_id: 'msg_1',
+        conversation_id: 'conv_1',
+        delivery_seq: 8,
+        chunk: 'once',
+      };
+      handlers.message_chunk(event);
+      handlers.message_chunk({ ...event, chunk: 'duplicate' });
+
+      expect(store.appendStreamingContent).toHaveBeenCalledTimes(1);
+      expect(store.appendStreamingContent).toHaveBeenCalledWith('conv_1', 'once');
     });
 
     it('should flush subsequent chunks after 16ms', () => {
@@ -418,6 +456,16 @@ describe('wsMessageHandlers', () => {
       expect(store.setStatus).toHaveBeenCalledWith('msg_1', 'completed');
     });
 
+    it('should keep streaming state at stream_end until message_done', () => {
+      handlers.stream_end({
+        message_id: 'msg_1',
+        conversation_id: 'conv_1',
+      });
+
+      expect(store.setStatus).not.toHaveBeenCalledWith('msg_1', 'completed');
+      expect(store.completeStreaming).not.toHaveBeenCalled();
+    });
+
     it('should fallback to taskConversationMap for conversationId', () => {
       deps.taskConversationMapRef.current.set('task_1', 'conv_mapped');
 
@@ -608,6 +656,21 @@ describe('wsMessageHandlers', () => {
       expect(store.setStreamingContent).toHaveBeenCalledWith('conv_1', 'Accumulated text');
     });
 
+    it('should bind payload message_id before restoring replayed content', () => {
+      deps.taskConversationMapRef.current.set('task_1', 'conv_1');
+
+      handlers.subscribed({
+        payload: {
+          task_id: 'task_1',
+          message_id: 'replayed_msg',
+          accumulated: 'replayed text',
+        },
+      });
+
+      expect(store.registerStreamingId).toHaveBeenCalledWith('conv_1', 'replayed_msg');
+      expect(store.setStreamingContent).toHaveBeenCalledWith('conv_1', 'replayed text');
+    });
+
     it('should not set content if no task mapping', () => {
       handlers.subscribed({
         payload: { task_id: 'unknown', accumulated: 'Text' },
@@ -694,6 +757,39 @@ describe('wsMessageHandlers', () => {
         'conv_1', blocks, '',
       );
     });
+
+    it('should project replayed tool events after the snapshot', () => {
+      deps.taskConversationMapRef.current.set('task_1', 'conv_1');
+
+      handlers.subscribed({
+        payload: {
+          task_id: 'task_1',
+          message_id: 'msg_1',
+          stream_id: 'stream_1',
+          execution_attempt: 1,
+          snapshot_seq: 0,
+          events: [{
+            event_type: 'content_block_add',
+            delivery_seq: 1,
+            payload: {
+              block: {
+                type: 'tool_step',
+                tool_name: 'erp_agent',
+                tool_call_id: 'tool_replay',
+                status: 'completed',
+                output: 'replayed',
+              },
+            },
+          }],
+        },
+      });
+
+      expect(store.updateContentBlock).toHaveBeenCalledWith(
+        'conv_1',
+        'tool_replay',
+        expect.objectContaining({ status: 'completed', output: 'replayed' }),
+      );
+    });
   });
 
   describe('content_block_add', () => {
@@ -731,6 +827,23 @@ describe('wsMessageHandlers', () => {
         type: 'text',
         text: '{\n  "answer": 42\n}',
       });
+    });
+
+    it('should project a terminal tool block even when running block was missed', () => {
+      const block = {
+        type: 'tool_step',
+        tool_name: 'erp_agent',
+        tool_call_id: 'tool_1',
+        status: 'completed',
+        output: 'query result',
+      };
+      handlers.content_block_add({
+        message_id: 'msg_1',
+        conversation_id: 'conv_1',
+        payload: { block },
+      });
+
+      expect(store.updateContentBlock).toHaveBeenCalledWith('conv_1', 'tool_1', block);
     });
   });
 
