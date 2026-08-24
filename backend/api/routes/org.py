@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from api.deps import CurrentUserId, ScopedDB
+from api.deps import CurrentUserId, PlatformDB, ScopedDB
 from core.exceptions import AppException
 from services.configuration.bundles import SecretBundleResolver
 from services.configuration.control_service import ConfigurationControlService
@@ -18,16 +18,18 @@ from services.configuration.envelope import LocalKEKProvider
 from services.configuration.material_service import SecretMaterialService
 from services.configuration.resolver import ConfigurationResolutionError
 from services.org.org_service import OrgService
-from .org_dependencies import (
-    get_org_service as _get_org_service,
-    get_platform_org_service as _get_platform_org_service,
-)
-from .org_lifecycle import router as lifecycle_router
 from .org_public import router as public_router
 
 router = APIRouter(prefix="/org", tags=["企业管理"])
 router.include_router(public_router)
-router.include_router(lifecycle_router)
+
+
+def _get_org_service(db: ScopedDB) -> OrgService:
+    return OrgService(db)
+
+
+def _get_platform_org_service(db: PlatformDB) -> OrgService:
+    return OrgService(db)
 
 
 def _get_configuration_control(

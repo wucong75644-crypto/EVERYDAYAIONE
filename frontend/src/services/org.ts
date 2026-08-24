@@ -9,7 +9,7 @@ import { request } from './api';
 export interface OrgDetail {
   id: string;
   name: string;
-  status: 'active' | 'suspended';
+  status: string;
   owner_id: string;
   created_at: string;
   member_count?: number;
@@ -43,8 +43,8 @@ export interface OrgConfigStatus {
 
 // ── 超管 API ──
 
-export async function listAllOrgs(signal?: AbortSignal): Promise<OrgDetail[]> {
-  return request({ method: 'GET', url: '/org/admin/all', signal });
+export async function listAllOrgs(): Promise<OrgDetail[]> {
+  return request({ method: 'GET', url: '/org/admin/all' });
 }
 
 export async function searchUser(phone: string): Promise<SearchUserResult> {
@@ -53,28 +53,6 @@ export async function searchUser(phone: string): Promise<SearchUserResult> {
 
 export async function createOrg(name: string, ownerPhone: string): Promise<{ success: boolean; data: OrgDetail }> {
   return request({ method: 'POST', url: '/org', data: { name, owner_phone: ownerPhone } });
-}
-
-export async function suspendOrg(
-  orgId: string,
-  signal?: AbortSignal,
-): Promise<{ success: boolean; data: OrgDetail }> {
-  return request({
-    method: 'POST',
-    url: `/org/admin/${orgId}/suspend`,
-    signal,
-  });
-}
-
-export async function restoreOrg(
-  orgId: string,
-  signal?: AbortSignal,
-): Promise<{ success: boolean; data: OrgDetail }> {
-  return request({
-    method: 'POST',
-    url: `/org/admin/${orgId}/restore`,
-    signal,
-  });
 }
 
 // ── 企业管理 API ──

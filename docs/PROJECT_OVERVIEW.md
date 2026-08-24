@@ -597,21 +597,6 @@ Agent Runtime AR-13 Command Claim与Coordinator骨架：
   `admin-user-assets-capability.sh` 与 `worker-control.sh`；先核验隔离角色集合及
   Runtime 旧 Chat enqueue 撤权，再核验核心域、管理员资产和 Worker Control 的
   checksum、owner、ACL、RLS 与能力边界。
-- `backend/migrations/217_organization_lifecycle_governance.sql`、
-  `218_suspended_organization_execution_fence.sql`：提供平台企业原子停用/恢复、脱敏
-  治理审计、active 邀请/任务发现与 suspended 企业服务写入 Fence。
-- `deploy/preflight/organization-lifecycle.sh`：只读核验生命周期迁移、Runtime-only
-  RPC 精确 ACL、owner/SECURITY DEFINER/search_path、完整 trigger 集合与 suspended
-  执行 Fence。
-- `backend/tests/test_organization_lifecycle_external.py`、
-  `test_organization_lifecycle_permissions_external.py`：在显式隔离 PostgreSQL 中分离
-  验证迁移/并发/事务/逆序 rollback 与 Actor/Scope/角色 ACL/四类服务 Fence，单文件
-  均保持在 500 行以内。
-- `backend/api/routes/org_lifecycle.py`：隔离平台企业停用/恢复路由及安全数据库故障映射，
-  避免继续扩大既有企业管理路由文件。
-- `frontend/src/components/admin/useOrganizationLifecycle.ts`、
-  `SuperAdminPanelSections.tsx`：隔离生命周期请求状态和创建/列表/确认区块，保持请求取消、
-  权威刷新与前端函数长度阈值。
 - `deploy/transfer-admin-user-assets-ownership.sh`：在迁移 209 前仅校验并将旧
   `list_admin_user_assets` 查询函数从遗留角色转移给 `everydayai_owner`，不修改
   其他对象或 ACL。

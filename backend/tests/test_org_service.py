@@ -476,44 +476,6 @@ class TestGovernanceCapabilityRouting:
         )
 
     @pytest.mark.parametrize(
-        ("method_name", "rpc_name"),
-        (
-            ("suspend_organization", "suspend_governed_organization"),
-            ("restore_organization", "restore_governed_organization"),
-        ),
-    )
-    def test_lifecycle_writes_use_exact_governance_rpc(
-        self, method_name, rpc_name,
-    ):
-        database = MagicMock()
-        database.rpc.return_value.execute.return_value.data = {
-            "id": "org-1", "status": "suspended",
-        }
-
-        result = getattr(OrgService(database), method_name)("org-1")
-
-        database.rpc.assert_called_once_with(
-            rpc_name, {"p_org_id": "org-1"},
-        )
-        assert result["id"] == "org-1"
-
-    @pytest.mark.parametrize(
-        ("marker", "exception_type"),
-        (
-            ("GOVERNANCE_ORG_NOT_FOUND", NotFoundError),
-            ("GOVERNANCE_ORG_STATUS_CONFLICT", ConflictError),
-        ),
-    )
-    def test_lifecycle_errors_are_stably_mapped(
-        self, marker, exception_type,
-    ):
-        database = MagicMock()
-        database.rpc.return_value.execute.side_effect = Exception(marker)
-
-        with pytest.raises(exception_type):
-            OrgService(database).suspend_organization("org-1")
-
-    @pytest.mark.parametrize(
         "marker",
         (
             "GOVERNANCE_AUTHORITY_DENIED",

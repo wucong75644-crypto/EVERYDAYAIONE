@@ -2,23 +2,9 @@
  * 超管面板 — 创建企业 + 企业列表
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { toApiRequestError } from '../../services/api';
-import {
-  listAllOrgs, createOrg, searchUser,
-} from '../../services/org';
+import { useState, useEffect } from 'react';
+import { listAllOrgs, createOrg, searchUser } from '../../services/org';
 import type { OrgDetail, SearchUserResult } from '../../services/org';
-import {
-  CreateOrganizationSection, LifecycleDialog, OrganizationList,
-} from './SuperAdminPanelSections';
-import { useOrganizationLifecycle } from './useOrganizationLifecycle';
-
-function safeErrorMessage(error: unknown, fallback: string): string {
-  const apiError = toApiRequestError(error);
-  return apiError.message && apiError.message !== '请求失败'
-    ? apiError.message
-    : fallback;
-}
 
 export default function SuperAdminPanel() {
   const [orgs, setOrgs] = useState<OrgDetail[]>([]);
@@ -32,38 +18,22 @@ export default function SuperAdminPanel() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const listControllerRef = useRef<AbortController | null>(null);
-  const listGenerationRef = useRef(0);
-
-  const loadOrgs = useCallback(async () => {
-    listControllerRef.current?.abort();
-    const controller = new AbortController();
-    listControllerRef.current = controller;
-    const generation = ++listGenerationRef.current;
-    setLoading(true);
-    try {
-      const data = await listAllOrgs(controller.signal);
-      if (generation === listGenerationRef.current) setOrgs(data);
-    } catch {
-      if (controller.signal.aborted) return;
-      setError('加载企业列表失败');
-    } finally {
-      if (generation === listGenerationRef.current) setLoading(false);
-    }
-  }, []);
-
-  const lifecycle = useOrganizationLifecycle({
-    reload: loadOrgs, setError, setSuccess,
-  });
-  const abortLifecycleRequest = lifecycle.abort;
 
   useEffect(() => {
-    void loadOrgs();
-    return () => {
-      listControllerRef.current?.abort();
-      abortLifecycleRequest();
-    };
-  }, [abortLifecycleRequest, loadOrgs]);
+    loadOrgs();
+  }, []);
+
+  const loadOrgs = async () => {
+    setLoading(true);
+    try {
+      const data = await listAllOrgs();
+      setOrgs(data);
+    } catch {
+      setError('加载企业列表失败');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSearchUser = async () => {
     if (!/^1[3-9]\d{9}$/.test(ownerPhone)) {
@@ -106,9 +76,9 @@ export default function SuperAdminPanel() {
       setOwnerPhone('');
       setSearchResult(null);
       setShowCreate(false);
-      void loadOrgs();
-    } catch (createError: unknown) {
-      setError(safeErrorMessage(createError, '创建失败'));
+      loadOrgs();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || '创建失败');
     } finally {
       setCreating(false);
     }
@@ -138,19 +108,90 @@ export default function SuperAdminPanel() {
       )}
 
       {/* 创建企业表单 */}
-      <CreateOrganizationSection visible={showCreate} orgName={orgName}
-        ownerPhone={ownerPhone} searchResult={searchResult} creating={creating}
-        setOrgName={setOrgName} setOwnerPhone={setOwnerPhone}
-        clearSearch={() => setSearchResult(null)}
-        search={() => void handleSearchUser()} create={() => void handleCreate()} />
+      {showCreate && (
+        <div className="bg-surface rounded-lg p-4 space-y-3 border">
+          <div>
+            <label className="block text-sm font-medium text-text-secondary mb-1">企业名称</label>
+            <input
+              type="text"
+              value={orgName}
+              onChange={(e) => setOrgName(e.target.value)}
+              className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-focus-ring"
+              placeholder="输入企业全称"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-text-secondary mb-1">
+              企业管理员手机号
+            </label>
+            <div className="flex space-x-2">
+              <input
+                type="tel"
+                value={ownerPhone}
+                onChange={(e) => { setOwnerPhone(e.target.value); setSearchResult(null); }}
+                className="flex-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-focus-ring"
+                placeholder="输入手机号"
+                maxLength={11}
+              />
+              <button
+                onClick={handleSearchUser}
+                className="px-3 py-2 text-sm bg-active rounded-lg hover:bg-active transition-base whitespace-nowrap"
+              >
+                搜索
+              </button>
+            </div>
+            {searchResult?.found && searchResult.user && (
+              <div className="mt-2 p-2 bg-success-light rounded text-sm text-success">
+                找到用户：{searchResult.user.nickname}（{searchResult.user.phone}）
+              </div>
+            )}
+          </div>
+          <button
+            onClick={handleCreate}
+            disabled={creating || !orgName.trim() || !searchResult?.found}
+            className="w-full py-2 text-sm bg-accent text-text-on-accent rounded-lg hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-base"
+          >
+            {creating ? '创建中...' : '确认创建'}
+          </button>
+        </div>
+      )}
 
       {/* 企业列表 */}
-      <OrganizationList orgs={orgs} loading={loading} open={lifecycle.open} />
-      <LifecycleDialog target={lifecycle.target}
-        confirmationName={lifecycle.confirmationName}
-        transitioning={lifecycle.transitioning}
-        setConfirmationName={lifecycle.setConfirmationName}
-        close={lifecycle.close} submit={lifecycle.submit} />
+      {loading ? (
+        <div className="text-center text-text-tertiary py-8">加载中...</div>
+      ) : orgs.length === 0 ? (
+        <div className="text-center text-text-tertiary py-8">暂无企业</div>
+      ) : (
+        <div className="space-y-2">
+          {orgs.map((org) => (
+            <div
+              key={org.id}
+              className="flex items-center justify-between p-3 bg-surface rounded-lg"
+            >
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-sm text-text-primary">{org.name}</div>
+                <div className="text-xs text-text-tertiary mt-0.5">
+                  {org.member_count ?? 0} 人 &middot;
+                  {org.status === 'active' ? ' 正常' : ' 已停用'} &middot;
+                  {new Date(org.created_at).toLocaleDateString()}
+                </div>
+                <div className="text-xs text-text-disabled mt-0.5 truncate font-mono">
+                  登录链接：{window.location.origin}/login?org={org.id}
+                </div>
+              </div>
+              <span
+                className={`text-xs px-2 py-0.5 rounded-full ${
+                  org.status === 'active'
+                    ? 'bg-success-light text-success'
+                    : 'bg-error-light text-error'
+                }`}
+              >
+                {org.status === 'active' ? '运行中' : '已停用'}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -9,27 +9,6 @@
 
 ## 函数列表
 
-### WeCom Smart Robot typed outbound ACK transport
-
-| 函数/类型 | 文件 | 说明 |
-|---|---|---|
-| `WecomOutboundAckResult` / `WecomOutboundStatus` / `WecomOutboundErrorClass` | `backend/services/wecom/ws_outbound.py` | 仅返回 provider request ID、证明状态、非零 ACK errcode 与受限错误分类，不携带 Secret、原始 payload 或自由 errmsg |
-| `WecomOutboundMixin.send_proactive_typed` / `lookup_outbound_result` | `backend/services/wecom/ws_outbound.py` | 使用 8..200 位安全字符的调用方稳定 provider request ID 作为企微 req_id；unavailable 不注册且可安全重试，可用时 send 前注册 ACK，同 ID 幂等共享、冲突失败关闭；独立 lookup 先清理 TTL，仅纯内存返回现有终态或 UNKNOWN，miss/pending 不等待且不发送、不延寿 |
-
-### Agent Runtime Sandbox Job专业Executor
-
-| 函数/类型 | 文件 | 说明 |
-|---|---|---|
-| `SandboxJobCapability` | `backend/services/agent/runtime/sandbox/capability.py` | 绑定Action/Attempt，只允许暂存已核验代码与Artifact并通过Runtime窄RPC创建、查询或请求取消Job |
-| `SandboxWorkspaceStore` | `backend/services/agent/runtime/sandbox/workspace.py` | 管理不可变输入、job临时目录、内容寻址输出、partial quarantine及精确清理，不向Executor暴露根路径 |
-| `SandboxWorkerIdentity.capture_current_process` / `IsolationProbe.inspect` / `NsJailSubprocessLauncher` | `backend/services/agent/runtime/sandbox/launcher.py`、`nsjail.py` | 仅Sandbox composition捕获当前非root进程UID/GID并映射到jail内65534；缺Linux/nsjail/cgroup v2时失败关闭 |
-| `SandboxJobWorker.run_once` / `reconcile_next` | `backend/services/agent/runtime/sandbox/worker.py` | 执行唯一领取、绑定Owner的续租/query/cancel、durable unknown reconciliation、内容materialize与partial清理 |
-| `SandboxJobWorkerService.run` / `stop` | `backend/services/agent/runtime/sandbox/service.py` | 独立进程可使用的durable execution/reconcile/cleanup轮询与drain生命周期；未接production startup |
-| `SandboxJobExecutor.dispatch` / `reconcile` / `cancel` | `backend/services/agent/runtime/executors/sandbox_job.py` | 将fenced DispatchIntent映射到唯一Sandbox Job；accepted/unknown禁止普通重派 |
-| `SandboxCapabilityIssuer.issue` | `backend/services/agent/runtime/sandbox/issuer.py` | 仅在Policy/Grant gate后签发attempt-scoped、operation-scoped SandboxJobCapability；Executor只能消费而不能自行扩权 |
-| `build_sandbox_worker_components` / `build_sandbox_executor_components` | `backend/services/agent/runtime/sandbox/composition.py` | Worker与Runtime分离composition；Runtime构造路径无法取得launcher/Worker，均未连接production startup或ingress |
-| `get_sandbox_job_by_binding` / `get_owned_sandbox_job` / `record_reconciled_sandbox_partials` / recovery scanners | `backend/migrations/222_03_agent_runtime_sandbox_job_recovery_rpcs.sql` | 响应丢失精确readback、绑定原Worker token的执行期读取、清理前冻结checkpoint partial事实、权威未启动恢复和不重派的durable reconciliation扫描 |
-
 ### 媒体 Worker 原子终态
 
 | 函数名 | 文件路径 | 功能描述 |
@@ -74,10 +53,9 @@
 | `BackgroundTaskWorker._get_active_org_ids` | `backend/services/background_task_worker.py` | 建立 actorless Worker DatabaseScope，并通过窄 RPC 获取 active 企业 ID；权限或响应异常失败关闭 |
 | `worker_list_active_organization_ids` | `backend/migrations/209_worker_active_organization_capability.sql` | 仅允许无 Actor/Org 的 Worker Scope 枚举 active 企业，不开放 `organizations` 表权限 |
 | `recover_orphan_tasks` | `backend/services/task_recovery.py` | 循环领取非 Actor 孤儿任务，并按累积内容调用 fenced complete/fail 能力收敛终态 |
-| `worker_claim_orphan_tasks` | `backend/migrations/210_worker_orphan_task_recovery_capability.sql`，由 `227_21_agent_runtime_legacy_lifecycle_fence.sql` 收紧 | 通过 `FOR UPDATE SKIP LOCKED`、lease 和 execution token，仅领取 Runtime key 缺失或严格为 JSON false 的非 Actor 可恢复任务 |
-| `worker_discover_legacy_active_tasks` / `worker_fail_legacy_stale_task` | `backend/migrations/171_worker_media_task_control.sql`，由 `227_21_agent_runtime_legacy_lifecycle_fence.sql` 收紧 | legacy stale timeout discovery/settlement；Runtime key 仅缺失或严格为 JSON false 时允许，其他值失败关闭，仍仅授予 `everydayai_worker` |
-| `worker_complete_orphan_task` | `backend/migrations/210_worker_orphan_task_recovery_capability.sql`，由 `227_21_agent_runtime_legacy_lifecycle_fence.sql` 收紧 | 校验 Scope、状态、租约和 fencing；Runtime key 存在且非 JSON false 时拒绝，并在同一事务写入 interrupted Message 与 Task 终态 |
-| `worker_fail_orphan_task` | `backend/migrations/210_worker_orphan_task_recovery_capability.sql`，由 `227_21_agent_runtime_legacy_lifecycle_fence.sql` 收紧 | 校验 Scope、状态、租约和 fencing；Runtime key 存在且非 JSON false 时拒绝，并在同一事务幂等退款与提交失败终态 |
+| `worker_claim_orphan_tasks` | `backend/migrations/210_worker_orphan_task_recovery_capability.sql` | 通过 `FOR UPDATE SKIP LOCKED`、lease 和 execution token 原子领取可恢复任务 |
+| `worker_complete_orphan_task` | `backend/migrations/210_worker_orphan_task_recovery_capability.sql` | 校验 Scope、状态、租约和 fencing，在同一事务写入 interrupted Message 与 Task 终态 |
+| `worker_fail_orphan_task` | `backend/migrations/210_worker_orphan_task_recovery_capability.sql` | 校验 Scope、状态、租约和 fencing，在同一事务幂等退款并提交失败终态 |
 | `worker_replace_global_knowledge_seed` | `backend/migrations/211_worker_global_knowledge_seed_capability.sql` | 校验受限节点、1024 维 Embedding 和边端点，原子替换全局 Seed 且拒绝跨作用域引用 |
 
 ### Agent Runtime AR-05～AR-09 基础合同
@@ -88,7 +66,7 @@
 | `validate_transition` | `backend/services/agent/runtime/domain/transitions.py` | 对 Session、Run、ModelStep、Action 和 ActionAttempt 执行终态不可逆的状态转移校验 |
 | Repository / Model / Executor / Event / Projection ports | `backend/services/agent/runtime/ports/` | 定义 Runtime 领域与数据库、模型、执行器、事件存储和投影基础设施之间的反转边界 |
 | `ensure_agent_runtime_session` / `submit_session_command` | `backend/migrations/213_agent_runtime_session_run_rpcs.sql` | runtime/WeCom 在精确 Actor/Org Scope 内幂等建立 Session、提交完整 request hash 的 Command |
-| `create_agent_run` / `claim_agent_run` / `renew_agent_run` | `backend/migrations/213_agent_runtime_session_run_rpcs.sql`；`create_agent_run` 由 `227_22_02_agent_runtime_task_cancel_create_run_fence.sql` 收紧 | Worker 为单个 Command 唯一创建 Run，并以 lease、execution token 和 attempt 执行 claim/续租；direct root creation 在 Run DML 前锁查 task cancel intent |
+| `create_agent_run` / `claim_agent_run` / `renew_agent_run` | `backend/migrations/213_agent_runtime_session_run_rpcs.sql` | Worker 为单个 Command 唯一创建 Run，并以 lease、execution token 和 attempt 执行 claim/续租 |
 | `set_agent_run_waiting` / `wake_agent_run` / `complete_agent_run` / `fail_agent_run` / `cancel_agent_run` | `backend/migrations/214_agent_runtime_run_lifecycle_rpcs.sql` | 以 Session→Run 锁序、CAS、fencing 和终态内容冲突检查推进 Run 生命周期 |
 | `create_model_step` / `complete_model_step` / `fail_model_step` | `backend/migrations/215_agent_runtime_model_event_projection_rpcs.sql` | Worker 在有效 Run lease 内记录模型请求、Token 和确定性终态 |
 | `claim_agent_projection_outbox` / `complete_agent_projection_outbox` / `fail_agent_projection_outbox` | `backend/migrations/215_agent_runtime_model_event_projection_rpcs.sql` | 通过 `SKIP LOCKED`、lease token、checkpoint 幂等和有界退避消费投影 Outbox |
@@ -99,9 +77,9 @@
 | `PostgresRuntimeEventStore.replay` / `event_from_row` | `backend/services/agent/runtime/infrastructure/postgres/event_store.py` | 分页重放严格连续的完整 RuntimeEvent envelope，拒绝跨 Session、超前 checkpoint 和 sequence gap |
 | `PostgresProjectionOutbox.claim/complete/fail` | `backend/services/agent/runtime/infrastructure/postgres/projection_outbox.py` | 通过 Worker Scope、lease token 和完整 Event envelope 消费 Projection Outbox |
 | `get_agent_runtime_session` / `replay_agent_runtime_events` / `get_agent_runtime_run_claim` / `get_claimed_agent_projection_event` | `backend/migrations/216_agent_runtime_read_projection_capabilities.sql` | 提供无核心表直权的 scoped read/readback 能力；system Scope 仅 actorless Worker 可读 |
-| `ExistingProviderModelAdapter.complete` | `backend/services/agent/runtime/infrastructure/model/adapter.py` | 校验冻结 ModelStep 请求后调用共享 Secret-free stream consumer；本地 adapter 必须显式注入，Runtime 默认构造路径失败关闭并等待 BG4 Gateway client composition |
+| `ExistingProviderModelAdapter.complete` | `backend/services/agent/runtime/infrastructure/model/adapter.py` | 校验冻结 ModelStep 请求后复用现有 Provider adapter；记录 attempt receipt，并把 timeout、部分响应和网关 5xx 失败关闭为 unknown |
 | `compute_request_hash` / `resolve_model_revision` / `validate_request_projection` | `backend/services/agent/runtime/infrastructure/model/projection.py` | 生成不含正文和 Secret 的稳定请求摘要，并在 Provider IO 前校验模型 revision、ContextPlan 和请求 hash |
-| `ResponseAccumulator.add/complete` / `map_stop_reason` / `canonical_response_hash` | `backend/services/agent/runtime/infrastructure/model/response.py` | 聚合文本、Tool Call 和累计 usage，生成稳定 Tool Call ID、脱敏 response receipt 及闭合 StopReason；唯一 canonical hash 绑定 stop/provider stop、output、两类 Tool Call ID 与全部 usage |
+| `ResponseAccumulator.add/complete` / `map_stop_reason` | `backend/services/agent/runtime/infrastructure/model/response.py` | 聚合文本、Tool Call 和累计 usage，生成稳定 Tool Call ID、脱敏 response receipt 及闭合 StopReason |
 
 ### Agent Runtime AR-11 ModelAttempt 与唯一计费
 
@@ -115,70 +93,6 @@
 | `claim_model_attempt_reconciliation` / `renew_model_attempt_reconciliation` / `resolve_model_attempt` | `backend/migrations/217_04_agent_runtime_model_attempt_reconciliation.sql` | 以独立token、lease和fencing恢复unknown Attempt，非终态冲突保持零mutation |
 | `get_model_attempt` / `record_late_model_receipt` | `backend/migrations/217_04_agent_runtime_model_attempt_reconciliation.sql` | 提供响应丢失readback，并在Run取消后幂等保存late receipt和唯一财务adjustment |
 | `cancel_agent_run` | `backend/migrations/217_03_agent_runtime_model_attempt_lifecycle.sql` | 保持原签名和Scope授权，增加活动ModelAttempt/ModelStep取消及预留释放 |
-
-### Agent Runtime AR-12 Action 持久化与 Tool 终态
-
-| 函数/类型 | 文件 | 说明 |
-|---|---|---|
-| `ActionRepositoryPort` / `ActionMutationReceipt` | `backend/services/agent/runtime/ports/action_repository.py` | 定义Tool terminal、Action claim、执行、reconcile与响应丢失readback的typed持久化边界 |
-| `PostgresActionRepository` | `backend/services/agent/runtime/infrastructure/postgres/action_repository.py` | 将Action Port映射到Worker Scoped migration 218 RPC并失败关闭解析未知outcome |
-| `complete_model_attempt_step_and_create_actions` | `backend/migrations/218_02_agent_runtime_action_tool_terminal.sql` | 原子完成ModelAttempt、ModelStep、积分结算、SHA-256 Action批次、Run waiting、Event与Outbox |
-| `claim_ready_agent_actions` / `get_agent_action_claim_batch` | `backend/migrations/218_03_agent_runtime_action_lifecycle.sql` | 以稳定claim request幂等领取ready Action，并在响应丢失后恢复原Attempt、token与lease |
-| `complete_agent_action` / `fail_agent_action` | `backend/migrations/218_03_agent_runtime_action_lifecycle.sql` | 以fencing token原子写规范Result、递减blocker并在最后一个结果后唯一唤醒Run |
-| `claim_agent_action_reconciliation` / `claim_next_agent_action_reconciliation` / `get_claimed_agent_action_reconciliation` | `backend/migrations/218_04_agent_runtime_action_reconciliation.sql`，220_25 增加 dispatch-intent recovery，227_24 收紧 operation | 先将带 durable dispatch intent 且 lease 过期的 dispatching Attempt 原子转 unknown/retry-after-reconcile，再为 accepted/unknown 签发持久绑定的 reconcile/cancel operation、父 Run identity/version 与独立 lease；响应丢失 readback 必须返回同一 operation，禁止普通重复dispatch |
-| `finalize_agent_action_provider_v2` / `_finalize_agent_action_cancelled_run_v1` | `backend/migrations/226_13_agent_runtime_reconciliation_child_cancel.sql`，由 `227_24_agent_runtime_provider_cancel_handoff.sql` 收紧 | 唯一 Runtime worker finalizer；provider cancel confirmed 在 cancelled 父 Run 下以 reconciliation token、lease、request hash、owner/kill/revision fence和 durable provider fact 原子终结 Attempt/Action，记录 refund/event且不递减已清零 blocker；内部 helper 无外部授权 |
-| `request_agent_runtime_sandbox_cancel_v1` / `claim_next_sandbox_cancel_v1` / `finalize_agent_action_sandbox_cancel_v1` | `backend/migrations/227_26_agent_runtime_sandbox_cancel_handoff.sql` | cancelled 父 Run 的 code_execute 仅经 Action reconciliation token/lease、state/request hash、dispatch binding与kill epoch窄入口写Sandbox cancel intent；queued取消也由专属Sandbox worker领取、证明未启动并cleanup，durable proof后才由Runtime原子终结Attempt/Action，父Run与blocker保持cancelled/0 |
-| `create_agent_child_run_strict_v2` / `claim_next_agent_child_run_cancel_intent_v1` / `apply_agent_child_run_cancel_intent_v1` / `finalize_agent_action_child_cancel_v1` | `backend/migrations/227_27_agent_runtime_child_run_recursive_cancel.sql` | create强制context scope与父Run org/user一致；cancelled父Run写owner-only durable intent，scanner递归等待每层proof；child finalizer验证reserve fact，not-created幂等release、其余confirmed cancel幂等refund后终结父Action；UNKNOWN永久保持reconcile-only |
-| `ActionRecoveryOperation` / `ActionRecoveryClaim` / `PostgresCoordinatorRecoveryRepository.claim_action_reconciliation` | `backend/services/agent/runtime/ports/coordinator_recovery.py`、`infrastructure/postgres/coordinator_recovery.py` | 严格解析 reconcile/cancel 与父 Run/snapshot/token/version binding；正常 claim 和 DB 响应丢失 readback 缺失、非法或不一致时失败关闭 |
-| `ActionLoopDriver.reconcile_once` / `cancel_action` | `backend/services/agent/runtime/application/action_loop.py`、`application/action_cancel.py` | reconcile operation 保持 readback；cancel operation 在同一续租 ActionLease 下仅白名单 Specialist 或 Sandbox owner，durable confirmed proof 才终态，UNKNOWN 保持 reconcile-only |
-| `ChildCancelRecoveryClaim` / `RuntimeLoopCoordinator.child_cancel_once` / `ChildRunService.cancel` | `backend/services/agent/runtime/ports/coordinator_recovery.py`、`application/coordinator.py`、`executors/resource_support.py` | 专用递归scanner用claim token/state-version恢复requested/applied intent；ownership-lost作为正常takeover结果保守继续；ChildRun readback可从parent binding恢复缺失ID，cancel仅消费227_27 proof |
-| `cancel_agent_run` | `backend/migrations/218_04_agent_runtime_action_reconciliation.sql` | 按统一锁序原子取消活动Model/Action工作、清零blocker并保持原Scope授权 |
-
-### Agent Runtime AR-13 Command Claim 与 Coordinator 骨架
-
-| 函数/类型 | 文件 | 说明 |
-|---|---|---|
-| `CommandClaim` / `CommandClaimReceipt` / `CommandClaimRepositoryPort` | `backend/services/agent/runtime/ports/command_claim.py` | 定义pending Command领取、readback、续租和终态的typed应用边界 |
-| `PostgresCommandClaimRepository` | `backend/services/agent/runtime/infrastructure/postgres/command_claim_repository.py` | 通过Worker Scoped窄RPC执行Command claim，并在提交响应不确定时按worker与command精确readback |
-| `RuntimeCoordinator` | `backend/services/agent/runtime/application/coordinator.py` | 以PostgreSQL周期扫描和可选wakeup驱动单Command处理、续租、lease-lost取消与终态提交 |
-| `claim_pending_agent_command_and_ensure_run` / `get_agent_command_run_claim` | `backend/migrations/219_02a_agent_runtime_command_claim_terminal_compatibility.sql`；claim 入口由 `227_22_03_agent_runtime_task_cancel_claim_fence.sql` 收紧 | 按 Session→Command→CommandClaim→CancelIntent→Run 锁序领取 pending Command；requested/applied cancel intent 在 `_ensure_agent_command_run` 前阻断根 Run DML |
-| `renew_agent_command_claim` / `finish_agent_command_claim` | `backend/migrations/219_02_agent_runtime_command_claim_lifecycle.sql` | 以CommandClaim fencing token续租或提交completed/failed终态，旧token和过期lease失败关闭 |
-| `request_agent_runtime_task_cancel_v1` | `backend/migrations/227_22_01_agent_runtime_task_cancel_intent.sql`，由 `227_23_agent_runtime_task_cancel_facade_callable.sql` 撤销外部授权 | 内部 hash-bearing 原子 task cancel facade：严格区分 nullable scope user 与非空 requester，并按 user/channel scope 绑定 Task/Message/Conversation/Session/submit Command；仅由 v2 委托调用 |
-| `request_agent_runtime_task_cancel_v2` | `backend/migrations/227_23_agent_runtime_task_cancel_facade_callable.sql` | Runtime/WeCom Runtime callable facade：在 PostgreSQL 内用私有 canonical helper生成 request hash并原样委托 v1；响应不暴露 hash 或 payload |
-| `RuntimeTaskCancelService` / `PostgresRuntimeTaskCancelRepository` / `WebTaskCancelService` | `backend/services/agent/runtime/task_cancel.py`、`infrastructure/postgres/task_cancel_repository.py`、`backend/services/web_task_cancel.py` | Web cancel边界：alias按Task去重并集后全量预检；Runtime只调用v2 facade；逐Task durable结果与WS/slot/anchor失败脱敏聚合，不掩盖已提交事实 |
-| `_assert_agent_runtime_task_cancel_binding` | `backend/migrations/227_22_01_agent_runtime_task_cancel_intent.sql` | 仅消费 facade 已锁定的 Session/Command/Task row，按 user/channel scope 验证 Conversation、requester、Message 与 Runtime marker；不重新获取行锁且不授予外部角色 |
-| `agent_runtime_task_cancel_intents` | `backend/migrations/227_22_01_agent_runtime_task_cancel_intent.sql` | owner-only、FORCE RLS 的 durable requested/applied cancel facts；scope user、requester 与 SHA-256 request identity 不可变，Task、submit Command 和 Session idempotency 唯一 |
-
-### Agent Runtime AR-14～AR-16 授权恢复与 Dispatch Gate
-
-| 函数/类型 | 文件 | 说明 |
-|---|---|---|
-| `ActionAuthorizationPort` / `PostgresActionAuthorizationRepository` | `backend/services/agent/runtime/ports/authorization.py`、`infrastructure/postgres/authorization.py` | Worker Scoped 授权恢复、receipt、activation 与 fenced dispatch gate 边界 |
-| `ActionExecutorResolver` / `PostgresActionExecutorResolver` | `backend/services/agent/runtime/executors/resolver.py` | 将持久 Action snapshot 解析为唯一 Registry descriptor、Executor、Attempt 与 request |
-| `AuthorizationRecoveryDriver.run_once` | `backend/services/agent/runtime/application/authorization_recovery.py` | 领取已批准 Interaction，重新求值 Policy，持久化 allow receipt 后激活 Action |
-| `ActionLoopDriver.dispatch_once` / `reconcile_once` / `cancel_action` | `backend/services/agent/runtime/application/action_loop.py` | 按 Resolver→gate→Executor 调度、租约对账及应用层唯一取消终态编排 |
-| `gate_agent_action_dispatch` / `get_agent_action_dispatch_intent` | `backend/migrations/220_24_agent_runtime_authorization_dispatch_gate.sql` | 同事务校验 receipt/grant/scope、消费 GrantUse、绑定 Attempt fencing 并持久化 DispatchIntent/readback |
-| `claim_next_agent_authorization_recovery` / `renew_agent_authorization_recovery` / `activate_agent_authorized_action` / `expire_agent_authorization_interaction` | `backend/migrations/220_25_agent_runtime_authorization_recovery.sql` | 按统一锁序恢复、续租、激活或关闭授权等待 Action，并精确重算 Run blocker/wait state |
-
-### Agent Runtime Projection dead stream恢复
-
-| 函数/类型 | 文件 | 说明 |
-|---|---|---|
-| `ProjectionDeadRecoveryPort` / `PostgresProjectionDeadRecovery` | `backend/services/agent/runtime/ports/projection_recovery.py`、`infrastructure/postgres/projection_recovery.py` | Runtime actor的dead item检查和严格绑定人工requeue合同，数据库再次验证active super_admin与tenant |
-| `list_agent_projection_dead_items` / `get_agent_projection_dead_item` | `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql` | 仅返回当前tenant的Outbox/Event顺序元数据，不返回payload或业务内容 |
-| `requeue_agent_projection_dead` | `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql` | 按Session→Outbox→Event→Checkpoint→Result锁序记录不可变审计并恢复一个dead首项，不重置失败历史 |
-| `claim_agent_projection_outbox` | `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql` | additive替换215通用claim，仅领取audit；web_runtime/wecom继续由有序compat claim唯一领取 |
-
-### Agent Runtime Sandbox Job Controller Batch A
-
-| 函数/类型 | 文件 | 说明 |
-|---|---|---|
-| `SandboxJobSnapshot` / `SandboxJobRepositoryPort` | `backend/services/agent/runtime/domain/sandbox_job.py`、`ports/sandbox_job.py` | 定义持久 Job、fencing、terminal、unknown/reconcile 与 cleanup typed 合同 |
-| `PostgresSandboxJobRepository` | `backend/services/agent/runtime/infrastructure/postgres/sandbox_job_repository.py` | 仅接受 Runtime 或专属 Sandbox Worker scoped client，并按方法阻断角色越权 |
-| `create_or_get_sandbox_job` / `get_sandbox_job` / `request_sandbox_job_cancel` | `backend/migrations/222_02_agent_runtime_sandbox_job_rpcs.sql`，旧 cancel 入口由 227_26 对 Runtime撤权 | Runtime 的幂等创建和scope readback；旧无Action reconciliation fence的cancel函数不再是生产入口 |
-| `claim_next_sandbox_job` / `renew_sandbox_job_lease` / `mark_sandbox_job_started` / `recover_expired_sandbox_job` | `backend/migrations/222_02_agent_runtime_sandbox_job_rpcs.sql` | 专属 Worker claim、fencing、start 与崩溃恢复合同；starting/running 不重派 |
-| `finish_sandbox_job` / `record_sandbox_job_unknown` | `backend/migrations/222_02_agent_runtime_sandbox_job_rpcs.sql` | 原子 terminal 或 unknown 写入，强制 receipt、partial、cleanup 与 cancel proof |
-| `claim_sandbox_job_reconciliation` / `renew_sandbox_job_reconciliation` / `resolve_sandbox_job_reconciliation` / `record_sandbox_job_cleanup` | `backend/migrations/222_02_agent_runtime_sandbox_job_rpcs.sql` | unknown-only reconciliation lease、终态解析和清理证据入口 |
 
 ### Git 与发布脚本
 
@@ -198,9 +112,6 @@
 | `update_manual_memory` | `backend/migrations/144_manual_curated_memory.sql` | 仅更新当前 scope 内的手动记忆，并同步重建向量、全文索引和内容哈希 | org_id, user_id, memory_id, content, content_hash, embedding | JSONB outcome |
 | `delete_memory_atom` | `backend/migrations/144_manual_curated_memory.sql` | 软删除当前 scope 内指定的 active Curated Memory | org_id, user_id, memory_id | JSONB outcome |
 | `clear_memory_atoms` | `backend/migrations/144_manual_curated_memory.sql` | 软删除当前 scope 内全部 active Curated Memory | org_id, user_id | JSONB outcome |
-| `_assert_runtime_manual_memory_scope` | `backend/migrations/220_runtime_manual_memory_capabilities.sql` | 校验 Web Runtime 会话身份、用户、组织与 active 成员关系 | org_id, user_id | void |
-| `runtime_create_manual_memory` / `runtime_update_manual_memory` | `backend/migrations/220_runtime_manual_memory_capabilities.sql` | 在可信 Runtime Scope 内创建或更新手动记忆，不开放底层表 | scope 与记忆字段 | JSONB outcome |
-| `runtime_delete_memory_atom` / `runtime_clear_memory_atoms` | `backend/migrations/220_runtime_manual_memory_capabilities.sql` | 在可信 Runtime Scope 内软删除指定或全部手动记忆 | org_id, user_id, memory_id? | JSONB outcome |
 | `ManualMemoryService.get_all_memories` | `backend/services/memory/manual_memory_service.py` | NULL-safe 列出当前用户 scope 内最多 100 条 active Curated Memory | user_id, org_id? | list[dict] |
 | `ManualMemoryService.get_memory_count` | `backend/services/memory/manual_memory_service.py` | 统计当前用户 scope 内可管理的 active Curated Memory | user_id, org_id? | int |
 | `ManualMemoryService.add_memory` | `backend/services/memory/manual_memory_service.py` | 原文归一化、生成 embedding 并通过原子 RPC 创建或复用手动记忆 | user_id, content, source, org_id? | list[dict] |
@@ -214,10 +125,8 @@
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `serialize_content_part` / `serialize_content_parts` | `backend/schemas/message.py` | 按后端权威 ContentPart 线协议统一输出 JSON-compatible 字典 | part / parts | `dict` / `list[dict]` |
-| `build_content_part_contract` | `backend/schemas/content_part_contract.py` | 生成版本化 JSON Schema、合法样例与拒绝样例，供跨语言契约门禁使用 | - | `dict` |
 | `parseProtocolString` | `frontend/src/schemas/messageProtocol.ts` | 校验 WebSocket/恢复链路中的字符串字段，拒绝对象隐式转换 | input, field, context? | `string \| null` |
-| `parseContentPart` | `frontend/src/schemas/messageProtocol.ts` | 在 Store 写入前校验单个 ContentPart；按权威契约归一化可空元数据并兼容恢复结构化 text | input, context? | `ContentPart \| null` |
+| `parseContentPart` | `frontend/src/schemas/messageProtocol.ts` | 在 Store 写入前校验单个 ContentPart；兼容恢复结构化 text | input, context? | `ContentPart \| null` |
 | `parseContentParts` | `frontend/src/schemas/messageProtocol.ts` | 校验内容块数组并隔离非法块 | input, context? | `ContentPart[]` |
 | `DiagramPart.validate_source` | `backend/schemas/diagram.py` | 校验 Mermaid 结构化消息源码非空且不超过协议上限 | value | `str` |
 | `ChartPart.normalize_spec_format` | `backend/schemas/chart.py` | 保留三种已知图表格式并将未知历史格式归一化为可读降级类型 | value | `str` |
@@ -232,7 +141,6 @@
 | `formatDisplayValue` | `frontend/src/utils/displayValue.ts` | 将未知值稳定转换为可展示文本，处理 BigInt 与循环引用 | value | `string` |
 | `formatFormValue` | `frontend/src/utils/displayValue.ts` | 仅允许标量进入表单控件，拒绝结构化值 | value | `string` |
 | `createStreamingLifecycleActions` | `frontend/src/stores/slices/streamingLifecycleActions.ts` | 创建流式消息启动、注册、完成和查询 actions | set, get | lifecycle actions |
-| `mergeMessages` | `frontend/src/hooks/useUnifiedMessages.ts` | 按消息 ID 合并持久化与乐观消息，并始终按原始发送时间稳定排序 | messages, optimisticMessages | `Message[]` |
 | `createOptimisticMessageActions` | `frontend/src/stores/slices/optimisticMessageActions.ts` | 创建乐观消息幂等写入、替换、移除 actions | set, get | optimistic actions |
 | `createStreamingUiActions` | `frontend/src/stores/slices/streamingUiActions.ts` | 创建思考、步骤提示、建议和工具确认 actions | set, get | UI actions |
 | `handleRoutingComplete` | `frontend/src/contexts/wsRoutingCompleteHandler.ts` | 处理模型路由完成后的媒体占位符或聊天参数更新 | deps, msg | void |
@@ -259,17 +167,6 @@
 | `BackgroundTaskWorker.cleanup_stale_tasks` | `backend/services/background_task_worker.py` | 清理超时任务（image/video 走 TaskCompletionService，chat 直接更新） | - | None |
 | `ScheduledTaskExecutor._build_application_db` | `backend/services/scheduler/task_executor.py` | 为单次定时任务构造绑定创建者、企业和 task request id 的 Runtime 数据库门面 | task | OrgScopedDB |
 | `ToolExecutor.__init__(..., allowed_tools=...)` | `backend/services/agent/tool_executor.py` | 可选执行层工具白名单；定时任务用它阻断无人值守禁用工具 | allowed_tools | None |
-| `canonical_arguments_hash` | `backend/services/tool_confirmation/canonical.py` | 对严格 JSON-only 参数生成排序键 SHA-256 绑定 | arguments | str |
-| `get_safety_level` | `backend/config/tool_safety.py` | 查询显式安全分类；未知工具抛出受控错误 | tool_name | SafetyLevel |
-| `build_confirmation_summary` | `backend/services/tool_confirmation/preview.py` | 按工具 allowlist 生成不含原始参数的有界确认摘要 | tool_name、arguments | dict |
-| `ToolConfirmationRedisStore` | `backend/services/tool_confirmation/redis_store.py` | 执行三键 create/consume/expire/read/claim Lua 合同 | immutable binding | Redis result |
-| `ToolConfirmationService.create` | `backend/services/tool_confirmation/service.py` | 创建随机 challenge 与 waiter token，绑定单 Action 或 confirmation group leader 身份 | scoped tool call / group facts | ConfirmationRequest |
-| `ToolConfirmationService.await_and_claim` | `backend/services/tool_confirmation/service.py` | 轮询权威 Hash、复核完整 binding 并唯一领取执行权 | ConfirmationRequest | ConfirmationDecision |
-| `ToolConfirmationService.consume_response` | `backend/services/tool_confirmation/service.py` | 以可信 WS actor scope 将单项响应路由到 V3 RPC、group 响应路由到批量原子 RPC | confirmation_id、actor | str |
-| `ToolConfirmationNotificationWorker.run_once` | `backend/services/agent/runtime/application/confirmation_notification.py` | 从 grouped claim RPC 只领取并投递一个 leader；非组挑战保持 V3 兼容 | worker_id | bool |
-| `WebSocketManager.send_tool_confirmation` | `backend/services/websocket_manager.py` | V3 专用投递；要求本地实际发送或跨 Worker delivery ACK | task、user、message、org | bool |
-| `RedisPubSubMixin._publish_with_delivery_ack` | `backend/services/websocket_redis.py` | 以随机短 TTL key 等待远端 Worker 实际 WebSocket 发送确认 | user、message、org | bool |
-| `log_agent_event` | `backend/services/agent/safe_tool_logging.py` | 仅记录作用域、工具、稳定错误码和异常类型的脱敏 Agent 日志 | event、agent、tool、code | None |
 | `execute_with_scheduled_lease` | `backend/services/scheduler/run_lease.py` | 在持续续租下执行定时任务完整业务与终态，租约丢失时取消执行 | store, task_id, run, execution | Any |
 | `ScheduledWorkerStore.append_result_message` | `backend/services/scheduler/worker_store.py` | 通过 fencing token 能力原子写入定时任务结果消息 | task_id, run, text | dict \| None |
 
@@ -363,7 +260,6 @@
 | `CreditsTab` | `frontend/src/components/admin/userDetail/CreditsTab.tsx` | 余额 + 充值表单（二次确认）+ 流水 | userId, balance, status?, onChanged | JSX |
 | `ConversationViewTab` | `frontend/src/components/admin/userDetail/ConversationViewTab.tsx` | 左对话列表 + 右消息流，保留单素材下载，不再向服务端提交 URL 批量打包 | userId | JSX |
 | `AssetSpaceTab` | `frontend/src/components/admin/userDetail/AssetSpaceTab.tsx` | 统一资产 [上传/生成] 切换 + 复合游标分页 + 资产 ID 多选下载 | userId | JSX |
-| `CredentialGroupSection` | `frontend/src/components/admin/configuration/CredentialGroupSection.tsx` | 统一凭证组配置状态、折叠展示和重新配置入口 | configured, editing, label, onEdit, children | JSX |
 
 ### 对话管理模块 (Conversation Management)
 
@@ -443,8 +339,6 @@
 | `WecomDeliverySender.build_items/send` | `backend/services/wecom/delivery_sender.py` | 将 AI 终态或带来源标识的 Web 用户文本展开为稳定分项；chart 降级为格式化 JSON、diagram 降级为原始 Mermaid 源码，智能机器人终态可完成原 stream | task, message, context, delivery_kind / context, item | list / bool |
 | `_graphic_fallback` | `backend/services/wecom/delivery_sender.py` | 将企微不支持的结构化 chart/diagram 转换为仍可读取的文本数据 | part | str / None |
 | `WecomDeliveryWorker.start/stop/run_once` | `backend/services/wecom/delivery_worker.py` | 轮询认领企微事务 Outbox，按 delivery_kind 加载输入或助手消息，续租、逐项检查点、完成或指数退避/dead | - | None / bool |
-| `ScheduledRuntimeWecomWorker.start/stop/run_once` | `backend/services/wecom/scheduled_runtime_worker.py` | 以唯一 loop task 和实例 pass lock 串行执行 started recovery → prepared recovery → fresh dispatch；stop 等待所属 loop 退出，并发 restart 只能在旧代释放 ownership 后启动 | - | None / bool |
-| `build_scheduled_wecom_runtime_components` / `ScheduledWecomCredentialJournalAuditSink.record` | `backend/services/wecom/scheduled_runtime_composition.py` | 以 actorless/orgless `WORKER` scope 组合 Scheduled WeCom Repository、exact-tenant Smart/App resolver、Router 与 Worker；构造过程无 RPC、Secret read 或发送，默认 journal sink 仅记录已验证的 opaque credential 生命周期白名单字段 | 显式 DB/WS/material/token/HTTP/worker/audit 依赖 | `ScheduledWecomRuntimeComponents` / None |
 | `cancel_actor_task` | `backend/services/conversation_task.py` | 经 user/org 范围约束的 cancel RPC 原子取消 Actor task | db, task, user_id, org_id | bool |
 | `update_generation_progress` | `backend/migrations/123_conversation_actor_progress.sql` | 仅当前 running task 的有效 fencing token 可更新 accumulated 内容与块 | task_id, execution_token, accumulated_content, accumulated_blocks | JSONB |
 | `build_running_step` | `backend/services/handlers/chat/tool_loop.py` | Web 与无头执行内核共用的 running tool_step 构造原语 | call | Dict |
@@ -508,7 +402,7 @@
 | `update_wecom_conversation_setting` | `backend/migrations/126_wecom_conversation_settings.sql` | 行锁内按 user/org/source 校验并原子更新模型或思考模式 | conversation_id, user_id, setting_key/value, org_id | JSONB |
 | Actor tenant RPC facades | `backend/migrations/127_actor_tenant_rpc_contract.sql` | 接收 OrgScopedDB 注入的 p_org_id，强校验租户后委托既有原子核心 | 原核心参数 + org_id | JSONB |
 | `get_wecom_conversation_setting` / `set_wecom_conversation_setting` | `backend/services/wecom/conversation_settings.py` | 读取企微对话设置并通过原子 RPC 持久化，数据库为唯一事实源 | db, conversation/user/key/value/org | str \| dict |
-| `enqueue_wecom_message` | `backend/services/wecom/actor_enqueue.py` | 从企微 msgid 派生稳定 task/message/turn ID，将文件/图片/文本内容写入唯一 Runtime ingress；不可用时失败关闭，不回退 Actor generation Owner | handler, msg, user_id, conversation_id, image_urls, file_payload, stream_context | WecomActorEnqueueResult |
+| `enqueue_wecom_message` | `backend/services/wecom/actor_enqueue.py` | 从企微 msgid 派生稳定 task/message/turn ID，将智能机器人 stream 上下文写入 delivery_context，并以结构化内容调用原子入队 RPC | handler, msg, user_id, conversation_id, image_urls, file_payload, stream_context | WecomActorEnqueueResult |
 | `stable_wecom_task_id` | `backend/services/wecom/actor_enqueue.py` | 返回与企微原子入队完全一致的稳定 task ID，供入站在唤醒 Worker 前注册 stream 保活 | msg, user_id | str |
 | `identify_file` | `backend/services/assets/file_identity.py` | 依据解密后内容识别 CSV/TSV、Office、PDF 和媒体类型，生成安全规范名、MIME 与 SHA-256 | data, stable_id, provider_name?, content_disposition? | AssetIdentity |
 | `resolve_asset_identity` | `backend/services/assets/asset_identity.py` | 将可信 Workspace/OSS URL 与 owner key 解析为不受 CDN 域名和 query 影响的 canonical provider/key | original_url, workspace_path?, org/scope/owner, allowed_hosts? | CanonicalAssetIdentity |
@@ -556,7 +450,7 @@
 | `resolve_asset_path` | `backend/scripts/reconcile_wecom_attachments.py` | 按 user/channel scope 重算资产根目录并拒绝路径穿越，不信任历史绝对路径 | attachment row, workspace_root | Path |
 | `WecomFileMixin._prepare_wecom_file` | `backend/services/wecom/wecom_file_mixin.py` | 解密后按真实内容识别类型和规范名，再按 msgid 稳定保存；私聊进入个人 Workspace，群聊进入 channel Workspace | msg, reply_ctx, user_id, org_id | dict \| None |
 | `WecomReplyMixin` | `backend/services/wecom/wecom_reply_mixin.py` | 旧同步链路的结果格式化、企微双通道回复和 Web 会话更新通知 | - | mixin |
-| `WecomIngressMixin._process_incoming_content` | `backend/services/wecom/wecom_ingress_mixin.py` | FILE 先保留既有附件暂存/Artifact 语义，再通过 Runtime ingress 创建消息执行链；其他支持类型进入企微入队 | msg, reply_ctx, user_id, conversation_id, image_urls | None |
+| `WecomIngressMixin._process_incoming_content` | `backend/services/wecom/wecom_ingress_mixin.py` | FILE 固定进入 Actor；其他支持类型按企微 Actor 开关分流原子入队或旧同步生命周期 | msg, reply_ctx, user_id, conversation_id, image_urls | None |
 | `GenerationClaim.from_rpc` | `backend/services/conversation_execution.py` | 校验 claimed RPC 结果并构造不可变执行权对象；非 claimed 结果返回 None | data, conversation_id, execution_mode | GenerationClaim \| None |
 | `ConversationExecutionService.claim_serial` | `backend/services/conversation_execution.py` | 通过数据库 RPC 认领 conversation 最早 serial task | conversation_id | GenerationClaim \| None |
 | `ConversationExecutionService.claim_branch` | `backend/services/conversation_execution.py` | 通过数据库 RPC 精确认领内部 branch task | task_id, conversation_id | GenerationClaim \| None |
@@ -797,7 +691,7 @@
 | `MessageIdempotencyService.complete` / `fail` | `backend/services/message_idempotency_service.py` | 持久化可重放的成功或业务失败终态 | claim, response/error | None |
 | `MessageIdempotencyService.fail_unexpected` | `backend/services/message_idempotency_service.py` | 最佳努力持久化脱敏的未知异常终态且不覆盖原异常 | claim, error | None |
 | `prepare_and_start_chat_generation` | `backend/api/routes/message_chat_preparation.py` | 原子准备 Web Chat 的消息、Turn、本地 task 和 ContextAnchor 后入队 Actor | db, handler, conversation/user/org/request, body | GenerateResponse |
-| `prepare_and_start_image_generation` | `backend/api/routes/message_image_preparation.py` | 原子准备 Web 普通图片的消息、Turn 和 1–10 个 preparing task，再交给 Runtime image batch ingress | db, handler, conversation service, scope/request/body | GenerateResponse |
+| `prepare_and_start_image_generation` | `backend/api/routes/message_image_preparation.py` | 原子准备 Web 普通图片的消息、Turn 和 1–4 个 preparing task，再启动供应商提交 | db, handler, conversation service, scope/request/body | GenerateResponse |
 | `submit_prepared_image_task` | `backend/services/handlers/image_prepared_submission.py` | 使用稳定本地 task 锁积分、提交图片供应商，并 attach 成功结果或记录失败终态 | handler, local task, adapter, batch/model/credit/request context | str \| None |
 | `resolve_prepared_batch` | `backend/services/handlers/image_request_settings.py` | fail-closed 验证已准备 task 数量和 batch ID，禁止退回到供应商先调用路径 | metadata, num_images | tuple |
 | `prepare_and_start_video_generation` | `backend/api/routes/message_video_preparation.py` | 原子准备 Web 视频消息、Turn 和 preparing task，再启动供应商提交 | db, handler, conversation service, scope/request/body | GenerateResponse |
@@ -814,7 +708,6 @@
 | `ImageHandler.start` | `backend/services/handlers/image_handler.py` | 启动图片生成任务（异步） | message_id, conversation_id, user_id, content, params | task_id |
 | `ImageHandler.preflight` | `backend/services/handlers/image_handler.py` | 图片消息变更前校验本次请求总积分 | user_id, content, params | None |
 | `resolve_image_generation_settings` | `backend/services/handlers/image_request_settings.py` | 统一解析图片提交与计费参数 | params, has_image_urls | Dict[str, Any] |
-| `build_canonical_image_request` | `backend/services/handlers/image_request_settings.py` | 以已解析 prompt/model 构建唯一图片请求，禁止序列化原始参数覆盖 image-to-image 模型身份 | prompt, model_id, serialized_params | Dict[str, Any] |
 | `VideoHandler.start` | `backend/services/handlers/video_handler.py` | 提交入口已原子准备的视频任务（缺少 prepared task 时关闭失败） | message_id, conversation_id, user_id, content, params, metadata | client_task_id |
 | `_reset_message_for_retry` | `backend/api/routes/message.py` | 重置失败消息用于重试 | db, message_id, gen_type, model, params | Message |
 | `_create_assistant_placeholder` | `backend/api/routes/message.py` | 创建助手消息占位符 | db, conversation_id, message_id, gen_type, model, params | Message |
@@ -837,7 +730,7 @@
 | `reject_websocket` | `backend/services/websocket_auth.py` | 先完成握手再返回浏览器可观察的 4001/4002/4003 业务关闭码 | websocket, code, reason | None |
 | `_handle_task_subscription` | `backend/api/routes/ws.py` | 校验任务租户边界后建立 WebSocket 订阅并恢复任务状态 | conn_id, user_id, org_id, task_id | None |
 | `_handle_user_steer` | `backend/api/routes/ws.py` | 校验任务租户边界后处理执行中追加消息 | conn_id, user_id, org_id, task_id, message | None |
-| `WebSocketManager.send_to_user` | `backend/services/websocket_manager.py` | 按用户与精确 org_id 投递并继续 best-effort Redis publish；org_id=None 仅表示个人空间 | user_id, message, org_id | 本地连接是否成功投递 |
+| `WebSocketManager.send_to_user` | `backend/services/websocket_manager.py` | 按用户与精确 org_id 投递；org_id=None 仅表示个人空间 | user_id, message, org_id | None |
 | `WebSocketManager.send_to_task_subscribers` | `backend/services/websocket_manager.py` | 按 `(task_id, org_id)` 复合订阅键执行本地及 Redis 投递 | task_id, message, org_id | int |
 | `WebSocketManager.send_to_task_or_user` | `backend/services/websocket_manager.py` | 优先按复合任务订阅投递，无订阅时按用户与精确 org_id 兜底 | task_id, user_id, message, org_id | None |
 | `RedisPubSubMixin._deliver_from_redis` | `backend/services/websocket_redis.py` | 消费跨 Worker 消息并按精确企业上下文过滤本地连接 | data | None |
@@ -1439,21 +1332,6 @@
 企微生成、上下文构建、积分扣除和结果投递已统一由 Conversation Actor、
 ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二条同步链路。
 
-#### 后端类 — 企微 App HTTP typed transport (`backend/services/wecom/app_outbound.py`)
-
-| 类/方法 | 文件路径 | 功能描述 | 参数 | 返回值 |
-|--------|----------|----------|------|--------|
-| `WecomAppOutbound` | `backend/services/wecom/app_outbound.py` | 依赖显式注入 token provider 与 HTTP client；实例内有界保留已开始身份及 credential-timeout tombstone，timeout 后同 ID 只读且满容量拒绝新身份；immediate credential unavailable 仍可重试；不提供服务端幂等，新实例重试由 DB facts/owner 决定 | token_provider, http_client, capacity, credential_timeout, post_timeout | transport 实例 |
-| `WecomAppOutbound.send_typed` | `backend/services/wecom/app_outbound.py` | 以 caller-owned `provider_request_id` 最多执行一次 App HTTP POST；绝对 deadline 不等待吞取消依赖，仅可信 2xx 且部分失败字段类型合法的完整回执可 ACK | provider_request_id, target, payload | `WecomAppOutboundReceipt` |
-
-#### 后端类 — Runtime 企微 App 凭证组装 (`backend/services/agent/runtime/wecom_app_credentials.py`)
-
-| 类/函数 | 文件路径 | 功能描述 | 参数 | 返回值 |
-|--------|----------|----------|------|--------|
-| `TokenExchange` | `backend/services/agent/runtime/wecom_app_credentials.py` | 显式注入、具备 operational/production readiness 的纯端口；仅在 lease controlled consumer 内接收 opaque material，material schema 与 token 派生均由后续实现负责 | material | `Optional[str]` |
-| `build_wecom_app_token_provider` | `backend/services/agent/runtime/wecom_app_credentials.py` | 仅在 broker 与 exchange 均 production-ready 时，按不可变 RuntimeScope、opaque handle、固定 provider/purpose 与 revision 重新 resolve；显式复核 lease handle 后以同一 binding 执行 consumer，普通失败返回 None，exchange 取消在 material frame 正常离开后重建传播 | broker, scope, credential_handle, provider_revision, token_exchange | D2-B2a `AppAccessTokenProvider` |
-| `build_runtime_wecom_app_outbound` | `backend/services/agent/runtime/wecom_app_credentials.py` | 将 Runtime token provider 与显式 App send HTTP client 注入 `WecomAppOutbound`；不接真实 token HTTP、Worker、DB 或 production composition | credential binding, broker, token_exchange, outbound_http_client, limits | `WecomAppOutbound` |
-
 #### 后端函数 — 企微消息发送 (`backend/services/wecom/app_message_sender.py`)
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
@@ -1845,8 +1723,6 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `transfer-knowledge-audit-ownership.sh` / `rollback-knowledge-audit-ownership.sh` | `deploy/` | 转移 Knowledge/Audit 六张基表、Tool Audit 动态分区、关联序列和分区维护函数；回滚要求未启用 FORCE RLS |
 | `SyncConfigurationResolver` | `backend/services/configuration/sync_resolver.py` | 以 Sync 角色发现企业、解析 ERP/快麦 Bundle，并原子轮换 ERP Token |
 | `ExternalConfigurationControl` | `backend/services/configuration/external_control.py` | 企业管理员通过配置控制面原子管理快麦外部凭证 Bundle |
-| `parse_curl` / `is_kuaimai_host` | `backend/services/kuaimai_external/curl_parser.py` | 兼容 Chrome/Safari 常见 cURL 参数格式，提取快麦 companyid/Cookie 并校验精确主机 |
-| `create_credential` | `backend/api/routes/kuaimai_external_credentials.py` | 对快麦 cURL 执行结构化校验、数据源一致性检查，并经配置控制面原子保存后回读 |
 | `external_manual_sync_loop` | `backend/services/kuaimai_external/manual_worker.py` | 以租约与 fencing token 消费持久化的快麦手动同步请求 |
 | `_graceful_shutdown` | `backend/sync_worker_main.py` | 有序停止 ERP 编排器与常驻任务，并关闭 Sync 数据库池和 Redis 连接 |
 | `refresh_kit_stock` | `backend/services/kuaimai/erp_sync_kit_stock.py` | 通过 Sync 专属数据库能力刷新套件库存物化视图 |
@@ -1921,7 +1797,6 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `_build_score_knowledge` / `_commit_model_score` | `backend/services/model_scorer.py` | 保留 Python EMA 算法和 embedding 构造，通过 Worker Commit RPC 原子持久化，不再直读写 Knowledge 表 |
 | `resolve_schedule_fields` | `backend/api/routes/scheduled_task_support.py` | 将 once/cron/daily/weekly/monthly 请求字段解析为持久化计划与下一执行时间 | payload, tz | Dict |
 | `enrich_with_creator` | `backend/api/routes/scheduled_task_support.py` | 批量读取用户基础展示和 Runtime 任职能力，为定时任务补充创建者部门职位信息 | db, tasks, org_id | List[Dict] |
-| `PostgresArray` | `backend/core/db_scope.py` | 显式标记 Scoped RPC 的 PostgreSQL 数组参数，避免 Python list 被编码为 JSONB | values | PostgreSQL array adapter |
 | `PermissionChecker.get_assignment` | `backend/services/permissions/checker.py` | 调用 Runtime 任职窄能力读取用户在企业内的主任职；能力失败时记录用户与企业上下文并失败关闭 |
 | `get_users_in_depts` | `backend/services/permissions/scope_filter.py` | 通过显式 org_id 和部门集合能力计算数据范围内成员，不再直读任职表 | db, dept_ids, org_id, include_subtree | Set[str] |
 | `add_governed_member` / `remove_governed_member` / `change_governed_member_role` | `backend/migrations/157_governance_write_capabilities.sql` | 企业行锁下执行成员上限、owner、自操作和 admin 层级不变量，并同事务记录角色变化 |
@@ -1937,19 +1812,12 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `ConfigurationControlService` | `backend/services/configuration/control_service.py` | 为平台、企业、个人提供显式 set/delete/status 方法；应用层先校验值和 Scope，再生成 envelope 并调用窄 RPC |
 | `EffectiveConfigResolver.parse` | `backend/services/configuration/resolver.py` | 严格解析数据库选定的固定 Bundle；校验 Registry 版本、键顺序、Scope、版本、普通值和 SecretRef 契约 |
 | `SecretBundleResolver` | `backend/services/configuration/bundles.py` | 通过 13 个显式方法调用对应固定 RPC，只解密数据库授权返回的 SecretRef，并验证 payload 精确字段；`wecom_bot_admin_test` 使用独立 Runtime owner/admin 门面 |
-| `AsyncSecretBundleResolver.wecom_app` | `backend/services/configuration/bundles.py` | Scheduled WeCom Runtime 通过无参数 `get_wecom_app_bundle` 解析现有企业 `corp_id + oauth agent id/secret` 固定 Bundle；不接收 org 参数、不引入 fallback |
 | `WecomBotTargetResolver.list_targets` | `backend/services/configuration/bundles.py` | 先以 actorless Worker Scope 发现企业，再为每个企业建立独立精确 Scope 并解析 `wecom.bot` Bundle；单企业材料失败不影响其他企业 |
 | `_assert_wecom_worker_discovery_scope` / `discover_wecom_bot_targets` | `backend/migrations/166_wecom_worker_discovery.sql` | 仅允许 actorless Worker 发现具备有效 WeCom Bundle 的 active 企业，返回 org_id 与凭证版本且不返回 Secret |
-| `install-service-units.sh` | `deploy/install-service-units.sh` | 保留 all/agent-runtime-only，并以 control-plane-only 编排四份安全 env 与三个 reviewed control-plane unit update |
-| `bootstrap-agent-model-gateway-role.sh` | `deploy/bootstrap-agent-model-gateway-role.sh` | 仅供 disposable 数据库穿越冻结 227_18 migration 历史；不创建当前运行服务或执行 Owner |
-| `read_required_values` / `validate_kek` / `render_envs` | `deploy/control_plane_env_source.py` | 严格读取批准生产来源，验证 32-byte KEK keyring，并生成 release-bound Runtime/Runtime Model/Projection/Authorization flags-off env |
-| `provision-control-plane-worker-envs.py` | `deploy/provision-control-plane-worker-envs.py` | release-bound staging 四 env；Runtime Model env 使用独立 secret group，其余使用 app group，并以旧内容/权限/uid/gid journal 和 hash fence 提供 publish/verify/幂等 rollback |
-| `update-control-plane-units.sh` | `deploy/update-control-plane-units.sh` | 协调四 env/三个 unit 的 prepared→published→restored 事务；inactive+disabled、reviewed SHA、daemon/postcheck 失败统一恢复 |
-| `check-control-plane-unit-manifest.sh` | `deploy/check-control-plane-unit-manifest.sh` | 在 release rsync 前远端只读核对三个当前 target unit 的 reviewed SHA-256 |
+| `install-service-units.sh` | `deploy/install-service-units.sh` | 校验数据库角色及 KEK 文件，安装并核对四个生产 Systemd 单元后重新加载 daemon |
 | `_resolve_effective_configuration_item` / `_resolve_configuration_bundle` | `backend/migrations/160_configuration_resolution_core.sql` | 按企业策略执行 user→organization→platform 选择，必需键缺失或 Secret 状态/版本异常时失败关闭 |
 | `get_*_bundle` | `backend/migrations/160_configuration_resolution_facades.sql` | 无参数固定 Bundle 能力；分别绑定 runtime actor、actorless OAuth、精确企业 Worker、WeCom actor 或企业管理员 |
 | `get_wecom_bot_admin_test_bundle` | `backend/migrations/216_configuration_admin_test_bundle.sql` | 仅允许 Runtime active 企业 owner/admin 解析固定 `wecom.bot` 测试 Bundle；不扩大 Worker 专用门面权限 |
-| `get_wecom_app_bundle` | `backend/migrations/227_50_agent_runtime_scheduled_wecom_configuration_facade.sql` | 复用 227_38 Scheduled WeCom worker authority，并额外要求 actorless、非空 active tenant org；只向 `everydayai_wecom_runtime` 返回该企业现有 `wecom.app` Bundle，应用角色无配置表直权 |
 | `build_legacy_preflight` | `backend/services/configuration/legacy_migration.py` | 根据旧键存在性、Corp ID 来源一致性和外部 Cookie 加密/状态事实生成不含配置值的迁移就绪报告；组合缺项、未知键、来源冲突或明文 Cookie 均阻断 |
 | `LegacyConfigurationFactCollector.collect` | `backend/services/configuration/legacy_migration.py` | 以三次批量只读查询采集旧组织、配置和快麦凭证；仅在局部内存验证企业/全局旧密钥、密文与 Corp ID 相等性，输出每企业无秘密值预检报告 |
 | `import_legacy_configuration_batch` | `backend/migrations/161_configuration_legacy_import.sql` | 仅允许 everydayai_migrator 在显式 apply 会话中一次性导入 1–10000 个目标；全批使用 expected_version=0 CAS，任一失败整事务回滚并仅记录无秘密值审计 |
@@ -2039,145 +1907,3 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `generateRequirementSuggestions` | `frontend/src/services/ecomRequirement.ts` | 调用可取消的三方案接口并使用 105 秒独立超时 |
 | `useDetailRequirementAssist` | `frontend/src/hooks/useDetailRequirementAssist.ts` | 管理 AI 帮写弹窗、请求取消、过期响应隔离和三套独立编辑状态 |
 | `RequirementAssistModal` | `frontend/src/components/detail-page/RequirementAssistModal.tsx` | 展示产品事实、参考图分析、冲突和三套可编辑 AI 帮写方案 |
-
-### 平台企业停用与恢复
-
-| 函数/能力 | 文件 | 说明 |
-|---|---|---|
-| `suspend_governed_organization` / `restore_governed_organization` | `backend/migrations/217_organization_lifecycle_governance.sql` | 仅 active super_admin 在平台 Runtime Scope 内以行锁原子转换企业状态并同步写治理审计 |
-| `reject_suspended_organization_service_write` | `backend/migrations/218_suspended_organization_execution_fence.sql` | 阻断服务角色继续写入 suspended 企业的任务、Agent Runtime 和 WeCom Inbox |
-| `OrgService.suspend_organization` / `restore_organization` | `backend/services/org/org_service.py` | 调用精确治理 RPC 并提供稳定 404/409/403 错误语义 |
-| `suspend_org` / `restore_org` | `backend/api/routes/org_lifecycle.py` | 通过 PlatformDB 暴露超管生命周期 API，未知数据库异常安全映射为 503 |
-| `suspendOrg` / `restoreOrg` | `frontend/src/services/org.ts` | 透传 AbortSignal 调用企业生命周期 API |
-| `SuperAdminPanel` 生命周期交互 | `frontend/src/components/admin/SuperAdminPanel.tsx` | 名称确认、重复提交保护、请求取消及成功后权威列表刷新 |
-| `useOrganizationLifecycle` | `frontend/src/components/admin/useOrganizationLifecycle.ts` | 管理停用/恢复请求、AbortController、重复提交保护和成功后的权威刷新 |
-| `CreateOrganizationSection` / `OrganizationList` / `LifecycleDialog` | `frontend/src/components/admin/SuperAdminPanelSections.tsx` | 分离企业创建、权威状态列表和生命周期确认界面 |
-| 生命周期 External fixture 与 helper | `backend/tests/test_organization_lifecycle_external.py` | 通过 Migration Runner 应用 217/218，执行 preflight，并验证并发、事务、对象元数据、逆序 rollback 与重新应用 |
-| 生命周期权限/Fence External 矩阵 | `backend/tests/test_organization_lifecycle_permissions_external.py` | 验证 Actor/Scope/数据库角色精确 ACL、无 grant option/继承旁路、四类服务 suspended Fence 及 active 恢复 |
-| `organization-lifecycle.sh` | `deploy/preflight/organization-lifecycle.sh` | 只读核验迁移账本、函数 owner/SECURITY DEFINER/search_path/ACL、12 个 Fence trigger 与 Runtime 无企业直写权限 |
-
-### Agent Runtime 生产 composition
-
-| 函数/类 | 文件 | 说明 |
-|---|---|---|
-| `RuntimeIngress.submit` | `backend/services/agent/runtime/ingress.py` | 校验完整 Web task/message/turn/request 绑定后直接调用唯一 required ingress；不探测版本、不读取 rollout、不回退 Legacy Owner |
-| `resolve_runtime_model` / `snapshot_from_resolution` | `backend/services/agent/runtime/model_resolution.py` | 沿用聊天模型选择链解析有效显式模型或 `DEFAULT_MODEL_ID`，冻结 model/provider/revision；不读取订阅选择 |
-| `_resolve_model_selection` | `backend/services/agent/runtime/production_model.py` | 优先使用 Run config snapshot 的 resolved model，并兼容旧 WeCom task 模型回退，不受 definition 固定模型覆盖 |
-| `build_runtime` / `build_projection` / `build_authorization` / `build_sandbox` | `backend/services/agent/runtime/composition.py` | 四个互斥进程的生产 composition roots |
-| `ScheduledRuntimeFinalizer.run_once` | `backend/services/agent/runtime/application/scheduled_finalizer.py` | Runtime Owner 每轮最多处理一个 scheduled terminal intent，以冻结终态时间确定性计算 retry/cron，并仅通过 v2 apply 收敛本地 scheduled facts |
-| `PostgresScheduledFinalizationRepository` | `backend/services/agent/runtime/infrastructure/postgres/scheduled_finalization_repository.py` | 严格解析 227_31/227_33 Worker 窄 RPC；响应丢失后以 readback 加同请求 v2 replay 证明 applied/already-applied，不读取事实表 |
-| `build_agent_runtime_production_components` / `ProductionCompositionNotReady` | `backend/services/agent/runtime/production_factory.py` | Runtime Worker 唯一 code-owned 生产组装入口；真实安全服务未接线时返回携带强类型 readiness 的结构化失败 |
-| `build_safe_runtime_components` | `backend/services/agent/runtime/composition.py` | 不启动 Worker 的 safe Runtime read/model/action 基础接线；不接 provider-dependent 能力 |
-| `CapabilityReadiness` / `RuntimeAssemblyReadiness` | `backend/services/agent/runtime/runtime_assembly.py` | 区分 capability ready、unavailable、disabled 与整体 production readiness |
-| `build_safe_runtime_composition` / `build_runtime_data_adapters` / `build_runtime_data_read_registry` | `backend/services/agent/runtime/production_composition.py`、`backend/services/agent/runtime/data_read_composition.py` | Runtime 主入口显式构造三项只读 adapter；safe composition 仅注册显式提供的 local_data/file_analyze/fetch_all_pages，ERP Write/Sync、淘宝奇门、Media 不注册 |
-| `PostgresModelCallFactory` | `backend/services/agent/runtime/production_model.py` | 从 fenced PostgreSQL 上下文冻结模型选择、当前输入参考图、ContextPlan、request hash、非 Secret provider revision/purpose 与确定性 Action；参考图只以当前输入索引进入 1～10 个 `generate_image` Action，不获取 credential material |
-| `agent_runtime_worker_main.main` | `backend/agent_runtime_worker_main.py` | Worker gate、Unix health、heartbeat、drain 与 shutdown |
-| `AgentRuntimeProcessSettings` / `_load_process_settings` | `backend/agent_runtime_worker_main.py` | Runtime Owner 的最小 typed settings；`env_file=None`，不读取 Backend `.env`，Projection/Authorization 保持既有配置边界 |
-| `RuntimeConfiguredAdapterFactory.create` | `backend/services/agent/runtime/infrastructure/model/configured_adapter.py` | 仅在 227_53 fenced ModelAttempt 下读取现有 encrypted Bundle，以 Runtime 私有 KEK consumer 构造请求局部的既有 chat adapter；不读取通用 Settings 或 `.env` |
-| `runtime_status` / `update_runtime_control` / `requeue_projection_dead` | `backend/api/routes/runtime_admin.py` | super_admin、租户作用域、幂等审计的 Runtime 运维入口；灰度写入口已删除，保留 kill epoch 和能力控制 |
-| `probe_tool_confirmation_redis` | `backend/services/tool_confirmation/capability_probe.py` | Tool Confirmation V3 Redis 原子能力探针 |
-| `NsJailSubprocessLauncher` | `backend/services/agent/runtime/sandbox/nsjail.py` | 固定哈希、cgroup v2、网络隔离与进程树清理的 Sandbox 启动器 |
-| `create_manifest` / `verify_manifest` | `backend/services/agent/runtime/sandbox/rootfs_manifest.py` | 创建并验证包含类型、权限、owner、大小和文件哈希的完整 rootfs manifest |
-| `AgentDefinition` / `AgentDefinitionRegistry` / `RuntimeVersionRegistry` | `backend/services/agent/runtime/agents/`、`catalog/registry.py` | 不可变版本事实解析；入口使用同一 Agent/Catalog registry，历史 Run 由 PostgreSQL facts 恢复 |
-| `RuntimeToolCatalog` / `RuntimeToolCatalogRegistry` / `EffectiveToolset` | `backend/services/agent/runtime/catalog/` | Executor-backed 版本目录与 scope/channel/entitlement/authorization 交集；未注册 Executor 不进入模型工具集 |
-| `canonicalize_scheduled_toolset` | `backend/services/agent/runtime/catalog/scheduled_toolset.py` | 从来源 Run 的冻结 Runtime facts 结构保持地筛选 scheduled execution 9/17 项安全工具，并按 Runtime canonical JSON 算法生成可恢复 snapshot/hash。 |
-| `build_safe_read_registry` / `build_safe_read_catalog` / `build_safe_read_snapshot` | `backend/services/agent/runtime/catalog/safe_read_release.py` | C7-B3.2-A 从 Read Descriptor SSOT 确定性冻结 17 项安全只读 release；保留既有 user/channel scope 过滤 |
-| `start_model_attempt_dispatch_v2` | `backend/migrations/227_53_agent_runtime_model_configuration_facade.sql` | Runtime-only 原子锁定 Run/ModelStep/ModelAttempt，验证 lease/request hash/config revision 与三层 kill gate，并将 epoch 快照写入唯一 ModelAttempt |
-| `get_agent_runtime_model_configuration_v1` | `backend/migrations/227_53_agent_runtime_model_configuration_facade.sql` | 只向持有同一 Run/Attempt execution token、state version 与 request hash 的 Runtime Worker返回现有 encrypted configuration Bundle |
-| `get_agent_runtime_erp_configuration_v1` / `rotate_agent_runtime_erp_token_pair_v1` | `backend/migrations/227_54_agent_runtime_erp_read_configuration.sql` | 只向持有同一 ActionAttempt、dispatch intent、kill epoch、execution token、state version 与 request hash 的 Runtime Worker返回既有 ERP Bundle，并以配置版本 CAS 写回刷新 Token |
-| `build_erp_read_snapshot` | `backend/services/agent/runtime/catalog/erp_read_release.py` | 从 17 项既有安全读与六项 ERP Read Descriptor 确定性生成 v5 Catalog、Definition、EffectiveToolset；排除 ERP Write/Sync、淘宝奇门与 Media |
-| `get_agent_runtime_resource_manifest_v1` / `PostgresRuntimeResourceManifestResolver` | `backend/migrations/227_56_agent_runtime_resource_manifest_facade.sql`、`backend/services/agent/runtime/executors/resource_manifest.py` | 通过同一 fenced `file_analyze` ActionAttempt 读取现有任务冻结附件或固定输入消息，并返回与现有 Web/企微 Workspace owner 一致的脱敏资源清单；Worker 无附件表直权 |
-| `RuntimeFileAnalyzeAdapter` / `RuntimeFetchAllPagesAdapter` | `backend/services/agent/runtime/executors/data_adapters.py` | S2-TAB-B1 复用现有文件分析与 ERP 只读分页能力；文件路径必须来自 fenced Runtime resource manifest，ERP dispatcher 按请求构造并关闭，partial failure 仅返回脱敏证据；当前未注册 production Catalog |
-| `RuntimeLocalDataAdapter` / `execute_agent_runtime_local_query_v1` | `backend/services/agent/runtime/executors/data_adapters.py`、`backend/migrations/227_57_agent_runtime_local_query_facade.sql` | S2-TAB-B2 通过 Action/Attempt/PolicyReceipt/kill-epoch fence 调用既有 ERP analytics RPC；租户由事实绑定，Worker 仅有窄 EXECUTE，当前只支持 trend/compare/distribution 与安全 cross 指标 |
-| `build_data_read_snapshot` / `generate_agent_runtime_data_read_seed` | `backend/services/agent/runtime/catalog/data_read_release.py`、`backend/scripts/generate_agent_runtime_data_read_seed.py`、`backend/migrations/227_58_agent_runtime_data_read_release.sql` | S2-TAB-B3.2 从同一 Descriptor/Schema SSOT 冻结 v6 数据读取 Catalog；disabled 只保留安全无副作用工具，227_02 历史身份不改写 |
-| `build_batch_media_snapshot` / `generate_agent_runtime_batch_media_seed` | `backend/services/agent/runtime/catalog/batch_media_release.py`、`backend/scripts/generate_agent_runtime_batch_media_seed.py`、`backend/migrations/228_02_agent_runtime_batch_media_release.sql` | 从完整 42-tool production registry 冻结 v7 Catalog；新 ingress toolset 排除历史 `image_agent`、保留标准 `generate_image`，全部 facts 默认关闭且可恢复 |
-| `build_pricing_rows` / `generate_agent_runtime_media_pricing_seed` | `backend/scripts/generate_agent_runtime_media_pricing_seed.py`、`backend/migrations/228_04_agent_runtime_media_action_bindings.sql` | 从既有 KIE 图片配置生成不可变服务器定价 facts；Runtime 不接受模型提供的积分或内部标识 |
-| `prepare_agent_runtime_media_batch_v1` / `read_agent_runtime_media_manifest_v1` / `read_agent_runtime_media_binding_v1` | `backend/migrations/228_04_agent_runtime_media_action_bindings.sql` | 以 fenced ActionAttempt 锁定完整同批 1～10 个图片 Action，原子创建既有 Task、逐项积分交易、Action binding 和固定输出槽位；重放事实漂移失败关闭 |
-| `settle_agent_runtime_media_credit_v1` / `refund_agent_runtime_media_credit_v1` | `backend/migrations/228_04_agent_runtime_media_action_bindings.sql` | Projection 专用窄能力，按 Action 终态幂等确认或退款单项积分；本批不投影消息或 Asset |
-| `RuntimeMediaTaskPort.prepare` / `RuntimeMediaTaskPort.read` | `backend/services/agent/runtime/media_task_port.py` | 只接收 fenced ActionAttempt，通过 Runtime Worker 窄 RPC 准备和回读内部 binding；模型参数和 Provider payload 不携带 task/user/org/credit 标识 |
-| `start_agent_runtime_model_gateway_dispatch` | `backend/migrations/227_20_agent_runtime_model_gateway_dispatch_binding.sql` | Runtime-only 原子锁定并验证 Session/Run/ModelStep/ModelAttempt、credential binding 与三层 kill gate，由 DB 读取 epoch 后同事务推进 Attempt 并创建唯一 operation |
-| `claim_agent_runtime_model_gateway_operation_v2` | `backend/migrations/227_20_agent_runtime_model_gateway_dispatch_binding.sql` | Gateway-only claim；要求 ModelAttempt=`dispatching/request_started` 且 operation attempt version 与当前 Attempt 一致，保留 lease/fence/configuration bundle 合同 |
-| `submit_agent_runtime_model_gateway_operation` / `claim_agent_runtime_model_gateway_operation` | `backend/migrations/227_18_agent_runtime_model_gateway.sql` | BG2 历史 RPC 保持不可变；227_20 撤销 Runtime/Gateway EXECUTE，防止绕过 atomic dispatch binding |
-| `_agent_model_gateway_parent_active_v1` / `_lock_agent_model_gateway_cancel_scope_v1` / `_cancel_agent_run_action_work` / `cancel_agent_run` | `backend/migrations/227_25_agent_runtime_model_gateway_cancel_fence.sql` | 私有固定锁序 helper与最终 cancel wrapper：Gateway mutation 重新验证父 Run/ModelAttempt；Run cancel 先锁 Model 链再锁 Action链，将 pre-dispatch operation 终结为 failed、dispatching 保守终结为 unknown，且不改写既有终态 |
-| `read_agent_runtime_model_gateway_operation` / `mark_agent_runtime_model_gateway_dispatched` / `renew_agent_runtime_model_gateway_operation` / `finalize_agent_runtime_model_gateway_operation` / `recover_agent_runtime_model_gateway_operations` | `backend/migrations/227_18_agent_runtime_model_gateway.sql`，由 `227_25_agent_runtime_model_gateway_cancel_fence.sql` 收紧 mutation | 保留的 Gateway operation readback、父级 fence、lease CAS、Provider dispatch fact、UNKNOWN 保守恢复与终态事实合同；finalize 不终结 Runtime ModelAttempt |
-| `claim_agent_action_dispatch_final_v1` / `gate_agent_action_dispatch_final_v1` | `backend/migrations/228_08q_agent_runtime_single_owner_convergence.sql` | ActionLoop 唯一 claim/gate；claim 内恢复未开始 transport 的过期 Attempt，gate 内为 SAFE/NONE 创建 Attempt-bound PolicyReceipt 并完成最终 dispatch 授权，不读取 rollout 或独立 Activation 状态 |
-| `build_runtime_context` | `backend/services/agent/runtime/context/runtime_builder.py` | 从 Run 冻结事实构建确定性 Provider ContextPlan，并重复 tool_call/result |
-| `runtime_submit_ingress_v2` / `get_agent_runtime_model_context_v2` | `backend/migrations/224_01_agent_runtime_ar17_core.sql` | 原子 v2 ingress、gate 漂移幂等 readback 与严格 Run anchor context RPC；版本 seed 在 `224_02_agent_runtime_ar17_version_seed.sql` |
-| `set_agent_runtime_tenant_gate` / `get_agent_runtime_tenant_gate_status` | `backend/migrations/227_06_agent_runtime_tenant_kill_control.sql` | Tenant/provider/capability kill gate 的租户作用域 CAS、单调 epoch、脱敏不可变审计与只读状态；不接入 Runtime dispatch |
-| `get_agent_runtime_owner_fence` | `backend/migrations/227_06_agent_runtime_tenant_kill_control.sql` | 仅按 owner、execution token 返回脱敏 owner fence；Worker 无新事实表直权 |
-| `submit_runtime_ingress_required_v1` / `enqueue_wecom_runtime_turn_required_v1` | `backend/migrations/228_08q_agent_runtime_single_owner_convergence.sql` | Web/WeCom 最终唯一 ingress facade；直接建立 Runtime Session/Command 和 task ownership，失败关闭，不探测 capability、不读取 rollout、不调用 legacy fallback |
-
-### Agent Runtime AR-17.3 专业 Executor（仅非生产）
-
-| 函数/类 | 文件 | 说明 |
-|---|---|---|
-| `specialist_descriptor` / `build_specialist_registry` | `backend/services/agent/runtime/executors/specialist_registry.py` | 23 项工具的唯一 Descriptor、族级 Capability 与 fail-closed Registry |
-| `open_agent_authorization_batch_v1` / `claim_agent_tool_batch_confirmation_v1` / `resolve_agent_tool_batch_confirmation_v1` | `backend/migrations/228_03_agent_runtime_media_authorization_group.sql` | 为同一 ModelStep/Batch 的 2～10 个 `generate_image` Action 创建独立 interaction，只投递一个 leader，并一次原子批准或拒绝整批 |
-| `SpecialistExecutor` | `backend/services/agent/runtime/executors/specialist_executor.py` | Provider submit/reconcile/cancel 外壳；响应丢失转 unknown，禁止普通重派 |
-| `CallbackInbox` | `backend/services/agent/runtime/providers/callback_inbox.py` | 签名校验、敏感字段脱敏和 callback 幂等去重 |
-| `InMemoryActionCostLedger` | `backend/services/agent/runtime/costs.py` | 非模型 Action Cost Ledger 的单元测试实现；生产通过窄 RPC |
-| `ArtifactMaterializer` | `backend/services/agent/runtime/executors/materializer.py` | 内容寻址、partial 隔离和 materialize-only 重试 |
-| `build_nonproduction_full_catalog` / `assert_nonproduction_catalog_consistency` | `backend/services/agent/runtime/catalog/consistency.py` | 18 只读 + code_execute + 23 专业工具的 42 项非生产集合门禁 |
-| `226_01`～`226_18` RPC | `backend/migrations/226_*.sql` | Provider reconcile、Callback、Cost、Artifact、Child Run、Workspace/Scheduled Task CAS、终态 finalize、Sync submission mapping、fencing/幂等与 Worker RPC overload 窄 RPC |
-| `build_nonproduction_specialist_registry` | `backend/services/agent/runtime/executors/real_specialist_composition.py` | 为 23 项工具构造真实 Provider adapter 与八类业务 Executor |
-| `AllowlistedTransport` / Provider adapters | `backend/services/agent/runtime/executors/provider_adapters.py` | 绑定 ERP、DashScope、Crawler、KIE 的隔离网络路由并限制响应大小 |
-| `WorkspaceResourceService` / `ScheduledTaskService` | `backend/services/agent/runtime/executors/resource_contracts.py` | OSS retention、稳定资源恢复、原子 rename 与计划任务 CAS |
-| `PostgresSpecialistRepository` | `backend/services/agent/runtime/infrastructure/postgres/specialist_repository.py` | Cost、Callback、Artifact、Child Run 与资源 RPC 的 worker-scoped adapter |
-| `ERPQueryProvider` / `ErpApiSearchProvider` | `backend/services/agent/runtime/executors/provider_adapters.py` | 分别通过正式 ERP Registry/Dispatcher 和本地 `search_erp_api`；只有六项 ERP Read 可进入远程 dispatcher，非法 action 在提交前失败 |
-| `OrgScopedErpDispatcherFactory` | `backend/services/agent/runtime/executors/erp_factory.py` | 每次以 ActionAttempt fence 和 `scope.org_id` 解析既有企业 ERP Bundle，构造一次性现有 client/dispatcher，并用窄 CAS RPC 持久化刷新 Token；不读取平台默认凭证或 Redis Token 缓存 |
-| `HttpProviderTransport` / `KieMediaProvider` | `backend/services/agent/runtime/executors/provider_adapters.py` | 隔离 HTTP submit/status/cancel，限制 timeout/响应大小/redirect；无终止证明返回 unknown |
-| `CallbackInbox.ingest` | `backend/services/agent/runtime/providers/callback_inbox.py` | 原始 body 验签、时间窗校验、脱敏后唯一写入持久化 repository；旧 `record` 入口明确拒绝 |
-| `ContentAddressedArtifactService` / `RuntimeResourceMutationService` | `backend/services/agent/runtime/executors/resource_contracts.py` | 内容寻址 materialize、Workspace/OSS retention、Scheduler CAS 的非生产具体 composition |
-| `PostgresSpecialistRepository.provider_submission/provider_terminal` | `backend/services/agent/runtime/infrastructure/postgres/specialist_repository.py` | Durable provider facts, cost, callback, artifact, resource and child-run RPC adapter. |
-| `PostgresSpecialistRepository.finalize/sync_phase/read_sync_facts` | `backend/services/agent/runtime/infrastructure/postgres/specialist_repository.py` | Strict outcome parsing over application-owned atomic finalize, non-terminal reconciliation, Child Run v2 and durable ERP sync recovery RPCs. |
-| `ActionLoopDriver._try_specialist_finalize` | `backend/services/agent/runtime/application/action_loop.py` | 唯一 specialist terminal owner；reserve、provider fact、cost 与 Action terminal 在原子 finalize 合同内闭合。 |
-| `SpecialistExecutor.dispatch/reconcile/cancel` | `backend/services/agent/runtime/executors/specialist_executor.py` | 仅执行 Provider 调用并返回 typed receipt；reconciliation ownership 由 ActionLoop context 传入。 |
-| `LocalDataService` / `FileAnalyzeService` / `FetchAllPagesService` | `backend/services/agent/runtime/executors/resource_contracts.py` | Summary/detail/export, CSV/Excel-to-Parquet lineage, and Registry-bound paginated ERP materialization. |
-| `ErpSyncService` | `backend/services/agent/runtime/executors/resource_contracts.py` | DB-fact-based sync submission/progress/apply/checkpoint recovery without resubmit. |
-| `ChildRunService` / resource support helpers | `backend/services/agent/runtime/executors/resource_support.py` | Repository-backed child lifecycle, content-addressed materialization and resource contract helpers. |
-| ActionLoop support helpers | `backend/services/agent/runtime/application/action_loop_support.py` | Lease renewal, result normalization and fencing utility contracts used by the ActionLoop application owner. |
-| `226_13` / `226_14` | `backend/migrations/226_13_*.sql`, `backend/migrations/226_14_*.sql` | still accepted/unknown lease release, Child Run v2 readback/terminal result, cancel parity, and Sync ownership/version/phase fencing. |
-| `mutate_agent_runtime_scheduled_task_control_v1` / readback/cancel/reconcile RPCs | `backend/migrations/227_28_agent_runtime_scheduler_control.sql` | Runtime worker-only atomic five-operation control over existing `scheduled_tasks`; immutable intent/receipt, tenant/PolicyReceipt/DispatchIntent/token/hash/kill/revision/CAS fences, existing organization/push-target ACL, atomic schedule-time normalization, response-loss readback and cancel-before-commit guard. |
-| `get_agent_runtime_scheduled_task_resume_context_v1` / `_runtime_scheduler_operation_allowed` | `backend/migrations/227_28_agent_runtime_scheduler_control.sql` | Secret-free authoritative schedule snapshot plus PermissionChecker-equivalent resource scope; resume time is computed by the existing server-side cron service and committed only after schedule-hash and task-version fencing. |
-| `PostgresSchedulerControlStore` / `scheduler_control_result` | `backend/services/agent/runtime/scheduler_cas.py` | Worker-scoped adapter and failure-closed mapping from committed/readback/cancelled/CAS outcomes to provider state; production-ready remains false. |
-| `normalize_scheduler_control_payload` / Scheduler service helpers | `backend/services/agent/runtime/scheduler_control_payload.py`, `backend/services/agent/runtime/executors/scheduler_service_support.py` | Reuse existing cron/once schedule semantics and keep Scheduler service orchestration outside the shared resource-contract file. |
-| `ScheduledTaskService.reconcile/cancel` / `RuntimeResourceMutationService.reconcile/cancel` | `backend/services/agent/runtime/executors/resource_contracts.py` | Scheduler readback and cancel/reconcile port used by the Runtime specialist provider without changing legacy Scanner or ToolLoop execution. |
-| `create_agent_runtime_scheduled_execution_profile_v1` / `read_agent_runtime_scheduled_execution_profile_v1` | `backend/migrations/227_29_agent_runtime_scheduled_execution_owner.sql` | Verify a real source production toolset containing `manage_scheduled_task`, then freeze its Python-canonicalized C7-B3.2-A 9/17-tool safe-read subset after the database reconstructs every source-derived field and canonical hash byte. |
-| `read_agent_runtime_scheduled_adoption_plan_v1` / `_agent_runtime_scheduled_adoption_target_shape` | `backend/migrations/227_59_agent_runtime_scheduled_adoption_preflight.sql` | Owner-only, read-only classification of historical profileless `scheduled_tasks`; returns counts, immutable task/delivery hashes and fail-closed reasons without creating Runtime facts, changing tasks or exposing prompt/target payloads. |
-| `complete_agent_runtime_scheduled_adoption_v1` / `read_agent_runtime_scheduled_adoption_control_v1` / scheduled Owner convergence gates | `backend/migrations/227_62_agent_runtime_scheduled_owner_convergence.sql` | Owner-only adoption completion gate; only after every scheduled task has a Runtime profile does the worker stop returning legacy ownership, and rollback is permitted only while the control remains pending. |
-| `submit_agent_runtime_chat_action_v1` | `backend/migrations/227_63_agent_runtime_chat_action_submission.sql` | Runtime ingress-scoped additive submission: persists a chat tool call, PolicyReceipt and Runtime Action anchor; the existing ActionLoop owns DispatchIntent, fencing and Catalog/Executor execution. |
-| `select_agent_runtime_scheduled_run_owner_v1` / `read_agent_runtime_scheduled_run_owner_v1` | `backend/migrations/227_29_agent_runtime_scheduled_execution_owner.sql` | Atomically choose one monotonic owner using run→trigger→tenant/provider/capability gate locks; a Runtime profile without a run binding fails closed and never defaults to legacy. |
-| `bind_agent_runtime_scheduled_run_runtime_v1` / owner gate RPCs | `backend/migrations/227_29_agent_runtime_scheduled_execution_owner.sql` | Require native submit command hashes/idempotency, a dedicated `scheduled` Run and scheduler context anchor; recheck task/profile/gate epochs immediately before binding. The private legacy gate remains non-callable externally. |
-| `worker_claim_due_scheduled_executions_v1` / `request_agent_runtime_scheduled_execution_v1` / readback RPC | `backend/migrations/227_30_agent_runtime_scheduled_submission.sql` | Atomically owner-split due/manual triggers, create a hidden scheduler anchor plus Runtime Session/Command/A1 binding, and return authoritative idempotent readback; disabled outside disposable verification. |
-| `claim_next_agent_runtime_scheduled_finalization_v1` / `read_agent_runtime_scheduled_finalization_v1` | `backend/migrations/227_31_agent_runtime_scheduled_terminal_intents.sql` | Capture the first scheduled Runtime Run terminal transition in the same transaction, then expose a single-winner recoverable claim and side-effect-free token-fenced readback with binding, schedule, ModelResult, usage and cost projection inputs; B1-B remains the only task/result/credits applier. |
-| `apply_agent_runtime_scheduled_finalization_v1` | `backend/migrations/227_32_agent_runtime_scheduled_finalization_apply.sql` | Atomically apply a claimed scheduled Runtime terminal intent to the existing scheduled run/task facts with request-id idempotency, lease/version/schedule/epoch fencing, legacy-compatible completed/failed/cancelled scheduling, Model-fact-only credit/token projection and a bounded immutable application receipt; it never mutates the user wallet or sends delivery events. |
-| `read_agent_runtime_scheduled_finalization_context_v1` / `apply_agent_runtime_scheduled_finalization_v2` | `backend/migrations/227_33_agent_runtime_scheduled_finalization_context.sql` | Token-bound finalization planning plus atomic local-fact convergence after a Runtime Run is already terminal. Frozen binding epochs and profile revisions remain fenced, while later kill-epoch changes continue blocking new side effects without stranding the scheduled run; no prompts, claim tokens, Provider calls or wallet writes are exposed. |
-| `prepare_model_attempt` / scheduled settlement and late-receipt wrappers | `backend/migrations/227_34_agent_runtime_scheduled_run_credit_budget.sql` | Scheduled Run-only hard `max_credits` allocation before attempt creation; user charge never exceeds the frozen Run cap, full late Provider actual is preserved in an immutable platform-overage fact, pending replay never auto-debits later, and ordinary Run charging remains unchanged. |
-| `ModelAttemptOutcome.BUDGET_EXHAUSTED` / `ModelLoopDriver._run_step` | `backend/services/agent/runtime/ports/model_attempt.py`、`backend/services/agent/runtime/application/model_loop.py` | Type the database budget outcome and fail the ModelStep/Run before direct or Gateway Provider dispatch; prepared/already-prepared and insufficient-credit behavior remain compatible. |
-| `_agent_runtime_scheduled_delivery_normalize` / delivery snapshot, content and intent triggers | `backend/migrations/227_35_agent_runtime_scheduled_delivery_intents.sql` | Freeze complete web/WeCom row identities from one bounded top-level multi expansion, bind the Runtime Run, reconstruct a safe ordered Artifact manifest from final Runtime facts, and atomically append one pending intent per target; duplicate/nested targets and identity conflicts fail closed. |
-| `_agent_runtime_scheduled_delivery_target_available` / `read_agent_runtime_scheduled_delivery_intents_v1` | `backend/migrations/227_35_agent_runtime_scheduled_delivery_intents.sql` | Projection-only tenant/run readback revalidates active membership and exact current mapping/target identity before returning frozen targets plus safe ModelResult/Artifact identity; revoked or rebound targets return unavailable and no sendable data, with no mutation or external send. |
-| `claim/apply/get/complete_agent_runtime_scheduled_web_projection_*` | `backend/migrations/227_36_agent_runtime_scheduled_web_projection.sql` | Projection-only Web claim/apply/readback/wakeup completion RPCs use request/lease/state fences, revalidate immutable target/content/run/finalization identities and active membership, persist one durable projection receipt before one sanitized best-effort wakeup result, and never claim WeCom intents. |
-| `_initialize_agent_runtime_scheduled_wecom_delivery` / `_agent_runtime_scheduled_wecom_identity_guard` | `backend/migrations/227_37_agent_runtime_scheduled_wecom_delivery.sql` | Atomically derive one Runtime-owned delivery plus stable text/Artifact identity-only items from each immutable D1-A WeCom intent; occurrence ordinal and frozen role preserve legitimate repeated Artifact identities, while provider identities and strict attempt/ambiguity/typed-receipt transitions remain owner-only under FORCE RLS without an owner RPC or transport. |
-| `claim_agent_runtime_scheduled_wecom_delivery_v1` / `renew_agent_runtime_scheduled_wecom_delivery_lease_v1` / claim and dispatch-context reads | `backend/migrations/227_38_agent_runtime_scheduled_wecom_claim.sql` | WeCom delivery worker (`session_user=everydayai_wecom_runtime`, `app.access_kind=worker`) gets only request-id readback, SKIP LOCKED claim, lease renewal and a fenced safe dispatch gate. Claim readback is side-effect-free; dispatch-context evaluation requires the exact applied finalization request/hash/receipt, terminal binding/Run/scheduled-run mapping and frozen D1/A1 identity before live target validation, and may atomically mark only a failed pre-dispatch intent unavailable. |
-| `prepare_agent_runtime_scheduled_wecom_dispatch_v1` / `recover_agent_runtime_scheduled_wecom_prepared_dispatch_v1` / `start_agent_runtime_scheduled_wecom_dispatch_v1` / attempt readback | `backend/migrations/227_39_agent_runtime_scheduled_wecom_dispatch_prepare.sql` | Persist stable provider/idempotency identity before transport, recover only evidence-free prepared attempts after the current delivery lease expires, and fence start/readback by stable attempt identity plus the current delivery claim. Append-only recovery request facts preserve durable request-id readback across later takeovers; worker access remains RPC-only with no table privileges. |
-| `record_agent_runtime_scheduled_wecom_dispatch_outcome_v1` / typed receipt helpers | `backend/migrations/227_40_agent_runtime_scheduled_wecom_dispatch_outcomes.sql` | Atomically persist exactly one accepted/rejected/unknown result for a dispatch-started attempt, with durable same-request readback, current claim/version and provider identity fencing, strict per-item ordinal transition, terminal aggregation or ambiguity claim release. Receipt metadata is flat, allowlisted and bounded; its domain-separated canonical hash binds outcome, receipt type/code and provider identity, while post-start live-context or clock-only lease drift cannot discard external evidence. |
-| `claim_agent_runtime_scheduled_wecom_reconcile_v1` / `renew_agent_runtime_scheduled_wecom_reconcile_lease_v1` / `read_agent_runtime_scheduled_wecom_reconcile_v1` | `backend/migrations/227_41_agent_runtime_scheduled_wecom_reconcile_claim.sql`、`227_52_agent_runtime_scheduled_wecom_reconcile_org.sql` | Claim only delivery/item facts whose independent retry windows are both due and whose frozen attempt is unknown/ambiguous, using the delivery reconcile lease fields without creating an attempt or dispatching. The append-only request ledger freezes request-to-delivery/item/attempt/provider identity, token, worker, lease and versions; a shared global request lock/guard makes it mutually exclusive in both directions with delivery claim, prepared recovery and outcome request facts. Claim/read/renew expose the immutable `org_id` from the selected delivery, never caller input; renew fences expired/stale ownership, while pure readback preserves an old request as fenced after takeover. Worker access remains RPC-only. |
-| `claim_agent_runtime_scheduled_wecom_delivery_v2` / `_agent_runtime_scheduled_wecom_terminalize_unavailable_continuation` / continuation ledger and namespace guards | `backend/migrations/227_42_agent_runtime_scheduled_wecom_continuation_claim.sql` | Replace the worker-callable v1 claim with one durable v2 contract for two mutually exclusive cases: an initial claim with no attempt, or a continuation claim whose historical attempts are all terminal accepted/rejected and whose strict next due item has no attempt. The append-only FORCE-RLS ledger freezes request/intent/item, initial-or-continuation kind, worker, token, lease and versions, supports response-loss readback, and joins the 227_38–227_41 request UUID namespace bidirectionally. v2 never recreates or resubmits a historical attempt; live-target invalidation safely cancels an initial delivery or cancels only unsent continuation items before 227_40-compatible completed/partial/failed aggregation. Migration rollback restores the 227_41 guard definitions and WeCom worker EXECUTE on `claim_agent_runtime_scheduled_wecom_delivery_v1`; no reconciliation result is recorded here. |
-| `record_agent_runtime_scheduled_wecom_reconcile_result_v1` / `_agent_runtime_scheduled_wecom_reconcile_readback_hash` | `backend/migrations/227_43_agent_runtime_scheduled_wecom_reconcile_still_unknown.sql` | Record only a typed `still_unknown` readback for the exact current 227_41 claim, frozen attempt/provider identity, reconcile token/worker and delivery/item versions. The append-only FORCE-RLS ledger stores a database-canonical readback hash using the 227_40 metadata allowlist; success leaves the unknown/ambiguous attempt and `unknown_at` untouched, marks item/delivery `reconcile_required`, releases only the reconcile lease and sets one shared bounded retry time. Post-readback target or lease-clock drift is accepted, while takeover/version drift is fenced; the result request UUID joins every 227_41/42 namespace guard bidirectionally. |
-| `record_agent_runtime_scheduled_wecom_reconcile_definitive_result_v1` / definitive result ledger | `backend/migrations/227_44_agent_runtime_scheduled_wecom_reconcile_definitive.sql` | Record one typed `accepted|rejected` readback for the exact current 227_41 claim and frozen unknown attempt/provider identity. The append-only FORCE-RLS ledger reuses the canonical 227_43 hash and 227_40 metadata allowlist; success preserves `unknown_at`, records receipt/resolution evidence, maps item accepted/failed, clears ordinary/reconcile claims, then either exposes a real pending continuation to 227_42 v2 or aggregates completed/partial/failed. Target/clock drift remains recordable while token/worker/version takeover fences, and the request UUID joins the complete 227_41–43 namespace bidirectionally. |
-| `prepare_agent_runtime_scheduled_wecom_dispatch_v2` / `start_agent_runtime_scheduled_wecom_dispatch_v2` / `read_agent_runtime_scheduled_wecom_dispatch_attempt_v2` | `backend/migrations/227_45_agent_runtime_scheduled_wecom_dispatch_version_readback.sql` | Wrap the 227_39 transitions in one transaction and append current authoritative delivery/item BIGINT versions only after strict intent/item/attempt, provider identity/revision and current claim/lease/worker binding. Prepared output feeds start directly; started output feeds 227_40 outcome directly; response-loss readback returns the same attempt with current versions. Fenced/not-found responses disclose no versions, worker table access remains denied, and WeCom runtime EXECUTE is cut over from the three v1 entries to v2. |
-| `read_agent_runtime_scheduled_wecom_dispatch_payload_v1` / `_agent_runtime_scheduled_wecom_payload_hash_v2` | `backend/migrations/227_46_agent_runtime_scheduled_wecom_dispatch_payload.sql`、`227_49_agent_runtime_scheduled_wecom_unicode_payload.sql` | Fenced worker-only gate over the approved 227_38 live dispatch context. A completed text item verifies exact run/task/finalization/content/item/version and frozen model-result identity, then requires the stored safe summary to equal a database-side re-sanitization of that exact result. Revision 2 hashes safe text and the minimal transport target as UTF-8 first, then binds only their 64hex digests plus frozen source/content/result/target, org/channel/provider and current version identities through the existing ASCII canonical helper; normal Chinese text therefore remains supported without weakening that helper. The response still returns only safe text, opaque hashes, and App `org_id/corp_id/wecom_userid` or Smart Robot `org_id/chatid`. Artifact and non-completed items remain payload-free `unsupported`; raw model output, snapshots and internal IDs never leave the RPC. Parser compatibility accepts revision 1 only for coordinated SQL rollback and revision 2 for the current contract. |
-| `terminalize_agent_runtime_scheduled_wecom_unsupported_item_v1` / unsupported request ledger | `backend/migrations/227_47_agent_runtime_scheduled_wecom_unsupported_terminalization.sql` | Under the exact current 227_42 v2 claim/item/version fence, calls the 227_46 gate and durably cancels only an unsent item whose server-derived result is one of the four fixed `unsupported` reasons. The append-only FORCE-RLS ledger preserves request/claim/token/worker/version identity and authoritative result versions for response-loss replay; the global request namespace guards reject cross-contract reuse. Remaining items release immediately to a fresh strict continuation claim, otherwise accepted-count aggregation produces completed/partial/failed without creating or modifying dispatch attempts. |
-| `recover_agent_runtime_scheduled_wecom_started_dispatch_v1` / started-recovery request ledger | `backend/migrations/227_48_agent_runtime_scheduled_wecom_started_recovery.sql` | Selects only an expired, exact `dispatch_started/external_request_started` attempt whose frozen delivery/item/claim/provider/version identity still matches. Once external dispatch has started, later target/org drift cannot prove no send and therefore does not block UNKNOWN convergence. In one transaction the RPC generates a distinct internal outcome request, invokes the authoritative 227_40 UNKNOWN transition with no evidence, and stores an append-only FORCE-RLS recovery receipt for durable response-loss readback. The attempt becomes unknown/ambiguous and reconcile-only; no prepare, start, transport, new attempt or resubmit occurs. |
-| `ScheduledWecomDeliveryRepositoryPort` / `PostgresScheduledWecomDeliveryRepository` / `parse_started_recovery` | `backend/services/agent/runtime/ports/scheduled_wecom_delivery.py`、`application/scheduled_wecom_parsing.py`、`infrastructure/postgres/scheduled_wecom_delivery.py` | Frozen typed boundary over claim v2, prepared and 227_48 started recovery, 227_45 dispatch v2, 227_46 safe payload readback, 227_47 unsupported terminalization, 227_40 outcome and 227_41～44 reconciliation RPCs. Reconcile claims require canonical `org_id`, and renew/read identity checks reject tenant drift together with request/intent/item/attempt/provider drift. Started recovery parses only the exact durable UNKNOWN receipt and never exposes resubmit/send/prepare/start; explicit parameters preserve request/worker/token/version/hash/revision fences, exact allowlists reject drift, and durable request-ledger mutations replay only their identical request after a lost response. |
-| `ScheduledWecomSmartDispatchService.dispatch_claimed` / `dispatch_recovered_prepared` / `SmartRobotTransportResolverPort.resolve_smart_transport` / `scheduled_wecom_smart_identity` | `backend/services/agent/runtime/application/scheduled_wecom_smart_dispatch.py`、`ports/scheduled_wecom_smart_dispatch.py`、`scheduled_wecom_receipt.py` | Runtime-owned one-shot Smart Robot orchestration over verified fresh or recovered PREPARED input. Fresh dispatch retains prepare→start→send→outcome; recovered dispatch accepts only RECOVERED/READBACK plus an exact READBACK/PREPARED attempt, revalidates payload/fence/channel and the complete frozen provider identity, resolves the exact connected target-org transport before persistence, then joins the same identity single-flight and starts that existing attempt directly without prepare or resubmit. Resolver failure returns typed UNAVAILABLE with no start/send/UNKNOWN facts; post-start failure and cancellation retain the existing UNKNOWN contract. |
-| `ScheduledSmartTransportResolver.resolve_smart_transport` / `resolve_smart_readback` | `backend/services/wecom/scheduled_smart_transport.py` | Trusted credential-free adapter over injected `get_ws_client(org_id)`. Both paths require canonical and exact client org; dispatch additionally requires `connected is True` and callable send, while the independent narrow readback path requires only callable in-memory lookup so late ACK cache remains readable after disconnect. Neither path reads Secret, caches clients, inspects chatid, or uses a mutable global default. |
-| `ScheduledWecomReconcileService.reconcile_once` / `scheduled_wecom_reconcile_readback_hash` | `backend/services/agent/runtime/application/scheduled_wecom_reconcile.py`、`scheduled_wecom_receipt.py` | Claims one 227_41 ambiguous attempt and records only through 227_43/44. Smart identities resolve exact-org cache readback and call lookup only: valid ACK/rejection become definitive, while miss/pending/unknown/not-started/unavailable remain typed still-unknown with a fixed 60-second delay. App identities never resolve credentials or transport and record typed unsupported readback; unknown identity prefixes fail closed. Result UUIDs derive stably from claim identity, and the Python canonical hash matches the SQL domain/field contract without payload, Secret or free text. |
-| `ScheduledWecomAppDispatchService.dispatch_claimed` / `dispatch_recovered_prepared` / `ScheduledWecomAppBinding` / `scheduled_wecom_app_identity` | `backend/services/agent/runtime/application/scheduled_wecom_app_dispatch.py`、`ports/scheduled_wecom_app_dispatch.py`、`scheduled_wecom_receipt.py` | Runtime-owned one-shot App orchestration over verified fresh or recovered PREPARED input and an explicitly injected non-secret binding. Fresh dispatch is unchanged; recovered dispatch accepts only RECOVERED/READBACK plus an exact READBACK/PREPARED attempt, strictly revalidates payload/fence/channel, org/corp/agent binding and the complete frozen provider identity, then joins the same identity single-flight and starts that existing attempt directly without prepare, resubmit, config resolution or payload reads. ACK/rejection evidence and every post-start UNKNOWN/cancellation behavior remain shared with fresh dispatch. |
-| `ScheduledWecomRouter.dispatch_once` / `recover_prepared_once` / `AppBindingResolverPort.resolve_app_binding` | `backend/services/agent/runtime/application/scheduled_wecom_router.py`、`ports/scheduled_wecom_router.py`、`ports/scheduled_wecom_app_dispatch.py` | Runtime-owned fresh and PREPARED-recovery routing boundary with independent request single-flights. Fresh dispatch remains claim→one safe payload read→typed routing. Prepared recovery performs one durable recovery claim and dedicated frozen payload read, rejects unsupported/unavailable/fence/identity drift without terminalizing or preparing, then resumes only the original attempt through the existing Smart or exact-tenant App service. Post-start UNKNOWN/cancellation persistence remains owned by those services; started recovery, UNKNOWN reconciliation and concrete Worker composition remain separate owners. |
-| `ScheduledWecomAppBindingResolver.resolve_app_binding` | `backend/services/wecom/scheduled_app_binding.py` | Trusted exact-tenant adapter over the 227_50 `wecom.app` façade. It creates an actorless exact-org `WORKER` DB scope, strictly validates organization-only corp/agent/secret/version facts, keeps non-serializable slot-only Secret material inside a five-minute exact-match production broker backend and lease consumer, passes only the opaque provider revision to the injected per-org token manager, and exports `ScheduledWecomAppBinding`. Database, material service, token manager, shared HTTP client and credential audit sink are mandatory; failures close to `None` while cancellation propagates. |
-| `get_access_token(..., *, credential_revision=None)` | `backend/services/wecom/access_token_manager.py` | Backward-compatible per-org WeCom App token lookup. Calls without a revision retain the byte-identical legacy Redis key and behavior; Scheduled Runtime must pass a strict `wecom-app:<64 lowercase hex>` opaque revision, producing an org+revision cache key so credential rotation cannot reuse an older token. Invalid revisions fail before Redis or network access. |
-| `PostgresScheduledDeliveryProjection` / `ScheduledDeliveryProjectionWorker` | `backend/services/agent/runtime/infrastructure/postgres/scheduled_delivery_projection.py`, `backend/services/agent/runtime/application/scheduled_delivery_projection.py` | Failure-closed typed adapter and ProjectionOwner worker; response loss reads durable receipt, crash recovery may duplicate only the safe WS refresh hint, and payloads contain no body, Secret, token, path or Provider data. |
-| `scheduled_task_completed` / `scheduled_task_failed` handlers | `frontend/src/contexts/wsMessageHandlers.ts` | Apply only allowlisted DB `task_status` values to optimistic Scheduled Task state, then refresh run history; completed no longer forces once tasks to active. |
-| `ScheduledWorkerStore.claim_due` / `legacy_owner_allowed` | `backend/services/scheduler/worker_store.py` | Use the Background Worker scoped narrow RPC, normalize mixed legacy/Runtime claims, and fail closed before the old executor can run a Runtime-profile task. |
-| `request_runtime_scheduled_execution` | `backend/api/routes/scheduled_task_support.py` | Route immediate Runtime-profile execution through the same atomic submission contract while leaving authoritative legacy tasks on the existing execution path. |

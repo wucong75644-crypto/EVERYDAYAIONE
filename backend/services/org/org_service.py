@@ -49,10 +49,6 @@ class OrgService(OrgInvitationMixin):
                 raise ConflictError("该手机号已有待处理邀请或已是成员") from error
             if "GOVERNANCE_ORG_INACTIVE" in marker:
                 raise PermissionDeniedError("该企业已被停用") from error
-            if "GOVERNANCE_ORG_NOT_FOUND" in marker:
-                raise NotFoundError("企业") from error
-            if "GOVERNANCE_ORG_STATUS_CONFLICT" in marker:
-                raise ConflictError("企业状态已变化，请刷新后重试") from error
             if "GOVERNANCE_INVITATION_RECIPIENT_MISMATCH" in marker:
                 raise ValidationError("邀请手机号不匹配") from error
             if "GOVERNANCE_INVITATION_EXPIRED" in marker:
@@ -276,20 +272,6 @@ class OrgService(OrgInvitationMixin):
         """列出平台企业；数据库能力负责验证全局管理员。"""
         result = self._governance_rpc("list_all_governed_organizations")
         return result.data or []
-
-    def suspend_organization(self, org_id: str) -> dict:
-        """Atomically suspend one active organization."""
-        result = self._governance_rpc(
-            "suspend_governed_organization", {"p_org_id": org_id},
-        )
-        return result.data or {}
-
-    def restore_organization(self, org_id: str) -> dict:
-        """Atomically restore one suspended organization."""
-        result = self._governance_rpc(
-            "restore_governed_organization", {"p_org_id": org_id},
-        )
-        return result.data or {}
 
     def search_user_by_phone(self, phone: str) -> dict:
         """按手机号搜索用户；仅返回治理能力允许的脱敏字段。"""
