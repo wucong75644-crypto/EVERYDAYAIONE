@@ -15,10 +15,11 @@ DECLARE
     function_name TEXT;
     procedure_oid REGPROCEDURE;
     denied_role TEXT;
+    required_role TEXT;
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM public.schema_migration_ledger
-         WHERE identity = '218_suspended_organization_execution_fence.sql'
+         WHERE identity = '232_organization_lifecycle_runtime_role_closure.sql'
            AND status = 'applied'
     ) THEN
         RAISE NOTICE 'organization_lifecycle=pending';
@@ -102,6 +103,28 @@ BEGIN
     ) IS NULL THEN
         RAISE EXCEPTION 'suspended organization execution fence missing';
     END IF;
+    FOREACH function_name IN ARRAY ARRAY[
+        'public.reject_suspended_organization_service_write()',
+        'public.reject_suspended_delivery_service_write()'
+    ] LOOP
+        procedure_oid := to_regprocedure(function_name);
+        FOREACH required_role IN ARRAY ARRAY[
+            'everydayai_agent_runtime_worker',
+            'everydayai_projection_worker',
+            'everydayai_authorization_worker',
+            'everydayai_sandbox_worker',
+            'everydayai_runtime_admin'
+        ] LOOP
+            IF position(
+                quote_literal(required_role)
+                IN pg_get_functiondef(procedure_oid)
+            ) = 0 THEN
+                RAISE EXCEPTION
+                    'suspended organization runtime role fence incomplete: % %',
+                    function_name, required_role;
+            END IF;
+        END LOOP;
+    END LOOP;
     IF (
         SELECT count(*)
           FROM pg_catalog.pg_trigger

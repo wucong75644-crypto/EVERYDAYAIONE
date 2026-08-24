@@ -19,6 +19,13 @@ FENCE_ROLLBACK = (
     ROOT
     / "migrations/rollback/218_suspended_organization_execution_fence_rollback.sql"
 ).read_text(encoding="utf-8")
+ROLE_CLOSURE = (
+    ROOT / "migrations/232_organization_lifecycle_runtime_role_closure.sql"
+).read_text(encoding="utf-8")
+ROLE_CLOSURE_ROLLBACK = (
+    ROOT
+    / "migrations/rollback/232_organization_lifecycle_runtime_role_closure_rollback.sql"
+).read_text(encoding="utf-8")
 
 
 def _function(sql: str, name: str) -> str:
@@ -107,3 +114,25 @@ def test_service_writes_and_discovery_fail_closed_for_suspended_orgs() -> None:
     ):
         assert "organization.status = 'active'" in _function(FENCE, name)
         assert name in FENCE_ROLLBACK
+
+
+def test_agent_runtime_roles_are_included_in_the_write_fence() -> None:
+    for role_name in (
+        "everydayai_agent_runtime_worker",
+        "everydayai_projection_worker",
+        "everydayai_authorization_worker",
+        "everydayai_sandbox_worker",
+        "everydayai_runtime_admin",
+    ):
+        assert role_name in ROLE_CLOSURE
+    assert "everydayai_sync" not in _function(
+        ROLE_CLOSURE, "reject_suspended_delivery_service_write",
+    )
+    for function_name in (
+        "reject_suspended_organization_service_write",
+        "reject_suspended_delivery_service_write",
+    ):
+        assert (
+            f"CREATE OR REPLACE FUNCTION {function_name}"
+            in ROLE_CLOSURE_ROLLBACK
+        )

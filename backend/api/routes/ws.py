@@ -65,6 +65,21 @@ async def websocket_endpoint(
             db = _build_connection_db(
                 user_id, org_id, request_id="ws:handshake",
             )
+            organization = db.table("organizations").select("status").eq(
+                "id", org_id
+            ).maybe_single().execute()
+            if not organization or not organization.data or organization.data.get(
+                "status"
+            ) != "active":
+                logger.warning(
+                    f"WS org_id rejected | user={user_id} | org_id={org_id}"
+                )
+                await reject_websocket(
+                    websocket,
+                    code=4003,
+                    reason="Organization access denied",
+                )
+                return
             member = db.table("org_members").select("status").eq(
                 "org_id", org_id
             ).eq("user_id", user_id).maybe_single().execute()

@@ -37,11 +37,46 @@ async def test_auth_rejection_accepts_before_closing(
 async def test_org_rejection_returns_business_close_code() -> None:
     websocket = AsyncMock()
     db = MagicMock()
-    query = (
+    organization_query = (
+        db.table.return_value.select.return_value.eq.return_value
+        .maybe_single.return_value
+    )
+    organization_query.execute.return_value.data = {"status": "active"}
+    member_query = (
         db.table.return_value.select.return_value.eq.return_value.eq.return_value
         .maybe_single.return_value
     )
-    query.execute.return_value.data = None
+    member_query.execute.return_value.data = None
+
+    with (
+        patch(
+            "api.routes.ws.get_user_from_token",
+            new=AsyncMock(return_value=("user-1", "")),
+        ),
+        patch("api.routes.ws._build_connection_db", return_value=db),
+    ):
+        await websocket_endpoint(
+            websocket,
+            token="secret",
+            org_id="org-1",
+        )
+
+    websocket.accept.assert_awaited_once_with()
+    websocket.close.assert_awaited_once_with(
+        code=4003,
+        reason="Organization access denied",
+    )
+
+
+@pytest.mark.asyncio
+async def test_suspended_org_rejection_happens_before_member_access() -> None:
+    websocket = AsyncMock()
+    db = MagicMock()
+    organization_query = (
+        db.table.return_value.select.return_value.eq.return_value
+        .maybe_single.return_value
+    )
+    organization_query.execute.return_value.data = {"status": "suspended"}
 
     with (
         patch(

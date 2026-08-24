@@ -18,17 +18,17 @@ from testing.tenant_role_matrix import (
     TenantMatrixConfigError,
     TenantRoleMatrixConfig,
 )
-
-
 pytestmark = pytest.mark.external
 ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = ROOT.parent
 MIGRATION_IDENTITIES = (
     "217_organization_lifecycle_governance.sql",
     "218_suspended_organization_execution_fence.sql",
+    "232_organization_lifecycle_runtime_role_closure.sql",
 )
 MIGRATIONS = tuple(ROOT / "migrations" / name for name in MIGRATION_IDENTITIES)
 ROLLBACKS = (
+    ROOT / "migrations/rollback/232_organization_lifecycle_runtime_role_closure_rollback.sql",
     ROOT
     / "migrations/rollback/218_suspended_organization_execution_fence_rollback.sql",
     ROOT
@@ -253,6 +253,7 @@ def _assert_rollback_objects(
     connection: psycopg.Connection,
     expect_217: bool,
     expect_218: bool,
+    expect_232: bool,
 ) -> None:
     for function_name in LIFECYCLE_FUNCTIONS:
         exists = connection.execute(
@@ -270,6 +271,12 @@ def _assert_rollback_objects(
         (list(FENCE_TRIGGER_NAMES),),
     ).fetchone()[0]
     assert trigger_count == (len(FENCE_TRIGGER_NAMES) if expect_218 else 0)
+    if expect_218:
+        source = connection.execute(
+            "SELECT pg_get_functiondef(to_regprocedure(%s))",
+            ("public.reject_suspended_organization_service_write()",),
+        ).fetchone()[0]
+        assert ("everydayai_agent_runtime_worker" in source) is expect_232
 
 
 def _create_test_roles_and_helper(connection: psycopg.Connection) -> None:
@@ -346,13 +353,19 @@ def lifecycle_database() -> Iterator[TenantRoleMatrixConfig]:
                 _execute_migration(admin, ROLLBACKS[0])
             if setup_complete:
                 _assert_rollback_objects(
-                    admin, expect_217=True, expect_218=False,
+                    admin, expect_217=True, expect_218=True, expect_232=False,
                 )
-            if lifecycle_exists:
+            if fence_exists:
                 _execute_migration(admin, ROLLBACKS[1])
             if setup_complete:
                 _assert_rollback_objects(
-                    admin, expect_217=False, expect_218=False,
+                    admin, expect_217=True, expect_218=False, expect_232=False,
+                )
+            if lifecycle_exists:
+                _execute_migration(admin, ROLLBACKS[2])
+            if setup_complete:
+                _assert_rollback_objects(
+                    admin, expect_217=False, expect_218=False, expect_232=False,
                 )
             _remove_target_ledger(admin)
             if setup_complete:
@@ -363,6 +376,7 @@ def lifecycle_database() -> Iterator[TenantRoleMatrixConfig]:
             with psycopg.connect(config.admin_url) as admin:
                 _execute_migration(admin, ROLLBACKS[0])
                 _execute_migration(admin, ROLLBACKS[1])
+                _execute_migration(admin, ROLLBACKS[2])
                 _remove_target_ledger(admin)
 
 

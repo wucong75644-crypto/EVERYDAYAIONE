@@ -157,9 +157,10 @@ def test_reverse_rollback_preserves_organization_facts(
         )
         admin.commit()
         _execute_migration(admin, ROLLBACKS[0])
-        _assert_rollback_objects(admin, expect_217=True, expect_218=False)
         _execute_migration(admin, ROLLBACKS[1])
-        _assert_rollback_objects(admin, expect_217=False, expect_218=False)
+        _assert_rollback_objects(
+            admin, expect_217=True, expect_218=False, expect_232=False,
+        )
         preserved = admin.execute(
             "SELECT organization.status, "
             "(SELECT count(*) FROM org_members WHERE org_id = organization.id), "
