@@ -53,7 +53,7 @@ export function useChatAttachments() {
   }, [handleFileUpload, handleImageFiles]);
 
   const addQuotedImage = useCallback((input: QuotedImageInput) => {
-    addQuotedImageToUpload(input.url, input.thumbnailUrl);
+    addQuotedImageToUpload(input);
   }, [addQuotedImageToUpload]);
 
   const removeAttachment = useCallback((id: string) => {

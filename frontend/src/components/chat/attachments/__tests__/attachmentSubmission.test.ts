@@ -3,7 +3,7 @@ import type { ChatAttachment } from '../ChatAttachment.types';
 import { createAttachmentSubmissionSnapshot } from '../attachmentSubmission';
 
 describe('createAttachmentSubmissionSnapshot', () => {
-  it('所有图片来源都只提交原图 URL，缩略图只保留为元数据', () => {
+  it('所有图片来源都提交统一的完整图片输入', () => {
     const sources = ['upload', 'quote', 'workspace'] as const;
     const attachments: ChatAttachment[] = sources.map((source) => ({
       id: `${source}:image`, sourceId: `${source}:image`, kind: 'image', source, status: 'ready',
@@ -14,8 +14,9 @@ describe('createAttachmentSubmissionSnapshot', () => {
 
     const result = createAttachmentSubmissionSnapshot(attachments);
 
-    expect(result.imageUrls).toEqual(sources.map((source) => `https://cdn.example.com/${source}.png`));
-    expect(result.imageInputs.map((image) => image.url)).toEqual(result.imageUrls);
+    expect(result.imageInputs.map((image) => image.url)).toEqual(
+      sources.map((source) => `https://cdn.example.com/${source}.png`),
+    );
     expect(result.imageInputs[0].thumbnail_url).toBe('https://cdn.example.com/upload.thumb.webp');
   });
 
@@ -30,7 +31,7 @@ describe('createAttachmentSubmissionSnapshot', () => {
       { ...base, id: 'error', status: 'error' },
     ]);
 
-    expect(result.imageUrls).toEqual([]);
+    expect(result.imageInputs).toEqual([]);
     expect(result.invalidImages.map((item) => item.id)).toEqual(['error']);
   });
 

@@ -74,6 +74,18 @@ function makeOptions(
 describe('useInputSubmission', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it('流式任务中的文本只进入当前 turn，不重复创建 HTTP 任务', async () => {
+    const sendSteer = vi.fn(() => true);
+    const options = makeOptions({ isStreaming: true, sendSteer });
+    const { result } = renderHook(() => useInputSubmission(options));
+
+    await act(() => result.current.handleSubmit());
+
+    expect(sendSteer).toHaveBeenCalledWith('保留这段输入');
+    expect(options.handleChatMessage).not.toHaveBeenCalled();
+    expect(options.clearPromptForSubmission).toHaveBeenCalledOnce();
+  });
+
   it('后端拒绝请求时保留输入和附件', async () => {
     const options = makeOptions({
       handleChatMessage: vi.fn(async () => {
@@ -143,6 +155,39 @@ describe('useInputSubmission', () => {
     );
   });
 
+  it('新对话的图片动作保留引用图片完整输入', async () => {
+    vi.mocked(createConversation).mockResolvedValue({
+      id: 'conversation-image-new',
+      title: '基于引用图生成',
+    });
+    const options = makeOptions({
+      conversationId: null,
+      effectiveModelType: 'image',
+      smartSubMode: 'image-i2i',
+      prompt: '基于引用图生成',
+      attachmentSnapshot: snapshot([{
+        ...image('quoted.png', 'https://cdn.example.com/quoted.png'),
+        source: 'quote',
+        assetId: 'asset-quoted',
+        thumbnailUrl: 'https://cdn.example.com/quoted.thumb.webp',
+      }]),
+    });
+    const { result } = renderHook(() => useInputSubmission(options));
+
+    await act(() => result.current.handleSubmit());
+
+    expect(options.handleImageGeneration).toHaveBeenCalledWith(
+      'conversation-image-new',
+      '基于引用图生成',
+      [expect.objectContaining({
+        url: 'https://cdn.example.com/quoted.png',
+        original_url: 'https://cdn.example.com/quoted.png',
+        thumbnail_url: 'https://cdn.example.com/quoted.thumb.webp',
+        asset_id: 'asset-quoted',
+      })],
+    );
+  });
+
   it('聊天模式将工作区图片作为图片、普通文件作为文件发送', async () => {
     const options = makeOptions({
       attachmentSnapshot: snapshot([
@@ -178,7 +223,7 @@ describe('useInputSubmission', () => {
   it.each([
     ['image', 'handleImageGeneration'],
     ['video', 'handleVideoGeneration'],
-  ] as const)('%s 模式会传递工作区图片原图 URL', async (modelType, handlerName) => {
+  ] as const)('%s 模式会传递完整工作区图片输入', async (modelType, handlerName) => {
     const options = makeOptions({
       effectiveModelType: modelType,
       attachmentSnapshot: snapshot([
@@ -192,11 +237,15 @@ describe('useInputSubmission', () => {
     expect(options[handlerName]).toHaveBeenCalledWith(
       'conversation-1',
       '保留这段输入',
-      ['https://cdn.example.com/workspace/reference.webp'],
+      [expect.objectContaining({
+        url: 'https://cdn.example.com/workspace/reference.webp',
+        original_url: 'https://cdn.example.com/workspace/reference.webp',
+        workspace_path: '上传/reference.webp',
+      })],
     );
   });
 
-  it('电商图模式会传递工作区图片原图 URL', async () => {
+  it('电商图模式会传递完整工作区图片输入', async () => {
     const options = makeOptions({
       isEcomMode: true,
       effectiveModelType: 'image',
@@ -212,7 +261,11 @@ describe('useInputSubmission', () => {
     expect(options.handleImageGeneration).toHaveBeenCalledWith(
       'conversation-1',
       '保留这段输入',
-      ['https://cdn.example.com/workspace/product.jpg'],
+      [expect.objectContaining({
+        url: 'https://cdn.example.com/workspace/product.jpg',
+        original_url: 'https://cdn.example.com/workspace/product.jpg',
+        workspace_path: '上传/product.jpg',
+      })],
       { generation_type_override: 'image_ecom' },
     );
   });
@@ -232,7 +285,11 @@ describe('useInputSubmission', () => {
     expect(options.handleImageGeneration).toHaveBeenCalledWith(
       'conversation-1',
       '保留这段输入',
-      ['https://cdn.example.com/workspace/reference.png'],
+      [expect.objectContaining({
+        url: 'https://cdn.example.com/workspace/reference.png',
+        original_url: 'https://cdn.example.com/workspace/reference.png',
+        workspace_path: '上传/reference.png',
+      })],
     );
   });
 

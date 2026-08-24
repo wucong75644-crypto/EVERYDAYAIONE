@@ -13,6 +13,11 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import AiImageGrid from '../media/AiImageGrid';
 import type { ContentPart } from '../../../stores/useMessageStore';
 
+const attachmentMocks = vi.hoisted(() => ({ addQuotedImage: vi.fn() }));
+vi.mock('../attachments/ChatAttachmentContext', () => ({
+  useChatAttachmentContext: () => attachmentMocks,
+}));
+
 // Mock 依赖
 vi.mock('react-intersection-observer', () => ({
   useInView: () => ({ ref: vi.fn(), inView: true }),
@@ -120,6 +125,70 @@ describe('AiImageGrid', () => {
       'src',
       'https://cdn.everydayai.com.cn/workspace-thumbnails/thumb.w360.webp',
     );
+  });
+
+  it('多图引用保留原图片的稳定元数据', () => {
+    attachmentMocks.addQuotedImage.mockClear();
+    const content: ContentPart[] = [{
+      type: 'image',
+      url: 'https://cdn.everydayai.com.cn/original.png',
+      original_url: 'https://cdn.everydayai.com.cn/original.png',
+      thumbnail_url: 'https://cdn.everydayai.com.cn/thumb.webp',
+      asset_id: 'asset-grid-1',
+      workspace_path: '生成/grid-1.png',
+      name: 'grid-1.png',
+      mime_type: 'image/png',
+      size: 1024,
+    }];
+
+    render(
+      <AiImageGrid
+        content={content}
+        numImages={1}
+        messageId="msg-grid-quote"
+        placeholderSize={defaultPlaceholderSize}
+        onImageClick={vi.fn()}
+        isGenerating={false}
+      />,
+    );
+
+    const image = screen.getByRole('img');
+    fireEvent.load(image);
+    fireEvent.contextMenu(screen.getByRole('button', { name: '查看图片 1' }));
+    fireEvent.click(screen.getByText('引用'));
+
+    expect(attachmentMocks.addQuotedImage).toHaveBeenCalledWith(expect.objectContaining({
+      assetId: 'asset-grid-1',
+      workspacePath: '生成/grid-1.png',
+      name: 'grid-1.png',
+      mimeType: 'image/png',
+      size: 1024,
+    }));
+  });
+
+  it('缩略图加载失败时回退到原图', () => {
+    const content: ContentPart[] = [{
+      type: 'image',
+      url: 'https://cdn.everydayai.com.cn/original.png',
+      original_url: 'https://cdn.everydayai.com.cn/original.png',
+      thumbnail_url: 'https://cdn.everydayai.com.cn/thumb.webp',
+    }];
+
+    render(
+      <AiImageGrid
+        content={content}
+        numImages={1}
+        messageId="msg-grid-fallback"
+        placeholderSize={defaultPlaceholderSize}
+        onImageClick={vi.fn()}
+        isGenerating={false}
+      />,
+    );
+
+    const image = screen.getByRole('img');
+    expect(image).toHaveAttribute('src', 'https://cdn.everydayai.com.cn/thumb.webp');
+    fireEvent.error(image);
+    expect(screen.getByRole('img')).toHaveAttribute('src', 'https://cdn.everydayai.com.cn/original.png');
   });
 
   it('失败的图片渲染 FailedMediaPlaceholder', () => {
