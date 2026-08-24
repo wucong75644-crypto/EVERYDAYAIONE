@@ -46,7 +46,14 @@ export function createStreamingLifecycleActions(
         streamingMessages.set(conversationId, messageId);
         const optimisticMessages = new Map(state.optimisticMessages);
         const list = optimisticMessages.get(conversationId) || [];
-        if (!list.some((message) => message.id === messageId)) {
+        const existingOptimisticIndex = list.findIndex((message) => message.id === messageId);
+        if (existingOptimisticIndex >= 0) {
+          optimisticMessages.set(conversationId, list.map((message, index) => (
+            index === existingOptimisticIndex
+              ? { ...message, status: 'streaming' }
+              : message
+          )));
+        } else {
           const existing = state.messages[conversationId]?.find(
             (message) => message.id === messageId,
           );

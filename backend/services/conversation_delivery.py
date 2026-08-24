@@ -43,6 +43,7 @@ class ActorTerminalDelivery:
     async def _send_completed(self, task: Mapping[str, Any]) -> None:
         message = await self._load_message(str(task["assistant_message_id"]))
         push_task_id = _push_task_id(task)
+        delivery_state = await self._load_delivery_state(task)
         await self._websocket.send_to_task_or_user(
             push_task_id,
             str(task["user_id"]),
@@ -51,6 +52,14 @@ class ActorTerminalDelivery:
                 conversation_id=str(task["conversation_id"]),
                 message=format_message(message),
                 credits_consumed=int(message.get("credits_cost") or 0),
+                delivery_session_id=_optional_string(
+                    delivery_state.get("session_id")
+                ),
+                stream_id=_optional_string(delivery_state.get("stream_id")),
+                execution_attempt=_optional_int(
+                    delivery_state.get("execution_attempt")
+                ),
+                delivery_seq=_optional_int(delivery_state.get("next_seq")),
             ),
             org_id=task.get("org_id"),
         )
@@ -94,6 +103,27 @@ class ActorTerminalDelivery:
             raise RuntimeError("ACTOR_DELIVERY_MESSAGE_MISSING")
         return dict(result.data)
 
+    async def _load_delivery_state(self, task: Mapping[str, Any]) -> dict[str, Any]:
+        """读取终态交付元数据；迁移尚未应用时保持旧终态通知兼容。"""
+        try:
+            response = await self._db.rpc(
+                "read_conversation_delivery_state",
+                {
+                    "p_task_id": str(task["id"]),
+                    "p_user_id": str(task["user_id"]),
+                    "p_last_seq": 0,
+                },
+            ).execute()
+            data = response.data if response else None
+            if isinstance(data, dict) and data.get("outcome") == "found":
+                return data
+        except Exception as error:
+            logger.debug(
+                "actor_delivery_state_unavailable | "
+                f"task_id={task.get('id')} | error={type(error).__name__}"
+            )
+        return {}
+
 
 def _push_task_id(task: Mapping[str, Any]) -> str:
     value = (
@@ -105,3 +135,11 @@ def _push_task_id(task: Mapping[str, Any]) -> str:
         logger.error(f"actor_delivery_task_id_missing | task={task.get('id')}")
         raise RuntimeError("ACTOR_DELIVERY_TASK_ID_MISSING")
     return str(value)
+
+
+def _optional_string(value: Any) -> str | None:
+    return str(value) if value else None
+
+
+def _optional_int(value: Any) -> int | None:
+    return int(value) if isinstance(value, (int, float)) else None

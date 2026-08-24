@@ -184,14 +184,29 @@ async def _handle_message(
             success = await ws_manager.subscribe_task(conn_id, task_id)
 
             if success:
-                # 查询最新累积内容 + 结构化内容块（补全刷新期间的差异）
-                accumulated, accumulated_blocks = await _get_task_accumulated_state(task_id, user_id)
+                last_seq = payload.get("last_delivery_seq", payload.get("last_index", 0))
+                try:
+                    last_seq = max(int(last_seq), 0)
+                except (TypeError, ValueError):
+                    last_seq = 0
+                delivery_state = await _get_task_delivery_state(
+                    task_id, user_id, last_seq,
+                )
+                accumulated = delivery_state.get("snapshot_content")
+                accumulated_blocks = delivery_state.get("snapshot_blocks")
 
                 await ws_manager.send_to_connection(conn_id, build_subscribed(
                     task_id=task_id,
                     accumulated=accumulated or "",
                     accumulated_blocks=accumulated_blocks or [],
-                    current_index=-1  # 不再使用索引
+                    current_index=-1,
+                    delivery_session_id=delivery_state.get("session_id"),
+                    stream_id=delivery_state.get("stream_id"),
+                    execution_attempt=delivery_state.get("execution_attempt"),
+                    delivery_status=delivery_state.get("delivery_status"),
+                    next_seq=delivery_state.get("next_seq"),
+                    snapshot_seq=delivery_state.get("snapshot_seq"),
+                    events=delivery_state.get("events") or [],
                 ))
 
                 logger.info(f"Task subscribed | conn={conn_id} | task={task_id} | accumulated_len={len(accumulated or '')} | blocks={len(accumulated_blocks or [])}")
@@ -527,6 +542,48 @@ async def _get_task_accumulated_state(task_id: str, user_id: str) -> Tuple[Optio
         return None, None
 
 
+async def _get_task_delivery_state(
+    task_id: str,
+    user_id: str,
+    last_seq: int,
+) -> dict[str, Any]:
+    """读取交付会话快照；没有新协议数据时回退到 tasks 快照。"""
+    try:
+        db = get_db()
+        task = await _find_task_by_any_id(db, task_id, user_id)
+        if not task or task.get("type") != "chat":
+            return {}
+        response = db.rpc(
+            "read_conversation_delivery_state",
+            {
+                "p_task_id": str(task["id"]),
+                "p_user_id": user_id,
+                "p_last_seq": last_seq,
+            },
+        ).execute()
+        data = response.data if response else None
+        if isinstance(data, dict) and data.get("outcome") in {"found", "empty"}:
+            if data.get("outcome") == "found":
+                return data
+            return {
+                "snapshot_content": task.get("accumulated_content") or "",
+                "snapshot_blocks": task.get("accumulated_blocks") or [],
+                "delivery_status": task.get("status"),
+            }
+        return {
+            "snapshot_content": task.get("accumulated_content") or "",
+            "snapshot_blocks": task.get("accumulated_blocks") or [],
+            "delivery_status": task.get("status"),
+        }
+    except Exception as error:
+        logger.warning(
+            f"Failed to read delivery_state | task_id={task_id} | error={error}"
+        )
+        accumulated, blocks = await _get_task_accumulated_state(task_id, user_id)
+        return {
+            "snapshot_content": accumulated or "",
+            "snapshot_blocks": blocks or [],
+        }
 async def _check_and_send_completed_task(conn_id: str, task_id: str, user_id: str):
     """
     检查任务是否已完成，如果已完成则推送完成消息

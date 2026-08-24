@@ -24,6 +24,7 @@ import {
 import { getMessages } from '../services/message';
 import { logger } from '../utils/logger';
 import { createWSMessageHandlers } from './wsMessageHandlers';
+import type { DeliveryCursor } from './wsMessageHandlerShared';
 import ToolConfirmModal from '../components/chat/modals/ToolConfirmModal';
 
 /** 操作上下文（供完成回调使用） */
@@ -41,7 +42,7 @@ export interface WebSocketContextValue {
   isConnected: boolean;
   isConnecting: boolean;
   subscribe: (type: WSMessageType, handler: (msg: WSMessage) => void) => () => void;
-  subscribeTask: (taskId: string) => void;
+  subscribeTask: (taskId: string, lastIndex?: number) => void;
   unsubscribeTask: (taskId: string) => void;
   subscribeTaskWithMapping: (taskId: string, conversationId: string) => void;
   registerOperation: (taskId: string, context: OperationContext) => void;
@@ -71,6 +72,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   // 改进：同时存储 conversationId，避免额外映射维护
   const chunkBufferRef = useRef<Map<string, { chunk: string; conversationId: string }>>(new Map());
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const deliveryCursorRef = useRef<Map<string, DeliveryCursor>>(new Map());
 
   // ws ref（避免回调重建）
   const wsRef = useRef(ws);
@@ -87,6 +89,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       flushTimerRef,
       unsubscribeTask: ws.unsubscribeTask,
       send: ws.send,
+      deliveryCursorRef,
     };
 
     const handlers = createWSMessageHandlers(deps);
@@ -111,15 +114,28 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   const subscribeTaskWithMapping = useCallback((taskId: string, conversationId: string) => {
     if (subscribedTasksRef.current.has(taskId)) {
       logger.debug('ws:subscribe', 'already subscribed', { taskId });
+      const cursor = deliveryCursorRef.current.get(taskId);
+      wsRef.current.subscribeTask(taskId, cursor?.lastSeq ?? 0);
       return;
     }
 
     subscribedTasksRef.current.add(taskId);
     taskConversationMapRef.current.set(taskId, conversationId);
-    wsRef.current.subscribeTask(taskId);
+    const cursor = deliveryCursorRef.current.get(taskId);
+    wsRef.current.subscribeTask(taskId, cursor?.lastSeq ?? 0);
 
     logger.debug('ws:subscribe', 'subscribed', { taskId, conversationId });
   }, []);
+
+  // WebSocket 重连后主动恢复已有任务订阅，并携带最后确认的 delivery_seq。
+  // Redis Pub/Sub 不提供断线回放，回放游标必须由客户端重新发送给服务端。
+  useEffect(() => {
+    if (!ws.isConnected) return;
+    subscribedTasksRef.current.forEach((taskId) => {
+      const cursor = deliveryCursorRef.current.get(taskId);
+      ws.subscribeTask(taskId, cursor?.lastSeq ?? 0);
+    });
+  }, [ws.isConnected, ws.subscribeTask]);
 
   // subscribeTaskWithMapping ref（用于任务恢复，避免循环依赖）
   const subscribeTaskWithMappingRef = useRef(subscribeTaskWithMapping);

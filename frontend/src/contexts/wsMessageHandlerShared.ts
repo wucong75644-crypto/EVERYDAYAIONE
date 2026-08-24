@@ -16,6 +16,13 @@ export interface WSIncomingMessage extends WSMessage {
   data?: Record<string, unknown>;
 }
 
+export interface DeliveryCursor {
+  streamId: string;
+  executionAttempt: number;
+  lastSeq: number;
+  snapshotApplied: boolean;
+}
+
 export interface MessageStoreActions {
   setStatus: (messageId: string, status: MessageStatus) => void;
   appendStreamingContent: (conversationId: string, chunk: string) => void;
@@ -61,12 +68,96 @@ export interface HandlerDeps {
   flushTimerRef: React.RefObject<ReturnType<typeof setTimeout> | null>;
   unsubscribeTask: (taskId: string) => void;
   send: (message: Omit<WSMessage, 'timestamp'>) => void;
+  deliveryCursorRef?: React.RefObject<Map<string, DeliveryCursor>>;
+}
+
+export function acceptDeliveryEvent(
+  deps: HandlerDeps,
+  msg: WSIncomingMessage,
+): boolean {
+  const taskId = msg.task_id;
+  const payload = msg.payload || {};
+  const streamId = typeof payload.stream_id === 'string' ? payload.stream_id : undefined;
+  const attempt = typeof payload.execution_attempt === 'number'
+    ? payload.execution_attempt
+    : undefined;
+  const seq = typeof payload.delivery_seq === 'number' ? payload.delivery_seq : undefined;
+  if (!taskId || !streamId || attempt === undefined || seq === undefined) return true;
+  const cursors = deps.deliveryCursorRef?.current;
+  if (!cursors) return true;
+
+  const current = cursors.get(taskId);
+  if (current && attempt < current.executionAttempt) return false;
+  if (
+    current
+    && streamId === current.streamId
+    && attempt === current.executionAttempt
+    && seq <= current.lastSeq
+  ) {
+    return false;
+  }
+  if (
+    current
+    && streamId === current.streamId
+    && attempt === current.executionAttempt
+    && seq > current.lastSeq + 1
+  ) {
+    deps.send({
+      type: 'subscribe',
+      payload: {
+        task_id: taskId,
+        last_index: current.lastSeq,
+        last_delivery_seq: current.lastSeq,
+      },
+    });
+    return false;
+  }
+  if (!current || attempt > current.executionAttempt || streamId !== current.streamId) {
+    cursors.set(taskId, {
+      streamId, executionAttempt: attempt, lastSeq: seq, snapshotApplied: false,
+    });
+    return true;
+  }
+  cursors.set(taskId, { ...current, lastSeq: seq });
+  return true;
+}
+
+export function setDeliveryCursor(
+  deps: HandlerDeps,
+  taskId: string,
+  streamId: string | undefined,
+  executionAttempt: number | undefined,
+  seq: number | undefined,
+  snapshotApplied = false,
+): void {
+  if (!streamId || executionAttempt === undefined || seq === undefined) return;
+  const cursors = deps.deliveryCursorRef?.current;
+  if (!cursors) return;
+  const current = cursors.get(taskId);
+  if (
+    current
+    && current.streamId === streamId
+    && current.executionAttempt === executionAttempt
+  ) {
+    cursors.set(taskId, {
+      ...current,
+      lastSeq: Math.max(current.lastSeq, seq),
+      snapshotApplied: current.snapshotApplied || snapshotApplied,
+    });
+    return;
+  }
+  if (!current || executionAttempt >= current.executionAttempt) {
+    cursors.set(taskId, {
+      streamId, executionAttempt, lastSeq: seq, snapshotApplied,
+    });
+  }
 }
 
 export function cleanupTaskSubscription(deps: HandlerDeps, taskId: string): void {
   deps.subscribedTasksRef.current.delete(taskId);
   deps.taskConversationMapRef.current.delete(taskId);
   deps.unsubscribeTask(taskId);
+  deps.deliveryCursorRef?.current.delete(taskId);
 }
 
 export function flushChunkBuffer(deps: HandlerDeps): void {

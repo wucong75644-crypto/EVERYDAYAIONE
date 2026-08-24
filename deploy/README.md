@@ -71,6 +71,10 @@ bash /tmp/setup-env.sh
 正式发布使用 `release.sh`。它会校验工作区范围，提交并推送明确列出的文件，
 再从该提交的隔离工作树执行完整部署；工作区存在未列入范围的变更时会直接停止。
 
+如果本次文件清单包含 `backend/migrations/NNN_*.sql`，发布入口会在重启服务前只执行
+这些明确列出的正向迁移。不会扫描或重复执行整个 migrations 目录；迁移失败时不会重启服务。
+应用版本回滚也不会自动回滚数据库迁移。
+
 ```bash
 ./release.sh --message "feat: upgrade conversation actor runtime" \
   --file backend/services/conversation_commands.py \

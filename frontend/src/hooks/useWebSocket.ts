@@ -270,7 +270,11 @@ export function useWebSocket(): UseWebSocketReturn {
           pendingSubscriptionsRef.current.forEach((lastIndex, taskId) => {
             ws.send(JSON.stringify({
               type: 'subscribe',
-              payload: { task_id: taskId, last_index: lastIndex },
+              payload: {
+                task_id: taskId,
+                last_index: lastIndex,
+                last_delivery_seq: lastIndex,
+              },
               timestamp: Date.now(),
             }));
           });
@@ -375,7 +379,11 @@ export function useWebSocket(): UseWebSocketReturn {
       wsRef.current.send(
         JSON.stringify({
           type: 'subscribe',
-          payload: { task_id: taskId, last_index: lastIndex },
+          payload: {
+            task_id: taskId,
+            last_index: lastIndex,
+            last_delivery_seq: lastIndex,
+          },
           timestamp: Date.now(),
         })
       );

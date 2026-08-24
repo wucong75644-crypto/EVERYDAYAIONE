@@ -27,12 +27,16 @@ class _Query:
 
 
 class _DB:
-    def __init__(self, task, message=None):
+    def __init__(self, task, message=None, delivery_state=None):
         self.task = task
         self.message = message
+        self.delivery_state = delivery_state
 
     def table(self, name):
         return _Query(self.task if name == "tasks" else self.message)
+
+    def rpc(self, _name, _params):
+        return _Query(self.delivery_state)
 
 
 class _WebSocket:
@@ -94,6 +98,37 @@ async def test_completed_delivery_releases_slot_then_pushes_message(monkeypatch)
     assert websocket.messages[0][0] == "client-1"
     assert websocket.messages[0][3]["type"] == "message_done"
     assert websocket.messages[0][3]["payload"]["credits_consumed"] == 2
+
+
+@pytest.mark.asyncio
+async def test_completed_delivery_includes_delivery_cursor(monkeypatch):
+    async def fake_release(_task):
+        return None
+
+    monkeypatch.setattr(
+        "services.conversation_delivery.release_task_slot",
+        fake_release,
+    )
+    websocket = _WebSocket()
+    delivery_state = {
+        "outcome": "found",
+        "session_id": "session-1",
+        "stream_id": "stream-1",
+        "execution_attempt": 2,
+        "next_seq": 18,
+    }
+    delivery = ActorTerminalDelivery(
+        _DB(_task("completed"), _message(), delivery_state),
+        websocket,
+    )
+
+    await delivery.notify(_task("running"), {"outcome": "committed"})
+
+    payload = websocket.messages[0][3]["payload"]
+    assert payload["delivery_session_id"] == "session-1"
+    assert payload["stream_id"] == "stream-1"
+    assert payload["execution_attempt"] == 2
+    assert payload["delivery_seq"] == 18
 
 
 @pytest.mark.asyncio

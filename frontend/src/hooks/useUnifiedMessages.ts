@@ -35,7 +35,7 @@ export function mergeMessages(
 
     const canOverlay = (
       optimisticMessage.status === 'streaming'
-        && ['pending', 'streaming', 'generating'].includes(message.status)
+        && ['pending', 'streaming', 'generating', 'interrupted'].includes(message.status)
     ) || (
       optimisticMessage.status === 'interrupted'
         && !['completed', 'failed'].includes(message.status)

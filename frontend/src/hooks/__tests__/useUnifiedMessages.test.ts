@@ -40,4 +40,20 @@ describe('mergeMessages', () => {
 
     expect(result[0]).toEqual(completed);
   });
+
+  it('allows the active resumed stream to overlay an interrupted persisted message', () => {
+    const result = mergeMessages(
+      [{ ...baseMessage, status: 'interrupted' as const, content: [] }],
+      [{
+        ...baseMessage,
+        status: 'streaming' as const,
+        content: [{ type: 'text' as const, text: '恢复中的新增内容' }],
+      }],
+    );
+
+    expect(result[0].status).toBe('streaming');
+    expect(result[0].content).toEqual([
+      { type: 'text', text: '恢复中的新增内容' },
+    ]);
+  });
 });

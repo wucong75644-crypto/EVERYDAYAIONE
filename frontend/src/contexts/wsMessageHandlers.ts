@@ -17,6 +17,8 @@ import { getAgentStepText, getToolCallText } from '../constants/placeholder';
 import { handleRoutingComplete } from './wsRoutingCompleteHandler';
 import {
   flushChunkBuffer,
+  acceptDeliveryEvent,
+  setDeliveryCursor,
   type HandlerDeps,
   type WSIncomingMessage,
 } from './wsMessageHandlerShared';
@@ -44,6 +46,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
   message_start: (deps, msg) => {
       const { message_id } = msg;
       if (!message_id) return;
+      if (!acceptDeliveryEvent(deps, msg)) return;
 
       logger.info('ws:message', 'start received', { messageId: message_id });
       deps.getStore().setStatus(message_id, 'streaming');
@@ -51,6 +54,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
 
   message_chunk: (deps, msg) => {
       const { message_id, task_id, conversation_id } = msg;
+      if (!acceptDeliveryEvent(deps, msg)) return;
       const chunk = parseProtocolString(msg.chunk ?? msg.payload?.chunk, 'chunk', {
         messageId: message_id,
         conversationId: conversation_id,
@@ -93,6 +97,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
     // 真正的 completed 只能由 message_done（数据库终态之后）确认。
   stream_end: (deps, msg) => {
       const { message_id, conversation_id } = msg;
+      if (!acceptDeliveryEvent(deps, msg)) return;
       logger.info('ws:message', 'stream_end received', { messageId: message_id, conversationId: conversation_id });
 
       // flush 残留 chunk
@@ -144,6 +149,14 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
   subscribed: (deps, msg) => {
       const payload = msg.payload || {};
       const task_id = typeof payload.task_id === 'string' ? payload.task_id : undefined;
+      const streamId = typeof payload.stream_id === 'string' ? payload.stream_id : undefined;
+      const executionAttempt = typeof payload.execution_attempt === 'number'
+        ? payload.execution_attempt : undefined;
+      const snapshotSeq = typeof payload.snapshot_seq === 'number'
+        ? payload.snapshot_seq : undefined;
+      const currentCursor = task_id
+        ? deps.deliveryCursorRef?.current.get(task_id)
+        : undefined;
       const accumulated = parseProtocolString(payload.accumulated, 'accumulated', {
         source: 'ws:subscribed',
       });
@@ -160,12 +173,48 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       if (task_id) {
         const conversationId = deps.taskConversationMapRef.current.get(task_id);
         if (conversationId) {
-          if (accumulatedBlocks.length > 0) {
-            const remaining = calcRemainingText(accumulatedBlocks, accumulated);
-            deps.getStore().restoreStreamingBlocks(conversationId, accumulatedBlocks, remaining);
-          } else if (accumulated && accumulated.length > 0) {
-            // 向后兼容：无 blocks 时仅恢复纯文字
-            deps.getStore().setStreamingContent(conversationId, accumulated);
+          const shouldRestoreSnapshot = !currentCursor
+            || currentCursor.streamId !== streamId
+            || !currentCursor.snapshotApplied
+            || snapshotSeq === undefined
+            || currentCursor.lastSeq <= snapshotSeq;
+          if (shouldRestoreSnapshot) {
+            if (accumulatedBlocks.length > 0) {
+              const remaining = calcRemainingText(accumulatedBlocks, accumulated);
+              deps.getStore().restoreStreamingBlocks(conversationId, accumulatedBlocks, remaining);
+            } else if (accumulated && accumulated.length > 0) {
+              // 向后兼容：无 blocks 时仅恢复纯文字
+              deps.getStore().setStreamingContent(conversationId, accumulated);
+            }
+          }
+          if (streamId && task_id) {
+            setDeliveryCursor(
+              deps, task_id, streamId, executionAttempt, snapshotSeq ?? 0, true,
+            );
+          }
+
+          const events = Array.isArray(payload.events) ? payload.events : [];
+          for (const event of events) {
+            if (!event || typeof event !== 'object') continue;
+            const eventType = (event as { event_type?: unknown }).event_type;
+            const eventPayload = (event as { payload?: Record<string, unknown> }).payload;
+            const seq = (event as { delivery_seq?: unknown }).delivery_seq;
+            if (typeof eventPayload !== 'object' || !eventPayload) continue;
+            if (eventType === 'message_chunk' && typeof eventPayload.chunk === 'string') {
+              deps.getStore().appendStreamingContent(conversationId, eventPayload.chunk);
+            } else if (eventType === 'thinking_chunk' && typeof eventPayload.chunk === 'string') {
+              deps.getStore().appendStreamingThinking(conversationId, eventPayload.chunk);
+            } else if (eventType === 'content_block_add') {
+              const block = parseContentPart(eventPayload.block, {
+                messageId: msg.message_id,
+                conversationId,
+                source: 'ws:delivery_replay',
+              });
+              if (block) deps.getStore().appendContentBlock(conversationId, block);
+            }
+            if (typeof seq === 'number' && task_id && streamId) {
+              setDeliveryCursor(deps, task_id, streamId, executionAttempt, seq);
+            }
           }
         }
       }
@@ -184,6 +233,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
 
   thinking_chunk: (deps, msg) => {
       const { conversation_id } = msg;
+      if (!acceptDeliveryEvent(deps, msg)) return;
       const chunk = parseProtocolString(msg.chunk ?? msg.payload?.chunk, 'chunk', {
         conversationId: conversation_id,
         source: 'ws:thinking_chunk',
@@ -252,6 +302,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
 
   content_block_add: (deps, msg) => {
       const { conversation_id } = msg;
+      if (!acceptDeliveryEvent(deps, msg)) return;
       const block = parseContentPart(msg.payload?.block, {
         messageId: msg.message_id,
         conversationId: conversation_id,

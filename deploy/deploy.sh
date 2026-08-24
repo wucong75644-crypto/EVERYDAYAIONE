@@ -42,6 +42,7 @@ show_help() {
     -s, --setup             首次部署，执行服务器初始化
     -f, --frontend-only     仅部署前端
     -b, --backend-only      仅部署后端
+    --migration-file PATH   执行本次发布明确列出的正向 SQL 迁移（可重复）
     --skip-build           跳过构建步骤
     --skip-test            跳过测试
 
@@ -311,6 +312,73 @@ sync_backend() {
     log_success "后端文件同步完成"
 }
 
+# 执行本次发布明确列出的数据库迁移。
+# 不扫描 migrations 目录，也不自动执行历史文件，避免把旧迁移重复应用到生产。
+apply_migrations() {
+    if [ "$RUN_MIGRATIONS" != true ]; then
+        if [ ${#MIGRATION_FILES[@]} -gt 0 ]; then
+            log_error "本次发布包含迁移，但 deploy/config.env 的 RUN_MIGRATIONS=false"
+            exit 1
+        fi
+        log_info "未请求数据库迁移"
+        return
+    fi
+
+    if [ ${#MIGRATION_FILES[@]} -eq 0 ]; then
+        log_info "本次发布未包含数据库迁移"
+        return
+    fi
+
+    log_info "执行本次发布明确列出的数据库迁移..."
+    for migration_file in "${MIGRATION_FILES[@]}"; do
+        case "$migration_file" in
+            backend/migrations/*.sql)
+                ;;
+            *)
+                log_error "非法迁移路径：$migration_file（必须位于 backend/migrations/）"
+                exit 1
+                ;;
+        esac
+        case "$migration_file" in
+            backend/migrations/rollback/*)
+                log_error "禁止自动执行 rollback 迁移：$migration_file"
+                exit 1
+                ;;
+        esac
+        if [[ "$migration_file" != backend/migrations/[0-9][0-9][0-9]_*.sql ]]; then
+            log_error "迁移文件必须使用三位编号命名：$migration_file"
+            exit 1
+        fi
+    done
+
+    remote_exec bash -s -- "${MIGRATION_FILES[@]}" << 'ENDSSH'
+        set -euo pipefail
+        cd /var/www/everydayai
+        ENV_FILE=/var/www/everydayai/backend/.env
+        test -f "$ENV_FILE"
+        set -a
+        . "$ENV_FILE"
+        set +a
+        test -n "${DATABASE_URL:-}" || {
+            echo "❌ .env 缺少 DATABASE_URL"
+            exit 1
+        }
+        for migration_file in "$@"; do
+            migration_path="/var/www/everydayai/$migration_file"
+            test -f "$migration_path" || {
+                echo "❌ 迁移文件不存在: $migration_path"
+                exit 1
+            }
+            echo "▶ 应用迁移: $migration_file"
+            psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+                -c "SELECT pg_advisory_lock(hashtextextended('everydayai:migrations', 0));" \
+                -f "$migration_path"
+            echo "✅ 迁移完成: $migration_file"
+        done
+ENDSSH
+    log_success "数据库迁移完成"
+}
+
 # 在服务器上执行命令
 remote_exec() {
     ssh -p ${SERVER_PORT} ${SERVER_USER}@${SERVER_HOST} "$@"
@@ -483,6 +551,7 @@ EOF
     BACKEND_ONLY=false
     SKIP_BUILD=false
     SKIP_TEST=false
+    MIGRATION_FILES=()
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -502,6 +571,14 @@ EOF
                 BACKEND_ONLY=true
                 shift
                 ;;
+            --migration-file)
+                if [ $# -lt 2 ]; then
+                    log_error "--migration-file 缺少参数"
+                    exit 1
+                fi
+                MIGRATION_FILES+=("$2")
+                shift 2
+                ;;
             --skip-build)
                 SKIP_BUILD=true
                 shift
@@ -517,6 +594,11 @@ EOF
                 ;;
         esac
     done
+
+    if [ "$FRONTEND_ONLY" = true ] && [ ${#MIGRATION_FILES[@]} -gt 0 ]; then
+        log_error "--frontend-only 不能执行数据库迁移"
+        exit 1
+    fi
 
     # 检查配置和依赖
     check_config
@@ -541,6 +623,7 @@ EOF
     if [ "$FRONTEND_ONLY" != true ]; then
         build_backend
         sync_backend
+        apply_migrations
         deploy_backend
     fi
 

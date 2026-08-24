@@ -45,11 +45,19 @@ def _build_ws_message(
 def build_message_start(
     task_id: str, conversation_id: str, message_id: str,
     model: Optional[str] = None,
+    *,
+    delivery_session_id: Optional[str] = None,
+    stream_id: Optional[str] = None,
+    execution_attempt: Optional[int] = None,
+    delivery_seq: Optional[int] = None,
 ) -> Dict[str, Any]:
     """构建开始生成消息"""
     payload: Dict[str, Any] = {}
     if model:
         payload["model"] = model
+    _add_delivery_metadata(
+        payload, delivery_session_id, stream_id, execution_attempt, delivery_seq,
+    )
     return _build_ws_message(
         WSMessageType.MESSAGE_START, payload,
         task_id=task_id, conversation_id=conversation_id, message_id=message_id,
@@ -59,11 +67,19 @@ def build_message_start(
 def build_message_chunk(
     task_id: str, conversation_id: str, message_id: str,
     chunk: str, accumulated: Optional[str] = None,
+    *,
+    delivery_session_id: Optional[str] = None,
+    stream_id: Optional[str] = None,
+    execution_attempt: Optional[int] = None,
+    delivery_seq: Optional[int] = None,
 ) -> Dict[str, Any]:
     """构建流式内容块消息"""
     payload = {"chunk": chunk}
     if accumulated is not None:
         payload["accumulated"] = accumulated
+    _add_delivery_metadata(
+        payload, delivery_session_id, stream_id, execution_attempt, delivery_seq,
+    )
     return _build_ws_message(
         WSMessageType.MESSAGE_CHUNK, payload,
         task_id=task_id, conversation_id=conversation_id, message_id=message_id,
@@ -73,11 +89,19 @@ def build_message_chunk(
 def build_thinking_chunk(
     task_id: str, conversation_id: str, message_id: str,
     chunk: str, accumulated: Optional[str] = None,
+    *,
+    delivery_session_id: Optional[str] = None,
+    stream_id: Optional[str] = None,
+    execution_attempt: Optional[int] = None,
+    delivery_seq: Optional[int] = None,
 ) -> Dict[str, Any]:
     """构建思考内容流式块消息"""
     payload = {"chunk": chunk}
     if accumulated is not None:
         payload["accumulated"] = accumulated
+    _add_delivery_metadata(
+        payload, delivery_session_id, stream_id, execution_attempt, delivery_seq,
+    )
     return _build_ws_message(
         WSMessageType.THINKING_CHUNK, payload,
         task_id=task_id, conversation_id=conversation_id, message_id=message_id,
@@ -86,14 +110,23 @@ def build_thinking_chunk(
 
 def build_stream_end(
     task_id: str, conversation_id: str, message_id: str,
+    *,
+    delivery_session_id: Optional[str] = None,
+    stream_id: Optional[str] = None,
+    execution_attempt: Optional[int] = None,
+    delivery_seq: Optional[int] = None,
 ) -> Dict[str, Any]:
     """构建流式输出终止信号（对标 Anthropic message_stop）
 
     在 LLM 流结束后立即发送，不等待 DB 持久化。
     前端收到后立即退出 streaming 状态。
     """
+    payload: Dict[str, Any] = {}
+    _add_delivery_metadata(
+        payload, delivery_session_id, stream_id, execution_attempt, delivery_seq,
+    )
     return _build_ws_message(
-        WSMessageType.STREAM_END, {},
+        WSMessageType.STREAM_END, payload,
         task_id=task_id, conversation_id=conversation_id, message_id=message_id,
     )
 
@@ -101,11 +134,19 @@ def build_stream_end(
 def build_message_done(
     task_id: str, conversation_id: str,
     message: Dict[str, Any], credits_consumed: Optional[int] = None,
+    *,
+    delivery_session_id: Optional[str] = None,
+    stream_id: Optional[str] = None,
+    execution_attempt: Optional[int] = None,
+    delivery_seq: Optional[int] = None,
 ) -> Dict[str, Any]:
     """构建生成完成消息"""
     payload: Dict[str, Any] = {"message": message}
     if credits_consumed is not None:
         payload["credits_consumed"] = credits_consumed
+    _add_delivery_metadata(
+        payload, delivery_session_id, stream_id, execution_attempt, delivery_seq,
+    )
     return _build_ws_message(
         WSMessageType.MESSAGE_DONE, payload,
         task_id=task_id, conversation_id=conversation_id, message_id=message.get("id"),
@@ -187,6 +228,14 @@ def build_image_partial_update(
 def build_subscribed(
     task_id: str, accumulated: str = "", current_index: int = -1,
     accumulated_blocks: Optional[list] = None,
+    *,
+    delivery_session_id: Optional[str] = None,
+    stream_id: Optional[str] = None,
+    execution_attempt: Optional[int] = None,
+    delivery_status: Optional[str] = None,
+    next_seq: Optional[int] = None,
+    snapshot_seq: Optional[int] = None,
+    events: Optional[list[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """构建订阅确认消息"""
     payload: Dict[str, Any] = {
@@ -196,7 +245,36 @@ def build_subscribed(
     }
     if accumulated_blocks:
         payload["accumulated_blocks"] = accumulated_blocks
+    _add_delivery_metadata(
+        payload, delivery_session_id, stream_id, execution_attempt, None,
+    )
+    if delivery_status is not None:
+        payload["delivery_status"] = delivery_status
+    if next_seq is not None:
+        payload["next_seq"] = next_seq
+    if snapshot_seq is not None:
+        payload["snapshot_seq"] = snapshot_seq
+    if events:
+        payload["events"] = events
     return _build_ws_message(WSMessageType.SUBSCRIBED, payload)
+
+
+def _add_delivery_metadata(
+    payload: Dict[str, Any],
+    delivery_session_id: Optional[str],
+    stream_id: Optional[str],
+    execution_attempt: Optional[int],
+    delivery_seq: Optional[int],
+) -> None:
+    """附加可选的交付会话元数据；旧 Web Chat 事件保持兼容。"""
+    if delivery_session_id is not None:
+        payload["delivery_session_id"] = delivery_session_id
+    if stream_id is not None:
+        payload["stream_id"] = stream_id
+    if execution_attempt is not None:
+        payload["execution_attempt"] = execution_attempt
+    if delivery_seq is not None:
+        payload["delivery_seq"] = delivery_seq
 
 
 def build_error(message: str, code: Optional[str] = None) -> Dict[str, Any]:
@@ -307,15 +385,24 @@ def build_suggestions_ready(
 def build_content_block_add(
     task_id: str, conversation_id: str, message_id: str,
     block: Dict[str, Any],
+    *,
+    delivery_session_id: Optional[str] = None,
+    stream_id: Optional[str] = None,
+    execution_attempt: Optional[int] = None,
+    delivery_seq: Optional[int] = None,
 ) -> Dict[str, Any]:
     """构建内容块追加通知（工具结果等独立渲染块）
 
     前端收到后将 block 追加到当前消息的 content 数组中，
     后续 message_chunk 自动追加到新的 text block。
     """
+    payload = {"block": block}
+    _add_delivery_metadata(
+        payload, delivery_session_id, stream_id, execution_attempt, delivery_seq,
+    )
     return _build_ws_message(
         WSMessageType.CONTENT_BLOCK_ADD,
-        {"block": block},
+        payload,
         task_id=task_id, conversation_id=conversation_id, message_id=message_id,
     )
 

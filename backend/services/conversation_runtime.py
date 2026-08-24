@@ -7,6 +7,7 @@ import os
 from typing import Any, Callable, Mapping
 
 from services.conversation_delivery import ActorTerminalDelivery
+from services.conversation_delivery_store import DatabaseConversationDeliveryStore
 from services.conversation_execution import GenerationClaim, ConversationExecutionService
 from services.conversation_command_store import DatabaseConversationCommandStore
 from services.conversation_subtasks import DatabaseConversationSubtaskStore
@@ -86,6 +87,7 @@ class ConversationActorRuntime:
             delivery,
             cancellation_event,
             self._websocket,
+            delivery_store=DatabaseConversationDeliveryStore(self._db),
         )
 
 
@@ -114,6 +116,7 @@ def _build_delivery(
         user_id=str(task["user_id"]),
         org_id=str(task["org_id"]) if task.get("org_id") else None,
         model_id=_normalize_model_id(task.get("model_id")),
+        execution_attempt=claim.execution_attempt,
     )
 def create_kernel_manager() -> Any:
     from services.sandbox.kernel_manager import KernelManager

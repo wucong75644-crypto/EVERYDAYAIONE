@@ -16,6 +16,10 @@ from schemas.websocket import (
     build_stream_end,
     build_thinking_chunk,
 )
+from services.conversation_delivery_store import (
+    ConversationDeliveryStore,
+    DeliverySession,
+)
 
 
 _PERSIST_EVERY_CHUNKS = 20
@@ -31,6 +35,7 @@ class ActorDelivery:
     user_id: str
     org_id: str | None
     model_id: str
+    execution_attempt: int = 1
 
 
 class ActorWebSink:
@@ -42,35 +47,57 @@ class ActorWebSink:
         delivery: ActorDelivery,
         cancellation_event: asyncio.Event,
         websocket: Any,
+        delivery_store: ConversationDeliveryStore | None = None,
     ) -> None:
         self._db = db
         self._delivery = delivery
         self._cancellation_event = cancellation_event
         self._websocket = websocket
+        self._delivery_store = delivery_store
+        self._session: DeliverySession | None = None
         self._text = ""
         self._thinking = ""
         self._blocks: list[dict[str, Any]] = []
         self._chunks_since_persist = 0
 
     async def start(self) -> None:
+        await self._ensure_session()
+        delivery_seq = await self._append_event(
+            "message_start", {"model": self._delivery.model_id},
+        )
         await self._send(
             build_message_start(
                 task_id=self._delivery.push_task_id,
                 conversation_id=self._delivery.conversation_id,
                 message_id=self._delivery.message_id,
                 model=self._delivery.model_id,
+                delivery_session_id=self._session.session_id if self._session else None,
+                stream_id=self._session.stream_id if self._session else None,
+                execution_attempt=(
+                    self._session.execution_attempt if self._session else None
+                ),
+                delivery_seq=delivery_seq,
             )
         )
 
     async def on_text(self, text: str) -> None:
         self._text += text
         self._chunks_since_persist += 1
+        delivery_seq = await self._append_event(
+            "message_chunk", {"chunk": text},
+        )
         await self._send(
             build_message_chunk(
                 task_id=self._delivery.push_task_id,
                 conversation_id=self._delivery.conversation_id,
                 message_id=self._delivery.message_id,
                 chunk=text,
+                delivery_session_id=self._session.session_id if self._session else None,
+                stream_id=self._session.stream_id if self._session else None,
+                execution_attempt=(
+                    self._session.execution_attempt if self._session else None
+                ),
+                delivery_seq=delivery_seq,
             )
         )
         if self._chunks_since_persist >= _PERSIST_EVERY_CHUNKS:
@@ -78,6 +105,9 @@ class ActorWebSink:
 
     async def on_thinking(self, text: str) -> None:
         self._thinking += text
+        delivery_seq = await self._append_event(
+            "thinking_chunk", {"chunk": text},
+        )
         await self._send(
             build_thinking_chunk(
                 task_id=self._delivery.push_task_id,
@@ -85,28 +115,50 @@ class ActorWebSink:
                 message_id=self._delivery.message_id,
                 chunk=text,
                 accumulated=self._thinking,
+                delivery_session_id=self._session.session_id if self._session else None,
+                stream_id=self._session.stream_id if self._session else None,
+                execution_attempt=(
+                    self._session.execution_attempt if self._session else None
+                ),
+                delivery_seq=delivery_seq,
             )
         )
 
     async def on_block(self, block: dict[str, Any]) -> None:
         self._blocks.append(block)
+        delivery_seq = await self._append_event(
+            "content_block_add", {"block": block},
+        )
         await self._send(
             build_content_block_add(
                 task_id=self._delivery.push_task_id,
                 conversation_id=self._delivery.conversation_id,
                 message_id=self._delivery.message_id,
                 block=block,
+                delivery_session_id=self._session.session_id if self._session else None,
+                stream_id=self._session.stream_id if self._session else None,
+                execution_attempt=(
+                    self._session.execution_attempt if self._session else None
+                ),
+                delivery_seq=delivery_seq,
             )
         )
         await self._persist()
 
     async def flush(self) -> None:
         await self.flush_progress()
+        delivery_seq = await self._append_event("stream_end", {})
         await self._send(
             build_stream_end(
                 task_id=self._delivery.push_task_id,
                 conversation_id=self._delivery.conversation_id,
                 message_id=self._delivery.message_id,
+                delivery_session_id=self._session.session_id if self._session else None,
+                stream_id=self._session.stream_id if self._session else None,
+                execution_attempt=(
+                    self._session.execution_attempt if self._session else None
+                ),
+                delivery_seq=delivery_seq,
             )
         )
 
@@ -148,14 +200,74 @@ class ActorWebSink:
             }:
                 self._cancellation_event.set()
                 raise asyncio.CancelledError
+            if self._delivery_store is not None and self._session is not None:
+                snapshot = await self._delivery_store.save_snapshot(
+                    task_id=self._delivery.task_id,
+                    execution_token=self._delivery.execution_token,
+                    content=self._text,
+                    blocks=self._blocks,
+                )
+                if snapshot.get("outcome") == "ownership_lost":
+                    self._cancellation_event.set()
+                    raise asyncio.CancelledError
         except asyncio.CancelledError:
             raise
         except Exception as error:
+            if "OWNERSHIP_LOST" in str(error):
+                self._cancellation_event.set()
+                raise asyncio.CancelledError from error
             logger.warning(
                 "actor_progress_write_failed | "
                 f"task_id={self._delivery.task_id} | "
                 f"error={type(error).__name__}"
             )
+
+    async def _ensure_session(self) -> None:
+        if self._delivery_store is None or self._session is not None:
+            return
+        try:
+            self._session = await self._delivery_store.begin(
+                task_id=self._delivery.task_id,
+                execution_token=self._delivery.execution_token,
+                execution_attempt=self._delivery.execution_attempt,
+                message_id=self._delivery.message_id,
+            )
+        except RuntimeError as error:
+            if "OWNERSHIP_LOST" in str(error):
+                self._cancellation_event.set()
+                raise asyncio.CancelledError from error
+            raise
+
+    async def _append_event(
+        self,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> int | None:
+        if self._delivery_store is None:
+            return None
+        await self._ensure_session()
+        if self._session is None:
+            return None
+        try:
+            result = await self._delivery_store.append(
+                task_id=self._delivery.task_id,
+                execution_token=self._delivery.execution_token,
+                event_type=event_type,
+                payload=payload,
+            )
+        except RuntimeError as error:
+            if "OWNERSHIP_LOST" in str(error):
+                self._cancellation_event.set()
+                raise asyncio.CancelledError from error
+            logger.warning(
+                "actor_delivery_event_append_failed | "
+                f"task_id={self._delivery.task_id} | event={event_type} | "
+                f"error={type(error).__name__}"
+            )
+            return None
+        if result.get("outcome") != "appended":
+            return None
+        return int(result["delivery_seq"])
 
     async def _send(self, message: dict[str, Any]) -> None:
         try:

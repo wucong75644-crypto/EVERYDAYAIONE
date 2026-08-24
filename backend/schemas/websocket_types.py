@@ -92,7 +92,8 @@ class WSBaseMessage(BaseModel):
 class SubscribePayload(BaseModel):
     """订阅消息的 payload"""
     task_id: str
-    last_index: int = -1  # 用于断点续传
+    last_index: int = -1  # 旧客户端字段；现在表示 delivery_seq
+    last_delivery_seq: Optional[int] = None
 
 
 class UnsubscribePayload(BaseModel):
@@ -160,6 +161,13 @@ class SubscribedPayload(BaseModel):
     task_id: str
     accumulated: str = ""
     current_index: int = -1
+    delivery_session_id: Optional[str] = None
+    stream_id: Optional[str] = None
+    execution_attempt: Optional[int] = None
+    delivery_status: Optional[str] = None
+    next_seq: Optional[int] = None
+    snapshot_seq: Optional[int] = None
+    events: list[Dict[str, Any]] = Field(default_factory=list)
 
 
 class ErrorPayload(BaseModel):
