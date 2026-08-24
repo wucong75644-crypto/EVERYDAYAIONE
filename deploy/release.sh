@@ -290,11 +290,11 @@ if [[ -z "$rollback_sha" && -z "$deploy_task_sha" && -z "$deploy_main_sha" ]]; t
     done
     set -u
 
-    for task_file in "${task_files[@]}"; do
+    for task_file in "${task_files[@]-}"; do
         [[ -e "$task_file" ]] || fail "发布文件不存在：$task_file"
     done
     set +u
-    for migration_file in "${migration_files[@]}"; do
+    for migration_file in "${migration_files[@]-}"; do
         [[ -e "$migration_file" ]] || fail "迁移文件不存在：$migration_file"
     done
     set -u
@@ -365,14 +365,14 @@ deploy_args=()
 [[ "$backend_only" == true ]] && deploy_args+=(--backend-only)
 if [[ "$frontend_only" != true ]]; then
     set +u
-    for task_file in "${task_files[@]}"; do
+    for task_file in "${task_files[@]-}"; do
         case "$task_file" in
             backend/migrations/[0-9][0-9][0-9]_*.sql)
                 deploy_args+=(--migration-file "$task_file")
                 ;;
         esac
     done
-    for migration_file in "${migration_files[@]}"; do
+    for migration_file in "${migration_files[@]-}"; do
         deploy_args+=(--migration-file "$migration_file")
     done
     set -u
