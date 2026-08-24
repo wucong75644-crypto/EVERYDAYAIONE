@@ -22,6 +22,7 @@ usage() {
     cat <<'EOF'
 用法：
   ./deploy/release.sh --message "type: description" --file path/to/file [--file ...]
+  ./deploy/release.sh --message "type: description" --file path/to/file --migration-file backend/migrations/NNN_name.sql
   ./deploy/release.sh --message "type: description" --file-list /tmp/release-files.txt
   ./deploy/release.sh --rollback <commit-sha>
 
@@ -29,6 +30,7 @@ usage() {
   --message MSG        本次发布提交信息（提交发布必填）
   --file PATH          明确纳入本次提交的文件，可重复
   --file-list PATH     从本地清单逐行读取发布文件
+  --migration-file PATH  明确执行已存在于目标提交中的正向 SQL 迁移，可重复
   --frontend-only      仅部署前端
   --backend-only       仅部署后端
   --rollback SHA       从指定历史提交部署应用版本，不回滚数据库迁移
@@ -45,6 +47,7 @@ rollback_sha=''
 frontend_only=false
 backend_only=false
 declare -a task_files=()
+declare -a migration_files=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -64,6 +67,11 @@ while [[ $# -gt 0 ]]; do
             while IFS= read -r path; do
                 [[ -n "$path" ]] && task_files+=("$path")
             done < "$2"
+            shift 2
+            ;;
+        --migration-file)
+            [[ $# -ge 2 ]] || fail "--migration-file 缺少参数"
+            migration_files+=("$2")
             shift 2
             ;;
         --frontend-only)
@@ -93,7 +101,7 @@ done
     && fail "--frontend-only 与 --backend-only 不能同时使用"
 
 if [[ -n "$rollback_sha" ]]; then
-    [[ -z "$message" && ${#task_files[@]} -eq 0 ]] \
+    [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#migration_files[@]} -eq 0 ]] \
         || fail "回滚模式不能同时提交新文件"
 else
     [[ -n "$message" ]] || fail "提交发布必须提供 --message"
@@ -106,6 +114,12 @@ for path in "${task_files[@]}"; do
         || fail "非法发布路径：$path"
     [[ "$path" != .env* && "$path" != */.env* && "$path" != .cursor/* && "$path" != .codex/* ]] \
         || fail "发布禁止路径：$path"
+done
+for path in "${migration_files[@]}"; do
+    [[ "$path" != /* && "$path" != ../* && "$path" != */../* && "$path" != .git/* ]] \
+        || fail "非法迁移路径：$path"
+    [[ "$path" == backend/migrations/[0-9][0-9][0-9]_*.sql ]] \
+        || fail "迁移文件必须使用三位编号命名且位于 backend/migrations/：$path"
 done
 set -u
 
@@ -138,6 +152,9 @@ if [[ -z "$rollback_sha" ]]; then
 
     for task_file in "${task_files[@]}"; do
         [[ -e "$task_file" ]] || fail "发布文件不存在：$task_file"
+    done
+    for migration_file in "${migration_files[@]}"; do
+        [[ -e "$migration_file" ]] || fail "迁移文件不存在：$migration_file"
     done
 
     git add -- "${task_files[@]}"
@@ -182,6 +199,9 @@ if [[ "$frontend_only" != true ]]; then
                 deploy_args+=(--migration-file "$task_file")
                 ;;
         esac
+    done
+    for migration_file in "${migration_files[@]}"; do
+        deploy_args+=(--migration-file "$migration_file")
     done
 fi
 if [[ ${#deploy_args[@]} -gt 0 ]]; then
