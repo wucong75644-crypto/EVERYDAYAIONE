@@ -96,6 +96,7 @@ async def test_suspended_org_rejection_happens_before_member_access() -> None:
         code=4003,
         reason="Organization access denied",
     )
+    assert db.table.call_count == 1
 
 
 def test_connection_database_carries_verified_runtime_scope() -> None:
