@@ -47,23 +47,42 @@ bash /tmp/setup-env.sh
 
 ---
 
+## 安全发布流程
+
+正式发布统一使用 `release.sh`，不要直接运行底层 `deploy.sh`：
+
+```bash
+# 提交、推送、合并到 main，并部署生产供测试
+./deploy/release.sh --message "feat: description" --file path/to/file
+
+# 生产测试通过后，确认稳定版本、同步其他任务基座并清理当前工作树
+./deploy/release.sh --merge-and-deploy
+```
+
+每次“提交部署”都会重新提交、合并 `main` 并部署，工作树不会自动删除。
+此时发布的是可回退的候选版本，不会推进稳定版本，也不会修改其他任务的开发基座。
+只有明确执行“清理工作树”时，流程才会确认当前生产候选提交（不重复部署）、创建生产稳定版本标签，并把该稳定 `main`
+合并推送到其他干净的 `codex/task/*` 工作树；发现未提交修改、分支分叉或合并冲突时
+会停止，不会覆盖其他对话。同步成功后才删除当前任务工作树和本地分支，远程分支及
+Git 历史始终保留。
+
 ## 常用命令
 
 ```bash
 # 正常部署（前后端都部署）
-./deploy.sh
+./deploy/release.sh --message "feat: description" --file path/to/file
 
 # 仅部署前端
-./deploy.sh --frontend-only
+./deploy/release.sh --message "feat: frontend change" --file path/to/file --frontend-only
 
 # 仅部署后端
-./deploy.sh --backend-only
+./deploy/release.sh --message "feat: backend change" --file path/to/file --backend-only
 
-# 跳过测试快速部署
-./deploy.sh --skip-test
+# 仅查看底层部署参数帮助（不作为正式发布入口）
+./deploy/deploy.sh --help
 
 # 查看帮助
-./deploy.sh --help
+./deploy/release.sh --help
 ```
 
 ---

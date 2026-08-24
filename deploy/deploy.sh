@@ -420,6 +420,20 @@ ENDSSH
     log_success "前端部署完成"
 }
 
+# 记录本次已通过 readiness 的生产提交，供“清理工作树”做无重复部署的版本确认。
+record_deployed_release() {
+    log_info "记录生产发布版本..."
+
+    remote_exec bash -s << ENDSSH
+        set -e
+        printf 'sha=%s\nscope=%s\n' '${EXPECTED_SHA}' '${DEPLOY_SCOPE}' \
+            | sudo tee '${REMOTE_APP_DIR}/.deployed-release' >/dev/null
+        sudo chmod 0644 '${REMOTE_APP_DIR}/.deployed-release'
+ENDSSH
+
+    log_success "生产发布版本记录完成: ${EXPECTED_SHA}"
+}
+
 # 首次部署 - 服务器初始化
 setup_server() {
     log_info "开始首次部署服务器初始化..."
@@ -525,11 +539,11 @@ main() {
         run_stage "后端迁移与服务发布" deploy_backend
     fi
 
-    run_stage "公网只读健康检查" verify_public_endpoints
-
     local deploy_scope="frontend+backend"
     [ "$FRONTEND_ONLY" = true ] && deploy_scope="frontend"
     [ "$BACKEND_ONLY" = true ] && deploy_scope="backend"
+    run_stage "公网只读健康检查" verify_public_endpoints
+    DEPLOY_SCOPE="$deploy_scope" run_stage "生产提交版本记录" record_deployed_release
     printf 'DEPLOY_RESULT sha=%s scope=%s technical=passed automatic_validation=passed business_acceptance=pending_user log=%s\n' \
         "$EXPECTED_SHA" "$deploy_scope" "$DEPLOY_LOG_FILE"
 }
