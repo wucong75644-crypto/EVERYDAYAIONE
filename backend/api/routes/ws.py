@@ -200,7 +200,7 @@ async def _handle_message(
                     accumulated=accumulated or "",
                     accumulated_blocks=accumulated_blocks or [],
                     current_index=-1,
-                    message_id=task.get("assistant_message_id"),
+                    message_id=delivery_state.get("message_id"),
                     delivery_session_id=delivery_state.get("session_id"),
                     stream_id=delivery_state.get("stream_id"),
                     execution_attempt=delivery_state.get("execution_attempt"),
@@ -565,16 +565,24 @@ async def _get_task_delivery_state(
         data = response.data if response else None
         if isinstance(data, dict) and data.get("outcome") in {"found", "empty"}:
             if data.get("outcome") == "found":
-                return data
+                return {
+                    **data,
+                    "message_id": task.get("assistant_message_id")
+                    or task.get("placeholder_message_id"),
+                }
             return {
                 "snapshot_content": task.get("accumulated_content") or "",
                 "snapshot_blocks": task.get("accumulated_blocks") or [],
                 "delivery_status": task.get("status"),
+                "message_id": task.get("assistant_message_id")
+                or task.get("placeholder_message_id"),
             }
         return {
             "snapshot_content": task.get("accumulated_content") or "",
             "snapshot_blocks": task.get("accumulated_blocks") or [],
             "delivery_status": task.get("status"),
+            "message_id": task.get("assistant_message_id")
+            or task.get("placeholder_message_id"),
         }
     except Exception as error:
         logger.warning(
@@ -584,6 +592,7 @@ async def _get_task_delivery_state(
         return {
             "snapshot_content": accumulated or "",
             "snapshot_blocks": blocks or [],
+            "message_id": None,
         }
 async def _check_and_send_completed_task(conn_id: str, task_id: str, user_id: str):
     """
