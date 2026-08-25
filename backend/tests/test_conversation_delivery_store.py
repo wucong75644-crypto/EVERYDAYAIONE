@@ -57,12 +57,14 @@ async def test_begin_normalizes_session_data_and_append_preserves_fencing_params
         execution_token="token-1",
         event_type="message_chunk",
         payload={"chunk": "新增"},
+        event_id="event-1",
     )
 
     assert session.stream_id == "stream-1"
     assert session.snapshot_content == "旧内容"
     assert result["delivery_seq"] == 1
     assert db.calls[1][1]["p_execution_token"] == "token-1"
+    assert db.calls[1][1]["p_event_id"] == "event-1"
 
 
 @pytest.mark.asyncio
