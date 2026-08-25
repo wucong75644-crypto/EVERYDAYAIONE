@@ -80,6 +80,11 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   // ws ref（避免回调重建）
   const wsRef = useRef(ws);
   wsRef.current = ws;
+  const wsSubscribe = ws.subscribe;
+  const wsSubscribeTask = ws.subscribeTask;
+  const wsUnsubscribeTask = ws.unsubscribeTask;
+  const wsSend = ws.send;
+  const isWsConnected = ws.isConnected;
 
   // 统一消息处理
   useEffect(() => {
@@ -90,8 +95,8 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       operationContextRef,
       chunkBufferRef,
       flushTimerRef,
-      unsubscribeTask: ws.unsubscribeTask,
-      send: ws.send,
+      unsubscribeTask: wsUnsubscribeTask,
+      send: wsSend,
       deliveryCursorRef,
     };
 
@@ -99,7 +104,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
     // 注册所有处理器
     const unsubscribes = Object.entries(handlers).map(([type, handler]) =>
-      ws.subscribe(type as WSMessageType, handler)
+      wsSubscribe(type as WSMessageType, handler)
     );
 
     return () => {
@@ -110,8 +115,9 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
         flushTimerRef.current = null;
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- handler 通过 getState() 获取最新 store，无需依赖 messageStore
-  }, [ws]);
+  // handler 通过 getState() 获取最新 store；只依赖稳定的传输方法，避免
+  // WebSocket hook 每次渲染返回新对象时反复拆装全部消息处理器。
+  }, [wsSubscribe, wsUnsubscribeTask, wsSend]);
 
   // 订阅任务（带映射）
   const subscribeTaskWithMapping = useCallback((taskId: string, conversationId: string) => {
@@ -131,12 +137,12 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   // WebSocket 重连后主动恢复已有任务订阅，并携带最后确认的 delivery_seq。
   // Redis Pub/Sub 不提供断线回放，回放游标必须由客户端重新发送给服务端。
   useEffect(() => {
-    if (!ws.isConnected) return;
+    if (!isWsConnected) return;
     subscribedTasksRef.current.forEach((taskId) => {
       const cursor = deliveryCursorRef.current.get(taskId);
-      ws.subscribeTask(taskId, cursor?.lastSeq ?? 0);
+      wsSubscribeTask(taskId, cursor?.lastSeq ?? 0);
     });
-  }, [ws.isConnected, ws.subscribeTask]);
+  }, [isWsConnected, wsSubscribeTask]);
 
   // subscribeTaskWithMapping ref（用于任务恢复，避免循环依赖）
   const subscribeTaskWithMappingRef = useRef(subscribeTaskWithMapping);
@@ -196,19 +202,18 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       if (state.hydrateComplete) runPhase1();
     });
     return unsub;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Phase 2：WS 就绪后，对 Phase 1 的任务执行 subscribe
   // 幂等：subscribedTasksRef 防止重复订阅
   useEffect(() => {
-    if (!ws.isConnected) return;
+    if (!isWsConnected) return;
     const result = restorationResultRef.current;
     if (!result || (result.chatTasks.length === 0 && result.mediaTasks.length === 0)) return;
 
     logger.info('ws:restore', 'Phase 2: WS connected, subscribing restored tasks');
     subscribeRestoredTasks(result, subscribeTaskWithMappingRef.current);
-  }, [ws.isConnected]);
+  }, [isWsConnected]);
 
   // WS 重连恢复：聊天和媒体都以数据库状态为准，补偿可能遗漏的终态事件。
   async function recoverMissedCompletions() {
@@ -280,7 +285,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   const wasEverConnectedRef = useRef(false);
 
   useEffect(() => {
-    if (!ws.isConnected) return;
+    if (!isWsConnected) return;
 
     // 首次连接由 Phase 1/2 处理，跳过
     if (!wasEverConnectedRef.current) {
@@ -290,14 +295,13 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
     // 重连：检查是否有遗漏的终态事件
     recoverMissedCompletions();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ws.isConnected]);
+  }, [isWsConnected]);
 
   // Phase 4：首次刷新或继续输出后，即使没有发生 WS 重连，也可能错过
   // message_done（例如任务在订阅窗口内完成）。用低频任务状态对账兜底，
   // 不按 token 查库，只在前端仍有 streaming 任务时轮询。
   useEffect(() => {
-    if (!ws.isConnected) return;
+    if (!isWsConnected) return;
 
     const reconcile = () => {
       const store = useMessageStore.getState();
@@ -311,7 +315,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       window.clearTimeout(initialCheck);
       window.clearInterval(interval);
     };
-  }, [ws.isConnected]);
+  }, [isWsConnected]);
 
   // 注册操作上下文
   const registerOperation = useCallback((taskId: string, context: OperationContext) => {
@@ -325,7 +329,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   const handleToolConfirm = useCallback((toolCallId: string) => {
     const request = useMessageStore.getState().toolConfirmRequest;
     if (!request || request.toolCallId !== toolCallId) return;
-    ws.send({
+    wsSend({
       type: 'tool_confirm_response' as const,
       payload: {
         tool_call_id: toolCallId,
@@ -335,12 +339,12 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       },
     });
     useMessageStore.getState().setToolConfirmRequest(null);
-  }, [ws]);
+  }, [wsSend]);
 
   const handleToolReject = useCallback((toolCallId: string) => {
     const request = useMessageStore.getState().toolConfirmRequest;
     if (!request || request.toolCallId !== toolCallId) return;
-    ws.send({
+    wsSend({
       type: 'tool_confirm_response' as const,
       payload: {
         tool_call_id: toolCallId,
@@ -350,14 +354,14 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       },
     });
     useMessageStore.getState().setToolConfirmRequest(null);
-  }, [ws]);
+  }, [wsSend]);
 
   // 用户打断（steer）— InputArea 通过 CustomEvent 触发
   useEffect(() => {
     const handler = (e: Event) => {
       const { taskId, conversationId, message } = (e as CustomEvent).detail;
       if (!taskId || !message) return;
-      ws.send({
+      wsSend({
         type: 'user_steer' as const,
         payload: { task_id: taskId, conversation_id: conversationId, message },
       });
@@ -365,14 +369,14 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     };
     window.addEventListener('chat:user-steer', handler);
     return () => window.removeEventListener('chat:user-steer', handler);
-  }, [ws]);
+  }, [wsSend]);
 
   // 表单提交 — FormBlock 通过 CustomEvent 触发
   useEffect(() => {
     const handler = (e: Event) => {
       const { formType, formData } = (e as CustomEvent).detail;
       if (!formType || !formData) return;
-      ws.send({
+      wsSend({
         type: 'form_submit' as const,
         payload: { form_type: formType, form_data: formData },
       });
@@ -380,11 +384,11 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     };
     window.addEventListener('chat:form-submit', handler);
     return () => window.removeEventListener('chat:form-submit', handler);
-  }, [ws]);
+  }, [wsSend]);
 
   // 表单提交结果 — 后端返回 form_submit_result → 派发到 FormBlock
   useEffect(() => {
-    const unsub = ws.subscribe('form_submit_result' as never, (msg) => {
+    const unsub = wsSubscribe('form_submit_result' as never, (msg) => {
       const payload = msg.payload as { success?: boolean; message?: string };
       window.dispatchEvent(
         new CustomEvent('chat:form-submit-result', { detail: payload }),
@@ -392,7 +396,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       logger.info('ws:form', 'form_submit_result', { success: payload?.success });
     });
     return unsub;
-  }, [ws]);
+  }, [wsSubscribe]);
 
   const contextValue: WebSocketContextValue = {
     isConnected: ws.isConnected,

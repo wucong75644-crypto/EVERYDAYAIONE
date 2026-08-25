@@ -215,6 +215,16 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
             }
           }
 
+          const activeTool = accumulatedBlocks.find(
+            (block) => block.type === 'tool_step' && block.status === 'running',
+          );
+          if (activeTool && activeTool.type === 'tool_step' && activeTool.tool_name) {
+            deps.getStore().setAgentStepHint(
+              conversationId,
+              getToolCallText(activeTool.tool_name),
+            );
+          }
+
           if (task_id && streamId) {
             projection.setDeliveryCursor(
               task_id, streamId, executionAttempt, snapshotSeq ?? 0, true,
@@ -317,7 +327,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       logger.info('ws:tool', 'tool_result', { conversationId: conversation_id, tool: toolName, success });
     },
 
-  content_block_add: (_deps, msg, projection) => {
+  content_block_add: (deps, msg, projection) => {
       const conversation_id = projection.ensureMessageBinding(msg);
       const block = parseContentPart(msg.payload?.block, {
         messageId: msg.message_id,
@@ -330,7 +340,17 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       // 统一投影：工具 running/terminal、文本完整块和其他结构化 block
       // 都经过同一入口，避免某种事件先到时被 Store 静默丢弃。
       projection.projectBlock(conversation_id, block);
+      if (block.type === 'tool_step' && block.tool_call_id && block.status === 'running') {
+        const toolName = typeof block.tool_name === 'string' ? block.tool_name : '';
+        if (toolName) deps.getStore().setAgentStepHint(conversation_id, getToolCallText(toolName));
+      }
       if (block.type === 'tool_step' && block.tool_call_id && block.status !== 'running') {
+        const messageId = deps.getStore().getStreamingMessageId(conversation_id);
+        const currentMessage = messageId ? deps.getStore().getMessage(messageId) : undefined;
+        const hasRunningTool = currentMessage?.content.some(
+          (part) => part.type === 'tool_step' && part.status === 'running',
+        );
+        if (!hasRunningTool) deps.getStore().clearAgentStepHint(conversation_id);
         logger.info('ws:content', 'tool_step_update', {
           conversationId: conversation_id,
           toolCallId: block.tool_call_id,

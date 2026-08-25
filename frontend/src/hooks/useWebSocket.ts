@@ -159,13 +159,14 @@ export function useWebSocket(): UseWebSocketReturn {
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const isCleaningUpRef = useRef(false);
+  // 每个物理连接都有独立的 generation。旧 socket 的异步回调不能再修改
+  // 当前连接状态，也不能触发第二个重连循环。
+  const connectionGenerationRef = useRef(0);
+  const connectInFlightRef = useRef(false);
   // 服务器重启期间的重连不应被误判为认证失败
   const isServerRestartingRef = useRef(false);
   // 用于打破 handleServerRestart <-> connect 循环依赖
   const connectRef = useRef<(() => void) | null>(null);
-  // WS 未连接时缓存订阅请求，连接后自动重发
-  const pendingSubscriptionsRef = useRef<Map<string, number>>(new Map());
   // 多次重连只允许共享同一个 Token 刷新请求。
   const tokenRefreshRef = useRef<Promise<string> | null>(null);
 
@@ -173,7 +174,7 @@ export function useWebSocket(): UseWebSocketReturn {
 
   // 清理函数
   const cleanup = useCallback(() => {
-    isCleaningUpRef.current = true;
+    connectionGenerationRef.current += 1;
 
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
@@ -184,11 +185,15 @@ export function useWebSocket(): UseWebSocketReturn {
       heartbeatIntervalRef.current = null;
     }
     if (wsRef.current) {
-      wsRef.current.close(1000, 'Client cleanup');
+      const socket = wsRef.current;
       wsRef.current = null;
+      if (
+        socket.readyState === WebSocket.OPEN ||
+        socket.readyState === WebSocket.CONNECTING
+      ) {
+        socket.close(1000, 'Client cleanup');
+      }
     }
-
-    isCleaningUpRef.current = false;
   }, []);
 
   // 分发消息给订阅者
@@ -257,124 +262,126 @@ export function useWebSocket(): UseWebSocketReturn {
       return;
     }
 
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
+    const currentReadyState = wsRef.current?.readyState;
+    if (
+      currentReadyState === WebSocket.OPEN ||
+      currentReadyState === WebSocket.CONNECTING ||
+      currentReadyState === WebSocket.CLOSING
+    ) {
       return;
     }
 
-    if (isCleaningUpRef.current) {
+    if (connectInFlightRef.current) {
       return;
     }
 
-    if (isAccessTokenExpired(token)) {
-      logger.info('ws:connection', 'Access token expired or near expiry, refreshing before connect');
-      const refreshPromise = tokenRefreshRef.current || (tokenRefreshRef.current = silentRefresh());
-      try {
-        token = await refreshPromise;
-      } catch {
-        return;
-      } finally {
-        if (tokenRefreshRef.current === refreshPromise) {
-          tokenRefreshRef.current = null;
+    connectInFlightRef.current = true;
+    const requestGeneration = connectionGenerationRef.current;
+
+    try {
+      if (isAccessTokenExpired(token)) {
+        logger.info('ws:connection', 'Access token expired or near expiry, refreshing before connect');
+        const refreshPromise = tokenRefreshRef.current || (tokenRefreshRef.current = silentRefresh());
+        try {
+          token = await refreshPromise;
+        } catch {
+          return;
+        } finally {
+          if (tokenRefreshRef.current === refreshPromise) {
+            tokenRefreshRef.current = null;
+          }
+        }
+        if (!token || !isAuthenticated() || requestGeneration !== connectionGenerationRef.current) {
+          return;
         }
       }
-      if (!token || !isAuthenticated() || isCleaningUpRef.current) {
+      if (requestGeneration !== connectionGenerationRef.current || !isAuthenticated()) {
         return;
       }
-    }
 
-    cleanup();
-    setConnectionState('connecting');
+      // 清掉已经 CLOSED 的旧引用，但不要关闭/替换一个尚在 CONNECTING 的 socket。
+      if (wsRef.current && wsRef.current.readyState === WebSocket.CLOSED) {
+        wsRef.current = null;
+      }
+      const generation = ++connectionGenerationRef.current;
+      setConnectionState('connecting');
 
-    const orgId = localStorage.getItem('current_org_id');
-    const orgParam = orgId ? `&org_id=${encodeURIComponent(orgId)}` : '';
-    const wsUrl = `${getWebSocketUrl()}?token=${encodeURIComponent(token)}${orgParam}`;
-    logger.info('ws:connection', 'Connecting', { url: wsUrl.replace(/token=.*/, 'token=***') });
+      const orgId = localStorage.getItem('current_org_id');
+      const orgParam = orgId ? `&org_id=${encodeURIComponent(orgId)}` : '';
+      const wsUrl = `${getWebSocketUrl()}?token=${encodeURIComponent(token)}${orgParam}`;
+      logger.info('ws:connection', 'Connecting', {
+        url: wsUrl.replace(/token=.*/, 'token=***'),
+        generation,
+      });
 
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
 
-    ws.onopen = () => {
-      logger.info('ws:connection', 'Connected');
-      isServerRestartingRef.current = false;
-      setConnectionState('connected');
-      reconnectAttemptsRef.current = 0;
-      startHeartbeat();
-
-      // 重连后重发 pending 订阅（WS 断线期间缓存的任务订阅）
-      // 多租户隔离：如果 org 已切换，清空旧 org 的 pending 订阅
-      if (pendingSubscriptionsRef.current.size > 0) {
-        const currentOrg = localStorage.getItem('current_org_id') || '';
-        const wsOrg = orgId || '';
-        if (currentOrg !== wsOrg) {
-          logger.info('ws:connection', 'Org changed, clearing pending subscriptions', {
-            oldOrg: wsOrg, newOrg: currentOrg,
-          });
-          pendingSubscriptionsRef.current.clear();
-        } else {
-          logger.info('ws:connection', 'Flushing pending subscriptions', {
-            count: pendingSubscriptionsRef.current.size,
-          });
-          pendingSubscriptionsRef.current.forEach((lastIndex, taskId) => {
-            ws.send(JSON.stringify({
-              type: 'subscribe',
-              payload: {
-                task_id: taskId,
-                last_index: lastIndex,
-                last_delivery_seq: lastIndex,
-              },
-              timestamp: Date.now(),
-            }));
-          });
-          pendingSubscriptionsRef.current.clear();
+      ws.onopen = () => {
+        if (wsRef.current !== ws || connectionGenerationRef.current !== generation) {
+          ws.close(1000, 'Stale WebSocket generation');
+          return;
         }
-      }
-    };
+        logger.info('ws:connection', 'Connected', { generation });
+        isServerRestartingRef.current = false;
+        setConnectionState('connected');
+        reconnectAttemptsRef.current = 0;
+        startHeartbeat();
+        // 逻辑订阅由 WebSocketContext 统一恢复。Hook 只负责物理连接，
+        // 避免这里和 Context 同时发送同一个 subscribe。
+      };
 
-    ws.onclose = (event) => {
-      logger.info('ws:connection', 'Closed', { code: event.code, reason: event.reason });
-      setConnectionState('disconnected');
+      ws.onclose = (event) => {
+        const isCurrent = wsRef.current === ws && connectionGenerationRef.current === generation;
+        logger.info('ws:connection', 'Closed', {
+          code: event.code,
+          reason: event.reason,
+          generation,
+          current: isCurrent,
+        });
+        if (!isCurrent) return;
 
-      if (heartbeatIntervalRef.current) {
-        clearInterval(heartbeatIntervalRef.current);
-        heartbeatIntervalRef.current = null;
-      }
+        wsRef.current = null;
+        connectionGenerationRef.current += 1;
+        setConnectionState('disconnected');
 
-      // 认证失败：只有后端明确返回 4001/4002 才是 token 无效
-      // 1006 是"异常关闭"（网络断开/服务器重启），不代表认证失败
-      const isAuthError =
-        event.code === 4001 ||
-        event.code === 4002;
+        if (heartbeatIntervalRef.current) {
+          clearInterval(heartbeatIntervalRef.current);
+          heartbeatIntervalRef.current = null;
+        }
 
-      if (isAuthError) {
-        logger.warn('ws:connection', 'Auth failed, unified logout', { code: event.code });
-        logoutOnce();
-        return;
-      }
+        // 认证失败：只有后端明确返回 4001/4002 才是 token 无效。
+        const isAuthError = event.code === 4001 || event.code === 4002;
 
-      // 非主动清理时自动重连（含服务器重启 code=1000 的场景）
-      if (
-        !isCleaningUpRef.current &&
-        isAuthenticated()
-      ) {
-        setConnectionState('reconnecting');
-        const delay = getReconnectDelay();
-        reconnectAttemptsRef.current++;
-        logger.info('ws:connection', 'Reconnecting', { delay, attempt: reconnectAttemptsRef.current });
+        if (isAuthError) {
+          logger.warn('ws:connection', 'Auth failed, unified logout', { code: event.code });
+          logoutOnce();
+          return;
+        }
 
-        reconnectTimeoutRef.current = setTimeout(() => {
-          // 使用 ref 调用 connect，避免声明顺序问题
-          connectRef.current?.();
-        }, delay);
-      }
-    };
+        if (isAuthenticated()) {
+          setConnectionState('reconnecting');
+          const delay = getReconnectDelay();
+          reconnectAttemptsRef.current++;
+          logger.info('ws:connection', 'Reconnecting', { delay, attempt: reconnectAttemptsRef.current });
 
-    ws.onerror = () => {
-      logger.error('ws:connection', 'WebSocket error');
-    };
+          reconnectTimeoutRef.current = setTimeout(() => {
+            reconnectTimeoutRef.current = null;
+            connectRef.current?.();
+          }, delay);
+        }
+      };
 
-    ws.onmessage = (event) => {
-      try {
-        const message: WSMessage = JSON.parse(event.data);
+      ws.onerror = () => {
+        if (wsRef.current === ws && connectionGenerationRef.current === generation) {
+          logger.error('ws:connection', 'WebSocket error', { generation });
+        }
+      };
+
+      ws.onmessage = (event) => {
+        if (wsRef.current !== ws || connectionGenerationRef.current !== generation) return;
+        try {
+          const message: WSMessage = JSON.parse(event.data);
 
         // 处理心跳
         if (message.type === 'ping') {
@@ -394,13 +401,16 @@ export function useWebSocket(): UseWebSocketReturn {
           return;
         }
 
-        // 分发消息
-        dispatchMessage(message);
-      } catch (error) {
-        logger.error('ws:message', 'Message parse error', error);
-      }
-    };
-  }, [cleanup, startHeartbeat, getReconnectDelay, dispatchMessage, handleServerRestart]);
+          // 分发消息
+          dispatchMessage(message);
+        } catch (error) {
+          logger.error('ws:message', 'Message parse error', error);
+        }
+      };
+    } finally {
+      connectInFlightRef.current = false;
+    }
+  }, [startHeartbeat, getReconnectDelay, dispatchMessage, handleServerRestart]);
 
   // 更新 connectRef，供 handleServerRestart 使用（避免渲染期间修改 ref）
   useLayoutEffect(() => {
@@ -420,7 +430,7 @@ export function useWebSocket(): UseWebSocketReturn {
     };
   }, []);
 
-  // 订阅任务（WS 未连接时入队列，连接后自动重发）
+  // 订阅任务。断线期间由 WebSocketContext 保存逻辑订阅并在连接恢复后重放。
   const subscribeTask = useCallback((taskId: string, lastIndex: number = -1) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(
@@ -436,8 +446,7 @@ export function useWebSocket(): UseWebSocketReturn {
       );
       logger.info('ws:subscribe', 'Subscribed to task', { taskId });
     } else {
-      pendingSubscriptionsRef.current.set(taskId, lastIndex);
-      logger.info('ws:subscribe', 'Queued pending subscription', { taskId });
+      logger.info('ws:subscribe', 'Deferred subscription until connection recovery', { taskId });
     }
   }, []);
 
@@ -523,7 +532,6 @@ export function useWebSocket(): UseWebSocketReturn {
   // 自动连接
   useEffect(() => {
     if (isAuthenticated()) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       connect();
     }
     return cleanup;

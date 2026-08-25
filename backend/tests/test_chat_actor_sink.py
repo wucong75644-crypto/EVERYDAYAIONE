@@ -48,8 +48,10 @@ class _FailingWebSocket:
 class _DeliveryStore:
     def __init__(self):
         self.events = []
+        self.event_ids = []
         self.snapshots = []
         self._seq = 0
+        self.failures = 0
 
     async def begin(self, **_kwargs):
         from services.conversation_delivery_store import DeliverySession
@@ -64,7 +66,11 @@ class _DeliveryStore:
             snapshot_blocks=[],
         )
 
-    async def append(self, *, event_type, payload, **_kwargs):
+    async def append(self, *, event_type, payload, event_id=None, **_kwargs):
+        self.event_ids.append(event_id)
+        if self.failures:
+            self.failures -= 1
+            raise ConnectionError("temporary delivery store outage")
         self._seq += 1
         self.events.append((event_type, payload))
         return {"outcome": "appended", "delivery_seq": self._seq}
@@ -178,3 +184,40 @@ async def test_sink_block_update_is_ordered_and_persisted():
     assert websocket.messages[-1][3]["payload"]["block"]["status"] == "completed"
     assert websocket.messages[-1][3]["payload"]["delivery_seq"] == 3
     assert delivery_store.snapshots[-1][1] == [completed]
+
+
+@pytest.mark.asyncio
+async def test_sink_retries_delivery_event_with_same_id():
+    delivery_store = _DeliveryStore()
+    delivery_store.failures = 2
+    sink = ActorWebSink(
+        _DB([{"outcome": "updated"}]),
+        _delivery(),
+        asyncio.Event(),
+        _WebSocket(),
+        delivery_store=delivery_store,
+    )
+
+    await sink.start()
+
+    assert len(delivery_store.event_ids) == 3
+    assert len(set(delivery_store.event_ids)) == 1
+
+
+@pytest.mark.asyncio
+async def test_sink_does_not_send_unpersisted_event():
+    delivery_store = _DeliveryStore()
+    delivery_store.failures = 3
+    websocket = _WebSocket()
+    sink = ActorWebSink(
+        _DB([{"outcome": "updated"}]),
+        _delivery(),
+        asyncio.Event(),
+        websocket,
+        delivery_store=delivery_store,
+    )
+
+    with pytest.raises(RuntimeError, match="DELIVERY_EVENT_PERSISTENCE_FAILED"):
+        await sink.start()
+
+    assert websocket.messages == []

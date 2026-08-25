@@ -125,10 +125,18 @@ async def websocket_endpoint(
             except WebSocketDisconnect:
                 raise  # 重新抛出，让外层 except 处理
 
-    except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected normally | conn={conn_id}")
+    except WebSocketDisconnect as error:
+        logger.info(
+            "WebSocket disconnected | "
+            f"conn={conn_id} | code={getattr(error, 'code', None)} | "
+            f"reason={getattr(error, 'reason', None)!r} | user={user_id} | "
+            f"org={verified_org_id}"
+        )
     except Exception as e:
-        logger.error(f"WebSocket error | conn={conn_id} | error={e}")
+        logger.error(
+            "WebSocket error | "
+            f"conn={conn_id} | user={user_id} | org={verified_org_id} | error={e}"
+        )
     finally:
         heartbeat_task.cancel()
         try:

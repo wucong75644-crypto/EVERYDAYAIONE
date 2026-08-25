@@ -6,6 +6,7 @@ from pathlib import Path
 MIGRATIONS = Path(__file__).parent.parent / "migrations"
 MIGRATION = MIGRATIONS / "241_conversation_delivery_session.sql"
 ROLLBACK = MIGRATIONS / "rollback" / "241_conversation_delivery_session_rollback.sql"
+EVENT_ID_MIGRATION = MIGRATIONS / "242_conversation_delivery_event_idempotency.sql"
 
 
 def test_delivery_session_has_fencing_stream_and_snapshot_contract() -> None:
@@ -48,3 +49,14 @@ def test_rollback_drops_trigger_functions_then_tables() -> None:
     assert sql.index("DROP TRIGGER") < sql.index("DROP TABLE")
     assert "DROP TABLE IF EXISTS public.conversation_delivery_events" in sql
     assert "DROP TABLE IF EXISTS public.conversation_delivery_sessions" in sql
+
+
+def test_delivery_event_id_migration_is_retry_safe() -> None:
+    sql = EVENT_ID_MIGRATION.read_text(encoding="utf-8")
+
+    assert "ADD COLUMN IF NOT EXISTS event_id UUID" in sql
+    assert "UNIQUE INDEX IF NOT EXISTS" in sql
+    assert "append_conversation_delivery_event(UUID, UUID, TEXT, JSONB, UUID)" in sql
+    assert "ON CONFLICT (stream_id, event_id) DO NOTHING" in sql
+    assert "DELIVERY_EVENT_ID_REUSE" in sql
+    assert "p_event_id" in sql

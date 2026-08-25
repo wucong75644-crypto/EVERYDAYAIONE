@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,6 +24,8 @@ from services.conversation_delivery_store import (
 
 
 _PERSIST_EVERY_CHUNKS = 20
+_DELIVERY_RETRY_ATTEMPTS = 3
+_DELIVERY_RETRY_BASE_SECONDS = 0.05
 
 
 @dataclass(frozen=True)
@@ -214,47 +217,56 @@ class ActorWebSink:
 
     async def _persist(self) -> None:
         self._chunks_since_persist = 0
-        try:
-            response = await self._db.rpc(
-                "update_generation_progress",
-                {
-                    "p_task_id": self._delivery.task_id,
-                    "p_execution_token": self._delivery.execution_token,
-                    "p_accumulated_content": self._text,
-                    "p_accumulated_blocks": Jsonb(self._blocks),
-                },
-            ).execute()
-            result = response.data if response else None
-            if not isinstance(result, dict):
-                raise RuntimeError("ACTOR_PROGRESS_RESULT_INVALID")
-            if result.get("outcome") in {
-                "ownership_lost",
-                "lease_expired",
-                "terminal",
-            }:
-                self._cancellation_event.set()
-                raise asyncio.CancelledError
-            if self._delivery_store is not None and self._session is not None:
-                snapshot = await self._delivery_store.save_snapshot(
-                    task_id=self._delivery.task_id,
-                    execution_token=self._delivery.execution_token,
-                    content=self._text,
-                    blocks=self._blocks,
-                )
-                if snapshot.get("outcome") == "ownership_lost":
+        last_error: Exception | None = None
+        for attempt in range(_DELIVERY_RETRY_ATTEMPTS):
+            try:
+                response = await self._db.rpc(
+                    "update_generation_progress",
+                    {
+                        "p_task_id": self._delivery.task_id,
+                        "p_execution_token": self._delivery.execution_token,
+                        "p_accumulated_content": self._text,
+                        "p_accumulated_blocks": Jsonb(self._blocks),
+                    },
+                ).execute()
+                result = response.data if response else None
+                if not isinstance(result, dict):
+                    raise RuntimeError("ACTOR_PROGRESS_RESULT_INVALID")
+                if result.get("outcome") in {
+                    "ownership_lost",
+                    "lease_expired",
+                    "terminal",
+                }:
                     self._cancellation_event.set()
                     raise asyncio.CancelledError
-        except asyncio.CancelledError:
-            raise
-        except Exception as error:
-            if "OWNERSHIP_LOST" in str(error):
-                self._cancellation_event.set()
-                raise asyncio.CancelledError from error
-            logger.warning(
-                "actor_progress_write_failed | "
-                f"task_id={self._delivery.task_id} | "
-                f"error={type(error).__name__}"
-            )
+                if self._delivery_store is not None and self._session is not None:
+                    snapshot = await self._delivery_store.save_snapshot(
+                        task_id=self._delivery.task_id,
+                        execution_token=self._delivery.execution_token,
+                        content=self._text,
+                        blocks=self._blocks,
+                    )
+                    if snapshot.get("outcome") == "ownership_lost":
+                        self._cancellation_event.set()
+                        raise asyncio.CancelledError
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                if "OWNERSHIP_LOST" in str(error):
+                    self._cancellation_event.set()
+                    raise asyncio.CancelledError from error
+                last_error = error
+                if attempt + 1 < _DELIVERY_RETRY_ATTEMPTS:
+                    await asyncio.sleep(_DELIVERY_RETRY_BASE_SECONDS * (2 ** attempt))
+
+        logger.error(
+            "actor_progress_write_failed | "
+            f"task_id={self._delivery.task_id} | "
+            f"attempts={_DELIVERY_RETRY_ATTEMPTS} | "
+            f"error={type(last_error).__name__ if last_error else 'unknown'}"
+        )
+        raise RuntimeError("ACTOR_PROGRESS_PERSISTENCE_FAILED") from last_error
 
     async def _ensure_session(self) -> None:
         if self._delivery_store is None or self._session is not None:
@@ -282,26 +294,42 @@ class ActorWebSink:
         await self._ensure_session()
         if self._session is None:
             return None
-        try:
-            result = await self._delivery_store.append(
-                task_id=self._delivery.task_id,
-                execution_token=self._delivery.execution_token,
-                event_type=event_type,
-                payload=payload,
-            )
-        except RuntimeError as error:
-            if "OWNERSHIP_LOST" in str(error):
-                self._cancellation_event.set()
-                raise asyncio.CancelledError from error
-            logger.warning(
-                "actor_delivery_event_append_failed | "
-                f"task_id={self._delivery.task_id} | event={event_type} | "
-                f"error={type(error).__name__}"
-            )
-            return None
-        if result.get("outcome") != "appended":
-            return None
-        return int(result["delivery_seq"])
+        event_id = str(uuid.uuid4())
+        last_error: Exception | None = None
+        for attempt in range(_DELIVERY_RETRY_ATTEMPTS):
+            try:
+                result = await self._delivery_store.append(
+                    task_id=self._delivery.task_id,
+                    execution_token=self._delivery.execution_token,
+                    event_type=event_type,
+                    payload=payload,
+                    event_id=event_id,
+                )
+                if result.get("outcome") != "appended":
+                    raise RuntimeError(
+                        f"DELIVERY_EVENT_APPEND_{result.get('outcome', 'INVALID').upper()}"
+                    )
+                return int(result["delivery_seq"])
+            except RuntimeError as error:
+                if any(
+                    marker in str(error)
+                    for marker in ("OWNERSHIP_LOST", "LEASE_EXPIRED", "TERMINAL")
+                ):
+                    self._cancellation_event.set()
+                    raise asyncio.CancelledError from error
+                last_error = error
+            except Exception as error:
+                last_error = error
+            if attempt + 1 < _DELIVERY_RETRY_ATTEMPTS:
+                await asyncio.sleep(_DELIVERY_RETRY_BASE_SECONDS * (2 ** attempt))
+
+        logger.error(
+            "actor_delivery_event_append_failed | "
+            f"task_id={self._delivery.task_id} | event={event_type} | "
+            f"event_id={event_id} | attempts={_DELIVERY_RETRY_ATTEMPTS} | "
+            f"error={type(last_error).__name__ if last_error else 'unknown'}"
+        )
+        raise RuntimeError("DELIVERY_EVENT_PERSISTENCE_FAILED") from last_error
 
     async def _send(self, message: dict[str, Any]) -> None:
         try:

@@ -172,6 +172,17 @@ class ChatToolResultMixin:
         success: bool,
         summary: str,
     ) -> None:
+        # Actor 交付链路以持久化的 tool_step/content_block_add 为唯一 UI 真源。
+        # _finish_tool_step 会通过 ActorWebSink 写入同一 delivery session；
+        # 这里不再额外发送不可回放的 tool_result，避免断线时两套状态分叉。
+        actor_sink = getattr(self, "_actor_sink", None)
+        if (
+            getattr(self, "_actor_enabled", False) is True
+            and actor_sink is not None
+            and getattr(actor_sink, "on_block_update", None) is not None
+        ):
+            return
+
         from services.handlers import chat_tool_mixin
 
         await chat_tool_mixin.ws_manager.send_to_task_or_user(
