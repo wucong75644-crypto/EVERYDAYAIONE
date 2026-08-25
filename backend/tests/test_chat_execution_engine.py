@@ -13,6 +13,8 @@ from services.handlers.chat.execution_engine import (
     ChatExecutionRequest,
     _stable_actor_tool_call_id,
     _actor_tool_completion_command_id,
+    _execute_tools,
+    _read_turn,
     execute_chat,
 )
 from services.conversation_commands import SafePoint
@@ -74,6 +76,170 @@ def test_actor_tool_completion_command_id_is_bounded_and_stable():
     assert first != reordered
     assert len(first) <= 200
     assert first.startswith("tool-batch:task-1:turn-1:8:")
+
+
+@pytest.mark.asyncio
+async def test_actor_tool_preview_is_emitted_before_arguments_finish():
+    async def stream_chat(**_kwargs):
+        yield SimpleNamespace(
+            content=None,
+            thinking_content=None,
+            tool_calls=[SimpleNamespace(
+                index=0,
+                id="provider-call-1",
+                name="erp_agent",
+                arguments_delta="",
+            )],
+            prompt_tokens=0,
+            completion_tokens=0,
+            credits_consumed=None,
+            finish_reason=None,
+        )
+        yield SimpleNamespace(
+            content=None,
+            thinking_content=None,
+            tool_calls=[SimpleNamespace(
+                index=0,
+                id=None,
+                name=None,
+                arguments_delta='{"query":"近三天订单"}',
+            )],
+            prompt_tokens=0,
+            completion_tokens=0,
+            credits_consumed=None,
+            finish_reason="tool_calls",
+        )
+
+    class Sink:
+        def __init__(self):
+            self.added = []
+            self.updated = []
+
+        async def on_thinking(self, _text):
+            return None
+
+        async def on_text(self, _text):
+            return None
+
+        async def on_block(self, block):
+            self.added.append(dict(block))
+
+        async def on_block_update(self, block):
+            self.updated.append(dict(block))
+
+    prepared = SimpleNamespace(
+        adapter=SimpleNamespace(stream_chat=stream_chat),
+        messages=[],
+        stream_kwargs={},
+    )
+    runtime = ConversationTurnRuntime(
+        conversation_id="conv-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        cancellation_event=asyncio.Event(),
+    )
+    sink = Sink()
+    blocks = []
+
+    _, _, calls, previewed_ids = await _read_turn(
+        prepared,
+        [],
+        asyncio.Event(),
+        sink,
+        SimpleNamespace(
+            text="",
+            thinking="",
+            usage={"prompt_tokens": 0, "completion_tokens": 0},
+            chunk_count=0,
+            last_finish_reason=None,
+        ),
+        blocks,
+        runtime,
+    )
+
+    assert sink.added == [{
+        "type": "tool_step",
+        "tool_name": "erp_agent",
+        "tool_call_id": "actor-call:turn-1:0",
+        "status": "running",
+    }]
+    assert sink.updated == []
+    assert calls[0]["id"] == "actor-call:turn-1:0"
+    assert calls[0]["arguments"] == '{"query":"近三天订单"}'
+    assert previewed_ids == {"actor-call:turn-1:0"}
+
+
+@pytest.mark.asyncio
+async def test_actor_tool_preview_is_updated_before_tool_execution(monkeypatch):
+    order = []
+
+    class Sink:
+        def __init__(self):
+            self.added = []
+            self.updated = []
+
+        async def on_block(self, block):
+            self.added.append(dict(block))
+
+        async def on_block_update(self, block):
+            order.append("update")
+            self.updated.append(dict(block))
+
+    async def execute_tool_calls(*_args, **_kwargs):
+        order.append("execute")
+        call = _args[0][0]
+        return [(call, "查询完成", False, "查询完成")]
+
+    monkeypatch.setattr(
+        "services.handlers.chat.execution_engine.compact_tool_context",
+        lambda **_kwargs: asyncio.sleep(0),
+    )
+    handler = SimpleNamespace(
+        _execute_tool_calls=execute_tool_calls,
+        _get_conv_source=lambda _conversation_id: "web",
+        _pending_emit_payloads=[],
+    )
+    call = {
+        "id": "actor-call:turn-1:0",
+        "name": "erp_agent",
+        "arguments": '{"query":"近三天订单"}',
+    }
+    blocks = [{
+        "type": "tool_step",
+        "tool_name": "erp_agent",
+        "tool_call_id": call["id"],
+        "status": "running",
+    }]
+    prepared = SimpleNamespace(
+        messages=[],
+        budget=SimpleNamespace(),
+        tool_context=SimpleNamespace(
+            update_from_result=lambda *_args: None,
+        ),
+    )
+    request = SimpleNamespace(
+        task_id="task-1",
+        conversation_id="conv-1",
+        message_id="message-1",
+        user_id="user-1",
+    )
+
+    await _execute_tools(
+        handler=handler,
+        request=request,
+        prepared=prepared,
+        turn=0,
+        turn_text="",
+        calls=[call],
+        previewed_call_ids={call["id"]},
+        cancellation_event=asyncio.Event(),
+        sink=Sink(),
+        blocks=blocks,
+        runtime=None,
+    )
+
+    assert order == ["update", "execute"]
+    assert len(blocks) == 1
 
 
 @pytest.mark.asyncio

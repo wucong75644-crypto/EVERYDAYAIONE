@@ -179,12 +179,13 @@ async def _run_loop(
             tool_context=prepared.tool_context,
             permission=prepared.permission,
         )
-        turn_text, turn_thinking, calls = await _read_turn(
+        turn_text, turn_thinking, calls, previewed_call_ids = await _read_turn(
             prepared,
             tools,
             cancellation_event,
             sink,
             totals,
+            blocks,
             runtime,
         )
         if runtime:
@@ -204,6 +205,7 @@ async def _run_loop(
             turn=turn,
             turn_text=turn_text,
             calls=calls,
+            previewed_call_ids=previewed_call_ids,
             cancellation_event=cancellation_event,
             sink=sink,
             blocks=blocks,
@@ -217,11 +219,14 @@ async def _read_turn(
     cancellation_event: asyncio.Event,
     sink: ExecutionSink,
     totals: StreamTotals,
+    blocks: list[dict[str, Any]],
     runtime: ConversationTurnRuntime | None,
-) -> tuple[str, str, list[dict[str, Any]]]:
+) -> tuple[str, str, list[dict[str, Any]], set[str]]:
     turn_text = ""
     turn_thinking = ""
     calls: dict[int, dict[str, Any]] = {}
+    previewed_indices: set[int] = set()
+    preview_ids: dict[int, str] = {}
     stream = prepared.adapter.stream_chat(
         messages=prepared.messages,
         tools=tools,
@@ -271,19 +276,50 @@ async def _read_turn(
             await sink.on_text(chunk.content)
         if chunk.tool_calls:
             accumulate_tool_call_delta(calls, chunk.tool_calls)
+            if runtime is not None:
+                for index, call in calls.items():
+                    if index in previewed_indices or not call.get("name"):
+                        continue
+                    preview_id = _actor_tool_preview_id(runtime.turn_id, index)
+                    call["id"] = preview_id
+                    preview_ids[index] = preview_id
+                    previewed_indices.add(index)
+                    preview_block = {
+                        "type": "tool_step",
+                        "tool_name": call["name"],
+                        "tool_call_id": preview_id,
+                        "status": "running",
+                    }
+                    if not any(
+                        block.get("tool_call_id") == preview_id
+                        for block in blocks
+                    ):
+                        blocks.append(preview_block)
+                        await sink.on_block(preview_block)
         _accumulate_usage(totals, chunk)
-    ordered_calls = [calls[index] for index in sorted(calls)]
+    ordered_indices = sorted(calls)
+    ordered_calls = [calls[index] for index in ordered_indices]
+    previewed_call_ids: set[str] = set()
     if runtime:
-        for index, call in enumerate(ordered_calls):
-            call["id"] = _stable_actor_tool_call_id(
-                runtime.turn_id,
-                index,
-                call.get("name", ""),
-                call.get("arguments", ""),
-            )
+        for index, call in zip(ordered_indices, ordered_calls):
+            if index in preview_ids:
+                call["id"] = preview_ids[index]
+                previewed_call_ids.add(call["id"])
+            else:
+                call["id"] = _stable_actor_tool_call_id(
+                    runtime.turn_id,
+                    index,
+                    call.get("name", ""),
+                    call.get("arguments", ""),
+                )
     else:
         ordered_calls.sort(key=lambda call: call.get("id", ""))
-    return turn_text, turn_thinking, ordered_calls
+    return turn_text, turn_thinking, ordered_calls, previewed_call_ids
+
+
+def _actor_tool_preview_id(turn_id: str, index: int) -> str:
+    """Return an ID shared by preview/final steps; args hash stays in the ledger."""
+    return f"actor-call:{turn_id}:{index}"
 
 
 def _stable_actor_tool_call_id(
@@ -338,6 +374,7 @@ async def _execute_tools(
     turn: int,
     turn_text: str,
     calls: list[dict[str, Any]],
+    previewed_call_ids: set[str],
     cancellation_event: asyncio.Event,
     sink: ExecutionSink,
     blocks: list[dict[str, Any]],
@@ -347,9 +384,18 @@ async def _execute_tools(
     start_times: dict[str, float] = {}
     for call in calls:
         block = build_running_step(call)
-        blocks.append(block)
         start_times[call["id"]] = time.monotonic()
-        await sink.on_block(block)
+        if call["id"] in previewed_call_ids:
+            for index, existing in enumerate(blocks):
+                if existing.get("tool_call_id") == call["id"]:
+                    blocks[index] = block
+                    break
+            else:
+                blocks.append(block)
+            await sink.on_block_update(block)
+        else:
+            blocks.append(block)
+            await sink.on_block(block)
     if runtime:
         runtime.set_state(ConversationState.WAITING_TOOL)
         await runtime.safe_point(SafePoint.BEFORE_TOOL)
