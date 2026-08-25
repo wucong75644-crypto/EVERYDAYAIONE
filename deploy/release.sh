@@ -24,6 +24,7 @@ usage() {
   ./deploy/release.sh --message "type: description" --file path/to/file [--file ...]
   ./deploy/release.sh --message "type: description" --file path/to/file --migration-file backend/migrations/NNN_name.sql
   ./deploy/release.sh --message "type: description" --file-list /tmp/release-files.txt
+  ./deploy/release.sh --deploy-main <commit-sha>
   ./deploy/release.sh --rollback <commit-sha>
 
 选项：
@@ -31,6 +32,7 @@ usage() {
   --file PATH          明确纳入本次提交的文件，可重复
   --file-list PATH     从本地清单逐行读取发布文件
   --migration-file PATH  明确执行已存在于目标提交中的正向 SQL 迁移，可重复
+  --deploy-main SHA    仅从已合并到 origin/main 的确定提交部署
   --frontend-only      仅部署前端
   --backend-only       仅部署后端
   --rollback SHA       从指定历史提交部署应用版本，不回滚数据库迁移
@@ -44,6 +46,7 @@ cd "$repo_root"
 
 message=''
 rollback_sha=''
+deploy_main_sha=''
 frontend_only=false
 backend_only=false
 declare -a task_files=()
@@ -87,6 +90,11 @@ while [[ $# -gt 0 ]]; do
             rollback_sha=$2
             shift 2
             ;;
+        --deploy-main)
+            [[ $# -ge 2 ]] || fail "--deploy-main 缺少提交 SHA"
+            deploy_main_sha=$2
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -99,6 +107,8 @@ done
 
 [[ "$frontend_only" == true && "$backend_only" == true ]] \
     && fail "--frontend-only 与 --backend-only 不能同时使用"
+[[ -n "$rollback_sha" && -n "$deploy_main_sha" ]] \
+    && fail "--rollback 与 --deploy-main 不能同时使用"
 
 # macOS 自带 Bash 在 nounset 模式下对空数组的长度展开不兼容；发布入口
 # 必须允许“未指定迁移文件”的正常发布路径通过参数校验。
@@ -106,6 +116,9 @@ set +u
 if [[ -n "$rollback_sha" ]]; then
     [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#migration_files[@]} -eq 0 ]] \
         || fail "回滚模式不能同时提交新文件"
+elif [[ -n "$deploy_main_sha" ]]; then
+    [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#migration_files[@]} -eq 0 ]] \
+        || fail "--deploy-main 不能同时提交新文件"
 else
     [[ -n "$message" ]] || fail "提交发布必须提供 --message"
     [[ ${#task_files[@]} -gt 0 ]] || fail "提交发布必须至少提供一个 --file"
@@ -129,7 +142,7 @@ if [[ -n ${migration_files[*]-} ]]; then
 fi
 set -u
 
-if [[ -z "$rollback_sha" ]]; then
+if [[ -z "$rollback_sha" && -z "$deploy_main_sha" ]]; then
     git diff --cached --quiet || fail "已有暂存内容，无法确认其是否属于本次发布"
 
     declare -a changed_files=()
@@ -173,6 +186,15 @@ if [[ -z "$rollback_sha" ]]; then
         || fail "当前不是分支，拒绝自动推送"
     git push origin "$branch"
     info "提交并推送完成：$commit_sha"
+elif [[ -n "$deploy_main_sha" ]]; then
+    git cat-file -e "${deploy_main_sha}^{commit}" \
+        || fail "--deploy-main 目标不是有效提交：$deploy_main_sha"
+    origin_main_sha=$(git rev-parse origin/main 2>/dev/null) \
+        || fail "无法读取 origin/main，拒绝发布"
+    git merge-base --is-ancestor "$deploy_main_sha" "$origin_main_sha" \
+        || fail "部署目标不是 origin/main 的已合并提交：$deploy_main_sha"
+    commit_sha=$(git rev-parse "${deploy_main_sha}^{commit}")
+    info "已确认从 origin/main 发布：$commit_sha"
 else
     git cat-file -e "${rollback_sha}^{commit}" \
         || fail "回滚目标不是有效提交：$rollback_sha"
@@ -223,4 +245,5 @@ popd >/dev/null
 
 release_mode=normal
 [[ -n "$rollback_sha" ]] && release_mode=rollback
+[[ -n "$deploy_main_sha" ]] && release_mode=main
 echo "RELEASE_RESULT status=success commit=$commit_sha mode=$release_mode"
