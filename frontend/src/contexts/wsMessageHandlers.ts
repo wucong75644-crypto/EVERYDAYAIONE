@@ -53,7 +53,10 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
 
       if (!projection.acceptDelivery(msg)) return;
       const effectiveMessageId = projection.resolveMessageId(msg);
-      projection.ensureMessageBinding(msg);
+      const conversationId = projection.resolveConversationId(msg);
+      if (conversationId && effectiveMessageId) {
+        deps.getStore().registerStreamingId(conversationId, effectiveMessageId);
+      }
 
       logger.info('ws:message', 'start received', { messageId: effectiveMessageId });
       if (effectiveMessageId) deps.getStore().setStatus(effectiveMessageId, 'streaming');
@@ -111,7 +114,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
     // stream_end：LLM 流结束信号（对标 Anthropic message_stop）。
     // 它只代表模型网络流结束，不代表数据库 commit 已成功；最终状态由
     // message_done/message_error 或暂停/取消恢复事件确认。
-  stream_end: (deps, msg) => {
+  stream_end: (deps, msg, projection) => {
       const { message_id, conversation_id } = msg;
       if (!projection.acceptDelivery(msg)) return;
       logger.info('ws:message', 'stream_end received', { messageId: message_id, conversationId: conversation_id });
@@ -191,7 +194,10 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
             && deliveryStatus !== 'committed'
             && deliveryStatus !== 'failed'
             && deliveryStatus !== 'cancelled';
-          if (shouldBind) projection.ensureBinding(conversationId, messageId);
+          if (shouldBind) {
+            projection.ensureBinding(conversationId, messageId);
+            deps.getStore().registerStreamingId(conversationId, messageId);
+          }
 
           const currentCursor = deps.deliveryCursorRef?.current.get(task_id);
           const shouldRestore = !currentCursor

@@ -170,7 +170,7 @@ describe('wsMessageHandlers', () => {
         conversation_id: 'conv_1',
       });
 
-      expect(store.registerStreamingId).not.toHaveBeenCalled();
+      expect(store.registerStreamingId).toHaveBeenCalledWith('conv_1', 'msg_1');
       expect(store.setStatus).toHaveBeenCalledWith('msg_1', 'streaming');
     });
   });
