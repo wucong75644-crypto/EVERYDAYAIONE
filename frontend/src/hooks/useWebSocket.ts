@@ -14,7 +14,7 @@
 import { useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react';
 import { useAuthStore } from '../stores/useAuthStore';
 import { logger } from '../utils/logger';
-import { logoutOnce } from '../utils/tokenManager';
+import { logoutOnce, silentRefresh } from '../utils/tokenManager';
 
 // === 配置常量 ===
 
@@ -44,6 +44,7 @@ function getWebSocketUrl(): string {
 const HEARTBEAT_INTERVAL = 30000; // 30秒
 const RECONNECT_INTERVAL_BASE = 1000; // 基础重连间隔
 const RECONNECT_INTERVAL_MAX = 30000; // 最大重连间隔（之后每30s重试，无上限）
+const TOKEN_REFRESH_SKEW_MS = 30000;
 
 // === 消息类型 ===
 
@@ -124,6 +125,32 @@ function isAuthenticated(): boolean {
   return !!getToken();
 }
 
+/**
+ * WebSocket 握手失败时浏览器不会暴露服务端的 HTTP 401/403，通常只会
+ * 触发 code=1006。连接前主动检查 JWT 的 exp，避免用过期 token 无限重连。
+ */
+export function isAccessTokenExpired(
+  token: string,
+  nowMs: number = Date.now(),
+  skewMs: number = TOKEN_REFRESH_SKEW_MS,
+): boolean {
+  const payloadPart = token.split('.')[1];
+  if (!payloadPart) return false;
+
+  try {
+    const normalized = payloadPart.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    const payload = JSON.parse(atob(padded)) as { exp?: unknown };
+    return (
+      typeof payload.exp === 'number' &&
+      payload.exp * 1000 <= nowMs + skewMs
+    );
+  } catch {
+    // 非 JWT 或 payload 损坏时交给服务端认证，不因本地解析失败阻断连接。
+    return false;
+  }
+}
+
 // === Hook 实现 ===
 
 export function useWebSocket(): UseWebSocketReturn {
@@ -139,6 +166,8 @@ export function useWebSocket(): UseWebSocketReturn {
   const connectRef = useRef<(() => void) | null>(null);
   // WS 未连接时缓存订阅请求，连接后自动重发
   const pendingSubscriptionsRef = useRef<Map<string, number>>(new Map());
+  // 多次重连只允许共享同一个 Token 刷新请求。
+  const tokenRefreshRef = useRef<Promise<string> | null>(null);
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
 
@@ -221,8 +250,8 @@ export function useWebSocket(): UseWebSocketReturn {
   }, [cleanup]);
 
   // 连接 WebSocket
-  const connect = useCallback(() => {
-    const token = getToken();
+  const connect = useCallback(async () => {
+    let token = getToken();
     if (!token || !isAuthenticated()) {
       logger.info('ws:connection', 'Not authenticated, skip connection');
       return;
@@ -234,6 +263,23 @@ export function useWebSocket(): UseWebSocketReturn {
 
     if (isCleaningUpRef.current) {
       return;
+    }
+
+    if (isAccessTokenExpired(token)) {
+      logger.info('ws:connection', 'Access token expired or near expiry, refreshing before connect');
+      const refreshPromise = tokenRefreshRef.current || (tokenRefreshRef.current = silentRefresh());
+      try {
+        token = await refreshPromise;
+      } catch {
+        return;
+      } finally {
+        if (tokenRefreshRef.current === refreshPromise) {
+          tokenRefreshRef.current = null;
+        }
+      }
+      if (!token || !isAuthenticated() || isCleaningUpRef.current) {
+        return;
+      }
     }
 
     cleanup();
