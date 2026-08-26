@@ -41,6 +41,11 @@ from services.conversation_control_service import (
 
 router = APIRouter(tags=["WebSocket"])
 
+# ``_handle_form_submit`` 曾被少量内部调用方以旧的位置参数方式使用。
+# 哨兵值将“旧调用方未提供 org”与“已验证的 WebSocket 连接没有 org”区分开：
+# 前者仅保留兼容查询，后者绝不越权回退到任意企业。
+_FORM_ORG_UNSPECIFIED = object()
+
 
 async def get_user_from_token(token: str) -> tuple[Optional[str], str]:
     """
@@ -418,7 +423,8 @@ async def _handle_message(
         conversation_id = payload.get("conversation_id", "")
         if form_type and form_data:
             asyncio.create_task(_handle_form_submit(
-                conn_id, user_id, org_id, form_type, form_data, conversation_id,
+                conn_id, user_id, form_type, form_data, conversation_id,
+                org_id=org_id,
             ))
         else:
             await ws_manager.send_to_connection(conn_id, build_error(
@@ -508,10 +514,11 @@ async def _find_task_for_confirmation(
 async def _handle_form_submit(
     conn_id: str,
     user_id: str,
-    org_id: str | None,
     form_type: str,
     form_data: Dict[str, Any],
     conversation_id: str,
+    *,
+    org_id: str | None | object = _FORM_ORG_UNSPECIFIED,
 ) -> None:
     """处理表单提交（异步任务）"""
     import time as _time
@@ -520,7 +527,19 @@ async def _handle_form_submit(
     try:
         db = get_db()
 
-        if not org_id:
+        # 仅为已有的私有 helper 调用保留历史兼容性。真正 WebSocket
+        # 入口总会显式传入经认证的 org_id（包括 None）。
+        if org_id is _FORM_ORG_UNSPECIFIED:
+            org_result = db.table("org_members").select("org_id").eq(
+                "user_id", user_id
+            ).eq("status", "active").limit(1).execute()
+            org_id = (
+                org_result.data[0].get("org_id")
+                if org_result and org_result.data
+                else None
+            )
+
+        if not isinstance(org_id, str) or not org_id:
             await ws_manager.send_to_connection(conn_id, {
                 "type": WSMessageType.FORM_SUBMIT_RESULT.value,
                 "payload": {"success": False, "message": "未找到企业信息"},
