@@ -12,7 +12,6 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react';
-import { useAuthStore } from '../stores/useAuthStore';
 import { logger } from '../utils/logger';
 import { logoutOnce, silentRefresh } from '../utils/tokenManager';
 
@@ -122,10 +121,6 @@ function getToken(): string | null {
   return localStorage.getItem('access_token');
 }
 
-function isAuthenticated(): boolean {
-  return !!getToken();
-}
-
 /**
  * WebSocket 握手失败时浏览器不会暴露服务端的 HTTP 401/403，通常只会
  * 触发 code=1006。连接前主动检查 JWT 的 exp，避免用过期 token 无限重连。
@@ -154,7 +149,10 @@ export function isAccessTokenExpired(
 
 // === Hook 实现 ===
 
-export function useWebSocket(currentOrgId: string | null = null): UseWebSocketReturn {
+export function useWebSocket(
+  currentOrgId: string | null = null,
+  isAuthenticated = false,
+): UseWebSocketReturn {
   const wsRef = useRef<WebSocket | null>(null);
   const handlersRef = useRef<Map<WSMessageType, Set<MessageHandler>>>(new Map());
   const reconnectAttemptsRef = useRef(0);
@@ -172,6 +170,10 @@ export function useWebSocket(currentOrgId: string | null = null): UseWebSocketRe
   const tokenRefreshRef = useRef<Promise<string> | null>(null);
   const requestedOrgIdRef = useRef<string | null>(currentOrgId);
   requestedOrgIdRef.current = currentOrgId;
+  // 认证状态是连接资格的唯一来源；localStorage 中的 token 只用于握手。
+  // 这避免“登录页残留旧 token”被误当成仍处于登录会话。
+  const authenticatedRef = useRef(isAuthenticated);
+  authenticatedRef.current = isAuthenticated;
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
 
@@ -260,7 +262,7 @@ export function useWebSocket(currentOrgId: string | null = null): UseWebSocketRe
   // 连接 WebSocket
   const connect = useCallback(async () => {
     let token = getToken();
-    if (!token || !isAuthenticated()) {
+    if (!token || !authenticatedRef.current) {
       logger.info('ws:connection', 'Not authenticated, skip connection');
       return;
     }
@@ -294,11 +296,11 @@ export function useWebSocket(currentOrgId: string | null = null): UseWebSocketRe
             tokenRefreshRef.current = null;
           }
         }
-        if (!token || !isAuthenticated() || requestGeneration !== connectionGenerationRef.current) {
+        if (!token || !authenticatedRef.current || requestGeneration !== connectionGenerationRef.current) {
           return;
         }
       }
-      if (requestGeneration !== connectionGenerationRef.current || !isAuthenticated()) {
+      if (requestGeneration !== connectionGenerationRef.current || !authenticatedRef.current) {
         return;
       }
 
@@ -371,7 +373,7 @@ export function useWebSocket(currentOrgId: string | null = null): UseWebSocketRe
           return;
         }
 
-        if (isAuthenticated()) {
+        if (authenticatedRef.current && getToken()) {
           setConnectionState('reconnecting');
           const delay = getReconnectDelay();
           reconnectAttemptsRef.current++;
@@ -519,7 +521,7 @@ export function useWebSocket(currentOrgId: string | null = null): UseWebSocketRe
       if (
         document.visibilityState === 'visible' &&
         wsRef.current?.readyState !== WebSocket.OPEN &&
-        isAuthenticated()
+        authenticatedRef.current && getToken()
       ) {
         logger.info('ws:connection', 'Tab visible, reconnecting');
         reconnectAttemptsRef.current = 0;
@@ -536,7 +538,7 @@ export function useWebSocket(currentOrgId: string | null = null): UseWebSocketRe
     const handleOnline = () => {
       if (
         wsRef.current?.readyState !== WebSocket.OPEN &&
-        isAuthenticated()
+        authenticatedRef.current && getToken()
       ) {
         logger.info('ws:connection', 'Network online, reconnecting');
         reconnectAttemptsRef.current = 0;
@@ -548,31 +550,17 @@ export function useWebSocket(currentOrgId: string | null = null): UseWebSocketRe
     return () => window.removeEventListener('online', handleOnline);
   }, []);
 
-  // 监听认证状态变化（Zustand 状态驱动，同 tab 登录/退出也能感知）
+  // 认证状态由 WebSocketContext 作为显式输入传入。它比 localStorage 更早
+  // 表达“未登录/初始化中”，也让登录和登出成为唯一的物理连接边界。
   useEffect(() => {
-    const unsubscribe = useAuthStore.subscribe((state, prevState) => {
-      if (state.isAuthenticated && !prevState.isAuthenticated) {
-        // 登录：建立 WS 连接
-        logger.info('ws:connection', 'Auth state changed to authenticated, connecting');
-        connect();
-      } else if (!state.isAuthenticated && prevState.isAuthenticated) {
-        // 退出：断开 WS 连接
-        logger.info('ws:connection', 'Auth state changed to unauthenticated, disconnecting');
-        cleanup();
-        setConnectionState('disconnected');
-      }
-    });
-
-    return unsubscribe;
-  }, [connect, cleanup]);
-
-  // 自动连接
-  useEffect(() => {
-    if (isAuthenticated()) {
+    if (isAuthenticated) {
       connect();
+    } else {
+      cleanup();
+      setConnectionState('disconnected');
     }
     return cleanup;
-  }, [connect, cleanup]);
+  }, [isAuthenticated, connect, cleanup]);
 
   return {
     connectionState,

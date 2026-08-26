@@ -70,7 +70,7 @@ describe('useWebSocket connection coordination', () => {
   });
 
   it('ignores a stale socket close after a newer socket is connected', async () => {
-    const { result, unmount } = renderHook(() => useWebSocket());
+    const { result, unmount } = renderHook(() => useWebSocket(null, true));
     const first = MockWebSocket.instances[0];
 
     await act(async () => {
@@ -96,7 +96,7 @@ describe('useWebSocket connection coordination', () => {
   it('uses the React organization scope instead of a stale localStorage value', () => {
     localStorage.setItem('current_org_id', 'stale-org');
 
-    const { unmount } = renderHook(() => useWebSocket('active-org'));
+    const { unmount } = renderHook(() => useWebSocket('active-org', true));
 
     expect(MockWebSocket.instances[0]?.url).toContain('org_id=active-org');
     expect(MockWebSocket.instances[0]?.url).not.toContain('stale-org');
@@ -105,7 +105,7 @@ describe('useWebSocket connection coordination', () => {
 
   it('reconnects when the active organization changes', () => {
     const { rerender, unmount } = renderHook(
-      ({ orgId }) => useWebSocket(orgId),
+      ({ orgId }) => useWebSocket(orgId, true),
       { initialProps: { orgId: 'org-a' } },
     );
     const first = MockWebSocket.instances[0];
@@ -118,7 +118,7 @@ describe('useWebSocket connection coordination', () => {
   });
 
   it('closes a connection when the server acknowledges a different organization', async () => {
-    const { result, unmount } = renderHook(() => useWebSocket('org-a'));
+    const { result, unmount } = renderHook(() => useWebSocket('org-a', true));
     const socket = MockWebSocket.instances[0];
 
     await act(async () => {
@@ -134,6 +134,43 @@ describe('useWebSocket connection coordination', () => {
 
     expect(socket.readyState).toBe(MockWebSocket.CLOSED);
     expect(result.current.isConnected).toBe(false);
+    unmount();
+  });
+
+  it('does not connect from a stored token before authentication is ready', () => {
+    const { unmount } = renderHook(() => useWebSocket(null, false));
+
+    expect(MockWebSocket.instances).toHaveLength(0);
+    unmount();
+  });
+
+  it('connects only after authentication becomes ready', () => {
+    const { rerender, unmount } = renderHook(
+      ({ authenticated }) => useWebSocket(null, authenticated),
+      { initialProps: { authenticated: false } },
+    );
+
+    expect(MockWebSocket.instances).toHaveLength(0);
+
+    rerender({ authenticated: true });
+
+    expect(MockWebSocket.instances).toHaveLength(1);
+    unmount();
+  });
+
+  it('disconnects when authentication is cleared', async () => {
+    const { rerender, unmount } = renderHook(
+      ({ authenticated }) => useWebSocket(null, authenticated),
+      { initialProps: { authenticated: true } },
+    );
+    const socket = MockWebSocket.instances[0];
+
+    await act(async () => {
+      socket.open();
+    });
+    rerender({ authenticated: false });
+
+    expect(socket.readyState).toBe(MockWebSocket.CLOSED);
     unmount();
   });
 });
