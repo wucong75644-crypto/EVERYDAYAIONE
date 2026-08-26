@@ -56,8 +56,8 @@ interface WebSocketProviderProps {
 }
 
 export function WebSocketProvider({ children }: WebSocketProviderProps) {
-  const ws = useWebSocket();
   const currentOrgId = useAuthStore((state) => state.currentOrgId);
+  const ws = useWebSocket(currentOrgId);
   // 注意：不订阅整个 store（会导致每次 state 变化重建 handler）
   // handler 内部通过 useMessageStore.getState() 获取最新状态和方法
 

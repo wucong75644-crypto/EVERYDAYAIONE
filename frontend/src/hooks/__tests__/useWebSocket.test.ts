@@ -92,4 +92,48 @@ describe('useWebSocket connection coordination', () => {
     expect(MockWebSocket.instances).toHaveLength(2);
     unmount();
   });
+
+  it('uses the React organization scope instead of a stale localStorage value', () => {
+    localStorage.setItem('current_org_id', 'stale-org');
+
+    const { unmount } = renderHook(() => useWebSocket('active-org'));
+
+    expect(MockWebSocket.instances[0]?.url).toContain('org_id=active-org');
+    expect(MockWebSocket.instances[0]?.url).not.toContain('stale-org');
+    unmount();
+  });
+
+  it('reconnects when the active organization changes', () => {
+    const { rerender, unmount } = renderHook(
+      ({ orgId }) => useWebSocket(orgId),
+      { initialProps: { orgId: 'org-a' } },
+    );
+    const first = MockWebSocket.instances[0];
+
+    rerender({ orgId: 'org-b' });
+
+    expect(first.readyState).toBe(MockWebSocket.CLOSED);
+    expect(MockWebSocket.instances[1]?.url).toContain('org_id=org-b');
+    unmount();
+  });
+
+  it('closes a connection when the server acknowledges a different organization', async () => {
+    const { result, unmount } = renderHook(() => useWebSocket('org-a'));
+    const socket = MockWebSocket.instances[0];
+
+    await act(async () => {
+      socket.open();
+      socket.onmessage?.({
+        data: JSON.stringify({
+          type: 'connection_ready',
+          payload: { org_id: 'org-b' },
+          timestamp: Date.now(),
+        }),
+      });
+    });
+
+    expect(socket.readyState).toBe(MockWebSocket.CLOSED);
+    expect(result.current.isConnected).toBe(false);
+    unmount();
+  });
 });

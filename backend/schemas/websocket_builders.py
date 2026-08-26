@@ -37,6 +37,14 @@ def _build_ws_message(
     return message
 
 
+def build_connection_ready(org_id: Optional[str]) -> Dict[str, Any]:
+    """确认本次 WebSocket 已按服务端验证后的企业 scope 建立。"""
+    return _build_ws_message(
+        WSMessageType.CONNECTION_READY,
+        {"org_id": org_id},
+    )
+
+
 # ============================================================
 # 统一消息构建函数
 # ============================================================

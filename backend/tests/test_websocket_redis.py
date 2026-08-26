@@ -113,6 +113,28 @@ async def test_remote_task_delivery_derives_task_id_for_gate() -> None:
 
 
 @pytest.mark.asyncio
+async def test_remote_task_delivery_filters_task_subscribers_by_org() -> None:
+    manager = WebSocketManager()
+    manager.send_to_connection = AsyncMock(return_value=True)
+    manager._task_subscribers["task-1"] = {"conn-a", "conn-b"}
+    manager._conn_index.update({
+        "conn-a": SimpleNamespace(org_id="org-a"),
+        "conn-b": SimpleNamespace(org_id="org-b"),
+    })
+
+    await manager._deliver_from_redis({
+        "target_type": "task",
+        "target_id": "task-1",
+        "org_id": "org-a",
+        "message": {"type": "content_block_add"},
+    })
+
+    manager.send_to_connection.assert_awaited_once_with(
+        "conn-a", {"type": "content_block_add"},
+    )
+
+
+@pytest.mark.asyncio
 async def test_publish_carries_task_id_for_user_delivery() -> None:
     """user 广播必须带 task_id，远端 Worker 才能执行取消闸门检查。"""
     manager = WebSocketManager()

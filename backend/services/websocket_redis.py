@@ -224,15 +224,25 @@ class RedisPubSubMixin:
         if target_type == "task":
             subscribers = self._task_subscribers.get(target_id, set())
             for conn_id in list(subscribers):
+                connection = self._conn_index.get(conn_id)
+                if not connection or not self._should_deliver_to_connection(
+                    connection,
+                    data.get("org_id"),
+                    task_id=str(task_id or target_id),
+                    path="redis_task",
+                ):
+                    continue
                 await self.send_to_connection(conn_id, message)
 
         elif target_type == "user":
             connections = self._connections.get(target_id, {})
             target_org_id = data.get("org_id")
             for conn_id, connection in list(connections.items()):
-                if (
-                    target_org_id is not None
-                    and connection.org_id != target_org_id
+                if not self._should_deliver_to_connection(
+                    connection,
+                    target_org_id,
+                    task_id=str(task_id or target_id),
+                    path="redis_user",
                 ):
                     continue
                 await self.send_to_connection(conn_id, message)

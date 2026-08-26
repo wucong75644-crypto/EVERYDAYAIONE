@@ -59,6 +59,7 @@ class WSMessageType(str, Enum):
     SUBSCRIBE = "subscribe"
     UNSUBSCRIBE = "unsubscribe"
     SUBSCRIBED = "subscribed"
+    CONNECTION_READY = "connection_ready"
 
     # === 连接管理 ===
     PING = "ping"

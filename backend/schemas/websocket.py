@@ -48,4 +48,5 @@ from schemas.websocket_builders import (  # noqa: F401
     build_tool_result,
     build_tool_confirm_request,
     build_content_block_add,
+    build_connection_ready,
 )

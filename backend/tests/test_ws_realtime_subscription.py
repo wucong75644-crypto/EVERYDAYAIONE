@@ -20,6 +20,11 @@ async def test_subscribe_returns_message_id_without_closing_connection(monkeypat
     monkeypatch.setattr(ws, "ws_manager", manager)
     monkeypatch.setattr(
         ws,
+        "_find_task_by_any_id",
+        AsyncMock(return_value={"id": "task-1", "org_id": None}),
+    )
+    monkeypatch.setattr(
+        ws,
         "_get_task_delivery_state",
         AsyncMock(return_value={"message_id": "assistant-1"}),
     )
@@ -37,6 +42,31 @@ async def test_subscribe_returns_message_id_without_closing_connection(monkeypat
     subscribed = manager.send_to_connection.await_args.args[1]
     assert subscribed["type"] == "subscribed"
     assert subscribed["payload"]["message_id"] == "assistant-1"
+
+
+@pytest.mark.asyncio
+async def test_subscribe_rejects_task_from_another_org_before_registering(monkeypatch):
+    manager = SimpleNamespace(
+        subscribe_task=AsyncMock(return_value=True),
+        send_to_connection=AsyncMock(),
+    )
+    monkeypatch.setattr(ws, "ws_manager", manager)
+    monkeypatch.setattr(
+        ws,
+        "_find_task_by_any_id",
+        AsyncMock(return_value={"id": "task-1", "org_id": "org-b"}),
+    )
+
+    await ws._handle_message(
+        "conn-a",
+        "user-1",
+        {"type": "subscribe", "payload": {"task_id": "task-1"}},
+        "org-a",
+    )
+
+    manager.subscribe_task.assert_not_awaited()
+    error = manager.send_to_connection.await_args.args[1]
+    assert error["payload"]["code"] == "SUBSCRIPTION_SCOPE_DENIED"
 
 
 @pytest.mark.asyncio

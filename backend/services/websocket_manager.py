@@ -123,8 +123,41 @@ class WebSocketManager(RedisPubSubMixin):
             self._connections[user_id][conn_id] = connection
             self._conn_index[conn_id] = connection
 
-        logger.info(f"WebSocket connected | user={user_id} | conn={conn_id}")
+        logger.info(
+            f"WebSocket connected | user={user_id} | conn={conn_id} | org={org_id}"
+        )
         return conn_id
+
+    @staticmethod
+    def connection_matches_org(
+        connection: Connection,
+        target_org_id: str | None,
+    ) -> bool:
+        """Return whether a task-scoped delivery may reach this connection.
+
+        A supplied org id is an authoritative tenant boundary and must match
+        exactly.  ``None`` retains the legacy personal/global delivery
+        behaviour; callers for an org task must therefore always propagate its
+        org id instead of relying on the fallback.
+        """
+        return target_org_id is None or connection.org_id == target_org_id
+
+    def _should_deliver_to_connection(
+        self,
+        connection: Connection,
+        target_org_id: str | None,
+        *,
+        task_id: str,
+        path: str,
+    ) -> bool:
+        if self.connection_matches_org(connection, target_org_id):
+            return True
+        logger.debug(
+            "Drop WebSocket delivery due to org scope mismatch | "
+            f"task={task_id} | path={path} | target_org={target_org_id} | "
+            f"connection_org={connection.org_id}"
+        )
+        return False
 
     def _remove_connection(self, conn_id: str) -> Optional[Connection]:
         """从索引中移除连接并清理订阅关系（不获取锁，由调用方保证线程安全）"""
@@ -273,6 +306,11 @@ class WebSocketManager(RedisPubSubMixin):
                     f"task={task_id} | type={message.get('type')}"
                 )
                 return delivered
+            connection = self._conn_index.get(conn_id)
+            if not connection or not self._should_deliver_to_connection(
+                connection, org_id, task_id=task_id, path="local_task",
+            ):
+                continue
             if await self.send_to_connection(conn_id, message):
                 delivered += 1
 
@@ -307,12 +345,20 @@ class WebSocketManager(RedisPubSubMixin):
             return
 
         local_subscribers = self._task_subscribers.get(task_id, set())
-        if local_subscribers:
+        scoped_subscribers = [
+            (conn_id, connection)
+            for conn_id in local_subscribers
+            if (connection := self._conn_index.get(conn_id)) is not None
+            and self._should_deliver_to_connection(
+                connection, org_id, task_id=task_id, path="local_task",
+            )
+        ]
+        if scoped_subscribers:
             logger.info(
                 f"send_to_task_or_user | task={task_id} | "
-                f"path=local_task | count={len(local_subscribers)}"
+                f"path=local_task | count={len(scoped_subscribers)}"
             )
-            for conn_id in list(local_subscribers):
+            for conn_id, _connection in scoped_subscribers:
                 if self.is_in_cancelled_gate(task_id, org_id):
                     logger.debug(
                         f"Drop cancelled task message during local delivery | "
@@ -327,13 +373,17 @@ class WebSocketManager(RedisPubSubMixin):
                     f"send_to_task_or_user | task={task_id} | "
                     f"path=local_user | user={user_id}"
                 )
-                for conn_id in list(local_conns.keys()):
+                for conn_id, connection in list(local_conns.items()):
                     if self.is_in_cancelled_gate(task_id, org_id):
                         logger.debug(
                             f"Drop cancelled task message during local delivery | "
                             f"task={task_id} | type={message.get('type')}"
                         )
                         return
+                    if not self._should_deliver_to_connection(
+                        connection, org_id, task_id=task_id, path="local_user",
+                    ):
+                        continue
                     await self.send_to_connection(conn_id, message)
 
         if self.is_in_cancelled_gate(task_id, org_id):

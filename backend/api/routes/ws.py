@@ -26,6 +26,7 @@ from schemas.websocket import (
     build_message_done,
     build_message_error,
     build_control_result,
+    build_connection_ready,
 )
 from services.websocket_manager import HEARTBEAT_INTERVAL, ws_manager
 from core.database import get_db
@@ -105,6 +106,10 @@ async def websocket_endpoint(
 
     # 2. 注册连接
     conn_id = await ws_manager.connect(websocket, user_id, org_id=verified_org_id)
+    await ws_manager.send_to_connection(
+        conn_id,
+        build_connection_ready(verified_org_id),
+    )
 
     # 3. 启动心跳任务
     heartbeat_task = asyncio.create_task(
@@ -189,6 +194,24 @@ async def _handle_message(
         task_id = payload.get("task_id")
 
         if task_id:
+            task = await _find_task_by_any_id(get_db(), str(task_id), user_id)
+            if not task:
+                await ws_manager.send_to_connection(conn_id, build_error(
+                    "Task not found",
+                    code="TASK_NOT_FOUND",
+                ))
+                return
+            if not _task_matches_connection_org(task, org_id):
+                logger.warning(
+                    "WebSocket subscription scope denied | "
+                    f"conn={conn_id} | task={task_id} | org={org_id}"
+                )
+                await ws_manager.send_to_connection(conn_id, build_error(
+                    "Task does not belong to this organization",
+                    code="SUBSCRIPTION_SCOPE_DENIED",
+                ))
+                return
+
             success = await ws_manager.subscribe_task(conn_id, task_id)
 
             if success:
@@ -198,7 +221,7 @@ async def _handle_message(
                 except (TypeError, ValueError):
                     last_seq = 0
                 delivery_state = await _get_task_delivery_state(
-                    task_id, user_id, last_seq,
+                    task_id, user_id, last_seq, task=task,
                 )
                 accumulated = delivery_state.get("snapshot_content")
                 accumulated_blocks = delivery_state.get("snapshot_blocks")
@@ -221,7 +244,9 @@ async def _handle_message(
                 logger.info(f"Task subscribed | conn={conn_id} | task={task_id} | accumulated_len={len(accumulated or '')} | blocks={len(accumulated_blocks or [])}")
 
                 # 检查任务是否已完成（解决订阅晚于任务完成的问题）
-                await _check_and_send_completed_task(conn_id, task_id, user_id)
+                await _check_and_send_completed_task(
+                    conn_id, task_id, user_id, task=task,
+                )
             else:
                 await ws_manager.send_to_connection(conn_id, build_error(
                     "Connection not found",
@@ -253,6 +278,7 @@ async def _handle_message(
                 conversation_id=str(conversation_id),
                 tool_call_id=str(tool_call_id),
                 approved=bool(approved),
+                org_id=org_id,
             )
             if not persisted and error_code == "CONFIRM_LEGACY":
                 # 仍由旧 ChatGenerateMixin 管理的任务：上下文用于本地 scope 校验，
@@ -306,6 +332,19 @@ async def _handle_message(
         message = payload.get("message", "")
         if task_id and message:
             conversation_id = payload.get("conversation_id")
+            task = await _find_task_by_any_id(get_db(), str(task_id), user_id)
+            if not task or not _task_matches_connection_org(task, org_id):
+                await ws_manager.send_to_connection(conn_id, build_error(
+                    "Task does not belong to this organization",
+                    code="STEER_SCOPE_INVALID",
+                ))
+                return
+            if conversation_id and task.get("conversation_id") != conversation_id:
+                await ws_manager.send_to_connection(conn_id, build_error(
+                    "Task does not belong to this conversation",
+                    code="STEER_SCOPE_INVALID",
+                ))
+                return
             control_tasks = None
             if conversation_id:
                 control_tasks = load_control_tasks(
@@ -379,7 +418,7 @@ async def _handle_message(
         conversation_id = payload.get("conversation_id", "")
         if form_type and form_data:
             asyncio.create_task(_handle_form_submit(
-                conn_id, user_id, form_type, form_data, conversation_id,
+                conn_id, user_id, org_id, form_type, form_data, conversation_id,
             ))
         else:
             await ws_manager.send_to_connection(conn_id, build_error(
@@ -398,12 +437,13 @@ async def _persist_actor_tool_confirmation(
     conversation_id: str,
     tool_call_id: str,
     approved: bool,
+    org_id: str | None = None,
 ) -> tuple[bool, str]:
     """校验审批归属并写入 PostgreSQL；非 Actor 任务不进入控制事件表。"""
     try:
         db = await get_async_db()
         task = await _find_task_for_confirmation(db, task_id, user_id)
-        if not task:
+        if not task or not _task_matches_connection_org(task, org_id):
             return False, "CONFIRM_TASK_NOT_FOUND"
         is_actor = (
             task.get("type") == "chat"
@@ -468,6 +508,7 @@ async def _find_task_for_confirmation(
 async def _handle_form_submit(
     conn_id: str,
     user_id: str,
+    org_id: str | None,
     form_type: str,
     form_data: Dict[str, Any],
     conversation_id: str,
@@ -478,15 +519,6 @@ async def _handle_form_submit(
 
     try:
         db = get_db()
-
-        # 查用户的 org_id
-        member = db.table("org_members") \
-            .select("org_id") \
-            .eq("user_id", user_id) \
-            .eq("status", "active") \
-            .limit(1) \
-            .execute()
-        org_id = member.data[0]["org_id"] if member.data else None
 
         if not org_id:
             await ws_manager.send_to_connection(conn_id, {
@@ -555,11 +587,13 @@ async def _get_task_delivery_state(
     task_id: str,
     user_id: str,
     last_seq: int,
+    *,
+    task: Dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """读取交付会话快照；没有新协议数据时回退到 tasks 快照。"""
     try:
         db = get_db()
-        task = await _find_task_by_any_id(db, task_id, user_id)
+        task = task or await _find_task_by_any_id(db, task_id, user_id)
         if not task or task.get("type") != "chat":
             return {}
         response = db.rpc(
@@ -602,7 +636,13 @@ async def _get_task_delivery_state(
             "snapshot_blocks": blocks or [],
             "message_id": None,
         }
-async def _check_and_send_completed_task(conn_id: str, task_id: str, user_id: str):
+async def _check_and_send_completed_task(
+    conn_id: str,
+    task_id: str,
+    user_id: str,
+    *,
+    task: Dict[str, Any] | None = None,
+):
     """
     检查任务是否已完成，如果已完成则推送完成消息
 
@@ -615,7 +655,7 @@ async def _check_and_send_completed_task(conn_id: str, task_id: str, user_id: st
         db = get_db()
 
         # 1. 查询任务（支持 id 或 external_task_id）
-        task = await _find_task_by_any_id(db, task_id, user_id)
+        task = task or await _find_task_by_any_id(db, task_id, user_id)
         if not task:
             logger.debug(f"Task not found for subscription check | task_id={task_id}")
             return
@@ -708,6 +748,14 @@ async def _find_task_by_any_id(db, task_id: str, user_id: str) -> Optional[Dict[
     ).eq("user_id", user_id).maybe_single().execute()
 
     return result.data if (result and result.data) else None
+
+
+def _task_matches_connection_org(
+    task: Dict[str, Any],
+    connection_org_id: str | None,
+) -> bool:
+    """A task may only be read or controlled from its exact WS tenant scope."""
+    return task.get("org_id") == connection_org_id
 
 
 async def _find_message_by_id(db, message_id: str) -> Optional[Dict[str, Any]]:

@@ -38,7 +38,12 @@ class _DB:
         return _Query(self.row)
 
 
-def _task(*, actor: bool, conversation_id: str = "conversation-1"):
+def _task(
+    *,
+    actor: bool,
+    conversation_id: str = "conversation-1",
+    org_id: str | None = None,
+):
     return {
         "id": "task-1",
         "type": "chat",
@@ -46,6 +51,7 @@ def _task(*, actor: bool, conversation_id: str = "conversation-1"):
         "conversation_id": conversation_id,
         "turn_id": "turn-1",
         "delivery_context": {"actor": actor},
+        "org_id": org_id,
     }
 
 
@@ -109,6 +115,27 @@ async def test_actor_confirmation_rejects_wrong_conversation():
 
     assert persisted is False
     assert code == "CONFIRM_SCOPE_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_actor_confirmation_rejects_another_organization_before_append():
+    db = _DB(_task(actor=True, org_id="org-b"))
+    store = AsyncMock()
+
+    with patch.object(ws, "get_async_db", new=AsyncMock(return_value=db)), \
+         patch.object(ws, "DatabaseConversationCommandStore", return_value=store):
+        persisted, code = await ws._persist_actor_tool_confirmation(
+            user_id="user-1",
+            task_id="task-1",
+            conversation_id="conversation-1",
+            tool_call_id="tool-1",
+            approved=True,
+            org_id="org-a",
+        )
+
+    assert persisted is False
+    assert code == "CONFIRM_TASK_NOT_FOUND"
+    store.append.assert_not_awaited()
 
 
 @pytest.mark.asyncio

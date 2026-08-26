@@ -68,6 +68,7 @@ export type WSMessageType =
   | 'subscribe'
   | 'unsubscribe'
   | 'subscribed'
+  | 'connection_ready'
   | 'conversation_updated'
   | 'server_restarting'
   | 'error'
@@ -153,7 +154,7 @@ export function isAccessTokenExpired(
 
 // === Hook 实现 ===
 
-export function useWebSocket(): UseWebSocketReturn {
+export function useWebSocket(currentOrgId: string | null = null): UseWebSocketReturn {
   const wsRef = useRef<WebSocket | null>(null);
   const handlersRef = useRef<Map<WSMessageType, Set<MessageHandler>>>(new Map());
   const reconnectAttemptsRef = useRef(0);
@@ -169,6 +170,8 @@ export function useWebSocket(): UseWebSocketReturn {
   const connectRef = useRef<(() => void) | null>(null);
   // 多次重连只允许共享同一个 Token 刷新请求。
   const tokenRefreshRef = useRef<Promise<string> | null>(null);
+  const requestedOrgIdRef = useRef<string | null>(currentOrgId);
+  requestedOrgIdRef.current = currentOrgId;
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
 
@@ -304,10 +307,10 @@ export function useWebSocket(): UseWebSocketReturn {
         wsRef.current = null;
       }
       const generation = ++connectionGenerationRef.current;
+      const connectionOrgId = currentOrgId;
       setConnectionState('connecting');
 
-      const orgId = localStorage.getItem('current_org_id');
-      const orgParam = orgId ? `&org_id=${encodeURIComponent(orgId)}` : '';
+      const orgParam = connectionOrgId ? `&org_id=${encodeURIComponent(connectionOrgId)}` : '';
       const wsUrl = `${getWebSocketUrl()}?token=${encodeURIComponent(token)}${orgParam}`;
       logger.info('ws:connection', 'Connecting', {
         url: wsUrl.replace(/token=.*/, 'token=***'),
@@ -318,11 +321,15 @@ export function useWebSocket(): UseWebSocketReturn {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        if (wsRef.current !== ws || connectionGenerationRef.current !== generation) {
+        if (
+          wsRef.current !== ws ||
+          connectionGenerationRef.current !== generation ||
+          connectionOrgId !== requestedOrgIdRef.current
+        ) {
           ws.close(1000, 'Stale WebSocket generation');
           return;
         }
-        logger.info('ws:connection', 'Connected', { generation });
+        logger.info('ws:connection', 'Connected', { generation, orgId: connectionOrgId });
         isServerRestartingRef.current = false;
         setConnectionState('connected');
         reconnectAttemptsRef.current = 0;
@@ -359,6 +366,11 @@ export function useWebSocket(): UseWebSocketReturn {
           return;
         }
 
+        if (event.code === 4003) {
+          logger.error('ws:connection', 'Stopped reconnecting after organization scope mismatch');
+          return;
+        }
+
         if (isAuthenticated()) {
           setConnectionState('reconnecting');
           const delay = getReconnectDelay();
@@ -379,7 +391,11 @@ export function useWebSocket(): UseWebSocketReturn {
       };
 
       ws.onmessage = (event) => {
-        if (wsRef.current !== ws || connectionGenerationRef.current !== generation) return;
+        if (
+          wsRef.current !== ws ||
+          connectionGenerationRef.current !== generation ||
+          connectionOrgId !== requestedOrgIdRef.current
+        ) return;
         try {
           const message: WSMessage = JSON.parse(event.data);
 
@@ -401,6 +417,27 @@ export function useWebSocket(): UseWebSocketReturn {
           return;
         }
 
+        if (message.type === 'connection_ready') {
+          const acknowledgedOrgId =
+            typeof message.payload.org_id === 'string'
+              ? message.payload.org_id
+              : null;
+          if (acknowledgedOrgId !== requestedOrgIdRef.current) {
+            logger.error('ws:connection', 'Server acknowledged an unexpected organization scope', {
+              generation,
+              expectedOrgId: requestedOrgIdRef.current,
+              acknowledgedOrgId,
+            });
+            ws.close(4003, 'Organization scope mismatch');
+            return;
+          }
+          logger.info('ws:connection', 'Organization scope verified', {
+            generation,
+            orgId: acknowledgedOrgId,
+          });
+          return;
+        }
+
           // 分发消息
           dispatchMessage(message);
         } catch (error) {
@@ -410,7 +447,7 @@ export function useWebSocket(): UseWebSocketReturn {
     } finally {
       connectInFlightRef.current = false;
     }
-  }, [startHeartbeat, getReconnectDelay, dispatchMessage, handleServerRestart]);
+  }, [currentOrgId, startHeartbeat, getReconnectDelay, dispatchMessage, handleServerRestart]);
 
   // 更新 connectRef，供 handleServerRestart 使用（避免渲染期间修改 ref）
   useLayoutEffect(() => {

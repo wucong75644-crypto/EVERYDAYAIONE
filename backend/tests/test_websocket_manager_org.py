@@ -51,6 +51,11 @@ class TestSendToUserOrgFilter:
             "conn_b": self.conn_b,
             "conn_p": self.conn_p,
         }
+        self.manager._conn_index.update({
+            "conn_a": self.conn_a,
+            "conn_b": self.conn_b,
+            "conn_p": self.conn_p,
+        })
 
     @pytest.mark.asyncio
     async def test_org_a_only_sends_to_org_a(self):
@@ -95,4 +100,40 @@ class TestSendToUserOrgFilter:
         self.manager._publish.assert_called_once_with(
             "user", "user1", {"type": "message_chunk"},
             org_id=ORG_A, task_id="task-1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_task_delivery_filters_local_task_subscribers_by_org(self):
+        self.manager._task_subscribers["task-1"] = {"conn_a", "conn_b"}
+
+        await self.manager.send_to_task_or_user(
+            "task-1", "user1", {"type": "message_chunk"}, org_id=ORG_A,
+        )
+
+        self.manager.send_to_connection.assert_awaited_once_with(
+            "conn_a", {"type": "message_chunk"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_wrong_org_task_subscriber_does_not_block_matching_user_fallback(self):
+        self.manager._task_subscribers["task-1"] = {"conn_b"}
+
+        await self.manager.send_to_task_or_user(
+            "task-1", "user1", {"type": "message_chunk"}, org_id=ORG_A,
+        )
+
+        self.manager.send_to_connection.assert_awaited_once_with(
+            "conn_a", {"type": "message_chunk"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_task_subscriber_delivery_filters_local_connections_by_org(self):
+        self.manager._task_subscribers["task-1"] = {"conn_a", "conn_b"}
+
+        await self.manager.send_to_task_subscribers(
+            "task-1", {"type": "content_block_add"}, org_id=ORG_A,
+        )
+
+        self.manager.send_to_connection.assert_awaited_once_with(
+            "conn_a", {"type": "content_block_add"},
         )
