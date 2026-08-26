@@ -13,6 +13,8 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from tests.conftest import MockSupabaseClient
 from services.subscription_service import SubscriptionService, KNOWN_MODEL_IDS
@@ -68,3 +70,21 @@ class TestGetModels:
         # 路由函数签名不包含 current_user，直接调用即可
         result = await get_models(service=service)
         assert len(result["models"]) > 0
+
+
+class TestModelsRoutingIntegration:
+    """模型目录 HTTP 集成测试。"""
+
+    def test_unauthenticated_request_returns_models(self, mock_db):
+        """模型目录公开，未登录请求不得触发认证依赖。"""
+        from api.deps import get_db
+        from api.routes.models import router
+
+        app = FastAPI()
+        app.include_router(router, prefix="/api")
+        app.dependency_overrides[get_db] = lambda: mock_db
+
+        response = TestClient(app).get("/api/models")
+
+        assert response.status_code == 200
+        assert len(response.json()["models"]) == len(KNOWN_MODEL_IDS)

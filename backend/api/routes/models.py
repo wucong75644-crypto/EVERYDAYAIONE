@@ -6,15 +6,15 @@
 
 from fastapi import APIRouter, Depends
 
-from api.deps import Database, ScopedDB
+from api.deps import Database
 from schemas.subscription import ModelListResponse
 from services.subscription_service import SubscriptionService
 
 router = APIRouter(prefix="/models", tags=["模型"])
 
 
-def get_subscription_service(db: ScopedDB) -> SubscriptionService:
-    """获取订阅服务实例（租户隔离）"""
+def get_subscription_service(db: Database) -> SubscriptionService:
+    """获取模型目录服务（公开接口不依赖用户或企业上下文）"""
     return SubscriptionService(db)
 
 
