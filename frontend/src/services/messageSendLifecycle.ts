@@ -16,7 +16,7 @@ export interface SendOptions {
   params?: Record<string, unknown>;
   operation?: MessageOperation;
   originalMessageId?: string;
-  subscribeTask?: (taskId: string, conversationId: string) => void;
+  subscribeTask?: (taskId: string, conversationId: string, force?: boolean) => void;
   unsubscribeTask?: (taskId: string) => void;
   identifiers?: SendIdentifiers;
 }
@@ -203,8 +203,13 @@ export function processApiResponse(
       expected: ctx.clientTaskId,
       received: response.task_id,
     });
-    subscribeTask?.(response.task_id, conversationId);
+    // 预订阅使用本地 ID；后端确认了不同 ID 后，旧映射不能留到重连时重放。
+    unsubscribeTask?.(ctx.clientTaskId);
   }
+
+  // 预订阅可能早于任务落库而被服务端拒绝。无论 ID 是否变化，都在
+  // HTTP 确认后强制补订阅一次，取得当前快照与后续实时事件。
+  subscribeTask?.(response.task_id, conversationId, true);
 }
 
 function replaceWithMediaPlaceholder(

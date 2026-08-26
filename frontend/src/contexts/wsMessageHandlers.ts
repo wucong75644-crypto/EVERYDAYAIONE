@@ -416,6 +416,13 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
 
   error: (_deps, msg) => {
       const message = msg.message ?? msg.payload?.message;
+      const code = msg.payload?.code;
+      // 发送请求前的乐观订阅可能先于任务落库；控制命令则永远不会
+      // 创建该临时任务。两种情况都会在 HTTP 响应后完成清理或确认订阅。
+      if (code === 'TASK_NOT_FOUND') {
+        logger.debug('ws:subscribe', 'provisional subscription not found', { error: message });
+        return;
+      }
       logger.error('ws:error', 'error received', undefined, { error: message });
     },
 

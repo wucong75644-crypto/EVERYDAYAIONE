@@ -45,7 +45,7 @@ export interface WebSocketContextValue {
   subscribe: (type: WSMessageType, handler: (msg: WSMessage) => void) => () => void;
   subscribeTask: (taskId: string, lastIndex?: number) => void;
   unsubscribeTask: (taskId: string) => void;
-  subscribeTaskWithMapping: (taskId: string, conversationId: string) => void;
+  subscribeTaskWithMapping: (taskId: string, conversationId: string, force?: boolean) => void;
   registerOperation: (taskId: string, context: OperationContext) => void;
 }
 
@@ -120,8 +120,14 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   }, [wsSubscribe, wsUnsubscribeTask, wsSend]);
 
   // 订阅任务（带映射）
-  const subscribeTaskWithMapping = useCallback((taskId: string, conversationId: string) => {
+  const subscribeTaskWithMapping = useCallback((taskId: string, conversationId: string, force = false) => {
     if (subscribedTasksRef.current.has(taskId)) {
+      if (force) {
+        const cursor = deliveryCursorRef.current.get(taskId);
+        wsRef.current.subscribeTask(taskId, cursor?.lastSeq ?? 0);
+        logger.debug('ws:subscribe', 'confirmed subscription', { taskId, conversationId });
+        return;
+      }
       logger.debug('ws:subscribe', 'already subscribed', { taskId });
       return;
     }
@@ -132,6 +138,15 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     wsRef.current.subscribeTask(taskId, cursor?.lastSeq ?? 0);
 
     logger.debug('ws:subscribe', 'subscribed', { taskId, conversationId });
+  }, []);
+
+  const unsubscribeTaskWithMapping = useCallback((taskId: string) => {
+    subscribedTasksRef.current.delete(taskId);
+    taskConversationMapRef.current.delete(taskId);
+    operationContextRef.current.delete(taskId);
+    deliveryCursorRef.current.delete(taskId);
+    wsRef.current.unsubscribeTask(taskId);
+    logger.debug('ws:subscribe', 'unsubscribed', { taskId });
   }, []);
 
   // WebSocket 重连后主动恢复已有任务订阅，并携带最后确认的 delivery_seq。
@@ -403,7 +418,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     isConnecting: ws.isConnecting,
     subscribe: ws.subscribe,
     subscribeTask: ws.subscribeTask,
-    unsubscribeTask: ws.unsubscribeTask,
+    unsubscribeTask: unsubscribeTaskWithMapping,
     subscribeTaskWithMapping,
     registerOperation,
   };

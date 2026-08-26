@@ -549,6 +549,18 @@ describe('WebSocketContext - Provider & Hook', () => {
       // 应该只订阅一次
       expect(mockWs.subscribeTask).toHaveBeenCalledTimes(1);
     });
+
+    it('should re-subscribe when the generation response confirms the task', () => {
+      const wrapper = createWrapper(mockWs, mockMessageStore);
+      const { result } = renderHook(() => useWebSocketContext(), { wrapper });
+
+      act(() => {
+        result.current.subscribeTaskWithMapping('task_123', 'conv_123');
+        result.current.subscribeTaskWithMapping('task_123', 'conv_123', true);
+      });
+
+      expect(mockWs.subscribeTask).toHaveBeenCalledTimes(2);
+    });
   });
 
   // ========================================

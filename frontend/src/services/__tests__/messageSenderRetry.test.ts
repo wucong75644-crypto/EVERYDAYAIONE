@@ -4,6 +4,7 @@ const store = {
   addMessage: vi.fn(),
   updateMessage: vi.fn(),
   removeMessage: vi.fn(),
+  removeOptimisticMessage: vi.fn(),
   startStreaming: vi.fn(),
   completeStreaming: vi.fn(),
   setIsSending: vi.fn(),
@@ -79,7 +80,29 @@ describe('sendMessage idempotent retry', () => {
     });
     expect(store.addMessage).toHaveBeenCalledTimes(1);
     expect(store.startStreaming).toHaveBeenCalledTimes(1);
+    expect(subscribeTask).toHaveBeenCalledTimes(2);
+    expect(subscribeTask).toHaveBeenLastCalledWith('task-1', 'conv-1', true);
+  });
+
+  it('cleans up the provisional subscription when the input is a control command', async () => {
+    requestMock.mockResolvedValue({
+      kind: 'control',
+      action: 'resume',
+      outcome: 'resumed',
+      conversation_id: 'conv-1',
+      task_id: 'running-task',
+    });
+    const subscribeTask = vi.fn();
+    const unsubscribeTask = vi.fn();
+
+    await expect(sendMessage({
+      conversationId: 'conv-1', content: [{ type: 'text', text: '继续' }],
+      identifiers, subscribeTask, unsubscribeTask,
+    })).resolves.toBe('task-1');
+
     expect(subscribeTask).toHaveBeenCalledTimes(1);
+    expect(unsubscribeTask).toHaveBeenCalledWith('task-1');
+    expect(store.createTask).not.toHaveBeenCalled();
   });
 
   it('keeps optimistic state when network outcome remains uncertain', async () => {
