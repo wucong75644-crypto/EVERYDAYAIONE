@@ -173,6 +173,9 @@ if [[ -z "$rollback_sha" && -z "$deploy_task_sha" && -z "$deploy_main_sha" ]]; t
         } | sort -u
     )
 
+    # macOS Bash + nounset 会把已声明但为空的数组当成未绑定变量。
+    # 干净工作树正是发布的正常状态，因此这段检查必须安全跳过空列表。
+    set +u
     for changed in "${changed_files[@]}"; do
         allowed=false
         for task_file in "${task_files[@]}"; do
@@ -183,6 +186,7 @@ if [[ -z "$rollback_sha" && -z "$deploy_task_sha" && -z "$deploy_main_sha" ]]; t
         done
         [[ "$allowed" == true ]] || fail "工作区存在未列入发布范围的变更：$changed"
     done
+    set -u
 
     for task_file in "${task_files[@]}"; do
         [[ -e "$task_file" ]] || fail "发布文件不存在：$task_file"
