@@ -268,7 +268,11 @@ if [[ "$frontend_only" != true ]]; then
         done
     fi
 fi
-if [[ ${#deploy_args[@]} -gt 0 ]]; then
+set +u
+has_deploy_args=false
+[[ ${#deploy_args[@]} -gt 0 ]] && has_deploy_args=true
+set -u
+if [[ "$has_deploy_args" == true ]]; then
     deploy_command=(bash deploy/deploy.sh "${deploy_args[@]}")
 else
     deploy_command=(bash deploy/deploy.sh)
