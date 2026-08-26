@@ -24,6 +24,7 @@ usage() {
   ./deploy/release.sh --message "type: description" --file path/to/file [--file ...]
   ./deploy/release.sh --message "type: description" --file path/to/file --migration-file backend/migrations/NNN_name.sql
   ./deploy/release.sh --message "type: description" --file-list /tmp/release-files.txt
+  ./deploy/release.sh --deploy-task <commit-sha>
   ./deploy/release.sh --deploy-main <commit-sha>
   ./deploy/release.sh --rollback <commit-sha>
 
@@ -32,6 +33,7 @@ usage() {
   --file PATH          明确纳入本次提交的文件，可重复
   --file-list PATH     从本地清单逐行读取发布文件
   --migration-file PATH  明确执行已存在于目标提交中的正向 SQL 迁移，可重复
+  --deploy-task SHA      重新部署当前任务分支上已推送的确定提交
   --deploy-main SHA    仅从已合并到 origin/main 的确定提交部署
   --frontend-only      仅部署前端
   --backend-only       仅部署后端
@@ -46,6 +48,7 @@ cd "$repo_root"
 
 message=''
 rollback_sha=''
+deploy_task_sha=''
 deploy_main_sha=''
 frontend_only=false
 backend_only=false
@@ -95,6 +98,11 @@ while [[ $# -gt 0 ]]; do
             deploy_main_sha=$2
             shift 2
             ;;
+        --deploy-task)
+            [[ $# -ge 2 ]] || fail "--deploy-task 缺少提交 SHA"
+            deploy_task_sha=$2
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -107,8 +115,12 @@ done
 
 [[ "$frontend_only" == true && "$backend_only" == true ]] \
     && fail "--frontend-only 与 --backend-only 不能同时使用"
-[[ -n "$rollback_sha" && -n "$deploy_main_sha" ]] \
-    && fail "--rollback 与 --deploy-main 不能同时使用"
+release_target_count=0
+[[ -n "$rollback_sha" ]] && ((release_target_count += 1))
+[[ -n "$deploy_task_sha" ]] && ((release_target_count += 1))
+[[ -n "$deploy_main_sha" ]] && ((release_target_count += 1))
+[[ "$release_target_count" -le 1 ]] \
+    || fail "--rollback、--deploy-task 与 --deploy-main 只能指定一个"
 
 # macOS 自带 Bash 在 nounset 模式下对空数组的长度展开不兼容；发布入口
 # 必须允许“未指定迁移文件”的正常发布路径通过参数校验。
@@ -116,6 +128,9 @@ set +u
 if [[ -n "$rollback_sha" ]]; then
     [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#migration_files[@]} -eq 0 ]] \
         || fail "回滚模式不能同时提交新文件"
+elif [[ -n "$deploy_task_sha" ]]; then
+    [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#migration_files[@]} -eq 0 ]] \
+        || fail "--deploy-task 不能同时提交新文件"
 elif [[ -n "$deploy_main_sha" ]]; then
     [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#migration_files[@]} -eq 0 ]] \
         || fail "--deploy-main 不能同时提交新文件"
@@ -142,7 +157,7 @@ if [[ -n ${migration_files[*]-} ]]; then
 fi
 set -u
 
-if [[ -z "$rollback_sha" && -z "$deploy_main_sha" ]]; then
+if [[ -z "$rollback_sha" && -z "$deploy_task_sha" && -z "$deploy_main_sha" ]]; then
     git diff --cached --quiet || fail "已有暂存内容，无法确认其是否属于本次发布"
 
     declare -a changed_files=()
@@ -186,6 +201,20 @@ if [[ -z "$rollback_sha" && -z "$deploy_main_sha" ]]; then
         || fail "当前不是分支，拒绝自动推送"
     git push origin "$branch"
     info "提交并推送完成：$commit_sha"
+elif [[ -n "$deploy_task_sha" ]]; then
+    branch=$(git symbolic-ref --quiet --short HEAD) \
+        || fail "当前不是任务分支，拒绝部署任务提交"
+    [[ "$branch" == codex/task/* ]] \
+        || fail "--deploy-task 仅允许当前 codex/task/* 分支使用"
+    git cat-file -e "${deploy_task_sha}^{commit}" \
+        || fail "--deploy-task 目标不是有效提交：$deploy_task_sha"
+    commit_sha=$(git rev-parse "${deploy_task_sha}^{commit}")
+    git merge-base --is-ancestor "$commit_sha" HEAD \
+        || fail "--deploy-task 目标不属于当前任务分支"
+    remote_sha=$(git ls-remote origin "refs/heads/$branch" | awk '{print $1}')
+    [[ "$remote_sha" == "$commit_sha" ]] \
+        || fail "--deploy-task 目标尚未作为当前任务分支的远端最新提交推送"
+    info "已确认重新部署任务提交：$commit_sha"
 elif [[ -n "$deploy_main_sha" ]]; then
     git cat-file -e "${deploy_main_sha}^{commit}" \
         || fail "--deploy-main 目标不是有效提交：$deploy_main_sha"
@@ -217,6 +246,7 @@ else
     fail "缺少 deploy/config.env，不能执行生产发布"
 fi
 
+release_log="${TMPDIR:-/tmp}/everydayai-release-${commit_sha}.log"
 pushd "$release_worktree" >/dev/null
 chmod +x deploy/deploy.sh
 deploy_args=()
@@ -239,13 +269,20 @@ if [[ "$frontend_only" != true ]]; then
     fi
 fi
 if [[ ${#deploy_args[@]} -gt 0 ]]; then
-    bash deploy/deploy.sh "${deploy_args[@]}"
+    deploy_command=(bash deploy/deploy.sh "${deploy_args[@]}")
 else
-    bash deploy/deploy.sh
+    deploy_command=(bash deploy/deploy.sh)
 fi
+if ! "${deploy_command[@]}" >"$release_log" 2>&1; then
+    echo "RELEASE_RESULT status=failed commit=$commit_sha log=$release_log" >&2
+    tail -n 160 "$release_log" >&2
+    exit 1
+fi
+tail -n 40 "$release_log"
 popd >/dev/null
 
 release_mode=normal
 [[ -n "$rollback_sha" ]] && release_mode=rollback
+[[ -n "$deploy_task_sha" ]] && release_mode=task
 [[ -n "$deploy_main_sha" ]] && release_mode=main
-echo "RELEASE_RESULT status=success commit=$commit_sha mode=$release_mode"
+echo "RELEASE_RESULT status=success commit=$commit_sha mode=$release_mode log=$release_log"
