@@ -395,7 +395,8 @@ export default function MessageArea({
     try {
       const response = await resumeTaskByMessageId(messageId);
       const task = response.tasks?.find(
-        (item) => item.outcome === 'resumed' || item.outcome === 'already_pending',
+        (item) => ['resumed', 'already_pending', 'enqueued', 'already_enqueued']
+          .includes(item.outcome || ''),
       );
       const taskId = task?.client_task_id || task?.external_task_id;
       if (!taskId) {
@@ -403,7 +404,7 @@ export default function MessageArea({
         return;
       }
       const store = useMessageStore.getState();
-      store.registerStreamingId(conversationId, messageId);
+      store.beginResumedStreaming(conversationId, messageId);
       subscribeTaskWithMapping(taskId, conversationId);
     } catch (error) {
       logger.error('messageArea', '继续任务失败', error);

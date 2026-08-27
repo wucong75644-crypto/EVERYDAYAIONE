@@ -195,8 +195,19 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
             && deliveryStatus !== 'failed'
             && deliveryStatus !== 'cancelled';
           if (shouldBind) {
-            projection.ensureBinding(conversationId, messageId);
-            deps.getStore().registerStreamingId(conversationId, messageId);
+            const startsFreshDelivery = deliveryStatus === 'pending'
+              && !streamId
+              && !accumulated
+              && accumulatedBlocks.length === 0;
+            if (startsFreshDelivery) {
+              // RESUME 已原子清空 DeliveryProgress 并删除旧交付会话。刷新
+              // 发生在新 worker claim 之前时，也必须建立空白投影，不能复制
+              // persisted interrupted snapshot。
+              deps.getStore().beginResumedStreaming(conversationId, messageId);
+            } else {
+              projection.ensureBinding(conversationId, messageId);
+              deps.getStore().registerStreamingId(conversationId, messageId);
+            }
           }
 
           const currentCursor = deps.deliveryCursorRef?.current.get(task_id);

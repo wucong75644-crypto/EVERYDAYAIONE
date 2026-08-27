@@ -1,0 +1,3 @@
+-- 243 rollback is intentionally non-destructive.
+-- Both functions are required by the deployed Conversation Actor contract.
+-- Removing them would reintroduce production task failures during a code rollback.

@@ -351,6 +351,52 @@ async def test_executor_consumes_latest_replay_context(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_executor_never_projects_replay_checkpoint_as_new_delivery(monkeypatch):
+    row = {
+        "id": "input-1",
+        "conversation_id": "conv-1",
+        "turn_id": "turn-1",
+        "role": "user",
+        "content": [{"type": "text", "text": "test"}],
+    }
+    store = _ReplayCheckpointStore()
+    store.read_result = {
+        "outcome": "found",
+        "boundary": "after_tool",
+        "payload": {
+            "messages": [{"role": "user", "content": "冻结上下文"}],
+            "content_blocks": [{"type": "text", "text": "旧 partial"}],
+            "turn_index": 1,
+            "tool_call_ids": [],
+        },
+    }
+    sink = SimpleNamespace(seed_progress=lambda *_args: pytest.fail("must not seed delivery"))
+
+    async def fake_execute_chat(**_kwargs):
+        return ChatExecutionResult(
+            parts=[TextPart(text="重新开始")],
+            content_blocks=[{"type": "text", "text": "重新开始"}],
+            usage={},
+            credits_cost=0,
+            tool_digest=None,
+        )
+
+    monkeypatch.setattr(
+        "services.handlers.chat.executor.execute_chat",
+        fake_execute_chat,
+    )
+    executor = ChatGenerationExecutor(
+        _DB(row),
+        lambda _db: SimpleNamespace(org_id=None),
+        handler_db_factory=lambda: object(),
+        replay_checkpoint_store=store,
+        sink_factory=lambda _task, _claim, _event: sink,
+    )
+
+    await executor.execute(_task(), _claim(), asyncio.Event())
+
+
+@pytest.mark.asyncio
 async def test_executor_reuses_commit_ready_checkpoint_without_model_call(monkeypatch):
     row = {
         "id": "input-1",

@@ -1,0 +1,2 @@
+-- 244 rollback is intentionally non-destructive.
+-- Restoring the former RESUME function would reintroduce stale delivery replay.
