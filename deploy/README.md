@@ -87,6 +87,23 @@ bash /tmp/setup-env.sh
 ./release.sh --rollback <commit-sha>
 ```
 
+### 任务发布与验收关闭
+
+开发任务始终在独立 `codex/task/*` 工作树中完成。
+
+- “提交部署”：提交、推送并完整部署当前任务提交，供生产测试；不会合并 `main`。
+- 若当前任务没有新改动但需要再次测试同一提交，使用 `./deploy/release.sh --deploy-task <commit-sha>`；它重新部署已推送的当前任务提交。
+- “清理工作树”：只在用户验收后执行。脚本会核验生产记录的候选提交就是当前任务，合并到 `main` 后再次核对最终代码树与该候选完全一致；一致时同步其他活跃任务的稳定基座并关闭当前任务，**不重复部署**。
+- 若 `main` 在此期间出现额外改动，最终代码树不一致，脚本会停止并保留工作树。此时必须重新提交部署最终版本，不能把未测试代码标记为稳定。
+
+```bash
+# 开始新任务：自动从最新 origin/main 创建独立工作树
+./scripts/task-worktree.sh start task-slug
+
+# 验收通过后：合并、同步稳定基座、关闭；不部署
+./deploy/release.sh --accept-and-close
+```
+
 ---
 
 ## 文件说明
