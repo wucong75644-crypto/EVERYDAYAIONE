@@ -377,10 +377,17 @@ if [[ "$frontend_only" != true ]]; then
     done
     set -u
 fi
+set +u
+if [[ ${#deploy_args[@]} -gt 0 ]]; then
+    deploy_command=(bash deploy/deploy.sh "${deploy_args[@]}")
+else
+    deploy_command=(bash deploy/deploy.sh)
+fi
+set -u
 if ! EVERYDAYAI_RELEASE_CONTEXT=release.sh \
     EVERYDAYAI_RELEASE_COMMIT="$commit_sha" \
     EVERYDAYAI_RELEASE_MODE="$release_mode" \
-    bash deploy/deploy.sh "${deploy_args[@]}" >"$release_log" 2>&1; then
+    "${deploy_command[@]}" >"$release_log" 2>&1; then
     echo "RELEASE_RESULT status=failed commit=$commit_sha log=$release_log" >&2
     tail -n 160 "$release_log" >&2
     exit 1
