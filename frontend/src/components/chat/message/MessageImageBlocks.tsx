@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useInView } from 'react-intersection-observer';
 import { Loader2 } from 'lucide-react';
@@ -10,11 +10,6 @@ import MediaPlaceholder from '../media/MediaPlaceholder';
 import ImageContextMenu from '../media/ImageContextMenu';
 import styles from '../menus/shared.module.css';
 import type { ImageAsset } from '../../../types/message';
-
-const IMAGE_RETRY_CONFIG = {
-  maxRetries: 3,
-  baseDelay: 1000,
-};
 
 interface ImageBlockProps {
   messageId: string;
@@ -36,11 +31,8 @@ export function AiGeneratedImage({
 }) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [retryCount, setRetryCount] = useState(0);
-  const [loadError, setLoadError] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const placeholderNotified = useRef(false);
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { ref: lazyRef, inView } = useInView({
     triggerOnce: true,
@@ -51,49 +43,18 @@ export function AiGeneratedImage({
 
   const aspectRatio = placeholderSize.width / placeholderSize.height;
   const imageUrl = imageAsset?.originalUrl || null;
-  const displayImageUrl = useMemo(
-    () => imageAsset?.thumbnailUrl || toThumbnailImageUrl(imageAsset?.originalUrl, Math.ceil(placeholderSize.width)),
-    [imageAsset, placeholderSize.width],
-  );
-
-  const imageUrlWithRetry = useMemo(() => {
-    if (!displayImageUrl) return null;
-    if (retryCount === 0) return displayImageUrl;
-    const separator = displayImageUrl.includes('?') ? '&' : '?';
-    return `${displayImageUrl}${separator}_retry=${retryCount}`;
-  }, [displayImageUrl, retryCount]);
+  const displayImageUrl = imageAsset?.thumbnailUrl
+    || toThumbnailImageUrl(imageAsset?.originalUrl, Math.ceil(placeholderSize.width));
+  const thumbnail = useThumbnailFallback(displayImageUrl, imageAsset?.originalUrl);
 
   useEffect(() => {
     if (imageUrl) {
       setImageLoaded(false);
-      setRetryCount(0);
-      setLoadError(false);
       placeholderNotified.current = false;
-      if (retryTimerRef.current) {
-        clearTimeout(retryTimerRef.current);
-        retryTimerRef.current = null;
-      }
     }
   }, [imageUrl]);
 
-  useEffect(() => {
-    return () => {
-      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-    };
-  }, []);
-
-  const handleImageError = useCallback(() => {
-    if (retryCount < IMAGE_RETRY_CONFIG.maxRetries) {
-      const delay = IMAGE_RETRY_CONFIG.baseDelay * Math.pow(2, retryCount);
-      retryTimerRef.current = setTimeout(() => {
-        setRetryCount((prev) => prev + 1);
-      }, delay);
-    } else {
-      setLoadError(true);
-    }
-  }, [retryCount]);
-
-  const showPlaceholder = !imageLoaded && !loadError && (isGenerating || !!imageUrl);
+  const showPlaceholder = !imageLoaded && !thumbnail.failed && (isGenerating || !!imageUrl);
   useEffect(() => {
     if (showPlaceholder && !placeholderNotified.current) {
       placeholderNotified.current = true;
@@ -130,7 +91,7 @@ export function AiGeneratedImage({
         <MediaPlaceholder type="image" width={placeholderSize.width} height={placeholderSize.height} />
       )}
 
-      {imageUrl && shouldRender && !loadError && (
+      {imageUrl && shouldRender && !thumbnail.failed && (
         <div
           className={`group cursor-pointer relative inline-block ${styles['dynamic-aspect-ratio']}`}
           style={
@@ -148,14 +109,14 @@ export function AiGeneratedImage({
           aria-label="查看大图"
         >
           <img
-            src={imageUrlWithRetry || displayImageUrl}
+            src={thumbnail.src}
             alt="生成的图片"
             className={`rounded-xl shadow-sm w-full h-auto block transition-opacity duration-200 ${imageLoaded ? 'opacity-100' : 'opacity-0'}`}
             onLoad={() => {
               setImageLoaded(true);
               onMediaLoaded?.();
             }}
-            onError={handleImageError}
+            onError={thumbnail.onError}
           />
           {!imageLoaded && (
             <div className="absolute inset-0 rounded-xl bg-hover dark:bg-surface-dark-card flex items-center justify-center animate-media-pulse">
@@ -191,6 +152,7 @@ export function AiGeneratedImage({
               y={contextMenu.y}
               imageUrl={imageUrl}
               thumbnailUrl={imageAsset?.thumbnailUrl}
+              sourcePart={imageAsset?.sourcePart}
               messageId={messageId}
               onClose={() => setContextMenu(null)}
             />,
@@ -199,7 +161,7 @@ export function AiGeneratedImage({
         </div>
       )}
 
-      {loadError && imageUrl && (
+      {thumbnail.failed && imageUrl && (
         <div
           className="flex flex-col items-center justify-center rounded-xl bg-hover text-text-tertiary"
           style={{ width: placeholderSize.width, height: placeholderSize.height }}
@@ -212,8 +174,8 @@ export function AiGeneratedImage({
             type="button"
             className="mt-2 px-3 py-1 text-xs text-accent hover:text-accent-hover hover:bg-accent-light rounded-full transition-base"
             onClick={() => {
-              setLoadError(false);
-              setRetryCount(0);
+              thumbnail.reset();
+              setImageLoaded(false);
             }}
           >
             点击重试
@@ -276,6 +238,7 @@ function UserImage({
           y={contextMenu.y}
           imageUrl={imageAsset.originalUrl}
           thumbnailUrl={imageAsset.thumbnailUrl}
+          sourcePart={imageAsset.sourcePart}
           messageId={messageId}
           onClose={() => setContextMenu(null)}
         />,

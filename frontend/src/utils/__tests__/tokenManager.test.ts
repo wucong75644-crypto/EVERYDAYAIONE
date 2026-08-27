@@ -150,12 +150,12 @@ describe('silentRefresh', () => {
     expect(mockClearAuth).toHaveBeenCalled();
   });
 
-  it('刷新失败 → 调 logoutOnce + 抛错', async () => {
+  it('网络刷新失败 → 保留登录态并抛错', async () => {
     localStorage.setItem('refresh_token', 'some-rt');
     mockAxiosPost.mockRejectedValueOnce(new Error('Network error'));
 
     await expect(silentRefresh()).rejects.toThrow('Network error');
-    expect(mockClearAuth).toHaveBeenCalled();
+    expect(mockClearAuth).not.toHaveBeenCalled();
   });
 });
 
