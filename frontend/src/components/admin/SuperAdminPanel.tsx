@@ -3,7 +3,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { listAllOrgs, createOrg, searchUser } from '../../services/org';
+import { listAllOrgs, createOrg, searchUser, restoreOrg, suspendOrg } from '../../services/org';
 import type { OrgDetail, SearchUserResult } from '../../services/org';
 
 export default function SuperAdminPanel() {
@@ -18,6 +18,7 @@ export default function SuperAdminPanel() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [transitioningOrgId, setTransitioningOrgId] = useState<string | null>(null);
 
   useEffect(() => {
     loadOrgs();
@@ -81,6 +82,22 @@ export default function SuperAdminPanel() {
       setError(err.response?.data?.detail || '创建失败');
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleLifecycle = async (org: OrgDetail) => {
+    const action = org.status === 'active' ? 'suspend' : 'restore';
+    if (action === 'suspend' && !window.confirm(`确认停用企业「${org.name}」？`)) return;
+    setTransitioningOrgId(org.id);
+    setError('');
+    try {
+      if (action === 'suspend') await suspendOrg(org.id);
+      else await restoreOrg(org.id);
+      await loadOrgs();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || '企业状态更新失败');
+    } finally {
+      setTransitioningOrgId(null);
     }
   };
 
@@ -179,15 +196,25 @@ export default function SuperAdminPanel() {
                   登录链接：{window.location.origin}/login?org={org.id}
                 </div>
               </div>
-              <span
-                className={`text-xs px-2 py-0.5 rounded-full ${
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleLifecycle(org)}
+                  disabled={transitioningOrgId === org.id}
+                  className="text-xs px-2 py-1 border rounded hover:bg-surface-hover disabled:opacity-50"
+                >
+                  {transitioningOrgId === org.id ? '处理中...' : org.status === 'active' ? '停用' : '恢复'}
+                </button>
+                <span
+                  className={`text-xs px-2 py-0.5 rounded-full ${
                   org.status === 'active'
                     ? 'bg-success-light text-success'
                     : 'bg-error-light text-error'
-                }`}
-              >
-                {org.status === 'active' ? '运行中' : '已停用'}
-              </span>
+                  }`}
+                >
+                  {org.status === 'active' ? '运行中' : '已停用'}
+                </span>
+              </div>
             </div>
           ))}
         </div>
