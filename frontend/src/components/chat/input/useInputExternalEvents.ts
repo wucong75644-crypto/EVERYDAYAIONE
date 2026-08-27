@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import { useMessageStore } from '../../../stores/useMessageStore';
 import { logger } from '../../../utils/logger';
 import type { AttachmentSubmissionSnapshot } from '../attachments/ChatAttachment.types';
+import type { ImageInputInfo } from '../../../services/messageSender';
 
 interface UseInputExternalEventsOptions {
   conversationId: string | null;
@@ -11,7 +12,7 @@ interface UseInputExternalEventsOptions {
   handleImageGeneration: (
     conversationId: string,
     prompt: string,
-    imageUrls?: string[] | null,
+    images?: string[] | ImageInputInfo[] | null,
     params?: Record<string, unknown> | null,
   ) => Promise<void>;
   handleChatMessage: (content: string, conversationId: string) => Promise<void>;
@@ -23,18 +24,19 @@ export function useInputExternalEvents(options: UseInputExternalEventsOptions) {
   } = options;
   useEffect(() => {
     const handler = async (event: Event) => {
-      const { images, conversationId } = (event as CustomEvent).detail || {};
-      if (!images || !conversationId) return;
+      const { images: eventImages, conversationId } = (event as CustomEvent).detail || {};
+      if (!eventImages || !conversationId) return;
       try {
-        const imageUrls = attachmentSnapshot.imageUrls;
+        const attachmentImages = attachmentSnapshot.imageInputs;
+        const imageUrls = attachmentImages.map((image) => image.url);
         await handleImageGeneration(
           conversationId,
           prompt || '电商主图生成',
-          imageUrls,
+          attachmentImages,
           {
             generation_type_override: 'image_ecom',
-            image_task_meta: images,
-            num_images: images.length,
+            image_task_meta: eventImages,
+            num_images: eventImages.length,
             product_image_urls: imageUrls,
             style_ref_urls: [],
           },

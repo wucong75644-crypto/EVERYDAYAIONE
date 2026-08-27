@@ -290,14 +290,16 @@ if [[ -z "$rollback_sha" && -z "$deploy_task_sha" && -z "$deploy_main_sha" ]]; t
     done
     set -u
 
-    for task_file in "${task_files[@]}"; do
-        [[ -e "$task_file" ]] || fail "发布文件不存在：$task_file"
-    done
-    set +u
-    for migration_file in "${migration_files[@]}"; do
-        [[ -e "$migration_file" ]] || fail "迁移文件不存在：$migration_file"
-    done
-    set -u
+    if ((${#task_files[@]} > 0)); then
+        for task_file in "${task_files[@]}"; do
+            [[ -e "$task_file" ]] || fail "发布文件不存在：$task_file"
+        done
+    fi
+    if ((${#migration_files[@]} > 0)); then
+        for migration_file in "${migration_files[@]}"; do
+            [[ -e "$migration_file" ]] || fail "迁移文件不存在：$migration_file"
+        done
+    fi
 
     git add -- "${task_files[@]}"
     git diff --cached --quiet && fail "指定文件没有可提交的变更"
@@ -364,18 +366,20 @@ deploy_args=()
 [[ "$frontend_only" == true ]] && deploy_args+=(--frontend-only)
 [[ "$backend_only" == true ]] && deploy_args+=(--backend-only)
 if [[ "$frontend_only" != true ]]; then
-    set +u
-    for task_file in "${task_files[@]}"; do
-        case "$task_file" in
-            backend/migrations/[0-9][0-9][0-9]_*.sql)
-                deploy_args+=(--migration-file "$task_file")
-                ;;
-        esac
-    done
-    for migration_file in "${migration_files[@]}"; do
-        deploy_args+=(--migration-file "$migration_file")
-    done
-    set -u
+    if ((${#task_files[@]} > 0)); then
+        for task_file in "${task_files[@]}"; do
+            case "$task_file" in
+                backend/migrations/[0-9][0-9][0-9]_*.sql)
+                    deploy_args+=(--migration-file "$task_file")
+                    ;;
+            esac
+        done
+    fi
+    if ((${#migration_files[@]} > 0)); then
+        for migration_file in "${migration_files[@]}"; do
+            deploy_args+=(--migration-file "$migration_file")
+        done
+    fi
 fi
 set +u
 if [[ ${#deploy_args[@]} -gt 0 ]]; then
