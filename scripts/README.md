@@ -6,6 +6,7 @@
 
 ```
 scripts/
+├── task-worktree.sh                   # Codex 任务工作树创建、稳定基座同步与关闭
 ├── security/                          # 安全相关脚本
 │   ├── update_env.sh                  # 更新环境变量密钥
 │   └── verify_supabase.py             # 验证 Supabase 连接
@@ -109,6 +110,18 @@ python3 ../scripts/database/run_migration.py
 ---
 
 ## 🔧 维护脚本
+
+### task-worktree.sh
+
+管理 Codex 任务隔离，不直接部署业务代码：
+
+```bash
+# 从最新 origin/main 新建任务工作树
+./scripts/task-worktree.sh start task-slug
+
+# 仅由验收关闭流程调用：同步其他任务的稳定基座，不改它们的代码
+./scripts/task-worktree.sh sync-stable-base --commit <origin-main-sha>
+```
 
 ### clean_placeholder_messages.py
 清理前端占位符遗留的"生成完成"消息。
