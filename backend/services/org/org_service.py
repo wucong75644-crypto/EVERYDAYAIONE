@@ -500,6 +500,34 @@ class OrgService:
         if org_result.data["status"] != "active":
             raise PermissionDeniedError("该企业已被停用")
 
+    def suspend_organization(self, org_id: str) -> dict:
+        """将企业从 active 原子切换为 suspended。"""
+        result = (
+            self.db.table("organizations")
+            .update({"status": "suspended"})
+            .eq("id", org_id)
+            .eq("status", "active")
+            .execute()
+        )
+        if not result.data:
+            raise NotFoundError("企业", org_id)
+        logger.warning("Organization suspended | org_id={}", org_id)
+        return result.data[0]
+
+    def restore_organization(self, org_id: str) -> dict:
+        """将企业从 suspended 原子恢复为 active。"""
+        result = (
+            self.db.table("organizations")
+            .update({"status": "active"})
+            .eq("id", org_id)
+            .eq("status", "suspended")
+            .execute()
+        )
+        if not result.data:
+            raise NotFoundError("企业", org_id)
+        logger.info("Organization restored | org_id={}", org_id)
+        return result.data[0]
+
     def require_role(
         self, org_id: str, user_id: str, allowed_roles: tuple[str, ...],
     ) -> str:

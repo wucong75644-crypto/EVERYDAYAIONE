@@ -14,8 +14,10 @@ from api.deps import CurrentUserId, Database, ScopedDB
 from core.exceptions import AppException
 from services.org.config_resolver import OrgConfigResolver
 from services.org.org_service import OrgService
+from .org_lifecycle import router as lifecycle_router
 
 router = APIRouter(prefix="/org", tags=["企业管理"])
+router.include_router(lifecycle_router)
 
 
 def _get_org_service(db: ScopedDB) -> OrgService:

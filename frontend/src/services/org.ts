@@ -47,6 +47,14 @@ export async function createOrg(name: string, ownerPhone: string): Promise<{ suc
   return request({ method: 'POST', url: '/org', data: { name, owner_phone: ownerPhone } });
 }
 
+export async function suspendOrg(orgId: string): Promise<{ success: boolean; data: OrgDetail }> {
+  return request({ method: 'POST', url: `/org/admin/${orgId}/suspend` });
+}
+
+export async function restoreOrg(orgId: string): Promise<{ success: boolean; data: OrgDetail }> {
+  return request({ method: 'POST', url: `/org/admin/${orgId}/restore` });
+}
+
 // ── 企业管理 API ──
 
 export async function getOrgDetail(orgId: string): Promise<OrgDetail> {
