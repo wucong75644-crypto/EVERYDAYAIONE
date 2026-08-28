@@ -69,3 +69,12 @@ backend/external/
 *.tmp
 
 .claude/worktrees/
+
+# Local assistant state, generated reports, experiments and temporary worktrees.
+# These are never product release files and must not enter task commit selection.
+.codex/
+.cursor/memory/
+frontend/coverage/
+outputs/
+tmp/
+worktrees/

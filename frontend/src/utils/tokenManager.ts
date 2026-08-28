@@ -13,6 +13,13 @@ import { API_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/useAuthStore';
 import { logger } from './logger';
 
+function isDefinitiveRefreshRejection(error: unknown): boolean {
+  if (typeof axios.isAxiosError !== 'function' || !axios.isAxiosError(error)) return false;
+  const status = error.response?.status;
+  return status !== undefined && status >= 400 && status < 500 &&
+    status !== 408 && status !== 429;
+}
+
 // ── 刷新锁 + 等待队列 ────────────────────────────────────
 
 let isRefreshing = false;
@@ -49,7 +56,7 @@ function subscribeTokenRefresh(): Promise<string> {
  *
  * - 并发安全：第一个 401 触发刷新，后续请求排队
  * - 成功后更新 localStorage + Zustand，批量通知队列
- * - 失败则统一登出
+ * - 凭证被明确拒绝时统一登出；网络、超时和服务端故障保留登录态
  *
  * @returns 新的 access_token（或抛错触发登出）
  */
@@ -97,9 +104,17 @@ export async function silentRefresh(): Promise<string> {
 
     return newAccessToken;
   } catch (err) {
-    logger.warn('auth:refresh', 'Refresh failed, logging out');
+    const shouldLogout = isDefinitiveRefreshRejection(err);
+    logger.warn(
+      'auth:refresh',
+      shouldLogout
+        ? 'Refresh token rejected, logging out'
+        : 'Refresh temporarily unavailable, preserving session',
+    );
     onRefreshFailed(err instanceof Error ? err : new Error('Refresh failed'));
-    logoutOnce();
+    if (shouldLogout) {
+      logoutOnce();
+    }
     throw err;
   } finally {
     isRefreshing = false;
