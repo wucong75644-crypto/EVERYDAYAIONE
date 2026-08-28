@@ -17,7 +17,6 @@ from psycopg.types.json import Jsonb
 class DatabaseAccessKind(StrEnum):
     """允许进入普通数据库事务的服务类别。"""
 
-    AGENT_RUNTIME = "agent_runtime"
     AUTHORIZATION = "authorization"
     PROJECTION = "projection"
     RUNTIME = "runtime"

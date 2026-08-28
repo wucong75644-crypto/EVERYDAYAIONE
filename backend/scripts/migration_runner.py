@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import re
 import sys
@@ -18,6 +19,7 @@ from psycopg.rows import dict_row
 
 ROOT = Path(__file__).resolve().parent.parent
 MIGRATIONS_DIR = ROOT / "migrations"
+RETIRED_LEDGER_PATH = MIGRATIONS_DIR / "retired_ledger_checksums.json"
 LEDGER_IDENTITY = "000_migration_ledger.sql"
 LOCK_KEY = "everydayai:schema-migrations:v1"
 ERROR_LIMIT = 2000
@@ -72,6 +74,30 @@ def discover_migrations(directory: Path = MIGRATIONS_DIR) -> list[Migration]:
     return migrations
 
 
+def load_retired_ledger_checksums(
+    path: Path = RETIRED_LEDGER_PATH,
+) -> dict[str, str]:
+    """Load applied migration identities whose executable SQL was retired."""
+    if not path.is_file():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        raise MigrationError("invalid retired migration ledger registry")
+    migrations = payload.get("migrations")
+    if not isinstance(migrations, dict):
+        raise MigrationError("invalid retired migration ledger entries")
+    checksums: dict[str, str] = {}
+    for identity, checksum in migrations.items():
+        if (
+            not isinstance(identity, str)
+            or not isinstance(checksum, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", checksum)
+        ):
+            raise MigrationError("invalid retired migration checksum")
+        checksums[identity] = checksum
+    return checksums
+
+
 def _bootstrap(connection: Any, migration: Migration) -> None:
     with connection.cursor() as cursor:
         cursor.execute(migration.path.read_text(encoding="utf-8"))
@@ -90,16 +116,26 @@ def _ledger_rows(connection: Any) -> dict[str, dict[str, Any]]:
 def validate_ledger(
     migrations: Sequence[Migration],
     rows: dict[str, dict[str, Any]],
+    retired: dict[str, str] | None = None,
 ) -> list[Migration]:
-    """Reject checksum drift, failed history, and unknown ledger identities."""
+    """Reject checksum drift, failed history, and unregistered ledger identities."""
     discovered = {migration.identity: migration for migration in migrations}
-    unknown = sorted(set(rows) - set(discovered))
+    retired = load_retired_ledger_checksums() if retired is None else retired
+    overlap = sorted(set(discovered) & set(retired))
+    if overlap:
+        raise MigrationError(f"migration is both active and retired: {overlap}")
+    known = set(discovered) | set(retired)
+    unknown = sorted(set(rows) - known)
     if unknown:
         raise MigrationError(f"ledger identities missing from repository: {unknown}")
 
     for identity, row in rows.items():
-        migration = discovered[identity]
-        if row["checksum_sha256"] != migration.checksum:
+        expected_checksum = (
+            discovered[identity].checksum
+            if identity in discovered
+            else retired[identity]
+        )
+        if row["checksum_sha256"] != expected_checksum:
             raise MigrationError(f"checksum drift: {identity}")
         if row["status"] != "applied":
             raise MigrationError(f"failed migration requires reconciliation: {identity}")
