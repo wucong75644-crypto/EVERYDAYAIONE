@@ -22,6 +22,7 @@ usage() {
     cat <<'EOF'
 用法：
   ./deploy/release.sh --message "type: description" --file path/to/file [--file ...]
+  ./deploy/release.sh --message "type: description" --source-only-file backend/migrations/NNN_name.sql
   ./deploy/release.sh --message "type: description" --file path/to/file --migration-file backend/migrations/NNN_name.sql
   ./deploy/release.sh --message "type: description" --file-list /tmp/release-files.txt
   ./deploy/release.sh --deploy-task <commit-sha>
@@ -32,6 +33,7 @@ usage() {
 选项：
   --message MSG          本次任务提交信息（提交部署必填）
   --file PATH            明确纳入本次提交的文件，可重复
+  --source-only-file PATH 纳入提交但本次不执行的正向 SQL 迁移，可重复
   --file-list PATH       从本地清单逐行读取发布文件
   --migration-file PATH  明确执行目标提交中已有的正向 SQL 迁移，可重复
   --deploy-task SHA      重新部署当前任务分支上已推送的确定提交
@@ -59,6 +61,7 @@ accept_and_close=false
 frontend_only=false
 backend_only=false
 declare -a task_files=()
+declare -a source_only_files=()
 declare -a migration_files=()
 
 while [[ $# -gt 0 ]]; do
@@ -71,6 +74,11 @@ while [[ $# -gt 0 ]]; do
         --file)
             [[ $# -ge 2 ]] || fail "--file 缺少参数"
             task_files+=("$2")
+            shift 2
+            ;;
+        --source-only-file)
+            [[ $# -ge 2 ]] || fail "--source-only-file 缺少参数"
+            source_only_files+=("$2")
             shift 2
             ;;
         --file-list)
@@ -136,19 +144,27 @@ target_count=0
 
 set +u
 if [[ "$accept_and_close" == true ]]; then
-    [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#migration_files[@]} -eq 0 && "$frontend_only" == false && "$backend_only" == false ]] \
+    [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#source_only_files[@]} -eq 0 && ${#migration_files[@]} -eq 0 && "$frontend_only" == false && "$backend_only" == false ]] \
         || fail "--accept-and-close 不接受提交文件或部署范围参数"
 elif [[ -n "$deploy_task_sha" || -n "$deploy_main_sha" || -n "$rollback_sha" ]]; then
-    [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#migration_files[@]} -eq 0 ]] \
+    [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#source_only_files[@]} -eq 0 && ${#migration_files[@]} -eq 0 ]] \
         || fail "指定部署或回滚目标时不能同时提交新文件"
 else
     [[ -n "$message" ]] || fail "提交部署必须提供 --message"
-    [[ ${#task_files[@]} -gt 0 ]] || fail "提交部署必须至少提供一个 --file"
+    [[ $((${#task_files[@]} + ${#source_only_files[@]})) -gt 0 ]] || fail "提交部署必须至少提供一个 --file 或 --source-only-file"
 fi
+set -u
+set +u
+for path in "${source_only_files[@]}"; do
+    [[ "$path" != /* && "$path" != ../* && "$path" != */../* && "$path" != .git/* ]] \
+        || fail "非法发布路径：$path"
+    [[ "$path" == backend/migrations/[0-9][0-9][0-9]_*.sql ]] \
+        || fail "--source-only-file 只能用于三位编号正向迁移：$path"
+done
 set -u
 
 set +u
-for path in "${task_files[@]}"; do
+for path in "${task_files[@]}" "${source_only_files[@]}"; do
     [[ "$path" != /* && "$path" != ../* && "$path" != */../* && "$path" != .git/* ]] \
         || fail "非法发布路径：$path"
     [[ "$path" != .env* && "$path" != */.env* && "$path" != .cursor/* && "$path" != .codex/* ]] \
@@ -280,7 +296,7 @@ if [[ -z "$rollback_sha" && -z "$deploy_task_sha" && -z "$deploy_main_sha" ]]; t
     set +u
     for changed in "${changed_files[@]}"; do
         allowed=false
-        for task_file in "${task_files[@]}"; do
+        for task_file in "${task_files[@]}" "${source_only_files[@]}"; do
             if [[ "$changed" == "$task_file" ]]; then
                 allowed=true
                 break
@@ -295,13 +311,18 @@ if [[ -z "$rollback_sha" && -z "$deploy_task_sha" && -z "$deploy_main_sha" ]]; t
             [[ -e "$task_file" ]] || fail "发布文件不存在：$task_file"
         done
     fi
+    if ((${#source_only_files[@]} > 0)); then
+        for source_only_file in "${source_only_files[@]}"; do
+            [[ -e "$source_only_file" ]] || fail "发布文件不存在：$source_only_file"
+        done
+    fi
     if ((${#migration_files[@]} > 0)); then
         for migration_file in "${migration_files[@]}"; do
             [[ -e "$migration_file" ]] || fail "迁移文件不存在：$migration_file"
         done
     fi
 
-    git add -- "${task_files[@]}"
+    git add -- "${task_files[@]}" "${source_only_files[@]}"
     git diff --cached --quiet && fail "指定文件没有可提交的变更"
     git commit -m "$message"
     commit_sha=$(git rev-parse HEAD)

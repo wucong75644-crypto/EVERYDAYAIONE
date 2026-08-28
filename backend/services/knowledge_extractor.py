@@ -130,6 +130,7 @@ async def _call_extraction_model(
 
 async def extract_and_save(
     *,
+    db_source: Any = None,
     task_type: str,
     model_id: str,
     status: str,
@@ -170,6 +171,7 @@ async def extract_and_save(
 
         # 保存知识节点
         node_id = await add_knowledge(
+            db_source=db_source,
             category=item["category"],
             subcategory=item.get("subcategory"),
             node_type=_infer_node_type(item),
@@ -185,7 +187,7 @@ async def extract_and_save(
 
         # 构建关系边
         for relation in item.get("relations", []):
-            await _save_relation(node_id, relation)
+            await _save_relation(node_id, relation, db_source=db_source)
 
     logger.info(
         f"Knowledge extracted | task={task_type} model={model_id} | saved={saved}"
@@ -203,7 +205,12 @@ def _infer_node_type(item: Dict[str, Any]) -> str:
     return "pattern"
 
 
-async def _save_relation(node_id: str, relation: Dict[str, Any]) -> None:
+async def _save_relation(
+    node_id: str,
+    relation: Dict[str, Any],
+    *,
+    db_source: Any = None,
+) -> None:
     """保存一条关系边"""
     from_entity = relation.get("from", "")
     to_entity = relation.get("to", "")
@@ -220,11 +227,16 @@ async def _save_relation(node_id: str, relation: Dict[str, Any]) -> None:
         rel_type = "related_to"
 
     # 查找实体节点（按 model_id metadata 匹配）
-    from_node = await get_node_by_metadata("model_id", from_entity)
-    to_node = await get_node_by_metadata("model_id", to_entity)
+    from_node = await get_node_by_metadata(
+        "model_id", from_entity, db_source=db_source,
+    )
+    to_node = await get_node_by_metadata(
+        "model_id", to_entity, db_source=db_source,
+    )
 
     if from_node and to_node:
         await graph_service.add_edge(
+            db_source=db_source,
             source_id=str(from_node["id"]),
             target_id=str(to_node["id"]),
             relation_type=rel_type,
@@ -232,6 +244,7 @@ async def _save_relation(node_id: str, relation: Dict[str, Any]) -> None:
     elif from_node:
         # to_entity 没有对应节点，用当前新建的节点
         await graph_service.add_edge(
+            db_source=db_source,
             source_id=str(from_node["id"]),
             target_id=node_id,
             relation_type=rel_type,

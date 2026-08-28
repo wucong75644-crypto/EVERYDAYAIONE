@@ -267,6 +267,8 @@ class KernelManager:
         skills_dir: str = "",
     ) -> Kernel:
         """启动 Kernel 子进程"""
+        from services.sandbox.functions import build_sandbox_environment
+
         cmd = self._build_command(workspace_dir, staging_dir, output_dir, skills_dir=skills_dir)
 
         process = await asyncio.create_subprocess_exec(
@@ -280,6 +282,7 @@ class KernelManager:
             # 提高到 10MB 容纳任意大小产物(emit_payloads 不计入 stdout 截断预算)。
             limit=10 * 1024 * 1024,
             cwd=self._backend_dir,
+            env=build_sandbox_environment(),
             preexec_fn=self._pdeathsig_fn,
         )
 

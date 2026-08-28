@@ -211,7 +211,7 @@ class ErpToolMixin:
                     token_persister=_persist,
                 )
                 await client.load_cached_token()  # 从 Redis 拿最新热缓存
-                return ErpDispatcher(client)
+                return ErpDispatcher(client, db_source=self.db)
             except ValueError as e:
                 return AgentResult(
                     summary=str(e),
@@ -230,7 +230,7 @@ class ErpToolMixin:
                 metadata={"retryable": False},
             )
         await client.load_cached_token()
-        return ErpDispatcher(client)
+        return ErpDispatcher(client, db_source=self.db)
 
     # ========================================
     # 本地查询工具

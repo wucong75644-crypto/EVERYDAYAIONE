@@ -379,10 +379,24 @@ class TestGetCdnUrl:
         assert url.startswith("https://cdn.example.com/workspace/")
         assert "org/org1/u1/uploads/file.csv" in url
 
-    def test_cdn_url_without_domain(self, workspace):
+    def test_cdn_url_without_domain_uses_oss_endpoint(self, workspace):
         ex = FileExecutor(workspace_root=workspace)
         with patch("core.config.get_settings") as mock_settings:
             mock_settings.return_value.oss_cdn_domain = None
+            mock_settings.return_value.oss_bucket_name = "everydayai-images"
+            mock_settings.return_value.oss_endpoint = "https://oss-cn-hangzhou.aliyuncs.com/"
+            url = ex.get_cdn_url("any.txt")
+        assert url == (
+            "https://everydayai-images.oss-cn-hangzhou.aliyuncs.com/"
+            "workspace/any.txt"
+        )
+
+    def test_cdn_url_without_cdn_or_oss_config_returns_none(self, workspace):
+        ex = FileExecutor(workspace_root=workspace)
+        with patch("core.config.get_settings") as mock_settings:
+            mock_settings.return_value.oss_cdn_domain = None
+            mock_settings.return_value.oss_bucket_name = None
+            mock_settings.return_value.oss_endpoint = None
             url = ex.get_cdn_url("any.txt")
         assert url is None
 

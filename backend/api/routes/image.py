@@ -21,6 +21,7 @@ from schemas.image import UploadImageResponse
 from services.storage_service import StorageService
 from services.user_activity_service import record_user_activity
 from services.file_upload import build_workspace_thumbnail_url
+from services.assets import register_web_upload_best_effort
 
 router = APIRouter(prefix="/images", tags=["图像"])
 
@@ -70,10 +71,21 @@ async def upload_image(
                     filename=file.filename,
                     org_id=org_id,
                 )
+                thumbnail_url = build_workspace_thumbnail_url(url)
+                register_web_upload_best_effort(
+                    db,
+                    user_id=user_id,
+                    org_id=org_id,
+                    url=url,
+                    name=file.filename or "image",
+                    mime_type=file.content_type or "image/jpeg",
+                    size=len(content),
+                    thumbnail_url=thumbnail_url,
+                )
                 return UploadImageResponse(
                     url=url,
                     original_url=url,
-                    thumbnail_url=build_workspace_thumbnail_url(url),
+                    thumbnail_url=thumbnail_url,
                     preview_url=url,
                     download_url=url,
                 )
@@ -138,6 +150,17 @@ async def upload_image(
                 resource_id=upload_path,
                 metadata={"filename": filename, "size": total_size, "kind": "image"},
             )
+            register_web_upload_best_effort(
+                db,
+                user_id=user_id,
+                org_id=org_id,
+                url=cdn_url or "",
+                name=unique_name,
+                mime_type=mime_type,
+                size=total_size,
+                workspace_path=upload_path,
+                thumbnail_url=thumbnail_url,
+            )
             return UploadImageResponse(
                 url=cdn_url or "",
                 original_url=cdn_url or "",
@@ -167,10 +190,20 @@ async def upload_image(
                 resource_type="image",
                 metadata={"kind": "base64_image"},
             )
+            thumbnail_url = build_workspace_thumbnail_url(url)
+            register_web_upload_best_effort(
+                db,
+                user_id=user_id,
+                org_id=org_id,
+                url=url,
+                name="image",
+                mime_type="image/jpeg",
+                thumbnail_url=thumbnail_url,
+            )
             return UploadImageResponse(
                 url=url,
                 original_url=url,
-                thumbnail_url=build_workspace_thumbnail_url(url),
+                thumbnail_url=thumbnail_url,
                 preview_url=url,
                 download_url=url,
             )

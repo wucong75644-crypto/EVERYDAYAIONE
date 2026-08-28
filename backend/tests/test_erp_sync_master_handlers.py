@@ -479,6 +479,38 @@ class TestSyncStockFull:
         # erp_products 表为空（默认）
         assert await sync_stock_full(svc) == 0
 
+    @pytest.mark.asyncio
+    async def test_cleanup_uses_scalar_neq_filters(self, monkeypatch):
+        """清理仓库残留时使用标量 neq，避免 not.in list 参数错误"""
+        import services.kuaimai.erp_sync_master_handlers.stock as stock_module
+        from services.kuaimai.erp_sync_master_handlers import sync_stock_full
+
+        monkeypatch.setattr(
+            "core.config.get_settings",
+            lambda: MagicMock(erp_warehouse_ids="87227,436208"),
+        )
+        monkeypatch.setattr(stock_module.asyncio, "sleep", AsyncMock())
+        svc = _mock_stock_svc(code_items=[{
+            "mainOuterId": "P01", "skuOuterId": "P01-01",
+            "title": "商品A", "sellableNum": 50, "wareHouseId": "87227",
+        }])
+        svc.db.set_table_data("erp_products", [
+            {"outer_id": "P01", "active_status": 1},
+        ])
+        stock_table = svc.db.table("erp_stock_status")
+        neq_calls = []
+
+        def record_neq(field, value):
+            neq_calls.append((field, value))
+            return stock_table
+
+        stock_table.neq = record_neq
+        assert await sync_stock_full(svc) == 2
+        assert neq_calls == [
+            ("warehouse_id", "87227"),
+            ("warehouse_id", "436208"),
+        ]
+
 
 class TestMapStockItem:
     def test_basic_mapping(self):

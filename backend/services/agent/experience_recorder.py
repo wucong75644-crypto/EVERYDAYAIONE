@@ -59,7 +59,10 @@ class ExperienceRecorder:
     支持多 Agent 共用（通过 writer 参数区分来源）。
     """
 
-    def __init__(self, org_id: str, writer: str = "erp_agent"):
+    def __init__(
+        self, org_id: str, writer: str = "erp_agent", db: Any = None,
+    ):
+        self.db = db
         self.org_id = org_id
         self.writer = writer
 
@@ -104,6 +107,7 @@ class ExperienceRecorder:
             domain = infer_business_domain(unique_tools)
 
             await add_knowledge(
+                db_source=self.db,
                 category="experience",
                 subcategory=domain,
                 node_type=node_type,

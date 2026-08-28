@@ -4,7 +4,9 @@
 企业 CRUD、成员管理、邀请管理。
 """
 
-from typing import Optional
+from collections.abc import Mapping
+import os
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
@@ -12,6 +14,11 @@ from pydantic import BaseModel, Field
 
 from api.deps import CurrentUserId, Database, ScopedDB
 from core.exceptions import AppException
+from services.configuration.bundles import SecretBundleResolver
+from services.configuration.control_service import ConfigurationControlService
+from services.configuration.envelope import LocalKEKProvider
+from services.configuration.material_service import SecretMaterialService
+from services.configuration.resolver import ConfigurationResolutionError
 from services.org.config_resolver import OrgConfigResolver
 from services.org.org_service import OrgService
 from .org_lifecycle import router as lifecycle_router
@@ -26,6 +33,44 @@ def _get_org_service(db: ScopedDB) -> OrgService:
 
 def _get_config_resolver(db: ScopedDB) -> OrgConfigResolver:
     return OrgConfigResolver(db)
+
+
+def _get_configuration_control(
+    db: ScopedDB,
+) -> ConfigurationControlService | None:
+    if os.environ.get("CONFIG_CONTROL_PLANE_ENABLED") != "1":
+        return None
+    try:
+        return ConfigurationControlService(
+            db,
+            SecretMaterialService(LocalKEKProvider.from_environment()),
+        )
+    except ValueError:
+        logger.warning("Configuration control plane disabled: KEK is not configured")
+        return None
+
+
+def _get_secret_bundle_resolver(db: ScopedDB) -> SecretBundleResolver | None:
+    if os.environ.get("CONFIG_CONTROL_PLANE_ENABLED") != "1":
+        return None
+    try:
+        return SecretBundleResolver(
+            db,
+            SecretMaterialService(LocalKEKProvider.from_environment()),
+        )
+    except ValueError:
+        logger.warning("Configuration bundle resolver disabled: KEK is not configured")
+        return None
+
+
+def _configuration_status(item: Mapping[str, object]) -> dict[str, object]:
+    return {
+        "config_key": item.get("key"),
+        "configured": bool(item.get("configured")),
+        "version": int(item.get("version") or 0),
+        "source": item.get("source"),
+        "updated_at": item.get("updated_at"),
+    }
 
 
 # ── 公开接口（无需认证）──────────────────────────────────────
@@ -82,8 +127,12 @@ class AcceptInvitationRequest(BaseModel):
 
 
 class SetConfigRequest(BaseModel):
-    key: str = Field(..., min_length=1, max_length=100, description="配置键名")
-    value: str = Field(..., min_length=1, description="配置值（明文，后端加密存储）")
+    # config_key/expected_version 是正式 Configuration Control Plane 合同。
+    # key 保留旧 Web 管理台兼容路径，避免升级时旧客户端直接 422。
+    config_key: Optional[str] = Field(None, min_length=1, max_length=100)
+    key: Optional[str] = Field(None, min_length=1, max_length=100)
+    value: Any
+    expected_version: Optional[int] = Field(None, ge=0)
 
 
 # ── 企业 CRUD ───────────────────────────────────────────────
@@ -354,13 +403,19 @@ async def list_org_configs(
     org_id: str,
     user_id: CurrentUserId,
     svc: OrgService = Depends(_get_org_service),
+    control: ConfigurationControlService | None = Depends(_get_configuration_control),
     resolver: OrgConfigResolver = Depends(_get_config_resolver),
 ):
-    """列出企业已配置的 key（不返回值），admin+ 可用"""
+    """列出正式配置状态，绝不返回配置值或 Secret 材料。"""
     try:
         svc.require_role(org_id, user_id, ("owner", "admin"))
-        keys = resolver.list_keys(org_id)
-        return {"success": True, "data": keys}
+        if control is not None:
+            statuses = control.list_organization_status(org_id=org_id)
+            return {
+                "success": True,
+                "data": [_configuration_status(item) for item in statuses],
+            }
+        return {"success": True, "data": resolver.list_keys(org_id)}
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
 
@@ -371,11 +426,28 @@ async def set_org_config(
     body: SetConfigRequest,
     user_id: CurrentUserId,
     svc: OrgService = Depends(_get_org_service),
+    control: ConfigurationControlService | None = Depends(_get_configuration_control),
     resolver: OrgConfigResolver = Depends(_get_config_resolver),
 ):
-    """写入企业配置（AES 加密存储），admin+ 可用"""
+    """正式配置走版本 CAS；旧 key/value 客户端暂走兼容存储。"""
     try:
         svc.require_role(org_id, user_id, ("owner", "admin"))
+        if body.config_key is not None:
+            if control is None:
+                raise HTTPException(status_code=503, detail="正式配置控制面尚未配置 KEK")
+            if body.expected_version is None:
+                raise HTTPException(status_code=422, detail="expected_version 必填")
+            result = control.set_organization(
+                org_id=org_id,
+                key=body.config_key,
+                value=body.value,
+                expected_version=body.expected_version,
+            )
+            return {"success": True, "data": _configuration_status(result)}
+        if body.key is None:
+            raise HTTPException(status_code=422, detail="配置键名必填")
+        if not isinstance(body.value, str) or not body.value:
+            raise HTTPException(status_code=422, detail="配置值不能为空")
         resolver.set(org_id, body.key, body.value, updated_by=user_id)
         return {"success": True, "message": f"配置 {body.key} 已更新"}
     except ValueError as e:
@@ -389,12 +461,21 @@ async def delete_org_config(
     org_id: str,
     config_key: str,
     user_id: CurrentUserId,
+    expected_version: Optional[int] = Query(None, ge=0),
     svc: OrgService = Depends(_get_org_service),
+    control: ConfigurationControlService = Depends(_get_configuration_control),
     resolver: OrgConfigResolver = Depends(_get_config_resolver),
 ):
-    """删除企业配置，admin+ 可用"""
+    """正式配置按版本 CAS 删除；无版本时保留旧删除路径。"""
     try:
         svc.require_role(org_id, user_id, ("owner", "admin"))
+        if expected_version is not None:
+            result = control.delete_organization(
+                org_id=org_id,
+                key=config_key,
+                expected_version=expected_version,
+            )
+            return {"success": True, "data": _configuration_status(result)}
         resolver.delete(org_id, config_key)
         return {"success": True, "message": f"配置 {config_key} 已删除"}
     except AppException as e:
@@ -406,49 +487,74 @@ async def test_erp_connection(
     org_id: str,
     user_id: CurrentUserId,
     svc: OrgService = Depends(_get_org_service),
+    bundle_resolver: SecretBundleResolver | None = Depends(_get_secret_bundle_resolver),
+    control: ConfigurationControlService | None = Depends(_get_configuration_control),
     resolver: OrgConfigResolver = Depends(_get_config_resolver),
 ):
-    """用企业配置的 ERP 凭证发一个简单查询，验证连接是否正常"""
+    """使用正式 erp.runtime Bundle 测试连接，并按版本 CAS 回写刷新令牌。"""
     try:
         svc.require_role(org_id, user_id, ("owner", "admin"))
-        creds = resolver.get_erp_credentials(org_id)
+        if bundle_resolver is None or control is None:
+            creds = resolver.get_erp_credentials(org_id)
+            import asyncio as _asyncio
+            async def _persist_legacy(oid: str, access: str, refresh: str) -> None:
+                await _asyncio.to_thread(resolver.update_erp_token, oid, access, refresh)
+            from services.kuaimai.client import KuaiMaiClient
+            client = KuaiMaiClient(
+                app_key=creds["kuaimai_app_key"],
+                app_secret=creds["kuaimai_app_secret"],
+                access_token=creds["kuaimai_access_token"],
+                refresh_token=creds["kuaimai_refresh_token"],
+                org_id=org_id,
+                token_persister=_persist_legacy,
+            )
+            try:
+                await client.load_cached_token()
+                await client.request_with_retry(
+                    "erp.shop.list.query", {"pageNo": 1, "pageSize": 1},
+                )
+                return {"success": True, "message": "ERP 连接测试成功"}
+            except Exception:
+                return {"success": False, "message": "ERP 连接失败，请检查凭证或稍后重试"}
+            finally:
+                await client.close()
+        bundle = bundle_resolver.erp_runtime()
+        app = bundle.values.get("erp.app_credentials")
+        token = bundle.values.get("erp.token_pair")
+        if not isinstance(app, Mapping) or not isinstance(token, Mapping):
+            raise ConfigurationResolutionError("CONFIG_BUNDLE_INCOMPLETE")
 
-        # token 双写闭环：即使是手动测试连接，也要走持久化
-        # （万一测试时 token 刚好过期，refresh 后必须把新 token 持久化）
-        # resolver 是同步版，client 调 persister 是 async，用 to_thread 包装
         import asyncio as _asyncio
         async def _persist(oid: str, access: str, refresh: str) -> None:
             await _asyncio.to_thread(
-                resolver.update_erp_token, oid, access, refresh,
+                control.set_organization,
+                org_id=oid,
+                key="erp.token_pair",
+                value={"access_token": access, "refresh_token": refresh},
+                expected_version=bundle.versions["erp.token_pair"],
             )
 
         from services.kuaimai.client import KuaiMaiClient
         client = KuaiMaiClient(
-            app_key=creds["kuaimai_app_key"],
-            app_secret=creds["kuaimai_app_secret"],
-            access_token=creds["kuaimai_access_token"],
-            refresh_token=creds["kuaimai_refresh_token"],
+            app_key=str(app["app_key"]),
+            app_secret=str(app["app_secret"]),
+            access_token=str(token["access_token"]),
+            refresh_token=str(token["refresh_token"]),
             org_id=org_id,
             token_persister=_persist,
         )
-        await client.load_cached_token()  # 从 Redis 拿最新热缓存
         try:
-            result = await client.request_with_retry(
+            await client.load_cached_token()
+            await client.request_with_retry(
                 "erp.shop.list.query", {"pageNo": 1, "pageSize": 1}
             )
-            return {
-                "success": True,
-                "message": "ERP 连接测试成功",
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "message": f"ERP 连接失败: {str(e)[:200]}",
-            }
+            return {"success": True, "message": "ERP 连接测试成功"}
+        except Exception:
+            return {"success": False, "message": "ERP 连接失败，请检查凭证或稍后重试"}
         finally:
             await client.close()
-    except ValueError as e:
-        return {"success": False, "message": str(e)}
+    except (ConfigurationResolutionError, KeyError, ValueError):
+        return {"success": False, "message": "ERP 配置不完整或不可用"}
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
 
@@ -491,20 +597,31 @@ async def test_wecom_connection(
     org_id: str,
     user_id: CurrentUserId,
     svc: OrgService = Depends(_get_org_service),
+    bundle_resolver: SecretBundleResolver | None = Depends(_get_secret_bundle_resolver),
     resolver: OrgConfigResolver = Depends(_get_config_resolver),
 ):
-    """用企业配置的企微机器人凭证测试 WSS 连接"""
+    """使用正式 wecom.bot Bundle 测试 WSS 连接。"""
     try:
         svc.require_role(org_id, user_id, ("owner", "admin"))
-        bot_id = resolver.get(org_id, "wecom_bot_id")
-        bot_secret = resolver.get(org_id, "wecom_bot_secret")
-        if not bot_id or not bot_secret:
-            return {"success": False, "message": "企微机器人 Bot ID 或 Secret 未配置"}
+        if bundle_resolver is None:
+            bot_id = resolver.get(org_id, "wecom_bot_id")
+            bot_secret = resolver.get(org_id, "wecom_bot_secret")
+            if not bot_id or not bot_secret:
+                return {"success": False, "message": "企微机器人 Bot ID 或 Secret 未配置"}
+            from services.wecom.ws_client import verify_bot_credentials
+            ok, msg = await verify_bot_credentials(bot_id, bot_secret)
+            return {"success": ok, "message": msg}
+        bundle = bundle_resolver.wecom_bot_admin_test()
+        credentials = bundle.values.get("wecom.bot_credentials")
+        if not isinstance(credentials, Mapping):
+            raise ConfigurationResolutionError("CONFIG_BUNDLE_INCOMPLETE")
 
         from services.wecom.ws_client import verify_bot_credentials
-        ok, msg = await verify_bot_credentials(bot_id, bot_secret)
-        return {"success": ok, "message": msg}
-    except ValueError as e:
-        return {"success": False, "message": str(e)}
+        ok, _ = await verify_bot_credentials(
+            str(credentials["bot_id"]), str(credentials["bot_secret"]),
+        )
+        return {"success": ok, "message": "企微连接测试成功" if ok else "企微连接测试失败"}
+    except (ConfigurationResolutionError, KeyError, ValueError):
+        return {"success": False, "message": "企微配置不完整或不可用"}
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)

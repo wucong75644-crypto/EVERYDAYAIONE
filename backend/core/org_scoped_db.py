@@ -119,6 +119,16 @@ class OrgScopedDB:
     # atomic_refund_credits 通过 p_transaction_id 内部继承 org_id
     _RPC_NO_ORG: frozenset[str] = frozenset({
         "atomic_refund_credits",
+        "get_ai_dashscope_bundle",
+        "get_ai_google_bundle",
+        "get_ai_kie_bundle",
+        "get_ai_openrouter_bundle",
+        "get_erp_runtime_bundle",
+        "get_wecom_bot_admin_test_bundle",
+        "list_actor_organizations",
+        "list_actor_pending_invitations",
+        "list_all_governed_organizations",
+        "search_governed_user_by_phone",
     })
 
     def rpc(self, fn_name: str, params: dict | None = None) -> Any:

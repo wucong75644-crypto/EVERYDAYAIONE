@@ -187,6 +187,29 @@ class TestOrgScopedDBWithOrgId:
             "atomic_refund_credits", {"p_transaction_id": "tx-123"},
         )
 
+    def test_actor_scoped_zero_argument_rpcs_have_no_org_param(self):
+        for function_name in (
+            "get_ai_dashscope_bundle",
+            "get_ai_google_bundle",
+            "get_ai_kie_bundle",
+            "get_ai_openrouter_bundle",
+            "get_erp_runtime_bundle",
+            "get_wecom_bot_admin_test_bundle",
+            "list_actor_organizations",
+            "list_actor_pending_invitations",
+            "list_all_governed_organizations",
+        ):
+            self.raw_db.reset_mock()
+            self.db.rpc(function_name)
+            self.raw_db.rpc.assert_called_once_with(function_name, {})
+
+    def test_governed_phone_search_has_no_org_param(self):
+        self.db.rpc(
+            "search_governed_user_by_phone", {"p_phone": "13800138000"},
+        )
+        self.raw_db.rpc.assert_called_once_with(
+            "search_governed_user_by_phone", {"p_phone": "13800138000"},
+        )
     def test_rpc_preserves_explicit_org_id(self):
         """已有 p_org_id 不覆盖"""
         params = {"p_outer_id": "A01", "p_org_id": ORG_ID}
