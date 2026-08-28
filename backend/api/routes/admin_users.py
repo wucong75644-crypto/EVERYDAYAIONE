@@ -24,11 +24,13 @@ from .admin_users_helpers import (
     _log_admin_action,
     admin_adjust_credits,
 )
+from .admin_user_assets import assets_router
 from .admin_users_zip import zip_router
 
 
 router = APIRouter(prefix="/admin", tags=["admin-users"])
 router.include_router(zip_router)
+router.include_router(assets_router)
 
 
 # ── 请求/响应模型 ────────────────────────────────────────

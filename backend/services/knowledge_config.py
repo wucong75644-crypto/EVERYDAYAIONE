@@ -14,6 +14,7 @@ import httpx
 from loguru import logger
 
 from core.config import settings
+from core.db_scope import AsyncScopedConnectionPool, database_scope_from_client
 
 # ===== 常量 =====
 
@@ -81,11 +82,14 @@ async def _get_pg_pool():
             return None
 
 
-async def get_pg_connection():
-    """获取一个 psycopg 异步连接（context manager）"""
+async def get_pg_connection(db_source: Any = None):
+    """获取一个 psycopg 异步连接（可选注入事务级数据库作用域）。"""
     pool = await _get_pg_pool()
     if pool is None:
         return None
+    scope = database_scope_from_client(db_source)
+    if scope is not None:
+        return AsyncScopedConnectionPool(pool, scope).connection()
     return pool.connection()
 
 

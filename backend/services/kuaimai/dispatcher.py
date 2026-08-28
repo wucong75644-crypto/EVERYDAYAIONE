@@ -33,8 +33,9 @@ from services.kuaimai.registry.base import ApiEntry
 class ErpDispatcher:
     """ERP API统一调度器"""
 
-    def __init__(self, client: KuaiMaiClient) -> None:
+    def __init__(self, client: KuaiMaiClient, db_source: Any = None) -> None:
         self._client = client
+        self._db_source = db_source
 
     async def execute(
         self,
@@ -83,6 +84,7 @@ class ErpDispatcher:
             self._record_param_knowledge(
                 tool_name, action,
                 f"缺少必填参数: {', '.join(missing)}，支持: {', '.join(valid)}",
+                db_source=self._db_source,
             )
             return ToolOutput(
                 summary=(
@@ -108,6 +110,7 @@ class ErpDispatcher:
                 tool_name, action,
                 f"无效参数: {', '.join(param_warnings)}，"
                 f"支持: {', '.join(sorted(entry.param_map.keys()))}",
+                db_source=self._db_source,
             )
         logger.info(
             f"ErpDispatcher | tool={tool_name} action={action} "
@@ -192,12 +195,14 @@ class ErpDispatcher:
     @staticmethod
     def _record_param_knowledge(
         tool_name: str, action: str, error_message: str,
+        db_source: Any = None,
     ) -> None:
         """Fire-and-forget 记录参数错误知识"""
         try:
             from services.knowledge_extractor import extract_and_save
             asyncio.create_task(
                 extract_and_save(
+                    db_source=db_source,
                     task_type="param_validation",
                     model_id=f"{tool_name}:{action}",
                     status="failed",

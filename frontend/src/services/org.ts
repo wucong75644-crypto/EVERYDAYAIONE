@@ -65,8 +65,39 @@ export async function listMembers(orgId: string): Promise<OrgMember[]> {
   return request({ method: 'GET', url: `/org/${orgId}/members` });
 }
 
+interface ConfigurationStatus {
+  config_key?: string;
+  key?: string;
+  configured?: boolean;
+}
+
+const FORMAL_TO_LEGACY_KEYS: Record<string, string[]> = {
+  'ai.dashscope.api_key': ['ai_dashscope_api_key'],
+  'ai.openrouter.api_key': ['ai_openrouter_api_key'],
+  'ai.kie.api_key': ['ai_kie_api_key'],
+  'ai.google.api_key': ['ai_google_api_key'],
+  'erp.app_credentials': ['kuaimai_app_key', 'kuaimai_app_secret'],
+  'erp.token_pair': ['kuaimai_access_token', 'kuaimai_refresh_token'],
+  'wecom.corp_id': ['wecom_corp_id'],
+  'wecom.bot_credentials': ['wecom_bot_id', 'wecom_bot_secret'],
+  'wecom.oauth_agent_id': ['wecom_agent_id'],
+  'wecom.oauth_agent_secret': ['wecom_agent_secret'],
+};
+
 export async function listOrgConfigs(orgId: string): Promise<{ success: boolean; data: string[] }> {
-  return request({ method: 'GET', url: `/org/${orgId}/configs` });
+  const result = await request<{
+    success: boolean;
+    data: string[] | ConfigurationStatus[];
+  }>({ method: 'GET', url: `/org/${orgId}/configs` });
+  if (!result.data.length || typeof result.data[0] === 'string') {
+    return result as { success: boolean; data: string[] };
+  }
+  const keys = (result.data as ConfigurationStatus[]).flatMap((item) => {
+    if (!item.configured) return [];
+    const formalKey = item.config_key || item.key || '';
+    return FORMAL_TO_LEGACY_KEYS[formalKey] || [formalKey];
+  });
+  return { success: result.success, data: keys };
 }
 
 export async function testErpConnection(

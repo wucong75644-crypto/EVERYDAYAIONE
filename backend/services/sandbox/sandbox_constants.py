@@ -177,6 +177,7 @@ SENSITIVE_ENV_PREFIXES = (
     "WECHAT_",
     "WECOM_",
     "CLERK_SECRET",
+    "CONFIG_KEK_",
     "JWT_SECRET",
     "SECRET_KEY",
 )

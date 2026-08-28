@@ -10,6 +10,7 @@ from services.knowledge_config import get_pg_connection, is_kb_available
 
 async def record_metric(
     *,
+    db_source: Any = None,
     task_type: str,
     model_id: str,
     status: str,
@@ -28,7 +29,7 @@ async def record_metric(
     if not is_kb_available():
         return
 
-    conn_ctx = await get_pg_connection()
+    conn_ctx = await get_pg_connection(db_source)
     if conn_ctx is None:
         return
 

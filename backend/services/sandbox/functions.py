@@ -6,9 +6,23 @@
 """
 
 import hashlib
+import os
 from typing import Any, Dict, Optional
 
 from services.sandbox.executor import SandboxExecutor
+
+
+def build_sandbox_environment() -> dict[str, str]:
+    """构造不携带数据库、Provider 或 KEK 密钥的子进程环境。"""
+    from services.sandbox.sandbox_constants import SENSITIVE_ENV_PREFIXES
+
+    environment = {
+        key: value for key, value in os.environ.items()
+        if not any(key.startswith(prefix) for prefix in SENSITIVE_ENV_PREFIXES)
+    }
+    environment["MPLCONFIGDIR"] = "/tmp/everydayai-matplotlib"
+    environment["XDG_CACHE_HOME"] = "/tmp/everydayai-cache"
+    return environment
 
 
 def build_sandbox_executor(
