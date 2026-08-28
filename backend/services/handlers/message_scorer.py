@@ -133,7 +133,8 @@ async def _batch_compute_embeddings(
 
     try:
         client = await _get_ds_client().get()
-        BATCH_MAX = 25
+        # text-embedding-v3 accepts at most 10 strings per request.
+        BATCH_MAX = 10
         for chunk_start in range(0, len(valid), BATCH_MAX):
             chunk = valid[chunk_start:chunk_start + BATCH_MAX]
             resp = await client.post(

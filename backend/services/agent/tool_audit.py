@@ -59,7 +59,9 @@ async def record_tool_audit(db: Any, entry: ToolAuditEntry) -> None:
     try:
         row = asdict(entry)
         await asyncio.to_thread(
-            lambda: db.table("tool_audit_log").insert(row).execute()
+            lambda: db.table("tool_audit_log").insert(
+                row, returning=False,
+            ).execute()
         )
     except Exception as e:
         logger.warning(

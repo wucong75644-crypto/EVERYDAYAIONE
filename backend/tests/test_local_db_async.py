@@ -227,6 +227,22 @@ class TestAsyncQueryBuilderMutations:
         assert "RETURNING" in sql
 
     @pytest.mark.asyncio
+    async def test_insert_without_returning(self):
+        """INSERT can skip RETURNING for write-only RLS policies."""
+        pool, conn, cur = _mock_async_pool()
+        cur.description = None
+
+        result = await (
+            AsyncQueryBuilder(pool, "tool_audit_log")
+            .insert({"task_id": "t1"}, returning=False)
+            .execute()
+        )
+
+        assert result.data == []
+        sql = cur.execute.call_args[0][0]
+        assert "RETURNING" not in sql
+
+    @pytest.mark.asyncio
     async def test_upsert_with_conflict(self):
         """UPSERT ON CONFLICT DO UPDATE"""
         pool, conn, cur = _mock_async_pool()
@@ -357,6 +373,22 @@ class TestAsyncQueryBuilderSerialization:
 
 
 class TestAsyncRpcCaller:
+    @pytest.mark.asyncio
+    async def test_rpc_json_params_use_jsonb_adapter(self):
+        """Structured RPC parameters are adapted as PostgreSQL JSONB."""
+        from psycopg.types.json import Jsonb
+
+        pool, conn, cur = _mock_async_pool()
+        cur.description = [("result",)]
+        cur.fetchall = AsyncMock(return_value=[{"result": 42}])
+
+        await AsyncRpcCaller(
+            pool, "my_func", {"p_metadata": {"key": "value"}}
+        ).execute()
+
+        params = cur.execute.call_args[0][1]
+        assert isinstance(params[0], Jsonb)
+
     @pytest.mark.asyncio
     async def test_rpc_with_params(self):
         """RPC 带参数调用"""
