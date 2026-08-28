@@ -144,6 +144,20 @@ describe('MessageItem 用户消息气泡', () => {
     const bubble = screen.getByText('兼容性测试消息').closest('.rounded-2xl');
     expect(bubble).toHaveClass('bg-[#6366f1]', 'bg-gradient-to-r', 'text-text-on-accent');
   });
+
+  it('有媒体时为媒体网格提供可用宽度', () => {
+    const message = makeMessage({ role: 'user' });
+    const { container } = render(
+      <MessageItem
+        message={message}
+        allImageAssets={[{ originalUrl: 'https://img1.png' }, { originalUrl: 'https://img2.png' }]}
+      />,
+    );
+
+    const messageContent = container.querySelector('[data-message-id="msg-1"] > div');
+    expect(messageContent).toHaveClass('w-full', 'max-w-[90%]');
+    expect(capturedMediaProps.content).toEqual(message.content);
+  });
 });
 
 describe('MessageItem 回调稳定性', () => {

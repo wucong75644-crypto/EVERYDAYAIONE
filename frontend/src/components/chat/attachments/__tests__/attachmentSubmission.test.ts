@@ -47,4 +47,26 @@ describe('createAttachmentSubmissionSnapshot', () => {
       mime_type: 'application/pdf', size: 2048, workspace_path: 'docs/report.pdf',
     }]);
   });
+
+  it('按附件数组顺序生成图片和文件混排提交内容', () => {
+    const result = createAttachmentSubmissionSnapshot([
+      {
+        id: 'image:a', sourceId: 'a', sequence: 0, kind: 'image', source: 'upload', status: 'ready',
+        name: 'a.png', previewUrl: 'a', originalUrl: 'https://cdn/a.png',
+      },
+      {
+        id: 'file:b', sourceId: 'b', sequence: 1, kind: 'file', source: 'upload', status: 'ready',
+        name: 'b.pdf', url: 'https://cdn/b.pdf', mimeType: 'application/pdf', size: 2,
+      },
+      {
+        id: 'image:c', sourceId: 'c', sequence: 2, kind: 'image', source: 'upload', status: 'ready',
+        name: 'c.png', previewUrl: 'c', originalUrl: 'https://cdn/c.png',
+      },
+    ]);
+
+    expect(result.orderedAttachments.map((item) => item.kind)).toEqual(['image', 'file', 'image']);
+    expect(result.orderedAttachments.map((item) => (
+      item.kind === 'image' ? item.image.url : item.file.url
+    ))).toEqual(['https://cdn/a.png', 'https://cdn/b.pdf', 'https://cdn/c.png']);
+  });
 });

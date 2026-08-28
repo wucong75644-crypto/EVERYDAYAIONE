@@ -1,4 +1,7 @@
-import type { ImageInputInfo } from '../../../services/messageSender';
+import type {
+  ImageInputInfo,
+  OrderedAttachmentInput,
+} from '../../../services/messageSender';
 import type {
   AttachmentSubmissionSnapshot,
   ChatAttachment,
@@ -6,7 +9,7 @@ import type {
   SubmissionFileInput,
 } from './ChatAttachment.types';
 
-function toImageInput(image: ChatImageAttachment): ImageInputInfo {
+export function toImageInput(image: ChatImageAttachment): ImageInputInfo {
   const url = image.originalUrl as string;
   return {
     url,
@@ -20,7 +23,7 @@ function toImageInput(image: ChatImageAttachment): ImageInputInfo {
   };
 }
 
-function toFileInput(attachment: Extract<ChatAttachment, { kind: 'file' }>): SubmissionFileInput {
+export function toFileInput(attachment: Extract<ChatAttachment, { kind: 'file' }>): SubmissionFileInput {
   return {
     url: attachment.url || '',
     name: attachment.name,
@@ -28,6 +31,22 @@ function toFileInput(attachment: Extract<ChatAttachment, { kind: 'file' }>): Sub
     size: attachment.size,
     workspace_path: attachment.workspacePath,
   };
+}
+
+export function toOrderedAttachmentInputs(
+  attachments: ChatAttachment[],
+): OrderedAttachmentInput[] {
+  const ordered: OrderedAttachmentInput[] = [];
+  for (const attachment of attachments) {
+    if (attachment.kind === 'image' && attachment.status === 'ready' && attachment.originalUrl) {
+      ordered.push({ kind: 'image', image: toImageInput(attachment) });
+      continue;
+    }
+    if (attachment.kind === 'file' && attachment.status === 'ready' && attachment.url) {
+      ordered.push({ kind: 'file', file: toFileInput(attachment) });
+    }
+  }
+  return ordered;
 }
 
 /** 将界面附件模型转换为聊天、图片和视频接口共用的提交快照。 */
@@ -45,6 +64,7 @@ export function createAttachmentSubmissionSnapshot(
       .filter((item): item is Extract<ChatAttachment, { kind: 'file' }> => item.kind === 'file')
       .filter((item) => item.status === 'ready')
       .map(toFileInput),
+    orderedAttachments: toOrderedAttachmentInputs(attachments),
     invalidImages: attachments.filter(
       (item): item is ChatImageAttachment => item.kind === 'image'
         && item.status !== 'uploading' && !item.originalUrl,

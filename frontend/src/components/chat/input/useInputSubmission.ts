@@ -4,7 +4,7 @@ import { uploadAudio } from '../../../services/audio';
 import { ApiRequestError } from '../../../services/api';
 import { createConversation, type ChatSettings } from '../../../services/conversation';
 import type { ModelType, UnifiedModel } from '../../../constants/models';
-import type { ImageInputInfo } from '../../../services/messageSender';
+import type { ImageInputInfo, OrderedAttachmentInput } from '../../../services/messageSender';
 import type { Message } from '../../../stores/useMessageStore';
 import { logger } from '../../../utils/logger';
 import type {
@@ -32,6 +32,8 @@ export interface UseInputSubmissionOptions {
     conversationId: string,
     images?: string[] | ImageInputInfo[] | null,
     files?: Array<{ url: string; name: string; mime_type: string; size: number; workspace_path?: string }> | null,
+    extraParams?: Record<string, unknown> | null,
+    orderedAttachments?: OrderedAttachmentInput[] | null,
   ) => Promise<void>;
   handleImageGeneration: (
     conversationId: string,
@@ -156,7 +158,18 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
           generation_type_override: 'image_ecom',
         });
       } else if (options.effectiveModelType === 'chat') {
-        await options.handleChatMessage(message, currentId, imageInputs, fileData);
+        if (attachments.orderedAttachments.length > 0) {
+          await options.handleChatMessage(
+            message,
+            currentId,
+            imageInputs,
+            fileData,
+            null,
+            attachments.orderedAttachments,
+          );
+        } else {
+          await options.handleChatMessage(message, currentId, imageInputs, fileData);
+        }
       } else if (options.effectiveModelType === 'video') {
         await options.handleVideoGeneration(currentId, message, imageInputs);
       } else {

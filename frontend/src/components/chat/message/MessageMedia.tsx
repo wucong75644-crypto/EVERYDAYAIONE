@@ -9,7 +9,8 @@ import AiImageGrid from '../media/AiImageGrid';
 import styles from '../menus/shared.module.css';
 import type { ContentPart, FilePart, ImageAsset } from '../../../types/message';
 import FileCardList from '../media/FileCard';
-import { AiGeneratedImage, UserImageGallery } from './MessageImageBlocks';
+import { AiGeneratedImage, UserImage, UserImageGallery } from './MessageImageBlocks';
+import { resolveImageOriginalUrl } from '../../../utils/messageUtils';
 
 interface MessageMediaProps {
   /** 图片资产列表（原图/缩略图分离） */
@@ -44,6 +45,131 @@ interface MessageMediaProps {
   failedMediaType?: 'image' | 'video' | null;
   /** 重新生成回调（失败时 retry） */
   onRegenerate?: () => void;
+}
+
+type OrderedUserMediaRun =
+  | {
+    kind: 'visuals';
+    items: Array<
+      | { kind: 'image'; asset: ImageAsset; imageIndex: number }
+      | { kind: 'video'; url: string }
+    >;
+  }
+  | { kind: 'files'; files: FilePart[] };
+
+function buildOrderedUserMediaRuns(
+  content: ContentPart[],
+  imageAssets: ImageAsset[],
+): OrderedUserMediaRun[] {
+  const imageIndicesByUrl = new Map<string, number[]>();
+  imageAssets.forEach((asset, index) => {
+    const indices = imageIndicesByUrl.get(asset.originalUrl) || [];
+    indices.push(index);
+    imageIndicesByUrl.set(asset.originalUrl, indices);
+  });
+
+  const runs: OrderedUserMediaRun[] = [];
+  for (const part of content) {
+    if (part.type === 'image') {
+      const originalUrl = resolveImageOriginalUrl(part);
+      if (!originalUrl) continue;
+      const indices = imageIndicesByUrl.get(originalUrl);
+      const imageIndex = indices?.shift();
+      if (imageIndex === undefined) continue;
+      const asset = imageAssets[imageIndex];
+      const last = runs[runs.length - 1];
+      if (last?.kind === 'visuals') {
+        last.items.push({ kind: 'image', asset, imageIndex });
+      } else {
+        runs.push({ kind: 'visuals', items: [{ kind: 'image', asset, imageIndex }] });
+      }
+      continue;
+    }
+    if (part.type === 'file') {
+      if (!part.url && !part.workspace_path) continue;
+      const last = runs[runs.length - 1];
+      if (last?.kind === 'files') last.files.push(part);
+      else runs.push({ kind: 'files', files: [part] });
+      continue;
+    }
+    if (part.type === 'video' && part.url) {
+      const last = runs[runs.length - 1];
+      if (last?.kind === 'visuals') last.items.push({ kind: 'video', url: part.url });
+      else runs.push({ kind: 'visuals', items: [{ kind: 'video', url: part.url }] });
+    }
+  }
+  return runs;
+}
+
+function OrderedUserMedia({
+  content = [],
+  imageAssets = [],
+  imageWidth,
+  imageHeight,
+  messageId,
+  onImageClick,
+  onMediaLoaded,
+}: Pick<MessageMediaProps, 'content' | 'imageAssets' | 'messageId' | 'onImageClick' | 'onMediaLoaded'> & {
+  imageWidth: number;
+  imageHeight: number;
+}) {
+  const runs = useMemo(
+    () => buildOrderedUserMediaRuns(content, imageAssets),
+    [content, imageAssets],
+  );
+
+  if (runs.length === 0) return null;
+
+  return (
+    <div className="flex w-[min(720px,90vw)] max-w-full flex-col items-end gap-2">
+      {runs.map((run, runIndex) => {
+        if (run.kind === 'visuals') {
+          const tileWidth = run.items.length > 1 ? Math.min(imageWidth, 280) : imageWidth;
+          const tileHeight = run.items.length > 1
+            ? Math.round(tileWidth * imageHeight / imageWidth)
+            : imageHeight;
+          return (
+            <div
+              key={`visuals-${runIndex}`}
+              data-attachment-run="visuals"
+              className="mt-4 grid w-full justify-end gap-2"
+              style={{ gridTemplateColumns: `repeat(auto-fit, ${tileWidth}px)` }}
+            >
+              {run.items.map((item, itemIndex) => item.kind === 'image' ? (
+                <UserImage
+                  key={`${item.asset.originalUrl}-${itemIndex}`}
+                  imageAsset={item.asset}
+                  index={itemIndex}
+                  messageId={messageId}
+                  onImageClick={() => onImageClick(item.imageIndex)}
+                  onMediaLoaded={itemIndex === 0 && runIndex === 0 ? onMediaLoaded : undefined}
+                  displayWidth={tileWidth}
+                  displayHeight={tileHeight}
+                />
+              ) : (
+                <video
+                  key={`video-${itemIndex}`}
+                  src={item.url}
+                  controls
+                  className="block rounded-xl shadow-sm object-contain"
+                  style={{ width: tileWidth, height: tileHeight }}
+                  preload="metadata"
+                  onLoadedMetadata={itemIndex === 0 && runIndex === 0 ? onMediaLoaded : undefined}
+                >
+                  您的浏览器不支持视频播放
+                </video>
+              ))}
+            </div>
+          );
+        }
+        return (
+          <div key={`files-${runIndex}`} data-attachment-run="files" className="w-full max-w-[590px] self-end">
+            <FileCardList files={run.files} />
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export default memo(function MessageMedia({
@@ -87,6 +213,9 @@ export default memo(function MessageMedia({
 
   const videoPlaceholderNotified = useRef(false);
   const showVideoPlaceholder = isGenerating && generatingType === 'video' && !videoUrl;
+  const hasOrderedUserMedia = isUser && content.some((part) => (
+    part.type === 'image' || part.type === 'file' || part.type === 'video'
+  ));
   useEffect(() => {
     if (showVideoPlaceholder && !videoPlaceholderNotified.current) {
       videoPlaceholderNotified.current = true;
@@ -100,7 +229,22 @@ export default memo(function MessageMedia({
     onImageClick(index ?? 0);
   }, [onImageClick]);
 
-  if (imageAssets.length === 0 && !videoUrl && !isGenerating && !failedMediaType && files.length === 0) return null;
+  if (imageAssets.length === 0 && !videoUrl && !isGenerating && !failedMediaType && files.length === 0
+    && !hasOrderedUserMedia) return null;
+
+  if (hasOrderedUserMedia) {
+    return (
+      <OrderedUserMedia
+        content={content}
+        imageAssets={imageAssets}
+        imageWidth={imagePlaceholderSize.width}
+        imageHeight={imagePlaceholderSize.height}
+        messageId={messageId}
+        onImageClick={handleImageClick}
+        onMediaLoaded={onMediaLoaded}
+      />
+    );
+  }
 
   return (
     <>
@@ -114,6 +258,7 @@ export default memo(function MessageMedia({
             imageAssets={imageAssets}
             messageId={messageId}
             maxWidth={imagePlaceholderSize.width}
+            maxHeight={imagePlaceholderSize.height}
             onImageClick={handleImageClick}
             onMediaLoaded={onMediaLoaded}
           />
