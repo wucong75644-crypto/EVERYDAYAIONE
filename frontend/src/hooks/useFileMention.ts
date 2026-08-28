@@ -13,6 +13,7 @@ export interface MentionResult {
   name: string;
   workspace_path: string;
   cdn_url: string | null;
+  thumbnail_url?: string | null;
   mime_type: string | null;
   size: number;
 }
@@ -110,6 +111,7 @@ export function useFileMention(): UseFileMentionReturn {
           name: item.name,
           workspace_path: item.workspace_path || item.name,
           cdn_url: item.cdn_url,
+          thumbnail_url: item.thumbnail_url,
           mime_type: item.mime_type,
           size: item.size,
         })));

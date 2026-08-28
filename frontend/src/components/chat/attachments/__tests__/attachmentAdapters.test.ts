@@ -40,9 +40,12 @@ describe('attachmentAdapters', () => {
     expect(fromWorkspaceFile({
       name: 'workspace.webp', workspace_path: '上传/workspace.webp',
       cdn_url: 'https://cdn/workspace.webp', mime_type: null, size: 10,
+      thumbnail_url: 'https://cdn/workspace-thumb.webp',
     })).toMatchObject({
       id: 'workspace:上传/workspace.webp', kind: 'image', source: 'workspace',
       status: 'ready', originalUrl: 'https://cdn/workspace.webp',
+      previewUrl: 'https://cdn/workspace-thumb.webp',
+      thumbnailUrl: 'https://cdn/workspace-thumb.webp',
       workspacePath: '上传/workspace.webp',
     });
   });

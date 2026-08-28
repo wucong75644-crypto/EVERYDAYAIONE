@@ -45,6 +45,26 @@ def test_serialize_marks_missing(tmp_path) -> None:
     assert result["original_url"] is None
 
 
+def test_serialize_uses_workspace_thumbnail_url_for_ready_image(tmp_path) -> None:
+    from PIL import Image
+
+    service = _service(tmp_path)
+    target = service.executor.resolve_safe_path("valid.png")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (2, 2)).save(target, "PNG")
+    with patch.object(
+        service.executor,
+        "get_cdn_url",
+        return_value="https://cdn.everydayai.com.cn/workspace/valid.png",
+    ):
+        result = service._serialize_image({"workspace_path": "valid.png"})
+
+    assert result["original_url"] == "https://cdn.everydayai.com.cn/workspace/valid.png"
+    assert result["thumbnail_url"] == (
+        "https://cdn.everydayai.com.cn/workspace-thumbnails/valid.w360.webp"
+    )
+
+
 def test_get_current_returns_project_with_images(tmp_path) -> None:
     service = _service(tmp_path)
     project_query = MagicMock()

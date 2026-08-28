@@ -24,6 +24,7 @@ interface ItemActionOptions {
     name: string;
     workspace_path: string;
     cdn_url: string | null;
+    thumbnail_url?: string | null;
     mime_type: string | null;
     size: number;
   }) => void;
@@ -123,6 +124,7 @@ function toAttachment(item: WorkspaceFileItem, currentPath: string) {
     name: item.name,
     workspace_path: getFullPath(currentPath, item.name),
     cdn_url: item.cdn_url ? toOriginalImageUrl(item.cdn_url) : null,
+    thumbnail_url: item.thumbnail_url,
     mime_type: item.mime_type,
     size: item.size,
   };

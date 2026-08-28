@@ -8,6 +8,7 @@ from loguru import logger
 
 from core.config import get_settings
 from core.exceptions import AppException
+from services.file_upload import build_workspace_thumbnail_url
 from services.file_executor import FileExecutor
 
 
@@ -235,5 +236,8 @@ class DetailProjectService:
             ready = False
         image["status"] = "ready" if ready else "missing"
         image["original_url"] = self.executor.get_cdn_url(path) if ready else None
-        image["thumbnail_url"] = image["original_url"]
+        image["thumbnail_url"] = (
+            build_workspace_thumbnail_url(image["original_url"])
+            if image["original_url"] else None
+        ) or image["original_url"]
         return image

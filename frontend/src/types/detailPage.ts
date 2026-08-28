@@ -9,6 +9,7 @@ export interface DetailLocalImage {
   category: DetailImageCategory;
   file?: File;
   previewUrl: string;
+  originalUrl?: string;
   error: string | null;
   workspacePath?: string;
   status: DetailImageStatus;

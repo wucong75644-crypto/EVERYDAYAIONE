@@ -10,8 +10,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { extractMentionQuery, useFileMention } from '../useFileMention';
+import { searchWorkspace } from '../../services/workspace';
 
 // Mock searchWorkspace — 避免真实 API 调用
 vi.mock('../../services/workspace', () => ({
@@ -91,6 +92,20 @@ describe('useFileMention', () => {
     expect(result.current.results).toEqual([]);
     expect(result.current.activeIndex).toBe(0);
     expect(result.current.loading).toBe(false);
+  });
+
+  it('should preserve image thumbnail URL from workspace search results', async () => {
+    vi.mocked(searchWorkspace).mockResolvedValueOnce({
+      items: [{
+        name: 'product.png', workspace_path: '产品/product.png', cdn_url: 'https://cdn/original.png',
+        thumbnail_url: 'https://cdn/thumb.webp', mime_type: 'image/png', size: 1,
+      }],
+      total: 1,
+    });
+    const { result } = renderHook(() => useFileMention());
+
+    act(() => result.current.handleInputChange('@product', 8));
+    await waitFor(() => expect(result.current.results[0]?.thumbnail_url).toBe('https://cdn/thumb.webp'));
   });
 
   describe('close', () => {
