@@ -16,6 +16,7 @@ from typing import Any, Optional
 import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool, ConnectionPool
+from psycopg.types.json import Jsonb
 from loguru import logger
 
 
@@ -76,6 +77,13 @@ def _serialize_row(row: dict) -> dict:
     return result
 
 
+def _adapt_rpc_param(value: Any) -> Any:
+    """Adapt structured RPC parameters to PostgreSQL JSONB."""
+    if isinstance(value, (dict, list)):
+        return Jsonb(value)
+    return value
+
+
 # ============================================================
 # 查询构造器（链式 API）
 # ============================================================
@@ -102,6 +110,7 @@ class QueryBuilder:
         self._single: bool = False
         self._maybe_single: bool = False
         self._data: Any = None
+        self._returning: bool = True
         self._on_conflict: Optional[str] = None
 
     # ---- 操作类型 ----
@@ -112,9 +121,12 @@ class QueryBuilder:
         self._count_mode = count
         return self
 
-    def insert(self, data: dict | list[dict]) -> QueryBuilder:
+    def insert(
+        self, data: dict | list[dict], *, returning: bool = True,
+    ) -> QueryBuilder:
         self._operation = "insert"
         self._data = data if isinstance(data, list) else [data]
+        self._returning = returning
         return self
 
     def upsert(
@@ -358,7 +370,9 @@ class QueryBuilder:
                 if isinstance(val, (dict, list)):
                     val = json.dumps(val, ensure_ascii=False)
                 params.append(val)
-        sql = f'INSERT INTO "{self._table}" ({col_sql}) VALUES {all_placeholders} RETURNING *'
+        sql = f'INSERT INTO "{self._table}" ({col_sql}) VALUES {all_placeholders}'
+        if self._returning:
+            sql += " RETURNING *"
         return sql, params
 
     def _build_upsert(self) -> tuple[str, list]:
@@ -523,7 +537,7 @@ class RpcCaller:
                 f"{k} := %s" for k in self._params
             )
             sql = f'SELECT "{self._func_name}"({named_args})'
-            params = list(self._params.values())
+            params = [_adapt_rpc_param(value) for value in self._params.values()]
         else:
             sql = f'SELECT "{self._func_name}"()'
             params = []
@@ -658,7 +672,7 @@ class AsyncRpcCaller(RpcCaller):
                 f"{k} := %s" for k in self._params
             )
             sql = f'SELECT "{self._func_name}"({named_args})'
-            params = list(self._params.values())
+            params = [_adapt_rpc_param(value) for value in self._params.values()]
         else:
             sql = f'SELECT "{self._func_name}"()'
             params = []

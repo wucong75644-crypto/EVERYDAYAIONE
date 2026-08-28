@@ -748,3 +748,22 @@ class TestRecvTimeout:
 
         assert connected_client._is_connected is False
         connected_client._ws.close.assert_called_once()
+
+
+class TestConnectionWorkerCleanup:
+    @pytest.mark.asyncio
+    async def test_worker_exception_is_consumed(self, client):
+        """A receive worker close error is consumed before reconnecting."""
+        async def failing_worker():
+            raise RuntimeError("connection closed")
+
+        async def waiting_worker():
+            await asyncio.sleep(60)
+
+        failed = asyncio.create_task(failing_worker())
+        waiting = asyncio.create_task(waiting_worker())
+
+        await client._run_connection_workers(failed, waiting)
+
+        assert failed.done()
+        assert waiting.cancelled()

@@ -20,6 +20,7 @@ import pytest
 from unittest.mock import AsyncMock, patch
 
 from services.handlers.message_scorer import (
+    _batch_compute_embeddings,
     _compute_relevance_scores,
     _extract_text,
     _rule_score,
@@ -161,6 +162,52 @@ class TestScoreMessagesSync:
 
 
 class TestScoreMessagesAsync:
+    @pytest.mark.asyncio
+    async def test_embedding_batches_respect_dashscope_limit(self, monkeypatch):
+        """text-embedding-v3 requests are split into batches of at most 10."""
+        from core.config import settings
+
+        class FakeResponse:
+            def __init__(self, count):
+                self._count = count
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "data": [
+                        {"embedding": [float(i)]}
+                        for i in range(self._count)
+                    ],
+                }
+
+        class FakeClient:
+            def __init__(self):
+                self.batch_sizes = []
+
+            async def post(self, path, *, json):
+                assert path == "/embeddings"
+                self.batch_sizes.append(len(json["input"]))
+                return FakeResponse(len(json["input"]))
+
+        fake_client = FakeClient()
+
+        class FakeDashScopeClient:
+            async def get(self):
+                return fake_client
+
+        monkeypatch.setattr(settings, "dashscope_api_key", "test-key")
+        monkeypatch.setattr(
+            "services.handlers.message_scorer._get_ds_client",
+            lambda: FakeDashScopeClient(),
+        )
+
+        result = await _batch_compute_embeddings([f"text-{i}" for i in range(21)])
+
+        assert fake_client.batch_sizes == [10, 10, 1]
+        assert len(result) == 21
+
     @pytest.mark.asyncio
     async def test_few_messages_skip_embedding(self):
         """≤5 条消息跳过 Embedding，只用规则"""

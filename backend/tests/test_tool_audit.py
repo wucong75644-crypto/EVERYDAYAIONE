@@ -85,6 +85,9 @@ class TestRecordToolAudit:
 
         mock_db.table.assert_called_once_with("tool_audit_log")
         insert_call = mock_db.table.return_value.insert.call_args[0][0]
+        assert mock_db.table.return_value.insert.call_args.kwargs == {
+            "returning": False,
+        }
         assert insert_call["tool_name"] == "local_stock_query"
         assert insert_call["status"] == "success"
         assert insert_call["elapsed_ms"] == 10
@@ -150,8 +153,9 @@ class TestRecordToolAudit:
                 call_log.append("executed")
 
         class FakeInsert:
-            def insert(self, row):
+            def insert(self, row, *, returning=True):
                 call_log.append(("insert", row["tool_name"]))
+                assert returning is False
                 return FakeExecute()
 
         class FakeDB:

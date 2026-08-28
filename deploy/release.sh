@@ -322,7 +322,11 @@ if [[ -z "$rollback_sha" && -z "$deploy_task_sha" && -z "$deploy_main_sha" ]]; t
         done
     fi
 
-    git add -- "${task_files[@]}" "${source_only_files[@]}"
+    if ((${#source_only_files[@]} > 0)); then
+        git add -- "${task_files[@]}" "${source_only_files[@]}"
+    else
+        git add -- "${task_files[@]}"
+    fi
     git diff --cached --quiet && fail "指定文件没有可提交的变更"
     git commit -m "$message"
     commit_sha=$(git rev-parse HEAD)

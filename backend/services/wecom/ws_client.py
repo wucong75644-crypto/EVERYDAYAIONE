@@ -254,20 +254,7 @@ class WecomWSClient(WecomOutboundMixin):
                     # 并发运行心跳和消息接收，任一退出则取消另一个
                     hb_task = asyncio.create_task(self._heartbeat_loop())
                     recv_task = asyncio.create_task(self._receive_loop())
-                    done, pending = await asyncio.wait(
-                        [hb_task, recv_task],
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    for task in pending:
-                        task.cancel()
-                        try:
-                            await task
-                        except asyncio.CancelledError:
-                            pass
-                    # 将已完成任务的异常抛出（触发重连逻辑）
-                    for task in done:
-                        if task.exception():
-                            raise task.exception()
+                    await self._run_connection_workers(hb_task, recv_task)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -291,6 +278,28 @@ class WecomWSClient(WecomOutboundMixin):
                 logger.info(f"Wecom WS reconnecting in {delay}s...")
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, RECONNECT_DELAY_MAX)
+
+    async def _run_connection_workers(
+        self, hb_task: asyncio.Task, recv_task: asyncio.Task,
+    ) -> None:
+        """Wait for one worker and consume both worker task results."""
+        done, pending = await asyncio.wait(
+            [hb_task, recv_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        # A connection close is expected to trigger the outer reconnect loop,
+        # but must not leave an unhandled task exception in the event loop.
+        task_results = await asyncio.gather(
+            *done, *pending, return_exceptions=True,
+        )
+        for result in task_results:
+            if isinstance(result, Exception):
+                logger.warning(
+                    f"Wecom WS worker task ended | "
+                    f"error={type(result).__name__}: {result}"
+                )
 
     async def _subscribe(self) -> None:
         """发送订阅消息，认证 Bot"""
