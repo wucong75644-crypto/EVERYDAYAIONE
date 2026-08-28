@@ -24,6 +24,7 @@ const workspaceImage = {
   name: 'workspace.png',
   workspace_path: '上传/workspace.png',
   cdn_url: 'https://cdn.example.com/workspace.png',
+  thumbnail_url: 'https://cdn.example.com/workspace-thumb.webp',
   mime_type: 'image/png',
   size: 10,
 };
@@ -72,6 +73,11 @@ describe('useChatAttachments', () => {
       thumbnail_url: 'https://cdn.example.com/quote.thumb.webp',
       asset_id: 'asset-quote',
       workspace_path: '生成/quote.png',
+    });
+    expect(result.current.submissionSnapshot.imageInputs[1]).toMatchObject({
+      url: 'https://cdn.example.com/workspace.png',
+      thumbnail_url: 'https://cdn.example.com/workspace-thumb.webp',
+      workspace_path: '上传/workspace.png',
     });
   });
 

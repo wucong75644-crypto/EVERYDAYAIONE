@@ -66,6 +66,7 @@ export interface WorkspaceFile {
   name: string;
   workspace_path: string;
   cdn_url: string | null;
+  thumbnail_url?: string | null;
   mime_type: string | null;
   size: number;
 }

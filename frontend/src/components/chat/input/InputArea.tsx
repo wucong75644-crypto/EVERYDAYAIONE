@@ -114,7 +114,7 @@ export default function InputArea({
   const fileMention = useFileMention();
   const consumeMention = fileMention.consumeMention;
   // @ 提及选中文件：添加到 workspaceFiles + 用 hook 精准移除 @keyword
-  const handleMentionSelect = useCallback((file: { name: string; workspace_path: string; cdn_url: string | null; mime_type: string | null; size: number }) => {
+  const handleMentionSelect = useCallback((file: { name: string; workspace_path: string; cdn_url: string | null; thumbnail_url?: string | null; mime_type: string | null; size: number }) => {
     addWorkspaceFile(file);
     // consumeMention 用 hook 内部记录的精准 @ 起始位置做替换，不依赖 lastIndexOf
     setPrompt(consumeMention(prompt));

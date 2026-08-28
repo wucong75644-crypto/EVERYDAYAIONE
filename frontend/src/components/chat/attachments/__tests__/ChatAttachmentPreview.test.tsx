@@ -23,6 +23,7 @@ function workspaceImage(): ChatAttachment {
     mimeType: 'image/png',
     size: 1024,
     previewUrl: 'https://cdn.example.com/product.thumbnail.webp',
+    thumbnailUrl: 'https://cdn.example.com/product.thumbnail.webp',
     originalUrl: 'https://cdn.example.com/product.png',
     workspacePath: 'images/product.png',
   };

@@ -3,6 +3,7 @@ import PreviewHost from '../../../preview/PreviewHost';
 import type { PreviewItem } from '../../../preview/types';
 import { usePreview } from '../../../preview/usePreview';
 import { getFileIcon } from '../../../utils/fileUtils';
+import { useThumbnailFallback } from '../../../hooks/useThumbnailFallback';
 import type { ChatAttachment, ChatImageAttachment } from './ChatAttachment.types';
 
 interface ChatAttachmentPreviewProps {
@@ -13,12 +14,44 @@ interface ChatAttachmentPreviewProps {
 function toPreviewItem(image: ChatImageAttachment): PreviewItem {
   return {
     url: image.originalUrl || image.previewUrl || undefined,
-    thumbnailUrl: image.previewUrl || undefined,
+    thumbnailUrl: image.thumbnailUrl || (image.source === 'upload' ? image.previewUrl : undefined),
     workspacePath: image.workspacePath,
     filename: image.name,
     mimeType: image.mimeType || 'image/*',
     size: image.size,
   };
+}
+
+function AttachmentImage({
+  attachment,
+  onClick,
+}: {
+  attachment: ChatImageAttachment;
+  onClick: () => void;
+}) {
+  const thumbnail = useThumbnailFallback(
+    attachment.thumbnailUrl || (attachment.source === 'upload' ? attachment.previewUrl : undefined),
+    attachment.originalUrl,
+  );
+  const src = thumbnail.src;
+
+  if (!src) {
+    return <div className="h-12 w-12 rounded-lg bg-active flex items-center justify-center text-error">!</div>;
+  }
+
+  return (
+    <img
+      src={src}
+      alt={attachment.name}
+      onClick={onClick}
+      onError={thumbnail.onError}
+      className={`h-12 w-12 rounded-lg object-cover transition-transform ${
+        attachment.status === 'uploading' ? 'opacity-50' : ''
+      } ${attachment.status === 'error' ? 'border-2 border-error' : ''} ${
+        attachment.source === 'quote' ? 'ring-2 ring-blue-400' : ''
+      } ${attachment.status === 'ready' ? 'cursor-pointer hover:scale-105 hover:shadow-md' : ''}`}
+    />
+  );
 }
 
 function formatFileSize(bytes: number): string {
@@ -54,20 +87,7 @@ export default function ChatAttachmentPreview({ attachments, onRemove }: ChatAtt
       <div className="flex items-end gap-2">
         {attachments.map((attachment) => attachment.kind === 'image' ? (
           <div key={attachment.id} className="relative inline-block shrink-0">
-            {attachment.previewUrl ? (
-              <img
-                src={attachment.previewUrl}
-                alt={attachment.name}
-                onClick={() => openImage(attachment)}
-                className={`h-12 w-12 rounded-lg object-cover transition-transform ${
-                  attachment.status === 'uploading' ? 'opacity-50' : ''
-                } ${attachment.status === 'error' ? 'border-2 border-error' : ''} ${
-                  attachment.source === 'quote' ? 'ring-2 ring-blue-400' : ''
-                } ${attachment.status === 'ready' ? 'cursor-pointer hover:scale-105 hover:shadow-md' : ''}`}
-              />
-            ) : (
-              <div className="h-12 w-12 rounded-lg bg-active flex items-center justify-center text-error">!</div>
-            )}
+            <AttachmentImage attachment={attachment} onClick={() => openImage(attachment)} />
             {attachment.status === 'uploading' && (
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />

@@ -103,7 +103,7 @@ function applyDraft(project: import('../types/detailPage').DetailProjectDraft | 
     },
     images: project.images.map((image) => ({
       id: image.id, category: image.category, workspacePath: image.workspace_path,
-      previewUrl: image.thumbnail_url || image.original_url || '', error: null,
+      previewUrl: image.thumbnail_url || image.original_url || '', originalUrl: image.original_url || undefined, error: null,
       status: image.status, sortOrder: image.sort_order, name: image.workspace_path.split('/').pop() || '图片',
     })),
   };
