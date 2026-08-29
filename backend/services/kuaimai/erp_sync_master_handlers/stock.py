@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from services.kuaimai.erp_sync_utils import (
+    _ApiRateLimiter,
     _batch_upsert,
     _fmt_dt,
     _ms_to_iso,
@@ -60,27 +61,50 @@ _STOCK_UPSERT_KEY = "outer_id,sku_outer_id,warehouse_id,org_id"
 _CHECKPOINT_INTERVAL = 10  # 每 10 批（~1000 编码）存盘一次
 _STOCK_FULL_429_MAX_RETRIES = 8  # 全量同步429最大重试（比增量更宽容）
 _STOCK_FULL_429_BASE_DELAY = 10.0  # 全量同步429退避起始秒数
+_STOCK_FULL_DEFAULT_QPS = 2.0  # 全量扫描独立限流默认值，低于全局 10 QPS
+
+
+def _get_stock_full_qps() -> float:
+    """读取全量库存独立 QPS，配置异常时使用保守默认值。"""
+    from core.config import get_settings
+
+    raw_qps = getattr(get_settings(), "erp_stock_full_qps", _STOCK_FULL_DEFAULT_QPS)
+    # 测试替身或异常配置对象不应被 MagicMock/其他对象的隐式 float 转换放大流量。
+    if isinstance(raw_qps, bool) or not isinstance(raw_qps, (int, float, str)):
+        return _STOCK_FULL_DEFAULT_QPS
+    try:
+        qps = float(raw_qps)
+    except (TypeError, ValueError):
+        return _STOCK_FULL_DEFAULT_QPS
+    return qps if qps > 0 else _STOCK_FULL_DEFAULT_QPS
 
 
 async def _stock_full_request(
     svc: "ErpSyncService", batch_str: str, wh_id: int, page: int,
+    rate_limiter: _ApiRateLimiter | None = None,
 ) -> dict[str, Any] | None:
-    """全量同步单次API请求，带429长退避（不依赖client的3次短重试）"""
+    """全量同步单次 API 请求，带独立低速限流和 429 长退避。"""
     import httpx
     from services.kuaimai.erp_sync_utils import _API_SEM
+
+    async def _request():
+        return await svc._get_client().request_with_retry(
+            "stock.api.status.query",
+            {
+                "mainOuterId": batch_str,
+                "warehouseId": wh_id,
+                "pageSize": 100,
+                "pageNo": page,
+            },
+        )
 
     for attempt in range(_STOCK_FULL_429_MAX_RETRIES):
         try:
             async with _API_SEM:
-                return await svc._get_client().request_with_retry(
-                    "stock.api.status.query",
-                    {
-                        "mainOuterId": batch_str,
-                        "warehouseId": wh_id,
-                        "pageSize": 100,
-                        "pageNo": page,
-                    },
-                )
+                if rate_limiter is None:
+                    return await _request()
+                async with rate_limiter:
+                    return await _request()
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 429:
                 delay = _STOCK_FULL_429_BASE_DELAY * (2 ** attempt)
@@ -126,8 +150,6 @@ async def _fetch_stock_by_codes(
     按仓库遍历：对每个仓库分别查询，确保多仓数据完整。
     分批存盘：每 _CHECKPOINT_INTERVAL 批 upsert 一次，避免单次 429 丢弃全部进度。
     """
-    from services.kuaimai.erp_sync_utils import _API_SEM
-
     if not warehouse_ids:
         warehouse_ids = await _get_warehouse_ids(svc)
     if not warehouse_ids:
@@ -136,10 +158,12 @@ async def _fetch_stock_by_codes(
 
     total_batches = (len(codes) + 99) // 100
     total_upserted = 0
+    stock_full_qps = _get_stock_full_qps()
+    stock_full_limiter = _ApiRateLimiter(max_qps=stock_full_qps)
 
     logger.info(
         f"stock_full fetch start | codes={len(codes)} batches={total_batches} "
-        f"warehouses={warehouse_ids}"
+        f"warehouses={warehouse_ids} qps={stock_full_qps:g}"
     )
 
     for wh_id in warehouse_ids:
@@ -151,7 +175,7 @@ async def _fetch_stock_by_codes(
             while page < 500:
                 page += 1
                 data = await _stock_full_request(
-                    svc, batch_str, int(wh_id), page,
+                    svc, batch_str, int(wh_id), page, rate_limiter=stock_full_limiter,
                 )
                 if data is None:
                     break  # 无法恢复，跳过此批

@@ -212,6 +212,7 @@ class Settings(BaseSettings):
     erp_sync_shard_days: int = 1               # 时间窗口分片大小（天），快麦API单次查询数据量有限
     erp_warehouse_ids: str = "87227,436208"  # 库存同步仓库ID列表（逗号分隔），排除虚拟仓444522
     erp_stock_full_refresh_interval: int = 21600    # 库存全量刷新间隔（秒），默认6小时（增量已足够准确）
+    erp_stock_full_qps: float = 2.0                  # 库存全量请求速率上限，避免全量扫描瞬时打满接口
     erp_sync_worker_count: int = 10               # Worker 协程数（并发消费任务）
     erp_sync_max_org_concurrency: int = 3         # 单企业最大并发同步数（防大企业霸占 Worker）
     erp_sync_task_lock_ttl: int = 60              # per-(org, sync_type) 任务锁 TTL（秒），配合续期

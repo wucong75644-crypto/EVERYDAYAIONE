@@ -158,7 +158,7 @@ async def _process_platform_map_batch(
 
     except Exception as e:
         # 网络/未知错误：跳过此批，不标记，下轮 sync 自然重试
-        logger.error(
+        logger.warning(
             f"platform_map: unexpected error | "
             f"type={type(e).__name__} | size={len(batch)} | error={e}"
         )

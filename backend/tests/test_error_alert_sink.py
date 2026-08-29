@@ -56,6 +56,16 @@ class TestFingerprint:
         msg2 = "request 99999999 failed"
         assert _fingerprint("m", "f", msg1) == _fingerprint("m", "f", msg2)
 
+    def test_consecutive_error_count_replaced(self):
+        msg1 = "ERP sync repeated failure | consecutive_errors=3 | last_error=x"
+        msg2 = "ERP sync repeated failure | consecutive_errors=300 | last_error=x"
+        assert _fingerprint("m", "f", msg1) == _fingerprint("m", "f", msg2)
+
+    def test_chinese_failure_count_replaced(self):
+        msg1 = "ERP 同步异常告警 | product: 3 次失败"
+        msg2 = "ERP 同步异常告警 | product: 300 次失败"
+        assert _fingerprint("m", "f", msg1) == _fingerprint("m", "f", msg2)
+
     def test_short_numbers_not_replaced(self):
         """4 位以下数字保留（可能是端口、行号等有意义的值）"""
         msg1 = "port 8000 error"
