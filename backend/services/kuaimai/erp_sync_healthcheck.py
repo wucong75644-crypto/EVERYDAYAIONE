@@ -166,12 +166,9 @@ async def _scan_and_alert(db: Any) -> None:
 
 def _fingerprint(items: list[dict]) -> str:
     """生成告警指纹用于去重 — 同 org 相同 sync_type 集合视为同一告警"""
-    # 用 ALERT_THRESHOLD 做分档：每升一档（再失败 ALERT_THRESHOLD 次）触发一次新告警
-    # 例如阈值=3：error_count 3-5 一档，6-8 一档，9-11 一档...
-    bucket = max(ALERT_THRESHOLD, 1)
-    parts = sorted(
-        f"{i['sync_type']}:{i.get('error_count', 0) // bucket}" for i in items
-    )
+    # 失败次数只用于消息内容，不参与指纹；同一 sync_type 持续失败时，
+    # 在 DEDUPE_TTL 到期前不因计数递增而重复推送。
+    parts = sorted(str(i["sync_type"]) for i in items)
     s = ",".join(parts)
     return hashlib.md5(s.encode()).hexdigest()[:12]
 

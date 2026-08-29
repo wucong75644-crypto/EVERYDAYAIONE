@@ -86,6 +86,15 @@ def _fingerprint(module: str, function: str, message: str) -> str:
     # 去掉消息中的动态部分（数字、UUID、时间戳）用于聚合
     stable_msg = re.sub(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "<uuid>", message)
     stable_msg = re.sub(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}", "<ts>", stable_msg)
+    # 连续失败计数和告警正文中的“X 次失败”是同一错误的运行时状态，
+    # 不应让每次计数增长都产生一条新的 error_logs 指纹。
+    stable_msg = re.sub(
+        r"(consecutive_errors\s*[=:]\s*)\d+",
+        r"\1<count>",
+        stable_msg,
+        flags=re.I,
+    )
+    stable_msg = re.sub(r"\d+\s*次失败", "<count>次失败", stable_msg)
     stable_msg = re.sub(r"\d{5,}", "<num>", stable_msg)
     raw = f"{module}:{function}:{stable_msg[:200]}"
     return hashlib.md5(raw.encode()).hexdigest()

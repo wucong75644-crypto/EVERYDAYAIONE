@@ -634,6 +634,30 @@ class TestFetchStockByCodes:
         assert result == 150
         assert page_call["n"] == 2
 
+    @pytest.mark.asyncio
+    async def test_uses_configured_low_qps_limiter(self, monkeypatch):
+        """全量扫描把配置的低速限流器传给每次请求。"""
+        import services.kuaimai.erp_sync_master_handlers.stock as stock_module
+        from services.kuaimai.erp_sync_master_handlers import _fetch_stock_by_codes
+
+        monkeypatch.setattr(
+            "core.config.get_settings",
+            lambda: MagicMock(erp_stock_full_qps=2.5),
+        )
+        monkeypatch.setattr(stock_module.asyncio, "sleep", AsyncMock())
+        captured = []
+
+        async def _mock_full_request(*args, **kwargs):
+            captured.append(kwargs["rate_limiter"])
+            return {"stockStatusVoList": []}
+
+        monkeypatch.setattr(stock_module, "_stock_full_request", _mock_full_request)
+        svc = _mock_stock_svc()
+
+        assert await _fetch_stock_by_codes(svc, ["P001"], warehouse_ids=["87227"]) == 0
+        assert len(captured) == 1
+        assert captured[0]._min_interval == pytest.approx(0.4)
+
 
 # ============================================================
 # TestSyncSupplier — 供应商同步

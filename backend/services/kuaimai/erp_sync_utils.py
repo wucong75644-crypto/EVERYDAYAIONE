@@ -121,18 +121,35 @@ def _to_float(val: Any) -> float:
         return 0.0
 
 
+def _to_pg_text_array(values: list[Any]) -> str:
+    """将 Python 列表编码成 PostgreSQL TEXT[] 数组字面量。"""
+    encoded: list[str] = []
+    for value in values:
+        if value is None:
+            encoded.append("NULL")
+            continue
+        text = str(value).replace("\\", "\\\\").replace('"', '\\"')
+        encoded.append(f'"{text}"')
+    return "{" + ",".join(encoded) + "}"
+
+
 def _normalize_archive_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Normalize legacy ``exception_tags`` values before archive upsert."""
+    """Normalize legacy ``exception_tags`` values before archive upsert.
+
+    PostgREST/psycopg 将 Python list 序列化为 JSON 数组，而目标列是 TEXT[]。
+    统一转成 PostgreSQL 数组字面量，避免出现 malformed array literal。
+    """
     normalized: list[dict[str, Any]] = []
     for row in rows:
         item = dict(row)
         value = item.get("exception_tags")
-        if isinstance(value, tuple):
-            item["exception_tags"] = list(value)
+        values: list[Any] | None = None
+        if isinstance(value, (list, tuple)):
+            values = list(value)
         elif isinstance(value, str):
             text = value.strip()
             if not text:
-                item["exception_tags"] = []
+                values = []
             else:
                 parsed: Any = None
                 try:
@@ -141,11 +158,13 @@ def _normalize_archive_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     if text.startswith("{") and text.endswith("}"):
                         parsed = next(csv.reader([text[1:-1]]), [])
                 if isinstance(parsed, list):
-                    item["exception_tags"] = [str(tag) for tag in parsed]
+                    values = parsed
                 elif parsed is not None:
-                    item["exception_tags"] = [str(parsed)]
+                    values = [parsed]
                 else:
-                    item["exception_tags"] = [text]
+                    values = [text]
+        if values is not None:
+            item["exception_tags"] = _to_pg_text_array(values)
         normalized.append(item)
     return normalized
 
