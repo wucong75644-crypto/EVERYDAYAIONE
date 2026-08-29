@@ -101,7 +101,8 @@ async def test_legacy_stream_delegates_to_shared_execution_engine(monkeypatch) -
 def test_legacy_runner_no_longer_imports_chat_stream_loop() -> None:
     from pathlib import Path
 
-    source = Path(
-        "backend/services/handlers/chat/stream_runner.py",
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "services/handlers/chat/stream_runner.py"
     ).read_text(encoding="utf-8")
     assert "ChatStreamLoop" not in source
