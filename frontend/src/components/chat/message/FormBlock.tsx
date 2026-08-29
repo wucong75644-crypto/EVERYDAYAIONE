@@ -13,7 +13,7 @@
 
 import { memo, useState, useCallback, useMemo, type ChangeEvent } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
-import { CheckCircle2, X } from 'lucide-react';
+import { CheckCircle2, Circle, Loader2, X } from 'lucide-react';
 import type { FormPart, FormField } from '../../../types/message';
 import { cn } from '../../../utils/cn';
 import { formatFormValue } from '../../../utils/displayValue';
@@ -213,6 +213,52 @@ interface FormBlockProps {
   form: FormPart;
 }
 
+function ScheduledTaskWorkflowStage({
+  formType,
+  status,
+}: {
+  formType: string;
+  status: 'idle' | 'submitting' | 'submitted' | 'cancelled';
+}) {
+  if (!['scheduled_task_create', 'scheduled_task_confirm'].includes(formType)) return null;
+
+  const activeStep = formType === 'scheduled_task_confirm'
+    ? (status === 'submitted' ? 4 : 3)
+    : (status === 'submitting' ? 2 : status === 'submitted' ? 3 : 1);
+  const labels = ['填写配置', '规划与试跑', '确认启用', '已启用'];
+
+  return (
+    <div className="mx-4 mt-3 rounded-[var(--s-radius-card)] border border-border-default bg-surface px-3 py-2">
+      <div className="flex items-center gap-1 overflow-x-auto" aria-label={`定时任务第 ${activeStep} 步，共 4 步`}>
+        {labels.map((label, index) => {
+          const step = index + 1;
+          const complete = step < activeStep;
+          const active = step === activeStep;
+          return (
+            <div key={label} className="flex min-w-0 items-center gap-1.5">
+              {index > 0 && <span className="h-px w-3 shrink-0 bg-border-default" aria-hidden="true" />}
+              {active && status === 'submitting'
+                ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-accent" />
+                : complete
+                  ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
+                  : <Circle className={cn('h-3.5 w-3.5 shrink-0', active ? 'text-accent' : 'text-text-tertiary')} />}
+              <span className={cn('whitespace-nowrap text-[11px]', active ? 'font-medium text-text-primary' : complete ? 'text-text-secondary' : 'text-text-tertiary')}>
+                {step}. {label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-1 text-[11px] text-text-secondary">
+        {activeStep === 1 && '尚未创建任务；请确认配置后开始规划与安全试跑。'}
+        {activeStep === 2 && '正在进行只读试跑：不扣积分、不发送消息、不写入业务数据。'}
+        {activeStep === 3 && '预检已通过；确认启用后才会创建正式任务。'}
+        {activeStep === 4 && '任务已启用，可在定时任务面板查看执行历史。'}
+      </p>
+    </div>
+  );
+}
+
 function FormFields({
   fields,
   values,
@@ -275,6 +321,7 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
   const [values, setValues] = useState<Record<string, unknown>>(initialValues);
   const [status, setStatus] = useState<'idle' | 'submitting' | 'submitted' | 'cancelled'>('idle');
   const [nextForm, setNextForm] = useState<FormPart | null>(null);
+  const [submittedMessage, setSubmittedMessage] = useState('');
   const submitted = status === 'submitted';
   const submitting = status === 'submitting';
   const cancelled = status === 'cancelled';
@@ -302,6 +349,7 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
       const { success, message, next_form: nextFormPayload } = (e as CustomEvent).detail;
       if (success) {
         setStatus('submitted');
+        setSubmittedMessage(message || '');
         if (nextFormPayload) setNextForm(nextFormPayload as FormPart);
       } else {
         setStatus('idle');
@@ -346,7 +394,7 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
           )}
         >
           {submitted ? <CheckCircle2 size={16} /> : <X size={16} />}
-          <span>{form.title} — {submitted ? '已提交' : '已取消'}</span>
+          <span>{submitted ? (submittedMessage || `${form.title} — 已提交`) : `${form.title} — 已取消`}</span>
         </m.div>
         {nextForm && <FormBlock form={nextForm} />}
       </>
@@ -354,9 +402,12 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
   }
 
   return (
-    <FormBlockContent form={form} submitting={submitting}
-      onSubmit={handleSubmit} onCancel={handleCancel}
-      fields={<FormFields fields={form.fields} values={values}
-        isVisible={isFieldVisible} onChange={updateField} />} />
+    <>
+      <ScheduledTaskWorkflowStage formType={form.form_type} status={status} />
+      <FormBlockContent form={form} submitting={submitting}
+        onSubmit={handleSubmit} onCancel={handleCancel}
+        fields={<FormFields fields={form.fields} values={values}
+          isVisible={isFieldVisible} onChange={updateField} />} />
+    </>
   );
 });

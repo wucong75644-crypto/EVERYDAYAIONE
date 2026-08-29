@@ -272,7 +272,7 @@ def _build_create_form(
         "form_type": "scheduled_task_create",
         "form_id": f"task_create_{uuid4().hex[:8]}",
         "title": "创建定时任务",
-        "description": "确认后 AI 会规划调用路径并进行只读安全试跑；试跑通过后再确认启用。",
+        "description": "步骤 1/4 · 尚未创建任务。提交后 AI 会规划调用路径并进行只读安全试跑；通过后再确认启用。",
         "fields": fields,
         "submit_text": "规划并安全试跑",
         "cancel_text": "取消",
@@ -373,7 +373,10 @@ def _build_confirm_form(draft: Dict[str, Any]) -> Dict[str, Any]:
         "form_type": "scheduled_task_confirm",
         "form_id": f"task_confirm_{draft['id'][:8]}",
         "title": "确认启用定时任务",
-        "description": f"安全试跑已通过。执行路径：{path or 'AI 将在已确认范围内动态执行'}",
+        "description": (
+            "步骤 3/4 · 预检已通过，正式任务仍未创建。"
+            f"执行路径：{path or 'AI 将在已确认范围内动态执行'}"
+        ),
         "fields": [
             _build_form_field("draft_id", "hidden", "", default_value=draft["id"]),
             _build_form_field("config_hash", "hidden", "", default_value=draft["config_hash"]),
@@ -693,10 +696,10 @@ async def _submit_create(
     return {
         "success": True,
         "message": (
-            f"✅ 「{name}」已通过 AI 路径规划与只读试跑\n"
+            f"✅ 「{name}」已完成 AI 路径规划与只读试跑，尚未创建正式任务。\n"
             f"- 频率：{schedule_desc}\n"
             f"- 调用工具：{', '.join((draft.get('execution_policy') or {}).get('allowed_tools', []))}\n"
-            "请打开「定时任务」面板查看试跑证据，并点击“确认启用”。"
+            "请在下方查看试跑路径，并确认启用。"
         ),
         "next_form": _build_confirm_form(draft),
     }

@@ -269,7 +269,9 @@ code_execute 直接 pd.read_parquet('staging/x.parquet') 即可。
 
 ### manage_scheduled_task — 定时任务管理
 创建/查看/修改/暂停/恢复/删除定时任务。
-create 传 description 描述任务内容和频率，返回表单供用户确认。
+create 传 description 描述任务内容和频率，只返回配置表单，不创建任务。
+用户提交后先进行 AI 路径规划和只读安全试跑；预检通过后还需第二次确认才会启用正式任务。
+返回表单后不得称任务“已创建”“已生效”或“已开始执行”，且不得改写表单中的频率和时间。
 
 # 执行模式
 

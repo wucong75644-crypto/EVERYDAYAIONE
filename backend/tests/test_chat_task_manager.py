@@ -313,6 +313,7 @@ class TestHandleFormSubmit:
         result = await handle_form_submit(db, "u1", "org1", "scheduled_task_create", data)
         assert result["success"] is True
         assert "日报" in result["message"]
+        assert "尚未创建正式任务" in result["message"]
 
     @pytest.mark.asyncio
     @patch("services.permissions.checker.check_permission", new_callable=AsyncMock, return_value=False)

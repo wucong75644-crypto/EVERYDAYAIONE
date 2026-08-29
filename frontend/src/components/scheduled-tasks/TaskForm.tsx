@@ -55,6 +55,43 @@ const WEEKDAY_LABELS: { value: number; label: string }[] = [
 
 type PushTargetMode = 'self' | 'colleague' | 'group';
 
+const WORKFLOW_STEPS = ['填写配置', '规划与试跑', '确认启用', '已启用'];
+
+function WorkflowProgress({ step, failed = false }: { step: number; failed?: boolean }) {
+  return (
+    <div className="rounded-lg border border-[var(--s-border-default)] bg-[var(--s-surface-sunken)] p-3">
+      <div className="flex items-center gap-1 overflow-x-auto" aria-label={`定时任务第 ${step} 步，共 4 步`}>
+        {WORKFLOW_STEPS.map((label, index) => {
+          const number = index + 1;
+          const isCurrent = number === step;
+          const complete = number < step;
+          return (
+            <div key={label} className="flex min-w-0 items-center gap-1.5">
+              {index > 0 && <span className="h-px w-3 shrink-0 bg-[var(--s-border-default)]" aria-hidden="true" />}
+              <span className={cn(
+                'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-medium',
+                complete ? 'border-[var(--s-success)] bg-[var(--s-success)] text-white' :
+                  isCurrent ? 'border-[var(--s-accent)] bg-[var(--s-accent-soft)] text-[var(--s-accent)]' :
+                    'border-[var(--s-border-default)] text-[var(--s-text-tertiary)]',
+              )}>{number}</span>
+              <span className={cn('whitespace-nowrap text-xs', isCurrent ? 'font-medium text-[var(--s-text-primary)]' : 'text-[var(--s-text-tertiary)]')}>
+                {label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-2 text-xs text-[var(--s-text-secondary)]">
+        {step === 1 && '尚未创建任务。提交配置后，系统才会规划调用路径并进行只读安全试跑。'}
+        {step === 2 && (failed
+          ? '安全试跑未通过。正式任务没有创建；请修改配置后重新试跑。'
+          : '正在只读安全试跑：不扣积分、不发送消息、不写入业务数据。')}
+        {step === 3 && '预检通过，但正式任务仍未创建；确认启用后才会生效。'}
+      </p>
+    </div>
+  );
+}
+
 /** 把 ISO 时间字符串转成 datetime-local 输入框需要的本地时间格式 */
 function isoToLocalDatetime(iso: string | null | undefined): string {
   if (!iso) {
@@ -323,6 +360,24 @@ export function TaskForm({ task, onClose, onSaved }: Props) {
     }
   };
 
+  if (!isEdit && submitting && !draft) {
+    return (
+      <>
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--s-border-default)]">
+          <Loader2 className="w-4 h-4 animate-spin text-[var(--s-accent)]" />
+          <h2 className="text-sm font-medium text-[var(--s-text-primary)]">AI 规划与安全试跑</h2>
+        </div>
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+          <WorkflowProgress step={2} />
+          <div className="rounded-lg border border-[var(--s-accent)] bg-[var(--s-accent-soft)] p-3">
+            <p className="text-sm font-medium text-[var(--s-text-primary)]">正在验证执行路径</p>
+            <p className="text-xs text-[var(--s-text-secondary)] mt-1">AI 正在选择允许调用的工具，并用相同路径完成一次只读试跑。</p>
+          </div>
+        </div>
+      </>
+    );
+  }
+
   if (!isEdit && draft) {
     const preflight = draft.latest_preflight;
     const passed = draft.status === 'ready' && preflight?.status === 'passed';
@@ -335,6 +390,7 @@ export function TaskForm({ task, onClose, onSaved }: Props) {
           <h2 className="text-sm font-medium text-[var(--s-text-primary)]">执行计划与安全试跑</h2>
         </div>
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+          <WorkflowProgress step={passed ? 3 : 2} failed={!passed} />
           <div className="rounded-lg border border-[var(--s-border-default)] p-3 space-y-2">
             <p className="text-sm font-medium text-[var(--s-text-primary)]">{draft.plan?.objective || 'AI 正在理解任务'}</p>
             {(draft.plan?.steps || []).map((step, index) => (
@@ -387,6 +443,7 @@ export function TaskForm({ task, onClose, onSaved }: Props) {
 
       {/* 表单内容 */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        {!isEdit && <WorkflowProgress step={1} />}
         {/* AI 智能创建（仅新建时） */}
         {!isEdit && (
           <div className="bg-[var(--s-surface-sunken)] rounded-lg p-3">

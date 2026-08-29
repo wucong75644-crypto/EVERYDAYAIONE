@@ -129,14 +129,20 @@ describe('structured message consumers', () => {
       type: 'form', form_type: 'scheduled_task_create', form_id: 'preflight', title: '试跑', fields: [],
     };
     render(<FormBlock form={form} />);
+    expect(screen.getByText('1. 填写配置')).toBeInTheDocument();
+    expect(screen.getByText(/尚未创建任务/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '确认' }));
+    expect(screen.getByText('2. 规划与试跑')).toBeInTheDocument();
     fireEvent(window, new CustomEvent('chat:form-submit-result', { detail: {
       success: true,
       next_form: {
         type: 'form', form_type: 'scheduled_task_confirm', form_id: 'confirm',
-        title: '确认启用定时任务', fields: [], submit_text: '确认启用', cancel_text: '取消',
+        title: '确认启用定时任务',
+        description: '步骤 3/4 · 预检已通过，正式任务仍未创建。',
+        fields: [], submit_text: '确认启用', cancel_text: '取消',
       },
     } }));
+    expect(screen.getByText(/正式任务仍未创建/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '确认启用' })).toBeInTheDocument();
   });
 

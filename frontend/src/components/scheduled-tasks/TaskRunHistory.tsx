@@ -143,8 +143,9 @@ export function TaskRunHistory({ taskId }: Props) {
 
   return (
     <div className="border-t border-[var(--s-border-subtle)] mt-3 pt-2">
-      <div className="text-xs font-medium text-[var(--s-text-tertiary)] px-3 mb-1 uppercase tracking-wider">
-        执行历史
+      <div className="flex items-center gap-2 px-3 mb-1">
+        <span className="text-[10px] font-medium text-[var(--s-success)]">步骤 4/4 · 已启用</span>
+        <span className="text-xs font-medium text-[var(--s-text-tertiary)] uppercase tracking-wider">执行历史</span>
       </div>
       <div className="max-h-64 overflow-y-auto">
         {runs.slice(0, 10).map((run) => (

@@ -281,10 +281,13 @@ def build_common_tools() -> List[Dict[str, Any]]:
                 "description": (
                     "管理定时任务（自动执行重复性工作，如每日推送报表、定期数据同步）。\n\n"
                     "Actions:\n"
-                    "- create: 传 description 自然语言描述任务和频率，返回预填表单供用户确认后创建。\n"
+                    "- create: 传 description 自然语言描述任务和频率，只返回预填配置表单；此时任务尚未创建。"
+                    "用户提交表单后，系统会先规划工具路径并进行只读安全试跑；预检通过后必须再次确认，才会创建正式任务。\n"
                     "- list: 查看当前任务列表。\n"
                     "- update: 传 task_name + description 描述变更，返回表单供确认。\n"
                     "- pause/resume/delete: 传 task_name（模糊匹配）或 task_id 定位任务。\n\n"
+                    "调用 create 后，回复只能说明“配置表单已生成，任务尚未创建”；"
+                    "不得宣称任务已创建、已启用或已开始执行，也不得补充与表单不一致的频率或时间。"
                     "任务不存在时建议用 list 查看现有任务。"
                     "不要用于：一次性数据查询 → erp_agent；手动触发执行 → 不支持。"
                 ),
