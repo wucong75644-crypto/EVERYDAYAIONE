@@ -211,7 +211,7 @@ read_production_release_commit() {
 append_migration_once() {
     local candidate=$1
     local existing
-    for existing in "${migration_files[@]}"; do
+    for existing in "${migration_files[@]-}"; do
         [[ "$existing" == "$candidate" ]] && return
     done
     migration_files+=("$candidate")
