@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
 
@@ -105,6 +106,10 @@ class UpdateScheduledTaskRequest(BaseModel):
 
 class ParseNLRequest(BaseModel):
     text: str = Field(..., max_length=500)
+
+
+class ConfirmScheduledTaskDraftRequest(BaseModel):
+    config_hash: str = Field(..., min_length=64, max_length=64)
 
 
 # ════════════════════════════════════════════════════════
@@ -243,6 +248,16 @@ def _resolve_schedule_fields(payload: Any, tz: str) -> Dict[str, Any]:
     return result
 
 
+def _draft_definition(payload: CreateScheduledTaskRequest, schedule: Dict[str, Any]) -> Dict[str, Any]:
+    """草稿与预检的不可变输入；启用时由 RPC 原样消费。"""
+    return {
+        "name": payload.name, "prompt": payload.prompt, "timezone": payload.timezone,
+        "push_target": payload.push_target, "template_file": payload.template_file,
+        "max_credits": payload.max_credits, "retry_count": payload.retry_count,
+        "timeout_sec": payload.timeout_sec, **schedule,
+    }
+
+
 async def _enrich_with_creator(db: Any, tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """批量补充创建者展示信息（用于老板/主管视角）"""
     if not tasks:
@@ -319,6 +334,20 @@ async def create_task(
     scoped_db: ScopedDB,
     db: Database,
 ) -> Dict[str, Any]:
+    raise HTTPException(
+        409,
+        "定时任务必须先通过 AI 规划与安全试跑；请调用 POST /scheduled-tasks/drafts",
+    )
+
+
+@router.post("/drafts", summary="规划并试跑定时任务")
+async def create_task_draft(
+    payload: CreateScheduledTaskRequest,
+    user_id: CurrentUserId,
+    org_ctx: OrgCtx,
+    db: Database,
+) -> Dict[str, Any]:
+    """创建草稿并同步完成只读预检。该路径不创建 active 任务、不扣积分、不投递。"""
     org_id = _require_org(org_ctx)
 
     # 1. 权限校验
@@ -335,33 +364,72 @@ async def create_task(
     # 2. 解析频率字段（once / daily / weekly / monthly / cron）
     schedule = _resolve_schedule_fields(payload, payload.timezone)
 
-    # 3. 创建记录（OrgScopedDB 自动注入 org_id）
-    task_id = str(uuid4())
-    row = {
-        "id": task_id,
-        "org_id": org_id,
-        "user_id": user_id,
-        "name": payload.name,
-        "prompt": payload.prompt,
-        "cron_expr": schedule["cron_expr"],
-        "schedule_type": schedule["schedule_type"],
-        "weekdays": schedule["weekdays"],
-        "day_of_month": schedule["day_of_month"],
-        "run_at": schedule["run_at"],
-        "timezone": payload.timezone,
-        "push_target": payload.push_target,
-        "template_file": payload.template_file,
-        "status": "active",
-        "max_credits": payload.max_credits,
-        "retry_count": payload.retry_count,
-        "timeout_sec": payload.timeout_sec,
-        "next_run_at": schedule["next_run_at"],
-        "run_count": 0,
-        "consecutive_failures": 0,
-    }
-    scoped_db.table("scheduled_tasks").insert(row).execute()
+    from services.scheduler.scheduled_task_workflow import create_draft_and_preflight
+    draft = await create_draft_and_preflight(
+        db=db, org_id=org_id, user_id=user_id,
+        definition=_draft_definition(payload, schedule),
+    )
+    return {"success": True, "data": draft}
 
-    return {"success": True, "data": _format_task(row)}
+
+@router.get("/drafts/{draft_id}", summary="查看定时任务预检草稿")
+async def get_task_draft(
+    draft_id: str,
+    user_id: CurrentUserId,
+    org_ctx: OrgCtx,
+    scoped_db: ScopedDB,
+    db: Database,
+) -> Dict[str, Any]:
+    org_id = _require_org(org_ctx)
+    if not await check_permission(db, user_id, org_id, "task.create"):
+        raise HTTPException(403, "无权创建定时任务")
+    result = scoped_db.table("scheduled_task_drafts").select("*").eq("id", draft_id).eq("user_id", user_id).execute()
+    if not result.data:
+        raise HTTPException(404, "任务草稿不存在")
+    draft = result.data[0]
+    if draft.get("latest_preflight_id"):
+        runs = scoped_db.table("scheduled_task_preflight_runs").select("*").eq("id", draft["latest_preflight_id"]).execute()
+        draft["latest_preflight"] = runs.data[0] if runs.data else None
+    return {"success": True, "data": draft}
+
+
+@router.post("/drafts/{draft_id}/confirm", summary="确认启用已预检的定时任务")
+async def confirm_task_draft(
+    draft_id: str,
+    payload: ConfirmScheduledTaskDraftRequest,
+    user_id: CurrentUserId,
+    org_ctx: OrgCtx,
+    scoped_db: ScopedDB,
+    db: Database,
+) -> Dict[str, Any]:
+    org_id = _require_org(org_ctx)
+    if not await check_permission(db, user_id, org_id, "task.create"):
+        raise HTTPException(403, "无权创建定时任务")
+    result = scoped_db.table("scheduled_task_drafts").select("*").eq("id", draft_id).eq("user_id", user_id).execute()
+    if not result.data:
+        raise HTTPException(404, "任务草稿不存在")
+    draft = result.data[0]
+    definition = draft.get("definition") or {}
+    if payload.config_hash != draft.get("config_hash"):
+        raise HTTPException(409, "任务配置已变化，请重新规划并试跑")
+    try:
+        schedule = _resolve_schedule_fields(SimpleNamespace(**definition), definition.get("timezone") or "Asia/Shanghai")
+    except HTTPException:
+        raise HTTPException(409, "任务时间配置已失效，请重新规划并试跑")
+    task_id = str(uuid4())
+    response = db.rpc("confirm_scheduled_task_draft", {
+        "p_draft_id": draft_id, "p_org_id": org_id, "p_user_id": user_id,
+        "p_config_hash": payload.config_hash, "p_task_id": task_id,
+        "p_next_run_at": schedule["next_run_at"],
+    }).execute()
+    outcome = response.data if response else None
+    if not isinstance(outcome, dict) or outcome.get("outcome") not in {"created", "confirmed"}:
+        raise HTTPException(409, "预检尚未通过、已过期或配置已变化")
+    final_id = str(outcome.get("task_id") or task_id)
+    task = scoped_db.table("scheduled_tasks").select("*").eq("id", final_id).execute()
+    if not task.data:
+        raise HTTPException(503, "任务已确认但读取失败，请刷新后检查")
+    return {"success": True, "data": _format_task(task.data[0])}
 
 
 @router.get("", summary="列出定时任务")
@@ -678,8 +746,22 @@ async def list_runs(
         .order("started_at", desc=True) \
         .limit(limit) \
         .execute()
+    run_rows = list(runs.data or [])
+    run_ids = [row["id"] for row in run_rows]
+    if run_ids:
+        events = scoped_db.table("scheduled_task_execution_events") \
+            .select("execution_id,step_order,event_type,tool_name,status,elapsed_ms,summary") \
+            .eq("execution_kind", "run") \
+            .in_("execution_id", run_ids) \
+            .order("step_order") \
+            .execute()
+        event_map: Dict[str, List[Dict[str, Any]]] = {}
+        for event in events.data or []:
+            event_map.setdefault(str(event["execution_id"]), []).append(event)
+        for run in run_rows:
+            run["events"] = event_map.get(str(run["id"]), [])
 
-    return {"success": True, "data": list(runs.data or [])}
+    return {"success": True, "data": run_rows}
 
 
 @router.post("/parse", summary="自然语言解析为结构化任务")

@@ -104,11 +104,24 @@ class ScheduledTaskExecutor:
                 )
 
             # 5. Web 仅是在线通知；企微可靠投递已在上面的 DB 事务中入队。
+            try:
+                await self._record_execution_trace(task, run_id, result)
+            except Exception as trace_error:
+                logger.warning(
+                    f"scheduled_task_trace_record_failed | run={run_id} | error={trace_error}"
+                )
             await self._save_result_message(task, result)
             await self._push_web_result(task, result)
 
         except Exception as e:
             # credit_lock 会自动 refund
+            if result is not None:
+                try:
+                    await self._record_execution_trace(task, run_id, result)
+                except Exception as trace_error:
+                    logger.warning(
+                        f"scheduled_task_trace_record_failed | run={run_id} | error={trace_error}"
+                    )
             await self._on_failure(task, run_id, e, result, agent_run_started_at)
 
     # ════════════════════════════════════════════════════════
@@ -170,6 +183,8 @@ class ScheduledTaskExecutor:
                 "id": run_id,
                 "task_id": task["id"],
                 "org_id": task["org_id"],
+                "execution_id": run_id,
+                "plan_snapshot": task.get("plan_snapshot"),
                 "status": "running",
                 "started_at": datetime.now(timezone.utc).isoformat(),
             }).execute()
@@ -177,6 +192,22 @@ class ScheduledTaskExecutor:
         except Exception as e:
             logger.error(f"_create_run failed | task={task['id']} | error={e}")
             return None
+
+    async def _record_execution_trace(self, task: Dict[str, Any], run_id: str, result: Any) -> None:
+        """把实际运行的计划、工具轨迹和 Completion Gate 持久化给历史界面。"""
+        from services.scheduler.scheduled_task_workflow import _trace_rows
+
+        gate = getattr(result, "completion_gate", {}) or {}
+        rows = _trace_rows(
+            org_id=task["org_id"], execution_kind="run", execution_id=run_id,
+            task_id=task["id"], plan=task.get("plan_snapshot") or {},
+            result=result, gate=gate,
+        )
+        if rows:
+            self.db.table("scheduled_task_execution_events").insert(rows).execute()
+        self.db.table("scheduled_task_runs").update({
+            "completion_gate": gate,
+        }).eq("id", run_id).execute()
 
     async def _save_result_message(self, task: Dict[str, Any], result: Any) -> None:
         """保存任务结果供 Web 历史读取；不能重新触发企微直推。"""

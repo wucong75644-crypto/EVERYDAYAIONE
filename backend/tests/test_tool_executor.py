@@ -52,6 +52,24 @@ class TestExecuteDispatch:
         result = await exe.execute("web_search", {"search_query": "test"})
         assert result == "result"
 
+    @pytest.mark.asyncio
+    async def test_confirmed_policy_blocks_tool_outside_scope(self):
+        exe = ToolExecutor(
+            db=MagicMock(), user_id="u1", conversation_id="c1", org_id="org1",
+            allowed_tool_names={"erp_agent"},
+        )
+        with pytest.raises(PermissionError, match="用户确认的执行范围"):
+            await exe.execute("web_search", {"query": "x"})
+
+    @pytest.mark.asyncio
+    async def test_preflight_blocks_business_write_even_if_in_scope(self):
+        exe = ToolExecutor(
+            db=MagicMock(), user_id="u1", conversation_id="c1", org_id="org1",
+            allowed_tool_names={"erp_execute"}, execution_mode="preflight",
+        )
+        with pytest.raises(PermissionError, match="预检禁止"):
+            await exe.execute("erp_execute", {})
+
 
 # ============================================================
 # TestWebSearch
@@ -887,4 +905,3 @@ class TestWebSearchInline:
             result = await exe._web_search({"query": "测试"})
 
         assert result.status == "empty"
-

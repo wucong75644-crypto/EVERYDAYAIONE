@@ -296,8 +296,12 @@ class TestCalcOnceRunAt:
 
 class TestHandleFormSubmit:
     @pytest.mark.asyncio
+    @patch("services.scheduler.scheduled_task_workflow.create_draft_and_preflight", new_callable=AsyncMock, return_value={
+        "id": "draft-1", "status": "ready", "config_hash": "a" * 64,
+        "execution_policy": {"allowed_tools": ["erp_agent"]}, "plan": {"steps": []},
+    })
     @patch("services.permissions.checker.check_permission", new_callable=AsyncMock, return_value=True)
-    async def test_create_success(self, _mock_perm):
+    async def test_create_success(self, _mock_perm, _mock_preflight):
         db = _mock_db()
         data = {
             "name": "日报",
@@ -332,8 +336,12 @@ class TestHandleFormSubmit:
         assert "名称" in result["message"]
 
     @pytest.mark.asyncio
+    @patch("services.scheduler.scheduled_task_workflow.create_draft_and_preflight", new_callable=AsyncMock, return_value={
+        "id": "draft-1", "status": "ready", "config_hash": "a" * 64,
+        "execution_policy": {"allowed_tools": ["erp_agent"]}, "plan": {"steps": []},
+    })
     @patch("services.permissions.checker.check_permission", new_callable=AsyncMock, return_value=True)
-    async def test_create_weekly(self, _mock_perm):
+    async def test_create_weekly(self, _mock_perm, _mock_preflight):
         db = _mock_db()
         data = {
             "name": "周报",
@@ -379,8 +387,12 @@ class TestHandleFormSubmit:
         assert result["success"] is False
 
     @pytest.mark.asyncio
+    @patch("services.scheduler.scheduled_task_workflow.create_draft_and_preflight", new_callable=AsyncMock, return_value={
+        "id": "draft-1", "status": "ready", "config_hash": "a" * 64,
+        "execution_policy": {"allowed_tools": ["erp_agent"]}, "plan": {"steps": []},
+    })
     @patch("services.permissions.checker.check_permission", new_callable=AsyncMock, return_value=True)
-    async def test_create_once_type(self, _mock_perm):
+    async def test_create_once_type(self, _mock_perm, _mock_preflight):
         """once 类型→生成 run_at 而非 cron_expr"""
         db = _mock_db()
         data = {
@@ -392,17 +404,18 @@ class TestHandleFormSubmit:
         }
         result = await handle_form_submit(db, "u1", "org1", "scheduled_task_create", data)
         assert result["success"] is True
-        # 验证 insert 被调用且 cron_expr=None
-        insert_call = db.insert.call_args
-        assert insert_call is not None
-        row = insert_call[0][0]
+        row = _mock_preflight.await_args.kwargs["definition"]
         assert row["cron_expr"] is None
         assert row["schedule_type"] == "once"
         assert row["run_at"] is not None
 
     @pytest.mark.asyncio
+    @patch("services.scheduler.scheduled_task_workflow.create_draft_and_preflight", new_callable=AsyncMock, return_value={
+        "id": "draft-1", "status": "ready", "config_hash": "a" * 64,
+        "execution_policy": {"allowed_tools": ["erp_agent"]}, "plan": {"steps": []},
+    })
     @patch("services.permissions.checker.check_permission", new_callable=AsyncMock, return_value=True)
-    async def test_create_monthly(self, _mock_perm):
+    async def test_create_monthly(self, _mock_perm, _mock_preflight):
         """monthly 类型→正确设置 day_of_month"""
         db = _mock_db()
         data = {
@@ -415,7 +428,7 @@ class TestHandleFormSubmit:
         }
         result = await handle_form_submit(db, "u1", "org1", "scheduled_task_create", data)
         assert result["success"] is True
-        row = db.insert.call_args[0][0]
+        row = _mock_preflight.await_args.kwargs["definition"]
         assert row["day_of_month"] == 15
         assert "15" in row["cron_expr"]
 

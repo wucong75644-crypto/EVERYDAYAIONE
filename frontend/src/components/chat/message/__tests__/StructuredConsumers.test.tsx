@@ -124,6 +124,22 @@ describe('structured message consumers', () => {
     window.removeEventListener('chat:form-submit', submitListener);
   });
 
+  it('FormBlock renders a preflight confirmation form returned by the server', () => {
+    const form: FormPart = {
+      type: 'form', form_type: 'scheduled_task_create', form_id: 'preflight', title: '试跑', fields: [],
+    };
+    render(<FormBlock form={form} />);
+    fireEvent.click(screen.getByRole('button', { name: '确认' }));
+    fireEvent(window, new CustomEvent('chat:form-submit-result', { detail: {
+      success: true,
+      next_form: {
+        type: 'form', form_type: 'scheduled_task_confirm', form_id: 'confirm',
+        title: '确认启用定时任务', fields: [], submit_text: '确认启用', cancel_text: '取消',
+      },
+    } }));
+    expect(screen.getByRole('button', { name: '确认启用' })).toBeInTheDocument();
+  });
+
   it('FormBlock recovers from submit failure and supports cancellation', () => {
     const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
     const form: FormPart = {

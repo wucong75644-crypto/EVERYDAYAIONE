@@ -212,6 +212,22 @@ class TestToolExecutorERPAgent:
         mock_execute.assert_called_once()
 
     @pytest.mark.asyncio
+    @patch("services.agent.erp_agent.ERPAgent")
+    async def test_erp_agent_receives_explicit_execution_budget(self, mock_agent):
+        from services.agent.agent_result import AgentResult
+        from services.tool_executor import ToolExecutor
+
+        mock_agent.return_value.execute = AsyncMock(return_value=AgentResult(status="success", summary="ok"))
+        budget = MagicMock()
+        exe = ToolExecutor(
+            db=MagicMock(), user_id="t", conversation_id="t", org_id="test",
+            execution_budget=budget, erp_step_timeout_sec=55.0,
+        )
+        await exe._erp_agent({"query": "查库存"})
+        assert mock_agent.call_args.kwargs["budget"] is budget
+        assert mock_agent.call_args.kwargs["step_timeout_sec"] == 55.0
+
+    @pytest.mark.asyncio
     @patch("services.erp_agent.ERPAgent.execute")
     async def test_erp_agent_normal_returns_agent_result(self, mock_execute):
         """ERP Agent 正常返回 → AgentResult"""

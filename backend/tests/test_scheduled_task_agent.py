@@ -192,3 +192,34 @@ class TestExecutionOutcome:
         assert result.tokens_used == 42
         adapter.close.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_wrap_up_text_after_failure_is_not_a_successful_delivery(self):
+        """模型能写出失败解释，不代表定时任务已完成。"""
+        agent = ScheduledTaskAgent(MagicMock(), make_task())
+        adapter = MagicMock()
+        adapter.close = AsyncMock()
+        loop = MagicMock()
+        loop.run = AsyncMock(return_value=LoopResult(
+            text="查询超时，我缩小范围后继续查询。",
+            total_tokens=99,
+            turns=3,
+            is_llm_synthesis=True,
+            stop_reason="wrap_up_failure",
+            failure_message="erp_agent:timeout",
+        ))
+
+        with patch.object(agent, "_prepare_template", new_callable=AsyncMock), \
+             patch.object(agent, "_build_tool_loop", return_value=(loop, MagicMock())), \
+             patch("config.chat_tools.get_core_tools", return_value=[]), \
+             patch("services.adapters.factory.create_chat_adapter", return_value=adapter), \
+             patch("services.agent.tool_executor.ToolExecutor"), \
+             patch("core.config.get_settings", return_value=SimpleNamespace(
+                 agent_loop_model=None, file_workspace_root="/tmp",
+             )), \
+             patch("core.workspace.resolve_staging_dir", return_value="/tmp/staging"):
+            result = await agent.execute()
+
+        assert result.status == "error"
+        assert result.error_message == "erp_agent:timeout"
+        assert result.completion_gate["passed"] is False
+        assert "loop_stopped:wrap_up_failure" in result.completion_gate["reasons"]

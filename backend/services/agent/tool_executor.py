@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Coroutine, Dict, TYPE_CHECKING
+from typing import Any, Callable, Coroutine, Dict, Iterable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from services.agent.agent_result import AgentResult
@@ -48,6 +48,10 @@ class ToolExecutor(
         request_ctx=None,
         workspace_user_id: str | None = None,
         resource_manifest=None,
+        allowed_tool_names: Iterable[str] | None = None,
+        execution_budget=None,
+        execution_mode: str = "interactive",
+        erp_step_timeout_sec: float | None = None,
     ) -> None:
         self.db = db
         self.user_id = user_id
@@ -55,6 +59,12 @@ class ToolExecutor(
         self.conversation_id = conversation_id
         self.org_id = org_id
         self.resource_manifest = resource_manifest
+        self.allowed_tool_names = (
+            frozenset(allowed_tool_names) if allowed_tool_names is not None else None
+        )
+        self.execution_budget = execution_budget
+        self.execution_mode = execution_mode
+        self.erp_step_timeout_sec = erp_step_timeout_sec
         # 时间事实层 — 请求级 SSOT，由 ERPAgent 透传
         # 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.4 (B16)
         self.request_ctx = request_ctx
@@ -102,6 +112,13 @@ class ToolExecutor(
             ValueError: 未知工具名
             Exception: 工具执行异常（由调用方 catch 后回传大脑）
         """
+        if self.allowed_tool_names is not None and tool_name not in self.allowed_tool_names:
+            raise PermissionError(f"该工具未在用户确认的执行范围内: {tool_name}")
+        if self.execution_mode == "preflight" and tool_name in {
+            "manage_scheduled_task", "erp_execute", "trigger_erp_sync", "file_delete",
+            "generate_image", "generate_video", "image_agent",
+        }:
+            raise PermissionError(f"预检禁止执行有副作用的工具: {tool_name}")
         handler = self._handlers.get(tool_name)
         if not handler:
             raise ValueError(f"Unknown sync tool: {tool_name}")
@@ -196,8 +213,7 @@ class ToolExecutor(
             f"context_preview={conversation_context[:200] if conversation_context else '(empty)'}"
         )
 
-        # v6: budget 通过构造函数传递（替代属性注入 hack）
-        _parent_budget = getattr(self, "_budget", None)
+        # 预算与 profile 由调用方显式传入，避免不同入口隐式属性注入后失配。
         agent = ERPAgent(
             db=self.db,
             user_id=self.user_id,
@@ -206,8 +222,9 @@ class ToolExecutor(
             task_id=getattr(self, "_task_id", None),
             message_id=getattr(self, "_message_id", None),
             request_ctx=self.request_ctx,
-            budget=_parent_budget,
+            budget=self.execution_budget,
             workspace_user_id=self.workspace_user_id,
+            step_timeout_sec=self.erp_step_timeout_sec,
         )
 
         result = await agent.execute(

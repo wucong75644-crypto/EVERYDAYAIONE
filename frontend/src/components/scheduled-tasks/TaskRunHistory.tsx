@@ -86,6 +86,16 @@ function RunRow({ run }: { run: TaskRun }) {
             {run.error_message}
           </p>
         )}
+        {run.events && run.events.length > 0 && (
+          <div className="mt-1 space-y-0.5 border-l border-[var(--s-border-subtle)] pl-2">
+            {run.events.map((event, index) => (
+              <p key={`${event.event_type}-${event.tool_name || index}`} className="text-[11px] text-[var(--s-text-tertiary)]">
+                {event.tool_name || event.event_type} · {event.status}
+                {event.summary ? ` · ${event.summary}` : ''}
+              </p>
+            ))}
+          </div>
+        )}
         {run.result_files && run.result_files.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1">
             {run.result_files.map((f, i) => (

@@ -39,6 +39,7 @@ class ScheduledTaskResult:
     files: List[Dict[str, Any]] = field(default_factory=list)
     is_truncated: bool = False
     error_message: str = ""
+    completion_gate: Dict[str, Any] = field(default_factory=dict)
 
 
 # ════════════════════════════════════════════════════════
@@ -63,13 +64,14 @@ class ScheduledTaskAgent:
         result = await agent.execute()
     """
 
-    def __init__(self, db: Any, task: Dict[str, Any]) -> None:
+    def __init__(self, db: Any, task: Dict[str, Any], *, execution_mode: str = "production") -> None:
         self.db = db
         self.task = task
         self.task_id = task["id"]
         self.user_id = task["user_id"]
         self.org_id = task["org_id"]
-        self.conversation_id = f"scheduled_{task['id']}"
+        self.execution_mode = execution_mode
+        self.conversation_id = f"scheduled_{execution_mode}_{task['id']}"
 
         # RequestContext（时间事实层，复用 ERPAgent 模式）
         from utils.time_context import RequestContext
@@ -89,9 +91,20 @@ class ScheduledTaskAgent:
             # 1. 模板文件复制到 staging（如有）
             await self._prepare_template()
 
-            # 2. 构建工具列表（与主聊天流程一致的核心工具集）
+            # 2. 构建工具列表；新任务只能看见用户确认过的能力范围。
             from config.chat_tools import get_core_tools
             all_tools = get_core_tools(org_id=self.org_id)
+
+            from services.scheduler.scheduled_task_workflow import ScheduledExecutionPolicy
+            policy = ScheduledExecutionPolicy.from_dict(
+                self.task.get("execution_policy"),
+                timeout_sec=int(self.task.get("timeout_sec") or DEFAULT_DEADLINE),
+            )
+            if policy.allowed_tools:
+                all_tools = [
+                    tool for tool in all_tools
+                    if tool["function"]["name"] in policy.allowed_tools
+                ]
 
             # 3. 构建轻量上下文
             messages = self._build_light_context()
@@ -115,6 +128,9 @@ class ScheduledTaskAgent:
                 conversation_id=self.conversation_id,
                 org_id=self.org_id,
                 request_ctx=self.request_ctx,
+                allowed_tool_names=policy.allowed_tools or None,
+                execution_mode=self.execution_mode,
+                erp_step_timeout_sec=policy.erp_step_timeout_sec,
             )
 
             # 6. 多维执行预算
@@ -124,6 +140,7 @@ class ScheduledTaskAgent:
                 max_turns=MAX_SCHEDULED_TURNS,
                 max_wall_time=deadline,
             )
+            executor.execution_budget = budget
 
             # 7. 设置 staging 分流目录（用户级隔离）
             from services.agent.tool_result_envelope import set_staging_dir, STAGED_MARKER
@@ -135,7 +152,7 @@ class ScheduledTaskAgent:
 
             # 8. 共享 ToolLoopExecutor（无 WS 推送 / 无时间校验 / 无失败反思）
             tool_loop, hook_ctx = self._build_tool_loop(
-                adapter, executor, all_tools,
+                adapter, executor, all_tools, policy.tool_timeout_sec,
             )
 
             result = await tool_loop.run(
@@ -155,11 +172,13 @@ class ScheduledTaskAgent:
             # 定时任务没有交互方可接管未完成的循环。若工具循环未形成 LLM
             # 最终结论，fallback 文本只能用于诊断，不能被当作可推送、可计费
             # 的成功结果，否则会把沙盒/模型失败伪装成任务完成。
-            if not result.is_llm_synthesis:
+            from services.scheduler.scheduled_task_workflow import completion_gate
+            gate = completion_gate(result=result, policy=policy)
+            if not gate["passed"]:
                 error_message = (
                     result.failure_message
                     or result.stop_reason
-                    or "final_synthesis_missing"
+                    or "; ".join(gate["reasons"])
                 )
                 logger.error(
                     "ScheduledTask incomplete | task={} | stop_reason={} | error={}",
@@ -174,6 +193,7 @@ class ScheduledTaskAgent:
                     files=files,
                     is_truncated=STAGED_MARKER in (text or ""),
                     error_message=error_message[:500],
+                    completion_gate=gate,
                 )
 
             # 9. 生成摘要
@@ -188,6 +208,7 @@ class ScheduledTaskAgent:
                 tools_called=tools_called,
                 files=files,
                 is_truncated=STAGED_MARKER in (text or ""),
+                completion_gate=gate,
             )
 
         except asyncio.TimeoutError:
@@ -230,6 +251,7 @@ class ScheduledTaskAgent:
         adapter: Any,
         executor: Any,
         all_tools: List[Dict[str, Any]],
+        tool_timeout: float = TOOL_TIMEOUT,
     ) -> tuple:
         """装配 ToolLoopExecutor + HookContext（定时任务默认配置）
 
@@ -262,7 +284,7 @@ class ScheduledTaskAgent:
             config=LoopConfig(
                 max_turns=MAX_SCHEDULED_TURNS,
                 context_window=CONTEXT_WINDOW,
-                tool_timeout=TOOL_TIMEOUT,
+                tool_timeout=tool_timeout,
                 no_synthesis_fallback_text=(
                     "定时任务执行未能生成完整结论，请检查任务指令。"
                 ),

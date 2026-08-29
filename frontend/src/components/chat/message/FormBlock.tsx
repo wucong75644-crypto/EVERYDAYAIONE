@@ -274,6 +274,7 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
 
   const [values, setValues] = useState<Record<string, unknown>>(initialValues);
   const [status, setStatus] = useState<'idle' | 'submitting' | 'submitted' | 'cancelled'>('idle');
+  const [nextForm, setNextForm] = useState<FormPart | null>(null);
   const submitted = status === 'submitted';
   const submitting = status === 'submitting';
   const cancelled = status === 'cancelled';
@@ -298,9 +299,10 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
 
     // 监听结果
     const handleResult = (e: Event) => {
-      const { success, message } = (e as CustomEvent).detail;
+      const { success, message, next_form: nextFormPayload } = (e as CustomEvent).detail;
       if (success) {
         setStatus('submitted');
+        if (nextFormPayload) setNextForm(nextFormPayload as FormPart);
       } else {
         setStatus('idle');
         alert(message || '提交失败');
@@ -313,7 +315,7 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
     setTimeout(() => {
       window.removeEventListener('chat:form-submit-result', handleResult);
       setStatus((s) => (s === 'submitting' ? 'idle' : s));
-    }, 15000);
+    }, form.form_type === 'scheduled_task_create' ? 210000 : 15000);
   }, [form.form_type, values, status]);
 
   const handleCancel = useCallback(() => {
@@ -331,20 +333,23 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
 
   if (submitted || cancelled) {
     return (
-      <m.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={SOFT_SPRING}
-        className={cn(
-          'my-2 flex items-center gap-2 rounded-[var(--s-radius-card)] border p-3 text-sm',
-          submitted
-            ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-950/30 dark:text-green-300'
-            : 'border-border-default bg-surface text-text-tertiary',
-        )}
-      >
-        {submitted ? <CheckCircle2 size={16} /> : <X size={16} />}
-        <span>{form.title} — {submitted ? '已提交' : '已取消'}</span>
-      </m.div>
+      <>
+        <m.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={SOFT_SPRING}
+          className={cn(
+            'my-2 flex items-center gap-2 rounded-[var(--s-radius-card)] border p-3 text-sm',
+            submitted
+              ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-950/30 dark:text-green-300'
+              : 'border-border-default bg-surface text-text-tertiary',
+          )}
+        >
+          {submitted ? <CheckCircle2 size={16} /> : <X size={16} />}
+          <span>{form.title} — {submitted ? '已提交' : '已取消'}</span>
+        </m.div>
+        {nextForm && <FormBlock form={nextForm} />}
+      </>
     );
   }
 

@@ -272,9 +272,9 @@ def _build_create_form(
         "form_type": "scheduled_task_create",
         "form_id": f"task_create_{uuid4().hex[:8]}",
         "title": "创建定时任务",
-        "description": "请确认以下信息，点击确认后将创建定时任务。",
+        "description": "确认后 AI 会规划调用路径并进行只读安全试跑；试跑通过后再确认启用。",
         "fields": fields,
-        "submit_text": "确认创建",
+        "submit_text": "规划并安全试跑",
         "cancel_text": "取消",
     }
 
@@ -356,6 +356,29 @@ def _build_update_form(
         "description": "修改后点击确认保存。",
         "fields": fields,
         "submit_text": "确认修改",
+        "cancel_text": "取消",
+    }
+
+
+def _build_confirm_form(draft: Dict[str, Any]) -> Dict[str, Any]:
+    """预检通过后给聊天用户的第二次确认；第一张表单不会直接启用任务。"""
+    plan = draft.get("plan") or {}
+    steps = plan.get("steps") or []
+    path = "；".join(
+        f"{index + 1}. {step.get('intent', '执行查询')}（{','.join(step.get('tools', []))}）"
+        for index, step in enumerate(steps)
+    )
+    return {
+        "type": "form",
+        "form_type": "scheduled_task_confirm",
+        "form_id": f"task_confirm_{draft['id'][:8]}",
+        "title": "确认启用定时任务",
+        "description": f"安全试跑已通过。执行路径：{path or 'AI 将在已确认范围内动态执行'}",
+        "fields": [
+            _build_form_field("draft_id", "hidden", "", default_value=draft["id"]),
+            _build_form_field("config_hash", "hidden", "", default_value=draft["config_hash"]),
+        ],
+        "submit_text": "确认启用",
         "cancel_text": "取消",
     }
 
@@ -572,6 +595,11 @@ async def handle_form_submit(
             return {"success": False, "message": "无权创建定时任务"}
         return await _submit_create(db, user_id, org_id, form_data)
 
+    if form_type == "scheduled_task_confirm":
+        if not await check_permission(db, user_id, org_id, "task.create"):
+            return {"success": False, "message": "无权创建定时任务"}
+        return await _submit_confirm(db, user_id, org_id, form_data)
+
     if form_type == "scheduled_task_update":
         if not await check_permission(db, user_id, org_id, "task.edit"):
             return {"success": False, "message": "无权修改定时任务"}
@@ -630,12 +658,7 @@ async def _submit_create(
         except Exception as e:
             return {"success": False, "message": f"计算执行时间失败: {e}"}
 
-    # 写入 DB
-    task_id = str(uuid4())
-    row = {
-        "id": task_id,
-        "org_id": org_id,
-        "user_id": user_id,
+    definition = {
         "name": name,
         "prompt": prompt,
         "cron_expr": cron_expr,
@@ -646,23 +669,67 @@ async def _submit_create(
         "timezone": tz,
         "push_target": push_target,
         "template_file": None,
-        "status": "active",
         "max_credits": 10,
         "retry_count": 1,
         "timeout_sec": 180,
         "next_run_at": next_run_at,
-        "run_count": 0,
-        "consecutive_failures": 0,
     }
-    db.table("scheduled_tasks").insert(row).execute()
-
     schedule_desc = parse_cron_readable(cron_expr) if cron_expr else "单次执行"
-    logger.info(f"chat_task_manager created | id={task_id} | name={name} | schedule={schedule_desc}")
+    from services.scheduler.scheduled_task_workflow import create_draft_and_preflight
+    draft = await create_draft_and_preflight(
+        db=db, org_id=org_id, user_id=user_id, definition=definition,
+    )
+    if draft.get("status") != "ready":
+        return {
+            "success": False,
+            "message": f"安全试跑未通过：{draft.get('error_message') or '调用路径未完成'}。请修改任务后重新试跑。",
+        }
+
+    logger.info(
+        f"chat_task_manager preflight_ready | draft={draft['id']} | "
+        f"name={name} | schedule={schedule_desc}"
+    )
 
     return {
         "success": True,
-        "message": f"✅ 已创建定时任务「{name}」\n- 频率：{schedule_desc}\n- 执行时间：{time_str}\n- 推送到：{push_target.get('type', 'web')}",
+        "message": (
+            f"✅ 「{name}」已通过 AI 路径规划与只读试跑\n"
+            f"- 频率：{schedule_desc}\n"
+            f"- 调用工具：{', '.join((draft.get('execution_policy') or {}).get('allowed_tools', []))}\n"
+            "请打开「定时任务」面板查看试跑证据，并点击“确认启用”。"
+        ),
+        "next_form": _build_confirm_form(draft),
     }
+
+
+async def _submit_confirm(
+    db: Any, user_id: str, org_id: str, data: Dict[str, Any],
+) -> Dict[str, Any]:
+    draft_id = str(data.get("draft_id") or "").strip()
+    config_hash = str(data.get("config_hash") or "").strip()
+    if not draft_id or not config_hash:
+        return {"success": False, "message": "缺少预检确认信息"}
+    response = db.table("scheduled_task_drafts").select("*").eq("id", draft_id).eq("org_id", org_id).eq("user_id", user_id).limit(1).execute()
+    if not response.data:
+        return {"success": False, "message": "预检草稿不存在或无权确认"}
+    draft = response.data[0]
+    definition = draft.get("definition") or {}
+    if definition.get("schedule_type") == "once":
+        next_run_at = definition.get("next_run_at") or definition.get("run_at")
+    else:
+        try:
+            next_run_at = calc_next_run(definition.get("cron_expr") or "", definition.get("timezone") or "Asia/Shanghai").isoformat()
+        except Exception:
+            return {"success": False, "message": "任务时间配置已失效，请重新试跑"}
+    task_id = str(uuid4())
+    confirmed = db.rpc("confirm_scheduled_task_draft", {
+        "p_draft_id": draft_id, "p_org_id": org_id, "p_user_id": user_id,
+        "p_config_hash": config_hash, "p_task_id": task_id, "p_next_run_at": next_run_at,
+    }).execute()
+    outcome = confirmed.data if confirmed else None
+    if not isinstance(outcome, dict) or outcome.get("outcome") not in {"created", "confirmed"}:
+        return {"success": False, "message": "预检已过期或任务配置已变化，请重新试跑"}
+    return {"success": True, "message": "✅ 定时任务已确认启用"}
 
 
 async def _submit_update(
