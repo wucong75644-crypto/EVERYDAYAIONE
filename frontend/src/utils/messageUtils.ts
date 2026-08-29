@@ -12,6 +12,7 @@ import type {
   ImageAsset,
   VideoPart,
   FilePart,
+  FormPart,
 } from '../types/message';
 import { pickOriginalImageUrl } from './imageUrlRules';
 import { parseContentParts } from '../schemas/messageProtocol';
@@ -165,4 +166,47 @@ export function normalizeMessage(msg: RawApiMessage | Message): Message {
   }
 
   return { ...msg, content, status } as Message;
+}
+
+/** 将表单提交结果同步到内存消息缓存，支持 next_form 的递归确认链。 */
+export function applyFormSubmitResult(
+  content: ContentPart[],
+  result: {
+    formId: string;
+    success: boolean;
+    status?: FormPart['status'];
+    message?: string;
+    nextForm?: FormPart;
+  },
+): ContentPart[] {
+  let changed = false;
+  const resolvedStatus = result.status ?? (result.success ? 'submitted' : 'open');
+
+  const updateForm = (form: FormPart): FormPart => {
+    const nextForm = form.next_form ? updateForm(form.next_form) : undefined;
+    if (form.form_id !== result.formId) {
+      if (nextForm === form.next_form) return form;
+      return { ...form, next_form: nextForm };
+    }
+
+    changed = true;
+    const updated: FormPart = {
+      ...form,
+      status: resolvedStatus,
+      ...(nextForm !== form.next_form ? { next_form: nextForm } : {}),
+    };
+    if (result.success) {
+      if (result.message) updated.result_message = result.message;
+      if (resolvedStatus !== 'open') delete updated.error_message;
+    } else if (result.message) {
+      updated.error_message = result.message;
+    }
+    if (result.nextForm) updated.next_form = result.nextForm;
+    return updated;
+  };
+
+  const updatedContent = content.map((part) => (
+    part.type === 'form' ? updateForm(part as FormPart) : part
+  ));
+  return changed ? updatedContent : content;
 }

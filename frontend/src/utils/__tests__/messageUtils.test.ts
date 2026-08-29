@@ -17,8 +17,9 @@ import {
   normalizeMessage,
   calcRemainingText,
   resolveImageOriginalUrl,
+  applyFormSubmitResult,
 } from '../messageUtils';
-import type { Message, ContentPart } from '../../types/message';
+import type { Message, ContentPart, FormPart } from '../../types/message';
 
 // ============================================================
 // 辅助函数
@@ -35,6 +36,50 @@ function createTestMessage(content: ContentPart[], overrides: Partial<Message> =
     ...overrides,
   };
 }
+
+describe('applyFormSubmitResult', () => {
+  it('persists a nested confirmation result in the cached parent message', () => {
+    const content: ContentPart[] = [{
+      type: 'form',
+      form_type: 'scheduled_task_create',
+      form_id: 'create-1',
+      fields: [],
+      next_form: {
+        type: 'form',
+        form_type: 'scheduled_task_confirm',
+        form_id: 'confirm-1',
+        fields: [],
+      },
+    }];
+
+    const updated = applyFormSubmitResult(content, {
+      formId: 'confirm-1',
+      success: true,
+      status: 'submitted',
+      message: '✅ 定时任务已确认启用',
+    });
+    const parent = updated[0] as FormPart;
+
+    expect(updated).not.toBe(content);
+    expect(parent.next_form?.status).toBe('submitted');
+    expect(parent.next_form?.result_message).toBe('✅ 定时任务已确认启用');
+    expect((content[0] as FormPart).next_form?.status).toBeUndefined();
+  });
+
+  it('keeps a failed form open and exposes its persisted error in cache', () => {
+    const content: ContentPart[] = [{
+      type: 'form', form_type: 'test', form_id: 'form-1', fields: [],
+    }];
+
+    const updated = applyFormSubmitResult(content, {
+      formId: 'form-1', success: false, message: '服务处理异常，请重试',
+    });
+
+    expect((updated[0] as FormPart)).toMatchObject({
+      status: 'open', error_message: '服务处理异常，请重试',
+    });
+  });
+});
 
 // ============================================================
 // getImageAssets 测试

@@ -24,6 +24,7 @@ import {
 } from '../utils/taskRestoration';
 import { getMessages } from '../services/message';
 import { logger } from '../utils/logger';
+import { applyFormSubmitResult } from '../utils/messageUtils';
 import { createWSMessageHandlers } from './wsMessageHandlers';
 import type { DeliveryCursor } from './wsMessageHandlerShared';
 import ToolConfirmModal from '../components/chat/modals/ToolConfirmModal';
@@ -397,10 +398,33 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       const payload = msg.payload as {
         success?: boolean;
         message?: string;
+        status?: 'open' | 'submitting' | 'cancelled' | 'submitted';
         form_id?: string;
         message_id?: string;
         conversation_id?: string;
+        next_form?: import('../types/message').FormPart;
       };
+      if (payload?.form_id && payload.message_id && payload.conversation_id) {
+        const store = useMessageStore.getState();
+        const message = store.messages[payload.conversation_id]?.find(
+          (item) => item.id === payload.message_id,
+        );
+        if (message) {
+          const content = applyFormSubmitResult(message.content, {
+            formId: payload.form_id,
+            success: payload.success === true,
+            status: payload.status,
+            message: payload.message,
+            nextForm: payload.next_form,
+          });
+          if (content !== message.content) {
+            store.updateMessage(payload.message_id, { content });
+          }
+        } else {
+          // 用户在提交完成前切走或缓存被淘汰时，下一次打开必须读取数据库事实。
+          store.markForceRefresh(payload.conversation_id);
+        }
+      }
       window.dispatchEvent(
         new CustomEvent('chat:form-submit-result', { detail: payload }),
       );
