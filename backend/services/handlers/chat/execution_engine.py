@@ -94,6 +94,7 @@ async def execute_chat(
     handler._adapter = prepared.adapter
     handler._pending_emit_payloads = []
     handler._pending_form_block = None
+    handler._terminal_form_pending = False
     totals = StreamTotals()
     blocks: list[dict[str, Any]] = _initial_replay_blocks(
         request.replay_context,
@@ -211,6 +212,10 @@ async def _run_loop(
             blocks=blocks,
             runtime=runtime,
         )
+        # FormBlockResult 是一个完整的交付物，不再发起额外的模型回合。
+        # 这样既避免重复文案，也保证表单是该消息唯一的确认入口。
+        if getattr(handler, "_terminal_form_pending", False):
+            return
 
 
 async def _read_turn(

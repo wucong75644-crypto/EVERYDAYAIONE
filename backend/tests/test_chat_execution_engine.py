@@ -15,6 +15,7 @@ from services.handlers.chat.execution_engine import (
     _actor_tool_completion_command_id,
     _execute_tools,
     _read_turn,
+    _run_loop,
     execute_chat,
 )
 from services.conversation_commands import SafePoint
@@ -483,3 +484,52 @@ async def test_execute_chat_preserves_thinking_as_structured_part(monkeypatch):
     assert [part.type for part in result.parts] == ["thinking", "text"]
     assert result.parts[0].text == "分析中"
     assert result.parts[1].text == "结论"
+
+
+@pytest.mark.asyncio
+async def test_form_result_stops_tool_loop_before_a_second_model_turn(monkeypatch):
+    """表单已发出时，模型不得再生成与表单重复的确认文案。"""
+    read_turns = 0
+
+    async def fake_read_turn(*_args, **_kwargs):
+        nonlocal read_turns
+        read_turns += 1
+        return "", "", [{
+            "id": "call-1",
+            "name": "manage_scheduled_task",
+            "arguments": "{}",
+        }], set()
+
+    async def fake_execute_tools(*, handler, **_kwargs):
+        handler._terminal_form_pending = True
+
+    monkeypatch.setattr(
+        "services.handlers.chat.execution_engine._read_turn", fake_read_turn,
+    )
+    monkeypatch.setattr(
+        "services.handlers.chat.execution_engine._execute_tools", fake_execute_tools,
+    )
+
+    budget = SimpleNamespace(stop_reason=None, turns_used=0)
+    budget.use_turn = lambda: setattr(budget, "turns_used", budget.turns_used + 1)
+    prepared = SimpleNamespace(
+        budget=budget,
+        core_tools=[],
+        tool_context=SimpleNamespace(discovered_tools=set()),
+        messages=[],
+        permission=SimpleNamespace(need_exit_attachment=False),
+    )
+    handler = SimpleNamespace(org_id="org-1", _terminal_form_pending=False)
+
+    await _run_loop(
+        handler=handler,
+        request=_request(),
+        prepared=prepared,
+        cancellation_event=asyncio.Event(),
+        sink=SimpleNamespace(),
+        totals=SimpleNamespace(),
+        blocks=[],
+        runtime=None,
+    )
+
+    assert read_turns == 1

@@ -47,6 +47,12 @@ export default function MessageContentBlocks({
   onImageClick,
   onRegenerateSingle,
 }: MessageContentBlocksProps) {
+  const firstScheduledTaskFormIndex = message.content.findIndex((part) => (
+    part.type === 'form'
+    && (part as import('../../../types/message').FormPart)
+      .form_type.startsWith('scheduled_task_')
+  ));
+
   return (
     <div className="space-y-1">
       {message.content.map((part, idx) => {
@@ -78,10 +84,16 @@ export default function MessageContentBlocks({
         }
         if (part.type === 'interrupt_marker') return null;
         if (part.type === 'text' && (part as { text: string }).text) {
+          const text = (part as { text: string }).text;
+          // 已持久化的旧消息可能包含表单之后由模型生成的重复确认话术。
+          // 新执行流不会再写入它；这里仅清理该已知历史格式，保留表单前的说明。
+          const isLegacyScheduledTaskFormCopy = idx > firstScheduledTaskFormIndex
+            && /配置表单已生成|任务预览|请确认是否创建此定时任务/.test(text);
+          if (isLegacyScheduledTaskFormCopy) return null;
           return (
             <MarkdownRenderer
               key={idx}
-              content={(part as { text: string }).text}
+              content={text}
             />
           );
         }

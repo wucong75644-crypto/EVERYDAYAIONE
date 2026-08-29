@@ -568,6 +568,8 @@ class TestFormBlockResultChannel:
         # form 暂存到 _pending_form_block（chat_handler 统一处理）
         assert mixin._pending_form_block is not None
         assert mixin._pending_form_block["form_type"] == "scheduled_task_create"
+        # 结构化表单已经是完整交付，不应继续请求模型补一段重复确认话术。
+        assert mixin._terminal_form_pending is True
         # 发 tool_result + tool_step 完成更新
         ws_calls = mock_ws.send_to_task_or_user.call_args_list
         assert len(ws_calls) == 2
