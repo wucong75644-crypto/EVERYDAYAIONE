@@ -111,10 +111,21 @@ def _build_app(db, user_id="user_1", org_id="org_1", with_perm=True):
 
 
 # ════════════════════════════════════════════════════════
-# 1. POST /scheduled-tasks 创建
+# 1. POST /scheduled-tasks/drafts 规划与预检
 # ════════════════════════════════════════════════════════
 
-class TestCreateTask:
+class TestCreateTaskDraft:
+
+    @staticmethod
+    async def _ready_preflight(**kwargs):
+        """让路由测试聚焦输入校验与权限，不在这里重复 Agent 预检覆盖。"""
+        return {
+            "id": "draft_1",
+            "status": "ready",
+            "config_hash": "a" * 64,
+            "definition": kwargs["definition"],
+            "latest_preflight": {"status": "passed"},
+        }
 
     def test_create_success(self):
         db = FakeDB()
@@ -124,9 +135,12 @@ class TestCreateTask:
         with patch(
             "api.routes.scheduled_tasks.check_permission",
             new=AsyncMock(return_value=True),
+        ), patch(
+            "services.scheduler.scheduled_task_workflow.create_draft_and_preflight",
+            new=self._ready_preflight,
         ):
             client = TestClient(app)
-            resp = client.post("/api/scheduled-tasks", json={
+            resp = client.post("/api/scheduled-tasks/drafts", json={
                 "name": "每日销售日报",
                 "prompt": "查询昨日销售",
                 "cron_expr": "0 9 * * *",
@@ -135,10 +149,9 @@ class TestCreateTask:
 
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["name"] == "每日销售日报"
-        assert data["status"] == "active"
-        assert "cron_readable" in data
-        assert data["cron_readable"] == "每天 09:00"
+        assert data["status"] == "ready"
+        assert data["definition"]["name"] == "每日销售日报"
+        assert data["definition"]["cron_expr"] == "0 9 * * *"
 
     def test_create_no_permission(self):
         db = FakeDB()
@@ -149,7 +162,7 @@ class TestCreateTask:
             new=AsyncMock(return_value=False),
         ):
             client = TestClient(app)
-            resp = client.post("/api/scheduled-tasks", json={
+            resp = client.post("/api/scheduled-tasks/drafts", json={
                 "name": "test",
                 "prompt": "test",
                 "cron_expr": "0 9 * * *",
@@ -166,7 +179,7 @@ class TestCreateTask:
             new=AsyncMock(return_value=True),
         ):
             client = TestClient(app)
-            resp = client.post("/api/scheduled-tasks", json={
+            resp = client.post("/api/scheduled-tasks/drafts", json={
                 "name": "test",
                 "prompt": "test",
                 "cron_expr": "invalid",
@@ -187,7 +200,7 @@ class TestCreateTask:
             new=fake_check,
         ):
             client = TestClient(app)
-            resp = client.post("/api/scheduled-tasks", json={
+            resp = client.post("/api/scheduled-tasks/drafts", json={
                 "name": "test",
                 "prompt": "test",
                 "cron_expr": "0 9 * * *",
@@ -208,9 +221,12 @@ class TestCreateTask:
         with patch(
             "api.routes.scheduled_tasks.check_permission",
             new=fake_check,
+        ), patch(
+            "services.scheduler.scheduled_task_workflow.create_draft_and_preflight",
+            new=self._ready_preflight,
         ):
             client = TestClient(app)
-            resp = client.post("/api/scheduled-tasks", json={
+            resp = client.post("/api/scheduled-tasks/drafts", json={
                 "name": "test",
                 "prompt": "test",
                 "cron_expr": "0 9 * * *",
@@ -226,9 +242,12 @@ class TestCreateTask:
         with patch(
             "api.routes.scheduled_tasks.check_permission",
             new=AsyncMock(return_value=True),
+        ), patch(
+            "services.scheduler.scheduled_task_workflow.create_draft_and_preflight",
+            new=self._ready_preflight,
         ):
             client = TestClient(app)
-            resp = client.post("/api/scheduled-tasks", json={
+            resp = client.post("/api/scheduled-tasks/drafts", json={
                 "name": "每天 9 点",
                 "prompt": "test",
                 "schedule_type": "daily",
@@ -238,9 +257,8 @@ class TestCreateTask:
 
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["schedule_type"] == "daily"
-        assert data["cron_expr"] == "0 9 * * *"
-        assert data["cron_readable"] == "每天 09:00"
+        assert data["definition"]["schedule_type"] == "daily"
+        assert data["definition"]["cron_expr"] == "0 9 * * *"
 
     def test_create_weekly_multi_days(self):
         """schedule_type=weekly + 多个 weekdays"""
@@ -250,9 +268,12 @@ class TestCreateTask:
         with patch(
             "api.routes.scheduled_tasks.check_permission",
             new=AsyncMock(return_value=True),
+        ), patch(
+            "services.scheduler.scheduled_task_workflow.create_draft_and_preflight",
+            new=self._ready_preflight,
         ):
             client = TestClient(app)
-            resp = client.post("/api/scheduled-tasks", json={
+            resp = client.post("/api/scheduled-tasks/drafts", json={
                 "name": "周一三五日报",
                 "prompt": "test",
                 "schedule_type": "weekly",
@@ -263,9 +284,9 @@ class TestCreateTask:
 
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["schedule_type"] == "weekly"
-        assert data["cron_expr"] == "0 9 * * 1,3,5"
-        assert data["weekdays"] == [1, 3, 5]
+        assert data["definition"]["schedule_type"] == "weekly"
+        assert data["definition"]["cron_expr"] == "0 9 * * 1,3,5"
+        assert data["definition"]["weekdays"] == [1, 3, 5]
 
     def test_create_monthly(self):
         db = FakeDB()
@@ -274,9 +295,12 @@ class TestCreateTask:
         with patch(
             "api.routes.scheduled_tasks.check_permission",
             new=AsyncMock(return_value=True),
+        ), patch(
+            "services.scheduler.scheduled_task_workflow.create_draft_and_preflight",
+            new=self._ready_preflight,
         ):
             client = TestClient(app)
-            resp = client.post("/api/scheduled-tasks", json={
+            resp = client.post("/api/scheduled-tasks/drafts", json={
                 "name": "每月 15 日",
                 "prompt": "test",
                 "schedule_type": "monthly",
@@ -287,9 +311,9 @@ class TestCreateTask:
 
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["schedule_type"] == "monthly"
-        assert data["cron_expr"] == "0 9 15 * *"
-        assert data["day_of_month"] == 15
+        assert data["definition"]["schedule_type"] == "monthly"
+        assert data["definition"]["cron_expr"] == "0 9 15 * *"
+        assert data["definition"]["day_of_month"] == 15
 
     def test_create_once(self):
         """schedule_type=once + run_at → 单次任务，cron_expr 为 None"""
@@ -299,9 +323,12 @@ class TestCreateTask:
         with patch(
             "api.routes.scheduled_tasks.check_permission",
             new=AsyncMock(return_value=True),
+        ), patch(
+            "services.scheduler.scheduled_task_workflow.create_draft_and_preflight",
+            new=self._ready_preflight,
         ):
             client = TestClient(app)
-            resp = client.post("/api/scheduled-tasks", json={
+            resp = client.post("/api/scheduled-tasks/drafts", json={
                 "name": "今晚 22:00",
                 "prompt": "test",
                 "schedule_type": "once",
@@ -311,9 +338,9 @@ class TestCreateTask:
 
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["schedule_type"] == "once"
-        assert data["cron_expr"] is None
-        assert data["run_at"] is not None
+        assert data["definition"]["schedule_type"] == "once"
+        assert data["definition"]["cron_expr"] is None
+        assert data["definition"]["run_at"] is not None
 
     def test_create_once_in_past_rejected(self):
         """单次任务的 run_at 是过去时间 → 400"""
@@ -325,7 +352,7 @@ class TestCreateTask:
             new=AsyncMock(return_value=True),
         ):
             client = TestClient(app)
-            resp = client.post("/api/scheduled-tasks", json={
+            resp = client.post("/api/scheduled-tasks/drafts", json={
                 "name": "test",
                 "prompt": "test",
                 "schedule_type": "once",
@@ -344,7 +371,7 @@ class TestCreateTask:
             new=AsyncMock(return_value=True),
         ):
             client = TestClient(app)
-            resp = client.post("/api/scheduled-tasks", json={
+            resp = client.post("/api/scheduled-tasks/drafts", json={
                 "name": "test",
                 "prompt": "test",
                 "schedule_type": "once",
@@ -362,7 +389,7 @@ class TestCreateTask:
             new=AsyncMock(return_value=True),
         ):
             client = TestClient(app)
-            resp = client.post("/api/scheduled-tasks", json={
+            resp = client.post("/api/scheduled-tasks/drafts", json={
                 "name": "test",
                 "prompt": "test",
                 "schedule_type": "weekly",
@@ -370,6 +397,17 @@ class TestCreateTask:
                 "push_target": {"type": "wecom_group", "chatid": "x"},
             })
         assert resp.status_code == 400
+
+    def test_direct_create_is_rejected_to_prevent_preflight_bypass(self):
+        app = _build_app(FakeDB())
+
+        resp = TestClient(app).post("/api/scheduled-tasks", json={
+            "name": "禁止直建", "prompt": "test", "cron_expr": "0 9 * * *",
+            "push_target": {"type": "wecom_group", "chatid": "x"},
+        })
+
+        assert resp.status_code == 409
+        assert "规划与安全试跑" in resp.json()["detail"]
 
 
 # ════════════════════════════════════════════════════════
