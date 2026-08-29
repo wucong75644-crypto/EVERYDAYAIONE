@@ -175,6 +175,17 @@ class ChatToolResultMixin:
         success: bool,
         summary: str,
     ) -> None:
+        sink = self.__dict__.get("_execution_sink")
+        on_tool_result = getattr(sink, "on_tool_result", None)
+        if on_tool_result is not None:
+            await on_tool_result(
+                tool_name=context.tool_name,
+                tool_call_id=context.tool_call_id,
+                success=success,
+                summary=summary,
+                turn=context.turn,
+            )
+            return
         from services.handlers import chat_tool_mixin
 
         await chat_tool_mixin.ws_manager.send_to_task_or_user(

@@ -2,23 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from schemas.websocket import build_message_start
-from services.handlers.chat.stream_finalize import (
-    StreamFinalizationInput,
-    finalize_stream_result,
-)
 from services.handlers.chat.stream_lifecycle import (
     cleanup_stream_resources,
     handle_stream_error,
     persist_stream_completion,
 )
-from services.handlers.chat.stream_loop import ChatStreamLoop
-from services.handlers.chat.stream_session import StreamDelivery
-from services.handlers.chat.stream_setup import prepare_chat_stream
+from services.handlers.chat.execution_engine import (
+    ChatExecutionRequest,
+    execute_chat,
+)
+from services.handlers.chat.execution_sink import WebSocketExecutionSink
 
 
 @dataclass(frozen=True)
@@ -81,6 +79,7 @@ async def run_legacy_chat_stream(
             permission_mode=result.permission_mode,
             params=request.params,
             retry_context=request.retry_context,
+            context_anchor=request.context_anchor,
         )
     finally:
         await cleanup_stream_resources(
@@ -110,78 +109,87 @@ async def _execute_stream(
     websocket: Any,
     result: _RunResult,
 ) -> None:
-    delivery = _delivery(request, handler.org_id)
-    await websocket.send_to_task_or_user(
-        request.task_id,
-        request.user_id,
-        build_message_start(
-            task_id=request.task_id,
-            conversation_id=request.conversation_id,
-            message_id=request.message_id,
-            model=request.model_id,
-        ),
-    )
-    prepared = await prepare_chat_stream(
-        handler=handler,
-        content=request.content,
-        user_id=request.user_id,
-        conversation_id=request.conversation_id,
-        task_id=request.task_id,
-        model_id=request.model_id,
-        permission_mode=request.permission_mode,
-        needs_google_search=request.needs_google_search,
-        params=request.params or {},
-        context_anchor=request.context_anchor,
-    )
-    handler._adapter = prepared.adapter
-    result.permission_mode = prepared.permission_mode
-    result.text_content = prepared.text_content
-    websocket.register_steer_listener(request.task_id)
-    websocket.register_cancel_listener(request.task_id)
-
-    loop = ChatStreamLoop(
-        handler=handler,
-        prepared=prepared,
-        delivery=delivery,
-        websocket=websocket,
-        thinking_effort=request.thinking_effort,
-        thinking_mode=request.thinking_mode,
-    )
-    await loop.run()
-    finalized = await finalize_stream_result(
-        handler=handler,
-        adapter=prepared.adapter,
-        budget=prepared.budget,
-        delivery=delivery,
-        state=StreamFinalizationInput(
-            messages=prepared.messages,
-            content_blocks=loop.content_blocks,
-            accumulated_text=loop.totals.text,
-            accumulated_thinking=loop.totals.thinking,
-            turn_text=loop.turn_result.text,
-            turn_thinking=loop.turn_result.thinking,
-            thinking_committed=loop.turn_result.thinking_committed,
-            thinking_started_at=loop.turn_result.thinking_started_at,
-            usage=loop.totals.usage,
-        ),
-        websocket=websocket,
-        save_blocks=handler._save_accumulated_blocks,
-    )
-    result.accumulated_text = finalized.accumulated_text
-    result.usage = loop.totals.usage
-    result.completion_args = finalized.completion_args
-    if finalized.clear_pending_emit_payloads:
-        handler._pending_emit_payloads = []
-
-
-def _delivery(
-    request: LegacyStreamRequest,
-    org_id: str | None,
-) -> StreamDelivery:
-    return StreamDelivery(
+    cancellation_event = asyncio.Event()
+    sink = WebSocketExecutionSink(
         task_id=request.task_id,
         conversation_id=request.conversation_id,
         message_id=request.message_id,
         user_id=request.user_id,
-        org_id=org_id,
+        model_id=request.model_id,
+        websocket=websocket,
+        save_content=handler._save_accumulated_content,
+        save_blocks=handler._save_accumulated_blocks,
     )
+    cancellation_monitor = asyncio.create_task(
+        _watch_legacy_cancellation(websocket, request.task_id, cancellation_event)
+    )
+
+    async def on_cancel(
+        messages: list[dict[str, Any]],
+        blocks: list[dict[str, Any]],
+        partial_text: str,
+        partial_thinking: str,
+        location: str,
+    ) -> None:
+        if getattr(on_cancel, "called", False):
+            return
+        on_cancel.called = True
+        await handler._handle_user_cancel(
+            request.task_id,
+            request.message_id,
+            request.conversation_id,
+            messages,
+            blocks,
+            location,
+            partial_text=partial_text,
+            partial_thinking=partial_thinking,
+        )
+
+    try:
+        execution = await execute_chat(
+            handler=handler,
+            request=ChatExecutionRequest(
+                content=request.content,
+                user_id=request.user_id,
+                conversation_id=request.conversation_id,
+                task_id=request.task_id,
+                message_id=request.message_id,
+                model_id=request.model_id,
+                context_anchor=request.context_anchor,
+                params=request.params or {},
+                permission_mode=request.permission_mode,
+                needs_google_search=request.needs_google_search,
+                thinking_effort=request.thinking_effort,
+                thinking_mode=request.thinking_mode,
+                steer_reader=lambda: websocket.check_steer(request.task_id),
+                on_cancel=on_cancel,
+            ),
+            cancellation_event=cancellation_event,
+            sink=sink,
+        )
+    finally:
+        cancellation_monitor.cancel()
+        await asyncio.gather(cancellation_monitor, return_exceptions=True)
+
+    result.permission_mode = request.permission_mode
+    result.text_content = handler._extract_text_content(request.content)
+    result.accumulated_text = sink.text
+    result.usage = execution.usage
+    result.completion_args = {
+        "task_id": request.task_id,
+        "result": execution.parts,
+        "credits_consumed": execution.credits_cost,
+        "tool_digest": execution.tool_digest,
+    }
+
+
+async def _watch_legacy_cancellation(
+    websocket: Any,
+    task_id: str,
+    cancellation_event: asyncio.Event,
+) -> None:
+    while not cancellation_event.is_set():
+        if websocket.is_cancelled(task_id):
+            cancellation_event.set()
+            return
+        await asyncio.sleep(0.05)

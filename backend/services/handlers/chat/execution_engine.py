@@ -7,11 +7,11 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from loguru import logger
 
-from schemas.message import ContentPart
+from schemas.message import ContentPart, TextPart
 from services.handlers.chat.execution_sink import (
     CollectingExecutionSink,
     ExecutionSink,
@@ -51,6 +51,13 @@ class ChatExecutionRequest:
     calculate_credits: bool = True
     execution_scope: Any = None
     replay_context: dict[str, Any] | None = None
+    thinking_effort: str | None = None
+    thinking_mode: str | None = None
+    steer_reader: Callable[[], str | None] | None = None
+    on_cancel: Callable[
+        [list[dict[str, Any]], list[dict[str, Any]], str, str, str],
+        Awaitable[None],
+    ] | None = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +99,8 @@ async def execute_chat(
         replay_context=request.replay_context,
     )
     handler._adapter = prepared.adapter
+    previous_sink = getattr(handler, "_execution_sink", None)
+    handler._execution_sink = output
     handler._pending_emit_payloads = []
     handler._pending_form_block = None
     handler._terminal_form_pending = False
@@ -101,7 +110,7 @@ async def execute_chat(
     )
     try:
         await output.start()
-        await _run_loop(
+        form_hint = await _run_loop(
             handler=handler,
             request=request,
             prepared=prepared,
@@ -111,7 +120,7 @@ async def execute_chat(
             blocks=blocks,
             runtime=runtime,
         )
-        await _apply_budget_stop(prepared, totals, blocks)
+        await _apply_budget_stop(prepared, totals, blocks, output)
         await _consume_emit_payloads(handler, blocks, output)
         await output.flush()
         parts = build_content_parts(
@@ -119,6 +128,8 @@ async def execute_chat(
             fallback_text=totals.text,
             fallback_thinking=totals.thinking,
         )
+        if form_hint:
+            parts.append(TextPart(text=form_hint))
         return ChatExecutionResult(
             parts=parts,
             content_blocks=blocks,
@@ -140,6 +151,10 @@ async def execute_chat(
         )
     finally:
         await prepared.adapter.close()
+        if getattr(handler, "_adapter", None) is prepared.adapter:
+            handler._adapter = None
+        if getattr(handler, "_execution_sink", None) is output:
+            handler._execution_sink = previous_sink
 
 
 async def _run_loop(
@@ -152,7 +167,9 @@ async def _run_loop(
     totals: StreamTotals,
     blocks: list[dict[str, Any]],
     runtime: ConversationTurnRuntime | None,
-) -> None:
+) -> str | None:
+    thinking_mode = request.thinking_mode
+    empty_output_retried = False
     while not prepared.budget.stop_reason:
         if runtime:
             runtime.set_state(ConversationState.RUNNING_MODEL)
@@ -168,7 +185,14 @@ async def _run_loop(
                 prepared.messages,
                 runtime.consume_subtask_completions(),
             )
-        _raise_if_cancelled(cancellation_event)
+            _inject_steer_messages(
+                prepared.messages,
+                runtime.consume_steer_messages(),
+            )
+        await _check_cancelled(
+            cancellation_event, request, prepared.messages, blocks,
+            totals, "loop_top",
+        )
         prepared.budget.use_turn()
         turn = prepared.budget.turns_used - 1
         tools = prepare_tool_turn(
@@ -188,6 +212,9 @@ async def _run_loop(
             totals,
             blocks,
             runtime,
+            request.thinking_effort,
+            thinking_mode,
+            request,
         )
         if runtime:
             await runtime.safe_point(SafePoint.AFTER_MODEL)
@@ -198,8 +225,25 @@ async def _run_loop(
             text=turn_text,
         )
         if not calls:
-            return
-        await _execute_tools(
+            if not turn_text and prepared.budget.turns_used > 1:
+                if not empty_output_retried:
+                    empty_output_retried = True
+                    thinking_mode = None
+                    prepared.messages.append({
+                        "role": "user",
+                        "content": "请根据刚才的工具执行结果，直接告诉我结论。",
+                    })
+                    continue
+                fallback = _last_tool_output(blocks)
+                fallback_text = (
+                    "抱歉，我在整理回复时遇到了问题。以下是工具返回的原始结果：\n\n"
+                    + (fallback or "（无工具输出）")
+                )
+                totals.text += fallback_text
+                blocks.append({"type": "text", "text": fallback_text})
+                await sink.on_block(blocks[-1])
+            return None
+        form_hint = await _execute_tools(
             handler=handler,
             request=request,
             prepared=prepared,
@@ -211,11 +255,15 @@ async def _run_loop(
             sink=sink,
             blocks=blocks,
             runtime=runtime,
+            totals=totals,
         )
         # FormBlockResult 是一个完整的交付物，不再发起额外的模型回合。
         # 这样既避免重复文案，也保证表单是该消息唯一的确认入口。
         if getattr(handler, "_terminal_form_pending", False):
-            return
+            return None
+        if form_hint:
+            return form_hint
+    return None
 
 
 async def _read_turn(
@@ -226,6 +274,9 @@ async def _read_turn(
     totals: StreamTotals,
     blocks: list[dict[str, Any]],
     runtime: ConversationTurnRuntime | None,
+    thinking_effort: str | None = None,
+    thinking_mode: str | None = None,
+    request: ChatExecutionRequest | None = None,
 ) -> tuple[str, str, list[dict[str, Any]], set[str]]:
     turn_text = ""
     turn_thinking = ""
@@ -235,16 +286,20 @@ async def _read_turn(
     stream = prepared.adapter.stream_chat(
         messages=prepared.messages,
         tools=tools,
+        reasoning_effort=thinking_effort,
+        thinking_mode=thinking_mode,
         **prepared.stream_kwargs,
     )
     stream_iterator = stream.__aiter__()
     while True:
         next_chunk = asyncio.create_task(stream_iterator.__anext__())
+        cancel_waiter = asyncio.create_task(cancellation_event.wait())
         command_waiter = (
             asyncio.create_task(runtime.wait_for_command())
             if runtime is not None else None
         )
         wait_set = {next_chunk}
+        wait_set.add(cancel_waiter)
         if command_waiter is not None:
             wait_set.add(command_waiter)
         done, _ = await asyncio.wait(
@@ -254,15 +309,31 @@ async def _read_turn(
 
         # 命令先到时主动结束 provider stream；随后 safe_point 会刷盘并
         # 把 PAUSE/CANCEL 归约为控制流异常。不会每个 token 查询数据库。
+        if cancel_waiter in done and next_chunk not in done:
+            next_chunk.cancel()
+            await asyncio.gather(next_chunk, return_exceptions=True)
+            if command_waiter is not None:
+                command_waiter.cancel()
+                await asyncio.gather(command_waiter, return_exceptions=True)
+            await _check_cancelled(
+                cancellation_event, request, prepared.messages, blocks,
+                totals, "stream",
+            )
+
         if command_waiter is not None and command_waiter in done and next_chunk not in done:
             next_chunk.cancel()
             await asyncio.gather(next_chunk, return_exceptions=True)
+            cancel_waiter.cancel()
+            await asyncio.gather(cancel_waiter, return_exceptions=True)
             await runtime.safe_point(SafePoint.MODEL_CHUNK)
             continue
 
         if command_waiter is not None and not command_waiter.done():
             command_waiter.cancel()
             await asyncio.gather(command_waiter, return_exceptions=True)
+        if not cancel_waiter.done():
+            cancel_waiter.cancel()
+        await asyncio.gather(cancel_waiter, return_exceptions=True)
 
         try:
             chunk = next_chunk.result()
@@ -270,7 +341,10 @@ async def _read_turn(
             break
         if runtime:
             await runtime.safe_point(SafePoint.MODEL_CHUNK)
-        _raise_if_cancelled(cancellation_event)
+        await _check_cancelled(
+            cancellation_event, request, prepared.messages, blocks,
+            totals, "stream",
+        )
         if chunk.thinking_content:
             turn_thinking += chunk.thinking_content
             totals.thinking += chunk.thinking_content
@@ -362,6 +436,10 @@ async def _append_turn_blocks(
     thinking: str,
     text: str,
 ) -> None:
+    if text and not thinking and getattr(sink, "emit_empty_thinking", False):
+        block = {"type": "thinking", "text": "", "duration_ms": 0}
+        blocks.append(block)
+        await sink.on_block(block)
     for block in (
         {"type": "thinking", "text": thinking} if thinking else None,
         {"type": "text", "text": text} if text else None,
@@ -384,8 +462,11 @@ async def _execute_tools(
     sink: ExecutionSink,
     blocks: list[dict[str, Any]],
     runtime: ConversationTurnRuntime | None,
-) -> None:
+    totals: StreamTotals | None = None,
+) -> str | None:
+    totals = totals or StreamTotals()
     prepared.messages.append(_assistant_tool_message(turn_text, calls))
+    await _sink_tool_calls(sink, calls, turn + 1)
     start_times: dict[str, float] = {}
     for call in calls:
         block = build_running_step(call)
@@ -404,7 +485,10 @@ async def _execute_tools(
     if runtime:
         runtime.set_state(ConversationState.WAITING_TOOL)
         await runtime.safe_point(SafePoint.BEFORE_TOOL)
-    _raise_if_cancelled(cancellation_event)
+    await _check_cancelled(
+        cancellation_event, request, prepared.messages, blocks,
+        totals, "before_tool",
+    )
     results = await handler._execute_tool_calls(
         calls,
         request.task_id,
@@ -442,7 +526,10 @@ async def _execute_tools(
                     payload=command.payload or {},
                 )
         runtime.push(command)
-    _raise_if_cancelled(cancellation_event)
+    await _check_cancelled(
+        cancellation_event, request, prepared.messages, blocks,
+        totals, "post_tool",
+    )
     image_urls = apply_tool_results(
         tool_results=results,
         messages=prepared.messages,
@@ -451,7 +538,17 @@ async def _execute_tools(
         tool_context=prepared.tool_context,
     )
     append_tool_images(prepared.messages, image_urls)
-    await _consume_emit_payloads(handler, blocks, sink)
+    if runtime:
+        await runtime.safe_point(SafePoint.AFTER_TOOL)
+        _inject_steer_messages(
+            prepared.messages,
+            runtime.consume_steer_messages(),
+        )
+    elif getattr(request, "steer_reader", None) is not None:
+        steer_message = request.steer_reader()
+        if steer_message:
+            prepared.messages.append({"role": "user", "content": steer_message})
+    form_hint = await _consume_emit_payloads(handler, blocks, sink)
     await compact_tool_context(
         messages=prepared.messages,
         conversation_source=handler._get_conv_source(request.conversation_id),
@@ -471,6 +568,7 @@ async def _execute_tools(
         f"Headless tool turn complete | task={request.task_id} | "
         f"turn={turn + 1} | tools={[call['name'] for call in calls]}"
     )
+    return form_hint
 
 
 def _assistant_tool_message(
@@ -560,7 +658,7 @@ async def _consume_emit_payloads(
     handler: Any,
     blocks: list[dict[str, Any]],
     sink: ExecutionSink,
-) -> None:
+) -> str | None:
     from services.handlers.emit_payloads import build_block_from_payload
 
     for payload in handler._pending_emit_payloads:
@@ -570,16 +668,21 @@ async def _consume_emit_payloads(
             await sink.on_block(block)
     handler._pending_emit_payloads = []
     form = getattr(handler, "_pending_form_block", None)
+    form_hint = None
     if form:
         blocks.append(form)
         await sink.on_block(form)
         handler._pending_form_block = None
+        form_hint = "请在上方表单中确认信息后点击提交。"
+        await sink.on_text(form_hint)
+    return form_hint
 
 
 async def _apply_budget_stop(
     prepared: Any,
     totals: StreamTotals,
     blocks: list[dict[str, Any]],
+    sink: ExecutionSink,
 ) -> None:
     if not prepared.budget.stop_reason:
         return
@@ -594,9 +697,20 @@ async def _apply_budget_stop(
     )
     if synthesis:
         totals.text = synthesis
-        blocks.append({"type": "text", "text": synthesis})
+        block = {"type": "text", "text": synthesis}
+        blocks.append(block)
+        await sink.on_block(block)
     elif not totals.text:
         raise RuntimeError("CHAT_BUDGET_EXHAUSTED_WITHOUT_OUTPUT")
+    else:
+        warning = (
+            f"\n\n> ⚠️ 已达到执行上限（{stop_message(prepared.budget.stop_reason)}），"
+            "以上为部分结果。"
+        )
+        totals.text += warning
+        block = {"type": "text", "text": warning}
+        blocks.append(block)
+        await sink.on_block(block)
 
 
 def _accumulate_usage(totals: StreamTotals, chunk: Any) -> None:
@@ -624,6 +738,49 @@ def _build_digest(
         return None
 
 
-def _raise_if_cancelled(event: asyncio.Event) -> None:
-    if event.is_set():
-        raise asyncio.CancelledError
+async def _check_cancelled(
+    event: asyncio.Event,
+    request: ChatExecutionRequest | None,
+    messages: list[dict[str, Any]],
+    blocks: list[dict[str, Any]],
+    totals: StreamTotals,
+    location: str,
+) -> None:
+    if not event.is_set():
+        return
+    if request is not None and request.on_cancel is not None:
+        await request.on_cancel(
+            messages,
+            blocks,
+            totals.text,
+            totals.thinking,
+            location,
+        )
+    raise asyncio.CancelledError
+
+
+async def _sink_tool_calls(
+    sink: ExecutionSink,
+    calls: list[dict[str, Any]],
+    turn: int,
+) -> None:
+    callback = getattr(sink, "on_tool_calls", None)
+    if callback is not None:
+        await callback(calls, turn)
+
+
+def _inject_steer_messages(
+    messages: list[dict[str, Any]],
+    steer_messages: list[str],
+) -> None:
+    for message in steer_messages:
+        if message:
+            messages.append({"role": "user", "content": message})
+
+
+def _last_tool_output(blocks: list[dict[str, Any]]) -> str:
+    for block in reversed(blocks):
+        text = block.get("output") or block.get("text")
+        if block.get("type") in {"tool_result", "tool_step"} and text:
+            return str(text)[:2000]
+    return ""

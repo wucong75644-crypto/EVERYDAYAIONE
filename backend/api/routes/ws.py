@@ -37,6 +37,7 @@ from services.conversation_control_service import (
     execute_control_action,
     load_control_tasks,
 )
+from services.conversation_task import is_actor_task
 
 router = APIRouter(tags=["WebSocket"])
 
@@ -351,6 +352,33 @@ async def _handle_message(
                         client_task_id=result.get("client_task_id"),
                         external_task_id=result.get("external_task_id"),
                     ))
+                    return
+                if is_actor_task(candidate_task) and candidate_task.get("status") == "running":
+                    internal_task_id = str(candidate_task["id"])
+                    async_db = await get_async_db()
+                    steer_result = await DatabaseConversationCommandStore(
+                        async_db
+                    ).append(
+                        conversation_id=str(candidate_task["conversation_id"]),
+                        task_id=internal_task_id,
+                        turn_id=(
+                            str(candidate_task["turn_id"])
+                            if candidate_task.get("turn_id") else None
+                        ),
+                        command_type=CommandType.STEER,
+                        dedupe_key=f"steer:{uuid.uuid4()}",
+                        payload={"message": str(message)},
+                    )
+                    from services.conversation_worker import RedisConversationWakeup
+                    await RedisConversationWakeup().publish(
+                        str(candidate_task["conversation_id"]), org_id,
+                    )
+                    logger.info(
+                        "Actor steer persisted | "
+                        f"task_id={internal_task_id} | "
+                        f"conversation_id={candidate_task['conversation_id']} | "
+                        f"already_enqueued={steer_result.get('already_enqueued', False)}"
+                    )
                     return
             resolved = ws_manager.resolve_steer(task_id, message)
             logger.info(

@@ -58,6 +58,7 @@ class DatabaseConversationCommandStore:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         if command_type not in {
+            CommandType.STEER,
             CommandType.CANCEL,
             CommandType.PAUSE,
             CommandType.APPROVAL_RESULT,
@@ -65,16 +66,23 @@ class DatabaseConversationCommandStore:
             CommandType.TOOL_COMPLETED,
         }:
             raise ValueError("command type cannot be persisted as a control event")
+        rpc_name = (
+            "append_conversation_steer"
+            if command_type is CommandType.STEER
+            else "append_conversation_control_command"
+        )
+        params = {
+            "p_conversation_id": conversation_id,
+            "p_task_id": task_id,
+            "p_turn_id": turn_id,
+            "p_dedupe_key": dedupe_key,
+            "p_payload": Jsonb(payload),
+        }
+        if command_type is not CommandType.STEER:
+            params["p_event_type"] = command_type.value
         response = await self._db.rpc(
-            "append_conversation_control_command",
-            {
-                "p_conversation_id": conversation_id,
-                "p_task_id": task_id,
-                "p_turn_id": turn_id,
-                "p_event_type": command_type.value,
-                "p_dedupe_key": dedupe_key,
-                "p_payload": Jsonb(payload),
-            },
+            rpc_name,
+            params,
         ).execute()
         data = response.data if response else None
         if not isinstance(data, dict):

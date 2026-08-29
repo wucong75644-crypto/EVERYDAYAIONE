@@ -179,6 +179,16 @@ class ActorWebSink:
         )
         await self._persist()
 
+    async def on_tool_calls(
+        self, _tool_calls: list[dict[str, Any]], _turn: int,
+    ) -> None:
+        """工具调用由 running tool_step 事件投影，避免新增 outbox 事件类型。"""
+        return None
+
+    async def on_tool_result(self, **_kwargs: Any) -> None:
+        """工具结果由 tool_step 更新投影，保持交付事件类型向后兼容。"""
+        return None
+
     async def flush(self) -> None:
         await self.flush_progress()
         delivery_seq = await self._append_event("stream_end", {})

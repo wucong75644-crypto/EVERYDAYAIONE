@@ -507,9 +507,11 @@ class ChatToolMixin(ChatToolResultMixin):
             "output": output,
             "elapsed_ms": elapsed_ms,
         }
-        actor_sink = getattr(self, "_actor_sink", None)
-        on_block_update = getattr(actor_sink, "on_block_update", None)
-        if getattr(self, "_actor_enabled", False) is True and on_block_update is not None:
+        sink = self.__dict__.get("_execution_sink")
+        if sink is None and self.__dict__.get("_actor_enabled") is True:
+            sink = self.__dict__.get("_actor_sink")
+        on_block_update = getattr(sink, "on_block_update", None)
+        if on_block_update is not None:
             result = on_block_update(_step_update)
             if hasattr(result, "__await__"):
                 await result

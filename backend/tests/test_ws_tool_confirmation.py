@@ -141,3 +141,51 @@ async def test_durable_approval_returns_to_runtime_inbox_before_safe_point():
     assert approved is True
     runtime.push.assert_called_once_with(command)
     store.acknowledge.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_actor_steer_is_durable_and_wakes_conversation_worker():
+    task = _task(actor=True)
+    control_tasks = SimpleNamespace(
+        running=task,
+        paused=None,
+        to_router_state=lambda: {},
+    )
+    store = AsyncMock()
+    store.append.return_value = {"outcome": "enqueued"}
+    wakeup = MagicMock()
+    wakeup.publish = AsyncMock()
+
+    with patch.object(ws, "get_db", return_value=MagicMock()), \
+         patch.object(ws, "get_async_db", new=AsyncMock(return_value=MagicMock())), \
+         patch.object(ws, "load_control_tasks", return_value=control_tasks), \
+         patch.object(
+             ws.ConversationControlRouter,
+             "route",
+             new_callable=AsyncMock,
+             return_value=SimpleNamespace(action=ws.ControlAction.NONE),
+         ), \
+         patch.object(ws, "DatabaseConversationCommandStore", return_value=store), \
+         patch(
+             "services.conversation_worker.RedisConversationWakeup",
+             return_value=wakeup,
+         ):
+        await ws._handle_message(
+            "conn-1",
+            "user-1",
+            {
+                "type": "user_steer",
+                "payload": {
+                    "task_id": "task-1",
+                    "conversation_id": "conversation-1",
+                    "message": "请改为简短回答",
+                },
+            },
+            org_id="org-1",
+        )
+
+    store.append.assert_awaited_once()
+    kwargs = store.append.await_args.kwargs
+    assert kwargs["command_type"] is CommandType.STEER
+    assert kwargs["payload"] == {"message": "请改为简短回答"}
+    wakeup.publish.assert_awaited_once_with("conversation-1", "org-1")

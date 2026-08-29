@@ -8,10 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from services.handlers.chat.stream_loop import ChatStreamLoop
-from services.handlers.chat.stream_session import (
-    StreamDelivery,
-    StreamTurnResult,
-)
+from services.handlers.chat.stream_session import StreamDelivery
 
 
 class _Budget:
@@ -39,25 +36,10 @@ def _prepared(turns_used: int = 0) -> SimpleNamespace:
         core_tools=[],
         tool_context=SimpleNamespace(discovered_tools=set()),
         permission=MagicMock(need_exit_attachment=False),
+        permission_mode="auto",
         stream_kwargs={},
         adapter=MagicMock(),
         messages=[],
-    )
-
-
-def _turn(
-    *,
-    text: str = "",
-    tool_calls: dict | None = None,
-) -> StreamTurnResult:
-    return StreamTurnResult(
-        text=text,
-        thinking="",
-        thinking_committed=True,
-        thinking_started_at=None,
-        request_started_at=1,
-        tool_calls=tool_calls or {},
-        cancelled=False,
     )
 
 
@@ -92,21 +74,19 @@ async def test_loop_stops_after_plain_text_turn() -> None:
         thinking_effort=None,
         thinking_mode=None,
     )
-    with (
-        patch(
-            "services.handlers.chat.stream_loop.prepare_tool_turn",
-            return_value=[],
-        ),
-        patch(
-            "services.handlers.chat.stream_loop.read_stream_turn",
-            new_callable=AsyncMock,
-            return_value=_turn(text="答案"),
-        ),
+    async def run_core(**kwargs):
+        kwargs["totals"].text = "答案"
+        kwargs["blocks"].append({"type": "text", "text": "答案"})
+
+    with patch(
+        "services.handlers.chat.stream_loop._run_loop",
+        new_callable=AsyncMock,
+        side_effect=run_core,
     ):
         await loop.run()
 
-    assert loop.turn_result.text == "答案"
-    assert loop.prepared.budget.turns_used == 1
+    assert loop.totals.text == "答案"
+    assert loop.content_blocks == [{"type": "text", "text": "答案"}]
 
 
 @pytest.mark.asyncio
@@ -121,84 +101,43 @@ async def test_loop_cancelled_before_provider_call_persists_anchor() -> None:
         thinking_mode=None,
     )
 
-    await loop.run()
+    async def run_core(**kwargs):
+        await kwargs["request"].on_cancel(
+            [], [], "", "", "loop_top",
+        )
+
+    with patch(
+        "services.handlers.chat.stream_loop._run_loop",
+        new_callable=AsyncMock,
+        side_effect=run_core,
+    ):
+        await loop.run()
 
     handler._handle_user_cancel.assert_awaited_once()
     assert handler._handle_user_cancel.call_args.args[5] == "loop_top"
 
 
 @pytest.mark.asyncio
-async def test_loop_executes_tools_then_continues_to_final_text() -> None:
+async def test_compatibility_loop_routes_to_shared_core() -> None:
     handler = _handler()
-    websocket = _websocket()
     loop = ChatStreamLoop(
         handler=handler,
         prepared=_prepared(),
         delivery=_delivery(),
-        websocket=websocket,
-        thinking_effort=None,
-        thinking_mode=None,
-    )
-    call = {"id": "call-1", "name": "query", "arguments": "{}"}
-    with (
-        patch(
-            "services.handlers.chat.stream_loop.prepare_tool_turn",
-            return_value=[],
-        ),
-        patch(
-            "services.handlers.chat.stream_loop.read_stream_turn",
-            new_callable=AsyncMock,
-            side_effect=[_turn(tool_calls={0: call}), _turn(text="完成")],
-        ),
-        patch(
-            "services.handlers.chat.stream_loop.begin_tool_calls",
-            new_callable=AsyncMock,
-            return_value={"call-1": 1.0},
-        ),
-        patch(
-            "services.handlers.chat.stream_loop.apply_tool_results",
-            return_value=[],
-        ),
-        patch(
-            "services.handlers.chat.stream_loop.compact_tool_context",
-            new_callable=AsyncMock,
-        ) as compact,
-    ):
-        await loop.run()
-
-    handler._execute_tool_calls.assert_awaited_once()
-    compact.assert_awaited_once()
-    assert loop.turn_result.text == "完成"
-    assert loop.prepared.budget.turns_used == 2
-
-
-@pytest.mark.asyncio
-async def test_empty_output_retries_once_then_uses_tool_fallback() -> None:
-    loop = ChatStreamLoop(
-        handler=_handler(),
-        prepared=_prepared(turns_used=1),
-        delivery=_delivery(),
         websocket=_websocket(),
-        thinking_effort=None,
-        thinking_mode="enabled",
+        thinking_effort="high",
+        thinking_mode="deep",
     )
-    loop.content_blocks = [
-        {"type": "tool_step", "output": "工具原始结果"}
-    ]
-    with (
-        patch(
-            "services.handlers.chat.stream_loop.prepare_tool_turn",
-            return_value=[],
-        ),
-        patch(
-            "services.handlers.chat.stream_loop.read_stream_turn",
-            new_callable=AsyncMock,
-            side_effect=[_turn(), _turn()],
-        ),
-    ):
+
+    with patch(
+        "services.handlers.chat.stream_loop._run_loop",
+        new_callable=AsyncMock,
+    ) as run_core:
         await loop.run()
 
-    assert loop.empty_output_retried is True
-    assert loop.thinking_mode is None
-    assert "工具原始结果" in loop.turn_result.text
-    assert loop.totals.text == loop.turn_result.text
+    run_core.assert_awaited_once()
+    request = run_core.call_args.kwargs["request"]
+    assert request.thinking_effort == "high"
+    assert request.thinking_mode == "deep"
+    assert request.steer_reader is not None
+    assert request.on_cancel is not None

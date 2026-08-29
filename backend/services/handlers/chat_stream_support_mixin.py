@@ -128,6 +128,7 @@ class ChatStreamSupportMixin:
         _params: Optional[Dict[str, Any]],
         _retry_context: Optional[Any],
         elapsed_ms: int,
+        context_anchor: Optional[Any] = None,
     ) -> None:
         """处理流式生成失败：尝试重试，否则报错 + 记录指标"""
         retried = await self._attempt_chat_retry(
@@ -136,6 +137,7 @@ class ChatStreamSupportMixin:
             content=content, model_id=model_id,
             thinking_effort=thinking_effort, thinking_mode=thinking_mode,
             _params=_params, _retry_context=_retry_context,
+            context_anchor=context_anchor,
         )
         if not retried:
             await self.on_error(
@@ -170,6 +172,7 @@ class ChatStreamSupportMixin:
         thinking_mode: Optional[str],
         _params: Optional[Dict[str, Any]],
         _retry_context: Optional[Any],
+        context_anchor: Optional[Any] = None,
     ) -> bool:
         """Smart mode 重试：调用千问大脑重新选择模型，成功则递归重试"""
         retry_ctx = self._build_retry_context(
@@ -216,5 +219,6 @@ class ChatStreamSupportMixin:
             content=content, model_id=new_model,
             thinking_effort=thinking_effort, thinking_mode=thinking_mode,
             _params=_params, _retry_context=retry_ctx,
+            context_anchor=context_anchor,
         )
         return True
