@@ -5,8 +5,8 @@ ALTER TABLE conversation_control_events
     DROP CONSTRAINT IF EXISTS conversation_control_events_type_check,
     ADD CONSTRAINT conversation_control_events_type_check
         CHECK (event_type IN (
-            'cancel', 'approval_result', 'subtask_completed',
-            'tool_completed', 'steer'
+            'cancel', 'pause', 'resume', 'approval_result',
+            'subtask_completed', 'tool_completed', 'steer'
         ));
 
 CREATE OR REPLACE FUNCTION append_conversation_steer(

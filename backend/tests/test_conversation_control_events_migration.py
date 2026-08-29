@@ -71,6 +71,7 @@ def test_steer_migration_reuses_control_event_table() -> None:
     migration = _read(MIGRATIONS / "242_conversation_actor_steer.sql")
 
     assert "ALTER TABLE conversation_control_events" in migration
+    assert "'pause', 'resume'" in migration
     assert "'steer'" in migration
     assert "CREATE OR REPLACE FUNCTION append_conversation_steer" in migration
     assert "ACTOR_STEER_SCOPE_MISMATCH" in migration
