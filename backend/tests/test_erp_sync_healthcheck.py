@@ -7,7 +7,7 @@
 - dedupe 顺序修复（推送失败时不持锁 1h）
 - 推送失败时主流程不抛异常
 - 管理员查询走 org_members（不是 users.role）
-- 指纹生成（按 error_count // ALERT_THRESHOLD 分档）
+- 指纹生成（按 org 的 sync_type 集合稳定去重）
 - best-effort 通道：缺 wecom 配置时跳过
 """
 
@@ -18,7 +18,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from services.kuaimai.erp_sync_healthcheck import (
-    ALERT_THRESHOLD,
     _fingerprint,
     _maybe_alert_org,
     _push_to_org_admins,
@@ -49,27 +48,17 @@ class TestFingerprint:
         ]
         assert _fingerprint(items_a) == _fingerprint(items_b)
 
-    def test_error_count_bucketed_by_threshold(self):
-        """error_count 按 ALERT_THRESHOLD 分档（同档去重，避免数字 +1 刷屏）
+    def test_error_count_does_not_change_fingerprint(self):
+        """持续失败只更新次数，不应在去重窗口内重复推送"""
+        items_low = [{"sync_type": "order", "error_count": 3}]
+        items_high = [{"sync_type": "order", "error_count": 300}]
+        assert _fingerprint(items_low) == _fingerprint(items_high)
 
-        2026-04-11: ALERT_THRESHOLD 10→3 后，分档粒度从 10 变 3。
-        例如阈值=3：3-5 同档，6-8 同档，9-11 同档。
-        """
-        from services.kuaimai.erp_sync_healthcheck import ALERT_THRESHOLD
-        # 同档：[ALERT_THRESHOLD * k, ALERT_THRESHOLD * (k+1) - 1]
-        base = ALERT_THRESHOLD * 5  # 任取一档起点
-        items_a = [{"sync_type": "order", "error_count": base}]
-        items_b = [{"sync_type": "order", "error_count": base + 1}]
-        items_c = [{"sync_type": "order", "error_count": base + ALERT_THRESHOLD - 1}]
-        assert _fingerprint(items_a) == _fingerprint(items_b) == _fingerprint(items_c)
-
-    def test_error_count_crosses_bucket(self):
-        """跨档应生成不同指纹，重新触发告警"""
-        from services.kuaimai.erp_sync_healthcheck import ALERT_THRESHOLD
-        base = ALERT_THRESHOLD * 5
-        items_low = [{"sync_type": "order", "error_count": base + ALERT_THRESHOLD - 1}]
-        items_high = [{"sync_type": "order", "error_count": base + ALERT_THRESHOLD}]
-        assert _fingerprint(items_low) != _fingerprint(items_high)
+    def test_sync_type_changes_fingerprint(self):
+        """新增或消失的同步类型应视为新的告警组合"""
+        items_a = [{"sync_type": "order", "error_count": 3}]
+        items_b = [{"sync_type": "stock", "error_count": 3}]
+        assert _fingerprint(items_a) != _fingerprint(items_b)
 
 
 # ── _scan_and_alert（阈值过滤 + 按 org 聚合）──────────────
