@@ -17,6 +17,7 @@ import { TableBlock } from './TableBlock';
 import ThinkingBlock from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
 import ToolStepCard from './ToolStepCard';
+import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 
 const DiagramBlock = lazy(() => import('./DiagramBlock'));
 
@@ -47,41 +48,55 @@ export default function MessageContentBlocks({
   onImageClick,
   onRegenerateSingle,
 }: MessageContentBlocksProps) {
+  const firstScheduledTaskFormIndex = message.content.findIndex((part) => (
+    part.type === 'form'
+    && (part as import('../../../types/message').FormPart)
+      .form_type.startsWith('scheduled_task_')
+  ));
+
   return (
-    <div className="space-y-1">
+    <div className={`${MESSAGE_CONTENT_LAYOUT.fill} space-y-1`}>
       {message.content.map((part, idx) => {
         if (part.type === 'thinking') {
           const tp = part as { text?: string; duration_ms?: number };
           if (!tp.text && tp.duration_ms == null) return null;
           return (
-            <ThinkingBlock
-              key={`thinking-${idx}`}
-              content={tp.text || ''}
-              durationMs={tp.duration_ms}
-            />
+            <div key={`thinking-${idx}`} className={MESSAGE_CONTENT_LAYOUT.compact}>
+              <ThinkingBlock
+                content={tp.text || ''}
+                durationMs={tp.duration_ms}
+              />
+            </div>
           );
         }
         if (part.type === 'tool_step') {
           const ts = part as { tool_name: string; tool_call_id: string; status: 'running' | 'completed' | 'error' | 'cancelled'; code?: string; output?: string; input?: string; elapsed_ms?: number };
           return (
-            <ToolStepCard
-              key={ts.tool_call_id || idx}
-              toolName={ts.tool_name || 'tool'}
-              toolCallId={ts.tool_call_id || String(idx)}
-              status={ts.status || 'completed'}
-              code={ts.code}
-              output={ts.output}
-              input={ts.input}
-              elapsedMs={ts.elapsed_ms}
-            />
+            <div key={ts.tool_call_id || idx} className={MESSAGE_CONTENT_LAYOUT.compact}>
+              <ToolStepCard
+                toolName={ts.tool_name || 'tool'}
+                toolCallId={ts.tool_call_id || String(idx)}
+                status={ts.status || 'completed'}
+                code={ts.code}
+                output={ts.output}
+                input={ts.input}
+                elapsedMs={ts.elapsed_ms}
+              />
+            </div>
           );
         }
         if (part.type === 'interrupt_marker') return null;
         if (part.type === 'text' && (part as { text: string }).text) {
+          const text = (part as { text: string }).text;
+          // 已持久化的旧消息可能包含表单之后由模型生成的重复确认话术。
+          // 新执行流不会再写入它；这里仅清理该已知历史格式，保留表单前的说明。
+          const isLegacyScheduledTaskFormCopy = idx > firstScheduledTaskFormIndex
+            && /配置表单已生成|任务预览|请确认是否创建此定时任务/.test(text);
+          if (isLegacyScheduledTaskFormCopy) return null;
           return (
             <MarkdownRenderer
               key={idx}
-              content={(part as { text: string }).text}
+              content={text}
             />
           );
         }
@@ -202,7 +217,14 @@ export default function MessageContentBlocks({
         }
         if (part.type === 'form') {
           const fp = part as import('../../../types/message').FormPart;
-          return <FormBlock key={fp.form_id} form={fp} />;
+          return (
+            <FormBlock
+              key={fp.form_id}
+              form={fp}
+              messageId={message.id}
+              conversationId={message.conversation_id}
+            />
+          );
         }
         if (part.type === 'ecom_plan') {
           const ep = part as import('../../../types/message').EcomPlanPart;

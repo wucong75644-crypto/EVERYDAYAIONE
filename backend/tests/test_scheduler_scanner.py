@@ -400,13 +400,54 @@ class TestTaskExecutor:
         assert db.table.called
 
     @pytest.mark.asyncio
+    async def test_partial_result_is_refunded_and_never_committed_as_success(self):
+        """无最终结论的 headless 任务不能被计费或投递。"""
+        db = self._make_db()
+        executor = ScheduledTaskExecutor(db)
+        executor._on_success = AsyncMock()
+        executor._on_failure = AsyncMock()
+
+        from contextlib import asynccontextmanager
+        from services.credit_service import CreditLockHandle
+        from services.agent.scheduled_task_agent import ScheduledTaskResult
+
+        lock_exited_with_error = False
+
+        @asynccontextmanager
+        async def fake_lock(**kwargs):
+            nonlocal lock_exited_with_error
+            try:
+                yield CreditLockHandle("txn_123", kwargs.get("amount", 10))
+            except RuntimeError:
+                lock_exited_with_error = True
+                raise
+
+        incomplete = ScheduledTaskResult(
+            text="未形成最终结论",
+            status="partial",
+            error_message="沙盒内核启动失败",
+            tokens_used=42,
+        )
+        with patch("services.credit_service.CreditService") as mock_credit_cls, \
+             patch("services.agent.scheduled_task_agent.ScheduledTaskAgent") as mock_agent_cls:
+            mock_credit_cls.return_value.credit_lock = fake_lock
+            mock_agent_cls.return_value.execute = AsyncMock(return_value=incomplete)
+            await executor.execute(make_task())
+
+        assert lock_exited_with_error is True
+        executor._on_success.assert_not_awaited()
+        executor._on_failure.assert_awaited_once()
+        error = executor._on_failure.await_args.args[2]
+        assert "沙盒内核启动失败" in str(error)
+
+    @pytest.mark.asyncio
     async def test_failure_three_times_pause(self):
         """连续 3 次失败 → 暂停 + 通知"""
         db = self._make_db()
         executor = ScheduledTaskExecutor(db)
 
         notify_calls = []
-        async def fake_notify(task, msg):
+        async def fake_notify(task, _run_id, msg):
             notify_calls.append((task["id"], msg))
 
         executor._notify_owner = fake_notify

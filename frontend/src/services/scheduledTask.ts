@@ -11,6 +11,7 @@ import type {
   UpdateTaskDto,
   ParseNLResult,
   ChatTarget,
+  ScheduledTaskDraft,
 } from '../types/scheduledTask';
 
 interface ApiResponse<T> {
@@ -25,6 +26,20 @@ export const scheduledTaskService = {
   /** 创建任务 */
   async create(dto: CreateTaskDto): Promise<ScheduledTask> {
     const res = await api.post<ApiResponse<ScheduledTask>>(BASE, dto);
+    return res.data.data;
+  },
+
+  /** AI 规划并进行只读安全试跑；不会创建 active 任务。 */
+  async createDraft(dto: CreateTaskDto): Promise<ScheduledTaskDraft> {
+    const res = await api.post<ApiResponse<ScheduledTaskDraft>>(`${BASE}/drafts`, dto);
+    return res.data.data;
+  },
+
+  /** 用户确认与预检配置一致后，原子启用真正的定时任务。 */
+  async confirmDraft(id: string, configHash: string): Promise<ScheduledTask> {
+    const res = await api.post<ApiResponse<ScheduledTask>>(`${BASE}/drafts/${id}/confirm`, {
+      config_hash: configHash,
+    });
     return res.data.data;
   },
 
@@ -43,8 +58,10 @@ export const scheduledTaskService = {
   },
 
   /** 更新任务 */
-  async update(id: string, dto: UpdateTaskDto): Promise<void> {
-    await api.patch(`${BASE}/${id}`, dto);
+  /** 修改先生成修订草稿；确认前不会改变活跃任务。 */
+  async update(id: string, dto: UpdateTaskDto): Promise<ScheduledTaskDraft> {
+    const res = await api.patch<ApiResponse<ScheduledTaskDraft>>(`${BASE}/${id}`, dto);
+    return res.data.data;
   },
 
   /** 删除任务 */

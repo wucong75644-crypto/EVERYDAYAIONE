@@ -6,6 +6,7 @@
 import { create } from 'zustand';
 import type {
   ScheduledTask,
+  ScheduledTaskDraft,
   TaskRun,
   CreateTaskDto,
   UpdateTaskDto,
@@ -37,7 +38,8 @@ interface ScheduledTaskState {
   setExpandedTaskId: (id: string | null) => void;
 
   createTask: (dto: CreateTaskDto) => Promise<ScheduledTask | null>;
-  updateTask: (id: string, dto: UpdateTaskDto) => Promise<boolean>;
+  /** 返回待确认的修订草稿；确认前不修改运行中的任务。 */
+  updateTask: (id: string, dto: UpdateTaskDto) => Promise<ScheduledTaskDraft | null>;
   deleteTask: (id: string) => Promise<boolean>;
 
   pauseTask: (id: string) => Promise<boolean>;
@@ -96,14 +98,10 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
 
   updateTask: async (id, dto) => {
     try {
-      await scheduledTaskService.update(id, dto);
-      // 重新拉一次该任务（同步 next_run_at 等字段）
-      const task = await scheduledTaskService.get(id);
-      get().optimisticUpdate(id, task);
-      return true;
+      return await scheduledTaskService.update(id, dto);
     } catch (error) {
       logger.error('scheduled-task', 'updateTask failed', error);
-      return false;
+      return null;
     }
   },
 

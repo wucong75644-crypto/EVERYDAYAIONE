@@ -24,6 +24,7 @@ import {
 } from '../utils/taskRestoration';
 import { getMessages } from '../services/message';
 import { logger } from '../utils/logger';
+import { applyFormSubmitResult } from '../utils/messageUtils';
 import { createWSMessageHandlers } from './wsMessageHandlers';
 import type { DeliveryCursor } from './wsMessageHandlerShared';
 import ToolConfirmModal from '../components/chat/modals/ToolConfirmModal';
@@ -370,13 +371,22 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   // 表单提交 — FormBlock 通过 CustomEvent 触发
   useEffect(() => {
     const handler = (e: Event) => {
-      const { formType, formData } = (e as CustomEvent).detail;
-      if (!formType || !formData) return;
+      const {
+        formType, formData, formId, messageId, conversationId, action,
+      } = (e as CustomEvent).detail;
+      if (!formType || !formId || !messageId || !conversationId || !action) return;
       ws.send({
         type: 'form_submit' as const,
-        payload: { form_type: formType, form_data: formData },
+        payload: {
+          form_type: formType,
+          form_data: formData || {},
+          form_id: formId,
+          message_id: messageId,
+          conversation_id: conversationId,
+          action,
+        },
       });
-      logger.info('ws:form', 'form_submit sent', { formType });
+      logger.info('ws:form', 'form interaction sent', { formType, formId, action });
     };
     window.addEventListener('chat:form-submit', handler);
     return () => window.removeEventListener('chat:form-submit', handler);
@@ -385,11 +395,40 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   // 表单提交结果 — 后端返回 form_submit_result → 派发到 FormBlock
   useEffect(() => {
     const unsub = ws.subscribe('form_submit_result' as never, (msg) => {
-      const payload = msg.payload as { success?: boolean; message?: string };
+      const payload = msg.payload as {
+        success?: boolean;
+        message?: string;
+        status?: 'open' | 'submitting' | 'cancelled' | 'submitted';
+        form_id?: string;
+        message_id?: string;
+        conversation_id?: string;
+        next_form?: import('../types/message').FormPart;
+      };
+      if (payload?.form_id && payload.message_id && payload.conversation_id) {
+        const store = useMessageStore.getState();
+        const message = store.messages[payload.conversation_id]?.find(
+          (item) => item.id === payload.message_id,
+        );
+        if (message) {
+          const content = applyFormSubmitResult(message.content, {
+            formId: payload.form_id,
+            success: payload.success === true,
+            status: payload.status,
+            message: payload.message,
+            nextForm: payload.next_form,
+          });
+          if (content !== message.content) {
+            store.updateMessage(payload.message_id, { content });
+          }
+        } else {
+          // 用户在提交完成前切走或缓存被淘汰时，下一次打开必须读取数据库事实。
+          store.markForceRefresh(payload.conversation_id);
+        }
+      }
       window.dispatchEvent(
         new CustomEvent('chat:form-submit-result', { detail: payload }),
       );
-      logger.info('ws:form', 'form_submit_result', { success: payload?.success });
+      logger.info('ws:form', 'form_submit_result', { success: payload?.success, formId: payload?.form_id });
     });
     return unsub;
   }, [ws]);

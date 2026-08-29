@@ -5,8 +5,9 @@
 包含:
 - cron_utils: cron 表达式解析 + 下次执行时间计算
 - scanner: 调度扫描器（嵌入 BackgroundTaskWorker.start() 主循环）
-- task_executor: 编排器（积分锁 + ScheduledTaskAgent + 推送 + 状态更新）
-- push_dispatcher: 推送分发（企微 + Web）
+- task_executor: 编排器（积分锁 + ScheduledTaskAgent + Outbox + 状态更新）
+- delivery_worker: 定时任务企微 Outbox 投递与重试
+- push_dispatcher: 历史 best-effort 推送分发（非定时任务结果）
 """
 from services.scheduler.cron_utils import (
     calc_next_run,

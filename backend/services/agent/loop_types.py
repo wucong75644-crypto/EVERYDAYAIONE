@@ -85,6 +85,10 @@ class LoopResult:
     """停止原因：wrap_up_failure / wrap_up_budget / loop_detected / 空=正常退出"""
     wrap_up_reason: str = ""
     """收尾详情（如 consecutive_failures=3）"""
+    failure_message: str = ""
+    """未形成最终结论时保留的最近工具失败原因，供 headless 调用方结算。"""
+    tool_outcomes: List[Dict[str, str]] = field(default_factory=list)
+    """每个实际工具调用的最终状态，供无交互任务的完成判定使用。"""
 
 
 # ============================================================

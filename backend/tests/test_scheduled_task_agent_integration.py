@@ -132,6 +132,9 @@ def make_task(**overrides) -> dict:
         "last_summary": None,
         "run_count": 0,
         "consecutive_failures": 0,
+        # 集成测试验证已通过预检的执行循环；无策略历史任务的拒绝行为由
+        # test_scheduled_task_agent.py 单独覆盖。
+        "execution_policy": {"allowed_tools": ["erp_agent", "code_execute"]},
     }
     base.update(overrides)
     return base
@@ -270,7 +273,9 @@ class TestExecuteSafetyGuards:
         # 循环检测：3 次后中止
         # adapter.call_count 应该 ≤ 4（3 轮工具 + 最多 1 次 wrap_up 合成）
         assert adapter.call_count <= 4
-        assert result.status == "success"  # 仍然返回，只是 text 是最后一次工具结果
+        # 没有形成最终结论时不能把原始工具结果伪装成成功，以免错误投递、计费。
+        assert result.status == "error"
+        assert result.error_message == "loop_detected"
 
     @pytest.mark.asyncio
     async def test_max_turns_breaks_loop(self):

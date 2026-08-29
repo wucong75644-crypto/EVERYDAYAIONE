@@ -15,11 +15,13 @@ if str(backend_dir) not in sys.path:
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
 
 from services.agent.scheduled_task_agent import (
     ScheduledTaskAgent,
     ScheduledTaskResult,
 )
+from services.agent.loop_types import LoopResult
 
 
 # ════════════════════════════════════════════════════════
@@ -44,6 +46,7 @@ def make_task(**overrides) -> dict:
         "last_summary": None,
         "run_count": 0,
         "consecutive_failures": 0,
+        "execution_policy": {"allowed_tools": ["erp_agent"]},
     }
     base.update(overrides)
     return base
@@ -158,3 +161,76 @@ class TestScheduledTaskResult:
         assert len(result.files) == 1
 
 
+class TestExecutionOutcome:
+    @pytest.mark.asyncio
+    async def test_legacy_task_without_execution_policy_requires_revalidation(self):
+        task = make_task()
+        task.pop("execution_policy")
+
+        result = await ScheduledTaskAgent(MagicMock(), task).execute()
+
+        assert result.status == "error"
+        assert result.error_message == "scheduled_task_revalidation_required"
+
+    @pytest.mark.asyncio
+    async def test_missing_final_synthesis_is_error_and_preserves_tool_failure(self):
+        agent = ScheduledTaskAgent(MagicMock(), make_task())
+        adapter = MagicMock()
+        adapter.close = AsyncMock()
+        loop = MagicMock()
+        loop.run = AsyncMock(return_value=LoopResult(
+            text="定时任务执行未能生成完整结论，请检查任务指令。",
+            total_tokens=42,
+            turns=2,
+            is_llm_synthesis=False,
+            stop_reason="wrap_up_failure",
+            failure_message="❌ 沙盒内核启动失败,请稍后重试",
+        ))
+
+        with patch.object(agent, "_prepare_template", new_callable=AsyncMock), \
+             patch.object(agent, "_build_tool_loop", return_value=(loop, MagicMock())), \
+             patch("config.chat_tools.get_core_tools", return_value=[]), \
+             patch("services.adapters.factory.create_chat_adapter", return_value=adapter), \
+             patch("services.agent.tool_executor.ToolExecutor"), \
+             patch("core.config.get_settings", return_value=SimpleNamespace(
+                 agent_loop_model=None, file_workspace_root="/tmp",
+             )), \
+             patch("core.workspace.resolve_staging_dir", return_value="/tmp/staging"):
+            result = await agent.execute()
+
+        assert result.status == "error"
+        assert result.error_message == "❌ 沙盒内核启动失败,请稍后重试"
+        assert result.tokens_used == 42
+        adapter.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_wrap_up_text_after_failure_is_not_a_successful_delivery(self):
+        """模型能写出失败解释，不代表定时任务已完成。"""
+        agent = ScheduledTaskAgent(MagicMock(), make_task())
+        adapter = MagicMock()
+        adapter.close = AsyncMock()
+        loop = MagicMock()
+        loop.run = AsyncMock(return_value=LoopResult(
+            text="查询超时，我缩小范围后继续查询。",
+            total_tokens=99,
+            turns=3,
+            is_llm_synthesis=True,
+            stop_reason="wrap_up_failure",
+            failure_message="erp_agent:timeout",
+        ))
+
+        with patch.object(agent, "_prepare_template", new_callable=AsyncMock), \
+             patch.object(agent, "_build_tool_loop", return_value=(loop, MagicMock())), \
+             patch("config.chat_tools.get_core_tools", return_value=[]), \
+             patch("services.adapters.factory.create_chat_adapter", return_value=adapter), \
+             patch("services.agent.tool_executor.ToolExecutor"), \
+             patch("core.config.get_settings", return_value=SimpleNamespace(
+                 agent_loop_model=None, file_workspace_root="/tmp",
+             )), \
+             patch("core.workspace.resolve_staging_dir", return_value="/tmp/staging"):
+            result = await agent.execute()
+
+        assert result.status == "error"
+        assert result.error_message == "erp_agent:timeout"
+        assert result.completion_gate["passed"] is False
+        assert "loop_stopped:wrap_up_failure" in result.completion_gate["reasons"]

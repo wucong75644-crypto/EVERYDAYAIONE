@@ -86,6 +86,16 @@ function RunRow({ run }: { run: TaskRun }) {
             {run.error_message}
           </p>
         )}
+        {run.events && run.events.length > 0 && (
+          <div className="mt-1 space-y-0.5 border-l border-[var(--s-border-subtle)] pl-2">
+            {run.events.map((event, index) => (
+              <p key={`${event.event_type}-${event.tool_name || index}`} className="text-[11px] text-[var(--s-text-tertiary)]">
+                {event.tool_name || event.event_type} · {event.status}
+                {event.summary ? ` · ${event.summary}` : ''}
+              </p>
+            ))}
+          </div>
+        )}
         {run.result_files && run.result_files.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1">
             {run.result_files.map((f, i) => (
@@ -133,8 +143,9 @@ export function TaskRunHistory({ taskId }: Props) {
 
   return (
     <div className="border-t border-[var(--s-border-subtle)] mt-3 pt-2">
-      <div className="text-xs font-medium text-[var(--s-text-tertiary)] px-3 mb-1 uppercase tracking-wider">
-        执行历史
+      <div className="flex items-center gap-2 px-3 mb-1">
+        <span className="text-[10px] font-medium text-[var(--s-success)]">步骤 4/4 · 已启用</span>
+        <span className="text-xs font-medium text-[var(--s-text-tertiary)] uppercase tracking-wider">执行历史</span>
       </div>
       <div className="max-h-64 overflow-y-auto">
         {runs.slice(0, 10).map((run) => (

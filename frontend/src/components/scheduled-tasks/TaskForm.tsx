@@ -19,7 +19,6 @@ import { useState, useEffect } from 'react';
 import { ArrowLeft, Sparkles, Loader2, User, Users, MessageSquare } from 'lucide-react';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
-import { useScheduledTaskStore } from '../../stores/useScheduledTaskStore';
 import { scheduledTaskService } from '../../services/scheduledTask';
 import { orgMembersService } from '../../services/orgMembers';
 import { wecomChatTargetsService } from '../../services/wecomChatTargets';
@@ -32,6 +31,7 @@ import type {
   CreateTaskDto,
   ScheduleType,
   PushTarget,
+  ScheduledTaskDraft,
 } from '../../types/scheduledTask';
 import type { WecomCollectedMember } from '../../types/orgMembers';
 import type { WecomGroup } from '../../types/wecomChatTargets';
@@ -53,6 +53,43 @@ const WEEKDAY_LABELS: { value: number; label: string }[] = [
 ];
 
 type PushTargetMode = 'self' | 'colleague' | 'group';
+
+const WORKFLOW_STEPS = ['填写配置', '规划与试跑', '确认启用', '已启用'];
+
+function WorkflowProgress({ step, failed = false }: { step: number; failed?: boolean }) {
+  return (
+    <div className="rounded-lg border border-[var(--s-border-default)] bg-[var(--s-surface-sunken)] p-3">
+      <div className="flex items-center gap-1 overflow-x-auto" aria-label={`定时任务第 ${step} 步，共 4 步`}>
+        {WORKFLOW_STEPS.map((label, index) => {
+          const number = index + 1;
+          const isCurrent = number === step;
+          const complete = number < step;
+          return (
+            <div key={label} className="flex min-w-0 items-center gap-1.5">
+              {index > 0 && <span className="h-px w-3 shrink-0 bg-[var(--s-border-default)]" aria-hidden="true" />}
+              <span className={cn(
+                'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-medium',
+                complete ? 'border-[var(--s-success)] bg-[var(--s-success)] text-white' :
+                  isCurrent ? 'border-[var(--s-accent)] bg-[var(--s-accent-soft)] text-[var(--s-accent)]' :
+                    'border-[var(--s-border-default)] text-[var(--s-text-tertiary)]',
+              )}>{number}</span>
+              <span className={cn('whitespace-nowrap text-xs', isCurrent ? 'font-medium text-[var(--s-text-primary)]' : 'text-[var(--s-text-tertiary)]')}>
+                {label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-2 text-xs text-[var(--s-text-secondary)]">
+        {step === 1 && '尚未创建任务。提交配置后，系统才会规划调用路径并进行只读安全试跑。'}
+        {step === 2 && (failed
+          ? '安全试跑未通过。正式任务没有创建；请修改配置后重新试跑。'
+          : '正在只读安全试跑：不扣积分、不发送消息、不写入业务数据。')}
+        {step === 3 && '预检通过，但正式任务仍未创建；确认启用后才会生效。'}
+      </p>
+    </div>
+  );
+}
 
 /** 把 ISO 时间字符串转成 datetime-local 输入框需要的本地时间格式 */
 function isoToLocalDatetime(iso: string | null | undefined): string {
@@ -85,8 +122,6 @@ function localDatetimeToIso(local: string): string {
 
 export function TaskForm({ task, onClose, onSaved }: Props) {
   const isEdit = task !== null;
-  const createTask = useScheduledTaskStore((s) => s.createTask);
-  const updateTask = useScheduledTaskStore((s) => s.updateTask);
   const currentUserId = useAuthStore((s) => s.user?.id) || '';
 
   const canPushToOthers = usePermission('task.push_to_others');
@@ -145,6 +180,7 @@ export function TaskForm({ task, onClose, onSaved }: Props) {
   const [myWecomUserid, setMyWecomUserid] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [draft, setDraft] = useState<ScheduledTaskDraft | null>(null);
 
   // 自然语言输入
   const [nlText, setNlText] = useState('');
@@ -292,18 +328,101 @@ export function TaskForm({ task, onClose, onSaved }: Props) {
     setSubmitting(true);
     try {
       if (isEdit && task) {
-        const ok = await updateTask(task.id, dto);
-        if (ok) onSaved();
-        else setError('更新失败');
+        const prepared = await scheduledTaskService.update(task.id, dto);
+        setDraft(prepared);
+        if (prepared.status !== 'ready') {
+          setError(prepared.error_message || '安全试跑未通过，原任务没有修改');
+        }
       } else {
-        const created = await createTask(dto);
-        if (created) onSaved();
-        else setError('创建失败');
+        const prepared = await scheduledTaskService.createDraft(dto);
+        setDraft(prepared);
+        if (prepared.status !== 'ready') {
+          setError(prepared.error_message || '安全试跑未通过，请修改任务后重试');
+        }
       }
     } finally {
       setSubmitting(false);
     }
   };
+
+  const handleConfirmDraft = async () => {
+    if (!draft) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      await scheduledTaskService.confirmDraft(draft.id, draft.config_hash);
+      onSaved();
+    } catch (err) {
+      logger.error('task-form', 'confirm draft failed', err);
+      setError('确认启用失败；任务可能已过期或配置已变化，请重新试跑');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (submitting && !draft) {
+    return (
+      <>
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--s-border-default)]">
+          <Loader2 className="w-4 h-4 animate-spin text-[var(--s-accent)]" />
+          <h2 className="text-sm font-medium text-[var(--s-text-primary)]">AI 规划与安全试跑</h2>
+        </div>
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+          <WorkflowProgress step={2} />
+          <div className="rounded-lg border border-[var(--s-accent)] bg-[var(--s-accent-soft)] p-3">
+            <p className="text-sm font-medium text-[var(--s-text-primary)]">正在验证执行路径</p>
+            <p className="text-xs text-[var(--s-text-secondary)] mt-1">AI 正在选择允许调用的工具，并用相同路径完成一次只读试跑。</p>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  if (draft) {
+    const preflight = draft.latest_preflight;
+    const passed = draft.status === 'ready' && preflight?.status === 'passed';
+    return (
+      <>
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--s-border-default)]">
+          <button type="button" onClick={() => setDraft(null)} aria-label="返回编辑" className="p-1 rounded text-[var(--s-text-tertiary)] hover:bg-[var(--s-hover)]">
+            <ArrowLeft className="w-4 h-4" />
+          </button>
+          <h2 className="text-sm font-medium text-[var(--s-text-primary)]">执行计划与安全试跑</h2>
+        </div>
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+          <WorkflowProgress step={passed ? 3 : 2} failed={!passed} />
+          <div className="rounded-lg border border-[var(--s-border-default)] p-3 space-y-2">
+            <p className="text-sm font-medium text-[var(--s-text-primary)]">{draft.plan?.objective || 'AI 正在理解任务'}</p>
+            {(draft.plan?.steps || []).map((step, index) => (
+              <div key={step.id} className="text-xs text-[var(--s-text-secondary)]">
+                {index + 1}. {step.intent} · {step.tools.join('、')}
+              </div>
+            ))}
+          </div>
+          <div className={cn('rounded-lg border p-3', passed ? 'border-[var(--s-success)] bg-[var(--s-success-soft)]' : 'border-[var(--s-error)] bg-[var(--s-error-soft)]')}>
+            <p className="text-sm font-medium text-[var(--s-text-primary)]">{passed ? '安全试跑通过' : '安全试跑未通过'}</p>
+            <p className="text-xs text-[var(--s-text-secondary)] mt-1">{preflight?.result_summary || preflight?.error_message || draft.error_message || '未生成试跑结果'}</p>
+            {(preflight?.completion_gate?.reasons || []).map((reason) => (
+              <p key={reason} className="text-xs text-[var(--s-error)] mt-1">{reason}</p>
+            ))}
+          </div>
+          {preflight?.tool_trace && preflight.tool_trace.length > 0 && (
+            <div className="rounded-lg bg-[var(--s-surface-sunken)] p-3">
+              <p className="text-xs font-medium text-[var(--s-text-secondary)] mb-2">试跑路径</p>
+              {preflight.tool_trace.filter((event) => event.event_type !== 'completion_gate').map((event, index) => (
+                <p key={`${event.tool_name}-${index}`} className="text-xs text-[var(--s-text-secondary)]">{event.tool_name || event.event_type} · {event.status}</p>
+              ))}
+            </div>
+          )}
+          {error && <div className="text-xs text-[var(--s-error)] bg-[var(--s-error-soft)] px-3 py-2 rounded">{error}</div>}
+        </div>
+        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-[var(--s-border-default)]">
+          <Button variant="secondary" size="sm" onClick={() => setDraft(null)}>修改并重新试跑</Button>
+          <Button variant="accent" size="sm" loading={submitting} disabled={!passed} onClick={handleConfirmDraft}>确认启用</Button>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -324,6 +443,7 @@ export function TaskForm({ task, onClose, onSaved }: Props) {
 
       {/* 表单内容 */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        {!isEdit && <WorkflowProgress step={1} />}
         {/* AI 智能创建（仅新建时） */}
         {!isEdit && (
           <div className="bg-[var(--s-surface-sunken)] rounded-lg p-3">
@@ -617,7 +737,7 @@ export function TaskForm({ task, onClose, onSaved }: Props) {
           loading={submitting}
           onClick={handleSubmit}
         >
-          {isEdit ? '保存修改' : '创建任务'}
+          {isEdit ? '保存修改' : '规划并安全试跑'}
         </Button>
       </div>
     </>

@@ -71,13 +71,12 @@ class ChatToolMixin(ChatToolResultMixin):
             request_ctx=_request_ctx,
             workspace_user_id=getattr(self, "_workspace_user_id", user_id),
             resource_manifest=getattr(self, "_resource_manifest", None),
+            execution_budget=budget,
         )
         # 每轮上下文
         executor._task_id = task_id
         executor._message_id = message_id
         executor._parent_messages = messages
-        if budget is not None:
-            executor._budget = budget
         # 提取当前用户消息中的图片 URLs（供 image_agent 自动注入）
         executor._current_message_images = self._extract_user_image_urls(messages)
         results: List[tuple] = []

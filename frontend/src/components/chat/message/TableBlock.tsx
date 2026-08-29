@@ -6,6 +6,7 @@
  */
 import { memo, useMemo } from 'react';
 import { formatDisplayValue } from '../../../utils/displayValue';
+import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 
 interface TableBlockProps {
   title?: string;
@@ -50,7 +51,7 @@ const TableBlockComponent = ({ title, columns, rows, truncated }: TableBlockProp
   const displayRows = rows.slice(0, MAX_PREVIEW_ROWS);
 
   return (
-    <div className="my-2 rounded-md border border-base-300 bg-base-100 overflow-hidden">
+    <div className={`my-2 ${MESSAGE_CONTENT_LAYOUT.fill} rounded-md border border-base-300 bg-base-100 overflow-hidden`}>
       {title && (
         <div className="px-3 py-2 border-b border-base-300 text-sm font-medium text-base-content">
           {title}

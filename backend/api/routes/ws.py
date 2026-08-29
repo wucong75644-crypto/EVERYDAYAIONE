@@ -365,17 +365,29 @@ async def _handle_message(
 
 
     elif msg_type == WSMessageType.FORM_SUBMIT.value:
-        # 用户在聊天中提交表单（定时任务创建/修改等）
+        # 用户在聊天中提交或取消表单。form_id/message_id/conversation_id 是
+        # 持久化交互状态的定位键，不能再依赖浏览器本地组件状态。
         form_type = payload.get("form_type", "")
         form_data = payload.get("form_data", {})
         conversation_id = payload.get("conversation_id", "")
-        if form_type and form_data:
+        message_id = payload.get("message_id", "")
+        form_id = payload.get("form_id", "")
+        action = payload.get("action", "submit")
+        if (
+            form_type
+            and isinstance(form_data, dict)
+            and conversation_id
+            and message_id
+            and form_id
+            and action in {"submit", "cancel"}
+        ):
             asyncio.create_task(_handle_form_submit(
                 conn_id, user_id, form_type, form_data, conversation_id,
+                message_id, form_id, action,
             ))
         else:
             await ws_manager.send_to_connection(conn_id, build_error(
-                "form_type and form_data are required",
+                "form interaction identifiers are required",
                 code="MISSING_FORM_PARAMS",
             ))
 
@@ -463,11 +475,55 @@ async def _handle_form_submit(
     form_type: str,
     form_data: Dict[str, Any],
     conversation_id: str,
+    message_id: str,
+    form_id: str,
+    action: str = "submit",
 ) -> None:
-    """处理表单提交（异步任务）"""
+    """处理持久化聊天表单交互；同一表单只允许一次有效状态转换。"""
     import time as _time
     from services.scheduler.chat_task_manager import handle_form_submit
 
+    async def send_result(result: Dict[str, Any]) -> None:
+        payload = {
+            **result,
+            "form_id": form_id,
+            "message_id": message_id,
+            "conversation_id": conversation_id,
+            "action": action,
+        }
+        await ws_manager.send_to_connection(conn_id, {
+            "type": WSMessageType.FORM_SUBMIT_RESULT.value,
+            "payload": payload,
+            "conversation_id": conversation_id,
+            "timestamp": int(_time.time() * 1000),
+        })
+
+    def transition(
+        db: Any,
+        expected: str,
+        next_status: str,
+        *,
+        result_message: str | None = None,
+        next_form: Dict[str, Any] | None = None,
+        error_message: str | None = None,
+    ) -> Dict[str, Any]:
+        response = db.rpc("transition_chat_form_state", {
+            "p_message_id": message_id,
+            "p_conversation_id": conversation_id,
+            "p_form_id": form_id,
+            "p_expected_status": expected,
+            "p_next_status": next_status,
+            "p_result_message": result_message,
+            "p_next_form": next_form,
+            "p_error_message": error_message,
+        }).execute()
+        payload = response.data if response else None
+        if not isinstance(payload, dict):
+            raise RuntimeError("CHAT_FORM_STATE_RESULT_INVALID")
+        return payload
+
+    db: Any | None = None
+    submission_claimed = False
     try:
         db = get_db()
 
@@ -481,22 +537,66 @@ async def _handle_form_submit(
         org_id = member.data[0]["org_id"] if member.data else None
 
         if not org_id:
-            await ws_manager.send_to_connection(conn_id, {
-                "type": WSMessageType.FORM_SUBMIT_RESULT.value,
-                "payload": {"success": False, "message": "未找到企业信息"},
-                "conversation_id": conversation_id,
-                "timestamp": int(_time.time() * 1000),
-            })
+            await send_result({"success": False, "message": "未找到企业信息"})
             return
 
-        result = await handle_form_submit(db, user_id, org_id, form_type, form_data)
+        # 先验证用户是该对话的所有者，RPC 再验证消息与表单精确匹配。
+        from services.conversation_service import ConversationService
+        await ConversationService(db).get_conversation(conversation_id, user_id, org_id)
 
-        await ws_manager.send_to_connection(conn_id, {
-            "type": WSMessageType.FORM_SUBMIT_RESULT.value,
-            "payload": result,
-            "conversation_id": conversation_id,
-            "timestamp": int(_time.time() * 1000),
-        })
+        if action == "cancel":
+            cancellation = transition(db, "open", "cancelled")
+            if cancellation.get("outcome") == "state_conflict":
+                if cancellation.get("status") == "cancelled":
+                    await send_result({"success": True, "message": "表单已取消", "status": "cancelled"})
+                    return
+                await send_result({"success": False, "message": "表单状态已变化，请刷新后查看"})
+                return
+            if cancellation.get("outcome") != "transitioned":
+                await send_result({"success": False, "message": "取消失败：表单不存在或已失效"})
+                return
+            await send_result({"success": True, "message": "表单已取消", "status": "cancelled"})
+            return
+
+        claimed = transition(db, "open", "submitting")
+        if claimed.get("outcome") == "state_conflict":
+            status = claimed.get("status")
+            if status == "submitted":
+                await send_result({"success": True, "message": "该表单已提交", "status": status})
+            elif status == "submitting":
+                await send_result({"success": False, "message": "表单正在处理中，请稍候", "status": status})
+            else:
+                await send_result({"success": False, "message": "表单已取消，请重新发起任务", "status": status})
+            return
+        if claimed.get("outcome") != "transitioned":
+            await send_result({"success": False, "message": "提交失败：表单不存在或已失效"})
+            return
+        submission_claimed = True
+
+        result = await handle_form_submit(db, user_id, org_id, form_type, form_data)
+        if result.get("success"):
+            resolved = transition(
+                db,
+                "submitting",
+                "submitted",
+                result_message=str(result.get("message") or ""),
+                next_form=result.get("next_form") if isinstance(result.get("next_form"), dict) else None,
+            )
+            if resolved.get("outcome") != "transitioned":
+                raise RuntimeError("CHAT_FORM_STATE_COMMIT_FAILED")
+            submission_claimed = False
+        else:
+            restored = transition(
+                db,
+                "submitting",
+                "open",
+                error_message=str(result.get("message") or "提交失败，请重试"),
+            )
+            if restored.get("outcome") != "transitioned":
+                raise RuntimeError("CHAT_FORM_STATE_RESTORE_FAILED")
+            submission_claimed = False
+
+        await send_result(result)
 
         logger.info(
             f"Form submitted | conn={conn_id} | type={form_type} | "
@@ -504,12 +604,21 @@ async def _handle_form_submit(
         )
     except Exception as e:
         logger.error(f"Form submit error | conn={conn_id} | type={form_type} | error={e}")
-        await ws_manager.send_to_connection(conn_id, {
-            "type": WSMessageType.FORM_SUBMIT_RESULT.value,
-            "payload": {"success": False, "message": f"提交失败: {e}"},
-            "conversation_id": conversation_id,
-            "timestamp": int(_time.time() * 1000),
-        })
+        if db is not None and submission_claimed:
+            try:
+                transition(
+                    db,
+                    "submitting",
+                    "open",
+                    error_message="服务处理异常，请重试",
+                )
+            except Exception as transition_error:
+                logger.error(
+                    "Form state recovery failed | form={} | error={}",
+                    form_id,
+                    transition_error,
+                )
+        await send_result({"success": False, "message": f"提交失败: {e}"})
 
 
 async def _get_task_accumulated_state(task_id: str, user_id: str) -> Tuple[Optional[str], Optional[list]]:

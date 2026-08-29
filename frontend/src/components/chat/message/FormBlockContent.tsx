@@ -6,6 +6,7 @@ import { Calendar, CheckCircle2, X } from 'lucide-react';
 import type { FormPart } from '../../../types/message';
 import { cn } from '../../../utils/cn';
 import { SOFT_SPRING } from '../../../utils/motion';
+import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 
 interface FormBlockContentProps {
   form: FormPart;
@@ -28,7 +29,7 @@ export function FormBlockContent({
       animate={{ opacity: 1, y: 0 }}
       transition={SOFT_SPRING}
       className={cn(
-        'my-3 rounded-[var(--s-radius-card)] border overflow-hidden',
+        `my-3 ${MESSAGE_CONTENT_LAYOUT.fill} rounded-[var(--s-radius-card)] border overflow-hidden`,
         'border-border-default bg-surface shadow-sm',
       )}
     >

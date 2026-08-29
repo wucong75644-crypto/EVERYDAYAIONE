@@ -26,6 +26,7 @@ import { RENDER_CONFIG, getCompletedBubbleText, type MessageType } from '../../.
 import type { RenderInstruction } from '../../../types/render';
 import type { AspectRatio, VideoAspectRatio } from '../../../constants/models';
 import type { MessageItemProps } from './MessageItem.types';
+import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 
 export default memo(function MessageItem({
   message,
@@ -362,7 +363,7 @@ export default memo(function MessageItem({
           className={`${
             isUser
               ? 'rounded-2xl px-5 py-3 bg-[#6366f1] bg-gradient-to-r from-[var(--color-user-bubble-from)] to-[var(--color-user-bubble-to)] text-text-on-accent'
-              : 'text-text-primary'
+              : `${MESSAGE_CONTENT_LAYOUT.standard} text-text-primary`
           }`}
           style={isUser ? { boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.22), 0 4px 16px rgba(0,0,0,0.06)' } : undefined}
         >

@@ -79,6 +79,9 @@ class ChatToolResultMixin:
         context: ToolResultContext,
     ) -> tuple:
         self._pending_form_block = result.form
+        # 表单本身就是此轮面向用户的最终交付。继续请求模型只会生成
+        # 与结构化表单重复、且无法与表单状态保持一致的说明文字。
+        self._terminal_form_pending = True
         display = "表单已展示"
         await ChatToolResultMixin._send_tool_result(
             self, context, True, display,

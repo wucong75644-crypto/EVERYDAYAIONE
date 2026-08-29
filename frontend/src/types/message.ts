@@ -133,6 +133,11 @@ export interface FormPart {
   fields: FormField[];
   submit_text?: string;
   cancel_text?: string;
+  /** 服务端持久化的表单生命周期；刷新和跨端恢复同一状态。 */
+  status?: 'open' | 'submitting' | 'cancelled' | 'submitted';
+  result_message?: string;
+  error_message?: string;
+  next_form?: FormPart;
 }
 
 /** 电商图方案卡片内容块（用户确认后触发生成） */

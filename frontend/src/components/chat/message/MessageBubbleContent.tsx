@@ -4,6 +4,7 @@ import LoadingPlaceholder from './LoadingPlaceholder';
 import MarkdownRenderer from './MarkdownRenderer';
 import MessageContentBlocks from './MessageContentBlocks';
 import ThinkingBlock from './ThinkingBlock';
+import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 
 interface BubbleTextInfo {
   text: string;
@@ -68,12 +69,14 @@ export default function MessageBubbleContent({
   return (
     <>
       {shouldShowSingleThinking && (
-        <ThinkingBlock
-          content={thinkingText}
-          isThinking={isThinkingNow}
-          thinkingStartTime={thinkingStartTime}
-          durationMs={thinkingDurationMs}
-        />
+        <div className={MESSAGE_CONTENT_LAYOUT.compact}>
+          <ThinkingBlock
+            content={thinkingText}
+            isThinking={isThinkingNow}
+            thinkingStartTime={thinkingStartTime}
+            durationMs={thinkingDurationMs}
+          />
+        </div>
       )}
 
       <div className={isUser ? 'text-[15px] leading-relaxed whitespace-pre-wrap' : ''}>

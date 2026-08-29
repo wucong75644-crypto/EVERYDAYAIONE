@@ -431,6 +431,10 @@ class TestSignalHandling:
                 "services.wecom.delivery_worker.WecomDeliveryWorker",
                 return_value=mock_delivery_worker,
             ),
+            patch(
+                "services.scheduler.delivery_worker.ScheduledTaskDeliveryWorker",
+                return_value=mock_delivery_worker,
+            ),
             patch("asyncio.Event", return_value=mock_stop_event),
             patch("asyncio.get_running_loop") as mock_loop,
         ):
@@ -470,6 +474,10 @@ class TestSignalHandling:
             patch("wecom_ws_runner.WecomWSManager", return_value=mock_manager),
             patch(
                 "services.wecom.delivery_worker.WecomDeliveryWorker",
+                return_value=mock_delivery_worker,
+            ),
+            patch(
+                "services.scheduler.delivery_worker.ScheduledTaskDeliveryWorker",
                 return_value=mock_delivery_worker,
             ),
             patch("asyncio.Event", return_value=mock_stop_event),

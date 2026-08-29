@@ -160,6 +160,14 @@ describe('MessageItem 用户消息气泡', () => {
   });
 });
 
+describe('MessageItem 助手内容宽度', () => {
+  it('为表单和工具等内容提供稳定的标准宽度容器', () => {
+    const { container } = render(<MessageItem message={makeMessage({ role: 'assistant' })} />);
+    const assistantContent = container.querySelector('[data-message-id="msg-1"] > div > div');
+    expect(assistantContent).toHaveClass('w-full', 'min-w-0', 'max-w-[680px]');
+  });
+});
+
 describe('MessageItem 回调稳定性', () => {
   beforeEach(() => {
     capturedMediaProps = {};

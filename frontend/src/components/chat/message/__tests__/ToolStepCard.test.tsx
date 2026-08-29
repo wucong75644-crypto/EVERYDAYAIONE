@@ -28,6 +28,14 @@ describe('ToolStepCard', () => {
       expect(screen.getByText('2.3s')).toBeDefined();
     });
 
+    it('使用统一的紧凑宽度契约，而不是随工具名称伸缩', () => {
+      const { container } = render(
+        <ToolStepCard {...baseProps} toolName="a_very_long_tool_name_that_must_not_resize_the_card" />,
+      );
+      expect(container.firstElementChild).toHaveClass('w-full', 'min-w-0');
+      expect(container.firstElementChild).not.toHaveClass('max-w-md');
+    });
+
     it('error 状态显示"失败"', () => {
       render(<ToolStepCard {...baseProps} status="error" />);
       expect(screen.getByText('失败')).toBeDefined();

@@ -8,6 +8,7 @@
 
 import { useState, memo } from 'react';
 import { getToolCallText } from '../../../constants/placeholder';
+import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 
 interface ToolStepCardProps {
   toolName: string;
@@ -63,7 +64,7 @@ export default memo(function ToolStepCard({
   return (
     <div
       key={toolCallId}
-      className={`my-1.5 max-w-md rounded-lg border overflow-hidden text-xs ${
+      className={`my-1.5 ${MESSAGE_CONTENT_LAYOUT.fill} rounded-lg border overflow-hidden text-xs ${
         isCancelled
           ? 'border-l-2 border-l-yellow-500 border-border-default/60 bg-bg-subtle/30'
           : 'border-border-default/60 bg-bg-subtle/40'

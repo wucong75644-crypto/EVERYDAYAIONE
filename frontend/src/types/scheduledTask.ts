@@ -93,6 +93,43 @@ export interface TaskRun {
   error_message?: string | null;
   credits_used: number;
   tokens_used: number;
+  completion_gate?: { passed: boolean; reasons: string[] } | null;
+  events?: Array<{
+    event_type: string;
+    tool_name?: string | null;
+    status: string;
+    summary?: string | null;
+    elapsed_ms?: number | null;
+  }>;
+}
+
+export interface ScheduledTaskPlanStep {
+  id: string;
+  intent: string;
+  tools: string[];
+  required: boolean;
+  verify: string;
+}
+
+export interface ScheduledTaskDraft {
+  id: string;
+  config_hash: string;
+  status: 'draft' | 'planning' | 'preflight_running' | 'ready' | 'failed' | 'confirmed' | 'expired';
+  plan?: {
+    objective: string;
+    steps: ScheduledTaskPlanStep[];
+    output_contract?: { allow_empty_result: boolean; required_evidence: string[] };
+  } | null;
+  execution_policy?: { allowed_tools: string[]; required_tools: string[] } | null;
+  error_message?: string | null;
+  latest_preflight?: {
+    id: string;
+    status: 'running' | 'passed' | 'failed' | 'timeout';
+    result_summary?: string | null;
+    error_message?: string | null;
+    completion_gate?: { passed: boolean; reasons: string[] } | null;
+    tool_trace?: Array<{ event_type: string; tool_name?: string | null; status: string; summary?: string | null }>;
+  } | null;
 }
 
 export interface CreateTaskDto {

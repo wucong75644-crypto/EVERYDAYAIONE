@@ -25,7 +25,7 @@ usage() {
   ./deploy/release.sh --message "type: description" --source-only-file backend/migrations/NNN_name.sql
   ./deploy/release.sh --message "type: description" --file path/to/file --migration-file backend/migrations/NNN_name.sql
   ./deploy/release.sh --message "type: description" --file-list /tmp/release-files.txt
-  ./deploy/release.sh --deploy-task <commit-sha>
+  ./deploy/release.sh --deploy-task <commit-sha> [--migration-file backend/migrations/NNN_name.sql]
   ./deploy/release.sh --accept-and-close
   ./deploy/release.sh --deploy-main <commit-sha>
   ./deploy/release.sh --rollback <commit-sha>
@@ -36,7 +36,7 @@ usage() {
   --source-only-file PATH 纳入提交但本次不执行的正向 SQL 迁移，可重复
   --file-list PATH       从本地清单逐行读取发布文件
   --migration-file PATH  明确执行目标提交中已有的正向 SQL 迁移，可重复
-  --deploy-task SHA      重新部署当前任务分支上已推送的确定提交
+  --deploy-task SHA      重新部署当前任务分支上已推送的确定提交；可显式补执行该提交内的正向迁移
   --accept-and-close     已验收任务：核验生产候选、合并 main、同步基座并清理；不部署
   --deploy-main SHA      从已合并到 origin/main 的确定提交部署
   --frontend-only        仅部署前端
@@ -146,9 +146,12 @@ set +u
 if [[ "$accept_and_close" == true ]]; then
     [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#source_only_files[@]} -eq 0 && ${#migration_files[@]} -eq 0 && "$frontend_only" == false && "$backend_only" == false ]] \
         || fail "--accept-and-close 不接受提交文件或部署范围参数"
-elif [[ -n "$deploy_task_sha" || -n "$deploy_main_sha" || -n "$rollback_sha" ]]; then
+elif [[ -n "$deploy_task_sha" || -n "$deploy_main_sha" ]]; then
+    [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#source_only_files[@]} -eq 0 ]] \
+        || fail "指定部署目标时不能同时提交新文件"
+elif [[ -n "$rollback_sha" ]]; then
     [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#source_only_files[@]} -eq 0 && ${#migration_files[@]} -eq 0 ]] \
-        || fail "指定部署或回滚目标时不能同时提交新文件"
+        || fail "回滚目标不能同时提交新文件或执行迁移"
 else
     [[ -n "$message" ]] || fail "提交部署必须提供 --message"
     [[ $((${#task_files[@]} + ${#source_only_files[@]})) -gt 0 ]] || fail "提交部署必须至少提供一个 --file 或 --source-only-file"
@@ -203,6 +206,48 @@ read_production_release_commit() {
         || fail "deploy/config.env 缺少生产核验所需配置"
     ssh -p "$SERVER_PORT" -o ConnectTimeout=10 -o BatchMode=yes "$SERVER_USER@${SERVER_HOST}" \
         "test -r '$REMOTE_APP_DIR/.release-provenance' && sed -n 's/^commit=//p' '$REMOTE_APP_DIR/.release-provenance' | head -n 1"
+}
+
+append_migration_once() {
+    local candidate=$1
+    local existing
+    for existing in "${migration_files[@]-}"; do
+        [[ "$existing" == "$candidate" ]] && return
+    done
+    migration_files+=("$candidate")
+}
+
+collect_task_branch_migrations() {
+    # 任务分支可能先有一次失败发布，随后只改代码再次发布。发布范围不能仅看
+    # 本次 --file，而要把当前任务分支相对 main 新增的正向迁移一并交给迁移账本。
+    [[ "$frontend_only" == true || "$release_mode" == rollback ]] && return
+    git fetch --prune origin main >/dev/null \
+        || fail "无法同步 origin/main，不能核验任务分支迁移"
+    local merge_base status path
+    merge_base=$(git merge-base origin/main "$commit_sha") \
+        || fail "无法确定任务分支迁移基线"
+    while IFS=$'\t' read -r status path; do
+        [[ -n "$path" ]] || continue
+        case "$status" in
+            A)
+                local source_only=false
+                local excluded
+                for excluded in "${source_only_files[@]-}"; do
+                    [[ "$excluded" == "$path" ]] && source_only=true && break
+                done
+                [[ "$source_only" == true ]] || append_migration_once "$path"
+                ;;
+            M|R*)
+                fail "迁移文件必须不可变，任务分支修改了既有迁移：$path"
+                ;;
+        esac
+    done < <(
+        git diff --name-status "$merge_base" "$commit_sha" -- \
+            'backend/migrations/[0-9][0-9][0-9]_*.sql'
+    )
+    if ((${#migration_files[@]} > 0)); then
+        info "已收集任务分支待核验迁移：${migration_files[*]}"
+    fi
 }
 
 record_local_deployed_candidate() {
@@ -374,7 +419,15 @@ else
     info "回滚目标确认：$commit_sha"
 fi
 
+collect_task_branch_migrations
 ensure_supported_release_tree "$commit_sha"
+
+set +u
+for migration_file in "${migration_files[@]}"; do
+    git cat-file -e "${commit_sha}:${migration_file}" \
+        || fail "目标提交不包含迁移文件：$migration_file"
+done
+set -u
 
 release_worktree=$(mktemp -d "${TMPDIR:-/tmp}/everydayai-release.XXXXXX")
 git worktree add --detach "$release_worktree" "$commit_sha" >/dev/null

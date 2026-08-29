@@ -49,10 +49,13 @@ run git -C "$seed" config user.email lifecycle-test@example.invalid
 mkdir -p "$seed/deploy" "$seed/scripts/testing"
 cp "$source_root/deploy/release.sh" "$seed/deploy/release.sh"
 cp "$source_root/scripts/task-worktree.sh" "$seed/scripts/task-worktree.sh"
-chmod +x "$seed/deploy/release.sh" "$seed/scripts/task-worktree.sh"
+printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'printf "%s\\n" "$@" > "${DEPLOY_ARGS_FILE:?}"' > "$seed/deploy/deploy.sh"
+chmod +x "$seed/deploy/release.sh" "$seed/deploy/deploy.sh" "$seed/scripts/task-worktree.sh"
 printf 'base\n' > "$seed/product.txt"
 printf 'deploy/config.env\n' > "$seed/.gitignore"
-run git -C "$seed" add deploy/release.sh scripts/task-worktree.sh product.txt .gitignore
+run git -C "$seed" add deploy/release.sh deploy/deploy.sh scripts/task-worktree.sh product.txt .gitignore
 run git -C "$seed" commit -m base
 run git -C "$seed" branch -M main
 run git -C "$seed" remote add origin "$remote"
@@ -64,8 +67,10 @@ run git -C "$root" config user.email lifecycle-test@example.invalid
 
 run_in "$root" ./scripts/task-worktree.sh start other --path "$other"
 run_in "$root" ./scripts/task-worktree.sh start candidate --path "$candidate"
+mkdir -p "$candidate/backend/migrations"
 printf 'candidate\n' >> "$candidate/product.txt"
-run git -C "$candidate" add product.txt
+printf '%s\n' 'SELECT 1;' > "$candidate/backend/migrations/242_delivery_outbox.sql"
+run git -C "$candidate" add product.txt backend/migrations/242_delivery_outbox.sql
 run git -C "$candidate" commit -m candidate
 run git -C "$candidate" push origin HEAD
 candidate_sha=$(git -C "$candidate" rev-parse HEAD)
@@ -78,6 +83,18 @@ printf '%s\n' \
     'SERVER_USER=test' \
     'SERVER_PORT=22' \
     'REMOTE_APP_DIR=/tmp/everydayai' > "$candidate/deploy/config.env"
+
+migration_deploy_args="$tmp_root/migration-deploy-args.txt"
+(
+    cd "$candidate"
+    DEPLOY_ARGS_FILE="$migration_deploy_args" \
+        ./deploy/release.sh --deploy-task "$candidate_sha" \
+        --migration-file backend/migrations/242_delivery_outbox.sql
+) > "$tmp_root/migration-retry.log"
+rg -Fx -- '--migration-file' "$migration_deploy_args" >/dev/null \
+    || fail "任务重试未将显式迁移转发给部署脚本"
+rg -Fx -- 'backend/migrations/242_delivery_outbox.sql' "$migration_deploy_args" >/dev/null \
+    || fail "任务重试转发的迁移路径不正确"
 
 (
     cd "$candidate"

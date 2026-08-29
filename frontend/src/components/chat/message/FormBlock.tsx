@@ -11,14 +11,15 @@
  * 4. 后端处理后返回 form_submit_result → 前端 toast 提示
  */
 
-import { memo, useState, useCallback, useMemo, type ChangeEvent } from 'react';
+import { memo, useState, useCallback, useEffect, useMemo, type ChangeEvent } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
-import { CheckCircle2, X } from 'lucide-react';
+import { CheckCircle2, Circle, Loader2, X } from 'lucide-react';
 import type { FormPart, FormField } from '../../../types/message';
 import { cn } from '../../../utils/cn';
 import { formatFormValue } from '../../../utils/displayValue';
 import { SOFT_SPRING } from '../../../utils/motion';
 import { FormBlockContent } from './FormBlockContent';
+import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 
 // ════════════════════════════════════════════════════════
 // 子组件
@@ -211,6 +212,56 @@ function CheckboxGroupField({
 
 interface FormBlockProps {
   form: FormPart;
+  messageId: string;
+  conversationId: string;
+}
+
+type FormStatus = 'open' | 'submitting' | 'submitted' | 'cancelled';
+
+function ScheduledTaskWorkflowStage({
+  formType,
+  status,
+}: {
+  formType: string;
+  status: FormStatus;
+}) {
+  if (!['scheduled_task_create', 'scheduled_task_confirm'].includes(formType)) return null;
+
+  const activeStep = formType === 'scheduled_task_confirm'
+    ? (status === 'submitted' ? 4 : 3)
+    : (status === 'submitting' ? 2 : status === 'submitted' ? 3 : 1);
+  const labels = ['填写配置', '规划与试跑', '确认启用', '已启用'];
+
+  return (
+    <div className={`mt-3 ${MESSAGE_CONTENT_LAYOUT.fill} rounded-[var(--s-radius-card)] border border-border-default bg-surface px-3 py-2`}>
+      <div className="flex items-center gap-1 overflow-x-auto" aria-label={`定时任务第 ${activeStep} 步，共 4 步`}>
+        {labels.map((label, index) => {
+          const step = index + 1;
+          const complete = step < activeStep;
+          const active = step === activeStep;
+          return (
+            <div key={label} className="flex min-w-0 items-center gap-1.5">
+              {index > 0 && <span className="h-px w-3 shrink-0 bg-border-default" aria-hidden="true" />}
+              {active && status === 'submitting'
+                ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-accent" />
+                : complete
+                  ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
+                  : <Circle className={cn('h-3.5 w-3.5 shrink-0', active ? 'text-accent' : 'text-text-tertiary')} />}
+              <span className={cn('whitespace-nowrap text-[11px]', active ? 'font-medium text-text-primary' : complete ? 'text-text-secondary' : 'text-text-tertiary')}>
+                {step}. {label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-1 text-[11px] text-text-secondary">
+        {activeStep === 1 && '尚未创建任务；请确认配置后开始规划与安全试跑。'}
+        {activeStep === 2 && '正在进行只读试跑：不扣积分、不发送消息、不写入业务数据。'}
+        {activeStep === 3 && '预检已通过；确认启用后才会创建正式任务。'}
+        {activeStep === 4 && '任务已启用，可在定时任务面板查看执行历史。'}
+      </p>
+    </div>
+  );
 }
 
 function FormFields({
@@ -262,7 +313,7 @@ function FormFields({
   );
 }
 
-export default memo(function FormBlock({ form }: FormBlockProps) {
+export default memo(function FormBlock({ form, messageId, conversationId }: FormBlockProps) {
   // 初始化表单值
   const initialValues = useMemo(() => {
     const vals: Record<string, unknown> = {};
@@ -273,52 +324,91 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
   }, [form.fields]);
 
   const [values, setValues] = useState<Record<string, unknown>>(initialValues);
-  const [status, setStatus] = useState<'idle' | 'submitting' | 'submitted' | 'cancelled'>('idle');
+  const [status, setStatus] = useState<FormStatus>(form.status || 'open');
+  const [nextForm, setNextForm] = useState<FormPart | null>(form.next_form || null);
+  const [submittedMessage, setSubmittedMessage] = useState(form.result_message || '');
+  const [formError, setFormError] = useState(form.error_message || '');
   const submitted = status === 'submitted';
   const submitting = status === 'submitting';
   const cancelled = status === 'cancelled';
+
+  useEffect(() => {
+    setStatus(form.status || 'open');
+    setNextForm(form.next_form || null);
+    setSubmittedMessage(form.result_message || '');
+    setFormError(form.error_message || '');
+  }, [form.status, form.next_form, form.result_message, form.error_message]);
+
+  useEffect(() => {
+    const handleResult = (e: Event) => {
+      const detail = (e as CustomEvent).detail as {
+        success?: boolean;
+        message?: string;
+        status?: FormStatus;
+        form_id?: string;
+        message_id?: string;
+        conversation_id?: string;
+        next_form?: FormPart;
+      };
+      if (
+        detail.form_id !== form.form_id
+        || detail.message_id !== messageId
+        || detail.conversation_id !== conversationId
+      ) return;
+
+      if (detail.success) {
+        const resolved = detail.status || 'submitted';
+        setStatus(resolved);
+        setSubmittedMessage(detail.message || '');
+        if (detail.next_form) setNextForm(detail.next_form);
+      } else {
+        setStatus(detail.status === 'cancelled' ? 'cancelled' : 'open');
+        setFormError(detail.message || '提交失败，请重试');
+      }
+    };
+    window.addEventListener('chat:form-submit-result', handleResult);
+    return () => window.removeEventListener('chat:form-submit-result', handleResult);
+  }, [conversationId, form.form_id, messageId]);
 
   const updateField = useCallback((name: string, value: unknown) => {
     setValues((prev) => ({ ...prev, [name]: value }));
   }, []);
 
   const handleSubmit = useCallback(() => {
-    if (status !== 'idle') return;
+    if (status !== 'open') return;
     setStatus('submitting');
+    setFormError('');
 
-    // 派发自定义事件，WebSocketContext 监听处理
     window.dispatchEvent(
       new CustomEvent('chat:form-submit', {
         detail: {
           formType: form.form_type,
           formData: values,
+          formId: form.form_id,
+          messageId,
+          conversationId,
+          action: 'submit',
         },
       }),
     );
-
-    // 监听结果
-    const handleResult = (e: Event) => {
-      const { success, message } = (e as CustomEvent).detail;
-      if (success) {
-        setStatus('submitted');
-      } else {
-        setStatus('idle');
-        alert(message || '提交失败');
-      }
-      window.removeEventListener('chat:form-submit-result', handleResult);
-    };
-    window.addEventListener('chat:form-submit-result', handleResult);
-
-    // 超时兜底
-    setTimeout(() => {
-      window.removeEventListener('chat:form-submit-result', handleResult);
-      setStatus((s) => (s === 'submitting' ? 'idle' : s));
-    }, 15000);
-  }, [form.form_type, values, status]);
+  }, [conversationId, form.form_id, form.form_type, messageId, status, values]);
 
   const handleCancel = useCallback(() => {
-    setStatus('cancelled');
-  }, []);
+    if (status !== 'open') return;
+    setStatus('submitting');
+    window.dispatchEvent(
+      new CustomEvent('chat:form-submit', {
+        detail: {
+          formType: form.form_type,
+          formData: {},
+          formId: form.form_id,
+          messageId,
+          conversationId,
+          action: 'cancel',
+        },
+      }),
+    );
+  }, [conversationId, form.form_id, form.form_type, messageId, status]);
 
   // 判断字段是否可见（visible_when 联动）
   const isFieldVisible = useCallback(
@@ -331,27 +421,34 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
 
   if (submitted || cancelled) {
     return (
-      <m.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={SOFT_SPRING}
-        className={cn(
-          'my-2 flex items-center gap-2 rounded-[var(--s-radius-card)] border p-3 text-sm',
-          submitted
-            ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-950/30 dark:text-green-300'
-            : 'border-border-default bg-surface text-text-tertiary',
-        )}
-      >
-        {submitted ? <CheckCircle2 size={16} /> : <X size={16} />}
-        <span>{form.title} — {submitted ? '已提交' : '已取消'}</span>
-      </m.div>
+      <>
+        <m.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={SOFT_SPRING}
+          className={cn(
+            `my-2 ${MESSAGE_CONTENT_LAYOUT.fill} flex items-center gap-2 rounded-[var(--s-radius-card)] border p-3 text-sm`,
+            submitted
+              ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-950/30 dark:text-green-300'
+              : 'border-border-default bg-surface text-text-tertiary',
+          )}
+        >
+          {submitted ? <CheckCircle2 size={16} /> : <X size={16} />}
+          <span>{submitted ? (submittedMessage || `${form.title} — 已提交`) : `${form.title} — 已取消`}</span>
+        </m.div>
+        {nextForm && <FormBlock form={nextForm} messageId={messageId} conversationId={conversationId} />}
+      </>
     );
   }
 
   return (
-    <FormBlockContent form={form} submitting={submitting}
-      onSubmit={handleSubmit} onCancel={handleCancel}
-      fields={<FormFields fields={form.fields} values={values}
-        isVisible={isFieldVisible} onChange={updateField} />} />
+    <>
+      <ScheduledTaskWorkflowStage formType={form.form_type} status={status} />
+      <FormBlockContent form={form} submitting={submitting}
+        onSubmit={handleSubmit} onCancel={handleCancel}
+        fields={<FormFields fields={form.fields} values={values}
+          isVisible={isFieldVisible} onChange={updateField} />} />
+      {formError && <p className="mx-4 mt-2 text-xs text-red-600 dark:text-red-400">{formError}</p>}
+    </>
   );
 });

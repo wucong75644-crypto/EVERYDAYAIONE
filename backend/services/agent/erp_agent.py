@@ -45,12 +45,14 @@ class ERPAgent(ERPChildFactoryMixin):
         request_ctx: Optional["RequestContext"] = None,
         budget: Optional["ExecutionBudget"] = None,
         workspace_user_id: Optional[str] = None,
+        step_timeout_sec: Optional[float] = None,
     ) -> None:
         self.db, self.user_id = db, user_id
         self.workspace_user_id = workspace_user_id or user_id
         self.conversation_id, self.org_id = conversation_id, org_id
         self.task_id, self.message_id = task_id, message_id
         self._budget = budget
+        self._step_timeout_sec = step_timeout_sec
         from utils.time_context import RequestContext
         self.request_ctx = request_ctx or RequestContext.build(
             user_id=user_id, org_id=org_id, request_id=task_id or "",
@@ -204,9 +206,11 @@ class ERPAgent(ERPChildFactoryMixin):
             log_agent_event("info", "ERPAgent domain execute", self, "erp_agent")
             try:
                 # export 模式给子进程足够时间（120s 导出 + 10s profile）
-                step_timeout = 30.0
-                if step.params.get("mode") == "export":
-                    step_timeout = 130.0
+                default_step_timeout = 130.0 if step.params.get("mode") == "export" else 30.0
+                step_timeout = (
+                    min(self._step_timeout_sec, default_step_timeout)
+                    if self._step_timeout_sec is not None else default_step_timeout
+                )
                 result = await asyncio.wait_for(
                     agent.execute(query[:200], dag_mode=True, params=step.params),
                     timeout=min(remaining, step_timeout),

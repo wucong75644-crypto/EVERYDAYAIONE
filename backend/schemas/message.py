@@ -118,6 +118,11 @@ class FormPart(BaseModel):
     fields: List[Dict[str, Any]] = Field(default_factory=list)
     submit_text: str = "确认"
     cancel_text: str = "取消"
+    # 表单是持久化会话内容的一部分；刷新/跨端时不能重新变成可提交状态。
+    status: Literal["open", "submitting", "cancelled", "submitted"] = "open"
+    result_message: str = ""
+    error_message: str = ""
+    next_form: Optional[Dict[str, Any]] = None
 
 
 class EcomPlanPart(BaseModel):
