@@ -6,7 +6,7 @@
  * - compact：工具调用、思考步骤等辅助信息。
  */
 export const MESSAGE_CONTENT_LAYOUT = {
-  standard: 'w-full min-w-0 max-w-[960px]',
-  compact: 'w-full min-w-0 max-w-[640px]',
+  standard: 'w-full min-w-0 max-w-[680px]',
+  compact: 'w-full min-w-0 max-w-[500px]',
   fill: 'w-full min-w-0',
 } as const;
