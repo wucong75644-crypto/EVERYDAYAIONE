@@ -17,6 +17,7 @@ import { TableBlock } from './TableBlock';
 import ThinkingBlock from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
 import ToolStepCard from './ToolStepCard';
+import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 
 const DiagramBlock = lazy(() => import('./DiagramBlock'));
 
@@ -54,32 +55,34 @@ export default function MessageContentBlocks({
   ));
 
   return (
-    <div className="space-y-1">
+    <div className={`${MESSAGE_CONTENT_LAYOUT.fill} space-y-1`}>
       {message.content.map((part, idx) => {
         if (part.type === 'thinking') {
           const tp = part as { text?: string; duration_ms?: number };
           if (!tp.text && tp.duration_ms == null) return null;
           return (
-            <ThinkingBlock
-              key={`thinking-${idx}`}
-              content={tp.text || ''}
-              durationMs={tp.duration_ms}
-            />
+            <div key={`thinking-${idx}`} className={MESSAGE_CONTENT_LAYOUT.compact}>
+              <ThinkingBlock
+                content={tp.text || ''}
+                durationMs={tp.duration_ms}
+              />
+            </div>
           );
         }
         if (part.type === 'tool_step') {
           const ts = part as { tool_name: string; tool_call_id: string; status: 'running' | 'completed' | 'error' | 'cancelled'; code?: string; output?: string; input?: string; elapsed_ms?: number };
           return (
-            <ToolStepCard
-              key={ts.tool_call_id || idx}
-              toolName={ts.tool_name || 'tool'}
-              toolCallId={ts.tool_call_id || String(idx)}
-              status={ts.status || 'completed'}
-              code={ts.code}
-              output={ts.output}
-              input={ts.input}
-              elapsedMs={ts.elapsed_ms}
-            />
+            <div key={ts.tool_call_id || idx} className={MESSAGE_CONTENT_LAYOUT.compact}>
+              <ToolStepCard
+                toolName={ts.tool_name || 'tool'}
+                toolCallId={ts.tool_call_id || String(idx)}
+                status={ts.status || 'completed'}
+                code={ts.code}
+                output={ts.output}
+                input={ts.input}
+                elapsedMs={ts.elapsed_ms}
+              />
+            </div>
           );
         }
         if (part.type === 'interrupt_marker') return null;

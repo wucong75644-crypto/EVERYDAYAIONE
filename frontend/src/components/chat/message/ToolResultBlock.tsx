@@ -10,6 +10,7 @@ import { memo } from 'react';
 import type { FilePart } from '../../../types/message';
 import MarkdownRenderer from './MarkdownRenderer';
 import FileCardList from '../media/FileCard';
+import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 
 /** 工具名 → 展示标题 */
 const TOOL_LABELS: Record<string, string> = {
@@ -32,7 +33,7 @@ export default memo(function ToolResultBlock({
   const label = TOOL_LABELS[toolName] || toolName;
 
   return (
-    <div className="my-2">
+    <div className={`my-2 ${MESSAGE_CONTENT_LAYOUT.fill}`}>
       <div className="mb-1 flex items-center gap-1.5 text-xs font-medium text-text-secondary">
         <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="currentColor">
           <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 12.5a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11zm.75-8.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0zM8 7a.75.75 0 0 0-.75.75v3.5a.75.75 0 0 0 1.5 0v-3.5A.75.75 0 0 0 8 7z" />

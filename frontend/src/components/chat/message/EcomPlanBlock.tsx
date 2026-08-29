@@ -8,6 +8,7 @@
 import { useState } from 'react';
 import { Check, Sparkles } from 'lucide-react';
 import type { EcomPlanPart } from '../../../types/message';
+import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 
 interface EcomPlanBlockProps {
   plan: EcomPlanPart;
@@ -58,7 +59,7 @@ export default function EcomPlanBlock({ plan, onConfirm }: EcomPlanBlockProps) {
   };
 
   return (
-    <div className="border border-border-primary rounded-xl bg-surface-primary overflow-hidden my-2">
+    <div className={`${MESSAGE_CONTENT_LAYOUT.fill} border border-border-primary rounded-xl bg-surface-primary overflow-hidden my-2`}>
       {/* 顶部：产品理解 + 视觉策略 */}
       <div className="px-4 py-3 bg-surface-secondary border-b border-border-primary">
         <div className="space-y-1">

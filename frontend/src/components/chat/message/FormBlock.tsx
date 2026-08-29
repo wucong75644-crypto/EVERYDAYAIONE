@@ -19,6 +19,7 @@ import { cn } from '../../../utils/cn';
 import { formatFormValue } from '../../../utils/displayValue';
 import { SOFT_SPRING } from '../../../utils/motion';
 import { FormBlockContent } from './FormBlockContent';
+import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 
 // ════════════════════════════════════════════════════════
 // 子组件
@@ -232,7 +233,7 @@ function ScheduledTaskWorkflowStage({
   const labels = ['填写配置', '规划与试跑', '确认启用', '已启用'];
 
   return (
-    <div className="mx-4 mt-3 rounded-[var(--s-radius-card)] border border-border-default bg-surface px-3 py-2">
+    <div className={`mt-3 ${MESSAGE_CONTENT_LAYOUT.fill} rounded-[var(--s-radius-card)] border border-border-default bg-surface px-3 py-2`}>
       <div className="flex items-center gap-1 overflow-x-auto" aria-label={`定时任务第 ${activeStep} 步，共 4 步`}>
         {labels.map((label, index) => {
           const step = index + 1;
@@ -426,7 +427,7 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
           animate={{ opacity: 1, scale: 1 }}
           transition={SOFT_SPRING}
           className={cn(
-            'my-2 flex items-center gap-2 rounded-[var(--s-radius-card)] border p-3 text-sm',
+            `my-2 ${MESSAGE_CONTENT_LAYOUT.fill} flex items-center gap-2 rounded-[var(--s-radius-card)] border p-3 text-sm`,
             submitted
               ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-950/30 dark:text-green-300'
               : 'border-border-default bg-surface text-text-tertiary',
