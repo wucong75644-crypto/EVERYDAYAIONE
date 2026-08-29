@@ -132,6 +132,9 @@ def make_task(**overrides) -> dict:
         "last_summary": None,
         "run_count": 0,
         "consecutive_failures": 0,
+        # 集成测试验证已通过预检的执行循环；无策略历史任务的拒绝行为由
+        # test_scheduled_task_agent.py 单独覆盖。
+        "execution_policy": {"allowed_tools": ["erp_agent", "code_execute"]},
     }
     base.update(overrides)
     return base
