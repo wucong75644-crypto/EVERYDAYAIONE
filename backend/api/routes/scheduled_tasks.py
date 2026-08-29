@@ -577,7 +577,22 @@ async def resume_task(
     if not await check_permission(db, user_id, org_id, "task.edit", task):
         raise HTTPException(403, "无权恢复此任务")
 
-    next_run = calc_next_run(task["cron_expr"], task.get("timezone", "Asia/Shanghai"))
+    if task.get("schedule_type") == "once":
+        raw_run_at = task.get("run_at")
+        if not raw_run_at:
+            raise HTTPException(409, "一次性任务缺少执行时间，不能恢复")
+        try:
+            run_at = datetime.fromisoformat(str(raw_run_at).replace("Z", "+00:00"))
+        except ValueError as error:
+            raise HTTPException(409, "一次性任务执行时间无效，不能恢复") from error
+        if run_at.tzinfo is None:
+            raise HTTPException(409, "一次性任务执行时间必须包含时区")
+        # 明确恢复已经过期的一次性任务时，下一轮轮询立即领取一次。
+        next_run = max(run_at, datetime.now(timezone.utc))
+    else:
+        next_run = calc_next_run(
+            task["cron_expr"], task.get("timezone", "Asia/Shanghai"),
+        )
     scoped_db.table("scheduled_tasks").update({
         "status": "active",
         "next_run_at": next_run.isoformat(),
@@ -606,11 +621,33 @@ async def run_task_now(
     if not await check_permission(db, user_id, org_id, "task.execute", task):
         raise HTTPException(403, "无权立即执行此任务")
 
-    # 异步执行（不阻塞 HTTP 响应）
+    # 原子领取，避免 Scanner 同时把同一任务作为到期任务执行。
+    claim_response = db.rpc("claim_scheduled_task_now", {
+        "p_task_id": task_id,
+        "p_org_id": org_id,
+    }).execute()
+    claim = claim_response.data if claim_response else None
+    if not isinstance(claim, dict):
+        logger.error("scheduled_task_run_now_claim_invalid | task={}", task_id)
+        raise HTTPException(503, "任务暂时无法领取，请稍后重试")
+    if claim.get("outcome") == "already_running":
+        raise HTTPException(409, "任务正在执行中")
+    if claim.get("outcome") != "claimed" or not isinstance(claim.get("task"), dict):
+        logger.error(
+            "scheduled_task_run_now_claim_failed | task={} | outcome={}",
+            task_id, claim.get("outcome"),
+        )
+        raise HTTPException(503, "任务暂时无法领取，请稍后重试")
+
+    # 异步执行（不阻塞 HTTP 响应）。此前状态随任务快照传入，完成时恢复
+    # paused/error 的手动任务，避免一次点击意外开启长期调度。
     import asyncio
     from services.scheduler.task_executor import ScheduledTaskExecutor
     executor = ScheduledTaskExecutor(db)
-    asyncio.create_task(executor.execute(dict(task)))
+    claimed_task = dict(claim["task"])
+    claimed_task["_manual_run"] = True
+    claimed_task["_previous_status"] = claim.get("previous_status")
+    asyncio.create_task(executor.execute(claimed_task))
 
     return {"success": True, "message": "任务已开始执行，请稍后查看执行历史"}
 

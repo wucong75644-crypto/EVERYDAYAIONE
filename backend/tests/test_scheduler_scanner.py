@@ -406,7 +406,7 @@ class TestTaskExecutor:
         executor = ScheduledTaskExecutor(db)
 
         notify_calls = []
-        async def fake_notify(task, msg):
+        async def fake_notify(task, _run_id, msg):
             notify_calls.append((task["id"], msg))
 
         executor._notify_owner = fake_notify

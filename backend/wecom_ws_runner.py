@@ -200,13 +200,23 @@ async def main() -> None:
     async_db = await get_async_db()
     from services.wecom.delivery_sender import WecomDeliverySender
     from services.wecom.delivery_worker import WecomDeliveryWorker
+    from services.scheduler.delivery_worker import ScheduledTaskDeliveryWorker
+    delivery_sender = WecomDeliverySender(async_db, get_ws_client)
     delivery_worker = WecomDeliveryWorker(
         async_db,
-        WecomDeliverySender(async_db, get_ws_client),
+        delivery_sender,
     )
     delivery_task = asyncio.create_task(
         delivery_worker.start(),
         name="wecom_delivery_worker",
+    )
+    scheduled_delivery_worker = ScheduledTaskDeliveryWorker(
+        async_db,
+        delivery_sender,
+    )
+    scheduled_delivery_task = asyncio.create_task(
+        scheduled_delivery_worker.start(),
+        name="scheduled_task_delivery_worker",
     )
 
     # 定时任务推送订阅器（跨进程 IPC：web 进程 publish → ws_runner 这里 subscribe）
@@ -245,6 +255,12 @@ async def main() -> None:
     except asyncio.TimeoutError:
         delivery_task.cancel()
         await asyncio.gather(delivery_task, return_exceptions=True)
+    await scheduled_delivery_worker.stop()
+    try:
+        await asyncio.wait_for(scheduled_delivery_task, timeout=10)
+    except asyncio.TimeoutError:
+        scheduled_delivery_task.cancel()
+        await asyncio.gather(scheduled_delivery_task, return_exceptions=True)
     await _manager.stop()
     await close_async_db()
     logger.info("Wecom WS runner stopped")

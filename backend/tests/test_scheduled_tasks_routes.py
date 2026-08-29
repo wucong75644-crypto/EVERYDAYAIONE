@@ -65,6 +65,7 @@ class FakeDB:
     def __init__(self):
         self._tables: dict = {}
         self._rpc_responses: dict = {}
+        self.rpc_calls: list[tuple[str, dict | None]] = []
 
     def add(self, name, data):
         self._tables.setdefault(name, []).append(FakeQueryBuilder(data))
@@ -79,6 +80,7 @@ class FakeDB:
         return FakeQueryBuilder([])
 
     def rpc(self, name, params=None):
+        self.rpc_calls.append((name, params))
         result = MagicMock()
         result.execute.return_value = MagicMock(
             data=self._rpc_responses.get(name, [])
@@ -555,6 +557,25 @@ class TestTaskOperations:
             resp = client.post("/api/scheduled-tasks/t1/resume")
         assert resp.status_code == 200
 
+    def test_resume_once_task_uses_its_run_at_without_cron(self):
+        db, task = self._make_task_db()
+        task.update({
+            "status": "paused",
+            "schedule_type": "once",
+            "cron_expr": None,
+            "run_at": "2030-01-01T09:00:00+08:00",
+        })
+        db.add("scheduled_tasks", [task])
+        app = _build_app(db)
+
+        with patch(
+            "api.routes.scheduled_tasks.check_permission",
+            new=AsyncMock(return_value=True),
+        ):
+            resp = TestClient(app).post("/api/scheduled-tasks/t1/resume")
+
+        assert resp.status_code == 200
+
     def test_delete_task(self):
         db, task = self._make_task_db()
         db.add("scheduled_tasks", [task])
@@ -580,6 +601,46 @@ class TestTaskOperations:
             client = TestClient(app)
             resp = client.post("/api/scheduled-tasks/t1/run")
         assert resp.status_code == 403
+
+    def test_run_now_claims_atomically_before_starting_executor(self):
+        db, task = self._make_task_db()
+        db.add("scheduled_tasks", [task])
+        db.add_rpc("claim_scheduled_task_now", {
+            "outcome": "claimed",
+            "previous_status": "active",
+            "task": task,
+        })
+        app = _build_app(db)
+
+        def capture_task(coro):
+            coro.close()
+            return MagicMock()
+
+        with patch(
+            "api.routes.scheduled_tasks.check_permission",
+            new=AsyncMock(return_value=True),
+        ), patch("asyncio.create_task", side_effect=capture_task) as create_task:
+            resp = TestClient(app).post("/api/scheduled-tasks/t1/run")
+
+        assert resp.status_code == 200
+        assert db.rpc_calls == [("claim_scheduled_task_now", {
+            "p_task_id": "t1", "p_org_id": "org_1",
+        })]
+        assert create_task.called
+
+    def test_run_now_rejects_task_already_claimed_by_scheduler(self):
+        db, task = self._make_task_db()
+        db.add("scheduled_tasks", [task])
+        db.add_rpc("claim_scheduled_task_now", {"outcome": "already_running"})
+        app = _build_app(db)
+
+        with patch(
+            "api.routes.scheduled_tasks.check_permission",
+            new=AsyncMock(return_value=True),
+        ):
+            resp = TestClient(app).post("/api/scheduled-tasks/t1/run")
+
+        assert resp.status_code == 409
 
 
 # ════════════════════════════════════════════════════════
@@ -690,7 +751,12 @@ class TestRunsAndChatTargets:
         assert resp.json()["data"] == []
 
     def test_run_now_executes_immediately(self):
-        db, _task = self._make_task_db_with_runs()
+        db, task = self._make_task_db_with_runs()
+        db.add_rpc("claim_scheduled_task_now", {
+            "outcome": "claimed",
+            "previous_status": "active",
+            "task": task,
+        })
         app = _build_app(db)
 
         with patch(
