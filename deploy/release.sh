@@ -25,7 +25,7 @@ usage() {
   ./deploy/release.sh --message "type: description" --source-only-file backend/migrations/NNN_name.sql
   ./deploy/release.sh --message "type: description" --file path/to/file --migration-file backend/migrations/NNN_name.sql
   ./deploy/release.sh --message "type: description" --file-list /tmp/release-files.txt
-  ./deploy/release.sh --deploy-task <commit-sha>
+  ./deploy/release.sh --deploy-task <commit-sha> [--migration-file backend/migrations/NNN_name.sql]
   ./deploy/release.sh --accept-and-close
   ./deploy/release.sh --deploy-main <commit-sha>
   ./deploy/release.sh --rollback <commit-sha>
@@ -36,7 +36,7 @@ usage() {
   --source-only-file PATH 纳入提交但本次不执行的正向 SQL 迁移，可重复
   --file-list PATH       从本地清单逐行读取发布文件
   --migration-file PATH  明确执行目标提交中已有的正向 SQL 迁移，可重复
-  --deploy-task SHA      重新部署当前任务分支上已推送的确定提交
+  --deploy-task SHA      重新部署当前任务分支上已推送的确定提交；可显式补执行该提交内的正向迁移
   --accept-and-close     已验收任务：核验生产候选、合并 main、同步基座并清理；不部署
   --deploy-main SHA      从已合并到 origin/main 的确定提交部署
   --frontend-only        仅部署前端
@@ -146,9 +146,12 @@ set +u
 if [[ "$accept_and_close" == true ]]; then
     [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#source_only_files[@]} -eq 0 && ${#migration_files[@]} -eq 0 && "$frontend_only" == false && "$backend_only" == false ]] \
         || fail "--accept-and-close 不接受提交文件或部署范围参数"
-elif [[ -n "$deploy_task_sha" || -n "$deploy_main_sha" || -n "$rollback_sha" ]]; then
+elif [[ -n "$deploy_task_sha" || -n "$deploy_main_sha" ]]; then
+    [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#source_only_files[@]} -eq 0 ]] \
+        || fail "指定部署目标时不能同时提交新文件"
+elif [[ -n "$rollback_sha" ]]; then
     [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#source_only_files[@]} -eq 0 && ${#migration_files[@]} -eq 0 ]] \
-        || fail "指定部署或回滚目标时不能同时提交新文件"
+        || fail "回滚目标不能同时提交新文件或执行迁移"
 else
     [[ -n "$message" ]] || fail "提交部署必须提供 --message"
     [[ $((${#task_files[@]} + ${#source_only_files[@]})) -gt 0 ]] || fail "提交部署必须至少提供一个 --file 或 --source-only-file"
@@ -375,6 +378,13 @@ else
 fi
 
 ensure_supported_release_tree "$commit_sha"
+
+set +u
+for migration_file in "${migration_files[@]}"; do
+    git cat-file -e "${commit_sha}:${migration_file}" \
+        || fail "目标提交不包含迁移文件：$migration_file"
+done
+set -u
 
 release_worktree=$(mktemp -d "${TMPDIR:-/tmp}/everydayai-release.XXXXXX")
 git worktree add --detach "$release_worktree" "$commit_sha" >/dev/null
