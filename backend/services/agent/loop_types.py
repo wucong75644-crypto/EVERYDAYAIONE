@@ -85,6 +85,8 @@ class LoopResult:
     """停止原因：wrap_up_failure / wrap_up_budget / loop_detected / 空=正常退出"""
     wrap_up_reason: str = ""
     """收尾详情（如 consecutive_failures=3）"""
+    failure_message: str = ""
+    """未形成最终结论时保留的最近工具失败原因，供 headless 调用方结算。"""
 
 
 # ============================================================

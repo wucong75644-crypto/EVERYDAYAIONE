@@ -63,7 +63,7 @@
 
 多角色评审共识：
 1. 方向正确，有状态执行是行业标准，用户价值明确
-2. 安全隔离选 **nsjail**（namespace + cgroups v1 + seccomp + chroot 四合一）
+2. 安全隔离选 **nsjail**（namespace + cgroups v1/v2 自适配 + seccomp + chroot 四合一）
 3. IPC 协议选 **stdin/stdout JSON-Line**（最简单、nsjail 零配置透传）
 4. 最多 4 个并发 Kernel（4核8GB 服务器），超出降级无状态
 5. 保留现有 L1-L7 安全层作为内层防线，nsjail 作为外层防线
@@ -300,7 +300,8 @@ mount { src: "/var/www/everydayai/backend/venv" dst: "/venv" is_bind: true rw: f
 mount { dst: "/tmp" fstype: "tmpfs" rw: true }
 mount { dst: "/proc" fstype: "proc" rw: false }
 
-# --- 资源限制 (cgroups v1) ---
+# --- 资源限制 (cgroups v1/v2 自动探测) ---
+detect_cgroupv2: true
 cgroup_mem_max: 1073741824           # 1GB per Kernel
 cgroup_pids_max: 32                  # 最多 32 线程（numpy 需要）
 cgroup_cpu_ms_per_sec: 800           # 80% 单核
@@ -392,7 +393,7 @@ process = await asyncio.create_subprocess_exec(
 - `__builtins__` 每次执行前重置 → 防止用户跨调用篡改安全函数
 - `builtins.open` 每次执行前重置 → 防止用户覆盖文件访问控制
 - `builtins.__import__` 每次执行前重置 → 防止用户绕过 import 白名单
-- cgroups v1 memory 限制 1GB → 触及上限 OOM killer 杀进程，KernelManager 自动重建
+- cgroups memory 限制 → 按主机实际 v1/v2 建立内存、CPU 与 PID 限额，触及上限时 KernelManager 自动重建
 - MAX_LIFETIME 30 分钟 → 防止长期内存泄漏积累
 
 ## 边界场景处理
@@ -407,7 +408,7 @@ process = await asyncio.create_subprocess_exec(
 | 并发请求同一 conversation | Kernel 内 asyncio.Lock 排队执行 | Kernel.lock |
 | 用户代码死循环 | sys.settrace timeout 中断当前执行，不杀 Kernel 进程 | kernel_worker |
 | 用户代码污染 builtins | 每次执行前重置 builtins/__import__/open | kernel_worker |
-| Kernel 内存持续增长 | cgroups v1 memory 1GB 限制 + MAX_LIFETIME 30 分钟强制重建 | nsjail + KernelManager |
+| Kernel 内存持续增长 | cgroups v1/v2 自适配内存限制 + MAX_LIFETIME 30 分钟强制重建 | nsjail + KernelManager |
 | 服务器重启 | systemd 拉起主进程，Kernel 按需创建 | systemd |
 
 ## 文件结构
@@ -437,7 +438,7 @@ process = await asyncio.create_subprocess_exec(
 |-------|---------|------------|
 | 新增 KernelManager | kernel_manager.py（新建） | 进程池 + 超时回收 + 降级 |
 | 新增 kernel_worker | kernel_worker.py（新建） | REPL 循环 + builtins 重置 |
-| 新增 nsjail 配置 | deploy/sandbox.cfg（新建） | cgroups v1 + namespace |
+| 新增 nsjail 配置 | deploy/sandbox.cfg（新建） | cgroups v1/v2 自动探测 + namespace |
 | SandboxExecutor.execute() | executor.py | 有状态分支 + fallback |
 | build_sandbox_executor | functions.py | 注入 KernelManager |
 | _code_execute timeout | tool_executor.py:454-457 | 语义从进程生命周期 → 单次执行 |

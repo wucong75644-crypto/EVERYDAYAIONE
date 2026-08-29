@@ -86,9 +86,9 @@ class ScheduledTaskExecutor:
                 agent = ScheduledTaskAgent(self.db, task)
                 result = await agent.execute()
 
-                if result.status in ("error", "timeout"):
+                if result.status != "success":
                     raise RuntimeError(
-                        f"Agent 执行失败: {result.text or result.error_message}"
+                        f"Agent 执行失败: {result.error_message or result.text}"
                     )
 
                 # 3. 按量计费：用 token 换算实际积分

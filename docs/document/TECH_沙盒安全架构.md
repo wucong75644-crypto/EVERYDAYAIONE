@@ -81,6 +81,7 @@ mount { src: "/venv"  rw: false }    # Python 库只读
 mount { src: "/app"   rw: false }    # 业务代码只读
 clone_newnet: true                    # 网络完全切断
 cgroup_mem_max: 4294967296            # 4GB 内存上限
+detect_cgroupv2: true                  # 按主机实际 cgroup v1/v2 自动选择
 ```
 
 LLM 写 `open("/etc/passwd", "w")` → OS 层 EROFS。
@@ -119,6 +120,7 @@ macOS / 没 nsjail 的 Linux:
 - [ ] `clone_newnet: true` (防出网)
 - [ ] `/usr`, `/lib`, `/lib64`, `/venv`, `/app` 均 `rw: false`
 - [ ] `cgroup_mem_max`, `cgroup_pids_max`, `cgroup_cpu_ms_per_sec` 全部设置
+- [ ] `detect_cgroupv2: true`，不能把 v1 控制器路径硬编码到统一层级 v2 主机
 - [ ] `rlimit_fsize`, `rlimit_nofile`, `rlimit_as` 全部设置
 - [ ] 没有 `mount_proc: true` (procfs 暴露主机信息)
 

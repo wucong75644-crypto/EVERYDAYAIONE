@@ -15,11 +15,13 @@ if str(backend_dir) not in sys.path:
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
 
 from services.agent.scheduled_task_agent import (
     ScheduledTaskAgent,
     ScheduledTaskResult,
 )
+from services.agent.loop_types import LoopResult
 
 
 # ════════════════════════════════════════════════════════
@@ -157,4 +159,36 @@ class TestScheduledTaskResult:
         assert result.tokens_used == 1500
         assert len(result.files) == 1
 
+
+class TestExecutionOutcome:
+    @pytest.mark.asyncio
+    async def test_missing_final_synthesis_is_error_and_preserves_tool_failure(self):
+        agent = ScheduledTaskAgent(MagicMock(), make_task())
+        adapter = MagicMock()
+        adapter.close = AsyncMock()
+        loop = MagicMock()
+        loop.run = AsyncMock(return_value=LoopResult(
+            text="定时任务执行未能生成完整结论，请检查任务指令。",
+            total_tokens=42,
+            turns=2,
+            is_llm_synthesis=False,
+            stop_reason="wrap_up_failure",
+            failure_message="❌ 沙盒内核启动失败,请稍后重试",
+        ))
+
+        with patch.object(agent, "_prepare_template", new_callable=AsyncMock), \
+             patch.object(agent, "_build_tool_loop", return_value=(loop, MagicMock())), \
+             patch("config.chat_tools.get_core_tools", return_value=[]), \
+             patch("services.adapters.factory.create_chat_adapter", return_value=adapter), \
+             patch("services.agent.tool_executor.ToolExecutor"), \
+             patch("core.config.get_settings", return_value=SimpleNamespace(
+                 agent_loop_model=None, file_workspace_root="/tmp",
+             )), \
+             patch("core.workspace.resolve_staging_dir", return_value="/tmp/staging"):
+            result = await agent.execute()
+
+        assert result.status == "error"
+        assert result.error_message == "❌ 沙盒内核启动失败,请稍后重试"
+        assert result.tokens_used == 42
+        adapter.close.assert_awaited_once()
 

@@ -208,7 +208,7 @@ class SandboxExecutor:
                 )
                 if not kernel_ok:
                     return self._format_error(
-                        "沙盒资源紧张,请稍后重试", retryable=True,
+                        "沙盒内核启动失败,请稍后重试", retryable=True,
                     ), []
 
                 status, stdout, payloads = await self._kernel_manager.execute(

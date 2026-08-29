@@ -152,6 +152,30 @@ class ScheduledTaskAgent:
             # 8. 提取沙盒输出的产物(ToolLoopExecutor 已在独立通道透传 emit_payloads)
             files = result.emit_payloads or []
 
+            # 定时任务没有交互方可接管未完成的循环。若工具循环未形成 LLM
+            # 最终结论，fallback 文本只能用于诊断，不能被当作可推送、可计费
+            # 的成功结果，否则会把沙盒/模型失败伪装成任务完成。
+            if not result.is_llm_synthesis:
+                error_message = (
+                    result.failure_message
+                    or result.stop_reason
+                    or "final_synthesis_missing"
+                )
+                logger.error(
+                    "ScheduledTask incomplete | task={} | stop_reason={} | error={}",
+                    self.task_id, result.stop_reason, error_message[:500],
+                )
+                return ScheduledTaskResult(
+                    text=text or "定时任务未生成完整结论",
+                    status="error",
+                    tokens_used=total_tokens,
+                    turns_used=turns,
+                    tools_called=tools_called,
+                    files=files,
+                    is_truncated=STAGED_MARKER in (text or ""),
+                    error_message=error_message[:500],
+                )
+
             # 9. 生成摘要
             summary = await self._generate_summary(text, adapter)
 

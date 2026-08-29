@@ -115,6 +115,7 @@ class ToolLoopExecutor:
         tracker = FailureTracker()
         stop_reason = ""
         wrap_up_reason = ""
+        failure_message = ""
 
         for turn in range(self.config.max_turns):
             hook_ctx.turn = turn + 1
@@ -187,6 +188,7 @@ class ToolLoopExecutor:
                         error_text = _res.error_message
                     elif isinstance(_res, str):
                         error_text = _res
+                    failure_message = error_text or f"{_tn}:{rc.value}"
                     tracker.record_failure(_tn, error_text)
                     worst_tool_name = _tn
             self._turn_tool_outcomes.clear()
@@ -225,6 +227,7 @@ class ToolLoopExecutor:
             accumulated_text, total_tokens, turn,
             is_llm_synthesis, hook_ctx,
             stop_reason=stop_reason, wrap_up_reason=wrap_up_reason,
+            failure_message=failure_message,
         )
 
     def _is_loop_detected(
@@ -255,6 +258,7 @@ class ToolLoopExecutor:
         hook_ctx: HookContext,
         stop_reason: str = "",
         wrap_up_reason: str = "",
+        failure_message: str = "",
     ) -> LoopResult:
         """循环退出后的兜底文本 / wrap_up 合成 / hook 链 + 打包 LoopResult"""
         # ── wrap_up 合成（stop_reason 非空） ──
@@ -284,6 +288,8 @@ class ToolLoopExecutor:
                 f"raw_len={len(accumulated_text)} | turns={turn + 1}"
             )
             accumulated_text = self.config.no_synthesis_fallback_text
+            if not failure_message:
+                failure_message = stop_reason or "final_synthesis_missing"
 
         # Hook 链：合成阶段（LLM 合成时触发）
         if is_llm_synthesis and accumulated_text:
@@ -300,6 +306,7 @@ class ToolLoopExecutor:
             emit_payloads=self._emit_payloads,
             stop_reason=stop_reason,
             wrap_up_reason=wrap_up_reason,
+            failure_message=failure_message,
         )
 
     def _try_recover_from_context_error(
