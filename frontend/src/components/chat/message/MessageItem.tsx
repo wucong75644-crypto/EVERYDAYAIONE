@@ -329,7 +329,7 @@ export default memo(function MessageItem({
       layout={enableLayoutAnimation && !isStreaming ? 'position' : false}
     >
       <div
-        className={`relative flex flex-col ${isUser ? 'items-end' : 'items-start w-full'} ${isUser ? (hasMedia ? 'max-w-[90%]' : 'max-w-[80%]') : ''}`}
+        className={`relative flex flex-col ${isUser ? 'items-end' : 'items-start w-full'} ${isUser ? `w-full ${hasMedia ? 'max-w-[90%]' : 'max-w-[80%]'}` : ''}`}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
@@ -348,6 +348,7 @@ export default memo(function MessageItem({
               generatingType={mediaPlaceholderInfo?.type}
               imageAspectRatio={actualImageAspectRatio}
               videoAspectRatio={actualVideoAspectRatio}
+              content={message.content}
             />
           </div>
         )}

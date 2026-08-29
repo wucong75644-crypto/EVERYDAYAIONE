@@ -12,6 +12,8 @@ import type { QuotedImageInput } from '../components/chat/attachments/ChatAttach
 
 export interface UploadedImage {
   id: string; // 唯一标识
+  /** 统一聊天附件顺序（由 useChatAttachments 分配）。 */
+  sequence?: number;
   file: File;
   preview: string; // ObjectURL 预览（本地 blob:// URL，性能优于 base64）；引用图直接用 CDN URL
   url: string | null; // 上传后的公网URL
@@ -60,7 +62,8 @@ export function useImageUpload() {
   const handleImageFiles = async (
     files: FileList | File[],
     maxImages?: number,
-    maxFileSizeMB?: number
+    maxFileSizeMB?: number,
+    sequenceByFile?: ReadonlyMap<File, number>,
   ) => {
     const fileArray = Array.from(files);
 
@@ -89,6 +92,7 @@ export function useImageUpload() {
     // 为每个文件创建记录并开始上传
     const newImages: UploadedImage[] = fileArray.map((file) => ({
       id: `${Date.now()}-${Math.random()}`,
+      sequence: sequenceByFile?.get(file),
       file,
       preview: '', // 稍后填充
       url: null,
@@ -279,6 +283,7 @@ export function useImageUpload() {
         preview_url: originalUrl,
         download_url: originalUrl,
         asset_id: quotedInput.assetId,
+        sequence: quotedInput.sequence,
         workspace_path: quotedInput.workspacePath,
         name: quotedInput.name,
         mime_type: quotedInput.mimeType,

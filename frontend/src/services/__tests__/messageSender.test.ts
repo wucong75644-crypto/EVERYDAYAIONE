@@ -9,6 +9,7 @@ import {
   createTextContent,
   createTextWithImages,
   createTextWithFiles,
+  createTextWithAttachments,
   getTextFromContent,
   inferGenerationType,
   determineMessageType,
@@ -201,6 +202,23 @@ describe('createTextWithImages', () => {
 // ============================================================
 // createTextWithFiles 测试
 // ============================================================
+
+describe('createTextWithAttachments', () => {
+  it('保留图片和文件的混合顺序', () => {
+    const result = createTextWithAttachments('按顺序处理', [
+      { kind: 'image', image: { url: 'https://cdn/a.png' } },
+      { kind: 'file', file: {
+        url: 'https://cdn/b.pdf', name: 'b.pdf', mime_type: 'application/pdf', size: 10,
+      } },
+      { kind: 'image', image: { url: 'https://cdn/c.png' } },
+    ]);
+
+    expect(result.map((part) => part.type)).toEqual(['text', 'image', 'file', 'image']);
+    expect(result[1]).toMatchObject({ type: 'image', url: 'https://cdn/a.png' });
+    expect(result[2]).toMatchObject({ type: 'file', url: 'https://cdn/b.pdf', name: 'b.pdf' });
+    expect(result[3]).toMatchObject({ type: 'image', url: 'https://cdn/c.png' });
+  });
+});
 
 describe('createTextWithFiles', () => {
   const testFile = { url: 'https://cdn.example.com/report.pdf', name: 'report.pdf', mime_type: 'application/pdf', size: 2400000 };

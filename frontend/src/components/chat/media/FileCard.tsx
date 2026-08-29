@@ -18,7 +18,7 @@ export default function FileCardList({ files }: { files: FilePart[] }) {
   const preview = usePreview();
 
   return (
-    <div className="mt-3 space-y-2">
+    <div className="mt-3 flex max-w-full flex-wrap justify-end gap-2" data-file-card-list>
       {files.map((file, i) => {
         const item = fromFilePart(file);
         const canShow = canPreview(item);
@@ -52,7 +52,8 @@ function FileCardItem({ file, onPreview }: { file: FilePart; onPreview?: () => v
 
   return (
     <div
-      className={`inline-flex items-center gap-3 px-4 py-3 rounded-xl bg-surface dark:bg-surface-dark-card hover:bg-hover dark:hover:bg-surface-dark-card transition-base border border-border-default dark:border-border-dark max-w-sm ${onPreview ? 'cursor-pointer' : ''}`}
+      data-file-card
+      className={`flex w-full max-w-[280px] min-w-0 flex-[0_1_280px] items-center gap-3 rounded-xl border border-border-default bg-surface px-4 py-3 transition-base hover:bg-hover dark:border-border-dark dark:bg-surface-dark-card dark:hover:bg-surface-dark-card ${onPreview ? 'cursor-pointer' : ''}`}
       onClick={onPreview}
     >
       <span className="text-2xl flex-shrink-0">{getFileIcon(file.name)}</span>

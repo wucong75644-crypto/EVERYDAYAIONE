@@ -1,10 +1,12 @@
-import type { ImageInputInfo } from '../../../services/messageSender';
+import type { ImageInputInfo, OrderedAttachmentInput } from '../../../services/messageSender';
 
 export type ChatAttachmentSource = 'upload' | 'quote' | 'workspace';
 export type ChatAttachmentStatus = 'uploading' | 'ready' | 'error';
 
 interface ChatAttachmentBase {
   id: string;
+  /** 用户把附件加入当前输入队列时分配的稳定顺序。 */
+  sequence?: number;
   source: ChatAttachmentSource;
   sourceId: string;
   status: ChatAttachmentStatus;
@@ -42,6 +44,7 @@ export interface AttachmentConstraints {
 export interface QuotedImageInput {
   url: string;
   thumbnailUrl?: string;
+  sequence?: number;
   assetId?: string;
   workspacePath?: string;
   name?: string;
@@ -61,6 +64,7 @@ export interface AttachmentSubmissionSnapshot {
   attachments: ChatAttachment[];
   imageInputs: ImageInputInfo[];
   files: SubmissionFileInput[];
+  orderedAttachments: OrderedAttachmentInput[];
   invalidImages: ChatImageAttachment[];
 }
 

@@ -167,27 +167,16 @@ export default function InputArea({
     onAutoSaveModel: handleAutoSaveModel,
   });
 
-  // 统一上传入口：UploadMenu 按用户原生 file picker 选好的 File[] 在此分流
-  // image/* → useImageUpload.handleImageFiles（构造 ImagePart）
-  // 其他 → useFileUpload.handleFileUpload（构造 FilePart）
+  // 统一上传入口：一次传入完整 File[]，由附件控制器分流并分配统一序号。
+  // 不能在这里先拆成图片/文件两次调用，否则跨类型的原始选择顺序会丢失。
   // 两条 hook 内部都走 /images/upload 或 /files/upload，P0 后已落 上传/{YYYY-MM}/。
   // 注：必须放在 useModelSelection 之后（依赖 selectedModel.capabilities）
   const handleUnifiedFiles = useCallback(
     (incoming: File[]) => {
       if (incoming.length === 0) return;
-      const images: File[] = [];
-      const docs: File[] = [];
-      for (const f of incoming) {
-        if (f.type.startsWith('image/')) images.push(f);
-        else docs.push(f);
-      }
-      if (images.length > 0) {
-        void addLocalFiles(images, {
-          maxImages: selectedModel.capabilities.maxImages,
-          maxImageSizeMB: selectedModel.capabilities.maxFileSize,
-        });
-      }
-      if (docs.length > 0) void addLocalFiles(docs, {
+      void addLocalFiles(incoming, {
+        maxImages: selectedModel.capabilities.maxImages,
+        maxImageSizeMB: selectedModel.capabilities.maxFileSize,
         maxFileSizeMB: selectedModel.capabilities.maxPDFSize,
       });
     },

@@ -202,21 +202,36 @@ describe('useInputSubmission', () => {
     expect(options.handleChatMessage).toHaveBeenCalledWith(
       '保留这段输入',
       'conversation-1',
-      [{
+      [expect.objectContaining({
         url: 'https://cdn.example.com/workspace/product.png',
         original_url: 'https://cdn.example.com/workspace/product.png',
         name: 'product.png',
         workspace_path: '上传/product.png',
         mime_type: 'image/png',
         size: 2048,
-      }],
-      [{
+      })],
+      [expect.objectContaining({
         url: 'https://cdn.example.com/workspace/report.pdf',
         name: 'report.pdf',
         mime_type: 'application/pdf',
         size: 4096,
         workspace_path: '上传/report.pdf',
-      }],
+      })],
+      null,
+      [
+        {
+          kind: 'image',
+          image: expect.objectContaining({
+            url: 'https://cdn.example.com/workspace/product.png',
+          }),
+        },
+        {
+          kind: 'file',
+          file: expect.objectContaining({
+            url: 'https://cdn.example.com/workspace/report.pdf',
+          }),
+        },
+      ],
     );
   });
 
