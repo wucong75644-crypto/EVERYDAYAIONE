@@ -206,25 +206,25 @@ describe('createTask', () => {
 // ════════════════════════════════════════════════════════
 
 describe('updateTask', () => {
-  it('成功时重新拉取并替换', async () => {
+  it('成功时返回待确认修订草稿，不改写列表中的运行中任务', async () => {
     const oldTask = makeTask({ name: '旧名' });
-    const newTask = makeTask({ name: '新名' });
+    const draft = { id: 'draft-1', status: 'ready', config_hash: 'a'.repeat(64) };
     useScheduledTaskStore.setState({ tasks: [oldTask] });
 
-    mockUpdate.mockResolvedValueOnce();
-    mockGet.mockResolvedValueOnce(newTask);
+    mockUpdate.mockResolvedValueOnce(draft);
 
-    const ok = await useScheduledTaskStore.getState().updateTask('t1', { name: '新名' });
+    const result = await useScheduledTaskStore.getState().updateTask('t1', { name: '新名' });
 
-    expect(ok).toBe(true);
-    expect(useScheduledTaskStore.getState().tasks[0].name).toBe('新名');
+    expect(result).toEqual(draft);
+    expect(useScheduledTaskStore.getState().tasks[0].name).toBe('旧名');
+    expect(mockGet).not.toHaveBeenCalled();
   });
 
-  it('失败时返回 false', async () => {
+  it('失败时返回 null', async () => {
     mockUpdate.mockRejectedValueOnce(new Error('forbidden'));
 
-    const ok = await useScheduledTaskStore.getState().updateTask('t1', { name: 'x' });
-    expect(ok).toBe(false);
+    const result = await useScheduledTaskStore.getState().updateTask('t1', { name: 'x' });
+    expect(result).toBeNull();
   });
 });
 

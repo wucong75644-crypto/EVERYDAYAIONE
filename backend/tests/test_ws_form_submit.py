@@ -12,7 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 @pytest.mark.asyncio
 @patch("api.routes.ws.ws_manager")
 @patch("api.routes.ws.get_db")
-async def test_form_submit_success(mock_get_db, mock_ws):
+@patch("services.conversation_service.ConversationService")
+async def test_form_submit_success(mock_conversation_service, mock_get_db, mock_ws):
     """正常路径：查到 org_id → 调用 handle_form_submit → 回传成功"""
     from api.routes.ws import _handle_form_submit
 
@@ -22,8 +23,13 @@ async def test_form_submit_success(mock_get_db, mock_ws):
     db.eq.return_value = db
     db.limit.return_value = db
     db.execute.return_value = MagicMock(data=[{"org_id": "org-123"}])
+    db.rpc.return_value.execute.side_effect = [
+        MagicMock(data={"outcome": "transitioned"}),
+        MagicMock(data={"outcome": "transitioned"}),
+    ]
     mock_get_db.return_value = db
     mock_ws.send_to_connection = AsyncMock()
+    mock_conversation_service.return_value.get_conversation = AsyncMock(return_value={"id": "conv-1"})
 
     with patch(
         "services.scheduler.chat_task_manager.handle_form_submit",
@@ -32,7 +38,7 @@ async def test_form_submit_success(mock_get_db, mock_ws):
     ):
         await _handle_form_submit(
             "conn-1", "user-1", "scheduled_task_create",
-            {"name": "日报", "prompt": "推日报"}, "conv-1",
+            {"name": "日报", "prompt": "推日报"}, "conv-1", "message-1", "form-1",
         )
 
     # 验证回传了成功结果
@@ -42,6 +48,8 @@ async def test_form_submit_success(mock_get_db, mock_ws):
     assert msg["type"] == "form_submit_result"
     assert msg["payload"]["success"] is True
     assert msg["conversation_id"] == "conv-1"
+    assert msg["payload"]["message_id"] == "message-1"
+    assert msg["payload"]["form_id"] == "form-1"
 
 
 @pytest.mark.asyncio
@@ -61,7 +69,7 @@ async def test_form_submit_no_org(mock_get_db, mock_ws):
     mock_ws.send_to_connection = AsyncMock()
 
     await _handle_form_submit(
-        "conn-1", "user-1", "scheduled_task_create", {"name": "x"}, "conv-1",
+        "conn-1", "user-1", "scheduled_task_create", {"name": "x"}, "conv-1", "message-1", "form-1",
     )
 
     msg = mock_ws.send_to_connection.call_args[0][1]
@@ -73,7 +81,8 @@ async def test_form_submit_no_org(mock_get_db, mock_ws):
 @pytest.mark.asyncio
 @patch("api.routes.ws.ws_manager")
 @patch("api.routes.ws.get_db")
-async def test_form_submit_exception(mock_get_db, mock_ws):
+@patch("services.conversation_service.ConversationService")
+async def test_form_submit_exception(mock_conversation_service, mock_get_db, mock_ws):
     """handle_form_submit 抛异常 → 捕获并返回错误"""
     from api.routes.ws import _handle_form_submit
 
@@ -83,8 +92,13 @@ async def test_form_submit_exception(mock_get_db, mock_ws):
     db.eq.return_value = db
     db.limit.return_value = db
     db.execute.return_value = MagicMock(data=[{"org_id": "org-1"}])
+    db.rpc.return_value.execute.side_effect = [
+        MagicMock(data={"outcome": "transitioned"}),
+        MagicMock(data={"outcome": "transitioned"}),
+    ]
     mock_get_db.return_value = db
     mock_ws.send_to_connection = AsyncMock()
+    mock_conversation_service.return_value.get_conversation = AsyncMock(return_value={"id": "conv-1"})
 
     with patch(
         "services.scheduler.chat_task_manager.handle_form_submit",
@@ -92,7 +106,7 @@ async def test_form_submit_exception(mock_get_db, mock_ws):
         side_effect=Exception("DB connection lost"),
     ):
         await _handle_form_submit(
-            "conn-1", "user-1", "scheduled_task_create", {}, "conv-1",
+            "conn-1", "user-1", "scheduled_task_create", {}, "conv-1", "message-1", "form-1",
         )
 
     msg = mock_ws.send_to_connection.call_args[0][1]

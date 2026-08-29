@@ -370,13 +370,22 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   // 表单提交 — FormBlock 通过 CustomEvent 触发
   useEffect(() => {
     const handler = (e: Event) => {
-      const { formType, formData } = (e as CustomEvent).detail;
-      if (!formType || !formData) return;
+      const {
+        formType, formData, formId, messageId, conversationId, action,
+      } = (e as CustomEvent).detail;
+      if (!formType || !formId || !messageId || !conversationId || !action) return;
       ws.send({
         type: 'form_submit' as const,
-        payload: { form_type: formType, form_data: formData },
+        payload: {
+          form_type: formType,
+          form_data: formData || {},
+          form_id: formId,
+          message_id: messageId,
+          conversation_id: conversationId,
+          action,
+        },
       });
-      logger.info('ws:form', 'form_submit sent', { formType });
+      logger.info('ws:form', 'form interaction sent', { formType, formId, action });
     };
     window.addEventListener('chat:form-submit', handler);
     return () => window.removeEventListener('chat:form-submit', handler);
@@ -385,11 +394,17 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   // 表单提交结果 — 后端返回 form_submit_result → 派发到 FormBlock
   useEffect(() => {
     const unsub = ws.subscribe('form_submit_result' as never, (msg) => {
-      const payload = msg.payload as { success?: boolean; message?: string };
+      const payload = msg.payload as {
+        success?: boolean;
+        message?: string;
+        form_id?: string;
+        message_id?: string;
+        conversation_id?: string;
+      };
       window.dispatchEvent(
         new CustomEvent('chat:form-submit-result', { detail: payload }),
       );
-      logger.info('ws:form', 'form_submit_result', { success: payload?.success });
+      logger.info('ws:form', 'form_submit_result', { success: payload?.success, formId: payload?.form_id });
     });
     return unsub;
   }, [ws]);

@@ -202,7 +202,14 @@ export default function MessageContentBlocks({
         }
         if (part.type === 'form') {
           const fp = part as import('../../../types/message').FormPart;
-          return <FormBlock key={fp.form_id} form={fp} />;
+          return (
+            <FormBlock
+              key={fp.form_id}
+              form={fp}
+              messageId={message.id}
+              conversationId={message.conversation_id}
+            />
+          );
         }
         if (part.type === 'ecom_plan') {
           const ep = part as import('../../../types/message').EcomPlanPart;

@@ -312,8 +312,8 @@ sync_backend() {
     log_success "后端文件同步完成"
 }
 
-# 执行本次发布明确列出的数据库迁移。
-# 不扫描 migrations 目录，也不自动执行历史文件，避免把旧迁移重复应用到生产。
+# 执行 release.sh 已根据任务分支收集的数据库迁移。迁移账本按文件路径和
+# checksum 去重：失败发布后的下一次发布会补跑遗漏迁移，已成功的不会重复执行。
 apply_migrations() {
     if [ "$RUN_MIGRATIONS" != true ]; then
         if [ ${#MIGRATION_FILES[@]} -gt 0 ]; then
@@ -363,17 +363,40 @@ apply_migrations() {
             echo "❌ .env 缺少 DATABASE_URL"
             exit 1
         }
+        # 发布进程间使用同一把文件锁；随后数据库事务内仍取得 advisory lock。
+        # 这样“检查迁移账本 → 执行迁移 → 写入账本”不会被并发发布穿插。
+        exec 9>/tmp/everydayai-schema-migrations.lock
+        flock -x 9
+        psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -c '
+            CREATE TABLE IF NOT EXISTS public.deployment_schema_migrations (
+                migration_path TEXT PRIMARY KEY,
+                checksum TEXT NOT NULL,
+                applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        '
         for migration_file in "$@"; do
             migration_path="/var/www/everydayai/$migration_file"
             test -f "$migration_path" || {
                 echo "❌ 迁移文件不存在: $migration_path"
                 exit 1
             }
+            checksum=$(sha256sum "$migration_path" | awk '{print $1}')
+            recorded=$(psql "$DATABASE_URL" -X -At -v ON_ERROR_STOP=1 \
+                -c "SELECT checksum FROM public.deployment_schema_migrations WHERE migration_path = '$migration_file';")
+            if [ -n "$recorded" ]; then
+                [ "$recorded" = "$checksum" ] || {
+                    echo "❌ 已应用迁移 checksum 不一致: $migration_file"
+                    exit 1
+                }
+                echo "↷ 跳过已应用迁移: $migration_file"
+                continue
+            fi
             echo "▶ 应用迁移: $migration_file"
             psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 \
-                -c "SELECT pg_advisory_lock(hashtextextended('everydayai:migrations', 0));" \
-                -f "$migration_path"
-            echo "✅ 迁移完成: $migration_file"
+                -c "BEGIN; SELECT pg_advisory_xact_lock(hashtextextended('everydayai:migrations', 0));" \
+                -f "$migration_path" \
+                -c "INSERT INTO public.deployment_schema_migrations(migration_path, checksum) VALUES ('$migration_file', '$checksum'); COMMIT;"
+            echo "✅ 迁移完成并已记录: $migration_file"
         done
 ENDSSH
     log_success "数据库迁移完成"

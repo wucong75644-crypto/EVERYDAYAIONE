@@ -410,6 +410,41 @@ class TestCreateTaskDraft:
         assert "规划与安全试跑" in resp.json()["detail"]
 
 
+class TestTaskRevisionDraft:
+    def test_patch_creates_a_revision_draft_without_directly_changing_the_task(self):
+        db = FakeDB()
+        task = {
+            "id": "task-1", "org_id": "org_1", "user_id": "user_1",
+            "name": "旧日报", "prompt": "旧指令", "schedule_type": "daily",
+            "cron_expr": "0 9 * * *", "timezone": "Asia/Shanghai",
+            "push_target": {"type": "web", "user_id": "user_1"},
+            "max_credits": 10, "retry_count": 1, "timeout_sec": 180,
+        }
+        db.add("scheduled_tasks", [task])
+        app = _build_app(db)
+
+        async def revision_preflight(**kwargs):
+            return {
+                "id": "draft-revision", "status": "ready", "config_hash": "a" * 64,
+                "source_task_id": kwargs["source_task_id"], "definition": kwargs["definition"],
+            }
+
+        with patch(
+            "api.routes.scheduled_tasks.check_permission",
+            new=AsyncMock(return_value=True),
+        ), patch(
+            "services.scheduler.scheduled_task_workflow.create_draft_and_preflight",
+            new=revision_preflight,
+        ):
+            response = TestClient(app).patch("/api/scheduled-tasks/task-1", json={"name": "新日报"})
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["source_task_id"] == "task-1"
+        assert data["definition"]["name"] == "新日报"
+        assert task["name"] == "旧日报"
+
+
 # ════════════════════════════════════════════════════════
 # 1.5 _is_push_to_self 辅助函数单测（覆盖 4 个分支）
 # ════════════════════════════════════════════════════════

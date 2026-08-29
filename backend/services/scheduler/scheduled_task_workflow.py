@@ -268,7 +268,12 @@ def _trace_rows(*, org_id: str, execution_kind: str, execution_id: str, task_id:
 
 
 async def create_draft_and_preflight(
-    *, db: Any, org_id: str, user_id: str, definition: Dict[str, Any],
+    *,
+    db: Any,
+    org_id: str,
+    user_id: str,
+    definition: Dict[str, Any],
+    source_task_id: str | None = None,
 ) -> Dict[str, Any]:
     """保存不可执行草稿，规划并以同一 Agent 引擎做零额度预检。"""
     draft_id = str(uuid4())
@@ -276,6 +281,7 @@ async def create_draft_and_preflight(
     db.table("scheduled_task_drafts").insert({
         "id": draft_id, "org_id": org_id, "user_id": user_id,
         "definition": definition, "config_hash": config_hash, "status": "planning",
+        "source_task_id": source_task_id,
     }).execute()
     try:
         plan, policy = await create_plan(db=db, org_id=org_id, definition=definition)

@@ -11,7 +11,7 @@
  * 4. 后端处理后返回 form_submit_result → 前端 toast 提示
  */
 
-import { memo, useState, useCallback, useMemo, type ChangeEvent } from 'react';
+import { memo, useState, useCallback, useEffect, useMemo, type ChangeEvent } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
 import { CheckCircle2, Circle, Loader2, X } from 'lucide-react';
 import type { FormPart, FormField } from '../../../types/message';
@@ -211,14 +211,18 @@ function CheckboxGroupField({
 
 interface FormBlockProps {
   form: FormPart;
+  messageId: string;
+  conversationId: string;
 }
+
+type FormStatus = 'open' | 'submitting' | 'submitted' | 'cancelled';
 
 function ScheduledTaskWorkflowStage({
   formType,
   status,
 }: {
   formType: string;
-  status: 'idle' | 'submitting' | 'submitted' | 'cancelled';
+  status: FormStatus;
 }) {
   if (!['scheduled_task_create', 'scheduled_task_confirm'].includes(formType)) return null;
 
@@ -308,7 +312,7 @@ function FormFields({
   );
 }
 
-export default memo(function FormBlock({ form }: FormBlockProps) {
+export default memo(function FormBlock({ form, messageId, conversationId }: FormBlockProps) {
   // 初始化表单值
   const initialValues = useMemo(() => {
     const vals: Record<string, unknown> = {};
@@ -319,56 +323,91 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
   }, [form.fields]);
 
   const [values, setValues] = useState<Record<string, unknown>>(initialValues);
-  const [status, setStatus] = useState<'idle' | 'submitting' | 'submitted' | 'cancelled'>('idle');
-  const [nextForm, setNextForm] = useState<FormPart | null>(null);
-  const [submittedMessage, setSubmittedMessage] = useState('');
+  const [status, setStatus] = useState<FormStatus>(form.status || 'open');
+  const [nextForm, setNextForm] = useState<FormPart | null>(form.next_form || null);
+  const [submittedMessage, setSubmittedMessage] = useState(form.result_message || '');
+  const [formError, setFormError] = useState(form.error_message || '');
   const submitted = status === 'submitted';
   const submitting = status === 'submitting';
   const cancelled = status === 'cancelled';
+
+  useEffect(() => {
+    setStatus(form.status || 'open');
+    setNextForm(form.next_form || null);
+    setSubmittedMessage(form.result_message || '');
+    setFormError(form.error_message || '');
+  }, [form.status, form.next_form, form.result_message, form.error_message]);
+
+  useEffect(() => {
+    const handleResult = (e: Event) => {
+      const detail = (e as CustomEvent).detail as {
+        success?: boolean;
+        message?: string;
+        status?: FormStatus;
+        form_id?: string;
+        message_id?: string;
+        conversation_id?: string;
+        next_form?: FormPart;
+      };
+      if (
+        detail.form_id !== form.form_id
+        || detail.message_id !== messageId
+        || detail.conversation_id !== conversationId
+      ) return;
+
+      if (detail.success) {
+        const resolved = detail.status || 'submitted';
+        setStatus(resolved);
+        setSubmittedMessage(detail.message || '');
+        if (detail.next_form) setNextForm(detail.next_form);
+      } else {
+        setStatus(detail.status === 'cancelled' ? 'cancelled' : 'open');
+        setFormError(detail.message || '提交失败，请重试');
+      }
+    };
+    window.addEventListener('chat:form-submit-result', handleResult);
+    return () => window.removeEventListener('chat:form-submit-result', handleResult);
+  }, [conversationId, form.form_id, messageId]);
 
   const updateField = useCallback((name: string, value: unknown) => {
     setValues((prev) => ({ ...prev, [name]: value }));
   }, []);
 
   const handleSubmit = useCallback(() => {
-    if (status !== 'idle') return;
+    if (status !== 'open') return;
     setStatus('submitting');
+    setFormError('');
 
-    // 派发自定义事件，WebSocketContext 监听处理
     window.dispatchEvent(
       new CustomEvent('chat:form-submit', {
         detail: {
           formType: form.form_type,
           formData: values,
+          formId: form.form_id,
+          messageId,
+          conversationId,
+          action: 'submit',
         },
       }),
     );
-
-    // 监听结果
-    const handleResult = (e: Event) => {
-      const { success, message, next_form: nextFormPayload } = (e as CustomEvent).detail;
-      if (success) {
-        setStatus('submitted');
-        setSubmittedMessage(message || '');
-        if (nextFormPayload) setNextForm(nextFormPayload as FormPart);
-      } else {
-        setStatus('idle');
-        alert(message || '提交失败');
-      }
-      window.removeEventListener('chat:form-submit-result', handleResult);
-    };
-    window.addEventListener('chat:form-submit-result', handleResult);
-
-    // 超时兜底
-    setTimeout(() => {
-      window.removeEventListener('chat:form-submit-result', handleResult);
-      setStatus((s) => (s === 'submitting' ? 'idle' : s));
-    }, form.form_type === 'scheduled_task_create' ? 210000 : 15000);
-  }, [form.form_type, values, status]);
+  }, [conversationId, form.form_id, form.form_type, messageId, status, values]);
 
   const handleCancel = useCallback(() => {
-    setStatus('cancelled');
-  }, []);
+    if (status !== 'open') return;
+    setStatus('submitting');
+    window.dispatchEvent(
+      new CustomEvent('chat:form-submit', {
+        detail: {
+          formType: form.form_type,
+          formData: {},
+          formId: form.form_id,
+          messageId,
+          conversationId,
+          action: 'cancel',
+        },
+      }),
+    );
+  }, [conversationId, form.form_id, form.form_type, messageId, status]);
 
   // 判断字段是否可见（visible_when 联动）
   const isFieldVisible = useCallback(
@@ -396,7 +435,7 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
           {submitted ? <CheckCircle2 size={16} /> : <X size={16} />}
           <span>{submitted ? (submittedMessage || `${form.title} — 已提交`) : `${form.title} — 已取消`}</span>
         </m.div>
-        {nextForm && <FormBlock form={nextForm} />}
+        {nextForm && <FormBlock form={nextForm} messageId={messageId} conversationId={conversationId} />}
       </>
     );
   }
@@ -408,6 +447,7 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
         onSubmit={handleSubmit} onCancel={handleCancel}
         fields={<FormFields fields={form.fields} values={values}
           isVisible={isFieldVisible} onChange={updateField} />} />
+      {formError && <p className="mx-4 mt-2 text-xs text-red-600 dark:text-red-400">{formError}</p>}
     </>
   );
 });

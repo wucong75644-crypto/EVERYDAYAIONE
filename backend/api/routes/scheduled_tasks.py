@@ -258,6 +258,25 @@ def _draft_definition(payload: CreateScheduledTaskRequest, schedule: Dict[str, A
     }
 
 
+def _revision_definition(
+    task: Dict[str, Any],
+    payload: UpdateScheduledTaskRequest,
+    schedule: Dict[str, Any],
+) -> Dict[str, Any]:
+    """把现有任务与修订输入合成为新的、待预检的不可变定义。"""
+    return {
+        "name": payload.name if payload.name is not None else task["name"],
+        "prompt": payload.prompt if payload.prompt is not None else task["prompt"],
+        "timezone": payload.timezone if payload.timezone is not None else task.get("timezone", "Asia/Shanghai"),
+        "push_target": payload.push_target if payload.push_target is not None else task.get("push_target") or {},
+        "template_file": payload.template_file if payload.template_file is not None else task.get("template_file"),
+        "max_credits": payload.max_credits if payload.max_credits is not None else task.get("max_credits", 10),
+        "retry_count": payload.retry_count if payload.retry_count is not None else task.get("retry_count", 1),
+        "timeout_sec": payload.timeout_sec if payload.timeout_sec is not None else task.get("timeout_sec", 180),
+        **schedule,
+    }
+
+
 async def _enrich_with_creator(db: Any, tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """批量补充创建者展示信息（用于老板/主管视角）"""
     if not tasks:
@@ -403,12 +422,17 @@ async def confirm_task_draft(
     db: Database,
 ) -> Dict[str, Any]:
     org_id = _require_org(org_ctx)
-    if not await check_permission(db, user_id, org_id, "task.create"):
-        raise HTTPException(403, "无权创建定时任务")
     result = scoped_db.table("scheduled_task_drafts").select("*").eq("id", draft_id).eq("user_id", user_id).execute()
     if not result.data:
         raise HTTPException(404, "任务草稿不存在")
     draft = result.data[0]
+    source_task_id = draft.get("source_task_id")
+    if source_task_id:
+        source = scoped_db.table("scheduled_tasks").select("*").eq("id", source_task_id).execute()
+        if not source.data or not await check_permission(db, user_id, org_id, "task.edit", source.data[0]):
+            raise HTTPException(403, "无权修改此定时任务")
+    elif not await check_permission(db, user_id, org_id, "task.create"):
+        raise HTTPException(403, "无权创建定时任务")
     definition = draft.get("definition") or {}
     if payload.config_hash != draft.get("config_hash"):
         raise HTTPException(409, "任务配置已变化，请重新规划并试跑")
@@ -423,7 +447,9 @@ async def confirm_task_draft(
         "p_next_run_at": schedule["next_run_at"],
     }).execute()
     outcome = response.data if response else None
-    if not isinstance(outcome, dict) or outcome.get("outcome") not in {"created", "confirmed"}:
+    if not isinstance(outcome, dict) or outcome.get("outcome") not in {"created", "updated", "confirmed"}:
+        if isinstance(outcome, dict) and outcome.get("outcome") == "source_running":
+            raise HTTPException(409, "任务正在执行，暂不能替换配置；请稍后重新确认")
         raise HTTPException(409, "预检尚未通过、已过期或配置已变化")
     final_id = str(outcome.get("task_id") or task_id)
     task = scoped_db.table("scheduled_tasks").select("*").eq("id", final_id).execute()
@@ -536,11 +562,6 @@ async def update_task(
     if not await check_permission(db, user_id, org_id, "task.edit", task):
         raise HTTPException(403, "无权编辑此任务")
 
-    update: Dict[str, Any] = {}
-    for field in ("name", "prompt", "timezone", "max_credits", "retry_count", "timeout_sec"):
-        val = getattr(payload, field, None)
-        if val is not None:
-            update[field] = val
     if payload.push_target is not None:
         # 改推送目标也要校验权限：改成给他人/群聊需要 task.push_to_others
         if not _is_push_to_self(db, user_id, payload.push_target):
@@ -548,35 +569,37 @@ async def update_task(
                 raise HTTPException(
                     403, "无权将定时任务推送给同事或群聊（需要管理职位）"
                 )
-        update["push_target"] = payload.push_target
-    if payload.template_file is not None:
-        update["template_file"] = payload.template_file
+    # 任何会影响实际执行的修改都必须重新走 AI 规划与安全试跑；原任务在
+    # 用户确认草稿前保持完全不变。
+    effective = SimpleNamespace(
+        schedule_type=payload.schedule_type or task.get("schedule_type"),
+        cron_expr=(
+            payload.cron_expr
+            if payload.cron_expr is not None
+            else task.get("cron_expr")
+        ),
+        time_str=payload.time_str,
+        weekdays=(payload.weekdays if payload.weekdays is not None else task.get("weekdays")),
+        day_of_month=(payload.day_of_month if payload.day_of_month is not None else task.get("day_of_month")),
+        run_at=(payload.run_at if payload.run_at is not None else task.get("run_at")),
+    )
+    # 已有 daily/weekly/monthly 任务没有 time_str，需从 cron 恢复给统一校验器。
+    if effective.schedule_type in {"daily", "weekly", "monthly"} and not effective.time_str:
+        cron_parts = str(effective.cron_expr or "").split()
+        if len(cron_parts) >= 2:
+            effective.time_str = f"{int(cron_parts[1]):02d}:{int(cron_parts[0]):02d}"
+    tz = payload.timezone or task.get("timezone", "Asia/Shanghai")
+    schedule = _resolve_schedule_fields(effective, tz)
 
-    # 频率字段：只有传 schedule_type 时才走重新组装；
-    # 否则只兼容老接口（仅传 cron_expr）
-    if payload.schedule_type is not None:
-        tz = payload.timezone or task.get("timezone", "Asia/Shanghai")
-        schedule = _resolve_schedule_fields(payload, tz)
-        update["schedule_type"] = schedule["schedule_type"]
-        update["cron_expr"] = schedule["cron_expr"]
-        update["weekdays"] = schedule["weekdays"]
-        update["day_of_month"] = schedule["day_of_month"]
-        update["run_at"] = schedule["run_at"]
-        update["next_run_at"] = schedule["next_run_at"]
-    elif payload.cron_expr is not None:
-        # 老接口：仅传 cron_expr 时维持向后兼容
-        if not validate_cron(payload.cron_expr):
-            raise HTTPException(400, "cron 表达式无效")
-        update["cron_expr"] = payload.cron_expr
-        update["next_run_at"] = calc_next_run(
-            payload.cron_expr, payload.timezone or task.get("timezone", "Asia/Shanghai")
-        ).isoformat()
-
-    if update:
-        update["updated_at"] = datetime.now(timezone.utc).isoformat()
-        scoped_db.table("scheduled_tasks").update(update).eq("id", task_id).execute()
-
-    return {"success": True}
+    from services.scheduler.scheduled_task_workflow import create_draft_and_preflight
+    draft = await create_draft_and_preflight(
+        db=db,
+        org_id=org_id,
+        user_id=user_id,
+        definition=_revision_definition(task, payload, schedule),
+        source_task_id=task_id,
+    )
+    return {"success": True, "data": draft}
 
 
 @router.delete("/{task_id}", summary="删除任务")

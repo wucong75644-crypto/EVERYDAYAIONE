@@ -445,9 +445,13 @@ class TestHandleFormSubmit:
         assert "执行内容" in result["message"]
 
     @pytest.mark.asyncio
+    @patch("services.scheduler.scheduled_task_workflow.create_draft_and_preflight", new_callable=AsyncMock, return_value={
+        "id": "draft-1", "status": "ready", "config_hash": "a" * 64,
+        "source_task_id": "task-123", "execution_policy": {"allowed_tools": ["erp_agent"]}, "plan": {"steps": []},
+    })
     @patch("services.permissions.checker.check_permission", new_callable=AsyncMock, return_value=True)
-    async def test_update_success(self, _mock_perm):
-        """修改任务成功路径"""
+    async def test_update_success(self, _mock_perm, mock_preflight):
+        """修改任务必须产生修订草稿，而非直接改写运行中的任务。"""
         db = _mock_db()
         db.execute.return_value = MagicMock(data=[
             {"id": "task-123", "name": "旧", "prompt": "旧指令",
@@ -463,7 +467,9 @@ class TestHandleFormSubmit:
         }
         result = await handle_form_submit(db, "u1", "org1", "scheduled_task_update", data)
         assert result["success"] is True
-        assert "新名称" in result["message"]
+        assert "试跑" in result["message"]
+        assert result["next_form"]["form_type"] == "scheduled_task_confirm"
+        assert mock_preflight.await_args.kwargs["source_task_id"] == "task-123"
 
 
 # ════════════════════════════════════════════════════════

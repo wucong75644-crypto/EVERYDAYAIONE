@@ -4,8 +4,8 @@
 > 定时任务企微推送的实现依据。当前可靠投递设计见
 > [TECH_定时任务可靠投递.md](./TECH_定时任务可靠投递.md)；旧段落仅保留设计历史。
 
-> 版本：V3.0 | 日期：2026-08-29
-> 状态：已实施（受控规划、预检与确认启用）
+> 版本：V3.1 | 日期：2026-08-29
+> 状态：已实施（受控规划、预检、持久化确认与可靠投递）
 > 依赖：[TECH_组织架构与权限模型.md](./TECH_组织架构与权限模型.md)
 
 ---
@@ -40,7 +40,7 @@
 
 ```text
 任务定义 → Planner Agent（结构化计划） → 系统能力策略 → 只读预检
-→ 用户确认 → 原子启用 active 任务 → 到点动态执行 → Completion Gate
+→ 持久化确认 → 原子启用/替换 active 任务 → 到点动态执行 → Completion Gate
 → 原子结算 + 可靠投递 outbox
 ```
 
@@ -49,6 +49,8 @@
 - 预检沿用正式的 `ScheduledTaskAgent`，但处于 `preflight` 模式：禁止业务写操作、推送和积分锁定，输出隔离在 staging。
 - `wrap_up_failure`、超时、循环检测、预算耗尽、缺少必需工具或最终结论，均不能通过 Completion Gate；失败只记录诊断、退款且不产生结果投递。
 - `scheduled_task_drafts`、`scheduled_task_preflight_runs` 和 `scheduled_task_execution_events` 保存草稿、试跑证据和实际运行路径；`tool_audit_log` 继续承担全局工具审计。
+- 聊天表单的 `open → submitting → submitted/cancelled` 状态和下一张确认表单写回 assistant 消息内容，定位键为 `conversation_id + message_id + form_id`。刷新、跨端打开和重复点击均读取同一事实，不依赖浏览器本地状态。
+- 编辑 active 任务生成带 `source_task_id` 的修订草稿。仅在预检通过且用户确认后，RPC 锁定源任务并原子替换定义；源任务运行中则拒绝替换。没有 `execution_policy` 的历史任务自动暂停，必须重新预检后才可恢复。
 
 接口对应如下：
 
@@ -56,6 +58,7 @@
 |---|---|
 | `POST /scheduled-tasks/drafts` | 创建草稿、AI 规划并同步执行只读预检；不创建 active 任务 |
 | `POST /scheduled-tasks/drafts/{id}/confirm` | 校验配置指纹与预检状态后，以 RPC 原子启用任务 |
+| `PATCH /scheduled-tasks/{id}` | 创建修订草稿并安全试跑；确认前原任务保持不变 |
 | `POST /scheduled-tasks` | 拒绝旧式直建，避免绕过预检 |
 
 网页表单展示计划、试跑结论与调用路径；聊天表单在试跑通过后追加“确认启用”表单。已有任务保持可运行，但其编辑、重新启用应迁移至预检流程。

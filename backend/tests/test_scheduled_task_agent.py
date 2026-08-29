@@ -46,6 +46,7 @@ def make_task(**overrides) -> dict:
         "last_summary": None,
         "run_count": 0,
         "consecutive_failures": 0,
+        "execution_policy": {"allowed_tools": ["erp_agent"]},
     }
     base.update(overrides)
     return base
@@ -161,6 +162,16 @@ class TestScheduledTaskResult:
 
 
 class TestExecutionOutcome:
+    @pytest.mark.asyncio
+    async def test_legacy_task_without_execution_policy_requires_revalidation(self):
+        task = make_task()
+        task.pop("execution_policy")
+
+        result = await ScheduledTaskAgent(MagicMock(), task).execute()
+
+        assert result.status == "error"
+        assert result.error_message == "scheduled_task_revalidation_required"
+
     @pytest.mark.asyncio
     async def test_missing_final_synthesis_is_error_and_preserves_tool_failure(self):
         agent = ScheduledTaskAgent(MagicMock(), make_task())

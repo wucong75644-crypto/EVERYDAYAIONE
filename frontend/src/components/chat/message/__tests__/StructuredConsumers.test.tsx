@@ -63,7 +63,7 @@ describe('structured message consumers', () => {
       }],
     } as unknown as FormPart;
 
-    render(<FormBlock form={form} />);
+    render(<FormBlock form={form} messageId="message-1" conversationId="conversation-1" />);
 
     expect(screen.getByRole('textbox')).toHaveValue('');
     expect(document.body.textContent).not.toContain('[object Object]');
@@ -88,7 +88,7 @@ describe('structured message consumers', () => {
         { type: 'hidden', name: 'token', label: '隐藏', default_value: 'secret' },
       ],
     };
-    const { container } = render(<FormBlock form={form} />);
+    const { container } = render(<FormBlock form={form} messageId="message-1" conversationId="conversation-1" />);
 
     expect(screen.getByText('创建任务')).toBeInTheDocument();
     expect(screen.getByText('填写配置')).toBeInTheDocument();
@@ -111,15 +111,20 @@ describe('structured message consumers', () => {
     };
     const submitListener = vi.fn();
     window.addEventListener('chat:form-submit', submitListener);
-    render(<FormBlock form={form} />);
+    render(<FormBlock form={form} messageId="message-1" conversationId="conversation-1" />);
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'new' } });
     fireEvent.click(screen.getByRole('button', { name: '确认' }));
 
     expect(submitListener).toHaveBeenCalled();
     const event = submitListener.mock.calls[0][0] as CustomEvent;
-    expect(event.detail).toEqual({ formType: 'test', formData: { name: 'new' } });
+    expect(event.detail).toEqual({
+      formType: 'test', formData: { name: 'new' }, formId: 'submit',
+      messageId: 'message-1', conversationId: 'conversation-1', action: 'submit',
+    });
     expect(screen.getByRole('button', { name: /提交中/ })).toBeDisabled();
-    fireEvent(window, new CustomEvent('chat:form-submit-result', { detail: { success: true } }));
+    fireEvent(window, new CustomEvent('chat:form-submit-result', { detail: {
+      success: true, form_id: 'submit', message_id: 'message-1', conversation_id: 'conversation-1',
+    } }));
     expect(screen.getByText(/已提交/)).toBeInTheDocument();
     window.removeEventListener('chat:form-submit', submitListener);
   });
@@ -128,13 +133,14 @@ describe('structured message consumers', () => {
     const form: FormPart = {
       type: 'form', form_type: 'scheduled_task_create', form_id: 'preflight', title: '试跑', fields: [],
     };
-    render(<FormBlock form={form} />);
+    render(<FormBlock form={form} messageId="message-1" conversationId="conversation-1" />);
     expect(screen.getByText('1. 填写配置')).toBeInTheDocument();
     expect(screen.getByText(/尚未创建任务/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '确认' }));
     expect(screen.getByText('2. 规划与试跑')).toBeInTheDocument();
     fireEvent(window, new CustomEvent('chat:form-submit-result', { detail: {
       success: true,
+      form_id: 'preflight', message_id: 'message-1', conversation_id: 'conversation-1',
       next_form: {
         type: 'form', form_type: 'scheduled_task_confirm', form_id: 'confirm',
         title: '确认启用定时任务',
@@ -147,20 +153,37 @@ describe('structured message consumers', () => {
   });
 
   it('FormBlock recovers from submit failure and supports cancellation', () => {
-    const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
     const form: FormPart = {
       type: 'form', form_type: 'test', form_id: 'failure', title: '失败测试', fields: [],
     };
-    const { rerender } = render(<FormBlock form={form} />);
+    const { rerender } = render(<FormBlock form={form} messageId="message-1" conversationId="conversation-1" />);
     fireEvent.click(screen.getByRole('button', { name: '确认' }));
     fireEvent(window, new CustomEvent('chat:form-submit-result', {
-      detail: { success: false, message: '服务拒绝' },
+      detail: { success: false, message: '服务拒绝', form_id: 'failure', message_id: 'message-1', conversation_id: 'conversation-1' },
     }));
-    expect(alertMock).toHaveBeenCalledWith('服务拒绝');
+    expect(screen.getByText('服务拒绝')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '确认' })).toBeEnabled();
 
-    rerender(<FormBlock form={{ ...form, form_id: 'cancel' }} />);
+    rerender(<FormBlock form={{ ...form, form_id: 'cancel' }} messageId="message-1" conversationId="conversation-1" />);
     fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    fireEvent(window, new CustomEvent('chat:form-submit-result', { detail: {
+      success: true, status: 'cancelled', form_id: 'cancel', message_id: 'message-1', conversation_id: 'conversation-1',
+    } }));
     expect(screen.getByText(/已取消/)).toBeInTheDocument();
+  });
+
+  it('FormBlock ignores a result belonging to another form and renders persisted cancellation after refresh', () => {
+    const form: FormPart = {
+      type: 'form', form_type: 'test', form_id: 'persisted', title: '持久化测试', fields: [],
+    };
+    const { rerender } = render(<FormBlock form={form} messageId="message-1" conversationId="conversation-1" />);
+    fireEvent.click(screen.getByRole('button', { name: '确认' }));
+    fireEvent(window, new CustomEvent('chat:form-submit-result', { detail: {
+      success: true, form_id: 'other-form', message_id: 'message-1', conversation_id: 'conversation-1',
+    } }));
+    expect(screen.getByRole('button', { name: /提交中/ })).toBeDisabled();
+
+    rerender(<FormBlock form={{ ...form, status: 'cancelled' }} messageId="message-1" conversationId="conversation-1" />);
+    expect(screen.getByText('持久化测试 — 已取消')).toBeInTheDocument();
   });
 });

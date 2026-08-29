@@ -19,7 +19,6 @@ import { useState, useEffect } from 'react';
 import { ArrowLeft, Sparkles, Loader2, User, Users, MessageSquare } from 'lucide-react';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
-import { useScheduledTaskStore } from '../../stores/useScheduledTaskStore';
 import { scheduledTaskService } from '../../services/scheduledTask';
 import { orgMembersService } from '../../services/orgMembers';
 import { wecomChatTargetsService } from '../../services/wecomChatTargets';
@@ -123,7 +122,6 @@ function localDatetimeToIso(local: string): string {
 
 export function TaskForm({ task, onClose, onSaved }: Props) {
   const isEdit = task !== null;
-  const updateTask = useScheduledTaskStore((s) => s.updateTask);
   const currentUserId = useAuthStore((s) => s.user?.id) || '';
 
   const canPushToOthers = usePermission('task.push_to_others');
@@ -330,9 +328,11 @@ export function TaskForm({ task, onClose, onSaved }: Props) {
     setSubmitting(true);
     try {
       if (isEdit && task) {
-        const ok = await updateTask(task.id, dto);
-        if (ok) onSaved();
-        else setError('更新失败');
+        const prepared = await scheduledTaskService.update(task.id, dto);
+        setDraft(prepared);
+        if (prepared.status !== 'ready') {
+          setError(prepared.error_message || '安全试跑未通过，原任务没有修改');
+        }
       } else {
         const prepared = await scheduledTaskService.createDraft(dto);
         setDraft(prepared);
@@ -360,7 +360,7 @@ export function TaskForm({ task, onClose, onSaved }: Props) {
     }
   };
 
-  if (!isEdit && submitting && !draft) {
+  if (submitting && !draft) {
     return (
       <>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--s-border-default)]">
@@ -378,7 +378,7 @@ export function TaskForm({ task, onClose, onSaved }: Props) {
     );
   }
 
-  if (!isEdit && draft) {
+  if (draft) {
     const preflight = draft.latest_preflight;
     const passed = draft.status === 'ready' && preflight?.status === 'passed';
     return (

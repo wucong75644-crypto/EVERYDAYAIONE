@@ -149,6 +149,9 @@ const contentPartSchema = z.preprocess(normalizeNullEquivalentFields, z.discrimi
     fields: z.array(formFieldSchema),
     submit_text: optionalString,
     cancel_text: optionalString,
+    status: z.enum(['open', 'submitting', 'cancelled', 'submitted']).optional(),
+    result_message: optionalString,
+    error_message: optionalString,
   }).passthrough(),
   z.object({
     type: z.literal('chart'),

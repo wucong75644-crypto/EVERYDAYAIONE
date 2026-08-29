@@ -88,6 +88,15 @@ class ScheduledTaskAgent:
         adapter = None
 
         try:
+            # 245 起，所有自动执行的任务都必须绑定已确认的工具范围。
+            # 旧任务会在迁移中暂停；这里保留最终护栏，防止任何旁路执行。
+            if not isinstance(self.task.get("execution_policy"), dict):
+                return ScheduledTaskResult(
+                    text="任务尚未通过当前执行路径验证",
+                    status="error",
+                    error_message="scheduled_task_revalidation_required",
+                )
+
             # 1. 模板文件复制到 staging（如有）
             await self._prepare_template()
 

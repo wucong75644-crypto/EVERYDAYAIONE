@@ -372,10 +372,14 @@ def _build_confirm_form(draft: Dict[str, Any]) -> Dict[str, Any]:
         "type": "form",
         "form_type": "scheduled_task_confirm",
         "form_id": f"task_confirm_{draft['id'][:8]}",
-        "title": "确认启用定时任务",
+        "title": "确认更新定时任务" if draft.get("source_task_id") else "确认启用定时任务",
         "description": (
-            "步骤 3/4 · 预检已通过，正式任务仍未创建。"
-            f"执行路径：{path or 'AI 将在已确认范围内动态执行'}"
+            (
+                "步骤 3/4 · 修订预检已通过，确认后才会替换当前任务的执行定义。"
+                if draft.get("source_task_id")
+                else "步骤 3/4 · 预检已通过，正式任务仍未创建。"
+            )
+            + f"执行路径：{path or 'AI 将在已确认范围内动态执行'}"
         ),
         "fields": [
             _build_form_field("draft_id", "hidden", "", default_value=draft["id"]),
@@ -599,8 +603,8 @@ async def handle_form_submit(
         return await _submit_create(db, user_id, org_id, form_data)
 
     if form_type == "scheduled_task_confirm":
-        if not await check_permission(db, user_id, org_id, "task.create"):
-            return {"success": False, "message": "无权创建定时任务"}
+        # 新建与修订的确认权限不同：修订沿用源任务的编辑权限，不能因为
+        # “确认”这个动作而额外要求创建权限。
         return await _submit_confirm(db, user_id, org_id, form_data)
 
     if form_type == "scheduled_task_update":
@@ -716,6 +720,14 @@ async def _submit_confirm(
     if not response.data:
         return {"success": False, "message": "预检草稿不存在或无权确认"}
     draft = response.data[0]
+    from services.permissions.checker import check_permission
+    source_task_id = draft.get("source_task_id")
+    if source_task_id:
+        source = db.table("scheduled_tasks").select("*").eq("id", source_task_id).eq("org_id", org_id).limit(1).execute()
+        if not source.data or not await check_permission(db, user_id, org_id, "task.edit", source.data[0]):
+            return {"success": False, "message": "无权修改此定时任务"}
+    elif not await check_permission(db, user_id, org_id, "task.create"):
+        return {"success": False, "message": "无权创建定时任务"}
     definition = draft.get("definition") or {}
     if definition.get("schedule_type") == "once":
         next_run_at = definition.get("next_run_at") or definition.get("run_at")
@@ -730,15 +742,19 @@ async def _submit_confirm(
         "p_config_hash": config_hash, "p_task_id": task_id, "p_next_run_at": next_run_at,
     }).execute()
     outcome = confirmed.data if confirmed else None
-    if not isinstance(outcome, dict) or outcome.get("outcome") not in {"created", "confirmed"}:
+    if not isinstance(outcome, dict) or outcome.get("outcome") not in {"created", "updated", "confirmed"}:
+        if isinstance(outcome, dict) and outcome.get("outcome") == "source_running":
+            return {"success": False, "message": "任务正在执行，暂不能替换配置；请稍后重新确认"}
         return {"success": False, "message": "预检已过期或任务配置已变化，请重新试跑"}
+    if outcome.get("outcome") == "updated":
+        return {"success": True, "message": "✅ 定时任务已确认更新"}
     return {"success": True, "message": "✅ 定时任务已确认启用"}
 
 
 async def _submit_update(
     db: Any, user_id: str, org_id: str, data: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """修改定时任务（表单提交后调用）"""
+    """创建任务修订草稿；任何执行定义变化都不能绕过预检。"""
     task_id = data.get("task_id", "").strip()
     if not task_id:
         return {"success": False, "message": "缺少任务 ID"}
@@ -767,20 +783,31 @@ async def _submit_update(
     except json.JSONDecodeError:
         return {"success": False, "message": "推送目标格式无效"}
 
-    update: Dict[str, Any] = {}
-    if name:
-        update["name"] = name
-    if prompt:
-        update["prompt"] = prompt
-    if push_target:
-        update["push_target"] = push_target
-    update["schedule_type"] = schedule_type
+    task = result.data[0]
+    if not name or not prompt:
+        return {"success": False, "message": "任务名称和执行内容不能为空"}
+    if not isinstance(push_target, dict) or not push_target:
+        return {"success": False, "message": "推送目标格式无效"}
+
+    definition: Dict[str, Any] = {
+        "name": name,
+        "prompt": prompt,
+        "push_target": push_target,
+        "timezone": task.get("timezone") or tz,
+        "template_file": task.get("template_file"),
+        "max_credits": task.get("max_credits") or 10,
+        "retry_count": task.get("retry_count") or 1,
+        "timeout_sec": task.get("timeout_sec") or 180,
+        "schedule_type": schedule_type,
+    }
 
     if schedule_type == "once":
         run_dt = _calc_once_run_at(time_str, tz)
-        update["run_at"] = run_dt.isoformat()
-        update["next_run_at"] = run_dt.astimezone(timezone.utc).isoformat()
-        update["cron_expr"] = None
+        definition["run_at"] = run_dt.isoformat()
+        definition["next_run_at"] = run_dt.astimezone(timezone.utc).isoformat()
+        definition["cron_expr"] = None
+        definition["weekdays"] = None
+        definition["day_of_month"] = None
     else:
         try:
             cron_expr = compose_cron(
@@ -792,20 +819,33 @@ async def _submit_update(
         except ValueError as e:
             return {"success": False, "message": f"频率配置错误: {e}"}
 
-        update["cron_expr"] = cron_expr
-        update["weekdays"] = [int(w) for w in weekdays] if weekdays and schedule_type == "weekly" else None
-        update["day_of_month"] = int(day_of_month) if day_of_month and schedule_type == "monthly" else None
-        update["run_at"] = None
+        definition["cron_expr"] = cron_expr
+        definition["weekdays"] = [int(w) for w in weekdays] if weekdays and schedule_type == "weekly" else None
+        definition["day_of_month"] = int(day_of_month) if day_of_month and schedule_type == "monthly" else None
+        definition["run_at"] = None
         try:
             next_run = calc_next_run(cron_expr, tz)
-            update["next_run_at"] = next_run.isoformat()
+            definition["next_run_at"] = next_run.isoformat()
         except Exception as e:
             return {"success": False, "message": f"计算执行时间失败: {e}"}
 
-    db.table("scheduled_tasks").update(update).eq("id", task_id).execute()
+    from services.scheduler.scheduled_task_workflow import create_draft_and_preflight
+    draft = await create_draft_and_preflight(
+        db=db,
+        org_id=org_id,
+        user_id=user_id,
+        definition=definition,
+        source_task_id=task_id,
+    )
+    if draft.get("status") != "ready":
+        return {
+            "success": False,
+            "message": f"安全试跑未通过：{draft.get('error_message') or '调用路径未完成'}。原任务未修改。",
+        }
 
-    logger.info(f"chat_task_manager updated | id={task_id} | fields={list(update.keys())}")
+    logger.info(f"chat_task_manager revision_ready | task={task_id} | draft={draft['id']}")
     return {
         "success": True,
-        "message": f"✅ 已更新任务「{name or task_id[:8]}」",
+        "message": f"✅ 「{name}」已完成更新路径的规划与只读试跑，原任务尚未修改。",
+        "next_form": _build_confirm_form(draft),
     }

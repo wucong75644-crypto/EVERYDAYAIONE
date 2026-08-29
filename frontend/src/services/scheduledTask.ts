@@ -58,8 +58,10 @@ export const scheduledTaskService = {
   },
 
   /** 更新任务 */
-  async update(id: string, dto: UpdateTaskDto): Promise<void> {
-    await api.patch(`${BASE}/${id}`, dto);
+  /** 修改先生成修订草稿；确认前不会改变活跃任务。 */
+  async update(id: string, dto: UpdateTaskDto): Promise<ScheduledTaskDraft> {
+    const res = await api.patch<ApiResponse<ScheduledTaskDraft>>(`${BASE}/${id}`, dto);
+    return res.data.data;
   },
 
   /** 删除任务 */
