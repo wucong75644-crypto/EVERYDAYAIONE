@@ -77,6 +77,19 @@ export interface ScheduledTask {
 
   created_at: string;
   updated_at: string;
+  revision: string;
+  execution_policy?: Record<string, unknown> | null;
+  plan_snapshot?: Record<string, unknown> | null;
+  data_scope?: Record<string, unknown> | null;
+}
+
+export type ScheduledTaskChangeOperation = 'create' | 'update' | 'pause' | 'resume' | 'delete';
+
+export interface ScheduledTaskChangeRequest {
+  operation: ScheduledTaskChangeOperation;
+  task_id?: string;
+  definition?: Record<string, unknown>;
+  idempotency_key?: string;
 }
 
 export interface TaskRun {

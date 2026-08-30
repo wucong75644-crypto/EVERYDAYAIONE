@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List
 from uuid import uuid4
 
+from services.planner import CapabilityRegistry, PlanCandidate, PlanStep, PlannerFramework
+
 
 _PREFLIGHT_BLOCKED_TOOLS = frozenset({
     "manage_scheduled_task", "erp_execute", "trigger_erp_sync", "file_delete",
@@ -131,10 +133,42 @@ def validate_plan(raw: Dict[str, Any], *, available_tools: set[str], timeout_sec
     evidence = contract.get("required_evidence")
     if not isinstance(evidence, list):
         evidence = []
+    candidate = PlanCandidate(
+        target={"resource_type": "scheduled_task"},
+        input_contract={"type": "scheduled_task_definition"},
+        output_contract={
+            "allow_empty_result": allow_empty,
+            "required_evidence": [str(x)[:160] for x in evidence if str(x).strip()][:8],
+        },
+        steps=tuple(
+            PlanStep(
+                step_id=step["id"], intent=step["intent"], tools=step["tools"],
+                required=step["required"], verification=step["verify"],
+            )
+            for step in normalized_steps
+        ),
+        candidate_tools=tuple(sorted(allowed)),
+        verification_conditions=tuple(
+            str(x)[:160] for x in evidence if str(x).strip()
+        ),
+        risk_info={"execution_mode": "scheduled"},
+    )
+    validation = PlannerFramework(CapabilityRegistry.from_names(available_tools)).validator.validate(
+        candidate, execution_mode="scheduled",
+    )
+    if not validation.valid:
+        raise ValueError("计划校验失败: " + "; ".join(validation.errors))
+
     plan = {
         "version": 1,
+        "contract_version": candidate.version,
         "objective": objective,
         "steps": normalized_steps,
+        "target": dict(candidate.target),
+        "input_contract": dict(candidate.input_contract),
+        "candidate_tools": sorted(allowed),
+        "verification_conditions": list(candidate.verification_conditions),
+        "risk_info": dict(candidate.risk_info),
         "output_contract": {
             "allow_empty_result": allow_empty,
             "required_evidence": [str(x)[:160] for x in evidence if str(x).strip()][:8],

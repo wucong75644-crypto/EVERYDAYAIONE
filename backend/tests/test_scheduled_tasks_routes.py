@@ -409,6 +409,24 @@ class TestCreateTaskDraft:
         assert resp.status_code == 409
         assert "规划与安全试跑" in resp.json()["detail"]
 
+    def test_changeset_entry_returns_stable_projection(self):
+        db = FakeDB()
+        app = _build_app(db)
+        with patch(
+            "api.routes.scheduled_tasks._propose_task_change",
+            new=AsyncMock(return_value={"id": "cs-1", "status": "awaiting_approval"}),
+        ) as propose, patch(
+            "api.routes.change_sets._to_dto",
+            return_value={"id": "cs-1", "status": "awaiting_approval", "diff": {}, "checks": []},
+        ):
+            response = TestClient(app).post("/api/scheduled-tasks/changesets", json={
+                "operation": "pause", "task_id": "task-1", "definition": {},
+            })
+
+        assert response.status_code == 200
+        assert response.json()["data"]["status"] == "awaiting_approval"
+        propose.assert_awaited_once()
+
 
 class TestTaskRevisionDraft:
     def test_patch_creates_a_revision_draft_without_directly_changing_the_task(self):
@@ -585,6 +603,12 @@ class TestTaskOperations:
         with patch(
             "api.routes.scheduled_tasks.check_permission",
             new=AsyncMock(return_value=True),
+        ), patch(
+            "api.routes.scheduled_tasks._propose_task_change",
+            new=AsyncMock(return_value={}),
+        ), patch(
+            "api.routes.change_sets._to_dto",
+            return_value={},
         ):
             client = TestClient(app)
             resp = client.post("/api/scheduled-tasks/t1/pause")
@@ -625,6 +649,12 @@ class TestTaskOperations:
         with patch(
             "api.routes.scheduled_tasks.check_permission",
             new=AsyncMock(return_value=True),
+        ), patch(
+            "api.routes.scheduled_tasks._propose_task_change",
+            new=AsyncMock(return_value={}),
+        ), patch(
+            "api.routes.change_sets._to_dto",
+            return_value={},
         ):
             client = TestClient(app)
             resp = client.post("/api/scheduled-tasks/t1/resume")
@@ -644,6 +674,12 @@ class TestTaskOperations:
         with patch(
             "api.routes.scheduled_tasks.check_permission",
             new=AsyncMock(return_value=True),
+        ), patch(
+            "api.routes.scheduled_tasks._propose_task_change",
+            new=AsyncMock(return_value={}),
+        ), patch(
+            "api.routes.change_sets._to_dto",
+            return_value={},
         ):
             resp = TestClient(app).post("/api/scheduled-tasks/t1/resume")
 
@@ -657,6 +693,12 @@ class TestTaskOperations:
         with patch(
             "api.routes.scheduled_tasks.check_permission",
             new=AsyncMock(return_value=True),
+        ), patch(
+            "api.routes.scheduled_tasks._propose_task_change",
+            new=AsyncMock(return_value={}),
+        ), patch(
+            "api.routes.change_sets._to_dto",
+            return_value={},
         ):
             client = TestClient(app)
             resp = client.delete("/api/scheduled-tasks/t1")

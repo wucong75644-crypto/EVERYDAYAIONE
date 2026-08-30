@@ -67,6 +67,9 @@ class DefaultRiskPolicy:
         if context.get("external_effect"):
             reasons.append("external_effect")
             return RiskAssessment(RiskLevel.HIGH, True, tuple(reasons))
+        if context.get("tool_scope_expanded"):
+            reasons.append("tool_scope_expanded")
+            return RiskAssessment(RiskLevel.HIGH, True, tuple(reasons))
         if normalized_operation in {"read", "preview", "render"}:
             reasons.append("read_only")
             return RiskAssessment(RiskLevel.LOW, False, tuple(reasons))

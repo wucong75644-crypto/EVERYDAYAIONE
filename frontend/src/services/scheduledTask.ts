@@ -12,7 +12,9 @@ import type {
   ParseNLResult,
   ChatTarget,
   ScheduledTaskDraft,
+  ScheduledTaskChangeRequest,
 } from '../types/scheduledTask';
+import type { ChangeSet } from '../types/changeset';
 
 interface ApiResponse<T> {
   success: boolean;
@@ -32,6 +34,12 @@ export const scheduledTaskService = {
   /** AI 规划并进行只读安全试跑；不会创建 active 任务。 */
   async createDraft(dto: CreateTaskDto): Promise<ScheduledTaskDraft> {
     const res = await api.post<ApiResponse<ScheduledTaskDraft>>(`${BASE}/drafts`, dto);
+    return res.data.data;
+  },
+
+  /** 第二批新入口：创建 ChangeSet，不写 scheduled_task_drafts。 */
+  async proposeChange(dto: ScheduledTaskChangeRequest): Promise<ChangeSet> {
+    const res = await api.post<ApiResponse<ChangeSet>>(`${BASE}/changesets`, dto);
     return res.data.data;
   },
 

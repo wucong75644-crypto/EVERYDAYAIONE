@@ -5,6 +5,7 @@
 
 路由：
 - POST   /scheduled-tasks                    创建
+- POST   /scheduled-tasks/changesets         创建受控 ChangeSet
 - GET    /scheduled-tasks                    列表（自动数据范围过滤）
 - GET    /scheduled-tasks/{id}               详情
 - PATCH  /scheduled-tasks/{id}               修改
@@ -34,6 +35,11 @@ from services.scheduler.cron_utils import (
     compose_cron,
     parse_cron_readable,
     validate_cron,
+)
+from services.scheduler.scheduled_task_change_adapter import (
+    ScheduledTaskChangeError,
+    ScheduledTaskChangeSetService,
+    task_snapshot,
 )
 
 
@@ -110,6 +116,13 @@ class ParseNLRequest(BaseModel):
 
 class ConfirmScheduledTaskDraftRequest(BaseModel):
     config_hash: str = Field(..., min_length=64, max_length=64)
+
+
+class ScheduledTaskChangeRequest(BaseModel):
+    operation: Literal["create", "update", "pause", "resume", "delete"]
+    task_id: Optional[str] = None
+    definition: Dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: Optional[str] = Field(default=None, min_length=1, max_length=200)
 
 
 # ════════════════════════════════════════════════════════
@@ -277,6 +290,60 @@ def _revision_definition(
     }
 
 
+async def _propose_task_change(
+    *,
+    db: Any,
+    scoped_db: Any,
+    user_id: str,
+    org_id: str,
+    operation: str,
+    task_id: str | None = None,
+    definition: Dict[str, Any] | None = None,
+    base_task: Dict[str, Any] | None = None,
+    idempotency_key: str | None = None,
+) -> Dict[str, Any]:
+    """新入口统一经过 Planner + ChangeSet；不写 scheduled_task_drafts。"""
+    task = base_task
+    if operation != "create" and not task_id:
+        raise HTTPException(422, "该操作必须提供 task_id")
+    if operation != "create" and task is None:
+        result = scoped_db.table("scheduled_tasks").select("*").eq("id", task_id).execute()
+        if not result.data:
+            raise HTTPException(404, "任务不存在")
+        task = result.data[0]
+    if operation != "create" and not task_id:
+        task_id = str(task["id"])
+    proposed = dict(definition or {})
+    if operation in {"pause", "resume", "delete"}:
+        proposed = task_snapshot(task)
+        if operation == "pause":
+            proposed.update({"status": "paused", "next_run_at": None})
+        elif operation == "resume":
+            if task.get("schedule_type") == "once":
+                raw = task.get("run_at")
+                if not raw:
+                    raise HTTPException(409, "一次性任务缺少执行时间，不能恢复")
+                run_at = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+                if run_at.tzinfo is None:
+                    raise HTTPException(409, "一次性任务执行时间必须包含时区")
+                next_run = max(run_at, datetime.now(timezone.utc))
+            else:
+                next_run = calc_next_run(task["cron_expr"], task.get("timezone", "Asia/Shanghai"))
+            proposed.update({"status": "active", "next_run_at": next_run.isoformat()})
+    if operation == "create":
+        proposed.setdefault("status", "active")
+    service = ScheduledTaskChangeSetService(db, user_id=user_id, org_id=org_id)
+    try:
+        return await service.propose(
+            operation=operation,
+            resource_id=None if operation == "create" else task_id,
+            base_snapshot=task,
+            proposed_snapshot=proposed, idempotency_key=idempotency_key,
+        )
+    except ScheduledTaskChangeError as exc:
+        raise HTTPException(exc.status_code, {"message": str(exc), "reasons": exc.details}) from exc
+
+
 async def _enrich_with_creator(db: Any, tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """批量补充创建者展示信息（用于老板/主管视角）"""
     if not tasks:
@@ -355,8 +422,27 @@ async def create_task(
 ) -> Dict[str, Any]:
     raise HTTPException(
         409,
-        "定时任务必须先通过 AI 规划与安全试跑；请调用 POST /scheduled-tasks/drafts",
+        "请使用 POST /scheduled-tasks/changesets 完成规划与安全试跑后确认创建",
     )
+
+
+@router.post("/changesets", summary="创建定时任务 ChangeSet")
+async def propose_task_changeset(
+    payload: ScheduledTaskChangeRequest,
+    user_id: CurrentUserId,
+    org_ctx: OrgCtx,
+    scoped_db: ScopedDB,
+    db: Database,
+) -> Dict[str, Any]:
+    """新入口：返回可供第三批前端展示和确认的 ChangeSet DTO。"""
+    org_id = _require_org(org_ctx)
+    row = await _propose_task_change(
+        db=db, scoped_db=scoped_db, user_id=user_id, org_id=org_id,
+        operation=payload.operation, task_id=payload.task_id,
+        definition=payload.definition, idempotency_key=payload.idempotency_key,
+    )
+    from api.routes.change_sets import _to_dto
+    return {"success": True, "data": _to_dto(row, row.get("checks") or [])}
 
 
 @router.post("/drafts", summary="规划并试跑定时任务")
@@ -591,6 +677,8 @@ async def update_task(
     tz = payload.timezone or task.get("timezone", "Asia/Shanghai")
     schedule = _resolve_schedule_fields(effective, tz)
 
+    # 兼容已经打开的旧任务表单：该路径只创建旧 draft，不直接写入任务。
+    # 新入口使用 POST /scheduled-tasks/changesets，统一进入 ChangeSet 适配器。
     from services.scheduler.scheduled_task_workflow import create_draft_and_preflight
     draft = await create_draft_and_preflight(
         db=db,
@@ -620,8 +708,12 @@ async def delete_task(
     if not await check_permission(db, user_id, org_id, "task.delete", task):
         raise HTTPException(403, "无权删除此任务")
 
-    scoped_db.table("scheduled_tasks").delete().eq("id", task_id).execute()
-    return {"success": True}
+    row = await _propose_task_change(
+        db=db, scoped_db=scoped_db, user_id=user_id, org_id=org_id,
+        operation="delete", task_id=task_id, base_task=task,
+    )
+    from api.routes.change_sets import _to_dto
+    return {"success": True, "data": _to_dto(row, row.get("checks") or [])}
 
 
 @router.post("/{task_id}/pause", summary="暂停任务")
@@ -642,12 +734,12 @@ async def pause_task(
     if not await check_permission(db, user_id, org_id, "task.edit", task):
         raise HTTPException(403, "无权暂停此任务")
 
-    scoped_db.table("scheduled_tasks").update({
-        "status": "paused",
-        "next_run_at": None,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }).eq("id", task_id).execute()
-    return {"success": True}
+    row = await _propose_task_change(
+        db=db, scoped_db=scoped_db, user_id=user_id, org_id=org_id,
+        operation="pause", task_id=task_id, base_task=task,
+    )
+    from api.routes.change_sets import _to_dto
+    return {"success": True, "data": _to_dto(row, row.get("checks") or [])}
 
 
 @router.post("/{task_id}/resume", summary="恢复任务")
@@ -684,13 +776,12 @@ async def resume_task(
         next_run = calc_next_run(
             task["cron_expr"], task.get("timezone", "Asia/Shanghai"),
         )
-    scoped_db.table("scheduled_tasks").update({
-        "status": "active",
-        "next_run_at": next_run.isoformat(),
-        "consecutive_failures": 0,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }).eq("id", task_id).execute()
-    return {"success": True}
+    row = await _propose_task_change(
+        db=db, scoped_db=scoped_db, user_id=user_id, org_id=org_id,
+        operation="resume", task_id=task_id, base_task=task,
+    )
+    from api.routes.change_sets import _to_dto
+    return {"success": True, "data": _to_dto(row, row.get("checks") or [])}
 
 
 @router.post("/{task_id}/run", summary="立即执行任务")

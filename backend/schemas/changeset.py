@@ -76,6 +76,11 @@ class ChangeSetDTO(BaseModel):
     created_at: datetime
     updated_at: datetime
     checks: List[ChangeCheckDTO] = Field(default_factory=list)
+    # 第二批稳定投影：第三批无需读取业务表来拼装审批/计划/结果。
+    risk: Optional[Dict[str, Any]] = None
+    plan: Optional[Dict[str, Any]] = None
+    approval_actions: List[Dict[str, Any]] = Field(default_factory=list)
+    result: Optional[Dict[str, Any]] = None
 
 
 class ChangeSetTimelineDTO(BaseModel):

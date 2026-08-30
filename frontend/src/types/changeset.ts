@@ -70,6 +70,16 @@ export interface ChangeSet {
   created_at: string;
   updated_at: string;
   checks: ChangeCheck[];
+  /** 第二批稳定投影，第三批直接渲染，不需读取业务表拼接。 */
+  risk?: Record<string, unknown> | null;
+  plan?: Record<string, unknown> | null;
+  approval_actions?: Array<{
+    action: 'confirm' | 'reject' | 'cancel';
+    enabled: boolean;
+    method: string;
+    path: string;
+  }>;
+  result?: Record<string, unknown> | null;
 }
 
 export interface ChangeSetTimeline {

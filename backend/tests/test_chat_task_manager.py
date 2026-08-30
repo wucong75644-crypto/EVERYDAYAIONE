@@ -197,7 +197,11 @@ class TestChatTaskManagerHandle:
             {"id": "t1", "name": "日报", "status": "active"},
         ])
         mgr = ChatTaskManager(db, "user1", "org1")
-        result = await mgr.handle("pause", {"task_name": "日报"})
+        with patch.object(mgr, "_propose_chat_change", new=AsyncMock(return_value={
+            "type": "change_set", "text": "已生成暂停变更方案，请确认后提交。",
+        })):
+            result = await mgr.handle("pause", {"task_name": "日报"})
+        assert result["type"] == "change_set"
         assert "暂停" in result["text"]
 
     @pytest.mark.asyncio
@@ -218,7 +222,11 @@ class TestChatTaskManagerHandle:
              "cron_expr": "0 9 * * *", "timezone": "Asia/Shanghai"},
         ])
         mgr = ChatTaskManager(db, "user1", "org1")
-        result = await mgr.handle("resume", {"task_name": "日报"})
+        with patch.object(mgr, "_propose_chat_change", new=AsyncMock(return_value={
+            "type": "change_set", "text": "已生成恢复变更方案，请确认后提交。",
+        })):
+            result = await mgr.handle("resume", {"task_name": "日报"})
+        assert result["type"] == "change_set"
         assert "恢复" in result["text"]
 
     @pytest.mark.asyncio
@@ -228,8 +236,27 @@ class TestChatTaskManagerHandle:
             {"id": "t1", "name": "日报", "status": "active"},
         ])
         mgr = ChatTaskManager(db, "user1", "org1")
-        result = await mgr.handle("delete", {"task_name": "日报"})
+        with patch.object(mgr, "_propose_chat_change", new=AsyncMock(return_value={
+            "type": "change_set", "text": "已生成删除变更方案，请确认后提交。",
+        })):
+            result = await mgr.handle("delete", {"task_name": "日报"})
+        assert result["type"] == "change_set"
         assert "删除" in result["text"]
+
+    @pytest.mark.asyncio
+    async def test_name_ambiguity_returns_candidates_without_selecting_first(self):
+        db = _mock_db()
+        db.execute.return_value = MagicMock(data=[
+            {"id": "task-1", "name": "日报-销售", "status": "active"},
+            {"id": "task-2", "name": "日报-库存", "status": "active"},
+        ])
+        mgr = ChatTaskManager(db, "user1", "org1")
+
+        result = await mgr.handle("pause", {"task_name": "日报"})
+
+        assert result["type"] == "text"
+        assert "task-1" in result["text"]
+        assert "task-2" in result["text"]
 
     @pytest.mark.asyncio
     async def test_unknown_action(self):

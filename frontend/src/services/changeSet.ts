@@ -25,6 +25,11 @@ export const changeSetService = {
     return res.data.data;
   },
 
+  async confirm(id: string): Promise<ChangeSet> {
+    const res = await api.post<ApiResponse<ChangeSet>>(`${BASE}/${id}/confirm`);
+    return res.data.data;
+  },
+
   async recover(id: string, idempotencyKey?: string): Promise<ChangeSet> {
     const res = await api.post<ApiResponse<ChangeSet>>(`${BASE}/${id}/recover`, {
       ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
