@@ -11,10 +11,10 @@
 
 `changeSetEvents.ts` 提供两个前端边界：状态变化通知会触发重新读取，动作请求交给第二批适配器或 WebSocket 入口。没有适配器时，确认/重新规划/解决冲突只发出事件并显示等待提示，不乐观修改状态。
 
-`FormBlock` 通过 `change_set_id` 关联卡片；`applyFormSubmitResult` 只把引用写回内存消息投影，ChangeSet 本身不写入消息缓存作为事实。消息刷新仍由既有消息 API 回读，卡片再按 ID 读取 ChangeSet。
+`FormBlock` 通过 `change_set_id` 关联卡片；ChangeSet 创建成功后由服务端将该引用和表单完成快照持久化到消息，`applyFormSubmitResult` 只负责即时更新内存投影。消息刷新仍由既有消息 API 回读，卡片再按 ID 读取 ChangeSet。
 
 ## 验证与回滚
 
 新增测试覆盖读取恢复、状态更新事件、取消防重、失败恢复、冲突提示、长文本/无 Diff、表单关联和旧表单兼容。生产灰度只需将 `VITE_CHANGESET_CHAT_UI` 设为 `false` 并重新加载前端；ChangeSet 和历史消息数据保留。
 
-第二批接口冻结后，应补充真实适配器链路测试：创建草案 → 规划/只读试跑 → 确认 → applied，以及修改 → Diff → 版本冲突 → 基于最新版本重新规划/确认。当前这些动作保留在注入边界，未伪造后端协议。
+第二批接口已冻结后，聊天定时任务场景的冲突卡片会复用 `/scheduled-tasks/changesets` 生成新的幂等提案；通用卡片仍保留动作事件桥供后续资源适配器接入。创建草案 → 规划/只读试跑 → 确认 → applied，以及修改 → Diff → 版本冲突 → 基于最新版本重新规划/确认由定时任务适配器完成。

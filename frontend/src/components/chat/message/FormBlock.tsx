@@ -17,11 +17,14 @@ import { CheckCircle2, Circle, Loader2, X } from 'lucide-react';
 import type { FormPart, FormField } from '../../../types/message';
 import { cn } from '../../../utils/cn';
 import { formatFormValue } from '../../../utils/displayValue';
+import { applyFormSubmitResult } from '../../../utils/messageUtils';
 import { SOFT_SPRING } from '../../../utils/motion';
+import { useMessageStore } from '../../../stores/useMessageStore';
 import { FormBlockContent } from './FormBlockContent';
 import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 import ChangeSetCard from './ChangeSetCard';
-import { isChangeSetChatUiEnabled } from '../../../config/featureFlags';
+import type { ChangeSet } from '../../../types/changeset';
+import { scheduledTaskService } from '../../../services/scheduledTask';
 
 // ════════════════════════════════════════════════════════
 // 子组件
@@ -335,6 +338,39 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
   const submitting = status === 'submitting';
   const cancelled = status === 'cancelled';
 
+  const replanChangeSet = useCallback(async (changeSet: ChangeSet): Promise<ChangeSet> => {
+    const operation = changeSet.operation === 'update' ? 'update' : 'create';
+    const next = await scheduledTaskService.proposeChange({
+      operation,
+      ...(operation === 'update' ? { task_id: changeSet.resource_id } : {}),
+      definition: changeSet.proposed_snapshot,
+      idempotency_key: `chat-replan:${changeSet.id}:${changeSet.revision}`,
+      message_id: messageId,
+      conversation_id: conversationId,
+      form_id: form.form_id,
+    });
+    const store = useMessageStore.getState();
+    const message = store.messages[conversationId]?.find((item) => item.id === messageId);
+    if (message) {
+      const content = applyFormSubmitResult(message.content, {
+        formId: form.form_id,
+        success: true,
+        status: 'submitted',
+        message: '已基于最新任务版本重新生成变更方案。',
+        changeSetId: next.id,
+      });
+      if (content !== message.content) store.updateMessage(messageId, { content });
+    } else {
+      store.markForceRefresh(conversationId);
+    }
+    return next;
+  }, [conversationId, form.form_id, messageId]);
+
+  const changeSetActionHandlers = useMemo(() => ({
+    replan: replanChangeSet,
+    resolve_conflict: replanChangeSet,
+  }), [replanChangeSet]);
+
   useEffect(() => {
     setStatus(form.status || 'open');
     setNextForm(form.next_form || null);
@@ -444,8 +480,8 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
           {submitted ? <CheckCircle2 size={16} /> : <X size={16} />}
           <span>{submitted ? (submittedMessage || `${form.title} — 已提交`) : `${form.title} — 已取消`}</span>
         </m.div>
-        {isChangeSetChatUiEnabled() && localChangeSetId && (
-          <ChangeSetCard changeSetId={localChangeSetId} fallbackTitle={form.title} />
+        {localChangeSetId && (
+          <ChangeSetCard changeSetId={localChangeSetId} fallbackTitle={form.title} actionHandlers={changeSetActionHandlers} />
         )}
         {nextForm && <FormBlock form={nextForm} messageId={messageId} conversationId={conversationId} />}
       </>
@@ -454,8 +490,8 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
 
   return (
     <>
-      {isChangeSetChatUiEnabled() && localChangeSetId && (
-        <ChangeSetCard changeSetId={localChangeSetId} fallbackTitle={form.title} />
+      {localChangeSetId && (
+        <ChangeSetCard changeSetId={localChangeSetId} fallbackTitle={form.title} actionHandlers={changeSetActionHandlers} />
       )}
       {!localChangeSetId && <ScheduledTaskWorkflowStage formType={form.form_type} status={status} />}
       <FormBlockContent form={form} submitting={submitting}

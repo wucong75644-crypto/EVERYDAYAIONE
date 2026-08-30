@@ -54,6 +54,11 @@ from services.scheduler.cron_utils import (
 
 TASK_RESOURCE_TYPE = "scheduled_task"
 TASK_OPERATIONS = frozenset({"create", "update", "pause", "resume", "delete"})
+DEFAULT_TASK_LIMITS = {
+    "max_credits": 10,
+    "retry_count": 1,
+    "timeout_sec": 180,
+}
 TASK_FIELDS = (
     "name", "prompt", "cron_expr", "schedule_type", "weekdays", "day_of_month",
     "run_at", "timezone", "push_target", "template_file", "max_credits",
@@ -67,6 +72,56 @@ class ScheduledTaskChangeError(ValueError):
         super().__init__(message)
         self.status_code = status_code
         self.details = details or []
+
+
+def _complete_task_definition(
+    proposed: Mapping[str, Any], base: Mapping[str, Any], *, operation: str,
+) -> dict[str, Any]:
+    """生成规划、Diff、试跑和提交共用的完整任务定义。
+
+    聊天表单只提交用户可见字段；ChangeSet 适配器是唯一允许把它们
+    扩展为业务完整快照的边界。更新时保留当前任务中未出现在表单里的
+    受控字段，创建时使用与旧入口一致的默认值。
+    """
+    value = dict(base) if operation == "update" else {}
+    value.update(dict(proposed))
+    for key, default in DEFAULT_TASK_LIMITS.items():
+        raw = value.get(key)
+        if raw is None or raw == "":
+            value[key] = default
+            continue
+        if isinstance(raw, bool):
+            raise ScheduledTaskChangeError(f"{key} 必须是整数")
+        try:
+            value[key] = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ScheduledTaskChangeError(f"{key} 必须是整数") from exc
+    limits = (("max_credits", 1, 1000), ("retry_count", 0, 5), ("timeout_sec", 10, 600))
+    for key, lower, upper in limits:
+        if not lower <= value[key] <= upper:
+            raise ScheduledTaskChangeError(f"{key} 必须在 {lower} 到 {upper} 之间")
+    value.setdefault("template_file", None)
+    return value
+
+
+def _normalize_schedule_fields(value: dict[str, Any], schedule_type: str) -> None:
+    """把表单的字符串选择值收敛为 scheduled_tasks 的持久化形态。"""
+    if schedule_type == "weekly":
+        raw_weekdays = value.get("weekdays")
+        if raw_weekdays is not None:
+            try:
+                value["weekdays"] = [int(day) for day in raw_weekdays]
+            except (TypeError, ValueError) as exc:
+                raise ScheduledTaskChangeError("weekdays 格式无效") from exc
+    else:
+        value["weekdays"] = None
+    if schedule_type == "monthly" and value.get("day_of_month") is not None:
+        try:
+            value["day_of_month"] = int(value["day_of_month"])
+        except (TypeError, ValueError) as exc:
+            raise ScheduledTaskChangeError("day_of_month 格式无效") from exc
+    elif schedule_type != "monthly":
+        value["day_of_month"] = None
 
 
 def task_snapshot(row: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -139,8 +194,10 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
         return ResolveResult(proposed_snapshot=dict(request.context.proposed_snapshot))
 
     async def normalize(self, request: NormalizeRequest) -> NormalizeResult:
-        value = dict(request.proposed_snapshot)
         operation = request.context.operation
+        value = _complete_task_definition(
+            request.proposed_snapshot, request.context.base_snapshot, operation=operation,
+        )
         if operation in {"create", "update"}:
             for key in ("name", "prompt", "timezone", "push_target"):
                 if not value.get(key):
@@ -153,6 +210,7 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
             if schedule_type not in {"once", "daily", "weekly", "monthly", "cron"}:
                 raise ScheduledTaskChangeError(f"不支持的 schedule_type: {schedule_type}")
             value["schedule_type"] = schedule_type
+            _normalize_schedule_fields(value, schedule_type)
             if schedule_type == "once":
                 raw_run_at = value.get("run_at")
                 if not raw_run_at:

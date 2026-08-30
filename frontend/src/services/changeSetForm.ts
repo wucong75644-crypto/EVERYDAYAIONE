@@ -44,6 +44,9 @@ export function buildScheduledTaskChangeRequest(
     operation: formType === 'scheduled_task_update' ? 'update' : 'create',
     definition,
     idempotency_key: `chat-form:${identity.conversationId}:${identity.messageId}:${identity.formId}:${shortHash(serialized)}`,
+    message_id: identity.messageId,
+    conversation_id: identity.conversationId,
+    form_id: identity.formId,
   };
   if (request.operation === 'update' && typeof formData.task_id === 'string' && formData.task_id) {
     request.task_id = formData.task_id;

@@ -15,6 +15,9 @@ describe('changeSetForm', () => {
     expect(request.definition).toMatchObject({
       push_target: { type: 'web' }, weekdays: [1, 3], timezone: 'Asia/Shanghai',
     });
+    expect(request).toMatchObject({
+      message_id: 'msg-1', conversation_id: 'conv-1', form_id: 'form-1',
+    });
     expect(buildScheduledTaskChangeRequest('scheduled_task_create', formData, identity).idempotency_key)
       .toBe(request.idempotency_key);
   });

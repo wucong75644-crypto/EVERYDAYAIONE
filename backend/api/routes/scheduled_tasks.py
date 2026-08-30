@@ -123,6 +123,11 @@ class ScheduledTaskChangeRequest(BaseModel):
     task_id: Optional[str] = None
     definition: Dict[str, Any] = Field(default_factory=dict)
     idempotency_key: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    # 聊天入口用这些定位键把 ChangeSet ID 回写为消息中的展示引用；
+    # 非聊天 API 调用可以不传，不能以消息内容代替 ChangeSet 状态。
+    message_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    form_id: Optional[str] = None
 
 
 # ════════════════════════════════════════════════════════
@@ -436,11 +441,49 @@ async def propose_task_changeset(
 ) -> Dict[str, Any]:
     """新入口：返回可供第三批前端展示和确认的 ChangeSet DTO。"""
     org_id = _require_org(org_ctx)
+    references = (payload.message_id, payload.conversation_id, payload.form_id)
+    if any(references) and not all(references):
+        raise HTTPException(422, "聊天表单引用参数不完整")
     row = await _propose_task_change(
         db=db, scoped_db=scoped_db, user_id=user_id, org_id=org_id,
         operation=payload.operation, task_id=payload.task_id,
         definition=payload.definition, idempotency_key=payload.idempotency_key,
     )
+    if all(references):
+        try:
+            from services.conversation_service import ConversationService
+
+            await ConversationService(db).get_conversation(
+                payload.conversation_id, user_id, org_id,
+            )
+            response = db.rpc("attach_chat_form_changeset", {
+                "p_message_id": payload.message_id,
+                "p_conversation_id": payload.conversation_id,
+                "p_org_id": org_id,
+                "p_form_id": payload.form_id,
+                "p_change_set_id": str(row["id"]),
+                "p_result_message": "变更方案已生成，请在卡片中确认。",
+            }).execute()
+            attached = response.data if response else None
+            outcome = attached.get("outcome") if isinstance(attached, dict) else None
+            if outcome not in {"transitioned", "existing"}:
+                messages = {
+                    "message_missing": "聊天消息不存在，方案仍可在 ChangeSet 中查看",
+                    "form_missing": "聊天表单不存在，方案仍可在 ChangeSet 中查看",
+                    "state_conflict": "聊天表单状态已变化，请刷新后查看",
+                    "changeset_missing": "变更方案不存在，请重新规划",
+                }
+                raise HTTPException(409, messages.get(outcome, "聊天表单引用同步失败，请重试"))
+        except HTTPException:
+            raise
+        except Exception as exc:
+            # ChangeSet 已经按幂等键落库；返回可重试的安全错误，下一次同键请求
+            # 会回放同一个 ChangeSet 并再次完成消息引用绑定。
+            logger.warning(
+                "Scheduled task ChangeSet message reference sync failed | "
+                f"change_set_id={row.get('id')} | error={type(exc).__name__}"
+            )
+            raise HTTPException(503, "变更方案已生成，但聊天状态同步失败，请重试") from exc
     from api.routes.change_sets import _to_dto
     return {"success": True, "data": _to_dto(row, row.get("checks") or [])}
 

@@ -153,3 +153,51 @@ async def test_normalize_rejects_invalid_schedule_without_writing():
                 "schedule_type": "cron", "cron_expr": "not-cron",
             },
         ))
+
+
+@pytest.mark.asyncio
+async def test_normalize_completes_create_definition_before_planning():
+    adapter = ScheduledTaskChangeAdapter(_Db(), user_id="u1", org_id="org1")
+    context = ChangeSetContext(
+        id="cs1", org_id="org1", resource_type="scheduled_task", resource_id="task1",
+        operation="create", base_revision="0", base_snapshot={}, proposed_snapshot={},
+        patch=(), diff={}, policy_snapshot={},
+    )
+    result = await adapter.normalize(SimpleNamespace(
+        context=context,
+        proposed_snapshot={
+            "name": "日报", "prompt": "查询订单", "timezone": "Asia/Shanghai",
+            "push_target": {"type": "web", "user_id": "u1"},
+            "schedule_type": "daily", "time_str": "09:00",
+        },
+    ))
+
+    assert result.proposed_snapshot["max_credits"] == 10
+    assert result.proposed_snapshot["retry_count"] == 1
+    assert result.proposed_snapshot["timeout_sec"] == 180
+    assert result.proposed_snapshot["template_file"] is None
+    assert result.proposed_snapshot["cron_expr"] == "0 9 * * *"
+
+
+@pytest.mark.asyncio
+async def test_normalize_update_merges_hidden_limits_from_current_task():
+    adapter = ScheduledTaskChangeAdapter(_Db(), user_id="u1", org_id="org1")
+    context = ChangeSetContext(
+        id="cs1", org_id="org1", resource_type="scheduled_task", resource_id="task1",
+        operation="update", base_revision="7", base_snapshot={
+            "name": "旧日报", "prompt": "旧查询", "timezone": "Asia/Shanghai",
+            "push_target": {"type": "web", "user_id": "u1"},
+            "schedule_type": "daily", "cron_expr": "0 9 * * *",
+            "max_credits": 42, "retry_count": 3, "timeout_sec": 240,
+        }, proposed_snapshot={}, patch=(), diff={}, policy_snapshot={},
+    )
+    result = await adapter.normalize(SimpleNamespace(
+        context=context,
+        proposed_snapshot={"name": "新日报", "prompt": "新查询"},
+    ))
+
+    assert result.proposed_snapshot["name"] == "新日报"
+    assert result.proposed_snapshot["max_credits"] == 42
+    assert result.proposed_snapshot["retry_count"] == 3
+    assert result.proposed_snapshot["timeout_sec"] == 240
+    assert result.proposed_snapshot["cron_expr"] == "0 9 * * *"

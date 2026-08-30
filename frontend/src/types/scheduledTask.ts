@@ -90,6 +90,10 @@ export interface ScheduledTaskChangeRequest {
   task_id?: string;
   definition?: Record<string, unknown>;
   idempotency_key?: string;
+  /** 聊天表单的持久化引用定位，不承载 ChangeSet 状态。 */
+  message_id?: string;
+  conversation_id?: string;
+  form_id?: string;
 }
 
 export interface TaskRun {

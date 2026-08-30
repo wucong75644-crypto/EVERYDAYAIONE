@@ -18,7 +18,7 @@
 
 ## 灰度与回退
 
-前端开关：`VITE_CHANGESET_CHAT_UI`。默认开启；设置为 `false` 时带 ChangeSet 引用的表单也回退到旧表单展示和旧 `form_submit` 提交流程。旧消息和旧草案数据不删除。
+前端开关：`VITE_CHANGESET_CHAT_UI`。默认开启；设置为 `false` 时只停止没有 ChangeSet 引用的新表单进入新入口。已经生成 ChangeSet 引用的表单仍保留 ChangeSetCard，确保灰度回退不会把进行中的变更卡死；无引用的旧表单继续走旧 `form_submit` 流程。旧消息和旧草案数据不删除。
 
 通用卡片监听 `changeset:updated` 事件重新读取 DTO；当前已接入 `form_submit_result` 的 ChangeSet 引用通知。第二批冻结通用 ChangeSet WebSocket 事件名后，只需在 WebSocket 入口调用同一事件桥，无需改变卡片或另建定时任务状态机。
 
