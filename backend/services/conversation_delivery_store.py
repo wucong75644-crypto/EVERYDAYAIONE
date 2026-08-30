@@ -37,8 +37,9 @@ class ConversationDeliveryStore(Protocol):
         execution_token: str,
         event_type: str,
         payload: Mapping[str, Any],
+        event_id: str,
     ) -> dict[str, Any]:
-        """持久化一个有序交付事件并返回序号。"""
+        """持久化一个有序交付事件并返回序号；event_id 用于安全重试。"""
 
     async def save_snapshot(
         self,
@@ -88,6 +89,7 @@ class DatabaseConversationDeliveryStore:
         execution_token: str,
         event_type: str,
         payload: Mapping[str, Any],
+        event_id: str,
     ) -> dict[str, Any]:
         response = await self._db.rpc(
             "append_conversation_delivery_event",
@@ -96,6 +98,7 @@ class DatabaseConversationDeliveryStore:
                 "p_execution_token": execution_token,
                 "p_event_type": event_type,
                 "p_payload": Jsonb(dict(payload)),
+                "p_event_id": event_id,
             },
         ).execute()
         data = _response_dict(response, "DELIVERY_EVENT_APPEND_RESULT_INVALID")
