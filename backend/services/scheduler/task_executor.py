@@ -83,7 +83,9 @@ class ScheduledTaskExecutor:
             ) as credit_handle:
                 # 2. 跑 Agent
                 from services.agent.scheduled_task_agent import ScheduledTaskAgent
-                agent = ScheduledTaskAgent(self.db, task)
+                agent = ScheduledTaskAgent(
+                    self.db, task, execution_mode="scheduled",
+                )
                 result = await agent.execute()
 
                 if result.status != "success":

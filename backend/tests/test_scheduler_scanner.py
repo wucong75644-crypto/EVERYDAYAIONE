@@ -366,6 +366,10 @@ class TestTaskExecutor:
                 ):
                     await executor.execute(make_task())
 
+                mock_agent_cls.assert_called_once_with(
+                    db, make_task(), execution_mode="scheduled",
+                )
+
         # 验证 update 被调用（用 update 才能确认 _on_success 跑了）
         assert db.table.called
 
