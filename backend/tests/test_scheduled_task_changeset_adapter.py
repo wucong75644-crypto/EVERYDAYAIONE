@@ -5,9 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from services.changeset.contracts import ChangeSetContext, CommitRequest, PreflightResult
+from services.changeset.repository import ChangeSetIdempotencyConflict
 from services.changeset.risk import RiskLevel
 from services.planner import PlanCandidate, PlanRelease
 from services.scheduler.scheduled_task_change_adapter import (
+    ScheduledTaskChangeError,
     ScheduledTaskChangeAdapter,
     ScheduledTaskChangeSetService,
     build_scheduled_task_diff,
@@ -45,11 +47,19 @@ class _Repo:
         self.checks = []
 
     def create(self, payload):
-        self.row = {**self.row, **payload, "id": "cs1", "status": "draft"}
+        self.row = {
+            **self.row, **payload, "id": "cs1", "status": "draft",
+            "created_by": payload.get("actor_id"),
+        }
         return deepcopy(self.row)
 
     def get(self, _id, _org):
         return deepcopy(self.row)
+
+    def get_by_idempotency_key(self, *, org_id, idempotency_key):
+        if self.row.get("org_id") == org_id and self.row.get("idempotency_key") == idempotency_key:
+            return deepcopy(self.row)
+        return None
 
     def transition(self, *, next_status, **_kwargs):
         self.row["status"] = next_status
@@ -61,6 +71,21 @@ class _Repo:
 
     def list_checks(self, *_args):
         return deepcopy(self.checks)
+
+
+class _RacingRepo(_Repo):
+    def get_by_idempotency_key(self, *, org_id, idempotency_key):
+        return None
+
+    def create(self, payload):
+        self.row = {
+            **self.row, **payload, "id": "cs1", "status": "draft",
+            "created_by": payload.get("actor_id"),
+        }
+        raise ChangeSetIdempotencyConflict(
+            "idempotency key is already bound to another ChangeSet",
+            existing=self.row,
+        )
 
 
 def _release():
@@ -96,6 +121,79 @@ async def test_adapter_commit_uses_fixed_rpc_and_returns_conflict():
     result = await adapter.commit(CommitRequest(context=context, idempotency_key="k"))
     assert result.applied is False
     assert result.conflict["current_revision"] == 4
+
+
+@pytest.mark.asyncio
+async def test_duplicate_create_replays_without_replanning():
+    repo = _Repo()
+    db = _Db()
+    service = ScheduledTaskChangeSetService(db, user_id="u1", org_id="org1")
+    service._build_release = AsyncMock(return_value=_release())
+    service.adapter.preflight = AsyncMock(return_value=PreflightResult(
+        True, {"full_run": False, "mode": "deterministic_read_only"}, (),
+    ))
+    definition = {
+        "name": "日报", "prompt": "查询淘宝销售额", "timezone": "Asia/Shanghai",
+        "push_target": {"type": "web", "user_id": "u1"},
+        "schedule_type": "daily", "cron_expr": "0 9 * * *",
+    }
+    with patch("services.scheduler.scheduled_task_change_adapter.ChangeSetRepository", return_value=repo), \
+         patch("services.permissions.checker.check_permission", new=AsyncMock(return_value=True)):
+        first = await service.propose(
+            operation="create", proposed_snapshot=definition, idempotency_key="same-key",
+        )
+        second = await service.propose(
+            operation="create", proposed_snapshot=definition, idempotency_key="same-key",
+        )
+
+    assert first["id"] == second["id"] == "cs1"
+    assert service._build_release.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_idempotency_key_collision_is_a_safe_conflict():
+    repo = _Repo()
+    repo.row["idempotency_key"] = "same-key"
+    repo.row["created_by"] = "u1"
+    repo.row["resource_id"] = "fixed-resource"
+    db = _Db()
+    service = ScheduledTaskChangeSetService(db, user_id="u1", org_id="org1")
+    definition = {
+        "name": "日报", "prompt": "不同请求", "timezone": "Asia/Shanghai",
+        "push_target": {"type": "web", "user_id": "u1"},
+        "schedule_type": "daily", "cron_expr": "0 9 * * *",
+    }
+    with patch("services.scheduler.scheduled_task_change_adapter.ChangeSetRepository", return_value=repo):
+        with pytest.raises(ScheduledTaskChangeError) as exc_info:
+            await service.propose(
+                operation="create", resource_id="fixed-resource",
+                proposed_snapshot=definition, idempotency_key="same-key",
+            )
+    assert getattr(exc_info.value, "status_code", None) == 409
+
+
+@pytest.mark.asyncio
+async def test_concurrent_duplicate_create_replays_database_winner():
+    repo = _RacingRepo()
+    db = _Db()
+    service = ScheduledTaskChangeSetService(db, user_id="u1", org_id="org1")
+    service._build_release = AsyncMock(return_value=_release())
+    service.adapter.preflight = AsyncMock(return_value=PreflightResult(
+        True, {"full_run": False, "mode": "deterministic_read_only"}, (),
+    ))
+    definition = {
+        "name": "日报", "prompt": "查询淘宝销售额", "timezone": "Asia/Shanghai",
+        "push_target": {"type": "web", "user_id": "u1"},
+        "schedule_type": "daily", "cron_expr": "0 9 * * *",
+    }
+    with patch("services.scheduler.scheduled_task_change_adapter.ChangeSetRepository", return_value=repo), \
+         patch("services.permissions.checker.check_permission", new=AsyncMock(return_value=True)):
+        result = await service.propose(
+            operation="create", proposed_snapshot=definition, idempotency_key="same-key",
+        )
+
+    assert result["id"] == "cs1"
+    assert service._build_release.await_count == 1
 
 
 @pytest.mark.asyncio

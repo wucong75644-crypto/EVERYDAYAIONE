@@ -19,7 +19,9 @@ class ChangeSetNotFound(ChangeSetRepositoryError):
 
 
 class ChangeSetIdempotencyConflict(ChangeSetRepositoryError):
-    pass
+    def __init__(self, message: str, *, existing: Mapping[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.existing = dict(existing or {})
 
 
 class ChangeSetConcurrencyError(ChangeSetRepositoryError):
@@ -69,11 +71,29 @@ class ChangeSetRepository:
         data = _response_dict(result, "CHANGESET_CREATE_RESULT_INVALID")
         outcome = data.get("outcome")
         if outcome == "idempotency_conflict":
-            raise ChangeSetIdempotencyConflict("idempotency key is already bound to another ChangeSet")
+            raise ChangeSetIdempotencyConflict(
+                "idempotency key is already bound to another ChangeSet",
+                existing=data.get("change_set"),
+            )
         change_set = data.get("change_set")
         if not isinstance(change_set, dict):
             raise ChangeSetRepositoryError("CHANGESET_CREATE_ROW_INVALID")
         return change_set
+
+    def get_by_idempotency_key(
+        self, *, org_id: str, idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        """读取同一组织下幂等键已绑定的 ChangeSet。
+
+        业务服务在执行昂贵且可能不确定的规划前调用它，确保重复请求
+        直接回放原候选，而不是重新生成另一个 plan_snapshot 后再被数据库
+        判定为幂等冲突。
+        """
+        result = self._db.table("change_sets").select("*").eq(
+            "org_id", str(org_id),
+        ).eq("idempotency_key", str(idempotency_key)).limit(1).execute()
+        rows = result.data or []
+        return rows[0] if rows else None
 
     def get(self, change_set_id: str, org_id: str) -> dict[str, Any]:
         result = self._db.table("change_sets").select("*").eq(

@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Mapping
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from services.changeset.contracts import (
     AuthorizationResult,
@@ -34,7 +34,7 @@ from services.changeset.contracts import (
     ValidateRequest,
     ValidationResult,
 )
-from services.changeset.repository import ChangeSetRepository
+from services.changeset.repository import ChangeSetIdempotencyConflict, ChangeSetRepository
 from services.changeset.risk import DefaultRiskPolicy
 from services.changeset.service import ChangeSetService
 from services.planner import (
@@ -72,6 +72,31 @@ class ScheduledTaskChangeError(ValueError):
         super().__init__(message)
         self.status_code = status_code
         self.details = details or []
+
+
+def _idempotency_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
+    """取幂等请求身份，不把模型每次生成的发布快照算作用户请求差异。"""
+    value = dict(snapshot or {})
+    value.pop("execution_policy", None)
+    value.pop("plan_snapshot", None)
+    return value
+
+
+def _same_idempotent_request(
+    existing: Mapping[str, Any], *, user_id: str, resource_id: str,
+    operation: str, base_revision: str, base: Mapping[str, Any],
+    normalized_snapshot: Mapping[str, Any],
+) -> bool:
+    return (
+        str(existing.get("created_by")) == str(user_id)
+        and str(existing.get("resource_type")) == TASK_RESOURCE_TYPE
+        and str(existing.get("resource_id")) == resource_id
+        and str(existing.get("operation")) == operation
+        and str(existing.get("base_revision")) == base_revision
+        and (existing.get("base_snapshot") or {}) == dict(base)
+        and _idempotency_snapshot(existing.get("proposed_snapshot"))
+        == _idempotency_snapshot(normalized_snapshot)
+    )
 
 
 def _complete_task_definition(
@@ -430,7 +455,24 @@ class ScheduledTaskChangeSetService:
         if operation not in TASK_OPERATIONS:
             raise ScheduledTaskChangeError(f"不支持的定时任务操作: {operation}")
         base = task_snapshot(base_snapshot)
-        resource_id = str(resource_id or uuid4())
+        repo = ChangeSetRepository(self.db)
+        existing = (
+            repo.get_by_idempotency_key(org_id=self.org_id, idempotency_key=idempotency_key)
+            if idempotency_key else None
+        )
+        # create 没有外部 resource_id，首次请求会生成 UUID。重复请求必须先
+        # 复用原 resource_id，否则即使表单完全相同也会被数据库误判为冲突。
+        if existing and operation == "create":
+            resource_id = str(existing.get("resource_id") or uuid4())
+        elif operation == "create" and idempotency_key:
+            # 在两个并发重复请求尚未看到对方行时，也必须生成同一个业务
+            # resource_id；否则数据库无法识别它们是同一个 create 请求。
+            resource_id = str(uuid5(
+                NAMESPACE_URL,
+                f"everydayai:scheduled-task:{self.org_id}:{idempotency_key}",
+            ))
+        else:
+            resource_id = str(resource_id or uuid4())
         base_revision = str((base_snapshot or {}).get("revision", 0))
         context = ChangeSetContext(
             id=str(uuid4()), org_id=self.org_id, resource_type=TASK_RESOURCE_TYPE,
@@ -441,6 +483,18 @@ class ScheduledTaskChangeSetService:
         resolved = await self.adapter.resolve(ResolveRequest(context=context, intent=dict(proposed_snapshot)))
         normalized = await self.adapter.normalize(NormalizeRequest(context=context, proposed_snapshot=resolved.proposed_snapshot))
         normalized_snapshot = dict(normalized.proposed_snapshot)
+
+        if existing:
+            if not _same_idempotent_request(
+                existing, user_id=self.user_id, resource_id=resource_id,
+                operation=operation, base_revision=base_revision,
+                base=base, normalized_snapshot=normalized_snapshot,
+            ):
+                raise ScheduledTaskChangeError(
+                    "该请求标识已绑定其他变更，请重新提交",
+                    status_code=409,
+                )
+            return self._with_projection(existing, repo)
 
         external = not await self.adapter._is_self_target(normalized_snapshot.get("push_target"))
         assessment = DefaultRiskPolicy().assess(
@@ -508,8 +562,7 @@ class ScheduledTaskChangeSetService:
             "preflight": {"passed": preflight.passed, "result": dict(preflight.result), "reasons": list(preflight.reasons)},
             "risk": assessment.as_snapshot(),
         }
-        repo = ChangeSetRepository(self.db)
-        row = repo.create({
+        create_payload = {
             "org_id": self.org_id, "resource_type": TASK_RESOURCE_TYPE, "resource_id": resource_id,
             "operation": operation, "base_revision": base_revision, "base_snapshot": base,
             "proposed_snapshot": normalized_snapshot, "patch": list(diff.patch), "diff": dict(diff.diff),
@@ -518,7 +571,27 @@ class ScheduledTaskChangeSetService:
             "check_summary": check_summary, "idempotency_key": idempotency_key or f"scheduled-task:{uuid4()}",
             "actor_id": self.user_id, "actor_type": "user",
             "audit_subject": {"user_id": self.user_id, "resource_type": TASK_RESOURCE_TYPE},
-        })
+        }
+        try:
+            row = repo.create(create_payload)
+        except ChangeSetIdempotencyConflict as exc:
+            if not idempotency_key:
+                raise
+            # 并发重复请求可能在规划阶段同时生成不同 release_id。以第一条
+            # 已落库的候选为准，只比较用户请求身份，不把模型快照当成差异。
+            winner = exc.existing or repo.get_by_idempotency_key(
+                org_id=self.org_id, idempotency_key=idempotency_key,
+            )
+            if winner and _same_idempotent_request(
+                winner, user_id=self.user_id, resource_id=resource_id,
+                operation=operation, base_revision=base_revision,
+                base=base, normalized_snapshot=normalized_snapshot,
+            ):
+                return self._with_projection(winner, repo)
+            raise ScheduledTaskChangeError(
+                "该请求标识已绑定其他变更，请重新提交",
+                status_code=409,
+            ) from exc
         change_set_id = str(row["id"])
         service = ChangeSetService(repo)
         await self._transition(service, change_set_id, "draft", "resolving", "resolved")
