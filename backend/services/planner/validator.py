@@ -8,6 +8,17 @@ from services.planner.contracts import PlanCandidate, PlanValidationResult
 from services.planner.registry import CapabilityRegistry
 
 
+def required_tools_for_steps(steps: Any) -> set[str]:
+    """Compile the completion-gate tool set from required plan steps only."""
+    required_tools: set[str] = set()
+    for step in steps or ():
+        required = step.required if hasattr(step, "required") else bool(step.get("required", True))
+        if required:
+            tools = step.tools if hasattr(step, "tools") else step.get("tools", ())
+            required_tools.update(str(name).strip() for name in tools if str(name).strip())
+    return required_tools
+
+
 class PlanValidator:
     def __init__(self, registry: CapabilityRegistry) -> None:
         self.registry = registry
@@ -35,15 +46,12 @@ class PlanValidator:
             if execution_mode == "preflight" and not descriptor.supports_readonly_preflight:
                 errors.append(f"工具不支持只读预检: {tool_name}")
 
-        required_tools: set[str] = set()
         required_permissions: set[str] = set()
         risk_levels: set[str] = set()
         for index, step in enumerate(candidate.steps, start=1):
             step_tools = {str(name).strip() for name in step.tools if str(name).strip()}
             if not step_tools <= candidate_tools:
                 errors.append(f"第 {index} 步工具超出候选范围")
-            if step.required:
-                required_tools.update(step_tools)
             for tool_name in step_tools:
                 descriptor = self.registry.get(tool_name)
                 if descriptor is not None and step.input:
@@ -90,7 +98,7 @@ class PlanValidator:
                 "version": 1,
                 "execution_mode": execution_mode,
                 "allowed_tools": sorted(candidate_tools),
-                "required_tools": sorted(required_tools),
+                "required_tools": sorted(required_tools_for_steps(candidate.steps)),
                 "required_permissions": sorted(required_permissions),
                 "risk_levels": sorted(risk_levels),
                 "verification_conditions": list(candidate.verification_conditions),

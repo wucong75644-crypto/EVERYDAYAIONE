@@ -316,7 +316,7 @@ class ScheduledTaskAgent:
             "1. 完成任务指令中描述的工作\n"
             "2. 如需取数据，调用 erp_agent 工具\n"
             "3. 如需生成报表/计算，调用 code_execute 工具，文件输出到 '下载/x.xlsx'(相对路径)\n"
-            "4. 最终回复应简洁清晰，适合直接推送到企微群"
+            "4. 最终回复应简洁清晰，供调度器按任务配置投递；不要调用发送消息、查找 webhook 或其他交付工具"
         )
 
         # 时间事实层
@@ -329,6 +329,29 @@ class ScheduledTaskAgent:
 
         # 用户任务消息
         user_msg = f"## 任务\n{self.task['prompt']}"
+
+        # 计划是已确认的执行事实；交付由调度器负责，不让模型从自然语言重新推断。
+        plan = self.task.get("plan_snapshot") or {}
+        candidate = plan.get("candidate") if isinstance(plan, dict) else None
+        if not isinstance(candidate, dict):
+            candidate = plan if isinstance(plan, dict) else {}
+        steps = candidate.get("steps") or []
+        step_lines = []
+        for index, step in enumerate(steps, start=1):
+            if not isinstance(step, dict):
+                continue
+            required = "必需" if bool(step.get("required", True)) else "可选"
+            tools = ", ".join(str(tool) for tool in step.get("tools", []) if tool)
+            step_lines.append(
+                f"{index}. [{required}] {step.get('intent') or '执行计划步骤'}（工具：{tools or '无'}）"
+            )
+        if step_lines:
+            user_msg += "\n\n## 已确认执行路径\n" + "\n".join(step_lines)
+
+        target = self.task.get("push_target") or {}
+        target_type = target.get("type") if isinstance(target, dict) else None
+        if target_type:
+            user_msg += f"\n\n## 结果交付\n目标类型：{target_type}。由调度器负责投递；你只需返回任务结果。"
 
         # 模板文件提示
         if self.task.get("template_file"):

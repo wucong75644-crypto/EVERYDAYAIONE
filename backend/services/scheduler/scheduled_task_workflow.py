@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable, List
 from uuid import uuid4
 
 from services.planner import CapabilityRegistry, PlanCandidate, PlanStep, PlannerFramework
+from services.planner import required_tools_for_steps
 
 
 _PREFLIGHT_BLOCKED_TOOLS = frozenset({
@@ -110,7 +111,6 @@ def validate_plan(raw: Dict[str, Any], *, available_tools: set[str], timeout_sec
     if not isinstance(steps, list) or not steps:
         raise ValueError("规划缺少执行步骤")
     normalized_steps: List[Dict[str, Any]] = []
-    required_tools: set[str] = set()
     for index, step in enumerate(steps, start=1):
         if not isinstance(step, dict):
             raise ValueError("规划步骤格式无效")
@@ -118,8 +118,6 @@ def validate_plan(raw: Dict[str, Any], *, available_tools: set[str], timeout_sec
         if not tools or not tools <= allowed:
             raise ValueError(f"第 {index} 步工具不在允许范围内")
         required = bool(step.get("required", True))
-        if required:
-            required_tools.update(tools)
         normalized_steps.append({
             "id": str(step.get("id") or f"step-{index}"),
             "intent": str(step.get("intent") or "执行数据查询").strip(),
@@ -176,7 +174,7 @@ def validate_plan(raw: Dict[str, Any], *, available_tools: set[str], timeout_sec
     }
     policy = ScheduledExecutionPolicy(
         allowed_tools=frozenset(allowed),
-        required_tools=frozenset(required_tools),
+        required_tools=frozenset(required_tools_for_steps(normalized_steps)),
         tool_timeout_sec=min(75.0, max(10.0, timeout_sec - 15.0)),
         erp_step_timeout_sec=min(60.0, max(5.0, timeout_sec - 20.0)),
         final_reserve_sec=min(15.0, max(5.0, timeout_sec / 6)),
@@ -213,17 +211,33 @@ async def create_plan(*, db: Any, org_id: str, definition: Dict[str, Any]) -> tu
         for tool in schemas
         if tool["function"]["name"] in available
     ]
+    target = definition.get("push_target") or {}
+    if isinstance(target, dict) and target.get("type") == "multi":
+        target_types = sorted({
+            str(child.get("type"))
+            for child in target.get("targets", [])
+            if isinstance(child, dict) and child.get("type")
+        })
+    elif isinstance(target, dict) and target.get("type"):
+        target_types = [str(target["type"])]
+    else:
+        target_types = []
     prompt = {
         "task": {
             "name": definition["name"],
             "prompt": definition["prompt"],
             "schedule_type": definition["schedule_type"],
         },
+        "delivery": {
+            "managed_by": "scheduler",
+            "target_types": target_types,
+            "instruction": "调度器会按任务配置负责最终投递；计划只负责取数、计算和生成结果，不规划发送消息、查找 webhook 或调用发送工具。",
+        },
         "available_tools": tool_descriptions,
         "required_output_schema": {
             "objective": "string",
             "allowed_tools": ["tool name; only from available_tools"],
-            "steps": [{"id": "string", "intent": "string", "tools": ["tool"], "required": True, "verify": "string"}],
+            "steps": [{"id": "string", "intent": "string", "tools": ["tool"], "required": "boolean; true only when the step is necessary for the result", "verify": "string"}],
             "output_contract": {"allow_empty_result": False, "required_evidence": ["string"]},
         },
     }
@@ -235,7 +249,7 @@ async def create_plan(*, db: Any, org_id: str, definition: Dict[str, Any]) -> tu
     )
     try:
         response = await adapter.chat_sync(messages=[
-            {"role": "system", "content": "你是定时任务规划器。只输出符合 schema 的 JSON；不执行任务，不虚构工具。"},
+            {"role": "system", "content": "你是定时任务规划器。只输出符合 schema 的 JSON；不执行任务，不虚构工具。调度器独立负责结果投递，绝不要把发送到网页/企微、查 webhook、发送消息等交付动作编入步骤；任务指令中的交付措辞只作为结果目标理解。"},
             {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
         ])
         raw = parse_json_object(getattr(response, "content", ""))
@@ -333,7 +347,7 @@ async def create_draft_and_preflight(
         from services.agent.scheduled_task_agent import ScheduledTaskAgent
         preflight_task = {
             "id": preflight_id, "org_id": org_id, "user_id": user_id,
-            **definition, "execution_policy": policy.as_dict(), "last_summary": None,
+            **definition, "execution_policy": policy.as_dict(), "plan_snapshot": plan, "last_summary": None,
         }
         result = await ScheduledTaskAgent(
             db, preflight_task, execution_mode="preflight",
