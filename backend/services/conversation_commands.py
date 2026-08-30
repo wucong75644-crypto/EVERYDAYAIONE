@@ -12,6 +12,7 @@ class CommandType(str, Enum):
     """会影响当前 Conversation 执行流程的逻辑命令。"""
 
     USER_TURN = "user_turn"
+    STEER = "steer"
     CANCEL = "cancel"
     PAUSE = "pause"
     RESUME = "resume"
@@ -46,6 +47,7 @@ _COMMAND_PRIORITY: dict[CommandType, int] = {
     CommandType.TOOL_COMPLETED: 3,
     # User turn 与普通完成事件保持到达顺序；控制命令仍优先。
     CommandType.USER_TURN: 3,
+    CommandType.STEER: 2,
 }
 
 

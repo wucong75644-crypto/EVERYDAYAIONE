@@ -59,6 +59,7 @@ class ConversationTurnRuntime:
         self.last_safe_point: SafePoint | None = None
         self.applied_commands: list[ConversationCommand] = []
         self._subtask_completions: list[dict[str, Any]] = []
+        self._steer_messages: list[str] = []
         self.push(
             ConversationCommand(
                 command_id=f"turn:{task_id}:{turn_id}",
@@ -184,6 +185,11 @@ class ConversationTurnRuntime:
             self.applied_commands.append(command)
             if command.command_type.value == "subtask_completed":
                 self._record_subtask_completion(command)
+            if command.command_type is CommandType.STEER:
+                message = (command.payload or {}).get("message")
+                if not isinstance(message, str) or not message.strip():
+                    raise RuntimeError("ACTOR_STEER_PAYLOAD_INVALID")
+                self._steer_messages.append(message.strip())
             self.state = reduce_command(self.state, command)
             if self.state in {
                 ConversationState.CANCELLING,
@@ -234,6 +240,12 @@ class ConversationTurnRuntime:
         completions = self._subtask_completions
         self._subtask_completions = []
         return completions
+
+    def consume_steer_messages(self) -> list[str]:
+        """取出已在安全点归约的 steer；每个事件只注入下一轮模型一次。"""
+        messages = self._steer_messages
+        self._steer_messages = []
+        return messages
 
     def set_state(self, state: ConversationState) -> None:
         """记录执行器边界状态；终态不能被普通状态覆盖。"""

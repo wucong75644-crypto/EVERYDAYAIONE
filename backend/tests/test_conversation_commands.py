@@ -68,6 +68,29 @@ async def test_runtime_applies_tool_completion_at_safe_point():
 
 
 @pytest.mark.asyncio
+async def test_runtime_reduces_steer_and_exposes_it_once():
+    runtime = ConversationTurnRuntime(
+        conversation_id="conversation-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        cancellation_event=asyncio.Event(),
+    )
+    runtime.push(ConversationCommand(
+        command_id="steer-1",
+        command_type=CommandType.STEER,
+        conversation_id="conversation-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        payload={"message": "改查库存"},
+    ))
+
+    await runtime.safe_point(SafePoint.AFTER_TOOL)
+
+    assert runtime.consume_steer_messages() == ["改查库存"]
+    assert runtime.consume_steer_messages() == []
+
+
+@pytest.mark.asyncio
 async def test_runtime_only_stops_cancel_at_safe_point():
     runtime = ConversationTurnRuntime(
         conversation_id="conversation-1",

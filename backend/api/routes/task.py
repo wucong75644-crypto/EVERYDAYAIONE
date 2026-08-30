@@ -329,6 +329,9 @@ async def cancel_task_by_message_id(
                         mark_cancel_start(ext_id)
                         record_cancel_event(ext_id, org_id=ctx.org_id)
                         ws_manager.cancel_task(ext_id, org_id=ctx.org_id)
+                        await ws_manager.publish_cancelled_gate(
+                            ext_id, ctx.org_id, action="set",
+                        )
 
                     # 直接 UPDATE 改 task 终态后，webhook/worker 都会因状态检查跳过 release，
                     # 必须由 cancel 路径主动释放 Redis 槽位（SREM 幂等，handler 再次释放也安全）
@@ -421,6 +424,9 @@ async def pause_task_by_message_id(
                 if push_task_id:
                     # 立即关闭前端显示闸门，但不提前覆盖数据库快照。
                     ws_manager.cancel_task(push_task_id, org_id=ctx.org_id)
+                    await ws_manager.publish_cancelled_gate(
+                        str(push_task_id), ctx.org_id, action="set",
+                    )
 
             return {
                 "success": True,
@@ -492,6 +498,9 @@ async def resume_task_by_message_id(
                 if push_task_id:
                     await ws_manager.clear_cancelled_gate(
                         str(push_task_id), org_id=ctx.org_id,
+                    )
+                    await ws_manager.publish_cancelled_gate(
+                        str(push_task_id), ctx.org_id, action="clear",
                     )
                 await RedisConversationWakeup().publish(
                     str(task["conversation_id"]), ctx.org_id,

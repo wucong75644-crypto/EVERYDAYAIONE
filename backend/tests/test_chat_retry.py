@@ -243,7 +243,7 @@ class TestAttemptChatRetry:
 
     @pytest.mark.asyncio
     async def test_retry_passes_context_to_stream_generate(self, handler):
-        """重试时 retry_context 应传递给 _stream_generate"""
+        """重试时 retry_context 与 ContextAnchor 都应传递给 _stream_generate"""
         new_decision = RoutingDecision(
             generation_type=GenerationType.CHAT,
             recommended_model="gemini-3-flash",
@@ -259,6 +259,7 @@ class TestAttemptChatRetry:
              patch.object(handler, "_send_retry_notification", new_callable=AsyncMock), \
              patch.object(handler, "_stream_generate", new_callable=AsyncMock) as mock_stream:
 
+            anchor = object()
             await handler._attempt_chat_retry(
                 error=Exception("error"),
                 task_id="task-1",
@@ -272,10 +273,12 @@ class TestAttemptChatRetry:
 
                 _params={"_is_smart_mode": True},
                 _retry_context=None,
+                context_anchor=anchor,
             )
 
             call_kwargs = mock_stream.call_args.kwargs
             assert call_kwargs["_retry_context"] is mock_ctx
+            assert call_kwargs["context_anchor"] is anchor
 
 
 # ============================================================

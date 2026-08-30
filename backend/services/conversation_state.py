@@ -58,4 +58,6 @@ def reduce_command(
         return ConversationState.RUNNING_MODEL
     if command.command_type == CommandType.TOOL_COMPLETED:
         return ConversationState.RUNNING_MODEL
+    if command.command_type == CommandType.STEER:
+        return ConversationState.RUNNING_MODEL
     return state

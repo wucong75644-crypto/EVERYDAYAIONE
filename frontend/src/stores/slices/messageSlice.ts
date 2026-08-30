@@ -91,43 +91,42 @@ export const createMessageSlice: StateCreator<
   updateMessage: (messageId, updates) => {
     set((state) => {
       const messages = { ...state.messages };
+      const optimisticMessages = new Map(state.optimisticMessages);
+      let updated = false;
 
       for (const [convId, list] of Object.entries(messages)) {
         const index = list.findIndex((m) => m.id === messageId);
         if (index !== -1) {
-          const updated = {
+          const nextMessage = {
             ...list[index],
             ...updates,
             updated_at: new Date().toISOString(),
           };
           const newList = [...list];
-          newList[index] = updated;
+          newList[index] = nextMessage;
           messages[convId] = newList;
-
-          return { messages };
+          updated = true;
+          break;
         }
       }
-
-      // 也检查乐观消息
-      const optimisticMessages = new Map(state.optimisticMessages);
 
       for (const [convId, list] of optimisticMessages) {
         const index = list.findIndex((m) => m.id === messageId);
         if (index !== -1) {
-          const updated = {
+          const nextMessage = {
             ...list[index],
             ...updates,
             updated_at: new Date().toISOString(),
           };
           const newList = [...list];
-          newList[index] = updated;
+          newList[index] = nextMessage;
           optimisticMessages.set(convId, newList);
-
-          return { optimisticMessages };
+          updated = true;
+          break;
         }
       }
 
-      return state;
+      return updated ? { messages, optimisticMessages } : state;
     });
   },
 

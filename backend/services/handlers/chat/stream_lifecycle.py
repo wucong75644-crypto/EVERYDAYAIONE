@@ -24,6 +24,7 @@ async def handle_stream_error(
     permission_mode: str,
     params: dict[str, Any] | None,
     retry_context: Any,
+    context_anchor: Any = None,
 ) -> None:
     """区分 Provider 可重试错误和业务错误，不处理持久化阶段异常。"""
     from core.error_classifier import classify_error
@@ -49,6 +50,7 @@ async def handle_stream_error(
             permission_mode=permission_mode,
             _params=params,
             _retry_context=retry_context,
+            context_anchor=context_anchor,
             elapsed_ms=int((time.monotonic() - started_at) * 1000),
         )
         return

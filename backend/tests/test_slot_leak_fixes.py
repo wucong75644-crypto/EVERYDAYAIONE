@@ -227,6 +227,7 @@ class TestTaskRouteSlotRelease:
         with patch("api.routes.task.release_task_slot", new_callable=AsyncMock) as mock_release, \
              patch("services.websocket_manager.ws_manager") as mock_ws:
             mock_ws.cancel_task = MagicMock()
+            mock_ws.publish_cancelled_gate = AsyncMock()
 
             from api.routes.task import cancel_task_by_message_id
             # 路由内部不用 request 对象本身，传 mock 即可
@@ -262,7 +263,8 @@ class TestTaskRouteSlotRelease:
         ) as mock_cancel, patch(
             "api.routes.task.release_task_slot",
             new_callable=AsyncMock,
-        ), patch("services.websocket_manager.ws_manager"):
+        ), patch("services.websocket_manager.ws_manager") as mock_ws:
+            mock_ws.publish_cancelled_gate = AsyncMock()
             from api.routes.task import cancel_task_by_message_id
 
             result = await cancel_task_by_message_id(

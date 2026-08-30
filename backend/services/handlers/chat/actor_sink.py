@@ -179,6 +179,16 @@ class ActorWebSink:
         )
         await self._persist()
 
+    async def on_tool_calls(
+        self, _tool_calls: list[dict[str, Any]], _turn: int,
+    ) -> None:
+        """工具调用由 running tool_step 事件投影，避免新增 outbox 事件类型。"""
+        return None
+
+    async def on_tool_result(self, **_kwargs: Any) -> None:
+        """工具结果由 tool_step 更新投影，保持交付事件类型向后兼容。"""
+        return None
+
     async def flush(self) -> None:
         await self.flush_progress()
         delivery_seq = await self._append_event("stream_end", {})
@@ -197,8 +207,12 @@ class ActorWebSink:
         )
 
     async def flush_progress(self) -> None:
-        """在安全点前刷入最新进度，不发送 stream_end。"""
-        await self._persist()
+        """在安全点前刷入最新进度，不发送 stream_end。
+
+        暂停/取消会据此快照物化 messages；这里不能把写失败降级为日志，
+        否则 PostgreSQL 会确认暂停但遗漏最后一段用户可见内容。
+        """
+        await self._persist(required=True)
 
     def seed_progress(
         self,
@@ -212,49 +226,57 @@ class ActorWebSink:
             if isinstance(block, dict)
         ]
 
-    async def _persist(self) -> None:
+    async def _persist(self, *, required: bool = False) -> None:
         self._chunks_since_persist = 0
-        try:
-            response = await self._db.rpc(
-                "update_generation_progress",
-                {
-                    "p_task_id": self._delivery.task_id,
-                    "p_execution_token": self._delivery.execution_token,
-                    "p_accumulated_content": self._text,
-                    "p_accumulated_blocks": Jsonb(self._blocks),
-                },
-            ).execute()
-            result = response.data if response else None
-            if not isinstance(result, dict):
-                raise RuntimeError("ACTOR_PROGRESS_RESULT_INVALID")
-            if result.get("outcome") in {
-                "ownership_lost",
-                "lease_expired",
-                "terminal",
-            }:
-                self._cancellation_event.set()
-                raise asyncio.CancelledError
-            if self._delivery_store is not None and self._session is not None:
-                snapshot = await self._delivery_store.save_snapshot(
-                    task_id=self._delivery.task_id,
-                    execution_token=self._delivery.execution_token,
-                    content=self._text,
-                    blocks=self._blocks,
-                )
-                if snapshot.get("outcome") == "ownership_lost":
+        attempts = 3 if required else 1
+        for attempt in range(1, attempts + 1):
+            try:
+                response = await self._db.rpc(
+                    "update_generation_progress",
+                    {
+                        "p_task_id": self._delivery.task_id,
+                        "p_execution_token": self._delivery.execution_token,
+                        "p_accumulated_content": self._text,
+                        "p_accumulated_blocks": Jsonb(self._blocks),
+                    },
+                ).execute()
+                result = response.data if response else None
+                if not isinstance(result, dict):
+                    raise RuntimeError("ACTOR_PROGRESS_RESULT_INVALID")
+                if result.get("outcome") in {
+                    "ownership_lost",
+                    "lease_expired",
+                    "terminal",
+                }:
                     self._cancellation_event.set()
                     raise asyncio.CancelledError
-        except asyncio.CancelledError:
-            raise
-        except Exception as error:
-            if "OWNERSHIP_LOST" in str(error):
-                self._cancellation_event.set()
-                raise asyncio.CancelledError from error
-            logger.warning(
-                "actor_progress_write_failed | "
-                f"task_id={self._delivery.task_id} | "
-                f"error={type(error).__name__}"
-            )
+                if self._delivery_store is not None and self._session is not None:
+                    snapshot = await self._delivery_store.save_snapshot(
+                        task_id=self._delivery.task_id,
+                        execution_token=self._delivery.execution_token,
+                        content=self._text,
+                        blocks=self._blocks,
+                    )
+                    if snapshot.get("outcome") == "ownership_lost":
+                        self._cancellation_event.set()
+                        raise asyncio.CancelledError
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                if "OWNERSHIP_LOST" in str(error):
+                    self._cancellation_event.set()
+                    raise asyncio.CancelledError from error
+                if attempt < attempts:
+                    await asyncio.sleep(0.05 * attempt)
+                    continue
+                logger.warning(
+                    "actor_progress_write_failed | "
+                    f"task_id={self._delivery.task_id} | "
+                    f"error={type(error).__name__} | required={required}"
+                )
+                if required:
+                    raise RuntimeError("ACTOR_PROGRESS_PERSIST_REQUIRED") from error
 
     async def _ensure_session(self) -> None:
         if self._delivery_store is None or self._session is not None:

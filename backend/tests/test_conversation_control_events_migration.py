@@ -67,6 +67,17 @@ def test_control_event_append_supports_tool_completion() -> None:
     assert "p_event_type = 'approval_result'" in sql
 
 
+def test_steer_migration_reuses_control_event_table() -> None:
+    migration = _read(MIGRATIONS / "242_conversation_actor_steer.sql")
+
+    assert "ALTER TABLE conversation_control_events" in migration
+    assert "'pause', 'resume'" in migration
+    assert "'steer'" in migration
+    assert "CREATE OR REPLACE FUNCTION append_conversation_steer" in migration
+    assert "ACTOR_STEER_SCOPE_MISMATCH" in migration
+    assert "CREATE TABLE" not in migration
+
+
 def test_rollback_refuses_pending_events_and_drops_objects_in_order() -> None:
     sql = _read(ROLLBACK)
 

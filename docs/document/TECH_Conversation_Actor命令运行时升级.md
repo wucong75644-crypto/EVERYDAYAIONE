@@ -81,6 +81,7 @@ PostgreSQL 是唯一的持久事实来源，负责：
 
 ```text
 USER_TURN
+STEER
 CANCEL
 TOOL_COMPLETED
 APPROVAL_RESULT
@@ -89,7 +90,17 @@ LEASE_LOST
 SHUTDOWN
 ```
 
-同步工具结果可以先使用当前 Runtime 内存 Inbox；跨进程或跨生命周期事件必须在数据库落盘后再唤醒 Runtime。
+同步工具结果可以先使用当前 Runtime 内存 Inbox；跨进程或跨生命周期事件（包括 Actor steer）必须在数据库落盘后再唤醒 Runtime。
+
+模型流、工具调用、工具结果回填、预算、上下文压缩和取消检查由
+`execute_chat` 的通道无关内核统一执行。ActorWebSink 与旧 WebSocket sink
+只负责事件投影和进度持久化；旧 Web 路径保留兼容入口，但不再维护独立 Agent Loop。
+
+重试边界保持明确：共享内核不做 Provider 故障切换；旧 Web 的
+`handle_stream_error` 继续负责兼容路径的 Provider 级 smart retry。Actor 的失败恢复
+仍由现有 claim/lease/fencing 与 `execution_attempt` 负责，不能把一次 Provider 重试
+误当成新的工具执行授权。模型调用可能已产生 Provider 费用，因此恢复时依靠稳定
+`tool_call_id` 与 `tool_invocations` 幂等记录，禁止未知外部副作用盲目重放。
 
 ### 3.4 SafePoint
 
@@ -153,7 +164,7 @@ event_type, payload, dedupe_key,
 status, created_at, applied_at
 ```
 
-事件表只保存取消、审批结果、外部工具回调和子任务完成，不保存 token 流。唯一去重键保证同一外部事件重复投递只被应用一次。
+事件表只保存取消、steer、审批结果、外部工具回调和子任务完成，不保存 token 流。唯一去重键保证同一外部事件重复投递只被应用一次。
 
 ### 5.3 工具幂等
 

@@ -10,7 +10,7 @@
 import { useAuthStore } from '../stores/useAuthStore';
 import { useMemoryStore } from '../stores/useMemoryStore';
 import { logger } from '../utils/logger';
-import { calcRemainingText } from '../utils/messageUtils';
+import { calcRemainingText, normalizeMessage, type RawApiMessage } from '../utils/messageUtils';
 import { parseContentPart, parseContentParts, parseProtocolString } from '../schemas/messageProtocol';
 import type { WSMessage } from '../hooks/useWebSocket';
 import type { TaskStatus } from '../types/scheduledTask';
@@ -55,6 +55,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       const effectiveMessageId = projection.resolveMessageId(msg);
       const conversationId = projection.resolveConversationId(msg);
       if (conversationId && effectiveMessageId) {
+        if (!projection.canProjectStreaming(conversationId, effectiveMessageId)) return;
         deps.getStore().registerStreamingId(conversationId, effectiveMessageId);
       }
 
@@ -65,7 +66,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
   message_chunk: (deps, msg, projection) => {
       const { task_id } = msg;
       const message_id = projection.resolveMessageId(msg);
-      const conversation_id = projection.ensureMessageBinding(msg);
+      const conversation_id = projection.resolveConversationId(msg);
       const chunk = parseProtocolString(msg.chunk ?? msg.payload?.chunk, 'chunk', {
         messageId: message_id,
         conversationId: conversation_id,
@@ -79,6 +80,8 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
         deps.getStore().appendContent(message_id, chunk);
         return;
       }
+      if (!projection.canProjectStreaming(conversation_id, message_id)) return;
+      projection.ensureBinding(conversation_id, message_id);
 
       const bufferData = deps.chunkBufferRef.current.get(message_id);
       const prevChunk = bufferData?.chunk || '';
@@ -126,6 +129,31 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
           deps.flushTimerRef.current = null;
         }
         flushChunkBuffer(deps);
+      }
+
+      // Actor 暂停已在 PostgreSQL 中物化 interrupted 快照。沿用 stream_end
+      // 协议把该快照投影到每个已连接页面，避免多标签只能等重连才收敛。
+      const deliveryStatus = msg.payload?.delivery_status;
+      const pausedMessage = msg.payload?.message;
+      const pausedMessageRecord = pausedMessage
+        && typeof pausedMessage === 'object'
+        && !Array.isArray(pausedMessage)
+        ? pausedMessage as Record<string, unknown>
+        : null;
+      const effectiveConversationId = projection.resolveConversationId(msg);
+      if (
+        deliveryStatus === 'paused'
+        && effectiveConversationId
+        && pausedMessageRecord
+        && typeof pausedMessageRecord.id === 'string'
+        && typeof pausedMessageRecord.conversation_id === 'string'
+        && typeof pausedMessageRecord.role === 'string'
+        && (typeof pausedMessageRecord.content === 'string' || Array.isArray(pausedMessageRecord.content))
+      ) {
+        deps.getStore().completeStreamingWithMessage(
+          effectiveConversationId,
+          normalizeMessage(pausedMessageRecord as RawApiMessage),
+        );
       }
 
       // Agent 操作完成 → 通知工作区刷新（覆盖删除等无 file block 的场景）
@@ -189,14 +217,35 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
         if (conversationId) {
           const deliveryStatus = typeof payload.delivery_status === 'string'
             ? payload.delivery_status : undefined;
-          const shouldBind = messageId
-            && deliveryStatus !== 'paused'
-            && deliveryStatus !== 'committed'
-            && deliveryStatus !== 'failed'
-            && deliveryStatus !== 'cancelled';
-          if (shouldBind) {
-            projection.ensureBinding(conversationId, messageId);
-            deps.getStore().registerStreamingId(conversationId, messageId);
+          const isTerminalDelivery = deliveryStatus === 'paused'
+            || deliveryStatus === 'committed'
+            || deliveryStatus === 'failed'
+            || deliveryStatus === 'cancelled';
+          if (deliveryStatus === 'paused') {
+            // 订阅快照也可能是唯一可见事件（例如另一个标签刚暂停）。
+            // 先停止本地流状态，持久化消息随后由任务对账回读完整 marker/内容。
+            if (messageId) deps.getStore().updateMessage(messageId, { status: 'interrupted' });
+            deps.getStore().completeStreaming(conversationId);
+          }
+          // Older subscription snapshots may not carry message_id. They still
+          // need their accumulated state restored; only an active snapshot
+          // with an explicit message id may establish a streaming binding.
+          const startsFreshDelivery = deliveryStatus === 'pending'
+            && !streamId
+            && !accumulated
+            && accumulatedBlocks.length === 0;
+          const canRestoreActiveSnapshot = !messageId
+            || startsFreshDelivery
+            || projection.canProjectStreaming(conversationId, messageId);
+          if (messageId && !isTerminalDelivery && canRestoreActiveSnapshot) {
+            if (startsFreshDelivery) {
+              // RESUME 原子清空 DeliveryProgress 后，在新 claim 前重连时只会
+              // 收到空 pending 快照；必须立即替换旧 partial，而非稍后终态回写。
+              deps.getStore().beginResumedStreaming(conversationId, messageId);
+            } else {
+              projection.ensureBinding(conversationId, messageId);
+              deps.getStore().registerStreamingId(conversationId, messageId);
+            }
           }
 
           const currentCursor = deps.deliveryCursorRef?.current.get(task_id);
@@ -205,7 +254,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
             || !currentCursor.snapshotApplied
             || snapshotSeq === undefined
             || currentCursor.lastSeq <= snapshotSeq;
-          if (shouldRestore) {
+          if (shouldRestore && !isTerminalDelivery && canRestoreActiveSnapshot) {
             if (accumulatedBlocks.length > 0) {
               const remaining = calcRemainingText(accumulatedBlocks, accumulated);
               projection.restore(conversationId, messageId, accumulatedBlocks, remaining);
@@ -249,13 +298,16 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
     },
 
   thinking_chunk: (_deps, msg, projection) => {
-      const conversation_id = projection.ensureMessageBinding(msg);
+      const conversation_id = projection.resolveConversationId(msg);
+      const messageId = projection.resolveMessageId(msg);
       const chunk = parseProtocolString(msg.chunk ?? msg.payload?.chunk, 'chunk', {
         conversationId: conversation_id,
         source: 'ws:thinking_chunk',
       });
       if (!conversation_id || !chunk) return;
       if (!projection.acceptDelivery(msg)) return;
+      if (messageId && !projection.canProjectStreaming(conversation_id, messageId)) return;
+      if (messageId) projection.ensureBinding(conversation_id, messageId);
 
       projection.appendThinkingChunk(conversation_id, chunk);
     },
@@ -318,14 +370,17 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
     },
 
   content_block_add: (_deps, msg, projection) => {
-      const conversation_id = projection.ensureMessageBinding(msg);
+      const conversation_id = projection.resolveConversationId(msg);
+      const messageId = projection.resolveMessageId(msg);
       const block = parseContentPart(msg.payload?.block, {
-        messageId: msg.message_id,
+        messageId,
         conversationId: conversation_id,
         source: 'ws:content_block_add',
       });
       if (!conversation_id || !block) return;
       if (!projection.acceptDelivery(msg)) return;
+      if (messageId && !projection.canProjectStreaming(conversation_id, messageId)) return;
+      if (messageId) projection.ensureBinding(conversation_id, messageId);
 
       // 统一投影：工具 running/terminal、文本完整块和其他结构化 block
       // 都经过同一入口，避免某种事件先到时被 Store 静默丢弃。

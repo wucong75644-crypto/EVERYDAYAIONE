@@ -403,7 +403,7 @@ export default function MessageArea({
         return;
       }
       const store = useMessageStore.getState();
-      store.registerStreamingId(conversationId, messageId);
+      store.beginResumedStreaming(conversationId, messageId);
       subscribeTaskWithMapping(taskId, conversationId);
     } catch (error) {
       logger.error('messageArea', '继续任务失败', error);

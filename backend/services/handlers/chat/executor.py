@@ -131,6 +131,8 @@ class ChatGenerationExecutor:
                     needs_google_search=bool(params.get("_needs_google_search")),
                     execution_scope=execution_scope,
                     replay_context=replay_context,
+                    thinking_effort=params.get("thinking_effort"),
+                    thinking_mode=params.get("thinking_mode"),
                 ),
                 cancellation_event=cancellation_event,
                 sink=sink,

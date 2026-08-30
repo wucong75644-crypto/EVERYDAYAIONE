@@ -75,6 +75,7 @@ function createMockStore(): MessageStoreActions {
     completeStreaming: vi.fn(),
     completeStreamingWithMessage: vi.fn(),
     registerStreamingId: vi.fn(),
+    beginResumedStreaming: vi.fn(),
     markConversationCompleted: vi.fn(),
     setIsSending: vi.fn(),
     getMessage: vi.fn(),
@@ -173,6 +174,16 @@ describe('wsMessageHandlers', () => {
       expect(store.registerStreamingId).toHaveBeenCalledWith('conv_1', 'msg_1');
       expect(store.setStatus).toHaveBeenCalledWith('msg_1', 'streaming');
     });
+
+    it('should ignore a late start for a locally paused message', () => {
+      (store.getStreamingMessageId as ReturnType<typeof vi.fn>).mockReturnValue(null);
+      (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue({ status: 'interrupted' });
+
+      handlers.message_start({ message_id: 'msg_1', conversation_id: 'conv_1' });
+
+      expect(store.registerStreamingId).not.toHaveBeenCalled();
+      expect(store.setStatus).not.toHaveBeenCalled();
+    });
   });
 
   // ========================================
@@ -249,6 +260,34 @@ describe('wsMessageHandlers', () => {
       });
 
       expect(store.appendStreamingContent).toHaveBeenCalledWith('conv_mapped', 'mapped chunk');
+    });
+
+    it('should ignore late chunks for a locally paused message', () => {
+      (store.getStreamingMessageId as ReturnType<typeof vi.fn>).mockReturnValue(null);
+      (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue({ status: 'interrupted' });
+
+      handlers.message_chunk({
+        message_id: 'msg_1',
+        conversation_id: 'conv_1',
+        chunk: 'late chunk',
+      });
+
+      expect(store.registerStreamingId).not.toHaveBeenCalled();
+      expect(store.appendStreamingContent).not.toHaveBeenCalled();
+      expect(deps.chunkBufferRef.current.size).toBe(0);
+    });
+
+    it('should accept chunks after the user explicitly resumes the same message', () => {
+      (store.getStreamingMessageId as ReturnType<typeof vi.fn>).mockReturnValue('msg_1');
+      (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue({ status: 'interrupted' });
+
+      handlers.message_chunk({
+        message_id: 'msg_1',
+        conversation_id: 'conv_1',
+        chunk: 'resumed chunk',
+      });
+
+      expect(store.appendStreamingContent).toHaveBeenCalledWith('conv_1', 'resumed chunk');
     });
 
     it('should ignore a duplicate delivery sequence', () => {
@@ -459,6 +498,29 @@ describe('wsMessageHandlers', () => {
       expect(store.completeStreaming).not.toHaveBeenCalled();
     });
 
+    it('projects an authoritative paused snapshot and clears streaming', () => {
+      handlers.stream_end({
+        task_id: 'task_1',
+        message_id: 'msg_1',
+        conversation_id: 'conv_1',
+        payload: {
+          delivery_status: 'paused',
+          message: {
+            id: 'msg_1',
+            conversation_id: 'conv_1',
+            role: 'assistant',
+            status: 'interrupted',
+            content: [{ type: 'interrupt_marker', reason: 'user_pause' }],
+            created_at: '2026-08-30T00:00:00.000Z',
+          },
+        },
+      });
+
+      expect(store.completeStreamingWithMessage).toHaveBeenCalledWith(
+        'conv_1', expect.objectContaining({ id: 'msg_1', status: 'interrupted' }),
+      );
+    });
+
     it('should fallback to taskConversationMap for conversationId', () => {
       deps.taskConversationMapRef.current.set('task_1', 'conv_mapped');
 
@@ -642,6 +704,7 @@ describe('wsMessageHandlers', () => {
 
     it('should not bind a paused snapshot as an active stream', () => {
       deps.taskConversationMapRef.current.set('task_1', 'conv_1');
+      (store.getStreamingMessageId as ReturnType<typeof vi.fn>).mockReturnValue(null);
 
       handlers.subscribed({
         payload: {
@@ -653,6 +716,29 @@ describe('wsMessageHandlers', () => {
       });
 
       expect(store.registerStreamingId).not.toHaveBeenCalled();
+      expect(store.setStreamingContent).not.toHaveBeenCalled();
+      expect(store.updateMessage).toHaveBeenCalledWith('msg_1', { status: 'interrupted' });
+      expect(store.completeStreaming).toHaveBeenCalledWith('conv_1');
+    });
+
+    it('should start a blank projection for a pending resumed task without delivery progress', () => {
+      deps.taskConversationMapRef.current.set('task_1', 'conv_1');
+      (store.getStreamingMessageId as ReturnType<typeof vi.fn>).mockReturnValue(null);
+      (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue({ status: 'interrupted' });
+
+      handlers.subscribed({
+        payload: {
+          task_id: 'task_1',
+          message_id: 'msg_1',
+          delivery_status: 'pending',
+          accumulated: '',
+          accumulated_blocks: [],
+        },
+      });
+
+      expect(store.beginResumedStreaming).toHaveBeenCalledWith('conv_1', 'msg_1');
+      expect(store.registerStreamingId).not.toHaveBeenCalled();
+      expect(store.setStreamingContent).not.toHaveBeenCalled();
     });
 
     it('should set streaming content from accumulated', () => {
@@ -678,6 +764,24 @@ describe('wsMessageHandlers', () => {
 
       expect(store.registerStreamingId).toHaveBeenCalledWith('conv_1', 'replayed_msg');
       expect(store.setStreamingContent).toHaveBeenCalledWith('conv_1', 'replayed text');
+    });
+
+    it('should ignore a running snapshot for a locally paused message', () => {
+      deps.taskConversationMapRef.current.set('task_1', 'conv_1');
+      (store.getStreamingMessageId as ReturnType<typeof vi.fn>).mockReturnValue(null);
+      (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue({ status: 'interrupted' });
+
+      handlers.subscribed({
+        payload: {
+          task_id: 'task_1',
+          message_id: 'msg_1',
+          delivery_status: 'streaming',
+          accumulated: 'late snapshot',
+        },
+      });
+
+      expect(store.registerStreamingId).not.toHaveBeenCalled();
+      expect(store.setStreamingContent).not.toHaveBeenCalled();
     });
 
     it('should not set content if no task mapping', () => {

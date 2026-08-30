@@ -95,6 +95,52 @@ async def test_remote_user_delivery_drops_cancelled_task() -> None:
 
 
 @pytest.mark.asyncio
+async def test_remote_user_delivery_allows_authoritative_paused_snapshot() -> None:
+    """暂停终态必须穿透瞬态 gate，所有 Worker 才能收敛到数据库快照。"""
+    manager = WebSocketManager()
+    manager.send_to_connection = AsyncMock(return_value=True)
+    manager._connections["user-1"] = {
+        "conn-a": SimpleNamespace(org_id="org-a"),
+    }
+    await manager.mark_cancelled_gate("task-1", "org-a")
+    message = {
+        "type": "stream_end",
+        "payload": {"delivery_status": "paused", "message": {"id": "msg-1"}},
+    }
+
+    await manager._deliver_from_redis({
+        "target_type": "user",
+        "target_id": "user-1",
+        "task_id": "task-1",
+        "org_id": "org-a",
+        "message": message,
+    })
+
+    manager.send_to_connection.assert_awaited_once_with("conn-a", message)
+
+
+@pytest.mark.asyncio
+async def test_remote_gate_control_updates_local_gate() -> None:
+    manager = WebSocketManager()
+
+    await manager._deliver_from_redis({
+        "target_type": "cancelled_gate",
+        "target_id": "task-1",
+        "org_id": "org-a",
+        "message": {"action": "set"},
+    })
+    assert manager.is_in_cancelled_gate("task-1", "org-a") is True
+
+    await manager._deliver_from_redis({
+        "target_type": "cancelled_gate",
+        "target_id": "task-1",
+        "org_id": "org-a",
+        "message": {"action": "clear"},
+    })
+    assert manager.is_in_cancelled_gate("task-1", "org-a") is False
+
+
+@pytest.mark.asyncio
 async def test_remote_task_delivery_derives_task_id_for_gate() -> None:
     """task channel 的 target_id 本身就是 task_id。"""
     manager = WebSocketManager()

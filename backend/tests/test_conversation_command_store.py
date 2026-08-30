@@ -27,6 +27,11 @@ class _DB:
                 "event_id": "event-2",
                 "already_enqueued": False,
             },
+            "append_conversation_steer": {
+                "outcome": "enqueued",
+                "event_id": "event-steer",
+                "already_enqueued": False,
+            },
             "read_conversation_control_commands": [
                 {
                     "id": "event-1",
@@ -65,6 +70,25 @@ async def test_store_appends_typed_approval_event():
     assert result["event_id"] == "event-2"
     assert db.calls[0][0] == "append_conversation_control_command"
     assert db.calls[0][1]["p_event_type"] == "approval_result"
+
+
+@pytest.mark.asyncio
+async def test_store_appends_steer_to_scoped_actor_rpc():
+    db = _DB()
+    store = DatabaseConversationCommandStore(db)
+
+    result = await store.append(
+        conversation_id="conversation-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        command_type=CommandType.STEER,
+        dedupe_key="steer:event-1",
+        payload={"message": "改查库存"},
+    )
+
+    assert result["event_id"] == "event-steer"
+    assert db.calls[0][0] == "append_conversation_steer"
+    assert db.calls[0][1]["p_payload"].obj == {"message": "改查库存"}
 
 
 @pytest.mark.asyncio

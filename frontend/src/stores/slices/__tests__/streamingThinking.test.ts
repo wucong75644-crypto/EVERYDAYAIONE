@@ -304,5 +304,36 @@ describe('streamingSlice - suggestions', () => {
         }),
       ]);
     });
+
+    it('starts a resumed attempt with blank delivery content', () => {
+      const paused = {
+        id: 'paused_msg',
+        conversation_id: 'conv_1',
+        role: 'assistant' as const,
+        content: [
+          { type: 'text' as const, text: '旧 partial' },
+          { type: 'interrupt_marker' as const, reason: 'user_pause' as const },
+        ],
+        status: 'interrupted' as const,
+        created_at: new Date().toISOString(),
+      };
+      store.setState({ messages: { conv_1: [paused] } });
+      store.getState().appendStreamingThinking('conv_1', '旧思考');
+      store.getState().setAgentStepHint('conv_1', '旧工具状态');
+
+      store.getState().beginResumedStreaming('conv_1', 'paused_msg');
+
+      expect(store.getState().messages.conv_1[0]).toEqual(paused);
+      expect(store.getState().streamingMessages.get('conv_1')).toBe('paused_msg');
+      expect(store.getState().optimisticMessages.get('conv_1')).toEqual([
+        expect.objectContaining({
+          id: 'paused_msg',
+          status: 'streaming',
+          content: [],
+        }),
+      ]);
+      expect(store.getState().streamingThinking.has('conv_1')).toBe(false);
+      expect(store.getState().agentStepHint.has('conv_1')).toBe(false);
+    });
   });
 });

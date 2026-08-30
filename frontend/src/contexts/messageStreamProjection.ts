@@ -64,6 +64,7 @@ export interface MessageStreamProjection {
     seq: number | undefined,
     snapshotApplied?: boolean,
   ) => void;
+  canProjectStreaming: (conversationId: string, messageId: string) => boolean;
   ensureBinding: (conversationId: string, messageId: string) => void;
   ensureMessageBinding: (msg: WSIncomingMessage, conversationId?: string) => string | undefined;
   appendTextChunk: (conversationId: string, chunk: string) => void;
@@ -196,6 +197,15 @@ export function createMessageStreamProjection(deps: HandlerDeps): MessageStreamP
     store.registerStreamingId?.(conversationId, messageId);
   };
 
+  const canProjectStreaming = (conversationId: string, messageId: string): boolean => {
+    const store = getStore();
+    // 停止会先在本地把同一消息物化为 interrupted。浏览器已在队列中的
+    // 旧 stream 事件不能再把它注册回 streaming；用户明确继续后已重新
+    // 注册同一 messageId，因此允许新 attempt 的事件进入。
+    return store.getStreamingMessageId(conversationId) === messageId
+      || store.getMessage(messageId)?.status !== 'interrupted';
+  };
+
   const ensureMessageBinding = (
     msg: WSIncomingMessage,
     conversationId = resolveConversationId(msg),
@@ -285,6 +295,7 @@ export function createMessageStreamProjection(deps: HandlerDeps): MessageStreamP
     resolveMessageId,
     acceptDelivery,
     setDeliveryCursor,
+    canProjectStreaming,
     ensureBinding,
     ensureMessageBinding,
     appendTextChunk,

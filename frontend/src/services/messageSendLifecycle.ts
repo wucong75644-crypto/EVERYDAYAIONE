@@ -157,7 +157,7 @@ export function processApiResponse(
     unsubscribeTask?.(ctx.clientTaskId);
 
     if (response.action === 'resume' && response.assistant_message_id) {
-      store.registerStreamingId(conversationId, response.assistant_message_id);
+      store.beginResumedStreaming(conversationId, response.assistant_message_id);
       const taskId = response.client_task_id
         || response.external_task_id
         || response.task_id;

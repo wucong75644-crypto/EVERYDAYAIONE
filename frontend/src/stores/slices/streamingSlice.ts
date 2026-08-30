@@ -31,6 +31,8 @@ export interface StreamingSlice {
     generationParams?: GenerationParams;
   }) => void;
   registerStreamingId: (conversationId: string, messageId: string) => void;
+  /** 暂停任务继续成功后，开始一轮不携带旧 partial 的新交付投影。 */
+  beginResumedStreaming: (conversationId: string, messageId: string) => void;
   appendStreamingContent: (conversationId: string, chunk: string) => void;
   appendContentBlock: (conversationId: string, block: ContentPart) => void;
   /** text block 去重：替换最后一个 text block（message_chunk 已累积），不追加重复 */

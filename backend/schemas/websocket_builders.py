@@ -111,6 +111,8 @@ def build_thinking_chunk(
 def build_stream_end(
     task_id: str, conversation_id: str, message_id: str,
     *,
+    delivery_status: Optional[str] = None,
+    message: Optional[Dict[str, Any]] = None,
     delivery_session_id: Optional[str] = None,
     stream_id: Optional[str] = None,
     execution_attempt: Optional[int] = None,
@@ -122,6 +124,10 @@ def build_stream_end(
     前端收到后立即退出 streaming 状态。
     """
     payload: Dict[str, Any] = {}
+    if delivery_status is not None:
+        payload["delivery_status"] = delivery_status
+    if message is not None:
+        payload["message"] = message
     _add_delivery_metadata(
         payload, delivery_session_id, stream_id, execution_attempt, delivery_seq,
     )
