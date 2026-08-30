@@ -265,11 +265,17 @@ async def _do_generate_message(
                     if decision.action in {ControlAction.PAUSE, ControlAction.CANCEL} and task_id:
                         from services.websocket_manager import ws_manager
                         ws_manager.cancel_task(str(task_id), org_id=ctx.org_id)
+                        await ws_manager.publish_cancelled_gate(
+                            str(task_id), ctx.org_id, action="set",
+                        )
                     if decision.action is ControlAction.RESUME:
                         if task_id:
                             from services.websocket_manager import ws_manager
                             await ws_manager.clear_cancelled_gate(
                                 str(task_id), org_id=ctx.org_id,
+                            )
+                            await ws_manager.publish_cancelled_gate(
+                                str(task_id), ctx.org_id, action="clear",
                             )
                         from services.conversation_worker import RedisConversationWakeup
                         await RedisConversationWakeup().publish(

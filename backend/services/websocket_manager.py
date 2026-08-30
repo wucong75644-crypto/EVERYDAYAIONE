@@ -21,7 +21,7 @@ from fastapi import WebSocket
 from loguru import logger
 
 from services.cancel_gate import CancelManager
-from services.websocket_redis import RedisPubSubMixin
+from services.websocket_redis import RedisPubSubMixin, is_pause_terminal_delivery
 
 
 # === 配置常量 ===
@@ -250,7 +250,7 @@ class WebSocketManager(RedisPubSubMixin):
             org_id: 用于闸门复合 key 匹配（可选向后兼容）
         """
         # === Phase 1: WS 闸门 ===
-        if self.is_in_cancelled_gate(task_id, org_id):
+        if self.is_in_cancelled_gate(task_id, org_id) and not is_pause_terminal_delivery(message):
             logger.debug(
                 f"Drop cancelled task message | task={task_id} | "
                 f"type={message.get('type')}"
@@ -267,7 +267,7 @@ class WebSocketManager(RedisPubSubMixin):
 
         delivered = 0
         for conn_id in list(subscribers):
-            if self.is_in_cancelled_gate(task_id, org_id):
+            if self.is_in_cancelled_gate(task_id, org_id) and not is_pause_terminal_delivery(message):
                 logger.debug(
                     f"Drop cancelled task message during local delivery | "
                     f"task={task_id} | type={message.get('type')}"
@@ -276,7 +276,7 @@ class WebSocketManager(RedisPubSubMixin):
             if await self.send_to_connection(conn_id, message):
                 delivered += 1
 
-        if self.is_in_cancelled_gate(task_id, org_id):
+        if self.is_in_cancelled_gate(task_id, org_id) and not is_pause_terminal_delivery(message):
             return delivered
         await self._publish("task", task_id, message, org_id=org_id)
 
@@ -299,7 +299,7 @@ class WebSocketManager(RedisPubSubMixin):
             org_id: 用于闸门复合 key 匹配（可选向后兼容）
         """
         # === Phase 1: WS 闸门 ===
-        if self.is_in_cancelled_gate(task_id, org_id):
+        if self.is_in_cancelled_gate(task_id, org_id) and not is_pause_terminal_delivery(message):
             logger.debug(
                 f"Drop cancelled task message | task={task_id} | "
                 f"type={message.get('type')}"
@@ -313,7 +313,7 @@ class WebSocketManager(RedisPubSubMixin):
                 f"path=local_task | count={len(local_subscribers)}"
             )
             for conn_id in list(local_subscribers):
-                if self.is_in_cancelled_gate(task_id, org_id):
+                if self.is_in_cancelled_gate(task_id, org_id) and not is_pause_terminal_delivery(message):
                     logger.debug(
                         f"Drop cancelled task message during local delivery | "
                         f"task={task_id} | type={message.get('type')}"
@@ -328,7 +328,7 @@ class WebSocketManager(RedisPubSubMixin):
                     f"path=local_user | user={user_id}"
                 )
                 for conn_id in list(local_conns.keys()):
-                    if self.is_in_cancelled_gate(task_id, org_id):
+                    if self.is_in_cancelled_gate(task_id, org_id) and not is_pause_terminal_delivery(message):
                         logger.debug(
                             f"Drop cancelled task message during local delivery | "
                             f"task={task_id} | type={message.get('type')}"
@@ -336,7 +336,7 @@ class WebSocketManager(RedisPubSubMixin):
                         return
                     await self.send_to_connection(conn_id, message)
 
-        if self.is_in_cancelled_gate(task_id, org_id):
+        if self.is_in_cancelled_gate(task_id, org_id) and not is_pause_terminal_delivery(message):
             return
         await self._publish(
             "user", user_id, message, org_id=org_id, task_id=task_id,
@@ -493,6 +493,20 @@ class WebSocketManager(RedisPubSubMixin):
         self, task_id: str, org_id: str | None = None,
     ) -> None:
         await self._cancel.clear_gate(task_id, org_id)
+
+    async def publish_cancelled_gate(
+        self,
+        task_id: str,
+        org_id: str | None = None,
+        *,
+        action: str,
+    ) -> None:
+        """把已由 PostgreSQL 控制命令确定的投影闸门同步给其他 Web Worker。"""
+        if action not in {"set", "clear"}:
+            raise ValueError("unsupported cancelled gate action")
+        await self._publish(
+            "cancelled_gate", task_id, {"action": action}, org_id=org_id,
+        )
 
     def is_in_cancelled_gate(
         self, task_id: str, org_id: str | None = None,

@@ -6,7 +6,7 @@ from typing import Any, Mapping
 
 from loguru import logger
 
-from schemas.websocket import build_message_done, build_message_error
+from schemas.websocket import build_message_done, build_message_error, build_stream_end
 from services.message_utils import format_message
 from services.task_limit_service import release_task_slot
 
@@ -33,7 +33,10 @@ class ActorTerminalDelivery:
         if status not in {"completed", "failed", "cancelled", "paused"}:
             return
         await release_task_slot(current)
-        if status in {"cancelled", "paused"}:
+        if status == "cancelled":
+            return
+        if status == "paused":
+            await self._send_paused(current)
             return
         if status == "completed":
             await self._send_completed(current)
@@ -75,6 +78,22 @@ class ActorTerminalDelivery:
                 message_id=str(task["assistant_message_id"]),
                 error_code="GENERATION_FAILED",
                 error_message=str(task.get("error_message") or "生成失败"),
+            ),
+            org_id=task.get("org_id"),
+        )
+
+    async def _send_paused(self, task: Mapping[str, Any]) -> None:
+        message = await self._load_message(str(task["assistant_message_id"]))
+        push_task_id = _push_task_id(task)
+        await self._websocket.send_to_task_or_user(
+            push_task_id,
+            str(task["user_id"]),
+            build_stream_end(
+                task_id=push_task_id,
+                conversation_id=str(task["conversation_id"]),
+                message_id=str(task["assistant_message_id"]),
+                delivery_status="paused",
+                message=format_message(message),
             ),
             org_id=task.get("org_id"),
         )

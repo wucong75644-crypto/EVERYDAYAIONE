@@ -32,6 +32,11 @@ class _DB:
         return _RPC(outcome)
 
 
+class _AlwaysUnavailableDB:
+    def rpc(self, _name, _params):
+        return _RPC(None)
+
+
 class _WebSocket:
     def __init__(self):
         self.messages = []
@@ -135,6 +140,18 @@ async def test_sink_degrades_when_progress_store_is_temporarily_unavailable():
     await sink.on_block({"type": "text", "text": "partial"})
 
     assert websocket.messages[0][3]["type"] == "content_block_add"
+
+
+@pytest.mark.asyncio
+async def test_sink_requires_progress_persistence_at_pause_safe_point():
+    sink = ActorWebSink(
+        _AlwaysUnavailableDB(), _delivery(), asyncio.Event(), _WebSocket(),
+    )
+
+    await sink.on_block({"type": "text", "text": "partial"})
+
+    with pytest.raises(RuntimeError, match="ACTOR_PROGRESS_PERSIST_REQUIRED"):
+        await sink.flush_progress()
 
 
 @pytest.mark.asyncio

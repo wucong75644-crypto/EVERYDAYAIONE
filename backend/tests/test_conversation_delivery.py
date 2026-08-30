@@ -63,14 +63,14 @@ def _task(status, delivery_context=None):
     }
 
 
-def _message():
+def _message(status="completed"):
     return {
         "id": "message-1",
         "conversation_id": "conv-1",
         "content": [{"type": "text", "text": "完成"}],
         "role": "assistant",
         "created_at": "2026-07-17T00:00:00Z",
-        "status": "completed",
+        "status": status,
         "credits_cost": 2,
     }
 
@@ -150,7 +150,7 @@ async def test_failed_delivery_pushes_message_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_paused_delivery_releases_slot_without_error_or_done(monkeypatch):
+async def test_paused_delivery_releases_slot_and_projects_interrupted_snapshot(monkeypatch):
     released = []
 
     async def fake_release(task):
@@ -161,12 +161,17 @@ async def test_paused_delivery_releases_slot_without_error_or_done(monkeypatch):
         fake_release,
     )
     websocket = _WebSocket()
-    delivery = ActorTerminalDelivery(_DB(_task("paused")), websocket)
+    delivery = ActorTerminalDelivery(
+        _DB(_task("paused"), _message("interrupted")), websocket,
+    )
 
     await delivery.notify(_task("running"), {"outcome": "paused"})
 
     assert released == ["task-1"]
-    assert websocket.messages == []
+    payload = websocket.messages[0][3]["payload"]
+    assert websocket.messages[0][3]["type"] == "stream_end"
+    assert payload["delivery_status"] == "paused"
+    assert payload["message"]["status"] == "interrupted"
 
 
 @pytest.mark.asyncio

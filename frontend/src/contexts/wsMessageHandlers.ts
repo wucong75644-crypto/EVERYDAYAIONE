@@ -128,6 +128,24 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
         flushChunkBuffer(deps);
       }
 
+      // Actor 暂停已在 PostgreSQL 中物化 interrupted 快照。沿用 stream_end
+      // 协议把该快照投影到每个已连接页面，避免多标签只能等重连才收敛。
+      const deliveryStatus = msg.payload?.delivery_status;
+      const pausedMessage = msg.payload?.message;
+      const effectiveConversationId = projection.resolveConversationId(msg);
+      if (
+        deliveryStatus === 'paused'
+        && effectiveConversationId
+        && pausedMessage
+        && typeof pausedMessage === 'object'
+        && !Array.isArray(pausedMessage)
+      ) {
+        deps.getStore().completeStreamingWithMessage(
+          effectiveConversationId,
+          pausedMessage as Parameters<MessageStoreActions['completeStreamingWithMessage']>[1],
+        );
+      }
+
       // Agent 操作完成 → 通知工作区刷新（覆盖删除等无 file block 的场景）
       window.dispatchEvent(new CustomEvent('workspace:changed'));
     },
@@ -194,6 +212,12 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
             && deliveryStatus !== 'committed'
             && deliveryStatus !== 'failed'
             && deliveryStatus !== 'cancelled';
+          if (deliveryStatus === 'paused') {
+            // 订阅快照也可能是唯一可见事件（例如另一个标签刚暂停）。
+            // 先停止本地流状态，持久化消息随后由任务对账回读完整 marker/内容。
+            if (messageId) deps.getStore().updateMessage(messageId, { status: 'interrupted' });
+            deps.getStore().completeStreaming(conversationId);
+          }
           if (shouldBind) {
             projection.ensureBinding(conversationId, messageId);
             deps.getStore().registerStreamingId(conversationId, messageId);
@@ -205,7 +229,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
             || !currentCursor.snapshotApplied
             || snapshotSeq === undefined
             || currentCursor.lastSeq <= snapshotSeq;
-          if (shouldRestore) {
+          if (shouldRestore && shouldBind) {
             if (accumulatedBlocks.length > 0) {
               const remaining = calcRemainingText(accumulatedBlocks, accumulated);
               projection.restore(conversationId, messageId, accumulatedBlocks, remaining);

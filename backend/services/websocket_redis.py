@@ -16,6 +16,14 @@ from loguru import logger
 WS_CHANNEL = "ws:broadcast"
 
 
+def is_pause_terminal_delivery(message: Any) -> bool:
+    """暂停快照必须穿透本地投影闸门，保证所有 Worker 能收敛。"""
+    if not isinstance(message, dict) or message.get("type") != "stream_end":
+        return False
+    payload = message.get("payload")
+    return isinstance(payload, dict) and payload.get("delivery_status") == "paused"
+
+
 class RedisPubSubMixin:
     """
     Redis Pub/Sub Mixin
@@ -34,6 +42,18 @@ class RedisPubSubMixin:
         self, task_id: str, org_id: str | None = None,
     ) -> bool:
         """由 WebSocketManager 提供的本地取消闸门查询。"""
+        raise NotImplementedError
+
+    async def mark_cancelled_gate(
+        self, task_id: str, org_id: str | None = None,
+    ) -> None:
+        """由 WebSocketManager 提供的本地投影闸门写入。"""
+        raise NotImplementedError
+
+    async def clear_cancelled_gate(
+        self, task_id: str, org_id: str | None = None,
+    ) -> None:
+        """由 WebSocketManager 提供的本地投影闸门清理。"""
         raise NotImplementedError
 
     def _init_redis_state(self) -> None:
@@ -207,6 +227,14 @@ class RedisPubSubMixin:
         if not message:
             return
 
+        if target_type == "cancelled_gate":
+            action = message.get("action") if isinstance(message, dict) else None
+            if action == "set":
+                await self.mark_cancelled_gate(str(target_id), data.get("org_id"))
+            elif action == "clear":
+                await self.clear_cancelled_gate(str(target_id), data.get("org_id"))
+            return
+
         # Redis 是跨进程 at-least-once 投递，消息可能在取消前已发布、
         # 取消后才抵达本 Worker。入站必须再次过闸门，不能只依赖发布端。
         task_id = data.get("task_id")
@@ -214,7 +242,7 @@ class RedisPubSubMixin:
             task_id = target_id
         if task_id and self.is_in_cancelled_gate(
             str(task_id), data.get("org_id")
-        ):
+        ) and not is_pause_terminal_delivery(message):
             logger.debug(
                 f"Drop cancelled Redis task message | task={task_id} | "
                 f"type={message.get('type')}"

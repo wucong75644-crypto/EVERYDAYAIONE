@@ -459,6 +459,29 @@ describe('wsMessageHandlers', () => {
       expect(store.completeStreaming).not.toHaveBeenCalled();
     });
 
+    it('projects an authoritative paused snapshot and clears streaming', () => {
+      handlers.stream_end({
+        task_id: 'task_1',
+        message_id: 'msg_1',
+        conversation_id: 'conv_1',
+        payload: {
+          delivery_status: 'paused',
+          message: {
+            id: 'msg_1',
+            conversation_id: 'conv_1',
+            role: 'assistant',
+            status: 'interrupted',
+            content: [{ type: 'interrupt_marker', reason: 'user_pause' }],
+            created_at: '2026-08-30T00:00:00.000Z',
+          },
+        },
+      });
+
+      expect(store.completeStreamingWithMessage).toHaveBeenCalledWith(
+        'conv_1', expect.objectContaining({ id: 'msg_1', status: 'interrupted' }),
+      );
+    });
+
     it('should fallback to taskConversationMap for conversationId', () => {
       deps.taskConversationMapRef.current.set('task_1', 'conv_mapped');
 
@@ -642,6 +665,7 @@ describe('wsMessageHandlers', () => {
 
     it('should not bind a paused snapshot as an active stream', () => {
       deps.taskConversationMapRef.current.set('task_1', 'conv_1');
+      (store.getStreamingMessageId as ReturnType<typeof vi.fn>).mockReturnValue(null);
 
       handlers.subscribed({
         payload: {
@@ -653,6 +677,9 @@ describe('wsMessageHandlers', () => {
       });
 
       expect(store.registerStreamingId).not.toHaveBeenCalled();
+      expect(store.setStreamingContent).not.toHaveBeenCalled();
+      expect(store.updateMessage).toHaveBeenCalledWith('msg_1', { status: 'interrupted' });
+      expect(store.completeStreaming).toHaveBeenCalledWith('conv_1');
     });
 
     it('should set streaming content from accumulated', () => {

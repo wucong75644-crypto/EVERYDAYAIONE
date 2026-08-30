@@ -334,10 +334,16 @@ async def _handle_message(
                     push_task_id = result.get("client_task_id") or result.get("external_task_id")
                     if decision.action in {ControlAction.PAUSE, ControlAction.CANCEL} and push_task_id:
                         ws_manager.cancel_task(str(push_task_id), org_id=org_id)
+                        await ws_manager.publish_cancelled_gate(
+                            str(push_task_id), org_id, action="set",
+                        )
                     if decision.action is ControlAction.RESUME:
                         if push_task_id:
                             await ws_manager.clear_cancelled_gate(
                                 str(push_task_id), org_id=org_id,
+                            )
+                            await ws_manager.publish_cancelled_gate(
+                                str(push_task_id), org_id, action="clear",
                             )
                         from services.conversation_worker import RedisConversationWakeup
                         await RedisConversationWakeup().publish(

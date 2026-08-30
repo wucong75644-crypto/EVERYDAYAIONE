@@ -197,6 +197,28 @@ class TestSendDropsCancelled:
         assert published_count[0] == 1
 
     @pytest.mark.asyncio
+    async def test_paused_terminal_snapshot_bypasses_gate(self, manager, monkeypatch):
+        published_count = [0]
+
+        async def fake_publish(*args, **kwargs):
+            published_count[0] += 1
+
+        monkeypatch.setattr(manager, "_publish", fake_publish)
+        await manager.mark_cancelled_gate("task_A", "org_x")
+
+        await manager.send_to_task_or_user(
+            task_id="task_A",
+            user_id="user_1",
+            message={
+                "type": "stream_end",
+                "payload": {"delivery_status": "paused"},
+            },
+            org_id="org_x",
+        )
+
+        assert published_count[0] == 1
+
+    @pytest.mark.asyncio
     async def test_send_org_isolation(self, manager, monkeypatch):
         published_count = [0]
 
