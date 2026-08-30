@@ -230,11 +230,22 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
           // Older subscription snapshots may not carry message_id. They still
           // need their accumulated state restored; only an active snapshot
           // with an explicit message id may establish a streaming binding.
+          const startsFreshDelivery = deliveryStatus === 'pending'
+            && !streamId
+            && !accumulated
+            && accumulatedBlocks.length === 0;
           const canRestoreActiveSnapshot = !messageId
+            || startsFreshDelivery
             || projection.canProjectStreaming(conversationId, messageId);
           if (messageId && !isTerminalDelivery && canRestoreActiveSnapshot) {
-            projection.ensureBinding(conversationId, messageId);
-            deps.getStore().registerStreamingId(conversationId, messageId);
+            if (startsFreshDelivery) {
+              // RESUME 原子清空 DeliveryProgress 后，在新 claim 前重连时只会
+              // 收到空 pending 快照；必须立即替换旧 partial，而非稍后终态回写。
+              deps.getStore().beginResumedStreaming(conversationId, messageId);
+            } else {
+              projection.ensureBinding(conversationId, messageId);
+              deps.getStore().registerStreamingId(conversationId, messageId);
+            }
           }
 
           const currentCursor = deps.deliveryCursorRef?.current.get(task_id);

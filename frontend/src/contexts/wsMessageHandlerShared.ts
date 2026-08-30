@@ -39,6 +39,7 @@ export interface MessageStoreActions {
   completeStreamingWithMessage: (conversationId: string, message: Message) => void;
   getStreamingMessageId: (conversationId: string) => string | null;
   registerStreamingId: (conversationId: string, messageId: string) => void;
+  beginResumedStreaming: (conversationId: string, messageId: string) => void;
   markConversationCompleted: (conversationId: string) => void;
   setIsSending: (isSending: boolean) => void;
   getMessage: (messageId: string) => Message | undefined;

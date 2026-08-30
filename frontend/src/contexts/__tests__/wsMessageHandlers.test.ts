@@ -75,6 +75,7 @@ function createMockStore(): MessageStoreActions {
     completeStreaming: vi.fn(),
     completeStreamingWithMessage: vi.fn(),
     registerStreamingId: vi.fn(),
+    beginResumedStreaming: vi.fn(),
     markConversationCompleted: vi.fn(),
     setIsSending: vi.fn(),
     getMessage: vi.fn(),
@@ -718,6 +719,26 @@ describe('wsMessageHandlers', () => {
       expect(store.setStreamingContent).not.toHaveBeenCalled();
       expect(store.updateMessage).toHaveBeenCalledWith('msg_1', { status: 'interrupted' });
       expect(store.completeStreaming).toHaveBeenCalledWith('conv_1');
+    });
+
+    it('should start a blank projection for a pending resumed task without delivery progress', () => {
+      deps.taskConversationMapRef.current.set('task_1', 'conv_1');
+      (store.getStreamingMessageId as ReturnType<typeof vi.fn>).mockReturnValue(null);
+      (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue({ status: 'interrupted' });
+
+      handlers.subscribed({
+        payload: {
+          task_id: 'task_1',
+          message_id: 'msg_1',
+          delivery_status: 'pending',
+          accumulated: '',
+          accumulated_blocks: [],
+        },
+      });
+
+      expect(store.beginResumedStreaming).toHaveBeenCalledWith('conv_1', 'msg_1');
+      expect(store.registerStreamingId).not.toHaveBeenCalled();
+      expect(store.setStreamingContent).not.toHaveBeenCalled();
     });
 
     it('should set streaming content from accumulated', () => {

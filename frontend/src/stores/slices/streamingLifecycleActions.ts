@@ -10,6 +10,7 @@ type GetState = Parameters<StateCreator<SliceState, [], [], StreamingSlice>>[1];
 type ActionKeys =
   | 'startStreaming'
   | 'registerStreamingId'
+  | 'beginResumedStreaming'
   | 'completeStreaming'
   | 'clearConversationStreaming'
   | 'completeStreamingWithMessage'
@@ -74,6 +75,55 @@ export function createStreamingLifecycleActions(
           }
         }
         return { streamingMessages, optimisticMessages, isSending: true };
+      });
+    },
+    beginResumedStreaming: (conversationId, messageId) => {
+      set((state) => {
+        const streamingMessages = new Map(state.streamingMessages);
+        streamingMessages.set(conversationId, messageId);
+        const optimisticMessages = new Map(state.optimisticMessages);
+        const list = optimisticMessages.get(conversationId) || [];
+        const existingOptimisticIndex = list.findIndex((message) => message.id === messageId);
+        const persisted = state.messages[conversationId]?.find(
+          (message) => message.id === messageId,
+        );
+        const base = existingOptimisticIndex >= 0
+          ? list[existingOptimisticIndex]
+          : persisted;
+        const resumed = base
+          ? { ...base, content: [], status: 'streaming' as const }
+          : {
+            id: messageId,
+            conversation_id: conversationId,
+            role: 'assistant' as const,
+            content: [],
+            status: 'streaming' as const,
+            created_at: new Date().toISOString(),
+          };
+
+        optimisticMessages.set(
+          conversationId,
+          existingOptimisticIndex >= 0
+            ? list.map((message, index) => (
+              index === existingOptimisticIndex ? resumed : message
+            ))
+            : [...list, resumed],
+        );
+
+        const streamingThinking = new Map(state.streamingThinking);
+        streamingThinking.delete(conversationId);
+        const agentStepHint = new Map(state.agentStepHint);
+        agentStepHint.delete(conversationId);
+        const suggestions = new Map(state.suggestions);
+        suggestions.delete(conversationId);
+        return {
+          streamingMessages,
+          optimisticMessages,
+          streamingThinking,
+          agentStepHint,
+          suggestions,
+          isSending: true,
+        };
       });
     },
     completeStreaming: (conversationId) => {
