@@ -132,21 +132,24 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       // 协议把该快照投影到每个已连接页面，避免多标签只能等重连才收敛。
       const deliveryStatus = msg.payload?.delivery_status;
       const pausedMessage = msg.payload?.message;
+      const pausedMessageRecord = pausedMessage
+        && typeof pausedMessage === 'object'
+        && !Array.isArray(pausedMessage)
+        ? pausedMessage as Record<string, unknown>
+        : null;
       const effectiveConversationId = projection.resolveConversationId(msg);
       if (
         deliveryStatus === 'paused'
         && effectiveConversationId
-        && pausedMessage
-        && typeof pausedMessage === 'object'
-        && !Array.isArray(pausedMessage)
-        && typeof pausedMessage.id === 'string'
-        && typeof pausedMessage.conversation_id === 'string'
-        && typeof pausedMessage.role === 'string'
-        && (typeof pausedMessage.content === 'string' || Array.isArray(pausedMessage.content))
+        && pausedMessageRecord
+        && typeof pausedMessageRecord.id === 'string'
+        && typeof pausedMessageRecord.conversation_id === 'string'
+        && typeof pausedMessageRecord.role === 'string'
+        && (typeof pausedMessageRecord.content === 'string' || Array.isArray(pausedMessageRecord.content))
       ) {
         deps.getStore().completeStreamingWithMessage(
           effectiveConversationId,
-          normalizeMessage(pausedMessage as RawApiMessage),
+          normalizeMessage(pausedMessageRecord as RawApiMessage),
         );
       }
 
