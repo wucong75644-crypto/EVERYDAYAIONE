@@ -22,6 +22,10 @@ from services.changeset.repository import (
     ChangeSetRepository,
 )
 from services.changeset.service import ChangeSetService
+from services.scheduler.scheduled_task_change_adapter import (
+    ScheduledTaskChangeAdapter,
+    build_change_set_approval_actions,
+)
 
 
 router = APIRouter(prefix="/change-sets", tags=["ChangeSet"])
@@ -52,7 +56,22 @@ def _get_owned(
 
 def _to_dto(row: Dict[str, Any], checks: list[Dict[str, Any]]) -> Dict[str, Any]:
     # Pydantic 只负责稳定字段校验；数据库的时间字符串由 FastAPI 原样输出。
-    return ChangeSetDTO.model_validate({**row, "checks": checks}).model_dump(mode="json")
+    policy = row.get("policy_snapshot") or {}
+    value = {
+        **row,
+        "checks": checks,
+        "risk": policy,
+        "plan": row.get("plan_snapshot"),
+        "approval_actions": build_change_set_approval_actions(row),
+        "result": {
+            "status": row.get("status"),
+            "committed_revision": row.get("committed_revision"),
+            "conflict": row.get("conflict"),
+            "error_code": row.get("error_code"),
+            "error_message": row.get("error_message"),
+        },
+    }
+    return ChangeSetDTO.model_validate(value).model_dump(mode="json")
 
 
 @router.get("/{change_set_id}", summary="读取 ChangeSet 状态")
@@ -105,6 +124,31 @@ async def cancel_change_set(
         )
     except ChangeSetConcurrencyError as exc:
         raise HTTPException(409, str(exc))
+    return {"success": True, "data": _to_dto(updated, repo.list_checks(change_set_id, org_id))}
+
+
+@router.post("/{change_set_id}/confirm", summary="确认并提交 ChangeSet")
+async def confirm_change_set(
+    change_set_id: str,
+    user_id: CurrentUserId,
+    org_ctx: OrgCtx,
+    scoped_db: ScopedDB,
+    db: Database,
+) -> Dict[str, Any]:
+    org_id = _org_id(org_ctx)
+    repo = ChangeSetRepository(scoped_db)
+    row = _get_owned(repo, change_set_id, org_id, user_id, org_ctx)
+    if row.get("resource_type") != "scheduled_task":
+        raise HTTPException(422, "当前 ChangeSet 没有可用的业务适配器")
+    adapter = ScheduledTaskChangeAdapter(db, user_id=user_id, org_id=org_id)
+    try:
+        updated = await ChangeSetService(repo).confirm(
+            change_set_id=change_set_id, org_id=org_id, actor_id=user_id, adapter=adapter,
+        )
+    except Exception as exc:
+        if hasattr(exc, "current"):
+            raise HTTPException(409, str(exc)) from exc
+        raise
     return {"success": True, "data": _to_dto(updated, repo.list_checks(change_set_id, org_id))}
 
 

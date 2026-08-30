@@ -100,6 +100,16 @@ def test_default_risk_policy_is_frozen_as_a_single_level_without_multi_approval(
     assert assessment.as_snapshot()["version"] == "default.v1"
 
 
+def test_default_risk_policy_requires_confirmation_for_tool_scope_expansion():
+    assessment = DefaultRiskPolicy().assess(
+        resource_type="scheduled_task", operation="update",
+        context={"tool_scope_expanded": True},
+    )
+    assert assessment.level is RiskLevel.HIGH
+    assert assessment.requires_approval is True
+    assert "tool_scope_expanded" in assessment.reasons
+
+
 def test_cancel_is_idempotent_and_records_only_one_transition():
     repo = FakeRepository()
     service = ChangeSetService(repo)

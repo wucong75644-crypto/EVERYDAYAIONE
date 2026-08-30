@@ -6,7 +6,7 @@
 设计要点：
 - create/update: 返回 FormPart 预填表单，用户确认后前端发 form_submit WS 事件
 - list: 返回文本摘要
-- pause/resume/delete: 直接执行，返回文本确认
+- pause/resume/delete: 生成 ChangeSet，等待用户确认
 
 设计文档: docs/document/TECH_定时任务心跳系统.md
 """
@@ -469,6 +469,8 @@ class ChatTaskManager:
         task = await self._find_task(task_id=task_id, task_name=task_name)
         if not task:
             return {"type": "text", "text": "未找到该任务，请确认任务名称或 ID。"}
+        if task.get("_ambiguous"):
+            return self._ambiguous_task_result(task)
 
         # 从 description 解析变更意图
         description = args.get("description", "")
@@ -492,14 +494,11 @@ class ChatTaskManager:
         )
         if not task:
             return {"type": "text", "text": "未找到该任务。"}
+        if task.get("_ambiguous"):
+            return self._ambiguous_task_result(task)
         if task["status"] == "paused":
             return {"type": "text", "text": f"任务「{task['name']}」已经是暂停状态。"}
-
-        self.db.table("scheduled_tasks") \
-            .update({"status": "paused"}) \
-            .eq("id", task["id"]) \
-            .execute()
-        return {"type": "text", "text": f"⏸ 已暂停任务「{task['name']}」。说「恢复 {task['name']}」可以重新启动。"}
+        return await self._propose_chat_change("pause", task)
 
     async def _handle_resume(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """恢复任务"""
@@ -509,21 +508,11 @@ class ChatTaskManager:
         )
         if not task:
             return {"type": "text", "text": "未找到该任务。"}
+        if task.get("_ambiguous"):
+            return self._ambiguous_task_result(task)
         if task["status"] == "active":
             return {"type": "text", "text": f"任务「{task['name']}」已经在运行中。"}
-
-        # 重新计算 next_run
-        update: Dict[str, Any] = {"status": "active"}
-        if task.get("cron_expr"):
-            tz = task.get("timezone", "Asia/Shanghai")
-            next_run = calc_next_run(task["cron_expr"], tz)
-            update["next_run_at"] = next_run.isoformat()
-
-        self.db.table("scheduled_tasks") \
-            .update(update) \
-            .eq("id", task["id"]) \
-            .execute()
-        return {"type": "text", "text": f"▶️ 已恢复任务「{task['name']}」。"}
+        return await self._propose_chat_change("resume", task)
 
     async def _handle_delete(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """删除任务"""
@@ -533,12 +522,9 @@ class ChatTaskManager:
         )
         if not task:
             return {"type": "text", "text": "未找到该任务。"}
-
-        self.db.table("scheduled_tasks") \
-            .delete() \
-            .eq("id", task["id"]) \
-            .execute()
-        return {"type": "text", "text": f"🗑 已删除任务「{task['name']}」。"}
+        if task.get("_ambiguous"):
+            return self._ambiguous_task_result(task)
+        return await self._propose_chat_change("delete", task)
 
     async def _find_task(
         self, task_id: str = "", task_name: str = "",
@@ -561,12 +547,46 @@ class ChatTaskManager:
                 .eq("user_id", self.user_id) \
                 .eq("org_id", self.org_id) \
                 .ilike("name", f"%{task_name}%") \
-                .limit(1) \
                 .execute()
-            if result.data:
-                return result.data[0]
+            rows = list(result.data or [])
+            if len(rows) == 1:
+                return rows[0]
+            if len(rows) > 1:
+                return {"_ambiguous": True, "candidates": rows}
 
         return None
+
+    @staticmethod
+    def _ambiguous_task_result(task: Dict[str, Any]) -> Dict[str, Any]:
+        candidates = task.get("candidates") or []
+        lines = ["找到多个同名或相似的定时任务，请先选择一个："]
+        for item in candidates:
+            lines.append(f"- {item.get('name', '未命名')}（ID: {str(item.get('id', ''))[:8]}）")
+        return {"type": "text", "text": "\n".join(lines)}
+
+    async def _propose_chat_change(self, operation: str, task: Dict[str, Any]) -> Dict[str, Any]:
+        """聊天新操作只创建 ChangeSet；旧表单提交路径不复用这里。"""
+        from services.scheduler.scheduled_task_change_adapter import ScheduledTaskChangeSetService
+
+        proposed = dict(task)
+        if operation == "pause":
+            proposed.update({"status": "paused", "next_run_at": None})
+        elif operation == "resume":
+            if task.get("schedule_type") == "once":
+                next_run = task.get("run_at")
+            else:
+                next_run = calc_next_run(task["cron_expr"], task.get("timezone", "Asia/Shanghai")).isoformat()
+            proposed.update({"status": "active", "next_run_at": next_run})
+        row = await ScheduledTaskChangeSetService(
+            self.db, user_id=self.user_id, org_id=self.org_id,
+        ).propose(
+            operation=operation, resource_id=task["id"], base_snapshot=task,
+            proposed_snapshot=proposed,
+        )
+        return {
+            "type": "change_set", "data": row,
+            "text": f"已生成「{task.get('name', '')}」的{operation}变更方案，请确认后提交。",
+        }
 
 
 # ════════════════════════════════════════════════════════

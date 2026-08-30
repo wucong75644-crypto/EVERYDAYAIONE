@@ -75,6 +75,8 @@ TENANT_TABLES: frozenset[str] = frozenset({
     "scheduled_tasks", "scheduled_task_runs",
     # AI ChangeSet 通用变更事务（migration 248）
     "change_sets", "change_checks", "change_events",
+    # 定时任务适配器幂等回执（migration 249）
+    "scheduled_task_change_receipts",
     # 快麦 Web 外部数据接入（migration 114）
     "kuaimai_external_credentials",
     "erp_thinktank_profit_shop",

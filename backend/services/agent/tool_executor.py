@@ -52,6 +52,7 @@ class ToolExecutor(
         execution_budget=None,
         execution_mode: str = "interactive",
         erp_step_timeout_sec: float | None = None,
+        tool_policy_snapshot: Dict[str, Any] | None = None,
     ) -> None:
         self.db = db
         self.user_id = user_id
@@ -65,6 +66,8 @@ class ToolExecutor(
         self.execution_budget = execution_budget
         self.execution_mode = execution_mode
         self.erp_step_timeout_sec = erp_step_timeout_sec
+        self.tool_policy_snapshot = dict(tool_policy_snapshot or {})
+        self._runtime_capability_registry = None
         # 时间事实层 — 请求级 SSOT，由 ERPAgent 透传
         # 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.4 (B16)
         self.request_ctx = request_ctx
@@ -112,6 +115,18 @@ class ToolExecutor(
             ValueError: 未知工具名
             Exception: 工具执行异常（由调用方 catch 后回传大脑）
         """
+        if self.tool_policy_snapshot:
+            from config.chat_tools import get_core_tools
+            from services.planner import CapabilityRegistry, validate_runtime_tool
+            if self._runtime_capability_registry is None:
+                self._runtime_capability_registry = CapabilityRegistry.from_tool_schemas(
+                    get_core_tools(org_id=self.org_id),
+                )
+            validate_runtime_tool(
+                tool_name, self.tool_policy_snapshot,
+                registry=self._runtime_capability_registry,
+                execution_mode=self.execution_mode,
+            )
         if self.allowed_tool_names is not None and tool_name not in self.allowed_tool_names:
             raise PermissionError(f"该工具未在用户确认的执行范围内: {tool_name}")
         if self.execution_mode == "preflight" and tool_name in {
@@ -371,6 +386,13 @@ class ToolExecutor(
             return FormBlockResult(
                 form=result,
                 llm_hint=f"已向用户展示{result.get('title', '表单')}，等待用户确认。不要重复展示表单内容。",
+            )
+
+        if result.get("type") == "change_set":
+            return AgentResult(
+                summary=result.get("text", "已生成待确认的定时任务变更"),
+                status="success",
+                metadata={"change_set": result.get("data") or {}},
             )
 
         return AgentResult(

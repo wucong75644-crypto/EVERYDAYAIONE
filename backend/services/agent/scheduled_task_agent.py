@@ -140,6 +140,7 @@ class ScheduledTaskAgent:
                 allowed_tool_names=policy.allowed_tools or None,
                 execution_mode=self.execution_mode,
                 erp_step_timeout_sec=policy.erp_step_timeout_sec,
+                tool_policy_snapshot=self.task.get("tool_policy_snapshot") or policy.as_dict(),
             )
 
             # 6. 多维执行预算
