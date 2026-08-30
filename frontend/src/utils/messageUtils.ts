@@ -177,6 +177,7 @@ export function applyFormSubmitResult(
     status?: FormPart['status'];
     message?: string;
     nextForm?: FormPart;
+    changeSetId?: string;
   },
 ): ContentPart[] {
   let changed = false;
@@ -202,6 +203,7 @@ export function applyFormSubmitResult(
       updated.error_message = result.message;
     }
     if (result.nextForm) updated.next_form = result.nextForm;
+    if (result.changeSetId) updated.change_set_id = result.changeSetId;
     return updated;
   };
 

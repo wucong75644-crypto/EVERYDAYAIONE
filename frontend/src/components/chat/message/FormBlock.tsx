@@ -20,6 +20,8 @@ import { formatFormValue } from '../../../utils/displayValue';
 import { SOFT_SPRING } from '../../../utils/motion';
 import { FormBlockContent } from './FormBlockContent';
 import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
+import ChangeSetCard from './ChangeSetCard';
+import { isChangeSetChatUiEnabled } from '../../../config/featureFlags';
 
 // ════════════════════════════════════════════════════════
 // 子组件
@@ -326,6 +328,7 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
   const [values, setValues] = useState<Record<string, unknown>>(initialValues);
   const [status, setStatus] = useState<FormStatus>(form.status || 'open');
   const [nextForm, setNextForm] = useState<FormPart | null>(form.next_form || null);
+  const [localChangeSetId, setLocalChangeSetId] = useState(form.change_set_id || '');
   const [submittedMessage, setSubmittedMessage] = useState(form.result_message || '');
   const [formError, setFormError] = useState(form.error_message || '');
   const submitted = status === 'submitted';
@@ -335,9 +338,10 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
   useEffect(() => {
     setStatus(form.status || 'open');
     setNextForm(form.next_form || null);
+    setLocalChangeSetId(form.change_set_id || '');
     setSubmittedMessage(form.result_message || '');
     setFormError(form.error_message || '');
-  }, [form.status, form.next_form, form.result_message, form.error_message]);
+  }, [form.status, form.next_form, form.result_message, form.error_message, form.change_set_id]);
 
   useEffect(() => {
     const handleResult = (e: Event) => {
@@ -349,6 +353,7 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
         message_id?: string;
         conversation_id?: string;
         next_form?: FormPart;
+        change_set_id?: string;
       };
       if (
         detail.form_id !== form.form_id
@@ -360,6 +365,7 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
         const resolved = detail.status || 'submitted';
         setStatus(resolved);
         setSubmittedMessage(detail.message || '');
+        if (detail.change_set_id) setLocalChangeSetId(detail.change_set_id);
         if (detail.next_form) setNextForm(detail.next_form);
       } else {
         setStatus(detail.status === 'cancelled' ? 'cancelled' : 'open');
@@ -388,10 +394,11 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
           messageId,
           conversationId,
           action: 'submit',
+          ...(localChangeSetId ? { changeSetId: localChangeSetId } : {}),
         },
       }),
     );
-  }, [conversationId, form.form_id, form.form_type, messageId, status, values]);
+  }, [conversationId, form.form_id, form.form_type, localChangeSetId, messageId, status, values]);
 
   const handleCancel = useCallback(() => {
     if (status !== 'open') return;
@@ -405,10 +412,11 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
           messageId,
           conversationId,
           action: 'cancel',
+          ...(localChangeSetId ? { changeSetId: localChangeSetId } : {}),
         },
       }),
     );
-  }, [conversationId, form.form_id, form.form_type, messageId, status]);
+  }, [conversationId, form.form_id, form.form_type, localChangeSetId, messageId, status]);
 
   // 判断字段是否可见（visible_when 联动）
   const isFieldVisible = useCallback(
@@ -436,6 +444,9 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
           {submitted ? <CheckCircle2 size={16} /> : <X size={16} />}
           <span>{submitted ? (submittedMessage || `${form.title} — 已提交`) : `${form.title} — 已取消`}</span>
         </m.div>
+        {isChangeSetChatUiEnabled() && localChangeSetId && (
+          <ChangeSetCard changeSetId={localChangeSetId} fallbackTitle={form.title} />
+        )}
         {nextForm && <FormBlock form={nextForm} messageId={messageId} conversationId={conversationId} />}
       </>
     );
@@ -443,7 +454,10 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
 
   return (
     <>
-      <ScheduledTaskWorkflowStage formType={form.form_type} status={status} />
+      {isChangeSetChatUiEnabled() && localChangeSetId && (
+        <ChangeSetCard changeSetId={localChangeSetId} fallbackTitle={form.title} />
+      )}
+      {!localChangeSetId && <ScheduledTaskWorkflowStage formType={form.form_type} status={status} />}
       <FormBlockContent form={form} submitting={submitting}
         onSubmit={handleSubmit} onCancel={handleCancel}
         fields={<FormFields fields={form.fields} values={values}

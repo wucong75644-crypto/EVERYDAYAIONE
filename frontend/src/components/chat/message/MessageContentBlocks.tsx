@@ -17,6 +17,7 @@ import { TableBlock } from './TableBlock';
 import ThinkingBlock from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
 import ToolStepCard from './ToolStepCard';
+import ChangeSetCard from './ChangeSetCard';
 import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 
 const DiagramBlock = lazy(() => import('./DiagramBlock'));
@@ -223,6 +224,17 @@ export default function MessageContentBlocks({
               form={fp}
               messageId={message.id}
               conversationId={message.conversation_id}
+            />
+          );
+        }
+        if (part.type === 'changeset') {
+          const reference = part as import('../../../types/message').ChangeSetPart;
+          return (
+            <ChangeSetCard
+              key={`changeset-${reference.change_set_id}-${idx}`}
+              changeSetId={reference.change_set_id}
+              fallbackTitle={reference.title}
+              resourceType={reference.resource_type}
             />
           );
         }

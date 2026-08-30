@@ -38,6 +38,19 @@ function createTestMessage(content: ContentPart[], overrides: Partial<Message> =
 }
 
 describe('applyFormSubmitResult', () => {
+  it('persists only the ChangeSet reference when a form result creates a draft', () => {
+    const content: ContentPart[] = [{
+      type: 'form', form_type: 'scheduled_task_create', form_id: 'form-1', fields: [],
+    }];
+
+    const updated = applyFormSubmitResult(content, {
+      formId: 'form-1', success: true, status: 'submitted', changeSetId: 'change-1',
+    });
+
+    expect((updated[0] as FormPart).change_set_id).toBe('change-1');
+    expect((updated[0] as FormPart).status).toBe('submitted');
+  });
+
   it('persists a nested confirmation result in the cached parent message', () => {
     const content: ContentPart[] = [{
       type: 'form',

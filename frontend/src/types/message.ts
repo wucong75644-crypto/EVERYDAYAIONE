@@ -23,6 +23,7 @@ export type ContentPart =
   | DiagramPart
   | TablePart
   | EcomPlanPart
+  | ChangeSetPart
   | InterruptMarkerPart;
 
 export interface TextPart {
@@ -138,6 +139,16 @@ export interface FormPart {
   result_message?: string;
   error_message?: string;
   next_form?: FormPart;
+  /** ChangeSet 服务中的草案 ID；消息只作为展示引用。 */
+  change_set_id?: string;
+}
+
+export interface ChangeSetPart {
+  type: 'changeset';
+  change_set_id: string;
+  title?: string;
+  resource_type?: string;
+  snapshot?: Record<string, unknown>;
 }
 
 /** 电商图方案卡片内容块（用户确认后触发生成） */

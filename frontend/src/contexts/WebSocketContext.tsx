@@ -23,8 +23,13 @@ import {
   type RestorationResult,
 } from '../utils/taskRestoration';
 import { getMessages } from '../services/message';
+import { scheduledTaskService } from '../services/scheduledTask';
+import { toApiRequestError } from '../services/api';
 import { logger } from '../utils/logger';
 import { applyFormSubmitResult } from '../utils/messageUtils';
+import { notifyChangeSetUpdated } from '../services/changeSetEvents';
+import { isChangeSetChatUiEnabled } from '../config/featureFlags';
+import { buildScheduledTaskChangeRequest, isScheduledTaskChangeSetForm } from '../services/changeSetForm';
 import { createWSMessageHandlers } from './wsMessageHandlers';
 import type { DeliveryCursor } from './wsMessageHandlerShared';
 import ToolConfirmModal from '../components/chat/modals/ToolConfirmModal';
@@ -372,9 +377,57 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   useEffect(() => {
     const handler = (e: Event) => {
       const {
-        formType, formData, formId, messageId, conversationId, action,
+        formType, formData, formId, messageId, conversationId, action, changeSetId,
       } = (e as CustomEvent).detail;
       if (!formType || !formId || !messageId || !conversationId || !action) return;
+
+      if (
+        isChangeSetChatUiEnabled()
+        && action === 'submit'
+        && isScheduledTaskChangeSetForm(formType)
+        && !changeSetId
+      ) {
+        const request = buildScheduledTaskChangeRequest(formType, formData || {}, {
+          conversationId, messageId, formId,
+        });
+        void scheduledTaskService.proposeChange(request).then((changeSet) => {
+          const result = {
+            success: true,
+            status: 'submitted' as const,
+            message: '变更方案已生成，请在卡片中确认。',
+            change_set_id: changeSet.id,
+            form_id: formId,
+            message_id: messageId,
+            conversation_id: conversationId,
+          };
+          const store = useMessageStore.getState();
+          const message = store.messages[conversationId]?.find((item) => item.id === messageId);
+          if (message) {
+            const content = applyFormSubmitResult(message.content, {
+              formId, success: true, status: result.status, message: result.message,
+              changeSetId: result.change_set_id,
+            });
+            if (content !== message.content) store.updateMessage(messageId, { content });
+          } else {
+            store.markForceRefresh(conversationId);
+          }
+          notifyChangeSetUpdated({ changeSetId: changeSet.id, source: 'form_propose' });
+          window.dispatchEvent(new CustomEvent('chat:form-submit-result', { detail: result }));
+        }).catch((error: unknown) => {
+          const apiError = toApiRequestError(error);
+          const message = apiError.status && apiError.status < 500
+            ? apiError.message
+            : '暂时无法生成变更方案，请稍后重试。';
+          window.dispatchEvent(new CustomEvent('chat:form-submit-result', {
+            detail: {
+              success: false, status: 'open', message,
+              form_id: formId, message_id: messageId, conversation_id: conversationId,
+            },
+          }));
+        });
+        return;
+      }
+
       ws.send({
         type: 'form_submit' as const,
         payload: {
@@ -403,6 +456,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
         message_id?: string;
         conversation_id?: string;
         next_form?: import('../types/message').FormPart;
+        change_set_id?: string;
       };
       if (payload?.form_id && payload.message_id && payload.conversation_id) {
         const store = useMessageStore.getState();
@@ -416,6 +470,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
             status: payload.status,
             message: payload.message,
             nextForm: payload.next_form,
+            changeSetId: payload.change_set_id,
           });
           if (content !== message.content) {
             store.updateMessage(payload.message_id, { content });
@@ -424,6 +479,9 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
           // 用户在提交完成前切走或缓存被淘汰时，下一次打开必须读取数据库事实。
           store.markForceRefresh(payload.conversation_id);
         }
+      }
+      if (payload?.change_set_id) {
+        notifyChangeSetUpdated({ changeSetId: payload.change_set_id, source: 'form_submit_result' });
       }
       window.dispatchEvent(
         new CustomEvent('chat:form-submit-result', { detail: payload }),
