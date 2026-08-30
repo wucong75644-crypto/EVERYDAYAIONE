@@ -207,11 +207,14 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
         if (conversationId) {
           const deliveryStatus = typeof payload.delivery_status === 'string'
             ? payload.delivery_status : undefined;
-          const shouldBind = messageId
-            && deliveryStatus !== 'paused'
-            && deliveryStatus !== 'committed'
-            && deliveryStatus !== 'failed'
-            && deliveryStatus !== 'cancelled';
+          const isTerminalDelivery = deliveryStatus === 'paused'
+            || deliveryStatus === 'committed'
+            || deliveryStatus === 'failed'
+            || deliveryStatus === 'cancelled';
+          // Older subscription snapshots may not carry message_id.  They still
+          // need their accumulated state restored; only active snapshots with
+          // an explicit message id should establish a streaming binding.
+          const shouldBind = Boolean(messageId) && !isTerminalDelivery;
           if (deliveryStatus === 'paused') {
             // 订阅快照也可能是唯一可见事件（例如另一个标签刚暂停）。
             // 先停止本地流状态，持久化消息随后由任务对账回读完整 marker/内容。
@@ -229,7 +232,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
             || !currentCursor.snapshotApplied
             || snapshotSeq === undefined
             || currentCursor.lastSeq <= snapshotSeq;
-          if (shouldRestore && shouldBind) {
+          if (shouldRestore && !isTerminalDelivery) {
             if (accumulatedBlocks.length > 0) {
               const remaining = calcRemainingText(accumulatedBlocks, accumulated);
               projection.restore(conversationId, messageId, accumulatedBlocks, remaining);
