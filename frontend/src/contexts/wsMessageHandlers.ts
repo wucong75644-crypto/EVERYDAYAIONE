@@ -55,6 +55,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       const effectiveMessageId = projection.resolveMessageId(msg);
       const conversationId = projection.resolveConversationId(msg);
       if (conversationId && effectiveMessageId) {
+        if (!projection.canProjectStreaming(conversationId, effectiveMessageId)) return;
         deps.getStore().registerStreamingId(conversationId, effectiveMessageId);
       }
 
@@ -65,7 +66,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
   message_chunk: (deps, msg, projection) => {
       const { task_id } = msg;
       const message_id = projection.resolveMessageId(msg);
-      const conversation_id = projection.ensureMessageBinding(msg);
+      const conversation_id = projection.resolveConversationId(msg);
       const chunk = parseProtocolString(msg.chunk ?? msg.payload?.chunk, 'chunk', {
         messageId: message_id,
         conversationId: conversation_id,
@@ -79,6 +80,8 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
         deps.getStore().appendContent(message_id, chunk);
         return;
       }
+      if (!projection.canProjectStreaming(conversation_id, message_id)) return;
+      projection.ensureBinding(conversation_id, message_id);
 
       const bufferData = deps.chunkBufferRef.current.get(message_id);
       const prevChunk = bufferData?.chunk || '';
@@ -227,7 +230,9 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
           // Older subscription snapshots may not carry message_id. They still
           // need their accumulated state restored; only an active snapshot
           // with an explicit message id may establish a streaming binding.
-          if (messageId && !isTerminalDelivery) {
+          const canRestoreActiveSnapshot = !messageId
+            || projection.canProjectStreaming(conversationId, messageId);
+          if (messageId && !isTerminalDelivery && canRestoreActiveSnapshot) {
             projection.ensureBinding(conversationId, messageId);
             deps.getStore().registerStreamingId(conversationId, messageId);
           }
@@ -238,7 +243,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
             || !currentCursor.snapshotApplied
             || snapshotSeq === undefined
             || currentCursor.lastSeq <= snapshotSeq;
-          if (shouldRestore && !isTerminalDelivery) {
+          if (shouldRestore && !isTerminalDelivery && canRestoreActiveSnapshot) {
             if (accumulatedBlocks.length > 0) {
               const remaining = calcRemainingText(accumulatedBlocks, accumulated);
               projection.restore(conversationId, messageId, accumulatedBlocks, remaining);
@@ -282,13 +287,16 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
     },
 
   thinking_chunk: (_deps, msg, projection) => {
-      const conversation_id = projection.ensureMessageBinding(msg);
+      const conversation_id = projection.resolveConversationId(msg);
+      const messageId = projection.resolveMessageId(msg);
       const chunk = parseProtocolString(msg.chunk ?? msg.payload?.chunk, 'chunk', {
         conversationId: conversation_id,
         source: 'ws:thinking_chunk',
       });
       if (!conversation_id || !chunk) return;
       if (!projection.acceptDelivery(msg)) return;
+      if (messageId && !projection.canProjectStreaming(conversation_id, messageId)) return;
+      if (messageId) projection.ensureBinding(conversation_id, messageId);
 
       projection.appendThinkingChunk(conversation_id, chunk);
     },
@@ -351,14 +359,17 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
     },
 
   content_block_add: (_deps, msg, projection) => {
-      const conversation_id = projection.ensureMessageBinding(msg);
+      const conversation_id = projection.resolveConversationId(msg);
+      const messageId = projection.resolveMessageId(msg);
       const block = parseContentPart(msg.payload?.block, {
-        messageId: msg.message_id,
+        messageId,
         conversationId: conversation_id,
         source: 'ws:content_block_add',
       });
       if (!conversation_id || !block) return;
       if (!projection.acceptDelivery(msg)) return;
+      if (messageId && !projection.canProjectStreaming(conversation_id, messageId)) return;
+      if (messageId) projection.ensureBinding(conversation_id, messageId);
 
       // 统一投影：工具 running/terminal、文本完整块和其他结构化 block
       // 都经过同一入口，避免某种事件先到时被 Store 静默丢弃。

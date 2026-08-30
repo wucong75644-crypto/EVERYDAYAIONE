@@ -173,6 +173,16 @@ describe('wsMessageHandlers', () => {
       expect(store.registerStreamingId).toHaveBeenCalledWith('conv_1', 'msg_1');
       expect(store.setStatus).toHaveBeenCalledWith('msg_1', 'streaming');
     });
+
+    it('should ignore a late start for a locally paused message', () => {
+      (store.getStreamingMessageId as ReturnType<typeof vi.fn>).mockReturnValue(null);
+      (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue({ status: 'interrupted' });
+
+      handlers.message_start({ message_id: 'msg_1', conversation_id: 'conv_1' });
+
+      expect(store.registerStreamingId).not.toHaveBeenCalled();
+      expect(store.setStatus).not.toHaveBeenCalled();
+    });
   });
 
   // ========================================
@@ -249,6 +259,34 @@ describe('wsMessageHandlers', () => {
       });
 
       expect(store.appendStreamingContent).toHaveBeenCalledWith('conv_mapped', 'mapped chunk');
+    });
+
+    it('should ignore late chunks for a locally paused message', () => {
+      (store.getStreamingMessageId as ReturnType<typeof vi.fn>).mockReturnValue(null);
+      (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue({ status: 'interrupted' });
+
+      handlers.message_chunk({
+        message_id: 'msg_1',
+        conversation_id: 'conv_1',
+        chunk: 'late chunk',
+      });
+
+      expect(store.registerStreamingId).not.toHaveBeenCalled();
+      expect(store.appendStreamingContent).not.toHaveBeenCalled();
+      expect(deps.chunkBufferRef.current.size).toBe(0);
+    });
+
+    it('should accept chunks after the user explicitly resumes the same message', () => {
+      (store.getStreamingMessageId as ReturnType<typeof vi.fn>).mockReturnValue('msg_1');
+      (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue({ status: 'interrupted' });
+
+      handlers.message_chunk({
+        message_id: 'msg_1',
+        conversation_id: 'conv_1',
+        chunk: 'resumed chunk',
+      });
+
+      expect(store.appendStreamingContent).toHaveBeenCalledWith('conv_1', 'resumed chunk');
     });
 
     it('should ignore a duplicate delivery sequence', () => {
@@ -705,6 +743,24 @@ describe('wsMessageHandlers', () => {
 
       expect(store.registerStreamingId).toHaveBeenCalledWith('conv_1', 'replayed_msg');
       expect(store.setStreamingContent).toHaveBeenCalledWith('conv_1', 'replayed text');
+    });
+
+    it('should ignore a running snapshot for a locally paused message', () => {
+      deps.taskConversationMapRef.current.set('task_1', 'conv_1');
+      (store.getStreamingMessageId as ReturnType<typeof vi.fn>).mockReturnValue(null);
+      (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue({ status: 'interrupted' });
+
+      handlers.subscribed({
+        payload: {
+          task_id: 'task_1',
+          message_id: 'msg_1',
+          delivery_status: 'streaming',
+          accumulated: 'late snapshot',
+        },
+      });
+
+      expect(store.registerStreamingId).not.toHaveBeenCalled();
+      expect(store.setStreamingContent).not.toHaveBeenCalled();
     });
 
     it('should not set content if no task mapping', () => {
