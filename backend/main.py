@@ -19,7 +19,7 @@ from slowapi.errors import RateLimitExceeded
 from api.routes import (
     admin_users, audio, auth, conversation, detail_project, ecom_requirement, error_monitor, file, health, image, image_ecom,
     kuaimai_external, memory, message, models, org, org_members_assignments,
-    pdd, qimen, scheduled_tasks, subscription, task, webhook, wecom, wecom_auth,
+    pdd, qimen, scheduled_tasks, change_sets, subscription, task, webhook, wecom, wecom_auth,
     wecom_chat_targets, ws,
 )
 from core.config import get_settings
@@ -553,6 +553,9 @@ def register_routers(app: FastAPI) -> None:
 
     # 定时任务
     app.include_router(scheduled_tasks.router, prefix="/api")
+
+    # AI ChangeSet 状态/审计时间线（不接管定时任务旧确认链路）
+    app.include_router(change_sets.router, prefix="/api")
 
     # 组织成员任职管理（权限模型 V1）
     app.include_router(org_members_assignments.router, prefix="/api")
