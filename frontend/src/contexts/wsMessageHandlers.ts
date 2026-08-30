@@ -10,7 +10,7 @@
 import { useAuthStore } from '../stores/useAuthStore';
 import { useMemoryStore } from '../stores/useMemoryStore';
 import { logger } from '../utils/logger';
-import { calcRemainingText } from '../utils/messageUtils';
+import { calcRemainingText, normalizeMessage, type RawApiMessage } from '../utils/messageUtils';
 import { parseContentPart, parseContentParts, parseProtocolString } from '../schemas/messageProtocol';
 import type { WSMessage } from '../hooks/useWebSocket';
 import type { TaskStatus } from '../types/scheduledTask';
@@ -139,10 +139,14 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
         && pausedMessage
         && typeof pausedMessage === 'object'
         && !Array.isArray(pausedMessage)
+        && typeof pausedMessage.id === 'string'
+        && typeof pausedMessage.conversation_id === 'string'
+        && typeof pausedMessage.role === 'string'
+        && (typeof pausedMessage.content === 'string' || Array.isArray(pausedMessage.content))
       ) {
         deps.getStore().completeStreamingWithMessage(
           effectiveConversationId,
-          pausedMessage as Parameters<MessageStoreActions['completeStreamingWithMessage']>[1],
+          normalizeMessage(pausedMessage as RawApiMessage),
         );
       }
 
@@ -211,17 +215,16 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
             || deliveryStatus === 'committed'
             || deliveryStatus === 'failed'
             || deliveryStatus === 'cancelled';
-          // Older subscription snapshots may not carry message_id.  They still
-          // need their accumulated state restored; only active snapshots with
-          // an explicit message id should establish a streaming binding.
-          const shouldBind = Boolean(messageId) && !isTerminalDelivery;
           if (deliveryStatus === 'paused') {
             // 订阅快照也可能是唯一可见事件（例如另一个标签刚暂停）。
             // 先停止本地流状态，持久化消息随后由任务对账回读完整 marker/内容。
             if (messageId) deps.getStore().updateMessage(messageId, { status: 'interrupted' });
             deps.getStore().completeStreaming(conversationId);
           }
-          if (shouldBind) {
+          // Older subscription snapshots may not carry message_id. They still
+          // need their accumulated state restored; only an active snapshot
+          // with an explicit message id may establish a streaming binding.
+          if (messageId && !isTerminalDelivery) {
             projection.ensureBinding(conversationId, messageId);
             deps.getStore().registerStreamingId(conversationId, messageId);
           }
