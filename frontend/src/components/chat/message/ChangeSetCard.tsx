@@ -228,7 +228,10 @@ function DiffView({ entries }: { entries: ChangeSetDiffEntry[] }) {
   );
 }
 
-function Checks({ checks }: { checks: ChangeCheck[] }) {
+function Checks({ checks, nonExecutionPreflightLabel }: {
+  checks: ChangeCheck[];
+  nonExecutionPreflightLabel?: string;
+}) {
   if (!checks.length) return <p className="text-xs text-text-secondary">尚未产生检查结果。</p>;
   return (
     <ul className="space-y-2" aria-label="校验和试跑结果">
@@ -237,7 +240,11 @@ function Checks({ checks }: { checks: ChangeCheck[] }) {
         const failed = check.status === 'failed';
         return <li key={check.id} className="flex min-w-0 items-center gap-2 text-xs">
           {passed ? <CheckCircle2 className="h-4 w-4 shrink-0 text-success" aria-hidden="true" /> : failed ? <XCircle className="h-4 w-4 shrink-0 text-error" aria-hidden="true" /> : <Clock3 className="h-4 w-4 shrink-0 text-text-tertiary" aria-hidden="true" />}
-          <span className="min-w-0 flex-1 break-words text-text-secondary">{checkLabels[check.check_type] || '流程检查'}</span>
+          <span className="min-w-0 flex-1 break-words text-text-secondary">{
+            check.check_type === 'preflight' && nonExecutionPreflightLabel
+              ? nonExecutionPreflightLabel
+              : checkLabels[check.check_type] || '流程检查'
+          }</span>
           <span className={cn('shrink-0', passed ? 'text-success' : failed ? 'text-error' : 'text-text-tertiary')}>{passed ? '通过' : failed ? '未通过' : check.status === 'running' ? '进行中' : '待执行'}</span>
         </li>;
       })}
@@ -349,6 +356,7 @@ export default function ChangeSetCard({
   const planSteps = adapter?.getPlanSteps?.(changeSet) || genericPlanSteps(changeSet);
   const title = adapter?.getTitle?.(changeSet) || fallbackTitle || '变更方案';
   const summary = adapter?.getSummary?.(changeSet);
+  const presentation = adapter?.getPresentation?.(changeSet);
   const canCancel = !terminalStatuses.has(status);
   const isConflict = status === 'conflicted';
   const hasApproval = status === 'awaiting_approval';
@@ -372,13 +380,22 @@ export default function ChangeSetCard({
         <span className={cn('shrink-0 rounded-full px-2 py-1 text-[11px] font-medium', status === 'applied' ? 'bg-success/10 text-success' : status === 'failed' || isConflict || status === 'rejected' ? 'bg-error-light text-error' : 'bg-active text-text-secondary')} aria-label={`当前状态：${statusLabels[status]}`}>{statusLabels[status]}</span>
       </header>
 
+      {presentation?.notice && (
+        <div className={cn(
+          'mx-4 mt-3 rounded-[var(--s-radius-control)] px-3 py-2 text-xs',
+          presentation.mode === 'destructive' ? 'bg-error-light text-error' : 'bg-warning/10 text-warning',
+        )} role="alert">
+          {presentation.notice}
+        </div>
+      )}
+
       <div className="min-w-0 px-4">
         <Section title="状态时间线"><Timeline current={status} events={events} /></Section>
-        <Section title="变更摘要"><ChangeSummary changeSet={changeSet} adapter={adapter} /></Section>
-        <Section title={`Diff${diff.length ? ` · ${diff.length} 项` : ''}`}><DiffView entries={diff} /></Section>
+        <Section title={presentation?.summaryTitle || '变更摘要'}><ChangeSummary changeSet={changeSet} adapter={adapter} /></Section>
+        {presentation?.showDiff !== false && <Section title={`${presentation?.diffTitle || 'Diff'}${diff.length ? ` · ${diff.length} 项` : ''}`}><DiffView entries={diff} /></Section>}
         <Section title="风险与权限影响"><div className="flex flex-wrap gap-2 text-xs"><span className="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-1 text-warning"><AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />{getRiskLabel(changeSet.risk_level)}</span><span className="inline-flex items-center gap-1 rounded-full bg-active px-2 py-1 text-text-secondary"><ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />{policyText}</span></div></Section>
-        <Section title="AI 规划的执行路径"><ol className="list-decimal space-y-1.5 pl-5 text-xs leading-5 text-text-secondary">{planSteps.length ? planSteps.map((step) => <li key={step} className="break-words">{step}</li>) : <li className="list-none pl-0">执行路径将在规划完成后显示。</li>}</ol></Section>
-        <Section title="校验与只读试跑"><Checks checks={changeSet.checks} /></Section>
+        {presentation?.showPlan !== false && <Section title="AI 规划的执行路径"><ol className="list-decimal space-y-1.5 pl-5 text-xs leading-5 text-text-secondary">{planSteps.length ? planSteps.map((step) => <li key={step} className="break-words">{step}</li>) : <li className="list-none pl-0">执行路径将在规划完成后显示。</li>}</ol></Section>}
+        <Section title={presentation?.checksTitle || '校验与只读试跑'}><Checks checks={changeSet.checks} nonExecutionPreflightLabel={presentation?.nonExecutionPreflightLabel} /></Section>
       </div>
 
       {(isConflict || status === 'failed' || status === 'rejected' || status === 'expired' || status === 'cancelled' || status === 'applied') && (
@@ -388,11 +405,11 @@ export default function ChangeSetCard({
       )}
 
       {hasActions && <footer className="flex flex-wrap items-center gap-2 border-t border-border-default bg-surface-elevated px-4 py-3">
-        {hasApproval && <Button size="sm" onClick={() => void handleAction('confirm')} loading={pendingAction === 'confirm'} disabled={!!pendingAction} icon={<CheckCircle2 className="h-3.5 w-3.5" />}>{actionLabel('confirm')}</Button>}
+        {hasApproval && <Button size="sm" variant={presentation?.mode === 'destructive' ? 'danger' : 'accent'} onClick={() => void handleAction('confirm')} loading={pendingAction === 'confirm'} disabled={!!pendingAction} icon={<CheckCircle2 className="h-3.5 w-3.5" />}>{presentation?.confirmationLabel || actionLabel('confirm')}</Button>}
         {canRetry && <Button size="sm" onClick={() => void handleAction('retry')} loading={pendingAction === 'retry'} disabled={!!pendingAction} icon={<RefreshCw className="h-3.5 w-3.5" />}>{actionLabel('retry')}</Button>}
         {canReplan && <Button size="sm" onClick={() => void handleAction('replan')} loading={pendingAction === 'replan'} disabled={!!pendingAction} icon={<RefreshCw className="h-3.5 w-3.5" />}>{actionLabel('replan')}</Button>}
         {isConflict && <Button size="sm" variant="secondary" onClick={() => void handleAction('resolve_conflict')} loading={pendingAction === 'resolve_conflict'} disabled={!!pendingAction}>{actionLabel('resolve_conflict')}</Button>}
-        {canCancel && <Button size="sm" variant="secondary" onClick={() => void handleAction('cancel')} loading={pendingAction === 'cancel'} disabled={!!pendingAction} icon={<X className="h-3.5 w-3.5" />}>{actionLabel('cancel')}</Button>}
+        {canCancel && <Button size="sm" variant="secondary" onClick={() => void handleAction('cancel')} loading={pendingAction === 'cancel'} disabled={!!pendingAction} icon={<X className="h-3.5 w-3.5" />}>{presentation?.cancellationLabel || actionLabel('cancel')}</Button>}
         {actionNotice && <span className="basis-full break-words text-xs text-text-secondary" role="status" aria-live="polite">{actionNotice}</span>}
       </footer>}
       {!hasActions && <div className="flex items-center gap-2 border-t border-border-default bg-surface-elevated px-4 py-3 text-xs text-text-tertiary"><CheckCircle2 className="h-4 w-4" aria-hidden="true" />流程已结束</div>}

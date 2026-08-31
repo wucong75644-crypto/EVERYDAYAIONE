@@ -46,7 +46,8 @@ describe('ChangeSetCard', () => {
   it('reads the current ChangeSet and renders generic sections plus scheduled-task labels', async () => {
     render(<ChangeSetCard changeSetId="change-1" />);
 
-    expect(await screen.findByRole('heading', { name: '新任务' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '编辑定时任务' })).toBeInTheDocument();
+    expect(screen.getByText('将修改「新任务」的配置和执行路径')).toBeInTheDocument();
     expect(screen.getByText('待确认')).toBeInTheDocument();
     expect(screen.getAllByText('一段很长的执行内容').length).toBeGreaterThan(0);
     expect(screen.getByText('只读试跑')).toBeInTheDocument();
@@ -104,6 +105,38 @@ describe('ChangeSetCard', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: '重新规划' }));
     await waitFor(() => expect(replan).toHaveBeenCalledWith(expect.objectContaining({ id: 'change-1' })));
+  });
+
+  it('renders deletion as a destructive confirmation instead of an editing plan', async () => {
+    vi.mocked(changeSetService.get).mockResolvedValue(makeChangeSet({
+      operation: 'delete', risk_level: 'high',
+      base_snapshot: { name: '日报任务', status: 'active', cron_expr: '0 9 * * *' },
+      proposed_snapshot: { name: '日报任务', status: 'active', cron_expr: '0 9 * * *' },
+    }));
+    render(<ChangeSetCard changeSetId="change-1" />);
+
+    expect(await screen.findByRole('heading', { name: '删除定时任务' })).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('删除后该任务将停止执行，且不能从此处恢复。');
+    expect(screen.getByRole('button', { name: '确认删除' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保留任务' })).toBeInTheDocument();
+    expect(screen.queryByText('AI 规划的执行路径')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Diff/)).not.toBeInTheDocument();
+  });
+
+  it('renders pause as a state confirmation without an AI plan or read-only trial claim', async () => {
+    vi.mocked(changeSetService.get).mockResolvedValue(makeChangeSet({
+      operation: 'pause',
+      base_snapshot: { name: '日报任务', status: 'active', next_run_at: '2026-09-01T01:00:00Z' },
+      proposed_snapshot: { name: '日报任务', status: 'paused', next_run_at: null },
+    }));
+    render(<ChangeSetCard changeSetId="change-1" />);
+
+    expect(await screen.findByRole('heading', { name: '暂停定时任务' })).toBeInTheDocument();
+    expect(screen.getByText('状态变化 · 2 项')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '确认暂停' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保持启用' })).toBeInTheDocument();
+    expect(screen.queryByText('AI 规划的执行路径')).not.toBeInTheDocument();
+    expect(screen.queryByText('校验与只读试跑')).not.toBeInTheDocument();
   });
 
   it('re-reads after a ChangeSet update event, including after a conversation switch', async () => {
