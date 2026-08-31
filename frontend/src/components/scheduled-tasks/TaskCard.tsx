@@ -7,6 +7,7 @@
  * - 老板/主管视角显示 CreatorBadge
  */
 import { m, AnimatePresence } from 'framer-motion';
+import { useState } from 'react';
 import { Pause, Play, Settings, Trash2, Paperclip, Clock, ChevronDown } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
@@ -24,6 +25,7 @@ import type { ScheduledTask } from '../../types/scheduledTask';
 interface Props {
   task: ScheduledTask;
   onEdit?: (task: ScheduledTask) => void;
+  onChangeRequested?: (operation: 'pause' | 'resume' | 'delete', task: ScheduledTask) => Promise<void>;
 }
 
 function formatRelative(iso: string | null | undefined): string {
@@ -59,10 +61,7 @@ function formatNextRun(iso: string | null | undefined): string {
   }
 }
 
-export function TaskCard({ task, onEdit }: Props) {
-  const pauseTask = useScheduledTaskStore((s) => s.pauseTask);
-  const resumeTask = useScheduledTaskStore((s) => s.resumeTask);
-  const deleteTask = useScheduledTaskStore((s) => s.deleteTask);
+export function TaskCard({ task, onEdit, onChangeRequested }: Props) {
   const runTaskNow = useScheduledTaskStore((s) => s.runTaskNow);
   const expandedTaskId = useScheduledTaskStore((s) => s.expandedTaskId);
   const setExpandedTaskId = useScheduledTaskStore((s) => s.setExpandedTaskId);
@@ -77,18 +76,33 @@ export function TaskCard({ task, onEdit }: Props) {
 
   const isPaused = task.status === 'paused';
   const isError = task.status === 'error';
+  const [pendingChange, setPendingChange] = useState(false);
+  const [changeError, setChangeError] = useState('');
 
   const handleToggle = async () => {
-    if (isPaused) {
-      await resumeTask(task.id);
-    } else {
-      await pauseTask(task.id);
+    if (!onChangeRequested || pendingChange) return;
+    setPendingChange(true);
+    try {
+      setChangeError('');
+      await onChangeRequested(isPaused ? 'resume' : 'pause', task);
+    } catch {
+      setChangeError('暂时无法生成变更方案，请稍后重试。');
+    } finally {
+      setPendingChange(false);
     }
   };
 
   const handleDelete = async () => {
-    if (!confirm(`确认删除任务「${task.name}」？`)) return;
-    await deleteTask(task.id);
+    if (!onChangeRequested || pendingChange) return;
+    setPendingChange(true);
+    try {
+      setChangeError('');
+      await onChangeRequested('delete', task);
+    } catch {
+      setChangeError('暂时无法生成变更方案，请稍后重试。');
+    } finally {
+      setPendingChange(false);
+    }
   };
 
   const handleRunNow = async () => {
@@ -193,8 +207,9 @@ export function TaskCard({ task, onEdit }: Props) {
                 size="sm"
                 icon={isPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
                 onClick={handleToggle}
+                disabled={pendingChange}
                 aria-label={isPaused ? '恢复' : '暂停'}
-                title={isPaused ? '恢复' : '暂停'}
+                title={isPaused ? '生成恢复方案' : '生成暂停方案'}
               />
             )}
             {canEdit && onEdit && (
@@ -213,12 +228,19 @@ export function TaskCard({ task, onEdit }: Props) {
                 size="sm"
                 icon={<Trash2 className="w-3.5 h-3.5" />}
                 onClick={handleDelete}
+                disabled={pendingChange}
                 aria-label="删除"
-                title="删除"
+                title="生成删除方案"
               />
             )}
           </div>
         </div>
+
+        {changeError && (
+          <p role="alert" className="mt-2 text-xs text-[var(--s-error)]">
+            {changeError}
+          </p>
+        )}
 
         {/* 展开后显示执行历史 */}
         <AnimatePresence>

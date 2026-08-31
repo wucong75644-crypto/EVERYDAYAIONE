@@ -43,6 +43,8 @@ interface ChangeSetCardProps {
   resourceType?: string;
   adapter?: ChangeSetResourceAdapter;
   actionHandlers?: Partial<Record<ChangeSetAction, ChangeSetActionHandler>>;
+  /** 宿主可据已确认的最终状态刷新自身的业务投影。 */
+  onChangeSetUpdated?: (changeSet: ChangeSet) => void;
 }
 
 export type ChangeSetActionHandler = (
@@ -249,6 +251,7 @@ export default function ChangeSetCard({
   resourceType,
   adapter: providedAdapter,
   actionHandlers,
+  onChangeSetUpdated,
 }: ChangeSetCardProps) {
   const [activeId, setActiveId] = useState(changeSetId);
   const [changeSet, setChangeSet] = useState<ChangeSet | null>(null);
@@ -269,6 +272,7 @@ export default function ChangeSetCard({
     try {
       const next = await changeSetService.get(activeId);
       setChangeSet(next);
+      onChangeSetUpdated?.(next);
       setActionNotice('');
       try {
         const timeline = await changeSetService.timeline(activeId);
@@ -281,7 +285,7 @@ export default function ChangeSetCard({
     } finally {
       setLoading(false);
     }
-  }, [activeId]);
+  }, [activeId, onChangeSetUpdated]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -316,7 +320,10 @@ export default function ChangeSetCard({
         return;
       }
       if (result?.id && result.id !== activeId) setActiveId(result.id);
-      if (result) setChangeSet(result);
+      if (result) {
+        setChangeSet(result);
+        onChangeSetUpdated?.(result);
+      }
     } catch (error) {
       if (isVersionConflict(error)) {
         await load();
@@ -327,7 +334,7 @@ export default function ChangeSetCard({
     } finally {
       setPendingAction(null);
     }
-  }, [actionHandlers, activeId, changeSet, load, pendingAction]);
+  }, [actionHandlers, activeId, changeSet, load, onChangeSetUpdated, pendingAction]);
 
   if (loading && !changeSet) {
     return <div className={`${MESSAGE_CONTENT_LAYOUT.fill} my-3 rounded-[var(--s-radius-card)] border border-border-default bg-surface p-4`} role="status" aria-live="polite"><Loader2 className="h-4 w-4 animate-spin text-accent" aria-hidden="true" /><span className="sr-only">正在读取变更状态</span></div>;
@@ -346,7 +353,8 @@ export default function ChangeSetCard({
   const isConflict = status === 'conflicted';
   const hasApproval = status === 'awaiting_approval';
   const canRetry = status === 'failed';
-  const hasActions = canCancel || hasApproval || canRetry || isConflict;
+  const canReplan = isConflict || status === 'rejected' || status === 'expired';
+  const hasActions = canCancel || hasApproval || canRetry || canReplan;
   const approvalImpact = changeSet.policy_snapshot;
   const policyText = typeof approvalImpact.requires_approval === 'boolean'
     ? (approvalImpact.requires_approval ? '需要确认后提交' : '无需额外审批')
@@ -382,7 +390,8 @@ export default function ChangeSetCard({
       {hasActions && <footer className="flex flex-wrap items-center gap-2 border-t border-border-default bg-surface-elevated px-4 py-3">
         {hasApproval && <Button size="sm" onClick={() => void handleAction('confirm')} loading={pendingAction === 'confirm'} disabled={!!pendingAction} icon={<CheckCircle2 className="h-3.5 w-3.5" />}>{actionLabel('confirm')}</Button>}
         {canRetry && <Button size="sm" onClick={() => void handleAction('retry')} loading={pendingAction === 'retry'} disabled={!!pendingAction} icon={<RefreshCw className="h-3.5 w-3.5" />}>{actionLabel('retry')}</Button>}
-        {isConflict && <><Button size="sm" onClick={() => void handleAction('replan')} loading={pendingAction === 'replan'} disabled={!!pendingAction} icon={<RefreshCw className="h-3.5 w-3.5" />}>{actionLabel('replan')}</Button><Button size="sm" variant="secondary" onClick={() => void handleAction('resolve_conflict')} loading={pendingAction === 'resolve_conflict'} disabled={!!pendingAction}>{actionLabel('resolve_conflict')}</Button></>}
+        {canReplan && <Button size="sm" onClick={() => void handleAction('replan')} loading={pendingAction === 'replan'} disabled={!!pendingAction} icon={<RefreshCw className="h-3.5 w-3.5" />}>{actionLabel('replan')}</Button>}
+        {isConflict && <Button size="sm" variant="secondary" onClick={() => void handleAction('resolve_conflict')} loading={pendingAction === 'resolve_conflict'} disabled={!!pendingAction}>{actionLabel('resolve_conflict')}</Button>}
         {canCancel && <Button size="sm" variant="secondary" onClick={() => void handleAction('cancel')} loading={pendingAction === 'cancel'} disabled={!!pendingAction} icon={<X className="h-3.5 w-3.5" />}>{actionLabel('cancel')}</Button>}
         {actionNotice && <span className="basis-full break-words text-xs text-text-secondary" role="status" aria-live="polite">{actionNotice}</span>}
       </footer>}

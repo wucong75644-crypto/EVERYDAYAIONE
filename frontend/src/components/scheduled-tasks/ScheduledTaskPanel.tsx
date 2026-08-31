@@ -9,14 +9,17 @@
  *
  * 设计文档: docs/document/UI_定时任务面板设计.md §四
  */
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { AnimatePresence, m } from 'framer-motion';
 import { Clock, X, Plus } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { ViewSwitcher } from './ViewSwitcher';
 import { TaskList } from './TaskList';
 import { TaskForm } from './TaskForm';
+import ChangeSetCard from '../chat/message/ChangeSetCard';
 import { useScheduledTaskStore } from '../../stores/useScheduledTaskStore';
+import { scheduledTaskService } from '../../services/scheduledTask';
+import type { ChangeSet } from '../../types/changeset';
 import { FLUID_SPRING } from '../../utils/motion';
 import { cn } from '../../utils/cn';
 import type { ScheduledTask } from '../../types/scheduledTask';
@@ -33,6 +36,7 @@ export default function ScheduledTaskPanel({ isOpen, onClose }: ScheduledTaskPan
 
   const [showForm, setShowForm] = useState(false);
   const [editingTask, setEditingTask] = useState<ScheduledTask | null>(null);
+  const [changeSetId, setChangeSetId] = useState<string | null>(null);
 
   // 打开面板时拉取数据
   useEffect(() => {
@@ -50,6 +54,8 @@ export default function ScheduledTaskPanel({ isOpen, onClose }: ScheduledTaskPan
         if (showForm) {
           setShowForm(false);
           setEditingTask(null);
+        } else if (changeSetId) {
+          setChangeSetId(null);
         } else {
           onClose();
         }
@@ -57,7 +63,7 @@ export default function ScheduledTaskPanel({ isOpen, onClose }: ScheduledTaskPan
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [isOpen, onClose, showForm]);
+  }, [changeSetId, isOpen, onClose, showForm]);
 
   const handleNew = useCallback(() => {
     setEditingTask(null);
@@ -73,6 +79,42 @@ export default function ScheduledTaskPanel({ isOpen, onClose }: ScheduledTaskPan
     setShowForm(false);
     setEditingTask(null);
   }, []);
+
+  const handleChangeRequested = useCallback(async (
+    operation: 'pause' | 'resume' | 'delete', task: ScheduledTask,
+  ) => {
+    const changeSet = await scheduledTaskService.proposeChange({
+      operation,
+      task_id: task.id,
+    });
+    setChangeSetId(changeSet.id);
+  }, []);
+
+  const handleFormProposed = useCallback((nextChangeSetId: string) => {
+    setShowForm(false);
+    setEditingTask(null);
+    setChangeSetId(nextChangeSetId);
+  }, []);
+
+  const handleChangeSetUpdated = useCallback((changeSet: ChangeSet) => {
+    if (changeSet.status === 'applied') void fetchTasks();
+  }, [fetchTasks]);
+
+  const replanChangeSet = useCallback(async (changeSet: ChangeSet) => {
+    const operation = changeSet.operation as 'create' | 'update' | 'pause' | 'resume' | 'delete';
+    const next = await scheduledTaskService.proposeChange({
+      operation,
+      ...(operation === 'create' ? {} : { task_id: changeSet.resource_id }),
+      definition: changeSet.proposed_snapshot,
+      idempotency_key: `scheduled-task-panel-replan:${changeSet.id}:${changeSet.revision}`,
+    });
+    return next;
+  }, []);
+
+  const changeSetActionHandlers = useMemo(() => ({
+    replan: replanChangeSet,
+    resolve_conflict: replanChangeSet,
+  }), [replanChangeSet]);
 
   return (
     <AnimatePresence>
@@ -105,14 +147,27 @@ export default function ScheduledTaskPanel({ isOpen, onClose }: ScheduledTaskPan
             role="dialog"
             aria-label="定时任务面板"
           >
-            {showForm ? (
+            {changeSetId ? (
+              <>
+                <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--s-border-default)]">
+                  <button type="button" onClick={() => setChangeSetId(null)} aria-label="返回任务列表" className="p-1 rounded text-[var(--s-text-tertiary)] hover:bg-[var(--s-hover)]">
+                    <X className="w-4 h-4" />
+                  </button>
+                  <h2 className="text-sm font-medium text-[var(--s-text-primary)]">确认定时任务变更</h2>
+                </div>
+                <div className="flex-1 overflow-y-auto px-4 py-2">
+                  <ChangeSetCard
+                    changeSetId={changeSetId}
+                    actionHandlers={changeSetActionHandlers}
+                    onChangeSetUpdated={handleChangeSetUpdated}
+                  />
+                </div>
+              </>
+            ) : showForm ? (
               <TaskForm
                 task={editingTask}
                 onClose={handleFormClose}
-                onSaved={() => {
-                  handleFormClose();
-                  fetchTasks();
-                }}
+                onProposed={handleFormProposed}
               />
             ) : (
               <>
@@ -151,7 +206,7 @@ export default function ScheduledTaskPanel({ isOpen, onClose }: ScheduledTaskPan
                 <ViewSwitcher />
 
                 {/* 任务列表 */}
-                <TaskList tasks={tasks} loading={loading} onEdit={handleEdit} />
+                <TaskList tasks={tasks} loading={loading} onEdit={handleEdit} onChangeRequested={handleChangeRequested} />
               </>
             )}
           </m.aside>

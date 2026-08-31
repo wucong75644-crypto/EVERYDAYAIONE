@@ -97,13 +97,25 @@ describe('ChangeSetCard', () => {
     window.removeEventListener('changeset:action', listener);
   });
 
+  it('offers a new plan for a rejected preflight and delegates it to the host', async () => {
+    vi.mocked(changeSetService.get).mockResolvedValue(makeChangeSet({ status: 'rejected' }));
+    const replan = vi.fn().mockResolvedValue(makeChangeSet({ id: 'change-2', status: 'awaiting_approval' }));
+    render(<ChangeSetCard changeSetId="change-1" actionHandlers={{ replan }} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '重新规划' }));
+    await waitFor(() => expect(replan).toHaveBeenCalledWith(expect.objectContaining({ id: 'change-1' })));
+  });
+
   it('re-reads after a ChangeSet update event, including after a conversation switch', async () => {
-    render(<ChangeSetCard changeSetId="change-1" />);
+    const onChangeSetUpdated = vi.fn();
+    render(<ChangeSetCard changeSetId="change-1" onChangeSetUpdated={onChangeSetUpdated} />);
     await screen.findByText('待确认');
     const callsBefore = vi.mocked(changeSetService.get).mock.calls.length;
+    onChangeSetUpdated.mockClear();
     await act(async () => {
       window.dispatchEvent(new CustomEvent('changeset:updated', { detail: { changeSetId: 'change-1' } }));
     });
     await waitFor(() => expect(changeSetService.get.mock.calls.length).toBeGreaterThan(callsBefore));
+    await waitFor(() => expect(onChangeSetUpdated).toHaveBeenCalledWith(expect.objectContaining({ id: 'change-1' })));
   });
 });

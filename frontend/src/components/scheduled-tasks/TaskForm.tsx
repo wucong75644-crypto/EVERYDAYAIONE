@@ -31,7 +31,6 @@ import type {
   CreateTaskDto,
   ScheduleType,
   PushTarget,
-  ScheduledTaskDraft,
 } from '../../types/scheduledTask';
 import type { WecomCollectedMember } from '../../types/orgMembers';
 import type { WecomGroup } from '../../types/wecomChatTargets';
@@ -39,7 +38,7 @@ import type { WecomGroup } from '../../types/wecomChatTargets';
 interface Props {
   task: ScheduledTask | null;  // null = 新建
   onClose: () => void;
-  onSaved: () => void;
+  onProposed: (changeSetId: string) => void;
 }
 
 const WEEKDAY_LABELS: { value: number; label: string }[] = [
@@ -54,7 +53,7 @@ const WEEKDAY_LABELS: { value: number; label: string }[] = [
 
 type PushTargetMode = 'self' | 'colleague' | 'group';
 
-const WORKFLOW_STEPS = ['填写配置', '规划与试跑', '确认启用', '已启用'];
+const WORKFLOW_STEPS = ['填写配置', '规划与试跑', '变更方案', '已提交'];
 
 function WorkflowProgress({ step, failed = false }: { step: number; failed?: boolean }) {
   return (
@@ -120,7 +119,7 @@ function localDatetimeToIso(local: string): string {
   return d.toISOString();
 }
 
-export function TaskForm({ task, onClose, onSaved }: Props) {
+export function TaskForm({ task, onClose, onProposed }: Props) {
   const isEdit = task !== null;
   const currentUserId = useAuthStore((s) => s.user?.id) || '';
 
@@ -180,7 +179,6 @@ export function TaskForm({ task, onClose, onSaved }: Props) {
   const [myWecomUserid, setMyWecomUserid] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<ScheduledTaskDraft | null>(null);
 
   // 自然语言输入
   const [nlText, setNlText] = useState('');
@@ -327,40 +325,21 @@ export function TaskForm({ task, onClose, onSaved }: Props) {
 
     setSubmitting(true);
     try {
-      if (isEdit && task) {
-        const prepared = await scheduledTaskService.update(task.id, dto);
-        setDraft(prepared);
-        if (prepared.status !== 'ready') {
-          setError(prepared.error_message || '安全试跑未通过，原任务没有修改');
-        }
-      } else {
-        const prepared = await scheduledTaskService.createDraft(dto);
-        setDraft(prepared);
-        if (prepared.status !== 'ready') {
-          setError(prepared.error_message || '安全试跑未通过，请修改任务后重试');
-        }
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleConfirmDraft = async () => {
-    if (!draft) return;
-    setError(null);
-    setSubmitting(true);
-    try {
-      await scheduledTaskService.confirmDraft(draft.id, draft.config_hash);
-      onSaved();
+      const changeSet = await scheduledTaskService.proposeChange({
+        operation: isEdit ? 'update' : 'create',
+        ...(isEdit && task ? { task_id: task.id } : {}),
+        definition: { ...dto },
+      });
+      onProposed(changeSet.id);
     } catch (err) {
-      logger.error('task-form', 'confirm draft failed', err);
-      setError('确认启用失败；任务可能已过期或配置已变化，请重新试跑');
+      logger.error('task-form', 'changeset proposal failed', err);
+      setError('暂时无法生成变更方案，请稍后重试。');
     } finally {
       setSubmitting(false);
     }
   };
 
-  if (submitting && !draft) {
+  if (submitting) {
     return (
       <>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--s-border-default)]">
@@ -373,52 +352,6 @@ export function TaskForm({ task, onClose, onSaved }: Props) {
             <p className="text-sm font-medium text-[var(--s-text-primary)]">正在验证执行路径</p>
             <p className="text-xs text-[var(--s-text-secondary)] mt-1">AI 正在选择允许调用的工具，并用相同路径完成一次只读试跑。</p>
           </div>
-        </div>
-      </>
-    );
-  }
-
-  if (draft) {
-    const preflight = draft.latest_preflight;
-    const passed = draft.status === 'ready' && preflight?.status === 'passed';
-    return (
-      <>
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--s-border-default)]">
-          <button type="button" onClick={() => setDraft(null)} aria-label="返回编辑" className="p-1 rounded text-[var(--s-text-tertiary)] hover:bg-[var(--s-hover)]">
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-          <h2 className="text-sm font-medium text-[var(--s-text-primary)]">执行计划与安全试跑</h2>
-        </div>
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-          <WorkflowProgress step={passed ? 3 : 2} failed={!passed} />
-          <div className="rounded-lg border border-[var(--s-border-default)] p-3 space-y-2">
-            <p className="text-sm font-medium text-[var(--s-text-primary)]">{draft.plan?.objective || 'AI 正在理解任务'}</p>
-            {(draft.plan?.steps || []).map((step, index) => (
-              <div key={step.id} className="text-xs text-[var(--s-text-secondary)]">
-                {index + 1}. {step.intent} · {step.tools.join('、')}
-              </div>
-            ))}
-          </div>
-          <div className={cn('rounded-lg border p-3', passed ? 'border-[var(--s-success)] bg-[var(--s-success-soft)]' : 'border-[var(--s-error)] bg-[var(--s-error-soft)]')}>
-            <p className="text-sm font-medium text-[var(--s-text-primary)]">{passed ? '安全试跑通过' : '安全试跑未通过'}</p>
-            <p className="text-xs text-[var(--s-text-secondary)] mt-1">{preflight?.result_summary || preflight?.error_message || draft.error_message || '未生成试跑结果'}</p>
-            {(preflight?.completion_gate?.reasons || []).map((reason) => (
-              <p key={reason} className="text-xs text-[var(--s-error)] mt-1">{reason}</p>
-            ))}
-          </div>
-          {preflight?.tool_trace && preflight.tool_trace.length > 0 && (
-            <div className="rounded-lg bg-[var(--s-surface-sunken)] p-3">
-              <p className="text-xs font-medium text-[var(--s-text-secondary)] mb-2">试跑路径</p>
-              {preflight.tool_trace.filter((event) => event.event_type !== 'completion_gate').map((event, index) => (
-                <p key={`${event.tool_name}-${index}`} className="text-xs text-[var(--s-text-secondary)]">{event.tool_name || event.event_type} · {event.status}</p>
-              ))}
-            </div>
-          )}
-          {error && <div className="text-xs text-[var(--s-error)] bg-[var(--s-error-soft)] px-3 py-2 rounded">{error}</div>}
-        </div>
-        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-[var(--s-border-default)]">
-          <Button variant="secondary" size="sm" onClick={() => setDraft(null)}>修改并重新试跑</Button>
-          <Button variant="accent" size="sm" loading={submitting} disabled={!passed} onClick={handleConfirmDraft}>确认启用</Button>
         </div>
       </>
     );
