@@ -556,6 +556,25 @@ async def _handle_form_submit(
             raise RuntimeError("CHAT_FORM_STATE_RESULT_INVALID")
         return payload
 
+    def attach_changeset(change_set_id: str, result_message: str) -> Dict[str, Any]:
+        """把已落库的 ChangeSet 作为消息展示引用持久化。
+
+        这里不把 ChangeSet 状态复制进聊天消息；消息只保存 ID，刷新和跨端
+        恢复时始终由卡片重新读取 ChangeSet 服务。
+        """
+        response = db.rpc("attach_chat_form_changeset", {
+            "p_message_id": message_id,
+            "p_conversation_id": conversation_id,
+            "p_org_id": org_id,
+            "p_form_id": form_id,
+            "p_change_set_id": change_set_id,
+            "p_result_message": result_message,
+        }).execute()
+        payload = response.data if response else None
+        if not isinstance(payload, dict):
+            raise RuntimeError("CHAT_FORM_CHANGESET_ATTACH_RESULT_INVALID")
+        return payload
+
     db: Any | None = None
     submission_claimed = False
     try:
@@ -607,23 +626,36 @@ async def _handle_form_submit(
             return
         submission_claimed = True
 
-        result = await handle_form_submit(db, user_id, org_id, form_type, form_data)
+        idempotency_key = f"chat-form:{conversation_id}:{message_id}:{form_id}"
+        result = await handle_form_submit(
+            db, user_id, org_id, form_type, form_data,
+            idempotency_key=idempotency_key,
+        )
         if result.get("success"):
-            resolved = transition(
-                db,
-                "submitting",
-                "submitted",
-                result_message=str(result.get("message") or ""),
-                next_form=result.get("next_form") if isinstance(result.get("next_form"), dict) else None,
-            )
-            if resolved.get("outcome") != "transitioned":
+            change_set_id = result.get("change_set_id")
+            if change_set_id:
+                resolved = attach_changeset(
+                    str(change_set_id), str(result.get("message") or ""),
+                )
+                expected_outcomes = {"transitioned", "existing"}
+            else:
+                resolved = transition(
+                    db,
+                    "submitting",
+                    "submitted",
+                    result_message=str(result.get("message") or ""),
+                    next_form=result.get("next_form") if isinstance(result.get("next_form"), dict) else None,
+                )
+                expected_outcomes = {"transitioned"}
+            if resolved.get("outcome") not in expected_outcomes:
                 raise RuntimeError("CHAT_FORM_STATE_COMMIT_FAILED")
             submission_claimed = False
         else:
+            final_status = result.get("status")
             restored = transition(
                 db,
                 "submitting",
-                "open",
+                "cancelled" if final_status == "cancelled" else "open",
                 error_message=str(result.get("message") or "提交失败，请重试"),
             )
             if restored.get("outcome") != "transitioned":
@@ -652,7 +684,8 @@ async def _handle_form_submit(
                     form_id,
                     transition_error,
                 )
-        await send_result({"success": False, "message": f"提交失败: {e}"})
+        # 异常细节仅记录在服务端日志；聊天用户只能看到可安全重试的提示。
+        await send_result({"success": False, "message": "提交失败，请稍后重试"})
 
 
 async def _get_task_accumulated_state(task_id: str, user_id: str) -> Tuple[Optional[str], Optional[list]]:

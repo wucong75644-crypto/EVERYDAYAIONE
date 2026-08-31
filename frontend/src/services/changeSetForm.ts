@@ -1,5 +1,11 @@
 import type { ScheduledTaskChangeRequest } from '../types/scheduledTask';
 
+/**
+ * 仅供独立 API 调用方构造定时任务 ChangeSet 请求。
+ *
+ * 聊天表单不使用此模块：它们始终经由 WebSocket 服务端生成 ChangeSet，并由
+ * 服务端持久化消息展示引用，以消除客户端双分流。
+ */
 const CHANGESET_FORM_TYPES = new Set(['scheduled_task_create', 'scheduled_task_update']);
 
 export function isScheduledTaskChangeSetForm(formType: string): boolean {
@@ -13,7 +19,7 @@ function normalizeDefinition(formData: Record<string, unknown>): Record<string, 
     try {
       definition.push_target = JSON.parse(pushTarget) as unknown;
     } catch {
-      // Keep the original value so the server can return a safe validation message.
+      // 保留原值，由服务端返回安全的字段校验信息。
     }
   }
   if (Array.isArray(definition.weekdays)) {

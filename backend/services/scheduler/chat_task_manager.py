@@ -4,7 +4,7 @@
 返回结构化 FormPart / 文本结果，由前端渲染。
 
 设计要点：
-- create/update: 返回 FormPart 预填表单，用户确认后前端发 form_submit WS 事件
+- create/update: 返回 FormPart 预填表单，提交后只创建 ChangeSet；确认由 ChangeSet 卡片完成
 - list: 返回文本摘要
 - pause/resume/delete: 生成 ChangeSet，等待用户确认
 
@@ -272,7 +272,7 @@ def _build_create_form(
         "form_type": "scheduled_task_create",
         "form_id": f"task_create_{uuid4().hex[:8]}",
         "title": "创建定时任务",
-        "description": "步骤 1/4 · 尚未创建任务。提交后 AI 会规划调用路径并进行只读安全试跑；通过后再确认启用。",
+        "description": "步骤 1/4 · 尚未创建任务。提交后 AI 会规划调用路径并进行只读安全试跑；请在变更方案卡片中查看结果并确认。",
         "fields": fields,
         "submit_text": "规划并安全试跑",
         "cancel_text": "取消",
@@ -353,39 +353,9 @@ def _build_update_form(
         "form_type": "scheduled_task_update",
         "form_id": f"task_update_{uuid4().hex[:8]}",
         "title": f"修改定时任务「{task.get('name', '')}」",
-        "description": "修改后点击确认保存。",
+        "description": "提交后将生成变更方案并进行只读试跑，确认前不会修改原任务。",
         "fields": fields,
-        "submit_text": "确认修改",
-        "cancel_text": "取消",
-    }
-
-
-def _build_confirm_form(draft: Dict[str, Any]) -> Dict[str, Any]:
-    """预检通过后给聊天用户的第二次确认；第一张表单不会直接启用任务。"""
-    plan = draft.get("plan") or {}
-    steps = plan.get("steps") or []
-    path = "；".join(
-        f"{index + 1}. {step.get('intent', '执行查询')}（{','.join(step.get('tools', []))}）"
-        for index, step in enumerate(steps)
-    )
-    return {
-        "type": "form",
-        "form_type": "scheduled_task_confirm",
-        "form_id": f"task_confirm_{draft['id'][:8]}",
-        "title": "确认更新定时任务" if draft.get("source_task_id") else "确认启用定时任务",
-        "description": (
-            (
-                "步骤 3/4 · 修订预检已通过，确认后才会替换当前任务的执行定义。"
-                if draft.get("source_task_id")
-                else "步骤 3/4 · 预检已通过，正式任务仍未创建。"
-            )
-            + f"执行路径：{path or 'AI 将在已确认范围内动态执行'}"
-        ),
-        "fields": [
-            _build_form_field("draft_id", "hidden", "", default_value=draft["id"]),
-            _build_form_field("config_hash", "hidden", "", default_value=draft["config_hash"]),
-        ],
-        "submit_text": "确认启用",
+        "submit_text": "规划并安全试跑",
         "cancel_text": "取消",
     }
 
@@ -599,6 +569,8 @@ async def handle_form_submit(
     org_id: str,
     form_type: str,
     form_data: Dict[str, Any],
+    *,
+    idempotency_key: str | None = None,
 ) -> Dict[str, Any]:
     """处理前端表单提交，返回结果文本
 
@@ -620,25 +592,30 @@ async def handle_form_submit(
     if form_type == "scheduled_task_create":
         if not await check_permission(db, user_id, org_id, "task.create"):
             return {"success": False, "message": "无权创建定时任务"}
-        return await _submit_create(db, user_id, org_id, form_data)
+        return await _submit_create(db, user_id, org_id, form_data, idempotency_key=idempotency_key)
 
     if form_type == "scheduled_task_confirm":
-        # 新建与修订的确认权限不同：修订沿用源任务的编辑权限，不能因为
-        # “确认”这个动作而额外要求创建权限。
-        return await _submit_confirm(db, user_id, org_id, form_data)
+        # 旧草稿不再是可提交的业务状态；新流程的确认只能通过 ChangeSet 卡片。
+        return {
+            "success": False,
+            "status": "cancelled",
+            "message": "该历史草稿已停止受理，请重新发起任务以生成新的变更方案。",
+        }
 
     if form_type == "scheduled_task_update":
         if not await check_permission(db, user_id, org_id, "task.edit"):
             return {"success": False, "message": "无权修改定时任务"}
-        return await _submit_update(db, user_id, org_id, form_data)
+        return await _submit_update(db, user_id, org_id, form_data, idempotency_key=idempotency_key)
 
     return {"success": False, "message": f"未知表单类型: {form_type}"}
 
 
 async def _submit_create(
     db: Any, user_id: str, org_id: str, data: Dict[str, Any],
+    *,
+    idempotency_key: str | None = None,
 ) -> Dict[str, Any]:
-    """创建定时任务（表单提交后调用）"""
+    """把聊天创建表单转换为 ChangeSet，绝不写入 legacy draft。"""
     name = (data.get("name") or "").strip()
     prompt = (data.get("prompt") or "").strip()
     schedule_type = data.get("schedule_type", "daily")
@@ -701,80 +678,18 @@ async def _submit_create(
         "timeout_sec": 180,
         "next_run_at": next_run_at,
     }
-    schedule_desc = parse_cron_readable(cron_expr) if cron_expr else "单次执行"
-    from services.scheduler.scheduled_task_workflow import create_draft_and_preflight
-    draft = await create_draft_and_preflight(
-        db=db, org_id=org_id, user_id=user_id, definition=definition,
+    return await _propose_form_change(
+        db=db, user_id=user_id, org_id=org_id, operation="create",
+        definition=definition, task_id=None, idempotency_key=idempotency_key,
     )
-    if draft.get("status") != "ready":
-        return {
-            "success": False,
-            "message": f"安全试跑未通过：{draft.get('error_message') or '调用路径未完成'}。请修改任务后重新试跑。",
-        }
-
-    logger.info(
-        f"chat_task_manager preflight_ready | draft={draft['id']} | "
-        f"name={name} | schedule={schedule_desc}"
-    )
-
-    return {
-        "success": True,
-        "message": (
-            f"✅ 「{name}」已完成 AI 路径规划与只读试跑，尚未创建正式任务。\n"
-            f"- 频率：{schedule_desc}\n"
-            f"- 调用工具：{', '.join((draft.get('execution_policy') or {}).get('allowed_tools', []))}\n"
-            "请在下方查看试跑路径，并确认启用。"
-        ),
-        "next_form": _build_confirm_form(draft),
-    }
-
-
-async def _submit_confirm(
-    db: Any, user_id: str, org_id: str, data: Dict[str, Any],
-) -> Dict[str, Any]:
-    draft_id = str(data.get("draft_id") or "").strip()
-    config_hash = str(data.get("config_hash") or "").strip()
-    if not draft_id or not config_hash:
-        return {"success": False, "message": "缺少预检确认信息"}
-    response = db.table("scheduled_task_drafts").select("*").eq("id", draft_id).eq("org_id", org_id).eq("user_id", user_id).limit(1).execute()
-    if not response.data:
-        return {"success": False, "message": "预检草稿不存在或无权确认"}
-    draft = response.data[0]
-    from services.permissions.checker import check_permission
-    source_task_id = draft.get("source_task_id")
-    if source_task_id:
-        source = db.table("scheduled_tasks").select("*").eq("id", source_task_id).eq("org_id", org_id).limit(1).execute()
-        if not source.data or not await check_permission(db, user_id, org_id, "task.edit", source.data[0]):
-            return {"success": False, "message": "无权修改此定时任务"}
-    elif not await check_permission(db, user_id, org_id, "task.create"):
-        return {"success": False, "message": "无权创建定时任务"}
-    definition = draft.get("definition") or {}
-    if definition.get("schedule_type") == "once":
-        next_run_at = definition.get("next_run_at") or definition.get("run_at")
-    else:
-        try:
-            next_run_at = calc_next_run(definition.get("cron_expr") or "", definition.get("timezone") or "Asia/Shanghai").isoformat()
-        except Exception:
-            return {"success": False, "message": "任务时间配置已失效，请重新试跑"}
-    task_id = str(uuid4())
-    confirmed = db.rpc("confirm_scheduled_task_draft", {
-        "p_draft_id": draft_id, "p_org_id": org_id, "p_user_id": user_id,
-        "p_config_hash": config_hash, "p_task_id": task_id, "p_next_run_at": next_run_at,
-    }).execute()
-    outcome = confirmed.data if confirmed else None
-    if not isinstance(outcome, dict) or outcome.get("outcome") not in {"created", "updated", "confirmed"}:
-        if isinstance(outcome, dict) and outcome.get("outcome") == "source_running":
-            return {"success": False, "message": "任务正在执行，暂不能替换配置；请稍后重新确认"}
-        return {"success": False, "message": "预检已过期或任务配置已变化，请重新试跑"}
-    if outcome.get("outcome") == "updated":
-        return {"success": True, "message": "✅ 定时任务已确认更新"}
-    return {"success": True, "message": "✅ 定时任务已确认启用"}
 
 
 async def _submit_update(
     db: Any, user_id: str, org_id: str, data: Dict[str, Any],
+    *,
+    idempotency_key: str | None = None,
 ) -> Dict[str, Any]:
-    """创建任务修订草稿；任何执行定义变化都不能绕过预检。"""
+    """把聊天修改表单转换为 ChangeSet，原任务只由 ChangeSet 提交阶段修改。"""
     task_id = data.get("task_id", "").strip()
     if not task_id:
         return {"success": False, "message": "缺少任务 ID"}
@@ -849,23 +764,56 @@ async def _submit_update(
         except Exception as e:
             return {"success": False, "message": f"计算执行时间失败: {e}"}
 
-    from services.scheduler.scheduled_task_workflow import create_draft_and_preflight
-    draft = await create_draft_and_preflight(
-        db=db,
-        org_id=org_id,
-        user_id=user_id,
-        definition=definition,
-        source_task_id=task_id,
+    return await _propose_form_change(
+        db=db, user_id=user_id, org_id=org_id, operation="update",
+        definition=definition, task_id=task_id, base_snapshot=task,
+        idempotency_key=idempotency_key,
     )
-    if draft.get("status") != "ready":
-        return {
-            "success": False,
-            "message": f"安全试跑未通过：{draft.get('error_message') or '调用路径未完成'}。原任务未修改。",
-        }
 
-    logger.info(f"chat_task_manager revision_ready | task={task_id} | draft={draft['id']}")
+
+async def _propose_form_change(
+    *,
+    db: Any,
+    user_id: str,
+    org_id: str,
+    operation: str,
+    definition: Dict[str, Any],
+    task_id: str | None,
+    idempotency_key: str | None,
+    base_snapshot: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """聊天表单进入统一 ChangeSet 服务；失败也以受控 ChangeSet 状态呈现。"""
+    from services.scheduler.scheduled_task_change_adapter import (
+        ScheduledTaskChangeError,
+        ScheduledTaskChangeSetService,
+    )
+
+    try:
+        change_set = await ScheduledTaskChangeSetService(
+            db, user_id=user_id, org_id=org_id,
+        ).propose(
+            operation=operation,
+            resource_id=task_id,
+            base_snapshot=base_snapshot,
+            proposed_snapshot=definition,
+            idempotency_key=idempotency_key,
+        )
+    except ScheduledTaskChangeError as exc:
+        return {"success": False, "message": str(exc)}
+    except Exception:
+        logger.exception(
+            "chat_task_manager changeset_propose_failed | operation={} | task_id={}",
+            operation, task_id,
+        )
+        return {"success": False, "message": "暂时无法生成变更方案，请稍后重试。"}
+
+    logger.info(
+        "chat_task_manager changeset_proposed | change_set={} | operation={} | task_id={}",
+        change_set.get("id"), operation, task_id,
+    )
     return {
         "success": True,
-        "message": f"✅ 「{name}」已完成更新路径的规划与只读试跑，原任务尚未修改。",
-        "next_form": _build_confirm_form(draft),
+        "status": "submitted",
+        "change_set_id": str(change_set["id"]),
+        "message": "变更方案已生成，请在卡片中查看试跑结果并确认。",
     }

@@ -230,12 +230,10 @@ function ScheduledTaskWorkflowStage({
   formType: string;
   status: FormStatus;
 }) {
-  if (!['scheduled_task_create', 'scheduled_task_confirm'].includes(formType)) return null;
+  if (!['scheduled_task_create', 'scheduled_task_update'].includes(formType)) return null;
 
-  const activeStep = formType === 'scheduled_task_confirm'
-    ? (status === 'submitted' ? 4 : 3)
-    : (status === 'submitting' ? 2 : status === 'submitted' ? 3 : 1);
-  const labels = ['填写配置', '规划与试跑', '确认启用', '已启用'];
+  const activeStep = status === 'submitting' ? 2 : status === 'submitted' ? 3 : 1;
+  const labels = ['填写配置', '规划与试跑', '变更方案', '已提交'];
 
   return (
     <div className={`mt-3 ${MESSAGE_CONTENT_LAYOUT.fill} rounded-[var(--s-radius-card)] border border-border-default bg-surface px-3 py-2`}>
@@ -262,8 +260,7 @@ function ScheduledTaskWorkflowStage({
       <p className="mt-1 text-[11px] text-text-secondary">
         {activeStep === 1 && '尚未创建任务；请确认配置后开始规划与安全试跑。'}
         {activeStep === 2 && '正在进行只读试跑：不扣积分、不发送消息、不写入业务数据。'}
-        {activeStep === 3 && '预检已通过；确认启用后才会创建正式任务。'}
-        {activeStep === 4 && '任务已启用，可在定时任务面板查看执行历史。'}
+        {activeStep === 3 && '变更方案已生成；请在卡片中查看试跑结果并确认提交。'}
       </p>
     </div>
   );
@@ -405,6 +402,7 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
         if (detail.next_form) setNextForm(detail.next_form);
       } else {
         setStatus(detail.status === 'cancelled' ? 'cancelled' : 'open');
+        if (detail.status === 'cancelled') setSubmittedMessage(detail.message || '');
         setFormError(detail.message || '提交失败，请重试');
       }
     };
@@ -430,11 +428,10 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
           messageId,
           conversationId,
           action: 'submit',
-          ...(localChangeSetId ? { changeSetId: localChangeSetId } : {}),
         },
       }),
     );
-  }, [conversationId, form.form_id, form.form_type, localChangeSetId, messageId, status, values]);
+  }, [conversationId, form.form_id, form.form_type, messageId, status, values]);
 
   const handleCancel = useCallback(() => {
     if (status !== 'open') return;
@@ -448,11 +445,10 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
           messageId,
           conversationId,
           action: 'cancel',
-          ...(localChangeSetId ? { changeSetId: localChangeSetId } : {}),
         },
       }),
     );
-  }, [conversationId, form.form_id, form.form_type, localChangeSetId, messageId, status]);
+  }, [conversationId, form.form_id, form.form_type, messageId, status]);
 
   // 判断字段是否可见（visible_when 联动）
   const isFieldVisible = useCallback(
@@ -478,7 +474,9 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
           )}
         >
           {submitted ? <CheckCircle2 size={16} /> : <X size={16} />}
-          <span>{submitted ? (submittedMessage || `${form.title} — 已提交`) : `${form.title} — 已取消`}</span>
+          <span>{submitted
+            ? (submittedMessage || `${form.title} — 已提交`)
+            : (submittedMessage || `${form.title} — 已取消`)}</span>
         </m.div>
         {localChangeSetId && (
           <ChangeSetCard changeSetId={localChangeSetId} fallbackTitle={form.title} actionHandlers={changeSetActionHandlers} />
