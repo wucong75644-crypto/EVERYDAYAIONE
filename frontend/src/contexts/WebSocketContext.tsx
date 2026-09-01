@@ -440,6 +440,13 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     return unsub;
   }, [ws]);
 
+  useEffect(() => ws.subscribe('changeset_updated' as never, (msg) => {
+    const payload = msg.payload as { change_set_id?: string };
+    if (payload?.change_set_id) {
+      notifyChangeSetUpdated({ changeSetId: payload.change_set_id, source: 'changeset_updated' });
+    }
+  }), [ws]);
+
   const contextValue: WebSocketContextValue = {
     isConnected: ws.isConnected,
     isConnecting: ws.isConnecting,

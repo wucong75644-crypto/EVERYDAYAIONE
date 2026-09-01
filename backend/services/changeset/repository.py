@@ -104,6 +104,48 @@ class ChangeSetRepository:
             raise ChangeSetNotFound("ChangeSet 不存在")
         return rows[0]
 
+    def list_active_for_actor(
+        self, *, org_id: str, actor_id: str, resource_type: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """返回发起人仍可继续处理的 ChangeSet，用于刷新后恢复界面。
+
+        终态不由聊天消息或前端缓存推导；这里按数据库真实状态过滤。
+        """
+        active = {"draft", "resolving", "proposed", "validating", "preflighting", "awaiting_approval", "committing"}
+        query = self._db.table("change_sets").select("*").eq("org_id", str(org_id)).eq(
+            "created_by", str(actor_id),
+        ).in_("status", sorted(active))
+        if resource_type:
+            query = query.eq("resource_type", str(resource_type))
+        result = query.order("updated_at", desc=True).limit(limit).execute()
+        # 保留本地兼容数据库的二次过滤，避免旧适配器忽略 in_ 时返回终态。
+        return [dict(row) for row in (result.data or []) if str(row.get("status")) in active]
+
+    def enrich_proposal(
+        self, *, change_set_id: str, org_id: str, expected_status: str,
+        proposed_snapshot: Mapping[str, Any], patch: list[dict[str, Any]],
+        diff: Mapping[str, Any], risk_level: str, policy_snapshot: Mapping[str, Any],
+        plan_snapshot: Mapping[str, Any] | None, tool_policy_snapshot: Mapping[str, Any] | None,
+        check_summary: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        response = self._db.rpc("enrich_change_set_proposal", {
+            "p_change_set_id": change_set_id, "p_org_id": org_id,
+            "p_expected_status": expected_status,
+            "p_proposed_snapshot": dict(proposed_snapshot), "p_patch": list(patch),
+            "p_diff": dict(diff), "p_risk_level": risk_level,
+            "p_policy_snapshot": dict(policy_snapshot), "p_plan_snapshot": plan_snapshot,
+            "p_tool_policy_snapshot": tool_policy_snapshot,
+            "p_check_summary": dict(check_summary),
+        }).execute()
+        data = _response_dict(response, "CHANGESET_ENRICH_RESULT_INVALID")
+        row = data.get("change_set")
+        if data.get("outcome") != "enriched" or not isinstance(row, dict):
+            raise ChangeSetConcurrencyError(
+                "ChangeSet 状态已被其他请求改变", current=row if isinstance(row, dict) else None,
+            )
+        return row
+
     def list_checks(self, change_set_id: str, org_id: str) -> list[dict[str, Any]]:
         result = self._db.table("change_checks").select("*").eq(
             "change_set_id", change_set_id,

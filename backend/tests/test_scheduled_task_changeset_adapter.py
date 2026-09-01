@@ -65,6 +65,19 @@ class _Repo:
         self.row["status"] = next_status
         return deepcopy(self.row)
 
+    def enrich_proposal(self, **kwargs):
+        self.row.update({
+            "proposed_snapshot": deepcopy(kwargs["proposed_snapshot"]),
+            "patch": deepcopy(kwargs["patch"]),
+            "diff": deepcopy(kwargs["diff"]),
+            "risk_level": kwargs["risk_level"],
+            "policy_snapshot": deepcopy(kwargs["policy_snapshot"]),
+            "plan_snapshot": deepcopy(kwargs["plan_snapshot"]),
+            "tool_policy_snapshot": deepcopy(kwargs["tool_policy_snapshot"]),
+            "check_summary": deepcopy(kwargs["check_summary"]),
+        })
+        return deepcopy(self.row)
+
     def record_check(self, **kwargs):
         self.checks.append(kwargs)
         return kwargs
@@ -148,6 +161,70 @@ async def test_duplicate_create_replays_without_replanning():
 
     assert first["id"] == second["id"] == "cs1"
     assert service._build_release.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_begin_persists_draft_before_background_planning():
+    repo = _Repo()
+    repo.row["idempotency_key"] = "other-key"
+    db = _Db()
+    service = ScheduledTaskChangeSetService(db, user_id="u1", org_id="org1")
+    service._build_release = AsyncMock(return_value=_release())
+    definition = {
+        "name": "日报", "prompt": "查询淘宝销售额", "timezone": "Asia/Shanghai",
+        "push_target": {"type": "web", "user_id": "u1"},
+        "schedule_type": "daily", "cron_expr": "0 9 * * *",
+    }
+    scheduled: list[object] = []
+
+    def schedule(coro):
+        scheduled.append(coro)
+        return MagicMock()
+
+    with patch("services.scheduler.scheduled_task_change_adapter.ChangeSetRepository", return_value=repo), \
+         patch("services.permissions.checker.check_permission", new=AsyncMock(return_value=True)), \
+         patch("asyncio.create_task", side_effect=schedule):
+        result = await service.begin(
+            operation="create", proposed_snapshot=definition, idempotency_key="new-key",
+        )
+
+    assert result["id"] == "cs1"
+    assert result["status"] == "draft"
+    service._build_release.assert_not_awaited()
+    assert scheduled
+    scheduled[0].close()
+
+
+@pytest.mark.asyncio
+async def test_complete_enriches_same_changeset_and_notifies_client():
+    repo = _Repo()
+    repo.row.update({
+        "operation": "create", "status": "draft", "base_snapshot": {},
+        "proposed_snapshot": {
+            "name": "日报", "prompt": "查询淘宝销售额", "timezone": "Asia/Shanghai",
+            "push_target": {"type": "web", "user_id": "u1"},
+            "schedule_type": "daily", "cron_expr": "0 9 * * *",
+        },
+        "policy_snapshot": {}, "patch": [], "diff": {},
+    })
+    db = _Db()
+    service = ScheduledTaskChangeSetService(db, user_id="u1", org_id="org1")
+    service._build_release = AsyncMock(return_value=_release())
+    service.adapter.preflight = AsyncMock(return_value=PreflightResult(
+        True, {"full_run": False, "mode": "deterministic_read_only"}, (),
+    ))
+    with patch("services.scheduler.scheduled_task_change_adapter.ChangeSetRepository", return_value=repo), \
+         patch("services.permissions.checker.check_permission", new=AsyncMock(return_value=True)), \
+         patch("services.websocket_manager.ws_manager.send_to_user", new=AsyncMock()) as notify:
+        await service.complete("cs1")
+
+    assert repo.row["id"] == "cs1"
+    assert repo.row["status"] == "awaiting_approval"
+    assert repo.row["plan_snapshot"]
+    notify.assert_awaited_once_with(
+        "u1", {"type": "changeset_updated", "payload": {"change_set_id": "cs1", "status": "awaiting_approval"}},
+        org_id="org1",
+    )
 
 
 @pytest.mark.asyncio

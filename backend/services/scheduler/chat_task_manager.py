@@ -549,13 +549,13 @@ class ChatTaskManager:
             proposed.update({"status": "active", "next_run_at": next_run})
         row = await ScheduledTaskChangeSetService(
             self.db, user_id=self.user_id, org_id=self.org_id,
-        ).propose(
+        ).begin(
             operation=operation, resource_id=task["id"], base_snapshot=task,
             proposed_snapshot=proposed,
         )
         return {
             "type": "change_set", "data": row,
-            "text": f"已生成「{task.get('name', '')}」的{operation}变更方案，请确认后提交。",
+            "text": f"正在生成「{task.get('name', '')}」的{operation}变更方案，完成后请确认提交。",
         }
 
 
@@ -815,5 +815,5 @@ async def _propose_form_change(
         "success": True,
         "status": "submitted",
         "change_set_id": str(change_set["id"]),
-        "message": "变更方案已生成，请在卡片中查看试跑结果并确认。",
+        "message": "正在生成变更方案，完成后请在卡片中查看试跑结果并确认。",
     }

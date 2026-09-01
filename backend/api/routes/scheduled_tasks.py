@@ -307,7 +307,7 @@ async def _propose_task_change(
     base_task: Dict[str, Any] | None = None,
     idempotency_key: str | None = None,
 ) -> Dict[str, Any]:
-    """新入口统一经过 Planner + ChangeSet；不写 scheduled_task_drafts。"""
+    """新入口先创建 ChangeSet，再由后台完成 Planner 与只读试跑。"""
     task = base_task
     if operation != "create" and not task_id:
         raise HTTPException(422, "该操作必须提供 task_id")
@@ -339,7 +339,7 @@ async def _propose_task_change(
         proposed.setdefault("status", "active")
     service = ScheduledTaskChangeSetService(db, user_id=user_id, org_id=org_id)
     try:
-        return await service.propose(
+        return await service.begin(
             operation=operation,
             resource_id=None if operation == "create" else task_id,
             base_snapshot=task,
@@ -462,7 +462,7 @@ async def propose_task_changeset(
                 "p_org_id": org_id,
                 "p_form_id": payload.form_id,
                 "p_change_set_id": str(row["id"]),
-                "p_result_message": "变更方案已生成，请在卡片中确认。",
+                "p_result_message": "正在生成变更方案，完成后请在卡片中确认。",
             }).execute()
             attached = response.data if response else None
             outcome = attached.get("outcome") if isinstance(attached, dict) else None
@@ -483,7 +483,7 @@ async def propose_task_changeset(
                 "Scheduled task ChangeSet message reference sync failed | "
                 f"change_set_id={row.get('id')} | error={type(exc).__name__}"
             )
-            raise HTTPException(503, "变更方案已生成，但聊天状态同步失败，请重试") from exc
+            raise HTTPException(503, "ChangeSet 已创建，但聊天状态同步失败，请重试") from exc
     from api.routes.change_sets import _to_dto
     return {"success": True, "data": _to_dto(row, row.get("checks") or [])}
 

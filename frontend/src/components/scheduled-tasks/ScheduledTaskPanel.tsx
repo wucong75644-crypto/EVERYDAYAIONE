@@ -19,6 +19,7 @@ import { TaskForm } from './TaskForm';
 import ChangeSetCard from '../chat/message/ChangeSetCard';
 import { useScheduledTaskStore } from '../../stores/useScheduledTaskStore';
 import { scheduledTaskService } from '../../services/scheduledTask';
+import { changeSetService } from '../../services/changeSet';
 import type { ChangeSet } from '../../types/changeset';
 import { FLUID_SPRING } from '../../utils/motion';
 import { cn } from '../../utils/cn';
@@ -38,11 +39,21 @@ export default function ScheduledTaskPanel({ isOpen, onClose }: ScheduledTaskPan
   const [editingTask, setEditingTask] = useState<ScheduledTask | null>(null);
   const [changeSetId, setChangeSetId] = useState<string | null>(null);
 
-  // 打开面板时拉取数据
+  // 打开或刷新后同时从任务和 ChangeSet 真实状态恢复，绝不把本地表单当流程事实。
   useEffect(() => {
-    if (isOpen) {
-      fetchTasks();
-    }
+    if (!isOpen) return;
+    let active = true;
+    void fetchTasks();
+    void changeSetService.listActive('scheduled_task')
+      .then((changeSets) => {
+        if (active && changeSets[0]) {
+          setChangeSetId((current) => current ?? changeSets[0].id);
+        }
+      })
+      .catch(() => {
+        // 任务列表仍可用；ChangeSetCard 会在用户新建/操作后按 ID 独立加载。
+      });
+    return () => { active = false; };
   }, [isOpen, fetchTasks]);
 
   // ESC 全局关闭

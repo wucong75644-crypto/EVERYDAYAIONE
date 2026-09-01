@@ -83,7 +83,7 @@ async def test_form_submit_changeset_attaches_only_display_reference(
             "success": True,
             "status": "submitted",
             "change_set_id": "change-1",
-            "message": "变更方案已生成，请在卡片中查看试跑结果并确认。",
+            "message": "正在生成变更方案，完成后请在卡片中查看试跑结果并确认。",
         },
     ) as mock_submit:
         await _handle_form_submit(

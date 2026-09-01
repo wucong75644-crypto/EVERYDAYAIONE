@@ -260,7 +260,7 @@ function ScheduledTaskWorkflowStage({
       <p className="mt-1 text-[11px] text-text-secondary">
         {activeStep === 1 && '尚未创建任务；请确认配置后开始规划与安全试跑。'}
         {activeStep === 2 && '正在进行只读试跑：不扣积分、不发送消息、不写入业务数据。'}
-        {activeStep === 3 && '变更方案已生成；请在卡片中查看试跑结果并确认提交。'}
+        {activeStep === 3 && 'ChangeSet 已创建；请在卡片中查看规划与试跑进度，完成后再确认提交。'}
       </p>
     </div>
   );

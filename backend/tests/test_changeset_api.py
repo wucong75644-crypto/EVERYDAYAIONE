@@ -18,6 +18,9 @@ class Query:
     def eq(self, *args, **kwargs):
         return self
 
+    def in_(self, *args, **kwargs):
+        return self
+
     def limit(self, *args, **kwargs):
         return self
 
@@ -88,3 +91,16 @@ def test_detail_and_timeline_are_stable_projections():
     assert detail.json()["data"]["status"] == "draft"
     assert timeline.status_code == 200
     assert timeline.json()["data"]["events"][0]["sequence"] == 1
+
+
+def test_active_returns_only_recoverable_changesets_for_the_current_actor():
+    active = _row()
+    active["status"] = "preflighting"
+    completed = _row()
+    completed.update({"id": "cs-2", "status": "applied"})
+    client = TestClient(_app(DB([active, completed])))
+
+    response = client.get("/api/change-sets/active?resource_type=detail_project")
+
+    assert response.status_code == 200
+    assert [row["id"] for row in response.json()["data"]] == ["cs-1"]

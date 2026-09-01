@@ -442,6 +442,165 @@ class ScheduledTaskChangeSetService:
         self.org_id = str(org_id)
         self.adapter = ScheduledTaskChangeAdapter(db, user_id=user_id, org_id=org_id)
 
+    async def begin(
+        self, *, operation: str, proposed_snapshot: Mapping[str, Any],
+        base_snapshot: Mapping[str, Any] | None = None, resource_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """先持久化可恢复的 ChangeSet，再后台执行耗时规划和只读试跑。"""
+        operation = operation.lower().strip()
+        if operation not in TASK_OPERATIONS:
+            raise ScheduledTaskChangeError(f"不支持的定时任务操作: {operation}")
+        base = task_snapshot(base_snapshot)
+        repo = ChangeSetRepository(self.db)
+        existing = repo.get_by_idempotency_key(org_id=self.org_id, idempotency_key=idempotency_key) if idempotency_key else None
+        # create 没有调用方提供的 resource_id。重复请求必须复用首个
+        # ChangeSet 的资源标识，再用归一化后的用户请求进行比对。
+        if existing and operation == "create":
+            resource_id = str(existing.get("resource_id") or uuid4())
+        elif operation == "create" and idempotency_key:
+            resource_id = str(uuid5(NAMESPACE_URL, f"everydayai:scheduled-task:{self.org_id}:{idempotency_key}"))
+        else:
+            resource_id = str(resource_id or uuid4())
+        base_revision = str((base_snapshot or {}).get("revision", 0))
+        context = ChangeSetContext(
+            id=str(uuid4()), org_id=self.org_id, resource_type=TASK_RESOURCE_TYPE,
+            resource_id=resource_id, operation=operation, base_revision=base_revision,
+            base_snapshot=base, proposed_snapshot=dict(proposed_snapshot), patch=(), diff={}, policy_snapshot={},
+        )
+        resolved = await self.adapter.resolve(ResolveRequest(context=context, intent=dict(proposed_snapshot)))
+        normalized = await self.adapter.normalize(NormalizeRequest(context=context, proposed_snapshot=resolved.proposed_snapshot))
+        normalized_snapshot = dict(normalized.proposed_snapshot)
+        context = replace(context, proposed_snapshot=normalized_snapshot)
+        if existing:
+            if not _same_idempotent_request(
+                existing, user_id=self.user_id, resource_id=resource_id,
+                operation=operation, base_revision=base_revision,
+                base=base, normalized_snapshot=normalized_snapshot,
+            ):
+                raise ScheduledTaskChangeError(
+                    "该请求标识已绑定其他变更，请重新提交",
+                    status_code=409,
+                )
+            return self._with_projection(existing, repo)
+        authorization = await self.adapter.authorize(AuthorizeRequest(context=context, actor_id=self.user_id, actor_type="user"))
+        validation = await self.adapter.validate(ValidateRequest(context=context))
+        if not authorization.allowed:
+            raise ScheduledTaskChangeError("无权执行定时任务变更", status_code=403, details=list(authorization.reasons))
+        if not validation.passed:
+            raise ScheduledTaskChangeError("定时任务校验失败", details=list(validation.reasons))
+        external = not await self.adapter._is_self_target(normalized_snapshot.get("push_target"))
+        assessment = DefaultRiskPolicy().assess(
+            resource_type=TASK_RESOURCE_TYPE, operation=operation,
+            context={"destructive": operation == "delete", "external_effect": operation == "delete" or external,
+                     "affects_many": normalized_snapshot.get("push_target", {}).get("type") == "multi", "tool_scope_expanded": operation == "create"},
+        )
+        diff = await self.adapter.diff(DiffRequest(context=context))
+        create_payload = {
+            "org_id": self.org_id, "resource_type": TASK_RESOURCE_TYPE, "resource_id": resource_id,
+            "operation": operation, "base_revision": base_revision, "base_snapshot": base,
+            "proposed_snapshot": normalized_snapshot, "patch": list(diff.patch), "diff": dict(diff.diff),
+            "risk_level": assessment.level.value,
+            "policy_snapshot": {**assessment.as_snapshot(), **authorization.policy_snapshot},
+            "plan_snapshot": None, "tool_policy_snapshot": None,
+            "check_summary": {"authorization": {"passed": True, "reasons": []}, "validation": {"passed": True, "result": dict(validation.result), "reasons": []}, "preflight": {"pending": True}, "risk": assessment.as_snapshot()},
+            "idempotency_key": idempotency_key or f"scheduled-task:{uuid4()}",
+            "actor_id": self.user_id, "actor_type": "user",
+            "audit_subject": {"user_id": self.user_id, "resource_type": TASK_RESOURCE_TYPE},
+        }
+        try:
+            row = repo.create(create_payload)
+        except ChangeSetIdempotencyConflict as exc:
+            winner = exc.existing or (repo.get_by_idempotency_key(org_id=self.org_id, idempotency_key=idempotency_key) if idempotency_key else None)
+            if winner and _same_idempotent_request(
+                winner, user_id=self.user_id, resource_id=resource_id,
+                operation=operation, base_revision=base_revision,
+                base=base, normalized_snapshot=normalized_snapshot,
+            ):
+                return self._with_projection(winner, repo)
+            raise ScheduledTaskChangeError(
+                "该请求标识已绑定其他变更，请重新提交",
+                status_code=409,
+            ) from exc
+        import asyncio
+        asyncio.create_task(self.complete(str(row["id"])))
+        return self._with_projection(row, repo)
+
+    async def complete(self, change_set_id: str) -> None:
+        """推进 begin 已创建的同一条 ChangeSet；任何结果都只改变其状态。"""
+        repo = ChangeSetRepository(self.db)
+        service = ChangeSetService(repo)
+        try:
+            row = repo.get(change_set_id, self.org_id)
+            if row.get("status") != "draft":
+                return
+            await self._transition(service, change_set_id, "draft", "resolving", "planning_started")
+            context = ChangeSetContext(
+                id=change_set_id, org_id=self.org_id, resource_type=TASK_RESOURCE_TYPE,
+                resource_id=str(row["resource_id"]), operation=str(row["operation"]),
+                base_revision=str(row["base_revision"]), base_snapshot=dict(row.get("base_snapshot") or {}),
+                proposed_snapshot=dict(row.get("proposed_snapshot") or {}), patch=tuple(row.get("patch") or ()),
+                diff=dict(row.get("diff") or {}), policy_snapshot=dict(row.get("policy_snapshot") or {}),
+            )
+            release = await self._build_release(context.operation, context.proposed_snapshot, context.policy_snapshot)
+            released_tools = set(release.tool_policy.get("allowed_tools", []))
+            external = not await self.adapter._is_self_target(context.proposed_snapshot.get("push_target"))
+            assessment = DefaultRiskPolicy().assess(
+                resource_type=TASK_RESOURCE_TYPE, operation=context.operation,
+                context={"destructive": context.operation == "delete", "external_effect": context.operation == "delete" or external,
+                         "affects_many": context.proposed_snapshot.get("push_target", {}).get("type") == "multi",
+                         "tool_scope_expanded": context.operation == "create" or bool(released_tools - set(_tool_scope(context.base_snapshot)))},
+            )
+            release = replace(
+                release,
+                candidate={**dict(release.candidate), "risk_info": assessment.as_snapshot()},
+            )
+            snapshot = dict(context.proposed_snapshot)
+            if context.operation in {"create", "update"}:
+                snapshot["execution_policy"] = dict(release.tool_policy)
+                snapshot["plan_snapshot"] = release.as_dict()
+            context = replace(context, proposed_snapshot=snapshot, plan_snapshot=release.as_dict(), tool_policy_snapshot=release.tool_policy,
+                              policy_snapshot={**assessment.as_snapshot(), **context.policy_snapshot})
+            validation = await self.adapter.validate(ValidateRequest(context=context))
+            diff = await self.adapter.diff(DiffRequest(context=context))
+            context = replace(context, patch=diff.patch, diff=diff.diff)
+            repo.enrich_proposal(
+                change_set_id=change_set_id, org_id=self.org_id, expected_status="resolving",
+                proposed_snapshot=context.proposed_snapshot, patch=list(context.patch), diff=context.diff,
+                risk_level=assessment.level.value, policy_snapshot=context.policy_snapshot,
+                plan_snapshot=release.as_dict(), tool_policy_snapshot=release.tool_policy,
+                check_summary={"authorization": {"passed": True, "reasons": []}, "validation": {"passed": validation.passed, "result": dict(validation.result), "reasons": list(validation.reasons)}, "preflight": {"pending": True}, "risk": assessment.as_snapshot()},
+            )
+            await self._transition(service, change_set_id, "resolving", "proposed", "proposed")
+            await self._record(repo, change_set_id, "authorization", True, {}, ())
+            await self._transition(service, change_set_id, "proposed", "validating", "validation_started")
+            await self._record(repo, change_set_id, "validation", validation.passed, validation.result, validation.reasons)
+            if not validation.passed:
+                await self._transition(service, change_set_id, "validating", "rejected", "validation_rejected", {"reasons": list(validation.reasons)})
+                return
+            await self._transition(service, change_set_id, "validating", "preflighting", "preflight_started")
+            preflight = await self.adapter.preflight(PreflightRequest(context=context))
+            await self._record(repo, change_set_id, "preflight", preflight.passed, preflight.result, preflight.reasons,
+                               status="passed" if preflight.passed and preflight.result.get("full_run") else "skipped" if preflight.passed else "failed")
+            await self._transition(service, change_set_id, "preflighting", "awaiting_approval" if preflight.passed else "rejected",
+                                   "awaiting_approval" if preflight.passed else "preflight_rejected", {"reasons": list(preflight.reasons)})
+        except Exception as exc:
+            try:
+                current = repo.get(change_set_id, self.org_id)
+                if current.get("status") in {"resolving", "proposed", "validating", "preflighting"}:
+                    repo.transition(change_set_id=change_set_id, org_id=self.org_id, expected_status=current["status"], next_status="failed",
+                                    actor_id=self.user_id, actor_type="system", event_type="planning_failed",
+                                    payload={"error_type": type(exc).__name__})
+            except Exception:
+                pass
+        finally:
+            try:
+                from services.websocket_manager import ws_manager
+                current = repo.get(change_set_id, self.org_id)
+                await ws_manager.send_to_user(self.user_id, {"type": "changeset_updated", "payload": {"change_set_id": change_set_id, "status": current.get("status")}}, org_id=self.org_id)
+            except Exception:
+                pass
+
     async def propose(
         self,
         *,
