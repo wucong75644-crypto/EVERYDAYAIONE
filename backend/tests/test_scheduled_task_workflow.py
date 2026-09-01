@@ -26,6 +26,20 @@ def test_plan_cannot_expand_to_unavailable_tool():
         }, available_tools={"erp_agent"}, timeout_sec=180)
 
 
+def test_optional_step_does_not_become_required_tool():
+    _, policy = validate_plan({
+        "objective": "日报",
+        "allowed_tools": ["erp_agent", "code_execute", "file_search"],
+        "steps": [
+            {"id": "query", "tools": ["erp_agent"], "required": True},
+            {"id": "lookup", "tools": ["file_search"], "required": False},
+            {"id": "report", "tools": ["code_execute"], "required": True},
+        ],
+    }, available_tools={"erp_agent", "code_execute", "file_search"}, timeout_sec=180)
+
+    assert policy.required_tools == {"erp_agent", "code_execute"}
+
+
 def test_completion_gate_rejects_wrap_up_even_with_text():
     policy = ScheduledExecutionPolicy.from_dict({
         "allowed_tools": ["erp_agent"], "required_tools": ["erp_agent"],

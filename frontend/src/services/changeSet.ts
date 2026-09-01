@@ -15,6 +15,13 @@ export const changeSetService = {
     return res.data.data;
   },
 
+  async listActive(resourceType?: string): Promise<ChangeSet[]> {
+    const res = await api.get<ApiResponse<ChangeSet[]>>(`${BASE}/active`, {
+      params: resourceType ? { resource_type: resourceType } : undefined,
+    });
+    return res.data.data;
+  },
+
   async timeline(id: string): Promise<ChangeSetTimeline> {
     const res = await api.get<ApiResponse<ChangeSetTimeline>>(`${BASE}/${id}/timeline`);
     return res.data.data;

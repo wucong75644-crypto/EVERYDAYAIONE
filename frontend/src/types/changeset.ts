@@ -86,3 +86,15 @@ export interface ChangeSetTimeline {
   change_set_id: string;
   events: ChangeEvent[];
 }
+
+/**
+ * 聊天消息只保存这个引用（以及可选的展示快照），不保存流程状态。
+ * 该引用是 ChangeSetCard 的唯一查询入口。
+ */
+export interface ChangeSetMessageReference {
+  type: 'changeset';
+  change_set_id: string;
+  title?: string;
+  resource_type?: string;
+  snapshot?: Record<string, unknown>;
+}

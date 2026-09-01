@@ -9,7 +9,7 @@ from services.planner.contracts import (
 )
 from services.planner.framework import PlannerFramework
 from services.planner.registry import CapabilityRegistry
-from services.planner.validator import PlanValidator, validate_runtime_tool
+from services.planner.validator import PlanValidator, required_tools_for_steps, validate_runtime_tool
 
 __all__ = [
     "CapabilityDescriptor",
@@ -19,6 +19,7 @@ __all__ = [
     "PlanStep",
     "PlanValidationResult",
     "PlanValidator",
+    "required_tools_for_steps",
     "validate_runtime_tool",
     "PlannerFramework",
 ]

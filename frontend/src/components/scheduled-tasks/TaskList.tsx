@@ -12,6 +12,7 @@ interface Props {
   tasks: ScheduledTask[];
   loading: boolean;
   onEdit?: (task: ScheduledTask) => void;
+  onChangeRequested?: (operation: 'pause' | 'resume' | 'delete', task: ScheduledTask) => Promise<void>;
 }
 
 interface SectionProps {
@@ -34,7 +35,7 @@ function Section({ title, count, children }: SectionProps) {
   );
 }
 
-export function TaskList({ tasks, loading, onEdit }: Props) {
+export function TaskList({ tasks, loading, onEdit, onChangeRequested }: Props) {
   if (loading && tasks.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center text-[var(--s-text-tertiary)] text-sm">
@@ -59,7 +60,7 @@ export function TaskList({ tasks, loading, onEdit }: Props) {
         <Section title="运行中" count={grouped.active.length}>
           <AnimatePresence>
             {grouped.active.map((t) => (
-              <TaskCard key={t.id} task={t} onEdit={onEdit} />
+              <TaskCard key={t.id} task={t} onEdit={onEdit} onChangeRequested={onChangeRequested} />
             ))}
           </AnimatePresence>
         </Section>
@@ -68,7 +69,7 @@ export function TaskList({ tasks, loading, onEdit }: Props) {
         <Section title="已暂停" count={grouped.paused.length}>
           <AnimatePresence>
             {grouped.paused.map((t) => (
-              <TaskCard key={t.id} task={t} onEdit={onEdit} />
+              <TaskCard key={t.id} task={t} onEdit={onEdit} onChangeRequested={onChangeRequested} />
             ))}
           </AnimatePresence>
         </Section>
@@ -77,7 +78,7 @@ export function TaskList({ tasks, loading, onEdit }: Props) {
         <Section title="失败" count={grouped.error.length}>
           <AnimatePresence>
             {grouped.error.map((t) => (
-              <TaskCard key={t.id} task={t} onEdit={onEdit} />
+              <TaskCard key={t.id} task={t} onEdit={onEdit} onChangeRequested={onChangeRequested} />
             ))}
           </AnimatePresence>
         </Section>

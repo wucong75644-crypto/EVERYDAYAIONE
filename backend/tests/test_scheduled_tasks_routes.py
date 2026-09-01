@@ -414,17 +414,17 @@ class TestCreateTaskDraft:
         app = _build_app(db)
         with patch(
             "api.routes.scheduled_tasks._propose_task_change",
-            new=AsyncMock(return_value={"id": "cs-1", "status": "awaiting_approval"}),
+            new=AsyncMock(return_value={"id": "cs-1", "status": "draft"}),
         ) as propose, patch(
             "api.routes.change_sets._to_dto",
-            return_value={"id": "cs-1", "status": "awaiting_approval", "diff": {}, "checks": []},
+            return_value={"id": "cs-1", "status": "draft", "diff": {}, "checks": []},
         ):
             response = TestClient(app).post("/api/scheduled-tasks/changesets", json={
                 "operation": "pause", "task_id": "task-1", "definition": {},
             })
 
         assert response.status_code == 200
-        assert response.json()["data"]["status"] == "awaiting_approval"
+        assert response.json()["data"]["status"] == "draft"
         propose.assert_awaited_once()
 
 

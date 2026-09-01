@@ -74,6 +74,24 @@ def _to_dto(row: Dict[str, Any], checks: list[Dict[str, Any]]) -> Dict[str, Any]
     return ChangeSetDTO.model_validate(value).model_dump(mode="json")
 
 
+@router.get("/active", summary="读取当前用户尚未结束的 ChangeSet")
+async def list_active_change_sets(
+    user_id: CurrentUserId,
+    org_ctx: OrgCtx,
+    scoped_db: ScopedDB,
+    resource_type: str | None = None,
+) -> Dict[str, Any]:
+    org_id = _org_id(org_ctx)
+    repo = ChangeSetRepository(scoped_db)
+    rows = repo.list_active_for_actor(
+        org_id=org_id, actor_id=user_id, resource_type=resource_type,
+    )
+    return {
+        "success": True,
+        "data": [_to_dto(row, repo.list_checks(str(row["id"]), org_id)) for row in rows],
+    }
+
+
 @router.get("/{change_set_id}", summary="读取 ChangeSet 状态")
 async def get_change_set(
     change_set_id: str,

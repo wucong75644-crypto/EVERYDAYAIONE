@@ -23,6 +23,7 @@ import { useWebSocket } from '../../hooks/useWebSocket';
 import { useMessageStore } from '../../stores/useMessageStore';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { useTaskRestorationStore } from '../../stores/useTaskRestorationStore';
+import { notifyChangeSetUpdated } from '../../services/changeSetEvents';
 
 // ============================================================
 // Mock 配置
@@ -64,6 +65,9 @@ vi.mock('react-hot-toast', () => ({
     success: vi.fn(),
     error: vi.fn(),
   },
+}));
+vi.mock('../../services/changeSetEvents', () => ({
+  notifyChangeSetUpdated: vi.fn(),
 }));
 
 // ============================================================
@@ -205,6 +209,20 @@ describe('WebSocketContext - Provider & Hook', () => {
       expect(mockWs.subscribe).toHaveBeenCalledWith('credits_changed', expect.any(Function));
       expect(mockWs.subscribe).toHaveBeenCalledWith('subscribed', expect.any(Function));
       expect(mockWs.subscribe).toHaveBeenCalledWith('error', expect.any(Function));
+      expect(mockWs.subscribe).toHaveBeenCalledWith('changeset_updated', expect.any(Function));
+    });
+
+    it('should notify ChangeSet cards to reread authoritative status updates', async () => {
+      const wrapper = createWrapper(mockWs, mockMessageStore);
+      renderHook(() => useWebSocketContext(), { wrapper });
+
+      await act(async () => {
+        mockWs.emit('changeset_updated', { payload: { change_set_id: 'cs-42' } });
+      });
+
+      expect(notifyChangeSetUpdated).toHaveBeenCalledWith({
+        changeSetId: 'cs-42', source: 'changeset_updated',
+      });
     });
   });
 
@@ -608,8 +626,8 @@ describe('WebSocketContext - Provider & Hook', () => {
 
       // 所有消息类型的订阅都应该被取消
       // 17 个原有 + 4 个定时任务事件 + 1 个 content_block_add + 1 个 suggestions_ready
-      // + 1 个 form_submit_result + 1 个 tool_confirm_request
-      expect(unsubscribe).toHaveBeenCalledTimes(26);
+      // + 1 个 form_submit_result + 1 个 tool_confirm_request + 1 个 changeset_updated
+      expect(unsubscribe).toHaveBeenCalledTimes(27);
     });
 
     it('should clear flush timer on unmount', async () => {

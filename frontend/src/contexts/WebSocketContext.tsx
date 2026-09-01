@@ -25,6 +25,7 @@ import {
 import { getMessages } from '../services/message';
 import { logger } from '../utils/logger';
 import { applyFormSubmitResult } from '../utils/messageUtils';
+import { notifyChangeSetUpdated } from '../services/changeSetEvents';
 import { createWSMessageHandlers } from './wsMessageHandlers';
 import type { DeliveryCursor } from './wsMessageHandlerShared';
 import ToolConfirmModal from '../components/chat/modals/ToolConfirmModal';
@@ -375,6 +376,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
         formType, formData, formId, messageId, conversationId, action,
       } = (e as CustomEvent).detail;
       if (!formType || !formId || !messageId || !conversationId || !action) return;
+
       ws.send({
         type: 'form_submit' as const,
         payload: {
@@ -403,6 +405,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
         message_id?: string;
         conversation_id?: string;
         next_form?: import('../types/message').FormPart;
+        change_set_id?: string;
       };
       if (payload?.form_id && payload.message_id && payload.conversation_id) {
         const store = useMessageStore.getState();
@@ -416,6 +419,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
             status: payload.status,
             message: payload.message,
             nextForm: payload.next_form,
+            changeSetId: payload.change_set_id,
           });
           if (content !== message.content) {
             store.updateMessage(payload.message_id, { content });
@@ -425,6 +429,9 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
           store.markForceRefresh(payload.conversation_id);
         }
       }
+      if (payload?.change_set_id) {
+        notifyChangeSetUpdated({ changeSetId: payload.change_set_id, source: 'form_submit_result' });
+      }
       window.dispatchEvent(
         new CustomEvent('chat:form-submit-result', { detail: payload }),
       );
@@ -432,6 +439,13 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     });
     return unsub;
   }, [ws]);
+
+  useEffect(() => ws.subscribe('changeset_updated' as never, (msg) => {
+    const payload = msg.payload as { change_set_id?: string };
+    if (payload?.change_set_id) {
+      notifyChangeSetUpdated({ changeSetId: payload.change_set_id, source: 'changeset_updated' });
+    }
+  }), [ws]);
 
   const contextValue: WebSocketContextValue = {
     isConnected: ws.isConnected,

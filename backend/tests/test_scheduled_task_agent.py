@@ -92,6 +92,29 @@ class TestBuildLightContext:
         assert "上次执行摘要" in user_msg
         assert "昨日总销售额 12.5 万" in user_msg
 
+    def test_includes_confirmed_plan_and_scheduler_delivery(self):
+        task = make_task(
+            push_target={"type": "web", "user_id": "user_zhangsan"},
+            plan_snapshot={
+                "candidate": {
+                    "steps": [
+                        {"intent": "查询销售数据", "tools": ["erp_agent"], "required": True},
+                        {"intent": "查找 webhook", "tools": ["file_search"], "required": False},
+                    ],
+                },
+            },
+        )
+        agent = ScheduledTaskAgent(MagicMock(), task)
+        messages = agent._build_light_context()
+
+        system_msg = messages[0]["content"]
+        user_msg = messages[-1]["content"]
+        assert "调度器按任务配置投递" in system_msg
+        assert "不要调用发送消息" in system_msg
+        assert "已确认执行路径" in user_msg
+        assert "查询销售数据" in user_msg
+        assert "目标类型：web" in user_msg
+
 
 
 # ════════════════════════════════════════════════════════

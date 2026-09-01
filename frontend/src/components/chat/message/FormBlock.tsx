@@ -17,9 +17,14 @@ import { CheckCircle2, Circle, Loader2, X } from 'lucide-react';
 import type { FormPart, FormField } from '../../../types/message';
 import { cn } from '../../../utils/cn';
 import { formatFormValue } from '../../../utils/displayValue';
+import { applyFormSubmitResult } from '../../../utils/messageUtils';
 import { SOFT_SPRING } from '../../../utils/motion';
+import { useMessageStore } from '../../../stores/useMessageStore';
 import { FormBlockContent } from './FormBlockContent';
 import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
+import ChangeSetCard from './ChangeSetCard';
+import type { ChangeSet } from '../../../types/changeset';
+import { scheduledTaskService } from '../../../services/scheduledTask';
 
 // ════════════════════════════════════════════════════════
 // 子组件
@@ -225,12 +230,10 @@ function ScheduledTaskWorkflowStage({
   formType: string;
   status: FormStatus;
 }) {
-  if (!['scheduled_task_create', 'scheduled_task_confirm'].includes(formType)) return null;
+  if (!['scheduled_task_create', 'scheduled_task_update'].includes(formType)) return null;
 
-  const activeStep = formType === 'scheduled_task_confirm'
-    ? (status === 'submitted' ? 4 : 3)
-    : (status === 'submitting' ? 2 : status === 'submitted' ? 3 : 1);
-  const labels = ['填写配置', '规划与试跑', '确认启用', '已启用'];
+  const activeStep = status === 'submitting' ? 2 : status === 'submitted' ? 3 : 1;
+  const labels = ['填写配置', '规划与试跑', '变更方案', '已提交'];
 
   return (
     <div className={`mt-3 ${MESSAGE_CONTENT_LAYOUT.fill} rounded-[var(--s-radius-card)] border border-border-default bg-surface px-3 py-2`}>
@@ -257,8 +260,7 @@ function ScheduledTaskWorkflowStage({
       <p className="mt-1 text-[11px] text-text-secondary">
         {activeStep === 1 && '尚未创建任务；请确认配置后开始规划与安全试跑。'}
         {activeStep === 2 && '正在进行只读试跑：不扣积分、不发送消息、不写入业务数据。'}
-        {activeStep === 3 && '预检已通过；确认启用后才会创建正式任务。'}
-        {activeStep === 4 && '任务已启用，可在定时任务面板查看执行历史。'}
+        {activeStep === 3 && 'ChangeSet 已创建；请在卡片中查看规划与试跑进度，完成后再确认提交。'}
       </p>
     </div>
   );
@@ -326,18 +328,53 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
   const [values, setValues] = useState<Record<string, unknown>>(initialValues);
   const [status, setStatus] = useState<FormStatus>(form.status || 'open');
   const [nextForm, setNextForm] = useState<FormPart | null>(form.next_form || null);
+  const [localChangeSetId, setLocalChangeSetId] = useState(form.change_set_id || '');
   const [submittedMessage, setSubmittedMessage] = useState(form.result_message || '');
   const [formError, setFormError] = useState(form.error_message || '');
   const submitted = status === 'submitted';
   const submitting = status === 'submitting';
   const cancelled = status === 'cancelled';
 
+  const replanChangeSet = useCallback(async (changeSet: ChangeSet): Promise<ChangeSet> => {
+    const operation = changeSet.operation === 'update' ? 'update' : 'create';
+    const next = await scheduledTaskService.proposeChange({
+      operation,
+      ...(operation === 'update' ? { task_id: changeSet.resource_id } : {}),
+      definition: changeSet.proposed_snapshot,
+      idempotency_key: `chat-replan:${changeSet.id}:${changeSet.revision}`,
+      message_id: messageId,
+      conversation_id: conversationId,
+      form_id: form.form_id,
+    });
+    const store = useMessageStore.getState();
+    const message = store.messages[conversationId]?.find((item) => item.id === messageId);
+    if (message) {
+      const content = applyFormSubmitResult(message.content, {
+        formId: form.form_id,
+        success: true,
+        status: 'submitted',
+        message: '已基于最新任务版本重新生成变更方案。',
+        changeSetId: next.id,
+      });
+      if (content !== message.content) store.updateMessage(messageId, { content });
+    } else {
+      store.markForceRefresh(conversationId);
+    }
+    return next;
+  }, [conversationId, form.form_id, messageId]);
+
+  const changeSetActionHandlers = useMemo(() => ({
+    replan: replanChangeSet,
+    resolve_conflict: replanChangeSet,
+  }), [replanChangeSet]);
+
   useEffect(() => {
     setStatus(form.status || 'open');
     setNextForm(form.next_form || null);
+    setLocalChangeSetId(form.change_set_id || '');
     setSubmittedMessage(form.result_message || '');
     setFormError(form.error_message || '');
-  }, [form.status, form.next_form, form.result_message, form.error_message]);
+  }, [form.status, form.next_form, form.result_message, form.error_message, form.change_set_id]);
 
   useEffect(() => {
     const handleResult = (e: Event) => {
@@ -349,6 +386,7 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
         message_id?: string;
         conversation_id?: string;
         next_form?: FormPart;
+        change_set_id?: string;
       };
       if (
         detail.form_id !== form.form_id
@@ -360,9 +398,11 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
         const resolved = detail.status || 'submitted';
         setStatus(resolved);
         setSubmittedMessage(detail.message || '');
+        if (detail.change_set_id) setLocalChangeSetId(detail.change_set_id);
         if (detail.next_form) setNextForm(detail.next_form);
       } else {
         setStatus(detail.status === 'cancelled' ? 'cancelled' : 'open');
+        if (detail.status === 'cancelled') setSubmittedMessage(detail.message || '');
         setFormError(detail.message || '提交失败，请重试');
       }
     };
@@ -434,8 +474,13 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
           )}
         >
           {submitted ? <CheckCircle2 size={16} /> : <X size={16} />}
-          <span>{submitted ? (submittedMessage || `${form.title} — 已提交`) : `${form.title} — 已取消`}</span>
+          <span>{submitted
+            ? (submittedMessage || `${form.title} — 已提交`)
+            : (submittedMessage || `${form.title} — 已取消`)}</span>
         </m.div>
+        {localChangeSetId && (
+          <ChangeSetCard changeSetId={localChangeSetId} fallbackTitle={form.title} actionHandlers={changeSetActionHandlers} />
+        )}
         {nextForm && <FormBlock form={nextForm} messageId={messageId} conversationId={conversationId} />}
       </>
     );
@@ -443,7 +488,10 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
 
   return (
     <>
-      <ScheduledTaskWorkflowStage formType={form.form_type} status={status} />
+      {localChangeSetId && (
+        <ChangeSetCard changeSetId={localChangeSetId} fallbackTitle={form.title} actionHandlers={changeSetActionHandlers} />
+      )}
+      {!localChangeSetId && <ScheduledTaskWorkflowStage formType={form.form_type} status={status} />}
       <FormBlockContent form={form} submitting={submitting}
         onSubmit={handleSubmit} onCancel={handleCancel}
         fields={<FormFields fields={form.fields} values={values}

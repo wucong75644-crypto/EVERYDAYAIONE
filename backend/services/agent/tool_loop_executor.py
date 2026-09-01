@@ -125,6 +125,14 @@ class ToolLoopExecutor:
                 turn, total_tokens, hook_ctx,
             )
             if not should_continue:
+                # ExecutionBudget 会在最后一个工具轮次之前预留一次无工具的
+                # 最终合成。这个退出不是工具失败，必须进入 _finalize 的正式
+                # synthesis 路径；此前这里直接 break，导致已完成的工具结果被
+                # 兜底文本覆盖，headless 调用方只能看到 final_synthesis_missing。
+                if hook_ctx.budget and hook_ctx.budget.stop_reason == "wrap_up_budget":
+                    wrap_up_reason = "wrap_up_budget"
+                elif hook_ctx.budget and hook_ctx.budget.stop_reason:
+                    stop_reason = hook_ctx.budget.stop_reason
                 break
 
             try:
@@ -264,25 +272,28 @@ class ToolLoopExecutor:
         tool_outcomes: List[Dict[str, str]] | None = None,
     ) -> LoopResult:
         """循环退出后的兜底文本 / wrap_up 合成 / hook 链 + 打包 LoopResult"""
-        # ── wrap_up 合成（stop_reason 非空） ──
-        if stop_reason and not is_llm_synthesis:
+        # ── wrap_up 合成（失败停止或预算预留） ──
+        # wrap_up_budget 是预算协议预留给纯文本最终结论的一轮，不表示执行失败；
+        # 所以使用 wrap_up_reason 触发合成，但不写入 stop_reason。
+        synthesis_reason = wrap_up_reason or stop_reason
+        if synthesis_reason and not is_llm_synthesis:
             from services.agent.stop_policy import synthesize_wrap_up
             synthesis = await synthesize_wrap_up(
                 adapter=self.adapter,
                 messages=hook_ctx.messages,
                 emit_payloads=self._emit_payloads,
-                reason=wrap_up_reason or stop_reason,
+                reason=synthesis_reason,
             )
             if synthesis:
                 accumulated_text = synthesis
                 is_llm_synthesis = True
                 logger.info(
-                    f"ToolLoop wrap_up synthesis OK | reason={stop_reason} | "
+                    f"ToolLoop wrap_up synthesis OK | reason={synthesis_reason} | "
                     f"len={len(synthesis)}"
                 )
             else:
                 logger.warning(
-                    f"ToolLoop wrap_up synthesis failed | reason={stop_reason}"
+                    f"ToolLoop wrap_up synthesis failed | reason={synthesis_reason}"
                 )
 
         if not is_llm_synthesis:

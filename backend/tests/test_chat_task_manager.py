@@ -323,12 +323,13 @@ class TestCalcOnceRunAt:
 
 class TestHandleFormSubmit:
     @pytest.mark.asyncio
-    @patch("services.scheduler.scheduled_task_workflow.create_draft_and_preflight", new_callable=AsyncMock, return_value={
-        "id": "draft-1", "status": "ready", "config_hash": "a" * 64,
-        "execution_policy": {"allowed_tools": ["erp_agent"]}, "plan": {"steps": []},
-    })
+    @patch(
+        "services.scheduler.scheduled_task_change_adapter.ScheduledTaskChangeSetService.propose",
+        new_callable=AsyncMock,
+        return_value={"id": "change-1", "status": "awaiting_approval"},
+    )
     @patch("services.permissions.checker.check_permission", new_callable=AsyncMock, return_value=True)
-    async def test_create_success(self, _mock_perm, _mock_preflight):
+    async def test_create_success_creates_changeset_not_legacy_draft(self, _mock_perm, mock_propose):
         db = _mock_db()
         data = {
             "name": "日报",
@@ -337,10 +338,17 @@ class TestHandleFormSubmit:
             "time_str": "09:00",
             "push_target": '{"type":"web","user_id":"u1"}',
         }
-        result = await handle_form_submit(db, "u1", "org1", "scheduled_task_create", data)
+        result = await handle_form_submit(
+            db, "u1", "org1", "scheduled_task_create", data,
+            idempotency_key="chat-form:conv:message:form",
+        )
         assert result["success"] is True
-        assert "日报" in result["message"]
-        assert "尚未创建正式任务" in result["message"]
+        assert result["change_set_id"] == "change-1"
+        assert "卡片" in result["message"]
+        assert mock_propose.await_args.kwargs["operation"] == "create"
+        assert mock_propose.await_args.kwargs["idempotency_key"] == "chat-form:conv:message:form"
+        assert mock_propose.await_args.kwargs["proposed_snapshot"]["name"] == "日报"
+        assert not db.rpc.called
 
     @pytest.mark.asyncio
     @patch("services.permissions.checker.check_permission", new_callable=AsyncMock, return_value=False)
@@ -364,12 +372,13 @@ class TestHandleFormSubmit:
         assert "名称" in result["message"]
 
     @pytest.mark.asyncio
-    @patch("services.scheduler.scheduled_task_workflow.create_draft_and_preflight", new_callable=AsyncMock, return_value={
-        "id": "draft-1", "status": "ready", "config_hash": "a" * 64,
-        "execution_policy": {"allowed_tools": ["erp_agent"]}, "plan": {"steps": []},
-    })
+    @patch(
+        "services.scheduler.scheduled_task_change_adapter.ScheduledTaskChangeSetService.propose",
+        new_callable=AsyncMock,
+        return_value={"id": "change-1", "status": "awaiting_approval"},
+    )
     @patch("services.permissions.checker.check_permission", new_callable=AsyncMock, return_value=True)
-    async def test_create_weekly(self, _mock_perm, _mock_preflight):
+    async def test_create_weekly_normalizes_schedule_before_changeset(self, _mock_perm, mock_propose):
         db = _mock_db()
         data = {
             "name": "周报",
@@ -381,6 +390,9 @@ class TestHandleFormSubmit:
         }
         result = await handle_form_submit(db, "u1", "org1", "scheduled_task_create", data)
         assert result["success"] is True
+        definition = mock_propose.await_args.kwargs["proposed_snapshot"]
+        assert definition["weekdays"] == [1, 3, 5]
+        assert definition["cron_expr"]
 
     @pytest.mark.asyncio
     @patch("services.permissions.checker.check_permission", new_callable=AsyncMock, return_value=True)
@@ -415,12 +427,13 @@ class TestHandleFormSubmit:
         assert result["success"] is False
 
     @pytest.mark.asyncio
-    @patch("services.scheduler.scheduled_task_workflow.create_draft_and_preflight", new_callable=AsyncMock, return_value={
-        "id": "draft-1", "status": "ready", "config_hash": "a" * 64,
-        "execution_policy": {"allowed_tools": ["erp_agent"]}, "plan": {"steps": []},
-    })
+    @patch(
+        "services.scheduler.scheduled_task_change_adapter.ScheduledTaskChangeSetService.propose",
+        new_callable=AsyncMock,
+        return_value={"id": "change-once", "status": "awaiting_approval"},
+    )
     @patch("services.permissions.checker.check_permission", new_callable=AsyncMock, return_value=True)
-    async def test_create_once_type(self, _mock_perm, _mock_preflight):
+    async def test_create_once_type(self, _mock_perm, mock_propose):
         """once 类型→生成 run_at 而非 cron_expr"""
         db = _mock_db()
         data = {
@@ -432,18 +445,19 @@ class TestHandleFormSubmit:
         }
         result = await handle_form_submit(db, "u1", "org1", "scheduled_task_create", data)
         assert result["success"] is True
-        row = _mock_preflight.await_args.kwargs["definition"]
+        row = mock_propose.await_args.kwargs["proposed_snapshot"]
         assert row["cron_expr"] is None
         assert row["schedule_type"] == "once"
         assert row["run_at"] is not None
 
     @pytest.mark.asyncio
-    @patch("services.scheduler.scheduled_task_workflow.create_draft_and_preflight", new_callable=AsyncMock, return_value={
-        "id": "draft-1", "status": "ready", "config_hash": "a" * 64,
-        "execution_policy": {"allowed_tools": ["erp_agent"]}, "plan": {"steps": []},
-    })
+    @patch(
+        "services.scheduler.scheduled_task_change_adapter.ScheduledTaskChangeSetService.propose",
+        new_callable=AsyncMock,
+        return_value={"id": "change-monthly", "status": "awaiting_approval"},
+    )
     @patch("services.permissions.checker.check_permission", new_callable=AsyncMock, return_value=True)
-    async def test_create_monthly(self, _mock_perm, _mock_preflight):
+    async def test_create_monthly(self, _mock_perm, mock_propose):
         """monthly 类型→正确设置 day_of_month"""
         db = _mock_db()
         data = {
@@ -456,7 +470,7 @@ class TestHandleFormSubmit:
         }
         result = await handle_form_submit(db, "u1", "org1", "scheduled_task_create", data)
         assert result["success"] is True
-        row = _mock_preflight.await_args.kwargs["definition"]
+        row = mock_propose.await_args.kwargs["proposed_snapshot"]
         assert row["day_of_month"] == 15
         assert "15" in row["cron_expr"]
 
@@ -472,13 +486,14 @@ class TestHandleFormSubmit:
         assert "执行内容" in result["message"]
 
     @pytest.mark.asyncio
-    @patch("services.scheduler.scheduled_task_workflow.create_draft_and_preflight", new_callable=AsyncMock, return_value={
-        "id": "draft-1", "status": "ready", "config_hash": "a" * 64,
-        "source_task_id": "task-123", "execution_policy": {"allowed_tools": ["erp_agent"]}, "plan": {"steps": []},
-    })
+    @patch(
+        "services.scheduler.scheduled_task_change_adapter.ScheduledTaskChangeSetService.propose",
+        new_callable=AsyncMock,
+        return_value={"id": "change-update", "status": "awaiting_approval"},
+    )
     @patch("services.permissions.checker.check_permission", new_callable=AsyncMock, return_value=True)
-    async def test_update_success(self, _mock_perm, mock_preflight):
-        """修改任务必须产生修订草稿，而非直接改写运行中的任务。"""
+    async def test_update_success_creates_changeset_not_legacy_draft(self, _mock_perm, mock_propose):
+        """修改任务只产生 ChangeSet，原任务保持不变直到卡片确认。"""
         db = _mock_db()
         db.execute.return_value = MagicMock(data=[
             {"id": "task-123", "name": "旧", "prompt": "旧指令",
@@ -494,9 +509,19 @@ class TestHandleFormSubmit:
         }
         result = await handle_form_submit(db, "u1", "org1", "scheduled_task_update", data)
         assert result["success"] is True
-        assert "试跑" in result["message"]
-        assert result["next_form"]["form_type"] == "scheduled_task_confirm"
-        assert mock_preflight.await_args.kwargs["source_task_id"] == "task-123"
+        assert result["change_set_id"] == "change-update"
+        assert mock_propose.await_args.kwargs["operation"] == "update"
+        assert mock_propose.await_args.kwargs["resource_id"] == "task-123"
+        assert mock_propose.await_args.kwargs["base_snapshot"]["id"] == "task-123"
+
+    @pytest.mark.asyncio
+    async def test_legacy_confirm_is_retired(self):
+        result = await handle_form_submit(
+            _mock_db(), "u1", "org1", "scheduled_task_confirm", {"draft_id": "old"},
+        )
+        assert result["success"] is False
+        assert result["status"] == "cancelled"
+        assert "历史草稿" in result["message"]
 
 
 # ════════════════════════════════════════════════════════

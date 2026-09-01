@@ -83,6 +83,7 @@ export type WSMessageType =
   // 表单交互
   | 'form_submit'
   | 'form_submit_result'
+  | 'changeset_updated'
   // 用户打断
   | 'user_steer';
 

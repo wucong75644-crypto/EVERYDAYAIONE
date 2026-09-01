@@ -47,6 +47,7 @@ class WSMessageType(str, Enum):
     # === 表单交互 ===
     FORM_SUBMIT = "form_submit"                   # 前端 → 后端：表单提交
     FORM_SUBMIT_RESULT = "form_submit_result"     # 后端 → 前端：表单提交结果
+    CHANGESET_UPDATED = "changeset_updated"       # 后端 → 前端：重新读取 ChangeSet
 
     # === 用户打断 ===
     USER_STEER = "user_steer"                     # 前端 → 后端：打断当前执行

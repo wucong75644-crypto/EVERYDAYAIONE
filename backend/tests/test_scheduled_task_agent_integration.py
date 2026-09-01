@@ -279,7 +279,7 @@ class TestExecuteSafetyGuards:
 
     @pytest.mark.asyncio
     async def test_max_turns_breaks_loop(self):
-        """到达 MAX_SCHEDULED_TURNS 自动中止"""
+        """预算预留轮次用于无工具最终合成，而不是丢弃已完成工具结果。"""
         # 构造一直调工具但每次都不同的场景，绕过循环检测
         turns = [
             {
@@ -290,8 +290,9 @@ class TestExecuteSafetyGuards:
                     "args": f'{{"q":"q{i}"}}',
                 }],
             }
-            for i in range(MAX_SCHEDULED_TURNS + 5)
+            for i in range(MAX_SCHEDULED_TURNS - 1)
         ]
+        turns.append({"text": "预算收口后的最终报告", "tool_calls": []})
         adapter = FakeAdapter(turns)
         executor = FakeToolExecutor(results={"erp_agent": "结果"})
 
@@ -302,6 +303,10 @@ class TestExecuteSafetyGuards:
             agent = ScheduledTaskAgent(MagicMock(), make_task())
             result = await agent.execute()
 
+        assert result.status == "success"
+        assert result.completion_gate["passed"] is True
+        assert result.is_truncated is False
+        assert "预算收口后的最终报告" in result.text
         assert result.turns_used <= MAX_SCHEDULED_TURNS
         assert adapter.call_count == MAX_SCHEDULED_TURNS
 
