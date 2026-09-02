@@ -13,13 +13,18 @@ from loguru import logger
 class PreparedChatStream:
     text_content: str
     messages: list[dict[str, Any]]
-    adapter: Any
+    model_gateway: Any
     permission: Any
     permission_mode: str
     core_tools: list[dict[str, Any]]
     stream_kwargs: dict[str, Any]
     tool_context: Any
     budget: Any
+
+    @property
+    def adapter(self) -> Any:
+        """兼容旧的内部 PreparedChatStream 读取方。"""
+        return self.model_gateway
 
 
 async def prepare_chat_stream(
@@ -66,50 +71,57 @@ async def prepare_chat_stream(
         f"context={int((context_ready_at - started_at) * 1000)}ms"
     )
 
-    from services.adapters.factory import create_chat_adapter
+    from services.model_gateway import ModelCallRequest, get_model_gateway
 
-    adapter = create_chat_adapter(
-        model_id,
-        org_id=handler.org_id,
-        db=handler.db,
+    model_gateway = get_model_gateway().open_chat(
+        ModelCallRequest(
+            model_id=model_id,
+            org_id=handler.org_id,
+            db=handler.db,
+            request_id=task_id,
+        )
     )
-    logger.info(
-        f"Stream generate starting | model={model_id} | "
-        f"adapter={type(adapter).__name__} | task={task_id} | "
-        f"setup_total={int((time.monotonic() - started_at) * 1000)}ms"
-    )
+    try:
+        logger.info(
+            f"Stream generate starting | model={model_id} | "
+            f"adapter={model_gateway.adapter_name} | task={task_id} | "
+            f"setup_total={int((time.monotonic() - started_at) * 1000)}ms"
+        )
 
-    permission, core_tools = _prepare_permission_and_tools(
-        permission_mode,
-        handler.org_id,
-        getattr(handler, "_personal_context_allowed", True),
-    )
-    stream_kwargs = _prepare_provider_tools(
-        adapter,
-        core_tools,
-        needs_google_search,
-        model_id,
-        task_id,
-    )
-    tool_context = _prepare_request_context(
-        handler,
-        user_id,
-        getattr(handler, "_workspace_user_id", user_id),
-        conversation_id,
-        task_id,
-    )
-    budget = _prepare_budget()
-    return PreparedChatStream(
-        text_content=text_content,
-        messages=messages,
-        adapter=adapter,
-        permission=permission,
-        permission_mode=permission_mode,
-        core_tools=core_tools,
-        stream_kwargs=stream_kwargs,
-        tool_context=tool_context,
-        budget=budget,
-    )
+        permission, core_tools = _prepare_permission_and_tools(
+            permission_mode,
+            handler.org_id,
+            getattr(handler, "_personal_context_allowed", True),
+        )
+        stream_kwargs = _prepare_provider_tools(
+            model_gateway,
+            core_tools,
+            needs_google_search,
+            model_id,
+            task_id,
+        )
+        tool_context = _prepare_request_context(
+            handler,
+            user_id,
+            getattr(handler, "_workspace_user_id", user_id),
+            conversation_id,
+            task_id,
+        )
+        budget = _prepare_budget()
+        return PreparedChatStream(
+            text_content=text_content,
+            messages=messages,
+            model_gateway=model_gateway,
+            permission=permission,
+            permission_mode=permission_mode,
+            core_tools=core_tools,
+            stream_kwargs=stream_kwargs,
+            tool_context=tool_context,
+            budget=budget,
+        )
+    except BaseException:
+        await model_gateway.close()
+        raise
 
 
 def _normalize_permission_mode(permission_mode: Any) -> str:

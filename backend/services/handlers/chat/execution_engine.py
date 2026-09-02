@@ -98,7 +98,8 @@ async def execute_chat(
         context_anchor=request.context_anchor,
         replay_context=request.replay_context,
     )
-    handler._adapter = prepared.adapter
+    model_gateway = _get_model_gateway(prepared)
+    handler._adapter = model_gateway
     previous_sink = getattr(handler, "_execution_sink", None)
     handler._execution_sink = output
     handler._pending_emit_payloads = []
@@ -150,8 +151,8 @@ async def execute_chat(
             ),
         )
     finally:
-        await prepared.adapter.close()
-        if getattr(handler, "_adapter", None) is prepared.adapter:
+        await model_gateway.close()
+        if getattr(handler, "_adapter", None) is model_gateway:
             handler._adapter = None
         if getattr(handler, "_execution_sink", None) is output:
             handler._execution_sink = previous_sink
@@ -283,7 +284,8 @@ async def _read_turn(
     calls: dict[int, dict[str, Any]] = {}
     previewed_indices: set[int] = set()
     preview_ids: dict[int, str] = {}
-    stream = prepared.adapter.stream_chat(
+    model_gateway = _get_model_gateway(prepared)
+    stream = model_gateway.stream_chat(
         messages=prepared.messages,
         tools=tools,
         reasoning_effort=thinking_effort,
@@ -394,6 +396,14 @@ async def _read_turn(
     else:
         ordered_calls.sort(key=lambda call: call.get("id", ""))
     return turn_text, turn_thinking, ordered_calls, previewed_call_ids
+
+
+def _get_model_gateway(prepared: Any) -> Any:
+    """读取 Gateway 会话；兼容旧测试注入的 adapter-shaped doubles。"""
+    model_gateway = getattr(prepared, "model_gateway", None)
+    if model_gateway is not None:
+        return model_gateway
+    return prepared.adapter
 
 
 def _actor_tool_preview_id(turn_id: str, index: int) -> str:
@@ -690,7 +700,7 @@ async def _apply_budget_stop(
     from services.handlers.chat.stream_finalize import stop_message
 
     synthesis = await synthesize_wrap_up(
-        adapter=prepared.adapter,
+        model_gateway=_get_model_gateway(prepared),
         messages=prepared.messages,
         content_blocks=blocks,
         reason=stop_message(prepared.budget.stop_reason),
