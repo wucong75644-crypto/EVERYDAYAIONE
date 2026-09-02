@@ -128,7 +128,7 @@ async def _apply_budget_stop(
         f"reason={budget.stop_reason} | turns={budget.turns_used}"
     )
     synthesis = await synthesize_wrap_up(
-        adapter=adapter,
+        model_gateway=adapter,
         messages=state.messages,
         content_blocks=state.content_blocks,
         reason=reason,

@@ -302,12 +302,14 @@ _WRAP_UP_TIMEOUT = 15.0  # wrap_up 合成超时（秒）
 
 
 async def synthesize_wrap_up(
-    adapter: Any,
-    messages: list[dict],
+    model_gateway: Any = None,
+    messages: list[dict] | None = None,
     content_blocks: list[dict] | None = None,
     emit_payloads: list[dict] | None = None,
     reason: str = "",
     timeout: float = _WRAP_UP_TIMEOUT,
+    *,
+    adapter: Any = None,
 ) -> str | None:
     """Final Synthesis Turn — 不传 tools,强制纯文本输出。
 
@@ -315,6 +317,10 @@ async def synthesize_wrap_up(
     超时默认 15 秒,避免 LLM 响应慢时无限阻塞。
     """
     import asyncio
+
+    model_gateway = model_gateway or adapter
+    if model_gateway is None or messages is None:
+        raise ValueError("MODEL_GATEWAY_AND_MESSAGES_REQUIRED")
 
     # 构建补充上下文
     extra_ctx = build_synthesis_context(content_blocks, emit_payloads)
@@ -330,7 +336,7 @@ async def synthesize_wrap_up(
 
     async def _collect() -> str | None:
         text = ""
-        async for chunk in adapter.stream_chat(
+        async for chunk in model_gateway.stream_chat(
             messages=slim, tools=None, temperature=0.3,
         ):
             if chunk.content:
