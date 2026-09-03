@@ -11,9 +11,12 @@ import pytest
 from schemas.message import TextPart
 from services.handlers.chat.execution_engine import (
     ChatExecutionRequest,
+    _actor_tool_preview_id,
     _stable_actor_tool_call_id,
     _actor_tool_completion_command_id,
+    _build_replay_context,
     _execute_tools,
+    _initial_model_round,
     _read_turn,
     _run_loop,
     execute_chat,
@@ -54,14 +57,41 @@ class _PauseStore:
         return None
 
 
-def test_actor_tool_call_id_is_stable_for_same_turn_and_arguments():
-    first = _stable_actor_tool_call_id("turn-1", 0, "erp_execute", '{"a":1}')
-    second = _stable_actor_tool_call_id("turn-1", 0, "erp_execute", '{"a":1}')
-    different_args = _stable_actor_tool_call_id("turn-1", 0, "erp_execute", '{"a":2}')
+def test_actor_tool_call_id_is_stable_for_same_model_round_and_arguments():
+    first = _stable_actor_tool_call_id(
+        "turn-1", 0, 0, "erp_execute", '{"a":1}',
+    )
+    second = _stable_actor_tool_call_id(
+        "turn-1", 0, 0, "erp_execute", '{"a":1}',
+    )
+    different_args = _stable_actor_tool_call_id(
+        "turn-1", 0, 0, "erp_execute", '{"a":2}',
+    )
 
     assert first == second
     assert first != different_args
-    assert first.startswith("actor-call:turn-1:0:")
+    assert first.startswith("actor-call:turn-1:round:0:index:0:")
+
+
+def test_actor_tool_call_id_separates_model_rounds():
+    first_round = _actor_tool_preview_id("turn-1", 0, 0)
+    second_round = _actor_tool_preview_id("turn-1", 1, 0)
+
+    assert first_round == _actor_tool_preview_id("turn-1", 0, 0)
+    assert first_round != second_round
+    assert second_round == "actor-call:turn-1:round:1:index:0"
+
+
+def test_replay_uses_next_model_round_and_supports_legacy_payloads():
+    assert _initial_model_round(None) == 0
+    assert _initial_model_round({"next_model_round": 4}) == 4
+    assert _initial_model_round({"turn_index": 2}) == 3
+    assert _initial_model_round({"next_model_round": -1}) == 0
+
+    payload = _build_replay_context(
+        [], [], 2, next_model_round=3,
+    )
+    assert payload["next_model_round"] == 3
 
 
 def test_actor_tool_completion_command_id_is_bounded_and_stable():
@@ -161,13 +191,130 @@ async def test_actor_tool_preview_is_emitted_before_arguments_finish():
     assert sink.added == [{
         "type": "tool_step",
         "tool_name": "erp_agent",
-        "tool_call_id": "actor-call:turn-1:0",
+        "tool_call_id": "actor-call:turn-1:round:0:index:0",
         "status": "running",
     }]
     assert sink.updated == []
-    assert calls[0]["id"] == "actor-call:turn-1:0"
+    assert calls[0]["id"] == "actor-call:turn-1:round:0:index:0"
     assert calls[0]["arguments"] == '{"query":"近三天订单"}'
-    assert previewed_ids == {"actor-call:turn-1:0"}
+    assert previewed_ids == {"actor-call:turn-1:round:0:index:0"}
+
+
+@pytest.mark.asyncio
+async def test_actor_tool_preview_uses_model_round_for_same_index():
+    async def stream_chat(**_kwargs):
+        yield SimpleNamespace(
+            content=None,
+            thinking_content=None,
+            tool_calls=[SimpleNamespace(
+                index=0,
+                id="provider-call-reused",
+                name="erp_agent",
+                arguments_delta='{"query":"same index"}',
+            )],
+            prompt_tokens=0,
+            completion_tokens=0,
+            credits_consumed=None,
+            finish_reason="tool_calls",
+        )
+
+    prepared = SimpleNamespace(
+        adapter=SimpleNamespace(stream_chat=stream_chat),
+        messages=[],
+        stream_kwargs={},
+    )
+    runtime = ConversationTurnRuntime(
+        conversation_id="conv-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        cancellation_event=asyncio.Event(),
+    )
+
+    def totals():
+        return SimpleNamespace(
+            text="",
+            thinking="",
+            usage={"prompt_tokens": 0, "completion_tokens": 0},
+            chunk_count=0,
+            last_finish_reason=None,
+        )
+
+    first_blocks = []
+    _, _, first_calls, _ = await _read_turn(
+        prepared, [], asyncio.Event(), SimpleNamespace(
+            on_thinking=AsyncMock(), on_text=AsyncMock(), on_block=AsyncMock(),
+        ), totals(), first_blocks, runtime, model_round=0,
+    )
+    second_blocks = []
+    _, _, second_calls, _ = await _read_turn(
+        prepared, [], asyncio.Event(), SimpleNamespace(
+            on_thinking=AsyncMock(), on_text=AsyncMock(), on_block=AsyncMock(),
+        ), totals(), second_blocks, runtime, model_round=1,
+    )
+
+    assert first_calls[0]["id"] != second_calls[0]["id"]
+    assert first_blocks[0]["tool_call_id"] != second_blocks[0]["tool_call_id"]
+
+
+@pytest.mark.asyncio
+async def test_run_loop_advances_model_round_identity_independently_of_budget_turn(
+    monkeypatch,
+):
+    read_rounds = []
+    completed_rounds = []
+
+    async def fake_read_turn(*_args, **kwargs):
+        read_rounds.append(kwargs["model_round"])
+        return "", "", [{
+            "id": f"call-{len(read_rounds)}",
+            "name": "erp_agent",
+            "arguments": "{}",
+        }], set()
+
+    async def fake_execute_tools(*, handler, **kwargs):
+        completed_rounds.append(kwargs["next_model_round"])
+        if len(completed_rounds) == 2:
+            prepared.budget.stop_reason = "max_turns"
+
+    monkeypatch.setattr(
+        "services.handlers.chat.execution_engine._read_turn", fake_read_turn,
+    )
+    monkeypatch.setattr(
+        "services.handlers.chat.execution_engine._execute_tools",
+        fake_execute_tools,
+    )
+    budget = SimpleNamespace(stop_reason=None, turns_used=0)
+    budget.use_turn = lambda: setattr(
+        budget, "turns_used", budget.turns_used + 1,
+    )
+    prepared = SimpleNamespace(
+        budget=budget,
+        core_tools=[],
+        tool_context=SimpleNamespace(
+            discovered_tools=set(),
+            build_context_prompt=lambda: "",
+        ),
+        messages=[],
+        permission=SimpleNamespace(
+            need_exit_attachment=False,
+            get_reminder=lambda _turn: "",
+        ),
+    )
+    handler = SimpleNamespace(org_id="org-1")
+
+    await _run_loop(
+        handler=handler,
+        request=_request(),
+        prepared=prepared,
+        cancellation_event=asyncio.Event(),
+        sink=SimpleNamespace(),
+        totals=SimpleNamespace(),
+        blocks=[],
+        runtime=None,
+    )
+
+    assert read_rounds == [0, 1]
+    assert completed_rounds == [1, 2]
 
 
 @pytest.mark.asyncio
@@ -201,7 +348,7 @@ async def test_actor_tool_preview_is_updated_before_tool_execution(monkeypatch):
         _pending_emit_payloads=[],
     )
     call = {
-        "id": "actor-call:turn-1:0",
+        "id": "actor-call:turn-1:round:0:index:0",
         "name": "erp_agent",
         "arguments": '{"query":"近三天订单"}',
     }
