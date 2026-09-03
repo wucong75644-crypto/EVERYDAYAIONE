@@ -202,7 +202,11 @@ async def create_plan(*, db: Any, org_id: str, definition: Dict[str, Any]) -> tu
     """由模型选择工具和初始路径；系统随后验证并收敛权限。"""
     from config.chat_tools import get_core_tools
     from core.config import get_settings
-    from services.adapters.factory import create_chat_adapter
+    from services.model_gateway import (
+        ModelCallRequest,
+        _collect_stream_response,
+        get_model_gateway,
+    )
 
     available = preflight_allowed_tool_names(org_id)
     schemas = get_core_tools(org_id=org_id)
@@ -242,20 +246,25 @@ async def create_plan(*, db: Any, org_id: str, definition: Dict[str, Any]) -> tu
         },
     }
     settings = get_settings()
-    adapter = create_chat_adapter(
-        getattr(settings, "agent_loop_model", None) or "qwen3.5-plus",
-        org_id=org_id,
-        db=db,
+    model_gateway = get_model_gateway().open_chat(
+        ModelCallRequest(
+            model_id=getattr(settings, "agent_loop_model", None) or "qwen3.5-plus",
+            org_id=org_id,
+            db=db,
+        )
     )
     try:
-        response = await adapter.chat_sync(messages=[
-            {"role": "system", "content": "你是定时任务规划器。只输出符合 schema 的 JSON；不执行任务，不虚构工具。调度器独立负责结果投递，绝不要把发送到网页/企微、查 webhook、发送消息等交付动作编入步骤；任务指令中的交付措辞只作为结果目标理解。"},
-            {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
-        ])
+        response = await _collect_stream_response(
+            model_gateway,
+            messages=[
+                {"role": "system", "content": "你是定时任务规划器。只输出符合 schema 的 JSON；不执行任务，不虚构工具。调度器独立负责结果投递，绝不要把发送到网页/企微、查 webhook、发送消息等交付动作编入步骤；任务指令中的交付措辞只作为结果目标理解。"},
+                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+            ],
+        )
         raw = parse_json_object(getattr(response, "content", ""))
         return validate_plan(raw, available_tools=available, timeout_sec=int(definition["timeout_sec"]))
     finally:
-        await adapter.close()
+        await model_gateway.close()
 
 
 def completion_gate(*, result: Any, policy: ScheduledExecutionPolicy) -> Dict[str, Any]:

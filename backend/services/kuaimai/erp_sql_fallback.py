@@ -186,9 +186,13 @@ async def sql_fallback(
         AgentResult 或 None（兜底失败时透明降级）。
     """
     from core.config import get_settings
-    from services.adapters.factory import create_chat_adapter
     from services.agent.agent_result import AgentResult
     from services.agent.tool_output import OutputFormat, ColumnMeta, FileRef
+    from services.model_gateway import (
+        ModelCallRequest,
+        _collect_stream_response,
+        get_model_gateway,
+    )
 
     logger.info(f"SQL fallback triggered | query={query[:80]}")
     settings = get_settings()
@@ -203,20 +207,30 @@ async def sql_fallback(
         org_id=org_id,
     )
 
-    # 2. 千问生成 SQL（复用 adapter 基础设施）
-    adapter = create_chat_adapter(settings.agent_loop_model, org_id=org_id, db=db)
+    # 2. 千问生成 SQL（复用 ModelGateway）
+    model_gateway = get_model_gateway().open_chat(
+        ModelCallRequest(
+            model_id=settings.agent_loop_model,
+            org_id=org_id,
+            db=db,
+            request_id=conversation_id or user_id,
+        )
+    )
     try:
         messages = [
             {"role": "system", "content": "你是 PostgreSQL 查询专家，只返回一条 SELECT SQL，不要任何解释。"},
             {"role": "user", "content": prompt},
         ]
-        response = await adapter.chat_sync(messages=messages)
+        response = await _collect_stream_response(
+            model_gateway,
+            messages=messages,
+        )
         raw_sql = getattr(response, "content", "") or ""
     except Exception as e:
         logger.warning(f"SQL generation LLM call failed: {e}")
         return None
     finally:
-        await adapter.close()
+        await model_gateway.close()
 
     if not raw_sql.strip():
         logger.warning("SQL generation returned empty")

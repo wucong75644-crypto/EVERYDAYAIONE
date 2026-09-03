@@ -15,6 +15,25 @@ if str(backend_dir) not in sys.path:
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
+
+
+def _stream_adapter(response=None, error=None):
+    adapter = MagicMock()
+    adapter.close = AsyncMock()
+
+    async def stream_chat(**_kwargs):
+        if error is not None:
+            raise error
+        yield SimpleNamespace(
+            content=response.content,
+            prompt_tokens=response.prompt_tokens,
+            completion_tokens=response.completion_tokens,
+            finish_reason="stop",
+        )
+
+    adapter.stream_chat = stream_chat
+    return adapter
 
 
 # ============================================================
@@ -564,9 +583,7 @@ class TestAnalyzeE2E:
         mock_response.prompt_tokens = 200
         mock_response.completion_tokens = 100
 
-        mock_adapter = MagicMock()
-        mock_adapter.chat_sync = AsyncMock(return_value=mock_response)
-        mock_adapter.close = AsyncMock()
+        mock_adapter = _stream_adapter(mock_response)
 
         with patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter):
             result = await agent.analyze("查供应商纸制品01的采购商品，用编码查订单")
@@ -613,9 +630,7 @@ class TestAnalyzeE2E:
         mock_response.content = llm_json
         mock_response.prompt_tokens = 100
         mock_response.completion_tokens = 60
-        mock_adapter = MagicMock()
-        mock_adapter.chat_sync = AsyncMock(return_value=mock_response)
-        mock_adapter.close = AsyncMock()
+        mock_adapter = _stream_adapter(mock_response)
 
         with patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter):
             result = await agent.analyze("查供应商商品再查订单")
@@ -988,9 +1003,7 @@ class TestLlmExtract:
         mock_response.prompt_tokens = 100
         mock_response.completion_tokens = 50
 
-        mock_adapter = MagicMock()
-        mock_adapter.chat_sync = AsyncMock(return_value=mock_response)
-        mock_adapter.close = AsyncMock()
+        mock_adapter = _stream_adapter(mock_response)
 
         with patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter):
             steps, hint, dep = await agent._llm_extract("今天多少订单")
@@ -1004,9 +1017,7 @@ class TestLlmExtract:
     async def test_llm_adapter_error_raises(self):
         """adapter 异常 → 抛出，由 _extract_plan 降级处理"""
         agent = self._make_agent()
-        mock_adapter = MagicMock()
-        mock_adapter.chat_sync = AsyncMock(side_effect=ConnectionError("API 不可用"))
-        mock_adapter.close = AsyncMock()
+        mock_adapter = _stream_adapter(error=ConnectionError("API 不可用"))
 
         with patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter):
             with pytest.raises(ConnectionError):

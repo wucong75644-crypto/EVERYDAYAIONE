@@ -1,11 +1,13 @@
 """定时任务规划、权限策略与 Completion Gate 的纯逻辑测试。"""
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from services.scheduler.scheduled_task_workflow import (
     ScheduledExecutionPolicy,
     completion_gate,
+    create_plan,
     stable_json_hash,
     validate_plan,
 )
@@ -78,3 +80,37 @@ def test_completion_gate_requires_required_tool_to_succeed_not_just_be_requested
     gate = completion_gate(result=result, policy=policy)
     assert gate["passed"] is False
     assert "required_tools_missing:erp_agent" in gate["reasons"]
+
+
+@pytest.mark.asyncio
+async def test_create_plan_uses_gateway_stream_and_closes_session() -> None:
+    async def stream_chat(**_kwargs):
+        yield SimpleNamespace(
+            content='{"objective":"日报","allowed_tools":["erp_agent"],"steps":[{"id":"query","intent":"查询数据","tools":["erp_agent"],"required":true}],"output_contract":{"allow_empty_result":false,"required_evidence":[]}}',
+            prompt_tokens=4,
+            completion_tokens=6,
+            finish_reason="stop",
+        )
+
+    session = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
+    gateway = Mock(open_chat=Mock(return_value=session))
+    settings = SimpleNamespace(agent_loop_model="qwen3.5-plus")
+    definition = {
+        "name": "日报",
+        "prompt": "查询日报",
+        "schedule_type": "cron",
+        "timeout_sec": 180,
+        "push_target": {},
+    }
+    with (
+        patch("config.chat_tools.get_core_tools", return_value=[{"function": {"name": "erp_agent", "description": "查询"}}]),
+        patch("services.scheduler.scheduled_task_workflow.preflight_allowed_tool_names", return_value={"erp_agent"}),
+        patch("core.config.get_settings", return_value=settings),
+        patch("services.model_gateway.get_model_gateway", return_value=gateway),
+    ):
+        plan, policy = await create_plan(db=Mock(), org_id="org-1", definition=definition)
+
+    assert plan["objective"] == "日报"
+    assert policy.allowed_tools == frozenset({"erp_agent"})
+    gateway.open_chat.assert_called_once()
+    session.close.assert_awaited_once()

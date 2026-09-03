@@ -15,7 +15,6 @@ from pydantic import ValidationError
 from core.config import get_settings
 from core.exceptions import AppException
 from schemas.ecom_requirement import RequirementAssistInput, RequirementAssistResult
-from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
 from services.agent.image.requirement_assist_prompts import build_multimodal_messages
 
 
@@ -83,20 +82,28 @@ class RequirementAssistService:
         model: str,
         timeout_seconds: float,
     ) -> RequirementAssistResult:
-        settings = get_settings()
-        adapter = DashScopeChatAdapter(
-            api_key=settings.dashscope_api_key or "",
-            model=model,
-            base_url=settings.dashscope_base_url,
-            stream_timeout=timeout_seconds,
+        from services.model_gateway import (
+            ModelCallRequest,
+            _collect_stream_response,
+            get_model_gateway,
+        )
+
+        model_gateway = get_model_gateway().open_chat(
+            ModelCallRequest(
+                model_id=model,
+                timeout=timeout_seconds,
+            )
         )
         try:
             response = await asyncio.wait_for(
-                adapter.chat_sync(messages=build_multimodal_messages(data)),
+                _collect_stream_response(
+                    model_gateway,
+                    messages=build_multimodal_messages(data),
+                ),
                 timeout=timeout_seconds,
             )
         finally:
-            await adapter.close()
+            await model_gateway.close()
         result = parse_requirement_result(response.content)
         validate_reference_ids(result, data)
         validate_no_output_urls(result)

@@ -119,7 +119,7 @@ class FileQueryExtensionsMixin:
 
     async def file_search(
         self,
-        keyword: str,
+        keyword: str = "",
         path: str = ".",
         search_content: bool = False,
         file_pattern: Optional[str] = None,

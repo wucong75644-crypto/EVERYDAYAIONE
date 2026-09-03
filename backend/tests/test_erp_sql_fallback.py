@@ -1,6 +1,10 @@
 """erp_sql_fallback.py 单元测试——SQL 兜底完整流程。"""
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
 
 _backend_dir = Path(__file__).parent.parent
 if str(_backend_dir) not in sys.path:
@@ -152,3 +156,49 @@ class TestShouldTryExtended:
 
     def test_cant_understand_no_trigger(self):
         assert not self._should("error", "无法理解您的请求")
+
+
+@pytest.mark.asyncio
+async def test_sql_fallback_uses_gateway_and_preserves_generated_sql() -> None:
+    from services.kuaimai.erp_sql_fallback import sql_fallback
+
+    async def stream_chat(**_kwargs):
+        yield SimpleNamespace(
+            content=f"SELECT * FROM orders WHERE org_id = '{ORG}' LIMIT 1",
+            prompt_tokens=4,
+            completion_tokens=6,
+            finish_reason="stop",
+        )
+
+    session = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
+    gateway = Mock(open_chat=Mock(return_value=session))
+    settings = SimpleNamespace(
+        agent_loop_model="qwen3.5-plus",
+        database_url="postgresql://test/test",
+    )
+    with (
+        patch("core.config.get_settings", return_value=settings),
+        patch("services.model_gateway.get_model_gateway", return_value=gateway),
+        patch(
+            "services.kuaimai.erp_sql_fallback.execute_readonly_sql",
+            new=AsyncMock(return_value=([{"id": "1"}], ["id"])),
+        ),
+        patch(
+            "services.kuaimai.erp_sql_fallback._write_sql_result_to_staging",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        result = await sql_fallback(
+            "查询订单",
+            SimpleNamespace(summary="原查询失败"),
+            None,
+            ORG,
+            Mock(),
+            user_id="user-1",
+            conversation_id="conversation-1",
+        )
+
+    assert result.status == "success"
+    assert result.metadata["sql"].startswith("SELECT * FROM orders")
+    gateway.open_chat.assert_called_once()
+    session.close.assert_awaited_once()

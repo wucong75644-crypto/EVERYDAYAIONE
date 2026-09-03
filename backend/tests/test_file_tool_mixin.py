@@ -484,6 +484,25 @@ class TestSearchFilesPathParsing:
         cache = get_file_cache("conv-search-space")
         assert cache.resolve("上传/4月 销售.csv", usage="analyze") == str(target)
 
+    @pytest.mark.asyncio
+    async def test_search_with_pattern_without_keyword(self, tmp_path):
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+        target = ws / "report.csv"
+        target.write_text("a,b\n1,2")
+
+        mixin = FakeMixin(conversation_id="conv-search-pattern")
+        executor = MagicMock()
+        executor.file_search = AsyncMock(
+            return_value="搜索结果\n  [文件] report.csv"
+        )
+        executor.resolve_safe_path = lambda path: ws / path
+
+        result = await mixin._search_files(executor, {"file_pattern": "*.csv"})
+
+        assert result.status == "success"
+        executor.file_search.assert_awaited_once_with(file_pattern="*.csv")
+
 
 class TestDescribeSingleFileMultimodal:
     """P1 file_search 多模态化：单文件路径命中图片时返回 FileReadResult(type=image)，

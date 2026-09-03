@@ -312,6 +312,14 @@ class TestFileSearch:
         assert "a.csv" in result
 
     @pytest.mark.asyncio
+    async def test_search_with_pattern_without_keyword(self, executor, workspace):
+        Path(workspace, "a.csv").write_text("1")
+        Path(workspace, "b.txt").write_text("2")
+        result = await executor.file_search(file_pattern="*.csv")
+        assert "a.csv" in result
+        assert "b.txt" not in result
+
+    @pytest.mark.asyncio
     async def test_search_case_insensitive(self, executor, workspace):
         Path(workspace, "Report.CSV").write_text("data")
         result = await executor.file_search("report")
