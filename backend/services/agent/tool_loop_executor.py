@@ -36,7 +36,7 @@ class ToolLoopExecutor:
     """通用工具循环执行器
 
     构造参数：
-        adapter:      LLM 适配器（必须实现 stream_chat）
+        adapter:      兼容旧参数名；生产调用方传入 ModelGatewaySession
         executor:     ToolExecutor 实例
         all_tools:    可被自动扩展的全量工具集（仅 strategy.enable_tool_expansion=True 时使用）
         config:       数值配置（max_turns / max_tokens / tool_timeout / ...）
@@ -54,7 +54,9 @@ class ToolLoopExecutor:
         hooks: List[LoopHook] = None,
         file_registry: Any = None,
     ) -> None:
+        # 兼容旧的构造参数名；生产调用方传入的是 ModelGatewaySession。
         self.adapter = adapter
+        self.model_gateway = adapter
         self.executor = executor
         self.all_tools = all_tools
         self.config = config
@@ -279,7 +281,7 @@ class ToolLoopExecutor:
         if synthesis_reason and not is_llm_synthesis:
             from services.agent.stop_policy import synthesize_wrap_up
             synthesis = await synthesize_wrap_up(
-                adapter=self.adapter,
+                model_gateway=self.model_gateway,
                 messages=hook_ctx.messages,
                 emit_payloads=self._emit_payloads,
                 reason=synthesis_reason,
@@ -450,7 +452,7 @@ class ToolLoopExecutor:
         _prompt_tokens = 0
         _completion_tokens = 0
 
-        async for chunk in self.adapter.stream_chat(
+        async for chunk in self.model_gateway.stream_chat(
             messages=messages, tools=selected_tools, temperature=0.1,
             thinking_mode=self.config.thinking_mode,
         ):

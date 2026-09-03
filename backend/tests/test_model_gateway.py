@@ -12,6 +12,7 @@ from services.model_gateway import (
     ModelCallRequest,
     ModelGateway,
     ModelGatewaySession,
+    _collect_stream_response,
     get_model_gateway,
 )
 
@@ -59,6 +60,25 @@ async def test_gateway_uses_existing_factory_and_forwards_chunks() -> None:
     assert chunks[0].content == "a"
     assert chunks[1].content == "b"
     assert session.request.request_id == "task-1"
+
+
+@pytest.mark.asyncio
+async def test_collect_stream_response_preserves_text_and_usage() -> None:
+    async def stream_chat(**_kwargs):
+        yield _chunk("part one")
+        yield _chunk("part two")
+
+    adapter = SimpleNamespace(
+        stream_chat=stream_chat,
+        close=AsyncMock(),
+    )
+    session = ModelGatewaySession(adapter, ModelCallRequest(model_id="model-1"))
+
+    response = await _collect_stream_response(session, messages=[{"role": "user", "content": "hi"}])
+
+    assert response.content == "part onepart two"
+    assert response.prompt_tokens == 1
+    assert response.completion_tokens == 2
 
 
 @pytest.mark.asyncio

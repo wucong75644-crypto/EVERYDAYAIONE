@@ -239,41 +239,51 @@ async def enhance_prompt(
         messages.append({"role": "user", "content": user_prompt})
 
     # 5. 调千问 VL（主模型 → 降级备选）
-    from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
+    from services.model_gateway import (
+        ModelCallRequest,
+        _collect_stream_response,
+        get_model_gateway,
+    )
 
     model = settings.image_enhance_vl_model if all_image_urls else settings.image_enhance_model
     timeout = settings.image_enhance_timeout
 
     response = None
-    adapter = DashScopeChatAdapter(
-        api_key=settings.dashscope_api_key or "",
-        model=model,
-        base_url=settings.dashscope_base_url,
-        stream_timeout=timeout,
+    model_gateway = get_model_gateway().open_chat(
+        ModelCallRequest(
+            model_id=model,
+            timeout=timeout,
+        )
     )
     try:
-        response = await adapter.chat_sync(messages=messages)
+        response = await _collect_stream_response(
+            model_gateway,
+            messages=messages,
+        )
     except Exception as primary_err:
         logger.warning(f"enhance primary model failed: {primary_err}, trying fallback")
     finally:
-        await adapter.close()
+        await model_gateway.close()
 
     if response is None:
         fallback = settings.image_enhance_fallback_model
-        adapter_fb = DashScopeChatAdapter(
-            api_key=settings.dashscope_api_key or "",
-            model=fallback,
-            base_url=settings.dashscope_base_url,
-            stream_timeout=timeout,
+        model_gateway_fb = get_model_gateway().open_chat(
+            ModelCallRequest(
+                model_id=fallback,
+                timeout=timeout,
+            )
         )
         try:
-            response = await adapter_fb.chat_sync(messages=messages)
+            response = await _collect_stream_response(
+                model_gateway_fb,
+                messages=messages,
+            )
             model = fallback
         except Exception as fallback_err:
             logger.error(f"enhance fallback also failed: {fallback_err}")
             return {"error": "方案生成失败，请稍后重试", "success": False}
         finally:
-            await adapter_fb.close()
+            await model_gateway_fb.close()
 
     # 6. 解析设计方案 JSON
     plan = _parse_design_plan(response.content)

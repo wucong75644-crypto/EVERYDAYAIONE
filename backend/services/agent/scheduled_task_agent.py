@@ -85,7 +85,7 @@ class ScheduledTaskAgent:
         """主入口：执行定时任务，返回结构化结果"""
         total_tokens = 0
         tools_called: List[str] = []
-        adapter = None
+        model_gateway = None
 
         try:
             # 245 起，所有自动执行的任务都必须绑定已确认的工具范围。
@@ -118,15 +118,20 @@ class ScheduledTaskAgent:
             # 3. 构建轻量上下文
             messages = self._build_light_context()
 
-            # 4. 创建 LLM adapter
-            from services.adapters.factory import create_chat_adapter
+            # 4. 打开共享 ModelGateway 会话
+            from services.model_gateway import ModelCallRequest, get_model_gateway
             from core.config import get_settings
             settings = get_settings()
             model_id = (
                 getattr(settings, "agent_loop_model", None) or "qwen3.5-plus"
             )
-            adapter = create_chat_adapter(
-                model_id, org_id=self.org_id, db=self.db,
+            model_gateway = get_model_gateway().open_chat(
+                ModelCallRequest(
+                    model_id=model_id,
+                    org_id=self.org_id,
+                    db=self.db,
+                    request_id=self.task_id,
+                )
             )
 
             # 5. 创建 ToolExecutor
@@ -162,7 +167,7 @@ class ScheduledTaskAgent:
 
             # 8. 共享 ToolLoopExecutor（无 WS 推送 / 无时间校验 / 无失败反思）
             tool_loop, hook_ctx = self._build_tool_loop(
-                adapter, executor, all_tools, policy.tool_timeout_sec,
+                model_gateway, executor, all_tools, policy.tool_timeout_sec,
             )
 
             result = await tool_loop.run(
@@ -207,7 +212,7 @@ class ScheduledTaskAgent:
                 )
 
             # 9. 生成摘要
-            summary = await self._generate_summary(text, adapter)
+            summary = await self._generate_summary(text, model_gateway)
 
             return ScheduledTaskResult(
                 text=text or "",
@@ -242,9 +247,9 @@ class ScheduledTaskAgent:
                 error_message=str(e)[:500],
             )
         finally:
-            if adapter is not None:
+            if model_gateway is not None:
                 try:
-                    await adapter.close()
+                    await model_gateway.close()
                 except Exception:
                     pass
             # 清理 staging ContextVar + 延迟清理 staging 文件
@@ -258,7 +263,7 @@ class ScheduledTaskAgent:
 
     def _build_tool_loop(
         self,
-        adapter: Any,
+        model_gateway: Any,
         executor: Any,
         all_tools: List[Dict[str, Any]],
         tool_timeout: float = TOOL_TIMEOUT,
@@ -288,7 +293,7 @@ class ScheduledTaskAgent:
         )
 
         tool_loop = ToolLoopExecutor(
-            adapter=adapter,
+            adapter=model_gateway,
             executor=executor,
             all_tools=all_tools,
             config=LoopConfig(
@@ -373,7 +378,7 @@ class ScheduledTaskAgent:
         messages.append({"role": "user", "content": user_msg})
         return messages
 
-    async def _generate_summary(self, text: str, adapter: Any) -> str:
+    async def _generate_summary(self, text: str, model_gateway: Any) -> str:
         """生成 ≤500 字摘要，写回 last_summary 用于下次执行参考"""
         if not text:
             return ""
@@ -388,13 +393,14 @@ class ScheduledTaskAgent:
                 },
                 {"role": "user", "content": text[:3000]},
             ]
-            summary = ""
-            async for chunk in adapter.stream_chat(
-                messages=messages, temperature=0.3,
-            ):
-                if chunk.content:
-                    summary += chunk.content
-            return summary[:500]
+            from services.model_gateway import _collect_stream_response
+
+            response = await _collect_stream_response(
+                model_gateway,
+                messages=messages,
+                temperature=0.3,
+            )
+            return response.content[:500]
         except Exception as e:
             logger.debug(
                 f"_generate_summary failed | task={self.task_id} | error={e}"

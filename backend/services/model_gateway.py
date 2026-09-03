@@ -8,11 +8,11 @@ Gateway 是主 Chat、Actor Chat 和企微兼容入口共享的模型边界。�
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
 
 if TYPE_CHECKING:
     from services.adapters.base import StreamChunk
-
 
 @dataclass(frozen=True)
 class ModelCallRequest:
@@ -114,6 +114,41 @@ class ModelGateway:
             factory_kwargs["stream_timeout"] = request.timeout
         adapter = adapter_factory(request.model_id, **factory_kwargs)
         return ModelGatewaySession(adapter, request)
+
+
+async def _collect_stream_response(
+    session: ModelGatewaySession,
+    *,
+    messages: list[dict[str, Any]],
+    reasoning_effort: str | None = None,
+    thinking_mode: str | None = None,
+    **kwargs: Any,
+) -> Any:
+    """收集现有流式边界的文本响应；不引入第二套模型调用协议。"""
+    content = ""
+    finish_reason: str | None = None
+    prompt_tokens = 0
+    completion_tokens = 0
+    async for chunk in session.stream_chat(
+        messages=messages,
+        reasoning_effort=reasoning_effort,
+        thinking_mode=thinking_mode,
+        **kwargs,
+    ):
+        if getattr(chunk, "content", None):
+            content += chunk.content
+        if getattr(chunk, "prompt_tokens", 0):
+            prompt_tokens = chunk.prompt_tokens
+        if getattr(chunk, "completion_tokens", 0):
+            completion_tokens = chunk.completion_tokens
+        if getattr(chunk, "finish_reason", None):
+            finish_reason = chunk.finish_reason
+    return SimpleNamespace(
+        content=content,
+        finish_reason=finish_reason,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+    )
 
 
 _MODEL_GATEWAY = ModelGateway()

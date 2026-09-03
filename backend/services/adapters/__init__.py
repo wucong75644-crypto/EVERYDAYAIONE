@@ -9,21 +9,23 @@ AI 模型适配器包
 - Anthropic（预留）
 
 使用示例:
-    from services.adapters import create_chat_adapter
+    from services.model_gateway import ModelCallRequest, get_model_gateway
 
-    # 使用工厂创建适配器（推荐）
-    adapter = create_chat_adapter("gemini-3-flash")
+    # 生产 Chat 调用使用共享 Gateway
+    session = get_model_gateway().open_chat(
+        ModelCallRequest(model_id="gemini-3-flash")
+    )
 
     # 流式聊天
-    async for chunk in adapter.stream_chat(messages):
+    async for chunk in session.stream_chat(messages):
         print(chunk.content, end="")
 
     # 成本估算
-    cost = adapter.estimate_cost_unified(1000, 500)
+    cost = session.estimate_cost_unified(1000, 500)
     print(f"Credits: {cost.estimated_credits}")
 
     # 关闭连接
-    await adapter.close()
+    await session.close()
 """
 
 # 基类和数据模型
