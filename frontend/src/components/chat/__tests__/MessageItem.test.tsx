@@ -168,6 +168,27 @@ describe('MessageItem 助手内容宽度', () => {
   });
 });
 
+describe('MessageItem 图片准备态', () => {
+  it('图片任务在后端确认前显示准备文案而不启动媒体卡', () => {
+    render(
+      <MessageItem
+        message={makeMessage({
+          content: [],
+          status: 'streaming',
+          generation_params: {
+            type: 'image',
+            _client_preparing_text: '正在准备图片素材',
+          },
+        })}
+        isStreaming
+      />,
+    );
+
+    expect(screen.getByText('正在准备图片素材')).toBeInTheDocument();
+    expect(capturedMediaProps.isGenerating).toBe(false);
+  });
+});
+
 describe('MessageItem 回调稳定性', () => {
   beforeEach(() => {
     capturedMediaProps = {};

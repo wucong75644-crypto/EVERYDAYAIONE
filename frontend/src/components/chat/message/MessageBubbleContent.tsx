@@ -65,6 +65,9 @@ export default function MessageBubbleContent({
   const shouldShowSingleThinking = !isUser
     && !hasMultiBlocks
     && (thinkingText || isThinkingNow || thinkingDurationMs != null);
+  const localPreparingText = message.generation_params?._client_preparing_text;
+  const loadingText = agentStepHint
+    || (typeof localPreparingText === 'string' ? localPreparingText : 'AI 正在思考');
 
   return (
     <>
@@ -81,7 +84,7 @@ export default function MessageBubbleContent({
 
       <div className={isUser ? 'text-[15px] leading-relaxed whitespace-pre-wrap' : ''}>
         {((isRegenerating || isStreaming) && !textContent && !hasMultiBlocks) ? (
-          <LoadingPlaceholder text={agentStepHint || 'AI 正在思考'} />
+          <LoadingPlaceholder text={loadingText} />
         ) : (!isUser && !textContent && !hasImage && !hasVideo && !hasFiles && !hasMultiBlocks && !isErrorMessage && !isStreaming && !isRegenerating && !(suggestions && suggestions.length > 0)) ? (
           <span className="text-text-disabled text-sm italic">已取消，点击「重新生成」重试</span>
         ) : bubbleTextInfo ? (
