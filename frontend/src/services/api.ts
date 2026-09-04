@@ -17,6 +17,7 @@ import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig, type In
 import toast from 'react-hot-toast';
 import type { ApiErrorResponse } from '../types/auth';
 import { silentRefresh } from '../utils/tokenManager';
+import { isAccessTokenExpired } from '../utils/accessToken';
 
 // 优先使用环境变量，默认使用相对路径（适用于同域名部署）
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
@@ -79,8 +80,16 @@ const api: AxiosInstance = axios.create({
 
 // 请求拦截器：添加 token + 企业上下文 + FormData Content-Type 修正
 api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('access_token');
+  async (config) => {
+    let token = localStorage.getItem('access_token');
+    const isRefreshRequest = config.url?.endsWith('/auth/refresh');
+    if (token && !isRefreshRequest && isAccessTokenExpired(token)) {
+      try {
+        token = await silentRefresh();
+      } catch {
+        // 保留原 token，让响应拦截器按原有策略处理认证失败。
+      }
+    }
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }

@@ -15,6 +15,10 @@ import { useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react
 import { useAuthStore } from '../stores/useAuthStore';
 import { logger } from '../utils/logger';
 import { logoutOnce, silentRefresh } from '../utils/tokenManager';
+import api from '../services/api';
+import { isAccessTokenExpired } from '../utils/accessToken';
+
+export { isAccessTokenExpired } from '../utils/accessToken';
 
 // === 配置常量 ===
 
@@ -44,7 +48,6 @@ function getWebSocketUrl(): string {
 const HEARTBEAT_INTERVAL = 30000; // 30秒
 const RECONNECT_INTERVAL_BASE = 1000; // 基础重连间隔
 const RECONNECT_INTERVAL_MAX = 30000; // 最大重连间隔（之后每30s重试，无上限）
-const TOKEN_REFRESH_SKEW_MS = 30000;
 
 // === 消息类型 ===
 
@@ -130,28 +133,6 @@ function isAuthenticated(): boolean {
  * WebSocket 握手失败时浏览器不会暴露服务端的 HTTP 401/403，通常只会
  * 触发 code=1006。连接前主动检查 JWT 的 exp，避免用过期 token 无限重连。
  */
-export function isAccessTokenExpired(
-  token: string,
-  nowMs: number = Date.now(),
-  skewMs: number = TOKEN_REFRESH_SKEW_MS,
-): boolean {
-  const payloadPart = token.split('.')[1];
-  if (!payloadPart) return false;
-
-  try {
-    const normalized = payloadPart.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
-    const payload = JSON.parse(atob(padded)) as { exp?: unknown };
-    return (
-      typeof payload.exp === 'number' &&
-      payload.exp * 1000 <= nowMs + skewMs
-    );
-  } catch {
-    // 非 JWT 或 payload 损坏时交给服务端认证，不因本地解析失败阻断连接。
-    return false;
-  }
-}
-
 // === Hook 实现 ===
 
 export function useWebSocket(): UseWebSocketReturn {
@@ -283,13 +264,26 @@ export function useWebSocket(): UseWebSocketReturn {
       }
     }
 
+    const orgId = localStorage.getItem('current_org_id');
     cleanup();
     setConnectionState('connecting');
 
-    const orgId = localStorage.getItem('current_org_id');
-    const orgParam = orgId ? `&org_id=${encodeURIComponent(orgId)}` : '';
-    const wsUrl = `${getWebSocketUrl()}?token=${encodeURIComponent(token)}${orgParam}`;
-    logger.info('ws:connection', 'Connecting', { url: wsUrl.replace(/token=.*/, 'token=***') });
+    let ticket: string;
+    try {
+      const response = await api.post<{ ticket: string }>('/auth/ws-ticket');
+      ticket = response.data.ticket;
+    } catch (error) {
+      logger.warn('ws:connection', 'Failed to create connection ticket', {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+    if (!isAuthenticated() || isCleaningUpRef.current) {
+      return;
+    }
+
+    const wsUrl = `${getWebSocketUrl()}?ticket=${encodeURIComponent(ticket)}`;
+    logger.info('ws:connection', 'Connecting');
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;

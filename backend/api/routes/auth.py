@@ -6,10 +6,10 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from api.deps import CurrentUser, Database, OrgCtx
+from api.deps import CurrentUser, CurrentUserId, Database, OrgCtx
 from schemas.auth import (
     CurrentMember,
     CurrentOrgInfo,
@@ -26,6 +26,7 @@ from schemas.auth import (
     VerifyCodeRequest,
 )
 from services.auth_service import AuthService
+from services.ws_ticket import WS_TICKET_TTL_SECONDS, issue_ws_ticket
 from services.permissions.effective_perms import (
     compute_user_permissions,
     get_member_context,
@@ -324,6 +325,19 @@ async def refresh_token(
     - 如果检测到已吊销的 refresh token 被重用，自动吊销该用户所有 token（防盗用）
     """
     return await auth_service.refresh_access_token(req.refresh_token)
+
+
+@router.post("/ws-ticket", summary="创建 WebSocket 临时凭证")
+async def create_ws_ticket(
+    user_id: CurrentUserId,
+    org_ctx: OrgCtx,
+) -> dict[str, int | str]:
+    """创建一次性、短时有效的 WebSocket 握手 ticket。"""
+    try:
+        ticket = await issue_ws_ticket(user_id, org_ctx.org_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="实时连接服务暂时不可用") from exc
+    return {"ticket": ticket, "expires_in": WS_TICKET_TTL_SECONDS}
 
 
 class _OptionalRefreshRequest(BaseModel):

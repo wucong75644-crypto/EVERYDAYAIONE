@@ -28,6 +28,7 @@ from schemas.websocket import (
     build_control_result,
 )
 from services.websocket_manager import HEARTBEAT_INTERVAL, ws_manager
+from services.ws_ticket import consume_ws_ticket
 from core.database import get_db
 from core.database import get_async_db
 from services.conversation_command_store import DatabaseConversationCommandStore
@@ -69,20 +70,34 @@ async def get_user_from_token(token: str) -> tuple[Optional[str], str]:
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
-    token: str = Query(..., description="认证 token"),
+    ticket: Optional[str] = Query(None, description="一次性 WebSocket ticket"),
+    token: Optional[str] = Query(None, description="兼容旧客户端的认证 token"),
     org_id: Optional[str] = Query(None, alias="org_id", description="企业ID"),
 ):
     """
     WebSocket 主端点
 
     连接流程:
-    1. 验证 token
+    1. 验证一次性 ticket（兼容旧客户端 token）
     2. 注册连接
     3. 启动心跳任务
     4. 消息循环
     """
-    # 1. 认证
-    user_id, error_type = await get_user_from_token(token)
+    # 1. 认证：新客户端使用一次性 ticket；token 仅保留给旧版本客户端平滑升级。
+    verified_org_id = None
+    if ticket:
+        try:
+            ticket_data = await consume_ws_ticket(ticket)
+        except RuntimeError as e:
+            logger.error(f"WebSocket ticket unavailable | error={e}")
+            await websocket.close(code=1013, reason="Service unavailable")
+            return
+        user_id = ticket_data.get("user_id") if ticket_data else None
+        error_type = "" if user_id else "invalid"
+        verified_org_id = ticket_data.get("org_id") if ticket_data else None
+    else:
+        user_id, error_type = await get_user_from_token(token or "")
+
     if not user_id:
         code = 4002 if error_type == "expired" else 4001
         reason = "Token expired" if error_type == "expired" else "Unauthorized"
@@ -90,8 +105,7 @@ async def websocket_endpoint(
         return
 
     # 1.5 验证 org_id 归属（防止伪造）
-    verified_org_id = None
-    if org_id:
+    if org_id and not ticket:
         try:
             db = get_db()
             member = db.table("org_members").select("status").eq(
