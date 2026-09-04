@@ -131,9 +131,17 @@ class BackgroundTaskWorker:
         if not response or not response.data:
             return
 
-        logger.debug(f"Polling {len(response.data)} tasks (fallback)")
+        # Provider 提交前的本地任务没有 external_task_id，不能拿本地 ID 去查询 Provider。
+        pollable_tasks = [
+            task for task in response.data
+            if task.get("external_task_id")
+        ]
+        if not pollable_tasks:
+            return
 
-        tasks_shuffled = random.sample(response.data, len(response.data))
+        logger.debug(f"Polling {len(pollable_tasks)} tasks (fallback)")
+
+        tasks_shuffled = random.sample(pollable_tasks, len(pollable_tasks))
         kie_qps_limit = getattr(self.settings, 'kie_qps_limit', 50)
         semaphore = asyncio.Semaphore(kie_qps_limit)
 
@@ -157,7 +165,7 @@ class BackgroundTaskWorker:
             for i, task in enumerate(tasks_shuffled)
         ])
 
-        logger.info(f"Polled {len(response.data)} tasks (fallback)")
+        logger.info(f"Polled {len(pollable_tasks)} tasks (fallback)")
 
     async def query_and_process(self, task: dict):
         """
@@ -166,6 +174,12 @@ class BackgroundTaskWorker:
         使用任务记录中的 model_id 创建适配器（而非硬编码）。
         """
         external_task_id = task["external_task_id"]
+        if not external_task_id:
+            logger.debug(
+                f"Skipping Provider poll before external task binding | "
+                f"local_task_id={task.get('id')}"
+            )
+            return
         task_type = task["type"]
         model_id = task.get("model_id")
 

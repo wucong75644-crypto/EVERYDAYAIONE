@@ -304,6 +304,21 @@ class TestCleanupStaleTasks:
         await worker.cleanup_stale_tasks()
 
     @pytest.mark.asyncio
+    async def test_poll_skips_task_before_external_binding(self, worker, db):
+        """Provider ID 尚未回填时不能拿本地 task ID 查询 Provider。"""
+        db._table_mock.execute.return_value = MagicMock(data=[{
+            "id": "local-task-1",
+            "type": "image",
+            "status": "pending",
+            "external_task_id": None,
+        }])
+
+        with patch.object(worker, "query_and_process", new_callable=AsyncMock) as query:
+            await worker.poll_pending_tasks()
+
+        query.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_skip_task_without_started_at(self, worker, db):
         """跳过没有 started_at 的任务"""
         db._table_mock.execute.return_value = MagicMock(data=[

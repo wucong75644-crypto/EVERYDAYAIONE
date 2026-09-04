@@ -72,6 +72,111 @@ def handler(mock_db):
     return VideoHandler(mock_db)
 
 
+class TestVideoTaskLifecycle:
+    """视频任务必须先创建本地 task，再绑定 Provider 外部 ID。"""
+
+    @pytest.mark.asyncio
+    async def test_local_task_is_saved_before_provider_and_then_bound(self, handler):
+        events = []
+        adapter = AsyncMock()
+        adapter.provider = MagicMock(value="kie")
+
+        async def generate(**kwargs):
+            events.append("generate")
+            return MagicMock(task_id="video_ext_1")
+
+        adapter.generate = AsyncMock(side_effect=generate)
+
+        handler._check_balance = MagicMock()
+        handler._lock_credits = MagicMock(return_value="tx_video_1")
+        handler._save_task = MagicMock(
+            side_effect=lambda **kwargs: events.append(("save", kwargs))
+        )
+        handler._update_task_by_id = MagicMock(
+            side_effect=lambda *args: events.append(("update", args))
+        )
+
+        with patch("config.kie_models.calculate_video_cost", return_value={"user_credits": 10}), \
+             patch("services.adapters.factory.create_video_adapter", return_value=adapter), \
+             patch.object(handler, "_build_callback_url", return_value="http://cb"):
+            result = await handler.start(
+                message_id="msg_1",
+                conversation_id="conv_1",
+                user_id="user_1",
+                content=[],
+                params={"model": "veo-3"},
+                metadata=MagicMock(client_task_id="client_video_1"),
+            )
+
+        assert result == "client_video_1"
+        assert [event[0] if isinstance(event, tuple) else event for event in events] == [
+            "save", "generate", "update",
+        ]
+        local_task_id = handler._lock_credits.call_args.kwargs["task_id"]
+        save_kwargs = handler._save_task.call_args.kwargs
+        assert save_kwargs["task_id"] == local_task_id
+        assert save_kwargs["local_task_id"] == local_task_id
+        assert save_kwargs["defer_external_task_id"] is True
+        update_args = handler._update_task_by_id.call_args.args
+        assert update_args[0] == local_task_id
+        assert update_args[1]["external_task_id"] == "video_ext_1"
+
+    @pytest.mark.asyncio
+    async def test_pre_save_failure_does_not_call_provider_and_refunds(self, handler):
+        adapter = AsyncMock()
+        adapter.provider = MagicMock(value="kie")
+        handler._check_balance = MagicMock()
+        handler._lock_credits = MagicMock(return_value="tx_video_1")
+        handler._save_task = MagicMock(side_effect=RuntimeError("turn mismatch"))
+        handler._refund_credits = MagicMock()
+
+        with patch("config.kie_models.calculate_video_cost", return_value={"user_credits": 10}), \
+             patch("services.adapters.factory.create_video_adapter", return_value=adapter), \
+             patch.object(handler, "_build_callback_url", return_value="http://cb"), \
+             pytest.raises(RuntimeError, match="turn mismatch"):
+            await handler.start(
+                message_id="msg_1",
+                conversation_id="conv_1",
+                user_id="user_1",
+                content=[],
+                params={"model": "veo-3"},
+                metadata=MagicMock(client_task_id="client_video_1"),
+            )
+
+        adapter.generate.assert_not_called()
+        adapter.close.assert_awaited_once()
+        handler._refund_credits.assert_called_once_with("tx_video_1")
+
+    @pytest.mark.asyncio
+    async def test_provider_failure_marks_the_precreated_task_failed(self, handler):
+        adapter = AsyncMock()
+        adapter.provider = MagicMock(value="kie")
+        adapter.generate = AsyncMock(side_effect=RuntimeError("provider down"))
+        handler._check_balance = MagicMock()
+        handler._lock_credits = MagicMock(return_value="tx_video_1")
+        handler._save_task = MagicMock()
+        handler._refund_credits = MagicMock()
+        handler._update_task_by_id = MagicMock()
+
+        with patch("config.kie_models.calculate_video_cost", return_value={"user_credits": 10}), \
+             patch("services.adapters.factory.create_video_adapter", return_value=adapter), \
+             patch.object(handler, "_build_callback_url", return_value="http://cb"), \
+             pytest.raises(RuntimeError, match="provider down"):
+            await handler.start(
+                message_id="msg_1",
+                conversation_id="conv_1",
+                user_id="user_1",
+                content=[],
+                params={"model": "veo-3"},
+                metadata=MagicMock(client_task_id="client_video_1"),
+            )
+
+        local_task_id = handler._lock_credits.call_args.kwargs["task_id"]
+        assert handler._update_task_by_id.call_args.args[0] == local_task_id
+        assert handler._update_task_by_id.call_args.args[1]["status"] == "failed"
+        handler._refund_credits.assert_called_once_with("tx_video_1")
+
+
 # ============================================================
 # A. 同步重试测试（_attempt_video_sync_retry）
 # ============================================================
@@ -98,7 +203,7 @@ class TestVideoSyncRetry:
              patch("services.adapters.factory.create_video_adapter", return_value=mock_new_adapter), \
              patch.object(handler, "_build_callback_url", return_value="http://cb"), \
              patch.object(handler, "_lock_credits", return_value="tx_new"), \
-             patch.object(handler, "_save_task"):
+             patch.object(handler, "_update_task_by_id"):
 
             result = await handler._attempt_video_sync_retry(
                 prompt="一只猫在跳舞",
@@ -111,11 +216,15 @@ class TestVideoSyncRetry:
                 message_id="msg_1",
                 conversation_id="conv_1",
                 metadata=MagicMock(client_task_id="client_task_1"),
+                local_task_id="local_video_task_1",
             )
 
             assert result == "client_task_1"
             mock_new_adapter.generate.assert_awaited_once()
             mock_new_adapter.close.assert_awaited_once()
+            handler._update_task_by_id.assert_called_once()
+            assert handler._update_task_by_id.call_args.args[0] == "local_video_task_1"
+            assert handler._update_task_by_id.call_args.args[1]["external_task_id"] == "new_video_ext"
 
     @pytest.mark.asyncio
     async def test_smart_mode_retry_also_fails(self, handler):
@@ -136,7 +245,8 @@ class TestVideoSyncRetry:
              patch("services.adapters.factory.create_video_adapter", return_value=mock_new_adapter), \
              patch.object(handler, "_build_callback_url", return_value="http://cb"), \
              patch.object(handler, "_lock_credits", return_value="tx_new"), \
-             patch.object(handler, "_refund_credits") as mock_refund:
+             patch.object(handler, "_refund_credits") as mock_refund, \
+             patch.object(handler, "_update_task_by_id"):
 
             result = await handler._attempt_video_sync_retry(
                 prompt="一只猫在跳舞",
@@ -149,6 +259,7 @@ class TestVideoSyncRetry:
                 message_id="msg_1",
                 conversation_id="conv_1",
                 metadata=MagicMock(client_task_id="client_task_1"),
+                local_task_id="local_video_task_1",
             )
 
             assert result is None
@@ -168,6 +279,7 @@ class TestVideoSyncRetry:
             message_id="msg_1",
             conversation_id="conv_1",
             metadata=MagicMock(),
+            local_task_id="local_video_task_1",
         )
         assert result is None
 
@@ -186,6 +298,7 @@ class TestVideoSyncRetry:
                 message_id="msg_1",
                 conversation_id="conv_1",
                 metadata=MagicMock(),
+                local_task_id="local_video_task_1",
             )
             assert result is None
 
@@ -221,6 +334,7 @@ class TestVideoSyncRetry:
                 message_id="msg_1",
                 conversation_id="conv_1",
                 metadata=MagicMock(),
+                local_task_id="local_video_task_1",
             )
 
             mock_new_adapter.close.assert_awaited_once()
@@ -252,6 +366,7 @@ class TestAsyncRetryServiceVideo:
 
     def _make_video_task(self, **overrides):
         task = {
+            "id": "local_video_task_1",
             "external_task_id": "vid_001",
             "type": "video",
             "user_id": "user_1",

@@ -292,11 +292,12 @@ async def handle_regenerate_or_send_operation(
                 f"message_id={assistant_message_id} | type={gen_type.value}"
             )
         except Exception as e:
-            # 占位符入库失败不应阻断任务，降级为虚拟占位符
+            # 任务 Turn 绑定必须能找到真实的助手消息，不能继续使用虚拟占位符。
             logger.warning(
-                f"Failed to save placeholder to DB, continuing | "
+                f"Failed to save placeholder to DB, aborting generation | "
                 f"message_id={assistant_message_id} | error={e}"
             )
+            raise
 
     # 构造返回用的 Message 对象
     # media 类型使用扁平 gen_params（包含 aspect_ratio 等前端占位符渲染参数）

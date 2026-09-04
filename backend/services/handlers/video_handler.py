@@ -5,6 +5,7 @@
 """
 
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -53,8 +54,9 @@ class VideoHandler(BaseHandler):
 
         1. 提取 prompt 和参考图
         2. 计算并预扣积分
-        3. 调用视频生成 API
-        4. 保存任务到数据库（含 transaction_id）
+        3. 先保存本地任务并绑定 Turn
+        4. 调用视频生成 API
+        5. 将 Provider ID 回填到同一条任务记录
         """
         # 1. 提取参数
         prompt = self._extract_text_content(content)
@@ -84,17 +86,16 @@ class VideoHandler(BaseHandler):
         # 4. 检查并预扣积分
         self._check_balance(user_id, credits_to_lock)
 
-        # 生成临时 task_id 用于积分锁定
-        temp_task_id = str(uuid.uuid4())
+        # 本地 task.id 是任务生命周期的稳定身份；Provider ID 只在提交成功后回填。
+        local_task_id = str(uuid.uuid4())
         transaction_id = self._lock_credits(
-            task_id=temp_task_id,
+            task_id=local_task_id,
             user_id=user_id,
             amount=credits_to_lock,
             reason=f"Video: {model_id}",
             org_id=self.org_id,
         )
 
-        # 5. 调用视频生成 API
         from services.adapters.factory import create_video_adapter
 
         adapter = create_video_adapter(model_id)
@@ -107,6 +108,37 @@ class VideoHandler(BaseHandler):
             "callback_url": self._build_callback_url(adapter.provider.value),
             "wait_for_result": False,
         }
+
+        # Provider 调用前先落库，保证 Turn 绑定失败时不会遗留一个已提交但无本地记录的任务。
+        try:
+            self._save_task(
+                task_id=local_task_id,
+                message_id=message_id,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                model_id=model_id,
+                prompt=prompt,
+                params=params,
+                metadata=metadata,
+                credits_locked=credits_to_lock,
+                transaction_id=transaction_id,
+                local_task_id=local_task_id,
+                defer_external_task_id=True,
+            )
+        except Exception as save_err:
+            logger.critical(
+                f"Video task pre-save failed, refunding | local_task_id={local_task_id} | "
+                f"transaction_id={transaction_id} | error={save_err}"
+            )
+            try:
+                self._refund_credits(transaction_id)
+            except Exception as refund_err:
+                logger.critical(
+                    f"Video pre-save refund also failed | tx={transaction_id} | "
+                    f"error={refund_err}"
+                )
+            await adapter.close()
+            raise
 
         try:
             result = await adapter.generate(**generate_kwargs)
@@ -124,43 +156,53 @@ class VideoHandler(BaseHandler):
                 params=params, generate_kwargs=generate_kwargs,
                 user_id=user_id, credits_to_lock=credits_to_lock,
                 message_id=message_id, conversation_id=conversation_id,
-                metadata=metadata,
+                metadata=metadata, local_task_id=local_task_id,
             )
             if retry_result:
                 return retry_result
+            self._update_task_by_id(
+                local_task_id,
+                {
+                    "status": "failed",
+                    "error_message": str(e),
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
             raise e
         finally:
             await adapter.close()
 
-        # 6. 保存任务到数据库（使用 external_task_id 作为主 ID）
+        # Provider 成功后只更新预先创建的本地任务，不再插入第二条任务。
         try:
-            self._save_task(
-                task_id=external_task_id,
-                message_id=message_id,
-                conversation_id=conversation_id,
-                user_id=user_id,
-                model_id=model_id,
-                prompt=prompt,
-                params=params,
-                metadata=metadata,
-                credits_locked=credits_to_lock,
-                transaction_id=transaction_id,
+            self._update_task_by_id(
+                local_task_id,
+                {
+                    "external_task_id": external_task_id,
+                    "error_message": None,
+                },
             )
-        except Exception as save_err:
-            # task 没落库 → webhook 回调时 get_task 找不到 → 永远不会确认/退积分
-            # 必须主动退积分 + 抛出异常，让 message.py finally 释放 slot
+        except Exception as update_err:
             logger.critical(
-                f"Video _save_task failed, refunding | external_task_id={external_task_id} | "
-                f"transaction_id={transaction_id} | error={save_err}"
+                f"Video external task binding failed, refunding | "
+                f"local_task_id={local_task_id} | external_task_id={external_task_id} | "
+                f"transaction_id={transaction_id} | error={update_err}"
             )
             try:
                 self._refund_credits(transaction_id)
             except Exception as refund_err:
                 logger.critical(
-                    f"Video _save_task refund also failed | tx={transaction_id} | "
+                    f"Video external task binding refund also failed | tx={transaction_id} | "
                     f"error={refund_err}"
                 )
-            raise
+            self._update_task_by_id(
+                local_task_id,
+                {
+                    "status": "failed",
+                    "error_message": str(update_err),
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            raise update_err
 
         logger.info(
             f"Video task started | external_task_id={external_task_id} | "
@@ -183,6 +225,7 @@ class VideoHandler(BaseHandler):
         message_id: str,
         conversation_id: str,
         metadata: TaskMetadata,
+        local_task_id: str,
     ) -> Optional[str]:
         """Smart mode 同步重试：API 调用失败时尝试替代模型"""
         if not params.get("_is_smart_mode"):
@@ -213,7 +256,7 @@ class VideoHandler(BaseHandler):
 
             new_adapter = create_video_adapter(new_model)
             new_tx = self._lock_credits(
-                task_id=str(uuid.uuid4()),
+                task_id=local_task_id,
                 user_id=user_id,
                 amount=credits_to_lock,
                 reason=f"Video retry: {new_model}",
@@ -240,30 +283,36 @@ class VideoHandler(BaseHandler):
             finally:
                 await new_adapter.close()
 
-            # API 成功 → 持久化。落库失败必须退积分 + 继续重试下一个 model，
-            # 否则 webhook 找不到 task 永远不退积分
+            # API 成功 → 更新同一条预先创建的本地 task。
             try:
                 retry_params = {
                     **params,
                     "_retried": True,
                     "_retry_from_model": model_id,
                 }
-                self._save_task(
-                    task_id=result.task_id,
-                    message_id=message_id,
-                    conversation_id=conversation_id,
-                    user_id=user_id,
-                    model_id=new_model,
-                    prompt=prompt,
-                    params=retry_params,
-                    metadata=metadata,
-                    credits_locked=credits_to_lock,
-                    transaction_id=new_tx,
+                self._update_task_by_id(
+                    local_task_id,
+                    {
+                        "external_task_id": result.task_id,
+                        "model_id": new_model,
+                        "status": "pending",
+                        "request_params": {
+                            "prompt": prompt,
+                            "model": new_model,
+                            **self._serialize_params(retry_params),
+                        },
+                        "credits_locked": credits_to_lock,
+                        "credit_transaction_id": new_tx,
+                        "error_message": None,
+                        "completed_at": None,
+                        "started_at": datetime.now(timezone.utc).isoformat(),
+                    },
                 )
-            except Exception as save_err:
+            except Exception as update_err:
                 logger.critical(
-                    f"Video retry _save_task failed, refunding | "
-                    f"external_task_id={result.task_id} | tx={new_tx} | error={save_err}"
+                    f"Video retry task update failed, refunding | "
+                    f"local_task_id={local_task_id} | external_task_id={result.task_id} | "
+                    f"tx={new_tx} | error={update_err}"
                 )
                 try:
                     self._refund_credits(new_tx)
@@ -272,8 +321,8 @@ class VideoHandler(BaseHandler):
                         f"Video retry _save_task refund also failed | tx={new_tx} | "
                         f"error={refund_err}"
                     )
-                ctx.add_failure(new_model, f"save_task_failed: {save_err}")
-                continue
+                ctx.add_failure(new_model, f"task_update_failed: {update_err}")
+                return None
 
             logger.info(
                 f"Video retry succeeded | task_id={result.task_id} | "
@@ -355,6 +404,8 @@ class VideoHandler(BaseHandler):
         metadata: TaskMetadata,
         credits_locked: int = 0,
         transaction_id: Optional[str] = None,
+        local_task_id: Optional[str] = None,
+        defer_external_task_id: bool = False,
     ) -> None:
         """保存任务到数据库"""
         # 1. 序列化业务参数
@@ -377,7 +428,13 @@ class VideoHandler(BaseHandler):
             metadata=metadata,
             credits_locked=credits_locked,
             transaction_id=transaction_id,
+            local_task_id=local_task_id,
+            defer_external_task_id=defer_external_task_id,
         )
+
+        if defer_external_task_id:
+            # 任务在 Provider 调用前已进入 pending，便于超时清理发现提交中断。
+            task_data["started_at"] = datetime.now(timezone.utc).isoformat()
 
         # 3. 保存到数据库
         self._insert_task_with_turn_binding(task_data, metadata)

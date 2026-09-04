@@ -8,7 +8,7 @@
 1. Image 类型 → 占位符入库
 2. Video 类型 → 占位符入库
 3. Chat 类型 → 不入库（保持虚拟）
-4. 占位符入库失败 → 降级继续（不阻断）
+4. 占位符入库失败 → 中止生成
 5. Retry 操作 → 不经过新逻辑
 6. Upsert 覆盖 → 占位符入库后 on_complete 的 upsert 能正确覆盖
 """
@@ -174,11 +174,11 @@ class TestMediaPlaceholderInsert:
 
 
 class TestPlaceholderInsertFailure:
-    """测试占位符入库失败时的降级行为"""
+    """测试占位符入库失败时中止生成"""
 
     @pytest.mark.asyncio
-    async def test_insert_failure_does_not_block_task(self):
-        """DB insert 失败时应降级继续，不阻断任务"""
+    async def test_insert_failure_blocks_task(self):
+        """DB insert 失败时应中止任务，避免使用虚拟助手消息"""
         from api.routes.message import _handle_regenerate_or_send_operation
 
         db = MagicMock()
@@ -192,20 +192,16 @@ class TestPlaceholderInsertFailure:
 
         msg_id = str(uuid4())
 
-        # 不应抛异常
-        result_id, result_msg = await _handle_regenerate_or_send_operation(
-            db=db,
-            conversation_id=str(uuid4()),
-            operation=MessageOperation.SEND,
-            original_message_id=None,
-            assistant_message_id=msg_id,
-            placeholder_created_at=datetime.now(timezone.utc),
-            gen_type=GenerationType.IMAGE,
-        )
-
-        # 仍然返回有效结果
-        assert result_id == msg_id
-        assert result_msg.status == MessageStatus.PENDING
+        with pytest.raises(Exception, match="DB connection lost"):
+            await _handle_regenerate_or_send_operation(
+                db=db,
+                conversation_id=str(uuid4()),
+                operation=MessageOperation.SEND,
+                original_message_id=None,
+                assistant_message_id=msg_id,
+                placeholder_created_at=datetime.now(timezone.utc),
+                gen_type=GenerationType.IMAGE,
+            )
 
     @pytest.mark.asyncio
     async def test_insert_failure_logs_warning(self):
@@ -220,15 +216,16 @@ class TestPlaceholderInsertFailure:
         table_mock.insert.return_value = insert_chain
 
         with patch("api.routes.message_generation_helpers.logger") as mock_logger:
-            await _handle_regenerate_or_send_operation(
-                db=db,
-                conversation_id=str(uuid4()),
-                operation=MessageOperation.SEND,
-                original_message_id=None,
-                assistant_message_id=str(uuid4()),
-                placeholder_created_at=datetime.now(timezone.utc),
-                gen_type=GenerationType.IMAGE,
-            )
+            with pytest.raises(Exception, match="timeout"):
+                await _handle_regenerate_or_send_operation(
+                    db=db,
+                    conversation_id=str(uuid4()),
+                    operation=MessageOperation.SEND,
+                    original_message_id=None,
+                    assistant_message_id=str(uuid4()),
+                    placeholder_created_at=datetime.now(timezone.utc),
+                    gen_type=GenerationType.IMAGE,
+                )
 
             # 验证 warning 被记录
             mock_logger.warning.assert_called_once()

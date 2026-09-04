@@ -109,7 +109,7 @@ class TestImageSyncRetry:
              patch("services.adapters.factory.create_image_adapter", return_value=mock_new_adapter), \
              patch.object(handler, "_build_callback_url", return_value="http://cb"), \
              patch.object(handler, "_lock_credits", return_value="tx_new"), \
-             patch.object(handler, "_save_task"):
+             patch.object(handler, "_update_task_by_id"):
 
             result = await handler._attempt_image_sync_retry(
                 prompt="画一只猫",
@@ -124,6 +124,7 @@ class TestImageSyncRetry:
                 message_id="msg_1",
                 conversation_id="conv_1",
                 metadata=MagicMock(),
+                local_task_id="local_task_1",
             )
 
             assert result == "new_ext_123"
@@ -165,6 +166,7 @@ class TestImageSyncRetry:
                 message_id="msg_1",
                 conversation_id="conv_1",
                 metadata=MagicMock(),
+                local_task_id="local_task_1",
             )
 
             assert result is None
@@ -187,6 +189,7 @@ class TestImageSyncRetry:
             message_id="msg_1",
             conversation_id="conv_1",
             metadata=MagicMock(),
+            local_task_id="local_task_1",
         )
 
         assert result is None
@@ -208,6 +211,7 @@ class TestImageSyncRetry:
                 message_id="msg_1",
                 conversation_id="conv_1",
                 metadata=MagicMock(),
+                local_task_id="local_task_1",
             )
 
             assert result is None
@@ -246,6 +250,7 @@ class TestImageSyncRetry:
                 message_id="msg_1",
                 conversation_id="conv_1",
                 metadata=MagicMock(),
+                local_task_id="local_task_1",
             )
 
             mock_new_adapter.close.assert_awaited_once()
@@ -278,6 +283,7 @@ class TestAsyncRetryService:
     def _make_task(self, **overrides):
         """创建测试 task dict"""
         task = {
+            "id": "local_task_1",
             "external_task_id": "ext_001",
             "type": "image",
             "user_id": "user_1",
