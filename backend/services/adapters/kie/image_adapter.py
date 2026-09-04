@@ -9,6 +9,8 @@ from typing import List, Optional, Dict, Any
 
 from loguru import logger
 
+from services.oss_service import normalize_external_oss_url
+
 from ..base import (
     BaseImageAdapter,
     ModelProvider,
@@ -239,6 +241,10 @@ class KieImageAdapter(BaseImageAdapter):
         resolution: Optional[str],
     ) -> Dict[str, Any]:
         """构建输入参数"""
+        image_urls = (
+            [normalize_external_oss_url(url) for url in image_urls]
+            if image_urls else image_urls
+        )
 
         if self.model == "google/nano-banana":
             return NanoBananaInput(

@@ -12,7 +12,7 @@ from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlparse, urlsplit, urlunsplit
 
 import oss2
 from loguru import logger
@@ -25,6 +25,44 @@ from services.http_downloader import HttpDownloader
 # 浏览器默认会"内嵌渲染"(而非下载)的 MIME 前缀 — 这些需要强制 attachment
 # 文档类(PDF/Office)不加 attachment,因为前端用 iframe 内嵌预览
 _INLINE_RENDERED_MIME_PREFIXES = ("image/", "video/", "audio/")
+
+
+def normalize_external_oss_url(url: str) -> str:
+    """规范化自有 OSS/CDN URL，供第三方服务端拉取媒体时使用。
+
+    仅编码已配置的 CDN/OSS 域名路径，保留 query 和外部 URL 原样，避免改变
+    用户引用的第三方资源语义。保留已有百分号编码，防止历史 URL 被二次编码。
+    """
+    try:
+        parsed = urlsplit(url)
+    except (TypeError, ValueError):
+        return url
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return url
+    if parsed.hostname.lower() not in _configured_external_oss_hosts():
+        return url
+    encoded_path = quote(parsed.path, safe="/%")
+    return urlunsplit(parsed._replace(path=encoded_path))
+
+
+def _configured_external_oss_hosts() -> set[str]:
+    """返回可安全规范化的自有 CDN/OSS 主机名。"""
+    hosts: set[str] = set()
+    cdn_host = _configured_host(settings.oss_cdn_domain)
+    if cdn_host:
+        hosts.add(cdn_host)
+    endpoint_host = _configured_host(settings.oss_endpoint)
+    if settings.oss_bucket_name and endpoint_host:
+        hosts.add(f"{settings.oss_bucket_name}.{endpoint_host}".lower())
+    return hosts
+
+
+def _configured_host(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parsed = urlsplit(text if "://" in text else f"//{text}")
+    return (parsed.hostname or "").lower().rstrip(".")
 
 
 def _build_upload_headers(content_type: str, filename: str) -> dict[str, str]:
@@ -336,14 +374,16 @@ class OSSService:
             object_key: 对象键
 
         Returns:
-            访问 URL
+            已按 RFC 3986 编码路径的访问 URL
         """
+        # OSS 保留原始 object key；仅在 URL 出口编码，覆盖用户自建目录和文件名中的 Unicode。
+        encoded_key = quote(str(object_key).replace("\\", "/").strip("/"), safe="/")
         if self.cdn_domain:
             # 使用 CDN 加速域名
-            return f"https://{self.cdn_domain}/{object_key}"
+            return f"https://{self.cdn_domain}/{encoded_key}"
         else:
             # 使用 OSS 外网直链（使用 external_endpoint）
-            return f"https://{settings.oss_bucket_name}.{self.external_endpoint}/{object_key}"
+            return f"https://{settings.oss_bucket_name}.{self.external_endpoint}/{encoded_key}"
 
     def is_oss_url(self, url: str) -> bool:
         """

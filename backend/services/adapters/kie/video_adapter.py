@@ -10,6 +10,8 @@ from decimal import Decimal
 
 from loguru import logger
 
+from services.oss_service import normalize_external_oss_url
+
 from ..base import (
     BaseVideoAdapter,
     ModelProvider,
@@ -219,6 +221,10 @@ class KieVideoAdapter(BaseVideoAdapter):
         remove_watermark: bool,
     ) -> Dict[str, Any]:
         """构建输入参数"""
+        image_urls = (
+            [normalize_external_oss_url(url) for url in image_urls]
+            if image_urls else image_urls
+        )
 
         # 转换宽高比枚举
         ar = AspectRatio.PORTRAIT if aspect_ratio == "portrait" else AspectRatio.LANDSCAPE

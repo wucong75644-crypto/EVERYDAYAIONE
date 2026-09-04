@@ -23,7 +23,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from uuid import uuid4
 
-from services.oss_service import OSSService, get_oss_service
+from services.oss_service import OSSService, get_oss_service, normalize_external_oss_url
 
 
 class TestOSSServiceInit:
@@ -340,6 +340,36 @@ class TestOSSServiceURLGeneration:
 
         # Assert
         assert "test-bucket.oss-cn-hangzhou.aliyuncs.com" in url
+
+    def test_get_url_percent_encodes_custom_unicode_object_key(self, oss_service):
+        url = oss_service.get_url("workspace/personal/abcd/客户素材/产品图.jpg")
+
+        assert url == (
+            "https://cdn.example.com/workspace/personal/abcd/"
+            "%E5%AE%A2%E6%88%B7%E7%B4%A0%E6%9D%90/"
+            "%E4%BA%A7%E5%93%81%E5%9B%BE.jpg"
+        )
+
+    def test_normalize_external_oss_url_encodes_legacy_custom_folder(self):
+        with patch("services.oss_service.settings") as mock_settings:
+            mock_settings.oss_cdn_domain = "cdn.example.com"
+            mock_settings.oss_bucket_name = None
+            mock_settings.oss_endpoint = None
+            url = normalize_external_oss_url(
+                "https://cdn.example.com/workspace/personal/abcd/客户素材/产品图.jpg?x=1",
+            )
+
+        assert url == (
+            "https://cdn.example.com/workspace/personal/abcd/"
+            "%E5%AE%A2%E6%88%B7%E7%B4%A0%E6%9D%90/"
+            "%E4%BA%A7%E5%93%81%E5%9B%BE.jpg?x=1"
+        )
+
+    def test_normalize_external_oss_url_keeps_third_party_url_unchanged(self):
+        url = "https://other.example.com/客户素材/产品图.jpg?x=1"
+
+        assert normalize_external_oss_url(url) == url
+
 
     def test_is_oss_url_cdn_domain(self, oss_service):
         """测试：CDN 域名 URL 识别"""
