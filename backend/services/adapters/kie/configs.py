@@ -126,6 +126,7 @@ IMAGE_MODEL_CONFIGS = {
         "description": "GPT Image 2 图生图（以参考图为基础生成）",
         "requires_image_input": True,
         "max_images": 16,
+        "max_image_size_mb": 30,
         "max_prompt_length": 20000,
         "supported_sizes": [
             "1:1", "9:16", "16:9", "3:4", "4:3", "auto"

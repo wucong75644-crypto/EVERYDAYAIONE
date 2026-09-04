@@ -7,6 +7,7 @@ KIE API HTTP 客户端
 import asyncio
 import json
 from typing import Optional, AsyncIterator, Dict, Any, NoReturn
+from urllib.parse import urlparse
 
 import httpx
 from loguru import logger
@@ -72,6 +73,16 @@ class KieTaskTimeoutError(KieAPIError):
     pass
 
 
+class KieMediaUploadError(KieAPIError):
+    """KIE 临时素材上传失败。"""
+    pass
+
+
+class KieRetryableMediaUploadError(KieMediaUploadError):
+    """可安全重试的 KIE 临时素材上传失败。"""
+    pass
+
+
 class KieClient:
     """
     KIE API 客户端
@@ -85,6 +96,7 @@ class KieClient:
     BASE_URL = "https://api.kie.ai"
     TASK_CREATE_ENDPOINT = "/api/v1/jobs/createTask"
     TASK_QUERY_ENDPOINT = "/api/v1/jobs/recordInfo"
+    FILE_STREAM_UPLOAD_ENDPOINT = "https://kieai.redpandaai.co/api/file-stream-upload"
 
     # Chat 模型端点映射
     CHAT_ENDPOINTS = {
@@ -97,6 +109,7 @@ class KieClient:
     STREAM_TIMEOUT = 300.0  # 流式响应超时
     TASK_POLL_INTERVAL = 2.0  # 任务轮询间隔
     TASK_MAX_WAIT_TIME = 600.0  # 任务最大等待时间 (10分钟)
+    FILE_UPLOAD_TIMEOUT = 90.0
 
     def __init__(
         self,
@@ -182,6 +195,94 @@ class KieClient:
                 status_code=status_code,
                 error_code=str(code),
             )
+
+    # ============================================================
+    # File Upload API（KIE 临时素材）
+    # ============================================================
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type(
+            (httpx.TimeoutException, httpx.NetworkError, KieRetryableMediaUploadError)
+        ),
+    )
+    async def upload_file_stream(
+        self,
+        content: bytes,
+        file_name: str,
+        content_type: str,
+        upload_path: str = "everydayai/input-media",
+    ) -> str:
+        """上传素材二进制到 KIE，返回仅供本次生成使用的临时下载 URL。"""
+        if not content:
+            raise KieMediaUploadError("KIE 输入素材为空")
+
+        timeout = httpx.Timeout(
+            connect=10.0,
+            read=self.FILE_UPLOAD_TIMEOUT,
+            write=self.FILE_UPLOAD_TIMEOUT,
+            pool=10.0,
+        )
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        files = {"file": (file_name, content, content_type)}
+        data = {"uploadPath": upload_path, "fileName": file_name}
+
+        try:
+            async with httpx.AsyncClient(headers=headers, timeout=timeout) as client:
+                response = await client.post(
+                    self.FILE_STREAM_UPLOAD_ENDPOINT,
+                    files=files,
+                    data=data,
+                )
+        except (httpx.TimeoutException, httpx.NetworkError):
+            raise
+        except httpx.HTTPError as exc:
+            raise KieMediaUploadError(f"KIE 素材上传请求失败: {exc}") from exc
+
+        try:
+            response_data = response.json()
+        except Exception as exc:
+            if response.status_code >= 500:
+                raise KieRetryableMediaUploadError(
+                    f"KIE 素材上传服务异常: HTTP {response.status_code}",
+                    status_code=response.status_code,
+                ) from exc
+            raise KieMediaUploadError(
+                f"KIE 素材上传返回非 JSON 响应: status={response.status_code}",
+                status_code=response.status_code,
+            ) from exc
+
+        try:
+            response_code = int(response_data.get("code", response.status_code))
+        except (TypeError, ValueError) as exc:
+            raise KieMediaUploadError("KIE 素材上传响应 code 无效") from exc
+
+        if response.status_code >= 500 or response_code >= 500 or response_code == 429:
+            raise KieRetryableMediaUploadError(
+                f"KIE 素材上传暂时不可用: {response_data.get('msg', 'unknown error')}",
+                status_code=response.status_code,
+                error_code=str(response_code),
+            )
+
+        if response.status_code != 200 or response_code != 200 or not response_data.get("success"):
+            self._handle_error_response(response_code, response_data)
+
+        response_payload = response_data.get("data")
+        if not isinstance(response_payload, dict):
+            raise KieMediaUploadError("KIE 素材上传响应缺少 data")
+
+        download_url = response_payload.get("downloadUrl") or response_payload.get("fileUrl")
+        parsed_url = urlparse(download_url) if isinstance(download_url, str) else None
+        if not parsed_url or parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+            raise KieMediaUploadError("KIE 素材上传响应缺少有效下载地址")
+
+        logger.info(
+            "KIE input media uploaded | bytes={} | content_type={}",
+            len(content),
+            content_type,
+        )
+        return download_url
 
     # ============================================================
     # Chat Completions API (Gemini 3 系列)

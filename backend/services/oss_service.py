@@ -45,6 +45,19 @@ def normalize_external_oss_url(url: str) -> str:
     return urlunsplit(parsed._replace(path=encoded_path))
 
 
+def is_configured_external_oss_url(url: str) -> bool:
+    """判断 URL 是否属于当前应用配置的公共 CDN/OSS。"""
+    try:
+        parsed = urlsplit(url)
+    except (TypeError, ValueError):
+        return False
+    return (
+        parsed.scheme in ("http", "https")
+        and bool(parsed.hostname)
+        and parsed.hostname.lower() in _configured_external_oss_hosts()
+    )
+
+
 def _configured_external_oss_hosts() -> set[str]:
     """返回可安全规范化的自有 CDN/OSS 主机名。"""
     hosts: set[str] = set()
