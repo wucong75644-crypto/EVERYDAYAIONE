@@ -22,7 +22,6 @@ ExecStart=/var/www/everydayai/backend/venv/bin/uvicorn main:app \
     --port 8000 \
     --workers 2 \
     --log-level info \
-    --access-log \
     --no-use-colors
 
 # 优雅重启
