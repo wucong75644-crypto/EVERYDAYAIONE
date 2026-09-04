@@ -170,9 +170,13 @@ class ERPAgent(ERPChildFactoryMixin):
 
     async def _llm_extract(self, query: str) -> tuple[list[tuple[str, dict]], str | None]:
         """调 LLM 提取多域计划。失败时抛异常，由调用方降级。"""
-        from services.adapters.factory import create_chat_adapter
         from core.config import get_settings
         from services.agent.plan_builder import build_multi_extract_prompt, parse_multi_extract_response
+        from services.model_gateway import (
+            ModelCallRequest,
+            _collect_stream_response,
+            get_model_gateway,
+        )
 
         now = self.request_ctx.now
         weekday = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
@@ -183,15 +187,25 @@ class ERPAgent(ERPChildFactoryMixin):
             {"role": "system", "content": "你是参数提取器，只返回JSON。"},
             {"role": "user", "content": prompt},
         ]
-        adapter = create_chat_adapter(get_settings().agent_loop_model, org_id=self.org_id, db=self.db)
+        model_gateway = get_model_gateway().open_chat(
+            ModelCallRequest(
+                model_id=get_settings().agent_loop_model,
+                org_id=self.org_id,
+                db=self.db,
+                request_id=self.task_id,
+            )
+        )
         try:
-            response = await adapter.chat_sync(messages=messages)
+            response = await _collect_stream_response(
+                model_gateway,
+                messages=messages,
+            )
             self._tokens_used += getattr(response, "prompt_tokens", 0)
             self._tokens_used += getattr(response, "completion_tokens", 0)
             raw = getattr(response, "content", "") or ""
             return parse_multi_extract_response(raw)
         finally:
-            await adapter.close()
+            await model_gateway.close()
 
     async def _execute_plan(self, plan: ExecutionPlan, query: str, deadline: float) -> list[tuple[str, Any]]:
         """并行执行所有 step，返回 [(domain, ToolOutput | Exception)]。"""

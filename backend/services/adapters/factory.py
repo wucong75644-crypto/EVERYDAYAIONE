@@ -140,6 +140,20 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
         max_tokens=65536,
         context_window=1_000_000,
     ),
+    "qwen-vl-max": ModelConfig(
+        model_id="qwen-vl-max",
+        provider=ModelProvider.DASHSCOPE,
+        provider_model="qwen-vl-max",
+        display_name="Qwen VL Max",
+        # 该模型此前由电商图入口直接创建；价格不参与本任务的调用收敛。
+        input_price=0.0,
+        output_price=0.0,
+        supports_vision=True,
+        supports_tools=False,
+        supports_thinking=True,
+        max_tokens=32768,
+        context_window=131_072,
+    ),
     "kimi-k2.5": ModelConfig(
         model_id="kimi-k2.5",
         provider=ModelProvider.DASHSCOPE,

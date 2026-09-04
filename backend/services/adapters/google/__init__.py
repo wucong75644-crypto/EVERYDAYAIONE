@@ -7,18 +7,8 @@ Google Gemini API 适配器
 - gemini-2.5-flash: 高效能模型
 - gemini-2.5-pro: 高级推理模型
 
-使用示例:
-    from services.adapters.google import GoogleChatAdapter
-
-    adapter = GoogleChatAdapter(
-        model_id="gemini-2.5-flash-preview-05-20",
-        api_key="your-api-key"
-    )
-
-    async for chunk in adapter.stream_chat(messages):
-        print(chunk.content, end="")
-
-    await adapter.close()
+生产 Chat 调用通过 services.model_gateway.get_model_gateway() 进入共享 Gateway；
+本模块只暴露 Provider adapter 实现。
 
 版本: 2.0（使用 google-genai SDK）
 """

@@ -98,7 +98,8 @@ async def execute_chat(
         context_anchor=request.context_anchor,
         replay_context=request.replay_context,
     )
-    handler._adapter = prepared.adapter
+    model_gateway = _get_model_gateway(prepared)
+    handler._adapter = model_gateway
     previous_sink = getattr(handler, "_execution_sink", None)
     handler._execution_sink = output
     handler._pending_emit_payloads = []
@@ -119,6 +120,7 @@ async def execute_chat(
             totals=totals,
             blocks=blocks,
             runtime=runtime,
+            model_round=_initial_model_round(request.replay_context),
         )
         await _apply_budget_stop(prepared, totals, blocks, output)
         await _consume_emit_payloads(handler, blocks, output)
@@ -150,8 +152,8 @@ async def execute_chat(
             ),
         )
     finally:
-        await prepared.adapter.close()
-        if getattr(handler, "_adapter", None) is prepared.adapter:
+        await model_gateway.close()
+        if getattr(handler, "_adapter", None) is model_gateway:
             handler._adapter = None
         if getattr(handler, "_execution_sink", None) is output:
             handler._execution_sink = previous_sink
@@ -167,6 +169,7 @@ async def _run_loop(
     totals: StreamTotals,
     blocks: list[dict[str, Any]],
     runtime: ConversationTurnRuntime | None,
+    model_round: int = 0,
 ) -> str | None:
     thinking_mode = request.thinking_mode
     empty_output_retried = False
@@ -179,6 +182,7 @@ async def _run_loop(
                     prepared.messages,
                     blocks,
                     prepared.budget.turns_used,
+                    next_model_round=model_round,
                 ),
             )
             _inject_subtask_completions(
@@ -204,6 +208,7 @@ async def _run_loop(
             tool_context=prepared.tool_context,
             permission=prepared.permission,
         )
+        current_model_round = model_round
         turn_text, turn_thinking, calls, previewed_call_ids = await _read_turn(
             prepared,
             tools,
@@ -215,7 +220,9 @@ async def _run_loop(
             request.thinking_effort,
             thinking_mode,
             request,
+            model_round=current_model_round,
         )
+        model_round += 1
         if runtime:
             await runtime.safe_point(SafePoint.AFTER_MODEL)
         await _append_turn_blocks(
@@ -251,6 +258,7 @@ async def _run_loop(
             turn_text=turn_text,
             calls=calls,
             previewed_call_ids=previewed_call_ids,
+            next_model_round=model_round,
             cancellation_event=cancellation_event,
             sink=sink,
             blocks=blocks,
@@ -277,13 +285,15 @@ async def _read_turn(
     thinking_effort: str | None = None,
     thinking_mode: str | None = None,
     request: ChatExecutionRequest | None = None,
+    model_round: int = 0,
 ) -> tuple[str, str, list[dict[str, Any]], set[str]]:
     turn_text = ""
     turn_thinking = ""
     calls: dict[int, dict[str, Any]] = {}
     previewed_indices: set[int] = set()
     preview_ids: dict[int, str] = {}
-    stream = prepared.adapter.stream_chat(
+    model_gateway = _get_model_gateway(prepared)
+    stream = model_gateway.stream_chat(
         messages=prepared.messages,
         tools=tools,
         reasoning_effort=thinking_effort,
@@ -359,7 +369,9 @@ async def _read_turn(
                 for index, call in calls.items():
                     if index in previewed_indices or not call.get("name"):
                         continue
-                    preview_id = _actor_tool_preview_id(runtime.turn_id, index)
+                    preview_id = _actor_tool_preview_id(
+                        runtime.turn_id, model_round, index,
+                    )
                     call["id"] = preview_id
                     preview_ids[index] = preview_id
                     previewed_indices.add(index)
@@ -387,6 +399,7 @@ async def _read_turn(
             else:
                 call["id"] = _stable_actor_tool_call_id(
                     runtime.turn_id,
+                    model_round,
                     index,
                     call.get("name", ""),
                     call.get("arguments", ""),
@@ -396,22 +409,52 @@ async def _read_turn(
     return turn_text, turn_thinking, ordered_calls, previewed_call_ids
 
 
-def _actor_tool_preview_id(turn_id: str, index: int) -> str:
-    """Return an ID shared by preview/final steps; args hash stays in the ledger."""
-    return f"actor-call:{turn_id}:{index}"
+def _get_model_gateway(prepared: Any) -> Any:
+    """读取 Gateway 会话；兼容旧测试注入的 adapter-shaped doubles。"""
+    model_gateway = getattr(prepared, "model_gateway", None)
+    if model_gateway is not None:
+        return model_gateway
+    return prepared.adapter
+
+
+def _initial_model_round(replay_context: dict[str, Any] | None) -> int:
+    """恢复 Actor 时从 checkpoint 继续使用稳定的模型回合号。"""
+    if not replay_context:
+        return 0
+    next_model_round = replay_context.get("next_model_round")
+    if (
+        isinstance(next_model_round, int)
+        and not isinstance(next_model_round, bool)
+    ):
+        return max(0, next_model_round)
+    turn_index = replay_context.get("turn_index")
+    if isinstance(turn_index, int) and not isinstance(turn_index, bool):
+        # 兼容旧 checkpoint：旧 payload 只记录已完成的本地回合索引。
+        return max(0, turn_index + 1)
+    return 0
+
+
+def _actor_tool_preview_id(
+    turn_id: str,
+    model_round: int,
+    index: int,
+) -> str:
+    """Return one ID shared by a streamed call's preview and final step."""
+    return f"actor-call:{turn_id}:round:{model_round}:index:{index}"
 
 
 def _stable_actor_tool_call_id(
     turn_id: str,
+    model_round: int,
     index: int,
     tool_name: str,
     arguments: str,
 ) -> str:
-    """为 Actor 重试生成稳定调用 ID，避免供应商 call ID 变化导致重复副作用。"""
+    """为 Actor 重试生成稳定调用 ID，避免供应商 ID 变化导致重复副作用。"""
     fingerprint = hashlib.sha256(
         f"{tool_name}\n{arguments}".encode("utf-8")
     ).hexdigest()[:24]
-    return f"actor-call:{turn_id}:{index}:{fingerprint}"
+    return f"actor-call:{turn_id}:round:{model_round}:index:{index}:{fingerprint}"
 
 
 def _actor_tool_completion_command_id(
@@ -462,6 +505,7 @@ async def _execute_tools(
     sink: ExecutionSink,
     blocks: list[dict[str, Any]],
     runtime: ConversationTurnRuntime | None,
+    next_model_round: int | None = None,
     totals: StreamTotals | None = None,
 ) -> str | None:
     totals = totals or StreamTotals()
@@ -562,6 +606,7 @@ async def _execute_tools(
                 blocks,
                 turn,
                 tool_call_ids=[call["id"] for call in calls],
+                next_model_round=next_model_round,
             ),
         )
     logger.info(
@@ -598,9 +643,10 @@ def _build_replay_context(
     turn_index: int,
     *,
     tool_call_ids: list[str] | None = None,
+    next_model_round: int | None = None,
 ) -> dict[str, Any]:
     """构造模型可重放上下文；不把 token 级 DeliveryProgress 当 checkpoint。"""
-    return {
+    payload = {
         "messages": json.loads(
             json.dumps(messages, ensure_ascii=False, default=str),
         ),
@@ -610,6 +656,9 @@ def _build_replay_context(
         "turn_index": turn_index,
         "tool_call_ids": list(tool_call_ids or []),
     }
+    if next_model_round is not None:
+        payload["next_model_round"] = next_model_round
+    return payload
 
 
 def _inject_subtask_completions(
@@ -690,7 +739,7 @@ async def _apply_budget_stop(
     from services.handlers.chat.stream_finalize import stop_message
 
     synthesis = await synthesize_wrap_up(
-        adapter=prepared.adapter,
+        model_gateway=_get_model_gateway(prepared),
         messages=prepared.messages,
         content_blocks=blocks,
         reason=stop_message(prepared.budget.stop_reason),

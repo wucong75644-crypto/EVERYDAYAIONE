@@ -62,6 +62,7 @@ async def read_stream_turn(
     save_accumulated: Callable[[str, str], Awaitable[None]],
 ) -> StreamTurnResult:
     """读取一轮模型流并产生工具调用；不执行工具、不决定任务终态。"""
+    model_gateway = adapter
     turn_text = ""
     turn_thinking = ""
     thinking_committed = False
@@ -70,7 +71,7 @@ async def read_stream_turn(
     tool_calls: dict[int, dict[str, Any]] = {}
     cancelled = False
 
-    async for chunk in adapter.stream_chat(
+    async for chunk in model_gateway.stream_chat(
         messages=messages,
         reasoning_effort=thinking_effort,
         thinking_mode=thinking_mode,

@@ -211,7 +211,11 @@ class ImageAgent(CreditMixin):
         messages: list[dict[str, Any]],
         has_images: bool,
     ) -> tuple[Any | None, str, AgentResult | None]:
-        from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
+        from services.model_gateway import (
+            ModelCallRequest,
+            _collect_stream_response,
+            get_model_gateway,
+        )
 
         model = (
             settings.image_enhance_vl_model
@@ -220,15 +224,18 @@ class ImageAgent(CreditMixin):
         models = [model, settings.image_enhance_fallback_model]
         last_error: Exception | None = None
         for index, candidate in enumerate(models):
-            adapter = DashScopeChatAdapter(
-                api_key=settings.dashscope_api_key or "",
-                model=candidate,
-                base_url=settings.dashscope_base_url,
-                stream_timeout=settings.image_enhance_timeout,
+            model_gateway = get_model_gateway().open_chat(
+                ModelCallRequest(
+                    model_id=candidate,
+                    timeout=settings.image_enhance_timeout,
+                )
             )
             try:
                 return (
-                    await adapter.chat_sync(messages=messages),
+                    await _collect_stream_response(
+                        model_gateway,
+                        messages=messages,
+                    ),
                     candidate,
                     None,
                 )
@@ -237,7 +244,7 @@ class ImageAgent(CreditMixin):
                 log = logger.warning if index == 0 else logger.error
                 log(f"ecom_plan model failed | model={candidate} | {error}")
             finally:
-                await adapter.close()
+                await model_gateway.close()
         error_result = AgentResult(
             status="error",
             summary="方案生成失败，请稍后重试",

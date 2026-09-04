@@ -3,7 +3,7 @@
 import asyncio
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -56,6 +56,21 @@ def _payload(*, conflict: bool = False) -> dict:
     }
 
 
+def _stream_adapter(content: str):
+    adapter = AsyncMock()
+
+    async def stream_chat(**_kwargs):
+        yield SimpleNamespace(
+            content=content,
+            prompt_tokens=3,
+            completion_tokens=5,
+            finish_reason="stop",
+        )
+
+    adapter.stream_chat = stream_chat
+    return adapter
+
+
 def test_parse_requirement_result_accepts_fenced_json() -> None:
     content = f"```json\n{json.dumps(_payload(), ensure_ascii=False)}\n```"
     assert parse_requirement_result(content).product_facts.product_name == "笔记本"
@@ -96,15 +111,19 @@ def test_conflict_gate_removes_claim_and_evasive_marketing_but_keeps_original() 
 
 @pytest.mark.asyncio
 async def test_generate_returns_primary_model_result_and_closes_adapter() -> None:
-    adapter = AsyncMock()
-    adapter.chat_sync.return_value = SimpleNamespace(content=json.dumps(_payload(), ensure_ascii=False))
+    adapter = _stream_adapter(json.dumps(_payload(), ensure_ascii=False))
     settings = SimpleNamespace(
         image_enhance_vl_model="primary", image_enhance_fallback_model="fallback",
         dashscope_api_key="key", dashscope_base_url="https://example.com",
     )
     with (
         patch("services.agent.image.requirement_assist_service.get_settings", return_value=settings),
-        patch("services.agent.image.requirement_assist_service.DashScopeChatAdapter", return_value=adapter),
+        patch("services.model_gateway.get_model_gateway", return_value=Mock(
+            open_chat=Mock(return_value=SimpleNamespace(
+                stream_chat=adapter.stream_chat,
+                close=adapter.close,
+            )),
+        )),
     ):
         outcome = await RequirementAssistService().generate(_input())
     assert outcome.model == "primary"
@@ -114,20 +133,20 @@ async def test_generate_returns_primary_model_result_and_closes_adapter() -> Non
 
 @pytest.mark.asyncio
 async def test_generate_falls_back_after_invalid_primary_output() -> None:
-    primary = AsyncMock()
-    fallback = AsyncMock()
-    primary.chat_sync.return_value = SimpleNamespace(content="invalid")
-    fallback.chat_sync.return_value = SimpleNamespace(content=json.dumps(_payload(), ensure_ascii=False))
+    primary = _stream_adapter("invalid")
+    fallback = _stream_adapter(json.dumps(_payload(), ensure_ascii=False))
     settings = SimpleNamespace(
         image_enhance_vl_model="primary", image_enhance_fallback_model="fallback",
         dashscope_api_key="key", dashscope_base_url="https://example.com",
     )
     with (
         patch("services.agent.image.requirement_assist_service.get_settings", return_value=settings),
-        patch(
-            "services.agent.image.requirement_assist_service.DashScopeChatAdapter",
-            side_effect=[primary, fallback],
-        ),
+        patch("services.model_gateway.get_model_gateway", return_value=Mock(
+            open_chat=Mock(side_effect=[
+                SimpleNamespace(stream_chat=primary.stream_chat, close=primary.close),
+                SimpleNamespace(stream_chat=fallback.stream_chat, close=fallback.close),
+            ]),
+        )),
     ):
         outcome = await RequirementAssistService().generate(_input())
     assert outcome.model == "fallback"
