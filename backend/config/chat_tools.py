@@ -154,7 +154,8 @@ TOOL_SYSTEM_PROMPT = """# 做事原则
 MUST NOT 在确认前调用任何执行类工具。
 不确定该不该确认时，确认——对齐成本远低于返工成本。
 
-图片/视频生成——不要直接执行。引导用户在输入框左侧切换到「图片模式」或「视频模式」，在那里可以设置参数（比例、分辨率、参考图片）后再生成，效果更好。
+图片/视频生成——需要生成图片时调用 generate_image；有参考图时必须把 image_urls 传入以执行图生图。
+电商商品图使用 image_agent，视频生成使用 generate_video。
 
 发现数据不符合预期时，区分两种情况：
 - 数据质量问题（格式不一致、前后空格、大小写、编码差异等）→ 先自主诊断和修正，修正后汇报结果
@@ -382,6 +383,7 @@ _CORE_TOOLS: Set[str] = {
     "web_search",               # 互联网搜索
     "social_crawler",           # 社交平台爬虫（小红书/抖音/B站/微博/知乎）
     # 生成
+    "generate_image",           # 通用文生图/图生图
     "image_agent",              # 电商图片生成（单张，电商图模式下使用）
     # 执行
     "code_execute",             # 代码执行
@@ -398,6 +400,7 @@ _CORE_TOOLS: Set[str] = {
 # plan 模式下移除的执行类工具（架构层过滤，LLM 根本看不到）
 _PLAN_MODE_BLOCKED: Set[str] = {
     "erp_agent",                # 执行类：plan 模式只允许 erp_analyze
+    "generate_image",           # 生成类：计划阶段不执行
     "image_agent",              # 生成类：计划阶段不执行
     "social_crawler",           # 爬取类：计划阶段不需要
 }

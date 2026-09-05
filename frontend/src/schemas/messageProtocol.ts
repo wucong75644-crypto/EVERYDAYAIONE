@@ -91,6 +91,7 @@ const contentPartSchema = z.preprocess(normalizeNullEquivalentFields, z.discrimi
     height: optionalNumber,
     alt: optionalString,
     failed: z.boolean().optional(),
+    pending: z.boolean().optional(),
     error: optionalString,
     error_code: optionalString,
     name: optionalString,

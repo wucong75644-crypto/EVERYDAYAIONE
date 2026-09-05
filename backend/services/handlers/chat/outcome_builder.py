@@ -99,6 +99,7 @@ def _build_part(block: dict[str, Any]) -> ContentPart | None:
             width=block.get("width"),
             height=block.get("height"),
             failed=block.get("failed"),
+            pending=block.get("pending"),
             error=block.get("error"),
             retry_context=block.get("retry_context"),
         )

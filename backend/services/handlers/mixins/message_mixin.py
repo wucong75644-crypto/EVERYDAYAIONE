@@ -28,6 +28,45 @@ async def _release_task_limit(task: Dict[str, Any], conversation_id: str) -> Non
     await release_task_slot(task)
 
 
+def _merge_async_image_results(
+    existing_content: Any,
+    incoming_content: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """避免 Chat 任务收尾覆盖已经完成的异步图片子任务。"""
+    if isinstance(existing_content, str):
+        import json
+        try:
+            existing_content = json.loads(existing_content)
+        except (TypeError, ValueError):
+            existing_content = []
+    if not isinstance(existing_content, list):
+        return incoming_content
+
+    existing_images = [
+        part for part in existing_content
+        if isinstance(part, dict) and part.get("type") == "image"
+    ]
+    if not existing_images:
+        return incoming_content
+
+    merged: List[Dict[str, Any]] = []
+    image_index = 0
+    for part in incoming_content:
+        if isinstance(part, dict) and part.get("type") == "image":
+            if image_index < len(existing_images):
+                existing_part = existing_images[image_index]
+                if existing_part.get("url") and (
+                    not part.get("url") or part.get("pending")
+                ):
+                    merged.append(existing_part)
+                    image_index += 1
+                    continue
+            image_index += 1
+        merged.append(part)
+
+    return merged
+
+
 class MessageMixin:
     """
     消息处理 Mixin
@@ -78,10 +117,11 @@ class MessageMixin:
         # 场景：chat task 启动时预创建 placeholder（含 _render 等前端渲染参数），
         # on_complete upsert 时如果直接重新构造 gen_params 会覆盖丢失。
         existing_gen_params: Dict[str, Any] = {}
+        existing_content: Any = []
         try:
             existing = (
                 self.db.table("messages")
-                .select("generation_params")
+                .select("generation_params, content")
                 .eq("id", message_id)
                 .maybe_single()
                 .execute()
@@ -90,6 +130,7 @@ class MessageMixin:
                 _existing_gp = existing.data.get("generation_params") or {}
                 if isinstance(_existing_gp, dict):
                     existing_gen_params = _existing_gp
+                existing_content = existing.data.get("content") or []
         except Exception:
             # 查不到不影响主流程，按新建处理
             pass
@@ -97,8 +138,15 @@ class MessageMixin:
         gen_params: Dict[str, Any] = {**existing_gen_params}
         gen_params["type"] = generation_type
         gen_params["model"] = model_id
+        if generation_type == "chat" and existing_gen_params.get("type") == "image":
+            gen_params["type"] = "image"
         if extra_generation_params:
             gen_params.update(extra_generation_params)
+
+        if generation_type == "chat":
+            content_dicts = _merge_async_image_results(
+                existing_content, content_dicts,
+            )
 
         # DB CHECK 约束：pg_column_size(generation_params) < 10240
         # 超限时逐步裁剪 tool_digest，防止写入被拒

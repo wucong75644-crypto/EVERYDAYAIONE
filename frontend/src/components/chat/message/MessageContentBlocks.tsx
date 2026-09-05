@@ -5,7 +5,7 @@ import api from '../../../services/api';
 import { useMessageStore, type Message } from '../../../stores/useMessageStore';
 import { resolveImageOriginalUrl } from '../../../utils/messageUtils';
 import type { FilePart, ImageAsset, ImagePart } from '../../../types/message';
-import { FailedMediaPlaceholder } from '../media/MediaPlaceholder';
+import MediaPlaceholder, { FailedMediaPlaceholder } from '../media/MediaPlaceholder';
 import FileCardList from '../media/FileCard';
 import ChartBlock from './ChartBlock';
 import EcomPlanBlock from './EcomPlanBlock';
@@ -19,6 +19,7 @@ import ToolResultBlock from './ToolResultBlock';
 import ToolStepCard from './ToolStepCard';
 import ChangeSetCard from './ChangeSetCard';
 import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
+import { getImagePlaceholderSize } from '../../../utils/settingsStorage';
 
 const DiagramBlock = lazy(() => import('./DiagramBlock'));
 
@@ -126,6 +127,22 @@ export default function MessageContentBlocks({
               height={img.height}
               onClick={() => onImageClick(imgIndex >= 0 ? imgIndex : 0)}
             />
+          );
+        }
+        if (part.type === 'image' && (part as { pending?: boolean }).pending) {
+          const size = getImagePlaceholderSize(
+            (message.generation_params?.aspect_ratio
+              || message.generation_params?.aspectRatio
+              || '1:1') as import('../../../constants/models').AspectRatio,
+          );
+          return (
+            <div key={`pending-image-${idx}`} className="my-2">
+              <MediaPlaceholder
+                type="image"
+                width={size.width}
+                height={size.height}
+              />
+            </div>
           );
         }
         if (part.type === 'image' && (part as { failed?: boolean }).failed) {

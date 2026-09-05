@@ -26,6 +26,7 @@ class ImagePart(BaseModel):
     height: Optional[int] = None
     alt: Optional[str] = None
     failed: Optional[bool] = None
+    pending: Optional[bool] = None
     error: Optional[str] = None
     retry_context: Optional[dict] = None
     name: Optional[str] = None

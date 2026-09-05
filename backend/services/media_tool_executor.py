@@ -8,6 +8,8 @@
 积分方法通过 CreditMixin 继承获得：self._lock_credits, self._confirm_deduct, self._refund_credits
 """
 
+import json
+from datetime import datetime, timezone
 from typing import Any, Dict
 from uuid import uuid4
 
@@ -18,7 +20,207 @@ class MediaToolMixin:
     """图片/视频生成工具 Mixin"""
 
     async def _generate_image(self, args: Dict[str, Any]) -> "AgentResult":
-        """生成图片：锁积分 → adapter 同步等待 → confirm/refund"""
+        """生成图片。
+
+        Web Chat 有 assistant message 上下文时，统一复用 ImageHandler 的
+        异步任务生命周期。没有消息上下文的旧调用方暂时走兼容实现，避免
+        定时任务等非聊天入口被无意改变。
+        """
+        if getattr(self, "_message_id", None) and getattr(self, "_task_id", None):
+            return await self._generate_image_async_task(args)
+        return await self._generate_image_sync_compat(args)
+
+    async def _generate_image_async_task(self, args: Dict[str, Any]) -> "AgentResult":
+        """将 generate_image 接入 ImageHandler 的异步图片任务链路。"""
+        from services.agent.agent_result import AgentResult
+        from services.handlers.base import TaskMetadata
+        from services.handlers.image_handler import ImageHandler
+        from schemas.message import ImagePart, TextPart
+
+        prompt = str(args.get("prompt", "")).strip()
+        if not prompt:
+            return AgentResult(
+                summary="提示词不能为空",
+                status="error",
+                error_message="Validation: prompt is required",
+                metadata={"retryable": True},
+            )
+
+        image_urls = [
+            str(url).strip()
+            for url in (args.get("image_urls") or [])
+            if str(url).strip()
+        ]
+        try:
+            num_images = max(1, min(4, int(args.get("num_images", 1))))
+        except (TypeError, ValueError):
+            num_images = 1
+
+        model_id = args.get("model")
+        if not model_id:
+            from config.smart_model_config import DEFAULT_IMAGE_MODEL
+            model_id = DEFAULT_IMAGE_MODEL
+        aspect_ratio = args.get("aspect_ratio") or "1:1"
+        resolution = args.get("resolution")
+        output_format = args.get("output_format") or "png"
+        child_task_id = str(uuid4())
+
+        params = {
+            "model": model_id,
+            "aspect_ratio": aspect_ratio,
+            "resolution": resolution,
+            "output_format": output_format,
+            "num_images": num_images,
+            "_from_generate_image_tool": True,
+        }
+        content = [TextPart(text=prompt)]
+        content.extend(ImagePart(url=url) for url in image_urls)
+
+        placeholder_snapshot = self._prepare_async_image_placeholder(
+            message_id=self._message_id,
+            model_id=model_id,
+            aspect_ratio=aspect_ratio,
+            num_images=num_images,
+        )
+
+        handler = ImageHandler(self.db)
+        handler.org_id = self.org_id
+        handler.request_ctx = getattr(self, "request_ctx", None)
+        metadata = TaskMetadata(
+            client_task_id=child_task_id,
+            placeholder_created_at=datetime.now(timezone.utc),
+            input_message_id=getattr(self, "_input_message_id", None),
+            turn_id=getattr(self, "_turn_id", None),
+            execution_mode=getattr(self, "_execution_mode", "serial"),
+        )
+
+        try:
+            await handler.start(
+                message_id=self._message_id,
+                conversation_id=self.conversation_id,
+                user_id=self.user_id,
+                content=content,
+                params=params,
+                metadata=metadata,
+            )
+        except Exception as error:
+            self._restore_async_image_placeholder(
+                self._message_id, placeholder_snapshot,
+            )
+            logger.error(
+                "Async image task start failed | "
+                f"message_id={self._message_id} | error={error}"
+            )
+            return AgentResult(
+                summary=f"图片生成失败：{error}",
+                status="error",
+                error_message=str(error),
+                metadata={"retryable": True},
+            )
+
+        pending_payloads = [
+            {
+                "kind": "image",
+                "url": None,
+                "pending": True,
+                "width": 1024,
+                "height": 1024,
+                "alt": "正在生成图片",
+            }
+            for _ in range(num_images)
+        ]
+        return AgentResult(
+            summary="图片已开始生成，完成后会自动展示。",
+            status="success",
+            metadata={
+                "async_media": True,
+                "media_task_id": child_task_id,
+                "media_task_type": "image",
+            },
+            emit_payloads=pending_payloads,
+        )
+
+    def _prepare_async_image_placeholder(
+        self,
+        *,
+        message_id: str,
+        model_id: str,
+        aspect_ratio: str,
+        num_images: int,
+    ) -> Dict[str, Any]:
+        """保存异步图片任务的 pending 内容，供刷新恢复使用。"""
+        try:
+            response = (
+                self.db.table("messages")
+                .select("content, generation_params")
+                .eq("id", message_id)
+                .maybe_single()
+                .execute()
+            )
+            row = response.data if response and response.data else {}
+            raw_content = row.get("content") or []
+            if isinstance(raw_content, str):
+                raw_content = json.loads(raw_content)
+            original_content = list(raw_content) if isinstance(raw_content, list) else []
+            original_params = row.get("generation_params") or {}
+            if isinstance(original_params, str):
+                original_params = json.loads(original_params)
+            original_params = dict(original_params) if isinstance(original_params, dict) else {}
+
+            pending_parts = [
+                {
+                    "type": "image",
+                    "url": None,
+                    "pending": True,
+                    "width": 1024,
+                    "height": 1024,
+                }
+                for _ in range(num_images)
+            ]
+            content = [
+                part for part in original_content
+                if not (isinstance(part, dict) and part.get("pending"))
+            ] + pending_parts
+            generation_params = {
+                **original_params,
+                "type": "image",
+                "model": model_id,
+                "aspect_ratio": aspect_ratio,
+                "num_images": num_images,
+            }
+            self.db.table("messages").update({
+                "content": content,
+                "generation_params": generation_params,
+            }).eq("id", message_id).execute()
+            return {
+                "content": original_content,
+                "generation_params": original_params,
+            }
+        except Exception as error:
+            logger.warning(
+                f"Failed to save async image placeholder | message_id={message_id} | error={error}"
+            )
+            return {}
+
+    def _restore_async_image_placeholder(
+        self,
+        message_id: str,
+        snapshot: Dict[str, Any],
+    ) -> None:
+        if not snapshot:
+            return
+        try:
+            self.db.table("messages").update({
+                "content": snapshot.get("content", []),
+                "generation_params": snapshot.get("generation_params") or {},
+            }).eq("id", message_id).execute()
+        except Exception as error:
+            logger.warning(
+                f"Failed to restore image placeholder | message_id={message_id} | error={error}"
+            )
+
+    async def _generate_image_sync_compat(self, args: Dict[str, Any]) -> "AgentResult":
+        """非聊天入口兼容实现；聊天入口不再调用此路径。"""
         from config.kie_models import calculate_image_cost
         from core.exceptions import InsufficientCreditsError
         from services.adapters.factory import create_image_adapter

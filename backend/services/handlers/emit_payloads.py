@@ -57,7 +57,7 @@ def build_block_from_payload(payload: Dict[str, Any]) -> Optional[Dict[str, Any]
         }
     if kind == "image":
         url = payload.get("url")
-        if not url and not payload.get("failed"):
+        if not url and not payload.get("failed") and not payload.get("pending"):
             return None
         block = {
             "type": "image",
@@ -75,6 +75,8 @@ def build_block_from_payload(payload: Dict[str, Any]) -> Optional[Dict[str, Any]
             for field in ("error", "retry_context"):
                 if payload.get(field):
                     block[field] = payload[field]
+        if payload.get("pending"):
+            block["pending"] = True
         return block
     if kind == "file":
         return {

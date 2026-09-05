@@ -6,6 +6,7 @@ import asyncio
 import json
 from typing import Any, Callable, Mapping
 
+from loguru import logger
 from pydantic import TypeAdapter
 
 from schemas.message import ContentPart, serialize_content_parts
@@ -25,6 +26,7 @@ from services.handlers.chat.execution_engine import (
 )
 from services.handlers.chat.execution_scope import resolve_execution_scope
 from services.handlers.context_snapshot import ContextAnchor
+from services.handlers.mixins.message_mixin import _merge_async_image_results
 
 
 ContentPartsAdapter = TypeAdapter(list[ContentPart])
@@ -88,6 +90,8 @@ class ChatGenerationExecutor:
         handler._actor_cancellation_event = cancellation_event
         handler._actor_enabled = self._command_store is not None
         handler._actor_turn_id = claim.turn_id
+        handler._input_message_id = claim.input_message_id
+        handler._execution_mode = claim.execution_mode
         if handler._actor_enabled:
             from services.tool_invocation_store import DatabaseToolInvocationStore
             handler._actor_invocation_store = DatabaseToolInvocationStore(
@@ -140,6 +144,10 @@ class ChatGenerationExecutor:
             )
         finally:
             await runtime.stop_command_watcher()
+        result_content = await self._merge_existing_image_results(
+            str(task["assistant_message_id"]),
+            serialize_content_parts(result.parts),
+        )
         replay_payload = result.replay_context or {
             "messages": [],
             "content_blocks": result.content_blocks,
@@ -149,7 +157,7 @@ class ChatGenerationExecutor:
         replay_payload = {
             **replay_payload,
             "checkpoint_kind": "commit_ready",
-            "result_content": serialize_content_parts(result.parts),
+            "result_content": result_content,
             "usage": result.usage,
             "credits_cost": result.credits_cost,
             "tool_digest": result.tool_digest,
@@ -159,11 +167,35 @@ class ChatGenerationExecutor:
             replay_payload=replay_payload,
         )
         return GenerationOutcome(
-            result_content=serialize_content_parts(result.parts),
+            result_content=result_content,
             usage=result.usage,
             credits_cost=result.credits_cost,
             tool_digest=result.tool_digest,
         )
+
+    async def _merge_existing_image_results(
+        self,
+        message_id: str,
+        incoming_content: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """保留已先于 Actor 收尾完成的异步图片子任务结果。"""
+        try:
+            response = await (
+                self._db.table("messages")
+                .select("content")
+                .eq("id", message_id)
+                .maybe_single()
+                .execute()
+            )
+            row = response.data if response else None
+            existing_content = row.get("content") if isinstance(row, dict) else None
+            return _merge_async_image_results(existing_content, incoming_content)
+        except Exception as error:
+            logger.warning(
+                "Failed to merge completed async image results | "
+                f"message_id={message_id} | error={error}"
+            )
+            return incoming_content
 
     def _build_replay_checkpoint_callback(
         self,

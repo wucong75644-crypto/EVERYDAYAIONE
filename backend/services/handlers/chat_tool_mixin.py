@@ -76,6 +76,9 @@ class ChatToolMixin(ChatToolResultMixin):
         # 每轮上下文
         executor._task_id = task_id
         executor._message_id = message_id
+        executor._input_message_id = getattr(self, "_input_message_id", None)
+        executor._turn_id = getattr(self, "_actor_turn_id", None)
+        executor._execution_mode = getattr(self, "_execution_mode", "serial")
         executor._parent_messages = messages
         # 提取当前用户消息中的图片 URLs（供 image_agent 自动注入）
         executor._current_message_images = self._extract_user_image_urls(messages)
@@ -123,6 +126,15 @@ class ChatToolMixin(ChatToolResultMixin):
             # 展示文本(供 content_block_add 推送)
             self._last_erp_display_text = result.summary
             self._last_erp_display_files = payloads
+            if result.metadata.get("async_media"):
+                pending_tasks = getattr(self, "_pending_media_tasks", None)
+                if pending_tasks is None:
+                    pending_tasks = []
+                    self._pending_media_tasks = pending_tasks
+                pending_tasks.append({
+                    "task_id": result.metadata.get("media_task_id"),
+                    "type": result.metadata.get("media_task_type", "image"),
+                })
             # token 统计
             self._erp_agent_tokens = (
                 getattr(self, "_erp_agent_tokens", 0) + result.tokens_used

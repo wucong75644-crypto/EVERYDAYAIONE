@@ -43,6 +43,8 @@ export interface ImagePart {
   height?: number;
   alt?: string;
   failed?: boolean;
+  /** Agent 异步生图已经提交但尚未完成。 */
+  pending?: boolean;
   error?: string;
   error_code?: string;
   /** 工作区文件名（用户上传/引用时填充，AI 生成图不填）—— 后端用于注册 file_path_cache 和 attachments 渲染 */

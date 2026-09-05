@@ -187,11 +187,11 @@ class TestCoreToolsExpanded:
         names = {t["function"]["name"] for t in get_core_tools(org_id="test")}
         assert "social_crawler" in names
 
-    def test_core_tools_no_media(self):
-        """图片/视频生成已移至子模式，不在核心工具中"""
+    def test_core_tools_include_async_image_tool(self):
+        """通用图片工具进入核心列表，视频仍由独立入口负责"""
         from config.chat_tools import get_core_tools
         names = {t["function"]["name"] for t in get_core_tools(org_id="test")}
-        assert "generate_image" not in names
+        assert "generate_image" in names
         assert "generate_video" not in names
 
     def test_core_tools_include_scheduled_task(self):

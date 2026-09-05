@@ -78,3 +78,7 @@
 ## 电商图片生成 (image_agent)
 
 详细参数和使用方法见 `image_agent` 工具自身的 description 字段 (在 tools schema 里). 不要重复描述. 触发场景: 用户要电商商品图 (白底主图/场景图/详情页/SKU 展示).
+
+## 通用图片生成 (generate_image)
+
+详细参数和使用方法见 `generate_image` 工具自身的 description 字段 (在 tools schema 里). 纯文字请求直接传 `prompt`；用户提供参考图并要求改图、重绘或基于图片创作时，必须把图片 URL 传入 `image_urls`。该工具立即提交异步任务，前端会显示占位符，完成后自动更新图片。

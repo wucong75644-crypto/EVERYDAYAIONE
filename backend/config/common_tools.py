@@ -171,7 +171,7 @@ def build_common_tools() -> List[Dict[str, Any]]:
                     "两种模式：\n"
                     "- 纯文字 → 文生图（只传 prompt）\n"
                     "- 有参考图 → 图生图（prompt + image_urls，用户上传图片时必传 image_urls）\n\n"
-                    "返回：成功 → 图片 URL，前端自动展示。"
+                    "返回：立即提交异步图片任务，前端显示占位符；完成后自动展示图片。"
                     "失败 → 错误信息，可修改 prompt 后重试。\n\n"
                     "不要用于：电商商品图（白底主图、场景图）→ image_agent；"
                     "视频生成 → generate_video。"

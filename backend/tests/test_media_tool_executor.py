@@ -174,6 +174,35 @@ class TestGenerateImage:
 
         assert "积分不足" in result
 
+    @pytest.mark.asyncio
+    async def test_chat_context_delegates_to_image_handler_async_task(self):
+        exe = _make_executor()
+        exe._task_id = "chat-task-1"
+        exe._message_id = "assistant-1"
+
+        handler = MagicMock()
+        handler.start = AsyncMock(return_value="provider-task-1")
+        with patch(
+            "services.handlers.image_handler.ImageHandler",
+            return_value=handler,
+        ), patch.object(
+            exe,
+            "_prepare_async_image_placeholder",
+            return_value={},
+        ):
+            result = await exe._generate_image({
+                "prompt": "a cat",
+                "image_urls": ["https://example.com/input.png"],
+            })
+
+        handler.start.assert_awaited_once()
+        kwargs = handler.start.await_args.kwargs
+        assert kwargs["message_id"] == "assistant-1"
+        assert kwargs["params"]["_from_generate_image_tool"] is True
+        assert kwargs["content"][1].url == "https://example.com/input.png"
+        assert result.metadata["async_media"] is True
+        assert result.emit_payloads[0]["pending"] is True
+
 
 class TestGenerateVideo:
     """_generate_video 测试"""

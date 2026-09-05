@@ -9,6 +9,7 @@ if str(backend_dir) not in sys.path:
 
 from schemas.message import ChartPart, DiagramPart, FilePart, ImagePart
 from services.handlers.emit_payloads import build_block_from_payload, build_part_from_payload
+from services.handlers.chat.outcome_builder import build_content_parts
 
 
 def test_image_payload_block_preserves_media_url_fields():
@@ -43,6 +44,28 @@ def test_explicit_image_payload_builds_image_part():
 
     assert isinstance(part, ImagePart)
     assert part.url == "https://cdn.example.com/a.png"
+
+
+def test_pending_image_payload_survives_final_content_serialization():
+    payload = {
+        "kind": "image",
+        "url": None,
+        "pending": True,
+        "width": 1024,
+        "height": 1024,
+    }
+
+    block = build_block_from_payload(payload)
+    part = build_part_from_payload(payload)
+    final_parts = build_content_parts(
+        [block], fallback_text="",
+    )
+
+    assert block["pending"] is True
+    assert isinstance(part, ImagePart)
+    assert part.pending is True
+    assert isinstance(final_parts[0], ImagePart)
+    assert final_parts[0].pending is True
 
 
 def test_explicit_file_payload_builds_file_part():

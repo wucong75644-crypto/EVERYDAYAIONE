@@ -105,6 +105,7 @@ async def execute_chat(
     previous_sink = getattr(handler, "_execution_sink", None)
     handler._execution_sink = output
     handler._pending_emit_payloads = []
+    handler._pending_media_tasks = []
     handler._pending_form_block = None
     handler._terminal_form_pending = False
     # retry 在 execute_chat 返回后才发生；清空旧请求残留，异常时再从共享
@@ -277,6 +278,11 @@ async def _run_loop(
             runtime=runtime,
             totals=totals,
         )
+        # 图片工具已经把请求交给独立的 ImageHandler 任务。此轮只提交
+        # pending 图片块，不再让模型继续追问或生成同步图片说明，避免
+        # 把异步图片任务重新拉回 ChatHandler 的同步完成路径。
+        if getattr(handler, "_pending_media_tasks", None):
+            return None
         # FormBlockResult 是一个完整的交付物，不再发起额外的模型回合。
         # 这样既避免重复文案，也保证表单是该消息唯一的确认入口。
         if getattr(handler, "_terminal_form_pending", False):
