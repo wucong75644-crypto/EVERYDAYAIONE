@@ -83,6 +83,9 @@ class ScheduledTaskAgent:
 
     async def execute(self) -> ScheduledTaskResult:
         """主入口：执行定时任务，返回结构化结果"""
+        from services.agent.observability import set_trace_id
+
+        set_trace_id(str(self.task_id))
         total_tokens = 0
         tools_called: List[str] = []
         model_gateway = None
@@ -130,7 +133,7 @@ class ScheduledTaskAgent:
                     model_id=model_id,
                     org_id=self.org_id,
                     db=self.db,
-                    request_id=self.task_id,
+                    task_id=self.task_id,
                 )
             )
 
@@ -288,7 +291,7 @@ class ScheduledTaskAgent:
             user_id=self.user_id,
             org_id=self.org_id,
             conversation_id=self.conversation_id,
-            task_id=None,  # 无 WS 通道
+            task_id=self.task_id,  # 无 WS 通道，但保留业务任务审计关联。
             request_ctx=self.request_ctx,
         )
 

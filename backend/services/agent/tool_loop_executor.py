@@ -471,8 +471,10 @@ class ToolLoopExecutor:
                     if tc_delta.arguments_delta:
                         entry["arguments"] += tc_delta.arguments_delta
             if chunk.prompt_tokens or chunk.completion_tokens:
-                _prompt_tokens = chunk.prompt_tokens or 0
-                _completion_tokens = chunk.completion_tokens or 0
+                # 与 Chat execution_engine 的累计语义对齐：Provider 可能在
+                # 多个 StreamChunk 报告 usage，不能只保留最后一帧。
+                _prompt_tokens += chunk.prompt_tokens or 0
+                _completion_tokens += chunk.completion_tokens or 0
                 turn_tokens = _prompt_tokens + _completion_tokens
 
         return tc_acc, turn_text, turn_tokens, _prompt_tokens, _completion_tokens

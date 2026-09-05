@@ -179,6 +179,7 @@ async def sql_fallback(
     db: Any,
     user_id: str | None = None,
     conversation_id: str | None = None,
+    task_id: str | None = None,
 ) -> Any | None:
     """SQL 兜底——结构化查询失败后的最后防线。
 
@@ -213,7 +214,7 @@ async def sql_fallback(
             model_id=settings.agent_loop_model,
             org_id=org_id,
             db=db,
-            request_id=conversation_id or user_id,
+            task_id=task_id,
         )
     )
     try:

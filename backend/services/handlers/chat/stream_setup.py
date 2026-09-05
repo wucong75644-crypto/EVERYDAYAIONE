@@ -35,6 +35,7 @@ async def prepare_chat_stream(
     conversation_id: str,
     task_id: str,
     model_id: str,
+    model_request_id: str | None = None,
     permission_mode: str,
     needs_google_search: bool,
     params: dict[str, Any],
@@ -78,7 +79,8 @@ async def prepare_chat_stream(
             model_id=model_id,
             org_id=handler.org_id,
             db=handler.db,
-            request_id=task_id,
+            task_id=task_id,
+            request_id=model_request_id,
         )
     )
     try:

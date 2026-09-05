@@ -17,6 +17,7 @@ import pytest
 from schemas.message import GenerationType, TextPart
 from services.intent_router import RetryContext, RoutingDecision
 from services.handlers.chat_handler import ChatHandler
+from services.model_gateway import ModelAttemptContext
 
 
 # ============================================================
@@ -59,10 +60,17 @@ class TestAttemptChatRetry:
             routed_by="model",
         )
 
+        attempt_context = ModelAttemptContext(
+            task_id="task-1", trace_id="trace-1", request_id="request-1",
+            attempt_id="attempt-1", model_id="gemini-3-pro", provider="google",
+            request_index=0,
+        )
+        handler._last_model_attempt_context = attempt_context
         with patch.object(handler, "_build_retry_context") as mock_build, \
-             patch.object(handler, "_route_retry", new_callable=AsyncMock, return_value=new_decision), \
-             patch.object(handler, "_send_retry_notification", new_callable=AsyncMock) as mock_notify, \
-             patch.object(handler, "_stream_generate", new_callable=AsyncMock) as mock_stream:
+            patch.object(handler, "_route_retry", new_callable=AsyncMock, return_value=new_decision), \
+            patch.object(handler, "_send_retry_notification", new_callable=AsyncMock) as mock_notify, \
+            patch.object(handler, "_stream_generate", new_callable=AsyncMock) as mock_stream, \
+            patch("services.model_gateway.record_retry_started", return_value="request-1") as mock_sampling:
 
             mock_ctx = MagicMock()
             mock_ctx.can_retry = True
@@ -91,6 +99,12 @@ class TestAttemptChatRetry:
             mock_stream.assert_awaited_once()
             call_kwargs = mock_stream.call_args.kwargs
             assert call_kwargs["model_id"] == "gemini-3-flash"
+            assert call_kwargs["model_request_id"] == "request-1"
+            mock_sampling.assert_called_once_with(
+                task_id="task-1",
+                model_id="gemini-3-flash",
+                attempt_context=attempt_context,
+            )
 
     @pytest.mark.asyncio
     async def test_smart_mode_route_retry_returns_none(self, handler):
