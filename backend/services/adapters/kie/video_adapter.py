@@ -20,7 +20,6 @@ from ..base import (
     CostEstimate,
 )
 from .client import KieClient, KieAPIError, KieTaskFailedError, KieTaskTimeoutError
-from .media_uploader import KieMediaUploader
 from .models import (
     CreateTaskRequest,
     QueryTaskResponse,
@@ -74,7 +73,6 @@ class KieVideoAdapter(BaseVideoAdapter):
         self.client = client
         self.model = model
         self.config = self.MODEL_CONFIGS[model]
-        self.media_uploader = KieMediaUploader(client)
 
     @property
     def provider(self) -> ModelProvider:
@@ -167,17 +165,10 @@ class KieVideoAdapter(BaseVideoAdapter):
         duration = duration_seconds
 
         try:
-            prepared_image_urls = image_urls
-            if image_urls and (self.requires_image_input or self.model == "sora-2-pro-storyboard"):
-                prepared_image_urls = await self.media_uploader.prepare_image_urls(
-                    image_urls,
-                    max_size_mb=self.config.get("max_image_size_mb"),
-                )
-
             # 构建输入参数
             input_params = self._build_input_params(
                 prompt=prompt,
-                image_urls=prepared_image_urls,
+                image_urls=image_urls,
                 n_frames=n_frames,
                 aspect_ratio=aspect_ratio,
                 remove_watermark=remove_watermark,
@@ -382,8 +373,7 @@ class KieVideoAdapter(BaseVideoAdapter):
         )
 
     async def close(self) -> None:
-        """关闭临时素材下载连接（KieClient 由调用方管理）。"""
-        await self.media_uploader.close()
+        """KieClient 由调用方管理。"""
 
     # ==================== 回调解析 ====================
 

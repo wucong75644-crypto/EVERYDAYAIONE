@@ -18,8 +18,6 @@ export const PLACEHOLDER_TEXT = {
   CHAT_THINKING: 'AI 正在思考',
 
   // 媒体占位符（首次生成和重新生成都用这个）
-  IMAGE_PREPARING_WITH_REFERENCES: '正在准备图片素材',
-  IMAGE_PREPARING: '正在创建图片任务',
   IMAGE_GENERATING: '图片生成中',
   VIDEO_GENERATING: '视频生成中',
   AUDIO_GENERATING: '音频生成中',
@@ -46,18 +44,6 @@ export function getPlaceholderText(type: MessageType): string {
     return PLACEHOLDER_TEXT.CHAT_THINKING;
   }
   return MEDIA_PLACEHOLDER_MAP[type];
-}
-
-/**
- * 图片任务在后端确认前的本地准备状态。
- *
- * 参考图任务此时会准备并交付输入素材给图像服务；纯文生图则在创建
- * 生成任务。两种文案都对应真实已发生的工作，不伪造模型内部进度。
- */
-export function getImagePreparationText(hasReferenceImages: boolean): string {
-  return hasReferenceImages
-    ? PLACEHOLDER_TEXT.IMAGE_PREPARING_WITH_REFERENCES
-    : PLACEHOLDER_TEXT.IMAGE_PREPARING;
 }
 
 // ============================================================

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # 受控发布入口。
-# 提交部署只发布任务候选；清理工作树只验收、合并、同步基座、关闭，不重复部署。
+# 任务候选部署前会同步最新 main；清理工作树只验收、合并、同步基座、关闭，不重复部署。
 
 set -euo pipefail
 
@@ -36,7 +36,7 @@ usage() {
   --source-only-file PATH 纳入提交但本次不执行的正向 SQL 迁移，可重复
   --file-list PATH       从本地清单逐行读取发布文件
   --migration-file PATH  明确执行目标提交中已有的正向 SQL 迁移，可重复
-  --deploy-task SHA      重新部署当前任务分支上已推送的确定提交；可显式补执行该提交内的正向迁移
+  --deploy-task SHA      同步最新 main 后重新部署当前任务分支上的确定提交；可显式补执行该提交内的正向迁移
   --accept-and-close     已验收任务：核验生产候选、合并 main、同步基座并清理；不部署
   --deploy-main SHA      从已合并到 origin/main 的确定提交部署
   --frontend-only        仅部署前端
@@ -256,6 +256,31 @@ record_local_deployed_candidate() {
     git config --worktree codex.taskDeployedCommit "$commit_sha"
 }
 
+sync_task_branch_with_latest_main() {
+    [[ "$release_mode" == preview ]] || return
+    [[ -n "${branch:-}" ]] || fail "任务候选缺少分支信息，无法同步最新 main"
+    [[ -z "$(git status --porcelain --untracked-files=all)" ]] \
+        || fail "任务工作树不干净，无法在部署前同步最新 main"
+
+    git fetch --prune origin main >/dev/null \
+        || fail "无法同步 origin/main，拒绝部署可能过期的任务代码"
+    local latest_main
+    latest_main=$(git rev-parse origin/main)
+    if git merge-base --is-ancestor "$latest_main" "$commit_sha"; then
+        info "任务候选已包含最新 main：$latest_main"
+        return
+    fi
+
+    info "部署前同步最新 main：$latest_main"
+    if ! git merge --no-ff --no-edit origin/main; then
+        fail "自动同步最新 main 出现冲突；请在当前任务工作树解决并提交冲突后，再部署最新任务提交"
+    fi
+    commit_sha=$(git rev-parse HEAD)
+    git push origin "$branch" \
+        || fail "已同步最新 main，但无法推送合并后的任务提交"
+    info "任务候选已同步最新 main，继续测试与部署：$commit_sha"
+}
+
 release_worktree=''
 integration_worktree=''
 cleanup_temp_worktrees() {
@@ -353,7 +378,10 @@ if [[ -z "$rollback_sha" && -z "$deploy_task_sha" && -z "$deploy_main_sha" ]]; t
 
     if ((${#task_files[@]} > 0)); then
         for task_file in "${task_files[@]}"; do
-            [[ -e "$task_file" ]] || fail "发布文件不存在：$task_file"
+            if [[ ! -e "$task_file" ]]; then
+                git diff --name-status -- "$task_file" | awk '$1 == "D" { found = 1 } END { exit !found }' \
+                    || fail "发布文件不存在且未标记删除：$task_file"
+            fi
         done
     fi
     if ((${#source_only_files[@]} > 0)); then
@@ -368,9 +396,9 @@ if [[ -z "$rollback_sha" && -z "$deploy_task_sha" && -z "$deploy_main_sha" ]]; t
     fi
 
     if ((${#source_only_files[@]} > 0)); then
-        git add -- "${task_files[@]}" "${source_only_files[@]}"
+        git add -A -- "${task_files[@]}" "${source_only_files[@]}"
     else
-        git add -- "${task_files[@]}"
+        git add -A -- "${task_files[@]}"
     fi
     git diff --cached --quiet && fail "指定文件没有可提交的变更"
     git commit -m "$message"
@@ -419,6 +447,7 @@ else
     info "回滚目标确认：$commit_sha"
 fi
 
+sync_task_branch_with_latest_main
 collect_task_branch_migrations
 ensure_supported_release_tree "$commit_sha"
 

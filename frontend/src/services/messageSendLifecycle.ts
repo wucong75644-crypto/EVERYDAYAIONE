@@ -1,6 +1,6 @@
 /** 消息发送的乐观状态、响应替换和错误回滚。 */
 
-import { getImagePreparationText, getPlaceholderText } from '../constants/placeholder';
+import { getPlaceholderText } from '../constants/placeholder';
 import { useMessageStore, type ContentPart, type Message } from '../stores/useMessageStore';
 import { logger } from '../utils/logger';
 import { toApiRequestError } from './api';
@@ -123,13 +123,10 @@ export function applyOptimisticUpdate(options: SendOptions, ctx: SendContext): v
     return;
   }
 
-  const hasReferenceImages = content.some((part) => part.type === 'image');
   const generationParams = generationType === 'image'
     ? {
       model,
       type: 'image' as const,
-      // 仅用于 HTTP 响应到达前的本地展示；响应会用后端正式参数替换它。
-      _client_preparing_text: getImagePreparationText(hasReferenceImages),
     }
     : { model };
 
