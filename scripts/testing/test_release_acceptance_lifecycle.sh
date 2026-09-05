@@ -75,6 +75,13 @@ run git -C "$candidate" commit -m candidate
 run git -C "$candidate" push origin HEAD
 candidate_sha=$(git -C "$candidate" rev-parse HEAD)
 
+# 候选分支创建后 main 前进；发布必须自动合入最新 main，而不是覆盖它。
+printf 'main-before-candidate-deploy\n' > "$root/main-before-candidate-deploy.txt"
+run git -C "$root" add main-before-candidate-deploy.txt
+run git -C "$root" commit -m main-before-candidate-deploy
+run git -C "$root" push origin main
+main_before_candidate_deploy=$(git -C "$root" rev-parse HEAD)
+
 mkdir -p "$fake_bin"
 printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\\n" "$FAKE_DEPLOYED_COMMIT"' > "$fake_bin/ssh"
 chmod +x "$fake_bin/ssh"
@@ -91,6 +98,9 @@ migration_deploy_args="$tmp_root/migration-deploy-args.txt"
         ./deploy/release.sh --deploy-task "$candidate_sha" \
         --migration-file backend/migrations/242_delivery_outbox.sql
 ) > "$tmp_root/migration-retry.log"
+candidate_sha=$(git -C "$candidate" rev-parse HEAD)
+git -C "$candidate" merge-base --is-ancestor "$main_before_candidate_deploy" "$candidate_sha" \
+    || fail "任务部署前未自动同步最新 main"
 rg -Fx -- '--migration-file' "$migration_deploy_args" >/dev/null \
     || fail "任务重试未将显式迁移转发给部署脚本"
 rg -Fx -- 'backend/migrations/242_delivery_outbox.sql' "$migration_deploy_args" >/dev/null \
@@ -142,5 +152,53 @@ fi
 [[ -d "$mismatch" ]] || fail "树不一致时错误清理了任务工作树"
 [[ "$(git -C "$root" rev-parse origin/main)" == "$main_before_rejection" ]] \
     || fail "树不一致时错误更新了 main"
+
+conflict="$tmp_root/conflict"
+run_in "$root" ./scripts/task-worktree.sh start conflict --path "$conflict"
+printf 'task-conflict\n' > "$conflict/product.txt"
+run git -C "$conflict" add product.txt
+run git -C "$conflict" commit -m task-conflict
+run git -C "$conflict" push origin HEAD
+conflict_sha=$(git -C "$conflict" rev-parse HEAD)
+
+printf 'main-conflict\n' > "$root/product.txt"
+run git -C "$root" add product.txt
+run git -C "$root" commit -m main-conflict
+run git -C "$root" push origin main
+
+if (
+    cd "$conflict"
+    ./deploy/release.sh --deploy-task "$conflict_sha"
+) > "$tmp_root/conflict.log" 2>&1; then
+    fail "自动同步 main 冲突时仍继续部署"
+fi
+grep -F "自动同步最新 main 出现冲突" "$tmp_root/conflict.log" >/dev/null \
+    || fail "自动同步冲突时未提供恢复说明"
+git -C "$conflict" diff --name-only --diff-filter=U | grep -Fx product.txt >/dev/null \
+    || fail "自动同步冲突后未保留给任务处理的冲突现场"
+
+normal="$tmp_root/normal"
+run_in "$root" ./scripts/task-worktree.sh start normal --path "$normal"
+printf 'normal-task\n' > "$normal/normal-task.txt"
+printf 'main-before-normal-deploy\n' > "$root/main-before-normal-deploy.txt"
+run git -C "$root" add main-before-normal-deploy.txt
+run git -C "$root" commit -m main-before-normal-deploy
+run git -C "$root" push origin main
+main_before_normal_deploy=$(git -C "$root" rev-parse HEAD)
+printf '%s\n' \
+    'SERVER_HOST=example.invalid' \
+    'SERVER_USER=test' \
+    'SERVER_PORT=22' \
+    'REMOTE_APP_DIR=/tmp/everydayai' > "$normal/deploy/config.env"
+(
+    cd "$normal"
+    DEPLOY_ARGS_FILE="$tmp_root/normal-deploy-args.txt" \
+        ./deploy/release.sh --message normal-task --file normal-task.txt
+) > "$tmp_root/normal-deploy.log"
+normal_sha=$(git -C "$normal" rev-parse HEAD)
+git -C "$normal" merge-base --is-ancestor "$main_before_normal_deploy" "$normal_sha" \
+    || fail "常规提交部署前未自动同步最新 main"
+[[ "$(git -C "$normal" ls-remote origin "refs/heads/$(git -C "$normal" branch --show-current)" | awk '{print $1}')" == "$normal_sha" ]] \
+    || fail "常规提交部署未推送同步后的任务提交"
 
 echo "release acceptance lifecycle tests passed"
