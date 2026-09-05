@@ -83,7 +83,7 @@ describe('sendMessage idempotent retry', () => {
     expect(subscribeTask).toHaveBeenCalledTimes(1);
   });
 
-  it('shows the local image preparation state before the task response', async () => {
+  it('starts an image streaming message before the task response', async () => {
     requestMock.mockResolvedValue({
       ...response,
       generation_type: 'image',
@@ -110,7 +110,6 @@ describe('sendMessage idempotent retry', () => {
       expect.objectContaining({
         generationParams: expect.objectContaining({
           type: 'image',
-          _client_preparing_text: '正在准备图片素材',
         }),
       }),
     );
