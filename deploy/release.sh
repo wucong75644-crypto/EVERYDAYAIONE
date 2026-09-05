@@ -353,7 +353,10 @@ if [[ -z "$rollback_sha" && -z "$deploy_task_sha" && -z "$deploy_main_sha" ]]; t
 
     if ((${#task_files[@]} > 0)); then
         for task_file in "${task_files[@]}"; do
-            [[ -e "$task_file" ]] || fail "发布文件不存在：$task_file"
+            if [[ ! -e "$task_file" ]]; then
+                git diff --name-status -- "$task_file" | awk '$1 == "D" { found = 1 } END { exit !found }' \
+                    || fail "发布文件不存在且未标记删除：$task_file"
+            fi
         done
     fi
     if ((${#source_only_files[@]} > 0)); then
@@ -368,9 +371,9 @@ if [[ -z "$rollback_sha" && -z "$deploy_task_sha" && -z "$deploy_main_sha" ]]; t
     fi
 
     if ((${#source_only_files[@]} > 0)); then
-        git add -- "${task_files[@]}" "${source_only_files[@]}"
+        git add -A -- "${task_files[@]}" "${source_only_files[@]}"
     else
-        git add -- "${task_files[@]}"
+        git add -A -- "${task_files[@]}"
     fi
     git diff --cached --quiet && fail "指定文件没有可提交的变更"
     git commit -m "$message"

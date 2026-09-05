@@ -65,9 +65,7 @@ export default function MessageBubbleContent({
   const shouldShowSingleThinking = !isUser
     && !hasMultiBlocks
     && (thinkingText || isThinkingNow || thinkingDurationMs != null);
-  const localPreparingText = message.generation_params?._client_preparing_text;
-  const loadingText = agentStepHint
-    || (typeof localPreparingText === 'string' ? localPreparingText : 'AI 正在思考');
+  const loadingText = agentStepHint || 'AI 正在思考';
 
   return (
     <>
