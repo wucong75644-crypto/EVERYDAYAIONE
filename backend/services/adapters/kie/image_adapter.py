@@ -9,6 +9,8 @@ from typing import List, Optional, Dict, Any
 
 from loguru import logger
 
+from services.oss_service import normalize_external_oss_url
+
 from ..base import (
     BaseImageAdapter,
     ModelProvider,
@@ -17,6 +19,7 @@ from ..base import (
     CostEstimate,
 )
 from .client import KieClient, KieAPIError, KieTaskFailedError, KieTaskTimeoutError
+from .media_uploader import KieMediaUploader
 from .models import (
     CreateTaskRequest,
     QueryTaskResponse,
@@ -75,6 +78,7 @@ class KieImageAdapter(BaseImageAdapter):
         self.client = client
         self.model = model
         self.config = self.MODEL_CONFIGS[model]
+        self.media_uploader = KieMediaUploader(client)
 
     @property
     def provider(self) -> ModelProvider:
@@ -182,10 +186,17 @@ class KieImageAdapter(BaseImageAdapter):
             self.validate_resolution(resolution)
 
         try:
+            prepared_image_urls = image_urls
+            if image_urls and (self.requires_image_input or self.model == "nano-banana-pro"):
+                prepared_image_urls = await self.media_uploader.prepare_image_urls(
+                    image_urls,
+                    max_size_mb=self.config.get("max_image_size_mb"),
+                )
+
             # 构建输入参数
             input_params = self._build_input_params(
                 prompt=prompt,
-                image_urls=image_urls,
+                image_urls=prepared_image_urls,
                 size=size,
                 output_format=output_format,
                 resolution=resolution,
@@ -239,6 +250,10 @@ class KieImageAdapter(BaseImageAdapter):
         resolution: Optional[str],
     ) -> Dict[str, Any]:
         """构建输入参数"""
+        image_urls = (
+            [normalize_external_oss_url(url) for url in image_urls]
+            if image_urls else image_urls
+        )
 
         if self.model == "google/nano-banana":
             return NanoBananaInput(
@@ -406,8 +421,8 @@ class KieImageAdapter(BaseImageAdapter):
         )
 
     async def close(self) -> None:
-        """关闭连接（KieClient 由调用方管理）"""
-        pass
+        """关闭临时素材下载连接（KieClient 由调用方管理）。"""
+        await self.media_uploader.close()
 
     # ==================== 回调解析 ====================
 

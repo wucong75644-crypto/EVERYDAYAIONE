@@ -7,6 +7,7 @@
 
 import asyncio
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -74,7 +75,7 @@ class ImageHandler(BaseHandler):
         流程：
         1. 提取 prompt 和参考图
         2. 计算总积分并校验余额
-        3. 循环创建 N 个任务（锁积分 → API 调用 → 保存 task）
+        3. 循环创建 N 个本地任务（绑定 Turn → 锁积分 → API 调用）
         4. 返回 client_task_id
         """
         # 1. 提取参数
@@ -193,19 +194,51 @@ class ImageHandler(BaseHandler):
         metadata: TaskMetadata,
     ) -> Optional[str]:
         """
-        创建单个图片生成任务（锁积分 → API → 保存 task）
+        创建单个图片生成任务（创建并绑定本地 task → 锁积分 → API）
 
         Returns:
             external_task_id 或 None（失败时）
         """
-        temp_task_id = str(uuid.uuid4())
+        local_task_id = str(uuid.uuid4())
         transaction_id = self._lock_credits(
-            task_id=temp_task_id,
+            task_id=local_task_id,
             user_id=user_id,
             amount=per_image_credits,
             reason=f"Image[{index}]: {model_id}",
             org_id=self.org_id,
         )
+
+        try:
+            self._save_task(
+                task_id=local_task_id,
+                message_id=message_id,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                model_id=model_id,
+                prompt=prompt,
+                params=params,
+                metadata=metadata,
+                credits_locked=per_image_credits,
+                transaction_id=transaction_id,
+                image_index=index,
+                batch_id=batch_id,
+                local_task_id=local_task_id,
+                defer_external_task_id=True,
+            )
+        except Exception as save_err:
+            logger.critical(
+                f"Image task pre-save failed, refunding | local_task_id={local_task_id} | "
+                f"batch_id={batch_id} | transaction_id={transaction_id} | "
+                f"error={save_err}"
+            )
+            try:
+                self._refund_credits(transaction_id)
+            except Exception as refund_err:
+                logger.critical(
+                    f"Image pre-save refund also failed | tx={transaction_id} | "
+                    f"error={refund_err}"
+                )
+            return None
 
         try:
             result = await adapter.generate(**generate_kwargs)
@@ -221,45 +254,63 @@ class ImageHandler(BaseHandler):
             )
 
             # Smart mode: 尝试用替代模型重试
-            retry_result = await self._attempt_image_sync_retry(
-                prompt=prompt, model_id=model_id, error=str(e),
-                params=params, generate_kwargs=generate_kwargs,
-                user_id=user_id, per_image_credits=per_image_credits,
-                index=index, batch_id=batch_id, message_id=message_id,
-                conversation_id=conversation_id, metadata=metadata,
+            try:
+                retry_result = await self._attempt_image_sync_retry(
+                    prompt=prompt, model_id=model_id, error=str(e),
+                    params=params, generate_kwargs=generate_kwargs,
+                    user_id=user_id, per_image_credits=per_image_credits,
+                    index=index, batch_id=batch_id, message_id=message_id,
+                    conversation_id=conversation_id, metadata=metadata,
+                    local_task_id=local_task_id,
+                )
+            except Exception as retry_err:
+                logger.warning(
+                    f"Image sync retry setup failed | local_task_id={local_task_id} | "
+                    f"error={retry_err}"
+                )
+                retry_result = None
+            if retry_result:
+                return retry_result
+            self._update_task_by_id(
+                local_task_id,
+                {
+                    "status": "failed",
+                    "error_message": str(e),
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                },
             )
-            return retry_result  # None if retry also failed
+            return None
 
         try:
-            self._save_task(
-                task_id=external_task_id,
-                message_id=message_id,
-                conversation_id=conversation_id,
-                user_id=user_id,
-                model_id=model_id,
-                prompt=prompt,
-                params=params,
-                metadata=metadata,
-                credits_locked=per_image_credits,
-                transaction_id=transaction_id,
-                image_index=index,
-                batch_id=batch_id,
+            self._update_task_by_id(
+                local_task_id,
+                {
+                    "external_task_id": external_task_id,
+                    "error_message": None,
+                },
             )
-        except Exception as save_err:
-            # task 没落库 → webhook 回调时 get_task 找不到 → 永远不会确认/退积分
-            # 必须主动退积分 + 返回 None，与"adapter 失败"路径一致，避免积分锁定 + slot 泄漏
+        except Exception as update_err:
             logger.critical(
-                f"Image _save_task failed, refunding | external_task_id={external_task_id} | "
+                f"Image external task binding failed, refunding | "
+                f"local_task_id={local_task_id} | external_task_id={external_task_id} | "
                 f"batch_id={batch_id} | transaction_id={transaction_id} | "
-                f"error={save_err}"
+                f"error={update_err}"
             )
             try:
                 self._refund_credits(transaction_id)
             except Exception as refund_err:
                 logger.critical(
-                    f"Image _save_task refund also failed | tx={transaction_id} | "
-                    f"error={refund_err}"
+                    f"Image external task binding refund also failed | "
+                    f"tx={transaction_id} | error={refund_err}"
                 )
+            self._update_task_by_id(
+                local_task_id,
+                {
+                    "status": "failed",
+                    "error_message": str(update_err),
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
             return None
 
         return external_task_id
@@ -278,6 +329,7 @@ class ImageHandler(BaseHandler):
         message_id: str,
         conversation_id: str,
         metadata: TaskMetadata,
+        local_task_id: str,
     ) -> Optional[str]:
         """Smart mode 同步重试：API 调用失败时尝试替代模型"""
         if not params.get("_is_smart_mode"):
@@ -308,7 +360,7 @@ class ImageHandler(BaseHandler):
 
             new_adapter = create_image_adapter(new_model)
             new_tx = self._lock_credits(
-                task_id=str(uuid.uuid4()),
+                task_id=local_task_id,
                 user_id=user_id,
                 amount=per_image_credits,
                 reason=f"Image[{index}] retry: {new_model}",
@@ -335,31 +387,35 @@ class ImageHandler(BaseHandler):
             finally:
                 await new_adapter.close()
 
-            # API 成功 → 持久化。落库失败必须退积分 + 返回 None，
-            # 否则 webhook 找不到 task 永远不退积分，且本张图的 slot 也会泄漏
+            # API 成功 → 更新同一条本地 task。重试不创建第二条批次记录。
             try:
                 retry_params = {
                     **params,
                     "_retried": True,
                     "_retry_from_model": model_id,
                 }
-                self._save_task(
-                    task_id=result.task_id,
-                    message_id=message_id,
-                    conversation_id=conversation_id,
-                    user_id=user_id,
-                    model_id=new_model,
-                    prompt=prompt,
-                    params=retry_params,
-                    metadata=metadata,
-                    credits_locked=per_image_credits,
-                    transaction_id=new_tx,
-                    image_index=index,
-                    batch_id=batch_id,
+                self._update_task_by_id(
+                    local_task_id,
+                    {
+                        "external_task_id": result.task_id,
+                        "model_id": new_model,
+                        "status": "pending",
+                        "request_params": {
+                            "prompt": prompt,
+                            "model": new_model,
+                            **self._serialize_params(retry_params),
+                        },
+                        "credits_locked": per_image_credits,
+                        "credit_transaction_id": new_tx,
+                        "error_message": None,
+                        "completed_at": None,
+                        "started_at": datetime.now(timezone.utc).isoformat(),
+                    },
                 )
             except Exception as save_err:
                 logger.critical(
-                    f"Image retry _save_task failed, refunding | index={index} | "
+                    f"Image retry task update failed, refunding | index={index} | "
+                    f"local_task_id={local_task_id} | "
                     f"external_task_id={result.task_id} | tx={new_tx} | error={save_err}"
                 )
                 try:
@@ -447,6 +503,8 @@ class ImageHandler(BaseHandler):
         transaction_id: Optional[str] = None,
         image_index: Optional[int] = None,
         batch_id: Optional[str] = None,
+        local_task_id: Optional[str] = None,
+        defer_external_task_id: bool = False,
     ) -> None:
         """保存任务到数据库"""
         request_params = {
@@ -469,12 +527,19 @@ class ImageHandler(BaseHandler):
             transaction_id=transaction_id,
             image_index=image_index,
             batch_id=batch_id,
+            local_task_id=local_task_id,
+            defer_external_task_id=defer_external_task_id,
         )
+
+        if defer_external_task_id:
+            # 任务在 Provider 调用前已进入 pending，便于超时清理发现提交中断。
+            task_data["started_at"] = datetime.now(timezone.utc).isoformat()
 
         self._insert_task_with_turn_binding(task_data, metadata)
 
         logger.info(
-            f"Task saved | external_task_id={task_id} | "
+            f"Task saved | local_task_id={task_data['id']} | "
+            f"external_task_id={task_data.get('external_task_id')} | "
             f"client_task_id={metadata.client_task_id} | "
             f"image_index={image_index} | batch_id={batch_id}"
         )

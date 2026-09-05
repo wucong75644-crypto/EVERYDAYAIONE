@@ -6,7 +6,7 @@ ImageHandler 多图批次生成单元测试
 - 循环创建 N 个 task
 - 部分 API 失败时继续创建其余 task
 - 全部失败时抛异常
-- _save_task 传递 image_index 和 batch_id
+- 任务预落库并传递 image_index 和 batch_id
 - _build_task_data 包含多图字段
 """
 
@@ -299,7 +299,41 @@ class TestImageHandlerPartialFailure:
                 )
 
         assert adapter.call_count == 4  # 全部尝试
-        assert len(db._inserted_tasks) == 2  # 只有 index=0 和 index=2 成功保存
+        assert len(db._inserted_tasks) == 4  # 每个 Provider 尝试都先落本地 task
+
+    @pytest.mark.asyncio
+    async def test_local_task_is_saved_before_provider_and_then_bound(self, db, metadata):
+        """Provider 返回的外部 ID 应回填同一条预先创建的本地 task。"""
+        handler = ImageHandler(db)
+        adapter = MockImageAdapter()
+        handler._lock_credits = MagicMock(return_value="tx_1")
+        handler._save_task = MagicMock()
+        handler._update_task_by_id = MagicMock()
+
+        result = await handler._create_single_task(
+            adapter=adapter,
+            index=0,
+            batch_id="batch_1",
+            generate_kwargs={"prompt": "test"},
+            message_id="msg_1",
+            conversation_id="conv_1",
+            user_id="user_1",
+            model_id="test-model",
+            per_image_credits=5,
+            params={},
+            prompt="test",
+            metadata=metadata,
+        )
+
+        assert result == "ext_task_0"
+        local_task_id = handler._lock_credits.call_args.kwargs["task_id"]
+        save_kwargs = handler._save_task.call_args.kwargs
+        assert save_kwargs["local_task_id"] == local_task_id
+        assert save_kwargs["task_id"] == local_task_id
+        assert save_kwargs["defer_external_task_id"] is True
+        handler._update_task_by_id.assert_called_once()
+        assert handler._update_task_by_id.call_args.args[0] == local_task_id
+        assert handler._update_task_by_id.call_args.args[1]["external_task_id"] == "ext_task_0"
 
     @pytest.mark.asyncio
     @patch("services.adapters.factory.create_image_adapter")
@@ -456,7 +490,7 @@ class TestBuildTaskDataMultiImage:
 
 
 class TestImageHandlerErrorHandling:
-    """_save_task 和 _refund_credits 失败场景"""
+    """任务预落库和 _refund_credits 失败场景"""
 
     def _make_handler(self):
         db = MagicMock()
@@ -464,31 +498,28 @@ class TestImageHandlerErrorHandling:
         return handler, db
 
     @pytest.mark.asyncio
-    async def test_save_task_failure_does_not_crash(self):
-        """主路径 _save_task 失败 → 不崩溃，退积分 + 返回 None
+    async def test_pre_save_failure_does_not_crash(self):
+        """任务预落库失败 → 不调用 Provider，退积分 + 返回 None
 
-        修复 slot 泄漏：task 没落库时 webhook 找不到 task 永远不会退积分，
-        必须主动退积分 + 返回 None（与 adapter 失败路径一致）。
+        任务必须在 Provider 调用前落库，避免外部任务已创建但本地没有映射。
         """
         handler, db = self._make_handler()
 
-        # mock adapter.generate 成功
+        # Provider 不应在本地 task 预落库失败时被调用
         mock_adapter = MagicMock()
-        mock_result = MagicMock()
-        mock_result.task_id = "ext_123"
-        mock_adapter.generate = AsyncMock(return_value=mock_result)
+        mock_adapter.generate = AsyncMock()
         mock_adapter.close = AsyncMock()
         mock_adapter.provider = MagicMock(value="kie")
 
         # _lock_credits 成功
         handler._lock_credits = MagicMock(return_value="tx_1")
 
-        # _save_task 失败
+        # 任务预落库失败
         handler._save_task = MagicMock(side_effect=Exception("DB down"))
         # _refund_credits 应被调用
         handler._refund_credits = MagicMock()
 
-        # _attempt_image_sync_retry 不应被调用
+        # 不应触发 Provider 重试
         handler._attempt_image_sync_retry = AsyncMock()
 
         metadata = TaskMetadata(client_task_id="client_1")
@@ -512,6 +543,7 @@ class TestImageHandlerErrorHandling:
         assert result is None
         # _save_task 被调用（虽然失败了）
         handler._save_task.assert_called_once()
+        mock_adapter.generate.assert_not_awaited()
         # 必须退积分，避免积分永久锁定
         handler._refund_credits.assert_called_once_with("tx_1")
 

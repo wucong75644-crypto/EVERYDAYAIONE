@@ -5,11 +5,12 @@
  *       getPlaceholderInfo、getAgentStepText、isMediaPlaceholder
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   PLACEHOLDER_TEXT,
   RENDER_CONFIG,
+  getImagePreparationText,
   getPlaceholderText,
   getCompletedBubbleText,
   getPlaceholderInfo,
@@ -55,6 +56,16 @@ describe('RENDER_CONFIG', () => {
     expect(RENDER_CONFIG[type]).toBeDefined();
     expect(RENDER_CONFIG[type].loadingText).toBeTruthy();
     expect(RENDER_CONFIG[type].completedText).toBeTruthy();
+  });
+});
+
+describe('getImagePreparationText', () => {
+  it('参考图任务显示素材准备状态', () => {
+    expect(getImagePreparationText(true)).toBe('正在准备图片素材');
+  });
+
+  it('纯文生图显示任务创建状态', () => {
+    expect(getImagePreparationText(false)).toBe('正在创建图片任务');
   });
 });
 

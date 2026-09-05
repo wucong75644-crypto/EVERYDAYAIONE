@@ -6,6 +6,7 @@ const store = {
   removeMessage: vi.fn(),
   startStreaming: vi.fn(),
   completeStreaming: vi.fn(),
+  completeStreamingWithMessage: vi.fn(),
   setIsSending: vi.fn(),
   registerStreamingId: vi.fn(),
   getMessage: vi.fn(),
@@ -80,6 +81,43 @@ describe('sendMessage idempotent retry', () => {
     expect(store.addMessage).toHaveBeenCalledTimes(1);
     expect(store.startStreaming).toHaveBeenCalledTimes(1);
     expect(subscribeTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the local image preparation state before the task response', async () => {
+    requestMock.mockResolvedValue({
+      ...response,
+      generation_type: 'image',
+      assistant_message: {
+        ...response.assistant_message,
+        generation_params: { type: 'image' },
+      },
+    });
+
+    await expect(sendMessage({
+      conversationId: 'conv-1',
+      content: [
+        { type: 'text', text: '替换图片主体' },
+        { type: 'image', url: 'https://cdn.example.com/reference.png' },
+      ],
+      generationType: 'image',
+      model: 'gpt-image-2-image-to-image',
+      identifiers,
+    })).resolves.toBe('task-1');
+
+    expect(store.startStreaming).toHaveBeenCalledWith(
+      'conv-1',
+      'assistant-1',
+      expect.objectContaining({
+        generationParams: expect.objectContaining({
+          type: 'image',
+          _client_preparing_text: '正在准备图片素材',
+        }),
+      }),
+    );
+    expect(store.completeStreamingWithMessage).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({ status: 'pending' }),
+    );
   });
 
   it('keeps optimistic state when network outcome remains uncertain', async () => {

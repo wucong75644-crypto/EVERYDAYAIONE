@@ -6,7 +6,6 @@
 """
 
 import json
-import uuid
 from typing import Any, Dict, Optional, Union
 
 from loguru import logger
@@ -146,7 +145,6 @@ class AsyncRetryService:
         """用新模型重新提交生成任务，更新 task 记录"""
         task_type = task["type"]
         user_id = task["user_id"]
-        old_ext_id = task["external_task_id"]
 
         # 1. 创建适配器
         if task_type == "image":
@@ -183,20 +181,27 @@ class AsyncRetryService:
                 "aspect_ratio", "16:9"
             )
 
-        # 3. 锁定新积分
-        old_credits = task.get("credits_locked", 0)
+        # 3. 先结束旧的积分锁定，再为同一条本地任务创建新的 pending 事务。
+        # credit_transactions 允许保留历史事务，但同一任务不能同时存在两个 pending 锁定。
         from services.handlers.mixins import CreditMixin
 
         credit_helper = CreditMixin()
         credit_helper.db = self.db
+        old_tx = task.get("credit_transaction_id")
+        if old_tx:
+            credit_helper._refund_credits(old_tx)
+
+        # 4. 锁定新积分
+        old_credits = task.get("credits_locked", 0)
         new_tx = credit_helper._lock_credits(
-            task_id=str(uuid.uuid4()),
+            task_id=task["id"],
             user_id=user_id,
             amount=old_credits,
             reason=f"Retry[{task_type}]: {new_model}",
+            org_id=task.get("org_id"),
         )
 
-        # 4. 提交 API 请求
+        # 5. 提交 API 请求
         try:
             api_result = await adapter.generate(**generate_kwargs)
             new_ext_id = api_result.task_id
@@ -205,18 +210,6 @@ class AsyncRetryService:
             raise
         finally:
             await adapter.close()
-
-        # 5. 退回旧积分
-        old_tx = task.get("credit_transaction_id")
-        if old_tx:
-            try:
-                self.db.rpc(
-                    "atomic_refund_credits", {"p_transaction_id": old_tx}
-                ).execute()
-            except Exception as e:
-                logger.warning(
-                    f"Failed to refund old credits | tx={old_tx} | error={e}"
-                )
 
         # 6. 更新 task 记录（复用同一条记录，新 ext_id）
         updated_params = {
@@ -237,6 +230,6 @@ class AsyncRetryService:
             "credits_locked": old_credits,
             "version": 1,
             "error_message": None,
-        }).eq("external_task_id", old_ext_id).execute()
+        }).eq("id", task["id"]).execute()
 
         return new_ext_id

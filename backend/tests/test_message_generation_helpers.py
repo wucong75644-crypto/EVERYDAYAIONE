@@ -600,16 +600,16 @@ def test_resolve_existing_turn_anchor_uses_explicit_relation():
     assert resolve_existing_turn_anchor(db, "c1", "a1") == ("u1", "t1")
 
 
-def test_resolve_existing_turn_anchor_recovers_legacy_user_message():
+def test_resolve_existing_turn_anchor_reuses_persisted_user_turn():
     db = _TurnDB(
         {"id": "a1", "conversation_id": "c1", "created_at": "2026-01-01T00:00:01Z"},
-        previous=[{"id": "u1"}],
+        previous=[{"id": "u1", "turn_id": "t1"}],
     )
 
     input_id, turn_id = resolve_existing_turn_anchor(db, "c1", "a1")
 
     assert input_id == "u1"
-    assert len(turn_id) == 36
+    assert turn_id == "t1"
 
 
 

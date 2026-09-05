@@ -34,6 +34,10 @@ class TaskMixin:
         )
         return result.data if (result and result.data) else None
 
+    def _update_task_by_id(self, task_id: str, update_data: Dict[str, Any]) -> None:
+        """按本地任务 ID 更新任务，供 Provider 提交前后的状态变更使用。"""
+        self.db.table("tasks").update(update_data).eq("id", task_id).execute()
+
     def _complete_task(self, task_id: str, task: Optional[Dict[str, Any]] = None) -> None:
         """
         标记任务完成

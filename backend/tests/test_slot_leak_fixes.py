@@ -395,9 +395,10 @@ class TestImageHandlerSaveTaskFailure:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_retry_path_save_task_failure_refunds_and_returns_none(self):
-        """retry 路径 _save_task 抛错 → 退积分 + return None"""
+    async def test_retry_path_task_update_failure_refunds_and_returns_none(self):
+        """retry 路径回填外部 ID 失败 → 退积分 + return None"""
         h = self._make_handler()
+        h._update_task_by_id = MagicMock(side_effect=RuntimeError("DB update failed"))
         h._route_retry = AsyncMock(return_value=MagicMock(recommended_model="flux-retry"))
 
         retry_adapter = MagicMock()
@@ -434,9 +435,10 @@ class TestImageHandlerSaveTaskFailure:
                 index=0, batch_id="b1",
                 message_id="msg1", conversation_id="c1",
                 metadata=metadata,
+                local_task_id="local-task-1",
             )
 
-        # _save_task 失败后必须退 retry 锁的积分
+        # 外部 ID 回填失败后必须退 retry 锁的积分
         h._refund_credits.assert_any_call("tx-retry")
         # 返回 None（修复关键：原本会 return result.task_id 泄漏 slot）
         assert result is None

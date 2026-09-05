@@ -196,6 +196,8 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
         transaction_id: Optional[str] = None,
         image_index: Optional[int] = None,
         batch_id: Optional[str] = None,
+        local_task_id: Optional[str] = None,
+        defer_external_task_id: bool = False,
     ) -> Dict[str, Any]:
         """
         构建标准 task_data 结构（所有 Handler 共用）
@@ -214,6 +216,8 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
             transaction_id: 积分事务 ID（仅 image/video）
             image_index: 图片在批次中的位置（0~3），仅图片任务
             batch_id: 批次 ID（同批次 task 共享），仅图片任务
+            local_task_id: 本地任务 ID；未传时保持原有自动生成行为
+            defer_external_task_id: 任务尚未提交 Provider 时暂不写入外部任务 ID
 
         Returns:
             标准 task_data 字典
@@ -222,8 +226,8 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
         org_id = request_params.pop("_org_id", None) if request_params else None
 
         task_data = {
-            "id": str(uuid.uuid4()),
-            "external_task_id": task_id,
+            "id": local_task_id or str(uuid.uuid4()),
+            "external_task_id": None if defer_external_task_id else task_id,
             "conversation_id": conversation_id,
             "user_id": user_id,
             "org_id": org_id,
