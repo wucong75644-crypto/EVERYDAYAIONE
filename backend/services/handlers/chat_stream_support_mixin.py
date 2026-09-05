@@ -193,6 +193,13 @@ class ChatStreamSupportMixin:
             f"Chat retry | task_id={task_id} | "
             f"failed={model_id} → new={new_model} | attempt={attempt}"
         )
+        from services.model_gateway import record_retry_started
+
+        model_request_id = record_retry_started(
+            task_id=task_id,
+            model_id=new_model,
+            attempt_context=getattr(self, "_last_model_attempt_context", None),
+        )
 
         # WS 通知前端正在重试
         await self._send_retry_notification(
@@ -217,6 +224,7 @@ class ChatStreamSupportMixin:
             task_id=task_id, message_id=message_id,
             conversation_id=conversation_id, user_id=user_id,
             content=content, model_id=new_model,
+            model_request_id=model_request_id,
             thinking_effort=thinking_effort, thinking_mode=thinking_mode,
             _params=_params, _retry_context=retry_ctx,
             context_anchor=context_anchor,

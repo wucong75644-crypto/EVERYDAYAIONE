@@ -45,6 +45,7 @@ class ChatExecutionRequest:
     message_id: str
     model_id: str
     context_anchor: Any
+    model_request_id: str | None = None
     params: dict[str, Any] = field(default_factory=dict)
     permission_mode: str = "auto"
     needs_google_search: bool = False
@@ -92,6 +93,7 @@ async def execute_chat(
         conversation_id=request.conversation_id,
         task_id=request.task_id,
         model_id=request.model_id,
+        model_request_id=request.model_request_id,
         permission_mode=request.permission_mode,
         needs_google_search=request.needs_google_search,
         params=request.params,
@@ -105,6 +107,9 @@ async def execute_chat(
     handler._pending_emit_payloads = []
     handler._pending_form_block = None
     handler._terminal_form_pending = False
+    # retry 在 execute_chat 返回后才发生；清空旧请求残留，异常时再从共享
+    # Gateway session 显式带出本次失败 attempt，不能依赖子 Task 的 ContextVar。
+    handler._last_model_attempt_context = None
     totals = StreamTotals()
     blocks: list[dict[str, Any]] = _initial_replay_blocks(
         request.replay_context,
@@ -151,6 +156,13 @@ async def execute_chat(
                 prepared.budget.turns_used,
             ),
         )
+    except BaseException:
+        handler._last_model_attempt_context = getattr(
+            model_gateway,
+            "last_attempt_context",
+            None,
+        )
+        raise
     finally:
         await model_gateway.close()
         if getattr(handler, "_adapter", None) is model_gateway:
@@ -293,12 +305,21 @@ async def _read_turn(
     previewed_indices: set[int] = set()
     preview_ids: dict[int, str] = {}
     model_gateway = _get_model_gateway(prepared)
-    stream = model_gateway.stream_chat(
-        messages=prepared.messages,
-        tools=tools,
-        reasoning_effort=thinking_effort,
-        thinking_mode=thinking_mode,
+    stream_kwargs = {
+        "messages": prepared.messages,
+        "tools": tools,
+        "reasoning_effort": thinking_effort,
+        "thinking_mode": thinking_mode,
         **prepared.stream_kwargs,
+    }
+    # 旧测试/兼容入口仍可注入 adapter-shaped double；只有永久 Gateway
+    # 消费本地 turn_index，不能把该内部字段转发给旧 Provider adapter。
+    from services.model_gateway import ModelGatewaySession
+
+    if isinstance(model_gateway, ModelGatewaySession):
+        stream_kwargs["turn_index"] = model_round
+    stream = model_gateway.stream_chat(
+        **stream_kwargs,
     )
     stream_iterator = stream.__aiter__()
     while True:

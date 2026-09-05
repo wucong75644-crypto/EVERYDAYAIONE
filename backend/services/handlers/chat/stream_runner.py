@@ -27,6 +27,7 @@ class LegacyStreamRequest:
     user_id: str
     content: list[Any]
     model_id: str
+    model_request_id: str | None = None
     thinking_effort: str | None = None
     thinking_mode: str | None = None
     permission_mode: str = "auto"
@@ -155,6 +156,7 @@ async def _execute_stream(
                 task_id=request.task_id,
                 message_id=request.message_id,
                 model_id=request.model_id,
+                model_request_id=request.model_request_id,
                 context_anchor=request.context_anchor,
                 params=request.params or {},
                 permission_mode=request.permission_mode,

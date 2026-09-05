@@ -106,18 +106,46 @@ def create_generation(
     name: str,
     model: str = "",
     input_messages: Optional[list] = None,
+    metadata: Optional[dict] = None,
 ) -> Any:
     """创建 Langfuse generation（对应一次 LLM 调用）。"""
     if isinstance(parent, _NullSpan):
         return _NullSpan()
     try:
+        generation_kwargs = {
+            "name": name,
+            "model": model or None,
+            "input": input_messages,
+        }
+        if metadata:
+            generation_kwargs["metadata"] = metadata
         return parent.generation(
-            name=name,
-            model=model or None,
-            input=input_messages,
+            **generation_kwargs,
         )
     except Exception as e:
         logger.debug(f"Langfuse create_generation failed: {e}")
+        return _NullSpan()
+
+
+def create_model_gateway_generation(
+    *,
+    trace_id: str | None,
+    model: str,
+    metadata: Optional[dict] = None,
+) -> Any:
+    """在已有 trace 下创建不含 prompt/response 的 Gateway generation。"""
+    lf = get_langfuse()
+    if lf is None:
+        return _NullSpan()
+    try:
+        trace = lf.trace(id=trace_id or None)
+        return trace.generation(
+            name="model_gateway_attempt",
+            model=model or None,
+            metadata=metadata or {},
+        )
+    except Exception as e:
+        logger.debug(f"Langfuse ModelGateway generation failed: {e}")
         return _NullSpan()
 
 

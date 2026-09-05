@@ -192,7 +192,7 @@ class ERPAgent(ERPChildFactoryMixin):
                 model_id=get_settings().agent_loop_model,
                 org_id=self.org_id,
                 db=self.db,
-                request_id=self.task_id,
+                task_id=self.task_id,
             )
         )
         try:
@@ -488,6 +488,7 @@ class ERPAgent(ERPChildFactoryMixin):
             db=self.db,
             user_id=self.user_id,
             conversation_id=self.conversation_id,
+            task_id=self.task_id,
         )
 
     async def _push_thinking(self, text: str) -> None:

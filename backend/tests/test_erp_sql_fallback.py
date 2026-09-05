@@ -196,9 +196,11 @@ async def test_sql_fallback_uses_gateway_and_preserves_generated_sql() -> None:
             Mock(),
             user_id="user-1",
             conversation_id="conversation-1",
+            task_id="task-1",
         )
 
     assert result.status == "success"
     assert result.metadata["sql"].startswith("SELECT * FROM orders")
     gateway.open_chat.assert_called_once()
+    assert gateway.open_chat.call_args.args[0].task_id == "task-1"
     session.close.assert_awaited_once()
