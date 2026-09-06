@@ -586,7 +586,8 @@ def _normalize_table_cell(value: Any) -> str:
             return f"number:{result}{'%' if percent else ''}"
         except InvalidOperation:
             pass
-    return f"text:{re.sub(r'\s+', '', normalized).casefold()}"
+    compact = re.sub(r"\s+", "", normalized).casefold()
+    return f"text:{compact}"
 
 
 def _normalize_table_dimension(value: Any) -> str:
