@@ -203,6 +203,26 @@ async def test_streaming_orchestrator_handles_table_split_across_chunks():
     assert sink.on_text.await_args.args[0] == "结论。\n"
 
 
+@pytest.mark.asyncio
+async def test_streaming_orchestrator_keeps_table_header_buffered_until_separator_chunk():
+    sink = AsyncMock()
+    sink.text = ""
+    sink.thinking = ""
+    sink.blocks = []
+    orchestrator = OutputOrchestrator(sink, [TABLE])
+
+    await orchestrator.on_text(
+        "结论。\n2026-09-06 今天付款订单数按平台划分:\n\n"
+    )
+    await orchestrator.on_text("| 平台 | 有效订单数 | 有效金额 |\n")
+    await orchestrator.on_text("| --- | --- | --- |\n| 抖音 | 128 | 2260.5 |")
+    await orchestrator.flush()
+
+    assert [call.args[0] for call in sink.on_text.await_args_list] == [
+        "结论。\n2026-09-06 今天付款订单数按平台划分:\n\n",
+    ]
+
+
 def test_canonical_content_blocks_drops_only_duplicate_text():
     content = canonicalize_content_blocks([
         {"type": "text", "text": _markdown_table() + "\n\n总结"},

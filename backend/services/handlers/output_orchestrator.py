@@ -381,12 +381,32 @@ def _candidate_can_continue(text: str) -> bool:
         return True
     if _markdown_table_fingerprint(text) is not None:
         return True
+    if _looks_like_incomplete_markdown_table(text):
+        return True
     if re.search(
         r"(?ms)^\s*```(?:json|text|mermaid|vega|vegalite)\s*$.*?^\s*```\s*$",
         text,
     ):
         return True
     return bool(_MARKDOWN_LINK_RE.search(text))
+
+
+def _looks_like_incomplete_markdown_table(text: str) -> bool:
+    """识别跨 token chunk 尚未形成完整指纹的 Markdown 表格候选。"""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines or not _is_pipe_line(lines[0]):
+        return False
+    if len(lines) == 1:
+        return True
+    if _is_table_separator(lines[1]):
+        return all(_is_pipe_line(line) for line in lines[2:])
+
+    # 分隔线本身也可能被拆在多个 token 中，例如 ``| --- |`` 的结尾
+    # 尚未到达。只接受由 :、- 组成的候选，避免把普通的竖线文本吞掉。
+    cells = _split_pipe_cells(lines[1])
+    return bool(cells) and any("-" in cell for cell in cells) and all(
+        bool(re.fullmatch(r"[:\-\s]*", cell)) for cell in cells
+    )
 
 
 def _remove_duplicate_tables(
