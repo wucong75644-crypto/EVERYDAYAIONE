@@ -13,6 +13,7 @@ from services.handlers.chat.execution_engine import (
 )
 from services.handlers.chat.execution_sink import WebSocketExecutionSink
 from services.handlers.chat.stream_session import StreamDelivery, StreamTotals
+from services.handlers.output_orchestrator import OutputOrchestrator
 
 
 class _LegacyLoopSink(WebSocketExecutionSink):
@@ -47,7 +48,7 @@ class ChatStreamLoop:
 
     async def run(self) -> None:
         cancellation_event = asyncio.Event()
-        sink = _LegacyLoopSink(
+        raw_sink = _LegacyLoopSink(
             task_id=self.delivery.task_id,
             conversation_id=self.delivery.conversation_id,
             message_id=self.delivery.message_id,
@@ -57,6 +58,7 @@ class ChatStreamLoop:
             save_content=self.handler._save_accumulated_content,
             save_blocks=self.handler._save_accumulated_blocks,
         )
+        sink = OutputOrchestrator(raw_sink, self.content_blocks)
         monitor = asyncio.create_task(
             self._watch_cancellation(cancellation_event),
         )
@@ -119,6 +121,10 @@ class ChatStreamLoop:
                 self.handler,
                 self.content_blocks,
                 sink,
+            )
+            await sink.finalize_text()
+            self.content_blocks[:] = sink.canonicalize_blocks(
+                self.content_blocks,
             )
         finally:
             monitor.cancel()

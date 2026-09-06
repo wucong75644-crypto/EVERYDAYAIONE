@@ -17,6 +17,7 @@ from services.handlers.chat.execution_sink import (
     ExecutionSink,
 )
 from services.handlers.chat.outcome_builder import build_content_parts
+from services.handlers.output_orchestrator import OutputOrchestrator
 from services.handlers.chat.stream_session import StreamTotals
 from services.handlers.chat.stream_setup import prepare_chat_stream
 from services.handlers.chat.tool_loop import (
@@ -81,7 +82,11 @@ async def execute_chat(
 ) -> ChatExecutionResult:
     """执行固定上下文的一次生成，不提交任务、消息或 revision 终态。"""
     event = cancellation_event or asyncio.Event()
-    output = sink or CollectingExecutionSink()
+    raw_output = sink or CollectingExecutionSink()
+    blocks: list[dict[str, Any]] = _initial_replay_blocks(
+        request.replay_context,
+    )
+    output = OutputOrchestrator(raw_output, blocks)
     if runtime:
         checkpoint = getattr(output, "flush_progress", None)
         if checkpoint is not None:
@@ -112,9 +117,6 @@ async def execute_chat(
     # Gateway session 显式带出本次失败 attempt，不能依赖子 Task 的 ContextVar。
     handler._last_model_attempt_context = None
     totals = StreamTotals()
-    blocks: list[dict[str, Any]] = _initial_replay_blocks(
-        request.replay_context,
-    )
     try:
         await output.start()
         form_hint = await _run_loop(
@@ -131,6 +133,8 @@ async def execute_chat(
         await _apply_budget_stop(prepared, totals, blocks, output)
         await _consume_emit_payloads(handler, blocks, output)
         await output.flush()
+        totals.text = output.text
+        blocks[:] = output.canonicalize_blocks(blocks)
         parts = build_content_parts(
             blocks,
             fallback_text=totals.text,
@@ -399,6 +403,9 @@ async def _read_turn(
             turn_text += chunk.content
             totals.text += chunk.content
             await sink.on_text(chunk.content)
+            visible_text = getattr(sink, "text", None)
+            if isinstance(visible_text, str):
+                totals.text = visible_text
         if chunk.tool_calls:
             accumulate_tool_call_delta(calls, chunk.tool_calls)
             if runtime is not None:

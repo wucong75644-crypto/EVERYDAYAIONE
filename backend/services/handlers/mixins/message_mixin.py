@@ -462,6 +462,12 @@ class MessageMixin:
                 return
 
             text = "\n".join(text_parts)
+            structured_parts = [
+                part for part in content_dicts
+                if part.get("type") in {
+                    "table", "chart", "diagram", "image", "file",
+                }
+            ]
             org_id = conv.data.get("org_id")
             user_id = task.get("user_id")
             if not org_id or not user_id:
@@ -469,7 +475,12 @@ class MessageMixin:
 
             from services.message_gateway import MessageGateway
             gateway = MessageGateway(self.db)
-            await gateway.fanout_to_wecom(user_id, org_id, text)
+            if structured_parts:
+                await gateway.fanout_to_wecom(
+                    user_id, org_id, text, content_blocks=structured_parts,
+                )
+            else:
+                await gateway.fanout_to_wecom(user_id, org_id, text)
         except Exception as e:
             logger.warning(
                 f"_maybe_fanout_to_wecom failed | "
