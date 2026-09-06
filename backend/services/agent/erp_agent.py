@@ -392,6 +392,7 @@ class ERPAgent(ERPChildFactoryMixin):
             return AgentResult(
                 status=status,
                 summary=summary,
+                format=result.format,
                 file_ref=result.file_ref,
                 data=result.data if result.format == OutputFormat.TABLE else None,
                 columns=result.columns,
@@ -408,19 +409,12 @@ class ERPAgent(ERPChildFactoryMixin):
         file_refs = []
         all_file_ref_objs = []
         emit_payloads: list[dict[str, Any]] = []
-        from services.handlers.emit_payloads import (
-            build_table_payload_from_agent_result,
-        )
+        from services.handlers.emit_payloads import collect_agent_result_payloads
         for domain, result in successes:
             label = _DOMAIN_LABEL.get(domain, domain)
             parts.append(f"【{label}】{result.summary}")
-            child_payloads = list(result.emit_payloads or [])
+            child_payloads = collect_agent_result_payloads(result)
             emit_payloads.extend(child_payloads)
-            table_payload = build_table_payload_from_agent_result(result)
-            if table_payload and not any(
-                payload.get("kind") == "table" for payload in child_payloads
-            ):
-                emit_payloads.append(table_payload)
             if result.file_ref:
                 file_refs.append({
                     "domain": domain,

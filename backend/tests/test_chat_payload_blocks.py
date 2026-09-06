@@ -17,6 +17,8 @@ from services.agent.tool_output import ColumnMeta, OutputFormat
 from services.handlers.emit_payloads import (
     build_block_from_payload,
     build_part_from_payload,
+    build_content_blocks_from_payloads,
+    collect_agent_result_payloads,
     build_table_payload_from_agent_result,
 )
 
@@ -192,3 +194,33 @@ def test_agent_result_table_serializes_database_native_values():
         "记录 ID": "00000000-0000-0000-0000-000000000001",
     }]
     json.dumps(payload, ensure_ascii=False)
+
+
+def test_collect_agent_result_payloads_adds_table_once():
+    result = AgentResult(
+        summary="订单统计",
+        format=OutputFormat.TABLE,
+        columns=[ColumnMeta("count", "integer", "有效订单")],
+        data=[{"count": 3}],
+        emit_payloads=[{"kind": "table", "columns": ["已有"], "rows": []}],
+    )
+
+    payloads = collect_agent_result_payloads(result)
+
+    assert len(payloads) == 1
+    assert payloads[0]["columns"] == ["已有"]
+
+
+def test_build_content_blocks_uses_existing_payload_converter():
+    blocks = build_content_blocks_from_payloads([
+        {"kind": "table", "columns": ["平台"], "rows": [{"平台": "京东"}]},
+        {"kind": "unknown"},
+    ])
+
+    assert blocks == [{
+        "type": "table",
+        "title": "",
+        "columns": ["平台"],
+        "rows": [{"平台": "京东"}],
+        "truncated": False,
+    }]

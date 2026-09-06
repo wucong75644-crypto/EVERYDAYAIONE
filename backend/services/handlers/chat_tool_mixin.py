@@ -109,18 +109,11 @@ class ChatToolMixin(ChatToolResultMixin):
 
         # ── AgentResult 处理:聚合 emit_payloads (沙盒 IO 统一协议) ──
         from services.agent.agent_result import AgentResult
-        from services.handlers.emit_payloads import (
-            build_table_payload_from_agent_result,
-        )
+        from services.handlers.emit_payloads import collect_agent_result_payloads
         for tc, result, _is_error, _display in results:
             if not isinstance(result, AgentResult):
                 continue
-            payloads = result.emit_payloads or []
-            table_payload = build_table_payload_from_agent_result(result)
-            if table_payload and not any(
-                payload.get("kind") == "table" for payload in payloads
-            ):
-                payloads = [*payloads, table_payload]
+            payloads = collect_agent_result_payloads(result)
             logger.info(
                 f"AgentResult emit_payloads check | tool={tc['name']} | "
                 f"count={len(payloads)} | "

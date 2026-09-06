@@ -98,6 +98,32 @@ class TestSaveSystemMessage:
         assert msg_inserts[0]["org_id"] == "org-1"
 
     @pytest.mark.asyncio
+    async def test_saves_structured_content_blocks_after_text(self):
+        db = _GatewayDB({
+            "conversations": [{"id": "conv-1"}],
+            "messages": [{"id": "msg-1"}],
+        })
+        gateway = MessageGateway(db)
+
+        with patch.object(gateway, "_notify_web", new_callable=AsyncMock):
+            with patch.object(gateway, "_push_to_wecom", new_callable=AsyncMock):
+                await gateway.save_system_message(
+                    user_id="u1", org_id="org-1", text="日报",
+                    content_blocks=[{
+                        "type": "table", "columns": ["平台"],
+                        "rows": [{"平台": "京东"}], "truncated": False,
+                    }],
+                )
+
+        assert db._inserts["messages"][0]["content"] == [
+            {"type": "text", "text": "日报"},
+            {
+                "type": "table", "columns": ["平台"],
+                "rows": [{"平台": "京东"}], "truncated": False,
+            },
+        ]
+
+    @pytest.mark.asyncio
     async def test_empty_text_returns_none(self):
         """空文本直接返回 None，不触发任何操作"""
         gateway = MessageGateway(MagicMock())

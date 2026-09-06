@@ -37,6 +37,7 @@ class ScheduledTaskResult:
     turns_used: int = 0
     tools_called: List[str] = field(default_factory=list)
     files: List[Dict[str, Any]] = field(default_factory=list)
+    content_blocks: List[Dict[str, Any]] = field(default_factory=list)
     is_truncated: bool = False
     error_message: str = ""
     completion_gate: Dict[str, Any] = field(default_factory=dict)
@@ -187,7 +188,9 @@ class ScheduledTaskAgent:
             turns = result.turns
 
             # 8. 提取沙盒输出的产物(ToolLoopExecutor 已在独立通道透传 emit_payloads)
+            from services.handlers.emit_payloads import build_content_blocks_from_payloads
             files = result.emit_payloads or []
+            content_blocks = build_content_blocks_from_payloads(files)
 
             # 定时任务没有交互方可接管未完成的循环。若工具循环未形成 LLM
             # 最终结论，fallback 文本只能用于诊断，不能被当作可推送、可计费
@@ -211,6 +214,7 @@ class ScheduledTaskAgent:
                     turns_used=turns,
                     tools_called=tools_called,
                     files=files,
+                    content_blocks=content_blocks,
                     is_truncated=STAGED_MARKER in (text or ""),
                     error_message=error_message[:500],
                     completion_gate=gate,
@@ -227,6 +231,7 @@ class ScheduledTaskAgent:
                 turns_used=turns,
                 tools_called=tools_called,
                 files=files,
+                content_blocks=content_blocks,
                 is_truncated=STAGED_MARKER in (text or ""),
                 completion_gate=gate,
             )

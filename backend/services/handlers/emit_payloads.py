@@ -174,3 +174,29 @@ def build_table_payload_from_agent_result(result: Any) -> Optional[Dict[str, Any
     serialized.pop("type", None)
     serialized["kind"] = "table"
     return serialized
+
+
+def collect_agent_result_payloads(result: Any) -> list[Dict[str, Any]]:
+    """收集 AgentResult 的统一产物，并补齐 TABLE 结果的 emit payload。"""
+    raw_payloads = getattr(result, "emit_payloads", None)
+    payloads = [payload for payload in (raw_payloads or []) if isinstance(payload, dict)]
+    table_payload = build_table_payload_from_agent_result(result)
+    if table_payload and not any(
+        payload.get("kind") == "table" for payload in payloads
+    ):
+        payloads.append(table_payload)
+    return payloads
+
+
+def build_content_blocks_from_payloads(
+    payloads: list[Dict[str, Any]] | None,
+) -> list[Dict[str, Any]]:
+    """把统一 emit payload 列表转为现有持久化 content block 列表。"""
+    blocks: list[Dict[str, Any]] = []
+    for payload in payloads or []:
+        if not isinstance(payload, dict):
+            continue
+        block = build_block_from_payload(payload)
+        if block:
+            blocks.append(block)
+    return blocks

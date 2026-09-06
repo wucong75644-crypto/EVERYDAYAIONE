@@ -395,7 +395,9 @@ class ToolLoopExecutor:
         Agent (ImageAgent/media_tool 等) 直接产 result.emit_payloads,
         此处聚合到 self._emit_payloads。
         """
-        payloads = getattr(result, "emit_payloads", None)
+        from services.handlers.emit_payloads import collect_agent_result_payloads
+
+        payloads = collect_agent_result_payloads(result)
         if payloads:
             self._emit_payloads.extend(payloads)
 
