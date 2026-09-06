@@ -10,7 +10,6 @@ from typing import Any, Callable, Mapping
 from loguru import logger
 from services.message_utils import parse_content
 from services.org.config_resolver import AsyncOrgConfigResolver
-from services.handlers.output_orchestrator import canonicalize_content_blocks
 from services.wecom.markdown_adapter import (
     adapt_for_app,
     clean_for_stream,
@@ -65,9 +64,7 @@ class WecomDeliverySender:
             return self._text_items(key, text, context)
 
         items: list[WecomDeliveryItem] = []
-        parts = canonicalize_content_blocks(
-            parse_content((message or {}).get("content"))
-        )
+        parts = parse_content((message or {}).get("content"))
         text_parts = [
             str(part["text"])
             for part in parts

@@ -49,21 +49,7 @@ class MessageGateway:
         Returns:
             message_id 或 None（存储失败时）
         """
-        from services.handlers.output_orchestrator import canonicalize_content_blocks
-
-        canonical_content = canonicalize_content_blocks([
-            {"type": "text", "text": text},
-            *(content_blocks or []),
-        ])
-        canonical_text = "\n".join(
-            str(part.get("text") or "")
-            for part in canonical_content
-            if part.get("type") == "text" and part.get("text")
-        )
-        canonical_blocks = [
-            part for part in canonical_content if part.get("type") != "text"
-        ]
-        if not canonical_text and not canonical_blocks:
+        if not text:
             return None
 
         # 1. 查找或创建企微对话
@@ -81,14 +67,17 @@ class MessageGateway:
         message_id = await self._insert_message(
             conversation_id=conversation_id,
             role="assistant",
-            content=canonical_content,
+            content=[
+                {"type": "text", "text": text},
+                *(content_blocks or []),
+            ],
             org_id=org_id,
         )
         if not message_id:
             return None
 
         # 3. 更新对话预览
-        await self._update_conversation_preview(conversation_id, canonical_text)
+        await self._update_conversation_preview(conversation_id, text)
 
         # 4. 扇出：推 Web
         if not skip_web:
@@ -96,10 +85,7 @@ class MessageGateway:
 
         # 5. 扇出：推企微（如果调用方没有已经推过）
         if not skip_wecom:
-            await self._push_to_wecom(
-                user_id, org_id, canonical_text,
-                content_blocks=canonical_blocks,
-            )
+            await self._push_to_wecom(user_id, org_id, text)
 
         logger.info(
             f"MessageGateway: saved | source={source} | "
@@ -113,7 +99,6 @@ class MessageGateway:
         user_id: str,
         org_id: str,
         text: str,
-        content_blocks: Optional[List[Dict[str, Any]]] = None,
     ) -> bool:
         """将已存入 DB 的消息推送到企微（Web→企微同步专用）。
 
@@ -122,10 +107,6 @@ class MessageGateway:
         Returns:
             是否推送成功
         """
-        if content_blocks:
-            return await self._push_to_wecom(
-                user_id, org_id, text, content_blocks=content_blocks,
-            )
         return await self._push_to_wecom(user_id, org_id, text)
 
     # ── 内部方法 ──────────────────────────────────────────────
@@ -249,31 +230,9 @@ class MessageGateway:
         user_id: str,
         org_id: str,
         text: str,
-        content_blocks: Optional[List[Dict[str, Any]]] = None,
     ) -> bool:
         """通过 PushDispatcher 推送到企微。"""
         try:
-            if content_blocks:
-                from services.handlers.output_orchestrator import (
-                    canonicalize_content_blocks,
-                )
-                from services.wecom.delivery_sender import _structured_fallback
-
-                canonical_content = canonicalize_content_blocks([
-                    {"type": "text", "text": text},
-                    *content_blocks,
-                ])
-                text_parts = [
-                    str(part.get("text") or "")
-                    for part in canonical_content
-                    if part.get("type") == "text" and part.get("text")
-                ]
-                fallbacks = [
-                    fallback
-                    for part in canonical_content
-                    if (fallback := _structured_fallback(part)) is not None
-                ]
-                text = "\n\n".join([*text_parts, *fallbacks])
             # Markdown 清理：企微智能机器人对部分 Markdown 语法支持有限
             from services.wecom.markdown_adapter import clean_for_stream
             text = clean_for_stream(text)

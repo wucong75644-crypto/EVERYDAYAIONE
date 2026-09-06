@@ -152,42 +152,6 @@ def test_build_items_downgrades_table_to_markdown():
     ]
 
 
-def test_build_items_does_not_send_table_markdown_twice():
-    sender = WecomDeliverySender(object(), MagicMock())
-
-    items = sender.build_items(
-        {"id": "task-1", "status": "completed"},
-        {"content": [
-            {
-                "type": "text",
-                "text": (
-                    "结论\n\n"
-                    "### 付款订单\n"
-                    "| 平台 | 数量 |\n"
-                    "| --- | --- |\n"
-                    "| 抖音 | 128 |"
-                ),
-            },
-            {
-                "type": "table",
-                "title": "付款订单",
-                "columns": ["平台", "数量"],
-                "rows": [{"平台": "抖音", "数量": 128}],
-            },
-        ]},
-        {"transport": "smart_robot"},
-    )
-
-    assert items == [
-        WecomDeliveryItem("text:0", "text", "结论"),
-        WecomDeliveryItem(
-            "table:1",
-            "text",
-            "### 付款订单\n| 平台 | 数量 |\n| --- | --- |\n| 抖音 | 128 |",
-        ),
-    ]
-
-
 def test_build_items_creates_failed_result_without_message():
     sender = WecomDeliverySender(object(), MagicMock())
 

@@ -191,8 +191,6 @@ class ScheduledTaskAgent:
             from services.handlers.emit_payloads import build_content_blocks_from_payloads
             files = result.emit_payloads or []
             content_blocks = build_content_blocks_from_payloads(files)
-            from services.handlers.output_orchestrator import canonicalize_output
-            text, content_blocks = canonicalize_output(text, content_blocks)
 
             # 定时任务没有交互方可接管未完成的循环。若工具循环未形成 LLM
             # 最终结论，fallback 文本只能用于诊断，不能被当作可推送、可计费
