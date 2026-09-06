@@ -37,6 +37,81 @@ def test_structured_table_owns_matching_markdown_display():
     assert result == "查询完成。\n\n请关注有效金额。"
 
 
+def test_structured_table_owns_semantically_equivalent_markdown_display():
+    block = {
+        "type": "table",
+        "columns": ["分组", "总订单数", "总金额", "有效订单数", "有效金额"],
+        "rows": [
+            {
+                "分组": "1688",
+                "总订单数": 197,
+                "总金额": 9720.94,
+                "有效订单数": 191,
+                "有效金额": 9572.58,
+            },
+            {
+                "分组": "pdd",
+                "总订单数": 5388,
+                "总金额": 0,
+                "有效订单数": 4726,
+                "有效金额": 0,
+            },
+        ],
+    }
+    text = (
+        "2026-09-06 今天付款订单数按平台划分:\n\n"
+        "| 平台 | 总订单数 | 有效订单数 | 总金额(元) | 有效金额(元) |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| 拼多多 | 5,388 | 4,726 | 0.00 | 0.00 |\n"
+        "| 1688 | 197 | 191 | 9,720.94 | 9,572.58 |\n"
+        "| 合计 | 5,585 | 4,917 | 9,720.94 | 9,572.58 |"
+    )
+
+    assert canonicalize_text(text, [block]) == (
+        "2026-09-06 今天付款订单数按平台划分:"
+    )
+
+
+def test_semantic_table_match_keeps_different_business_facts():
+    text = (
+        "| 平台 | 总订单数 | 有效订单数 | 总金额(元) | 有效金额(元) |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| 1688 | 197 | 190 | 9,720.94 | 9,572.58 |"
+    )
+
+    assert canonicalize_text(text, [{
+        "type": "table",
+        "columns": ["分组", "总订单数", "总金额", "有效订单数", "有效金额"],
+        "rows": [{
+            "分组": "1688",
+            "总订单数": 197,
+            "总金额": 9720.94,
+            "有效订单数": 191,
+            "有效金额": 9572.58,
+        }],
+    }]) == text
+
+
+def test_semantic_table_match_keeps_different_dimension_labels():
+    text = (
+        "| 平台 | 总订单数 | 有效订单数 | 总金额(元) | 有效金额(元) |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| 其他平台 | 197 | 191 | 9,720.94 | 9,572.58 |"
+    )
+
+    assert canonicalize_text(text, [{
+        "type": "table",
+        "columns": ["分组", "总订单数", "总金额", "有效订单数", "有效金额"],
+        "rows": [{
+            "分组": "1688",
+            "总订单数": 197,
+            "总金额": 9720.94,
+            "有效订单数": 191,
+            "有效金额": 9572.58,
+        }],
+    }]) == text
+
+
 def test_plain_markdown_table_is_preserved_without_structured_block():
     text = _markdown_table()
 
@@ -136,3 +211,49 @@ def test_canonical_content_blocks_drops_only_duplicate_text():
 
     assert content[0] == {"type": "text", "text": "总结"}
     assert content[1] == TABLE
+
+
+def test_canonical_content_blocks_deduplicates_structured_artifacts():
+    chart = {
+        "type": "chart",
+        "option": {"series": [{"type": "bar", "data": [1, 2]}]},
+    }
+    diagram = {"type": "diagram", "source": "flowchart TD\nA-->B"}
+    image = {"type": "image", "url": "https://cdn.example/a.png"}
+    file = {"type": "file", "url": "https://cdn.example/report.xlsx"}
+
+    content = canonicalize_content_blocks([
+        TABLE,
+        dict(TABLE),
+        chart,
+        dict(chart),
+        diagram,
+        dict(diagram),
+        image,
+        dict(image),
+        file,
+        dict(file),
+    ])
+
+    assert content == [TABLE, chart, diagram, image, file]
+
+
+def test_canonical_content_blocks_keeps_distinct_structured_artifacts():
+    first = {"type": "image", "url": "https://cdn.example/a.png"}
+    second = {"type": "image", "url": "https://cdn.example/b.png"}
+
+    assert canonicalize_content_blocks([first, second]) == [first, second]
+
+
+@pytest.mark.asyncio
+async def test_streaming_orchestrator_does_not_push_duplicate_structured_block():
+    sink = AsyncMock()
+    sink.text = ""
+    sink.thinking = ""
+    sink.blocks = []
+    orchestrator = OutputOrchestrator(sink)
+
+    await orchestrator.on_block(TABLE)
+    await orchestrator.on_block(dict(TABLE))
+
+    sink.on_block.assert_awaited_once_with(TABLE)

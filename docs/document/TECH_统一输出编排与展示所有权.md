@@ -19,7 +19,7 @@ AgentResult / emit_payloads
 build_block_from_payload()
           │  现有 ContentPart / content_blocks
           ▼
-OutputOrchestrator  ← 本次新增：指纹识别、展示所有权、流式候选缓冲
+OutputOrchestrator  ← 本次新增：产物身份、展示所有权、流式候选缓冲
      ┌────┼──────────────┬──────────────────┐
      ▼    ▼              ▼                  ▼
    Web  Actor       MessageGateway      Scheduled result
@@ -34,16 +34,21 @@ OutputOrchestrator  ← 本次新增：指纹识别、展示所有权、流式�
 ## 选择规则
 
 1. `table/chart/diagram/image/file` block 是结构化事实的主展示出口。
-2. 最终文本中的 Markdown 表格、图表/流程图 fenced block、相同媒体链接，只有
-   与结构化 block 指纹完全匹配时才会被抑制。
-3. 总结、结论、解释和不匹配的 Markdown 原样保留。
-4. 没有对应结构化 block 的普通 Markdown 表格不做修改。
-5. 无法可靠解析或指纹比对失败时 fail-open，保留原文本。
+2. 结构化 block 自身按产物身份去重；同一表格、图表、流程图、图片或文件只
+   保留首次主展示。
+3. 最终文本中的 Markdown 表格支持列名别名、列/行顺序和数字格式变化下的
+   语义等价识别；图表/流程图 fenced block 和相同媒体链接按稳定内容/URL
+   身份识别并抑制重复出口。
+4. 总结、结论、解释和不匹配的 Markdown 原样保留。
+5. 没有对应结构化 block 的普通 Markdown 表格不做修改。
+6. 无法可靠解析或身份比对失败时 fail-open，保留原文本；工具详情输出仍保留
+   给模型上下文和审计，不把它误当成主结果 block 删除。
 
 ## 渠道行为
 
-- Web / Actor：沿用 `content_block_add` 和现有原生组件；编排层只阻止重复
-  的文本出口，不改变 WebSocket cancel 监听、Actor lease、checkpoint 或终态。
+- Web / Actor：沿用 `content_block_add` 和现有原生组件；编排层在流式交付前
+  阻止重复 block 和文本出口，不改变 WebSocket cancel 监听、Actor lease、
+  checkpoint 或终态。
 - 企微：先 canonicalize 已持久化 content，再调用现有
   `WecomDeliverySender` / `_structured_fallback`；结构化表格、图表、流程图
   仍由既有 fallback 降级为 Markdown。
