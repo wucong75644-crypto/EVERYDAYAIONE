@@ -28,6 +28,8 @@ from services.agent.scheduled_task_agent import (
     ScheduledTaskResult,
     MAX_SCHEDULED_TURNS,
 )
+from services.agent.agent_result import AgentResult
+from services.agent.tool_output import ColumnMeta, OutputFormat
 
 
 # ════════════════════════════════════════════════════════
@@ -247,6 +249,42 @@ class TestExecuteHappyPath:
         # 跳过上传,这里只验证 status 和文本流程,emit_payloads 长度允许 0
         # (file 上传依赖真实 host_dir + 文件存在,FakeToolExecutor 不提供)
         assert "销售日报" in result.text
+
+    @pytest.mark.asyncio
+    async def test_agent_result_table_reaches_scheduled_content_blocks(self):
+        """ToolLoopExecutor 的统一收集器应把 AgentResult(TABLE) 接入定时结果。"""
+        adapter = FakeAdapter([
+            {
+                "text": "",
+                "tool_calls": [{
+                    "id": "c1", "name": "erp_agent", "args": '{"query":"订单"}',
+                }],
+            },
+            {"text": "订单统计完成", "tool_calls": []},
+        ])
+        executor = FakeToolExecutor(results={
+            "erp_agent": AgentResult(
+                summary="订单统计",
+                format=OutputFormat.TABLE,
+                columns=[ColumnMeta("platform", "text", "平台")],
+                data=[{"platform": "京东"}],
+            ),
+        })
+
+        with patch("config.phase_tools.build_domain_tools", return_value=[]), \
+             patch("services.adapters.factory.create_chat_adapter", return_value=adapter), \
+             patch("services.agent.tool_executor.ToolExecutor", return_value=executor):
+            agent = ScheduledTaskAgent(MagicMock(), make_task())
+            result = await agent.execute()
+
+        assert result.status == "success"
+        assert result.content_blocks == [{
+            "type": "table",
+            "title": "",
+            "columns": ["平台"],
+            "rows": [{"平台": "京东"}],
+            "truncated": False,
+        }]
 
 
 class TestExecuteSafetyGuards:

@@ -22,6 +22,10 @@ def _result():
     return SimpleNamespace(
         text="今日完成", summary="摘要", tokens_used=12, turns_used=2,
         files=[{"name": "report.xlsx", "url": "https://example.test/report"}],
+        content_blocks=[{
+            "type": "table", "columns": ["平台"],
+            "rows": [{"平台": "京东"}], "truncated": False,
+        }],
     )
 
 
@@ -41,6 +45,7 @@ def test_wecom_delivery_snapshot_is_deduplicated_and_immutable_from_target_shape
         "type": "wecom_group", "chatid": "chat",
     }
     assert deliveries[0]["payload"]["files"][0]["name"] == "report.xlsx"
+    assert deliveries[0]["payload"]["content"][1]["type"] == "table"
 
 
 @pytest.mark.asyncio
@@ -69,6 +74,7 @@ async def test_success_uses_atomic_completion_rpc_instead_of_push_dispatcher():
     assert name == "complete_scheduled_task_success"
     assert params["p_deliveries"][0]["target_context"]["chatid"] == "chat"
     assert params["p_deliveries"][0]["payload"]["text"] == "今日完成"
+    assert params["p_deliveries"][0]["payload"]["content"][1]["type"] == "table"
 
 
 @pytest.mark.asyncio

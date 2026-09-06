@@ -166,6 +166,24 @@ describe('MessageItem 助手内容宽度', () => {
     const assistantContent = container.querySelector('[data-message-id="msg-1"] > div > div');
     expect(assistantContent).toHaveClass('w-full', 'min-w-0', 'max-w-[680px]');
   });
+
+  it('table-only assistant messages enter structured block rendering', () => {
+    render(
+      <MessageItem
+        message={makeMessage({
+          content: [{
+            type: 'table',
+            columns: ['有效订单数'],
+            rows: [{ '有效订单数': 128 }],
+          }],
+          generation_params: { type: 'chat' },
+        })}
+      />,
+    );
+
+    expect(screen.getByRole('columnheader', { name: '有效订单数' })).toBeInTheDocument();
+    expect(screen.getByText('128')).toBeInTheDocument();
+  });
 });
 
 describe('MessageItem 图片提交态', () => {

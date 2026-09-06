@@ -33,6 +33,7 @@ class MessageGateway:
         source: str = "system",
         skip_wecom: bool = False,
         skip_web: bool = False,
+        content_blocks: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[str]:
         """存储系统消息（定时任务结果/报错通知）到用户的企微对话，并扇出通知。
 
@@ -43,6 +44,7 @@ class MessageGateway:
             source: 消息来源标识（system/scheduled_task/error_alert），用于日志
             skip_wecom: 是否跳过企微推送（已由调用方推过时设 True）
             skip_web: 是否跳过 Web 推送
+            content_blocks: 已通过统一 emit payload 转换的结构化内容块
 
         Returns:
             message_id 或 None（存储失败时）
@@ -65,7 +67,10 @@ class MessageGateway:
         message_id = await self._insert_message(
             conversation_id=conversation_id,
             role="assistant",
-            content=[{"type": "text", "text": text}],
+            content=[
+                {"type": "text", "text": text},
+                *(content_blocks or []),
+            ],
             org_id=org_id,
         )
         if not message_id:
@@ -154,7 +159,7 @@ class MessageGateway:
         self,
         conversation_id: str,
         role: str,
-        content: List[Dict[str, str]],
+        content: List[Dict[str, Any]],
         org_id: Optional[str] = None,
     ) -> Optional[str]:
         """插入消息到 messages 表。

@@ -24,6 +24,7 @@ from services.handlers.chat.execution_engine import (
 from services.conversation_commands import SafePoint
 from services.conversation_commands import CommandType, ConversationCommand
 from services.conversation_turn_runtime import ConversationTurnRuntime
+from services.model_gateway import ModelCallRequest, ModelGatewaySession
 
 
 def _request() -> ChatExecutionRequest:
@@ -500,6 +501,75 @@ async def test_execute_chat_stops_before_provider_when_cancelled(monkeypatch):
         )
 
     adapter.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_chat_external_cancel_closes_pending_provider_task(monkeypatch):
+    provider_started = asyncio.Event()
+    provider_cancelled = asyncio.Event()
+    unhandled = []
+    loop = asyncio.get_running_loop()
+    previous_exception_handler = loop.get_exception_handler()
+    loop.set_exception_handler(
+        lambda _loop, context: unhandled.append(context),
+    )
+
+    async def stream_chat(**_kwargs):
+        provider_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            provider_cancelled.set()
+            raise
+        raise RuntimeError("provider task escaped after outer cancellation")
+        yield  # pragma: no cover
+
+    adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
+    session = ModelGatewaySession(
+        adapter,
+        ModelCallRequest(model_id="model-1", task_id="task-1"),
+    )
+    prepared = SimpleNamespace(
+        model_gateway=session,
+        permission=SimpleNamespace(need_exit_attachment=False),
+        core_tools=[],
+        stream_kwargs={},
+        tool_context=SimpleNamespace(discovered_tools=set()),
+        messages=[],
+        budget=SimpleNamespace(
+            stop_reason=None,
+            turns_used=0,
+            use_turn=lambda: None,
+        ),
+    )
+
+    async def fake_prepare(**_kwargs):
+        return prepared
+
+    monkeypatch.setattr(
+        "services.handlers.chat.execution_engine.prepare_chat_stream",
+        fake_prepare,
+    )
+    handler = SimpleNamespace(
+        org_id=None,
+        _adapter=None,
+        _calculate_credits=lambda _usage: 0,
+    )
+    execution = asyncio.create_task(
+        execute_chat(handler=handler, request=_request()),
+    )
+    try:
+        await asyncio.wait_for(provider_started.wait(), timeout=0.2)
+        execution.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await execution
+
+        await asyncio.wait_for(provider_cancelled.wait(), timeout=0.2)
+        await asyncio.sleep(0)
+        adapter.close.assert_awaited_once()
+        assert not unhandled
+    finally:
+        loop.set_exception_handler(previous_exception_handler)
 
 
 @pytest.mark.asyncio

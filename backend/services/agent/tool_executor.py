@@ -50,6 +50,7 @@ class ToolExecutor(
         resource_manifest=None,
         allowed_tool_names: Iterable[str] | None = None,
         execution_budget=None,
+        cancellation_event=None,
         execution_mode: str = "interactive",
         erp_step_timeout_sec: float | None = None,
         tool_policy_snapshot: Dict[str, Any] | None = None,
@@ -64,6 +65,7 @@ class ToolExecutor(
             frozenset(allowed_tool_names) if allowed_tool_names is not None else None
         )
         self.execution_budget = execution_budget
+        self.cancellation_event = cancellation_event
         self.execution_mode = execution_mode
         self.erp_step_timeout_sec = erp_step_timeout_sec
         self.tool_policy_snapshot = dict(tool_policy_snapshot or {})
@@ -238,6 +240,7 @@ class ToolExecutor(
             message_id=getattr(self, "_message_id", None),
             request_ctx=self.request_ctx,
             budget=self.execution_budget,
+            cancellation_event=self.cancellation_event,
             workspace_user_id=self.workspace_user_id,
             step_timeout_sec=self.erp_step_timeout_sec,
         )

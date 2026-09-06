@@ -6,6 +6,8 @@ from schemas.message import (
     FilePart,
     FormPart,
     ImagePart,
+    InterruptMarkerPart,
+    TablePart,
     TextPart,
     ThinkingPart,
     ToolResultPart,
@@ -51,6 +53,17 @@ def test_build_content_parts_preserves_mixed_block_order() -> None:
             "title": "确认",
             "fields": [],
         },
+        {
+            "type": "table",
+            "title": "统计",
+            "columns": ["有效订单数", "有效金额"],
+            "rows": [{"有效订单数": 128, "有效金额": 2260.5}],
+        },
+        {
+            "type": "interrupt_marker",
+            "interrupted_at": "2026-09-06T00:00:00Z",
+            "reason": "user_cancel",
+        },
     ]
 
     parts = build_content_parts(blocks, fallback_text="unused")
@@ -65,6 +78,8 @@ def test_build_content_parts_preserves_mixed_block_order() -> None:
         ChartPart,
         DiagramPart,
         FormPart,
+        TablePart,
+        InterruptMarkerPart,
     ]
 
 

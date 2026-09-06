@@ -50,6 +50,38 @@ describe('MessageContentBlocks structured diagrams', () => {
     );
   });
 
+  it('renders a table part with its structured columns and rows', () => {
+    const message: Message = {
+      id: 'message-table',
+      conversation_id: 'conversation-1',
+      role: 'assistant',
+      status: 'completed',
+      created_at: '2026-07-18T00:00:00Z',
+      content: [{
+        type: 'table',
+        title: '付款订单',
+        columns: ['有效订单数', '有效金额'],
+        rows: [{ '有效订单数': 128, '有效金额': 2260.5 }],
+      }],
+    };
+
+    render(
+      <MessageContentBlocks
+        message={message}
+        imageAssets={[]}
+        fileBlocks={[]}
+        isStreaming={false}
+        isRegenerating={false}
+        textContent=""
+        onImageClick={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('columnheader', { name: '有效订单数' })).toBeInTheDocument();
+    expect(screen.getByText('128')).toBeInTheDocument();
+    expect(screen.getByText('2,260.5')).toBeInTheDocument();
+  });
+
   it('keeps the structured scheduled-task form but hides legacy duplicate confirmation copy', () => {
     const message: Message = {
       id: 'message-2',

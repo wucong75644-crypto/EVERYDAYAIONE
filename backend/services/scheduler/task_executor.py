@@ -222,6 +222,7 @@ class ScheduledTaskExecutor:
                 text=result.text,
                 source="scheduled_task",
                 skip_wecom=True,
+                content_blocks=getattr(result, "content_blocks", []),
             )
         except Exception as e:
             logger.warning(
@@ -240,7 +241,11 @@ class ScheduledTaskExecutor:
                     str(target["user_id"]),
                     {
                         "type": "scheduled_task_result",
-                        "data": {"text": result.text, "files": result.files},
+                        "data": {
+                            "text": result.text,
+                            "files": result.files,
+                            "content_blocks": getattr(result, "content_blocks", []),
+                        },
                     },
                     org_id=task["org_id"],
                 )
@@ -295,6 +300,13 @@ class ScheduledTaskExecutor:
                 "payload": {
                     "text": str(result.text or ""),
                     "files": result.files if isinstance(result.files, list) else [],
+                    "content": [
+                        {"type": "text", "text": str(result.text or "")},
+                        *(
+                            getattr(result, "content_blocks", [])
+                            if isinstance(getattr(result, "content_blocks", []), list) else []
+                        ),
+                    ],
                 },
             })
         return deliveries
@@ -357,6 +369,7 @@ class ScheduledTaskExecutor:
                 "tokens": result.tokens_used,
                 "turns": result.turns_used,
                 "files": result.files,
+                "content_blocks": getattr(result, "content_blocks", []),
             },
             "p_credits_used": credits_used,
             "p_tokens_used": result.tokens_used,
