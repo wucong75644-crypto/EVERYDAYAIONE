@@ -39,6 +39,15 @@ repo_root() {
     git rev-parse --show-toplevel 2>/dev/null || fail "当前目录不在 Git 仓库内"
 }
 
+main_worktree_root() {
+    local root=$1
+    local main_root
+    main_root=$(git -C "$root" worktree list --porcelain \
+        | awk '/^worktree / && !found {sub(/^worktree /, ""); print; found=1}')
+    [[ -n "$main_root" ]] || fail "无法确定仓库主工作树"
+    cd "$main_root" && pwd -P
+}
+
 sanitize_slug() {
     local slug=$1
     slug=$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g; s/--*/-/g; s/^[.-]*//; s/[.-]*$//')
@@ -81,8 +90,13 @@ start_task() {
         esac
     done
 
-    local root
+    local root main_root config_file
     root=$(repo_root)
+    main_root=$(main_worktree_root "$root")
+    config_file="$main_root/deploy/config.env"
+    [[ -f "$config_file" ]] \
+        || fail "主工作树缺少 deploy/config.env，无法创建可部署任务：$config_file"
+
     git -C "$root" fetch --prune origin main >/dev/null \
         || fail "无法同步 origin/main，拒绝从可能过期的代码创建任务工作树"
     git -C "$root" rev-parse --verify "${base_ref}^{commit}" >/dev/null \
@@ -98,6 +112,16 @@ start_task() {
 
     mkdir -p "$(dirname "$path")"
     git -C "$root" worktree add -b "$branch" "$path" "$base_commit" >/dev/null
+
+    if ! cp "$config_file" "$path/deploy/config.env"; then
+        git -C "$root" worktree remove --force "$path" >/dev/null 2>&1 || true
+        fail "无法复制主工作树 deploy/config.env，任务工作树未创建：$path"
+    fi
+    if ! chmod 600 "$path/deploy/config.env"; then
+        git -C "$root" worktree remove --force "$path" >/dev/null 2>&1 || true
+        fail "无法设置任务工作树 deploy/config.env 权限，任务工作树未创建：$path"
+    fi
+
     set_stable_base "$root" "$path" "$base_commit"
 
     info "TASK_STARTED status=success path=$path branch=$branch base=$base_commit"
