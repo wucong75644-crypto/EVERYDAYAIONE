@@ -475,6 +475,64 @@ class TestExecuteSingleToolAgentResult:
 class TestExecuteToolCallsAgentResult:
     """_execute_tool_calls 的 AgentResult 处理循环"""
 
+    def test_erp_table_is_not_added_as_interactive_payload(self):
+        """ERP TABLE 继续给模型使用，但不再生成第二个交互式表格。"""
+        from services.agent.agent_result import AgentResult
+        from services.agent.tool_output import ColumnMeta, OutputFormat
+        from services.handlers.chat_tool_mixin import (
+            _collect_interactive_agent_payloads,
+        )
+
+        result = AgentResult(
+            summary="订单统计",
+            source="erp_agent",
+            format=OutputFormat.TABLE,
+            columns=[ColumnMeta("platform", "text", "平台")],
+            data=[{"platform": "京东"}],
+        )
+
+        assert _collect_interactive_agent_payloads("erp_agent", result) == []
+
+    def test_erp_non_table_payloads_remain_on_unified_path(self):
+        """ERP 文件/图片等显式产物仍进入统一交互式 block 链路。"""
+        from services.agent.agent_result import AgentResult
+        from services.handlers.chat_tool_mixin import (
+            _collect_interactive_agent_payloads,
+        )
+
+        payload = {
+            "kind": "file",
+            "url": "/tmp/report.xlsx",
+            "name": "report.xlsx",
+            "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }
+        result = AgentResult(
+            summary="已导出",
+            source="erp_agent",
+            emit_payloads=[payload],
+        )
+
+        assert _collect_interactive_agent_payloads("erp_agent", result) == [payload]
+
+    def test_non_erp_table_still_uses_shared_payload_collector(self):
+        """其他 Agent 的 TABLE 不受 ERP 交互式展示隔离影响。"""
+        from services.agent.agent_result import AgentResult
+        from services.agent.tool_output import ColumnMeta, OutputFormat
+        from services.handlers.chat_tool_mixin import (
+            _collect_interactive_agent_payloads,
+        )
+
+        result = AgentResult(
+            summary="图像分析表",
+            format=OutputFormat.TABLE,
+            columns=[ColumnMeta("value", "integer", "值")],
+            data=[{"value": 1}],
+        )
+
+        payloads = _collect_interactive_agent_payloads("image_agent", result)
+
+        assert [payload["kind"] for payload in payloads] == ["table"]
+
     @pytest.mark.asyncio
     @patch("services.handlers.chat_tool_mixin.ws_manager")
     async def test_emit_payloads_to_pending(self, mock_ws):
