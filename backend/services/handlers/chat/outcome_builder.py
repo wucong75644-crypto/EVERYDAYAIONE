@@ -11,6 +11,8 @@ from schemas.message import (
     FilePart,
     FormPart,
     ImagePart,
+    InterruptMarkerPart,
+    TablePart,
     TextPart,
     ThinkingPart,
     ToolResultPart,
@@ -122,6 +124,18 @@ def _build_part(block: dict[str, Any]) -> ContentPart | None:
             format=block.get("format", "mermaid"),
             source=block["source"],
             title=block.get("title", ""),
+        )
+    if block_type == "table":
+        return TablePart(
+            title=block.get("title", ""),
+            columns=block.get("columns", []),
+            rows=block.get("rows", []),
+            truncated=block.get("truncated", False),
+        )
+    if block_type == "interrupt_marker":
+        return InterruptMarkerPart(
+            interrupted_at=block["interrupted_at"],
+            reason=block["reason"],
         )
     if block_type == "form":
         return FormPart(**block)

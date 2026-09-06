@@ -64,13 +64,15 @@ export default memo(function MessageItem({
   const hasFiles = files.length > 0;
 
   // 检测是否为多内容块模式
-  // tool_step / tool_result / image / file / form 均触发多块模式
+  // 所有独立结构化内容块均触发多块模式
   // thinking 单独在 ThinkingBlock 渲染，不触发
   const hasMultiBlocks = useMemo(() => {
     if (!Array.isArray(message.content)) return false;
     return message.content.some((p) =>
       p.type === 'tool_step' || p.type === 'tool_result' ||
       p.type === 'image' || p.type === 'file' || p.type === 'form' ||
+      p.type === 'chart' || p.type === 'diagram' || p.type === 'table' ||
+      p.type === 'changeset' || p.type === 'interrupt_marker' ||
       p.type === 'ecom_plan'
     );
   }, [message.content]);

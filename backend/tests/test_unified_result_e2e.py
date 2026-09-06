@@ -99,6 +99,33 @@ class TestERPQueryPath:
         assert result.source == "erp_agent"
         assert "23 笔退货" in result.summary
 
+    @pytest.mark.asyncio
+    async def test_erp_agent_preserves_child_table_payloads(self):
+        """多域聚合也必须沿用统一表格 payload 转换，不丢结构化数据。"""
+        from services.agent.erp_agent import ERPAgent, PlanStep, ExecutionPlan
+
+        child = AgentResult(
+            summary="订单统计",
+            format=OutputFormat.TABLE,
+            columns=[ColumnMeta("valid_orders", "integer", "有效订单数")],
+            data=[{"valid_orders": 128}],
+            source="trade",
+        )
+        agent = ERPAgent(db=MagicMock(), user_id="u1", conversation_id="c1", org_id="org1")
+        plan = ExecutionPlan(steps=[
+            PlanStep("trade", {}),
+            PlanStep("warehouse", {}),
+        ])
+        warehouse = AgentResult(summary="库存统计", source="warehouse")
+
+        result = agent._build_multi_result(
+            [("trade", child), ("warehouse", warehouse)], plan, "综合查询",
+        )
+
+        assert len(result.emit_payloads) == 1
+        assert result.emit_payloads[0]["kind"] == "table"
+        assert result.emit_payloads[0]["columns"] == ["有效订单数"]
+
     def test_chat_handler_injects_list_dict_content(self):
         """ChatHandler 从 AgentResult.to_message_content() 拿到 list[dict] 注入 messages"""
         result = AgentResult(

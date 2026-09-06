@@ -73,21 +73,21 @@ class WecomDeliverySender:
         graphic_fallbacks = [
             fallback
             for part in parts
-            if (fallback := _graphic_fallback(part)) is not None
+            if (fallback := _structured_fallback(part)) is not None
         ]
         stream_text = "\n\n".join([*text_parts, *graphic_fallbacks])
         stream_text_added = False
         for index, part in enumerate(parts):
             kind = part.get("type")
-            if kind in {"chart", "diagram"}:
+            if kind in {"chart", "diagram", "table"}:
                 logger.info(
-                    "wecom_graphic_fallback | "
+                    "wecom_structured_fallback | "
                     f"task_id={task.get('id')} | content_index={index} | "
                     f"content_type={kind} | renderer="
                     f"{part.get('spec_format') or part.get('format') or 'unknown'}"
                 )
                 if not context.get("stream_id"):
-                    fallback = _graphic_fallback(part)
+                    fallback = _structured_fallback(part)
                     if fallback:
                         items.extend(
                             self._text_items(
@@ -263,6 +263,28 @@ def _graphic_fallback(part: Mapping[str, Any]) -> str | None:
     heading = f"数据图表：{title}" if title else "数据图表（原始数据）"
     formatted = json.dumps(option, ensure_ascii=False, indent=2)
     return f"{heading}\n\n```json\n{formatted}\n```"
+
+
+def _structured_fallback(part: Mapping[str, Any]) -> str | None:
+    """把已持久化的结构化内容块降级为企微可发送的 Markdown。"""
+    if part.get("type") != "table":
+        return _graphic_fallback(part)
+    columns = part.get("columns")
+    rows = part.get("rows")
+    if not isinstance(columns, list) or not columns or not isinstance(rows, list):
+        return None
+    columns = [str(column) for column in columns]
+    lines = [
+        f"### {part.get('title')}" if part.get("title") else "### 数据表格",
+        "| " + " | ".join(columns) + " |",
+        "| " + " | ".join("---" for _ in columns) + " |",
+    ]
+    for row in rows[:200]:
+        if not isinstance(row, Mapping):
+            continue
+        values = [str(row.get(column, "")).replace("|", "\\|") for column in columns]
+        lines.append("| " + " | ".join(values) + " |")
+    return "\n".join(lines)
 
 
 def _stream_is_current(context: Mapping[str, Any]) -> bool:

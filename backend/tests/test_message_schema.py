@@ -22,6 +22,8 @@ from schemas.message import (
     MessageResponse,
     MessageRole,
     ImagePart,
+    InterruptMarkerPart,
+    TablePart,
     TextPart,
     serialize_content_part,
 )
@@ -172,6 +174,24 @@ class TestContentPartDiscriminator:
                 "format": "plantuml",
                 "source": "@startuml",
             })
+
+    def test_table_discriminator(self):
+        obj = self.adapter.validate_python({
+            "type": "table",
+            "title": "统计",
+            "columns": ["有效订单数", "有效金额"],
+            "rows": [{"有效订单数": 128, "有效金额": 2260.5}],
+        })
+        assert isinstance(obj, TablePart)
+        assert obj.rows[0]["有效订单数"] == 128
+
+    def test_interrupt_marker_discriminator(self):
+        obj = self.adapter.validate_python({
+            "type": "interrupt_marker",
+            "interrupted_at": "2026-09-06T00:00:00Z",
+            "reason": "user_cancel",
+        })
+        assert isinstance(obj, InterruptMarkerPart)
 
     def test_mixed_content_list(self):
         """混合类型列表正确反序列化"""

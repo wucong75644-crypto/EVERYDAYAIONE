@@ -385,6 +385,9 @@ class ERPAgent(ERPChildFactoryMixin):
             summary = result.summary or ""
             if errors:
                 summary += f"\n\n⚠ {'; '.join(errors)}"
+            metadata = dict(result.metadata or {})
+            if plan.compute_hint:
+                metadata["compute_hint"] = plan.compute_hint
             status = "success"
             return AgentResult(
                 status=status,
@@ -396,16 +399,28 @@ class ERPAgent(ERPChildFactoryMixin):
                 tokens_used=self._tokens_used,
                 confidence=0.6 if plan.degraded else 1.0,
                 error_message="",
-                metadata={"compute_hint": plan.compute_hint} if plan.compute_hint else {},
+                metadata=metadata,
+                emit_payloads=list(result.emit_payloads or []),
             )
 
         # 多步结果：合并 summary + file_ref 引用 + compute_hint
         parts = []
         file_refs = []
         all_file_ref_objs = []
+        emit_payloads: list[dict[str, Any]] = []
+        from services.handlers.emit_payloads import (
+            build_table_payload_from_agent_result,
+        )
         for domain, result in successes:
             label = _DOMAIN_LABEL.get(domain, domain)
             parts.append(f"【{label}】{result.summary}")
+            child_payloads = list(result.emit_payloads or [])
+            emit_payloads.extend(child_payloads)
+            table_payload = build_table_payload_from_agent_result(result)
+            if table_payload and not any(
+                payload.get("kind") == "table" for payload in child_payloads
+            ):
+                emit_payloads.append(table_payload)
             if result.file_ref:
                 file_refs.append({
                     "domain": domain,
@@ -449,6 +464,7 @@ class ERPAgent(ERPChildFactoryMixin):
             tokens_used=self._tokens_used,
             confidence=0.6 if plan.degraded else 1.0,
             metadata=metadata,
+            emit_payloads=emit_payloads,
         )
 
     def _register_files(self, domain: str, result: Any) -> None:
