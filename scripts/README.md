@@ -119,9 +119,13 @@ python3 ../scripts/database/run_migration.py
 # 从最新 origin/main 新建任务工作树
 ./scripts/task-worktree.sh start task-slug
 
+# 创建时自动同步主工作树的 deploy/config.env（副本权限为 600）
+
 # 仅由验收关闭流程调用：同步其他任务的稳定基座，不改它们的代码
 ./scripts/task-worktree.sh sync-stable-base --commit <origin-main-sha>
 ```
+
+主工作树缺少 `deploy/config.env` 时会拒绝创建可部署任务；该文件由 `.gitignore` 忽略，不会进入提交文件清单。
 
 ### clean_placeholder_messages.py
 清理前端占位符遗留的"生成完成"消息。

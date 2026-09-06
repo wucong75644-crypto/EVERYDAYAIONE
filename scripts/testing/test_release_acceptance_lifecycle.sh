@@ -65,8 +65,34 @@ run git clone "$remote" "$root"
 run git -C "$root" config user.name lifecycle-test
 run git -C "$root" config user.email lifecycle-test@example.invalid
 
+missing="$tmp_root/missing-config"
+if (
+    cd "$root"
+    ./scripts/task-worktree.sh start missing-config --path "$missing"
+) > "$tmp_root/missing-config.log" 2>&1; then
+    fail "主工作树缺少 deploy/config.env 时仍创建任务工作树"
+fi
+grep -F "主工作树缺少 deploy/config.env" "$tmp_root/missing-config.log" >/dev/null \
+    || fail "缺少 deploy/config.env 时未提供创建失败说明"
+[[ ! -e "$missing" ]] || fail "缺少 deploy/config.env 时创建了任务工作树"
+
+printf '%s\n' \
+    'SERVER_HOST=example.invalid' \
+    'SERVER_USER=test' \
+    'SERVER_PORT=22' \
+    'REMOTE_APP_DIR=/tmp/everydayai' > "$root/deploy/config.env"
+chmod 600 "$root/deploy/config.env"
+
 run_in "$root" ./scripts/task-worktree.sh start other --path "$other"
 run_in "$root" ./scripts/task-worktree.sh start candidate --path "$candidate"
+[[ -f "$other/deploy/config.env" && -f "$candidate/deploy/config.env" ]] \
+    || fail "任务工作树未复制 deploy/config.env"
+cmp -s "$root/deploy/config.env" "$other/deploy/config.env" \
+    || fail "任务工作树 deploy/config.env 内容与主工作树不一致"
+[[ "$(stat -f '%Lp' "$other/deploy/config.env")" == 600 ]] \
+    || fail "任务工作树 deploy/config.env 权限不是 600"
+[[ -z "$(git -C "$other" status --porcelain --untracked-files=all)" ]] \
+    || fail "deploy/config.env 出现在任务工作树提交文件清单中"
 mkdir -p "$candidate/backend/migrations"
 printf 'candidate\n' >> "$candidate/product.txt"
 printf '%s\n' 'SELECT 1;' > "$candidate/backend/migrations/242_delivery_outbox.sql"
