@@ -212,6 +212,7 @@ class ModelGatewaySession:
 
         emit(SamplingEventType.STARTED)
         provider_iterator: Any = None
+        next_chunk: asyncio.Task[Any] | None = None
         cancel_waiter: asyncio.Task[Any] | None = None
         stream_timeout: float | None = None
         try:
@@ -254,12 +255,15 @@ class ModelGatewaySession:
                 )
                 if cancel_waiter is not None and cancel_waiter in done:
                     await self._stop_provider_stream(provider_iterator, next_chunk)
+                    next_chunk = None
                     raise asyncio.CancelledError
                 if self._is_cancelled():
                     await self._stop_provider_stream(provider_iterator, next_chunk)
+                    next_chunk = None
                     raise asyncio.CancelledError
                 if next_chunk not in done:
                     await self._stop_provider_stream(provider_iterator, next_chunk)
+                    next_chunk = None
                     raise ModelGatewayTimeoutError(
                         self.model_id,
                         stream_timeout,
@@ -274,7 +278,9 @@ class ModelGatewaySession:
                 try:
                     chunk = next_chunk.result()
                 except StopAsyncIteration:
+                    next_chunk = None
                     break
+                next_chunk = None
                 _raise_if_cancelled(self.request.cancel_token, self.task_id)
                 _accumulate_usage(usage, chunk)
                 if not first_chunk_emitted:
@@ -286,7 +292,7 @@ class ModelGatewaySession:
             emit(SamplingEventType.FAILED, error_type=type(error).__name__)
             raise
         except (asyncio.CancelledError, GeneratorExit):
-            await self._stop_provider_stream(provider_iterator)
+            await self._stop_provider_stream(provider_iterator, next_chunk)
             emit(SamplingEventType.CANCELLED)
             raise
         except Exception as error:

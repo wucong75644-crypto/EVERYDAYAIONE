@@ -334,10 +334,24 @@ async def _read_turn(
         wait_set.add(cancel_waiter)
         if command_waiter is not None:
             wait_set.add(command_waiter)
-        done, _ = await asyncio.wait(
-            wait_set,
-            return_when=asyncio.FIRST_COMPLETED,
-        )
+        try:
+            done, _ = await asyncio.wait(
+                wait_set,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        except asyncio.CancelledError:
+            # 外层 execute_chat/Actor 在等待竞争任务时被取消，也必须收口
+            # __anext__；否则 Gateway 的 Provider stream 会脱离主任务继续
+            # 运行，最终产生未领取的 provider 异常或继续产生输出。
+            pending_tasks = [
+                task for task in (next_chunk, cancel_waiter, command_waiter)
+                if task is not None
+            ]
+            for task in pending_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+            raise
 
         # 命令先到时主动结束 provider stream；随后 safe_point 会刷盘并
         # 把 PAUSE/CANCEL 归约为控制流异常。不会每个 token 查询数据库。
