@@ -307,3 +307,14 @@ class TestClassifiedErrorProperties:
         err = ValueError("original")
         c = classify_error(err)
         assert c.original is err
+
+
+def test_model_gateway_timeout_is_not_retryable():
+    from services.model_gateway import ModelGatewayTimeoutError
+
+    error = ModelGatewayTimeoutError("model-1", 1.0, "first_chunk")
+    classified = classify_error(error)
+
+    assert classified.error_code == "MODEL_TIMEOUT"
+    assert classified.is_retryable is False
+    assert classified.original is error

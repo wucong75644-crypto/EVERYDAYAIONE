@@ -44,6 +44,7 @@ class ERPAgent(ERPChildFactoryMixin):
         task_id: Optional[str] = None, message_id: Optional[str] = None,
         request_ctx: Optional["RequestContext"] = None,
         budget: Optional["ExecutionBudget"] = None,
+        cancellation_event: Optional[asyncio.Event] = None,
         workspace_user_id: Optional[str] = None,
         step_timeout_sec: Optional[float] = None,
     ) -> None:
@@ -52,6 +53,7 @@ class ERPAgent(ERPChildFactoryMixin):
         self.conversation_id, self.org_id = conversation_id, org_id
         self.task_id, self.message_id = task_id, message_id
         self._budget = budget
+        self._cancellation_event = cancellation_event
         self._step_timeout_sec = step_timeout_sec
         from utils.time_context import RequestContext
         self.request_ctx = request_ctx or RequestContext.build(
@@ -193,6 +195,8 @@ class ERPAgent(ERPChildFactoryMixin):
                 org_id=self.org_id,
                 db=self.db,
                 task_id=self.task_id,
+                cancel_token=self._cancellation_event,
+                budget=self._budget,
             )
         )
         try:

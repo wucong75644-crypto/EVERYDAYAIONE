@@ -121,7 +121,15 @@ class ScheduledTaskAgent:
             # 3. 构建轻量上下文
             messages = self._build_light_context()
 
-            # 4. 打开共享 ModelGateway 会话
+            # 4. 多维执行预算；模型会话与工具循环共享同一墙钟预算。
+            from services.agent.execution_budget import ExecutionBudget
+            deadline = float(self.task.get("timeout_sec") or DEFAULT_DEADLINE)
+            budget = ExecutionBudget(
+                max_turns=MAX_SCHEDULED_TURNS,
+                max_wall_time=deadline,
+            )
+
+            # 5. 打开共享 ModelGateway 会话
             from services.model_gateway import ModelCallRequest, get_model_gateway
             from core.config import get_settings
             settings = get_settings()
@@ -134,10 +142,11 @@ class ScheduledTaskAgent:
                     org_id=self.org_id,
                     db=self.db,
                     task_id=self.task_id,
+                    budget=budget,
                 )
             )
 
-            # 5. 创建 ToolExecutor
+            # 6. 创建 ToolExecutor
             from services.agent.tool_executor import ToolExecutor
             executor = ToolExecutor(
                 db=self.db,
@@ -151,13 +160,6 @@ class ScheduledTaskAgent:
                 tool_policy_snapshot=self.task.get("tool_policy_snapshot") or policy.as_dict(),
             )
 
-            # 6. 多维执行预算
-            from services.agent.execution_budget import ExecutionBudget
-            deadline = float(self.task.get("timeout_sec") or DEFAULT_DEADLINE)
-            budget = ExecutionBudget(
-                max_turns=MAX_SCHEDULED_TURNS,
-                max_wall_time=deadline,
-            )
             executor.execution_budget = budget
 
             # 7. 设置 staging 分流目录（用户级隔离）

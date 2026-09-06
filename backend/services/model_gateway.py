@@ -44,14 +44,28 @@ _attempt_context: ContextVar[ModelAttemptContext | None] = ContextVar(
     default=None,
 )
 
+
+class ModelGatewayTimeoutError(TimeoutError):
+    """统一的永久 ModelGateway 请求超时。"""
+
+    def __init__(self, model_id: str, timeout: float, phase: str) -> None:
+        self.model_id = model_id
+        self.timeout = timeout
+        self.phase = phase
+        super().__init__(
+            f"ModelGateway request timed out | model={model_id} | "
+            f"phase={phase} | timeout={timeout:.3f}s"
+        )
+
+
 @dataclass(frozen=True)
 class ModelCallRequest:
     """一次模型会话的稳定请求边界。
 
     task_id 是业务任务 ID；trace_id 复用既有全链路追踪。request_id 可由
     调用方为单次模型请求显式指定；未指定时 Gateway 在真正开始 Provider 调用
-    前生成。timeout、cancel_token 和 retry_policy 继续只作为扩展点，不在此处
-    改变取消、超时或重试语义。
+    前生成。timeout 和 cancel_token 由 Gateway 统一落实为请求 deadline 与取消边界；
+    retry_policy 仍由既有上层重试层持有，Gateway 不自行决定或执行重试。
     """
 
     model_id: str
@@ -63,6 +77,7 @@ class ModelCallRequest:
     timeout: float | None = None
     cancel_token: Any = None
     retry_policy: Any = None
+    budget: Any = None
 
 
 class ModelGatewaySession:
@@ -82,6 +97,11 @@ class ModelGatewaySession:
         self._provider = provider
         self._request_index = 0
         self._last_attempt_context: ModelAttemptContext | None = None
+        # 延迟解析默认 timeout：open_chat 本身不能发起 Provider 请求，且
+        # headless/测试注入器可能只构造会话而不消费模型流。
+        self._stream_timeout = (
+            float(request.timeout) if request.timeout is not None else None
+        )
 
     @property
     def model_id(self) -> str:
@@ -132,7 +152,7 @@ class ModelGatewaySession:
         turn_index: int | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
-        """转发现有 StreamChunk，并在不改变输出的前提下记录生命周期。"""
+        """转发现有 StreamChunk，并统一处理请求 deadline 与取消。"""
         if self._closed:
             raise RuntimeError("MODEL_GATEWAY_SESSION_CLOSED")
         request_index = self._request_index
@@ -191,26 +211,104 @@ class ModelGatewaySession:
             )
 
         emit(SamplingEventType.STARTED)
+        provider_iterator: Any = None
+        cancel_waiter: asyncio.Task[Any] | None = None
+        stream_timeout: float | None = None
         try:
-            async for chunk in self._adapter.stream_chat(
+            _raise_if_cancelled(self.request.cancel_token, self.task_id)
+            stream_timeout = self._stream_timeout
+            if stream_timeout is None:
+                stream_timeout = _resolve_request_timeout(self.request)
+            provider_stream = self._adapter.stream_chat(
                 messages=messages,
                 reasoning_effort=reasoning_effort,
                 thinking_mode=thinking_mode,
                 **kwargs,
-            ):
+            )
+            provider_iterator = provider_stream.__aiter__()
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + stream_timeout
+            while True:
+                _raise_if_cancelled(self.request.cancel_token, self.task_id)
+                remaining = self._remaining_timeout(deadline)
+                if remaining <= 0:
+                    await self._stop_provider_stream(provider_iterator)
+                    raise ModelGatewayTimeoutError(
+                        self.model_id,
+                        stream_timeout,
+                        "first_chunk" if not first_chunk_emitted else "stream",
+                    )
+
+                next_chunk = asyncio.create_task(provider_iterator.__anext__())
+                cancel_waiter = _create_cancel_waiter(
+                    self.request.cancel_token,
+                    self.task_id,
+                )
+                wait_set: set[asyncio.Task[Any]] = {next_chunk}
+                if cancel_waiter is not None:
+                    wait_set.add(cancel_waiter)
+                done, _ = await asyncio.wait(
+                    wait_set,
+                    timeout=remaining,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if cancel_waiter is not None and cancel_waiter in done:
+                    await self._stop_provider_stream(provider_iterator, next_chunk)
+                    raise asyncio.CancelledError
+                if self._is_cancelled():
+                    await self._stop_provider_stream(provider_iterator, next_chunk)
+                    raise asyncio.CancelledError
+                if next_chunk not in done:
+                    await self._stop_provider_stream(provider_iterator, next_chunk)
+                    raise ModelGatewayTimeoutError(
+                        self.model_id,
+                        stream_timeout,
+                        "first_chunk" if not first_chunk_emitted else "stream",
+                    )
+                if cancel_waiter is not None and not cancel_waiter.done():
+                    cancel_waiter.cancel()
+                if cancel_waiter is not None:
+                    await asyncio.gather(cancel_waiter, return_exceptions=True)
+                    cancel_waiter = None
+
+                try:
+                    chunk = next_chunk.result()
+                except StopAsyncIteration:
+                    break
+                _raise_if_cancelled(self.request.cancel_token, self.task_id)
                 _accumulate_usage(usage, chunk)
                 if not first_chunk_emitted:
                     first_chunk_emitted = True
                     emit(SamplingEventType.FIRST_CHUNK)
                 yield chunk
+            emit(SamplingEventType.COMPLETED)
+        except ModelGatewayTimeoutError as error:
+            emit(SamplingEventType.FAILED, error_type=type(error).__name__)
+            raise
         except (asyncio.CancelledError, GeneratorExit):
+            await self._stop_provider_stream(provider_iterator)
             emit(SamplingEventType.CANCELLED)
             raise
         except Exception as error:
+            if _is_timeout_error(error):
+                await self._stop_provider_stream(provider_iterator)
+                timeout_error = ModelGatewayTimeoutError(
+                    self.model_id,
+                    stream_timeout or 0.0,
+                    "provider",
+                )
+                emit(
+                    SamplingEventType.FAILED,
+                    error_type=type(timeout_error).__name__,
+                )
+                raise timeout_error from error
             emit(SamplingEventType.FAILED, error_type=type(error).__name__)
             raise
-        else:
-            emit(SamplingEventType.COMPLETED)
+        finally:
+            if cancel_waiter is not None and not cancel_waiter.done():
+                cancel_waiter.cancel()
+            if cancel_waiter is not None:
+                await asyncio.gather(cancel_waiter, return_exceptions=True)
 
     def record_retry_started(
         self,
@@ -253,6 +351,38 @@ class ModelGatewaySession:
             return
         self._closed = True
         await self._adapter.close()
+
+    def _is_cancelled(self) -> bool:
+        return _is_cancelled(self.request.cancel_token, self.task_id)
+
+    def _remaining_timeout(self, deadline: float) -> float:
+        remaining = deadline - asyncio.get_running_loop().time()
+        budget_remaining = getattr(self.request.budget, "remaining", None)
+        if isinstance(budget_remaining, (int, float)):
+            remaining = min(remaining, float(budget_remaining))
+        return remaining
+
+    async def _stop_provider_stream(
+        self,
+        provider_iterator: Any,
+        next_chunk: asyncio.Task[Any] | None = None,
+    ) -> None:
+        """停止 iterator 后关闭 adapter；收尾失败不能掩盖 cancel/timeout。"""
+        if next_chunk is not None and not next_chunk.done():
+            next_chunk.cancel()
+        if next_chunk is not None:
+            await asyncio.gather(next_chunk, return_exceptions=True)
+        if provider_iterator is not None:
+            close_iterator = getattr(provider_iterator, "aclose", None)
+            if close_iterator is not None:
+                try:
+                    await close_iterator()
+                except Exception:
+                    pass
+        try:
+            await self.close()
+        except Exception:
+            pass
 
 
 class ModelGateway:
@@ -424,6 +554,66 @@ def _accumulate_usage(usage: dict[str, int | float], chunk: Any) -> None:
         usage["api_credits"] = credits
 
 
+def _resolve_request_timeout(request: ModelCallRequest) -> float:
+    if request.timeout is not None:
+        return float(request.timeout)
+    from services.timeout_resolver import resolve_stream_timeout
+
+    return float(resolve_stream_timeout(request.model_id))
+
+
+def _is_cancelled(token: Any, task_id: str | None) -> bool:
+    if token is None:
+        return False
+    is_set = getattr(token, "is_set", None)
+    if callable(is_set):
+        return bool(is_set())
+    is_signalled = getattr(token, "is_signalled", None)
+    if callable(is_signalled) and task_id:
+        return bool(is_signalled(task_id))
+    return False
+
+
+def _raise_if_cancelled(token: Any, task_id: str | None) -> None:
+    if _is_cancelled(token, task_id):
+        raise asyncio.CancelledError
+
+
+def _create_cancel_waiter(
+    token: Any,
+    task_id: str | None,
+) -> asyncio.Task[Any] | None:
+    if token is None:
+        return None
+    wait = getattr(token, "wait", None)
+    if callable(wait):
+        return asyncio.create_task(wait())
+    if callable(getattr(token, "is_set", None)) or callable(
+        getattr(token, "is_signalled", None)
+    ):
+        return asyncio.create_task(_poll_cancel(token, task_id))
+    return None
+
+
+async def _poll_cancel(token: Any, task_id: str | None) -> None:
+    while not _is_cancelled(token, task_id):
+        await asyncio.sleep(0.05)
+
+
+def _is_timeout_error(error: BaseException) -> bool:
+    """识别 Provider 已包装的 connect/read timeout，不误判普通错误文本。"""
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (TimeoutError, asyncio.TimeoutError)):
+            return True
+        if "timeout" in type(current).__name__.lower():
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def _new_identifier(kind: str) -> str:
     return f"{kind}_{uuid4().hex}"
 
@@ -485,6 +675,7 @@ def get_model_gateway() -> ModelGateway:
 __all__ = [
     "ModelCallRequest",
     "ModelAttemptContext",
+    "ModelGatewayTimeoutError",
     "ModelGateway",
     "ModelGatewaySession",
     "get_model_attempt_context",

@@ -41,6 +41,7 @@ async def prepare_chat_stream(
     params: dict[str, Any],
     context_anchor: Any,
     replay_context: dict[str, Any] | None = None,
+    cancellation_event: Any = None,
 ) -> PreparedChatStream:
     """准备一次固定上下文的 Chat 流执行，不读取或写入任务终态。"""
     started_at = time.monotonic()
@@ -73,6 +74,7 @@ async def prepare_chat_stream(
     )
 
     from services.model_gateway import ModelCallRequest, get_model_gateway
+    budget = _prepare_budget()
 
     model_gateway = get_model_gateway().open_chat(
         ModelCallRequest(
@@ -81,6 +83,8 @@ async def prepare_chat_stream(
             db=handler.db,
             task_id=task_id,
             request_id=model_request_id,
+            cancel_token=cancellation_event,
+            budget=budget,
         )
     )
     try:
@@ -109,7 +113,6 @@ async def prepare_chat_stream(
             conversation_id,
             task_id,
         )
-        budget = _prepare_budget()
         return PreparedChatStream(
             text_content=text_content,
             messages=messages,

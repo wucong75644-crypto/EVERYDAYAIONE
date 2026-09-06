@@ -48,6 +48,24 @@ def classify_error(error: Exception) -> ClassifiedError:
     不再依赖 isinstance 散落在各处。
     """
     # ------------------------------------------------------------------
+    # 0. Gateway 自己的请求 deadline → 统一模型超时，不进入模型 retry
+    # ------------------------------------------------------------------
+    try:
+        from services.model_gateway import ModelGatewayTimeoutError
+        if isinstance(error, ModelGatewayTimeoutError):
+            return ClassifiedError(
+                category=ErrorCategory.TRANSIENT,
+                is_retryable=False,
+                is_transient=True,
+                should_refund=True,
+                should_record_breaker=True,
+                error_code="MODEL_TIMEOUT",
+                original=error,
+            )
+    except ImportError:
+        pass
+
+    # ------------------------------------------------------------------
     # 1. Supabase PostgREST 数据库错误 → INFRA
     # ------------------------------------------------------------------
     try:

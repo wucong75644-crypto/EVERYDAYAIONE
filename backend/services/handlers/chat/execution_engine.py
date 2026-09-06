@@ -99,6 +99,7 @@ async def execute_chat(
         params=request.params,
         context_anchor=request.context_anchor,
         replay_context=request.replay_context,
+        cancellation_event=event,
     )
     model_gateway = _get_model_gateway(prepared)
     handler._adapter = model_gateway
@@ -563,6 +564,7 @@ async def _execute_tools(
         turn + 1,
         messages=prepared.messages,
         budget=prepared.budget,
+        cancellation_event=cancellation_event,
     )
     if runtime:
         tool_call_ids = [call["id"] for call in calls]
