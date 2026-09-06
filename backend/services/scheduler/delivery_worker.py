@@ -138,23 +138,32 @@ class ScheduledTaskDeliveryWorker:
 
     async def _process(self, claim: ScheduledTaskDeliveryClaim) -> None:
         try:
-            sent = await asyncio.wait_for(
-                self._sender.send(
-                    {
-                        "org_id": claim.org_id,
-                        "transport": "smart_robot",
-                        "chatid": str(claim.target_context["chatid"]),
-                    },
-                    WecomDeliveryItem(
-                        key=f"scheduled:{claim.delivery_id}",
-                        kind="text",
-                        content=_format_payload(claim.payload),
-                    ),
-                ),
-                timeout=self._send_timeout,
-            )
-            if not sent:
-                raise RuntimeError("WECOM_WS_UNAVAILABLE")
+            context = {
+                "org_id": claim.org_id,
+                "transport": "smart_robot",
+                "chatid": str(claim.target_context["chatid"]),
+            }
+            content = claim.payload.get("content")
+            if isinstance(content, list) and content:
+                items = self._sender.build_items(
+                    {"id": claim.run_id, "status": "completed"},
+                    {"content": content},
+                    context,
+                    delivery_kind=claim.delivery_kind,
+                )
+            else:
+                items = [WecomDeliveryItem(
+                    key=f"scheduled:{claim.delivery_id}",
+                    kind="text",
+                    content=_format_payload(claim.payload),
+                )]
+            for item in items:
+                sent = await asyncio.wait_for(
+                    self._sender.send(context, item),
+                    timeout=self._send_timeout,
+                )
+                if not sent:
+                    raise RuntimeError("WECOM_WS_UNAVAILABLE")
             await self._complete(claim)
         except asyncio.CancelledError:
             raise

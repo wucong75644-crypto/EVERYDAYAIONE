@@ -789,18 +789,21 @@ class TestBuildMultiResult:
     async def test_single_success(self):
         """单步成功 → AgentResult 直传"""
         from services.agent.erp_agent import PlanStep, ExecutionPlan
+        from services.agent.tool_output import ColumnMeta, OutputFormat
         agent = self._make_agent()
-        mock_output = MagicMock()
-        mock_output.summary = "100 笔订单"
-        mock_output.status = "ok"
-        mock_output.format = MagicMock(value="text")
-        mock_output.file_ref = None
-        mock_output.data = None
-        mock_output.columns = None
+        mock_output = MagicMock(
+            summary="100 笔订单", status="ok", format=OutputFormat.TABLE,
+            file_ref=None,
+            data=[{"count": 100}],
+            columns=[ColumnMeta("count", "integer", "有效订单")],
+            metadata={}, emit_payloads=[],
+        )
         plan = ExecutionPlan(steps=[PlanStep("trade", {})])
         result = agent._build_multi_result([("trade", mock_output)], plan, "query")
         assert result.status == "success"
         assert result.summary == "100 笔订单"
+        assert result.format == OutputFormat.TABLE
+        assert result.data == [{"count": 100}]
 
     @pytest.mark.asyncio
     async def test_multi_success_with_compute_hint(self):

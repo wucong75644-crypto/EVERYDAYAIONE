@@ -126,6 +126,32 @@ def test_build_items_downgrades_diagram_to_original_source():
     ]
 
 
+def test_build_items_downgrades_table_to_markdown():
+    sender = WecomDeliverySender(object(), MagicMock())
+
+    items = sender.build_items(
+        {"id": "task-1", "status": "completed"},
+        {"content": [{
+            "type": "table",
+            "title": "付款订单",
+            "columns": ["平台", "有效订单数", "有效金额"],
+            "rows": [{"平台": "抖音", "有效订单数": 128, "有效金额": 2260.5}],
+        }]},
+        {"transport": "smart_robot"},
+    )
+
+    assert items == [
+        WecomDeliveryItem(
+            "table:0",
+            "text",
+            "### 付款订单\n"
+            "| 平台 | 有效订单数 | 有效金额 |\n"
+            "| --- | --- | --- |\n"
+            "| 抖音 | 128 | 2260.5 |",
+        )
+    ]
+
+
 def test_build_items_creates_failed_result_without_message():
     sender = WecomDeliverySender(object(), MagicMock())
 

@@ -620,5 +620,267 @@ async def test_prepare_chat_stream_opens_gateway_for_shared_web_actor_path(
     factory.assert_called_once_with("model-1", org_id="org-1", db="db-1")
     assert prepared.model_gateway is not None
     assert prepared.model_gateway.request.request_id == "request-1"
+    assert prepared.model_gateway.request.budget is prepared.budget
     await prepared.model_gateway.close()
     adapter.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_gateway_cancel_before_provider_call_closes_adapter_without_calling_provider():
+    cancelled = asyncio.Event()
+    cancelled.set()
+    provider_called = False
+
+    async def stream_chat(**_kwargs):
+        nonlocal provider_called
+        provider_called = True
+        yield _chunk("unexpected")
+
+    adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
+    session = ModelGatewaySession(
+        adapter,
+        ModelCallRequest(
+            model_id="model-1",
+            task_id="task-1",
+            timeout=1.0,
+            cancel_token=cancelled,
+        ),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        [chunk async for chunk in session.stream_chat(messages=[])]
+
+    assert provider_called is False
+    adapter.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_gateway_cancels_before_first_chunk_and_closes_provider_stream():
+    started = asyncio.Event()
+    provider_closed = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def stream_chat(**_kwargs):
+        try:
+            started.set()
+            await asyncio.Event().wait()
+            yield _chunk("unreachable")
+        finally:
+            provider_closed.set()
+
+    adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
+    session = ModelGatewaySession(
+        adapter,
+        ModelCallRequest(
+            model_id="model-1",
+            task_id="task-1",
+            timeout=1.0,
+            cancel_token=cancelled,
+        ),
+    )
+
+    async def consume():
+        return [chunk async for chunk in session.stream_chat(messages=[])]
+
+    task = asyncio.create_task(consume())
+    await started.wait()
+    cancelled.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    await asyncio.wait_for(provider_closed.wait(), timeout=0.2)
+    adapter.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_gateway_cancel_during_stream_does_not_yield_more_chunks():
+    release_second = asyncio.Event()
+    provider_closed = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def stream_chat(**_kwargs):
+        try:
+            yield _chunk("first")
+            await release_second.wait()
+            yield _chunk("second")
+        finally:
+            provider_closed.set()
+
+    adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
+    session = ModelGatewaySession(
+        adapter,
+        ModelCallRequest(
+            model_id="model-1",
+            task_id="task-1",
+            timeout=1.0,
+            cancel_token=cancelled,
+        ),
+    )
+    iterator = session.stream_chat(messages=[]).__aiter__()
+
+    first = await iterator.__anext__()
+    assert first.content == "first"
+    cancelled.set()
+    with pytest.raises(asyncio.CancelledError):
+        await iterator.__anext__()
+    release_second.set()
+
+    await asyncio.wait_for(provider_closed.wait(), timeout=0.2)
+    adapter.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_gateway_timeout_is_uniform_and_closes_provider_stream():
+    provider_closed = asyncio.Event()
+
+    async def stream_chat(**_kwargs):
+        try:
+            await asyncio.Event().wait()
+            yield _chunk("unreachable")
+        finally:
+            provider_closed.set()
+
+    events = _SamplingEvents()
+    adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
+    session = ModelGatewaySession(
+        adapter,
+        ModelCallRequest(model_id="model-1", timeout=0.01),
+        event_publisher=events,
+    )
+
+    with pytest.raises(Exception) as error:
+        [chunk async for chunk in session.stream_chat(messages=[])]
+
+    assert error.type.__name__ == "ModelGatewayTimeoutError"
+    assert str(error.value).startswith("ModelGateway request timed out")
+    await asyncio.wait_for(provider_closed.wait(), timeout=0.2)
+    adapter.close.assert_awaited_once()
+    assert events.events[-1].event is SamplingEventType.FAILED
+
+
+@pytest.mark.asyncio
+async def test_gateway_wraps_provider_timeout_as_uniform_timeout():
+    async def stream_chat(**_kwargs):
+        raise TimeoutError("provider read timeout")
+        yield _chunk("unreachable")
+
+    adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
+    session = ModelGatewaySession(
+        adapter,
+        ModelCallRequest(model_id="model-1", timeout=1.0),
+    )
+
+    with pytest.raises(Exception) as error:
+        [chunk async for chunk in session.stream_chat(messages=[])]
+
+    assert error.type.__name__ == "ModelGatewayTimeoutError"
+    assert error.value.phase == "provider"
+    adapter.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_gateway_budget_remaining_bounds_model_request():
+    provider_closed = asyncio.Event()
+
+    async def stream_chat(**_kwargs):
+        try:
+            await asyncio.Event().wait()
+            yield _chunk("unreachable")
+        finally:
+            provider_closed.set()
+
+    budget = SimpleNamespace(remaining=0.01)
+    adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
+    session = ModelGatewaySession(
+        adapter,
+        ModelCallRequest(model_id="model-1", timeout=1.0, budget=budget),
+    )
+
+    with pytest.raises(Exception) as error:
+        [chunk async for chunk in session.stream_chat(messages=[])]
+
+    assert error.type.__name__ == "ModelGatewayTimeoutError"
+    await asyncio.wait_for(provider_closed.wait(), timeout=0.2)
+    adapter.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_gateway_actor_ownership_lost_event_stops_stream():
+    ownership_lost = asyncio.Event()
+    started = asyncio.Event()
+
+    async def stream_chat(**_kwargs):
+        started.set()
+        await asyncio.Event().wait()
+        yield _chunk("unreachable")
+
+    adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
+    session = ModelGatewaySession(
+        adapter,
+        ModelCallRequest(
+            model_id="model-1",
+            task_id="actor-task-1",
+            timeout=1.0,
+            cancel_token=ownership_lost,
+        ),
+    )
+    task = asyncio.create_task(
+        session.stream_chat(messages=[]).__anext__(),
+    )
+    await started.wait()
+    ownership_lost.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    adapter.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_gateway_can_consume_existing_cancel_manager_signal():
+    from services.cancel_gate import CancelManager
+
+    manager = CancelManager()
+    manager.register_listener("web-task-1")
+    started = asyncio.Event()
+
+    async def stream_chat(**_kwargs):
+        started.set()
+        await asyncio.Event().wait()
+        yield _chunk("unreachable")
+
+    adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
+    session = ModelGatewaySession(
+        adapter,
+        ModelCallRequest(
+            model_id="model-1",
+            task_id="web-task-1",
+            timeout=1.0,
+            cancel_token=manager,
+        ),
+    )
+    task = asyncio.create_task(
+        session.stream_chat(messages=[]).__anext__(),
+    )
+    await started.wait()
+    assert manager.cancel("web-task-1", "org-1") is True
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    adapter.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_gateway_normal_fast_request_does_not_timeout():
+    async def stream_chat(**_kwargs):
+        yield _chunk("ok")
+
+    adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
+    session = ModelGatewaySession(
+        adapter,
+        ModelCallRequest(model_id="model-1", timeout=0.2),
+    )
+
+    chunks = [chunk async for chunk in session.stream_chat(messages=[])]
+
+    assert [chunk.content for chunk in chunks] == ["ok"]
+    assert adapter.close.await_count == 0

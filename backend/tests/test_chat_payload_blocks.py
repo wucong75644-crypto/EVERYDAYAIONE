@@ -1,14 +1,26 @@
 from __future__ import annotations
 
 import sys
+import json
+from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
+from uuid import UUID
 
 backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from schemas.message import ChartPart, DiagramPart, FilePart, ImagePart
-from services.handlers.emit_payloads import build_block_from_payload, build_part_from_payload
+from schemas.message import ChartPart, DiagramPart, FilePart, ImagePart, TablePart
+from services.agent.agent_result import AgentResult
+from services.agent.tool_output import ColumnMeta, OutputFormat
+from services.handlers.emit_payloads import (
+    build_block_from_payload,
+    build_part_from_payload,
+    build_content_blocks_from_payloads,
+    collect_agent_result_payloads,
+    build_table_payload_from_agent_result,
+)
 
 
 def test_image_payload_block_preserves_media_url_fields():
@@ -125,9 +137,90 @@ def test_failed_image_payload_preserves_failure_details():
     assert part.retry_context == {"provider": "test-provider"}
 
 
-def test_table_and_unknown_payloads_have_no_content_part():
+def test_table_payload_builds_content_part():
     table = {"kind": "table", "columns": ["name"], "rows": [{"name": "A"}]}
 
     assert build_block_from_payload(table)["type"] == "table"
-    assert build_part_from_payload(table) is None
+    part = build_part_from_payload(table)
+    assert isinstance(part, TablePart)
+    assert part.rows == [{"name": "A"}]
     assert build_part_from_payload({"kind": "unknown"}) is None
+
+
+def test_agent_result_table_uses_column_labels_and_existing_preview_limit():
+    result = AgentResult(
+        summary="订单统计",
+        format=OutputFormat.TABLE,
+        columns=[
+            ColumnMeta("valid_orders", "integer", "有效订单数"),
+            ColumnMeta("valid_amount", "numeric", "有效金额"),
+        ],
+        data=[{"valid_orders": 128, "valid_amount": 2260.5}],
+        metadata={"title": "付款订单"},
+    )
+
+    payload = build_table_payload_from_agent_result(result)
+
+    assert payload == {
+        "kind": "table",
+        "title": "付款订单",
+        "columns": ["有效订单数", "有效金额"],
+        "rows": [{"有效订单数": 128, "有效金额": 2260.5}],
+        "truncated": False,
+    }
+
+
+def test_agent_result_table_serializes_database_native_values():
+    result = AgentResult(
+        summary="订单明细",
+        format=OutputFormat.TABLE,
+        columns=[
+            ColumnMeta("amount", "numeric", "金额"),
+            ColumnMeta("created_at", "timestamp", "创建时间"),
+            ColumnMeta("record_id", "text", "记录 ID"),
+        ],
+        data=[{
+            "amount": Decimal("12.34"),
+            "created_at": datetime(2026, 9, 6, tzinfo=timezone.utc),
+            "record_id": UUID("00000000-0000-0000-0000-000000000001"),
+        }],
+    )
+
+    payload = build_table_payload_from_agent_result(result)
+
+    assert payload["rows"] == [{
+        "金额": "12.34",
+        "创建时间": "2026-09-06T00:00:00Z",
+        "记录 ID": "00000000-0000-0000-0000-000000000001",
+    }]
+    json.dumps(payload, ensure_ascii=False)
+
+
+def test_collect_agent_result_payloads_adds_table_once():
+    result = AgentResult(
+        summary="订单统计",
+        format=OutputFormat.TABLE,
+        columns=[ColumnMeta("count", "integer", "有效订单")],
+        data=[{"count": 3}],
+        emit_payloads=[{"kind": "table", "columns": ["已有"], "rows": []}],
+    )
+
+    payloads = collect_agent_result_payloads(result)
+
+    assert len(payloads) == 1
+    assert payloads[0]["columns"] == ["已有"]
+
+
+def test_build_content_blocks_uses_existing_payload_converter():
+    blocks = build_content_blocks_from_payloads([
+        {"kind": "table", "columns": ["平台"], "rows": [{"平台": "京东"}]},
+        {"kind": "unknown"},
+    ])
+
+    assert blocks == [{
+        "type": "table",
+        "title": "",
+        "columns": ["平台"],
+        "rows": [{"平台": "京东"}],
+        "truncated": False,
+    }]

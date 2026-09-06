@@ -9,6 +9,7 @@ from services.scheduler.delivery_worker import (
     ScheduledTaskDeliveryClaim,
     ScheduledTaskDeliveryWorker,
 )
+from services.wecom.delivery_sender import WecomDeliveryItem
 
 
 class _Call:
@@ -84,3 +85,34 @@ async def test_worker_keeps_running_after_empty_outbox():
     )
 
     assert await worker.run_once() is False
+
+
+@pytest.mark.asyncio
+async def test_worker_uses_shared_wecom_structured_fallback_for_content_blocks():
+    claim = _claim()
+    claim["payload"] = {
+        "text": "日报",
+        "files": [],
+        "content": [
+            {"type": "text", "text": "日报"},
+            {
+                "type": "table",
+                "columns": ["平台", "有效订单"],
+                "rows": [{"平台": "京东", "有效订单": 114}],
+            },
+        ],
+    }
+    db = _DB({
+        "claim_scheduled_task_delivery": [claim],
+        "complete_scheduled_task_delivery": [{"outcome": "delivered"}],
+    })
+    sender = MagicMock()
+    sender.build_items.return_value = [WecomDeliveryItem(
+        key="table:1", kind="text", content="### 数据表格\n| 平台 | 有效订单 |",
+    )]
+    sender.send = AsyncMock(return_value=True)
+
+    assert await ScheduledTaskDeliveryWorker(db, sender).run_once() is True
+
+    sender.build_items.assert_called_once()
+    assert sender.send.call_args.args[1].content.startswith("### 数据表格")

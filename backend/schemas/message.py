@@ -125,6 +125,24 @@ class FormPart(BaseModel):
     next_form: Optional[Dict[str, Any]] = None
 
 
+class TablePart(BaseModel):
+    """结构化表格内容块（AgentResult TABLE / sandbox emit_table 共用）。"""
+    type: Literal["table"] = "table"
+    title: str = ""
+    columns: List[str] = Field(default_factory=list)
+    rows: List[Dict[str, Any]] = Field(default_factory=list)
+    truncated: bool = False
+
+
+class InterruptMarkerPart(BaseModel):
+    """用户中断锚点；用于历史恢复和前端中断提示。"""
+    type: Literal["interrupt_marker"] = "interrupt_marker"
+    interrupted_at: str
+    reason: Literal[
+        "user_cancel", "user_pause", "system_timeout", "network_error"
+    ]
+
+
 class EcomPlanPart(BaseModel):
     """电商图方案卡片内容块
 
@@ -140,7 +158,7 @@ class EcomPlanPart(BaseModel):
 ContentPart = Annotated[
     Union[TextPart, ImagePart, VideoPart, AudioPart, FilePart,
           ThinkingPart, ToolStepPart, ToolResultPart, FormPart, ChartPart,
-          DiagramPart, EcomPlanPart],
+          DiagramPart, TablePart, InterruptMarkerPart, EcomPlanPart],
     Field(discriminator="type"),
 ]
 
