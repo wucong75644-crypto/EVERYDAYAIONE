@@ -28,6 +28,28 @@ from services.handlers.chat_tool_result_mixin import (
 )
 
 
+def _collect_interactive_agent_payloads(
+    tool_name: str,
+    result: Any,
+) -> list[Dict[str, Any]]:
+    """收集交互式展示产物，但不把 ERP 数据表当成第二个展示出口。
+
+    ERPAgent 的 TABLE 是给主模型使用的数据契约；交互式 Web/Actor
+    仍展示模型最终文本。文件、图片等显式产物继续沿用统一 emit 协议。
+    定时任务不经过此函数，仍使用 ToolLoopExecutor 的统一收集路径。
+    """
+    from services.handlers.emit_payloads import collect_agent_result_payloads
+
+    raw_payloads = getattr(result, "emit_payloads", None)
+    if tool_name == "erp_agent":
+        return [
+            payload
+            for payload in (raw_payloads or [])
+            if isinstance(payload, dict) and payload.get("kind") != "table"
+        ]
+    return collect_agent_result_payloads(result)
+
+
 class ChatToolMixin(ChatToolResultMixin):
     """工具执行 Mixin：安全检查 + 并行/串行分批 + 错误回传"""
 
@@ -109,11 +131,10 @@ class ChatToolMixin(ChatToolResultMixin):
 
         # ── AgentResult 处理:聚合 emit_payloads (沙盒 IO 统一协议) ──
         from services.agent.agent_result import AgentResult
-        from services.handlers.emit_payloads import collect_agent_result_payloads
         for tc, result, _is_error, _display in results:
             if not isinstance(result, AgentResult):
                 continue
-            payloads = collect_agent_result_payloads(result)
+            payloads = _collect_interactive_agent_payloads(tc["name"], result)
             logger.info(
                 f"AgentResult emit_payloads check | tool={tc['name']} | "
                 f"count={len(payloads)} | "
