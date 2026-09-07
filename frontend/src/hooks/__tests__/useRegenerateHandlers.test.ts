@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useRegenerateHandlers } from '../useRegenerateHandlers';
 import type { Message, ContentPart } from '../../stores/useMessageStore';
+import { toast } from 'react-hot-toast';
 
 // ============================================================
 // Mocks
@@ -33,7 +34,7 @@ vi.mock('../../contexts/WebSocketContext', () => ({
 
 // Mock toast
 vi.mock('react-hot-toast', () => ({
-  default: {
+  toast: {
     error: vi.fn(),
   },
 }));
@@ -341,7 +342,6 @@ describe('useRegenerateHandlers', () => {
   });
 
   it('should handle sendMessage errors gracefully', async () => {
-    const toast = await import('react-hot-toast');
     mockSendMessage.mockRejectedValue(new Error('网络错误'));
 
     const { result } = renderHook(() =>
@@ -358,6 +358,6 @@ describe('useRegenerateHandlers', () => {
       await result.current.handleRegenerate(targetMessage, userMessage);
     });
 
-    expect(toast.default.error).toHaveBeenCalledWith('网络错误');
+    expect(toast.error).toHaveBeenCalledWith('网络错误');
   });
 });

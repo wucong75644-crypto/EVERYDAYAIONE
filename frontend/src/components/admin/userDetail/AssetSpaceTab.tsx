@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import { Download } from 'lucide-react';
 import { Button } from '../../ui/Button';
 import { useFileSelection } from '../../../hooks/useFileSelection';

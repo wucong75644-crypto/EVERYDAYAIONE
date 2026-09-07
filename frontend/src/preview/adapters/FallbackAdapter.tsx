@@ -9,7 +9,7 @@
  */
 
 import { Download } from 'lucide-react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import PreviewFrame from '../PreviewFrame';
 import { downloadFile } from '../../utils/downloadFile';
 import { getFileIcon } from '../../utils/fileUtils';

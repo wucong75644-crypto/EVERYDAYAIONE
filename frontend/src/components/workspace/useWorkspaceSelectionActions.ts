@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import type { UseWorkspaceReturn } from '../../hooks/useWorkspace';
 import type { useFileSelection } from '../../hooks/useFileSelection';
 import { useRubberBand } from '../../hooks/useRubberBand';

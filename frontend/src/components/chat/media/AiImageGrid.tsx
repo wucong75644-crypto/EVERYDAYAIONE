@@ -16,7 +16,7 @@ import { Image as ImageIcon, Loader2, RefreshCw } from 'lucide-react';
 import { FailedMediaPlaceholder } from './MediaPlaceholder';
 import ImageContextMenu from './ImageContextMenu';
 import { useThumbnailFallback } from '../../../hooks/useThumbnailFallback';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import { downloadImage } from '../../../utils/downloadImage';
 import { toThumbnailImageUrl } from '../../../utils/imageUrlRules';
 import { resolveImageOriginalUrl } from '../../../utils/messageUtils';

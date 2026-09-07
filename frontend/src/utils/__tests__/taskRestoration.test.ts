@@ -33,7 +33,7 @@ vi.mock('../../services/api', () => ({
 }));
 
 vi.mock('react-hot-toast', () => ({
-  default: { success: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn() },
 }));
 
 vi.mock('../logger', () => ({

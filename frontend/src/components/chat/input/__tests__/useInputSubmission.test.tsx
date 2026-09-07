@@ -15,7 +15,7 @@ vi.mock('../../../../services/conversation', () => ({
   createConversation: vi.fn(),
 }));
 vi.mock('../../../../services/audio', () => ({ uploadAudio: vi.fn() }));
-vi.mock('react-hot-toast', () => ({ default: { error: vi.fn() } }));
+vi.mock('react-hot-toast', () => ({ toast: { error: vi.fn() } }));
 
 function image(name: string, originalUrl: string | null): ChatAttachment {
   return {

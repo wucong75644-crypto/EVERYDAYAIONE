@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import type { UseWorkspaceReturn } from '../../hooks/useWorkspace';
 import type { useFileSelection } from '../../hooks/useFileSelection';
 import type { usePreview } from '../../preview/usePreview';

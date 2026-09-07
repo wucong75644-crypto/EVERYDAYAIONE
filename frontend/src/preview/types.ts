@@ -7,7 +7,7 @@
  * 详见 docs/document/TECH_预览适配器架构.md
  */
 
-import type { ComponentType } from 'react';
+import type { ComponentType, ExoticComponent } from 'react';
 
 /**
  * 预览项 — 统一的输入数据结构，所有调用方（工作区/聊天/输入框）都构造此类型。
@@ -45,6 +45,10 @@ export interface PreviewCommonProps {
   onDelete?: () => void;
 }
 
+export type PreviewComponent =
+  | ComponentType<PreviewCommonProps>
+  | ExoticComponent<PreviewCommonProps>;
+
 /**
  * 适配器定义。每种文件类型注册一个 adapter 到 registry。
  */
@@ -58,7 +62,7 @@ export interface PreviewAdapter {
   /** 优先级：数字大优先；命中多个时取最高 */
   priority: number;
   /** 渲染组件 */
-  Component: ComponentType<PreviewCommonProps>;
+  Component: PreviewComponent;
   /** 是否支持上下张（true → PreviewHost 知道兄弟列表有意义）*/
   supportsNavigation: boolean;
 }

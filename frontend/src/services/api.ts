@@ -14,7 +14,7 @@
  */
 
 import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig, type InternalAxiosRequestConfig } from 'axios';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import type { ApiErrorResponse } from '../types/auth';
 import { silentRefresh } from '../utils/tokenManager';
 import { isAccessTokenExpired } from '../utils/accessToken';

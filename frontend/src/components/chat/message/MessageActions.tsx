@@ -7,7 +7,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Trash2, FileSpreadsheet } from 'lucide-react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import { useModalAnimation } from '../../../hooks/useModalAnimation';
 import { logger } from '../../../utils/logger';
 import { hasMarkdownTable } from '../../../utils/tableExport';

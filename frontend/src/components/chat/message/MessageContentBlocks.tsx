@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import { formatRelativeCN } from '../../../utils/formatRelativeCN';
 import api from '../../../services/api';
 import { useMessageStore, type Message } from '../../../stores/useMessageStore';

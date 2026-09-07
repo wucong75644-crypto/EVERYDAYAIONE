@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useInView } from 'react-intersection-observer';
 import { Loader2 } from 'lucide-react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import { downloadImage } from '../../../utils/downloadImage';
 import { useThumbnailFallback } from '../../../hooks/useThumbnailFallback';
 import { toThumbnailImageUrl } from '../../../utils/imageUrlRules';

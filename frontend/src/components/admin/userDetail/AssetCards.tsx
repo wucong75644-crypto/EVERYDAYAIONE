@@ -11,7 +11,7 @@
  */
 
 import { useState } from 'react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import { Copy, Download, ZoomIn } from 'lucide-react';
 import type { UserAsset } from '../../../services/adminUser';
 import { formatRelativeCN } from '../../../utils/formatRelativeCN';
