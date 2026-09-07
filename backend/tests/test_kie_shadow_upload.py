@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -83,9 +84,9 @@ async def test_create_task_schedules_shadow_upload_without_changing_main_request
         input={"input_urls": [SOURCE_URL, SOURCE_URL]},
     )
 
-    with patch.object(client, "_get_client", return_value=main_http), patch.object(
-        client, "_run_shadow_upload", new_callable=AsyncMock
-    ) as shadow_upload:
+    with patch.dict(os.environ, {client.SHADOW_OVERSEAS_PROXY_ENV: ""}), patch.object(
+        client, "_get_client", return_value=main_http
+    ), patch.object(client, "_run_shadow_upload", new_callable=AsyncMock) as shadow_upload:
         result = await client.create_task(request)
         await asyncio.gather(*client._shadow_upload_tasks)
 
@@ -94,7 +95,10 @@ async def test_create_task_schedules_shadow_upload_without_changing_main_request
     assert main_http.post.await_args.kwargs["json"] == request.model_dump(exclude_none=True)
     shadow_upload.assert_awaited_once_with(
         model=IMAGE_MODEL,
+        task_id="task-123",
         source_urls=[SOURCE_URL],
+        route="auto",
+        proxy_url=None,
     )
 
 
@@ -109,7 +113,13 @@ async def test_shadow_upload_uses_environment_proxy_and_uploads_bytes():
         "services.adapters.kie.client.httpx.AsyncClient",
         side_effect=lambda **kwargs: _AsyncContext(fake_http_clients.pop(0)),
     ) as async_client:
-        await client._run_shadow_upload(IMAGE_MODEL, [SOURCE_URL])
+        await client._run_shadow_upload(
+            IMAGE_MODEL,
+            "task-123",
+            [SOURCE_URL],
+            route="auto",
+            proxy_url=None,
+        )
 
     assert async_client.call_args_list[0].kwargs["trust_env"] is True
     assert async_client.call_args_list[1].kwargs["trust_env"] is True
@@ -120,6 +130,54 @@ async def test_shadow_upload_uses_environment_proxy_and_uploads_bytes():
         b"image-bytes",
         "image/png",
     )
+
+
+@pytest.mark.asyncio
+async def test_create_task_records_task_id_for_both_shadow_routes():
+    client = KieClient(api_key="test-key")
+    request = CreateTaskRequest(
+        model=IMAGE_MODEL,
+        input={"input_urls": [SOURCE_URL]},
+    )
+
+    with patch.dict(
+        os.environ,
+        {client.SHADOW_OVERSEAS_PROXY_ENV: "http://127.0.0.1:7891"},
+    ), patch.object(client, "_run_shadow_upload", new_callable=AsyncMock) as shadow_upload:
+        client._schedule_shadow_upload(request, task_id="task-123")
+        await asyncio.gather(*client._shadow_upload_tasks)
+
+    assert {
+        call.kwargs["route"] for call in shadow_upload.await_args_list
+    } == {"auto", "overseas"}
+    assert {
+        call.kwargs["task_id"] for call in shadow_upload.await_args_list
+    } == {"task-123"}
+
+
+@pytest.mark.asyncio
+async def test_shadow_upload_overseas_route_uses_explicit_proxy():
+    client = KieClient(api_key="test-key")
+    download_client = _DownloadClient()
+    upload_client = _UploadClient()
+    fake_http_clients = [download_client, upload_client]
+    overseas_proxy = "http://127.0.0.1:7891"
+
+    with patch(
+        "services.adapters.kie.client.httpx.AsyncClient",
+        side_effect=lambda **kwargs: _AsyncContext(fake_http_clients.pop(0)),
+    ) as async_client:
+        await client._run_shadow_upload(
+            IMAGE_MODEL,
+            "task-123",
+            [SOURCE_URL],
+            route="overseas",
+            proxy_url=overseas_proxy,
+        )
+
+    for call in async_client.call_args_list:
+        assert call.kwargs["proxy"] == overseas_proxy
+        assert call.kwargs["trust_env"] is False
 
 
 def test_shadow_upload_skips_non_image_kie_requests():
@@ -135,4 +193,3 @@ def test_shadow_upload_skips_non_image_kie_requests():
 
     assert client._extract_shadow_image_urls(image_request) == []
     assert client._extract_shadow_image_urls(chat_request) == []
-

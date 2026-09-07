@@ -7,6 +7,7 @@ KIE API HTTP 客户端
 import asyncio
 import json
 import mimetypes
+import os
 import time
 from pathlib import Path
 from typing import Optional, AsyncIterator, Dict, Any, NoReturn
@@ -120,6 +121,7 @@ class KieClient:
         pool=10.0,
     )
     SHADOW_IMAGE_INPUT_KEYS = ("input_urls", "image_urls", "image_input")
+    SHADOW_OVERSEAS_PROXY_ENV = "KIE_SHADOW_OVERSEAS_PROXY"
 
     def __init__(
         self,
@@ -359,8 +361,10 @@ class KieClient:
         Returns:
             任务创建响应 (包含 taskId)
         """
-        self._schedule_shadow_upload(request)
-        return await self._create_task_with_retry(request)
+        result = await self._create_task_with_retry(request)
+        if result.task_id:
+            self._schedule_shadow_upload(request, task_id=result.task_id)
+        return result
 
     @retry(
         stop=stop_after_attempt(3),
@@ -396,21 +400,70 @@ class KieClient:
 
         return result
 
-    def _schedule_shadow_upload(self, request: CreateTaskRequest) -> None:
-        """在主任务旁路启动一次 KIE 临时空间上传探测。"""
+    def _schedule_shadow_upload(
+        self,
+        request: CreateTaskRequest,
+        task_id: str,
+    ) -> None:
+        """在主任务旁路启动默认和海外出口两次 KIE 上传探测。"""
         source_urls = self._extract_shadow_image_urls(request)
         if not source_urls:
             return
 
+        self._schedule_shadow_route(
+            model=request.model,
+            task_id=task_id,
+            source_urls=source_urls,
+            route="auto",
+            proxy_url=None,
+        )
+
+        overseas_proxy = os.getenv(self.SHADOW_OVERSEAS_PROXY_ENV)
+        if overseas_proxy:
+            self._schedule_shadow_route(
+                model=request.model,
+                task_id=task_id,
+                source_urls=source_urls,
+                route="overseas",
+                proxy_url=overseas_proxy,
+            )
+        else:
+            logger.warning(
+                "KIE_SHADOW_UPLOAD_SKIPPED | task_id={} | model={} | "
+                "route=overseas | reason=proxy_not_configured | env={}",
+                task_id,
+                request.model,
+                self.SHADOW_OVERSEAS_PROXY_ENV,
+            )
+
+    def _schedule_shadow_route(
+        self,
+        model: str,
+        task_id: str,
+        source_urls: list[str],
+        route: str,
+        proxy_url: Optional[str],
+    ) -> None:
+        """启动一条独立出口的旁路探测任务。"""
         task = asyncio.create_task(
-            self._run_shadow_upload(model=request.model, source_urls=source_urls)
+            self._run_shadow_upload(
+                model=model,
+                task_id=task_id,
+                source_urls=source_urls,
+                route=route,
+                proxy_url=proxy_url,
+            )
         )
         self._shadow_upload_tasks.add(task)
         task.add_done_callback(self._shadow_upload_tasks.discard)
         logger.info(
-            "KIE_SHADOW_UPLOAD_SCHEDULED | model={} | source_count={} | transport=httpx-trust-env",
-            request.model,
+            "KIE_SHADOW_UPLOAD_SCHEDULED | task_id={} | model={} | route={} | "
+            "source_count={} | transport={}",
+            task_id,
+            model,
+            route,
             len(source_urls),
+            "explicit-proxy" if proxy_url else "httpx-trust-env",
         )
 
     @classmethod
@@ -438,30 +491,47 @@ class KieClient:
                     source_urls.append(value)
         return source_urls
 
-    async def _run_shadow_upload(self, model: str, source_urls: list[str]) -> None:
+    async def _run_shadow_upload(
+        self,
+        model: str,
+        task_id: str,
+        source_urls: list[str],
+        route: str = "auto",
+        proxy_url: Optional[str] = None,
+    ) -> None:
         """下载并上传旁路素材；任何异常都只记录，不影响主任务。"""
         success_count = 0
         failure_count = 0
         started_at = time.monotonic()
 
         try:
-            async with httpx.AsyncClient(
-                timeout=self.SHADOW_DOWNLOAD_TIMEOUT,
-                follow_redirects=True,
-                limits=httpx.Limits(max_connections=4, max_keepalive_connections=2),
-                trust_env=True,
-            ) as download_client:
+            download_client_kwargs: Dict[str, Any] = {
+                "timeout": self.SHADOW_DOWNLOAD_TIMEOUT,
+                "follow_redirects": True,
+                "limits": httpx.Limits(max_connections=4, max_keepalive_connections=2),
+                "trust_env": proxy_url is None,
+            }
+            upload_client_kwargs: Dict[str, Any] = {
+                "headers": {"Authorization": f"Bearer {self.api_key}"},
+                "timeout": self.SHADOW_UPLOAD_TIMEOUT,
+                "trust_env": proxy_url is None,
+            }
+            if proxy_url:
+                download_client_kwargs["proxy"] = proxy_url
+                upload_client_kwargs["proxy"] = proxy_url
+
+            async with httpx.AsyncClient(**download_client_kwargs) as download_client:
                 async with httpx.AsyncClient(
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    timeout=self.SHADOW_UPLOAD_TIMEOUT,
-                    trust_env=True,
+                    **upload_client_kwargs,
                 ) as upload_client:
                     for source_url in source_urls:
                         if await self._shadow_upload_one(
                             model=model,
+                            task_id=task_id,
                             source_url=source_url,
                             download_client=download_client,
                             upload_client=upload_client,
+                            route=route,
                         ):
                             success_count += 1
                         else:
@@ -471,16 +541,20 @@ class KieClient:
             failure_count += len(source_urls) - success_count - failure_count
             logger.warning(
                 "KIE_SHADOW_UPLOAD_FAILURE | model={} | stage=client | "
-                "error_type={} | source_count={}",
+                "task_id={} | route={} | error_type={} | source_count={}",
                 model,
+                task_id,
+                route,
                 type(exc).__name__,
                 len(source_urls),
             )
 
         logger.info(
-            "KIE_SHADOW_UPLOAD_SUMMARY | model={} | attempted={} | succeeded={} | "
-            "failed={} | duration_ms={}",
+            "KIE_SHADOW_UPLOAD_SUMMARY | task_id={} | model={} | route={} | "
+            "attempted={} | succeeded={} | failed={} | duration_ms={}",
+            task_id,
             model,
+            route,
             len(source_urls),
             success_count,
             failure_count,
@@ -490,9 +564,11 @@ class KieClient:
     async def _shadow_upload_one(
         self,
         model: str,
+        task_id: str,
         source_url: str,
         download_client: httpx.AsyncClient,
         upload_client: httpx.AsyncClient,
+        route: str,
     ) -> bool:
         """执行一次无重试的下载 + KIE 临时空间上传探测。"""
         stage = "download"
@@ -540,9 +616,11 @@ class KieClient:
                 raise ValueError("invalid upload response")
 
             logger.info(
-                "KIE_SHADOW_UPLOAD_SUCCESS | model={} | bytes={} | content_type={} | "
-                "status_code={} | duration_ms={}",
+                "KIE_SHADOW_UPLOAD_SUCCESS | task_id={} | model={} | route={} | "
+                "bytes={} | content_type={} | status_code={} | duration_ms={}",
+                task_id,
                 model,
+                route,
                 len(content),
                 content_type,
                 response.status_code,
@@ -551,9 +629,11 @@ class KieClient:
             return True
         except Exception as exc:
             logger.warning(
-                "KIE_SHADOW_UPLOAD_FAILURE | model={} | stage={} | "
-                "error_type={} | status_code={}",
+                "KIE_SHADOW_UPLOAD_FAILURE | task_id={} | model={} | route={} | "
+                "stage={} | error_type={} | status_code={}",
+                task_id,
                 model,
+                route,
                 stage,
                 type(exc).__name__,
                 response_status if response_status is not None else "none",
