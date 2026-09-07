@@ -8,7 +8,7 @@ import { useCallback } from 'react';
 import { type Message } from '../stores/useMessageStore';
 import { sendMessage, determineMessageType, extractModelId, extractGenerationParams } from '../services/messageSender';
 import { useWebSocketContext } from '../contexts/WebSocketContext';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import { logger } from '../utils/logger';
 
 interface RegenerateHandlersOptions {

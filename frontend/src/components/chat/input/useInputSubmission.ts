@@ -1,5 +1,5 @@
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import { uploadAudio } from '../../../services/audio';
 import { ApiRequestError } from '../../../services/api';
 import { createConversation, type ChatSettings } from '../../../services/conversation';

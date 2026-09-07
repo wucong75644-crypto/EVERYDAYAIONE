@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "check:frontend": "node scripts/check-frontend.mjs"
   },
   "dependencies": {
     "@microsoft/fetch-event-source": "^2.0.1",

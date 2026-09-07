@@ -10,7 +10,7 @@
  */
 
 import { Quote, Copy, Download } from 'lucide-react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import { downloadImage } from '../../../utils/downloadImage';
 import { toOriginalImageUrl } from '../../../utils/imageUrlRules';
 import BaseContextMenu, { type ContextMenuItem } from '../menus/BaseContextMenu';

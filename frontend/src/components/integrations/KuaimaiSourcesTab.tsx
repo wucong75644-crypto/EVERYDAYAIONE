@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import {
   AlertTriangle,
   CheckCircle2,

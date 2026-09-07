@@ -4,7 +4,7 @@
  * 在消息中展示可下载/可预览的文件。
  */
 
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import type { FilePart } from '../../../types/message';
 import { downloadFile } from '../../../utils/downloadFile';
 import { getFileIcon, formatFileSize } from '../../../utils/fileUtils';

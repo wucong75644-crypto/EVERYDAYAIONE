@@ -55,7 +55,7 @@ vi.mock('../../utils/tabSync', () => ({
 }));
 
 vi.mock('react-hot-toast', () => ({
-  default: { success: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn() },
 }));
 
 // ============================================================

@@ -5,9 +5,10 @@
  * 不用关心是哪个 Modal/adapter 在工作 —— 由 registry 路由。
  */
 
-import { memo } from 'react';
+import { memo, Suspense } from 'react';
 import type { PreviewState } from './types';
 import { resolveAdapter } from './registry';
+import PreviewFrame from './PreviewFrame';
 
 interface PreviewHostProps {
   state: PreviewState;
@@ -43,13 +44,24 @@ export default memo(function PreviewHost({
 
   const { Component } = adapter;
   return (
-    <Component
-      item={current}
-      siblings={items}
-      index={index}
-      onClose={onClose}
-      onNavigate={onIndexChange}
-      onDelete={onDelete}
-    />
+    <Suspense
+      fallback={(
+        <PreviewFrame
+          item={current}
+          onClose={onClose}
+          loading
+          loadingText="正在加载预览..."
+        />
+      )}
+    >
+      <Component
+        item={current}
+        siblings={items}
+        index={index}
+        onClose={onClose}
+        onNavigate={onIndexChange}
+        onDelete={onDelete}
+      />
+    </Suspense>
   );
 });

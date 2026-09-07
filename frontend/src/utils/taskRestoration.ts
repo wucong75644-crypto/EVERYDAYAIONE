@@ -21,7 +21,7 @@
 import { useMessageStore } from '../stores/useMessageStore';
 import { calcRemainingText } from './messageUtils';
 import api from '../services/api';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import { logger } from './logger';
 import {
   IMAGE_TASK_TIMEOUT,

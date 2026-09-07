@@ -7,7 +7,7 @@
  */
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import { ALL_MODELS, type UnifiedModel } from '../constants/models';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useAuthModalStore } from '../stores/useAuthModalStore';

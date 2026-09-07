@@ -5,7 +5,7 @@
  */
 
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import { type UnifiedModel, ALL_MODELS, getAvailableModels } from '../constants/models';
 import { isSmartModel } from '../constants/smartModel';
 import { detectConflict } from '../utils/modelConflict';

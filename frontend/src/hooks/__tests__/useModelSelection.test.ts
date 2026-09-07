@@ -14,7 +14,7 @@ import { ALL_MODELS } from '../../constants/models';
 // ============================================================
 
 vi.mock('react-hot-toast', () => ({
-  default: vi.fn(),
+  toast: vi.fn(),
 }));
 
 const mockFetchModels = vi.fn();

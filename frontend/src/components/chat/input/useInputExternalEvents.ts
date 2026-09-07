@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import { useMessageStore } from '../../../stores/useMessageStore';
 import { logger } from '../../../utils/logger';
 import type { AttachmentSubmissionSnapshot } from '../attachments/ChatAttachment.types';

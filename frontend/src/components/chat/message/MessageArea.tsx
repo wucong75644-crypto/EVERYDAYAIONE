@@ -23,7 +23,7 @@ import { useMessageStore, type Message, type ImageAsset, getTextContent, getImag
 import MessageItem from './MessageItem';
 import EmptyState from '../layout/EmptyState';
 import LoadingSkeleton from './LoadingSkeleton';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import { logger } from '../../../utils/logger';
 import { useMessageLoader } from '../../../hooks/useMessageLoader';
 import { useRegenerateHandlers } from '../../../hooks/useRegenerateHandlers';

@@ -9,16 +9,49 @@
  * 等分散的白名单 —— 它们已经被废弃。
  */
 
-import type { PreviewAdapter, PreviewItem } from './types';
+import { lazy } from 'react';
+import type { ComponentType } from 'react';
+import type { PreviewAdapter, PreviewCommonProps, PreviewItem } from './types';
+import { extOf } from './types';
 import { IMAGE_EXTS, VIDEO_EXTS } from '../utils/fileCategory';
 import { imageAdapter } from './adapters/ImageAdapter';
 import { videoAdapter } from './adapters/VideoAdapter';
 import { textAdapter } from './adapters/TextAdapter';
 import { spreadsheetAdapter } from './adapters/SpreadsheetAdapter';
-import { pdfAdapter } from './adapters/PdfAdapter';
 import { docxAdapter } from './adapters/DocxAdapter';
-import { pptxAdapter } from './adapters/PptxAdapter';
 import { fallbackAdapter } from './adapters/FallbackAdapter';
+
+const OFFICE_EXTS = new Set(['pptx', 'ppt', 'doc']);
+
+const pdfAdapterComponent = lazy(() =>
+  import('./adapters/PdfAdapter').then(({ pdfAdapter }) => ({
+    default: pdfAdapter.Component as ComponentType<PreviewCommonProps>,
+  })),
+);
+
+const pptxAdapterComponent = lazy(() =>
+  import('./adapters/PptxAdapter').then(({ pptxAdapter }) => ({
+    default: pptxAdapter.Component as ComponentType<PreviewCommonProps>,
+  })),
+);
+
+const pdfAdapter: PreviewAdapter = {
+  id: 'pdf',
+  label: 'PDF',
+  priority: 80,
+  match: (item) => extOf(item.filename) === 'pdf',
+  Component: pdfAdapterComponent,
+  supportsNavigation: false,
+};
+
+const pptxAdapter: PreviewAdapter = {
+  id: 'pptx',
+  label: 'PowerPoint / Word（后端转 PDF）',
+  priority: 80,
+  match: (item) => OFFICE_EXTS.has(extOf(item.filename)),
+  Component: pptxAdapterComponent,
+  supportsNavigation: false,
+};
 
 // 静态注册表（按 priority 降序）。
 // 加新 adapter：在此 import + push，无需调用任何注册函数。

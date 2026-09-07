@@ -78,6 +78,13 @@ describe('canPreview', () => {
   });
 });
 
+describe('重型预览组件懒加载', () => {
+  it('PDF 与 Office 适配器仅在组件渲染时加载', () => {
+    expect(resolveAdapter(item('a.pdf'))?.Component).toHaveProperty('$$typeof', Symbol.for('react.lazy'));
+    expect(resolveAdapter(item('a.pptx'))?.Component).toHaveProperty('$$typeof', Symbol.for('react.lazy'));
+  });
+});
+
 describe('大写扩展名', () => {
   it('PNG 大写仍命中 image', () => {
     expect(resolveAdapter(item('IMG.PNG'))?.id).toBe('image');

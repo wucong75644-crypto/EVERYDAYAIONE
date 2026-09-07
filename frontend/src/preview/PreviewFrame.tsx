@@ -12,7 +12,7 @@
 import { type ReactNode, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Download, Loader2, X } from 'lucide-react';
-import toast from 'react-hot-toast';
+import { toast } from 'react-hot-toast';
 import { downloadFile } from '../utils/downloadFile';
 import { getFileIcon, formatFileSize } from '../utils/fileUtils';
 import { resolvePreviewUrl } from './fetchPreview';
