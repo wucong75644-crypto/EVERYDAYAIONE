@@ -33,6 +33,7 @@ from .models import (
     ChatCompletionChunk,
     TaskState,
 )
+from .shadow_upload_store import save_overseas_shadow_upload_urls
 
 
 class KieAPIError(Exception):
@@ -502,6 +503,7 @@ class KieClient:
         """下载并上传旁路素材；任何异常都只记录，不影响主任务。"""
         success_count = 0
         failure_count = 0
+        staged_urls: list[str] = []
         started_at = time.monotonic()
 
         try:
@@ -526,15 +528,17 @@ class KieClient:
                     **upload_client_kwargs,
                 ) as upload_client:
                     for source_url in source_urls:
-                        if await self._shadow_upload_one(
+                        staged_url = await self._shadow_upload_one(
                             model=model,
                             task_id=task_id,
                             source_url=source_url,
                             download_client=download_client,
                             upload_client=upload_client,
                             route=route,
-                        ):
+                        )
+                        if staged_url:
                             success_count += 1
+                            staged_urls.append(staged_url)
                         else:
                             failure_count += 1
         except Exception as exc:
@@ -548,6 +552,20 @@ class KieClient:
                 route,
                 type(exc).__name__,
                 len(source_urls),
+            )
+
+        if route == "overseas" and success_count == len(source_urls):
+            cache_saved = await save_overseas_shadow_upload_urls(
+                task_id,
+                source_urls,
+                staged_urls,
+            )
+            logger.info(
+                "KIE_SHADOW_UPLOAD_FALLBACK_READY | task_id={} | "
+                "source_count={} | cache_saved={}",
+                task_id,
+                len(source_urls),
+                cache_saved,
             )
 
         logger.info(
@@ -570,7 +588,7 @@ class KieClient:
         download_client: httpx.AsyncClient,
         upload_client: httpx.AsyncClient,
         route: str,
-    ) -> bool:
+    ) -> Optional[str]:
         """执行一次无重试的下载 + KIE 临时空间上传探测。"""
         stage = "download"
         response_status: Optional[int] = None
@@ -627,7 +645,7 @@ class KieClient:
                 response.status_code,
                 int((time.monotonic() - started_at) * 1000),
             )
-            return True
+            return download_url
         except Exception as exc:
             logger.warning(
                 "KIE_SHADOW_UPLOAD_FAILURE | task_id={} | model={} | route={} | "
@@ -639,7 +657,7 @@ class KieClient:
                 type(exc).__name__,
                 response_status if response_status is not None else "none",
             )
-            return False
+            return None
 
     async def _download_shadow_image(
         self,

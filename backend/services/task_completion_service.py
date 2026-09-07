@@ -311,11 +311,17 @@ class TaskCompletionService:
         external_task_id = task["external_task_id"]
         task_type = task["type"]
 
-        # Smart mode 异步重试：尝试用替代模型重新提交
+        # KIE 图片获取失败：优先用 overseas 旁路临时空间链接重提一次。
+        # 该任务已经重提过时，第二次失败必须直接进入正常失败结算，不能再触发 smart retry。
         from services.async_retry_service import AsyncRetryService
         retry_svc = AsyncRetryService(self.db)
-        if await retry_svc.attempt_retry(task, result):
-            return True
+        if retry_svc.should_attempt_kie_image_fetch_fallback(task, result):
+            if await retry_svc.attempt_kie_image_fetch_fallback(task):
+                return True
+        elif not retry_svc.has_kie_image_fetch_fallback_attempted(task):
+            # 保留原有 smart mode 行为；但专用重试后的任务不再换模型重试。
+            if await retry_svc.attempt_retry(task, result):
+                return True
 
         # 图片任务统一走批次处理
         if task_type == "image" and task.get("batch_id"):

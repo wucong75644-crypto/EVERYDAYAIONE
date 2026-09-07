@@ -182,6 +182,36 @@ async def test_shadow_upload_overseas_downloads_via_default_and_uploads_via_expl
     assert upload_call.kwargs["trust_env"] is False
 
 
+@pytest.mark.asyncio
+async def test_overseas_shadow_upload_caches_returned_staged_urls():
+    client = KieClient(api_key="test-key")
+    download_client = _DownloadClient()
+    upload_client = _UploadClient()
+    fake_http_clients = [download_client, upload_client]
+
+    with patch(
+        "services.adapters.kie.client.httpx.AsyncClient",
+        side_effect=lambda **kwargs: _AsyncContext(fake_http_clients.pop(0)),
+    ), patch(
+        "services.adapters.kie.client.save_overseas_shadow_upload_urls",
+        new_callable=AsyncMock,
+        return_value=True,
+    ) as save_staged_urls:
+        await client._run_shadow_upload(
+            IMAGE_MODEL,
+            "task-123",
+            [SOURCE_URL],
+            route="overseas",
+            proxy_url="http://127.0.0.1:7891",
+        )
+
+    save_staged_urls.assert_awaited_once_with(
+        "task-123",
+        [SOURCE_URL],
+        [STAGED_URL],
+    )
+
+
 def test_shadow_upload_skips_non_image_kie_requests():
     client = KieClient(api_key="test-key")
     image_request = CreateTaskRequest(

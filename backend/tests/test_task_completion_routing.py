@@ -259,6 +259,78 @@ class TestHandleFailureRouting:
         assert call_args[1]["error_message"] == "模型超时"
 
     @pytest.mark.asyncio
+    @patch("services.batch_completion_service.BatchCompletionService.handle_image_failure")
+    @patch("services.async_retry_service.AsyncRetryService")
+    async def test_kie_fetch_fallback_submitted_keeps_task_generating(
+        self, mock_retry_service, mock_batch_failure, service
+    ):
+        retry_svc = mock_retry_service.return_value
+        retry_svc.should_attempt_kie_image_fetch_fallback.return_value = True
+        retry_svc.attempt_kie_image_fetch_fallback = AsyncMock(return_value=True)
+
+        task = make_image_task(batch_id="batch_xyz")
+        result = ImageGenerateResult(
+            task_id=task["external_task_id"],
+            status=TaskStatus.FAILED,
+            fail_code="400",
+        )
+
+        success = await service._handle_failure(task, result)
+
+        assert success is True
+        retry_svc.attempt_kie_image_fetch_fallback.assert_awaited_once_with(task)
+        mock_batch_failure.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("services.batch_completion_service.BatchCompletionService.handle_image_failure")
+    @patch("services.async_retry_service.AsyncRetryService")
+    async def test_kie_fetch_fallback_failure_does_not_trigger_smart_retry(
+        self, mock_retry_service, mock_batch_failure, service
+    ):
+        retry_svc = mock_retry_service.return_value
+        retry_svc.should_attempt_kie_image_fetch_fallback.return_value = True
+        retry_svc.attempt_kie_image_fetch_fallback = AsyncMock(return_value=False)
+        mock_batch_failure.return_value = True
+
+        task = make_image_task(batch_id="batch_xyz")
+        result = ImageGenerateResult(
+            task_id=task["external_task_id"],
+            status=TaskStatus.FAILED,
+            fail_code="400",
+        )
+
+        success = await service._handle_failure(task, result)
+
+        assert success is True
+        retry_svc.attempt_retry.assert_not_called()
+        mock_batch_failure.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("services.batch_completion_service.BatchCompletionService.handle_image_failure")
+    @patch("services.async_retry_service.AsyncRetryService")
+    async def test_kie_fetch_fallback_second_failure_is_final(
+        self, mock_retry_service, mock_batch_failure, service
+    ):
+        retry_svc = mock_retry_service.return_value
+        retry_svc.should_attempt_kie_image_fetch_fallback.return_value = False
+        retry_svc.has_kie_image_fetch_fallback_attempted.return_value = True
+        mock_batch_failure.return_value = True
+
+        task = make_image_task(batch_id="batch_xyz")
+        result = ImageGenerateResult(
+            task_id=task["external_task_id"],
+            status=TaskStatus.FAILED,
+            fail_code="400",
+        )
+
+        success = await service._handle_failure(task, result)
+
+        assert success is True
+        retry_svc.attempt_kie_image_fetch_fallback.assert_not_called()
+        retry_svc.attempt_retry.assert_not_called()
+        mock_batch_failure.assert_called_once()
+
+    @pytest.mark.asyncio
     @patch("services.handlers.image_handler.ImageHandler.on_error")
     async def test_image_failure_without_batch_id_routes_to_handler(
         self, mock_on_error, service

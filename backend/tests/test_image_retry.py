@@ -19,6 +19,7 @@ B. 异步重试（AsyncRetryService — Webhook 报告失败时）
 """
 
 import json
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -467,3 +468,113 @@ class TestAsyncRetryService:
 
             retried = await svc.attempt_retry(task, result)
             assert retried is True
+
+    @pytest.mark.asyncio
+    async def test_kie_image_fetch_fallback_reuses_same_model_with_staged_urls(self, svc, retry_db):
+        source_urls = [
+            "https://cdn.example.com/source-1.png",
+            "https://cdn.example.com/source-2.png",
+        ]
+        staged_urls = [
+            "https://tempfile.redpandaai.co/staged-1.png",
+            "https://tempfile.redpandaai.co/staged-2.png",
+        ]
+        task = self._make_task(
+            model_id="gpt-image-2-image-to-image",
+            request_params={
+                "prompt": "画一只猫",
+                "aspect_ratio": "1:1",
+                "output_format": "png",
+                "resolution": "2K",
+                "image_urls": source_urls,
+            },
+        )
+        result = ImageGenerateResult(
+            task_id=task["external_task_id"],
+            status=TaskStatus.FAILED,
+            fail_code="400",
+            fail_msg="Image fetch failed",
+        )
+        mock_adapter = AsyncMock()
+        mock_adapter.provider = MagicMock(value="kie")
+        mock_adapter.generate = AsyncMock(
+            return_value=MagicMock(task_id="fallback_ext_002")
+        )
+
+        with patch.dict(os.environ, {"KIE_IMAGE_FETCH_FALLBACK_ENABLED": "true"}), \
+             patch(
+                 "services.adapters.kie.shadow_upload_store.get_overseas_shadow_upload_urls",
+                 new_callable=AsyncMock,
+                 return_value=dict(zip(source_urls, staged_urls)),
+             ), \
+             patch("services.adapters.factory.create_image_adapter", return_value=mock_adapter), \
+             patch("services.handlers.base.BaseHandler._build_callback_url", return_value="http://cb"), \
+             patch("services.handlers.mixins.CreditMixin._lock_credits", return_value="new_tx"), \
+             patch("services.handlers.mixins.CreditMixin._refund_credits"):
+            assert svc.should_attempt_kie_image_fetch_fallback(task, result) is True
+            retried = await svc.attempt_kie_image_fetch_fallback(task)
+
+        assert retried is True
+        assert mock_adapter.generate.await_args.kwargs["image_urls"] == staged_urls
+        assert mock_adapter.generate.await_args.kwargs["resolution"] == "2K"
+        update_payload = retry_db.table.return_value.update.call_args.args[0]
+        assert update_payload["external_task_id"] == "fallback_ext_002"
+        assert update_payload["status"] == "pending"
+        assert update_payload["request_params"]["_kie_image_fetch_fallback_attempted"] is True
+        assert update_payload["request_params"]["image_urls"] == staged_urls
+
+    @pytest.mark.asyncio
+    async def test_kie_image_fetch_fallback_requires_complete_staged_urls(self, svc):
+        source_url = "https://cdn.example.com/source.png"
+        task = self._make_task(
+            model_id="gpt-image-2-image-to-image",
+            request_params={"prompt": "画一只猫", "image_urls": [source_url]},
+        )
+
+        with patch(
+            "services.adapters.kie.shadow_upload_store.get_overseas_shadow_upload_urls",
+            new_callable=AsyncMock,
+            return_value={},
+        ):
+            retried = await svc.attempt_kie_image_fetch_fallback(task)
+
+        assert retried is False
+
+    @pytest.mark.asyncio
+    async def test_kie_image_fetch_fallback_matches_kie_normalized_source_url(self, svc):
+        source_url = "https://cdn.example.com/用户上传/input.png"
+        normalized_url = "https://cdn.example.com/%E7%94%A8%E6%88%B7%E4%B8%8A%E4%BC%A0/input.png"
+        staged_url = "https://tempfile.redpandaai.co/staged-input.png"
+        task = self._make_task(
+            model_id="gpt-image-2-image-to-image",
+            request_params={"prompt": "画一只猫", "image_urls": [source_url]},
+        )
+
+        with patch(
+            "services.adapters.kie.shadow_upload_store.get_overseas_shadow_upload_urls",
+            new_callable=AsyncMock,
+            return_value={normalized_url: staged_url},
+        ), patch(
+            "services.oss_service.normalize_external_oss_url",
+            return_value=normalized_url,
+        ), patch.object(
+            svc, "_resubmit", new_callable=AsyncMock, return_value="fallback_ext_002"
+        ) as resubmit:
+            retried = await svc.attempt_kie_image_fetch_fallback(task)
+
+        assert retried is True
+        assert resubmit.await_args.kwargs["request_params"]["image_urls"] == [staged_url]
+
+    def test_kie_image_fetch_fallback_is_not_repeated(self, svc):
+        task = self._make_task(
+            model_id="gpt-image-2-image-to-image",
+            request_params={"_kie_image_fetch_fallback_attempted": True},
+        )
+        result = ImageGenerateResult(
+            task_id=task["external_task_id"],
+            status=TaskStatus.FAILED,
+            fail_code="400",
+        )
+
+        with patch.dict(os.environ, {"KIE_IMAGE_FETCH_FALLBACK_ENABLED": "true"}):
+            assert svc.should_attempt_kie_image_fetch_fallback(task, result) is False

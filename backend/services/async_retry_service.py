@@ -6,6 +6,7 @@
 """
 
 import json
+import os
 from typing import Any, Dict, Optional, Union
 
 from loguru import logger
@@ -19,12 +20,137 @@ from services.adapters.base import (
 
 TaskResult = Union[ImageGenerateResult, VideoGenerateResult]
 
+_KIE_IMAGE_FETCH_FAILURE_CODE = "400"
+_KIE_IMAGE_FETCH_FALLBACK_ATTEMPTED_KEY = "_kie_image_fetch_fallback_attempted"
+_KIE_IMAGE_FETCH_FALLBACK_FROM_TASK_ID_KEY = "_kie_image_fetch_fallback_from_task_id"
+_KIE_IMAGE_FETCH_FALLBACK_ORIGINAL_URLS_KEY = "_kie_image_fetch_fallback_original_image_urls"
+_KIE_IMAGE_FETCH_FALLBACK_ENABLED_ENV = "KIE_IMAGE_FETCH_FALLBACK_ENABLED"
+
 
 class AsyncRetryService:
     """异步任务 smart_mode 重试"""
 
     def __init__(self, db):
         self.db = db
+
+    @staticmethod
+    def _request_params(task: Dict[str, Any]) -> Dict[str, Any]:
+        request_params = task.get("request_params") or {}
+        if isinstance(request_params, str):
+            return json.loads(request_params)
+        return request_params
+
+    @staticmethod
+    def _is_kie_image_fetch_fallback_enabled() -> bool:
+        return os.getenv(_KIE_IMAGE_FETCH_FALLBACK_ENABLED_ENV, "false").lower() in {
+            "1", "true", "yes", "on",
+        }
+
+    def has_kie_image_fetch_fallback_attempted(self, task: Dict[str, Any]) -> bool:
+        """判断该本地任务是否已经使用临时空间链接重提过一次。"""
+        return bool(
+            self._request_params(task).get(_KIE_IMAGE_FETCH_FALLBACK_ATTEMPTED_KEY)
+        )
+
+    def should_attempt_kie_image_fetch_fallback(
+        self,
+        task: Dict[str, Any],
+        result: TaskResult,
+    ) -> bool:
+        """仅对 KIE 图片获取失败（failCode=400）触发一次专用重试。"""
+        if (
+            not self._is_kie_image_fetch_fallback_enabled()
+            or task.get("type") != "image"
+            or str(result.fail_code or "") != _KIE_IMAGE_FETCH_FAILURE_CODE
+            or self.has_kie_image_fetch_fallback_attempted(task)
+        ):
+            return False
+
+        from services.adapters.kie.configs import IMAGE_MODEL_CONFIGS
+
+        return task.get("model_id") in IMAGE_MODEL_CONFIGS
+
+    async def attempt_kie_image_fetch_fallback(
+        self,
+        task: Dict[str, Any],
+    ) -> bool:
+        """用海外旁路临时空间链接，按原参数重提一次同模型 KIE 图片任务。"""
+        from services.adapters.kie.shadow_upload_store import (
+            get_overseas_shadow_upload_urls,
+        )
+
+        original_task_id = task["external_task_id"]
+        request_params = self._request_params(task)
+        original_image_urls = request_params.get("image_urls")
+        if not isinstance(original_image_urls, list) or not original_image_urls:
+            logger.warning(
+                "KIE_IMAGE_FETCH_FALLBACK_SKIPPED | task_id={} | "
+                "reason=original_image_urls_unavailable",
+                original_task_id,
+            )
+            return False
+
+        staged_url_map = await get_overseas_shadow_upload_urls(original_task_id)
+        if not staged_url_map:
+            logger.warning(
+                "KIE_IMAGE_FETCH_FALLBACK_SKIPPED | task_id={} | "
+                "reason=overseas_shadow_urls_unavailable",
+                original_task_id,
+            )
+            return False
+
+        # KIE adapter 会对自有 CDN/OSS URL 做路径编码；旁路缓存的 key 是编码后
+        # 实际提交给 KIE 的 URL，因此这里按相同规则查找，避免中文文件名等场景失配。
+        from services.oss_service import normalize_external_oss_url
+        staged_image_urls = [
+            staged_url_map.get(normalize_external_oss_url(url))
+            for url in original_image_urls
+        ]
+        if not all(isinstance(url, str) and url for url in staged_image_urls):
+            logger.warning(
+                "KIE_IMAGE_FETCH_FALLBACK_SKIPPED | task_id={} | "
+                "reason=overseas_shadow_urls_incomplete | source_count={}",
+                original_task_id,
+                len(original_image_urls),
+            )
+            return False
+
+        fallback_params = {
+            **request_params,
+            "image_urls": staged_image_urls,
+            _KIE_IMAGE_FETCH_FALLBACK_ATTEMPTED_KEY: True,
+            _KIE_IMAGE_FETCH_FALLBACK_FROM_TASK_ID_KEY: original_task_id,
+            _KIE_IMAGE_FETCH_FALLBACK_ORIGINAL_URLS_KEY: original_image_urls,
+        }
+        try:
+            new_task_id = await self._resubmit(
+                task=task,
+                new_model=task["model_id"],
+                request_params=fallback_params,
+                retry_count=self._request_params(task).get("_retry_count", 0),
+                retry_reason="KieImageFetchFallback",
+            )
+        except Exception as exc:
+            logger.warning(
+                "KIE_IMAGE_FETCH_FALLBACK_FAILURE | task_id={} | "
+                "stage=resubmit | error_type={}",
+                original_task_id,
+                type(exc).__name__,
+            )
+            return False
+
+        if not new_task_id:
+            return False
+
+        logger.info(
+            "KIE_IMAGE_FETCH_FALLBACK_SUBMITTED | original_task_id={} | "
+            "retry_task_id={} | model={} | source_count={}",
+            original_task_id,
+            new_task_id,
+            task["model_id"],
+            len(staged_image_urls),
+        )
+        return True
 
     async def attempt_retry(
         self,
@@ -37,9 +163,7 @@ class AsyncRetryService:
         Returns:
             True = 重试已提交，False = 不重试
         """
-        request_params = task.get("request_params") or {}
-        if isinstance(request_params, str):
-            request_params = json.loads(request_params)
+        request_params = self._request_params(task)
 
         if not request_params.get("_is_smart_mode"):
             return False
@@ -141,6 +265,7 @@ class AsyncRetryService:
         new_model: str,
         request_params: Dict[str, Any],
         retry_count: int,
+        retry_reason: str = "Retry",
     ) -> Optional[str]:
         """用新模型重新提交生成任务，更新 task 记录"""
         task_type = task["type"]
@@ -173,6 +298,9 @@ class AsyncRetryService:
             generate_kwargs["output_format"] = request_params.get(
                 "output_format", "png"
             )
+            resolution = request_params.get("resolution")
+            if resolution:
+                generate_kwargs["resolution"] = resolution
             image_urls = request_params.get("image_urls")
             if image_urls:
                 generate_kwargs["image_urls"] = image_urls
@@ -197,7 +325,7 @@ class AsyncRetryService:
             task_id=task["id"],
             user_id=user_id,
             amount=old_credits,
-            reason=f"Retry[{task_type}]: {new_model}",
+            reason=f"{retry_reason}[{task_type}]: {new_model}",
             org_id=task.get("org_id"),
         )
 
