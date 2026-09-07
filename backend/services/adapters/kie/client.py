@@ -509,7 +509,9 @@ class KieClient:
                 "timeout": self.SHADOW_DOWNLOAD_TIMEOUT,
                 "follow_redirects": True,
                 "limits": httpx.Limits(max_connections=4, max_keepalive_connections=2),
-                "trust_env": proxy_url is None,
+                # CDN 下载始终继承现有 7890/HTTP_PROXY 链路；海外旁路只
+                # 切换 KIE 临时空间上传出口。
+                "trust_env": True,
             }
             upload_client_kwargs: Dict[str, Any] = {
                 "headers": {"Authorization": f"Bearer {self.api_key}"},
@@ -517,7 +519,6 @@ class KieClient:
                 "trust_env": proxy_url is None,
             }
             if proxy_url:
-                download_client_kwargs["proxy"] = proxy_url
                 upload_client_kwargs["proxy"] = proxy_url
 
             async with httpx.AsyncClient(**download_client_kwargs) as download_client:

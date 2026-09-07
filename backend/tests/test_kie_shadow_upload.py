@@ -156,7 +156,7 @@ async def test_create_task_records_task_id_for_both_shadow_routes():
 
 
 @pytest.mark.asyncio
-async def test_shadow_upload_overseas_route_uses_explicit_proxy():
+async def test_shadow_upload_overseas_downloads_via_default_and_uploads_via_explicit_proxy():
     client = KieClient(api_key="test-key")
     download_client = _DownloadClient()
     upload_client = _UploadClient()
@@ -175,9 +175,11 @@ async def test_shadow_upload_overseas_route_uses_explicit_proxy():
             proxy_url=overseas_proxy,
         )
 
-    for call in async_client.call_args_list:
-        assert call.kwargs["proxy"] == overseas_proxy
-        assert call.kwargs["trust_env"] is False
+    download_call, upload_call = async_client.call_args_list
+    assert "proxy" not in download_call.kwargs
+    assert download_call.kwargs["trust_env"] is True
+    assert upload_call.kwargs["proxy"] == overseas_proxy
+    assert upload_call.kwargs["trust_env"] is False
 
 
 def test_shadow_upload_skips_non_image_kie_requests():
