@@ -6,7 +6,12 @@ KIE API HTTP 客户端
 
 import asyncio
 import json
+import mimetypes
+import time
+from pathlib import Path
 from typing import Optional, AsyncIterator, Dict, Any, NoReturn
+from urllib.parse import unquote, urlsplit
+from uuid import uuid4
 
 import httpx
 from loguru import logger
@@ -85,6 +90,7 @@ class KieClient:
     BASE_URL = "https://api.kie.ai"
     TASK_CREATE_ENDPOINT = "/api/v1/jobs/createTask"
     TASK_QUERY_ENDPOINT = "/api/v1/jobs/recordInfo"
+    FILE_STREAM_UPLOAD_ENDPOINT = "https://kieai.redpandaai.co/api/file-stream-upload"
 
     # Chat 模型端点映射
     CHAT_ENDPOINTS = {
@@ -97,6 +103,23 @@ class KieClient:
     STREAM_TIMEOUT = 300.0  # 流式响应超时
     TASK_POLL_INTERVAL = 2.0  # 任务轮询间隔
     TASK_MAX_WAIT_TIME = 600.0  # 任务最大等待时间 (10分钟)
+
+    # KIE 图片输入旁路探测。旁路不参与主任务，不重试，以便统计原始失败率。
+    SHADOW_UPLOAD_MAX_BYTES = 30 * 1024 * 1024
+    SHADOW_UPLOAD_PATH = "everydayai/input-media"
+    SHADOW_DOWNLOAD_TIMEOUT = httpx.Timeout(
+        connect=10.0,
+        read=60.0,
+        write=10.0,
+        pool=10.0,
+    )
+    SHADOW_UPLOAD_TIMEOUT = httpx.Timeout(
+        connect=10.0,
+        read=90.0,
+        write=90.0,
+        pool=10.0,
+    )
+    SHADOW_IMAGE_INPUT_KEYS = ("input_urls", "image_urls", "image_input")
 
     def __init__(
         self,
@@ -116,6 +139,7 @@ class KieClient:
         self.timeout = timeout
         self._stream_timeout = stream_timeout or self.STREAM_TIMEOUT
         self._client: Optional[httpx.AsyncClient] = None
+        self._shadow_upload_tasks: set[asyncio.Task[None]] = set()
 
     @property
     def headers(self) -> Dict[str, str]:
@@ -325,11 +349,6 @@ class KieClient:
     # Async Task API (图像/视频生成)
     # ============================================================
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError)),
-    )
     async def create_task(self, request: CreateTaskRequest) -> CreateTaskResponse:
         """
         创建异步生成任务
@@ -340,6 +359,16 @@ class KieClient:
         Returns:
             任务创建响应 (包含 taskId)
         """
+        self._schedule_shadow_upload(request)
+        return await self._create_task_with_retry(request)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError)),
+    )
+    async def _create_task_with_retry(self, request: CreateTaskRequest) -> CreateTaskResponse:
+        """创建主任务并保留原有网络重试行为。"""
         client = await self._get_client()
 
         logger.info(f"Creating task for model: {request.model}")
@@ -366,6 +395,203 @@ class KieClient:
         logger.info(f"Task created successfully: {result.task_id}")
 
         return result
+
+    def _schedule_shadow_upload(self, request: CreateTaskRequest) -> None:
+        """在主任务旁路启动一次 KIE 临时空间上传探测。"""
+        source_urls = self._extract_shadow_image_urls(request)
+        if not source_urls:
+            return
+
+        task = asyncio.create_task(
+            self._run_shadow_upload(model=request.model, source_urls=source_urls)
+        )
+        self._shadow_upload_tasks.add(task)
+        task.add_done_callback(self._shadow_upload_tasks.discard)
+        logger.info(
+            "KIE_SHADOW_UPLOAD_SCHEDULED | model={} | source_count={} | transport=httpx-trust-env",
+            request.model,
+            len(source_urls),
+        )
+
+    @classmethod
+    def _extract_shadow_image_urls(cls, request: CreateTaskRequest) -> list[str]:
+        """只提取当前 KIE 图片模型发送给 KIE 的 HTTP 图片 URL。"""
+        from .configs import IMAGE_MODEL_CONFIGS
+
+        if request.model not in IMAGE_MODEL_CONFIGS:
+            return []
+
+        seen: set[str] = set()
+        source_urls: list[str] = []
+        for input_key in cls.SHADOW_IMAGE_INPUT_KEYS:
+            values = request.input.get(input_key)
+            if not isinstance(values, list):
+                continue
+            for value in values:
+                if not isinstance(value, str):
+                    continue
+                parsed_url = urlsplit(value)
+                if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+                    continue
+                if value not in seen:
+                    seen.add(value)
+                    source_urls.append(value)
+        return source_urls
+
+    async def _run_shadow_upload(self, model: str, source_urls: list[str]) -> None:
+        """下载并上传旁路素材；任何异常都只记录，不影响主任务。"""
+        success_count = 0
+        failure_count = 0
+        started_at = time.monotonic()
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.SHADOW_DOWNLOAD_TIMEOUT,
+                follow_redirects=True,
+                limits=httpx.Limits(max_connections=4, max_keepalive_connections=2),
+                trust_env=True,
+            ) as download_client:
+                async with httpx.AsyncClient(
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    timeout=self.SHADOW_UPLOAD_TIMEOUT,
+                    trust_env=True,
+                ) as upload_client:
+                    for source_url in source_urls:
+                        if await self._shadow_upload_one(
+                            model=model,
+                            source_url=source_url,
+                            download_client=download_client,
+                            upload_client=upload_client,
+                        ):
+                            success_count += 1
+                        else:
+                            failure_count += 1
+        except Exception as exc:
+            # 防止旁路自身的初始化/清理异常产生未处理任务异常。
+            failure_count += len(source_urls) - success_count - failure_count
+            logger.warning(
+                "KIE_SHADOW_UPLOAD_FAILURE | model={} | stage=client | "
+                "error_type={} | source_count={}",
+                model,
+                type(exc).__name__,
+                len(source_urls),
+            )
+
+        logger.info(
+            "KIE_SHADOW_UPLOAD_SUMMARY | model={} | attempted={} | succeeded={} | "
+            "failed={} | duration_ms={}",
+            model,
+            len(source_urls),
+            success_count,
+            failure_count,
+            int((time.monotonic() - started_at) * 1000),
+        )
+
+    async def _shadow_upload_one(
+        self,
+        model: str,
+        source_url: str,
+        download_client: httpx.AsyncClient,
+        upload_client: httpx.AsyncClient,
+    ) -> bool:
+        """执行一次无重试的下载 + KIE 临时空间上传探测。"""
+        stage = "download"
+        response_status: Optional[int] = None
+        started_at = time.monotonic()
+        try:
+            content, response_content_type = await self._download_shadow_image(
+                download_client, source_url
+            )
+            content_type = self._resolve_shadow_content_type(
+                source_url, response_content_type
+            )
+            file_name = self._build_shadow_file_name(source_url, content_type)
+
+            stage = "upload"
+            response = await upload_client.post(
+                self.FILE_STREAM_UPLOAD_ENDPOINT,
+                files={"file": (file_name, content, content_type)},
+                data={
+                    "uploadPath": self.SHADOW_UPLOAD_PATH,
+                    "fileName": file_name,
+                },
+            )
+            response_status = response.status_code
+
+            stage = "response"
+            response_data = response.json()
+            response_code = int(response_data.get("code", response.status_code))
+            payload = response_data.get("data")
+            download_url = (
+                payload.get("downloadUrl") or payload.get("fileUrl")
+                if isinstance(payload, dict)
+                else None
+            )
+            parsed_download_url = urlsplit(download_url) if isinstance(download_url, str) else None
+
+            if (
+                response.status_code != 200
+                or response_code != 200
+                or response_data.get("success") is not True
+                or not parsed_download_url
+                or parsed_download_url.scheme not in {"http", "https"}
+                or not parsed_download_url.netloc
+            ):
+                raise ValueError("invalid upload response")
+
+            logger.info(
+                "KIE_SHADOW_UPLOAD_SUCCESS | model={} | bytes={} | content_type={} | "
+                "status_code={} | duration_ms={}",
+                model,
+                len(content),
+                content_type,
+                response.status_code,
+                int((time.monotonic() - started_at) * 1000),
+            )
+            return True
+        except Exception as exc:
+            logger.warning(
+                "KIE_SHADOW_UPLOAD_FAILURE | model={} | stage={} | "
+                "error_type={} | status_code={}",
+                model,
+                stage,
+                type(exc).__name__,
+                response_status if response_status is not None else "none",
+            )
+            return False
+
+    async def _download_shadow_image(
+        self,
+        client: httpx.AsyncClient,
+        source_url: str,
+    ) -> tuple[bytes, str]:
+        """通过继承环境代理的客户端下载图片，且不把 URL 写入旁路日志。"""
+        chunks: list[bytes] = []
+        total_size = 0
+        async with client.stream("GET", source_url) as response:
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "")
+            async for chunk in response.aiter_bytes(chunk_size=8192):
+                total_size += len(chunk)
+                if total_size > self.SHADOW_UPLOAD_MAX_BYTES:
+                    raise ValueError("shadow image exceeds size limit")
+                chunks.append(chunk)
+        return b"".join(chunks), content_type
+
+    @staticmethod
+    def _resolve_shadow_content_type(source_url: str, response_content_type: str) -> str:
+        content_type = response_content_type.split(";", 1)[0].strip().lower()
+        if content_type:
+            return content_type
+        guessed_type, _ = mimetypes.guess_type(urlsplit(source_url).path)
+        return guessed_type or "application/octet-stream"
+
+    @staticmethod
+    def _build_shadow_file_name(source_url: str, content_type: str) -> str:
+        suffix = Path(unquote(urlsplit(source_url).path)).suffix.lower()
+        if not suffix:
+            suffix = mimetypes.guess_extension(content_type) or ".bin"
+        return f"{uuid4().hex}{suffix}"
 
     @retry(
         stop=stop_after_attempt(3),
