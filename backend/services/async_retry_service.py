@@ -155,7 +155,9 @@ class AsyncRetryService:
         # 1. 创建适配器
         if task_type == "image":
             from services.adapters.factory import create_image_adapter
-            adapter = create_image_adapter(new_model)
+            adapter = create_image_adapter(
+                new_model, shadow_user_id=user_id, shadow_org_id=task.get("org_id"),
+            )
         else:
             from services.adapters.factory import create_video_adapter
             adapter = create_video_adapter(new_model)

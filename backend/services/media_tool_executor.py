@@ -71,7 +71,10 @@ class MediaToolMixin:
                 metadata={"retryable": False},
             )
 
-        adapter = create_image_adapter(model_id)
+        adapter = create_image_adapter(
+            model_id, shadow_user_id=getattr(self, "workspace_user_id", self.user_id),
+            shadow_org_id=self.org_id,
+        )
         try:
             return await self._run_image_generation(
                 adapter=adapter,

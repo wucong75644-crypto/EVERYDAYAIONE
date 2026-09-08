@@ -636,7 +636,12 @@ def get_models_by_provider(provider: ModelProvider) -> Dict[str, ModelConfig]:
 # ============================================================
 
 
-def create_image_adapter(model_id: Optional[str] = None) -> BaseImageAdapter:
+def create_image_adapter(
+    model_id: Optional[str] = None,
+    *,
+    shadow_user_id: Optional[str] = None,
+    shadow_org_id: Optional[str] = None,
+) -> BaseImageAdapter:
     """
     根据模型 ID 创建对应的图片生成适配器
 
@@ -682,7 +687,10 @@ def create_image_adapter(model_id: Optional[str] = None) -> BaseImageAdapter:
         if not settings.kie_api_key:
             raise ConfigurationError("KIE")
 
-        client = KieClient(settings.kie_api_key)
+        client = KieClient(
+            settings.kie_api_key,
+            shadow_user_id=shadow_user_id, shadow_org_id=shadow_org_id,
+        )
         return KieImageAdapter(client, config["provider_model"])
 
     else:

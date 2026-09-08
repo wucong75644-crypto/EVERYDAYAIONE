@@ -349,7 +349,9 @@ class ImageAgent(CreditMixin):
         final_prompt = self._prompt_builder.build_final_prompt(
             task, style_directive,
         )
-        adapter = create_image_adapter(model_id)
+        adapter = create_image_adapter(
+            model_id, shadow_user_id=self.workspace_user_id, shadow_org_id=self.org_id,
+        )
         try:
             result = await adapter.generate(
                 prompt=final_prompt,
