@@ -183,6 +183,16 @@ class BackgroundTaskWorker:
         task_type = task["type"]
         model_id = task.get("model_id")
 
+        # 续接已确认 400 的上传等待，不必再查询旧 Provider 任务。
+        from services.kie_image_fallback_service import needs_fallback_resume
+        if needs_fallback_resume(task):
+            await TaskCompletionService(self.db).process_result(
+                external_task_id,
+                ImageGenerateResult(task_id=external_task_id, status=TaskStatus.FAILED,
+                                    fail_code="400", fail_msg="Image fetch failed"),
+            )
+            return
+
         # 🔥 DEBUG: 记录开始查询
         logger.info(
             f"[POLL] Querying task | task_id={external_task_id} | "
@@ -339,6 +349,12 @@ class BackgroundTaskWorker:
                     f"Timeout via service failed, falling back | "
                     f"task_id={external_task_id} | error={e}"
                 )
+
+        # KIE 图片可能已在等待旁路或更换了外部任务号。锁竞争/DB 暂不可用时
+        # 留给下轮统一处理，绝不能用本轮旧快照绕过锁退款、标失败或释放槽位。
+        from services.kie_image_fallback_service import is_kie_image
+        if is_kie_image(task) and external_task_id:
+            return
 
         # Chat 任务或 fallback：直接更新数据库 + 退回积分
         # 注：_refund_credits 检查 status="pending"，不会重复退回

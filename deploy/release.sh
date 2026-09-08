@@ -2,6 +2,7 @@
 
 # 受控发布入口。
 # 任务候选部署前会同步最新 main；清理工作树只验收、合并、同步基座、关闭，不重复部署。
+# TASK_RELEASE_PROTOCOL=2
 
 set -euo pipefail
 
@@ -198,14 +199,7 @@ ensure_supported_release_tree() {
 }
 
 read_production_release_commit() {
-    local config_file="$repo_root/deploy/config.env"
-    [[ -f "$config_file" ]] || fail "缺少 deploy/config.env，无法核验已部署候选"
-    # shellcheck disable=SC1090
-    source "$config_file"
-    [[ -n "${SERVER_HOST:-}" && -n "${SERVER_USER:-}" && -n "${SERVER_PORT:-}" && -n "${REMOTE_APP_DIR:-}" ]] \
-        || fail "deploy/config.env 缺少生产核验所需配置"
-    ssh -p "$SERVER_PORT" -o ConnectTimeout=10 -o BatchMode=yes "$SERVER_USER@${SERVER_HOST}" \
-        "test -r '$REMOTE_APP_DIR/.release-provenance' && sed -n 's/^commit=//p' '$REMOTE_APP_DIR/.release-provenance' | head -n 1"
+    release_remote_state read
 }
 
 append_migration_once() {
@@ -283,13 +277,40 @@ sync_task_branch_with_latest_main() {
 
 release_worktree=''
 integration_worktree=''
+release_executor_state=not_started
+acceptance_state_write_unconfirmed=false
+# shellcheck source=deploy/release-coordination.sh
+source "$repo_root/deploy/release-coordination.sh"
 cleanup_temp_worktrees() {
+    local operation_exit=$?
     [[ -z "$release_worktree" ]] \
         || git -C "$main_repo_root" worktree remove --force "$release_worktree" >/dev/null 2>&1 || true
     [[ -z "$integration_worktree" ]] \
         || git -C "$main_repo_root" worktree remove --force "$integration_worktree" >/dev/null 2>&1 || true
+    local retained_reason=''
+    case "$release_executor_state" in
+        in_flight|unconfirmed) retained_reason=executor_unconfirmed ;;
+    esac
+    if [[ -z "$retained_reason" && "$release_state_write_unconfirmed" == true ]]; then
+        retained_reason=production_state_unconfirmed
+    fi
+    if [[ -z "$retained_reason" && "$acceptance_state_write_unconfirmed" == true ]]; then
+        retained_reason=stable_main_unconfirmed
+    fi
+    if [[ "$release_lock_owned" == true && -n "$retained_reason" ]]; then
+        echo "RELEASE_LOCK_RESULT status=retained reason=$retained_reason executor_state=$release_executor_state main_write_unconfirmed=$acceptance_state_write_unconfirmed operation_exit=$operation_exit path=${REMOTE_APP_DIR}.release-lock; 远端操作可能仍在执行，核验停止后才可恢复，禁止自动重跑" >&2
+        [[ "$operation_exit" -ne 0 ]] || exit 1
+        return
+    fi
+    if ! release_owned_lock; then
+        echo "RELEASE_LOCK_RESULT status=retained operation_exit=$operation_exit path=${REMOTE_APP_DIR}.release-lock; 已完成步骤不撤销，需核验锁所有者后恢复" >&2
+        [[ "$operation_exit" -ne 0 ]] || exit 1
+    fi
 }
 trap cleanup_temp_worktrees EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 accept_and_close_task() {
     local branch
@@ -299,6 +320,9 @@ accept_and_close_task() {
         || fail "清理工作树只能在 codex/task/* 分支执行，实际分支：$branch"
     [[ -z "$(git status --porcelain --untracked-files=all)" ]] \
         || fail "当前任务工作树不干净，不能清理"
+
+    acquire_release_lock "$repo_root/deploy/config.env" \
+        || fail "无法取得生产发布/验收锁，任务工作树保留"
 
     git fetch --prune origin main "$branch" >/dev/null \
         || fail "无法同步 origin/main 和任务分支，不能清理"
@@ -328,12 +352,14 @@ accept_and_close_task() {
     [[ "$candidate_tree" == "$final_tree" ]] \
         || fail "最终 main 包含未测试代码，拒绝标记稳定或清理；请先重新提交部署最终合并版本"
 
+    acceptance_state_write_unconfirmed=true
     git -C "$integration_worktree" push origin HEAD:refs/heads/main \
         || fail "推送 main 失败，任务工作树保留"
     git fetch --prune origin main >/dev/null \
         || fail "main 已推送但本地无法同步；任务工作树已保留，拒绝继续清理"
     [[ "$(git rev-parse origin/main)" == "$final_sha" ]] \
         || fail "origin/main 与已验收合并提交不一致，拒绝继续清理"
+    acceptance_state_write_unconfirmed=false
 
     ./scripts/task-worktree.sh sync-stable-base --commit "$final_sha" --exclude-path "$repo_root"
     ./scripts/task-worktree.sh close --current --confirm
@@ -447,6 +473,8 @@ else
     info "回滚目标确认：$commit_sha"
 fi
 
+acquire_release_lock "$repo_root/deploy/config.env" \
+    || fail "无法取得生产发布/验收锁，已创建的任务提交保留"
 sync_task_branch_with_latest_main
 collect_task_branch_migrations
 ensure_supported_release_tree "$commit_sha"
@@ -495,18 +523,41 @@ else
     deploy_command=(bash deploy/deploy.sh)
 fi
 set -u
-if ! EVERYDAYAI_RELEASE_CONTEXT=release.sh \
+# Older executors must not independently establish provenance. Their application
+# code can still be deployed from an exact rollback/retry commit under this lock.
+executor_context=release.sh-legacy-executor
+if grep -q '^# TASK_DEPLOY_PROTOCOL=2$' deploy/deploy.sh; then
+    executor_context=release.sh
+fi
+release_remote_state invalidate \
+    || fail "无法使旧生产候选失效，未启动部署"
+release_executor_state=in_flight
+if ! EVERYDAYAI_RELEASE_CONTEXT="$executor_context" \
+    EVERYDAYAI_RELEASE_PROTOCOL=2 \
+    EVERYDAYAI_RELEASE_LOCK_TOKEN="$release_lock_token" \
     EVERYDAYAI_RELEASE_COMMIT="$commit_sha" \
     EVERYDAYAI_RELEASE_MODE="$release_mode" \
     "${deploy_command[@]}" >"$release_log" 2>&1; then
-    echo "RELEASE_RESULT status=failed commit=$commit_sha log=$release_log" >&2
+    release_executor_state=unconfirmed
+    release_remote_state invalidate \
+        || echo 'RELEASE_CANDIDATE_RESULT status=unknown; 无法确认失败部署后的候选已清除，禁止验收' >&2
+    echo "RELEASE_RESULT status=failed executor_state=unconfirmed commit=$commit_sha log=$release_log" >&2
     tail -n 160 "$release_log" >&2
     exit 1
 fi
+release_executor_state=completed
 tail -n 40 "$release_log"
 popd >/dev/null
 
-if [[ "$release_mode" == preview ]]; then
-    record_local_deployed_candidate "$commit_sha"
+acceptance_candidate=false
+status_after=DEPLOYED_PARTIAL
+if [[ "$frontend_only" == false && "$backend_only" == false ]]; then
+    release_remote_state record "$commit_sha" "$release_mode" \
+        || fail "部署已完成，但无法建立可验收候选；任务保留，禁止验收"
+    acceptance_candidate=true
+    status_after=DEPLOYED_PENDING_ACCEPTANCE
+    if [[ "$release_mode" == preview ]]; then
+        record_local_deployed_candidate "$commit_sha"
+    fi
 fi
-echo "RELEASE_RESULT status=success commit=$commit_sha source=$release_source mode=$release_mode status_after=DEPLOYED_PENDING_ACCEPTANCE"
+echo "RELEASE_RESULT status=success commit=$commit_sha source=$release_source mode=$release_mode status_after=$status_after acceptance_candidate=$acceptance_candidate"

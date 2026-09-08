@@ -17,6 +17,13 @@ STAGED_URL = "https://tempfile.redpandaai.co/demo/shadow-input.png"
 IMAGE_MODEL = "gpt-image-2-image-to-image"
 
 
+@pytest.fixture(autouse=True)
+def isolate_shadow_cache():
+    with patch("services.adapters.kie.client.save_overseas_shadow_upload_status", new_callable=AsyncMock, return_value=True), \
+         patch("services.adapters.kie.client.save_overseas_shadow_upload_urls", new_callable=AsyncMock, return_value=True):
+        yield
+
+
 class _AsyncContext:
     def __init__(self, value):
         self.value = value
@@ -153,6 +160,9 @@ async def test_create_task_records_task_id_for_both_shadow_routes():
     assert {
         call.kwargs["task_id"] for call in shadow_upload.await_args_list
     } == {"task-123"}
+    overseas = next(call.kwargs for call in shadow_upload.await_args_list if call.kwargs["route"] == "overseas")
+    assert overseas["request_snapshot"] == {"model": IMAGE_MODEL, "input": request.input}
+    assert "callBackUrl" not in overseas["request_snapshot"]
 
 
 @pytest.mark.asyncio
@@ -209,6 +219,7 @@ async def test_overseas_shadow_upload_caches_returned_staged_urls():
         "task-123",
         [SOURCE_URL],
         [STAGED_URL],
+        request=None,
     )
 
 
@@ -225,3 +236,14 @@ def test_shadow_upload_skips_non_image_kie_requests():
 
     assert client._extract_shadow_image_urls(image_request) == []
     assert client._extract_shadow_image_urls(chat_request) == []
+
+
+async def test_partial_overseas_upload_is_failed_not_ready():
+    client = KieClient("test-key")
+    with patch("services.adapters.kie.client.httpx.AsyncClient", side_effect=lambda **kwargs: _AsyncContext(MagicMock())), \
+         patch.object(client, "_shadow_upload_one", new_callable=AsyncMock, side_effect=[STAGED_URL, None]), \
+         patch("services.adapters.kie.client.save_overseas_shadow_upload_status", new_callable=AsyncMock) as status, \
+         patch("services.adapters.kie.client.save_overseas_shadow_upload_urls", new_callable=AsyncMock) as ready:
+        await client._run_shadow_upload(IMAGE_MODEL, "partial", [SOURCE_URL, SOURCE_URL + "?second"], "overseas", "http://127.0.0.1:7891")
+    assert [call.args[1] for call in status.await_args_list] == ["pending", "failed"]
+    ready.assert_not_awaited()

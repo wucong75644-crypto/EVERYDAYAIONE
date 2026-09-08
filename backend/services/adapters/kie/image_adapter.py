@@ -38,6 +38,10 @@ from .models import (
 from .configs import IMAGE_MODEL_CONFIGS
 
 
+class KieSubmissionUncertainError(KieAPIError):
+    """创建请求已经发出，但响应不足以确认受理结果。"""
+
+
 class KieImageAdapter(BaseImageAdapter):
     """
     KIE 图像生成适配器
@@ -215,6 +219,8 @@ class KieImageAdapter(BaseImageAdapter):
                 return self._format_result(result, resolution)
             else:
                 # 仅创建任务
+                if kwargs.get("_image_fetch_fallback"):
+                    return await self.submit_prepared_fallback(request)
                 create_response = await self.client.create_task(request)
                 return ImageGenerateResult(
                     task_id=create_response.task_id,
@@ -226,11 +232,30 @@ class KieImageAdapter(BaseImageAdapter):
         except (KieAPIError, KieTaskFailedError, KieTaskTimeoutError, ValueError):
             raise
         except Exception as e:
+            if kwargs.get("_image_fetch_fallback"):
+                # 保留网络错误类型供专用模块区分“明确拒绝”和“受理不确定”。
+                raise
             logger.error(
                 f"Image generate failed: model={self.model}, "
                 f"prompt_preview={prompt[:50]}..., error={e}"
             )
             raise KieAPIError(f"Image generate failed: {e}") from e
+
+    async def submit_prepared_fallback(self, request: CreateTaskRequest) -> ImageGenerateResult:
+        """重放已接受请求；只供临时空间单次重试调用，不能再次上传素材。"""
+        if request.model != self.model_id:
+            raise ValueError("Fallback snapshot model mismatch")
+        try:
+            response = await self.client.create_task_once(request)
+        except KieAPIError as exc:
+            if exc.status_code is None or str(exc.status_code).startswith("5"):
+                raise KieSubmissionUncertainError("KIE submission acknowledgement unavailable") from exc
+            raise
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise KieSubmissionUncertainError("Malformed KIE submission acknowledgement") from exc
+        if not response.is_success or not response.task_id:
+            raise KieSubmissionUncertainError("KIE fallback response has no accepted task id")
+        return ImageGenerateResult(task_id=response.task_id, status=TaskStatus.PENDING)
 
     def _build_input_params(
         self,

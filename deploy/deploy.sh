@@ -4,6 +4,7 @@
 # 自动部署脚本 - EVERYDAYAIONE
 # 用途：将前后端代码部署到阿里云ECS服务器
 # 使用方法：./deploy/deploy.sh [选项]
+# TASK_DEPLOY_PROTOCOL=2
 ###############################################################################
 
 set -e  # 遇到错误立即退出
@@ -407,56 +408,16 @@ remote_exec() {
     ssh -p ${SERVER_PORT} ${SERVER_USER}@${SERVER_HOST} "$@"
 }
 
-# 只有由受控 release.sh 发起的全量发布才可成为“已验收候选”。
-# 关闭任务时读取这个远端标记，避免把本地记忆、日志或未完整发布的提交误认为生产版本。
-record_release_provenance() {
-    if [ "${EVERYDAYAI_RELEASE_CONTEXT:-}" != "release.sh" ]; then
-        log_warning "非受控发布，未写入验收候选标记"
-        return
-    fi
-    if [ "$FRONTEND_ONLY" = true ] || [ "$BACKEND_ONLY" = true ]; then
-        log_warning "部分发布不能作为任务验收候选，未写入验收候选标记"
-        return
-    fi
-
-    local release_commit="${EVERYDAYAI_RELEASE_COMMIT:-}"
-    local release_mode="${EVERYDAYAI_RELEASE_MODE:-}"
-    if ! [[ "$release_commit" =~ ^[0-9a-f]{40}$ ]]; then
-        log_error "受控发布缺少有效提交 SHA，拒绝写入验收候选标记"
+require_controlled_release() {
+    if [[ "${EVERYDAYAI_RELEASE_CONTEXT:-}" != release.sh || "${EVERYDAYAI_RELEASE_PROTOCOL:-}" != 2 || -z "${EVERYDAYAI_RELEASE_LOCK_TOKEN:-}" ]]; then
+        log_error '必须通过具备生产协调保护的 deploy/release.sh 执行部署'
         exit 1
     fi
-    case "$release_mode" in
-        preview|main|rollback)
-            ;;
-        *)
-            log_error "受控发布缺少有效模式，拒绝写入验收候选标记"
-            exit 1
-            ;;
-    esac
-
-    remote_exec bash -s -- "$release_commit" "$release_mode" << 'ENDSSH'
-        set -euo pipefail
-        release_commit=$1
-        release_mode=$2
-        [ "${#release_commit}" -eq 40 ] || exit 1
-        case "$release_commit" in
-            *[!0-9a-f]*|'') exit 1 ;;
-        esac
-        case "$release_mode" in
-            preview|main|rollback) ;;
-            *) exit 1 ;;
-        esac
-        target=/var/www/everydayai/.release-provenance
-        tmp="${target}.tmp.$$"
-        umask 022
-        {
-            printf 'commit=%s\n' "$release_commit"
-            printf 'mode=%s\n' "$release_mode"
-            printf 'recorded_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        } > "$tmp"
-        mv "$tmp" "$target"
-ENDSSH
-    log_success "已写入生产验收候选标记: $release_commit"
+    # shellcheck source=deploy/release-coordination.sh
+    source deploy/release-coordination.sh
+    load_release_coordination_config deploy/config.env || exit 1
+    release_lock_token=$EVERYDAYAI_RELEASE_LOCK_TOKEN
+    release_remote_state assert || exit 1
 }
 
 # 部署后端到服务器
@@ -677,6 +638,7 @@ EOF
 
     # 检查配置和依赖
     check_config
+    require_controlled_release
     check_dependencies
     if [ "$FRONTEND_ONLY" != true ]; then
         validate_release_python
@@ -705,8 +667,8 @@ EOF
     # 显示状态
     show_status
 
-    # 必须在服务健康检查全部通过后才记录该版本可供验收。
-    record_release_provenance
+    # The parent release.sh establishes provenance only after this entire
+    # executor has completed successfully, while retaining the production lock.
 
     # 完成提示
     echo ""

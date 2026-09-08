@@ -6,7 +6,6 @@
 """
 
 import json
-import os
 from typing import Any, Dict, Optional, Union
 
 from loguru import logger
@@ -19,11 +18,6 @@ from services.adapters.base import (
 )
 
 TaskResult = Union[ImageGenerateResult, VideoGenerateResult]
-
-_KIE_IMAGE_FETCH_FAILURE_CODE = "400"
-_KIE_IMAGE_FETCH_FALLBACK_ATTEMPTED_KEY = "_kie_image_fetch_fallback_attempted"
-_KIE_IMAGE_FETCH_FALLBACK_FROM_TASK_ID_KEY = "_kie_image_fetch_fallback_from_task_id"
-_KIE_IMAGE_FETCH_FALLBACK_ENABLED_ENV = "KIE_IMAGE_FETCH_FALLBACK_ENABLED"
 
 
 class AsyncRetryService:
@@ -38,103 +32,6 @@ class AsyncRetryService:
         if isinstance(request_params, str):
             return json.loads(request_params)
         return request_params
-
-    @staticmethod
-    def _is_kie_image_fetch_fallback_enabled() -> bool:
-        return os.getenv(_KIE_IMAGE_FETCH_FALLBACK_ENABLED_ENV, "false").lower() in {
-            "1", "true", "yes", "on",
-        }
-
-    def has_kie_image_fetch_fallback_attempted(self, task: Dict[str, Any]) -> bool:
-        """判断该本地任务是否已经使用临时空间链接重提过一次。"""
-        return bool(
-            self._request_params(task).get(_KIE_IMAGE_FETCH_FALLBACK_ATTEMPTED_KEY)
-        )
-
-    def should_attempt_kie_image_fetch_fallback(
-        self,
-        task: Dict[str, Any],
-        result: TaskResult,
-    ) -> bool:
-        """仅对 KIE 图片获取失败（failCode=400）触发一次专用重试。"""
-        if (
-            not self._is_kie_image_fetch_fallback_enabled()
-            or task.get("type") != "image"
-            or str(result.fail_code or "") != _KIE_IMAGE_FETCH_FAILURE_CODE
-            or self.has_kie_image_fetch_fallback_attempted(task)
-        ):
-            return False
-
-        from services.adapters.kie.configs import IMAGE_MODEL_CONFIGS
-
-        return task.get("model_id") in IMAGE_MODEL_CONFIGS
-
-    async def attempt_kie_image_fetch_fallback(
-        self,
-        task: Dict[str, Any],
-    ) -> bool:
-        """用海外旁路临时空间链接，按原参数重提一次同模型 KIE 图片任务。"""
-        from services.adapters.kie.shadow_upload_store import (
-            get_overseas_shadow_upload_staged_urls,
-        )
-
-        original_task_id = task["external_task_id"]
-        request_params = self._request_params(task)
-        staged_image_urls = await get_overseas_shadow_upload_staged_urls(
-            original_task_id
-        )
-        if not staged_image_urls:
-            logger.warning(
-                "KIE_IMAGE_FETCH_FALLBACK_SKIPPED | task_id={} | "
-                "reason=overseas_shadow_urls_unavailable",
-                original_task_id,
-            )
-            return False
-
-        if not all(isinstance(url, str) and url for url in staged_image_urls):
-            logger.warning(
-                "KIE_IMAGE_FETCH_FALLBACK_SKIPPED | task_id={} | "
-                "reason=overseas_shadow_urls_invalid | source_count={}",
-                original_task_id,
-                len(staged_image_urls),
-            )
-            return False
-
-        fallback_params = {
-            **request_params,
-            "image_urls": staged_image_urls,
-            _KIE_IMAGE_FETCH_FALLBACK_ATTEMPTED_KEY: True,
-            _KIE_IMAGE_FETCH_FALLBACK_FROM_TASK_ID_KEY: original_task_id,
-        }
-        try:
-            new_task_id = await self._resubmit(
-                task=task,
-                new_model=task["model_id"],
-                request_params=fallback_params,
-                retry_count=self._request_params(task).get("_retry_count", 0),
-                retry_reason="KieImageFetchFallback",
-            )
-        except Exception as exc:
-            logger.warning(
-                "KIE_IMAGE_FETCH_FALLBACK_FAILURE | task_id={} | "
-                "stage=resubmit | error_type={}",
-                original_task_id,
-                type(exc).__name__,
-            )
-            return False
-
-        if not new_task_id:
-            return False
-
-        logger.info(
-            "KIE_IMAGE_FETCH_FALLBACK_SUBMITTED | original_task_id={} | "
-            "retry_task_id={} | model={} | source_count={}",
-            original_task_id,
-            new_task_id,
-            task["model_id"],
-            len(staged_image_urls),
-        )
-        return True
 
     async def attempt_retry(
         self,

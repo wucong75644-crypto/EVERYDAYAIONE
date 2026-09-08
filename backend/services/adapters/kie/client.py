@@ -33,7 +33,10 @@ from .models import (
     ChatCompletionChunk,
     TaskState,
 )
-from .shadow_upload_store import save_overseas_shadow_upload_urls
+from .shadow_upload_store import (
+    save_overseas_shadow_upload_status,
+    save_overseas_shadow_upload_urls,
+)
 
 
 class KieAPIError(Exception):
@@ -374,6 +377,10 @@ class KieClient:
     )
     async def _create_task_with_retry(self, request: CreateTaskRequest) -> CreateTaskResponse:
         """创建主任务并保留原有网络重试行为。"""
+        return await self.create_task_once(request)
+
+    async def create_task_once(self, request: CreateTaskRequest) -> CreateTaskResponse:
+        """复用正常 API 出口，仅提交一次，不启动旁路或重发受理不确定的请求。"""
         client = await self._get_client()
 
         logger.info(f"Creating task for model: {request.model}")
@@ -427,6 +434,7 @@ class KieClient:
                 source_urls=source_urls,
                 route="overseas",
                 proxy_url=overseas_proxy,
+                request_snapshot=request.model_dump(mode="json", exclude={"callBackUrl"}),
             )
         else:
             logger.warning(
@@ -444,6 +452,7 @@ class KieClient:
         source_urls: list[str],
         route: str,
         proxy_url: Optional[str],
+        request_snapshot: Optional[dict] = None,
     ) -> None:
         """启动一条独立出口的旁路探测任务。"""
         task = asyncio.create_task(
@@ -453,6 +462,7 @@ class KieClient:
                 source_urls=source_urls,
                 route=route,
                 proxy_url=proxy_url,
+                **({"request_snapshot": request_snapshot} if request_snapshot is not None else {}),
             )
         )
         self._shadow_upload_tasks.add(task)
@@ -499,12 +509,18 @@ class KieClient:
         source_urls: list[str],
         route: str = "auto",
         proxy_url: Optional[str] = None,
+        request_snapshot: Optional[dict] = None,
     ) -> None:
         """下载并上传旁路素材；任何异常都只记录，不影响主任务。"""
         success_count = 0
         failure_count = 0
         staged_urls: list[str] = []
         started_at = time.monotonic()
+
+        if route == "overseas":
+            await save_overseas_shadow_upload_status(
+                task_id, "pending", source_urls, request_snapshot,
+            )
 
         try:
             download_client_kwargs: Dict[str, Any] = {
@@ -559,6 +575,7 @@ class KieClient:
                 task_id,
                 source_urls,
                 staged_urls,
+                request=request_snapshot,
             )
             logger.info(
                 "KIE_SHADOW_UPLOAD_FALLBACK_READY | task_id={} | "
@@ -566,6 +583,10 @@ class KieClient:
                 task_id,
                 len(source_urls),
                 cache_saved,
+            )
+        elif route == "overseas":
+            await save_overseas_shadow_upload_status(
+                task_id, "failed", source_urls, request_snapshot,
             )
 
         logger.info(

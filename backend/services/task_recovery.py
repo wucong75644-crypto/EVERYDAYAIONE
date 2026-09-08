@@ -28,7 +28,7 @@ async def recover_orphan_tasks(db) -> int:
         response = db.table("tasks").select(
             "id, type, external_task_id, placeholder_message_id, conversation_id, "
             "model_id, client_task_id, accumulated_content, accumulated_blocks, "
-            "credit_transaction_id, delivery_context"
+            "credit_transaction_id, delivery_context, request_params"
         ).in_(
             "status", ["pending", "running"]
         ).execute()
@@ -43,6 +43,10 @@ async def recover_orphan_tasks(db) -> int:
 
     for task in response.data:
         if is_actor_task(task):
+            continue
+        from services.kie_image_fallback_service import preserve_fallback_on_restart
+        if preserve_fallback_on_restart(task):
+            logger.info("KIE fallback retained for completion recovery | local_task_id={}", task["id"])
             continue
         accumulated = (task.get("accumulated_content") or "").strip()
         message_id = task.get("placeholder_message_id")

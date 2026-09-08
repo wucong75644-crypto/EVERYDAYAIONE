@@ -218,6 +218,12 @@ class TaskCompletionService:
             return False
 
         # 4. 乐观锁抢占：通过 version 字段原子更新
+        # 旧超时快照不能结束已经重新计时的 KIE 图片任务。
+        if result.status == TaskStatus.FAILED and result.fail_code == "TIMEOUT":
+            from services.kie_image_fallback_service import defer_stale_timeout
+            if defer_stale_timeout(task):
+                return True
+
         # 只有version未变化的任务才会被更新（防止并发冲突）
         current_version = task.get('version', 1)
         lock_update = (
@@ -311,15 +317,13 @@ class TaskCompletionService:
         external_task_id = task["external_task_id"]
         task_type = task["type"]
 
-        # KIE 图片获取失败：优先用 overseas 旁路临时空间链接重提一次。
-        # 该任务已经重提过时，第二次失败必须直接进入正常失败结算，不能再触发 smart retry。
-        from services.async_retry_service import AsyncRetryService
-        retry_svc = AsyncRetryService(self.db)
-        if retry_svc.should_attempt_kie_image_fetch_fallback(task, result):
-            if await retry_svc.attempt_kie_image_fetch_fallback(task):
-                return True
-        elif not retry_svc.has_kie_image_fetch_fallback_attempted(task):
-            # 保留原有 smart mode 行为；但专用重试后的任务不再换模型重试。
+        from services.kie_image_fallback_service import FallbackOutcome, KieImageFallbackService
+        outcome = await KieImageFallbackService(self.db).handle_failure(task, result)
+        if outcome == FallbackOutcome.PROCESSING:
+            return True
+        if outcome == FallbackOutcome.NOT_APPLICABLE:
+            from services.async_retry_service import AsyncRetryService
+            retry_svc = AsyncRetryService(self.db)
             if await retry_svc.attempt_retry(task, result):
                 return True
 

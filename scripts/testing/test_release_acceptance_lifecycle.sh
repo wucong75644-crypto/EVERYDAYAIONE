@@ -41,6 +41,15 @@ other="$tmp_root/other"
 candidate="$tmp_root/candidate"
 mismatch="$tmp_root/mismatch"
 fake_bin="$tmp_root/bin"
+fake_production="$tmp_root/production"
+
+write_test_config() {
+    local destination=$1
+    {
+        printf '%s\n' 'SERVER_HOST=example.invalid' 'SERVER_USER=test' 'SERVER_PORT=22'
+        printf 'REMOTE_APP_DIR=%q\n' "$fake_production"
+    } > "$destination"
+}
 
 run git init --bare "$remote"
 run git init "$seed"
@@ -48,14 +57,16 @@ run git -C "$seed" config user.name lifecycle-test
 run git -C "$seed" config user.email lifecycle-test@example.invalid
 mkdir -p "$seed/deploy" "$seed/scripts/testing"
 cp "$source_root/deploy/release.sh" "$seed/deploy/release.sh"
+cp "$source_root/deploy/release-coordination.sh" "$seed/deploy/release-coordination.sh"
 cp "$source_root/scripts/task-worktree.sh" "$seed/scripts/task-worktree.sh"
 printf '%s\n' \
     '#!/usr/bin/env bash' \
     'printf "%s\\n" "$@" > "${DEPLOY_ARGS_FILE:?}"' > "$seed/deploy/deploy.sh"
 chmod +x "$seed/deploy/release.sh" "$seed/deploy/deploy.sh" "$seed/scripts/task-worktree.sh"
 printf 'base\n' > "$seed/product.txt"
+printf 'other-base\n' > "$seed/other-product.txt"
 printf 'deploy/config.env\n' > "$seed/.gitignore"
-run git -C "$seed" add deploy/release.sh deploy/deploy.sh scripts/task-worktree.sh product.txt .gitignore
+run git -C "$seed" add deploy/release.sh deploy/release-coordination.sh deploy/deploy.sh scripts/task-worktree.sh product.txt other-product.txt .gitignore
 run git -C "$seed" commit -m base
 run git -C "$seed" branch -M main
 run git -C "$seed" remote add origin "$remote"
@@ -76,11 +87,7 @@ grep -F "主工作树缺少 deploy/config.env" "$tmp_root/missing-config.log" >/
     || fail "缺少 deploy/config.env 时未提供创建失败说明"
 [[ ! -e "$missing" ]] || fail "缺少 deploy/config.env 时创建了任务工作树"
 
-printf '%s\n' \
-    'SERVER_HOST=example.invalid' \
-    'SERVER_USER=test' \
-    'SERVER_PORT=22' \
-    'REMOTE_APP_DIR=/tmp/everydayai' > "$root/deploy/config.env"
+write_test_config "$root/deploy/config.env"
 chmod 600 "$root/deploy/config.env"
 
 run_in "$root" ./scripts/task-worktree.sh start other --path "$other"
@@ -93,6 +100,19 @@ cmp -s "$root/deploy/config.env" "$other/deploy/config.env" \
     || fail "任务工作树 deploy/config.env 权限不是 600"
 [[ -z "$(git -C "$other" status --porcelain --untracked-files=all)" ]] \
     || fail "deploy/config.env 出现在任务工作树提交文件清单中"
+
+# A 验收时 B 正在开发：同时保留已暂存、未暂存和未跟踪内容。
+printf 'other-staged\n' >> "$other/other-product.txt"
+run git -C "$other" add other-product.txt
+printf 'other-unstaged\n' >> "$other/other-product.txt"
+printf 'other-untracked\n' > "$other/other-new.txt"
+other_head=$(git -C "$other" rev-parse HEAD)
+other_index=$(git -C "$other" write-tree)
+git -C "$other" status --porcelain --untracked-files=all > "$tmp_root/other-status-before"
+git -C "$other" diff --binary > "$tmp_root/other-diff-before"
+git -C "$other" diff --cached --binary > "$tmp_root/other-cached-before"
+cp "$other/other-product.txt" "$tmp_root/other-product-before"
+cp "$other/other-new.txt" "$tmp_root/other-new-before"
 mkdir -p "$candidate/backend/migrations"
 printf 'candidate\n' >> "$candidate/product.txt"
 printf '%s\n' 'SELECT 1;' > "$candidate/backend/migrations/242_delivery_outbox.sql"
@@ -108,14 +128,24 @@ run git -C "$root" commit -m main-before-candidate-deploy
 run git -C "$root" push origin main
 main_before_candidate_deploy=$(git -C "$root" rev-parse HEAD)
 
-mkdir -p "$fake_bin"
-printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\\n" "$FAKE_DEPLOYED_COMMIT"' > "$fake_bin/ssh"
+mkdir -p "$fake_bin" "$fake_production"
+cat > "$fake_bin/ssh" <<'FAKE_SSH'
+#!/usr/bin/env python3
+import os
+import shlex
+import subprocess
+import sys
+
+command = shlex.split(sys.argv[-1])
+if (sys.argv[-2] != "test@example.invalid"
+        or command[:3] != ["bash", "-s", "--"]
+        or command[3] != os.environ["FAKE_PRODUCTION"]):
+    raise SystemExit("拒绝测试目录以外的 SSH 请求")
+raise SystemExit(subprocess.run(command).returncode)
+FAKE_SSH
 chmod +x "$fake_bin/ssh"
-printf '%s\n' \
-    'SERVER_HOST=example.invalid' \
-    'SERVER_USER=test' \
-    'SERVER_PORT=22' \
-    'REMOTE_APP_DIR=/tmp/everydayai' > "$candidate/deploy/config.env"
+export PATH="$fake_bin:$PATH"
+export FAKE_PRODUCTION="$fake_production"
 
 migration_deploy_args="$tmp_root/migration-deploy-args.txt"
 (
@@ -134,8 +164,7 @@ rg -Fx -- 'backend/migrations/242_delivery_outbox.sql' "$migration_deploy_args" 
 
 (
     cd "$candidate"
-    PATH="$fake_bin:$PATH" FAKE_DEPLOYED_COMMIT="$candidate_sha" \
-        ./deploy/release.sh --accept-and-close
+    ./deploy/release.sh --accept-and-close
 ) > "$tmp_root/accept.log"
 
 stable_main=$(git -C "$root" ls-remote origin refs/heads/main | awk '{print $1}')
@@ -146,8 +175,48 @@ stable_tree=$(git -C "$root" rev-parse "${stable_main}^{tree}")
 [[ ! -e "$candidate" ]] || fail "成功验收后候选工作树未清理"
 [[ "$(git -C "$other" config --worktree --get codex.taskStableBase)" == "$stable_main" ]] \
     || fail "其他活跃任务未同步最新稳定基座"
-[[ -z "$(git -C "$other" status --porcelain)" ]] \
-    || fail "同步稳定基座改动了其他任务代码"
+[[ "$(git -C "$other" rev-parse HEAD)" == "$other_head" ]] \
+    || fail "同步稳定基座改变了 B 的 HEAD"
+[[ "$(git -C "$other" write-tree)" == "$other_index" ]] \
+    || fail "同步稳定基座改变了 B 的暂存区"
+git -C "$other" status --porcelain --untracked-files=all > "$tmp_root/other-status-after"
+git -C "$other" diff --binary > "$tmp_root/other-diff-after"
+git -C "$other" diff --cached --binary > "$tmp_root/other-cached-after"
+for part in status diff cached; do
+    cmp -s "$tmp_root/other-$part-before" "$tmp_root/other-$part-after" \
+        || fail "同步稳定基座改变了 B 的 $part"
+done
+cmp -s "$other/other-product.txt" "$tmp_root/other-product-before" \
+    || fail "同步稳定基座改变了 B 的跟踪文件内容"
+cmp -s "$other/other-new.txt" "$tmp_root/other-new-before" \
+    || fail "同步稳定基座改变了 B 的未跟踪文件内容"
+
+# B 后续发布才合入 A 的稳定成果。暂存保护先拒绝，不能代用户清理。
+if (
+    cd "$other"
+    ./deploy/release.sh --message other-task --file other-product.txt --file other-new.txt
+) > "$tmp_root/other-staged-reject.log" 2>&1; then
+    fail "B 有预先暂存内容时仍继续发布"
+fi
+[[ "$(git -C "$other" write-tree)" == "$other_index" ]] \
+    || fail "拒绝发布时改变了 B 的暂存区"
+# 只取消临时测试仓库内由本测试创建的暂存，不改文件内容。
+run git -C "$other" reset -- other-product.txt
+(
+    cd "$other"
+    DEPLOY_ARGS_FILE="$tmp_root/other-deploy-args.txt" \
+        ./deploy/release.sh --message other-task --file other-product.txt --file other-new.txt
+) > "$tmp_root/other-deploy.log"
+other_deployed_sha=$(git -C "$other" rev-parse HEAD)
+git -C "$other" merge-base --is-ancestor "$stable_main" "$other_deployed_sha" \
+    || fail "B 发布未合入 A 的稳定成果"
+cmp -s "$other/other-product.txt" "$tmp_root/other-product-before" \
+    || fail "B 发布合入稳定基座后丢失原有修改"
+cmp -s "$other/other-new.txt" "$tmp_root/other-new-before" \
+    || fail "B 发布合入稳定基座后丢失原未跟踪文件"
+[[ "$(git -C "$root" ls-remote origin refs/heads/main | awk '{print $1}')" == "$stable_main" ]] \
+    || fail "B 发布提前改变了 main"
+[[ -d "$other" ]] || fail "B 发布后被提前清理"
 
 run_in "$root" ./scripts/task-worktree.sh start mismatch --path "$mismatch"
 printf 'candidate-two\n' >> "$mismatch/product.txt"
@@ -162,16 +231,12 @@ run git -C "$root" add main-only.txt
 run git -C "$root" commit -m main-change
 run git -C "$root" push origin main
 main_before_rejection=$(git -C "$root" rev-parse origin/main)
-printf '%s\n' \
-    'SERVER_HOST=example.invalid' \
-    'SERVER_USER=test' \
-    'SERVER_PORT=22' \
-    'REMOTE_APP_DIR=/tmp/everydayai' > "$mismatch/deploy/config.env"
+# 构造已测试候选，但 main 已额外前进的生产状态。
+printf 'commit=%s\n' "$mismatch_sha" > "$fake_production/.release-provenance"
 
 if (
     cd "$mismatch"
-    PATH="$fake_bin:$PATH" FAKE_DEPLOYED_COMMIT="$mismatch_sha" \
-        ./deploy/release.sh --accept-and-close
+    ./deploy/release.sh --accept-and-close
 ) > "$tmp_root/reject.log" 2>&1; then
     fail "包含未测试 main 变更时仍允许清理"
 fi
@@ -211,11 +276,6 @@ run git -C "$root" add main-before-normal-deploy.txt
 run git -C "$root" commit -m main-before-normal-deploy
 run git -C "$root" push origin main
 main_before_normal_deploy=$(git -C "$root" rev-parse HEAD)
-printf '%s\n' \
-    'SERVER_HOST=example.invalid' \
-    'SERVER_USER=test' \
-    'SERVER_PORT=22' \
-    'REMOTE_APP_DIR=/tmp/everydayai' > "$normal/deploy/config.env"
 (
     cd "$normal"
     DEPLOY_ARGS_FILE="$tmp_root/normal-deploy-args.txt" \
