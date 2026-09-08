@@ -23,7 +23,6 @@ TaskResult = Union[ImageGenerateResult, VideoGenerateResult]
 _KIE_IMAGE_FETCH_FAILURE_CODE = "400"
 _KIE_IMAGE_FETCH_FALLBACK_ATTEMPTED_KEY = "_kie_image_fetch_fallback_attempted"
 _KIE_IMAGE_FETCH_FALLBACK_FROM_TASK_ID_KEY = "_kie_image_fetch_fallback_from_task_id"
-_KIE_IMAGE_FETCH_FALLBACK_ORIGINAL_URLS_KEY = "_kie_image_fetch_fallback_original_image_urls"
 _KIE_IMAGE_FETCH_FALLBACK_ENABLED_ENV = "KIE_IMAGE_FETCH_FALLBACK_ENABLED"
 
 
@@ -76,22 +75,15 @@ class AsyncRetryService:
     ) -> bool:
         """用海外旁路临时空间链接，按原参数重提一次同模型 KIE 图片任务。"""
         from services.adapters.kie.shadow_upload_store import (
-            get_overseas_shadow_upload_urls,
+            get_overseas_shadow_upload_staged_urls,
         )
 
         original_task_id = task["external_task_id"]
         request_params = self._request_params(task)
-        original_image_urls = request_params.get("image_urls")
-        if not isinstance(original_image_urls, list) or not original_image_urls:
-            logger.warning(
-                "KIE_IMAGE_FETCH_FALLBACK_SKIPPED | task_id={} | "
-                "reason=original_image_urls_unavailable",
-                original_task_id,
-            )
-            return False
-
-        staged_url_map = await get_overseas_shadow_upload_urls(original_task_id)
-        if not staged_url_map:
+        staged_image_urls = await get_overseas_shadow_upload_staged_urls(
+            original_task_id
+        )
+        if not staged_image_urls:
             logger.warning(
                 "KIE_IMAGE_FETCH_FALLBACK_SKIPPED | task_id={} | "
                 "reason=overseas_shadow_urls_unavailable",
@@ -99,19 +91,12 @@ class AsyncRetryService:
             )
             return False
 
-        # KIE adapter 会对自有 CDN/OSS URL 做路径编码；旁路缓存的 key 是编码后
-        # 实际提交给 KIE 的 URL，因此这里按相同规则查找，避免中文文件名等场景失配。
-        from services.oss_service import normalize_external_oss_url
-        staged_image_urls = [
-            staged_url_map.get(normalize_external_oss_url(url))
-            for url in original_image_urls
-        ]
         if not all(isinstance(url, str) and url for url in staged_image_urls):
             logger.warning(
                 "KIE_IMAGE_FETCH_FALLBACK_SKIPPED | task_id={} | "
-                "reason=overseas_shadow_urls_incomplete | source_count={}",
+                "reason=overseas_shadow_urls_invalid | source_count={}",
                 original_task_id,
-                len(original_image_urls),
+                len(staged_image_urls),
             )
             return False
 
@@ -120,7 +105,6 @@ class AsyncRetryService:
             "image_urls": staged_image_urls,
             _KIE_IMAGE_FETCH_FALLBACK_ATTEMPTED_KEY: True,
             _KIE_IMAGE_FETCH_FALLBACK_FROM_TASK_ID_KEY: original_task_id,
-            _KIE_IMAGE_FETCH_FALLBACK_ORIGINAL_URLS_KEY: original_image_urls,
         }
         try:
             new_task_id = await self._resubmit(

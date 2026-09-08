@@ -43,10 +43,10 @@ async def save_overseas_shadow_upload_urls(
         return False
 
 
-async def get_overseas_shadow_upload_urls(
+async def get_overseas_shadow_upload_staged_urls(
     task_id: str,
-) -> Optional[dict[str, str]]:
-    """返回原 CDN URL 到海外临时空间 URL 的完整映射。"""
+) -> Optional[list[str]]:
+    """返回按原提交顺序保存的海外临时空间 URL。"""
     try:
         redis = await get_redis()
         if not redis:
@@ -65,7 +65,7 @@ async def get_overseas_shadow_upload_urls(
             or not all(isinstance(url, str) and url for url in source_urls + staged_urls)
         ):
             return None
-        return dict(zip(source_urls, staged_urls))
+        return staged_urls
     except Exception as exc:
         logger.warning(
             "KIE_SHADOW_UPLOAD_CACHE_READ_FAILURE | task_id={} | error_type={}",

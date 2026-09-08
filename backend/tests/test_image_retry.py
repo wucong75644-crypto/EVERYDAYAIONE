@@ -471,10 +471,6 @@ class TestAsyncRetryService:
 
     @pytest.mark.asyncio
     async def test_kie_image_fetch_fallback_reuses_same_model_with_staged_urls(self, svc, retry_db):
-        source_urls = [
-            "https://cdn.example.com/source-1.png",
-            "https://cdn.example.com/source-2.png",
-        ]
         staged_urls = [
             "https://tempfile.redpandaai.co/staged-1.png",
             "https://tempfile.redpandaai.co/staged-2.png",
@@ -486,7 +482,6 @@ class TestAsyncRetryService:
                 "aspect_ratio": "1:1",
                 "output_format": "png",
                 "resolution": "2K",
-                "image_urls": source_urls,
             },
         )
         result = ImageGenerateResult(
@@ -503,9 +498,9 @@ class TestAsyncRetryService:
 
         with patch.dict(os.environ, {"KIE_IMAGE_FETCH_FALLBACK_ENABLED": "true"}), \
              patch(
-                 "services.adapters.kie.shadow_upload_store.get_overseas_shadow_upload_urls",
+                 "services.adapters.kie.shadow_upload_store.get_overseas_shadow_upload_staged_urls",
                  new_callable=AsyncMock,
-                 return_value=dict(zip(source_urls, staged_urls)),
+                 return_value=staged_urls,
              ), \
              patch("services.adapters.factory.create_image_adapter", return_value=mock_adapter), \
              patch("services.handlers.base.BaseHandler._build_callback_url", return_value="http://cb"), \
@@ -524,46 +519,43 @@ class TestAsyncRetryService:
         assert update_payload["request_params"]["image_urls"] == staged_urls
 
     @pytest.mark.asyncio
-    async def test_kie_image_fetch_fallback_requires_complete_staged_urls(self, svc):
-        source_url = "https://cdn.example.com/source.png"
+    async def test_kie_image_fetch_fallback_requires_staged_urls(self, svc):
         task = self._make_task(
             model_id="gpt-image-2-image-to-image",
-            request_params={"prompt": "画一只猫", "image_urls": [source_url]},
+            request_params={"prompt": "画一只猫"},
         )
 
         with patch(
-            "services.adapters.kie.shadow_upload_store.get_overseas_shadow_upload_urls",
+            "services.adapters.kie.shadow_upload_store.get_overseas_shadow_upload_staged_urls",
             new_callable=AsyncMock,
-            return_value={},
+            return_value=[],
         ):
             retried = await svc.attempt_kie_image_fetch_fallback(task)
 
         assert retried is False
 
     @pytest.mark.asyncio
-    async def test_kie_image_fetch_fallback_matches_kie_normalized_source_url(self, svc):
-        source_url = "https://cdn.example.com/用户上传/input.png"
-        normalized_url = "https://cdn.example.com/%E7%94%A8%E6%88%B7%E4%B8%8A%E4%BC%A0/input.png"
-        staged_url = "https://tempfile.redpandaai.co/staged-input.png"
+    async def test_kie_image_fetch_fallback_uses_cached_staged_urls_without_original_urls(self, svc):
+        staged_urls = [
+            "https://tempfile.redpandaai.co/staged-1.png",
+            "https://tempfile.redpandaai.co/staged-2.png",
+        ]
         task = self._make_task(
             model_id="gpt-image-2-image-to-image",
-            request_params={"prompt": "画一只猫", "image_urls": [source_url]},
+            request_params={"prompt": "画一只猫"},
         )
 
         with patch(
-            "services.adapters.kie.shadow_upload_store.get_overseas_shadow_upload_urls",
+            "services.adapters.kie.shadow_upload_store.get_overseas_shadow_upload_staged_urls",
             new_callable=AsyncMock,
-            return_value={normalized_url: staged_url},
-        ), patch(
-            "services.oss_service.normalize_external_oss_url",
-            return_value=normalized_url,
+            return_value=staged_urls,
         ), patch.object(
             svc, "_resubmit", new_callable=AsyncMock, return_value="fallback_ext_002"
         ) as resubmit:
             retried = await svc.attempt_kie_image_fetch_fallback(task)
 
         assert retried is True
-        assert resubmit.await_args.kwargs["request_params"]["image_urls"] == [staged_url]
+        assert resubmit.await_args.kwargs["request_params"]["image_urls"] == staged_urls
 
     def test_kie_image_fetch_fallback_is_not_repeated(self, svc):
         task = self._make_task(
