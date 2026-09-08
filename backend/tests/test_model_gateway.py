@@ -190,8 +190,10 @@ async def test_gateway_preserves_provider_exception() -> None:
     assert [event.event for event in events.events] == [
         SamplingEventType.STARTED,
         SamplingEventType.FAILED,
+        SamplingEventType.REQUEST_FAILED,
     ]
-    assert events.events[-1].error_type == "RuntimeError"
+    assert events.events[-2].error_type == "RuntimeError"
+    assert events.events[-1].error_code == "UNKNOWN_ERROR"
 
 
 @pytest.mark.asyncio
@@ -759,7 +761,9 @@ async def test_gateway_timeout_is_uniform_and_closes_provider_stream():
     assert str(error.value).startswith("ModelGateway request timed out")
     await asyncio.wait_for(provider_closed.wait(), timeout=0.2)
     adapter.close.assert_awaited_once()
-    assert events.events[-1].event is SamplingEventType.FAILED
+    assert events.events[-2].event is SamplingEventType.FAILED
+    assert events.events[-1].event is SamplingEventType.REQUEST_FAILED
+    assert events.events[-1].error_code == "MODEL_TIMEOUT"
 
 
 @pytest.mark.asyncio

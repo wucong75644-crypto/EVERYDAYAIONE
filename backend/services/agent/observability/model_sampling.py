@@ -7,6 +7,7 @@ API key 或响应内容。Gateway 使用该模块记录一次 Provider stream �
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Mapping, Protocol
@@ -23,6 +24,10 @@ class SamplingEventType(str, Enum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     RETRY_STARTED = "retry_started"
+    CONCURRENCY_REJECTED = "concurrency_rejected"
+    PROVIDER_OVERLOADED = "provider_overloaded"
+    PROVIDER_REJECTED = "provider_rejected"
+    REQUEST_FAILED = "request_failed"
 
 
 _TERMINAL_EVENTS = frozenset({
@@ -48,6 +53,10 @@ class ModelSamplingEvent:
     usage: Mapping[str, int | float] = field(default_factory=dict)
     error_type: str | None = None
     previous_attempt_id: str | None = None
+    queue_wait_ms: float | None = None
+    rejection_reason: str | None = None
+    error_code: str | None = None
+    stop_reason: str | None = None
 
     @property
     def is_terminal(self) -> bool:
@@ -72,6 +81,14 @@ class ModelSamplingEvent:
             fields["error_type"] = self.error_type
         if self.previous_attempt_id:
             fields["previous_attempt_id"] = self.previous_attempt_id
+        if self.queue_wait_ms is not None:
+            fields["queue_wait_ms"] = self.queue_wait_ms
+        if self.rejection_reason:
+            fields["rejection_reason"] = self.rejection_reason
+        if self.error_code:
+            fields["error_code"] = self.error_code
+        if self.stop_reason:
+            fields["stop_reason"] = self.stop_reason
         return fields
 
 
@@ -108,7 +125,12 @@ class ObservabilitySamplingEventPublisher:
 
 def _publish_sampling_event(event: ModelSamplingEvent) -> None:
     """在后台线程写已有日志；终态再补充 Langfuse generation。"""
-    logger.bind(**event.log_fields()).info("ModelGateway sampling event")
+    fields = event.log_fields()
+    # 生产文件/控制台格式只渲染 message。显式写入安全字段，不能展开任意 extra。
+    logger.bind(**fields).info(
+        "ModelGateway sampling event {}",
+        json.dumps(fields, ensure_ascii=False, separators=(",", ":")),
+    )
     if event.is_terminal:
         _record_terminal_generation(event)
 

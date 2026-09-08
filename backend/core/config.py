@@ -296,6 +296,10 @@ class Settings(BaseSettings):
     image_agent_timeout: float = 120.0                             # 单张生成超时（秒）
     image_agent_max_images: int = 8                                # 单次最大生成张数
 
+    # Chat ModelGateway：每个服务进程的模型 stream 上限（Actor 任务并发仍为 5）。
+    # 超额等待计入既有模型 deadline；不表示跨 worker/Provider 账号的全局配额。
+    model_gateway_max_concurrency: int = Field(default=5, ge=1)
+
     # 熔断器配置（Provider 级别）
     circuit_breaker_failure_threshold: int = 3      # 连续失败次数阈值 → 触发 OPEN
     circuit_breaker_failure_window: float = 60.0    # 失败计数滑动窗口（秒）

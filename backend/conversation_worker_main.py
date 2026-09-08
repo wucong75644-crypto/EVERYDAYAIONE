@@ -39,7 +39,11 @@ async def _run() -> None:
         await runtime.start()
         await shutdown.wait()
     finally:
-        await runtime.stop()
+        from services.model_gateway import get_model_gateway
+        try:
+            await get_model_gateway().close()
+        finally:
+            await runtime.stop()
         await close_async_db()
         await RedisClient.close()
         logger.info("Conversation Actor Worker stopped")

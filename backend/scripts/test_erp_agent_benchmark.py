@@ -60,7 +60,7 @@ async def run_erp_agent_test(
     """模拟 ERPAgent 内部执行，记录选了哪些工具"""
     from config.phase_tools import build_domain_tools, build_domain_prompt
     from services.tool_selector import select_and_filter_tools
-    from services.adapters.factory import create_chat_adapter
+    from services.model_gateway import ModelCallRequest, get_model_gateway
 
     # 1. 同义词
     expanded = expand_synonyms(query)
@@ -82,12 +82,12 @@ async def run_erp_agent_test(
 
     for turn in range(MAX_TURNS):
         turns_used = turn + 1
-        adapter = create_chat_adapter(model_id)
+        session = get_model_gateway().open_chat(ModelCallRequest(model_id=model_id))
         tc_acc: Dict[int, Dict[str, Any]] = {}
         turn_text = ""
 
         try:
-            async for chunk in adapter.stream_chat(
+            async for chunk in session.stream_chat(
                 messages=messages, tools=selected_tools,
             ):
                 if chunk.content:
@@ -105,7 +105,7 @@ async def run_erp_agent_test(
                         if tc.arguments_delta:
                             entry["arguments"] += tc.arguments_delta
         finally:
-            await adapter.close()
+            await session.close()
 
         if not tc_acc:
             break
