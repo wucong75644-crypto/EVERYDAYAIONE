@@ -69,6 +69,7 @@ backend/tests/test_model_gateway_concurrency.py
 backend/tests/test_model_gateway_concurrency_integration.py
 backend/tests/test_model_gateway_credits_integration.py
 backend/tests/test_model_gateway_retry.py
+backend/tests/test_model_sampling_logging.py
 backend/tests/test_model_scorer.py
 backend/tests/test_model_scorer_integration.py
 backend/tests/test_models_routes.py

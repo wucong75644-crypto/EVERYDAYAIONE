@@ -61,6 +61,15 @@
 - `provider_overloaded`：基于已有分类或结构化 HTTP 429/503/529；不匹配异常正文。
 - `request_failed`：消费中的逻辑请求最终失败，记录标准化 error_code 和 stop_reason，区别于可继续 retry 的中间 attempt FAILED。该事件不重复创建 Langfuse generation 或计费记录。同步 factory 失败继续保留原 STARTED/FAILED 契约。
 - 所有新增字段都是时间、关联标识、错误码或固定原因；不记录 prompt、消息、响应内容、API key 或原始异常正文。沿用既有异步 best-effort 采样通道。
+- 事件消息采用 `ModelGateway sampling event {JSON}`，JSON 只包含 `log_fields()` 的安全字段，同时保留 bind 字段供已有结构化 sink 使用。这样现有仅输出 message 的文件/控制台格式也能查询事件，不需要修改全局日志格式或展开任意上下文 extra。仅 COMPLETED/FAILED/CANCELLED 创建 Langfuse generation，重试、拒绝和最终请求失败不重复创建。
+
+### 日志落盘缺口与补测（2026-09-08）
+
+首次部署 `9f8fdc81` 后核对人工验收入口时，发现原发布器仅 `logger.bind(**fields).info("ModelGateway sampling event")`，而生产 `setup_logging()` 格式不包含 extra。此前测试验证了事件对象、脱敏和异步行为，没有检查最终文件，因此普通日志只显示固定消息，无法查询等待时间和拒绝等字段。此前“全部达到验收标准”的判断不完整。
+
+本次仅修复采样发布器的消息序列化。新回归直接运行生产 `setup_logging()`，仅将日志目录移到临时目录，并读取生成的 app 日志；修复前稳定复现 JSON 字段缺失，修复后覆盖全部 10 种事件、真实 Gateway 排队超时/成功、过载后重试及最终失败。Langfuse 使用测试替身，日志发布器和文件 sink 使用真实实现。测试同时验证 request/attempt 关联、终态 generation 不重复，以及 prompt、响应、key、Provider 异常正文和上下文任意 extra 不进入事件输出。
+
+重新部署后，可在现有 `backend/logs/app_YYYY-MM-DD.log` 或服务控制台日志中搜索 `ModelGateway sampling event`，按 JSON 的 task_id/request_id/attempt_id 关联；异步事件不能依赖文件行顺序。等待时间见 attempt 事件的 queue_wait_ms；队列超时见 concurrency_rejected + queue_timeout；熔断见 provider_rejected + circuit_open；过载见 provider_overloaded；超时/最终失败见 request_failed 的 error_code/stop_reason；retry_started 的 previous_attempt_id 连接上一次 attempt。旧版本已丢弃的日志字段无法补回。
 
 ## direct call 清理及保留理由
 
@@ -94,6 +103,7 @@ T2 已清理 `backend/services` 和 `backend/api` 里的业务 direct stream cal
 - 最小临时 DB schema 缺少生产已有的 fail_code，补齐临时库后原测试全部通过；没有修改仓库迁移。
 - 新模块在 Python 3.11.15 上实际执行 semaphore 取消/幂等归还 smoke；生产修改文件通过 Python 3.11 语法解析。完整依赖测试使用现有 3.12 venv，不冒充完整 3.11 环境回归。
 - AST direct-call 扫描、Python 编译检查、git diff --check 通过；环境没有 ruff，未安装额外 lint 依赖。
+- 日志落盘补丁：新增 **12 项行为测试**；连同 Gateway、并发、Actor/Web/定时任务集成、retry 及 Web/Actor retry 集成，共 **134 passed**。继续覆盖采样 I/O 不阻塞首 chunk；本次没有改变并发/任务机制，不重复运行与日志无关的数据库或前端回归。
 
 ## 部署、回滚和验收状态
 
@@ -101,4 +111,5 @@ T2 已清理 `backend/services` 和 `backend/api` 里的业务 direct stream cal
 - 可选在现有 backend `.env` 增加 `MODEL_GATEWAY_MAX_CONCURRENCY=5`；不写也启用默认保护。变更需重启对应现有服务进程，配置不跨进程共享。
 - 可以回滚到 T5 候选 `e894ca8a` 或本任务基座 `c789a6cc` 的代码树；没有不可逆存储变更。回滚将恢复原来的无 Gateway 总并发限制行为；新增配置不再生效，必要时可移除。应通过项目受控发布流程操作。
 - 待交付差异未增加旧 Runtime 平台文件或无关部署变更；Actor claim/任务状态机/持久队列、计费公式和提交 RPC 均未修改。
-- **T6 实现和自动化验收标准已满足。** 上述为提交部署前的开发验证记录，生产发布状态以受控入口的 RELEASE_RESULT 为准；完整发布后保留工作树，等待用户生产验收。
+- 首次受控部署 `9f8fdc81de28ded9c9c53bae2e5449062c4750b0` 成功，前端 **1306 passed**、后端 **8009 passed / 37 skipped / 4 xfailed**，状态 `DEPLOYED_PENDING_ACCEPTANCE`。该版本仍有上述日志字段缺口。
+- 日志补丁已完成本地实现和行为验证；本节为补丁提交部署前的记录，发布状态以受控入口的 `RELEASE_RESULT` 为准，**T6 最终生产验收仍待完成**。补丁不新增配置、依赖、迁移或 service unit 修改；回滚补丁会恢复字段缺失，但不改变已部署的并发行为。发布后核对生产日志字段和用户业务验收；保留当前工作树。

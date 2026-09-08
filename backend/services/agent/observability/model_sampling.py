@@ -7,6 +7,7 @@ API key 或响应内容。Gateway 使用该模块记录一次 Provider stream �
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Mapping, Protocol
@@ -124,7 +125,12 @@ class ObservabilitySamplingEventPublisher:
 
 def _publish_sampling_event(event: ModelSamplingEvent) -> None:
     """在后台线程写已有日志；终态再补充 Langfuse generation。"""
-    logger.bind(**event.log_fields()).info("ModelGateway sampling event")
+    fields = event.log_fields()
+    # 生产文件/控制台格式只渲染 message。显式写入安全字段，不能展开任意 extra。
+    logger.bind(**fields).info(
+        "ModelGateway sampling event {}",
+        json.dumps(fields, ensure_ascii=False, separators=(",", ":")),
+    )
     if event.is_terminal:
         _record_terminal_generation(event)
 
