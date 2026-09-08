@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
 from pydantic import TypeAdapter
@@ -115,6 +116,28 @@ class ChatGenerationExecutor:
                     replay_context.get("content_blocks"),
                 )
         runtime.start_command_watcher()
+
+        async def on_model_retry(model_id: str, attempt: int) -> None:
+            # 仅 Actor executor 更新已持有任务的模型元数据。Gateway 不访问
+            # task/token/lease；任务执行次数和 commit/fail RPC 均保持原样。
+            await runtime.safe_point(SafePoint.BEFORE_MODEL)
+            if cancellation_event.is_set():
+                raise asyncio.CancelledError
+            response = await (
+                self._db.table("tasks").update({"model_id": model_id})
+                .eq("id", claim.task_id)
+                .eq("execution_token", claim.execution_token)
+                .eq("status", "running")
+                .gt("lease_expires_at", datetime.now(timezone.utc).isoformat())
+                .execute()
+            )
+            if not response or not response.data:
+                raise ConversationStopRequested("ownership_lost")
+            # 通道可选的展示回调不参与模型选择或任务终态。
+            notify = getattr(sink, "on_model_retry", None)
+            if notify is not None:
+                await notify(model_id, attempt)
+
         try:
             result = await execute_chat(
                 handler=handler,
@@ -133,6 +156,7 @@ class ChatGenerationExecutor:
                     replay_context=replay_context,
                     thinking_effort=params.get("thinking_effort"),
                     thinking_mode=params.get("thinking_mode"),
+                    on_model_retry=on_model_retry,
                 ),
                 cancellation_event=cancellation_event,
                 sink=sink,

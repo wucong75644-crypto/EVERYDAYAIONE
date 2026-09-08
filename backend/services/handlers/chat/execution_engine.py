@@ -54,6 +54,8 @@ class ChatExecutionRequest:
     replay_context: dict[str, Any] | None = None
     thinking_effort: str | None = None
     thinking_mode: str | None = None
+    retry_context: Any = None
+    on_model_retry: Callable[[str, int], Awaitable[None]] | None = None
     steer_reader: Callable[[], str | None] | None = None
     on_cancel: Callable[
         [list[dict[str, Any]], list[dict[str, Any]], str, str, str],
@@ -69,6 +71,8 @@ class ChatExecutionResult:
     credits_cost: int
     tool_digest: dict[str, Any] | None
     replay_context: dict[str, Any] | None = None
+    model_id: str | None = None
+    retry_context: Any = None
 
 
 async def execute_chat(
@@ -100,6 +104,8 @@ async def execute_chat(
         context_anchor=request.context_anchor,
         replay_context=request.replay_context,
         cancellation_event=event,
+        retry_context=request.retry_context,
+        on_model_retry=request.on_model_retry,
     )
     model_gateway = _get_model_gateway(prepared)
     handler._adapter = model_gateway
@@ -108,8 +114,7 @@ async def execute_chat(
     handler._pending_emit_payloads = []
     handler._pending_form_block = None
     handler._terminal_form_pending = False
-    # retry 在 execute_chat 返回后才发生；清空旧请求残留，异常时再从共享
-    # Gateway session 显式带出本次失败 attempt，不能依赖子 Task 的 ContextVar。
+    # 保留 T3 的跨 Task 关联出口；模型 retry 已在 Gateway 内执行。
     handler._last_model_attempt_context = None
     totals = StreamTotals()
     blocks: list[dict[str, Any]] = _initial_replay_blocks(
@@ -139,6 +144,8 @@ async def execute_chat(
         if form_hint:
             parts.append(TextPart(text=form_hint))
         return ChatExecutionResult(
+            model_id=getattr(model_gateway, "model_id", request.model_id),
+            retry_context=getattr(model_gateway, "retry_context", None),
             parts=parts,
             content_blocks=blocks,
             usage=totals.usage,
@@ -157,12 +164,19 @@ async def execute_chat(
                 prepared.budget.turns_used,
             ),
         )
-    except BaseException:
+    except BaseException as error:
         handler._last_model_attempt_context = getattr(
             model_gateway,
             "last_attempt_context",
             None,
         )
+        from services.model_gateway import ModelGatewayError
+
+        if isinstance(error, ModelGatewayError) and error.result.partial_output:
+            # 错误终态仍由 Web/Actor 原机制负责；先保存不足一个批次的 partial。
+            flush_progress = getattr(output, "flush_progress", None)
+            if flush_progress is not None:
+                await flush_progress()
         raise
     finally:
         await model_gateway.close()

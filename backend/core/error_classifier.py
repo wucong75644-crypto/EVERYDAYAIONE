@@ -14,7 +14,7 @@
 7. 未知错误 → UNKNOWN（不可重试）
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Optional
 
@@ -40,7 +40,7 @@ class ClassifiedError:
     original: Exception            # 原始异常
 
 
-def classify_error(error: Exception) -> ClassifiedError:
+def classify_error(error: Exception, *, model_call: bool = False) -> ClassifiedError:
     """
     统一错误分类入口。
 
@@ -64,6 +64,13 @@ def classify_error(error: Exception) -> ClassifiedError:
             )
     except ImportError:
         pass
+
+    # Chat Gateway 的 Provider 契约补全只在模型调用边界启用，避免改变
+    # KIE 图片/视频任务及其他外部服务已有的重试和退款语义。
+    if model_call:
+        provider_error = _classify_chat_provider_error(error)
+        if provider_error is not None:
+            return provider_error
 
     # ------------------------------------------------------------------
     # 1. Supabase PostgREST 数据库错误 → INFRA
@@ -306,3 +313,73 @@ def classify_error(error: Exception) -> ClassifiedError:
         error_code="UNKNOWN_ERROR",
         original=error,
     )
+
+
+def _classify_chat_provider_error(
+    error: Exception, seen: Optional[set[int]] = None,
+) -> Optional[ClassifiedError]:
+    """按类型、HTTP 状态和显式 cause 识别 Chat 错误，不匹配任意错误文本。"""
+    import httpx
+
+    from services.adapters.dashscope.chat_adapter import DashScopeAPIError
+    from services.adapters.openrouter.chat_adapter import OpenRouterAPIError
+    from services.adapters.google.models import GoogleAPIError
+    from services.adapters.kie.client import (
+        KieAPIError, KieAuthenticationError, KieInsufficientBalanceError,
+        KieRateLimitError,
+    )
+
+    provider_types = (KieAPIError, DashScopeAPIError, OpenRouterAPIError, GoogleAPIError)
+    if isinstance(error, (httpx.NetworkError, httpx.RemoteProtocolError)):
+        return replace(classify_error(ConnectionError()), original=error)
+    if not isinstance(error, (*provider_types, httpx.HTTPStatusError)):
+        return None
+
+    def classified(category, retryable, transient, refund, breaker, code):
+        return ClassifiedError(
+            category=category, is_retryable=retryable, is_transient=transient,
+            should_refund=refund, should_record_breaker=breaker,
+            error_code=code, original=error,
+        )
+
+    seen = seen if seen is not None else set()
+    if id(error) in seen:
+        return classified(ErrorCategory.UNKNOWN, False, False, False, False, "UNKNOWN_ERROR")
+    seen.add(id(error))
+
+    # KIE 子类可以不带 status_code；原来的 KIE_BALANCE/限流积分规则保留。
+    if isinstance(error, KieInsufficientBalanceError):
+        return classify_error(error)
+    if isinstance(error, KieRateLimitError):
+        return classify_error(error)
+    if isinstance(error, KieAuthenticationError):
+        return classified(ErrorCategory.BUSINESS, False, False, True, False, "BUSINESS_ERROR")
+
+    status = (
+        error.response.status_code if isinstance(error, httpx.HTTPStatusError)
+        else getattr(error, "status_code", None)
+    )
+    try:
+        status = int(status or 0)
+    except (ValueError, TypeError):
+        status = 0
+    if status == 429:
+        return classified(ErrorCategory.TRANSIENT, True, True, False, True, "RATE_LIMIT")
+    if status == 408:
+        return classified(ErrorCategory.TRANSIENT, False, True, True, True, "MODEL_TIMEOUT")
+    if 400 <= status < 500:
+        return classified(ErrorCategory.BUSINESS, False, False, True, False, "BUSINESS_ERROR")
+    if 500 <= status < 600:
+        return classified(ErrorCategory.MODEL, True, False, True, True, "MODEL_ERROR")
+
+    # Provider 包装的网络错误仍可识别；未知/编程错误不能因包装而变为可重试。
+    cause = error.__cause__
+    if isinstance(cause, Exception):
+        result = _classify_chat_provider_error(cause, seen)
+        return replace(result or classify_error(cause), original=error)
+    if cause is not None:
+        return classified(ErrorCategory.UNKNOWN, False, False, False, False, "UNKNOWN_ERROR")
+    # KIE 原有的通用 Provider 失败保持 MODEL；新接入的无状态未知错误保守终止。
+    if isinstance(error, KieAPIError):
+        return classify_error(error)
+    return classified(ErrorCategory.UNKNOWN, False, False, False, False, "UNKNOWN_ERROR")
