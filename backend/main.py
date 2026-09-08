@@ -325,6 +325,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
+    from services.model_gateway import get_model_gateway
+    await get_model_gateway().close()
+
     # 优雅关闭：通知所有 WebSocket 客户端服务即将重启
     from schemas.websocket import build_server_restarting
     await ws_manager.broadcast_all(build_server_restarting())

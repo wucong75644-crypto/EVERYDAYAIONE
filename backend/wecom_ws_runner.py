@@ -243,6 +243,9 @@ async def main() -> None:
     # 阻塞直到收到关闭信号
     await stop_event.wait()
 
+    from services.model_gateway import get_model_gateway
+    await get_model_gateway().close()
+
     proactive_task.cancel()
     try:
         await proactive_task

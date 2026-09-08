@@ -111,7 +111,7 @@ def test_delivery_session_replays_snapshot_and_fences_old_attempt():
         with conn.cursor() as cur:
             for signature in (
                 "begin_conversation_delivery_session(uuid,uuid,integer,uuid)",
-                "append_conversation_delivery_event(uuid,uuid,text,jsonb)",
+                "append_conversation_delivery_event(uuid,uuid,text,jsonb,uuid)",
                 "save_conversation_delivery_snapshot(uuid,uuid,text,jsonb)",
                 "read_conversation_delivery_state(uuid,uuid,bigint)",
             ):
@@ -132,15 +132,22 @@ def test_delivery_session_replays_snapshot_and_fences_old_attempt():
             first = _rpc(
                 cur,
                 "append_conversation_delivery_event",
-                (task_id, old_token, "message_start", _jsonb({"model": "test"})),
+                (task_id, old_token, "message_start", _jsonb({"model": "test"}), uuid.uuid4()),
             )
+            second_event_id = uuid.uuid4()
             second = _rpc(
                 cur,
                 "append_conversation_delivery_event",
-                (task_id, old_token, "message_chunk", _jsonb({"chunk": "新增"})),
+                (task_id, old_token, "message_chunk", _jsonb({"chunk": "新增"}), second_event_id),
             )
             assert first["delivery_seq"] == 1
             assert second["delivery_seq"] == 2
+            duplicate = _rpc(
+                cur,
+                "append_conversation_delivery_event",
+                (task_id, old_token, "message_chunk", _jsonb({"chunk": "新增"}), second_event_id),
+            )
+            assert duplicate["delivery_seq"] == second["delivery_seq"]
 
             saved = _rpc(
                 cur,
@@ -168,7 +175,7 @@ def test_delivery_session_replays_snapshot_and_fences_old_attempt():
             after_snapshot = _rpc(
                 cur,
                 "append_conversation_delivery_event",
-                (task_id, old_token, "thinking_chunk", _jsonb({"chunk": "思考"})),
+                (task_id, old_token, "thinking_chunk", _jsonb({"chunk": "思考"}), uuid.uuid4()),
             )
             assert after_snapshot["delivery_seq"] == 3
             incremental = _rpc(
@@ -199,7 +206,7 @@ def test_delivery_session_replays_snapshot_and_fences_old_attempt():
             old_append = _rpc(
                 cur,
                 "append_conversation_delivery_event",
-                (task_id, old_token, "message_chunk", _jsonb({"chunk": "旧"})),
+                (task_id, old_token, "message_chunk", _jsonb({"chunk": "旧"}), uuid.uuid4()),
             )
             assert old_append["outcome"] == "ownership_lost"
 

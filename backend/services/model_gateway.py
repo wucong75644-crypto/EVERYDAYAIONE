@@ -1,8 +1,8 @@
 """进程内 Chat ModelGateway。
 
 Gateway 是主 Chat、Actor Chat 和企微兼容入口共享的模型边界。它复用现有
-模型注册表与 adapter factory，只负责打开一次模型会话、转发 StreamChunk
-以及关闭 Provider adapter；工具编排、消息持久化和通道协议仍由上层负责。
+模型注册表、adapter factory、RetryContext 与 IntentRouter，统一执行安全的
+模型 attempt；工具编排、消息持久化和通道协议仍由上层负责。
 """
 
 from __future__ import annotations
@@ -13,6 +13,16 @@ from dataclasses import dataclass, replace
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
 from uuid import uuid4
+from weakref import WeakSet
+
+from services.model_gateway_concurrency import ModelConcurrencyGate, ModelConcurrencyLease
+
+from services.model_gateway_retry import (
+    ModelAttemptResult,
+    ModelCallResult,
+    ModelGatewayError,
+    ModelRetryPolicy,
+)
 
 from services.agent.observability.model_sampling import (
     ModelSamplingEvent,
@@ -65,7 +75,8 @@ class ModelCallRequest:
     task_id 是业务任务 ID；trace_id 复用既有全链路追踪。request_id 可由
     调用方为单次模型请求显式指定；未指定时 Gateway 在真正开始 Provider 调用
     前生成。timeout 和 cancel_token 由 Gateway 统一落实为请求 deadline 与取消边界；
-    retry_policy 仍由既有上层重试层持有，Gateway 不自行决定或执行重试。
+    retry_policy 注入既有 RetryContext/IntentRouter，Gateway 负责执行 attempt。
+    未注入策略的辅助模型链路保持单次调用和原始异常兼容。
     """
 
     model_id: str
@@ -89,6 +100,9 @@ class ModelGatewaySession:
         request: ModelCallRequest,
         event_publisher: SamplingEventPublisher | None = None,
         provider: str | None = None,
+        adapter_factory: Callable[[str], Any] | None = None,
+        open_error: Exception | None = None,
+        concurrency_gate: ModelConcurrencyGate | None = None,
     ) -> None:
         self._adapter = adapter
         self.request = request
@@ -97,6 +111,19 @@ class ModelGatewaySession:
         self._provider = provider
         self._request_index = 0
         self._last_attempt_context: ModelAttemptContext | None = None
+        self._adapter_factory = adapter_factory
+        self._open_error = open_error
+        self._attempt_results: list[ModelAttemptResult] = []
+        self.last_result: ModelCallResult | None = None
+        self._output_started = False
+        self._concurrency_gate = concurrency_gate or get_model_gateway()._concurrency_gate
+        self._lease: ModelConcurrencyLease | None = None
+        self._acquire_task: asyncio.Task[Any] | None = None
+        self._routing_task: asyncio.Task[Any] | None = None
+        self._next_chunk: asyncio.Task[Any] | None = None
+        self._provider_iterator: Any = None
+        self._call_active = False
+        self._cancel_attempt: Callable[[], None] | None = None
         # 延迟解析默认 timeout：open_chat 本身不能发起 Provider 请求，且
         # headless/测试注入器可能只构造会话而不消费模型流。
         self._stream_timeout = (
@@ -131,6 +158,11 @@ class ModelGatewaySession:
         return self._last_attempt_context
 
     @property
+    def retry_context(self) -> Any:
+        policy = self.request.retry_policy
+        return policy.context if isinstance(policy, ModelRetryPolicy) else None
+
+    @property
     def supports_google_search(self) -> bool:
         return bool(getattr(self._adapter, "supports_google_search", False))
 
@@ -152,12 +184,143 @@ class ModelGatewaySession:
         turn_index: int | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
-        """转发现有 StreamChunk，并统一处理请求 deadline 与取消。"""
+        """同一会话的工具回合顺序消费；不同会话共享进程内准入。"""
+        if self._call_active:
+            raise RuntimeError("MODEL_GATEWAY_SESSION_BUSY")
+        self._call_active = True
+        stream = self._stream_chat(
+            messages, reasoning_effort, thinking_mode, turn_index=turn_index, **kwargs,
+        )
+        try:
+            async for chunk in stream:
+                yield chunk
+        finally:
+            try:
+                await stream.aclose()
+            finally:
+                self._call_active = False
+
+    async def _stream_chat(
+        self,
+        messages: list[dict[str, Any]],
+        reasoning_effort: str | None = None,
+        thinking_mode: str | None = None,
+        *,
+        turn_index: int | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[StreamChunk]:
+        """一个请求内执行 attempt；首个 chunk 一旦交付就禁止重放。"""
         if self._closed:
             raise RuntimeError("MODEL_GATEWAY_SESSION_CLOSED")
         request_index = self._request_index
         self._request_index += 1
         request_id = self._next_request_id(request_index)
+        self._attempt_results = []
+        self.last_result = None
+        policy = self.request.retry_policy
+        while True:
+            attempt_stream = self._stream_attempt(
+                messages=messages,
+                reasoning_effort=reasoning_effort,
+                thinking_mode=thinking_mode,
+                request_index=request_index,
+                request_id=request_id,
+                turn_index=turn_index,
+                **kwargs,
+            )
+            try:
+                async for chunk in attempt_stream:
+                    yield chunk
+            except (asyncio.CancelledError, GeneratorExit):
+                await attempt_stream.aclose()
+                self._finish_result(request_id, "cancelled", error_code="MODEL_CANCELLED")
+                raise
+            except Exception as error:
+                from core.error_classifier import classify_error
+
+                classified = classify_error(error, model_call=True)
+                if self._attempt_results:
+                    self._attempt_results[-1] = replace(
+                        self._attempt_results[-1], error_code=classified.error_code,
+                    )
+                # 工具回合共享一个 Chat 会话；之前回合已有输出也不能换模，
+                # 避免重放工具或把前一模型的累计 usage 按新模型重新计价。
+                partial = self._output_started
+                if classified.should_record_breaker:
+                    self._record_breaker(success=False, error=error)
+                stop_reason = "not_retryable"
+                try:
+                    # 取消优先于已完成的失败；路由、通知与工厂之间也检查取消。
+                    _raise_if_cancelled(self.request.cancel_token, self.task_id)
+                    if partial:
+                        stop_reason = "partial_output"
+                    elif classified.is_retryable and isinstance(policy, ModelRetryPolicy):
+                        policy.context = policy.build_context(self.model_id, error, policy.context)
+                        if policy.context is None:
+                            stop_reason = "retry_disabled"
+                        elif not policy.context.can_retry:
+                            stop_reason = "retry_exhausted"
+                        else:
+                            # 失败 adapter 在异步路由期间就释放，不与下一 attempt 重叠。
+                            await self._close_attempt_adapter()
+                            decision = await self._await_retry_routing(policy.route(policy.context))
+                            _raise_if_cancelled(self.request.cancel_token, self.task_id)
+                            new_model = getattr(decision, "recommended_model", None)
+                            if self._valid_retry_model(new_model, policy):
+                                previous = self._last_attempt_context
+                                self.request = replace(self.request, model_id=new_model)
+                                self._provider = _resolve_provider(new_model)
+                                if policy.on_retry is not None:
+                                    await policy.on_retry(new_model, len(policy.context.failed_attempts))
+                                _raise_if_cancelled(self.request.cancel_token, self.task_id)
+                                self.record_retry_started(
+                                    request_id=request_id,
+                                    previous_attempt_id=previous.attempt_id if previous else None,
+                                    turn_index=turn_index,
+                                    request_index=request_index,
+                                )
+                                continue
+                            stop_reason = "no_candidate"
+                except asyncio.CancelledError:
+                    self._finish_result(request_id, "cancelled", error_code="MODEL_CANCELLED")
+                    await self._close_attempt_adapter()
+                    raise
+                # timeout 保留 T4 错误码；部分结果显式失败，绝不伪装成功结算。
+                error_code = (
+                    "MODEL_TIMEOUT" if classified.error_code == "MODEL_TIMEOUT"
+                    else "MODEL_PARTIAL_OUTPUT" if partial
+                    else "GENERATION_FAILED" if classified.is_retryable
+                    else classified.error_code
+                )
+                self._finish_result(
+                    request_id, "failed", error_code=error_code,
+                    stop_reason=stop_reason, classified_error=classified,
+                )
+                if isinstance(policy, ModelRetryPolicy):
+                    await self._close_attempt_adapter()
+                    raise ModelGatewayError(self.last_result, error) from error
+                raise
+            else:
+                self._record_breaker(success=True)
+                self._finish_result(request_id, "completed")
+                return
+            finally:
+                await attempt_stream.aclose()
+
+    async def _stream_attempt(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        reasoning_effort: str | None,
+        thinking_mode: str | None,
+        request_index: int,
+        request_id: str,
+        turn_index: int | None,
+        **kwargs: Any,
+    ) -> AsyncIterator[StreamChunk]:
+        """T3/T4 的单次 Provider 生命周期、deadline 和资源清理边界。"""
+        if self._closed:
+            raise asyncio.CancelledError
         attempt_id = _new_identifier("attempt")
         attempt_context = ModelAttemptContext(
             task_id=self.task_id,
@@ -179,6 +342,9 @@ class ModelGatewaySession:
         }
         first_chunk_emitted = False
         terminal_emitted = False
+        wait_started = asyncio.get_running_loop().time()
+        queue_wait_ms = 0.0
+        rejection_reason: str | None = None
 
         def emit(
             event_type: SamplingEventType,
@@ -194,6 +360,13 @@ class ModelGatewaySession:
                 if terminal_emitted:
                     return
                 terminal_emitted = True
+                self._attempt_results.append(ModelAttemptResult(
+                    context=attempt_context,
+                    status=event_type.value,
+                    usage=dict(usage),
+                    partial_output=first_chunk_emitted,
+                    error_code=error_type,
+                ))
             self._emit_event(
                 ModelSamplingEvent(
                     event=event_type,
@@ -207,19 +380,51 @@ class ModelGatewaySession:
                     turn_index=turn_index,
                     usage=dict(usage),
                     error_type=error_type,
+                    queue_wait_ms=queue_wait_ms,
+                    rejection_reason=rejection_reason,
                 )
             )
 
         emit(SamplingEventType.STARTED)
+        def cancel_attempt() -> None:
+            if not terminal_emitted:
+                emit(SamplingEventType.CANCELLED)
+                self._finish_result(request_id, "cancelled", error_code="MODEL_CANCELLED")
+        self._cancel_attempt = cancel_attempt
         provider_iterator: Any = None
         next_chunk: asyncio.Task[Any] | None = None
         cancel_waiter: asyncio.Task[Any] | None = None
         stream_timeout: float | None = None
         try:
             _raise_if_cancelled(self.request.cancel_token, self.task_id)
+            self._check_provider_available()
+            if self._open_error is not None:
+                open_error, self._open_error = self._open_error, None
+                raise open_error
+            if self._adapter is None:
+                self._adapter = self._adapter_factory(self.model_id)
+            policy = self.request.retry_policy
+            if isinstance(policy, ModelRetryPolicy) and policy.prepare_stream is not None:
+                kwargs = policy.prepare_stream(self, kwargs)
             stream_timeout = self._stream_timeout
             if stream_timeout is None:
                 stream_timeout = _resolve_request_timeout(self.request)
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + stream_timeout
+            wait_started = loop.time()
+            try:
+                self._lease = await self._acquire_slot(deadline, stream_timeout)
+            except ModelGatewayTimeoutError:
+                queue_wait_ms = (loop.time() - wait_started) * 1000
+                rejection_reason = "queue_timeout"
+                emit(SamplingEventType.CONCURRENCY_REJECTED)
+                raise
+            finally:
+                queue_wait_ms = (loop.time() - wait_started) * 1000
+            # 创建会话和实际开始调用之间可能已被同 Provider 的其他请求熔断。
+            if self._closed:
+                raise asyncio.CancelledError
+            self._check_provider_available()
             provider_stream = self._adapter.stream_chat(
                 messages=messages,
                 reasoning_effort=reasoning_effort,
@@ -227,9 +432,10 @@ class ModelGatewaySession:
                 **kwargs,
             )
             provider_iterator = provider_stream.__aiter__()
-            loop = asyncio.get_running_loop()
-            deadline = loop.time() + stream_timeout
+            self._provider_iterator = provider_iterator
             while True:
+                if self._closed:
+                    raise asyncio.CancelledError
                 _raise_if_cancelled(self.request.cancel_token, self.task_id)
                 remaining = self._remaining_timeout(deadline)
                 if remaining <= 0:
@@ -241,6 +447,7 @@ class ModelGatewaySession:
                     )
 
                 next_chunk = asyncio.create_task(provider_iterator.__anext__())
+                self._next_chunk = next_chunk
                 cancel_waiter = _create_cancel_waiter(
                     self.request.cancel_token,
                     self.task_id,
@@ -281,11 +488,17 @@ class ModelGatewaySession:
                     next_chunk = None
                     break
                 next_chunk = None
-                _raise_if_cancelled(self.request.cancel_token, self.task_id)
+                if self._is_cancelled():
+                    raise asyncio.CancelledError
                 _accumulate_usage(usage, chunk)
+                if isinstance(policy, ModelRetryPolicy) and getattr(chunk, "finish_reason", None) in {"content_filter", "safety", "SAFETY"}:
+                    from core.exceptions import ValidationError
+
+                    raise ValidationError("模型拒绝了本次请求")
                 if not first_chunk_emitted:
                     first_chunk_emitted = True
                     emit(SamplingEventType.FIRST_CHUNK)
+                self._output_started = True
                 yield chunk
             emit(SamplingEventType.COMPLETED)
         except ModelGatewayTimeoutError as error:
@@ -296,6 +509,14 @@ class ModelGatewaySession:
             emit(SamplingEventType.CANCELLED)
             raise
         except Exception as error:
+            from core.error_classifier import classify_error
+
+            classified = classify_error(error, model_call=True)
+            if classified.error_code in {"RATE_LIMIT", "KIE_RATE_LIMIT"} or _provider_overloaded(error):
+                emit(SamplingEventType.PROVIDER_OVERLOADED, error_type=classified.error_code)
+            if classified.error_code == "PROVIDER_UNAVAILABLE":
+                rejection_reason = "circuit_open"
+                emit(SamplingEventType.PROVIDER_REJECTED, error_type=classified.error_code)
             if _is_timeout_error(error):
                 await self._stop_provider_stream(provider_iterator)
                 timeout_error = ModelGatewayTimeoutError(
@@ -311,10 +532,97 @@ class ModelGatewaySession:
             emit(SamplingEventType.FAILED, error_type=type(error).__name__)
             raise
         finally:
-            if cancel_waiter is not None and not cancel_waiter.done():
-                cancel_waiter.cancel()
+            try:
+                if cancel_waiter is not None and not cancel_waiter.done():
+                    cancel_waiter.cancel()
+                if cancel_waiter is not None:
+                    await asyncio.gather(cancel_waiter, return_exceptions=True)
+                if provider_iterator is not None:
+                    close_iterator = getattr(provider_iterator, "aclose", None)
+                    if close_iterator is not None:
+                        try:
+                            await close_iterator()
+                        except Exception:
+                            pass
+            finally:
+                self._release_slot()
+                self._provider_iterator = None
+                self._next_chunk = None
+                self._cancel_attempt = None
+
+    async def _acquire_slot(self, deadline: float, timeout: float) -> ModelConcurrencyLease:
+        pending = asyncio.create_task(self._concurrency_gate.acquire())
+        self._acquire_task = pending
+        cancel_waiter = _create_cancel_waiter(self.request.cancel_token, self.task_id)
+        transferred = False
+        try:
+            waiters = {pending}
             if cancel_waiter is not None:
-                await asyncio.gather(cancel_waiter, return_exceptions=True)
+                waiters.add(cancel_waiter)
+            while True:
+                done, _ = await asyncio.wait(
+                    waiters, timeout=max(0, min(0.05, self._remaining_timeout(deadline))),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if done or self._remaining_timeout(deadline) <= 0:
+                    break
+                # 沿用进程内熔断器的同步状态；排队时 Provider 变为 OPEN
+                # 也能及时退出，不等待无关 Provider 的长流释放槽位。
+                self._check_provider_available()
+            _raise_if_cancelled(self.request.cancel_token, self.task_id)
+            if self._closed or (cancel_waiter is not None and cancel_waiter in done):
+                raise asyncio.CancelledError
+            if pending not in done or self._remaining_timeout(deadline) <= 0:
+                raise ModelGatewayTimeoutError(self.model_id, timeout, "queue")
+            lease = pending.result()
+            self._lease = lease
+            transferred = True
+            return lease
+        finally:
+            for waiter in (pending, cancel_waiter):
+                if waiter is not None and not waiter.done():
+                    waiter.cancel()
+            try:
+                await asyncio.gather(*(w for w in (pending, cancel_waiter) if w is not None), return_exceptions=True)
+            finally:
+                # cancel/timeout 与 acquire 同时完成时，成功得到的 lease
+                # 也必须归还；清理期间再次 Task.cancel 不能跳过归还。
+                if not transferred and pending.done() and not pending.cancelled() and pending.exception() is None:
+                    pending.result().release()
+                self._acquire_task = None
+
+    def _release_slot(self) -> None:
+        lease, self._lease = self._lease, None
+        if lease is not None:
+            lease.release()
+
+    def _check_provider_available(self) -> None:
+        from services.adapters.factory import MODEL_REGISTRY, DEFAULT_MODEL_ID
+        from services.adapters.types import ProviderUnavailableError
+        from services.circuit_breaker import is_provider_available
+
+        config = MODEL_REGISTRY.get(self.model_id)
+        if config is None and self.provider is not None:
+            config = MODEL_REGISTRY.get(DEFAULT_MODEL_ID)
+        if config is not None and not is_provider_available(config.provider):
+            raise ProviderUnavailableError("Provider circuit is open", provider=config.provider)
+
+    def _record_breaker(self, *, success: bool, error: Exception | None = None) -> None:
+        policy = self.request.retry_policy
+        if isinstance(policy, ModelRetryPolicy):
+            policy.record_breaker(self.model_id, success=success, **({"error": error} if error else {}))
+        else:
+            # 辅助模型链路同样计入现有 Provider 熔断器，不增加一套统计。
+            from services.adapters.factory import MODEL_REGISTRY
+            from services.circuit_breaker import get_breaker
+
+            config = MODEL_REGISTRY.get(self.model_id)
+            if config is not None:
+                breaker = get_breaker(config.provider)
+                if success:
+                    breaker.record_success()
+                else:
+                    breaker.record_failure()
 
     def record_retry_started(
         self,
@@ -322,8 +630,9 @@ class ModelGatewaySession:
         request_id: str,
         previous_attempt_id: str | None = None,
         turn_index: int | None = None,
+        request_index: int | None = None,
     ) -> None:
-        """供既有重试层声明重试开始；本方法不决定也不执行重试。"""
+        """沿用 T3 重试关联事件；每个实际 attempt 独占一个 attempt_id。"""
         self._emit_event(
             ModelSamplingEvent(
                 event=SamplingEventType.RETRY_STARTED,
@@ -334,10 +643,80 @@ class ModelGatewaySession:
                 previous_attempt_id=previous_attempt_id,
                 model_id=self.model_id,
                 provider=self.provider,
-                request_index=self._request_index,
+                request_index=self._request_index if request_index is None else request_index,
                 turn_index=turn_index,
             )
         )
+
+    def _finish_result(self, request_id: str, status: str, **kwargs: Any) -> None:
+        last = self._attempt_results[-1] if self._attempt_results else None
+        self.last_result = ModelCallResult(
+            request_id=request_id,
+            model_id=last.context.model_id if last else self.model_id,
+            status=status,
+            attempts=tuple(self._attempt_results),
+            usage=dict(last.usage) if last else {},
+            partial_output=self._output_started and status != "completed",
+            **kwargs,
+        )
+        if status == "failed" and last is not None:
+            # attempt FAILED 与逻辑请求最终失败分开记录；不重复创建
+            # Langfuse generation，也不把 retry 的中间失败当成最终失败。
+            context = last.context
+            self._emit_event(ModelSamplingEvent(
+                event=SamplingEventType.REQUEST_FAILED,
+                request_id=request_id, attempt_id=context.attempt_id,
+                model_id=context.model_id, provider=context.provider,
+                task_id=context.task_id, trace_id=context.trace_id,
+                request_index=context.request_index, turn_index=context.turn_index,
+                error_code=self.last_result.error_code, stop_reason=self.last_result.stop_reason,
+            ))
+
+    def _valid_retry_model(self, model_id: str | None, policy: ModelRetryPolicy) -> bool:
+        if not model_id or model_id in policy.context.failed_models or self._adapter_factory is None:
+            return False
+        from services.adapters.factory import MODEL_REGISTRY
+
+        # 工厂会把未知 ID 静默映射为默认模型；retry 不能借此绕过失败模型排除。
+        return model_id in MODEL_REGISTRY
+
+    async def _await_retry_routing(self, routing: Any) -> Any:
+        """路由期间响应同一取消 token/执行预算，不新增退避次数或 deadline。"""
+        if self._closed:
+            routing.close()
+            raise asyncio.CancelledError
+        pending = asyncio.create_task(routing)
+        self._routing_task = pending
+        cancel_waiter = _create_cancel_waiter(self.request.cancel_token, self.task_id)
+        try:
+            waiters = {pending}
+            if cancel_waiter is not None:
+                waiters.add(cancel_waiter)
+            remaining = getattr(self.request.budget, "remaining", None)
+            timeout = float(remaining) if isinstance(remaining, (float, int)) else None
+            done, _ = await asyncio.wait(waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+            _raise_if_cancelled(self.request.cancel_token, self.task_id)
+            if cancel_waiter is not None and cancel_waiter in done:
+                raise asyncio.CancelledError
+            if pending not in done:
+                # 原始 Provider 失败已经记录；预算用尽时不给下一 attempt。
+                return None
+            return pending.result()
+        finally:
+            for waiter in (pending, cancel_waiter):
+                if waiter is not None and not waiter.done():
+                    waiter.cancel()
+            await asyncio.gather(*(w for w in (pending, cancel_waiter) if w is not None), return_exceptions=True)
+            self._routing_task = None
+
+    async def _close_attempt_adapter(self) -> None:
+        adapter, self._adapter = self._adapter, None
+        if adapter is not None:
+            try:
+                await adapter.close()
+            except Exception:
+                # 清理不能掩盖已记录的模型失败或取消。
+                pass
 
     def _next_request_id(self, request_index: int) -> str:
         if request_index == 0 and self.request.request_id:
@@ -356,10 +735,20 @@ class ModelGatewaySession:
         if self._closed:
             return
         self._closed = True
-        await self._adapter.close()
+        pending = [task for task in (self._acquire_task, self._routing_task) if task is not None]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        try:
+            await self._stop_provider_stream(self._provider_iterator, self._next_chunk)
+        finally:
+            self._release_slot()
+            if self._cancel_attempt is not None:
+                self._cancel_attempt()
 
     def _is_cancelled(self) -> bool:
-        return _is_cancelled(self.request.cancel_token, self.task_id)
+        return self._closed or _is_cancelled(self.request.cancel_token, self.task_id)
 
     def _remaining_timeout(self, deadline: float) -> float:
         remaining = deadline - asyncio.get_running_loop().time()
@@ -385,10 +774,8 @@ class ModelGatewaySession:
                     await close_iterator()
                 except Exception:
                     pass
-        try:
-            await self.close()
-        except Exception:
-            pass
+        self._closed = True
+        await self._close_attempt_adapter()
 
 
 class ModelGateway:
@@ -398,12 +785,18 @@ class ModelGateway:
         self,
         adapter_factory: Callable[..., Any] | None = None,
         event_publisher: SamplingEventPublisher | None = None,
+        max_concurrency: int | None = None,
     ) -> None:
         self._adapter_factory = adapter_factory
         self._event_publisher = event_publisher or ObservabilitySamplingEventPublisher()
+        self._concurrency_gate = ModelConcurrencyGate(max_concurrency)
+        self._sessions: WeakSet[ModelGatewaySession] = WeakSet()
+        self._closed = False
 
     def open_chat(self, request: ModelCallRequest) -> ModelGatewaySession:
         """按现有工厂选择模型并创建一个可复用的 Chat 会话。"""
+        if self._closed:
+            raise RuntimeError("MODEL_GATEWAY_CLOSED")
         # 让 pre-stream factory 异常也有完整的 request 生命周期；正常会话
         # 的首个 stream 会复用该 request_id，而后续工具回合自行生成新 ID。
         if request.request_id is None:
@@ -427,6 +820,18 @@ class ModelGateway:
         try:
             adapter = adapter_factory(request.model_id, **factory_kwargs)
         except Exception as error:
+            if isinstance(request.retry_policy, ModelRetryPolicy):
+                # 同步 open 无法调用异步 IntentRouter。将这个确定的 factory
+                # 失败交给首个 attempt 处理，只记录一次失败且不重复建同一模型。
+                session = ModelGatewaySession(
+                    None, request, event_publisher=self._event_publisher,
+                    provider=provider,
+                    adapter_factory=lambda model: adapter_factory(model, **factory_kwargs),
+                    open_error=error,
+                    concurrency_gate=self._concurrency_gate,
+                )
+                self._sessions.add(session)
+                return session
             attempt_id = _new_identifier("attempt")
             _set_attempt_context(ModelAttemptContext(
                 task_id=request.task_id,
@@ -444,12 +849,21 @@ class ModelGateway:
                 error=error,
             )
             raise
-        return ModelGatewaySession(
+        session = ModelGatewaySession(
             adapter,
             request,
             event_publisher=self._event_publisher,
             provider=provider,
+            adapter_factory=lambda model: adapter_factory(model, **factory_kwargs),
+            concurrency_gate=self._concurrency_gate,
         )
+        self._sessions.add(session)
+        return session
+
+    async def close(self) -> None:
+        """服务退出时停止排队和在途模型流；不修改业务任务状态。"""
+        self._closed = True
+        await asyncio.gather(*(session.close() for session in tuple(self._sessions)))
 
     def record_retry_started(
         self,
@@ -620,6 +1034,19 @@ def _is_timeout_error(error: BaseException) -> bool:
     return False
 
 
+def _provider_overloaded(error: BaseException) -> bool:
+    """只读取结构化 HTTP 状态，不检查可能带正文的异常文本。"""
+    seen: set[int] = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        response = getattr(error, "response", None)
+        status = getattr(response, "status_code", None) or getattr(error, "status_code", None)
+        if str(status) in {"429", "503", "529"}:
+            return True
+        error = error.__cause__
+    return False
+
+
 def _new_identifier(kind: str) -> str:
     return f"{kind}_{uuid4().hex}"
 
@@ -682,6 +1109,9 @@ __all__ = [
     "ModelCallRequest",
     "ModelAttemptContext",
     "ModelGatewayTimeoutError",
+    "ModelRetryPolicy",
+    "ModelCallResult",
+    "ModelGatewayError",
     "ModelGateway",
     "ModelGatewaySession",
     "get_model_attempt_context",

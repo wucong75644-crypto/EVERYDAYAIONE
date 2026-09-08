@@ -59,7 +59,7 @@ async def call_llm_with_tools(
     model_id: str = "qwen3-30b-a3b",
 ) -> Dict[str, Any]:
     """多轮工具循环：模拟真实 ChatHandler 行为，mock 工具返回"""
-    from services.adapters.factory import create_chat_adapter
+    from services.model_gateway import ModelCallRequest, get_model_gateway
     from config.chat_tools import get_tool_system_prompt
 
     messages = [
@@ -79,12 +79,12 @@ async def call_llm_with_tools(
     for turn in range(MAX_BENCHMARK_TURNS):
         turns_used = turn + 1
 
-        adapter = create_chat_adapter(model_id)
+        session = get_model_gateway().open_chat(ModelCallRequest(model_id=model_id))
         tc_acc: Dict[int, Dict[str, Any]] = {}
         turn_text = ""
 
         try:
-            async for chunk in adapter.stream_chat(
+            async for chunk in session.stream_chat(
                 messages=messages, tools=current_tools,
             ):
                 if chunk.content:
@@ -102,7 +102,7 @@ async def call_llm_with_tools(
                         if tc.arguments_delta:
                             entry["arguments"] += tc.arguments_delta
         finally:
-            await adapter.close()
+            await session.close()
 
         if not tc_acc:
             text_acc = turn_text

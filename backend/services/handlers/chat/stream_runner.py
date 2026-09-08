@@ -40,6 +40,8 @@ class LegacyStreamRequest:
 @dataclass
 class _RunResult:
     permission_mode: str
+    model_id: str | None = None
+    retry_context: Any = None
     text_content: str = ""
     accumulated_text: str = ""
     usage: dict[str, Any] = field(
@@ -97,9 +99,9 @@ async def run_legacy_chat_stream(
         conversation_id=request.conversation_id,
         text_content=result.text_content,
         accumulated_text=result.accumulated_text,
-        model_id=request.model_id,
+        model_id=result.model_id or request.model_id,
         usage=result.usage,
-        retry_context=request.retry_context,
+        retry_context=result.retry_context,
     )
 
 
@@ -163,6 +165,7 @@ async def _execute_stream(
                 needs_google_search=request.needs_google_search,
                 thinking_effort=request.thinking_effort,
                 thinking_mode=request.thinking_mode,
+                retry_context=request.retry_context,
                 steer_reader=lambda: websocket.check_steer(request.task_id),
                 on_cancel=on_cancel,
             ),
@@ -177,6 +180,8 @@ async def _execute_stream(
     result.text_content = handler._extract_text_content(request.content)
     result.accumulated_text = sink.text
     result.usage = execution.usage
+    result.model_id = getattr(execution, "model_id", None) or request.model_id
+    result.retry_context = getattr(execution, "retry_context", None)
     result.completion_args = {
         "task_id": request.task_id,
         "result": execution.parts,

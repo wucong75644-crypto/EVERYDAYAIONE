@@ -346,12 +346,18 @@ class ConversationExecutionService:
             f"conversation_id={claim.conversation_id} | task_id={claim.task_id} | "
             f"turn_id={claim.turn_id} | error={type(error).__name__}"
         )
+        from services.model_gateway import ModelGatewayError
+
+        error_code = (
+            error.result.error_code if isinstance(error, ModelGatewayError)
+            else type(error).__name__.upper()[:50]
+        )
         return await self._rpc(
             "fail_generation_turn",
             {
                 "p_task_id": claim.task_id,
                 "p_execution_token": claim.execution_token,
-                "p_error_code": type(error).__name__.upper()[:50],
+                "p_error_code": error_code,
                 "p_error_message": str(error) or type(error).__name__,
             },
         )

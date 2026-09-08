@@ -92,7 +92,7 @@ async def run_llm_loop(
     max_turns: int = MAX_TURNS,
 ) -> Dict[str, Any]:
     """多轮工具循环，mock 工具返回"""
-    from services.adapters.factory import create_chat_adapter
+    from services.model_gateway import ModelCallRequest, get_model_gateway
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -104,12 +104,12 @@ async def run_llm_loop(
 
     for turn in range(max_turns):
         turns_used = turn + 1
-        adapter = create_chat_adapter(model_id)
+        session = get_model_gateway().open_chat(ModelCallRequest(model_id=model_id))
         tc_acc: Dict[int, Dict[str, Any]] = {}
         turn_text = ""
 
         try:
-            async for chunk in adapter.stream_chat(
+            async for chunk in session.stream_chat(
                 messages=messages, tools=tools,
             ):
                 if chunk.content:
@@ -127,7 +127,7 @@ async def run_llm_loop(
                         if tc.arguments_delta:
                             entry["arguments"] += tc.arguments_delta
         finally:
-            await adapter.close()
+            await session.close()
 
         if not tc_acc:
             break

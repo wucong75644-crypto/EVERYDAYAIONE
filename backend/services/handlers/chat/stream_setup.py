@@ -42,6 +42,8 @@ async def prepare_chat_stream(
     context_anchor: Any,
     replay_context: dict[str, Any] | None = None,
     cancellation_event: Any = None,
+    retry_context: Any = None,
+    on_model_retry: Any = None,
 ) -> PreparedChatStream:
     """准备一次固定上下文的 Chat 流执行，不读取或写入任务终态。"""
     started_at = time.monotonic()
@@ -75,6 +77,19 @@ async def prepare_chat_stream(
 
     from services.model_gateway import ModelCallRequest, get_model_gateway
     budget = _prepare_budget()
+    retry_policy = handler._build_model_retry_policy(
+        params=params, content=content, task_id=task_id,
+        conversation_id=conversation_id, user_id=user_id,
+        retry_context=retry_context, on_retry=on_model_retry,
+    )
+
+    def prepare_attempt(session, kwargs):
+        # 保留工具循环传入的工具列表；Provider 特有搜索工具按每次实际模型添加。
+        tools = list(kwargs.get("tools") or [])
+        _prepare_provider_tools(session, tools, needs_google_search, session.model_id, task_id)
+        return {**kwargs, "tools": tools} if tools else kwargs
+
+    retry_policy.prepare_stream = prepare_attempt
 
     model_gateway = get_model_gateway().open_chat(
         ModelCallRequest(
@@ -85,6 +100,7 @@ async def prepare_chat_stream(
             request_id=model_request_id,
             cancel_token=cancellation_event,
             budget=budget,
+            retry_policy=retry_policy,
         )
     )
     try:
@@ -99,13 +115,7 @@ async def prepare_chat_stream(
             handler.org_id,
             getattr(handler, "_personal_context_allowed", True),
         )
-        stream_kwargs = _prepare_provider_tools(
-            model_gateway,
-            core_tools,
-            needs_google_search,
-            model_id,
-            task_id,
-        )
+        stream_kwargs = {}
         tool_context = _prepare_request_context(
             handler,
             user_id,

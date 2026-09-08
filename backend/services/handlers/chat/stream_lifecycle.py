@@ -26,16 +26,18 @@ async def handle_stream_error(
     retry_context: Any,
     context_anchor: Any = None,
 ) -> None:
-    """区分 Provider 可重试错误和业务错误，不处理持久化阶段异常。"""
+    """接收 Gateway 最终结果；不再选择模型或执行模型 retry。"""
     from core.error_classifier import classify_error
+    from services.model_gateway import ModelGatewayError
 
     logger.error(
         f"Chat stream error | task_id={task_id} | "
         f"model={model_id} | error={error}"
     )
-    classified = classify_error(error)
-    if classified.should_record_breaker:
-        handler._record_breaker_result(model_id, success=False, error=error)
+    classified = (
+        error.result.classified_error if isinstance(error, ModelGatewayError)
+        else classify_error(error)
+    )
     if classified.is_retryable:
         await handler._handle_stream_failure(
             error=error,
@@ -61,7 +63,7 @@ async def handle_stream_error(
     )
     await handler.on_error(
         task_id=task_id,
-        error_code=classified.error_code,
+        error_code=error.result.error_code if isinstance(error, ModelGatewayError) else classified.error_code,
         error_message=str(error),
     )
 
@@ -105,7 +107,6 @@ async def persist_stream_completion(
         return
     try:
         await handler.on_complete(**completion_args)
-        handler._record_breaker_result(model_id, success=True)
         handler._dispatch_post_tasks(
             user_id=user_id,
             conversation_id=conversation_id,
