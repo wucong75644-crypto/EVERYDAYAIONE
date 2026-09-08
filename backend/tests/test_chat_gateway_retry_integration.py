@@ -61,9 +61,9 @@ def environment(monkeypatch):
     from services.handlers.permission_mode import PermissionMode
     monkeypatch.setattr(stream_setup, "_prepare_permission_and_tools", lambda *_args: (PermissionMode("ask"), []))
     events, sessions = [], []
-    def configure(*adapters):
+    def configure(*adapters, max_concurrency=None):
         factory = Mock(side_effect=adapters)
-        gateway = ModelGateway(adapter_factory=factory, event_publisher=SimpleNamespace(publish=events.append))
+        gateway = ModelGateway(adapter_factory=factory, event_publisher=SimpleNamespace(publish=events.append), max_concurrency=max_concurrency)
         original = gateway.open_chat
         def open_chat(request):
             session = original(request)

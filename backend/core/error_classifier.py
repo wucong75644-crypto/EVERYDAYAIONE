@@ -58,7 +58,7 @@ def classify_error(error: Exception, *, model_call: bool = False) -> ClassifiedE
                 is_retryable=False,
                 is_transient=True,
                 should_refund=True,
-                should_record_breaker=True,
+                should_record_breaker=error.phase != "queue",
                 error_code="MODEL_TIMEOUT",
                 original=error,
             )
