@@ -129,6 +129,8 @@ class Redis:
 
 @pytest.fixture
 async def chain(tmp_path, monkeypatch):
+    # 其他测试可能清空配置缓存；工厂与旁路须使用同一套隔离配置。
+    monkeypatch.setattr("services.adapters.factory.get_settings", lambda: settings)
     state = SimpleNamespace(
         db=Database(), posts=[], uploads={"auto": [], "overseas": []}, events=[],
         clients=[], http_options=[], mode=None, gate=asyncio.Event(), fail_code="400", success=False,

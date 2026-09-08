@@ -440,6 +440,7 @@ async def test_image_factory_passes_trusted_owner_without_changing_kie_payload()
     from services.adapters.factory import create_image_adapter
 
     with patch.object(settings, "kie_api_key", "test-key"), \
+         patch("services.adapters.factory.get_settings", return_value=settings), \
          patch("services.circuit_breaker.is_provider_available", return_value=True):
         adapter = create_image_adapter(IMAGE_MODEL, shadow_user_id=USER_ID, shadow_org_id=ORG_ID)
     client = adapter.client
