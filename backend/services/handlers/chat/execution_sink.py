@@ -224,8 +224,7 @@ class WebSocketExecutionSink:
         )
 
     async def flush(self) -> None:
-        await self._save_content(self._task_id, self.text)
-        await self._save_blocks(self._task_id, self.blocks)
+        await self.flush_progress()
         await self._send(
             build_stream_end(
                 task_id=self._task_id,
@@ -233,6 +232,11 @@ class WebSocketExecutionSink:
                 message_id=self._message_id,
             )
         )
+
+    async def flush_progress(self) -> None:
+        """保存部分输出，不声明流成功结束。"""
+        await self._save_content(self._task_id, self.text)
+        await self._save_blocks(self._task_id, self.blocks)
 
     async def _send_block(self, block: dict[str, Any]) -> None:
         await self._send(

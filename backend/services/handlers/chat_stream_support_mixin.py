@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 from schemas.message import ContentPart
-from schemas.websocket import build_message_start, build_message_chunk
 
 
 class ChatStreamSupportMixin:
@@ -113,120 +112,59 @@ class ChatStreamSupportMixin:
                 )
             )
 
+    def _build_model_retry_policy(
+        self, *, params, content, task_id, conversation_id, user_id,
+        retry_context=None, on_retry=None,
+    ):
+        """给 Gateway 注入原有策略；模型 attempt 不再递归重跑 Chat。"""
+        from services.model_gateway import ModelRetryPolicy
+
+        async def notify_retry(model_id: str, attempt: int) -> None:
+            if on_retry is not None:
+                # Actor 的 fenced 元数据/通道通知由 Actor executor 自己持有。
+                await on_retry(model_id, attempt)
+                return
+            await self._send_retry_notification(
+                task_id, conversation_id, user_id, model_id, attempt,
+            )
+            try:
+                self.db.table("tasks").update(
+                    {"model_id": model_id}
+                ).eq("external_task_id", task_id).execute()
+            except Exception as error:
+                logger.warning(f"Failed to update task model | task_id={task_id} | error={error}")
+
+        return ModelRetryPolicy(
+            build_context=lambda model_id, error, existing: self._build_retry_context(
+                params=params, content=content, model_id=model_id,
+                error=str(error), existing_ctx=existing,
+            ),
+            route=self._route_retry,
+            record_breaker=self._record_breaker_result,
+            on_retry=notify_retry,
+            context=retry_context,
+        )
+
     async def _handle_stream_failure(
-        self,
-        error: Exception,
-        task_id: str,
-        message_id: str,
-        conversation_id: str,
-        user_id: str,
-        content: List[ContentPart],
-        model_id: str,
-        thinking_effort: Optional[str],
-        thinking_mode: Optional[str],
-        permission_mode: str,
-        _params: Optional[Dict[str, Any]],
-        _retry_context: Optional[Any],
-        elapsed_ms: int,
-        context_anchor: Optional[Any] = None,
+        self, *, error: Exception, task_id: str, model_id: str,
+        user_id: str, elapsed_ms: int, **_kwargs,
     ) -> None:
-        """处理流式生成失败：尝试重试，否则报错 + 记录指标"""
-        retried = await self._attempt_chat_retry(
-            error=error, task_id=task_id, message_id=message_id,
-            conversation_id=conversation_id, user_id=user_id,
-            content=content, model_id=model_id,
-            thinking_effort=thinking_effort, thinking_mode=thinking_mode,
-            _params=_params, _retry_context=_retry_context,
-            context_anchor=context_anchor,
-        )
-        if not retried:
-            await self.on_error(
-                task_id=task_id,
-                error_code="GENERATION_FAILED",
-                error_message=str(error),
-            )
-            asyncio.create_task(
-                self._record_knowledge_metric(
-                    task_type="chat", model_id=model_id, status="failed",
-                    error_code="GENERATION_FAILED", cost_time_ms=elapsed_ms,
-                    user_id=user_id, org_id=self.org_id,
-                )
-            )
-            asyncio.create_task(
-                self._extract_failure_knowledge(
-                    task_type="chat", model_id=model_id,
-                    error_message=str(error),
-                )
-            )
+        """Gateway 已经结束模型请求；这里只提交旧 Web 失败终态和知识记录。"""
+        from core.error_classifier import classify_error
+        from services.model_gateway import ModelGatewayError
 
-    async def _attempt_chat_retry(
-        self,
-        error: Exception,
-        task_id: str,
-        message_id: str,
-        conversation_id: str,
-        user_id: str,
-        content: List[ContentPart],
-        model_id: str,
-        thinking_effort: Optional[str],
-        thinking_mode: Optional[str],
-        _params: Optional[Dict[str, Any]],
-        _retry_context: Optional[Any],
-        context_anchor: Optional[Any] = None,
-    ) -> bool:
-        """Smart mode 重试：调用千问大脑重新选择模型，成功则递归重试"""
-        retry_ctx = self._build_retry_context(
-            params=_params or {}, content=content,
-            model_id=model_id, error=str(error),
-            existing_ctx=_retry_context,
-        )
-        if not retry_ctx or not retry_ctx.can_retry:
-            return False
-
-        new_decision = await self._route_retry(retry_ctx)
-        if not new_decision or not new_decision.recommended_model:
-            return False
-
-        new_model = new_decision.recommended_model
-        attempt = len(retry_ctx.failed_attempts)
-        logger.info(
-            f"Chat retry | task_id={task_id} | "
-            f"failed={model_id} → new={new_model} | attempt={attempt}"
-        )
-        from services.model_gateway import record_retry_started
-
-        model_request_id = record_retry_started(
-            task_id=task_id,
-            model_id=new_model,
-            attempt_context=getattr(self, "_last_model_attempt_context", None),
-        )
-
-        # WS 通知前端正在重试
-        await self._send_retry_notification(
-            task_id, conversation_id, user_id, new_model, attempt,
-        )
-
-        # 关闭旧 adapter
-        if self._adapter:
-            await self._adapter.close()
-            self._adapter = None
-
-        # 更新 DB 中的 model_id
-        try:
-            self.db.table("tasks").update(
-                {"model_id": new_model}
-            ).eq("external_task_id", task_id).execute()
-        except Exception as e:
-            logger.warning(f"Failed to update task model | task_id={task_id} | error={e}")
-
-        # 递归重试（用新模型）
-        await self._stream_generate(
-            task_id=task_id, message_id=message_id,
-            conversation_id=conversation_id, user_id=user_id,
-            content=content, model_id=new_model,
-            model_request_id=model_request_id,
-            thinking_effort=thinking_effort, thinking_mode=thinking_mode,
-            _params=_params, _retry_context=retry_ctx,
-            context_anchor=context_anchor,
-        )
-        return True
+        if isinstance(error, ModelGatewayError):
+            code = error.result.error_code
+            model_id = error.result.model_id
+        else:
+            classified = classify_error(error)
+            code = "GENERATION_FAILED" if classified.is_retryable else classified.error_code
+        await self.on_error(task_id=task_id, error_code=code, error_message=str(error))
+        asyncio.create_task(self._record_knowledge_metric(
+            task_type="chat", model_id=model_id, status="failed",
+            error_code=code, cost_time_ms=elapsed_ms, user_id=user_id,
+            org_id=self.org_id,
+        ))
+        asyncio.create_task(self._extract_failure_knowledge(
+            task_type="chat", model_id=model_id, error_message=str(error),
+        ))
