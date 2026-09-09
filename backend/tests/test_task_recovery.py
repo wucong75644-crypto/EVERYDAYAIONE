@@ -12,8 +12,25 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from services.task_recovery import recover_orphan_tasks, _mark_task_failed
+
+
+@pytest.mark.parametrize("phase", ["waiting", "submitting", "submitted", "failed", "legacy_attempt"])
+async def test_restart_preserves_kie_fallback_for_completion_worker(phase):
+    params = {"_kie_image_fetch_fallback": {"phase": phase}}
+    if phase == "legacy_attempt":
+        params = {"_kie_image_fetch_fallback_attempted": True}
+    db = _mock_db([{
+        "id": "local-kie", "type": "image", "model_id": "gpt-image-2-image-to-image",
+        "external_task_id": "kie-id", "credit_transaction_id": "pending-credit",
+        "request_params": params,
+    }])
+    with patch("services.task_recovery.refund_task_credits") as refund:
+        assert await recover_orphan_tasks(db) == 0
+    refund.assert_not_called()
+    db.table.return_value.update.assert_not_called()
+    assert "request_params" in db.table.return_value.select.call_args.args[0]
 
 
 def _mock_db(tasks: list):

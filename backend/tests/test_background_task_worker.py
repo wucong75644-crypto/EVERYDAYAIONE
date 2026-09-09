@@ -147,6 +147,44 @@ class TestRefundCredits:
 
 class TestHandleTimeout:
 
+    @pytest.mark.asyncio
+    async def test_unbound_kie_first_submission_keeps_existing_timeout_cleanup(self, worker, db):
+        task = self._make_task("image", model_id="gpt-image-2-image-to-image", external_task_id=None)
+        with patch("services.background_task_worker.TaskCompletionService") as service, \
+             patch.object(worker, "_refund_credits", new_callable=AsyncMock) as refund, \
+             patch.object(worker, "_release_task_slot", new_callable=AsyncMock) as release:
+            service.return_value.process_result = AsyncMock(return_value=False)
+            await worker._handle_timeout(task, 10)
+        refund.assert_awaited_once_with("tx-1")
+        release.assert_awaited_once_with(task)
+        assert db._table_mock.update.call_args.args[0]["status"] == "failed"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("error", [False, True])
+    async def test_kie_timeout_never_directly_refunds_stale_snapshot(self, worker, error):
+        task = self._make_task("image", model_id="gpt-image-2-image-to-image")
+        with patch("services.background_task_worker.TaskCompletionService") as service, \
+             patch.object(worker, "_refund_credits", new_callable=AsyncMock) as refund, \
+             patch.object(worker, "_release_task_slot", new_callable=AsyncMock) as release:
+            service.return_value.process_result = AsyncMock(
+                side_effect=RuntimeError("DB unavailable") if error else None, return_value=False,
+            )
+            await worker._handle_timeout(task, 10)
+        refund.assert_not_awaited()
+        release.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_waiting_fallback_poll_resumes_without_provider_query(self, worker):
+        task = self._make_task("image", model_id="gpt-image-2-image-to-image", request_params={
+            "_kie_image_fetch_fallback": {"phase": "waiting"},
+        })
+        with patch("services.background_task_worker.TaskCompletionService") as service, \
+             patch("services.background_task_worker.create_image_adapter") as adapter:
+            service.return_value.process_result = AsyncMock(return_value=True)
+            await worker.query_and_process(task)
+        adapter.assert_not_called()
+        service.return_value.process_result.assert_awaited_once()
+
     def _make_task(self, task_type: str = "chat", **overrides) -> dict:
         base = {
             "id": "task-1",

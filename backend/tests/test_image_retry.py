@@ -19,6 +19,7 @@ B. 异步重试（AsyncRetryService — Webhook 报告失败时）
 """
 
 import json
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

@@ -1,6 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { useChatAttachments } from '../useChatAttachments';
+import { createTextWithAttachments } from '../../../../services/messageSender';
 
 vi.mock('../../../../services/upload', () => ({
   uploadImageFile: vi.fn(async (file: File) => ({
@@ -96,6 +97,46 @@ describe('useChatAttachments', () => {
       url: 'https://cdn.example.com/workspace.png',
       thumbnail_url: 'https://cdn.example.com/workspace-thumb.webp',
       workspace_path: '上传/workspace.png',
+    });
+  });
+
+  it('本地混合上传与工作区、对话引用交错添加后保留最终提交顺序和原图元数据', async () => {
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:preview') });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+    const { result } = renderHook(() => useChatAttachments());
+
+    await act(async () => result.current.addLocalFiles([
+      new File(['image'], 'local.png', { type: 'image/png' }),
+      new File(['pdf'], 'report.pdf', { type: 'application/pdf' }),
+    ]));
+    act(() => result.current.addWorkspaceFile(workspaceImage));
+    act(() => result.current.addQuotedImage({
+      url: 'https://cdn.example.com/quote.png',
+      thumbnailUrl: 'https://cdn.example.com/quote.thumb.webp',
+      assetId: 'asset-quote', workspacePath: '生成/quote.png', name: 'quote.png',
+    }));
+    await act(async () => result.current.addLocalFiles([
+      new File(['last'], 'last.webp', { type: 'image/webp' }),
+    ]));
+
+    expect(result.current.attachments.map((item) => item.source)).toEqual([
+      'upload', 'upload', 'workspace', 'quote', 'upload',
+    ]);
+    const content = createTextWithAttachments('按顺序处理', result.current.submissionSnapshot.orderedAttachments);
+    expect(content.map((part) => part.type)).toEqual(['text', 'image', 'file', 'image', 'image', 'image']);
+    expect(content.slice(1).map((part) => 'url' in part ? part.url : undefined)).toEqual([
+      'https://cdn.example.com/local.png', 'https://cdn.example.com/report.pdf',
+      'https://cdn.example.com/workspace.png', 'https://cdn.example.com/quote.png',
+      'https://cdn.example.com/last.webp',
+    ]);
+    expect(content[2]).toMatchObject({ workspace_path: '上传/report.pdf' });
+    expect(content[3]).toMatchObject({
+      original_url: workspaceImage.cdn_url, workspace_path: workspaceImage.workspace_path,
+      thumbnail_url: workspaceImage.thumbnail_url,
+    });
+    expect(content[4]).toMatchObject({
+      original_url: 'https://cdn.example.com/quote.png', asset_id: 'asset-quote',
+      workspace_path: '生成/quote.png', thumbnail_url: 'https://cdn.example.com/quote.thumb.webp',
     });
   });
 

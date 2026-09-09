@@ -614,7 +614,11 @@
 | `TaskCompletionService._renew_completion_lock` | `backend/services/task_completion_service.py` | 定期续期媒体完成处理锁 | lock_key, lock_token | None |
 | `TaskCompletionService._process_result_locked` | `backend/services/task_completion_service.py` | 持有分布式锁时执行原有成功/失败分流 | external_task_id, result | bool |
 | `TaskCompletionService._handle_success` | `backend/services/task_completion_service.py` | 处理成功结果（OSS 上传 → handler.on_complete） | task, result | bool |
-| `TaskCompletionService._handle_failure` | `backend/services/task_completion_service.py` | 处理失败结果（handler.on_error） | task, result | bool |
+| `TaskCompletionService._handle_failure` | `backend/services/task_completion_service.py` | KIE 专用单次重试 → 未接管时 smart retry → 原失败结算 | task, result | bool |
+| `KieImageFallbackService.handle_failure` | `backend/services/kie_image_fallback_service.py` | 等待海外旁路并只重提一次；异常记录任务号，不重复上传或重新锁积分 | task, result | FallbackOutcome |
+| `replay_request` / `legacy_generate_kwargs` | `backend/services/kie_image_fallback_request.py` | 只替换实际请求的图片 URL；旧缓存复用正常参数整理 | task, cache, callback/adapter | request/kwargs |
+| `needs_fallback_resume` / `preserve_fallback_on_restart` | `backend/services/kie_image_fallback_service.py` | 轮询续接上传等待，重启后仍由原完成入口结算 | task | bool |
+| `defer_stale_timeout` | `backend/services/kie_image_fallback_service.py` | 锁内复核 KIE 图片最新开始时间，忽略旧超时 | task | bool |
 | `TaskCompletionService._upload_urls_to_oss` | `backend/services/task_completion_service.py` | 批量上传媒体到 OSS（降级返回原 URL） | urls, user_id, task_type | List[str] |
 | `TaskCompletionService._build_content_parts` | `backend/services/task_completion_service.py` | 构建 ContentPart 字典列表 | urls, task_type | list |
 | `TaskCompletionService._create_handler` | `backend/services/task_completion_service.py` | 根据任务类型创建 Handler | task_type: str | BaseHandler |
@@ -647,6 +651,9 @@
 | `chat_simple` | `backend/services/adapters/kie/chat_adapter.py` | 简化聊天接口 | user_message, system_prompt, history, stream | ChatCompletionChunk or AsyncIterator |
 | `estimate_cost` | `backend/services/adapters/kie/chat_adapter.py` | 估算积分消耗 | input_tokens, output_tokens | CostEstimate |
 | `KieClient._handle_error_response` | `backend/services/adapters/kie/client.py` | 分类 KIE 错误并记录余额不足告警事件 | status_code, response_data, model | NoReturn |
+| `KieClient.create_task_once` | `backend/services/adapters/kie/client.py` | 正常 API 出口单次提交，无网络重发和影子上传 | request | CreateTaskResponse |
+| `KieImageAdapter.submit_prepared_fallback` | `backend/services/adapters/kie/image_adapter.py` | 重放实际 KIE 图片请求，保留受理不确定语义 | request | ImageGenerateResult |
+| `get_overseas_shadow_upload` | `backend/services/adapters/kie/shadow_upload_store.py` | 海外上传状态、源/临时 URL 映射及请求快照，TTL 一小时 | task_id | dict/None |
 | `chat_completions` | `backend/services/adapters/kie/client.py` | 非流式 Chat API | model, request | ChatCompletionChunk |
 | `chat_completions_stream` | `backend/services/adapters/kie/client.py` | 流式 Chat API（SSE） | model, request | AsyncIterator[ChatCompletionChunk] |
 

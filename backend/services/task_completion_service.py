@@ -218,6 +218,12 @@ class TaskCompletionService:
             return False
 
         # 4. 乐观锁抢占：通过 version 字段原子更新
+        # 旧超时快照不能结束已经重新计时的 KIE 图片任务。
+        if result.status == TaskStatus.FAILED and result.fail_code == "TIMEOUT":
+            from services.kie_image_fallback_service import defer_stale_timeout
+            if defer_stale_timeout(task):
+                return True
+
         # 只有version未变化的任务才会被更新（防止并发冲突）
         current_version = task.get('version', 1)
         lock_update = (
@@ -311,11 +317,15 @@ class TaskCompletionService:
         external_task_id = task["external_task_id"]
         task_type = task["type"]
 
-        # Smart mode 异步重试：尝试用替代模型重新提交
-        from services.async_retry_service import AsyncRetryService
-        retry_svc = AsyncRetryService(self.db)
-        if await retry_svc.attempt_retry(task, result):
+        from services.kie_image_fallback_service import FallbackOutcome, KieImageFallbackService
+        outcome = await KieImageFallbackService(self.db).handle_failure(task, result)
+        if outcome == FallbackOutcome.PROCESSING:
             return True
+        if outcome == FallbackOutcome.NOT_APPLICABLE:
+            from services.async_retry_service import AsyncRetryService
+            retry_svc = AsyncRetryService(self.db)
+            if await retry_svc.attempt_retry(task, result):
+                return True
 
         # 图片任务统一走批次处理
         if task_type == "image" and task.get("batch_id"):

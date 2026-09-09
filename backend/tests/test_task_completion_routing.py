@@ -259,6 +259,25 @@ class TestHandleFailureRouting:
         assert call_args[1]["error_message"] == "模型超时"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("processing", [True, False])
+    async def test_kie_fallback_routes_without_smart_retry(self, service, processing):
+        from services.kie_image_fallback_service import FallbackOutcome
+        outcome = FallbackOutcome.PROCESSING if processing else FallbackOutcome.FINAL_FAILURE
+        task = make_image_task(batch_id="batch_xyz")
+        result = make_failure_result(task["external_task_id"])
+        with patch(
+            "services.kie_image_fallback_service.KieImageFallbackService.handle_failure",
+            new_callable=AsyncMock, return_value=outcome,
+        ) as fallback, patch(
+            "services.async_retry_service.AsyncRetryService.attempt_retry", new_callable=AsyncMock,
+        ) as smart, patch(
+            "services.batch_completion_service.BatchCompletionService.handle_image_failure",
+            new_callable=AsyncMock, return_value=True,
+        ) as failed:
+            assert await service._handle_failure(task, result) is True
+        fallback.assert_awaited_once_with(task, result)
+        smart.assert_not_awaited()
+        assert failed.await_count == (0 if processing else 1)
     @patch("services.handlers.image_handler.ImageHandler.on_error")
     async def test_image_failure_without_batch_id_routes_to_handler(
         self, mock_on_error, service

@@ -26,6 +26,13 @@ class AsyncRetryService:
     def __init__(self, db):
         self.db = db
 
+    @staticmethod
+    def _request_params(task: Dict[str, Any]) -> Dict[str, Any]:
+        request_params = task.get("request_params") or {}
+        if isinstance(request_params, str):
+            return json.loads(request_params)
+        return request_params
+
     async def attempt_retry(
         self,
         task: Dict[str, Any],
@@ -37,9 +44,7 @@ class AsyncRetryService:
         Returns:
             True = 重试已提交，False = 不重试
         """
-        request_params = task.get("request_params") or {}
-        if isinstance(request_params, str):
-            request_params = json.loads(request_params)
+        request_params = self._request_params(task)
 
         if not request_params.get("_is_smart_mode"):
             return False
@@ -141,6 +146,7 @@ class AsyncRetryService:
         new_model: str,
         request_params: Dict[str, Any],
         retry_count: int,
+        retry_reason: str = "Retry",
     ) -> Optional[str]:
         """用新模型重新提交生成任务，更新 task 记录"""
         task_type = task["type"]
@@ -149,7 +155,9 @@ class AsyncRetryService:
         # 1. 创建适配器
         if task_type == "image":
             from services.adapters.factory import create_image_adapter
-            adapter = create_image_adapter(new_model)
+            adapter = create_image_adapter(
+                new_model, shadow_user_id=user_id, shadow_org_id=task.get("org_id"),
+            )
         else:
             from services.adapters.factory import create_video_adapter
             adapter = create_video_adapter(new_model)
@@ -173,6 +181,9 @@ class AsyncRetryService:
             generate_kwargs["output_format"] = request_params.get(
                 "output_format", "png"
             )
+            resolution = request_params.get("resolution")
+            if resolution:
+                generate_kwargs["resolution"] = resolution
             image_urls = request_params.get("image_urls")
             if image_urls:
                 generate_kwargs["image_urls"] = image_urls
@@ -197,7 +208,7 @@ class AsyncRetryService:
             task_id=task["id"],
             user_id=user_id,
             amount=old_credits,
-            reason=f"Retry[{task_type}]: {new_model}",
+            reason=f"{retry_reason}[{task_type}]: {new_model}",
             org_id=task.get("org_id"),
         )
 

@@ -115,7 +115,9 @@ class ImageHandler(BaseHandler):
 
         from services.adapters.factory import create_image_adapter
 
-        adapter = create_image_adapter(model_id)
+        adapter = create_image_adapter(
+            model_id, shadow_user_id=user_id, shadow_org_id=self.org_id,
+        )
 
         # 构建生成参数（所有图片共用）
         generate_kwargs = build_image_generate_kwargs(
@@ -358,7 +360,9 @@ class ImageHandler(BaseHandler):
 
             from services.adapters.factory import create_image_adapter
 
-            new_adapter = create_image_adapter(new_model)
+            new_adapter = create_image_adapter(
+                new_model, shadow_user_id=user_id, shadow_org_id=self.org_id,
+            )
             new_tx = self._lock_credits(
                 task_id=local_task_id,
                 user_id=user_id,

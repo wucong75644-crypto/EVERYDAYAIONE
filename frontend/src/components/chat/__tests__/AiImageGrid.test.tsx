@@ -9,9 +9,15 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
+import { create } from 'zustand';
 import AiImageGrid from '../media/AiImageGrid';
-import type { ContentPart } from '../../../stores/useMessageStore';
+import type { ContentPart, MessageStore } from '../../../stores/useMessageStore';
+import { createMessageSlice, createTaskSlice, createStreamingSlice, createConversationSlice } from '../../../stores/slices';
+import { createWSMessageHandlers, type HandlerDeps } from '../../../contexts/wsMessageHandlers';
+
+vi.mock('../../../utils/tabSync', () => ({ tabSync: { broadcast: vi.fn() } }));
+vi.mock('react-hot-toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const attachmentMocks = vi.hoisted(() => ({ addQuotedImage: vi.fn() }));
 vi.mock('../attachments/ChatAttachmentContext', () => ({
@@ -46,6 +52,96 @@ function makeContent(urls: (string | null)[], failed?: boolean[]): ContentPart[]
 }
 
 describe('AiImageGrid', () => {
+  it.each(['completed', 'failed'] as const)(
+    '连续图片事件在等待期间保留占位，message_done=%s 后正确收尾',
+    (terminalStatus) => {
+      const useStore = create<MessageStore>()((...args) => ({
+        ...createMessageSlice(...args), ...createTaskSlice(...args),
+        ...createStreamingSlice(...args), ...createConversationSlice(...args),
+      }));
+      const messageId = 'msg-retry';
+      const conversationId = 'conv-retry';
+      const taskId = 'task-retry';
+      useStore.getState().addMessage(conversationId, {
+        id: messageId, conversation_id: conversationId, role: 'assistant', status: 'streaming',
+        content: makeContent([null, null]), created_at: '2026-09-08T00:00:00.000Z',
+        generation_params: { type: 'image', num_images: 2 },
+      });
+      useStore.getState().registerStreamingId(conversationId, messageId);
+      useStore.getState().setIsSending(true);
+      useStore.getState().createTask({
+        taskId, messageId, conversationId, type: 'image', status: 'processing', progress: 0, createdAt: 0,
+      });
+      const deps: HandlerDeps = {
+        getStore: useStore.getState,
+        subscribedTasksRef: { current: new Set([taskId]) },
+        taskConversationMapRef: { current: new Map([[taskId, conversationId]]) },
+        operationContextRef: { current: new Map() }, chunkBufferRef: { current: new Map() },
+        flushTimerRef: { current: null }, unsubscribeTask: vi.fn(), send: vi.fn(),
+      };
+      const handlers = createWSMessageHandlers(deps);
+      const envelope = { type: 'image_partial_update', message_id: messageId, conversation_id: conversationId, task_id: taskId };
+      function Projection() {
+        const message = useStore((state) => state.messages[conversationId][0]);
+        return <AiImageGrid content={message.content} numImages={2} messageId={messageId}
+          placeholderSize={defaultPlaceholderSize} onImageClick={vi.fn()}
+          isGenerating={message.status === 'streaming'} />;
+      }
+      const { container } = render(<Projection />);
+      expect(container.querySelector('.grid')?.children).toHaveLength(2);
+      expect(screen.queryAllByRole('img')).toHaveLength(0);
+      const first: ContentPart = { type: 'image', url: 'https://cdn.example.com/first.png' };
+      act(() => handlers.image_partial_update({ ...envelope, payload: {
+        image_index: 0, content_part: first, completed_count: 1, total_count: 2,
+      } }));
+      fireEvent.load(screen.getByRole('img'));
+
+      // 后端内部重试期间没有终态事件；stream_end 也不能结束图片任务。
+      act(() => handlers.stream_end({ ...envelope, type: 'stream_end' }));
+      expect(useStore.getState().getMessage(messageId)?.status).toBe('streaming');
+      expect(useStore.getState().getStreamingMessageId(conversationId)).toBe(messageId);
+      expect(useStore.getState().isSending).toBe(true);
+      expect(container.querySelector('.grid')?.children).toHaveLength(2);
+      expect(container.querySelectorAll('.animate-media-pulse')).toHaveLength(1);
+      expect(screen.getByRole('img')).toHaveAttribute('src', first.url);
+      expect(screen.queryByTestId('failed-placeholder')).not.toBeInTheDocument();
+
+      const second: ContentPart = terminalStatus === 'completed'
+        ? { type: 'image', url: 'https://cdn.example.com/retried.png', workspace_path: '生成/retried.png' }
+        : { type: 'image', url: null, failed: true, error: '图片生成失败', error_code: 'GENERATION_FAILED' };
+      act(() => handlers.image_partial_update({ ...envelope, payload: {
+        image_index: 1, completed_count: 2, total_count: 2,
+        ...(terminalStatus === 'completed' ? { content_part: second }
+          : { content_part: null, error: '图片生成失败', error_code: 'GENERATION_FAILED' }),
+      } }));
+      if (terminalStatus === 'completed') fireEvent.load(screen.getAllByRole('img')[1]);
+      expect(useStore.getState().getMessage(messageId)?.status).toBe('streaming');
+      expect(useStore.getState().getMessage(messageId)?.content).toEqual([first, second]);
+      act(() => handlers.message_done({ ...envelope, type: 'message_done', message: {
+        ...useStore.getState().getMessage(messageId), status: terminalStatus, content: [first, second],
+      } }));
+
+      expect(useStore.getState().getMessage(messageId)?.status).toBe(terminalStatus);
+      expect(useStore.getState().messages[conversationId]).toHaveLength(1);
+      expect(useStore.getState().getStreamingMessageId(conversationId)).toBeNull();
+      expect(useStore.getState().isSending).toBe(false);
+      expect(deps.unsubscribeTask).toHaveBeenCalledWith(taskId);
+      expect(deps.subscribedTasksRef.current.has(taskId)).toBe(false);
+      expect(container.querySelector('.grid')?.children).toHaveLength(2);
+      expect(container.querySelectorAll('.animate-media-pulse')).toHaveLength(0);
+      expect(screen.getAllByRole('img')[0]).toHaveAttribute('src', first.url);
+      if (terminalStatus === 'completed') {
+        expect(screen.getAllByRole('img')[1]).toHaveAttribute('src', 'https://cdn.example.com/retried.png');
+        expect(screen.queryByTestId('failed-placeholder')).not.toBeInTheDocument();
+        expect(useStore.getState().tasks.has(taskId)).toBe(false);
+      } else {
+        expect(screen.getAllByRole('img')).toHaveLength(1);
+        expect(screen.getByTestId('failed-placeholder')).toHaveAttribute('data-error-code', 'GENERATION_FAILED');
+        expect(useStore.getState().tasks.get(taskId)?.status).toBe('failed');
+      }
+    },
+  );
+
   it('渲染正确数量的网格单元（含占位符）', () => {
     const content = makeContent(['https://img1.png', null, null, null]);
     const { container } = render(

@@ -180,6 +180,9 @@ class TestImageHandlerNumImages:
             )
 
         assert adapter.call_count == 1
+        mock_factory.assert_called_once_with(
+            "nano-banana", shadow_user_id="user_1", shadow_org_id=handler.org_id,
+        )
         assert len(db._inserted_tasks) == 1
         assert db._inserted_tasks[0]["image_index"] == 0
 
