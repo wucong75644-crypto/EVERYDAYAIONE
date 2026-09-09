@@ -1,20 +1,20 @@
 # 工具统一：共同约束与板块交接
 
-更新日期：2026-09-09。当前仅板块 01：**技术验收通过，待部署/用户验收**。未提交、未推送、未部署、未合并；不能启动板块 02。
+更新日期：2026-09-09。当前板块 02：**技术验收通过，待部署/用户验收**。本块未提交、未推送、未部署、未合并；不能启动板块 03。
 
-- 任务分支：`codex/task/20260909142551-tool-unification-01`
-- 工作树：`/Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-01`
-- 创建基准及当前 HEAD：`051b24c5715c6c0d0086dcc90ef44a2344296793`
-- 被测版本：上述基准加本任务未提交文件；准确代码指纹见 [01-source-checks.txt](tool-unification-evidence/01-source-checks.txt)。HEAD 不是含本次实现的提交。
-- [板块 01 验收记录](TOOL_UNIFICATION_ACCEPTANCE_01.md)
-- [当前工具清单及三代表契约](TOOL_UNIFICATION_CATALOG_01.md)
+- 板块 01 前置已核验：用户明确说明已验收进入 main；最新 origin/main 的 `2e8fdb2db242366b790cc623703d5a65dd574632` 合入 `b4c854ac`（Spec/Registry）。两者代码树一致，板块 01 工作树已不在工作树清单。板块 01 验收记录保留提交前历史状态，不以其过时首页否定当前 Git 与用户确认。
+- 本任务分支：`codex/task/20260909155118-tool-unification-policy`
+- 工作树：`/Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-policy`
+- 本任务基准及当前 HEAD：`2e8fdb2db242366b790cc623703d5a65dd574632`；本块实现为该基准上的未提交差异，HEAD 不是本块已测候选。
+- [板块 02 验收记录](TOOL_UNIFICATION_ACCEPTANCE_02.md) / [权限矩阵与接口](TOOL_UNIFICATION_POLICY_02.md) / [本块代码指纹和结构检查](tool-unification-evidence/02-source-checks.txt)
+- 历史：[板块 01 验收记录](TOOL_UNIFICATION_ACCEPTANCE_01.md) / [当前目录及三代表契约](TOOL_UNIFICATION_CATALOG_01.md)。板块 01 的基准为 `051b24c5`，独立 98 项测试在本块继续通过。
 
 ## 总体目标与顺序
 
 渐进建立 ToolSpec → ToolRegistry → ToolPolicy → ToolDispatcher → ToolHandler → ToolResult，统一公共工具调用外层，不重写业务引擎。编号顺序固定：
 
-1. 工具定义和注册表（本块）。
-2. Policy：模式、业务权限、参数级风险、确认与分批。
+1. 工具定义和注册表（已进入 main）。
+2. Policy：模式、业务权限快照、参数级风险、确认与分批（当前本块）。
 3. Dispatcher / Legacy Handler / ToolResult 基础。
 4. Chat、scheduled ToolLoop、旧 execute 实际入口完整切换。
 5. 实时结果与展示。
@@ -45,7 +45,7 @@
 
 ## 板块 01 实际接口
 
-代码位于 `backend/services/tools/`，生产目录之外的导入关系仍为旧路径。
+代码位于 `backend/services/tools/`，生产调用方仍只引用旧路径。以下为板块 01 原接口，板块 02 增量见后文。
 
 | 文件 | 已实现接口 / 责任 |
 |---|---|
@@ -90,9 +90,9 @@ resolution = catalog.resolve(
 # resolution.advertised_schemas(): 完整原 schema 的新副本列表
 ```
 
-`ToolAccessPolicy.resolve_access(spec, context) -> ToolAccessDecision(allowed: bool, reason: str)` 为当前唯一名称级权限决策扩展点；同步消费可信快照，有 IO 的身份/权限解析由可信适配器预先完成。Registry 在调用此接口前执行目录事实筛选：内部入口、domain、org、个人上下文、功能开关、授权名称上界。Policy 不必复制这些规则；后续执行入口同样先使用 Registry 的目录决议，再调用同一个 Policy 的参数级判断。
+`ToolAccessPolicy.resolve_access(spec, context) -> ToolAccessDecision(allowed: bool, reason: str)` 为当前唯一名称级权限决策扩展点；同步消费可信快照，有 IO 的身份/权限解析由可信适配器预先完成。Registry 在调用此接口前执行目录事实筛选：内部入口、domain、org、个人上下文、功能开关、授权名称上界。Policy 不必复制这些规则；板块 02 增加 `check_access` 供 resolve 和调用决策共用，后续执行入口使用同一 Policy 参数级判断。
 
-Policy 负责模式/场景、既有授权快照、可表达的业务权限，板块 02 增加规范化参数级 allow / require_confirmation / deny、实际风险与分批。当前名称级 allowed **不是执行许可或危险确认凭据**；本块没有 Policy 的生产实现、默认放行器、参数授权器或 UI 操作。缺少 policy 为调用错误；policy 报错传播，没有放行兜底。测试中的 StubPolicy 仅是验证衔接点的假实现，不是未来政策源。
+Policy 负责模式/场景、既有授权快照、可表达的业务权限，板块 02 已增加规范化参数级 allow / require_confirmation / deny、实际风险与分批。当前名称级 allowed **不是执行许可或危险确认凭据**；板块 01 没有实际 Policy，板块 02 已增加隔离的纯 Policy，但仍无生产接入或 UI 操作。缺少 policy 为调用错误；policy 报错传播，没有放行兜底。测试中的 StubPolicy 仅是验证衔接点的假实现，不是未来政策源。
 
 `advertised = PUBLIC ∩ allowed ∩ 当前展示选择`，有稳定名称顺序。LegacyAdvertisement 复用 get_tools_for_mode 的原核心/plan 展示事实；接受既有 ERP 初始集合；scheduled/preflight 不扩展 discovered_names。自定义展示器即使输出未知或内部名称也不能扩权。内部 exposure 在 legacy_internal 入口可属于 allowed，但永不 advertised。
 
@@ -110,8 +110,21 @@ Policy 负责模式/场景、既有授权快照、可表达的业务权限，板
 
 回退：本块仅新增目录、测试与文档；撤回这些新增项即回到基准 `051b24c5` 的生产代码树，没有数据迁移或新载荷，无需新增开关或生产回退演练。
 
+## 板块 02 实际增量
+
+- 新增 `policy.py`：ToolPolicy、ToolDecision、ConfirmationBinding、ToolConfirmation、ToolCall、PlannedToolCall；`decide` 纯决策，`plan_batches` 连续合批且保留串行屏障。
+- 新增 `action_rules.py`：同步 ERP ApiEntry.is_write 判定（query/raw 写 action 拒绝、execute category/动作校验）及任务列表/提案分类，无业务调用。
+- 新增 `legacy_policy.py`：本目录的唯一 Policy 声明，scheduled 能力上界复用现有核心工具工厂，不复制核心/预检阻止名单。新旧 Spec 使用同一规则引擎。
+- `ToolSpec` 增加不可变 `ToolPolicyRules` 和默认 unspecified 的 `replay_requirement`；原 schema/旧验证表及 metadata 保留。`ToolContext` 增加可信 `confirmation_available=False`，验证可选调用/会话/任务 ID；确认凭据通过独立参数输入。
+- `ToolRegistry.check_access(name, context, *, policy)` 把已有可用性规则公开为单一调用点，供 resolve 与 decide 共用；没有额外可用性名单。
+- 决策返回明确 outcome/reason、实际 risk/operation、分批资格及原 cacheable/effects/replay 元数据。缓存不从并发资格推导；restore_file 的 safe 风险和 code_execute 缓存资格保持原样。
+- 模式/场景矩阵、确认绑定范围、可信适配器职责、参数规范化前置和消费示例详见 [02 接口文档](TOOL_UNIFICATION_POLICY_02.md)。批准值不是签名凭据；适配器不能信任模型 JSON、客户端提供的 binding/approved 或仅有工具名字的危险授权。
+- 新增 `backend/tests/test_tool_policy.py`。本块最终：552 个新用例 + 98 个 Registry 回归 + 516 个相关旧入口回归 + 11 个独立 ERP 回归，共 **1177 passed，0 failed/error/skipped**。命令、逐用例日志、结构检查与问题记录见 [02 验收记录](TOOL_UNIFICATION_ACCEPTANCE_02.md)。
+- 未调用真实 ERP/删除/生成；未操作 WS/业务 Handler/缓存；未新增重试或生产导入。真实确认超时/断连、运行并发、业务授权源适配仍由板块 04 验证，不以本块测试代替。
+- 回退：撤回本块新增文件并把 services/tools 的五个增量文件恢复到 `2e8fdb2d`，保留板块 01。无持久化/数据库/新协议载荷，不需迁移或回放兼容处理；生产入口无需开关。
+
 ## 下一板块前置
 
-代码前置已具备：可读取完整 Legacy Catalog、三代表、ToolContext、allowed/advertised 解析与强制 ToolAccessPolicy 衔接点。板块 02 不重做本块定义，不复制其他任务未提交文件。
+板块 03 的代码前置已具备：规范 Spec/Context/Registry、统一纯决策与确认比较值、稳定批次结构可在隔离环境中消费。下一块仍只负责 Dispatcher/Legacy Handler/ToolResult 基础，不接生产。
 
-流程前置尚缺：用户明确提交部署确定候选 → 用户核对清单/代表契约及现有普通只读行为 → 用户明确验收关闭 → 受控入口确认 main 包含成果。最终提交号仅在实际提交部署后记录，不将当前 HEAD 冒充候选。**本任务止于板块 01，板块 02 尚未获启动条件。**
+流程前置尚缺：本块用户明确提交部署确定候选 → 用户核对权限矩阵和确认边界 → 用户明确验收关闭 → 受控入口确认 main 包含本块。最终候选 SHA 仅在实际提交部署后记录，并核对被测代码指纹。**本任务止于板块 02；用户验收关闭前不能启动板块 03。**

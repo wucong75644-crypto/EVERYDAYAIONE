@@ -73,6 +73,21 @@ class ToolRegistry:
     def specs(self) -> tuple[ToolSpec, ...]:
         return tuple(self._specs.values())
 
+    def check_access(
+        self, name: str, context: ToolContext, *, policy: ToolAccessPolicy,
+    ) -> ToolAccessDecision:
+        """Single eligibility path for advertisement AND call-time decisions."""
+        spec = self.get(name)
+        if spec is None:
+            return ToolAccessDecision(False, "unknown_tool")
+        reason = self._unavailable_reason(spec, context)
+        if reason is not None:
+            return ToolAccessDecision(False, reason)
+        decision = policy.resolve_access(spec, context)
+        if not isinstance(decision, ToolAccessDecision):
+            raise TypeError("Policy must return ToolAccessDecision")
+        return decision
+
     def resolve(
         self, context: ToolContext, *, policy: ToolAccessPolicy,
         advertisement: ToolAdvertisement, discovered_names: Iterable[str] = (),
@@ -80,16 +95,11 @@ class ToolRegistry:
         allowed: dict[str, ToolSpec] = {}
         denied: dict[str, str] = {}
         for name, spec in self._specs.items():
-            reason = self._unavailable_reason(spec, context)
-            if reason is None:
-                decision = policy.resolve_access(spec, context)
-                if not isinstance(decision, ToolAccessDecision):
-                    raise TypeError("Policy must return ToolAccessDecision")
-                reason = None if decision.allowed else decision.reason
-            if reason is None:
+            decision = self.check_access(name, context, policy=policy)
+            if decision.allowed:
                 allowed[name] = spec
             else:
-                denied[name] = reason
+                denied[name] = decision.reason
         selected = frozenset(advertisement.names(context, frozenset(discovered_names)))
         advertised = {
             name: spec for name, spec in sorted(allowed.items())
