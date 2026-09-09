@@ -1,0 +1,28 @@
+Block 01 source and handoff checks
+HEAD/base: 051b24c5715c6c0d0086dcc90ef44a2344296793
+branch: codex/task/20260909142551-tool-unification-01
+Tested version: base + uncommitted source fingerprints below; HEAD excludes this implementation.
+Tracked files diff against HEAD: empty (production and old tests unchanged).
+Untracked files: all within the declared block 01 scope.
+Main worktree user files: clean and unchanged.
+.env in task root/backend: absent. Test service addresses are loopback port 1.
+New Python compilation and trailing whitespace checks: passed.
+run-01.sh bash syntax: passed. Documentation local links: passed.
+Production reverse imports: test_catalog_import_has_no_reverse_production_dependency passed.
+Independent cold-process import orders:
+import config.chat_tools; import services.agent.tool_executor; import services.tools => 35 specs, success
+import services.tools; import config.chat_tools; import services.agent.tool_executor => 35 specs, success
+
+SHA256 of tested code and test source:
+237534dca195a2064b3135201af1c8816f01f136367859cf4dd32928cfa1b3a6  backend/services/tools/__init__.py
+9d7b5af55ef89b76cde92502e5dcbded94656746d0c9bcff21a1c263dd9985f0  backend/services/tools/context.py
+828d08387daf11ed6ea4fdc20c034d3acc24bd33e47fa933d9a92e01146d4f5e  backend/services/tools/legacy.py
+3bb1a9c0570ac0090cedc8e6561598f4950bd7e940db8a985b5cf54a12aeb679  backend/services/tools/registry.py
+a298d70f48a52ac483fba7be0603c09d403365d93751cd146cc0022e967d715a  backend/services/tools/spec.py
+cc3e7b96a559e8d09b0613ebeda1afc16ee01b91746b8538c710ef9ef42ae1aa  backend/tests/test_tool_registry.py
+
+Final executed test outcomes:
+98 passed (new isolated)
+603 passed (legacy main group)
+11 passed (legacy ERP module in separate process)
+0 failed, 0 errors, 0 skipped in final validation.
