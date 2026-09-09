@@ -22,6 +22,7 @@ from services.handlers.chat.execution_engine import (
     execute_chat,
 )
 from services.conversation_commands import SafePoint
+from services.tools.runtime_context import catalog_context
 from services.conversation_commands import CommandType, ConversationCommand
 from services.conversation_turn_runtime import ConversationTurnRuntime
 from services.model_gateway import ModelCallRequest, ModelGatewaySession
@@ -160,6 +161,7 @@ async def test_actor_tool_preview_is_emitted_before_arguments_finish():
             self.updated.append(dict(block))
 
     prepared = SimpleNamespace(
+        execution_context=catalog_context("org-1"),
         adapter=SimpleNamespace(stream_chat=stream_chat),
         messages=[],
         stream_kwargs={},
@@ -220,6 +222,7 @@ async def test_actor_tool_preview_uses_model_round_for_same_index():
         )
 
     prepared = SimpleNamespace(
+        execution_context=catalog_context("org-1"),
         adapter=SimpleNamespace(stream_chat=stream_chat),
         messages=[],
         stream_kwargs={},
@@ -289,6 +292,7 @@ async def test_run_loop_advances_model_round_identity_independently_of_budget_tu
         budget, "turns_used", budget.turns_used + 1,
     )
     prepared = SimpleNamespace(
+        execution_context=catalog_context("org-1"),
         budget=budget,
         core_tools=[],
         tool_context=SimpleNamespace(
@@ -297,6 +301,7 @@ async def test_run_loop_advances_model_round_identity_independently_of_budget_tu
         ),
         messages=[],
         permission=SimpleNamespace(
+            mode=SimpleNamespace(value="auto"),
             need_exit_attachment=False,
             get_reminder=lambda _turn: "",
         ),
@@ -360,6 +365,8 @@ async def test_actor_tool_preview_is_updated_before_tool_execution(monkeypatch):
         "status": "running",
     }]
     prepared = SimpleNamespace(
+        execution_context=catalog_context("org-1"),
+        permission=SimpleNamespace(mode=SimpleNamespace(value="auto")),
         messages=[],
         budget=SimpleNamespace(),
         tool_context=SimpleNamespace(
@@ -409,8 +416,10 @@ async def test_execute_chat_collects_usage_and_closes_adapter(monkeypatch):
         close=AsyncMock(),
     )
     prepared = SimpleNamespace(
+        execution_context=catalog_context("org-1"),
         adapter=adapter,
         permission=SimpleNamespace(
+            mode=SimpleNamespace(value="auto"),
             need_exit_attachment=False,
             get_reminder=lambda _turn: "",
         ),
@@ -473,8 +482,9 @@ async def test_execute_chat_collects_usage_and_closes_adapter(monkeypatch):
 async def test_execute_chat_stops_before_provider_when_cancelled(monkeypatch):
     adapter = SimpleNamespace(close=AsyncMock())
     prepared = SimpleNamespace(
+        execution_context=catalog_context("org-1"),
         adapter=adapter,
-        permission=SimpleNamespace(need_exit_attachment=False),
+        permission=SimpleNamespace(need_exit_attachment=False, mode=SimpleNamespace(value="auto")),
         core_tools=[],
         stream_kwargs={},
         tool_context=SimpleNamespace(discovered_tools=set()),
@@ -530,8 +540,9 @@ async def test_execute_chat_external_cancel_closes_pending_provider_task(monkeyp
         ModelCallRequest(model_id="model-1", task_id="task-1"),
     )
     prepared = SimpleNamespace(
+        execution_context=catalog_context("org-1"),
         model_gateway=session,
-        permission=SimpleNamespace(need_exit_attachment=False),
+        permission=SimpleNamespace(need_exit_attachment=False, mode=SimpleNamespace(value="auto")),
         core_tools=[],
         stream_kwargs={},
         tool_context=SimpleNamespace(discovered_tools=set()),
@@ -591,8 +602,9 @@ async def test_execute_chat_interrupts_waiting_provider_when_command_arrives(mon
 
     adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
     prepared = SimpleNamespace(
+        execution_context=catalog_context("org-1"),
         adapter=adapter,
-        permission=SimpleNamespace(need_exit_attachment=False),
+        permission=SimpleNamespace(need_exit_attachment=False, mode=SimpleNamespace(value="auto")),
         core_tools=[],
         stream_kwargs={},
         tool_context=SimpleNamespace(discovered_tools=set()),
@@ -668,8 +680,10 @@ async def test_execute_chat_preserves_thinking_as_structured_part(monkeypatch):
 
     budget.use_turn = use_turn
     prepared = SimpleNamespace(
+        execution_context=catalog_context("org-1"),
         adapter=adapter,
         permission=SimpleNamespace(
+            mode=SimpleNamespace(value="auto"),
             need_exit_attachment=False,
             get_reminder=lambda _turn: "",
         ),
@@ -730,11 +744,12 @@ async def test_form_result_stops_tool_loop_before_a_second_model_turn(monkeypatc
     budget = SimpleNamespace(stop_reason=None, turns_used=0)
     budget.use_turn = lambda: setattr(budget, "turns_used", budget.turns_used + 1)
     prepared = SimpleNamespace(
+        execution_context=catalog_context("org-1"),
         budget=budget,
         core_tools=[],
         tool_context=SimpleNamespace(discovered_tools=set()),
         messages=[],
-        permission=SimpleNamespace(need_exit_attachment=False),
+        permission=SimpleNamespace(need_exit_attachment=False, mode=SimpleNamespace(value="auto")),
     )
     handler = SimpleNamespace(org_id="org-1", _terminal_form_pending=False)
 

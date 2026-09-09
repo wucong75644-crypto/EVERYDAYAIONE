@@ -369,16 +369,14 @@ def test_risk_parallel_cache_and_effects_are_independent(registry):
     assert not spec.cacheable and spec.parallelizable and spec.effects == ("file_index",)
 
 
-def test_catalog_import_has_no_reverse_production_dependency():
+def test_catalog_factories_remain_independent_of_production_runtime():
+    # 04 deliberately imports services.tools in runtime consumers. Catalog
+    # factories must remain independent to prevent initialization recursion.
     backend = Path(__file__).resolve().parents[1]
-    offenders = []
-    for directory in (backend / "config", backend / "services"):
-        for path in directory.rglob("*.py"):
-            if path.is_relative_to(backend / "services" / "tools"):
-                continue
-            if "from services.tools" in path.read_text() or "import services.tools" in path.read_text():
-                offenders.append(str(path.relative_to(backend)))
-    assert not offenders
+    for path in (backend / "config").rglob("*.py"):
+        assert "from services.tools" not in path.read_text()
+    legacy = (backend / "services/tools/legacy.py").read_text()
+    assert "from services.agent.tool_executor import" not in legacy
 
 
 def test_partial_legacy_validation_directory_is_preserved_separately(registry):

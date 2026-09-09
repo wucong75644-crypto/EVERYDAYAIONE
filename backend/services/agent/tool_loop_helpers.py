@@ -23,6 +23,7 @@ def inject_tool(
     all_tools: List[Dict[str, Any]],
     exit_signals: FrozenSet[str],
     org_id: str,
+    *, context=None,
 ) -> None:
     """模型调了隐藏的远程工具 → 从全量列表动态注入到 selected_tools（去重）
 
@@ -30,35 +31,15 @@ def inject_tool(
     """
     if tool_name in exit_signals:
         return
-    current = {t["function"]["name"] for t in selected_tools}
-    if tool_name in current:
-        return
-
-    all_map = {t["function"]["name"]: t for t in all_tools}
-    if tool_name in all_map:
-        selected_tools.append(all_map[tool_name])
-        logger.info(f"ToolLoop tool injected | {tool_name}")
-    else:
-        # 不在当前 Agent 的全量列表 → fallback 到全局池（带域检查）
-        try:
-            from config.chat_tools import get_tools_by_names
-            from config.tool_domains import can_access
-            extra = get_tools_by_names({tool_name}, org_id=org_id)
-            # 域检查：推断当前域（all_tools 含 ERP 工具则为 erp 域）
-            _has_erp = any(
-                t["function"]["name"].startswith(("erp_", "local_"))
-                for t in all_tools[:5]
-            )
-            _domain = "erp" if _has_erp else "general"
-            extra = [t for t in extra if can_access(t["function"]["name"], _domain)]
-            selected_tools.extend(extra)
-            if extra:
-                logger.info(f"ToolLoop fallback injected | {tool_name} | domain={_domain}")
-        except Exception as e:
-            logger.debug(
-                f"ToolLoop tool injection fallback failed | "
-                f"tool={tool_name} | error={e}"
-            )
+    from services.tools import build_legacy_catalog, ToolPolicy, LegacyAdvertisement
+    from services.tools.runtime_context import catalog_context
+    registry = build_legacy_catalog()
+    context = context or catalog_context(org_id)
+    names = {t["function"]["name"] for t in selected_tools}
+    selected_tools[:] = registry.resolve(
+        context, policy=ToolPolicy(registry), advertisement=LegacyAdvertisement(names),
+        discovered_names=(tool_name,),
+    ).advertised_schemas()
 
 
 async def invoke_tool_with_cache(
@@ -68,6 +49,7 @@ async def invoke_tool_with_cache(
     args: Dict[str, Any],
     budget: Any,
     default_timeout: float,
+    *, call_id: str | None = None,
 ) -> Tuple[Any, str, bool, int]:
     """缓存命中检查 → 否则执行工具（含超时控制）。
 
@@ -78,12 +60,7 @@ async def invoke_tool_with_cache(
     """
     audit_start = time.monotonic()
     audit_status = "success"
-
-    cached = cache.get(tool_name, args)
-    if cached is not None:
-        logger.info(f"ToolLoop cache hit | tool={tool_name}")
-        elapsed_ms = int((time.monotonic() - audit_start) * 1000)
-        return cached, audit_status, True, elapsed_ms
+    is_cached = False
 
     # 超时控制（动态：min(单工具上限, 剩余预算)）
     tool_timeout = (
@@ -91,10 +68,11 @@ async def invoke_tool_with_cache(
     )
     try:
         result = await asyncio.wait_for(
-            executor.execute(tool_name, args),
+            executor.tool_runtime.execute(tool_name, args, call_id=call_id, cache=cache),
             timeout=tool_timeout,
         )
-        cache.put(tool_name, args, result)
+        is_cached = result.execution.cached
+        result = result.to_legacy()
     except asyncio.TimeoutError:
         logger.warning(
             f"ToolLoop tool timeout | tool={tool_name} | "
@@ -121,4 +99,4 @@ async def invoke_tool_with_cache(
         audit_status = "timeout" if result.status == "timeout" else "error"
 
     elapsed_ms = int((time.monotonic() - audit_start) * 1000)
-    return result, audit_status, False, elapsed_ms
+    return result, audit_status, is_cached, elapsed_ms

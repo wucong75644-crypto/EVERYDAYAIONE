@@ -65,13 +65,14 @@ class ScheduledTaskAgent:
         result = await agent.execute()
     """
 
-    def __init__(self, db: Any, task: Dict[str, Any], *, execution_mode: str = "production") -> None:
+    def __init__(self, db: Any, task: Dict[str, Any], *, execution_mode: str = "production", cancellation_event=None) -> None:
         self.db = db
         self.task = task
         self.task_id = task["id"]
         self.user_id = task["user_id"]
         self.org_id = task["org_id"]
-        self.execution_mode = execution_mode
+        self.execution_mode = "scheduled" if execution_mode == "production" else execution_mode
+        self.cancellation_event = cancellation_event or asyncio.Event()
         self.conversation_id = f"scheduled_{execution_mode}_{task['id']}"
 
         # RequestContext（时间事实层，复用 ERPAgent 模式）
@@ -101,23 +102,16 @@ class ScheduledTaskAgent:
                     error_message="scheduled_task_revalidation_required",
                 )
 
-            # 1. 模板文件复制到 staging（如有）
-            await self._prepare_template()
-
-            # 2. 构建工具列表；新任务只能看见用户确认过的能力范围。
-            from config.chat_tools import get_core_tools
-            all_tools = get_core_tools(org_id=self.org_id)
-
             from services.scheduler.scheduled_task_workflow import ScheduledExecutionPolicy
+            raw_policy = self.task["execution_policy"]
+            allowed = raw_policy.get("allowed_tools")
+            if (raw_policy.get("version") != 1 or not isinstance(allowed, list)
+                    or not allowed or any(not isinstance(n, str) or not n for n in allowed)):
+                return ScheduledTaskResult(text="任务授权未知或失效，工具未执行", status="error",
+                                           error_message="execution_authorization_invalid")
             policy = ScheduledExecutionPolicy.from_dict(
-                self.task.get("execution_policy"),
-                timeout_sec=int(self.task.get("timeout_sec") or DEFAULT_DEADLINE),
+                raw_policy, timeout_sec=int(self.task.get("timeout_sec") or DEFAULT_DEADLINE),
             )
-            if policy.allowed_tools:
-                all_tools = [
-                    tool for tool in all_tools
-                    if tool["function"]["name"] in policy.allowed_tools
-                ]
 
             # 3. 构建轻量上下文
             messages = self._build_light_context()
@@ -144,6 +138,7 @@ class ScheduledTaskAgent:
                     db=self.db,
                     task_id=self.task_id,
                     budget=budget,
+                    cancel_token=self.cancellation_event,
                 )
             )
 
@@ -155,13 +150,27 @@ class ScheduledTaskAgent:
                 conversation_id=self.conversation_id,
                 org_id=self.org_id,
                 request_ctx=self.request_ctx,
-                allowed_tool_names=policy.allowed_tools or None,
+                allowed_tool_names=policy.allowed_tools,
                 execution_mode=self.execution_mode,
                 erp_step_timeout_sec=policy.erp_step_timeout_sec,
-                tool_policy_snapshot=self.task.get("tool_policy_snapshot") or policy.as_dict(),
+                tool_policy_snapshot=self.task.get("tool_policy_snapshot") or raw_policy,
+                permission_mode="auto", agent_domain="general", task_id=str(self.task_id),
+                execution_budget=budget, cancellation_event=self.cancellation_event,
+                workspace_user_id=self.user_id, context_scope="user", personal_context_allowed=True,
+                resource_manifest=None, tool_entrypoint="model",
             )
 
-            executor.execution_budget = budget
+            all_tools = executor.tool_runtime.advertised(policy.allowed_tools)
+            if not all_tools and policy.allowed_tools:
+                return ScheduledTaskResult(text="任务授权已不可用，工具未执行", status="error",
+                                           error_message="execution_authorization_unavailable")
+            from services.tools.runtime_context import refresh_context
+            trusted = await refresh_context(executor, executor.tool_runtime.context(), executor.tool_runtime.registry)
+            executor.tool_runtime.check_lifetime(trusted)
+            if trusted.authorization_snapshot.get("access_denied_reason"):
+                return ScheduledTaskResult(text="任务权限已失效，工具未执行", status="error",
+                                           error_message=str(trusted.authorization_snapshot["access_denied_reason"]))
+            await self._prepare_template()
 
             # 7. 设置 staging 分流目录（用户级隔离）
             from services.agent.tool_result_envelope import set_staging_dir, STAGED_MARKER

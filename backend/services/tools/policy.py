@@ -122,6 +122,17 @@ class ToolPolicy:
         if reason is not None:
             return ToolAccessDecision(False, reason)
         snapshot = context.authorization_snapshot
+        if snapshot.get("access_denied_reason"):
+            return ToolAccessDecision(False, str(snapshot["access_denied_reason"]))
+        if snapshot and snapshot.get("version", 1) != 1:
+            return ToolAccessDecision(False, "execution_authorization_version_invalid")
+        if "allowed_tools" in snapshot:
+            names = snapshot["allowed_tools"]
+            if (not isinstance(names, (list, tuple))
+                    or any(not isinstance(name, str) or not name for name in names)):
+                return ToolAccessDecision(False, "execution_authorization_required")
+            if spec.name not in names:
+                return ToolAccessDecision(False, "outside_execution_authorization")
         if context.execution_mode != "interactive":
             names = snapshot.get("allowed_tools")
             if (context.task_id is None or context.authorized_tool_names is None

@@ -24,6 +24,7 @@ from services.agent.loop_types import (
 )
 from services.agent.tool_loop_executor import ToolLoopExecutor
 from services.agent.tool_result_cache import ToolResultCache
+from tests.tool_runtime_support import MockHandlerExecutor
 
 
 # ============================================================
@@ -50,7 +51,7 @@ def _make_hook_ctx(**overrides) -> HookContext:
 def _make_executor(tools_for_parallel: int = 1) -> ToolLoopExecutor:
     """构造最小 ToolLoopExecutor（跳过 LLM 只测工具执行）"""
     adapter = AsyncMock()
-    executor = AsyncMock()
+    executor = MockHandlerExecutor()
     config = LoopConfig(max_turns=5, context_window=50000, tool_timeout=30.0)
     strategy = LoopStrategy(
         exit_signals=frozenset({"route_to_chat"}),
@@ -171,7 +172,7 @@ class TestPhase2ParallelExecution:
 
         call_order = []
 
-        async def mock_invoke(executor, cache, name, args, budget, timeout):
+        async def mock_invoke(executor, cache, name, args, budget, timeout, **kwargs):
             call_order.append(name)
             await asyncio.sleep(0.01)  # 模拟 IO
             return f"{name}_result", "success", False, 50
@@ -202,7 +203,7 @@ class TestPhase2ParallelExecution:
         tle = _make_executor()
         hook_ctx = _make_hook_ctx()
 
-        async def mock_invoke(executor, cache, name, args, budget, timeout):
+        async def mock_invoke(executor, cache, name, args, budget, timeout, **kwargs):
             if name == "local_data":
                 raise RuntimeError("DB连接超时")
             return "库存100件", "success", False, 50
@@ -243,7 +244,7 @@ class TestPhase3PostProcess:
         tle = _make_executor()
         hook_ctx = _make_hook_ctx()
 
-        async def mock_invoke(executor, cache, name, args, budget, timeout):
+        async def mock_invoke(executor, cache, name, args, budget, timeout, **kwargs):
             # local_stock_query 先完成（模拟更快），但应排在后面
             delay = 0.02 if name == "local_data" else 0.01
             await asyncio.sleep(delay)
@@ -271,7 +272,7 @@ class TestPhase3PostProcess:
         tle = _make_executor()
         hook_ctx = _make_hook_ctx(task_id="task-steer-parallel")
 
-        async def mock_invoke(executor, cache, name, args, budget, timeout):
+        async def mock_invoke(executor, cache, name, args, budget, timeout, **kwargs):
             return f"{name}_ok", "success", False, 50
 
         with patch(
@@ -319,7 +320,7 @@ class TestPhase3PostProcess:
             {"type": "function", "function": {"name": "local_shop_list", "parameters": {}}},
         ]
         adapter = AsyncMock()
-        executor = AsyncMock()
+        executor = MockHandlerExecutor()
         config = LoopConfig(max_turns=5, context_window=50000, tool_timeout=30.0)
         strategy = LoopStrategy(enable_tool_expansion=True)
         tle = ToolLoopExecutor(
@@ -361,7 +362,7 @@ class TestHooksTiming:
         hook.on_tool_end = AsyncMock()
 
         adapter = AsyncMock()
-        executor = AsyncMock()
+        executor = MockHandlerExecutor()
         config = LoopConfig(max_turns=5, context_window=50000, tool_timeout=30.0)
         strategy = LoopStrategy()
         tle = ToolLoopExecutor(

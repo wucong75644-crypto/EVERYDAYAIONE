@@ -109,14 +109,14 @@ class TestRequestUserConfirm:
         )
 
     @pytest.mark.asyncio
-    async def test_headless_mode_skips_confirm(self):
-        """task_id=None（headless）→ 直接放行"""
+    async def test_headless_mode_denies_confirm(self):
+        """04：无确认通道时拒绝执行。"""
         executor = self._make_executor()
         ctx = self._make_hook_ctx(task_id=None)
         result = await executor._request_user_confirm(
             "erp_execute", {"action": "test"}, "tc_001", ctx,
         )
-        assert result is None  # None = 继续执行
+        assert "未执行" in result
 
     @pytest.mark.asyncio
     async def test_confirm_approved_returns_none(self):
@@ -158,7 +158,7 @@ class TestRequestUserConfirm:
             assert "拒绝" in result or "超时" in result
 
     @pytest.mark.asyncio
-    async def test_confirm_error_fails_open(self):
+    async def test_confirm_error_fails_closed(self):
         """确认机制异常 → 放行（fail-open）"""
         executor = self._make_executor()
         ctx = self._make_hook_ctx(task_id="task_001")
@@ -171,4 +171,4 @@ class TestRequestUserConfirm:
             result = await executor._request_user_confirm(
                 "erp_execute", {"action": "test"}, "tc_001", ctx,
             )
-            assert result is None  # fail-open
+            assert "未执行" in result

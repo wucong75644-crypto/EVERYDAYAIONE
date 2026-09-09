@@ -38,10 +38,12 @@ def test_prepare_tool_turn_appends_context_and_permission_prompts() -> None:
         build_context_prompt=lambda: "动态上下文",
     )
     permission = MagicMock()
+    permission.mode.value = "auto"
     permission.need_exit_attachment = True
     permission.consume_exit_attachment.return_value = "退出附件"
     permission.get_reminder.return_value = "权限提醒"
-    tools = [{"function": {"name": "query"}}]
+    from services.tools import build_legacy_catalog
+    tools = [build_legacy_catalog().require("web_search").to_schema()]
 
     result = prepare_tool_turn(
         core_tools=tools,

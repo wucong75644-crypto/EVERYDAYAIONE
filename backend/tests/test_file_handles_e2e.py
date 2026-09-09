@@ -36,6 +36,7 @@ def user_workspace(workspace):
 def tool_executor(workspace):
     """构造 ToolExecutor（mock db，真实文件系统）"""
     from services.agent.tool_executor import ToolExecutor
+    from tests.tool_runtime_support import IdentityDB
 
     mock_settings = MagicMock()
     mock_settings.file_workspace_enabled = True
@@ -47,7 +48,7 @@ def tool_executor(workspace):
 
     with patch("core.config.get_settings", return_value=mock_settings):
         executor = ToolExecutor(
-            db=MagicMock(),
+            db=IdentityDB("test_user", "test_org"),
             user_id="test_user",
             conversation_id="conv_001",
             org_id="test_org",

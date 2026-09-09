@@ -1,13 +1,13 @@
 # 工具统一：共同约束与板块交接
 
-更新日期：2026-09-09。当前板块 03：**技术验收通过，待部署/用户验收**。本块未提交、未推送、未部署、未合并；不能启动板块 04。
+更新日期：2026-09-09。当前板块 04：**技术验收通过，待部署/用户验收**。本块未提交、未推送、未部署、未合并；用户验收关闭前不能启动板块 05。
 
-- 板块 01–02 前置已核验：用户明确确认已验收进入 main。最新 origin/main `8e74f57de1073cbef8b3b8c8256e4409d60c506b` 合入板块 02 `4084db4e`，二者 tree 同为 `81f34e6dc3bee23db8499bcceb9b67f91257e9ad`；板块 01 `b4c854ac` 也在其祖先链，合并 `2e8fdb2d` 与候选 tree 一致。已关闭的 01/02 工作树不在当前工作树清单；历史验收记录中的提交前状态保留，不替代当前 Git 与用户验收事实。
-- 当前分支：`codex/task/20260909195904-tool-unification-03`
-- 当前工作树：`/Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-03`
-- 当前基准及 HEAD：`8e74f57de1073cbef8b3b8c8256e4409d60c506b`；实现为该基准上未提交差异，HEAD 不是板块 03 已测候选。
-- [板块 03 验收记录](TOOL_UNIFICATION_ACCEPTANCE_03.md) / [执行与结果接口](TOOL_UNIFICATION_EXECUTION_03.md) / [代码指纹及结构检查](tool-unification-evidence/03-source-checks.txt)
-- 历史：[板块 02 验收记录](TOOL_UNIFICATION_ACCEPTANCE_02.md) / [Policy 接口](TOOL_UNIFICATION_POLICY_02.md) / [板块 01 验收记录](TOOL_UNIFICATION_ACCEPTANCE_01.md) / [目录与代表契约](TOOL_UNIFICATION_CATALOG_01.md)。01/02 的记录是各自交付时的快照。
+- 板块 01–03 前置已核验：用户明确确认已验收进入 main。最新 origin/main/本任务基准 `0f65d72dd00a0fce6885d4df0b7977454f666812` 与 03 最终候选（含附件/文件边界修复）`2ed4d783` 的 tree 均为 `c38a4f18c3ec0ae8193af3c7b9750877df6ae933`；01 `b4c854ac`、02 `4084db4e`、03 `e243ba2c` 和 `2ed4d783` 均是祖先。不是从其他任务复制未提交文件。
+- 当前分支：`codex/task/20260909225830-tool-unification-04`
+- 当前工作树：`/Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-04`
+- 当前基准及 HEAD：`0f65d72dd00a0fce6885d4df0b7977454f666812`；实现为该基准上未提交差异，HEAD 不是板块 04 已测候选。
+- 当前：[板块 04 验收记录](TOOL_UNIFICATION_ACCEPTANCE_04.md) / [逐文件指纹与调用点](tool-unification-evidence/04-source-checks.txt) / [最终测试命令](tool-unification-evidence/run-04.sh)。实际接口和后续前置见本文末尾“板块 04 实际接入”。
+- 历史：[板块 03 验收记录](TOOL_UNIFICATION_ACCEPTANCE_03.md) / [执行与结果接口](TOOL_UNIFICATION_EXECUTION_03.md) / [板块 02 验收记录](TOOL_UNIFICATION_ACCEPTANCE_02.md) / [Policy 接口](TOOL_UNIFICATION_POLICY_02.md) / [板块 01 验收记录](TOOL_UNIFICATION_ACCEPTANCE_01.md) / [目录与代表契约](TOOL_UNIFICATION_CATALOG_01.md)。下方 01–03 的“尚未接生产/未部署”等描述均为各自交付时的快照，不替代这里的当前状态。
 
 ## 总体目标与顺序
 
@@ -15,8 +15,8 @@
 
 1. 工具定义和注册表（已进入 main）。
 2. Policy：模式、业务权限快照、参数级风险、确认与分批（已进入 main）。
-3. Dispatcher / Legacy Handler / ToolResult 基础（当前本块）。
-4. Chat、scheduled ToolLoop、旧 execute 实际入口完整切换。
+3. Dispatcher / Legacy Handler / ToolResult 基础（已进入 main，包含后续文件身份与边界修复）。
+4. Chat、scheduled ToolLoop、旧 execute 实际入口完整切换（当前本块，技术通过、待部署/用户验收）。
 5. 实时结果与展示。
 6. 回放、缓存、审计及新持久化载荷。
 7. 剩余定义所有权收拢。
@@ -135,7 +135,9 @@ Policy 负责模式/场景、既有授权快照、可表达的业务权限，板
 - 接口、各字段与旧结果逐项对照、请求内一次性边界、异常行为与板块 04 的可信装配责任见 [03 接口](TOOL_UNIFICATION_EXECUTION_03.md)。特别注意：ToolResult 是内存信封，不是新持久化 payload；ToolLoop 非 AgentResult 的现有消费限制没有被本块改写。
 - 回退：撤回本块四个新模块、两项测试及文档增量，将 tools/__init__.py 恢复到 `8e74f57d`；保留 01–02，无数据迁移、生产开关或 WS 新格式。
 
-## 下一板块前置
+## 板块 03 附件修复历史（交付时快照）
+
+以下原文保留历史问题、测试和发布过程；其中“未关闭/不能启动 04”的状态已由本文顶部的最新 main 核验更新，当前下一板块为 05。
 
 ### 2026-09-09 用户验证追加：工作区附件 ID 修复
 
@@ -151,3 +153,46 @@ Policy 负责模式/场景、既有授权快照、可表达的业务权限，板
 板块 04 的代码前置已具备：Spec/Registry/Policy、仅允许分发、原业务 Handler 复用及 ToolResult/旧兼容出口已在隔离环境贯通。后续必须完整接入可信 Context/Executor 身份配对、参数/资源解析、确认、分批、缓存/回放之前的权限边界和旧 execute 门面；不能先执行再补策略。实际接入契约见 03 接口文档第 4 节。
 
 流程前置仍缺：板块 03 用户明确提交部署确定候选 → 用户核对调用计数/结果对照及原有只读行为 → 用户明确验收关闭 → 受控入口确认 main 包含本块。**本任务止于板块 03；用户验收关闭前不能启动板块 04。** 最终候选 SHA 在实际提交部署后记录，并核对被测代码指纹。
+
+## 板块 04 实际接入
+
+### 入口与模块
+
+| 实际文件 / 接口 | 当前责任与调用方 |
+|---|---|
+| tools/runtime.py：ToolRuntime.context / advertised / batches / execute；run_parallel | 每个 ToolExecutor 绑定一个 Registry、Policy、ToolExecutionService、原 Legacy Handler 集。执行前刷新权限/资源，等待既有确认，最终 allow 后才进入缓存/ledger/Handler；并发读失败取消同批未完成任务 |
+| tools/runtime_context.py：chat_context / executor_context / refresh_context | 装配服务端 mode/domain、actor/workspace owner、org/task/conversation、个人/群边界、feature flags、授权快照/名称上界、资源清单、预算/取消。当前 organizations/org_members 与会话归属按现有身份规则读取；已有声明权限调用 PermissionChecker，不发明 ERP action RBAC |
+| 同模块：resolve_resources / check_deferred_resources / check_result_resources | 复用 FileExecutor 路径保护；不 mkdir、不执行业务。文件名/ID 解析稳定目标，Actor 恢复可由当前 manifest 解析 fid；restore 目的地及缓存/旧 replay 显式 workspace 产物必须在当前 owner 根目录内 |
+| ToolExecutor.tool_runtime / execute | 原 re-export 和 execute(name,args) 保留，可选 keyword-only call_id；旧 execute 必须经过 runtime，再 to_legacy。旧 `_handlers` 业务函数未改；无直接执行兜底 |
+| ChatToolMixin._execute_tool_calls / _execute_single_tool | 由共享 Chat execution_engine 调用，显式传本轮 mode/domain/budget/cancel，携带已解析 ExecutionScope、resource_manifest/loader。Policy 分批；同请求跨模型轮次保留服务及一次性预占，结束清理 |
+| ChatToolMixin._confirm_tool_call / _wait_for_tool_confirmation | 复用原 WS UI 和 Actor 持久命令；原 tool_call_id 字段承载完整 ConfirmationBinding 摘要，含参数、作用域和 Spec。先检查可恢复批准；等待失败/超时/断连拒绝，重新读取当前事实后才放行 |
+| chat/tool_lifecycle.py：ActorToolLifecycle.replay / begin / complete | 授权/资源校验后才只读 lookup；名称/参数 hash 匹配后旧 payload 回放，0 Handler。执行前保留原 mark_stale/begin/fencing，业务后用原 serializer complete。业务 error 是调用 succeeded；业务异常才 uncertain；投递失败不改写完成状态或重试业务 |
+| tool_invocation_store.DatabaseToolInvocationStore.lookup | 旧表按 task/conversation/turn/tool_call 查询 tool_name,args_hash,status,result；只读。原 begin/complete/mark_stale RPC、serializer/deserializer 未变，没有新 payload |
+| ToolLoopExecutor.run / _execute_tools；invoke_tool_with_cache | 当前生产创建者仅 ScheduledTaskAgent。保持模型返回顺序，Policy 连续读合批/写屏障；缓存读取移入最终策略检查之后，旧结果/audit 消费保留。原确认 helper 无生产调用且失败不放行 |
+| ScheduledTaskAgent.execute；scheduled_task_workflow | DB task 的执行策略先校验 version/名单；显式 scheduled/preflight 与 auto/general、actor=owner、预算/取消、授权快照。当前身份和任务要求权限在模板复制前再核验。核心/预检/动态展示由 Registry；定时名字授权不升级成危险 action 授权 |
+| Chat stream_setup._prepare_permission_and_tools；chat.tool_loop.prepare_tool_turn | 核心与动态发现统一 Registry.resolve，允许集合与展示选择分离。PreparedChatStream.execution_context 供每轮上下文传递；兼容 helper 无执行授权能力 |
+| api/routes/ws.py 确认响应 | approved 只接受字面 bool True；字段/builder/前端和 content blocks 原样 |
+
+Web 的 run_legacy_chat_stream 与 Actor 的 ChatGenerationExecutor.execute 共用 execute_chat/_run_loop；ERPAgent 仍是计划提取→部门 Agent→查询引擎，不改成 ToolLoop。全部生产构造点、执行点与已消除旁路见 [04 验收入口表](TOOL_UNIFICATION_ACCEPTANCE_04.md#生产入口与已消除旁路) 和源检查日志。
+
+### 运行与兼容契约
+
+- 生产调用者从已认证的服务端事实创建 executor，不从模型 JSON 赋值 actor/owner/org。ToolExecutor 新增 permission_mode、agent_domain、task_id、context_scope、personal_context_allowed、execution_scope/channel_scope_id、tool_entrypoint、tool_confirmer、resource_manifest_loader；原参数与默认门面保留。旧调用缺可信身份会明确拒绝，不回退业务 Handler。
+- 执行顺序是静态 Policy/action → 当前身份/声明权限/资源与目标检查 → 可用旧 replay → 必需真实确认 → 当前事实/绑定再核验 → 统一服务 allow/预占 → 旧缓存/Actor begin → Dispatcher/原 Handler → to_legacy/原 ledger 与消费者。拒绝路径没有缓存数据、业务或新 invocation，绝不登记成 uncertain。
+- 原资源消耗 CONFIRM 只是通知；manage_scheduled_task 的提案/表单沿用原提交机制。auto/ask 的危险操作均要确认，plan 继续阻止写/生成；query function 的写 action 不能通过确认升级为写入口。
+- 一次性 key 属于当前请求；Chat 跨轮复用服务，Actor 重启由原 ledger 保证不能重做已完成业务。已完成回放仍检查当前成员/资源和旧行 args_hash；running/uncertain 或哈希不一致明确拒绝。旧未绑定批准不能作为新批准，不改写旧行或 payload。
+- ToolResult 仍是 03 的内存信封。原 Chat/ToolLoop 两种投影、FileReadResult 图片、表单终止、交互 ERP TABLE 与定时 TABLE、emit/audit 字段继续交原消费者。结果 writer/reader、WS content blocks 和模型循环/Actor lease/安全点/业务锁没有改造。
+- cache.put 或完成结果投递故障不重试业务；完成写失败保留原 running/uncertain 恢复保护。取消继续传播，不增加统一自动重试；不宣称故障情况下审计零丢失。
+- 保留 code_execute 原缓存资格、restore_file 原 safe 风险/原 invocation 资格。scheduled 无新的资源附件清单来源，显式 resource_manifest=None，继续使用任务 owner 的工作区/模板边界；不冒充已有逐资源危险写授权。
+
+### 验证、限制与回退
+
+[04 验收记录](TOOL_UNIFICATION_ACCEPTANCE_04.md) 按 A-04-01～06、G-01～05 提供逐项证据，技术均通过。最终 **858 核心/集成 + 1613 相关旧回归 + 11 独立 ERP = 2482 passed，0 failed/error/skipped/xfail**；新增 I 为 118 个场景。真实 Event/轨迹证明读 A/B 重叠、C/E 独占及 D 位于 C 后；确认、撤权、群隔离、定时范围、取消和 invocation 拒绝顺序均通过。执行命令、日志、变更指纹、旧目标冲突断言依据及复验记录已保存。
+
+未连接真实业务服务/执行删除或付费生成，未提交/推送/部署/合并；用户生产验收为待完成。确认界面由真实服务端 WS 等待器与原 builder 在测试中贯通，真实浏览器/数据库部署验证仍需按验收单记录候选版本与用户结果。
+
+回退基准为 `0f65d72dd00a0fce6885d4df0b7977454f666812`：撤销本任务 04 增量，保留 01–03 及附件/文件边界修复。原序列化/reader/payload 未变，无数据迁移或新协议回迁；跨版本批准/参数哈希不匹配时拒绝，不能借回退重做 uncertain 业务。
+
+## 下一板块前置（05）
+
+04 代码前置已具备，但还需要用户明确“提交部署”确定候选 SHA → 在获准资源完成只读、plan 拒写、危险拒绝/批准及定时范围验证 → 用户明确“清理工作树” → 受控关闭确认 main 包含相同代码树。没有真实写入授权时仅验证无副作用步骤，批准执行项保留未验证。**用户验收关闭后才允许开始 05；本任务不继续结果展示或 replay 格式改造。**

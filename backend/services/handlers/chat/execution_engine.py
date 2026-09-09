@@ -179,6 +179,9 @@ async def execute_chat(
                 await flush_progress()
         raise
     finally:
+        if getattr(handler, "_tool_executor_scope", None) == (request.task_id, request.conversation_id, request.user_id, handler.org_id):
+            handler._tool_executor = None
+            handler._tool_executor_scope = None
         await model_gateway.close()
         if getattr(handler, "_adapter", None) is model_gateway:
             handler._adapter = None
@@ -234,6 +237,7 @@ async def _run_loop(
             messages=prepared.messages,
             tool_context=prepared.tool_context,
             permission=prepared.permission,
+            execution_context=prepared.execution_context,
         )
         current_model_round = model_round
         turn_text, turn_thinking, calls, previewed_call_ids = await _read_turn(
@@ -593,6 +597,8 @@ async def _execute_tools(
         messages=prepared.messages,
         budget=prepared.budget,
         cancellation_event=cancellation_event,
+        permission_mode=prepared.permission.mode.value,
+        agent_domain=prepared.execution_context.agent_domain,
     )
     if runtime:
         tool_call_ids = [call["id"] for call in calls]

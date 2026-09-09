@@ -17,6 +17,7 @@ class ExecutionScope:
     context_scope: Literal["user", "channel"]
     workspace_owner_id: str
     personal_context_allowed: bool
+    channel_scope_id: str | None = None
 
 
 async def resolve_execution_scope(
@@ -73,6 +74,7 @@ async def resolve_execution_scope(
             corp_id, chat_id,
         ),
         personal_context_allowed=False,
+        channel_scope_id=chat_id,
     )
 
 

@@ -11,6 +11,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 import pytest
+from tests.tool_runtime_support import MockHandlerExecutor
 
 from services.agent.agent_result import AgentResult
 from services.agent.tool_loop_helpers import invoke_tool_with_cache
@@ -26,15 +27,15 @@ def _mock_cache(hit_value=None):
 
 def _mock_executor(return_value):
     """构造 mock executor：execute 返回指定值"""
-    executor = MagicMock()
-    executor.execute = AsyncMock(return_value=return_value)
+    executor = MockHandlerExecutor(agent_domain="general")
+    executor.handler = AsyncMock(return_value=return_value)
     return executor
 
 
 def _mock_executor_raises(exc):
     """构造 mock executor：execute 抛出指定异常"""
-    executor = MagicMock()
-    executor.execute = AsyncMock(side_effect=exc)
+    executor = MockHandlerExecutor(agent_domain="general")
+    executor.handler = AsyncMock(side_effect=exc)
     return executor
 
 
@@ -64,7 +65,7 @@ class TestNormalExecution:
         cache = _mock_cache()
 
         result, status, is_cached, ms = await invoke_tool_with_cache(
-            executor, cache, "data_query", {"file": "x"},
+            executor, cache, "search_knowledge", {"file": "x"},
             budget=None, default_timeout=30.0,
         )
 
@@ -79,7 +80,7 @@ class TestNormalExecution:
         cache = _mock_cache()
 
         result, status, is_cached, ms = await invoke_tool_with_cache(
-            executor, cache, "data_query", {"sql": "bad"},
+            executor, cache, "search_knowledge", {"sql": "bad"},
             budget=None, default_timeout=30.0,
         )
 
@@ -94,7 +95,7 @@ class TestNormalExecution:
         cache = _mock_cache()
 
         result, status, is_cached, ms = await invoke_tool_with_cache(
-            executor, cache, "data_query", {},
+            executor, cache, "search_knowledge", {},
             budget=None, default_timeout=30.0,
         )
 
@@ -109,7 +110,7 @@ class TestNormalExecution:
         cache = _mock_cache()
 
         result, status, is_cached, ms = await invoke_tool_with_cache(
-            executor, cache, "data_query", {},
+            executor, cache, "search_knowledge", {},
             budget=None, default_timeout=30.0,
         )
 
@@ -128,14 +129,14 @@ class TestCacheHit:
         cache = _mock_cache(hit_value=cached_ar)
 
         result, status, is_cached, ms = await invoke_tool_with_cache(
-            executor, cache, "data_query", {"file": "x"},
+            executor, cache, "search_knowledge", {"file": "x"},
             budget=None, default_timeout=30.0,
         )
 
         assert result is cached_ar
         assert status == "success"
         assert is_cached is True
-        executor.execute.assert_not_called()
+        executor.handler.assert_not_called()
 
 
 class TestExceptionHandling:
@@ -148,7 +149,7 @@ class TestExceptionHandling:
         cache = _mock_cache()
 
         result, status, is_cached, ms = await invoke_tool_with_cache(
-            executor, cache, "data_query", {},
+            executor, cache, "search_knowledge", {},
             budget=None, default_timeout=5.0,
         )
 
@@ -165,7 +166,7 @@ class TestExceptionHandling:
         cache = _mock_cache()
 
         result, status, is_cached, ms = await invoke_tool_with_cache(
-            executor, cache, "data_query", {},
+            executor, cache, "search_knowledge", {},
             budget=None, default_timeout=30.0,
         )
 
@@ -189,7 +190,7 @@ class TestBudgetIntegration:
         cache = _mock_cache()
 
         await invoke_tool_with_cache(
-            executor, cache, "data_query", {},
+            executor, cache, "search_knowledge", {},
             budget=budget, default_timeout=30.0,
         )
 

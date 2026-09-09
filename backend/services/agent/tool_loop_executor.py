@@ -1,12 +1,12 @@
 """通用工具循环执行器（ToolLoopExecutor）
 
-被 ERPAgent 和 ScheduledTaskAgent 共用的单一执行内核。
+当前生产创建者是 ScheduledTaskAgent；ERPAgent 保留自己的内部编排。
 行为差异通过 LoopConfig / LoopStrategy / LoopHook 注入，零代码重复。
 
 设计参考：OpenAI Agents SDK Runner / LangGraph StateGraph /
 Anthropic Claude Code AgentLoop 的"配置 + 策略 + 中间件"模式。
 
-每次 ERPAgent.execute() 或 ScheduledTaskAgent.execute() 构造一个新实例，
+每次 ScheduledTaskAgent.execute() 构造一个新实例，
 对应一次完整的工具循环生命周期，内部维护一个 ToolResultCache。
 """
 
@@ -99,6 +99,9 @@ class ToolLoopExecutor:
         hook_ctx.selected_tools = selected_tools
         hook_ctx.tools_called = tools_called
         hook_ctx.budget = budget
+        selected_tools[:] = self.executor.tool_runtime.advertised(
+            t["function"]["name"] for t in selected_tools if "function" in t
+        )
 
         accumulated_text = ""
         total_tokens = 0
@@ -165,7 +168,7 @@ class ToolLoopExecutor:
                 # action == "continue"
                 continue
 
-            completed = sorted(tc_acc.values(), key=lambda x: x.get("id", ""))
+            completed = list(tc_acc.values())
 
             if self._is_loop_detected(completed, recent_calls):
                 stop_reason = "loop_detected"
@@ -499,8 +502,7 @@ class ToolLoopExecutor:
             str = 拒绝/超时的提示文本（跳过执行）
         """
         if not hook_ctx.task_id:
-            # headless 模式（无 WS 连接）：直接放行
-            return None
+            return "⚠ 无可用确认通道，操作未执行。"
 
         try:
             from schemas.websocket_builders import build_tool_confirm_request
@@ -552,8 +554,7 @@ class ToolLoopExecutor:
             logger.warning(
                 f"Tool confirm error | tool={tool_name} | error={e}"
             )
-            # 确认机制异常时放行（fail-open），不阻塞工具执行
-            return None
+            return "⚠ 确认失败，操作未执行。"
 
     # ========================================
     # 单轮工具执行
@@ -590,7 +591,7 @@ class ToolLoopExecutor:
         # 退出信号短路 / JSON 解析 / 安全检查 / 参数校验
         # 通过的工具收集到 ready 列表，待并行执行
         # ============================================================
-        from config.chat_tools import SafetyLevel, get_safety_level
+        from services.tools import ToolCall
         from services.agent.tool_args_validator import validate_tool_args
 
         accumulated = turn_text
@@ -613,7 +614,7 @@ class ToolLoopExecutor:
             # JSON 解析失败 → 错误信息回灌给 LLM
             try:
                 args = json.loads(tc["arguments"]) if tc["arguments"] else {}
-            except json.JSONDecodeError as e:
+            except (json.JSONDecodeError, TypeError) as e:
                 logger.warning(
                     f"ToolLoop bad JSON | tool={tool_name} | error={e}"
                 )
@@ -624,21 +625,18 @@ class ToolLoopExecutor:
                 accumulated = result
                 continue
 
-            # ── 安全检查：DANGEROUS 工具需用户确认 ──
-            safety = get_safety_level(tool_name)
-            if safety == SafetyLevel.DANGEROUS:
-                confirm_result = await self._request_user_confirm(
-                    tool_name, args, tc["id"], hook_ctx,
-                )
-                if confirm_result is not None:
-                    messages.append({
-                        "role": "tool", "tool_call_id": tc["id"],
-                        "content": confirm_result,
-                    })
-                    accumulated = confirm_result
-                    continue
+            if not isinstance(args, dict):
+                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": "工具参数必须是 JSON 对象"})
+                continue
 
             # ── 参数校验网关：过滤幻觉参数 + 必填检查 ──
+            try:
+                self.executor.tool_runtime.check_argument_scope(args)
+            except PermissionError as error:
+                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": str(error)})
+                self._turn_tool_outcomes.append((tool_name, str(error), "error"))
+                accumulated = str(error)
+                continue
             args, validation_error = validate_tool_args(
                 tool_name, args, selected_tools,
             )
@@ -669,29 +667,28 @@ class ToolLoopExecutor:
             try:
                 r, status, cached, ms = await invoke_tool_with_cache(
                     self.executor, self._cache, tool_name, args,
-                    hook_ctx.budget, self.config.tool_timeout,
+                    hook_ctx.budget, self.config.tool_timeout, call_id=tc["id"],
                 )
                 return tc, tool_name, args, r, status, cached, ms
             except Exception as e:
                 logger.opt(exception=True).error(f"ToolLoop parallel error | tool={tool_name} | error={e}")
                 return tc, tool_name, args, f"工具执行失败: {e}", "error", False, 0
 
-        # Hook 链：所有工具执行前
-        for tc, tool_name, args in ready:
-            for hook in self.hooks:
-                await hook.on_tool_start(hook_ctx, tool_name, args)
-
-        # 并行执行（单工具时等价于直接 await，无额外开销）
-        if len(ready) == 1:
-            results = [await _invoke_safe(*ready[0])]
-        else:
-            results = await _aio.gather(
-                *[_invoke_safe(tc, tn, a) for tc, tn, a in ready],
-            )
-            logger.info(
-                f"ToolLoop parallel done | count={len(results)} | "
-                f"tools={[r[1] for r in results]}"
-            )
+        by_id = {tc["id"]: (tc, name, args) for tc, name, args in ready}
+        planned = self.executor.tool_runtime.batches(
+            ToolCall(tc["id"], name, args) for tc, name, args in ready
+        )
+        results = []
+        for batch in planned:
+            entries = [by_id[item.call.call_id] for item in batch]
+            for tc, tool_name, args in entries:
+                for hook in self.hooks:
+                    await hook.on_tool_start(hook_ctx, tool_name, args)
+            if len(entries) == 1:
+                results.append(await _invoke_safe(*entries[0]))
+            else:
+                from services.tools.runtime import run_parallel
+                results.extend(await run_parallel(_invoke_safe(*entry) for entry in entries))
 
         # ============================================================
         # 阶段 3：后处理（串行，按原始顺序）
@@ -778,10 +775,9 @@ class ToolLoopExecutor:
 
             # 自动扩展：模型调了隐藏工具 → 从全量列表动态注入
             if self.strategy.enable_tool_expansion:
-                from services.agent.tool_loop_helpers import inject_tool
-                inject_tool(
-                    tool_name, selected_tools, self.all_tools,
-                    self.strategy.exit_signals, hook_ctx.org_id,
+                selected_tools[:] = self.executor.tool_runtime.advertised(
+                    (t["function"]["name"] for t in selected_tools),
+                    discovered_names=(tool_name,),
                 )
 
         return accumulated
