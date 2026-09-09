@@ -33,10 +33,17 @@ class ToolContext:
     conversation_id: str | None = None
     task_id: str | None = None
     call_id: str | None = None
+    confirmation_available: bool = False
     budget: Any = field(default=None, repr=False, compare=False)
     cancellation: Any = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        if type(self.confirmation_available) is not bool:
+            raise ValueError("confirmation_available must be a trusted boolean")
+        for name in ("conversation_id", "task_id", "call_id"):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"Invalid trusted {name}")
         for field_name in ("actor_user_id", "workspace_owner_id"):
             value = getattr(self, field_name)
             if not isinstance(value, str) or not value.strip():

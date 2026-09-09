@@ -1,0 +1,28 @@
+BASE 2e8fdb2db242366b790cc623703d5a65dd574632
+HEAD 2e8fdb2db242366b790cc623703d5a65dd574632
+BRANCH codex/task/20260909155118-tool-unification-policy
+BLOCK_01_MERGE_TREE b266cdaf38643f4517c07f8091bfcbdb483e780b
+BLOCK_01_CANDIDATE_TREE b266cdaf38643f4517c07f8091bfcbdb483e780b
+BLOCK_01_CANDIDATE_IS_ANCESTOR True
+TRACKED_BACKEND_DIFF ['backend/services/tools/__init__.py', 'backend/services/tools/context.py', 'backend/services/tools/legacy.py', 'backend/services/tools/registry.py', 'backend/services/tools/spec.py']
+PRODUCTION_ENTRYPOINT_DIFF 
+EXISTING_TEST_DIFF 
+DIFF_CHECK PASS
+BASH_SYNTAX PASS
+SHA256 11b56567cd0d8d6a0efea3accbb10d1bd22e6f01a2c10afcfb6ff643ae236eb7 backend/services/tools/__init__.py
+SHA256 137c16505099947bc5b7479cca4f8bd56c5b4b9e9934f2a501d4a1aadb293cf2 backend/services/tools/action_rules.py
+SHA256 2c2281554ffbb8a568e5033c0c39a33943ba66c354df6f6acb91257862db9673 backend/services/tools/context.py
+SHA256 4aae23ed614be1c68fbb27b0066099b8b2e428a6e9285e4846908cbb9a09ebf0 backend/services/tools/legacy.py
+SHA256 4199417f11a84e4f076a3785ea7b372874cac121f7d930fe7c67562bf69ef26c backend/services/tools/legacy_policy.py
+SHA256 37ee78cefe5e4e4f682c39c70bb912b73036ca2319817937f84ecc80ac5f7b21 backend/services/tools/policy.py
+SHA256 af8f576c790ef9b74429501e0eb8a2cbf4a7ee1caf43e151e01a9b061d3fcf66 backend/services/tools/registry.py
+SHA256 b2f73aef50d892c8e1ebfb2cb6af9dfbb4ad350406ae5789b1abfe16b9a39502 backend/services/tools/spec.py
+SHA256 ae15859f6bf0a1b2b6363d4a330655f4ec64c587140ff11659814ead8cbea9b4 backend/tests/test_tool_policy.py
+PYTHON_PARSE_AND_WHITESPACE PASS
+RESULT 02-isolated.txt ======================= 650 passed, 2 warnings in 0.71s ========================
+NEW_POLICY_PASSED 552
+ERP_QUERY_ACTION_ROWS 166
+RESULT 02-regression.txt ======================= 516 passed, 4 warnings in 2.89s ========================
+RESULT 02-regression-erp.txt ======================== 11 passed, 2 warnings in 0.29s ========================
+REVIEW: trust boundary, action dispatch, confirmation binding, scheduling, independent cache/effect declarations, production isolation checked; no unresolved high-confidence findings.
+LIMITS: pure decisions and local unit/mock regressions; no real WS timeout/disconnect, external services, production deployment or user acceptance.

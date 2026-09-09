@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -30,6 +30,39 @@ def thaw(value: Any) -> Any:
 class Exposure(str, Enum):
     PUBLIC = "public"
     LEGACY_INTERNAL = "legacy_internal"
+
+
+@dataclass(frozen=True, kw_only=True)
+class ToolPolicyRules:
+    """Reviewed policy facts; independent of risk, effects and cache eligibility.
+
+    Old/custom specs without reviewed rules fail closed until explicitly declared.
+    action_rule selects a pure domain resolver, never a business handler.
+    """
+
+    operation: str = "unknown"
+    plan_allowed: bool = False
+    execution_modes: tuple[str, ...] = ("interactive",)
+    action_rule: str | None = None
+    required_permissions: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.operation not in {"unknown", "read", "analysis", "business_write", "generation", "proposal"}:
+            raise ValueError("Invalid policy operation")
+        if type(self.plan_allowed) is not bool:
+            raise ValueError("plan_allowed must be explicit")
+        if isinstance(self.execution_modes, str) or not self.execution_modes or any(
+            mode not in {"interactive", "scheduled", "preflight"} for mode in self.execution_modes
+        ):
+            raise ValueError("Invalid policy execution_modes")
+        if self.action_rule not in {None, "erp_query", "erp_write", "erp_raw_read", "scheduled_task"}:
+            raise ValueError("Invalid policy action_rule")
+        if isinstance(self.required_permissions, str) or any(
+            not isinstance(code, str) or not code.strip() for code in self.required_permissions
+        ):
+            raise ValueError("Invalid required_permissions")
+        object.__setattr__(self, "execution_modes", tuple(self.execution_modes))
+        object.__setattr__(self, "required_permissions", tuple(self.required_permissions))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -64,8 +97,14 @@ class ToolSpec:
     definition_kind: str = "legacy"
     compatibility_notes: tuple[str, ...] = ()
     legacy_validation_schema: Mapping[str, Any] | None = None
+    policy_rules: ToolPolicyRules = field(default_factory=ToolPolicyRules)
+    replay_requirement: str = "unspecified"
 
     def __post_init__(self) -> None:
+        if not isinstance(self.policy_rules, ToolPolicyRules):
+            raise ValueError("Invalid policy_rules")
+        if self.replay_requirement not in {"unspecified", "reexecute_allowed", "record_required"}:
+            raise ValueError("Invalid replay_requirement")
         for field in ("name", "handler_key", "source"):
             value = getattr(self, field)
             if not isinstance(value, str) or not value.strip() or value != value.strip():

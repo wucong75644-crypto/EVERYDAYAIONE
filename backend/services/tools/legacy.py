@@ -11,6 +11,7 @@ from typing import Iterable, Mapping
 
 from .context import ToolContext
 from .registry import ToolRegistry
+from .legacy_policy import legacy_policy_rules
 from .spec import Exposure, ToolAvailability, ToolSpec
 
 
@@ -80,7 +81,7 @@ def build_legacy_catalog() -> ToolRegistry:
     No request identities, settings reads, DB clients, or ToolExecutors are held.
     Factory output remains authoritative, including every description/parameter.
     """
-    from config.chat_tools import get_safety_level, is_concurrency_safe
+    from config.chat_tools import get_core_tools, get_safety_level, is_concurrency_safe
     from config.agent_tools import TOOL_SCHEMAS
     from config.code_tools import build_code_tools
     from config.common_tools import build_common_tools
@@ -91,6 +92,7 @@ def build_legacy_catalog() -> ToolRegistry:
     from services.agent.tool_result_cache import ToolResultCache
 
     registry = ToolRegistry()
+    scheduled_names = frozenset(t["function"]["name"] for t in get_core_tools(org_id="catalog"))
     families = (
         ("config.erp_tools.build_erp_tools", build_erp_tools(), True, ()),
         ("config.crawler_tools.build_crawler_tools", build_crawler_tools(), False, ("crawler_enabled",)),
@@ -128,6 +130,7 @@ def build_legacy_catalog() -> ToolRegistry:
                 definition_kind="explicit" if name in explicit else "legacy",
                 compatibility_notes=_COMPATIBILITY.get(name, ()),
                 legacy_validation_schema=TOOL_SCHEMAS.get(name),
+                policy_rules=legacy_policy_rules(name, scheduled_names),
             ))
     for name, source in _INTERNAL_SOURCES.items():
         registry.register(ToolSpec(
@@ -144,6 +147,7 @@ def build_legacy_catalog() -> ToolRegistry:
             executor_type="legacy", handler_key=name, exposure=Exposure.LEGACY_INTERNAL,
             source=source,
             legacy_validation_schema=TOOL_SCHEMAS.get(name),
+            policy_rules=legacy_policy_rules(name, scheduled_names),
         ))
     return registry
 
