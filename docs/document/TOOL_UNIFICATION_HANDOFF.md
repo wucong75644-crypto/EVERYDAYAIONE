@@ -1,21 +1,21 @@
 # 工具统一：共同约束与板块交接
 
-更新日期：2026-09-09。当前板块 02：**技术验收通过，待部署/用户验收**。本块未提交、未推送、未部署、未合并；不能启动板块 03。
+更新日期：2026-09-09。当前板块 03：**技术验收通过，待部署/用户验收**。本块未提交、未推送、未部署、未合并；不能启动板块 04。
 
-- 板块 01 前置已核验：用户明确说明已验收进入 main；最新 origin/main 的 `2e8fdb2db242366b790cc623703d5a65dd574632` 合入 `b4c854ac`（Spec/Registry）。两者代码树一致，板块 01 工作树已不在工作树清单。板块 01 验收记录保留提交前历史状态，不以其过时首页否定当前 Git 与用户确认。
-- 本任务分支：`codex/task/20260909155118-tool-unification-policy`
-- 工作树：`/Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-policy`
-- 本任务基准及当前 HEAD：`2e8fdb2db242366b790cc623703d5a65dd574632`；本块实现为该基准上的未提交差异，HEAD 不是本块已测候选。
-- [板块 02 验收记录](TOOL_UNIFICATION_ACCEPTANCE_02.md) / [权限矩阵与接口](TOOL_UNIFICATION_POLICY_02.md) / [本块代码指纹和结构检查](tool-unification-evidence/02-source-checks.txt)
-- 历史：[板块 01 验收记录](TOOL_UNIFICATION_ACCEPTANCE_01.md) / [当前目录及三代表契约](TOOL_UNIFICATION_CATALOG_01.md)。板块 01 的基准为 `051b24c5`，独立 98 项测试在本块继续通过。
+- 板块 01–02 前置已核验：用户明确确认已验收进入 main。最新 origin/main `8e74f57de1073cbef8b3b8c8256e4409d60c506b` 合入板块 02 `4084db4e`，二者 tree 同为 `81f34e6dc3bee23db8499bcceb9b67f91257e9ad`；板块 01 `b4c854ac` 也在其祖先链，合并 `2e8fdb2d` 与候选 tree 一致。已关闭的 01/02 工作树不在当前工作树清单；历史验收记录中的提交前状态保留，不替代当前 Git 与用户验收事实。
+- 当前分支：`codex/task/20260909195904-tool-unification-03`
+- 当前工作树：`/Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-03`
+- 当前基准及 HEAD：`8e74f57de1073cbef8b3b8c8256e4409d60c506b`；实现为该基准上未提交差异，HEAD 不是板块 03 已测候选。
+- [板块 03 验收记录](TOOL_UNIFICATION_ACCEPTANCE_03.md) / [执行与结果接口](TOOL_UNIFICATION_EXECUTION_03.md) / [代码指纹及结构检查](tool-unification-evidence/03-source-checks.txt)
+- 历史：[板块 02 验收记录](TOOL_UNIFICATION_ACCEPTANCE_02.md) / [Policy 接口](TOOL_UNIFICATION_POLICY_02.md) / [板块 01 验收记录](TOOL_UNIFICATION_ACCEPTANCE_01.md) / [目录与代表契约](TOOL_UNIFICATION_CATALOG_01.md)。01/02 的记录是各自交付时的快照。
 
 ## 总体目标与顺序
 
 渐进建立 ToolSpec → ToolRegistry → ToolPolicy → ToolDispatcher → ToolHandler → ToolResult，统一公共工具调用外层，不重写业务引擎。编号顺序固定：
 
 1. 工具定义和注册表（已进入 main）。
-2. Policy：模式、业务权限快照、参数级风险、确认与分批（当前本块）。
-3. Dispatcher / Legacy Handler / ToolResult 基础。
+2. Policy：模式、业务权限快照、参数级风险、确认与分批（已进入 main）。
+3. Dispatcher / Legacy Handler / ToolResult 基础（当前本块）。
 4. Chat、scheduled ToolLoop、旧 execute 实际入口完整切换。
 5. 实时结果与展示。
 6. 回放、缓存、审计及新持久化载荷。
@@ -123,8 +123,20 @@ Policy 负责模式/场景、既有授权快照、可表达的业务权限，板
 - 未调用真实 ERP/删除/生成；未操作 WS/业务 Handler/缓存；未新增重试或生产导入。真实确认超时/断连、运行并发、业务授权源适配仍由板块 04 验证，不以本块测试代替。
 - 回退：撤回本块新增文件并把 services/tools 的五个增量文件恢复到 `2e8fdb2d`，保留板块 01。无持久化/数据库/新协议载荷，不需迁移或回放兼容处理；生产入口无需开关。
 
+## 板块 03 实际增量
+
+- 新增 `dispatcher.py`：ToolHandler 协议、ToolDispatcher，只分发入口签发的 allow 调用，按 executor_type/handler_key 定位；无 UI、业务实现、批次或重试。未知/缺失绑定仍为 ValueError。
+- 新增 `legacy_handler.py`：LegacyToolHandler、build_legacy_handlers，保留原 `_handlers` callable 并调用；不回调公共 execute。新显式/legacy Spec 都能绑定同一原业务函数。
+- 新增 `execution.py`：ToolExecutionService.execute 逐次执行 Registry/Policy 检查、取消检查、请求内一次性预占与分发；拒绝/待确认 Handler 为 0，批准后为 1。普通异常包装，取消继续传播；execute_legacy 返回原类型/抛原异常。
+- 新增 `result.py`：ToolResult、ToolError、ToolArtifacts、ToolExecutionMetadata。原对象及 runtime metadata 无损保留；Chat/ToolLoop 惰性旧投影、图片注入字段、表单终止字段、错误/重试、文件/emit、audit/执行状态映射齐备。无序列化器、审计写入或协议切换。
+- `__init__.py` 仅增加公开导出；生产 ToolExecutor、各 Mixin、Chat/ToolLoop、WS、invocation 与返回类型源码均未改动。
+- 新增 `test_tool_execution.py`（41 passed）和 `test_tool_result.py`（49 passed）。最终 90 新用例 + 650 Registry/Policy + 720 相关旧入口/结果 + 11 独立 ERP = **1471 passed，0 failed/error/skipped**。初轮 1 项新测试符号误写已修复并复验，详细记录见 [03 验收](TOOL_UNIFICATION_ACCEPTANCE_03.md)。
+- 三代表测试实际经过原 `_search_knowledge` 或原文件 `_handlers` 闭包 → `_file_dispatch`，仅外部 IO/删除实现为 mock；公共 execute 递归陷阱零调用。无真实双执行、删除或付费生成。
+- 接口、各字段与旧结果逐项对照、请求内一次性边界、异常行为与板块 04 的可信装配责任见 [03 接口](TOOL_UNIFICATION_EXECUTION_03.md)。特别注意：ToolResult 是内存信封，不是新持久化 payload；ToolLoop 非 AgentResult 的现有消费限制没有被本块改写。
+- 回退：撤回本块四个新模块、两项测试及文档增量，将 tools/__init__.py 恢复到 `8e74f57d`；保留 01–02，无数据迁移、生产开关或 WS 新格式。
+
 ## 下一板块前置
 
-板块 03 的代码前置已具备：规范 Spec/Context/Registry、统一纯决策与确认比较值、稳定批次结构可在隔离环境中消费。下一块仍只负责 Dispatcher/Legacy Handler/ToolResult 基础，不接生产。
+板块 04 的代码前置已具备：Spec/Registry/Policy、仅允许分发、原业务 Handler 复用及 ToolResult/旧兼容出口已在隔离环境贯通。后续必须完整接入可信 Context/Executor 身份配对、参数/资源解析、确认、分批、缓存/回放之前的权限边界和旧 execute 门面；不能先执行再补策略。实际接入契约见 03 接口文档第 4 节。
 
-流程前置尚缺：本块用户明确提交部署确定候选 → 用户核对权限矩阵和确认边界 → 用户明确验收关闭 → 受控入口确认 main 包含本块。最终候选 SHA 仅在实际提交部署后记录，并核对被测代码指纹。**本任务止于板块 02；用户验收关闭前不能启动板块 03。**
+流程前置仍缺：板块 03 用户明确提交部署确定候选 → 用户核对调用计数/结果对照及原有只读行为 → 用户明确验收关闭 → 受控入口确认 main 包含本块。**本任务止于板块 03；用户验收关闭前不能启动板块 04。** 最终候选 SHA 在实际提交部署后记录，并核对被测代码指纹。
