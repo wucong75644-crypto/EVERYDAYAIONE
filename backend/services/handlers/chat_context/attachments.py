@@ -94,14 +94,14 @@ def format_attachments(
             status = "image"
             parquet_rel = None
         elif ext in _DATA_EXTS:
-            analyzed = cache.is_analyzed(raw_name) if cache else False
+            analyzed = cache.is_analyzed(wp or raw_name) if cache else False
             if analyzed:
                 status = "analyzed"
                 # 取 parquet basename,渲染为 staging 相对路径
                 # (沙盒 cwd=/workspace,实际路径 = /workspace/staging/{basename})
                 parquet_rel = None
                 if cache:
-                    entry = cache._resolve_entry(raw_name)
+                    entry = cache._resolve_entry(wp or raw_name)
                     if entry and entry.parquet:
                         import os as _os
                         parquet_rel = f"staging/{_os.path.basename(entry.parquet)}"
@@ -200,7 +200,7 @@ def build_workspace_prompt(
         if ext in _IMG_EXTS:
             kind = "图片（已视觉注入）"
         elif ext in _DATA_EXTS:
-            is_analyzed = cache.is_analyzed(raw_name) if cache else False
+            is_analyzed = cache.is_analyzed(wp or raw_name) if cache else False
             kind = "数据文件（已分析）" if is_analyzed else "数据文件（待治理）"
         elif ext == ".parquet":
             kind = "Parquet 数据"

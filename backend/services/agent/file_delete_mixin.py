@@ -33,13 +33,15 @@ class FileDeleteMixin:
 
         cache = get_file_cache(self.conversation_id)
 
-        # 优先 file_ids（fid 协议），兜底 files（老协议）
+        # 保留同时携带两种参数的旧调用，使用副本，按实际目标去重。
         file_ids = args.get("file_ids") or []
         files = args.get("files") or []
         if isinstance(file_ids, str):
             file_ids = [file_ids]
         if isinstance(files, str):
             files = [files]
+        else:
+            files = list(files)
         if not file_ids and not files:
             return AgentResult(
                 summary="未指定要删除的文件",
@@ -72,35 +74,49 @@ class FileDeleteMixin:
                     )
                 files.append(ws)
 
-        deleted = []
+        targets = []
+        seen = set()
         skipped = []
         for name in files:
-            if os.path.isabs(name) and os.path.isfile(name):
-                abs_path = name  # 已经是 fid 解析出来的 abs 路径
-            else:
-                abs_path = cache.resolve(name, usage="delete")
-                if not abs_path:
-                    # 缓存没有 → 尝试直接 resolve
-                    try:
-                        target = executor.resolve_safe_path(name)
-                        if target.is_file():
-                            abs_path = str(target)
-                    except Exception:
-                        pass
-            if not abs_path or not os.path.isfile(abs_path):
+            # 带目录的输入必须按原路径校验；不能先被同名缓存改写。
+            # basename 保留唯一名字匹配兼容，缓存/ID 仍不代表路径授权。
+            candidate = name
+            if not os.path.dirname(name):
+                candidate = cache.resolve(name, usage="delete") or name
+            try:
+                target = executor.resolve_safe_path(candidate)
+                exists = target.is_file()
+            except FileNotFoundError:
                 skipped.append(name)
                 continue
+            except (OSError, ValueError) as error:
+                return AgentResult(
+                    summary=f"删除路径不允许或不可用: {name}",
+                    status="error", error_message=str(error),
+                    metadata={"retryable": False},
+                )
+            if not exists:
+                skipped.append(name)
+                continue
+            abs_path = str(target)
+            if abs_path not in seen:
+                seen.add(abs_path)
+                targets.append((name, abs_path))
 
-            os.remove(abs_path)
-            deleted.append((name, abs_path))
-            logger.info(f"file_delete | path={name} | resolved={abs_path}")
-
-        # 记录到 deleted_files 表（fire-and-forget）
-        if deleted:
-            deleted_meta = [
-                {"raw": name, "resolved": ap} for name, ap in deleted
-            ]
-            self._record_deleted_files(deleted_meta)
+        # 整批校验结束后才执行。保留 OSS 副本和原恢复记录，不能改用
+        # FileExecutor.file_delete（它会立即删除 OSS，破坏 30 天恢复）。
+        deleted = []
+        try:
+            for name, abs_path in targets:
+                os.remove(abs_path)
+                deleted.append((name, abs_path))
+                logger.info(f"file_delete | path={name} | resolved={abs_path}")
+        finally:
+            # 中途发生文件系统错误时，已成功的删除仍须进入原恢复流程。
+            if deleted:
+                self._record_deleted_files([
+                    {"raw": name, "resolved": ap} for name, ap in deleted
+                ])
 
         # 构建回复
         lines = []

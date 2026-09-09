@@ -272,8 +272,8 @@ def _build_analysis_result(
     )
     name = Path(abs_path).name
     _register_source(executor, cache, abs_path)
-    cache.set_parquet(name, cache_path)
-    cache.set_analyzed(name, True)
+    cache.set_parquet(abs_path, cache_path)
+    cache.set_analyzed(abs_path, True)
     lines = [file_view]
     if sheet_names and len(sheet_names) > 1:
         lines.extend(["", f"Sheet 列表: {', '.join(sheet_names)}"])

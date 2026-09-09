@@ -7,7 +7,7 @@
 - parquet: staging 里的 parquet 路径（file_analyze 后才有）
 
 归一化规则：NFKC + 只保留中文/字母/数字 + 扩展名点
-匹配策略：精确 → 归一化 → stem（无扩展名）→ 前缀（截断）
+匹配策略：完整路径 → 唯一名字 → 唯一归一化 → 唯一 stem → 唯一前缀
 
 生命周期：对话级，TTL 7 天 + 数量上限 1000。
 """
@@ -70,13 +70,13 @@ class FileEntry:
 class FilePathCache:
     """会话级文件路径缓存 — 三字段注册表 + 归一化匹配 + get_file 自检"""
 
-    __slots__ = ("_entries", "_normalized", "_max", "_staging_dir")
+    __slots__ = ("_entries", "_paths", "_files", "_max", "_staging_dir")
 
     def __init__(self, max_entries: int = 500) -> None:
-        # {key: FileEntry}  key = rel_path / filename
-        self._entries: dict[str, FileEntry] = {}
-        # {归一化文件名: FileEntry}  归一化匹配用
-        self._normalized: dict[str, FileEntry] = {}
+        # 完整路径标识文件；名字只是别名，可能对应多个文件。
+        self._entries: dict[str, set[FileEntry]] = {}
+        self._paths: dict[str, set[FileEntry]] = {}
+        self._files: list[FileEntry] = []
         self._max = max_entries
         self._staging_dir: str = ""
 
@@ -95,27 +95,63 @@ class FilePathCache:
         - 防止后续 register 把 analyze 后的 parquet 清空
         """
         filename = os.path.basename(rel_path)
-        norm_key = normalize_filename(filename)
+        # 只有相同工作区路径才能合并；归一化文件名不代表文件身份。
+        entry = next((f for f in self._files if workspace and f.workspace == workspace), None)
+        if entry is None:
+            candidates = self._paths.get(rel_path, self._entries.get(rel_path, set()))
+            if not workspace and len(candidates) > 1:
+                return  # 无完整路径的歧义更新不能选择任意文件。
+            compatible = {f for f in candidates if not workspace or not f.workspace}
+            entry = self._unique(compatible)
+        if entry is None:
+            if self._max <= 0:
+                return
+            if len(self._files) >= self._max:
+                self._evict_oldest()
+            entry = FileEntry(name=filename)
+            self._files.append(entry)
+        if workspace:
+            entry.workspace = workspace
+        if parquet:
+            entry.parquet = parquet
+        # 拿到目录限定路径后，先前登记的 basename 仅保留为兼容别名。
+        # 否则子目录 report.csv 的别名会遮住根目录真正的 report.csv。
+        if os.path.dirname(rel_path) and not os.path.isabs(rel_path):
+            bare_paths = self._paths.get(filename)
+            if bare_paths:
+                bare_paths.discard(entry)
+                if not bare_paths:
+                    del self._paths[filename]
+            self._paths.setdefault(rel_path, set()).add(entry)
+        elif os.path.isabs(rel_path) or not any(
+            entry in candidates and os.path.dirname(key) and not os.path.isabs(key)
+            for key, candidates in self._paths.items()
+        ):
+            self._paths.setdefault(rel_path, set()).add(entry)
+        # 重复登记仍补全每个键，避免先登记 basename 后丢失 rel_path。
+        for key in (rel_path, filename, entry.workspace):
+            if key:
+                self._entries.setdefault(key, set()).add(entry)
 
-        # 已存在 → 合并更新（非空字段才覆盖）
-        existing = self._normalized.get(norm_key)
-        if existing:
-            if workspace:
-                existing.workspace = workspace
-            if parquet:
-                existing.parquet = parquet
-            return
+    @staticmethod
+    def _unique(entries: set[FileEntry]) -> Optional[FileEntry]:
+        return next(iter(entries)) if len(entries) == 1 else None
 
-        # 新注册
-        entry = FileEntry(name=filename, workspace=workspace, parquet=parquet)
+    def _evict_oldest(self) -> None:
+        entry = self._files.pop(0)
+        for index in (self._entries, self._paths):
+            for key, candidates in list(index.items()):
+                candidates.discard(entry)
+                if not candidates:
+                    del index[key]
 
-        if len(self._entries) >= self._max:
-            first_key = next(iter(self._entries))
-            del self._entries[first_key]
-
-        self._entries[rel_path] = entry
-        self._entries[filename] = entry
-        self._normalized[norm_key] = entry
+    def registered_paths(self) -> tuple[tuple[str, FileEntry], ...]:
+        """供 ID 解析使用的唯一精确键快照，不含歧义名字或模糊匹配。"""
+        return tuple(
+            (key, next(iter(candidates)))
+            for key, candidates in (self._entries | self._paths).items()
+            if len(candidates) == 1
+        )
 
     def set_parquet(self, filename: str, parquet_path: str) -> None:
         """设置 parquet 路径（file_analyze 完成后调用）。"""
@@ -192,51 +228,47 @@ class FilePathCache:
     def _resolve_entry(self, name: str) -> Optional[FileEntry]:
         """四级递进匹配查找 FileEntry。"""
         # 1. 精确匹配
-        entry = self._entries.get(name)
-        if entry:
-            return entry
+        if name in self._paths:
+            return self._unique(self._paths[name])
+        if name in self._entries:
+            return self._unique(self._entries[name])
         basename = os.path.basename(name)
-        entry = self._entries.get(basename)
-        if entry:
-            return entry
+        if basename in self._entries:
+            return self._unique(self._entries[basename])
 
         # 2. 归一化匹配
         norm_input = normalize_filename(name)
-        entry = self._normalized.get(norm_input)
-        if entry:
-            return entry
+        normalized = [(normalize_filename(f.name), f) for f in self._files]
+        matches = {f for key, f in normalized if key == norm_input}
+        if matches:
+            return self._unique(matches)
 
         # 3. Stem 匹配（用户没带扩展名）
         input_stem = os.path.splitext(norm_input)[0]
         if input_stem:
-            for norm_key, entry in self._normalized.items():
-                registered_stem = os.path.splitext(norm_key)[0]
-                if input_stem == registered_stem:
-                    return entry
+            matches = {f for key, f in normalized if os.path.splitext(key)[0] == input_stem}
+            if matches:
+                return self._unique(matches)
 
         # 4. 前缀匹配（LLM 截断文件名，≥6 字符防误匹配）
         if input_stem and len(input_stem) >= 6:
-            for norm_key, entry in self._normalized.items():
+            matches = set()
+            for norm_key, entry in normalized:
                 registered_stem = os.path.splitext(norm_key)[0]
                 if registered_stem.startswith(input_stem) or input_stem.startswith(registered_stem):
-                    return entry
+                    matches.add(entry)
+            return self._unique(matches)
 
         return None
 
     def get_filename(self, name: str) -> Optional[str]:
         """按 key 查原始文件名。"""
-        entry = self._entries.get(name)
+        entry = self._unique(self._paths.get(name, self._entries.get(name, set())))
         return entry.name if entry else None
 
     def list_all(self) -> list[dict[str, str]]:
         """返回所有去重的文件条目。"""
-        seen: set[str] = set()
-        result: list[dict[str, str]] = []
-        for entry in self._normalized.values():
-            if entry.name not in seen:
-                seen.add(entry.name)
-                result.append(entry.to_dict())
-        return result
+        return [entry.to_dict() for entry in self._files]
 
     # write_manifest 已删除(路径协议改造)
     # 原用途:为沙盒 get_file 函数生成名字→路径映射表

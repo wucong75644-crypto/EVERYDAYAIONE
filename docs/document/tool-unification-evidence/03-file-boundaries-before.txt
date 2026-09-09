@@ -1,0 +1,380 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.2, pytest-9.0.3, pluggy-1.6.0 -- /Users/wucong/EVERYDAYAIONE/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-03/backend
+configfile: pytest.ini
+plugins: cov-7.1.0, asyncio-1.3.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 33 items
+
+backend/tests/test_file_tool_boundaries.py::test_safe_delete_uses_original_recording_and_does_not_mutate_args[relative] PASSED [  3%]
+backend/tests/test_file_tool_boundaries.py::test_safe_delete_uses_original_recording_and_does_not_mutate_args[absolute] PASSED [  6%]
+backend/tests/test_file_tool_boundaries.py::test_safe_delete_uses_original_recording_and_does_not_mutate_args[name] PASSED [  9%]
+backend/tests/test_file_tool_boundaries.py::test_safe_delete_uses_original_recording_and_does_not_mutate_args[fid] PASSED [ 12%]
+backend/tests/test_file_tool_boundaries.py::test_safe_delete_uses_original_recording_and_does_not_mutate_args[both] FAILED [ 15%]
+backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[absolute] FAILED [ 18%]
+backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[relative_escape] FAILED [ 21%]
+backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[other_owner] FAILED [ 24%]
+backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[blocked] FAILED [ 27%]
+backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[staging] FAILED [ 30%]
+backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[symlink] FAILED [ 33%]
+backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[parent_symlink] FAILED [ 36%]
+backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[cached] FAILED [ 39%]
+backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[fid] FAILED [ 42%]
+backend/tests/test_file_tool_boundaries.py::test_chat_keeps_explicit_delete_path_until_scoped_handler FAILED [ 45%]
+backend/tests/test_file_tool_boundaries.py::test_missing_and_duplicate_targets_keep_skip_and_once_semantics FAILED [ 48%]
+backend/tests/test_file_tool_boundaries.py::test_partial_io_failure_keeps_records_without_retry FAILED [ 51%]
+backend/tests/test_file_tool_boundaries.py::test_stdout_does_not_register_disallowed_paths[relative_escape] FAILED [ 54%]
+backend/tests/test_file_tool_boundaries.py::test_stdout_does_not_register_disallowed_paths[absolute] FAILED [ 57%]
+backend/tests/test_file_tool_boundaries.py::test_stdout_does_not_register_disallowed_paths[other_owner] FAILED [ 60%]
+backend/tests/test_file_tool_boundaries.py::test_stdout_does_not_register_disallowed_paths[symlink] FAILED [ 63%]
+backend/tests/test_file_tool_boundaries.py::test_stdout_does_not_register_disallowed_paths[parent_symlink] FAILED [ 66%]
+backend/tests/test_file_tool_boundaries.py::test_stdout_does_not_register_disallowed_paths[blocked] FAILED [ 69%]
+backend/tests/test_file_tool_boundaries.py::test_stdout_does_not_register_disallowed_paths[staging] FAILED [ 72%]
+backend/tests/test_file_tool_boundaries.py::test_stdout_does_not_register_disallowed_paths[directory] FAILED [ 75%]
+backend/tests/test_file_tool_boundaries.py::test_stdout_registers_valid_files_and_ids[False] PASSED [ 78%]
+backend/tests/test_file_tool_boundaries.py::test_stdout_registers_valid_files_and_ids[True] PASSED [ 81%]
+backend/tests/test_file_tool_boundaries.py::test_staging_artifacts_still_register_for_code[file_ref] PASSED [ 84%]
+backend/tests/test_file_tool_boundaries.py::test_staging_artifacts_still_register_for_code[new_text] PASSED [ 87%]
+backend/tests/test_file_tool_boundaries.py::test_staging_artifacts_still_register_for_code[legacy_text] PASSED [ 90%]
+backend/tests/test_file_tool_boundaries.py::test_staging_registration_cannot_escape_current_conversation[file_ref] FAILED [ 93%]
+backend/tests/test_file_tool_boundaries.py::test_staging_registration_cannot_escape_current_conversation[new_text] FAILED [ 96%]
+backend/tests/test_file_tool_boundaries.py::test_staging_registration_cannot_escape_current_conversation[legacy_text] FAILED [100%]
+
+=================================== FAILURES ===================================
+___ test_safe_delete_uses_original_recording_and_does_not_mutate_args[both] ____
+backend/tests/test_file_tool_boundaries.py:74: in test_safe_delete_uses_original_recording_and_does_not_mutate_args
+    assert "已删除 1 个文件" in result.summary
+E   AssertionError: assert '已删除 1 个文件' in '已删除 2 个文件：\n  ✓ 目录/销售 报表.csv\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_safe_delete_uses_original4/org/org/workspace-owner/目录/销售 报表.csv'
+E    +  where '已删除 2 个文件：\n  ✓ 目录/销售 报表.csv\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_safe_delete_uses_original4/org/org/workspace-owner/目录/销售 报表.csv' = AgentResult(summary='已删除 2 个文件：\n  ✓ 目录/销售 报表.csv\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_safe_delete_uses_original4/org/org/workspace-owner/目录/销售 报表.csv', status='success', format=<OutputFormat.TEXT: 'text'>, file_ref=None, data=None, columns=None, source='', error_message='', metadata={}, emit_payloads=[], tokens_used=0, confidence=1.0, insights=None, follow_up=None, thinking_text='').summary
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:33.979 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_safe_delete_uses_original4/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 22:01:33.986 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=目录/销售 报表.csv | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_safe_delete_uses_original4/org/org/workspace-owner/目录/销售 报表.csv
+2026-09-09 22:01:33.986 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_safe_delete_uses_original4/org/org/workspace-owner/目录/销售 报表.csv | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_safe_delete_uses_original4/org/org/workspace-owner/目录/销售 报表.csv
+__________ test_entire_batch_is_rejected_before_any_delete[absolute] ___________
+backend/tests/test_file_tool_boundaries.py:114: in test_entire_batch_is_rejected_before_any_delete
+    assert result.is_failure
+E   AssertionError: assert False
+E    +  where False = AgentResult(summary='已删除 2 个文件：\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_0/org/org/workspace-owner/safe.csv\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_0/outside.csv', status='success', format=<OutputFormat.TEXT: 'text'>, file_ref=None, data=None, columns=None, source='', error_message='', metadata={}, emit_payloads=[], tokens_used=0, confidence=1.0, insights=None, follow_up=None, thinking_text='').is_failure
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.007 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_0/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 22:01:34.007 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_0/org/org/workspace-owner/safe.csv | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_0/org/org/workspace-owner/safe.csv
+2026-09-09 22:01:34.008 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_0/outside.csv | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_0/outside.csv
+_______ test_entire_batch_is_rejected_before_any_delete[relative_escape] _______
+backend/tests/test_file_tool_boundaries.py:114: in test_entire_batch_is_rejected_before_any_delete
+    assert result.is_failure
+E   AssertionError: assert False
+E    +  where False = AgentResult(summary='已删除 1 个文件：\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_1/org/org/workspace-owner/safe.csv\n跳过 1 个（不存在或未找到）：\n  ✗ ../../../outside.csv', status='success', format=<OutputFormat.TEXT: 'text'>, file_ref=None, data=None, columns=None, source='', error_message='', metadata={}, emit_payloads=[], tokens_used=0, confidence=1.0, insights=None, follow_up=None, thinking_text='').is_failure
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.011 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_1/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 22:01:34.012 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_1/org/org/workspace-owner/safe.csv | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_1/org/org/workspace-owner/safe.csv
+_________ test_entire_batch_is_rejected_before_any_delete[other_owner] _________
+backend/tests/test_file_tool_boundaries.py:114: in test_entire_batch_is_rejected_before_any_delete
+    assert result.is_failure
+E   AssertionError: assert False
+E    +  where False = AgentResult(summary='已删除 2 个文件：\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_2/org/org/workspace-owner/safe.csv\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_2/org/org/other-owner/data.csv', status='success', format=<OutputFormat.TEXT: 'text'>, file_ref=None, data=None, columns=None, source='', error_message='', metadata={}, emit_payloads=[], tokens_used=0, confidence=1.0, insights=None, follow_up=None, thinking_text='').is_failure
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.015 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_2/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 22:01:34.016 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_2/org/org/workspace-owner/safe.csv | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_2/org/org/workspace-owner/safe.csv
+2026-09-09 22:01:34.016 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_2/org/org/other-owner/data.csv | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_2/org/org/other-owner/data.csv
+___________ test_entire_batch_is_rejected_before_any_delete[blocked] ___________
+backend/tests/test_file_tool_boundaries.py:114: in test_entire_batch_is_rejected_before_any_delete
+    assert result.is_failure
+E   AssertionError: assert False
+E    +  where False = AgentResult(summary='已删除 2 个文件：\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_3/org/org/workspace-owner/safe.csv\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_3/org/org/workspace-owner/.env', status='success', format=<OutputFormat.TEXT: 'text'>, file_ref=None, data=None, columns=None, source='', error_message='', metadata={}, emit_payloads=[], tokens_used=0, confidence=1.0, insights=None, follow_up=None, thinking_text='').is_failure
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.019 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_3/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 22:01:34.020 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_3/org/org/workspace-owner/safe.csv | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_3/org/org/workspace-owner/safe.csv
+2026-09-09 22:01:34.020 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_3/org/org/workspace-owner/.env | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_3/org/org/workspace-owner/.env
+___________ test_entire_batch_is_rejected_before_any_delete[staging] ___________
+backend/tests/test_file_tool_boundaries.py:114: in test_entire_batch_is_rejected_before_any_delete
+    assert result.is_failure
+E   AssertionError: assert False
+E    +  where False = AgentResult(summary='已删除 2 个文件：\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_4/org/org/workspace-owner/safe.csv\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_4/org/org/workspace-owner/staging/conv/internal.parquet', status='success', format=<OutputFormat.TEXT: 'text'>, file_ref=None, data=None, columns=None, source='', error_message='', metadata={}, emit_payloads=[], tokens_used=0, confidence=1.0, insights=None, follow_up=None, thinking_text='').is_failure
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.023 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_4/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 22:01:34.024 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_4/org/org/workspace-owner/safe.csv | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_4/org/org/workspace-owner/safe.csv
+2026-09-09 22:01:34.024 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_4/org/org/workspace-owner/staging/conv/internal.parquet | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_4/org/org/workspace-owner/staging/conv/internal.parquet
+___________ test_entire_batch_is_rejected_before_any_delete[symlink] ___________
+backend/tests/test_file_tool_boundaries.py:114: in test_entire_batch_is_rejected_before_any_delete
+    assert result.is_failure
+E   AssertionError: assert False
+E    +  where False = AgentResult(summary='已删除 2 个文件：\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_5/org/org/workspace-owner/safe.csv\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_5/org/org/workspace-owner/link.csv', status='success', format=<OutputFormat.TEXT: 'text'>, file_ref=None, data=None, columns=None, source='', error_message='', metadata={}, emit_payloads=[], tokens_used=0, confidence=1.0, insights=None, follow_up=None, thinking_text='').is_failure
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.027 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_5/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 22:01:34.028 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_5/org/org/workspace-owner/safe.csv | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_5/org/org/workspace-owner/safe.csv
+2026-09-09 22:01:34.028 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_5/org/org/workspace-owner/link.csv | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_5/org/org/workspace-owner/link.csv
+_______ test_entire_batch_is_rejected_before_any_delete[parent_symlink] ________
+backend/tests/test_file_tool_boundaries.py:114: in test_entire_batch_is_rejected_before_any_delete
+    assert result.is_failure
+E   AssertionError: assert False
+E    +  where False = AgentResult(summary='已删除 1 个文件：\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_6/org/org/workspace-owner/safe.csv\n跳过 1 个（不存在或未找到）：\n  ✗ linked/outside.csv', status='success', format=<OutputFormat.TEXT: 'text'>, file_ref=None, data=None, columns=None, source='', error_message='', metadata={}, emit_payloads=[], tokens_used=0, confidence=1.0, insights=None, follow_up=None, thinking_text='').is_failure
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.031 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_6/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 22:01:34.032 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_6/org/org/workspace-owner/safe.csv | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_6/org/org/workspace-owner/safe.csv
+___________ test_entire_batch_is_rejected_before_any_delete[cached] ____________
+backend/tests/test_file_tool_boundaries.py:114: in test_entire_batch_is_rejected_before_any_delete
+    assert result.is_failure
+E   AssertionError: assert False
+E    +  where False = AgentResult(summary='已删除 2 个文件：\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_7/org/org/workspace-owner/safe.csv\n  ✓ poison.csv', status='success', format=<OutputFormat.TEXT: 'text'>, file_ref=None, data=None, columns=None, source='', error_message='', metadata={}, emit_payloads=[], tokens_used=0, confidence=1.0, insights=None, follow_up=None, thinking_text='').is_failure
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.035 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_7/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 22:01:34.036 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_7/org/org/workspace-owner/safe.csv | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_7/org/org/workspace-owner/safe.csv
+2026-09-09 22:01:34.036 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=poison.csv | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_7/outside.csv
+_____________ test_entire_batch_is_rejected_before_any_delete[fid] _____________
+backend/tests/test_file_tool_boundaries.py:114: in test_entire_batch_is_rejected_before_any_delete
+    assert result.is_failure
+E   AssertionError: assert False
+E    +  where False = AgentResult(summary='已删除 2 个文件：\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_8/org/org/workspace-owner/safe.csv\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_8/outside.csv', status='success', format=<OutputFormat.TEXT: 'text'>, file_ref=None, data=None, columns=None, source='', error_message='', metadata={}, emit_payloads=[], tokens_used=0, confidence=1.0, insights=None, follow_up=None, thinking_text='').is_failure
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.039 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_8/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 22:01:34.040 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_8/org/org/workspace-owner/safe.csv | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_8/org/org/workspace-owner/safe.csv
+2026-09-09 22:01:34.040 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_8/outside.csv | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_entire_batch_is_rejected_8/outside.csv
+__________ test_chat_keeps_explicit_delete_path_until_scoped_handler ___________
+backend/tests/test_file_tool_boundaries.py:129: in test_chat_keeps_explicit_delete_path_until_scoped_handler
+    assert prepared == {"files": [str(outside)]}
+E   AssertionError: assert {'files': ['/...er/same.csv']} == {'files': ['/...t0/same.csv']}
+E     
+E     Differing items:
+E     {'files': ['/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_chat_keeps_explicit_delet0/org/org/workspace-owner/same.csv']} != {'files': ['/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_chat_keeps_explicit_delet0/same.csv']}
+E     
+E     Full diff:
+E       {
+E           'files': [...
+E     
+E     ...Full output truncated (5 lines hidden), use '-vv' to show
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.043 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_chat_keeps_explicit_delet0/org/org/workspace-owner
+_______ test_missing_and_duplicate_targets_keep_skip_and_once_semantics ________
+backend/tests/test_file_tool_boundaries.py:143: in test_missing_and_duplicate_targets_keep_skip_and_once_semantics
+    assert "已删除 1 个" in result.summary
+E   AssertionError: assert '已删除 1 个' in '已删除 2 个文件：\n  ✓ safe.csv\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_missing_and_duplicate_tar0/org/org/workspace-owner/safe.csv\n跳过 1 个（不存在或未找到）：\n  ✗ missing.csv'
+E    +  where '已删除 2 个文件：\n  ✓ safe.csv\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_missing_and_duplicate_tar0/org/org/workspace-owner/safe.csv\n跳过 1 个（不存在或未找到）：\n  ✗ missing.csv' = AgentResult(summary='已删除 2 个文件：\n  ✓ safe.csv\n  ✓ /private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_missing_and_duplicate_tar0/org/org/workspace-owner/safe.csv\n跳过 1 个（不存在或未找到）：\n  ✗ missing.csv', status='success', format=<OutputFormat.TEXT: 'text'>, file_ref=None, data=None, columns=None, source='', error_message='', metadata={}, emit_payloads=[], tokens_used=0, confidence=1.0, insights=None, follow_up=None, thinking_text='').summary
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.047 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_missing_and_duplicate_tar0/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 22:01:34.048 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=safe.csv | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_missing_and_duplicate_tar0/org/org/workspace-owner/safe.csv
+2026-09-09 22:01:34.048 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_missing_and_duplicate_tar0/org/org/workspace-owner/safe.csv | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_missing_and_duplicate_tar0/org/org/workspace-owner/safe.csv
+_____________ test_partial_io_failure_keeps_records_without_retry ______________
+backend/tests/test_file_tool_boundaries.py:156: in test_partial_io_failure_keeps_records_without_retry
+    env.owner._record_deleted_files.assert_called_once_with([
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/unittest/mock.py:996: in assert_called_once_with
+    raise AssertionError(msg)
+E   AssertionError: Expected 'mock' to be called once. Called 0 times.
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.051 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_partial_io_failure_keeps_0/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 22:01:34.052 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_partial_io_failure_keeps_0/org/org/workspace-owner
+2026-09-09 22:01:34.052 | INFO     | services.agent.file_delete_mixin:_file_delete:96 - file_delete | path=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_partial_io_failure_keeps_0/org/org/workspace-owner/first.csv | resolved=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_partial_io_failure_keeps_0/org/org/workspace-owner/first.csv
+_______ test_stdout_does_not_register_disallowed_paths[relative_escape] ________
+backend/tests/test_file_tool_boundaries.py:187: in test_stdout_does_not_register_disallowed_paths
+    assert env.cache.list_all() == []
+E   AssertionError: assert [{'name': 'ou...outside.csv'}] == []
+E     
+E     Left contains one more item: {'name': 'outside.csv', 'parquet': '', 'workspace': '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_stdout_does_not_register_0/outside.csv'}
+E     
+E     Full diff:
+E     - []
+E     + [
+E     +     {...
+E     
+E     ...Full output truncated (5 lines hidden), use '-vv' to show
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.071 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_stdout_does_not_register_0/org/org/workspace-owner
+___________ test_stdout_does_not_register_disallowed_paths[absolute] ___________
+backend/tests/test_file_tool_boundaries.py:187: in test_stdout_does_not_register_disallowed_paths
+    assert env.cache.list_all() == []
+E   AssertionError: assert [{'name': 'ou...outside.csv'}] == []
+E     
+E     Left contains one more item: {'name': 'outside.csv', 'parquet': '', 'workspace': '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_stdout_does_not_register_1/outside.csv'}
+E     
+E     Full diff:
+E     - []
+E     + [
+E     +     {...
+E     
+E     ...Full output truncated (5 lines hidden), use '-vv' to show
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.075 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_stdout_does_not_register_1/org/org/workspace-owner
+_________ test_stdout_does_not_register_disallowed_paths[other_owner] __________
+backend/tests/test_file_tool_boundaries.py:187: in test_stdout_does_not_register_disallowed_paths
+    assert env.cache.list_all() == []
+E   AssertionError: assert [{'name': 'da...er/data.csv'}] == []
+E     
+E     Left contains one more item: {'name': 'data.csv', 'parquet': '', 'workspace': '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_stdout_does_not_register_2/org/org/other-owner/data.csv'}
+E     
+E     Full diff:
+E     - []
+E     + [
+E     +     {...
+E     
+E     ...Full output truncated (5 lines hidden), use '-vv' to show
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.079 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_stdout_does_not_register_2/org/org/workspace-owner
+___________ test_stdout_does_not_register_disallowed_paths[symlink] ____________
+backend/tests/test_file_tool_boundaries.py:187: in test_stdout_does_not_register_disallowed_paths
+    assert env.cache.list_all() == []
+E   AssertionError: assert [{'name': 'li.../inside.csv'}] == []
+E     
+E     Left contains one more item: {'name': 'link.csv', 'parquet': '', 'workspace': '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_stdout_does_not_register_3/org/org/workspace-owner/inside.csv'}
+E     
+E     Full diff:
+E     - []
+E     + [
+E     +     {...
+E     
+E     ...Full output truncated (5 lines hidden), use '-vv' to show
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.083 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_stdout_does_not_register_3/org/org/workspace-owner
+________ test_stdout_does_not_register_disallowed_paths[parent_symlink] ________
+backend/tests/test_file_tool_boundaries.py:187: in test_stdout_does_not_register_disallowed_paths
+    assert env.cache.list_all() == []
+E   AssertionError: assert [{'name': 'ou...outside.csv'}] == []
+E     
+E     Left contains one more item: {'name': 'outside.csv', 'parquet': '', 'workspace': '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_stdout_does_not_register_4/outside.csv'}
+E     
+E     Full diff:
+E     - []
+E     + [
+E     +     {...
+E     
+E     ...Full output truncated (5 lines hidden), use '-vv' to show
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.087 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_stdout_does_not_register_4/org/org/workspace-owner
+___________ test_stdout_does_not_register_disallowed_paths[blocked] ____________
+backend/tests/test_file_tool_boundaries.py:187: in test_stdout_does_not_register_disallowed_paths
+    assert env.cache.list_all() == []
+E   AssertionError: assert [{'name': 'da...it/data.csv'}] == []
+E     
+E     Left contains one more item: {'name': 'data.csv', 'parquet': '', 'workspace': '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_stdout_does_not_register_5/org/org/workspace-owner/.git/data.csv'}
+E     
+E     Full diff:
+E     - []
+E     + [
+E     +     {...
+E     
+E     ...Full output truncated (5 lines hidden), use '-vv' to show
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.097 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_stdout_does_not_register_5/org/org/workspace-owner
+___________ test_stdout_does_not_register_disallowed_paths[staging] ____________
+backend/tests/test_file_tool_boundaries.py:187: in test_stdout_does_not_register_disallowed_paths
+    assert env.cache.list_all() == []
+E   AssertionError: assert [{'name': 'in...nal.parquet'}] == []
+E     
+E     Left contains one more item: {'name': 'internal.parquet', 'parquet': '', 'workspace': '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_stdout_does_not_register_6/org/org/workspace-owner/staging/conv/internal.parquet'}
+E     
+E     Full diff:
+E     - []
+E     + [
+E     +     {...
+E     
+E     ...Full output truncated (5 lines hidden), use '-vv' to show
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.100 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_stdout_does_not_register_6/org/org/workspace-owner
+__________ test_stdout_does_not_register_disallowed_paths[directory] ___________
+backend/tests/test_file_tool_boundaries.py:187: in test_stdout_does_not_register_disallowed_paths
+    assert env.cache.list_all() == []
+E   AssertionError: assert [{'name': 'di...rectory.csv'}] == []
+E     
+E     Left contains one more item: {'name': 'directory.csv', 'parquet': '', 'workspace': '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_stdout_does_not_register_7/org/org/workspace-owner/directory.csv'}
+E     
+E     Full diff:
+E     - []
+E     + [
+E     +     {...
+E     
+E     ...Full output truncated (5 lines hidden), use '-vv' to show
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.104 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_stdout_does_not_register_7/org/org/workspace-owner
+____ test_staging_registration_cannot_escape_current_conversation[file_ref] ____
+backend/tests/test_file_tool_boundaries.py:227: in test_staging_registration_cannot_escape_current_conversation
+    assert env.cache.list_all() == []
+E   AssertionError: assert [{'name': 're...ort.parquet'}] == []
+E     
+E     Left contains one more item: {'name': 'report.parquet', 'parquet': '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytes...pytest-of-wucong/pytest-171/test_staging_registration_cann0/org/org/workspace-owner/staging/other-conv/report.parquet'}
+E     
+E     Full diff:
+E     - []
+E     + [
+E     +     {...
+E     
+E     ...Full output truncated (5 lines hidden), use '-vv' to show
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.115 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_staging_registration_cann0/org/org/workspace-owner
+____ test_staging_registration_cannot_escape_current_conversation[new_text] ____
+backend/tests/test_file_tool_boundaries.py:227: in test_staging_registration_cannot_escape_current_conversation
+    assert env.cache.list_all() == []
+E   AssertionError: assert [{'name': 're...ort.parquet'}] == []
+E     
+E     Left contains one more item: {'name': 'report.parquet', 'parquet': '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytes...f-wucong/pytest-171/test_staging_registration_cann1/org/org/workspace-owner/staging/conv/../other-conv/report.parquet'}
+E     
+E     Full diff:
+E     - []
+E     + [
+E     +     {...
+E     
+E     ...Full output truncated (5 lines hidden), use '-vv' to show
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.120 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_staging_registration_cann1/org/org/workspace-owner
+__ test_staging_registration_cannot_escape_current_conversation[legacy_text] ___
+backend/tests/test_file_tool_boundaries.py:227: in test_staging_registration_cannot_escape_current_conversation
+    assert env.cache.list_all() == []
+E   AssertionError: assert [{'name': 're...ort.parquet'}] == []
+E     
+E     Left contains one more item: {'name': 'report.parquet', 'parquet': '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytes...f-wucong/pytest-171/test_staging_registration_cann2/org/org/workspace-owner/staging/conv/../other-conv/report.parquet'}
+E     
+E     Full diff:
+E     - []
+E     + [
+E     +     {...
+E     
+E     ...Full output truncated (5 lines hidden), use '-vv' to show
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 22:01:34.124 | INFO     | services.file_executor:__init__:98 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-171/test_staging_registration_cann2/org/org/workspace-owner
+=============================== warnings summary ===============================
+../../.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434
+  /Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+backend/services/adapters/kie/models.py:126
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-03/backend/services/adapters/kie/models.py:126: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class JsonSchema(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED backend/tests/test_file_tool_boundaries.py::test_safe_delete_uses_original_recording_and_does_not_mutate_args[both]
+FAILED backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[absolute]
+FAILED backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[relative_escape]
+FAILED backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[other_owner]
+FAILED backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[blocked]
+FAILED backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[staging]
+FAILED backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[symlink]
+FAILED backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[parent_symlink]
+FAILED backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[cached]
+FAILED backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[fid]
+FAILED backend/tests/test_file_tool_boundaries.py::test_chat_keeps_explicit_delete_path_until_scoped_handler
+FAILED backend/tests/test_file_tool_boundaries.py::test_missing_and_duplicate_targets_keep_skip_and_once_semantics
+FAILED backend/tests/test_file_tool_boundaries.py::test_partial_io_failure_keeps_records_without_retry
+FAILED backend/tests/test_file_tool_boundaries.py::test_stdout_does_not_register_disallowed_paths[relative_escape]
+FAILED backend/tests/test_file_tool_boundaries.py::test_stdout_does_not_register_disallowed_paths[absolute]
+FAILED backend/tests/test_file_tool_boundaries.py::test_stdout_does_not_register_disallowed_paths[other_owner]
+FAILED backend/tests/test_file_tool_boundaries.py::test_stdout_does_not_register_disallowed_paths[symlink]
+FAILED backend/tests/test_file_tool_boundaries.py::test_stdout_does_not_register_disallowed_paths[parent_symlink]
+FAILED backend/tests/test_file_tool_boundaries.py::test_stdout_does_not_register_disallowed_paths[blocked]
+FAILED backend/tests/test_file_tool_boundaries.py::test_stdout_does_not_register_disallowed_paths[staging]
+FAILED backend/tests/test_file_tool_boundaries.py::test_stdout_does_not_register_disallowed_paths[directory]
+FAILED backend/tests/test_file_tool_boundaries.py::test_staging_registration_cannot_escape_current_conversation[file_ref]
+FAILED backend/tests/test_file_tool_boundaries.py::test_staging_registration_cannot_escape_current_conversation[new_text]
+FAILED backend/tests/test_file_tool_boundaries.py::test_staging_registration_cannot_escape_current_conversation[legacy_text]
+=================== 24 failed, 9 passed, 2 warnings in 0.60s ===================

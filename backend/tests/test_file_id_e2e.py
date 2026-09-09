@@ -207,13 +207,13 @@ class TestToolResolve:
         _resolve_file_ids(args, conv_id, "file_analyze")
         assert args["path"] == str(f)
 
-    def test_file_delete_gets_workspace(self, cache, workspace, conv_id):
+    def test_file_delete_keeps_input_for_handler_boundary_validation(self, cache, workspace, conv_id):
         f = workspace / "4月销售分析.xlsx"
         cache.register(f.name, workspace=str(f))
 
         args = {"files": [f.name]}
         _resolve_file_ids(args, conv_id, "file_delete")
-        assert args["files"][0] == str(f)
+        assert args["files"][0] == f.name
 
     def test_code_execute_not_translated(self, cache, workspace, conv_id):
         """code_execute 不走翻译层（沙盒内用 get_file）"""

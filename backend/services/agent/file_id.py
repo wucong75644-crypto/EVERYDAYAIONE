@@ -43,19 +43,19 @@ def resolve_fid_to_workspace(
 ) -> Optional[str]:
     """从 file_path_cache 反查 fid 对应的 workspace 绝对路径。
 
-    遍历 cache._entries 已注册的 key（rel_path 和 basename 都会被 register 进去），
-    对每个 key 计算 compute_fid(org_id, key) 匹配 file_id；命中即返回 entry.workspace。
+    只遍历注册表公开的唯一精确键，不把歧义文件名或模糊名称当作文件身份。
+    对每个 key 计算 compute_fid(org_id, key)；若哈希命中多个源文件则不解析。
 
     Returns:
         workspace 绝对路径，或 None（未找到）
     """
     if not is_valid_fid(file_id):
         return None
-    entries = getattr(cache, "_entries", None)
-    if not entries:
+    registered_paths = getattr(cache, "registered_paths", None)
+    if not callable(registered_paths):
         return None
-    for key, entry in entries.items():
-        if compute_fid(org_id, key) == file_id:
-            ws = getattr(entry, "workspace", "")
-            return ws or None
-    return None
+    matches = {
+        entry.workspace for key, entry in registered_paths()
+        if compute_fid(org_id, key) == file_id and entry.workspace
+    }
+    return next(iter(matches)) if len(matches) == 1 else None

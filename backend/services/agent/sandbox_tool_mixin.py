@@ -229,50 +229,74 @@ class SandboxToolMixin:
         LLM 在沙盒中 os.listdir 发现的文件通过此方法注册，
         后续 file_delete / file_analyze 的路径解析继续工作。
         """
-        import os
         import re
+        from pathlib import Path
 
         from services.agent.file_path_cache import get_file_cache
+        from services.file_executor import FileExecutor
 
+        if not stdout:
+            return
         workspace_dir = self._get_workspace_dir()
-        if not workspace_dir:
+        if not workspace_dir or not Path(workspace_dir).is_dir():
             return
 
         _DATA_EXTS = r"\.(?:xlsx|xls|csv|tsv|parquet|pdf|docx|pptx|txt|json|png|jpg)"
         _FILE_RE = re.compile(rf"['\"]([^'\"]*{_DATA_EXTS})['\"]", re.IGNORECASE)
 
         cache = get_file_cache(self.conversation_id)
+        # _get_workspace_dir 已使用可信 workspace_owner，不再追加 actor 的目录。
+        try:
+            executor = FileExecutor(workspace_root=workspace_dir)
+        except (OSError, ValueError):
+            return  # 可选的路径登记不能把已完成的代码执行改为失败。
 
         for m in _FILE_RE.finditer(stdout):
             filename = m.group(1)
-            basename = os.path.basename(filename)
-            candidate = os.path.join(workspace_dir, filename)
-            if os.path.exists(candidate):
-                resolved = os.path.realpath(candidate)
-                cache.register(basename, workspace=resolved)
-                try:
-                    rel_path = os.path.relpath(resolved, workspace_dir)
-                    if not rel_path.startswith(".."):
-                        cache.register(rel_path, workspace=resolved)
-                except ValueError:
-                    pass
+            try:
+                target = executor.resolve_safe_path(filename)
+                if not target.is_file():
+                    continue
+            except (OSError, ValueError):
+                continue
+            relative = str(target.relative_to(Path(executor.workspace_root)))
+            cache.register(relative, workspace=str(target))
 
     def _register_staging_files(self, result: "AgentResult") -> None:
         """从工具结果中提取 staging 文件路径，注册到共享路径缓存。"""
-        import os
+        from pathlib import Path
 
         from services.agent.file_path_cache import get_file_cache
+        from services.file_executor import FileExecutor
 
         if not result or not result.summary:
             return
 
+        staging_dir = self._get_staging_dir()
+        if not staging_dir or not Path(staging_dir).is_dir():
+            return
+        # 内部产物仅允许当前会话 staging；普通文件入口仍禁止直接访问 staging。
+        try:
+            executor = FileExecutor(workspace_root=staging_dir)
+        except (OSError, ValueError):
+            return
+        cache = get_file_cache(self.conversation_id)
+
+        def register(path: str, filename: str) -> bool:
+            try:
+                target = executor.resolve_safe_path(path)
+                if not target.is_file():
+                    return False
+            except (OSError, ValueError):
+                return False
+            # ERP 产出：parquet 就是源文件，两个地址相同。
+            cache.register(filename, workspace=str(target), parquet=str(target))
+            return True
+
         # 从 file_ref 注册（结构化路径，最可靠）
         if hasattr(result, "file_ref") and result.file_ref:
             fr = result.file_ref
-            if fr.path and os.path.exists(fr.path):
-                cache = get_file_cache(self.conversation_id)
-                # ERP 产出：parquet 就是源文件，两个地址相同
-                cache.register(fr.filename, workspace=fr.path, parquet=fr.path)
+            if fr.path and register(fr.path, fr.filename):
                 return
 
         # 兜底:从 summary 文本中提取 staging 文件名(同时兼容新旧格式)
@@ -282,17 +306,9 @@ class SandboxToolMixin:
         _STAGING_RE = re.compile(
             r"(?:STAGING_DIR\s*\+\s*'/|['\"]staging/)([^'\"]+)['\"]?"
         )
-        staging_dir = self._get_staging_dir()
-        if not staging_dir:
-            return
-
-        cache = get_file_cache(self.conversation_id)
         for m in _STAGING_RE.finditer(result.summary):
             filename = m.group(1)
-            abs_path = os.path.join(staging_dir, filename)
-            if os.path.exists(abs_path):
-                # staging 文件：两个地址相同
-                cache.register(filename, workspace=abs_path, parquet=abs_path)
+            register(filename, filename)
 
     def _get_staging_dir(self) -> str:
         """获取当前用户的 staging 目录"""

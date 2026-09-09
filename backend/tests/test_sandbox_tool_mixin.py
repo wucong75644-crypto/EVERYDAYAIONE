@@ -38,8 +38,7 @@ class FakeSandboxMixin(SandboxToolMixin):
 
 
 class TestRegisterFilesFromOutput:
-    """_register_files_from_output 已简化为空操作（workspace_file_handles 模块已删除），
-    仅验证调用不抛异常。"""
+    """空输出/不可用工作区的兼容行为；路径边界见 test_file_tool_boundaries。"""
 
     def test_call_does_not_raise(self):
         """任意 stdout 输入 → 不抛异常"""
