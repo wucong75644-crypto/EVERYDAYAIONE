@@ -1,0 +1,9 @@
+real_workspace_guard_rejects_outside: true
+{"scenario": "outside_absolute", "status": "success", "remove_mock_calls": 1, "workspace_guard_calls": 0}
+{"scenario": "valid_fid", "status": "success", "remove_mock_calls": 1, "workspace_guard_calls": 0}
+{"scenario": "unknown_fid", "status": "error", "remove_mock_calls": 0, "workspace_guard_calls": 0}
+{"scenario": "wrong_org_fid", "status": "error", "remove_mock_calls": 0, "workspace_guard_calls": 0}
+sandbox_stdout_registers_outside_workspace: True
+real_fixture_files_still_exist: true
+UNCHANGED_FROM_DEPLOYED backend/services/agent/file_delete_mixin.py
+UNCHANGED_FROM_DEPLOYED backend/services/agent/sandbox_tool_mixin.py

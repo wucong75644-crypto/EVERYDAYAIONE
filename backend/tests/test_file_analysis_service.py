@@ -212,8 +212,8 @@ def test_build_result_registers_parquet_and_sheets(tmp_path):
 
     assert result.status == "success"
     assert "Sheet 列表" in result.summary
-    cache.set_parquet.assert_called_once_with("sales.csv", str(parquet))
-    cache.set_analyzed.assert_called_once_with("sales.csv", True)
+    cache.set_parquet.assert_called_once_with(str(source), str(parquet))
+    cache.set_analyzed.assert_called_once_with(str(source), True)
 
 
 def test_build_result_rejects_missing_metadata(tmp_path):

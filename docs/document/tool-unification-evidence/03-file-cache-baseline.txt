@@ -1,0 +1,224 @@
+Baseline: e243ba2c0d545d8afca3ae930a40389276b7c123 + current new regression tests only
+============================= test session starts ==============================
+platform darwin -- Python 3.14.2, pytest-9.0.3, pluggy-1.6.0 -- /Users/wucong/EVERYDAYAIONE/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /private/tmp/file-cache-baseline-4s8ccxn3/backend
+configfile: pytest.ini
+plugins: cov-7.1.0, asyncio-1.3.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 49 items
+
+backend/tests/test_file_cache_identity.py::test_registration_order_preserves_all_ids_and_analysis[order0] FAILED [  2%]
+backend/tests/test_file_cache_identity.py::test_registration_order_preserves_all_ids_and_analysis[order1] FAILED [  4%]
+backend/tests/test_file_cache_identity.py::test_registration_order_preserves_all_ids_and_analysis[order2] FAILED [  6%]
+backend/tests/test_file_cache_identity.py::test_registration_order_preserves_all_ids_and_analysis[order3] FAILED [  8%]
+backend/tests/test_file_cache_identity.py::test_registration_order_preserves_all_ids_and_analysis[order4] FAILED [ 10%]
+backend/tests/test_file_cache_identity.py::test_registration_order_preserves_all_ids_and_analysis[order5] FAILED [ 12%]
+backend/tests/test_file_cache_identity.py::test_same_or_normalized_names_are_distinct_files[False-names0] FAILED [ 14%]
+backend/tests/test_file_cache_identity.py::test_same_or_normalized_names_are_distinct_files[False-names1] FAILED [ 16%]
+backend/tests/test_file_cache_identity.py::test_same_or_normalized_names_are_distinct_files[True-names0] FAILED [ 18%]
+backend/tests/test_file_cache_identity.py::test_same_or_normalized_names_are_distinct_files[True-names1] FAILED [ 20%]
+backend/tests/test_file_cache_identity.py::test_ambiguous_stem_and_prefix_do_not_choose_first[report] FAILED [ 22%]
+backend/tests/test_file_cache_identity.py::test_ambiguous_stem_and_prefix_do_not_choose_first[report2026] FAILED [ 24%]
+backend/tests/test_file_cache_identity.py::test_eviction_removes_all_aliases_and_analysis_state FAILED [ 26%]
+backend/tests/test_file_cache_identity.py::test_discovery_then_real_attachment_registration_resolves_id[search] FAILED [ 28%]
+backend/tests/test_file_cache_identity.py::test_discovery_then_real_attachment_registration_resolves_id[list] FAILED [ 30%]
+backend/tests/test_file_cache_identity.py::test_discovery_then_real_attachment_registration_resolves_id[describe] FAILED [ 32%]
+backend/tests/test_file_cache_identity.py::test_discovery_then_real_attachment_registration_resolves_id[manifest] FAILED [ 34%]
+backend/tests/test_file_cache_identity.py::test_analysis_and_attachment_status_target_full_path FAILED [ 36%]
+backend/tests/test_file_cache_identity.py::test_root_file_exact_path_wins_over_subdirectory_basename[False] FAILED [ 38%]
+backend/tests/test_file_cache_identity.py::test_root_file_exact_path_wins_over_subdirectory_basename[True] FAILED [ 40%]
+backend/tests/test_file_cache_identity.py::test_hash_collision_does_not_resolve_arbitrary_source FAILED [ 42%]
+backend/tests/test_attachment_routing_baseline.py::TestImageAttachmentBaseline::test_image_xml_has_action_visual_injected PASSED [ 44%]
+backend/tests/test_attachment_routing_baseline.py::TestImageAttachmentBaseline::test_image_xml_excludes_file_analyze PASSED [ 46%]
+backend/tests/test_attachment_routing_baseline.py::TestRawDataAttachmentBaseline::test_xlsx_raw_action_points_to_file_analyze PASSED [ 48%]
+backend/tests/test_attachment_routing_baseline.py::TestRawDataAttachmentBaseline::test_csv_raw_action_points_to_file_analyze PASSED [ 51%]
+backend/tests/test_attachment_routing_baseline.py::TestAnalyzedDataAttachmentBaseline::test_analyzed_action_points_to_pd_read_parquet PASSED [ 53%]
+backend/tests/test_attachment_routing_baseline.py::TestDocAttachmentBaseline::test_pdf_action_points_to_code_execute PASSED [ 55%]
+backend/tests/test_attachment_routing_baseline.py::TestDocAttachmentBaseline::test_docx_action_points_to_code_execute PASSED [ 57%]
+backend/tests/test_attachment_routing_baseline.py::TestTextAttachmentBaseline::test_text_action_points_to_open PASSED [ 59%]
+backend/tests/test_attachment_routing_baseline.py::TestBinaryAttachmentBaseline::test_binary_action_asks_user PASSED [ 61%]
+backend/tests/test_attachment_routing_baseline.py::TestStatusActionEnumComplete::test_status_actions_dict_exists PASSED [ 63%]
+backend/tests/test_attachment_routing_baseline.py::TestStatusActionEnumComplete::test_status_actions_covers_all_statuses PASSED [ 65%]
+backend/tests/test_attachment_routing_baseline.py::TestNoDoubleInjection::test_xlsx_file_analyze_hint_appears_only_once PASSED [ 67%]
+backend/tests/test_attachment_routing_baseline.py::TestNoDoubleInjection::test_xlsx_file_in_at_most_2_system_messages PASSED [ 69%]
+backend/tests/test_attachment_routing_baseline.py::TestBuildWorkspacePromptStateAware::test_function_exists PASSED [ 71%]
+backend/tests/test_attachment_routing_baseline.py::TestBuildWorkspacePromptStateAware::test_no_hardcoded_tool_names PASSED [ 73%]
+backend/tests/test_attachment_routing_baseline.py::TestBuildWorkspacePromptStateAware::test_state_aware_for_analyzed_xlsx PASSED [ 75%]
+backend/tests/test_attachment_routing_baseline.py::TestBuildWorkspacePromptStateAware::test_state_aware_for_raw_xlsx PASSED [ 77%]
+backend/tests/test_attachment_routing_baseline.py::TestFileAnalyzeDescriptionContract::test_has_when_to_use_section PASSED [ 79%]
+backend/tests/test_attachment_routing_baseline.py::TestFileAnalyzeDescriptionContract::test_has_when_not_to_use_section PASSED [ 81%]
+backend/tests/test_attachment_routing_baseline.py::TestFileAnalyzeDescriptionContract::test_explicitly_excludes_image_extensions PASSED [ 83%]
+backend/tests/test_attachment_routing_baseline.py::TestFileAnalyzeDescriptionContract::test_mentions_image_visual_injection PASSED [ 85%]
+backend/tests/test_attachment_routing_baseline.py::TestFileAnalyzeDescriptionContract::test_within_anthropic_1024_char_limit PASSED [ 87%]
+backend/tests/test_attachment_routing_baseline.py::TestFileSearchDescriptionContract::test_mentions_image_multimodal XFAIL [ 89%]
+backend/tests/test_attachment_routing_baseline.py::TestAllToolDescriptionsContract::test_all_under_1024_chars XFAIL [ 91%]
+backend/tests/test_attachment_routing_baseline.py::TestSystemPromptModalityBoundary::test_has_modality_section_or_image_guidance_centralized XFAIL [ 93%]
+backend/tests/test_attachment_routing_baseline.py::TestSystemPromptModalityBoundary::test_no_image_guidance_buried_in_file_search_only XFAIL [ 95%]
+backend/tests/test_attachment_routing_baseline.py::TestE2EImageOnlyScenario::test_image_user_content_has_image_url_block PASSED [ 97%]
+backend/tests/test_attachment_routing_baseline.py::TestE2EImageOnlyScenario::test_image_attachments_xml_action_field_present PASSED [100%]
+
+=================================== FAILURES ===================================
+________ test_registration_order_preserves_all_ids_and_analysis[order0] ________
+backend/tests/test_file_cache_identity.py:29: in test_registration_order_preserves_all_ids_and_analysis
+    assert resolve_fid_to_workspace(compute_fid("org", name), "org", cache) == source
+E   AssertionError: assert None == '/ws/目录/report.xlsx'
+E    +  where None = resolve_fid_to_workspace('fid_a8b5b2db', 'org', <services.agent.file_path_cache.FilePathCache object at 0x1194dff80>)
+E    +    where 'fid_a8b5b2db' = compute_fid('org', '目录/report.xlsx')
+________ test_registration_order_preserves_all_ids_and_analysis[order1] ________
+backend/tests/test_file_cache_identity.py:29: in test_registration_order_preserves_all_ids_and_analysis
+    assert resolve_fid_to_workspace(compute_fid("org", name), "org", cache) == source
+E   AssertionError: assert None == '/ws/目录/report.xlsx'
+E    +  where None = resolve_fid_to_workspace('fid_e0dbc89a', 'org', <services.agent.file_path_cache.FilePathCache object at 0x11952d7c0>)
+E    +    where 'fid_e0dbc89a' = compute_fid('org', '附件/report.xlsx')
+________ test_registration_order_preserves_all_ids_and_analysis[order2] ________
+backend/tests/test_file_cache_identity.py:29: in test_registration_order_preserves_all_ids_and_analysis
+    assert resolve_fid_to_workspace(compute_fid("org", name), "org", cache) == source
+E   AssertionError: assert None == '/ws/目录/report.xlsx'
+E    +  where None = resolve_fid_to_workspace('fid_e0dbc89a', 'org', <services.agent.file_path_cache.FilePathCache object at 0x11952f880>)
+E    +    where 'fid_e0dbc89a' = compute_fid('org', '附件/report.xlsx')
+________ test_registration_order_preserves_all_ids_and_analysis[order3] ________
+backend/tests/test_file_cache_identity.py:29: in test_registration_order_preserves_all_ids_and_analysis
+    assert resolve_fid_to_workspace(compute_fid("org", name), "org", cache) == source
+E   AssertionError: assert None == '/ws/目录/report.xlsx'
+E    +  where None = resolve_fid_to_workspace('fid_e0dbc89a', 'org', <services.agent.file_path_cache.FilePathCache object at 0x119497a80>)
+E    +    where 'fid_e0dbc89a' = compute_fid('org', '附件/report.xlsx')
+________ test_registration_order_preserves_all_ids_and_analysis[order4] ________
+backend/tests/test_file_cache_identity.py:29: in test_registration_order_preserves_all_ids_and_analysis
+    assert resolve_fid_to_workspace(compute_fid("org", name), "org", cache) == source
+E   AssertionError: assert None == '/ws/目录/report.xlsx'
+E    +  where None = resolve_fid_to_workspace('fid_a8b5b2db', 'org', <services.agent.file_path_cache.FilePathCache object at 0x1194dd900>)
+E    +    where 'fid_a8b5b2db' = compute_fid('org', '目录/report.xlsx')
+________ test_registration_order_preserves_all_ids_and_analysis[order5] ________
+backend/tests/test_file_cache_identity.py:29: in test_registration_order_preserves_all_ids_and_analysis
+    assert resolve_fid_to_workspace(compute_fid("org", name), "org", cache) == source
+E   AssertionError: assert None == '/ws/目录/report.xlsx'
+E    +  where None = resolve_fid_to_workspace('fid_a8b5b2db', 'org', <services.agent.file_path_cache.FilePathCache object at 0x1194970c0>)
+E    +    where 'fid_a8b5b2db' = compute_fid('org', '目录/report.xlsx')
+________ test_same_or_normalized_names_are_distinct_files[False-names0] ________
+backend/tests/test_file_cache_identity.py:46: in test_same_or_normalized_names_are_distinct_files
+    assert resolve_fid_to_workspace(compute_fid("org", path), "org", cache) == f"/ws/{path}"
+E   AssertionError: assert None == '/ws/甲/report.xlsx'
+E    +  where None = resolve_fid_to_workspace('fid_d6cf48f9', 'org', <services.agent.file_path_cache.FilePathCache object at 0x1194ddec0>)
+E    +    where 'fid_d6cf48f9' = compute_fid('org', '甲/report.xlsx')
+________ test_same_or_normalized_names_are_distinct_files[False-names1] ________
+backend/tests/test_file_cache_identity.py:46: in test_same_or_normalized_names_are_distinct_files
+    assert resolve_fid_to_workspace(compute_fid("org", path), "org", cache) == f"/ws/{path}"
+E   AssertionError: assert None == '/ws/甲/销售-报表.xlsx'
+E    +  where None = resolve_fid_to_workspace('fid_c2f3069d', 'org', <services.agent.file_path_cache.FilePathCache object at 0x119495dc0>)
+E    +    where 'fid_c2f3069d' = compute_fid('org', '甲/销售-报表.xlsx')
+________ test_same_or_normalized_names_are_distinct_files[True-names0] _________
+backend/tests/test_file_cache_identity.py:46: in test_same_or_normalized_names_are_distinct_files
+    assert resolve_fid_to_workspace(compute_fid("org", path), "org", cache) == f"/ws/{path}"
+E   AssertionError: assert None == '/ws/甲/report.xlsx'
+E    +  where None = resolve_fid_to_workspace('fid_d6cf48f9', 'org', <services.agent.file_path_cache.FilePathCache object at 0x1194dcec0>)
+E    +    where 'fid_d6cf48f9' = compute_fid('org', '甲/report.xlsx')
+________ test_same_or_normalized_names_are_distinct_files[True-names1] _________
+backend/tests/test_file_cache_identity.py:46: in test_same_or_normalized_names_are_distinct_files
+    assert resolve_fid_to_workspace(compute_fid("org", path), "org", cache) == f"/ws/{path}"
+E   AssertionError: assert None == '/ws/甲/销售-报表.xlsx'
+E    +  where None = resolve_fid_to_workspace('fid_c2f3069d', 'org', <services.agent.file_path_cache.FilePathCache object at 0x119496b40>)
+E    +    where 'fid_c2f3069d' = compute_fid('org', '甲/销售-报表.xlsx')
+__________ test_ambiguous_stem_and_prefix_do_not_choose_first[report] __________
+backend/tests/test_file_cache_identity.py:67: in test_ambiguous_stem_and_prefix_do_not_choose_first
+    assert cache.resolve(query, "analyze") is None
+E   AssertionError: assert '/ws/report.csv' is None
+E    +  where '/ws/report.csv' = resolve('report', 'analyze')
+E    +    where resolve = <services.agent.file_path_cache.FilePathCache object at 0x1194dcc40>.resolve
+________ test_ambiguous_stem_and_prefix_do_not_choose_first[report2026] ________
+backend/tests/test_file_cache_identity.py:67: in test_ambiguous_stem_and_prefix_do_not_choose_first
+    assert cache.resolve(query, "analyze") is None
+E   AssertionError: assert '/ws/report2026first.csv' is None
+E    +  where '/ws/report2026first.csv' = resolve('report2026', 'analyze')
+E    +    where resolve = <services.agent.file_path_cache.FilePathCache object at 0x119497480>.resolve
+_____________ test_eviction_removes_all_aliases_and_analysis_state _____________
+backend/tests/test_file_cache_identity.py:76: in test_eviction_removes_all_aliases_and_analysis_state
+    assert cache.resolve(name, "analyze") is None
+E   AssertionError: assert '/ws/甲/first.csv' is None
+E    +  where '/ws/甲/first.csv' = resolve('first.csv', 'analyze')
+E    +    where resolve = <services.agent.file_path_cache.FilePathCache object at 0x1194f9040>.resolve
+_____ test_discovery_then_real_attachment_registration_resolves_id[search] _____
+backend/tests/test_file_cache_identity.py:117: in test_discovery_then_real_attachment_registration_resolves_id
+    assert resolve_fid_to_workspace(fid, "org", cache) == str(source)
+E   AssertionError: assert None == '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-169/test_discovery_then_real_attac0/已整理表格/report.csv'
+E    +  where None = resolve_fid_to_workspace('fid_fdfdfa28', 'org', <services.agent.file_path_cache.FilePathCache object at 0x1192fc280>)
+E    +  and   '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-169/test_discovery_then_real_attac0/已整理表格/report.csv' = str(PosixPath('/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-169/test_discovery_then_real_attac0/已整理表格/report.csv'))
+______ test_discovery_then_real_attachment_registration_resolves_id[list] ______
+backend/tests/test_file_cache_identity.py:117: in test_discovery_then_real_attachment_registration_resolves_id
+    assert resolve_fid_to_workspace(fid, "org", cache) == str(source)
+E   AssertionError: assert None == '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-169/test_discovery_then_real_attac1/已整理表格/report.csv'
+E    +  where None = resolve_fid_to_workspace('fid_fdfdfa28', 'org', <services.agent.file_path_cache.FilePathCache object at 0x1194f9c80>)
+E    +  and   '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-169/test_discovery_then_real_attac1/已整理表格/report.csv' = str(PosixPath('/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-169/test_discovery_then_real_attac1/已整理表格/report.csv'))
+____ test_discovery_then_real_attachment_registration_resolves_id[describe] ____
+backend/tests/test_file_cache_identity.py:117: in test_discovery_then_real_attachment_registration_resolves_id
+    assert resolve_fid_to_workspace(fid, "org", cache) == str(source)
+E   AssertionError: assert None == '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-169/test_discovery_then_real_attac2/已整理表格/report.csv'
+E    +  where None = resolve_fid_to_workspace('fid_fdfdfa28', 'org', <services.agent.file_path_cache.FilePathCache object at 0x11947ef00>)
+E    +  and   '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-169/test_discovery_then_real_attac2/已整理表格/report.csv' = str(PosixPath('/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-169/test_discovery_then_real_attac2/已整理表格/report.csv'))
+____ test_discovery_then_real_attachment_registration_resolves_id[manifest] ____
+backend/tests/test_file_cache_identity.py:117: in test_discovery_then_real_attachment_registration_resolves_id
+    assert resolve_fid_to_workspace(fid, "org", cache) == str(source)
+E   AssertionError: assert None == '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-169/test_discovery_then_real_attac3/已整理表格/report.csv'
+E    +  where None = resolve_fid_to_workspace('fid_fdfdfa28', 'org', <services.agent.file_path_cache.FilePathCache object at 0x11948b1c0>)
+E    +  and   '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-169/test_discovery_then_real_attac3/已整理表格/report.csv' = str(PosixPath('/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-169/test_discovery_then_real_attac3/已整理表格/report.csv'))
+_____________ test_analysis_and_attachment_status_target_full_path _____________
+backend/tests/test_file_cache_identity.py:174: in test_analysis_and_attachment_status_target_full_path
+    assert cache.resolve(files[1]["workspace_path"]) is None
+E   AssertionError: assert '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-169/test_analysis_and_attachment_s0/first.parquet' is None
+E    +  where '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-169/test_analysis_and_attachment_s0/first.parquet' = resolve('乙/report.csv')
+E    +    where resolve = <services.agent.file_path_cache.FilePathCache object at 0x11947c180>.resolve
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 20:59:57.618 | INFO     | services.agent.file_analysis_service:_log_analysis_success:329 - file_analyze OK | report.csv | 1×1 | path=? | model=? | ai_attempts=? | ai_ms=? | total=0.1s
+_______ test_root_file_exact_path_wins_over_subdirectory_basename[False] _______
+backend/tests/test_file_cache_identity.py:191: in test_root_file_exact_path_wins_over_subdirectory_basename
+    assert resolve_fid_to_workspace(compute_fid("org", path), "org", cache) == f"/ws/{path}"
+E   AssertionError: assert '/ws/子目录/report.csv' == '/ws/report.csv'
+E     
+E     - /ws/report.csv
+E     + /ws/子目录/report.csv
+E     ?    ++++
+_______ test_root_file_exact_path_wins_over_subdirectory_basename[True] ________
+backend/tests/test_file_cache_identity.py:191: in test_root_file_exact_path_wins_over_subdirectory_basename
+    assert resolve_fid_to_workspace(compute_fid("org", path), "org", cache) == f"/ws/{path}"
+E   AssertionError: assert None == '/ws/子目录/report.csv'
+E    +  where None = resolve_fid_to_workspace('fid_a8690093', 'org', <services.agent.file_path_cache.FilePathCache object at 0x11946cbc0>)
+E    +    where 'fid_a8690093' = compute_fid('org', '子目录/report.csv')
+____________ test_hash_collision_does_not_resolve_arbitrary_source _____________
+backend/tests/test_file_cache_identity.py:200: in test_hash_collision_does_not_resolve_arbitrary_source
+    assert resolve_fid_to_workspace("fid_12345678", "org", cache) is None
+E   AssertionError: assert '/ws/first.csv' is None
+E    +  where '/ws/first.csv' = resolve_fid_to_workspace('fid_12345678', 'org', <services.agent.file_path_cache.FilePathCache object at 0x119567180>)
+=============================== warnings summary ===============================
+../../../Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434
+  /Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+backend/services/adapters/kie/models.py:126
+  /private/tmp/file-cache-baseline-4s8ccxn3/backend/services/adapters/kie/models.py:126: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class JsonSchema(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED backend/tests/test_file_cache_identity.py::test_registration_order_preserves_all_ids_and_analysis[order0]
+FAILED backend/tests/test_file_cache_identity.py::test_registration_order_preserves_all_ids_and_analysis[order1]
+FAILED backend/tests/test_file_cache_identity.py::test_registration_order_preserves_all_ids_and_analysis[order2]
+FAILED backend/tests/test_file_cache_identity.py::test_registration_order_preserves_all_ids_and_analysis[order3]
+FAILED backend/tests/test_file_cache_identity.py::test_registration_order_preserves_all_ids_and_analysis[order4]
+FAILED backend/tests/test_file_cache_identity.py::test_registration_order_preserves_all_ids_and_analysis[order5]
+FAILED backend/tests/test_file_cache_identity.py::test_same_or_normalized_names_are_distinct_files[False-names0]
+FAILED backend/tests/test_file_cache_identity.py::test_same_or_normalized_names_are_distinct_files[False-names1]
+FAILED backend/tests/test_file_cache_identity.py::test_same_or_normalized_names_are_distinct_files[True-names0]
+FAILED backend/tests/test_file_cache_identity.py::test_same_or_normalized_names_are_distinct_files[True-names1]
+FAILED backend/tests/test_file_cache_identity.py::test_ambiguous_stem_and_prefix_do_not_choose_first[report]
+FAILED backend/tests/test_file_cache_identity.py::test_ambiguous_stem_and_prefix_do_not_choose_first[report2026]
+FAILED backend/tests/test_file_cache_identity.py::test_eviction_removes_all_aliases_and_analysis_state
+FAILED backend/tests/test_file_cache_identity.py::test_discovery_then_real_attachment_registration_resolves_id[search]
+FAILED backend/tests/test_file_cache_identity.py::test_discovery_then_real_attachment_registration_resolves_id[list]
+FAILED backend/tests/test_file_cache_identity.py::test_discovery_then_real_attachment_registration_resolves_id[describe]
+FAILED backend/tests/test_file_cache_identity.py::test_discovery_then_real_attachment_registration_resolves_id[manifest]
+FAILED backend/tests/test_file_cache_identity.py::test_analysis_and_attachment_status_target_full_path
+FAILED backend/tests/test_file_cache_identity.py::test_root_file_exact_path_wins_over_subdirectory_basename[False]
+FAILED backend/tests/test_file_cache_identity.py::test_root_file_exact_path_wins_over_subdirectory_basename[True]
+FAILED backend/tests/test_file_cache_identity.py::test_hash_collision_does_not_resolve_arbitrary_source
+============= 21 failed, 24 passed, 4 xfailed, 2 warnings in 0.79s =============

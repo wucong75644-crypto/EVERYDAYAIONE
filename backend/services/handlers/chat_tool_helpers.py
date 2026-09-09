@@ -43,9 +43,9 @@ def resolve_file_ids(
 
     if tool_name == "file_analyze":
         usage = "analyze"
-    elif tool_name == "file_delete":
-        usage = "delete"
     else:
+        # 删除由原 Handler 统一解析并校验。预先按同名缓存替换路径会
+        # 丢失用户指定的目录，导致其无法检查原始的绝对/相对路径。
         return args
     cache = get_file_cache(conversation_id)
     path_value = args.get("path")
