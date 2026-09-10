@@ -98,6 +98,7 @@ class ChatToolMixin(ChatToolResultMixin):
             workspace_user_id=getattr(self, "_workspace_user_id", user_id),
             resource_manifest=getattr(self, "_resource_manifest", None),
             resource_manifest_loader=getattr(self, "_tool_resource_manifest_loader", None),
+            resource_access_boundary=getattr(self, "_resource_access_boundary", None),
             execution_budget=budget,
             cancellation_event=cancellation_event,
             permission_mode=permission_mode, agent_domain=agent_domain, task_id=task_id,
@@ -119,6 +120,11 @@ class ChatToolMixin(ChatToolResultMixin):
             # round facts, retaining consumed IDs and scoped confirmations.
             for key, value in executor_kwargs.items():
                 setattr(executor, key, value)
+        executor.tool_runtime.context()  # clear any previous execution identity before restore
+        if getattr(self, "_tool_selection_history_task_id", None) == task_id:
+            executor.tool_runtime.resource_selections.restore(
+                executor, getattr(self, "_tool_selection_history", ()),
+            )
         # 每轮上下文
         executor._task_id = task_id
         executor._message_id = message_id

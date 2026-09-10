@@ -20,6 +20,8 @@ from pathlib import Path
 class FileTargetError(ValueError):
     def __init__(self, code: str, message: str, candidates=()):
         self.code = code
+        self.scope = None
+        self.recovery = "search_again" if code in {"RESOURCE_CHANGED", "RESOURCE_REFERENCE_INVALID", "RESOURCE_NOT_FOUND"} else "select_resource"
         self.candidates = tuple(candidates)
         detail = "\n".join(f"- {value}" for value in self.candidates)
         super().__init__(f"{code}: {message}" + (f"\n{detail}" if detail else ""))
@@ -151,11 +153,17 @@ class FileReferenceCodec:
                 raise ValueError()
             return data[3], tuple(data[4])
         except (ValueError, TypeError, UnicodeError) as exc:
-            raise PermissionError("RESOURCE_REFERENCE_INVALID: 文件引用无效或不属于当前工作区，工具未执行") from exc
+            from services.tools.resource_access import ResourceAccessError
+            raise ResourceAccessError("RESOURCE_REFERENCE_INVALID",
+                "文件引用无效或不属于当前工作区。请在当前获准范围重新搜索并复制引用，不要拼接或猜测。",
+                recovery="search_again") from exc
 
 
 class FileTargetResolver:
-    def __init__(self, owner, files=None, *, scope="workspace", check=lambda: None):
+    def __init__(self, owner, files=None, *, scope="workspace", check=lambda: None, action="read"):
+        from services.tools.resource_access import resource_boundary
+        self.access = resource_boundary(owner)
+        self.action = action
         from core.config import get_settings
         from services.file_executor import FileExecutor
         self.owner = owner
@@ -173,17 +181,25 @@ class FileTargetResolver:
 
     def guarded(self, value: str) -> Path:
         target = self.files.resolve_safe_path(value)
+        relative = str(target.relative_to(self.root))
+        self.access.require(self.action, relative, browse=self.action == "list")
         if self.scope != "workspace" and self.manifest is not None:
-            if str(target.relative_to(self.root)) not in self.manifest.allowed_paths:
-                raise PermissionError("RESOURCE_PATH_NOT_IN_MANIFEST: 工具未执行")
+            if relative not in self.manifest.allowed_paths:
+                from services.tools.resource_access import ResourceAccessError
+                raise ResourceAccessError("RESOURCE_PATH_NOT_IN_MANIFEST",
+                    "本次范围为 current（当前任务附件），目标不在附件中。若要操作工作区文件，请选择此前获准的搜索结果，"
+                    "或明确请求 workspace 范围并由系统重新检查权限；不要换文件或改用 ID 猜测。",
+                    recovery="select_scope", scope="current")
         return target
 
     def candidates(self) -> list[Path]:
         """Complete, bounded authorized enumeration; partial sets cannot select."""
         if self.scope != "workspace" and self.manifest is not None:
-            paths = [self.guarded(a.workspace_path) for a in self.manifest.assets]
+            paths = [self.guarded(a.workspace_path) for a in self.manifest.assets
+                     if self.access.permits(self.action, a.workspace_path)]
             return sorted({p for p in paths if p.is_file()})
-        return sorted({path for path in workspace_entries(self.files, check=self.check) if path.is_file()})
+        return sorted({path for path in workspace_entries(self.files, check=self.check)
+                       if self.access.permits(self.action, str(path.relative_to(self.root))) and path.is_file()})
 
     def _unique(self, paths, *, missing: str) -> Path:
         paths = sorted(set(paths))
@@ -207,7 +223,8 @@ class FileTargetResolver:
                 raise FileTargetError("RESOURCE_REFERENCE_INVALID", "file_id 格式无效")
             paths = self.candidates()
             if allow_missing and self.manifest is not None:
-                paths += [self.guarded(asset.workspace_path) for asset in self.manifest.assets]
+                paths += [self.guarded(asset.workspace_path) for asset in self.manifest.assets
+                          if self.access.permits(self.action, asset.workspace_path)]
             matches = {p for p in paths if value in {
                 compute_fid(self.owner.org_id, str(p.relative_to(self.root))),
                 compute_fid(self.owner.org_id, str(p)), compute_fid(self.owner.org_id, p.name)}}

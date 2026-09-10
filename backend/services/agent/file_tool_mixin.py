@@ -124,7 +124,7 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
             if Path(path).parent == Path(".") and not path.startswith(".") and not target.is_dir():
                 from services.file_resources import FileTargetResolver, FileTargetError
                 try:
-                    target = FileTargetResolver(self, executor).resolve(path).path
+                    target = FileTargetResolver(self, executor, action="list").resolve(path).path
                 except FileTargetError:
                     return await self._search_files(executor, {"keyword": path})
             if target.is_file():
@@ -158,36 +158,15 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
         from services.agent.file_path_cache import get_file_cache
 
         path = str(args.get("path") or "").strip()
-        keyword = str(args.get("keyword") or "").strip().lower()
-        pattern = str(args.get("file_pattern") or "").strip()
-        assets = list(self.resource_manifest.assets)
-        if path:
-            matched = [
-                asset for asset in assets
-                if asset.workspace_path == path or asset.name == path
-            ]
-            if not matched and Path(path).parent == Path("."):
-                matched = [asset for asset in assets if path.lower() in asset.name.lower()]
-            assets = matched
-        if keyword:
-            assets = [
-                asset for asset in assets
-                if keyword in asset.name.lower()
-                or keyword in asset.workspace_path.lower()
-            ]
-        if pattern:
-            assets = [
-                asset for asset in assets
-                if fnmatch(asset.name, pattern)
-                or fnmatch(asset.workspace_path, pattern)
-            ]
+        from services.tools.resource_access import manifest_matches, resource_boundary
+        assets = manifest_matches(self.resource_manifest, args, resource_boundary(self))
         if not assets:
             return AgentResult(
                 summary="当前任务资源中未找到匹配文件",
                 status="empty",
                 metadata={"resource_scope": "current"},
             )
-        if path and len(assets) == 1:
+        if path and path != "." and not path.endswith("/") and len(assets) == 1:
             try:
                 target = executor.resolve_safe_path(assets[0].workspace_path)
             except (FileNotFoundError, PermissionError, ValueError) as error:
@@ -216,6 +195,19 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
             },
         )
 
+    def _resource_query_options(self, executor, *, content=False):
+        from services.tools.resource_access import resource_boundary
+        access = resource_boundary(self)
+        # Preserve old direct FileExecutor callers. Filtering precedes result
+        # limits and content search, so unauthorized hits never enter outputs.
+        if any({"list", "read"} <= set(r.actions) and "." in r.directories for r in access.rules):
+            return {}
+        root = Path(executor.workspace_root)
+        return {"path_filter": lambda path: access.permits(
+            "list", str(executor.resolve_safe_path(str(path)).relative_to(root)), browse=True,
+        ) and (not content or access.permits("read", str(
+            executor.resolve_safe_path(str(path)).relative_to(root)) ))}
+
     async def _list_directory(
         self, executor: Any, args: Dict[str, Any],
     ) -> Any:
@@ -223,7 +215,7 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
         from services.agent.agent_result import AgentResult
         from services.agent.file_path_cache import get_file_cache
 
-        data = await executor.file_list_entries(**{
+        data = await executor.file_list_entries(**self._resource_query_options(executor), **{
             k: v for k, v in args.items() if k in ("path", "show_hidden")
         })
 
@@ -255,7 +247,7 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
 
     async def _search_files(self, executor: Any, args: Dict[str, Any]) -> Any:
         from services.agent.agent_result import AgentResult
-        data = await executor.file_search_entries(**{
+        data = await executor.file_search_entries(**self._resource_query_options(executor, content=bool(args.get("search_content"))), **{
             k: v for k, v in args.items()
             if k in ("keyword", "path", "search_content", "file_pattern")
         })

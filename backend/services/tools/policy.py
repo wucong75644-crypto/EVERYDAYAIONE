@@ -156,7 +156,7 @@ class ToolPolicy:
                 "actor_user_id", "workspace_owner_id", "org_id", "context_scope",
                 "personal_context_allowed", "agent_domain", "permission_mode", "execution_mode",
                 "entrypoint", "conversation_id", "task_id", "authorization_snapshot",
-                "feature_flags", "resource_manifest", "resource_versions",
+                "feature_flags", "resource_manifest", "resource_versions", "resource_access",
             )
         }
         scope["authorized_tool_names"] = (
@@ -219,6 +219,13 @@ class ToolPolicy:
         reason = self._mode_reason(spec, context, operation, risk)
         if reason:
             return result("deny", reason)
+        from .resource_access import FILE_ACTIONS, ResourceAccessBoundary
+        if name in FILE_ACTIONS and context.resource_access:
+            boundary = ResourceAccessBoundary.from_dict(context.resource_access)
+            if boundary.unavailable_reason:
+                return result("deny", boundary.unavailable_reason)
+            if not boundary.permits(FILE_ACTIONS[name]):
+                return result("deny", "RESOURCE_ACTION_DENIED")
         if risk != "dangerous":
             return result("allow", "resource_notice" if risk == "confirm" else "allowed")
         binding = self._binding(spec, context, arguments_digest)

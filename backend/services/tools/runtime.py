@@ -40,9 +40,24 @@ class ToolRuntime:
         self.policy = self.service.policy
         self._confirmations = {}
         self._pending = {}
+        from .resource_access import ResourceSelections
+        self.resource_selections = ResourceSelections()
+        self.resource_stop_reason = ""
+        self._resource_failures = {}
+        self._selection_identity = None
 
     def context(self, call_id=None):
-        return executor_context(self.executor, call_id=call_id)
+        context = executor_context(self.executor, call_id=call_id)
+        identity = (context.actor_user_id, context.workspace_owner_id, context.org_id,
+                    context.context_scope, context.conversation_id, context.task_id,
+                    context.execution_mode, context.agent_domain)
+        if self._selection_identity is not None and self._selection_identity != identity:
+            from .resource_access import ResourceSelections
+            self.resource_selections = ResourceSelections()
+            self.resource_stop_reason = ""
+            self._resource_failures.clear()
+        self._selection_identity = identity
+        return context
 
     def advertised(self, initial_names=None, discovered_names=()):
         return self.registry.resolve(
@@ -71,18 +86,19 @@ class ToolRuntime:
     async def execute(self, name, arguments, *, call_id=None, cache=None, lifecycle=None):
         call = ToolCall(call_id or str(uuid4()), name, arguments)
         context = self.context(call.call_id)
+        selections = self.resource_selections.snapshot()
         self.check_lifetime(context)
         decision = self.policy.decide(name, context, call.arguments)
         if decision.outcome == "deny" and not decision.reason.startswith("business_permission_required:"):
-            return ToolResult.not_executed(call=call, context=context, decision=decision)
+            return self._observe_resource_result(ToolResult.not_executed(call=call, context=context, decision=decision), context)
         try:
             self.check_argument_scope(call.arguments)
             context = await refresh_context(self.executor, context, self.registry)
             self.check_lifetime(context)
             decision = self.policy.decide(name, context, call.arguments)
             if decision.outcome == "deny":
-                return ToolResult.not_executed(call=call, context=context, decision=decision)
-            file_call = resolve_file_call(self.executor, name, call.arguments,
+                return self._observe_resource_result(ToolResult.not_executed(call=call, context=context, decision=decision), context)
+            file_call = resolve_file_call(self.executor, name, call.arguments, selections=selections,
                                           check=lambda: self.check_lifetime(context))
             if file_call is not None:
                 call = ToolCall(call.call_id, name, file_call.arguments)
@@ -90,7 +106,7 @@ class ToolRuntime:
             self.check_lifetime(context)
             decision = self.policy.decide(name, context, call.arguments)
             if decision.outcome == "deny":
-                return ToolResult.not_executed(call=call, context=context, decision=decision)
+                return self._observe_resource_result(ToolResult.not_executed(call=call, context=context, decision=decision), context)
             # Read-only peek: completed business calls do not require a second
             # approval. Current policy/action/resources are checked above.
             if lifecycle is not None:
@@ -127,6 +143,8 @@ class ToolRuntime:
                 if file_call is not None:
                     # Membership/manifest may have changed while approval waited.
                     resolve_resources(self.executor, name, call.arguments)
+                    from .resource_access import resource_boundary
+                    file_call.resolver.access = resource_boundary(self.executor)
                     await file_call.verify()
                 if cache is not None and decision.cacheable:
                     raw = cache.get(name, cache_arguments(call))
@@ -174,13 +192,29 @@ class ToolRuntime:
                             yield
 
             async with execution_guard():
-                return await self.service.execute(call, context, confirmation=receipt,
-                                                  before_dispatch=before_dispatch, on_result=on_result)
+                result = await self.service.execute(call, context, confirmation=receipt,
+                                                    before_dispatch=before_dispatch, on_result=on_result)
+                if file_call is not None and result.exception is None and result.status in {"success", "empty"}:
+                    self.resource_selections.record(file_call)
+                return self._observe_resource_result(result, context)
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            return ToolResult.from_exception(error, call=call, context=context,
-                                             decision=decision, handler_started=False)
+            return self._observe_resource_result(ToolResult.from_exception(error, call=call, context=context,
+                                             decision=decision, handler_started=False), context)
+
+    def _observe_resource_result(self, result, context):
+        from .resource_access import ResourceAccessError
+        from services.file_resources import FileTargetError
+        from .policy import _digest
+        error = result.exception
+        if isinstance(error, (ResourceAccessError, FileTargetError)):
+            key = _digest((error.code, context.resource_access, context.resource_manifest,
+                           sorted(self.resource_selections.browses)))
+            self._resource_failures[key] = self._resource_failures.get(key, 0) + 1
+            if error.recovery == "stop" or self._resource_failures[key] >= 2:
+                self.resource_stop_reason = str(error) + " 已停止无进展的工具调用，请明确资源范围或处理授权后继续。"
+        return result
 
     async def _confirm(self, call, context, decision):
         waits = []

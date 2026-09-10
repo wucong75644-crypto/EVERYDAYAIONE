@@ -1,5 +1,92 @@
 # 工具统一 04：技术验收记录
 
+## 2026-09-10 资源范围衔接修复：最新有效验收
+
+**技术验收通过，待提交部署及用户验收。** 本节覆盖下方历史结论；不代表生产已修复、已合入 main 或可以开始 05。最后已部署候选仍是 `bb4449a0e53b6c3b1d11aaa98e1c1faa410a81aa`。当前真实模型和生产用户验证尚未执行。
+
+### 1. 范围与版本
+
+- 分支 `codex/task/20260909225830-tool-unification-04`；目录 `/Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-04`；HEAD/修复前基准 `bb4449a0e53b6c3b1d11aaa98e1c1faa410a81aa`。被测版本为 HEAD 加本任务未提交差异，不能把 HEAD 当新候选。01–03 稳定基座 `0f65d72dd00a0fce6885d4df0b7977454f666812` 祖先和代码树检查通过。
+- 用户明确“开始开发吧”后按 [已确认方案及实际接口](TECH_工作区资源选择与授权衔接.md) 实施。新增 `ResourceAccessBoundary`/`ResourceRule` 动作与资源上界、`ResourceSelections` 浏览线索，复用 `PreparedFileCall`、Registry/Policy/Dispatcher 和原 Handler。
+- 搜索、分析、删除、恢复均检查动作范围；目录/图片/内容搜索使用同一目标选择规则，读取不得借用列举权限。普通交互保留现有 owner 工作区资格，再与身份、mode/domain、业务权限、确认求交；不新增自然语言授权判定。
+- scope 省略且存在可信线索时推导定位；明确 current 始终限定附件，搜索命中不加入授权清单。定时只从既有模板字段建立精确只读清单；仅有工具名不产生文件授权。
+- 本轮不增加 WS 字段、数据库/ledger/replay 格式、短引用、分页或展示治理。已确认的参数兼容调整与限制见方案“实施记录”。源码逐文件指纹、原协议/业务/安全点 AST 对照见 [source-checks](tool-unification-evidence/04-scope-source-checks.txt)。
+
+### 2. 逐项证据
+
+S = [test_resource_scope_continuity.py](../../backend/tests/test_resource_scope_continuity.py)；R = [test_resource_scope_reproduction.py](../../backend/tests/test_resource_scope_reproduction.py)；I = [test_tool_production_integration.py](../../backend/tests/test_tool_production_integration.py)；F = [test_file_target_execution.py](../../backend/tests/test_file_target_execution.py)。下列既有用例均在本轮重新运行，不能只引用历史通过。
+
+| 验收编号 | 场景及预期 | 实际结果 | 状态 | 证据 |
+|---|---|---|---|---|
+| A-04-01 | Chat/Actor、定时 ToolLoop、旧 execute 覆盖新旧选择参数，统一策略无公共执行绕行 | 三入口 × path/fid/fref 正常衔接；真实 Chat engine、Actor 冷恢复及 ToolLoop 多轮调用通过；调用点枚举无直调 Handler 旁路 | 通过 | S::test_workspace_search_to_analysis_omitted_scope、test_chat_actor_real_engine_uses_scope_across_model_rounds、test_real_loop_browses_directories_then_uses_reference；I::test_all_entrypoints_new_and_legacy_reach_dispatcher_once；source-checks |
+| A-04-02 | 权限/plan/跨域群隔离/定时范围/ERP query 写 action 均先拒绝，不读缓存或登记 invocation | 既有拒绝矩阵通过；list-only/read 拒绝三入口 cache/ledger trap=0；图片片段选择和内容搜索先验 read；有限清单先过滤再计数；未知/过期授权明确未执行 | 通过 | I::test_denial_precedes_handler_cache_and_ledger、test_real_erp_action_route、test_scheduled_scope_intersection；S::test_list_permission_does_not_grant_read_or_hit_cache、test_manifest_image_selection_checks_read_before_handler、test_finite_boundary_filters_inventory_before_limits_and_output、test_expired_resource_authority_never_executes |
+| A-04-03 | 未确认/拒绝/超时/故障/断连=0，批准=1；旧批准不能扩参、扩范围或复用失效授权 | 真实确认通道及持久批准恢复矩阵通过；新增确认等待中撤销动作和授权到期均 Handler=0；原通知/提案机制无第二弹窗 | 通过 | I::test_real_confirmation_channel、test_approval_cannot_survive_scope_or_authorization_change、test_changed_arguments_get_new_confirmation_and_duplicate_is_single_use、test_proposals_and_resource_notices_do_not_add_confirmation；S::test_confirmation_cannot_survive_resource_action_revocation、test_expired_resource_authority_never_executes；F::test_cold_actor_resumes_signed_target_without_second_dialog |
+| A-04-04 | 读 A/B 重叠，写 C 等待读结束，读 D 等写结束，写写不重叠；并行不串范围 | 原 Event 调用轨迹和进程锁测试通过；新增屏障固定同批子调用在另一搜索结束前进入，结束后仍不继承它的新浏览线索，下一轮才可继承 | 通过 | I::test_real_read_overlap_and_write_barriers；F::test_cross_conversation_writer_waits_for_readers、test_cross_process_shared_and_exclusive_lock_protocol；S::test_sibling_parallel_call_cannot_inherit_a_later_completed_search、test_parallel_browse_uses_scoped_set_not_last_completion |
+| A-04-05 | actor/owner 隔离、预算/取消、Actor 恢复、锁/幂等/安全点有效 | 同任务已完成显式搜索输入可恢复浏览，无搜索 Handler 回放；另一任务、失败/运行中记录不能恢复；冷引用重验权限；取消与既有预算/存储收尾场景通过 | 通过 | S::test_cold_actor_selection_rebuild_has_no_handler_replay、test_actor_checkpoint_from_another_task_cannot_seed_scope、test_recovered_reference_rechecks_revoked_access、test_cancelled_selection_never_reaches_handler；F group_actor/budget/cancellation 系列；I 生命周期系列；source-checks |
+| A-04-06 | 原消费者及 ledger 投影兼容，原执行器/循环/确认/权限回归通过 | 2960 passed，2 项原有 opt-in 真实模型测试未验证；正常结果投影/serializer/ledger hash/WS/ERP 不变；Chat/Loop 拒绝后终止并保留已有结果统计 | 通过 | 四组日志；I replay/consumer/ledger 用例；S::test_tool_loop_stops_without_more_tool_requests_on_missing_authority、test_real_search_reference_to_real_csv_conversion；source-checks |
+| G-01 | 实际变更在批准范围，无后续板块混入 | 内部授权/选择衔接及必要循环止损；原业务实现和持久化协议保持，明确列出默认定位与定时边界行为变化 | 通过 | 本节范围、方案实施记录、source-checks |
+| G-02 | 全 A 项含成功/失败/边界的有效证据 | A 表本轮复验全部通过；4 个原生产断点在旧候选隔离副本全部失败、同用例修复后全部通过 | 通过 | R；[旧候选复现](tool-unification-evidence/04-scope-baseline.txt)、本轮 files 日志 |
+| G-03 | 新增/相关回归通过，不削弱正确断言 | 新增 56 个场景全部通过；旧 MagicMock 增加真实 workspace_root，未改原断言；未新增 skip/xfail | 通过 | S/R、test_file_tool_mixin.py fixture 差异；四组日志 |
+| G-04 | 工具名/合法参数/旧 API/投影/WS 对照 | 可选 scope 文案明确继承规则，删除/恢复参数及 ledger hash 不改；旧 execute 返回异常家族兼容；错误细节使用已有 ToolError.retry_context | 通过 | test_file_tools/test_tool_registry/test_tool_result/test_ws_tool_confirmation；source-checks |
+| G-05 | 入口/接口/限制/回退及下一块前置可交接 | HANDOFF、CURRENT_ISSUES、设计与诊断更新；无新持久化迁移；回退到 bb4449a0 会重新出现已诊断的 scope 缺陷 | 通过 | 本记录及交接，下一块仍等待确定候选用户验收关闭 |
+
+生产入口枚举：`chat/execution_engine.py` / Actor 同一 engine → `chat_tool_mixin.py` → `ToolRuntime.execute`；`ScheduledTaskAgent` → `ToolLoopExecutor.run` → `ToolRuntime.execute`；兼容 `ToolExecutor.execute` → `ToolRuntime.execute`。三者均经 Registry/Policy/ExecutionService/Dispatcher。原 ERP 部门内部业务 IO 不属于模型工具入口。当前新增逻辑处于共同 Runtime/文件准备层，未建立搜索命中直读、旧 execute 宽松默认或 Actor 恢复直调 Handler 的兜底。
+
+### 3. 测试环境与摘要
+
+```sh
+PYTHONPATH=/private/tmp/tool04-testdeps:backend bash docs/document/tool-unification-evidence/run-04-scope.sh
+/Users/wucong/EVERYDAYAIONE/.venv/bin/python docs/document/tool-unification-evidence/check-04-scope.py > docs/document/tool-unification-evidence/04-scope-source-checks.txt 2>&1
+```
+
+执行目录为上述任务工作树。Python 3.14.2 / pytest 9.0.3；运行器拒绝 `.env`/`backend/.env`，仅使用 APP_ENV=testing、数据库/Redis `127.0.0.1:1` 和占位 JWT；沿用临时 time-machine 测试依赖，无生产数据或真实外部调用。复现基准通过 `git archive bb4449a0 backend` 创建隔离副本，仅复制 R 测试及测试专用配置；原输出保存于 baseline 日志。
+
+| 测试组 | 最终结果 | 原始日志 |
+|---|---|---|
+| Registry/Policy/Dispatcher/Result 与真实入口 | 858 passed | [core](tool-unification-evidence/04-scope-core.txt) |
+| 既有执行器/循环/确认/权限/Actor | 1613 passed | [regression](tool-unification-evidence/04-scope-regression.txt) |
+| ERP 独立进程隔离 collection stub | 11 passed | [erp](tool-unification-evidence/04-scope-erp.txt) |
+| 文件根因链、新增衔接、存储/上传/内核 | 478 passed，2 skipped | [files](tool-unification-evidence/04-scope-files.txt) |
+
+合计 **2960 passed、0 failed/error/xfail、2 skipped**。两项跳过为既有 `test_file_analyze_integration.py:42,75` 的 RUN_LLM_INTEGRATION=1 门槛，状态为未验证，不算通过；本轮真实 CSV→Parquet 的转换读取另有成功证据。既有 pytest env/Pydantic/FastAPI 弃用警告保留，无新增豁免。相关回归不等于发布全量门禁，部署时仍按受控入口执行。
+
+### 4. 问题与复验
+
+| 问题编号 | 复现 | 根因/影响 | 所属板块 | 处理结果 | 复验证据 |
+|---|---|---|---|---|---|
+| S-01 | 工作区搜索后目录/分析省略 scope 失败 | 定位选择未跨调用衔接，current 默认误拒绝 | 04 | 可信浏览线索与签名身份推导选择；显式范围不覆盖 | R 旧 4 failed / 新 4 passed；S 三入口矩阵 |
+| S-02 | 搜索许可可能被当内容许可，定时只给工具名 | list/read 无明确动作边界 | 04 | 资源动作上界 + 精确定时模板清单；未知拒绝；图片/内容搜索读检查前置 | S list-only/image/content/scheduled/expiry 用例 |
+| S-03 | 模型换文件/换 ID 重复同类失败 | 无法恢复的授权错误继续循环 | 04 | 错误附明确恢复动作；不可恢复即时止损，相同事实同类错误再次出现停止；不新增自动重试 | S repeated_scope_error/chat engine/loop stops 用例 |
+| S-04 | 同批搜索完成时间可能影响其他调用默认范围 | 可变运行时浏览集合 | 04 | 每次 execute 第一个 await 前固定选择快照；按身份/任务清理 | S sibling_parallel Event 屏障、task_switch 用例 |
+| V-04 | 旧文件路径路由 mock 无 owner 根目录 | 新授权前置需要真实归属事实 | 04 | fixture 提供现有临时 workspace_root，原断言不变 | test_file_tool_mixin.py 全部通过 |
+| V-05 | 自审发现列目录后处理 IO、部分图片名称选择、隐藏 staging 过滤次序风险 | 可能错记已执行结果、绕过 read 前置或误拒绝正常列举 | 04 | 浏览目录在准备阶段固定，记录阶段无 IO；前置/Handler 共用 manifest_matches；隐藏目录先过滤 | S image/directory/staging 用例；最后完整四组复验 |
+
+当前范围内无已知未修复的技术阻塞。长引用、分页、把截断数量误述为总数仍是后续 05/06 的结果消费问题，本轮不声称解决。有限授权仍沿用 owner 根目录遍历再过滤，不新增检索索引；原目录遍历上限与性能约束仍在。
+
+### 5. 用户验证单
+
+先按受控发布记录**本次新候选完整 SHA**，不能用 bb4449a0 验收新代码；在明确获准的测试目录/文件上执行：
+
+1. 工作区根目录浏览 → 子目录浏览 → 读取指定测试 CSV/Excel，确认模型即使省略后续 scope 仍读正确文件。明确“只查本轮附件”时不得读工作区其他文件。
+2. plan 请求删除测试文件，应拒绝且文件保留。另在获准可写测试文件上分别拒绝/批准危险确认，预期 0/1 次执行；未获删除授权时只做前述只读步骤，保留写验证项。
+3. 仅授权列举的测试资源不能读内容（含图片搜索）；权限未知/过期不能换文件继续尝试。普通交互沿用已有权限，不把模型自称“获准”视为授权来源。
+4. 定时使用已有明确模板测试文件，范围内只读成功、另一个文件拒绝；只有 allowed_tools 无资源清单的文件任务明确拒绝。非文件定时任务行为不受此文件边界调整影响。
+5. Actor 等待确认后恢复，批准后执行一次，无第二确认；恢复前撤销权限则不得执行。该项线上状态恢复及真实模型表现尚待验证。
+
+### 6. 结论与交接
+
+**本轮技术验收通过，待部署/用户验收；下一块前置尚未闭环。** 最终 Review 为同任务自审，不冒充独立代理审查。用户生产验证和两项真实模型 opt-in 测试未完成；不把 mock 循环通过称作生产通过。原 NFS 同机锁、历史备份版本限制继续有效，相关存储业务代码本轮未改。
+
+本轮未提交、推送、部署或更改生产数据。无新持久化载荷；如需回退，可按受控发布回退既有 bb4449a0，旧 reader 可读取当前原格式，但该基准有已知 scope 缺陷，不能作为问题已解决的最终版本。验收关闭仍由用户对确定部署版本确认后走受控入口。
+
+---
+
+## 2026-09-10 生产用户验证：修复前历史记录
+
+bb4449a0 受控发布成功；前端 1309 passed，后端 9149 passed、37 skipped、4 xfailed，构建与线上健康检查通过。随后用户真实验证发现「工作区搜索 → 后续目录搜索/分析」漏传 scope 回落 current，三次分析在 Handler 前被拒绝，且循环未有效纠正。见 [逐次参数、根因与测试缺口](FILE_WORKSPACE_SCOPE_DIAGNOSIS_20260910.md)。
+
+诊断当时已有 A 项安全/兼容证据保持，但真实上下文衔接和正常只读用户验证未闭合，G-02 总体证据不足，不能沿用此前总体“技术通过”结论。该诊断阶段没有改代码或执行生产业务操作；后续修复及复验以本文最上方最新有效验收为准。
+
 ## 2026-09-10 发布全量门禁复验（提交前快照；最终状态见交付消息）
 
 首个提交候选 ba3570936b9d43e15bf19ee28fbdb15ec9ebc294 已推送，但生产发布被后端全量测试拦下：9145 passed、4 failed、37 skipped、4 xfailed；前端 1309 项测试和构建通过且已部署，后端未同步，生产候选标记已失效。不能把首轮当作完整发布成功。技术结论等待修正后的受控发布全量复验；最终候选 SHA/状态以本次最终 RELEASE_RESULT 为准。

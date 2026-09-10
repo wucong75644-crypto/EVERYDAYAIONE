@@ -15,7 +15,7 @@ class FileDescribeMixin:
         from services.file_resources import FileTargetResolver
         from services.agent.file_id import compute_fid
         from services.agent.file_path_cache import get_file_cache
-        resolver = FileTargetResolver(self, executor)
+        resolver = FileTargetResolver(self, executor, action="list")
         reference = resolver.reference(path)
         relative = str(path.relative_to(Path(executor.workspace_root)))
         cache = get_file_cache(self.conversation_id)

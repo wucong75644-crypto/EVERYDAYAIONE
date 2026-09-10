@@ -42,6 +42,7 @@ def chat_context(handler, *, user_id, conversation_id, task_id, permission_mode,
 def executor_context(executor, *, call_id=None) -> ToolContext:
     from core.config import get_settings
     settings = get_settings()
+    from .resource_access import resource_boundary
     manifest = executor.resource_manifest
     return ToolContext(
         actor_user_id=executor.user_id, workspace_owner_id=executor.workspace_user_id,
@@ -57,6 +58,7 @@ def executor_context(executor, *, call_id=None) -> ToolContext:
             "file_workspace_enabled", "sandbox_enabled", "crawler_enabled",
         )},
         resource_manifest=None if manifest is None else tuple(asdict(a) for a in manifest.assets),
+        resource_access=resource_boundary(executor).as_dict(),
         budget=executor.execution_budget, cancellation=executor.cancellation_event,
         confirmation_available=executor.tool_confirmer is not None,
     )
@@ -91,7 +93,8 @@ async def refresh_context(executor, context, registry):
             snapshot["access_denied_reason"] = "business_permission_required"
     except Exception:
         snapshot["access_denied_reason"] = "identity_or_authorization_unavailable"
-    return replace(context, authorization_snapshot=snapshot)
+    from .resource_access import resource_boundary
+    return replace(context, authorization_snapshot=snapshot, resource_access=resource_boundary(executor).as_dict())
 
 
 def _check_identity(executor, context):

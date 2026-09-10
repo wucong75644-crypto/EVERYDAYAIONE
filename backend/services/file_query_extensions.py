@@ -37,6 +37,7 @@ class FileQueryExtensionsMixin:
         self,
         path: str = ".",
         show_hidden: bool = False,
+        path_filter=None,
     ) -> Dict[str, Any]:
         """列出目录内容（结构化数据）
 
@@ -62,6 +63,8 @@ class FileQueryExtensionsMixin:
                 if not show_hidden and item.name.startswith("."):
                     continue
                 if item.name in _BLOCKED_NAMES or item.name == "staging":
+                    continue
+                if path_filter is not None and not path_filter(item):
                     continue
                 try:
                     st = item.stat()
@@ -121,6 +124,7 @@ class FileQueryExtensionsMixin:
     async def file_search_entries(
         self, keyword: str = "", path: str = ".", search_content: bool = False,
         file_pattern: Optional[str] = None,
+        path_filter=None,
     ) -> Dict[str, Any]:
         """Structured hits are authoritative; presentation never feeds identity."""
         from fnmatch import fnmatch
@@ -132,6 +136,8 @@ class FileQueryExtensionsMixin:
         entries = []
         truncated = False
         for item in workspace_entries(self, path):
+            if path_filter is not None and not path_filter(item):
+                continue
             relative = str(item.relative_to(self._root))
             if file_pattern and not (fnmatch(item.name, file_pattern) or fnmatch(relative, file_pattern)):
                 continue

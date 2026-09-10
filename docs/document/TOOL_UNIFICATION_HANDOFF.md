@@ -1,8 +1,20 @@
 # 工具统一：共同约束与板块交接
 
-发布增量：首轮候选 ba357093 在后端全量门禁发现 4 项过时测试前提，发布未完成、候选标记已失效；已修正并完成 114 项定向复验，正在重新执行受控全量发布。详见 04 验收记录的最新发布段。最终成功状态与 SHA 以 RELEASE_RESULT 及最终交付消息为准。
+最新状态：资源范围衔接根因修复已完成，2960 passed、2 项既有真实模型 opt-in 测试未验证，源码入口/兼容检查通过。**技术验收通过，待提交部署及用户验收**；本轮没有新候选 SHA，也未部署。最后已部署版本为 bb4449a0；下方历史发布状态不代表本轮状态。
 
-更新日期：2026-09-10。当前板块 04：**本轮根因修复、本地回归及 NAS 不覆盖发布实测通过；技术验收通过，正在执行用户指令的提交部署，用户验收未关闭。** 原生产候选/当前 HEAD 为 `20636929f7b78346991b357630240d932ed5772d`，它不包含当前未提交修复。分支和工作树保留，不进入 05。
+更新日期：2026-09-10。当前板块 04：用户在 bb4449a0 发现工作区搜索到分析的 scope 衔接失败后，本任务完成 [诊断](FILE_WORKSPACE_SCOPE_DIAGNOSIS_20260910.md)、[设计及实际接口](TECH_工作区资源选择与授权衔接.md) 和 [逐项复验](TOOL_UNIFICATION_ACCEPTANCE_04.md)。真实模型/生产用户复验未完成；分支和工作树保留，不进入 05。
+
+### 本轮接入增量与恢复约束
+
+- `tools/resource_access.py`：`ResourceRule`/`ResourceAccessBoundary` 是可信内部动作、资源及有效期上界；身份仍由 `ToolContext` 持有。普通 interactive 保留现有工作区资格，scheduled/preflight 仅从已有精确资源清单产生 list/read；无清单为未知，不能用 allowed_tools 替代。`scheduled_task_agent.py::_template_manifest` 只适配既有模板文件字段，不读取计划文本作为授权。
+- `ResourceSelections` 是定位线索集合，运行时按 actor/owner/org/任务/domain 隔离，调用首次 await 前取快照；不是 last_scope。签名引用、确定清单目标、唯一浏览范围可以定位，显式 current 不被覆盖。搜索结果不扩写 manifest。
+- `file_calls.py::PreparedFileCall` 保留原目标/版本/确认链，增加准备阶段的 browse_directory；原参数不被执行后重选。`FileTargetResolver` 与实际文件查询共享动作过滤；`manifest_matches` 使前置检查与 Handler 对“部分名称/目录/单图”的选择一致，list 权限不隐式读图片。
+- 生产接入点：Chat/Actor 的 `chat/execution_engine.py` → `chat_tool_mixin.py`；定时 `ScheduledTaskAgent` → `ToolLoopExecutor`；兼容 `ToolExecutor.execute`。全部进入 `ToolRuntime` 和同一 Registry/Policy/Dispatcher，无旧执行/恢复宽松兜底。核心/动态目录仍使用 Registry。
+- Actor 仅用同 task 的已完成、显式 scope 的既有 file_search 输入恢复浏览线索，不读展示文本、不重新搜索或执行业务。旧 checkpoint 未记录隐式调用的规范 scope，不能猜其并行完成顺序；此时用已签名引用或明确 scope 定位并重新鉴权。
+- 确认包含资源授权依据；等待结束后刷新权限/有效期及目标版本，先于缓存、invocation 与 Handler。未知授权立即终止工具循环；同类资源错误在无新可信事实下再次出现也终止，保留原失败结果统计。取消继续抛出。
+- `ToolError.retry_context` 复用现有字段携带恢复动作/有效范围；正常 ToolResult 投影、WS、ledger serializer/hash、ERP、Actor lease/安全点、业务锁无新格式或协议。
+
+测试命令、基线四项失败/修复后成功、56 项新增场景及 A/G 完整矩阵见最新验收记录。回退无数据迁移：受控发布到 bb4449a0 可用旧 reader，但会恢复已知 scope 缺陷。长引用/分页/截断数量解释留在 05/06；本轮不承诺已解决。下一块必须等待新候选用户验证及受控验收关闭。
 
 用户已授权 [文件目标解析与确认闭环实施方案](TECH_文件目标解析与确认闭环.md) 的完整范围：统一名字/路径/fid/fref 的当前范围解析、绑定确认对象版本、恢复记录与 no-clobber、全内容缓存与解析配置、任务短 ID 歧义、必要 writer/取消协调。详见 [最新 A/G 验收记录](TOOL_UNIFICATION_ACCEPTANCE_04.md)、[本轮源码/入口检查](tool-unification-evidence/04-rootfix-source-checks.txt)、[测试命令](tool-unification-evidence/run-04-rootfix.sh)。未获生产业务写入授权，未操作生产业务文件。
 

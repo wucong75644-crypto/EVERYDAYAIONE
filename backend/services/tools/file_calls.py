@@ -29,6 +29,7 @@ class PreparedFileCall:
     record: dict | None = None
     versions: tuple = ()
     backup_etag: str | None = None
+    browse_directory: str | None = None
     check: object = field(default=lambda: None, repr=False)
 
     @property
@@ -51,14 +52,16 @@ class PreparedFileCall:
         from services.file_resources import workspace_entries
         resolver = self.resolver
         if resolver.manifest is not None and resolver.scope != "workspace":
-            paths = [resolver.guarded(asset.workspace_path) for asset in resolver.manifest.assets]
+            paths = [resolver.guarded(asset.workspace_path) for asset in resolver.manifest.assets
+                     if resolver.access.permits("list", asset.workspace_path)]
         else:
-            search_root = resolver.root
-            if self.arguments.get("path"):
-                selected = resolver.files.resolve_safe_path(self.arguments["path"])
-                if selected.is_dir():
-                    search_root = selected
-            paths = [search_root, *workspace_entries(resolver.files, str(search_root), check=self.check)]
+            search_root = resolver.files.resolve_safe_path(self.arguments.get("path") or ".")
+            if not search_root.exists() and Path(self.arguments.get("path") or ".").parent == Path("."):
+                search_root = resolver.root  # basename is still a discovery query
+            resolver.access.require("list", str(search_root.relative_to(resolver.root)), browse=True)
+            entries = workspace_entries(resolver.files, str(search_root), check=self.check) if search_root.is_dir() else ()
+            paths = [p for p in [search_root, *entries]
+                     if resolver.access.permits("list", str(p.relative_to(resolver.root)), browse=True)]
         values = []
         for path in sorted(set(paths)):
             self.check()
@@ -136,13 +139,20 @@ def validate_selectors(arguments):
             raise FileTargetError("RESOURCE_REFERENCE_INVALID", "resource_ref 格式无效，请从搜索结果复制")
 
 
-def resolve_file_call(owner, name, arguments, *, files=None, check=lambda: None):
+def resolve_file_call(owner, name, arguments, *, files=None, check=lambda: None, selections=None):
     if name not in FILE_TOOLS:
         return None
     args = thaw(arguments)
     validate_selectors(args)
-    scope = args.get("scope") or ("current" if name in {"file_search", "file_analyze"} else "workspace")
-    resolver = FileTargetResolver(owner, files, scope=scope, check=check)
+    from .resource_access import FILE_ACTIONS, ResourceSelections, resource_boundary
+    access = resource_boundary(owner)
+    access.require(FILE_ACTIONS[name])
+    files = files or FileTargetResolver(owner).files
+    selections = selections or getattr(getattr(owner, "_tool_runtime", None), "resource_selections", None) or ResourceSelections()
+    scope = selections.scope(owner, name, args, files)
+    resolver = FileTargetResolver(owner, files, scope=scope, check=check, action=FILE_ACTIONS[name])
+    if name in {"file_search", "file_analyze"}:
+        args["scope"] = scope
     operation = PreparedFileCall(name, resolver, args, check=check)
     if name == "file_delete":
         references = _values(args.pop("resource_refs", None))
@@ -175,12 +185,41 @@ def resolve_file_call(owner, name, arguments, *, files=None, check=lambda: None)
         operation.targets = (targets[0],)
         args["path"] = str(targets[0].path)
     elif name == "file_search":
+        if args.get("search_content"):
+            access.require("read")
+        from .resource_access import manifest_matches
+        manifest_target = None
+        if resolver.manifest is not None and scope == "current":
+            matched = manifest_matches(resolver.manifest, args, access)
+            path = str(args.get("path") or "")
+            if path and path != "." and not path.endswith("/") and len(matched) == 1:
+                manifest_target = matched[0].workspace_path
+        if manifest_target is not None:
+            args["path"] = manifest_target
+        if (manifest_target is not None or (args.get("path") and not args.get("keyword")
+                and not args.get("file_pattern") and (scope == "workspace" or resolver.manifest is None))):
+            target = resolver.files.resolve_safe_path(args["path"])
+            if not target.is_dir() and Path(args["path"]).parent == Path("."):
+                try:
+                    target = resolver.resolve(args["path"]).path
+                except FileTargetError as error:
+                    if error.code not in {"RESOURCE_NOT_FOUND", "RESOURCE_AMBIGUOUS"}:
+                        raise
+            if target.is_file():
+                resolver.guarded(str(target))
+                args["path"] = str(target.relative_to(resolver.root))
+                if target.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}:
+                    access.require("read", args["path"])
+        browse_path = resolver.files.resolve_safe_path(args.get("path") or ".")
+        if browse_path.is_dir():
+            operation.browse_directory = str(browse_path.relative_to(resolver.root))
         # Validate containment, but a name remains a search condition in Handler.
         if args.get("path") and Path(args["path"]).parent != Path("."):
             resolver.files.resolve_safe_path(args["path"])
         if resolver.manifest is not None and scope != "workspace":
             for asset in resolver.manifest.assets:
-                resolver.guarded(asset.workspace_path)
+                if resolver.access.permits("list", asset.workspace_path):
+                    resolver.guarded(asset.workspace_path)
     elif args.get("filename") and Path(args["filename"]).parent != Path("."):
         resolver.files.resolve_safe_path(args["filename"])
     return operation

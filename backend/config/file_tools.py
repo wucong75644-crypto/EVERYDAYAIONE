@@ -69,7 +69,7 @@ def build_file_tools() -> List[Dict[str, Any]]:
                 "description": (
                     "检索当前获准范围的文件，返回完整相对路径、resource_ref 和兼容 file_id；不转换文件。\n\n"
                     "Usage:\n"
-                    "- 无参数：默认检索当前任务附件；scope=workspace 时列工作区根目录\n"
+                    "- 无参数且无本轮浏览上下文：检索当前任务附件；scope=workspace 时列工作区根目录\n"
                     "- path：指定目录或精确相对路径；不完整文件名请用 keyword\n"
                     "- keyword：按文件名关键词搜索\n"
                     "- file_pattern：按通配符过滤（如 *.csv）\n\n"
@@ -82,7 +82,7 @@ def build_file_tools() -> List[Dict[str, Any]]:
                             "type": "string",
                             "description": (
                                 "目录相对路径（列目录）或文件完整相对路径（描述单文件）。"
-                                "未给 scope 时范围为 current。"
+                                "省略 scope 时承接本轮明确浏览范围；无绑定时为 current，歧义时需明确范围。"
                             ),
                         },
                         "keyword": {
@@ -97,7 +97,7 @@ def build_file_tools() -> List[Dict[str, Any]]:
                             "type": "string",
                             "enum": ["current", "workspace"],
                             "description": (
-                                "默认 current，仅检索当前任务附件；只有用户明确要求"
+                                "显式 current 仅检索本轮附件；省略时可承接本轮浏览范围，无绑定时为 current。只有用户明确要求"
                                 "搜索整个工作区时才使用 workspace。"
                             ),
                         },
@@ -127,7 +127,7 @@ def build_file_tools() -> List[Dict[str, Any]]:
                     "type": "object",
                     "properties": {
                         "resource_ref": {
-                            "type": "string", "description": "file_search 返回的资源引用，原样复制；文件变化后需重新搜索。",
+                            "type": "string", "description": "file_search 返回的资源引用，原样复制；可自动确定位置，系统仍检查当前动作权限。文件变化后需重新搜索。",
                         },
                         "file_id": {
                             "type": "string",
@@ -142,7 +142,7 @@ def build_file_tools() -> List[Dict[str, Any]]:
                             "type": "string",
                             "enum": ["current", "workspace"],
                             "description": (
-                                "默认 current；只有用户明确指定工作区历史文件时"
+                                "省略时根据已验证资源引用或本轮明确浏览范围定位，无绑定时为 current；显式 current 不扩大。用户指定工作区文件时"
                                 "才使用 workspace。"
                             ),
                         },

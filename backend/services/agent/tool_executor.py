@@ -64,6 +64,7 @@ class ToolExecutor(
         tool_entrypoint: str = "legacy_internal",
         tool_confirmer=None,
         resource_manifest_loader=None,
+        resource_access_boundary=None,
     ) -> None:
         self.db = db
         self.user_id = user_id
@@ -88,6 +89,7 @@ class ToolExecutor(
         self.tool_entrypoint = tool_entrypoint
         self.tool_confirmer = tool_confirmer
         self.resource_manifest_loader = resource_manifest_loader
+        self.resource_access_boundary = resource_access_boundary
         self._tool_runtime = None
         self.erp_step_timeout_sec = erp_step_timeout_sec
         self.tool_policy_snapshot = dict(tool_policy_snapshot or {})

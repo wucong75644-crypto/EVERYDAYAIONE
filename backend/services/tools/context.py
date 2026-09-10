@@ -30,6 +30,7 @@ class ToolContext:
     feature_flags: Mapping[str, bool] = field(default_factory=dict)
     resource_manifest: tuple[Mapping[str, Any], ...] | None = None
     resource_versions: Mapping[str, Any] = field(default_factory=dict)
+    resource_access: Mapping[str, Any] = field(default_factory=dict)
     entrypoint: str = "model"
     conversation_id: str | None = None
     task_id: str | None = None
@@ -77,5 +78,5 @@ class ToolContext:
             object.__setattr__(self, "authorized_tool_names", frozenset(self.authorized_tool_names))
         if any(type(enabled) is not bool for enabled in self.feature_flags.values()):
             raise ValueError("Feature flags must be boolean snapshots")
-        for field_name in ("authorization_snapshot", "feature_flags", "resource_manifest", "resource_versions"):
+        for field_name in ("authorization_snapshot", "feature_flags", "resource_manifest", "resource_versions", "resource_access"):
             object.__setattr__(self, field_name, freeze(getattr(self, field_name)))

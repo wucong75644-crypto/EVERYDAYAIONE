@@ -362,6 +362,7 @@ class TestFileSearchRouting:
         mixin = FakeMixin()
         executor = MagicMock()
         executor.resolve_safe_path = lambda p: ws / p
+        executor.workspace_root = str(ws)
 
         settings = MagicMock()
         settings.file_workspace_root = str(tmp_path)

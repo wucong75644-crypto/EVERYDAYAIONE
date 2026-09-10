@@ -25,7 +25,7 @@ _COMPATIBILITY = {
     "erp_agent": ("query -> task in existing validator and handler; task takes precedence",),
     "erp_analyze": ("query fallback exists in handler only; validator still uses public task schema",),
     "file_analyze": ("file_id preferred; legacy path and scope retained",),
-    "file_search": ("scope defaults to current; workspace explicitly selects workspace search",),
+    "file_search": ("scope defaults to current without a bound browse; explicit scope remains a narrowing selection, never authorization",),
     "file_delete": (
         "file_ids and legacy files retained; handler accepts string or list",
         "when both are given, resolved file_ids are appended to files; do not replace this behavior",

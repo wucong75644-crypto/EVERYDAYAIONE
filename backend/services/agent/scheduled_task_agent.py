@@ -157,7 +157,7 @@ class ScheduledTaskAgent:
                 permission_mode="auto", agent_domain="general", task_id=str(self.task_id),
                 execution_budget=budget, cancellation_event=self.cancellation_event,
                 workspace_user_id=self.user_id, context_scope="user", personal_context_allowed=True,
-                resource_manifest=None, tool_entrypoint="model",
+                resource_manifest=self._template_manifest(), tool_entrypoint="model",
             )
 
             all_tools = executor.tool_runtime.advertised(policy.allowed_tools)
@@ -425,6 +425,23 @@ class ScheduledTaskAgent:
                 f"_generate_summary failed | task={self.task_id} | error={e}"
             )
             return text[:500]
+
+    def _template_manifest(self):
+        """Only the approved task definition's template is a file input grant.
+
+        Tool-name policies and model plan prose do not authorize other files.
+        Reuse the existing template field; no new scheduled payload format.
+        """
+        from services.handlers.resource_manifest import ResourceAsset, ResourceManifest
+        template = self.task.get("template_file")
+        if not isinstance(template, dict) or not isinstance(template.get("path"), str) or not template["path"]:
+            return None
+        from services.tools.resource_access import relative_path
+        path = relative_path(template["path"])
+        return ResourceManifest(str(self.task_id), str(self.task_id), (
+            ResourceAsset("scheduled-template", str(template.get("name") or path), path,
+                          "application/octet-stream", None, ""),
+        ), "approved_task_template")
 
     async def _prepare_template(self) -> None:
         """模板文件复制到 staging 目录"""

@@ -110,7 +110,9 @@ class ToolResult:
             ToolExecutionMetadata(execution_status, handler_started, decision.effects,
                                   elapsed_ms, int(handler_started), cancelled),
             cls._audit(call, context, status, elapsed_ms, None),
-            ToolError(str(error), type(error).__name__), error,
+            ToolError(str(error), getattr(error, "code", type(error).__name__),
+                      retry_context={"recovery_action": error.recovery, "effective_scope": error.scope}
+                      if hasattr(error, "recovery") else None), error,
         )
 
     @classmethod
@@ -120,6 +122,10 @@ class ToolResult:
         status = "confirmation_required" if decision.outcome == "require_confirmation" else "denied"
         error = (ValueError(f"Unknown sync tool: {call.name}") if decision.reason == "unknown_tool"
                  else PermissionError(f"Tool execution not allowed: {decision.reason}"))
+        if decision.reason.startswith("RESOURCE_"):
+            from .resource_access import ResourceAccessError
+            error = ResourceAccessError(decision.reason,
+                "当前任务没有可验证的该动作文件授权。请先指定获准资源；不要改 scope 或换文件重试。")
         result = cls.from_exception(error, call=call, context=context, decision=decision, handler_started=False)
         return cls(result.raw, result.kind, status, decision, result.execution,
                    {**result.audit, "status": status}, result.error, error)

@@ -208,6 +208,12 @@ class ToolLoopExecutor:
                     worst_tool_name = _tn
             self._turn_tool_outcomes.clear()
 
+            resource_stop = getattr(getattr(self.executor, "_tool_runtime", None), "resource_stop_reason", "")
+            if isinstance(resource_stop, str) and resource_stop:
+                stop_reason = "resource_access_blocked"
+                failure_message = resource_stop
+                break
+
             result_class = most_severe(turn_classes)
             decision = evaluate(
                 tracker, result_class, stop_config,

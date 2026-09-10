@@ -1,0 +1,128 @@
+Baseline bb4449a0e53b6c3b1d11aaa98e1c1faa410a81aa; isolated git archive; real Runtime/search, mock analysis Handler.
+============================= test session starts ==============================
+platform darwin -- Python 3.14.2, pytest-9.0.3, pluggy-1.6.0 -- /Users/wucong/EVERYDAYAIONE/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /private/tmp/tool04-scope-baseline-ujrjmkfq/backend
+configfile: pytest.ini
+plugins: time-machine-2.14.1, cov-7.1.0, asyncio-1.3.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 4 items
+
+backend/tests/test_resource_scope_reproduction.py::test_production_search_to_analyze_without_repeating_scope[path] FAILED [ 25%]
+backend/tests/test_resource_scope_reproduction.py::test_production_search_to_analyze_without_repeating_scope[file_id] FAILED [ 50%]
+backend/tests/test_resource_scope_reproduction.py::test_production_search_to_analyze_without_repeating_scope[resource_ref] FAILED [ 75%]
+backend/tests/test_resource_scope_reproduction.py::test_production_root_to_directory_without_repeating_scope FAILED [100%]
+
+=================================== FAILURES ===================================
+_______ test_production_search_to_analyze_without_repeating_scope[path] ________
+backend/tests/test_resource_scope_reproduction.py:22: in test_production_search_to_analyze_without_repeating_scope
+    assert str(await e.execute("file_analyze", args)) == "analysis-ok"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/tool_executor.py:149: in execute
+    return (await self.tool_runtime.execute(tool_name, arguments, call_id=call_id)).to_legacy()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/tools/result.py:143: in to_legacy
+    raise self.exception
+backend/services/tools/runtime.py:85: in execute
+    file_call = resolve_file_call(self.executor, name, call.arguments,
+backend/services/tools/file_calls.py:170: in resolve_file_call
+    targets = [resolver.resolve(value, allow_missing=True) for value in values if value]
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:221: in resolve
+    return FileTarget(self.guarded(value))
+                      ^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:178: in guarded
+    raise PermissionError("RESOURCE_PATH_NOT_IN_MANIFEST: 工具未执行")
+E   PermissionError: RESOURCE_PATH_NOT_IN_MANIFEST: 工具未执行
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 14:26:23.553 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_search_to_anal0/org/o1/u1
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 14:26:23.581 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_search_to_anal0/org/o1/u1
+2026-09-10 14:26:23.582 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_search_to_anal0/org/o1/u1
+2026-09-10 14:26:23.582 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_search_to_anal0/org/o1/u1
+2026-09-10 14:26:23.601 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_search_to_anal0/org/o1/u1
+______ test_production_search_to_analyze_without_repeating_scope[file_id] ______
+backend/tests/test_resource_scope_reproduction.py:22: in test_production_search_to_analyze_without_repeating_scope
+    assert str(await e.execute("file_analyze", args)) == "analysis-ok"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/tool_executor.py:149: in execute
+    return (await self.tool_runtime.execute(tool_name, arguments, call_id=call_id)).to_legacy()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/tools/result.py:143: in to_legacy
+    raise self.exception
+backend/services/tools/runtime.py:85: in execute
+    file_call = resolve_file_call(self.executor, name, call.arguments,
+backend/services/tools/file_calls.py:170: in resolve_file_call
+    targets = [resolver.resolve(value, allow_missing=True) for value in values if value]
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:217: in resolve
+    matches.add(self.guarded(entry.workspace))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:178: in guarded
+    raise PermissionError("RESOURCE_PATH_NOT_IN_MANIFEST: 工具未执行")
+E   PermissionError: RESOURCE_PATH_NOT_IN_MANIFEST: 工具未执行
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 14:26:23.634 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_search_to_anal1/org/o1/u1
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 14:26:23.637 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_search_to_anal1/org/o1/u1
+2026-09-10 14:26:23.638 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_search_to_anal1/org/o1/u1
+2026-09-10 14:26:23.639 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_search_to_anal1/org/o1/u1
+2026-09-10 14:26:23.640 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_search_to_anal1/org/o1/u1
+___ test_production_search_to_analyze_without_repeating_scope[resource_ref] ____
+backend/tests/test_resource_scope_reproduction.py:22: in test_production_search_to_analyze_without_repeating_scope
+    assert str(await e.execute("file_analyze", args)) == "analysis-ok"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/tool_executor.py:149: in execute
+    return (await self.tool_runtime.execute(tool_name, arguments, call_id=call_id)).to_legacy()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/tools/result.py:143: in to_legacy
+    raise self.exception
+backend/services/tools/runtime.py:85: in execute
+    file_call = resolve_file_call(self.executor, name, call.arguments,
+backend/services/tools/file_calls.py:170: in resolve_file_call
+    targets = [resolver.resolve(value, allow_missing=True) for value in values if value]
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:204: in resolve
+    return FileTarget(self.guarded(path), version)
+                      ^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:178: in guarded
+    raise PermissionError("RESOURCE_PATH_NOT_IN_MANIFEST: 工具未执行")
+E   PermissionError: RESOURCE_PATH_NOT_IN_MANIFEST: 工具未执行
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 14:26:23.655 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_search_to_anal2/org/o1/u1
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 14:26:23.658 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_search_to_anal2/org/o1/u1
+2026-09-10 14:26:23.659 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_search_to_anal2/org/o1/u1
+2026-09-10 14:26:23.659 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_search_to_anal2/org/o1/u1
+2026-09-10 14:26:23.660 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_search_to_anal2/org/o1/u1
+__________ test_production_root_to_directory_without_repeating_scope ___________
+backend/tests/test_resource_scope_reproduction.py:31: in test_production_root_to_directory_without_repeating_scope
+    assert "report.csv" in str(await e.execute("file_search", {"path": "downloads/"}))
+E   AssertionError: assert 'report.csv' in '当前任务资源中未找到匹配文件'
+E    +  where '当前任务资源中未找到匹配文件' = str(AgentResult(summary='当前任务资源中未找到匹配文件', status='empty', format=<OutputFormat.TEXT: 'text'>, file_ref=None, data=None, columns=None, source='', error_message='', metadata={'resource_scope': 'current'}, emit_payloads=[], tokens_used=0, confidence=1.0, insights=None, follow_up=None, thinking_text=''))
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 14:26:23.675 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_root_to_direct0/org/o1/u1
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 14:26:23.677 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_root_to_direct0/org/o1/u1
+2026-09-10 14:26:23.678 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_root_to_direct0/org/o1/u1
+2026-09-10 14:26:23.679 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_root_to_direct0/org/o1/u1
+2026-09-10 14:26:23.679 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_root_to_direct0/org/o1/u1
+2026-09-10 14:26:23.680 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_root_to_direct0/org/o1/u1
+2026-09-10 14:26:23.680 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-228/test_production_root_to_direct0/org/o1/u1
+=============================== warnings summary ===============================
+../../../Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434
+  /Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+backend/services/adapters/kie/models.py:126
+  /private/tmp/tool04-scope-baseline-ujrjmkfq/backend/services/adapters/kie/models.py:126: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class JsonSchema(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED backend/tests/test_resource_scope_reproduction.py::test_production_search_to_analyze_without_repeating_scope[path]
+FAILED backend/tests/test_resource_scope_reproduction.py::test_production_search_to_analyze_without_repeating_scope[file_id]
+FAILED backend/tests/test_resource_scope_reproduction.py::test_production_search_to_analyze_without_repeating_scope[resource_ref]
+FAILED backend/tests/test_resource_scope_reproduction.py::test_production_root_to_directory_without_repeating_scope
+======================== 4 failed, 2 warnings in 0.58s =========================
