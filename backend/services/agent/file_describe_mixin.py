@@ -10,6 +10,19 @@ from loguru import logger
 
 
 class FileDescribeMixin:
+    def _file_reference_line(self, executor, path: Path) -> str:
+        import json
+        from services.file_resources import FileTargetResolver
+        from services.agent.file_id import compute_fid
+        from services.agent.file_path_cache import get_file_cache
+        resolver = FileTargetResolver(self, executor)
+        reference = resolver.reference(path)
+        relative = str(path.relative_to(Path(executor.workspace_root)))
+        cache = get_file_cache(self.conversation_id)
+        cache.register(relative, workspace=str(path))
+        return (f"  [文件] [{compute_fid(self.org_id, relative)}] {json.dumps(relative, ensure_ascii=False)}"
+                f"\n    resource_ref: {reference}")
+
     async def _describe_single_file(
         self,
         executor: Any,
@@ -20,6 +33,7 @@ class FileDescribeMixin:
         from services.agent.file_path_cache import get_file_cache
 
         name = Path(abs_path).name
+        reference_line = self._file_reference_line(executor, Path(abs_path))
         size_text = self._fmt_size(os.path.getsize(abs_path))
         try:
             relative_path = str(
@@ -46,7 +60,7 @@ class FileDescribeMixin:
             if cdn_url:
                 return FileReadResult(
                     type="image",
-                    text=f"{name} ({size_text}) — 图片已注入视觉，可直接观察。",
+                    text=f"{name} ({size_text}) — 图片已注入视觉，可直接观察。\n{reference_line}",
                     image_url=cdn_url,
                 )
             logger.warning(f"file_search image | no CDN URL for {abs_path}")
@@ -61,7 +75,7 @@ class FileDescribeMixin:
                 f"'{relative_path}' 直接读取"
             )
         return AgentResult(
-            summary="\n".join([f"{name} ({size_text})", "", hint]),
+            summary="\n".join([f"{name} ({size_text})", reference_line, "", hint]),
             status="success",
         )
 

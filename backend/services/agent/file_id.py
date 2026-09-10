@@ -2,11 +2,9 @@
 
 设计依据见 docs/document/TECH_文件ID协议化.md
 
-为何用无状态哈希而非缓存登记：
-- 不依赖运行时 cache：服务重启即恢复
-- 不依赖 DB：多 worker 间天然一致
-- 历史对话回放可即时翻译老 path → fid
-- (org_id, path) 元组保证多租户隔离
+哈希生成不依赖缓存；反向定位仍需当前授权范围的路径集合。
+旧 fid 兼容由 FileTargetResolver 在文件清单/工作区中唯一匹配，
+不能仅凭短哈希授权或假设无碰撞。新调用优先使用签名 resource_ref。
 """
 
 import hashlib
@@ -26,7 +24,7 @@ def compute_fid(org_id: Optional[str], workspace_path: str) -> str:
     Returns:
         12 位 ASCII，格式 "fid_<8位hex>"，e.g. "fid_a3f2b1c9"
 
-    冲突概率：4 字节 hash 空间下，单 org 1000 文件 ~10⁻⁸
+    仅 32 位哈希，可能碰撞；调用方必须在当前范围核验唯一性。
     """
     seed = f"{org_id or ''}:{workspace_path}".encode("utf-8")
     digest = hashlib.blake2b(seed, digest_size=4).hexdigest()

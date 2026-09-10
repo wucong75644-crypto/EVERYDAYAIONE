@@ -130,91 +130,17 @@ def _check_identity(executor, context):
 
 
 def resolve_resources(executor, name, arguments):
-    """Normalize existing path/ID aliases before approval; no business IO.
-
-    Use the original FileExecutor path guard. Stable absolute deletion targets
-    prevent a mutable name/ID cache from changing the object after approval.
-    """
-    import os
-    from core.config import get_settings
-    from services.file_executor import FileExecutor
-    from services.agent.file_path_cache import get_file_cache
-    from services.agent.file_id import is_valid_fid, compute_fid
-    args = thaw(arguments)
-    if name not in {"file_search", "file_analyze", "file_delete", "restore_file"}:
-        return args
-    settings = get_settings()
-    files = FileExecutor(settings.file_workspace_root, executor.workspace_user_id,
-                         executor.org_id, create_root=False)
-    cache = get_file_cache(executor.conversation_id)
-
-    def target(value):
-        if not isinstance(value, str) or not value:
-            raise ValueError("Invalid file target")
-        return str(files.resolve_safe_path(value))
-
-    def fid(value):
-        if not is_valid_fid(value):
-            raise ValueError("Invalid file_id")
-        candidates = {target(entry.workspace) for key, entry in cache.registered_paths()
-                      if compute_fid(executor.org_id, key) == value and entry.workspace}
-        # Restored Actors rebuild trusted attachment facts, not process-local
-        # cache contents. Resolve the same ID without creating a file/index.
-        if executor.resource_manifest is not None:
-            candidates.update(target(asset.workspace_path) for asset in executor.resource_manifest.assets
-                              if compute_fid(executor.org_id, asset.workspace_path) == value)
-        if len(candidates) != 1:
-            raise PermissionError("resource_id_unavailable")
-        return candidates.pop()
-
-    if name == "file_delete":
-        ids, paths = args.get("file_ids") or [], args.get("files") or []
-        ids = [ids] if isinstance(ids, str) else ids
-        paths = [paths] if isinstance(paths, str) else paths
-        resolved = [target(cache.resolve(p, usage="delete") or p) if not os.path.dirname(p)
-                    else target(p) for p in paths]
-        resolved.extend(fid(value) for value in ids)
-        if not resolved:
-            raise ValueError("file_ids 或 files 至少传一个")
-        args.pop("file_ids", None)
-        args["files"] = list(dict.fromkeys(resolved))
-    elif name == "file_analyze":
-        path = args.get("path") or ""
-        resolved = fid(args["file_id"]) if args.get("file_id") else target(cache.resolve(path, usage="analyze") or path)
-        args.pop("file_id", None)
-        args["path"] = resolved
-        if executor.resource_manifest is not None and args.get("scope") != "workspace":
-            relative = str(Path(resolved).relative_to(files.workspace_root))
-            if relative not in executor.resource_manifest.allowed_paths:
-                raise PermissionError("RESOURCE_PATH_NOT_IN_MANIFEST")
-    elif name == "file_search":
-        if args.get("path"):
-            target(args["path"])
-        # Manifest reads can return every asset, so validate all candidate paths
-        # before Handler or cache replay (the manifest is not itself a grant).
-        if executor.resource_manifest is not None and args.get("scope") != "workspace":
-            for asset in executor.resource_manifest.assets:
-                target(asset.workspace_path)
-    elif args.get("filename") and (os.path.dirname(args["filename"]) or Path(args["filename"]).is_absolute()):
-        target(args["filename"])
-    return args
+    """Compatibility facade for the single scoped file target resolver."""
+    from .file_calls import resolve_file_call
+    operation = resolve_file_call(executor, name, arguments)
+    return operation.arguments if operation is not None else thaw(arguments)
 
 
 async def check_deferred_resources(executor, name, arguments):
-    """Read existing restore metadata before the business Handler's download.
-
-    The original lookup remains scoped by actor/org; additionally check its
-    destination against the workspace owner (which differs in channel tasks).
-    """
-    if name != "restore_file" or not arguments.get("filename"):
-        return
-    from core.config import get_settings
-    from services.file_executor import FileExecutor
-    record = await executor._find_deleted_record(arguments["filename"].strip())
-    if record:
-        files = FileExecutor(get_settings().file_workspace_root, executor.workspace_user_id,
-                             executor.org_id, create_root=False)
-        files.resolve_safe_path(str(Path(files._workspace_base) / record["relative_path"]))
+    """Compatibility check; production keeps the resolved record through dispatch."""
+    from .file_calls import resolve_file_call, resolve_restore_record
+    operation = resolve_file_call(executor, name, arguments)
+    await resolve_restore_record(operation)
 
 
 def check_result_resources(context, value):

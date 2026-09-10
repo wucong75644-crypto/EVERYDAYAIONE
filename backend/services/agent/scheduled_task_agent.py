@@ -455,7 +455,10 @@ class ScheduledTaskAgent:
             dst = staging_dir / tpl["name"]
 
             if src.exists():
-                shutil.copy2(src, dst)
+                from services.workspace_coordination import workspace_lock, finish_file_io
+                async with workspace_lock(fe.workspace_root):
+                    src = fe.resolve_safe_path(tpl["path"])
+                    await finish_file_io(shutil.copy2, src, dst)
                 logger.info(
                     f"Template prepared | task={self.task_id} | dst={dst}"
                 )

@@ -104,6 +104,15 @@ class SandboxExecutor:
     async def execute(
         self, code: str, description: str = "",
     ) -> AgentResult:
+        from services.workspace_coordination import workspace_lock
+        if not self._workspace_dir:
+            return await self._execute_coordinated(code, description)
+        async with workspace_lock(self._workspace_dir, write=True):
+            return await self._execute_coordinated(code, description)
+
+    async def _execute_coordinated(
+        self, code: str, description: str = "",
+    ) -> AgentResult:
         """执行 Python 代码并返回结构化结果。
 
         流派 2 多字段协议(对齐 OpenAI/Anthropic Code Execution):

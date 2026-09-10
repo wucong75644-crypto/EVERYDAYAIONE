@@ -330,12 +330,22 @@ class ChatToolMixin(ChatToolResultMixin):
         try:
             # Install the local listener before publishing the existing dialog.
             await asyncio.sleep(0)
+            description = f"AI 要执行写操作: {call.name}"
+            if call.name == "file_delete":
+                from core.config import get_settings
+                from services.file_executor import FileExecutor
+                files = FileExecutor(get_settings().file_workspace_root, context.workspace_owner_id,
+                                     context.org_id, create_root=False)
+                from pathlib import Path
+                paths = [str(files.resolve_safe_path(path).relative_to(Path(files.workspace_root)))
+                         for path in call.arguments.get("files", ())]
+                description = f"删除 {len(paths)} 个文件：\n" + "\n".join(paths)
             await ws_manager.send_to_task_or_user(
                 context.task_id, context.actor_user_id,
                 build_tool_confirm_request(
                     task_id=context.task_id, conversation_id=context.conversation_id,
                     message_id=message_id, tool_call_id=confirmation_id, tool_name=call.name,
-                    arguments=thaw(call.arguments), description=f"AI 要执行写操作: {call.name}",
+                    arguments=thaw(call.arguments), description=description,
                     safety_level="dangerous",
                 ),
             )

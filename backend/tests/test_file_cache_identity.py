@@ -90,11 +90,12 @@ async def test_discovery_then_real_attachment_registration_resolves_id(tmp_path,
     executor = SimpleNamespace(
         workspace_root=str(tmp_path),
         resolve_safe_path=lambda path: tmp_path / path,
-        file_search=AsyncMock(return_value=f"  [文件] {relative}"),
-        file_list_entries=AsyncMock(return_value={"error": None, "dirs": [], "path": "已整理表格", "files": [{"name": source.name, "abs_path": str(source), "size": 20}]}),
+        file_search_entries=AsyncMock(return_value={"entries": [{"path": relative, "abs_path": str(source), "name": source.name, "is_dir": False, "line": None, "preview": None}], "truncated": False, "error": None}),
+        file_list_entries=AsyncMock(return_value={"error": None, "dirs": [], "path": "已整理表格", "files": [{"name": source.name, "abs_path": str(source), "size": 20}], "truncated": False}),
         _format_size=lambda _: "20B",
     )
     owner = FileToolMixin()
+    owner.user_id = "user"
     owner.org_id = "org"
     owner.conversation_id = "conv"
     if entrypoint == "search":
@@ -200,12 +201,16 @@ def test_hash_collision_does_not_resolve_arbitrary_source(monkeypatch):
     assert resolve_fid_to_workspace("fid_12345678", "org", cache) is None
 
 
-def test_directory_qualified_path_does_not_gain_basename_fuzzy_fallback():
+def test_directory_qualified_path_does_not_gain_basename_fuzzy_fallback(tmp_path):
+    from services.file_executor import FileExecutor
     cache = FilePathCache()
-    cache.register("甲/report.csv", workspace="/ws/甲/report.csv")
-    # 显式指定另一个目录时，不新增 basename 归一化匹配；继续交给旧路径解析器。
+    first = tmp_path / "甲/report.csv"
+    second = tmp_path / "乙/report-.csv"
+    for path in (first, second):
+        path.parent.mkdir()
+        path.write_text("x\n1\n")
+    cache.register("甲/report.csv", workspace=str(first))
     assert cache.resolve("乙/report-.csv", usage="analyze") is None
-    executor = SimpleNamespace(resolve_safe_path=lambda path: Path("/ws") / path)
-    assert _resolve_analysis_path(
-        SimpleNamespace(), executor, {"path": "乙/report-.csv"}, cache,
-    ) == ("/ws/乙/report-.csv", "乙/report-.csv")
+    executor = FileExecutor(str(tmp_path))
+    owner = SimpleNamespace(user_id="u", org_id="org", conversation_id="c")
+    assert _resolve_analysis_path(owner, executor, {"path": "乙/report-.csv"}, cache) == (str(second), "乙/report-.csv")

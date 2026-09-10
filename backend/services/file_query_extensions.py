@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
+from services.workspace_coordination import coordinated_file_write
 
 
 # 搜索时跳过的目录（从 file_executor 搬过来，搜索专用）
@@ -117,67 +118,60 @@ class FileQueryExtensionsMixin:
 
         return "\n".join(lines)
 
-    async def file_search(
-        self,
-        keyword: str = "",
-        path: str = ".",
-        search_content: bool = False,
+    async def file_search_entries(
+        self, keyword: str = "", path: str = ".", search_content: bool = False,
         file_pattern: Optional[str] = None,
-    ) -> str:
-        """搜索文件（按文件名或内容）"""
-        from services.file_executor import (
-            _BLOCKED_EXTENSIONS, _BLOCKED_NAMES,
-            _MAX_READ_SIZE, _MAX_SEARCH_RESULTS,
-        )
-
+    ) -> Dict[str, Any]:
+        """Structured hits are authoritative; presentation never feeds identity."""
+        from fnmatch import fnmatch
+        from services.file_executor import _MAX_READ_SIZE, _MAX_SEARCH_RESULTS
+        from services.file_resources import workspace_entries
         target = self.resolve_safe_path(path)
-
-        if not target.exists() or not target.is_dir():
-            return f"目录不存在: {path}"
-
-        results: List[str] = []
-        keyword_lower = keyword.lower()
-
-        for item in target.rglob(file_pattern or "*"):
-            if len(results) >= _MAX_SEARCH_RESULTS:
-                break
-            if item.name in _BLOCKED_NAMES:
+        if not target.is_dir():
+            return {"entries": [], "truncated": False, "error": f"目录不存在: {path}"}
+        entries = []
+        truncated = False
+        for item in workspace_entries(self, path):
+            relative = str(item.relative_to(self._root))
+            if file_pattern and not (fnmatch(item.name, file_pattern) or fnmatch(relative, file_pattern)):
                 continue
-            if item.suffix.lower() in _BLOCKED_EXTENSIONS:
-                continue
-            rel_parts = item.relative_to(target).parts
-            if any(p.startswith(".") or p in _SKIP_SEARCH_DIRS for p in rel_parts):
-                continue
-
-            rel_path = str(item.relative_to(self._root))
-
-            if keyword_lower in item.name.lower():
-                type_tag = "[目录]" if item.is_dir() else "[文件]"
-                results.append(f"  {type_tag} {rel_path}")
-                continue
-
-            if search_content and item.is_file() and self._is_text_file(item):
-                try:
-                    if item.stat().st_size > _MAX_READ_SIZE:
-                        continue
+            hit = {"path": relative, "abs_path": str(item), "name": item.name,
+                   "is_dir": item.is_dir(), "line": None, "preview": None}
+            matches = keyword.lower() in item.name.lower()
+            if not matches and search_content and item.is_file() and self._is_text_file(item):
+                if item.stat().st_size <= _MAX_READ_SIZE:
                     text = item.read_text(encoding="utf-8", errors="ignore")
                     for line_no, line in enumerate(text.splitlines(), 1):
-                        if keyword_lower in line.lower():
-                            preview = line.strip()[:100]
-                            results.append(f"  [文件] {rel_path}:{line_no} | {preview}")
+                        if keyword.lower() in line.lower():
+                            hit.update(line=line_no, preview=line.strip()[:100])
+                            matches = True
                             break
-                except (PermissionError, OSError):
-                    continue
+            if matches:
+                if len(entries) == _MAX_SEARCH_RESULTS:
+                    truncated = True
+                    break
+                entries.append(hit)
+        return {"entries": entries, "truncated": truncated, "error": None}
 
-        if not results:
+    async def file_search(
+        self, keyword: str = "", path: str = ".", search_content: bool = False,
+        file_pattern: Optional[str] = None,
+    ) -> str:
+        data = await self.file_search_entries(keyword, path, search_content, file_pattern)
+        if data["error"]:
+            return data["error"]
+        if not data["entries"]:
             mode = "文件名+内容" if search_content else "文件名"
             return f"未找到匹配「{keyword}」的结果（{mode}搜索）"
-
-        header = f"搜索「{keyword}」| 找到 {len(results)} 项"
-        if len(results) >= _MAX_SEARCH_RESULTS:
-            header += f"（已达上限 {_MAX_SEARCH_RESULTS}）"
-
-        return f"{header}\n{'─' * 60}\n" + "\n".join(results)
+        lines = []
+        for hit in data["entries"]:
+            suffix = f":{hit['line']} | {hit['preview']}" if hit["line"] is not None else ""
+            tag = "目录" if hit["is_dir"] else "文件"
+            lines.append(f"  [{tag}] {hit['path']}{suffix}")
+        header = f"搜索「{keyword}」| 找到 {len(lines)} 项"
+        if data["truncated"]:
+            header += "（已达上限，结果不完整）"
+        return header + "\n" + "─" * 60 + "\n" + "\n".join(lines)
 
     async def file_info(self, path: str) -> str:
         """获取文件/目录元信息"""
@@ -212,6 +206,7 @@ class FileQueryExtensionsMixin:
 
         return "\n".join(info_lines)
 
+    @coordinated_file_write
     async def file_edit(
         self,
         path: str,

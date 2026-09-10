@@ -42,10 +42,27 @@ def setup(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "file_workspace_root", str(tmp_path))
     monkeypatch.setattr(settings, "file_workspace_enabled", True)
     monkeypatch.setattr(settings, "sandbox_enabled", True)
+    monkeypatch.setattr("services.oss_service.get_oss_service", lambda: SimpleNamespace(
+        bucket=SimpleNamespace(get_object_meta=Mock(return_value=SimpleNamespace(etag="mock-etag")))))
     manager = WebSocketManager()
     manager.send_to_task_or_user = AsyncMock()
     monkeypatch.setattr("services.handlers.chat_tool_mixin.ws_manager", manager)
     return manager, tmp_path
+
+
+def existing_files(root, *names):
+    """Execution now requires real targets even when the business handler is mocked."""
+    for name in names:
+        path = root / "org/o1/u1" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("test")
+
+
+def restore_records(executor):
+    async def lookup(filename, *, record_id=None):
+        key = record_id or filename
+        return {"id": key, "relative_path": f"org/o1/u1/{key}.txt", "oss_object_key": f"mock/{key}"}
+    executor._find_deleted_record = lookup
 
 
 def loop_for(executor):
@@ -180,6 +197,7 @@ async def test_approval_cannot_survive_scope_or_authorization_change(setup, chan
 
 
 async def test_changed_arguments_get_new_confirmation_and_duplicate_is_single_use(setup):
+    existing_files(setup[1], "a.txt", "b.txt")
     executor = MockHandlerExecutor(agent_domain="general", task_id="task1")
     executor.tool_confirmer = AsyncMock(return_value=True)
     runtime = executor.tool_runtime
@@ -195,6 +213,7 @@ async def test_changed_arguments_get_new_confirmation_and_duplicate_is_single_us
 @pytest.mark.parametrize("entry", ["chat", "loop"])
 async def test_real_read_overlap_and_write_barriers(setup, entry, monkeypatch):
     executor = MockHandlerExecutor(agent_domain="general")
+    restore_records(executor)
     both = asyncio.Event()
     release = asyncio.Event()
     trace, running = [], set()
@@ -227,6 +246,7 @@ async def test_real_read_overlap_and_write_barriers(setup, entry, monkeypatch):
 
 @pytest.mark.parametrize("stage", ["before", "confirm", "handler"])
 async def test_cancellation_propagates(setup, stage):
+    existing_files(setup[1], "x.txt")
     event = asyncio.Event()
     executor = MockHandlerExecutor(agent_domain="general", cancellation_event=event, task_id="task1")
     started = asyncio.Event()
@@ -284,6 +304,7 @@ async def test_cache_cannot_survive_revoked_membership(setup):
 
 async def test_real_tool_loop_run_uses_model_order(setup):
     executor = MockHandlerExecutor(agent_domain="general")
+    restore_records(executor)
     loop, ctx = loop_for(executor)
     loop._stream_one_turn = AsyncMock(side_effect=[
         ({0: tc("web_search", {"query": "first"}, "z"), 1: tc("restore_file", {"filename": "next"}, "a")}, "", 3, 2, 1),
@@ -431,7 +452,9 @@ async def test_replay_current_permissions_without_business_or_confirmation(setup
 
 
 async def test_actor_durable_approval_bound_to_arguments_and_owner(setup, monkeypatch):
-    from dataclasses import asdict
+    from dataclasses import asdict, replace
+    from services.tools.file_calls import resolve_file_call
+    existing_files(setup[1], "a.txt", "b.txt")
     from services.tools.policy import _digest
     from services.tools.runtime_context import refresh_context, resolve_resources
     from services.conversation_commands import CommandType, ConversationCommand
@@ -443,7 +466,10 @@ async def test_actor_durable_approval_bound_to_arguments_and_owner(setup, monkey
     runtime = executor.tool_runtime
     args = {"files": ["a.txt"]}
     context = await refresh_context(executor, runtime.context("call"), runtime.registry)
-    decision = runtime.policy.decide("file_delete", context, resolve_resources(executor, "file_delete", args))
+    prepared = resolve_file_call(executor, "file_delete", args)
+    await prepared.prepare()
+    context = replace(context, resource_versions=prepared.binding)
+    decision = runtime.policy.decide("file_delete", context, prepared.arguments)
     identifier = "tool-approval:" + _digest(asdict(decision.confirmation_binding))
     commands = SimpleNamespace(load_pending=AsyncMock(return_value=[ConversationCommand(
         command_id="approved", command_type=CommandType.APPROVAL_RESULT, conversation_id="c1",

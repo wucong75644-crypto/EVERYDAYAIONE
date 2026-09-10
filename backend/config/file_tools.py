@@ -1,7 +1,7 @@
 """
 文件操作工具定义
 
-对齐 Claude 模式：file_search 定位文件并转 staging，AI 在 code_execute 自主探索。
+file_search 仅定位文件；file_analyze 单独治理表格并转 staging。
 file_search 命中图片时直接返回多模态（FileReadResult type=image）。
 restore_file 恢复文件。
 """
@@ -29,21 +29,26 @@ FILE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         },
     },
     "restore_file": {
-        "required": ["filename"],
+        "required": [],
         "properties": {
             "filename": {"type": "string"},
+            "record_id": {"type": "integer"},
         },
     },
     "file_analyze": {
-        "required": ["path"],
+        "required": [],
         "properties": {
+            "resource_ref": {"type": "string"},
+            "file_id": {"type": "string"},
             "path": {"type": "string"},
             "scope": {"type": "string", "enum": ["current", "workspace"]},
         },
     },
     "file_delete": {
-        "required": ["files"],
+        "required": [],
         "properties": {
+            "resource_refs": {"type": "array", "items": {"type": "string"}},
+            "file_ids": {"type": "array", "items": {"type": "string"}},
             "files": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -62,13 +67,13 @@ def build_file_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "file_search",
                 "description": (
-                    "搜索和准备工作区文件。定位文件 → 大 Excel/CSV 自动转 Parquet 到 staging → 返回路径。\n\n"
+                    "检索当前获准范围的文件，返回完整相对路径、resource_ref 和兼容 file_id；不转换文件。\n\n"
                     "Usage:\n"
-                    "- 无参数：列出工作区根目录所有文件\n"
-                    "- path：列出指定目录或准备指定文件（大数据文件自动转 Parquet）\n"
+                    "- 无参数：默认检索当前任务附件；scope=workspace 时列工作区根目录\n"
+                    "- path：指定目录或精确相对路径；不完整文件名请用 keyword\n"
                     "- keyword：按文件名关键词搜索\n"
                     "- file_pattern：按通配符过滤（如 *.csv）\n\n"
-                    "返回文件列表和 staging 路径，以及可直接复制到 code_execute 中执行的 duckdb.sql() 查询语句。"
+                    "多个候选请先选择完整路径；优先把 resource_ref 原样传给分析或删除工具。CSV/Excel 需另调 file_analyze。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -76,8 +81,8 @@ def build_file_tools() -> List[Dict[str, Any]]:
                         "path": {
                             "type": "string",
                             "description": (
-                                "目录相对路径（列目录）或文件名/相对路径（准备单个文件）。"
-                                "默认列出根目录。"
+                                "目录相对路径（列目录）或文件完整相对路径（描述单文件）。"
+                                "未给 scope 时范围为 current。"
                             ),
                         },
                         "keyword": {
@@ -121,14 +126,17 @@ def build_file_tools() -> List[Dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "resource_ref": {
+                            "type": "string", "description": "file_search 返回的资源引用，原样复制；文件变化后需重新搜索。",
+                        },
                         "file_id": {
                             "type": "string",
                             "pattern": "^fid_[a-z0-9]{8}$",
-                            "description": "文件 ID（fid_xxx），从 <attachments> 的 <id> 字段 copy。优先使用 file_id。",
+                            "description": "文件 ID（fid_xxx），从 <attachments> 的 <id> 字段 copy。新搜索结果优先使用 resource_ref。",
                         },
                         "path": {
                             "type": "string",
-                            "description": "（兼容老协议）文件名或相对路径。仅在没有 file_id 时使用。",
+                            "description": "（兼容老协议）文件名或相对路径。与其他选择器同时提供时必须指向同一文件。",
                         },
                         "scope": {
                             "type": "string",
@@ -155,6 +163,10 @@ def build_file_tools() -> List[Dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "resource_refs": {
+                            "type": "array", "items": {"type": "string"},
+                            "description": "file_search 返回的 resource_ref 列表，优先使用；不得自行编造。",
+                        },
                         "file_ids": {
                             "type": "array",
                             "items": {
@@ -166,7 +178,7 @@ def build_file_tools() -> List[Dict[str, Any]]:
                         "files": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "（兼容老协议）文件名或相对路径列表。仅在没有 file_ids 时使用。",
+                            "description": "（兼容老协议）文件名或相对路径列表。与 file_ids 同时提供时合并；不存在或歧义时整批不执行。",
                         },
                     },
                 },
@@ -185,12 +197,15 @@ def build_file_tools() -> List[Dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "record_id": {
+                            "type": "integer", "description": "删除记录 ID；同名有多条记录时从候选中选择。",
+                        },
                         "filename": {
                             "type": "string",
                             "description": "要恢复的文件名（如 '销售报表.xlsx'）",
                         },
                     },
-                    "required": ["filename"],
+                    "required": [],
                 },
             },
         },

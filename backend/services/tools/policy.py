@@ -156,7 +156,7 @@ class ToolPolicy:
                 "actor_user_id", "workspace_owner_id", "org_id", "context_scope",
                 "personal_context_allowed", "agent_domain", "permission_mode", "execution_mode",
                 "entrypoint", "conversation_id", "task_id", "authorization_snapshot",
-                "feature_flags", "resource_manifest",
+                "feature_flags", "resource_manifest", "resource_versions",
             )
         }
         scope["authorized_tool_names"] = (

@@ -15,6 +15,7 @@ FileExecutor 通过继承 FileWriteExtensionsMixin 获得这些能力。
 from pathlib import Path
 
 from loguru import logger
+from services.workspace_coordination import coordinated_file_write
 
 
 async def _oss_sync(local_path: Path, workspace_base: Path) -> None:
@@ -42,6 +43,7 @@ async def _oss_delete(target: Path, workspace_base: Path) -> None:
 class FileWriteExtensionsMixin:
     """文件写入 + 管理操作扩展"""
 
+    @coordinated_file_write
     async def file_write(
         self,
         path: str,
@@ -75,6 +77,7 @@ class FileWriteExtensionsMixin:
         await _oss_sync(target, self._workspace_base)
         return f"已{action}: {path}（{self._format_size(size)}）"
 
+    @coordinated_file_write
     async def file_delete(self, path: str) -> str:
         """删除文件或空目录"""
         target = self.resolve_safe_path(path)
@@ -98,6 +101,7 @@ class FileWriteExtensionsMixin:
 
         return f"无法删除: {path}"
 
+    @coordinated_file_write
     async def file_mkdir(self, path: str) -> str:
         """创建目录（含中间路径）"""
         target = self.resolve_safe_path(path)
@@ -111,6 +115,7 @@ class FileWriteExtensionsMixin:
         logger.info(f"FileExecutor mkdir | path={path}")
         return f"已创建目录: {path}"
 
+    @coordinated_file_write
     async def file_rename(self, old_path: str, new_path: str) -> str:
         """重命名文件或目录（同目录下改名，不允许跨目录）"""
         old_target = self.resolve_safe_path(old_path)
@@ -131,6 +136,7 @@ class FileWriteExtensionsMixin:
         await _oss_sync(new_target, self._workspace_base)
         return f"已重命名: {old_path} → {new_path}"
 
+    @coordinated_file_write
     async def file_move(self, src_path: str, dest_dir: str) -> str:
         """移动文件到目标目录"""
         src_target = self.resolve_safe_path(src_path)

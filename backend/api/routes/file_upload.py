@@ -5,6 +5,8 @@
 - POST /workspace/upload: 上传到 workspace 指定子目录（用户主动选目录的场景）
 """
 
+from services.workspace_coordination import workspace_lock, receive_workspace_upload
+
 import mimetypes
 from pathlib import Path
 from typing import Optional
@@ -48,7 +50,6 @@ async def upload_file(
       - url 供视觉模型/前端展示
       - workspace_path 供后端 file_path_cache 注册 + AI 工具读取
     """
-    import aiofiles
 
     from core.config import get_settings
     from core.workspace import resolve_upload_relpath
@@ -86,34 +87,27 @@ async def upload_file(
         upload_relpath_prefix = resolve_upload_relpath(user_id, org_id)
         upload_path = f"{upload_relpath_prefix}/{unique_name}"
         target = executor.resolve_safe_path(upload_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
+        async with workspace_lock(executor.workspace_root, write=True):
+            target = executor.resolve_safe_path(upload_path)
+            total_size = await receive_workspace_upload(
+                file, target, max_bytes=WORKSPACE_MAX_FILE_SIZE,
+                too_large=lambda size: ValidationError(
+                    message=f"文件过大: {size / 1024 / 1024:.1f}MB，上限 100MB"),
+            )
 
-        # 流式分块写入，固定占 ~1MB 内存
-        total_size = 0
-        async with aiofiles.open(target, 'wb') as f:
-            while chunk := await file.read(1024 * 1024):
-                total_size += len(chunk)
-                if total_size > WORKSPACE_MAX_FILE_SIZE:
-                    await f.close()
-                    target.unlink(missing_ok=True)
-                    raise ValidationError(
-                        message=f"文件过大: {total_size / 1024 / 1024:.1f}MB，上限 100MB"
-                    )
-                await f.write(chunk)
-
-        # 同步到 OSS 并生成 CDN URL（失败不致命，落盘已成功即认上传成功）
-        cdn_url = None
-        try:
-            from services.oss_service import get_oss_service
-            oss = get_oss_service()
-            rel_path = str(target.relative_to(Path(settings.file_workspace_root).resolve()))
-            cdn_url = await oss.sync_workspace_file(target, rel_path)
-            if (file.content_type or "").startswith("image/"):
-                await oss.sync_workspace_thumbnail(target, rel_path)
-        except Exception as e:
-            logger.warning(f"Upload OSS sync failed | file={filename} | error={e}")
-        if not cdn_url:
-            cdn_url = executor.get_cdn_url(upload_path)
+            # 同步到 OSS 并生成 CDN URL（失败不致命，落盘已成功即认上传成功）
+            cdn_url = None
+            try:
+                from services.oss_service import get_oss_service
+                oss = get_oss_service()
+                rel_path = str(target.relative_to(Path(settings.file_workspace_root).resolve()))
+                cdn_url = await oss.sync_workspace_file(target, rel_path)
+                if (file.content_type or "").startswith("image/"):
+                    await oss.sync_workspace_thumbnail(target, rel_path)
+            except Exception as e:
+                logger.warning(f"Upload OSS sync failed | file={filename} | error={e}")
+            if not cdn_url:
+                cdn_url = executor.get_cdn_url(upload_path)
 
         mime_type = file.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
 
@@ -204,7 +198,6 @@ async def upload_to_workspace(
             f"支持: {', '.join(sorted(WORKSPACE_ALLOWED_EXTENSIONS))}"
         )
 
-    import aiofiles
 
     user_id = ctx.user_id
     org_id = ctx.org_id
@@ -222,34 +215,27 @@ async def upload_to_workspace(
         clean_dir = target_dir.strip("/").strip("\\")
         upload_path = f"{clean_dir}/{unique_name}" if clean_dir and clean_dir != "." else unique_name
         target = executor.resolve_safe_path(upload_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
+        async with workspace_lock(executor.workspace_root, write=True):
+            target = executor.resolve_safe_path(upload_path)
+            total_size = await receive_workspace_upload(
+                file, target, max_bytes=WORKSPACE_MAX_FILE_SIZE,
+                too_large=lambda size: ValidationError(
+                    message=f"文件过大: {size / 1024 / 1024:.1f}MB，上限 100MB"),
+            )
 
-        # 流式分块写入，固定占 ~1MB 内存
-        total_size = 0
-        async with aiofiles.open(target, 'wb') as f:
-            while chunk := await file.read(1024 * 1024):  # 每次读 1MB
-                total_size += len(chunk)
-                if total_size > WORKSPACE_MAX_FILE_SIZE:
-                    await f.close()
-                    target.unlink(missing_ok=True)
-                    raise ValidationError(
-                        message=f"文件过大: {total_size / 1024 / 1024:.1f}MB，上限 100MB"
-                    )
-                await f.write(chunk)
-
-        # 同步到 OSS 并生成 CDN URL
-        cdn_url = None
-        try:
-            from services.oss_service import get_oss_service
-            oss = get_oss_service()
-            rel_path = str(target.relative_to(Path(settings.file_workspace_root).resolve()))
-            cdn_url = await oss.sync_workspace_file(target, rel_path)
-            if (file.content_type or "").startswith("image/"):
-                await oss.sync_workspace_thumbnail(target, rel_path)
-        except Exception as e:
-            logger.warning(f"Workspace OSS sync failed | file={filename} | error={e}")
-        if not cdn_url:
-            cdn_url = executor.get_cdn_url(upload_path)
+            # 同步到 OSS 并生成 CDN URL
+            cdn_url = None
+            try:
+                from services.oss_service import get_oss_service
+                oss = get_oss_service()
+                rel_path = str(target.relative_to(Path(settings.file_workspace_root).resolve()))
+                cdn_url = await oss.sync_workspace_file(target, rel_path)
+                if (file.content_type or "").startswith("image/"):
+                    await oss.sync_workspace_thumbnail(target, rel_path)
+            except Exception as e:
+                logger.warning(f"Workspace OSS sync failed | file={filename} | error={e}")
+            if not cdn_url:
+                cdn_url = executor.get_cdn_url(upload_path)
 
         logger.info(
             f"Workspace upload | user={user_id} | file={filename} | "

@@ -45,6 +45,7 @@ def tool_executor(workspace):
     mock_settings.sandbox_timeout = 30.0
     mock_settings.sandbox_max_result_chars = 8000
     mock_settings.oss_cdn_domain = None
+    mock_settings.jwt_secret_key = "file-handles-test-only-signing-key"
 
     with patch("core.config.get_settings", return_value=mock_settings):
         executor = ToolExecutor(

@@ -167,7 +167,7 @@ def test_three_representative_parameter_contracts_field_by_field(registry):
     expected = {
         "search_knowledge": ({"query": "string"}, ["query"]),
         "file_search": ({"path": "string", "keyword": "string", "file_pattern": "string", "scope": "string"}, []),
-        "file_delete": ({"file_ids": "array", "files": "array"}, []),
+        "file_delete": ({"file_ids": "array", "files": "array", "resource_refs": "array"}, []),
     }
     old = {t["function"]["name"]: t for t in get_chat_tools("org-a")}
     for name, (properties, required) in expected.items():
@@ -391,7 +391,7 @@ def test_partial_legacy_validation_directory_is_preserved_separately(registry):
     # Preserve the pre-existing difference; do not turn old validator 'files'
     # required into a new model schema requirement that rejects legal file_ids.
     delete = registry.require("file_delete")
-    assert delete.to_legacy_validation_schema()["required"] == ["files"]
+    assert delete.to_legacy_validation_schema()["required"] == []
     assert "required" not in delete.to_schema()["function"]["parameters"]
 
 

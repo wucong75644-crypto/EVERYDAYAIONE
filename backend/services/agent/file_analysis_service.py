@@ -95,41 +95,30 @@ def _resolve_analysis_path(
     args: dict[str, Any],
     cache: Any,
 ) -> tuple[str, str] | AgentResult:
-    from services.agent.file_id import is_valid_fid, resolve_fid_to_workspace
-
-    file_id = (args.get("file_id") or "").strip()
-    path = (args.get("path") or "").strip()
-    abs_path: str | None = None
-    if file_id:
-        if not is_valid_fid(file_id):
-            return _error(
-                f"file_id 格式错误: {file_id}",
-                f"file_id 必须是 fid_xxx 格式（fid_ + 8 位十六进制）。"
-                f"你传的是 {file_id!r}。请从 <attachments> 的 <id> 字段 copy。",
-                True,
-            )
-        abs_path = resolve_fid_to_workspace(
-            file_id, getattr(owner, "org_id", None), cache,
-        )
-        if not abs_path:
-            return _error(
-                f"未找到 file_id={file_id}",
-                f"file_id={file_id} 在当前对话的附件里找不到。"
-                "请检查 <attachments> 块的 <id> 字段。",
-                True,
-            )
-        path = file_id
-    if not abs_path and not path:
-        return _error(
-            "请提供 file_id 或 path",
-            "file_id 或 path 至少传一个",
-            True,
-        )
-    if not abs_path:
-        abs_path = cache.resolve(path, usage="analyze")
-    if abs_path:
-        return abs_path, path
-    return _resolve_legacy_path(owner, executor, path)
+    from services.file_resources import FileTargetResolver
+    from services.tools.file_calls import active_file_call, validate_selectors
+    prepared = active_file_call("file_analyze")
+    try:
+        validate_selectors(args)
+        if prepared is not None:
+            target = prepared.targets[0]
+        else:
+            resolver = FileTargetResolver(owner, executor, scope=args.get("scope") or "current")
+            selectors = [args.get("resource_ref"), args.get("file_id"), args.get("path")]
+            targets = [resolver.resolve(value) for value in selectors if value]
+            if not targets:
+                return _error("请提供 resource_ref、file_id 或 path", "RESOURCE_TARGET_REQUIRED", True)
+            if len({item.path for item in targets}) != 1:
+                return _error("文件参数指向不同目标", "RESOURCE_SELECTOR_CONFLICT", False)
+            target = targets[0]
+        target.validate()
+        return str(target.path), args.get("file_id") or args.get("path") or str(target.path.relative_to(Path(executor.workspace_root)))
+    except (ValueError, OSError) as error:
+        retryable = getattr(error, "code", "") in {
+            "RESOURCE_NOT_FOUND", "RESOURCE_TARGET_REQUIRED", "RESOURCE_REFERENCE_INVALID", "RESOURCE_AMBIGUOUS",
+        }
+        summary = f"路径不允许: {error}" if isinstance(error, PermissionError) else str(error)
+        return _error(summary, str(error), retryable)
 
 
 def _resolve_legacy_path(
@@ -188,21 +177,17 @@ async def _convert_to_parquet(
 
     extension = Path(abs_path).suffix.lower()
     try:
-        if extension in {".xlsx", ".xls"}:
-            validate_xlsx_safety(abs_path)
-        converter = (
-            ensure_parquet_cache_csv
-            if extension in {".csv", ".tsv"}
-            else None
-        )
-        operation = (
-            converter(abs_path, staging_dir)
-            if converter
-            else ensure_parquet_cache(abs_path, None, staging_dir)
-        )
-        return await asyncio.wait_for(
-            operation, timeout=_ENSURE_CACHE_TIMEOUT,
-        )
+        from services.file_resources import source_snapshot
+        async with source_snapshot(abs_path, staging_dir) as snapshot:
+            if extension in {".xlsx", ".xls"}:
+                validate_xlsx_safety(snapshot)
+            operation = (
+                ensure_parquet_cache_csv(snapshot, staging_dir)
+                if extension in {".csv", ".tsv"}
+                else ensure_parquet_cache(snapshot, None, staging_dir)
+            )
+            converted = await asyncio.wait_for(operation, timeout=_ENSURE_CACHE_TIMEOUT)
+        return converted
     except asyncio.TimeoutError:
         name = Path(abs_path).name
         cache.register(name, workspace=abs_path)
@@ -264,6 +249,9 @@ def _build_analysis_result(
             "PARQUET_METADATA_MISSING",
             True,
         )
+    # Cached content can be shared by different sources. Bind provenance only
+    # in this call's view; never rewrite shared metadata outside its cache lock.
+    meta.source_file = abs_path
     file_view = render_xml(
         meta,
         parquet_path=parquet_path,

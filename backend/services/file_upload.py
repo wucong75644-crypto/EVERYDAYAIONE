@@ -264,7 +264,8 @@ async def _write_meta_sidecar(
         }
         meta_path = file_path.with_name("." + file_path.name + ".meta.json")
         payload = json.dumps(record, ensure_ascii=False, indent=2)
-        await asyncio.to_thread(meta_path.write_text, payload, encoding="utf-8")
+        from services.workspace_coordination import finish_file_io
+        await finish_file_io(meta_path.write_text, payload, encoding="utf-8")
     except OSError as e:
         logger.warning(
             f"download_url_to_workspace meta write failed | "
@@ -343,30 +344,32 @@ async def download_url_to_workspace(
             else _generate_media_filename(mime_main or "", idx, media_type)
         )
 
-        # 4. 写盘(off-loop,避免阻塞事件循环)
-        try:
-            await asyncio.to_thread(
-                target_dir.mkdir, parents=True, exist_ok=True,
-            )
-            file_path = _resolve_unique_path(target_dir, filename)
-            filename = file_path.name
-            await asyncio.to_thread(file_path.write_bytes, content)
-        except OSError as e:
-            logger.error(
-                f"download_url_to_workspace write failed | "
-                f"dir={target_dir} | error={e}"
-            )
-            return None
+        from services.workspace_coordination import workspace_lock, finish_file_io
+        async with workspace_lock(user_root, write=True):
+            # 4. 写盘(off-loop,避免阻塞事件循环)
+            try:
+                await finish_file_io(
+                    target_dir.mkdir, parents=True, exist_ok=True,
+                )
+                file_path = _resolve_unique_path(target_dir, filename)
+                filename = file_path.name
+                await finish_file_io(file_path.write_bytes, content)
+            except OSError as e:
+                logger.error(
+                    f"download_url_to_workspace write failed | "
+                    f"dir={target_dir} | error={e}"
+                )
+                return None
 
-        # 5. .meta.json sidecar(可选)
-        if meta:
-            await _write_meta_sidecar(file_path, url, len(content), mime_main, meta)
+            # 5. .meta.json sidecar(可选)
+            if meta:
+                await _write_meta_sidecar(file_path, url, len(content), mime_main, meta)
 
-        # 6. 双轨 dict
-        payload = await upload_to_payload(
-            filename=filename, size=len(content),
-            output_dir=str(target_dir), user_id=user_id, org_id=org_id,
-        )
+            # 6. 双轨 dict
+            payload = await upload_to_payload(
+                filename=filename, size=len(content),
+                output_dir=str(target_dir), user_id=user_id, org_id=org_id,
+            )
         if not payload:
             logger.warning(
                 f"download_url_to_workspace upload_to_payload returned None | "

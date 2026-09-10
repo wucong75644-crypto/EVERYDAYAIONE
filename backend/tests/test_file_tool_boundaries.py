@@ -134,13 +134,16 @@ async def test_chat_keeps_explicit_delete_path_until_scoped_handler(env):
 
 
 @pytest.mark.asyncio
-async def test_missing_and_duplicate_targets_keep_skip_and_once_semantics(env):
+async def test_missing_target_rejects_batch_and_valid_duplicates_delete_once(env):
     safe = source(env.workspace / "safe.csv")
     result = await env.owner._file_delete(
         env.executor, {"files": ["missing.csv", "safe.csv", str(safe)]}, env.settings,
     )
+    assert result.status == "error"
+    assert "RESOURCE_NOT_FOUND" in result.summary
+    env.remove.assert_not_called()
+    result = await env.owner._file_delete(env.executor, {"files": ["safe.csv", str(safe)]}, env.settings)
     assert result.status == "success"
-    assert "跳过 1 个" in result.summary
     assert "已删除 1 个" in result.summary
     env.remove.assert_called_once_with(str(safe))
 

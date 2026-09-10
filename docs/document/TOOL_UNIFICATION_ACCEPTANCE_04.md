@@ -1,5 +1,130 @@
 # 工具统一 04：技术验收记录
 
+## 2026-09-10 根因修复复验（当前有效状态）
+
+**技术验收通过，用户已指令提交部署；用户验收未关闭。** NAS 不覆盖发布探针已于本次发布准备阶段通过并清理临时目录。此文档随候选提交；最终发布 SHA/部署状态由 RELEASE_RESULT 及交付消息记录。 本段覆盖下方所有历史状态。生产发布标记仍为 `20636929f7b78346991b357630240d932ed5772d`（preview，2026-09-09T16:01:26Z）。生产验证包括只读诊断、已有锁文件的 flock 检查和隔离临时目录的 no-clobber 探针，无业务数据写入/删除。
+
+### 1. 范围与版本
+
+- 基线及 HEAD：`20636929f7b78346991b357630240d932ed5772d`；原 01–03 稳定基座及祖先证据见历史记录，未复制其他任务修改。
+- 分支：`codex/task/20260909225830-tool-unification-04`；执行目录：`/Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-04`。
+- 被测版本：HEAD 加当前未提交 backend 差异；逐文件 SHA256 见 [本轮源码检查](tool-unification-evidence/04-rootfix-source-checks.txt)。HEAD 不是新修复候选 SHA。
+- 用户已授权 [文件目标解析与确认闭环方案](TECH_文件目标解析与确认闭环.md) 的完整根因修复。实际新增 file_resources、tools/file_calls、workspace_coordination；搜索/分析/删除/恢复共用规范目标，确认绑定内容版本，写入生命周期协调；补修缓存尾部指纹和任务短 ID 歧义。
+- 允许的公共变化：可选 resource_ref(s)、restore record_id；旧输入仍接受；批量缺失/歧义整批未执行，恢复不覆盖。ToolResult/ledger/WS/数据库 schema 不变，不实施板块 05–07。新增协调适配覆盖可写沙盒，但不重写其业务能力、ERP 或内核执行协议。
+
+### 2. 逐项证据
+
+I = [test_tool_production_integration.py](../../backend/tests/test_tool_production_integration.py)；F = [test_file_target_execution.py](../../backend/tests/test_file_target_execution.py)。I 的 118 项真实入口配 mock Handler 仍全通过；F 的 64 项采用真实文件 Handler/临时文件，只 mock 身份数据库、OSS 与恢复记录外部写入。用例全名和结果在日志中可检索。
+
+| 验收编号 | 场景及预期 | 实际结果 | 状态 | 证据 |
+|---|---|---|---|---|
+| A-04-01 | Chat/Actor、ToolLoop、旧 execute，新旧输入均走同一策略，无公共模型执行旁路 | 入口枚举和旧工具集成通过；F 五种文件选择参数 × 三入口实际删除各 1 次；完整 run 循环使用搜索结果 fref 执行；冷 Actor 恢复实际删除一次且无第二弹窗 | 通过 | I::test_all_entrypoints_new_and_legacy_reach_dispatcher_once；F::test_search_then_delete_real_handlers、test_complete_model_loop_carries_discovered_reference、test_cold_actor_resumes_signed_target_without_second_dialog；源码检查 |
+| A-04-02 | 授权/action/范围/目标拒绝先于缓存、Handler、invocation | I 三入口拒绝与缓存/ledger trap 保持；F 缺失/歧义/plan/越界/目标变化均 Handler=0；不完整枚举、fid 碰撞和伪造引用拒绝；备份变更、invocation 拒绝不调用实际删除/恢复 | 通过 | I::test_denial_precedes_handler_cache_and_ledger、test_real_erp_action_route、test_scheduled_scope_intersection；F::test_bad_target_never_reaches_handler、test_incomplete_candidate_inventory_never_selects_first、test_colliding_legacy_fid_and_tampered_reference_are_not_authority、test_invocation_refusal_is_before_real_delete |
+| A-04-03 | 真实确认拒绝/超时/异常/断连=0，批准=1；不得借用旧参数、范围或内容版本；不重复弹窗 | 真实 WS 等待链矩阵通过；不存在/歧义不发确认；批准等待中替换内容 Handler=0；冷 runtime + Actor 持久批准实际删除=1，无新请求；原资源通知与 ChangeSet 保留 | 通过 | I::test_real_confirmation_channel、test_approval_cannot_survive_scope_or_authorization_change、test_changed_arguments_get_new_confirmation_and_duplicate_is_single_use、test_proposals_and_resource_notices_do_not_add_confirmation；F 目标矩阵和 cold_actor 用例 |
+| A-04-04 | 读 A/B 真重叠，写 C 等待两者，读 D 等写完成，写写不重叠 | Chat/Loop Event 轨迹仍通过；真实跨会话文件读写锁和双进程 IPC 通过；生产同机双进程共享/排他锁探针通过。无耗时阈值充当并发证据 | 通过 | I::test_real_read_overlap_and_write_barriers；F::test_cross_conversation_writer_waits_for_readers、test_cross_process_shared_and_exclusive_lock_protocol；[NAS 记录](tool-unification-evidence/04-rootfix-nas.md) |
+| A-04-05 | actor/owner、预算/取消、Actor 恢复、幂等/安全点、实际存储发布语义 | 群真实删除只作用 owner；批准时预算耗尽 begin=0；等待锁取消 begin=0；批量删除取消停止剩余并保留已删记录；线程/OSS/内核收尾及原 lease/安全点通过。NAS no-clobber 发布及清理实测通过 | 通过 | F::test_group_actor_deletes_owner_resource_only、test_budget_expires_during_confirmation_before_invocation、test_cancel_between_batch_deletes_stops_remaining_and_records_completed、test_repeated_cancellation_drains_io_before_unlock、test_cancelled_oss_sync_drains_source_read_before_unlock；test_kernel_manager::test_cancel_waits_for_kernel_ack_and_preserves_state；[已验证探针](tool-unification-evidence/probe-04-nas-publication.py) |
+| A-04-06 | 旧消费者/ledger 投影保持；相关回归通过，无半接入 | 四组 2904 passed，2 项原有真实 LLM/私有数据测试 skipped；无失败。原结果类/WS/serializer/fenced RPC/ERP 源码对照通过；内容缓存修复不改 ToolResult replay | 通过 | 下方四份最终日志；I replay/ledger/consumer 用例；F::test_csv_tail_change_rebuilds_real_conversion、test_analysis_uses_real_conversion_and_invalidates_source_cache；源码检查 |
+| G-01 | 范围有据，无未说明契约/后续块改造 | 文件目标、恢复、缓存、短 ID 与必要 writer 协调均对应已批准方案；schema/sandbox 例外限定具体文件，其他协议/ERP树仍保持 | 通过 | 方案第 4/6 节；check-04-rootfix.py 保留全部未授权变化断言，仅按批准范围修正旧“整个业务文件不变”检查 |
+| G-02 | 全 A 项成功/失败/边界证据闭合 | 本地用例和 A-04-05 NAS 发布实测已闭合，仍不代替用户业务验收 | 通过 | A 表；NAS 记录 |
+| G-03 | 新增与受影响旧测试通过，不弱化正确断言 | 2904 passed；2 项既有 opt-in 真实 LLM 测试未执行并保留。初轮失败分类及替代验证见下方问题表；未新增 skip/xfail | 通过 | run-04-rootfix.sh 四组日志；修改前 41 失败日志及本轮复验 |
+| G-04 | 工具名/旧参数/投影/WS 保持，新增参数明确 | 旧 files/file_ids/path 与新引用交叉验证；restore filename/record_id 二选一由 runtime 校验；冲突参数拒绝。Registry 深比较与结果、图片、表单、ERP TABLE 回归通过 | 通过 | test_tool_registry/test_file_tools/test_chat_tools/test_file_id_protocol/test_file_handles_e2e/test_tool_result/test_ws_tool_confirmation；源码检查 |
+| G-05 | 接口/入口/证据/限制/回退可交接 | HANDOFF、方案和 CURRENT_ISSUES 更新；不冒充生产完成，保留 NAS/历史备份限制及新候选验收步骤 | 通过 | 本记录及交接 |
+
+所有生产模型入口与已消除旁路见下方历史入口表，路径仍由本轮 AST/调用点检查重新核验。当前文件链在该表的 Runtime 内增添 resolve → prepare → confirm → guarded verify；旧 execute 与 Actor/ToolLoop 没有独立文件执行兜底。
+
+补充实际源文件写入覆盖：Runtime(file_delete/restore/code_execute)、FileExecutor(write/edit/delete/mkdir/rename/move)、api/routes/file_upload 的两条上传、image 的 NAS 上传、services/file_upload.download_url_to_workspace、WecomFileMixin._prepare_wecom_file、SandboxExecutor.execute；ScheduledTaskAgent 模板读持共享锁。OSSService 的 workspace 同步/删除/缩略图线程 IO 排空后才释放上层协调。staging 输出不作为可删除源文件；ERP/媒体内部业务编排未改。
+
+### 3. 命令、环境与结果
+
+```sh
+PYTHONPATH=/private/tmp/tool04-testdeps:backend bash docs/document/tool-unification-evidence/run-04-rootfix.sh
+/Users/wucong/EVERYDAYAIONE/.venv/bin/python docs/document/tool-unification-evidence/check-04-rootfix.py > docs/document/tool-unification-evidence/04-rootfix-source-checks.txt
+```
+
+运行器拒绝工作树存在 .env/backend/.env，设置测试专用 APP_ENV、127.0.0.1:1 数据库、Redis 端口 1 和占位 JWT；不加载生产配置。Python 3.14.2 / pytest 9.0.3。项目已声明 time-machine==2.14.1，本机 venv 缺少它，本次仅安装到 /private/tmp/tool04-testdeps 作为测试路径，没有修改共享 venv 或项目依赖。
+
+| 测试组 | 实际最终结果 | 日志 |
+|---|---|---|
+| Registry/Policy/Dispatcher/Result + 真实生产入口 | 858 passed | [core](tool-unification-evidence/04-rootfix-core.txt) |
+| 原执行器/循环/确认/权限/Actor/文件/ERP | 1613 passed | [regression](tool-unification-evidence/04-rootfix-regression.txt) |
+| ERP 单独进程（原 collection stub 隔离） | 11 passed | [erp](tool-unification-evidence/04-rootfix-erp.txt) |
+| 新文件根因链 + 上传/源缓存/Wecom/OSS/内核/任务 | 422 passed，2 skipped | [files](tool-unification-evidence/04-rootfix-files.txt) |
+
+合计 2904 passed、0 failed/error/xfail、2 skipped。两项跳过来自原 test_file_analyze_integration 的 RUN_LLM_INTEGRATION=1 和私有真实 Excel fixture 门槛，不是本轮新增；不计通过，不冒充真实 LLM 验证。当前要求的缓存正确性已有真实 CSV/Parquet/源快照替代证据；Excel 原解析/扫描链未重写。日志含既有 pytest env 配置、Pydantic/FastAPI 弃用警告，未影响行为断言。
+
+### 4. 问题与复验
+
+| 问题编号 | 复现 | 根因/影响 | 所属板块 | 处理结果 | 复验证据 |
+|---|---|---|---|---|---|
+| F-01/02 | 明确路径被热缓存改写；冷缓存 fid 无法定位 | 名称/路径/短 ID 与进程缓存混用 | 04 | 统一 scoped resolver；明确路径不回退；冷范围枚举及新签名引用 | F explicit_path、cold_reference、五参数三入口、cold_actor |
+| F-03/04 | ghost 清单仍有 fid；含竖线文件名被截断 | 从展示文本重建身份，未核实实体 | 04 | 结构化 hits 直接生成定位字段；缺失不可用且无引用 | F missing_manifest、search_then_delete |
+| F-05 | 批准等待期替换文件仍进入 Handler | 批准绑定路径而未绑定版本，写入无共同协调 | 04 | 全内容/版本绑定 + guarded execution + writer 协调；取消排空 | F changed 矩阵及生命周期/IPC；NAS 发布已实测 |
+| F-06 | 短 ID 多匹配取首条 | ID 歧义与名称候选处理不一致 | 04 | 显示完整候选；不提交提案 | F ambiguous_scheduled_id 四个 action；test_chat_task_manager |
+| F-07 | 恢复覆盖当前文件，同名记录取最新 | 二次模糊查询与无条件目的地写入 | 04 | 固定 record_id/ETag；条件下载；不覆盖发布 | F restore_no_clobber、deleted_record_ambiguity、changed_backup；NAS 发布已实测 |
+| F-08 | CSV 1MiB 后变化仍读旧 Parquet | 缓存指纹只覆盖源前缀 | 04 | 全 SHA256 / v3.1 / 稳定快照；映射随源版本失效 | F csv_tail、analysis_uses_real_conversion、source_snapshot_rejects_change |
+| V-01 | 初轮 41 failed / 973 passed | 真实目标前置使旧 mock 数据不足；旧 schema/跳过缺失行为断言过时；缺 time-machine；另有显示别名兼容回归 | 04 | 补真实文件/备份、结构化 hits、签名测试 key；保留原 raw 记录语义；补临时依赖；完整复验通过 | [初轮](tool-unification-evidence/04-rootfix-initial-files.txt)、最终四组 |
+| V-02 | 扩大原回归初轮 4 failed / 1609 passed | restore required(filename) 不适合 record_id；manifest 假守卫抛 FileNotFound；两个 mock settings 无字符串签名 key | 04 | 恢复参数仍需二选一；manifest 断言加强为缺失无引用；fixture 提供占位签名 key；1613 全通过 | test_chat_tools/test_resource_manifest/test_file_handles_e2e；regression 日志 |
+| V-03 | 自审两项先复现失败 | CSV/TSV 同字节配置未进入缓存键；初版修复在锁外重绑共享缓存 metadata | 04 | 分隔符入 key；源路径只绑定本次视图，共享 metadata 不重写 | [修改前两项失败](tool-unification-evidence/04-rootfix-cache-review-before.txt)、最终 F 两项及 [受影响缓存复验](tool-unification-evidence/04-rootfix-final-cache.txt) |
+| P-01 | 当前 NFS local_lock=all | 只保证同机多进程，不能跨主机宣称互斥 | 04 | 当前 Web/Actor 同机 root，双进程探针通过；多主机扩展是明确部署前置 | NAS 记录 |
+| P-02 | 发布准备需补齐 NAS no-clobber 实测 | 此前仅本地 link 通过 | 04 | 用户提交部署后执行隔离临时目录探针，两条 PASS，目录已清理；已关闭 | probe-04-nas-publication.py、04-rootfix-nas.md |
+
+旧断言变更依据：批量缺失时过去删除其余文件，现按用户已批准行为要求整批 Handler=0，并另测合法去重只删一次；旧 schema required(files/filename) 改为允许替代选择字段，但 runtime 对无参数/错误类型/冲突仍拒绝；先确认才发现不存在的 mock 场景补真实目标，不削弱批准/拒绝/调用次数断言。原业务记录 raw 标签回归已在代码中恢复，没有改测试掩盖。检查脚本按当前路径处理中文文件名，原协议/ERP/Actor 不变断言仍有效。
+
+### 5. 用户验证单
+
+部署后记录**新的确定 SHA**（当前 20636929 不含修复），在获准的临时测试工作区执行：
+
+1. 上传测试 CSV 到子目录，用完整名/省略扩展名/片段搜索；返回正确完整路径。两个目录放同名文件时应要求选择。
+2. 要求删除不存在的名字，不应弹删除确认；删除测试文件时，拒绝后文件仍在，批准后仅正确目标消失。
+3. plan 模式要求删除，Handler 不执行；确认等待中替换测试文件后批准，应返回资源变化而不删除替换版本。
+4. 定时任务仅授权允许的只读工具，观察正常读和范围外请求拒绝；不因无 UI 放行危险调用。
+5. 获准恢复测试时，指定删除记录；目的地已有文件明确冲突，不覆盖；选择无冲突记录可恢复。
+
+真实 ERP 写入、生产业务文件删除、付费生成和真实备份变更均未获本轮授权，不执行。NAS 临时探针不代替这些用户验收。
+
+### 6. 结论与交接
+
+最终自审按项目 Review 技能复用现有差异与证据，核对信任边界、真实入口、文件/OSS/内核取消、缓存配置和旧协议；缓存配置与共享 metadata 两项发现已复现并修复。未发现其他高置信未修复的本轮代码问题；这是同任务自审，不冒充独立代理或生产业务验收。NAS 发布探针随后已通过，当前无未关闭的本轮技术阻塞项。
+
+本轮实现与本地回归已完成，**P-02 存储实测已补齐，技术验收通过，待确定候选部署及用户验收**。原 deleted_files 没有删除当时的不可变备份版本，本次只绑定准备时 ETag，不承诺修复历史已覆盖备份。文件/OSS/数据库保留原失败语义，无零丢失或跨系统事务承诺。
+
+回退本次根因修复可回到 20636929，但也恢复 F-01～08 已知缺陷；不称已修复方案。结果/ledger/schema 无迁移，旧输入保留；换版本/密钥旧批准不匹配则重新确认，新 fref 在旧版本不保证可用。完整撤销 04 的原稳定基座仍是 0f65d72d。均不自动执行回退、部署或关闭。
+
+下一步：执行本次已授权的提交部署 → 新 SHA 用户验证 → 明确验收关闭并受控合入 main。**在此之前不进入 05。** [交接](TOOL_UNIFICATION_HANDOFF.md) 和 [实施方案](TECH_文件目标解析与确认闭环.md) 已同步。
+
+---
+
+
+## 2026-09-10 修复前诊断增量（历史状态，已被上文覆盖）
+
+**技术验收未通过；已部署，用户验收未关闭。** 本段覆盖后文发布前的状态结论，保留后文测试记录作为历史证据。当前 HEAD/上轮已核验部署候选为 `20636929f7b78346991b357630240d932ed5772d`，分支和工作树不变。本次未提交差异仅为诊断方案、复现脚本/日志和文档更新，无业务代码改动或再次部署。
+
+用户生产验证发现按名称/片段搜索后删除失败。上轮只读生产核查证明存在猜根路径先确认后未找到的链路，同时正确 keyword→fid→批准删除已有成功记录。这次在同一候选代码上扩大相邻逻辑检查，复现 8 项缺陷，见 [方案与问题清单 F-01～08](TECH_文件目标解析与确认闭环.md)。不把代码证据或临时目录实验称为生产误操作。
+
+| 验收编号 | 场景及预期 | 实际结果 | 状态 | 证据 |
+|---|---|---|---|---|
+| A-04-03 增补 | 确认对象在等待期间被替换，旧批准不能执行替换后的对象 | 同路径内容替换后，真实 execute 调用 mock Handler 一次 | 未通过 | [脚本 confirmation_file_version](tool-unification-evidence/04-target-audit.py)、[日志](tool-unification-evidence/04-target-audit.txt) |
+| A-04-05 增补 | 冷 worker/Actor 恢复时保持已发现文件可定位且安全 | 冷缓存模拟返回 resource_id_unavailable；完整 Actor 文件引用恢复与拟议修复尚待集成验证 | 未验证 | 同脚本 cold_worker_fid；现有安全拒绝不代表恢复可用性通过 |
+| G-02 增补 | 必需行为无失败项 | A-04-03 新发现目标绑定缺口，尚未修复 | 未通过 | 同上；不能沿用后文总 passed 数关闭 |
+| G-03 增补 | 修复失败场景并运行受影响回归 | 当前只执行缺陷复现；业务修复及受影响回归尚未执行 | 未验证 | 用户本轮仅要求方案；草稿第 5 节列出复验矩阵 |
+| G-05 增补 | 当前状态、接口建议、限制、证据可交接 | 已更新本记录和 HANDOFF，草稿明确未实施和并发保证前提 | 通过 | [方案草稿](TECH_文件目标解析与确认闭环.md) |
+
+其余 A/G 项保留原测试的历史结果，本次没有重跑，也不以此宣布修复版本通过。修复候选必须按全部 A-04-01～06、G-01～05 重新汇总受影响证据。F-01～08 均待修复/复验；恢复同名最新记录和二次查询风险另有代码证据，尚未声称生产发生。
+
+本地执行目录为本任务工作树，使用测试专用数据库/JWT 配置和隔离临时文件：
+
+```sh
+APP_ENV=testing DATABASE_URL=postgresql://test:test@127.0.0.1:1/test JWT_SECRET_KEY=local-audit-test-only-key-long-enough REDIS_PORT=1 PYTHONPATH=backend /Users/wucong/EVERYDAYAIONE/.venv/bin/python docs/document/tool-unification-evidence/04-target-audit.py
+```
+
+结果：8 项预期缺陷全部复现，退出 0，非 pytest 修复验收。第一次诊断脚本因 str/Path 类型写法报错，改脚本后重跑完整成功；业务代码未变。Arrow 读取 CPU 信息的 sysctl 警告未影响数据断言。身份 DB、确认和 OSS 为 mock；CSV→Parquet 转换、文件搜索和恢复目的地写入使用真实业务代码，但所有文件在临时目录。无生产密钥、用户文件或原始生产聊天记录进入本证据包。
+
+后续用户验证需在获准测试资源上重复名称/片段搜索、确认拒绝/批准、plan 拒写、定时范围，并记录新的部署 SHA；本次未获真实写入授权，生产副作用验证仍待执行。当前不允许关闭板块 04 或进入板块 05。
+
+---
+
+以下为发布前历史记录。
+
 ## 1. 范围与版本
 
 状态：**技术验收通过，待部署/用户验收**。聊天/Actor、定时/预检 ToolLoop 和旧 `ToolExecutor.execute` 已完整接入 Registry/Policy/Dispatcher。这里只报告真实生产代码配 mock 业务 Handler 的本地验证；没有执行真实删除、ERP 写入或付费生成，没有发布生产。

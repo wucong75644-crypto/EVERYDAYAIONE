@@ -507,9 +507,13 @@ class ChatTaskManager:
                 .eq("user_id", self.user_id) \
                 .eq("org_id", self.org_id) \
                 .execute()
-            for t in (result.data or []):
-                if t["id"].startswith(task_id):
-                    return t
+            rows = list(result.data or [])
+            exact = [t for t in rows if t["id"] == task_id]
+            matches = exact or [t for t in rows if t["id"].startswith(task_id)]
+            if len(matches) == 1:
+                return matches[0]
+            if len(matches) > 1:
+                return {"_ambiguous": True, "candidates": matches}
 
         if task_name:
             result = self.db.table("scheduled_tasks") \
@@ -531,7 +535,7 @@ class ChatTaskManager:
         candidates = task.get("candidates") or []
         lines = ["找到多个同名或相似的定时任务，请先选择一个："]
         for item in candidates:
-            lines.append(f"- {item.get('name', '未命名')}（ID: {str(item.get('id', ''))[:8]}）")
+            lines.append(f"- {item.get('name', '未命名')}（ID: {item.get('id', '')}）")
         return {"type": "text", "text": "\n".join(lines)}
 
     async def _propose_chat_change(self, operation: str, task: Dict[str, Any]) -> Dict[str, Any]:

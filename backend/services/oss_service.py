@@ -447,12 +447,12 @@ class OSSService:
         Returns:
             CDN URL，失败返回 None
         """
-        import asyncio
+        from services.workspace_coordination import finish_file_io
         object_key = f"workspace/{rel_path}"
         content_type = self._guess_content_type(local_path.name)
         headers = _build_upload_headers(content_type, local_path.name)
         try:
-            await asyncio.to_thread(
+            await finish_file_io(
                 self.bucket.put_object_from_file,
                 object_key,
                 str(local_path),
@@ -471,7 +471,7 @@ class OSSService:
         width: int = 360,
     ) -> Optional[str]:
         """为 workspace 图片生成独立缩略图对象，返回 CDN URL。"""
-        import asyncio
+        from services.workspace_coordination import finish_file_io
         from PIL import Image, UnidentifiedImageError
 
         content_type = self._guess_content_type(local_path.name)
@@ -490,8 +490,8 @@ class OSSService:
                 return output.getvalue()
 
         try:
-            content = await asyncio.to_thread(_render_thumbnail)
-            result = await asyncio.to_thread(
+            content = await finish_file_io(_render_thumbnail)
+            result = await finish_file_io(
                 self.bucket.put_object,
                 thumb_key,
                 content,
@@ -520,10 +520,10 @@ class OSSService:
         Returns:
             是否成功
         """
-        import asyncio
+        from services.workspace_coordination import finish_file_io
         object_key = f"workspace/{rel_path}"
         try:
-            await asyncio.to_thread(self.bucket.delete_object, object_key)
+            await finish_file_io(self.bucket.delete_object, object_key)
             logger.info(f"Workspace delete OK | key={object_key}")
             return True
         except Exception as e:

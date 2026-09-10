@@ -9,15 +9,11 @@ backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-# Mock pydantic_settings 以避免环境依赖
-if "pydantic_settings" not in sys.modules:
-    sys.modules["pydantic_settings"] = MagicMock()
-
 import pytest
 
 from services.agent.agent_result import AgentResult
 from services.agent.file_tool_mixin import CrawlerToolMixin, FileToolMixin
-from services.file_executor import FileOperationError
+from services.file_executor import FileOperationError, FileExecutor
 
 
 # ── Fixtures ──
@@ -413,7 +409,7 @@ class TestFileSearchRouting:
         settings.file_workspace_root = str(tmp_path)
 
         with patch("core.workspace.resolve_staging_dir", return_value=str(tmp_path / "staging")):
-            result = await mixin._file_search(executor, {"path": "nonexistent.xlsx"}, settings)
+            result = await mixin._file_search(executor, {"path": "./nonexistent.xlsx"}, settings)
 
         assert result.status == "error"
         assert "未找到" in result.summary
@@ -470,10 +466,8 @@ class TestSearchFilesPathParsing:
         target.write_text("月份,销售额\n4月,100")
 
         mixin = FakeMixin(conversation_id="conv-search-space")
-        executor = MagicMock()
-        executor.file_search = AsyncMock(
-            return_value="搜索结果\n  [文件] 上传/4月 销售.csv:2 | 4月,100"
-        )
+        executor = FileExecutor(str(ws))
+        executor.file_search_entries = AsyncMock(wraps=executor.file_search_entries)
         executor.resolve_safe_path = lambda path: ws / path
 
         result = await mixin._search_files(executor, {"keyword": "销售"})
@@ -492,16 +486,14 @@ class TestSearchFilesPathParsing:
         target.write_text("a,b\n1,2")
 
         mixin = FakeMixin(conversation_id="conv-search-pattern")
-        executor = MagicMock()
-        executor.file_search = AsyncMock(
-            return_value="搜索结果\n  [文件] report.csv"
-        )
+        executor = FileExecutor(str(ws))
+        executor.file_search_entries = AsyncMock(wraps=executor.file_search_entries)
         executor.resolve_safe_path = lambda path: ws / path
 
         result = await mixin._search_files(executor, {"file_pattern": "*.csv"})
 
         assert result.status == "success"
-        executor.file_search.assert_awaited_once_with(file_pattern="*.csv")
+        executor.file_search_entries.assert_awaited_once_with(file_pattern="*.csv")
 
 
 class TestDescribeSingleFileMultimodal:
@@ -521,8 +513,7 @@ class TestDescribeSingleFileMultimodal:
         img_path.write_bytes(b"fake png bytes")
 
         mixin = FakeMixin(conversation_id="conv-img-1")
-        executor = MagicMock()
-        executor.workspace_root = str(ws)
+        executor = FileExecutor(str(ws))
         executor.get_cdn_url = MagicMock(
             return_value="https://cdn.example.com/workspace/org/x/上传/2026-06/logo.png"
         )
@@ -547,8 +538,7 @@ class TestDescribeSingleFileMultimodal:
         f.write_bytes(b"fake xlsx")
 
         mixin = FakeMixin(conversation_id="conv-img-2")
-        executor = MagicMock()
-        executor.workspace_root = str(ws)
+        executor = FileExecutor(str(ws))
         executor.get_cdn_url = MagicMock(return_value="https://cdn.example.com/x.xlsx")
 
         result = await mixin._describe_single_file(executor, str(f))
@@ -568,8 +558,7 @@ class TestDescribeSingleFileMultimodal:
         img.write_bytes(b"jpeg")
 
         mixin = FakeMixin(conversation_id="conv-img-3")
-        executor = MagicMock()
-        executor.workspace_root = str(ws)
+        executor = FileExecutor(str(ws))
         executor.get_cdn_url = MagicMock(return_value=None)  # 无 CDN
 
         result = await mixin._describe_single_file(executor, str(img))
@@ -598,8 +587,7 @@ class TestDescribeSingleFile:
         f.write_bytes(b"fake")
 
         mixin = FakeMixin()
-        executor = MagicMock()
-        executor.workspace_root = str(ws)
+        executor = FileExecutor(str(ws))
         result = await mixin._describe_single_file(executor, str(f))
 
         assert result.status == "success"

@@ -1,6 +1,7 @@
 """Production orchestration. Business handlers and old result/ledger payloads stay intact."""
 
 import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from uuid import uuid4
 
@@ -11,10 +12,12 @@ from .legacy_handler import build_legacy_handlers
 from .policy import ToolCall, ToolConfirmation
 from .result import ToolResult
 from .runtime_context import (
-    executor_context, refresh_context, resolve_resources, check_deferred_resources,
+    executor_context, refresh_context, resolve_resources,
     check_result_resources,
 )
 from .spec import thaw
+from .file_calls import resolve_file_call, resolve_restore_record
+from services.workspace_coordination import workspace_lock
 
 
 async def run_parallel(operations):
@@ -79,8 +82,11 @@ class ToolRuntime:
             decision = self.policy.decide(name, context, call.arguments)
             if decision.outcome == "deny":
                 return ToolResult.not_executed(call=call, context=context, decision=decision)
-            call = ToolCall(call.call_id, name, resolve_resources(self.executor, name, call.arguments))
-            await check_deferred_resources(self.executor, name, call.arguments)
+            file_call = resolve_file_call(self.executor, name, call.arguments,
+                                          check=lambda: self.check_lifetime(context))
+            if file_call is not None:
+                call = ToolCall(call.call_id, name, file_call.arguments)
+                await resolve_restore_record(file_call)
             self.check_lifetime(context)
             decision = self.policy.decide(name, context, call.arguments)
             if decision.outcome == "deny":
@@ -92,6 +98,11 @@ class ToolRuntime:
                 if replay is not None:
                     self.check_lifetime(context)
                     return replay
+            if file_call is not None:
+                async with workspace_lock(file_call.resolver.root, check=lambda: self.check_lifetime(context)):
+                    await file_call.prepare()
+                context = replace(context, resource_versions=file_call.binding)
+                decision = self.policy.decide(name, context, call.arguments)
             receipt = None
             if decision.outcome == "require_confirmation":
                 binding = decision.confirmation_binding
@@ -103,9 +114,9 @@ class ToolRuntime:
                     self._confirmations[binding] = receipt
                 # Fresh identity, flags, mode, authorization and resource facts.
                 context = await refresh_context(self.executor, self.context(call.call_id), self.registry)
+                if file_call is not None:
+                    context = replace(context, resource_versions=file_call.binding)
                 self.check_lifetime(context)
-                current = resolve_resources(self.executor, name, call.arguments)
-                call = ToolCall(call.call_id, name, current)
             self.check_lifetime(context)
             if decision.reason == "resource_notice":
                 from loguru import logger
@@ -113,8 +124,12 @@ class ToolRuntime:
 
             async def before_dispatch(call, context, decision):
                 self.check_lifetime(context)
+                if file_call is not None:
+                    # Membership/manifest may have changed while approval waited.
+                    resolve_resources(self.executor, name, call.arguments)
+                    await file_call.verify()
                 if cache is not None and decision.cacheable:
-                    raw = cache.get(name, thaw(call.arguments))
+                    raw = cache.get(name, cache_arguments(call))
                     if raw is not None:
                         check_result_resources(context, raw)
                         result = ToolResult.wrap(raw, call=call, context=context, decision=decision)
@@ -132,13 +147,35 @@ class ToolRuntime:
                     await lifecycle.complete(result)
                 if cache is not None and result.exception is None and result.decision.cacheable:
                     try:
-                        cache.put(name, thaw(call.arguments), result.to_legacy())
+                        cache.put(name, cache_arguments(call), result.to_legacy())
                     except Exception as error:
                         from loguru import logger
                         logger.warning(f"tool_cache_write_failed | error={type(error).__name__}")
 
-            return await self.service.execute(call, context, confirmation=receipt,
-                                              before_dispatch=before_dispatch, on_result=on_result)
+            def cache_arguments(call):
+                args = thaw(call.arguments)
+                if file_call is not None:
+                    args["_resource_versions"] = thaw(context.resource_versions)
+                return args
+
+            @asynccontextmanager
+            async def execution_guard():
+                if name == "code_execute":
+                    from services.file_resources import FileTargetResolver
+                    root = FileTargetResolver(self.executor).root
+                    async with workspace_lock(root, write=True, check=lambda: self.check_lifetime(context)):
+                        yield
+                elif file_call is None:
+                    yield
+                else:
+                    async with workspace_lock(file_call.resolver.root, write=file_call.write,
+                                              check=lambda: self.check_lifetime(context)):
+                        with file_call.activate():
+                            yield
+
+            async with execution_guard():
+                return await self.service.execute(call, context, confirmation=receipt,
+                                                  before_dispatch=before_dispatch, on_result=on_result)
         except asyncio.CancelledError:
             raise
         except Exception as error:

@@ -7,7 +7,6 @@
 - 同步 OSS，构建标准 FilePart 交给 Conversation Actor
 """
 
-import asyncio
 import os
 import uuid
 from pathlib import Path
@@ -34,12 +33,18 @@ class WecomFileMixin:
         if not msg.msgid:
             raise RuntimeError("WECOM_FILE_MSGID_MISSING")
         scope_root = self._file_scope_root(msg, user_id, org_id)
-        existing = await asyncio.to_thread(
+        from services.workspace_coordination import workspace_lock
+        async with workspace_lock(scope_root, write=True):
+            return await self._prepare_wecom_file_in_workspace(msg, reply_ctx, user_id, org_id, scope_root)
+
+    async def _prepare_wecom_file_in_workspace(self, msg, reply_ctx, user_id, org_id, scope_root):
+        from services.workspace_coordination import finish_file_io
+        existing = await finish_file_io(
             self._find_existing_file, scope_root, msg.msgid,
         )
         if existing:
             target = existing
-            data = await asyncio.to_thread(target.read_bytes)
+            data = await finish_file_io(target.read_bytes)
             identity = identify_file(
                 data, stable_id=msg.msgid, provider_name=target.name.split("_", 1)[-1],
             )
@@ -57,7 +62,7 @@ class WecomFileMixin:
                 scope_root, msg.msgid, identity.canonical_name,
             )
             try:
-                await asyncio.to_thread(_atomic_write, target, media.data)
+                await finish_file_io(_atomic_write, target, media.data, workspace_root=scope_root)
             except OSError as error:
                 logger.error(
                     "Wecom file workspace write failed | "
@@ -69,7 +74,7 @@ class WecomFileMixin:
 
         from services.file_upload import upload_to_payload
 
-        size = await asyncio.to_thread(lambda: target.stat().st_size)
+        size = await finish_file_io(lambda: target.stat().st_size)
         payload = await upload_to_payload(
             filename=target.name,
             size=size,
@@ -167,7 +172,13 @@ class WecomFileMixin:
         return media
 
 
-def _atomic_write(target: Path, data: bytes) -> None:
+def _atomic_write(target: Path, data: bytes, *, workspace_root=None) -> None:
+    from services.workspace_coordination import workspace_lock_sync
+    with workspace_lock_sync(workspace_root or target.parent):
+        _write_locked(target, data)
+
+
+def _write_locked(target: Path, data: bytes) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.part")
     try:

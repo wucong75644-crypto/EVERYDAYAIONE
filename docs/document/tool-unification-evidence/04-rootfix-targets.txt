@@ -1,0 +1,83 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.2, pytest-9.0.3, pluggy-1.6.0 -- /Users/wucong/EVERYDAYAIONE/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-04/backend
+configfile: pytest.ini
+plugins: time-machine-2.14.1, cov-7.1.0, asyncio-1.3.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 61 items
+
+backend/tests/test_file_target_execution.py::test_complete_model_loop_carries_discovered_reference PASSED [  1%]
+backend/tests/test_file_target_execution.py::test_budget_expires_during_confirmation_before_invocation PASSED [  3%]
+backend/tests/test_file_target_execution.py::test_deleted_record_ambiguity_uses_real_lookup PASSED [  4%]
+backend/tests/test_file_target_execution.py::test_cache_file_lock_wait_is_cancellable PASSED [  6%]
+backend/tests/test_file_target_execution.py::test_cold_actor_resumes_signed_target_without_second_dialog PASSED [  8%]
+backend/tests/test_file_target_execution.py::test_source_snapshot_rejects_change_and_cleans_temporary_files PASSED [  9%]
+backend/tests/test_file_target_execution.py::test_cancelled_oss_sync_drains_source_read_before_unlock PASSED [ 11%]
+backend/tests/test_file_target_execution.py::test_incomplete_candidate_inventory_never_selects_first[unreadable] PASSED [ 13%]
+backend/tests/test_file_target_execution.py::test_incomplete_candidate_inventory_never_selects_first[limit] PASSED [ 14%]
+backend/tests/test_file_target_execution.py::test_colliding_legacy_fid_and_tampered_reference_are_not_authority PASSED [ 16%]
+backend/tests/test_file_target_execution.py::test_search_then_delete_real_handlers[name-legacy] PASSED [ 18%]
+backend/tests/test_file_target_execution.py::test_search_then_delete_real_handlers[name-chat] PASSED [ 19%]
+backend/tests/test_file_target_execution.py::test_search_then_delete_real_handlers[name-loop] PASSED [ 21%]
+backend/tests/test_file_target_execution.py::test_search_then_delete_real_handlers[partial-legacy] PASSED [ 22%]
+backend/tests/test_file_target_execution.py::test_search_then_delete_real_handlers[partial-chat] PASSED [ 24%]
+backend/tests/test_file_target_execution.py::test_search_then_delete_real_handlers[partial-loop] PASSED [ 26%]
+backend/tests/test_file_target_execution.py::test_search_then_delete_real_handlers[path-legacy] PASSED [ 27%]
+backend/tests/test_file_target_execution.py::test_search_then_delete_real_handlers[path-chat] PASSED [ 29%]
+backend/tests/test_file_target_execution.py::test_search_then_delete_real_handlers[path-loop] PASSED [ 31%]
+backend/tests/test_file_target_execution.py::test_search_then_delete_real_handlers[fid-legacy] PASSED [ 32%]
+backend/tests/test_file_target_execution.py::test_search_then_delete_real_handlers[fid-chat] PASSED [ 34%]
+backend/tests/test_file_target_execution.py::test_search_then_delete_real_handlers[fid-loop] PASSED [ 36%]
+backend/tests/test_file_target_execution.py::test_search_then_delete_real_handlers[reference-legacy] PASSED [ 37%]
+backend/tests/test_file_target_execution.py::test_search_then_delete_real_handlers[reference-chat] PASSED [ 39%]
+backend/tests/test_file_target_execution.py::test_search_then_delete_real_handlers[reference-loop] PASSED [ 40%]
+backend/tests/test_file_target_execution.py::test_bad_target_never_reaches_handler[missing-legacy] PASSED [ 42%]
+backend/tests/test_file_target_execution.py::test_bad_target_never_reaches_handler[missing-chat] PASSED [ 44%]
+backend/tests/test_file_target_execution.py::test_bad_target_never_reaches_handler[missing-loop] PASSED [ 45%]
+backend/tests/test_file_target_execution.py::test_bad_target_never_reaches_handler[ambiguous-legacy] PASSED [ 47%]
+backend/tests/test_file_target_execution.py::test_bad_target_never_reaches_handler[ambiguous-chat] PASSED [ 49%]
+backend/tests/test_file_target_execution.py::test_bad_target_never_reaches_handler[ambiguous-loop] PASSED [ 50%]
+backend/tests/test_file_target_execution.py::test_bad_target_never_reaches_handler[plan-legacy] PASSED [ 52%]
+backend/tests/test_file_target_execution.py::test_bad_target_never_reaches_handler[plan-chat] PASSED [ 54%]
+backend/tests/test_file_target_execution.py::test_bad_target_never_reaches_handler[plan-loop] PASSED [ 55%]
+backend/tests/test_file_target_execution.py::test_bad_target_never_reaches_handler[denied-legacy] PASSED [ 57%]
+backend/tests/test_file_target_execution.py::test_bad_target_never_reaches_handler[denied-chat] PASSED [ 59%]
+backend/tests/test_file_target_execution.py::test_bad_target_never_reaches_handler[denied-loop] PASSED [ 60%]
+backend/tests/test_file_target_execution.py::test_bad_target_never_reaches_handler[changed-legacy] PASSED [ 62%]
+backend/tests/test_file_target_execution.py::test_bad_target_never_reaches_handler[changed-chat] PASSED [ 63%]
+backend/tests/test_file_target_execution.py::test_bad_target_never_reaches_handler[changed-loop] PASSED [ 65%]
+backend/tests/test_file_target_execution.py::test_bad_target_never_reaches_handler[foreign-legacy] PASSED [ 67%]
+backend/tests/test_file_target_execution.py::test_bad_target_never_reaches_handler[foreign-chat] PASSED [ 68%]
+backend/tests/test_file_target_execution.py::test_bad_target_never_reaches_handler[foreign-loop] PASSED [ 70%]
+backend/tests/test_file_target_execution.py::test_cold_reference_and_fid_are_scoped_and_resolvable PASSED [ 72%]
+backend/tests/test_file_target_execution.py::test_explicit_path_does_not_use_same_named_cache PASSED [ 73%]
+backend/tests/test_file_target_execution.py::test_missing_manifest_item_has_no_actionable_reference PASSED [ 75%]
+backend/tests/test_file_target_execution.py::test_restore_no_clobber_and_pinned_record PASSED [ 77%]
+backend/tests/test_file_target_execution.py::test_csv_tail_change_rebuilds_real_conversion PASSED [ 78%]
+backend/tests/test_file_target_execution.py::test_cross_conversation_writer_waits_for_readers PASSED [ 80%]
+backend/tests/test_file_target_execution.py::test_cancellation_waiting_for_workspace_never_registers_invocation PASSED [ 81%]
+backend/tests/test_file_target_execution.py::test_complete_filename_does_not_select_another_extension PASSED [ 83%]
+backend/tests/test_file_target_execution.py::test_analysis_uses_real_conversion_and_invalidates_source_cache PASSED [ 85%]
+backend/tests/test_file_target_execution.py::test_changed_backup_and_denied_invocation_never_enter_handler PASSED [ 86%]
+backend/tests/test_file_target_execution.py::test_invocation_refusal_is_before_real_delete PASSED [ 88%]
+backend/tests/test_file_target_execution.py::test_group_actor_deletes_owner_resource_only PASSED [ 90%]
+backend/tests/test_file_target_execution.py::test_ambiguous_scheduled_id_does_not_submit_proposal[pause] PASSED [ 91%]
+backend/tests/test_file_target_execution.py::test_ambiguous_scheduled_id_does_not_submit_proposal[resume] PASSED [ 93%]
+backend/tests/test_file_target_execution.py::test_ambiguous_scheduled_id_does_not_submit_proposal[delete] PASSED [ 95%]
+backend/tests/test_file_target_execution.py::test_ambiguous_scheduled_id_does_not_submit_proposal[update] PASSED [ 96%]
+backend/tests/test_file_target_execution.py::test_cross_process_shared_and_exclusive_lock_protocol PASSED [ 98%]
+backend/tests/test_file_target_execution.py::test_repeated_cancellation_drains_io_before_unlock PASSED [100%]
+
+=============================== warnings summary ===============================
+../../.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434
+  /Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+backend/services/adapters/kie/models.py:126
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-04/backend/services/adapters/kie/models.py:126: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class JsonSchema(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 61 passed, 2 warnings in 1.66s ========================

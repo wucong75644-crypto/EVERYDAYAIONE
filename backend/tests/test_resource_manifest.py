@@ -113,7 +113,7 @@ def test_filepart_reexport_preserves_asset_id() -> None:
 
 
 @pytest.mark.asyncio
-async def test_file_search_defaults_to_current_manifest() -> None:
+async def test_file_search_defaults_to_current_manifest(tmp_path) -> None:
     owner = MagicMock(spec=FileToolMixin)
     owner.resource_manifest = _manifest()
     owner.conversation_id = "conv-1"
@@ -121,7 +121,7 @@ async def test_file_search_defaults_to_current_manifest() -> None:
     owner._search_manifest = FileToolMixin._search_manifest.__get__(owner)
     executor = MagicMock()
     executor._format_size.return_value = "20 B"
-    executor.resolve_safe_path.side_effect = FileNotFoundError
+    executor.resolve_safe_path.return_value = tmp_path / "missing.csv"
 
     result = await FileToolMixin._file_search(
         owner, executor, {}, MagicMock(),
@@ -129,6 +129,8 @@ async def test_file_search_defaults_to_current_manifest() -> None:
 
     assert result.status == "success"
     assert "本次销售.csv" in result.summary
+    assert "不可用" in result.summary
+    assert "resource_ref:" not in result.summary and "fid_" not in result.summary
     executor.file_list_entries.assert_not_called()
 
 
