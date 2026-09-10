@@ -3,7 +3,7 @@
 import asyncio
 from dataclasses import replace
 
-from services.tools.result import ToolResult
+from services.tools.result import ToolResult, UncertainToolInvocationError
 from services.tools.spec import thaw
 
 
@@ -44,7 +44,8 @@ class ActorToolLifecycle:
                 turn_id=self.handler._actor_turn_id, tool_call_id=call.call_id,
                 execution_token=self.handler._actor_execution_token,
             )
-        raise PermissionError("ACTOR_TOOL_INVOCATION_" + row["status"].upper())
+        error_type = UncertainToolInvocationError if row["status"] in {"running", "in_progress", "uncertain"} else PermissionError
+        raise error_type("ACTOR_TOOL_INVOCATION_" + row["status"].upper())
 
     @staticmethod
     def _replayed(payload, call, context, decision):
@@ -71,7 +72,8 @@ class ActorToolLifecycle:
         if outcome == "replay":
             return self._replayed(invocation.get("result"), call, context, decision)
         if outcome != "execute":
-            raise PermissionError("ACTOR_TOOL_INVOCATION_" + str(outcome).upper())
+            error_type = UncertainToolInvocationError if outcome in {"running", "in_progress", "uncertain"} else PermissionError
+            raise error_type("ACTOR_TOOL_INVOCATION_" + str(outcome).upper())
         self.call = call
         return None
 
@@ -86,7 +88,7 @@ class ActorToolLifecycle:
                 self.handler, store=self.store, task_id=self.context.task_id,
                 turn_id=self.handler._actor_turn_id, tool_call_id=self.call.call_id,
                 status="uncertain" if error else "succeeded",
-                result={"kind": "error", "summary": str(error)[:2000]} if error else result.to_legacy(),
+                result=result.legacy_persistence_value(),
                 error_message=str(error) if error else "",
             )
         except Exception as exc:

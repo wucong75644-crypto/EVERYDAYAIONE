@@ -1,0 +1,19 @@
+{
+  "python": "3.14.2 (v3.14.2:df793163d58, Dec  5 2025, 12:18:06) [Clang 16.0.0 (clang-1600.0.26.6)]",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "temporary_dependencies": "/private/tmp/tool05-testdeps",
+  "versions": {
+    "pytest": "9.0.3",
+    "matplotlib": "3.10.8",
+    "ipython": "8.32.0",
+    "lxml": "5.3.0",
+    "time-machine": "2.14.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.2",
+    "Pillow": "12.3.0"
+  },
+  "database": "127.0.0.1:1",
+  "redis_port": 1,
+  "business_io": "mock/offline fixtures only",
+  "production_configuration_loaded": false
+}

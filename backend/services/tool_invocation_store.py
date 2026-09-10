@@ -161,6 +161,10 @@ def hash_tool_arguments(arguments: dict[str, Any]) -> str:
 def serialize_tool_result(result: Any) -> dict[str, Any]:
     """保留可安全回放的最小结果，不复制整个大数据结果。"""
     from services.agent.agent_result import AgentResult
+    from services.tools.result import ToolResult
+
+    if isinstance(result, ToolResult):
+        raise TypeError("ToolResult requires legacy_persistence_value before the legacy serializer")
 
     if isinstance(result, AgentResult):
         return {

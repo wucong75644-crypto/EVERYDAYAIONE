@@ -1,0 +1,127 @@
+.................FFFF...............................F..FFF............FF [ 86%]
+FFFFFFFFFFF                                                              [100%]
+=================================== FAILURES ===================================
+___________________ TestCalcOnceRunAt.test_future_time_today ___________________
+backend/tests/test_chat_task_manager.py:280: in test_future_time_today
+    import time_machine
+E   ModuleNotFoundError: No module named 'time_machine'
+_____________ TestCalcOnceRunAt.test_past_time_today_goes_tomorrow _____________
+backend/tests/test_chat_task_manager.py:290: in test_past_time_today_goes_tomorrow
+    import time_machine
+E   ModuleNotFoundError: No module named 'time_machine'
+_________________ TestCalcOnceRunAt.test_month_end_no_overflow _________________
+backend/tests/test_chat_task_manager.py:299: in test_month_end_no_overflow
+    import time_machine
+E   ModuleNotFoundError: No module named 'time_machine'
+_________________ TestCalcOnceRunAt.test_year_end_no_overflow __________________
+backend/tests/test_chat_task_manager.py:310: in test_year_end_no_overflow
+    import time_machine
+E   ModuleNotFoundError: No module named 'time_machine'
+________ TestMimebundleDispatch.test_html_dataframe_dispatched_as_table ________
+backend/tests/test_emit_three_engines.py:63: in test_html_dataframe_dispatched_as_table
+    assert payload["kind"] == "table"
+           ^^^^^^^^^^^^^^^
+E   TypeError: 'NoneType' object is not subscriptable
+___________ TestMimebundleDispatch.test_html_multi_table_takes_first ___________
+backend/tests/test_emit_three_engines.py:93: in test_html_multi_table_takes_first
+    assert payload["kind"] == "table"
+           ^^^^^^^^^^^^^^^
+E   TypeError: 'NoneType' object is not subscriptable
+________ TestMimebundleDispatch.test_html_unnamed_index_column_stripped ________
+backend/tests/test_emit_three_engines.py:107: in test_html_unnamed_index_column_stripped
+    assert payload["kind"] == "table"
+           ^^^^^^^^^^^^^^^
+E   TypeError: 'NoneType' object is not subscriptable
+____ TestMimebundleDispatch.test_html_nan_converted_to_none_for_json_safety ____
+backend/tests/test_emit_three_engines.py:119: in test_html_nan_converted_to_none_for_json_safety
+    assert payload["kind"] == "table"
+           ^^^^^^^^^^^^^^^
+E   TypeError: 'NoneType' object is not subscriptable
+____ TestMatplotlibChineseFont.test_install_hook_sets_chinese_font_rcparams ____
+backend/tests/test_emit_three_engines.py:319: in test_install_hook_sets_chinese_font_rcparams
+    import matplotlib.pyplot as plt
+E   ModuleNotFoundError: No module named 'matplotlib'
+___ TestMatplotlibChineseFont.test_chinese_font_in_fallback_list_avoids_box ____
+backend/tests/test_emit_three_engines.py:343: in test_chinese_font_in_fallback_list_avoids_box
+    import matplotlib.pyplot as plt
+E   ModuleNotFoundError: No module named 'matplotlib'
+____ TestMatplotlibChineseFont.test_chinese_aliases_registered_to_real_font ____
+backend/tests/test_emit_three_engines.py:369: in test_chinese_aliases_registered_to_real_font
+    from matplotlib import font_manager as fm
+E   ModuleNotFoundError: No module named 'matplotlib'
+___ TestMatplotlibChineseFont.test_alias_registration_dedupes_on_second_call ___
+backend/tests/test_emit_three_engines.py:392: in test_alias_registration_dedupes_on_second_call
+    from matplotlib import font_manager as fm
+E   ModuleNotFoundError: No module named 'matplotlib'
+__ TestMatplotlibChineseFont.test_macos_no_wqy_skips_registration_gracefully ___
+backend/tests/test_emit_three_engines.py:414: in test_macos_no_wqy_skips_registration_gracefully
+    from matplotlib import font_manager as fm
+E   ModuleNotFoundError: No module named 'matplotlib'
+_____________ TestIPythonDisplayShim.test_install_creates_modules ______________
+backend/tests/test_emit_auto_hooks.py:37: in test_install_creates_modules
+    assert "IPython.display" in sys.modules
+E   AssertionError: assert 'IPython.display' in {'81d243bd2c585b0f4821__mypyc': <module '81d243bd2c585b0f4821__mypyc' from '/Users/wucong/EVERYDAYAIONE/.venv/lib/pyth...e 'Crypto.Cipher.AES' from '/Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/Crypto/Cipher/AES.py'>, ...}
+E    +  where {'81d243bd2c585b0f4821__mypyc': <module '81d243bd2c585b0f4821__mypyc' from '/Users/wucong/EVERYDAYAIONE/.venv/lib/pyth...e 'Crypto.Cipher.AES' from '/Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/Crypto/Cipher/AES.py'>, ...} = sys.modules
+____________ TestIPythonDisplayShim.test_plotly_mime_to_emit_chart _____________
+backend/tests/test_emit_auto_hooks.py:47: in test_plotly_mime_to_emit_chart
+    from IPython.display import publish_display_data
+E   ModuleNotFoundError: No module named 'IPython'
+___________ TestIPythonDisplayShim.test_vegalite_mime_to_emit_chart ____________
+backend/tests/test_emit_auto_hooks.py:65: in test_vegalite_mime_to_emit_chart
+    from IPython.display import publish_display_data
+E   ModuleNotFoundError: No module named 'IPython'
+_______________ TestIPythonDisplayShim.test_unknown_mime_ignored _______________
+backend/tests/test_emit_auto_hooks.py:79: in test_unknown_mime_ignored
+    from IPython.display import publish_display_data
+E   ModuleNotFoundError: No module named 'IPython'
+___________ TestIPythonDisplayShim.test_display_with_repr_mimebundle ___________
+backend/tests/test_emit_auto_hooks.py:90: in test_display_with_repr_mimebundle
+    from IPython.display import display
+E   ModuleNotFoundError: No module named 'IPython'
+________________ TestIPythonDisplayShim.test_idempotent_install ________________
+backend/tests/test_emit_auto_hooks.py:107: in test_idempotent_install
+    assert "IPython.display" in sys.modules
+E   AssertionError: assert 'IPython.display' in {'81d243bd2c585b0f4821__mypyc': <module '81d243bd2c585b0f4821__mypyc' from '/Users/wucong/EVERYDAYAIONE/.venv/lib/pyth...e 'Crypto.Cipher.AES' from '/Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/Crypto/Cipher/AES.py'>, ...}
+E    +  where {'81d243bd2c585b0f4821__mypyc': <module '81d243bd2c585b0f4821__mypyc' from '/Users/wucong/EVERYDAYAIONE/.venv/lib/pyth...e 'Crypto.Cipher.AES' from '/Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/Crypto/Cipher/AES.py'>, ...} = sys.modules
+_______________ TestMatplotlibHook.test_plt_show_auto_emit_image _______________
+backend/tests/test_emit_auto_hooks.py:124: in test_plt_show_auto_emit_image
+    import matplotlib.pyplot as plt
+E   ModuleNotFoundError: No module named 'matplotlib'
+__________________ TestMatplotlibHook.test_no_figure_no_emit ___________________
+backend/tests/test_emit_auto_hooks.py:147: in test_no_figure_no_emit
+    import matplotlib.pyplot as plt
+E   ModuleNotFoundError: No module named 'matplotlib'
+=============================== warnings summary ===============================
+../../../Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434
+  /Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+tests/test_chat_task_manager.py::TestBuildCreateForm::test_form_structure
+  /private/tmp/tool-05-main/backend/services/adapters/kie/models.py:126: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class JsonSchema(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED backend/tests/test_chat_task_manager.py::TestCalcOnceRunAt::test_future_time_today
+FAILED backend/tests/test_chat_task_manager.py::TestCalcOnceRunAt::test_past_time_today_goes_tomorrow
+FAILED backend/tests/test_chat_task_manager.py::TestCalcOnceRunAt::test_month_end_no_overflow
+FAILED backend/tests/test_chat_task_manager.py::TestCalcOnceRunAt::test_year_end_no_overflow
+FAILED backend/tests/test_emit_three_engines.py::TestMimebundleDispatch::test_html_dataframe_dispatched_as_table
+FAILED backend/tests/test_emit_three_engines.py::TestMimebundleDispatch::test_html_multi_table_takes_first
+FAILED backend/tests/test_emit_three_engines.py::TestMimebundleDispatch::test_html_unnamed_index_column_stripped
+FAILED backend/tests/test_emit_three_engines.py::TestMimebundleDispatch::test_html_nan_converted_to_none_for_json_safety
+FAILED backend/tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_install_hook_sets_chinese_font_rcparams
+FAILED backend/tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+FAILED backend/tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_aliases_registered_to_real_font
+FAILED backend/tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_alias_registration_dedupes_on_second_call
+FAILED backend/tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_macos_no_wqy_skips_registration_gracefully
+FAILED backend/tests/test_emit_auto_hooks.py::TestIPythonDisplayShim::test_install_creates_modules
+FAILED backend/tests/test_emit_auto_hooks.py::TestIPythonDisplayShim::test_plotly_mime_to_emit_chart
+FAILED backend/tests/test_emit_auto_hooks.py::TestIPythonDisplayShim::test_vegalite_mime_to_emit_chart
+FAILED backend/tests/test_emit_auto_hooks.py::TestIPythonDisplayShim::test_unknown_mime_ignored
+FAILED backend/tests/test_emit_auto_hooks.py::TestIPythonDisplayShim::test_display_with_repr_mimebundle
+FAILED backend/tests/test_emit_auto_hooks.py::TestIPythonDisplayShim::test_idempotent_install
+FAILED backend/tests/test_emit_auto_hooks.py::TestMatplotlibHook::test_plt_show_auto_emit_image
+FAILED backend/tests/test_emit_auto_hooks.py::TestMatplotlibHook::test_no_figure_no_emit
+21 failed, 62 passed, 2 warnings in 0.75s

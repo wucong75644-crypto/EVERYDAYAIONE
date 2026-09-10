@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from .context import ToolContext
 from .policy import ToolCall, ToolDecision
+
+
+class UncertainToolInvocationError(PermissionError):
+    """A previous invocation may have performed external effects; never redo it."""
 
 
 @dataclass(frozen=True)
@@ -57,6 +61,7 @@ class ToolResult:
     audit: dict[str, Any]
     error: ToolError | None = None
     exception: BaseException | None = field(default=None, repr=False)
+    model_overrides: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @classmethod
     def wrap(
@@ -105,6 +110,8 @@ class ToolResult:
         execution_status = "not_started" if not handler_started else (
             "failed" if decision.effects == ("none",) else "uncertain"
         )
+        if isinstance(error, UncertainToolInvocationError):
+            execution_status = "uncertain"
         return cls(
             None, "exception", status, decision,
             ToolExecutionMetadata(execution_status, handler_started, decision.effects,
@@ -157,19 +164,57 @@ class ToolResult:
         """Original pre-truncation projection; Chat image injection remains separate."""
         if consumer not in {"chat", "tool_loop"}:
             raise ValueError(f"Unknown model consumer: {consumer}")
-        raw = self.to_legacy()
+        if self.execution.cancelled:
+            raise self.exception or asyncio.CancelledError()
+        if consumer in self.model_overrides:
+            return self.model_overrides[consumer]
+        if self.exception is not None:
+            return f"工具执行失败: {self.exception}" + self.uncertainty_notice
+        raw = self.raw
         if self.kind == "agent":
             return raw.to_message_content() if consumer == "chat" else raw.to_tool_content()
-        if consumer == "tool_loop":
-            # The legacy loop only normalizes AgentResult. Other objects pass
-            # through here; expanding that loop's type support belongs to block 05.
-            return raw or ""
-        if consumer == "chat":
-            if self.kind == "file_read":
-                return raw.text
-            if self.kind == "form":
-                return raw.llm_hint
+        if self.kind == "file_read":
+            return raw.text
+        if self.kind == "form":
+            return raw.llm_hint
         return str(raw)
+
+    def with_model_content(
+        self, consumer: str, content: Any, *, truncated: bool | None = None,
+    ) -> ToolResult:
+        """Staging changes only the model projection, never the original artifacts."""
+        audit = self.audit if truncated is None else {**self.audit, "truncated": truncated}
+        return replace(self, model_overrides={**self.model_overrides, consumer: content}, audit=audit)
+
+    @property
+    def uncertainty_notice(self) -> str:
+        return (" 外部执行结果尚未确定，请核验实际结果后再继续，不要重复执行。"
+                if self.execution.status == "uncertain" else "")
+
+    def collect_payloads(self, consumer: str) -> list[dict[str, Any]]:
+        from services.handlers.emit_payloads import collect_agent_result_payloads
+
+        if consumer not in {"chat", "tool_loop"}:
+            raise ValueError(f"Unknown display consumer: {consumer}")
+        if self.kind != "agent":
+            return []
+        if consumer == "chat" and self.audit["tool_name"] == "erp_agent":
+            return [p for p in self.artifacts.emit_payloads
+                    if isinstance(p, dict) and p.get("kind") != "table"]
+        return collect_agent_result_payloads(self.raw)
+
+    def legacy_persistence_value(self) -> Any:
+        """Explicit block-05 boundary; use only with the existing ledger writer.
+
+        Keep its exact AgentResult/scalar/json/error contract. In particular,
+        never let the old serializer stringify this in-memory envelope.
+        """
+        if self.exception is not None:
+            return {"kind": "error", "summary": str(self.exception)[:2000]}
+        return self.raw
+
+    def validation_issues(self) -> list[str]:
+        return self.raw.validate() if self.kind == "agent" else []
 
     @property
     def model_image_blocks(self) -> list[dict[str, Any]]:
@@ -214,6 +259,7 @@ class ToolResult:
     def audit_fields(self) -> dict[str, Any]:
         """Pre-delivery facts for the existing writer; no write or dedup occurs here."""
         fields = dict(self.audit)
+        fields["cached"] = self.execution.cached
         if self.kind == "form":
             fields["result_length"] = len(json.dumps(self.raw.form))
         return fields

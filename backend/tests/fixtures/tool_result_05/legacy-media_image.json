@@ -1,0 +1,161 @@
+{
+  "ws": [
+    [
+      "task1",
+      "u1",
+      null,
+      {
+        "type": "message_start",
+        "payload": {
+          "model": "model1"
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "task1",
+        "conversation_id": "c1",
+        "message_id": "m1"
+      }
+    ],
+    [
+      "task1",
+      "u1",
+      null,
+      {
+        "type": "content_block_add",
+        "payload": {
+          "block": {
+            "type": "tool_step",
+            "tool_call_id": "call",
+            "tool_name": "generate_image",
+            "status": "running"
+          }
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "task1",
+        "conversation_id": "c1",
+        "message_id": "m1"
+      }
+    ],
+    [
+      "task1",
+      "u1",
+      null,
+      {
+        "type": "tool_result",
+        "payload": {
+          "tool_name": "generate_image",
+          "tool_call_id": "call",
+          "success": true,
+          "summary": "图片完成",
+          "turn": 1
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "task1",
+        "conversation_id": "c1",
+        "message_id": "m1"
+      }
+    ],
+    [
+      "task1",
+      "u1",
+      null,
+      {
+        "type": "content_block_add",
+        "payload": {
+          "block": {
+            "type": "tool_step",
+            "tool_call_id": "call",
+            "tool_name": "generate_image",
+            "status": "completed",
+            "output": "图片完成",
+            "elapsed_ms": "<NONNEGATIVE_ELAPSED_MS>"
+          }
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "task1",
+        "conversation_id": "c1",
+        "message_id": "m1"
+      }
+    ],
+    [
+      "task1",
+      "u1",
+      null,
+      {
+        "type": "content_block_add",
+        "payload": {
+          "block": {
+            "type": "image",
+            "url": "https://example.test/sample.png",
+            "alt": "sample.png",
+            "width": 1,
+            "height": 1,
+            "workspace_path": "sample.png",
+            "original_url": "https://example.test/original.png",
+            "thumbnail_url": "https://example.test/thumb.png",
+            "preview_url": "https://example.test/preview.png",
+            "download_url": "https://example.test/download.png"
+          }
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "task1",
+        "conversation_id": "c1",
+        "message_id": "m1"
+      }
+    ],
+    [
+      "task1",
+      "u1",
+      null,
+      {
+        "type": "stream_end",
+        "payload": {},
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "task1",
+        "conversation_id": "c1",
+        "message_id": "m1"
+      }
+    ]
+  ],
+  "events": [],
+  "checkpoint": {
+    "messages": [
+      {
+        "role": "tool",
+        "tool_call_id": "call",
+        "content": [
+          {
+            "type": "text",
+            "text": "图片完成"
+          }
+        ]
+      }
+    ],
+    "content_blocks": [
+      {
+        "type": "tool_step",
+        "tool_call_id": "call",
+        "tool_name": "generate_image",
+        "status": "completed",
+        "elapsed_ms": "<NONNEGATIVE_ELAPSED_MS>",
+        "output": "图片完成"
+      },
+      {
+        "type": "image",
+        "url": "https://example.test/sample.png",
+        "alt": "sample.png",
+        "width": 1,
+        "height": 1,
+        "workspace_path": "sample.png",
+        "original_url": "https://example.test/original.png",
+        "thumbnail_url": "https://example.test/thumb.png",
+        "preview_url": "https://example.test/preview.png",
+        "download_url": "https://example.test/download.png"
+      }
+    ],
+    "turn_index": 0,
+    "tool_call_ids": [
+      "call"
+    ],
+    "next_model_round": 1
+  }
+}

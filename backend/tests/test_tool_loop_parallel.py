@@ -150,9 +150,9 @@ class TestPhase2ParallelExecution:
         tle = _make_executor()
         hook_ctx = _make_hook_ctx()
 
-        # mock invoke_tool_with_cache
+        # mock invoke_tool_result_with_cache
         with patch(
-            "services.agent.tool_loop_helpers.invoke_tool_with_cache",
+            "services.agent.tool_loop_helpers.invoke_tool_result_with_cache",
             new_callable=AsyncMock,
             return_value=("订单数据: 10条", "success", False, 100),
         ) as mock_invoke:
@@ -178,7 +178,7 @@ class TestPhase2ParallelExecution:
             return f"{name}_result", "success", False, 50
 
         with patch(
-            "services.agent.tool_loop_helpers.invoke_tool_with_cache",
+            "services.agent.tool_loop_helpers.invoke_tool_result_with_cache",
             side_effect=mock_invoke,
         ):
             completed = [
@@ -209,7 +209,7 @@ class TestPhase2ParallelExecution:
             return "库存100件", "success", False, 50
 
         with patch(
-            "services.agent.tool_loop_helpers.invoke_tool_with_cache",
+            "services.agent.tool_loop_helpers.invoke_tool_result_with_cache",
             side_effect=mock_invoke,
         ):
             completed = [
@@ -251,7 +251,7 @@ class TestPhase3PostProcess:
             return f"{name}_RESULT", "success", False, 50
 
         with patch(
-            "services.agent.tool_loop_helpers.invoke_tool_with_cache",
+            "services.agent.tool_loop_helpers.invoke_tool_result_with_cache",
             side_effect=mock_invoke,
         ):
             completed = [
@@ -276,7 +276,7 @@ class TestPhase3PostProcess:
             return f"{name}_ok", "success", False, 50
 
         with patch(
-            "services.agent.tool_loop_helpers.invoke_tool_with_cache",
+            "services.agent.tool_loop_helpers.invoke_tool_result_with_cache",
             side_effect=mock_invoke,
         ):
             # mock ws_manager.check_steer: 第一个工具后处理时触发
@@ -332,7 +332,7 @@ class TestPhase3PostProcess:
         selected_tools = []  # 空的，模拟核心工具集不含 local_shop_list
 
         with patch(
-            "services.agent.tool_loop_helpers.invoke_tool_with_cache",
+            "services.agent.tool_loop_helpers.invoke_tool_result_with_cache",
             new_callable=AsyncMock,
             return_value=("店铺列表数据", "success", False, 50),
         ):
@@ -373,7 +373,7 @@ class TestHooksTiming:
         hook_ctx = _make_hook_ctx()
 
         with patch(
-            "services.agent.tool_loop_helpers.invoke_tool_with_cache",
+            "services.agent.tool_loop_helpers.invoke_tool_result_with_cache",
             new_callable=AsyncMock,
             return_value=("ok", "success", False, 10),
         ):

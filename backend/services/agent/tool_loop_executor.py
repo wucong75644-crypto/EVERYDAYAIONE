@@ -20,11 +20,11 @@ from typing import Any, Dict, List, Tuple
 from loguru import logger
 
 from services.agent.erp_agent_types import is_context_length_error
-from services.agent.loop_hooks import LoopHook
+from services.agent.loop_hooks import LoopHook, ToolAuditHook
 from services.agent.loop_types import (
     HookContext, LoopConfig, LoopResult, LoopStrategy,
 )
-from services.agent.tool_output import ToolOutput
+from services.tools.result import ToolResult
 from services.agent.tool_result_cache import ToolResultCache
 
 # 产物通道:SandboxExecutor.execute 直接产出 AgentResult.emit_payloads
@@ -199,7 +199,9 @@ class ToolLoopExecutor:
                     tracker.record_success()
                 else:
                     error_text = ""
-                    if isinstance(_res, AgentResult):
+                    if isinstance(_res, ToolResult):
+                        error_text = _res.error.message if _res.error else ""
+                    elif isinstance(_res, AgentResult):
                         error_text = _res.error_message
                     elif isinstance(_res, str):
                         error_text = _res
@@ -406,7 +408,7 @@ class ToolLoopExecutor:
         """
         from services.handlers.emit_payloads import collect_agent_result_payloads
 
-        payloads = collect_agent_result_payloads(result)
+        payloads = result.collect_payloads("tool_loop") if isinstance(result, ToolResult) else collect_agent_result_payloads(result)
         if payloads:
             self._emit_payloads.extend(payloads)
 
@@ -663,15 +665,14 @@ class ToolLoopExecutor:
         # 阶段 2：执行（并行，对齐 LangGraph ToolNode asyncio.gather）
         # 单工具走快路径，多工具 gather 并行
         # ============================================================
-        import asyncio as _aio
-        from services.agent.tool_loop_helpers import invoke_tool_with_cache
+        from services.agent.tool_loop_helpers import invoke_tool_result_with_cache
 
         async def _invoke_safe(
             tc: Dict, tool_name: str, args: Dict,
         ) -> Tuple[Dict, str, Dict, Any, str, bool, int]:
             """安全执行单个工具，异常不扩散（对齐行业 return_exceptions 模式）"""
             try:
-                r, status, cached, ms = await invoke_tool_with_cache(
+                r, status, cached, ms = await invoke_tool_result_with_cache(
                     self.executor, self._cache, tool_name, args,
                     hook_ctx.budget, self.config.tool_timeout, call_id=tc["id"],
                 )
@@ -701,56 +702,46 @@ class ToolLoopExecutor:
         # 归一化 / 文件收集 / 截断 / 入 messages / hooks / steer
         # ============================================================
         steer_hit = False
+        steer_message = None
+        image_blocks = []
 
         for idx, (tc, tool_name, args, result, audit_status, is_cached, elapsed_ms) in enumerate(results):
             now_iso = datetime.now(timezone.utc).isoformat()
 
-            # Step 1: 归一化为 content 字符串
-            if isinstance(result, ToolOutput):
-                _warnings = result.validate()
-                if _warnings:
-                    logger.warning(
-                        f"ToolOutput validation | tool={tool_name} | "
-                        f"issues={_warnings}",
-                    )
-                content = result.to_tool_content()
-                is_truncated = False
-
-                self._register_result_files(result, tool_name)
-            else:
-                content = result or ""
-                is_truncated = False
-                self._register_result_files(result, tool_name)
-
-            # Step 2: emit_payloads 已由 SandboxExecutor.execute 通过 IPC 独立字段拿到,
-            # _register_result_files 已聚合到 self._emit_payloads,此处无需再处理产物
-
-            # Step 3: 信封分流(按工具名自动选预算,大结果落盘 staging)
-            if not isinstance(result, ToolOutput):
-                from services.agent.tool_result_envelope import (
-                    wrap_for_erp_agent, PERSISTED_OUTPUT_TAG,
-                )
+            # Both projections and artifacts come from the same live envelope.
+            if isinstance(result, ToolResult):
+                warnings = result.validation_issues()
+                if warnings:
+                    logger.warning(f"ToolOutput validation | tool={tool_name} | issues={warnings}")
+            content = result.model_content("tool_loop") if isinstance(result, ToolResult) else result or ""
+            self._register_result_files(result, tool_name)
+            is_truncated = False
+            # Preserve the old AgentResult projection/budget; stage plain text only.
+            if not isinstance(result, ToolResult) or result.kind == "string":
+                from services.agent.tool_result_envelope import wrap_for_erp_agent, PERSISTED_OUTPUT_TAG
                 content = wrap_for_erp_agent(tool_name, content, tight=False)
-                # 检测实际截断/落盘（而非猜内容长度）
-                is_truncated = (
-                    PERSISTED_OUTPUT_TAG in content
-                    or "⚠ 输出过长" in content
-                ) if content else False
+                is_truncated = bool(content and (PERSISTED_OUTPUT_TAG in content or "⚠ 输出过长" in content))
+                if isinstance(result, ToolResult):
+                    result = result.with_model_content("tool_loop", content, truncated=is_truncated)
 
             # Step 4: 入 messages
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "timestamp": now_iso,
-                "content": content,
-            })
-            accumulated = content
+            if steer_hit:
+                messages.append({"role": "tool", "tool_call_id": tc["id"],
+                                 "content": "⚠ 用户发送了新消息，跳过此工具调用。"})
+            else:
+                messages.append({"role": "tool", "tool_call_id": tc["id"],
+                                 "timestamp": now_iso, "content": content})
+                accumulated = content
+            if isinstance(result, ToolResult):
+                image_blocks.extend(result.model_image_blocks)
 
             # 停止策略：记录本轮工具结果（供 run() 中 classify 使用）
             self._turn_tool_outcomes.append((tool_name, result, audit_status))
 
             # Hook 链：单工具执行后（审计 + 失败反思等）
             for hook in self.hooks:
+                if steer_hit and not isinstance(hook, ToolAuditHook):
+                    continue
                 await hook.on_tool_end(
                     hook_ctx, tool_name, args, result,
                     audit_status, elapsed_ms,
@@ -768,22 +759,22 @@ class ToolLoopExecutor:
                         f"ToolLoop steer | task={hook_ctx.task_id} | "
                         f"msg={_steer[:50]}"
                     )
-                    # 跳过剩余工具结果，注入用户消息
-                    for r_tc_tuple in results[idx + 1:]:
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": r_tc_tuple[0]["id"],
-                            "content": "⚠ 用户发送了新消息，跳过此工具调用。",
-                        })
-                    messages.append({"role": "user", "content": _steer})
+                    # Business calls have already completed. Continue collecting
+                    # their artifacts/audits even when model feedback is skipped.
+                    steer_message = _steer
                     steer_hit = True
-                    break
 
             # 自动扩展：模型调了隐藏工具 → 从全量列表动态注入
-            if self.strategy.enable_tool_expansion:
+            if self.strategy.enable_tool_expansion and not steer_hit:
                 selected_tools[:] = self.executor.tool_runtime.advertised(
                     (t["function"]["name"] for t in selected_tools),
                     discovered_names=(tool_name,),
                 )
 
+        if image_blocks:
+            messages.append({"role": "user", "content": [
+                {"type": "text", "text": "[系统：以下是工具返回的图片]"}, *image_blocks,
+            ]})
+        if steer_message:
+            messages.append({"role": "user", "content": steer_message})
         return accumulated

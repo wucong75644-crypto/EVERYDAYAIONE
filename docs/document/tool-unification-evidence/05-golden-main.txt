@@ -1,0 +1,41 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.2, pytest-9.0.3, pluggy-1.6.0 -- /Users/wucong/EVERYDAYAIONE/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /private/tmp/tool05-golden.vqkovd/backend
+configfile: pytest.ini
+plugins: time-machine-2.14.1, cov-7.1.0, asyncio-1.3.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 72 items / 54 deselected / 18 selected
+
+backend/tests/test_tool_result_consumption.py::test_live_chat_protocol_matches_main[legacy-string] PASSED [  5%]
+backend/tests/test_tool_result_consumption.py::test_live_chat_protocol_matches_main[legacy-file] PASSED [ 11%]
+backend/tests/test_tool_result_consumption.py::test_live_chat_protocol_matches_main[legacy-image] PASSED [ 16%]
+backend/tests/test_tool_result_consumption.py::test_live_chat_protocol_matches_main[legacy-sandbox] PASSED [ 22%]
+backend/tests/test_tool_result_consumption.py::test_live_chat_protocol_matches_main[legacy-erp] PASSED [ 27%]
+backend/tests/test_tool_result_consumption.py::test_live_chat_protocol_matches_main[legacy-media_image] PASSED [ 33%]
+backend/tests/test_tool_result_consumption.py::test_live_chat_protocol_matches_main[legacy-media_video] PASSED [ 38%]
+backend/tests/test_tool_result_consumption.py::test_live_chat_protocol_matches_main[legacy-media_failure] PASSED [ 44%]
+backend/tests/test_tool_result_consumption.py::test_live_chat_protocol_matches_main[legacy-form] PASSED [ 50%]
+backend/tests/test_tool_result_consumption.py::test_live_chat_protocol_matches_main[actor-string] PASSED [ 55%]
+backend/tests/test_tool_result_consumption.py::test_live_chat_protocol_matches_main[actor-file] PASSED [ 61%]
+backend/tests/test_tool_result_consumption.py::test_live_chat_protocol_matches_main[actor-image] PASSED [ 66%]
+backend/tests/test_tool_result_consumption.py::test_live_chat_protocol_matches_main[actor-sandbox] PASSED [ 72%]
+backend/tests/test_tool_result_consumption.py::test_live_chat_protocol_matches_main[actor-erp] PASSED [ 77%]
+backend/tests/test_tool_result_consumption.py::test_live_chat_protocol_matches_main[actor-media_image] PASSED [ 83%]
+backend/tests/test_tool_result_consumption.py::test_live_chat_protocol_matches_main[actor-media_video] PASSED [ 88%]
+backend/tests/test_tool_result_consumption.py::test_live_chat_protocol_matches_main[actor-media_failure] PASSED [ 94%]
+backend/tests/test_tool_result_consumption.py::test_live_chat_protocol_matches_main[actor-form] PASSED [100%]
+
+=============================== warnings summary ===============================
+../../../Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434
+  /Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+backend/services/adapters/kie/models.py:126
+  /private/tmp/tool05-golden.vqkovd/backend/services/adapters/kie/models.py:126: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class JsonSchema(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================ 18 passed, 54 deselected, 2 warnings in 0.82s =================
+Original golden fixtures: /private/tmp/tool05-golden.vqkovd/backend/tests/fixtures/tool_result_05

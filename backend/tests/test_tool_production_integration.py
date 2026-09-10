@@ -417,7 +417,7 @@ async def test_invocation_gate_and_legacy_completion(setup, monkeypatch, outcome
         assert store.completed[0]["status"] == "succeeded"
         assert store.completed[0]["result"]["kind"] == "agent_result"
         assert store.completed[0]["result"]["status"] == "error"
-        assert output[0] is raw
+        assert output[0].raw is raw
     else: assert store.completed == []
 
 
@@ -443,7 +443,7 @@ async def test_replay_current_permissions_without_business_or_confirmation(setup
     harness = actor_harness(store)
     executor = MockHandlerExecutor(agent_domain="general", task_id="task1")
     output = await invoke("chat", executor, [tc("generate_image", args)], monkeypatch, harness)
-    assert output == ["原回放"] and store.trace == ["lookup"]
+    assert [r.model_content("chat") for r in output] == ["原回放"] and store.trace == ["lookup"]
     executor.db.active = False
     await invoke("chat", executor, [tc("generate_image", args, "revoked")], monkeypatch, harness)
     assert store.trace == ["lookup"]
@@ -581,7 +581,7 @@ async def test_restored_file_id_uses_manifest_and_preserves_legacy_replay(setup,
     executor = MockHandlerExecutor(agent_domain="general", task_id="task1", resource_manifest=manifest)
     executor.tool_confirmer = AsyncMock(side_effect=AssertionError("replay must not ask again"))
     output = await invoke("chat", executor, [tc("file_delete", {"file_ids": [compute_fid("o1", "restored.txt")]})], monkeypatch, harness)
-    assert output == ["已删除"] and store.trace == ["lookup"]
+    assert [r.model_content("chat") for r in output] == ["已删除"] and store.trace == ["lookup"]
     assert not (root / "org").exists()
     executor.handler.assert_not_awaited()
     executor.tool_confirmer.assert_not_awaited()
@@ -640,8 +640,8 @@ async def test_replay_foreign_artifact_denied_without_business(setup, monkeypatc
     harness = actor_harness(store)
     executor = MockHandlerExecutor(agent_domain="general", task_id="task1")
     output = await invoke("chat", executor, [tc("generate_image", args)], monkeypatch, harness)
-    assert "replay_resource_scope_mismatch" in output[0]
-    assert "hidden" not in output[0]
+    assert "replay_resource_scope_mismatch" in output[0].model_content("chat")
+    assert "hidden" not in output[0].model_content("chat")
     executor.handler.assert_not_awaited()
     assert store.trace == ["lookup"] and store.completed == []
 

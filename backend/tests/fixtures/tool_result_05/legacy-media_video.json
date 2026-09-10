@@ -1,0 +1,153 @@
+{
+  "ws": [
+    [
+      "task1",
+      "u1",
+      null,
+      {
+        "type": "message_start",
+        "payload": {
+          "model": "model1"
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "task1",
+        "conversation_id": "c1",
+        "message_id": "m1"
+      }
+    ],
+    [
+      "task1",
+      "u1",
+      null,
+      {
+        "type": "content_block_add",
+        "payload": {
+          "block": {
+            "type": "tool_step",
+            "tool_call_id": "call",
+            "tool_name": "generate_video",
+            "status": "running"
+          }
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "task1",
+        "conversation_id": "c1",
+        "message_id": "m1"
+      }
+    ],
+    [
+      "task1",
+      "u1",
+      null,
+      {
+        "type": "tool_result",
+        "payload": {
+          "tool_name": "generate_video",
+          "tool_call_id": "call",
+          "success": true,
+          "summary": "视频完成",
+          "turn": 1
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "task1",
+        "conversation_id": "c1",
+        "message_id": "m1"
+      }
+    ],
+    [
+      "task1",
+      "u1",
+      null,
+      {
+        "type": "content_block_add",
+        "payload": {
+          "block": {
+            "type": "tool_step",
+            "tool_call_id": "call",
+            "tool_name": "generate_video",
+            "status": "completed",
+            "output": "视频完成",
+            "elapsed_ms": "<NONNEGATIVE_ELAPSED_MS>"
+          }
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "task1",
+        "conversation_id": "c1",
+        "message_id": "m1"
+      }
+    ],
+    [
+      "task1",
+      "u1",
+      null,
+      {
+        "type": "content_block_add",
+        "payload": {
+          "block": {
+            "type": "file",
+            "url": "https://example.test/sample.mp4",
+            "name": "sample.mp4",
+            "mime_type": "video/mp4",
+            "size": 12,
+            "workspace_path": "videos/sample.mp4"
+          }
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "task1",
+        "conversation_id": "c1",
+        "message_id": "m1"
+      }
+    ],
+    [
+      "task1",
+      "u1",
+      null,
+      {
+        "type": "stream_end",
+        "payload": {},
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "task1",
+        "conversation_id": "c1",
+        "message_id": "m1"
+      }
+    ]
+  ],
+  "events": [],
+  "checkpoint": {
+    "messages": [
+      {
+        "role": "tool",
+        "tool_call_id": "call",
+        "content": [
+          {
+            "type": "text",
+            "text": "视频完成"
+          }
+        ]
+      }
+    ],
+    "content_blocks": [
+      {
+        "type": "tool_step",
+        "tool_call_id": "call",
+        "tool_name": "generate_video",
+        "status": "completed",
+        "elapsed_ms": "<NONNEGATIVE_ELAPSED_MS>",
+        "output": "视频完成"
+      },
+      {
+        "type": "file",
+        "url": "https://example.test/sample.mp4",
+        "name": "sample.mp4",
+        "mime_type": "video/mp4",
+        "size": 12,
+        "workspace_path": "videos/sample.mp4"
+      }
+    ],
+    "turn_index": 0,
+    "tool_call_ids": [
+      "call"
+    ],
+    "next_model_round": 1
+  }
+}

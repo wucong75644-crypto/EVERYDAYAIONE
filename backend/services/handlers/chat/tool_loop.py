@@ -167,13 +167,16 @@ def apply_tool_results(
 ) -> list[str]:
     """把工具结果写回模型消息和 tool_step，返回待注入的图片 URL。"""
     image_urls: list[str] = []
+    from services.tools.result import ToolResult
     for call, result, is_error, display_text in tool_results:
         tool_context.update_from_result(
             call["name"],
             display_text,
             is_error,
         )
-        if (
+        if isinstance(result, ToolResult):
+            image_urls.extend(block["image_url"]["url"] for block in result.model_image_blocks)
+        elif (
             isinstance(result, FileReadResult)
             and result.type == "image"
             and result.image_url

@@ -1,5 +1,20 @@
 # 工具统一：共同约束与板块交接
 
+## 当前状态：板块 05
+
+2026-09-10：05 已在独立任务工作树实现，**技术验收通过，待用户指令提交部署及用户验收**。本轮没有新候选 SHA、推送、部署、合并或清理，不启动 06。
+
+- 用户明确确认 01–04 已验收进入 main；本任务受控 start 基准为最新 origin/main `6c0737ab78f2d0cb3b2a8376498e7825b0829431`。其与 04 最终 `1f288018` 的 tree 都为 `5196ad3351ebaefa8e78a5c0215211018a2174db`，前置已核验。
+- 分支 `codex/task/20260910221341-tool-unification-05`；工作树 `/Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-05`。被测版本是当前 HEAD 加未提交差异，具体指纹见 [05 源检查](tool-unification-evidence/05-source-checks.json)。
+- [05 逐项验收记录](TOOL_UNIFICATION_ACCEPTANCE_05.md) 包含 A-05/G 矩阵、模型/前端/审计/持久化四边界、失败复验、真实环境限制及用户验证单。
+- 最终 1184 passed、0 failed/error/xfail、2 项既有 Linux 文泉驿字体环境测试 skipped（同 main 复现，未计为通过）；A-05 必需项均无跳过。新增 72 项真实消费集成，包含 18 份未修改 main 生成的 WS/delivery/checkpoint 全字段对照。
+- 实时 Chat 与 ToolLoop 已直接消费 ToolResult；ledger/checkpoint 继续旧兼容投影，旧 reader 未改。不把旧载荷中原来就缺失的 tokens/thinking/metadata 或 FileRead/Form 字符串恢复声称为无损；新版回放由 06 负责。
+
+以下 01–04 段落是对应板块关闭前的历史记录；其中“当前”“待部署”“不能启动 05”不覆盖以上最新 main 核验和本次状态。05 实际接口及 06 前置见本文末尾。
+
+## 板块 04 历史交接（关闭前快照）
+
+
 最新状态：资源范围衔接根因修复已完成，2960 passed、2 项既有真实模型 opt-in 测试未验证，源码入口/兼容检查通过。**技术验收通过，待提交部署及用户验收**；本轮没有新候选 SHA，也未部署。最后已部署版本为 bb4449a0；下方历史发布状态不代表本轮状态。
 
 更新日期：2026-09-10。当前板块 04：用户在 bb4449a0 发现工作区搜索到分析的 scope 衔接失败后，本任务完成 [诊断](FILE_WORKSPACE_SCOPE_DIAGNOSIS_20260910.md)、[设计及实际接口](TECH_工作区资源选择与授权衔接.md) 和 [逐项复验](TOOL_UNIFICATION_ACCEPTANCE_04.md)。真实模型/生产用户复验未完成；分支和工作树保留，不进入 05。
@@ -225,3 +240,24 @@ Web 的 run_legacy_chat_stream 与 Actor 的 ChatGenerationExecutor.execute 共�
 ## 下一板块前置（05）
 
 04 本轮代码与必需 NAS 发布实测已通过；用户已明确“提交部署”，受控发布仍需确定候选 SHA → 在获准资源完成只读、plan 拒写、危险拒绝/批准及定时范围验证 → 用户明确“清理工作树” → 受控关闭确认 main 包含相同代码树。没有真实写入授权时仅验证无副作用步骤，批准执行项保留未验证。**用户验收关闭后才允许开始 05；本任务不继续结果展示或 replay 格式改造。**
+
+
+## 板块 05 实际增量与后续前置
+
+| 文件/实际接口 | 责任与边界 |
+|---|---|
+| `tools/result.py` | `model_content(chat/tool_loop)` 分别调用两种原 AgentResult 投影；FileRead.text/图片 blocks、form.llm_hint/terminal_form、display/agent_context/metadata 保留。`with_model_content` 仅覆盖指定模型投影及分流标志；`collect_payloads` 复用原 emit 转换并按 Chat ERP/定时策略收集；`audit_fields` 保留原状态并读取实际 cached；`legacy_persistence_value` 为明确旧 writer 边界 |
+| `handlers/chat_tool_mixin.py` / `chat_tool_result_mixin.py` | runtime 返回信封不再 to_legacy；统一提取状态/展示/审计，产物和原 token 累加来自 ToolResult。旧 raw 分类 helper 保持兼容。审计先于展示；展示异常不触发第二次业务或审计 |
+| `handlers/chat_generate_mixin.py` / `chat/tool_loop.py` | model_content(chat) 回填；FileRead 图片通过原 append_tool_images 注入，旧类型入口仍受支持 |
+| `agent/tool_loop_helpers.py` / `tool_loop_executor.py` | 生产采用 `invoke_tool_result_with_cache`；原 `invoke_tool_with_cache` API 保留旧返回。统一结果贯穿模型、artifact、hook 和停止分类；原 AgentResult.validate、to_tool_content、普通文本 staging 预算保留。steer 仍按原模型协议反馈跳过，但收齐已完成结果的产物和审计 |
+| `agent/loop_hooks.py` / `stop_policy.py` | 原审计 writer 从 ToolResult 取真实状态/长度/cache/分流；其他 hook 提取原 display 文本。统一状态优先于旧 audit_status，保留业务 retryable=False；uncertain/cancelled 不走普通重试 |
+| `tools/execution.py` / `chat/tool_lifecycle.py` | 取消仍抛出；取消异常上的内存执行状态仅供 wait_for 超时分类。`UncertainToolInvocationError` 标识原 running/in_progress/uncertain 副作用状态。lifecycle.complete 显式投影旧持久化值，无新 invocation 格式/资格/RPC |
+| `chat/execution_engine.py` / `tool_invocation_store.py` | Chat 收到 uncertain 结束后续工具轮次并说明需核验；原表单终止保留。checkpoint 消费原模型消息/blocks；serializer/checkpoint 误收 ToolResult 时明确抛错，禁止 default=str 掩盖错误 |
+
+模型和前端均不认识新的持久化信封。原 AgentResult/ToolOutput、schemas、emit payload builder、WebSocket/Actor sink、ToolRuntime/Registry/Policy、沙盒/ERP/媒体业务代码保持原样；原 `generate_video` Handler 同步等待结果并返回 summary URL，本块未扩展视频 block 或异步协议。完整边界对应与精确命令见 [05 验收记录](TOOL_UNIFICATION_ACCEPTANCE_05.md)。
+
+旧 ledger 继续写 agent_result/scalar/json；保存内容与原 writer 相同，旧 reader AST 完全相同。原 AgentResult ledger 仍只恢复文本摘要、原业务状态/错误、emit；旧 FileRead/Form ledger 仍只有旧对象字符串。05 实时不丢字段，不能据此宣称旧 replay 也已无损。code_execute 缓存资格、restore_file 的资格/回放、Actor lease、可靠审计基础设施未扩展。
+
+回退到 `6c0737ab` 无需载荷迁移；实际落盘/恢复对照及 writer/reader AST 证明旧读兼容。真实浏览器文件点击、表单提交、获准媒体样本/生产 ERP 及用户观感未完成，按验收单记录确定部署版本。
+
+06 的代码前置：实时结果已统一且所有落盘边界明确；可据此独立设计新版本 replay/cache/audit 载荷、旧格式读取及跨版本回退。流程前置：用户“提交部署”确定候选 → 用户按 05 验证单验收 → 用户“清理工作树” → 受控关闭核验 main。完成之前不得启动 06。
