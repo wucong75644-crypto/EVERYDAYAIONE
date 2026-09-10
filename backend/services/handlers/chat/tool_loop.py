@@ -29,26 +29,21 @@ def prepare_tool_turn(
     messages: list[dict[str, Any]],
     tool_context: Any,
     permission: Any,
+    execution_context: Any = None,
 ) -> list[dict[str, Any]]:
     """构建本轮工具列表并追加动态上下文、退出附件与权限提醒。"""
-    current_tools = list(core_tools)
-    if discovered_names:
-        from config.chat_tools import get_tools_by_names
-        from config.tool_domains import filter_tools_for_domain
-
-        discovered = get_tools_by_names(discovered_names, org_id=org_id)
-        discovered = filter_tools_for_domain(discovered, "general")
-        core_names = {tool["function"]["name"] for tool in core_tools}
-        current_tools.extend(
-            tool
-            for tool in discovered
-            if tool["function"]["name"] not in core_names
-        )
-        logger.info(
-            f"Dynamic tools injected | turn={turn + 1} | "
-            f"discovered={sorted(discovered_names)} | "
-            f"total={len(current_tools)}"
-        )
+    from dataclasses import replace
+    from services.tools import ToolPolicy, LegacyAdvertisement, build_legacy_catalog
+    if execution_context is None:
+        from services.tools.runtime_context import catalog_context
+        execution_context = catalog_context(org_id, permission.mode.value)
+    context = replace(execution_context, permission_mode=permission.mode.value)
+    registry = build_legacy_catalog()
+    current_tools = registry.resolve(
+        context, policy=ToolPolicy(registry),
+        advertisement=LegacyAdvertisement(t["function"]["name"] for t in core_tools),
+        discovered_names=discovered_names,
+    ).advertised_schemas()
 
     if turn > 0:
         from services.handlers.context_compressor import (

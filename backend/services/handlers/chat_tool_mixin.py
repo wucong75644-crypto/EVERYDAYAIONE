@@ -64,6 +64,8 @@ class ChatToolMixin(ChatToolResultMixin):
         messages: Optional[List[Dict[str, Any]]] = None,
         budget=None,
         cancellation_event: asyncio.Event | None = None,
+        permission_mode: str = "auto",
+        agent_domain: str = "general",
     ) -> List[tuple]:
         """执行工具调用：安全检查 → 并行/串行分批 → 返回结果
 
@@ -74,7 +76,7 @@ class ChatToolMixin(ChatToolResultMixin):
         Returns:
             List of (tool_call_dict, result, is_error, display_text)
         """
-        from config.chat_tools import is_concurrency_safe
+        from services.tools import ToolCall
         from services.tool_executor import ToolExecutor
 
         # request_ctx 由入口（HTTP/WS/企微）注入到 handler，全链路不可变
@@ -88,15 +90,41 @@ class ChatToolMixin(ChatToolResultMixin):
             )
             logger.warning("request_ctx fallback in _execute_tool_calls — entry point should inject it")
 
-        executor = ToolExecutor(
+        scope = getattr(self, "execution_scope", None)
+        executor_kwargs = dict(
             db=self.db, user_id=user_id,
             conversation_id=conversation_id, org_id=self.org_id,
             request_ctx=_request_ctx,
             workspace_user_id=getattr(self, "_workspace_user_id", user_id),
             resource_manifest=getattr(self, "_resource_manifest", None),
+            resource_manifest_loader=getattr(self, "_tool_resource_manifest_loader", None),
+            resource_access_boundary=getattr(self, "_resource_access_boundary", None),
             execution_budget=budget,
             cancellation_event=cancellation_event,
+            permission_mode=permission_mode, agent_domain=agent_domain, task_id=task_id,
+            context_scope=getattr(scope, "context_scope", "user"),
+            personal_context_allowed=getattr(self, "_personal_context_allowed", True),
+            execution_scope=scope, channel_scope_id=getattr(scope, "channel_scope_id", None),
+            tool_entrypoint="model",
+            tool_confirmer=lambda call, ctx, decision: ChatToolMixin._confirm_tool_call(
+                self, call, ctx, decision, message_id,
+            ),
         )
+        executor_scope = (task_id, conversation_id, user_id, self.org_id)
+        executor = getattr(self, "_tool_executor", None)
+        if getattr(self, "_tool_executor_scope", None) != executor_scope or executor is None:
+            executor = ToolExecutor(**executor_kwargs)
+            self._tool_executor, self._tool_executor_scope = executor, executor_scope
+        else:
+            # Same request service across model rounds; refresh only trusted
+            # round facts, retaining consumed IDs and scoped confirmations.
+            for key, value in executor_kwargs.items():
+                setattr(executor, key, value)
+        executor.tool_runtime.context()  # clear any previous execution identity before restore
+        if getattr(self, "_tool_selection_history_task_id", None) == task_id:
+            executor.tool_runtime.resource_selections.restore(
+                executor, getattr(self, "_tool_selection_history", ()),
+            )
         # 每轮上下文
         executor._task_id = task_id
         executor._message_id = message_id
@@ -105,8 +133,18 @@ class ChatToolMixin(ChatToolResultMixin):
         executor._current_message_images = self._extract_user_image_urls(messages)
         results: List[tuple] = []
 
-        # 按并发安全性分批
-        batches = _partition_tool_calls(tool_calls)
+        # Policy determines real batch barriers; malformed calls remain serial.
+        by_id = {tc["id"]: tc for tc in tool_calls}
+        normalized = []
+        for tc in tool_calls:
+            try:
+                args = json.loads(tc["arguments"]) if tc.get("arguments") else {}
+                normalized.append(ToolCall(tc["id"], tc["name"], args))
+            except (TypeError, ValueError):
+                normalized.append(ToolCall(tc["id"], tc["name"], {}))
+        batches = [(len(batch) > 1 or batch[0].decision.parallelizable,
+                    [by_id[item.call.call_id] for item in batch])
+                   for batch in executor.tool_runtime.batches(normalized)]
 
         for is_safe, batch in batches:
             if is_safe:
@@ -118,7 +156,8 @@ class ChatToolMixin(ChatToolResultMixin):
                     )
                     for tc in batch
                 ]
-                batch_results = await asyncio.gather(*tasks)
+                from services.tools.runtime import run_parallel
+                batch_results = await run_parallel(tasks)
                 results.extend(batch_results)
             else:
                 # 写操作：逐个执行（含安全检查）
@@ -170,133 +209,38 @@ class ChatToolMixin(ChatToolResultMixin):
     ) -> tuple:
         """校验单个工具调用，执行后委托结果分类器处理。"""
         import time
+        from dataclasses import replace
 
-        prepared = await ChatToolMixin._prepare_tool_arguments(
-            self, tc, task_id, conversation_id, message_id, user_id,
-        )
-        if isinstance(prepared, tuple):
-            return prepared
-        args = _resolve_file_ids(
-            prepared, conversation_id, tc["name"],
-        )
+        from services.handlers.chat.tool_lifecycle import ActorToolLifecycle
         started_at = time.monotonic()
-
-        # 只读工具允许按普通错误策略重试；只有可能产生外部副作用的工具
-        # 进入 invocation ledger，恢复时才需要 invocation ID/参数 hash/uncertain
-        # 保护，避免把一次查询故障误判成未知写入。
-        from config.chat_tools import SafetyLevel, get_safety_level
-        invocation_store = getattr(self, "_actor_invocation_store", None)
-        if get_safety_level(tc["name"]) == SafetyLevel.SAFE:
-            invocation_store = None
-        invocation = await ChatToolMixin._begin_actor_tool_invocation(
-            self,
-            store=invocation_store,
-            task_id=task_id,
-            conversation_id=conversation_id,
-            tool_call_id=tc["id"],
-            tool_name=tc["name"],
-            args=args,
+        args = {}
+        result_ctx = ToolResultContext(
+            task_id=task_id, conversation_id=conversation_id, message_id=message_id,
+            user_id=user_id, tool_name=tc["name"], tool_call_id=tc["id"],
+            turn=turn, args=args, elapsed_ms=0,
         )
-        if invocation:
-            outcome = invocation.get("outcome")
-            if outcome == "replay":
-                from services.tool_invocation_store import deserialize_tool_result
-                result = deserialize_tool_result(invocation.get("result"))
-                return await ChatToolResultMixin._process_tool_result(
-                    self,
-                    tc,
-                    result,
-                    ToolResultContext(
-                        task_id=task_id,
-                        conversation_id=conversation_id,
-                        message_id=message_id,
-                        user_id=user_id,
-                        tool_name=tc["name"],
-                        tool_call_id=tc["id"],
-                        turn=turn,
-                        args=args,
-                        elapsed_ms=0,
-                    ),
-                )
-            if outcome in {"in_progress", "uncertain"}:
-                text = (
-                    "⚠ 该工具调用的外部副作用状态未知，已停止自动重试。"
-                    "请先核对业务系统结果，再决定是否重新发起操作。"
-                    if outcome == "uncertain" else
-                    "⚠ 该工具调用正在由另一执行者处理，已跳过重复执行。"
-                )
-                return tc, text, True, text
-            if outcome != "execute":
-                text = "⚠ 工具调用未获得当前执行权，未执行外部操作。"
-                return tc, text, True, text
         try:
-            result = await executor.execute(tc["name"], args)
-            await ChatToolMixin._complete_actor_tool_invocation(
-                self,
-                store=invocation_store,
-                task_id=task_id,
-                turn_id=getattr(self, "_actor_turn_id", None),
-                tool_call_id=tc["id"],
-                status="succeeded",
-                result=result,
-            )
-            elapsed_ms = int(
-                (time.monotonic() - started_at) * 1000
-            )
-            return await ChatToolResultMixin._process_tool_result(
-                self, tc,
-                result,
-                ToolResultContext(
-                    task_id=task_id,
-                    conversation_id=conversation_id,
-                    message_id=message_id,
-                    user_id=user_id,
-                    tool_name=tc["name"],
-                    tool_call_id=tc["id"],
-                    turn=turn,
-                    args=args,
-                    elapsed_ms=elapsed_ms,
-                ),
-            )
-        except Exception as error:
             try:
-                await ChatToolMixin._complete_actor_tool_invocation(
-                    self,
-                    store=invocation_store,
-                    task_id=task_id,
-                    turn_id=getattr(self, "_actor_turn_id", None),
-                    tool_call_id=tc["id"],
-                    status="uncertain",
-                    result={
-                        "kind": "error",
-                        "summary": str(error)[:2000],
-                    },
-                    error_message=str(error),
-                )
-            except Exception as invocation_error:
-                logger.warning(
-                    "actor_tool_invocation_uncertain_write_failed | "
-                    f"tool_call_id={tc['id']} | "
-                    f"error={type(invocation_error).__name__}"
-                )
-            elapsed_ms = int(
-                (time.monotonic() - started_at) * 1000
+                args = json.loads(tc["arguments"]) if tc.get("arguments") else {}
+            except (ValueError, TypeError) as exc:
+                raise ValueError("参数解析失败") from exc
+            if not isinstance(args, dict):
+                raise ValueError("工具参数必须是 JSON 对象")
+            result_ctx = replace(result_ctx, args=args)
+            runtime = executor.tool_runtime
+            envelope = await runtime.execute(
+                tc["name"], args, call_id=tc["id"],
+                lifecycle=ActorToolLifecycle(self, runtime.context(tc["id"])),
             )
-            return await ChatToolResultMixin._process_tool_exception(
-                self, tc,
-                error,
-                ToolResultContext(
-                    task_id=task_id,
-                    conversation_id=conversation_id,
-                    message_id=message_id,
-                    user_id=user_id,
-                    tool_name=tc["name"],
-                    tool_call_id=tc["id"],
-                    turn=turn,
-                    args=args,
-                    elapsed_ms=elapsed_ms,
-                ),
-            )
+            result = envelope.to_legacy()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            result_ctx = replace(result_ctx, elapsed_ms=int((time.monotonic() - started_at) * 1000))
+            return await ChatToolResultMixin._process_tool_exception(self, tc, error, result_ctx)
+        result_ctx = replace(result_ctx, elapsed_ms=int((time.monotonic() - started_at) * 1000))
+        # Delivery errors are outside the business/ledger completion boundary.
+        return await ChatToolResultMixin._process_tool_result(self, tc, result, result_ctx)
 
     async def _begin_actor_tool_invocation(
         self,
@@ -366,60 +310,56 @@ class ChatToolMixin(ChatToolResultMixin):
             error_message=error_message,
         )
 
-    async def _prepare_tool_arguments(
-        self,
-        tc: Dict[str, Any],
-        task_id: str,
-        conversation_id: str,
-        message_id: str,
-        user_id: str,
-    ) -> Dict[str, Any] | tuple:
-        from config.chat_tools import SafetyLevel, get_safety_level
-
-        safety = get_safety_level(tc["name"])
+    async def _confirm_tool_call(self, call, context, decision, message_id):
+        from dataclasses import asdict
+        from services.tools.policy import _digest
+        from services.tools.spec import thaw
+        # Existing WS fields are retained. The opaque confirmation identifier
+        # binds durable approval to the complete server-side call fingerprint.
+        confirmation_id = "tool-approval:" + _digest(asdict(decision.confirmation_binding))
+        self._tool_actor_user_id = context.actor_user_id
+        store = getattr(self, "_actor_command_store", None)
+        token = getattr(self, "_actor_execution_token", None)
+        if getattr(self, "_actor_enabled", False) is True and store is not None and token:
+            commands = await store.load_pending(task_id=context.task_id, execution_token=token)
+            for command in commands:
+                payload = command.payload or {}
+                if (command.command_type.value == "approval_result"
+                        and payload.get("tool_call_id") == confirmation_id
+                        and payload.get("user_id") == context.actor_user_id):
+                    return payload.get("approved") is True
+        waiter = asyncio.create_task(ChatToolMixin._wait_for_tool_confirmation(
+            self, tool_call_id=confirmation_id, task_id=context.task_id,
+            conversation_id=context.conversation_id,
+            timeout=min(60.0, context.budget.remaining) if context.budget else 60.0,
+        ))
         try:
-            args = (
-                json.loads(tc["arguments"])
-                if tc["arguments"] else {}
+            # Install the local listener before publishing the existing dialog.
+            await asyncio.sleep(0)
+            description = f"AI 要执行写操作: {call.name}"
+            if call.name == "file_delete":
+                from core.config import get_settings
+                from services.file_executor import FileExecutor
+                files = FileExecutor(get_settings().file_workspace_root, context.workspace_owner_id,
+                                     context.org_id, create_root=False)
+                from pathlib import Path
+                paths = [str(files.resolve_safe_path(path).relative_to(Path(files.workspace_root)))
+                         for path in call.arguments.get("files", ())]
+                description = f"删除 {len(paths)} 个文件：\n" + "\n".join(paths)
+            await ws_manager.send_to_task_or_user(
+                context.task_id, context.actor_user_id,
+                build_tool_confirm_request(
+                    task_id=context.task_id, conversation_id=context.conversation_id,
+                    message_id=message_id, tool_call_id=confirmation_id, tool_name=call.name,
+                    arguments=thaw(call.arguments), description=description,
+                    safety_level="dangerous",
+                ),
             )
-        except json.JSONDecodeError:
-            error = f"参数解析失败: {tc['arguments'][:100]}"
-            return tc, error, True, error
-        if safety != SafetyLevel.DANGEROUS:
-            if safety == SafetyLevel.CONFIRM:
-                logger.info(
-                    f"Tool confirm notify | tool={tc['name']} "
-                    f"| task={task_id}"
-                )
-            return args
-        await ws_manager.send_to_task_or_user(
-            task_id,
-            user_id,
-            build_tool_confirm_request(
-                task_id=task_id,
-                conversation_id=conversation_id,
-                message_id=message_id,
-                tool_call_id=tc["id"],
-                tool_name=tc["name"],
-                arguments=args,
-                description=f"AI 要执行写操作: {tc['name']}",
-                safety_level=safety.value,
-            ),
-        )
-        approved = await ChatToolMixin._wait_for_tool_confirmation(
-            self,
-            tool_call_id=tc["id"],
-            task_id=task_id,
-            conversation_id=conversation_id,
-            timeout=60.0,
-        )
-        if approved:
-            return args
-        rejected = (
-            f"⚠ 用户拒绝或超时未确认写操作 {tc['name']}。"
-            "请告知用户操作未执行，询问是否需要重新确认。"
-        )
-        return tc, rejected, True, rejected
+            return await waiter
+        finally:
+            if not waiter.done():
+                waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
 
     async def _wait_for_tool_confirmation(
         self,
@@ -463,20 +403,18 @@ class ChatToolMixin(ChatToolResultMixin):
                 runtime=runtime,
             )
         )
-        done, pending = await asyncio.wait(
-            (local_wait, durable_wait),
-            timeout=timeout,
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for task in pending:
-            task.cancel()
-        if not done:
-            return False
-        result = next(iter(done))
+        waits = (local_wait, durable_wait)
         try:
-            return bool(result.result())
+            done, _ = await asyncio.wait(waits, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+            if not done:
+                return False
+            # Any confirmation failure is closed, including simultaneous results.
+            return all(task.result() is True for task in done)
         finally:
-            await asyncio.gather(*pending, return_exceptions=True)
+            for task in waits:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*waits, return_exceptions=True)
 
     async def _poll_durable_tool_confirmation(
         self,
@@ -493,7 +431,7 @@ class ChatToolMixin(ChatToolResultMixin):
         cancellation_event = getattr(self, "_actor_cancellation_event", None)
         while loop.time() < deadline:
             if cancellation_event is not None and cancellation_event.is_set():
-                return False
+                raise asyncio.CancelledError()
             commands = await store.load_pending(
                 task_id=task_id,
                 execution_token=token,
@@ -504,7 +442,9 @@ class ChatToolMixin(ChatToolResultMixin):
                 payload = command.payload or {}
                 if payload.get("tool_call_id") != tool_call_id:
                     continue
-                approved = bool(payload.get("approved"))
+                if payload.get("user_id") != getattr(self, "_tool_actor_user_id", None):
+                    continue
+                approved = payload.get("approved") is True
                 if runtime is not None:
                     runtime.push(command)
                 elif command.event_id:
@@ -575,7 +515,7 @@ class ChatToolMixin(ChatToolResultMixin):
     @staticmethod
     def _extract_user_image_urls(messages: list) -> list[str]:
         """从 LLM messages 中提取最后一条 user 消息的图片 URLs。"""
-        for msg in reversed(messages):
+        for msg in reversed(messages or []):
             if msg.get("role") != "user":
                 continue
             content = msg.get("content")

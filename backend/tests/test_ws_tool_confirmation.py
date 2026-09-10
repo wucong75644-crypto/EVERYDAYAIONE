@@ -119,7 +119,7 @@ async def test_durable_approval_returns_to_runtime_inbox_before_safe_point():
         command_type=CommandType.APPROVAL_RESULT,
         conversation_id="conversation-1",
         task_id="task-1",
-        payload={"tool_call_id": "tool-1", "approved": True},
+        payload={"tool_call_id": "tool-1", "approved": True, "user_id": "user-1"},
     )
     store = MagicMock()
     store.load_pending = AsyncMock(return_value=[command])
@@ -127,6 +127,7 @@ async def test_durable_approval_returns_to_runtime_inbox_before_safe_point():
     runtime = MagicMock()
     mixin = MagicMock()
     mixin._actor_cancellation_event = asyncio.Event()
+    mixin._tool_actor_user_id = "user-1"
 
     approved = await ChatToolMixin._poll_durable_tool_confirmation(
         mixin,

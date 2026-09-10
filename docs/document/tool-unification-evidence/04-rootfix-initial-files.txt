@@ -1,0 +1,654 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.2, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-04/backend
+configfile: pytest.ini
+plugins: cov-7.1.0, asyncio-1.3.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 1014 items
+
+backend/tests/test_file_tool_mixin.py ..................F...FFFFFF....   [  3%]
+backend/tests/test_file_id_protocol.py .........................         [  5%]
+backend/tests/test_file_id_e2e.py .........................              [  8%]
+backend/tests/test_file_tool_boundaries.py FFFFFFFFFFFFFF.FF............ [ 10%]
+........FF..                                                             [ 12%]
+backend/tests/test_file_analysis_service.py FFF.F.............           [ 13%]
+backend/tests/test_file_executor.py .................................... [ 17%]
+.................................................                        [ 22%]
+backend/tests/test_file_search.py ..............                         [ 23%]
+backend/tests/test_file_cache_identity.py .............FFFF....F         [ 25%]
+backend/tests/test_file_path_cache_analyzed.py .........                 [ 26%]
+backend/tests/test_file_tools.py ....F............                       [ 28%]
+backend/tests/test_file_upload.py ..................                     [ 30%]
+backend/tests/test_wecom_file_mixin.py ..........                        [ 31%]
+backend/tests/test_chat_task_manager.py .................FFFF........... [ 34%]
+................                                                         [ 35%]
+backend/tests/test_tool_policy.py ...................................... [ 39%]
+........................................................................ [ 46%]
+........................................................................ [ 53%]
+........................................................................ [ 60%]
+........................................................................ [ 68%]
+........................................................................ [ 75%]
+........................................................................ [ 82%]
+........................................................................ [ 89%]
+..........                                                               [ 90%]
+backend/tests/test_tool_registry.py ....................F............... [ 93%]
+.........................................................F....           [100%]
+
+=================================== FAILURES ===================================
+___________ TestFileSearchRouting.test_path_not_found_returns_error ____________
+backend/tests/test_file_tool_mixin.py:416: in test_path_not_found_returns_error
+    result = await mixin._file_search(executor, {"path": "nonexistent.xlsx"}, settings)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_tool_mixin.py:129: in _file_search
+    return await self._search_files(executor, {"keyword": path})
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_tool_mixin.py:249: in _search_files
+    data = await executor.file_search_entries(**{
+E   TypeError: 'MagicMock' object can't be awaited
+______ TestSearchFilesPathParsing.test_search_registers_path_with_spaces _______
+backend/tests/test_file_tool_mixin.py:479: in test_search_registers_path_with_spaces
+    result = await mixin._search_files(executor, {"keyword": "销售"})
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_tool_mixin.py:249: in _search_files
+    data = await executor.file_search_entries(**{
+E   TypeError: 'MagicMock' object can't be awaited
+_____ TestSearchFilesPathParsing.test_search_with_pattern_without_keyword ______
+backend/tests/test_file_tool_mixin.py:501: in test_search_with_pattern_without_keyword
+    result = await mixin._search_files(executor, {"file_pattern": "*.csv"})
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_tool_mixin.py:249: in _search_files
+    data = await executor.file_search_entries(**{
+E   TypeError: 'MagicMock' object can't be awaited
+____ TestDescribeSingleFileMultimodal.test_image_returns_multimodal_result _____
+backend/tests/test_file_tool_mixin.py:530: in test_image_returns_multimodal_result
+    result = await mixin._describe_single_file(executor, str(img_path))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_describe_mixin.py:36: in _describe_single_file
+    reference_line = self._file_reference_line(executor, Path(abs_path))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_describe_mixin.py:18: in _file_reference_line
+    resolver = FileTargetResolver(self, executor)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:168: in __init__
+    self.codec = FileReferenceCodec(org_id=getattr(owner, "org_id", None),
+backend/services/file_resources.py:132: in __init__
+    self.key = hmac.digest(get_settings().jwt_secret_key.encode(), b"workspace-resource-reference:v1", "sha256")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/hmac.py:231: in digest
+    return _hashopenssl.hmac_digest(key, msg, digest)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: a bytes-like object is required, not 'MagicMock'
+_____ TestDescribeSingleFileMultimodal.test_non_image_returns_agent_result _____
+backend/tests/test_file_tool_mixin.py:554: in test_non_image_returns_agent_result
+    result = await mixin._describe_single_file(executor, str(f))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_describe_mixin.py:36: in _describe_single_file
+    reference_line = self._file_reference_line(executor, Path(abs_path))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_describe_mixin.py:18: in _file_reference_line
+    resolver = FileTargetResolver(self, executor)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:168: in __init__
+    self.codec = FileReferenceCodec(org_id=getattr(owner, "org_id", None),
+backend/services/file_resources.py:132: in __init__
+    self.key = hmac.digest(get_settings().jwt_secret_key.encode(), b"workspace-resource-reference:v1", "sha256")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/hmac.py:231: in digest
+    return _hashopenssl.hmac_digest(key, msg, digest)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: a bytes-like object is required, not 'MagicMock'
+____ TestDescribeSingleFileMultimodal.test_image_no_cdn_falls_back_to_text _____
+backend/tests/test_file_tool_mixin.py:575: in test_image_no_cdn_falls_back_to_text
+    result = await mixin._describe_single_file(executor, str(img))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_describe_mixin.py:36: in _describe_single_file
+    reference_line = self._file_reference_line(executor, Path(abs_path))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_describe_mixin.py:18: in _file_reference_line
+    resolver = FileTargetResolver(self, executor)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:168: in __init__
+    self.codec = FileReferenceCodec(org_id=getattr(owner, "org_id", None),
+backend/services/file_resources.py:132: in __init__
+    self.key = hmac.digest(get_settings().jwt_secret_key.encode(), b"workspace-resource-reference:v1", "sha256")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/hmac.py:231: in digest
+    return _hashopenssl.hmac_digest(key, msg, digest)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: a bytes-like object is required, not 'MagicMock'
+______________ TestDescribeSingleFile.test_returns_workspace_path ______________
+backend/tests/test_file_tool_mixin.py:603: in test_returns_workspace_path
+    result = await mixin._describe_single_file(executor, str(f))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_describe_mixin.py:36: in _describe_single_file
+    reference_line = self._file_reference_line(executor, Path(abs_path))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_describe_mixin.py:18: in _file_reference_line
+    resolver = FileTargetResolver(self, executor)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:168: in __init__
+    self.codec = FileReferenceCodec(org_id=getattr(owner, "org_id", None),
+backend/services/file_resources.py:132: in __init__
+    self.key = hmac.digest(get_settings().jwt_secret_key.encode(), b"workspace-resource-reference:v1", "sha256")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/hmac.py:231: in digest
+    return _hashopenssl.hmac_digest(key, msg, digest)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: a bytes-like object is required, not 'MagicMock'
+_ test_safe_delete_uses_original_recording_and_does_not_mutate_args[relative] __
+backend/tests/test_file_tool_boundaries.py:73: in test_safe_delete_uses_original_recording_and_does_not_mutate_args
+    result = await env.owner._file_delete(env.executor, args, env.settings)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_delete_mixin.py:39: in _file_delete
+    operation = resolve_file_call(self, "file_delete", args)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/tools/file_calls.py:94: in resolve_file_call
+    resolver = FileTargetResolver(owner, scope=scope, check=check)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:168: in __init__
+    self.codec = FileReferenceCodec(org_id=getattr(owner, "org_id", None),
+backend/services/file_resources.py:132: in __init__
+    self.key = hmac.digest(get_settings().jwt_secret_key.encode(), b"workspace-resource-reference:v1", "sha256")
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'jwt_secret_key'
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 11:04:39.832 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_safe_delete_uses_original0/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:04:39.833 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_safe_delete_uses_original0/org/org/workspace-owner
+_ test_safe_delete_uses_original_recording_and_does_not_mutate_args[absolute] __
+backend/tests/test_file_tool_boundaries.py:73: in test_safe_delete_uses_original_recording_and_does_not_mutate_args
+    result = await env.owner._file_delete(env.executor, args, env.settings)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_delete_mixin.py:39: in _file_delete
+    operation = resolve_file_call(self, "file_delete", args)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/tools/file_calls.py:94: in resolve_file_call
+    resolver = FileTargetResolver(owner, scope=scope, check=check)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:168: in __init__
+    self.codec = FileReferenceCodec(org_id=getattr(owner, "org_id", None),
+backend/services/file_resources.py:132: in __init__
+    self.key = hmac.digest(get_settings().jwt_secret_key.encode(), b"workspace-resource-reference:v1", "sha256")
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'jwt_secret_key'
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 11:04:39.843 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_safe_delete_uses_original1/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:04:39.844 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_safe_delete_uses_original1/org/org/workspace-owner
+___ test_safe_delete_uses_original_recording_and_does_not_mutate_args[name] ____
+backend/tests/test_file_tool_boundaries.py:73: in test_safe_delete_uses_original_recording_and_does_not_mutate_args
+    result = await env.owner._file_delete(env.executor, args, env.settings)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_delete_mixin.py:39: in _file_delete
+    operation = resolve_file_call(self, "file_delete", args)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/tools/file_calls.py:94: in resolve_file_call
+    resolver = FileTargetResolver(owner, scope=scope, check=check)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:168: in __init__
+    self.codec = FileReferenceCodec(org_id=getattr(owner, "org_id", None),
+backend/services/file_resources.py:132: in __init__
+    self.key = hmac.digest(get_settings().jwt_secret_key.encode(), b"workspace-resource-reference:v1", "sha256")
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'jwt_secret_key'
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 11:04:39.853 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_safe_delete_uses_original2/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:04:39.854 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_safe_delete_uses_original2/org/org/workspace-owner
+____ test_safe_delete_uses_original_recording_and_does_not_mutate_args[fid] ____
+backend/tests/test_file_tool_boundaries.py:73: in test_safe_delete_uses_original_recording_and_does_not_mutate_args
+    result = await env.owner._file_delete(env.executor, args, env.settings)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_delete_mixin.py:39: in _file_delete
+    operation = resolve_file_call(self, "file_delete", args)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/tools/file_calls.py:94: in resolve_file_call
+    resolver = FileTargetResolver(owner, scope=scope, check=check)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:168: in __init__
+    self.codec = FileReferenceCodec(org_id=getattr(owner, "org_id", None),
+backend/services/file_resources.py:132: in __init__
+    self.key = hmac.digest(get_settings().jwt_secret_key.encode(), b"workspace-resource-reference:v1", "sha256")
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'jwt_secret_key'
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 11:04:39.863 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_safe_delete_uses_original3/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:04:39.864 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_safe_delete_uses_original3/org/org/workspace-owner
+___ test_safe_delete_uses_original_recording_and_does_not_mutate_args[both] ____
+backend/tests/test_file_tool_boundaries.py:73: in test_safe_delete_uses_original_recording_and_does_not_mutate_args
+    result = await env.owner._file_delete(env.executor, args, env.settings)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_delete_mixin.py:39: in _file_delete
+    operation = resolve_file_call(self, "file_delete", args)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/tools/file_calls.py:94: in resolve_file_call
+    resolver = FileTargetResolver(owner, scope=scope, check=check)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:168: in __init__
+    self.codec = FileReferenceCodec(org_id=getattr(owner, "org_id", None),
+backend/services/file_resources.py:132: in __init__
+    self.key = hmac.digest(get_settings().jwt_secret_key.encode(), b"workspace-resource-reference:v1", "sha256")
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'jwt_secret_key'
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 11:04:39.873 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_safe_delete_uses_original4/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:04:39.874 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_safe_delete_uses_original4/org/org/workspace-owner
+__________ test_entire_batch_is_rejected_before_any_delete[absolute] ___________
+backend/tests/test_file_tool_boundaries.py:114: in test_entire_batch_is_rejected_before_any_delete
+    result = await env.owner._file_delete(env.executor, args, env.settings)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_delete_mixin.py:39: in _file_delete
+    operation = resolve_file_call(self, "file_delete", args)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/tools/file_calls.py:94: in resolve_file_call
+    resolver = FileTargetResolver(owner, scope=scope, check=check)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:168: in __init__
+    self.codec = FileReferenceCodec(org_id=getattr(owner, "org_id", None),
+backend/services/file_resources.py:132: in __init__
+    self.key = hmac.digest(get_settings().jwt_secret_key.encode(), b"workspace-resource-reference:v1", "sha256")
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'jwt_secret_key'
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 11:04:39.883 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_entire_batch_is_rejected_0/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:04:39.884 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_entire_batch_is_rejected_0/org/org/workspace-owner
+_______ test_entire_batch_is_rejected_before_any_delete[relative_escape] _______
+backend/tests/test_file_tool_boundaries.py:114: in test_entire_batch_is_rejected_before_any_delete
+    result = await env.owner._file_delete(env.executor, args, env.settings)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_delete_mixin.py:39: in _file_delete
+    operation = resolve_file_call(self, "file_delete", args)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/tools/file_calls.py:94: in resolve_file_call
+    resolver = FileTargetResolver(owner, scope=scope, check=check)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:168: in __init__
+    self.codec = FileReferenceCodec(org_id=getattr(owner, "org_id", None),
+backend/services/file_resources.py:132: in __init__
+    self.key = hmac.digest(get_settings().jwt_secret_key.encode(), b"workspace-resource-reference:v1", "sha256")
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'jwt_secret_key'
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 11:04:39.893 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_entire_batch_is_rejected_1/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:04:39.893 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_entire_batch_is_rejected_1/org/org/workspace-owner
+_________ test_entire_batch_is_rejected_before_any_delete[other_owner] _________
+backend/tests/test_file_tool_boundaries.py:114: in test_entire_batch_is_rejected_before_any_delete
+    result = await env.owner._file_delete(env.executor, args, env.settings)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_delete_mixin.py:39: in _file_delete
+    operation = resolve_file_call(self, "file_delete", args)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/tools/file_calls.py:94: in resolve_file_call
+    resolver = FileTargetResolver(owner, scope=scope, check=check)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:168: in __init__
+    self.codec = FileReferenceCodec(org_id=getattr(owner, "org_id", None),
+backend/services/file_resources.py:132: in __init__
+    self.key = hmac.digest(get_settings().jwt_secret_key.encode(), b"workspace-resource-reference:v1", "sha256")
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'jwt_secret_key'
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 11:04:39.902 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_entire_batch_is_rejected_2/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:04:39.903 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_entire_batch_is_rejected_2/org/org/workspace-owner
+___________ test_entire_batch_is_rejected_before_any_delete[blocked] ___________
+backend/tests/test_file_tool_boundaries.py:114: in test_entire_batch_is_rejected_before_any_delete
+    result = await env.owner._file_delete(env.executor, args, env.settings)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_delete_mixin.py:39: in _file_delete
+    operation = resolve_file_call(self, "file_delete", args)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/tools/file_calls.py:94: in resolve_file_call
+    resolver = FileTargetResolver(owner, scope=scope, check=check)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:168: in __init__
+    self.codec = FileReferenceCodec(org_id=getattr(owner, "org_id", None),
+backend/services/file_resources.py:132: in __init__
+    self.key = hmac.digest(get_settings().jwt_secret_key.encode(), b"workspace-resource-reference:v1", "sha256")
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'jwt_secret_key'
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 11:04:39.912 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_entire_batch_is_rejected_3/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:04:39.913 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_entire_batch_is_rejected_3/org/org/workspace-owner
+___________ test_entire_batch_is_rejected_before_any_delete[staging] ___________
+backend/tests/test_file_tool_boundaries.py:114: in test_entire_batch_is_rejected_before_any_delete
+    result = await env.owner._file_delete(env.executor, args, env.settings)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_delete_mixin.py:39: in _file_delete
+    operation = resolve_file_call(self, "file_delete", args)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/tools/file_calls.py:94: in resolve_file_call
+    resolver = FileTargetResolver(owner, scope=scope, check=check)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:168: in __init__
+    self.codec = FileReferenceCodec(org_id=getattr(owner, "org_id", None),
+backend/services/file_resources.py:132: in __init__
+    self.key = hmac.digest(get_settings().jwt_secret_key.encode(), b"workspace-resource-reference:v1", "sha256")
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'jwt_secret_key'
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 11:04:39.922 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_entire_batch_is_rejected_4/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:04:39.923 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_entire_batch_is_rejected_4/org/org/workspace-owner
+___________ test_entire_batch_is_rejected_before_any_delete[symlink] ___________
+backend/tests/test_file_tool_boundaries.py:114: in test_entire_batch_is_rejected_before_any_delete
+    result = await env.owner._file_delete(env.executor, args, env.settings)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_delete_mixin.py:39: in _file_delete
+    operation = resolve_file_call(self, "file_delete", args)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/tools/file_calls.py:94: in resolve_file_call
+    resolver = FileTargetResolver(owner, scope=scope, check=check)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:168: in __init__
+    self.codec = FileReferenceCodec(org_id=getattr(owner, "org_id", None),
+backend/services/file_resources.py:132: in __init__
+    self.key = hmac.digest(get_settings().jwt_secret_key.encode(), b"workspace-resource-reference:v1", "sha256")
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'jwt_secret_key'
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 11:04:39.932 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_entire_batch_is_rejected_5/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:04:39.933 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_entire_batch_is_rejected_5/org/org/workspace-owner
+_______ test_entire_batch_is_rejected_before_any_delete[parent_symlink] ________
+backend/tests/test_file_tool_boundaries.py:114: in test_entire_batch_is_rejected_before_any_delete
+    result = await env.owner._file_delete(env.executor, args, env.settings)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_delete_mixin.py:39: in _file_delete
+    operation = resolve_file_call(self, "file_delete", args)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/tools/file_calls.py:94: in resolve_file_call
+    resolver = FileTargetResolver(owner, scope=scope, check=check)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:168: in __init__
+    self.codec = FileReferenceCodec(org_id=getattr(owner, "org_id", None),
+backend/services/file_resources.py:132: in __init__
+    self.key = hmac.digest(get_settings().jwt_secret_key.encode(), b"workspace-resource-reference:v1", "sha256")
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'jwt_secret_key'
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 11:04:39.942 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_entire_batch_is_rejected_6/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:04:39.942 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_entire_batch_is_rejected_6/org/org/workspace-owner
+___________ test_entire_batch_is_rejected_before_any_delete[cached] ____________
+backend/tests/test_file_tool_boundaries.py:114: in test_entire_batch_is_rejected_before_any_delete
+    result = await env.owner._file_delete(env.executor, args, env.settings)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_delete_mixin.py:39: in _file_delete
+    operation = resolve_file_call(self, "file_delete", args)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/tools/file_calls.py:94: in resolve_file_call
+    resolver = FileTargetResolver(owner, scope=scope, check=check)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:168: in __init__
+    self.codec = FileReferenceCodec(org_id=getattr(owner, "org_id", None),
+backend/services/file_resources.py:132: in __init__
+    self.key = hmac.digest(get_settings().jwt_secret_key.encode(), b"workspace-resource-reference:v1", "sha256")
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'jwt_secret_key'
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 11:04:39.955 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_entire_batch_is_rejected_7/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:04:39.956 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_entire_batch_is_rejected_7/org/org/workspace-owner
+_____________ test_entire_batch_is_rejected_before_any_delete[fid] _____________
+backend/tests/test_file_tool_boundaries.py:114: in test_entire_batch_is_rejected_before_any_delete
+    result = await env.owner._file_delete(env.executor, args, env.settings)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_delete_mixin.py:39: in _file_delete
+    operation = resolve_file_call(self, "file_delete", args)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/tools/file_calls.py:94: in resolve_file_call
+    resolver = FileTargetResolver(owner, scope=scope, check=check)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:168: in __init__
+    self.codec = FileReferenceCodec(org_id=getattr(owner, "org_id", None),
+backend/services/file_resources.py:132: in __init__
+    self.key = hmac.digest(get_settings().jwt_secret_key.encode(), b"workspace-resource-reference:v1", "sha256")
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'jwt_secret_key'
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 11:04:39.965 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_entire_batch_is_rejected_8/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:04:39.966 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_entire_batch_is_rejected_8/org/org/workspace-owner
+_______ test_missing_and_duplicate_targets_keep_skip_and_once_semantics ________
+backend/tests/test_file_tool_boundaries.py:139: in test_missing_and_duplicate_targets_keep_skip_and_once_semantics
+    result = await env.owner._file_delete(
+backend/services/agent/file_delete_mixin.py:39: in _file_delete
+    operation = resolve_file_call(self, "file_delete", args)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/tools/file_calls.py:94: in resolve_file_call
+    resolver = FileTargetResolver(owner, scope=scope, check=check)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:168: in __init__
+    self.codec = FileReferenceCodec(org_id=getattr(owner, "org_id", None),
+backend/services/file_resources.py:132: in __init__
+    self.key = hmac.digest(get_settings().jwt_secret_key.encode(), b"workspace-resource-reference:v1", "sha256")
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'jwt_secret_key'
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 11:04:39.977 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_missing_and_duplicate_tar0/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:04:39.978 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_missing_and_duplicate_tar0/org/org/workspace-owner
+_____________ test_partial_io_failure_keeps_records_without_retry ______________
+backend/tests/test_file_tool_boundaries.py:156: in test_partial_io_failure_keeps_records_without_retry
+    assert env.remove.call_count == 2
+E   AssertionError: assert 0 == 2
+E    +  where 0 = <MagicMock id='4643073264'>.call_count
+E    +    where <MagicMock id='4643073264'> = namespace(owner=<backend.tests.test_file_tool_boundaries.Owner object at 0x114913c50>, executor=<services.file_executo.../folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_partial_io_failure_keeps_0/outside.csv')).remove
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 11:04:39.987 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_partial_io_failure_keeps_0/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:04:39.988 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_partial_io_failure_keeps_0/org/org/workspace-owner
+2026-09-10 11:04:39.988 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_partial_io_failure_keeps_0/org/org/workspace-owner
+2026-09-10 11:04:39.989 | ERROR    | services.agent.file_tool_mixin:_file_dispatch:83 - ToolExecutor file_delete | error='types.SimpleNamespace' object has no attribute 'jwt_secret_key'
+______________ test_public_delete_uses_workspace_owner_not_actor _______________
+backend/tests/test_file_tool_boundaries.py:274: in test_public_delete_uses_workspace_owner_not_actor
+    assert result.status == "success"
+E   AssertionError: assert 'error' == 'success'
+E     
+E     - success
+E     + error
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 11:04:40.074 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_public_delete_uses_worksp0/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:04:40.075 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_public_delete_uses_worksp0/org/org/workspace-owner
+2026-09-10 11:04:40.076 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_public_delete_uses_worksp0/org/org/workspace-owner
+2026-09-10 11:04:40.076 | ERROR    | services.agent.file_tool_mixin:_file_dispatch:83 - ToolExecutor file_delete | error='types.SimpleNamespace' object has no attribute 'jwt_secret_key'
+_________ test_cancellation_propagates_and_records_completed_deletions _________
+backend/tests/test_file_tool_boundaries.py:284: in test_cancellation_propagates_and_records_completed_deletions
+    with pytest.raises(asyncio.CancelledError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'asyncio.exceptions.CancelledError'>
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 11:04:40.080 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_cancellation_propagates_a0/org/org/workspace-owner
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:04:40.081 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_cancellation_propagates_a0/org/org/workspace-owner
+2026-09-10 11:04:40.081 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-199/test_cancellation_propagates_a0/org/org/workspace-owner
+2026-09-10 11:04:40.082 | ERROR    | services.agent.file_tool_mixin:_file_dispatch:83 - ToolExecutor file_delete | error='types.SimpleNamespace' object has no attribute 'jwt_secret_key'
+________________ test_analyze_file_success_orchestrates_stages _________________
+backend/tests/test_file_analysis_service.py:56: in test_analyze_file_success_orchestrates_stages
+    result = await analyze_file(
+backend/services/agent/file_analysis_service.py:27: in analyze_file
+    resolved = _resolve_analysis_path(owner, executor, args, cache)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_analysis_service.py:105: in _resolve_analysis_path
+    resolver = FileTargetResolver(owner, executor, scope=args.get("scope") or "current")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:169: in __init__
+    owner_id=getattr(owner, "workspace_user_id", owner.user_id),
+                                                 ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'user_id'
+______________________ test_invalid_file_id_is_retryable _______________________
+backend/tests/test_file_analysis_service.py:65: in test_invalid_file_id_is_retryable
+    result = _resolve_analysis_path(
+backend/services/agent/file_analysis_service.py:105: in _resolve_analysis_path
+    resolver = FileTargetResolver(owner, executor, scope=args.get("scope") or "current")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:169: in __init__
+    owner_id=getattr(owner, "workspace_user_id", owner.user_id),
+                                                 ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'user_id'
+________________ test_legacy_permission_error_is_not_retryable _________________
+backend/tests/test_file_analysis_service.py:82: in test_legacy_permission_error_is_not_retryable
+    result = _resolve_analysis_path(
+backend/services/agent/file_analysis_service.py:105: in _resolve_analysis_path
+    resolver = FileTargetResolver(owner, executor, scope=args.get("scope") or "current")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:169: in __init__
+    owner_id=getattr(owner, "workspace_user_id", owner.user_id),
+                                                 ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'user_id'
+________________________ test_missing_path_is_retryable ________________________
+backend/tests/test_file_analysis_service.py:105: in test_missing_path_is_retryable
+    result = _resolve_analysis_path(
+backend/services/agent/file_analysis_service.py:105: in _resolve_analysis_path
+    resolver = FileTargetResolver(owner, executor, scope=args.get("scope") or "current")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:169: in __init__
+    owner_id=getattr(owner, "workspace_user_id", owner.user_id),
+                                                 ^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'user_id'
+_____ test_discovery_then_real_attachment_registration_resolves_id[search] _____
+backend/tests/test_file_cache_identity.py:101: in test_discovery_then_real_attachment_registration_resolves_id
+    discovered = await FileToolMixin._search_files(owner, executor, {"keyword": "report"})
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_tool_mixin.py:249: in _search_files
+    data = await executor.file_search_entries(**{
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'file_search_entries'. Did you mean: 'file_list_entries'?
+______ test_discovery_then_real_attachment_registration_resolves_id[list] ______
+backend/tests/test_file_cache_identity.py:103: in test_discovery_then_real_attachment_registration_resolves_id
+    discovered = await FileToolMixin._list_directory(owner, executor, {})
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_tool_mixin.py:241: in _list_directory
+    lines.append(self._file_reference_line(executor, Path(f["abs_path"])))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_describe_mixin.py:18: in _file_reference_line
+    resolver = FileTargetResolver(self, executor)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:169: in __init__
+    owner_id=getattr(owner, "workspace_user_id", owner.user_id),
+                                                 ^^^^^^^^^^^^^
+E   AttributeError: 'FileToolMixin' object has no attribute 'user_id'
+____ test_discovery_then_real_attachment_registration_resolves_id[describe] ____
+backend/tests/test_file_cache_identity.py:105: in test_discovery_then_real_attachment_registration_resolves_id
+    discovered = await FileToolMixin._describe_single_file(owner, executor, str(source))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_describe_mixin.py:36: in _describe_single_file
+    reference_line = self._file_reference_line(executor, Path(abs_path))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_describe_mixin.py:18: in _file_reference_line
+    resolver = FileTargetResolver(self, executor)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:169: in __init__
+    owner_id=getattr(owner, "workspace_user_id", owner.user_id),
+                                                 ^^^^^^^^^^^^^
+E   AttributeError: 'FileToolMixin' object has no attribute 'user_id'
+____ test_discovery_then_real_attachment_registration_resolves_id[manifest] ____
+backend/tests/test_file_cache_identity.py:112: in test_discovery_then_real_attachment_registration_resolves_id
+    discovered = await owner._search_manifest(executor, {"keyword": "report"})
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_tool_mixin.py:200: in _search_manifest
+    lines.append(self._file_reference_line(executor, target))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_describe_mixin.py:18: in _file_reference_line
+    resolver = FileTargetResolver(self, executor)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:169: in __init__
+    owner_id=getattr(owner, "workspace_user_id", owner.user_id),
+                                                 ^^^^^^^^^^^^^
+E   AttributeError: 'FileToolMixin' object has no attribute 'user_id'
+_____ test_directory_qualified_path_does_not_gain_basename_fuzzy_fallback ______
+backend/tests/test_file_cache_identity.py:209: in test_directory_qualified_path_does_not_gain_basename_fuzzy_fallback
+    assert _resolve_analysis_path(
+backend/services/agent/file_analysis_service.py:105: in _resolve_analysis_path
+    resolver = FileTargetResolver(owner, executor, scope=args.get("scope") or "current")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/file_resources.py:164: in __init__
+    self.root = Path(self.files.workspace_root)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'workspace_root'
+_____________ TestFileToolSchemas.test_file_delete_requires_files ______________
+backend/tests/test_file_tools.py:39: in test_file_delete_requires_files
+    assert "files" in schema["required"]
+E   AssertionError: assert 'files' in []
+___________________ TestCalcOnceRunAt.test_future_time_today ___________________
+backend/tests/test_chat_task_manager.py:280: in test_future_time_today
+    import time_machine
+E   ModuleNotFoundError: No module named 'time_machine'
+_____________ TestCalcOnceRunAt.test_past_time_today_goes_tomorrow _____________
+backend/tests/test_chat_task_manager.py:290: in test_past_time_today_goes_tomorrow
+    import time_machine
+E   ModuleNotFoundError: No module named 'time_machine'
+_________________ TestCalcOnceRunAt.test_month_end_no_overflow _________________
+backend/tests/test_chat_task_manager.py:299: in test_month_end_no_overflow
+    import time_machine
+E   ModuleNotFoundError: No module named 'time_machine'
+_________________ TestCalcOnceRunAt.test_year_end_no_overflow __________________
+backend/tests/test_chat_task_manager.py:310: in test_year_end_no_overflow
+    import time_machine
+E   ModuleNotFoundError: No module named 'time_machine'
+_________ test_three_representative_parameter_contracts_field_by_field _________
+backend/tests/test_tool_registry.py:178: in test_three_representative_parameter_contracts_field_by_field
+    assert {key: value["type"] for key, value in parameters["properties"].items()} == properties
+E   AssertionError: assert {'file_ids': ...efs': 'array'} == {'file_ids': ...les': 'array'}
+E     
+E     Omitting 2 identical items, use -vv to show
+E     Left contains 1 more item:
+E     {'resource_refs': 'array'}
+E     Use -v to get more diff
+_______ test_partial_legacy_validation_directory_is_preserved_separately _______
+backend/tests/test_tool_registry.py:394: in test_partial_legacy_validation_directory_is_preserved_separately
+    assert delete.to_legacy_validation_schema()["required"] == ["files"]
+E   AssertionError: assert [] == ['files']
+E     
+E     Right contains one more item: 'files'
+E     Use -v to get more diff
+=========================== short test summary info ============================
+FAILED backend/tests/test_file_tool_mixin.py::TestFileSearchRouting::test_path_not_found_returns_error
+FAILED backend/tests/test_file_tool_mixin.py::TestSearchFilesPathParsing::test_search_registers_path_with_spaces
+FAILED backend/tests/test_file_tool_mixin.py::TestSearchFilesPathParsing::test_search_with_pattern_without_keyword
+FAILED backend/tests/test_file_tool_mixin.py::TestDescribeSingleFileMultimodal::test_image_returns_multimodal_result
+FAILED backend/tests/test_file_tool_mixin.py::TestDescribeSingleFileMultimodal::test_non_image_returns_agent_result
+FAILED backend/tests/test_file_tool_mixin.py::TestDescribeSingleFileMultimodal::test_image_no_cdn_falls_back_to_text
+FAILED backend/tests/test_file_tool_mixin.py::TestDescribeSingleFile::test_returns_workspace_path
+FAILED backend/tests/test_file_tool_boundaries.py::test_safe_delete_uses_original_recording_and_does_not_mutate_args[relative]
+FAILED backend/tests/test_file_tool_boundaries.py::test_safe_delete_uses_original_recording_and_does_not_mutate_args[absolute]
+FAILED backend/tests/test_file_tool_boundaries.py::test_safe_delete_uses_original_recording_and_does_not_mutate_args[name]
+FAILED backend/tests/test_file_tool_boundaries.py::test_safe_delete_uses_original_recording_and_does_not_mutate_args[fid]
+FAILED backend/tests/test_file_tool_boundaries.py::test_safe_delete_uses_original_recording_and_does_not_mutate_args[both]
+FAILED backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[absolute]
+FAILED backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[relative_escape]
+FAILED backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[other_owner]
+FAILED backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[blocked]
+FAILED backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[staging]
+FAILED backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[symlink]
+FAILED backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[parent_symlink]
+FAILED backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[cached]
+FAILED backend/tests/test_file_tool_boundaries.py::test_entire_batch_is_rejected_before_any_delete[fid]
+FAILED backend/tests/test_file_tool_boundaries.py::test_missing_and_duplicate_targets_keep_skip_and_once_semantics
+FAILED backend/tests/test_file_tool_boundaries.py::test_partial_io_failure_keeps_records_without_retry
+FAILED backend/tests/test_file_tool_boundaries.py::test_public_delete_uses_workspace_owner_not_actor
+FAILED backend/tests/test_file_tool_boundaries.py::test_cancellation_propagates_and_records_completed_deletions
+FAILED backend/tests/test_file_analysis_service.py::test_analyze_file_success_orchestrates_stages
+FAILED backend/tests/test_file_analysis_service.py::test_invalid_file_id_is_retryable
+FAILED backend/tests/test_file_analysis_service.py::test_legacy_permission_error_is_not_retryable
+FAILED backend/tests/test_file_analysis_service.py::test_missing_path_is_retryable
+FAILED backend/tests/test_file_cache_identity.py::test_discovery_then_real_attachment_registration_resolves_id[search]
+FAILED backend/tests/test_file_cache_identity.py::test_discovery_then_real_attachment_registration_resolves_id[list]
+FAILED backend/tests/test_file_cache_identity.py::test_discovery_then_real_attachment_registration_resolves_id[describe]
+FAILED backend/tests/test_file_cache_identity.py::test_discovery_then_real_attachment_registration_resolves_id[manifest]
+FAILED backend/tests/test_file_cache_identity.py::test_directory_qualified_path_does_not_gain_basename_fuzzy_fallback
+FAILED backend/tests/test_file_tools.py::TestFileToolSchemas::test_file_delete_requires_files
+FAILED backend/tests/test_chat_task_manager.py::TestCalcOnceRunAt::test_future_time_today
+FAILED backend/tests/test_chat_task_manager.py::TestCalcOnceRunAt::test_past_time_today_goes_tomorrow
+FAILED backend/tests/test_chat_task_manager.py::TestCalcOnceRunAt::test_month_end_no_overflow
+FAILED backend/tests/test_chat_task_manager.py::TestCalcOnceRunAt::test_year_end_no_overflow
+FAILED backend/tests/test_tool_registry.py::test_three_representative_parameter_contracts_field_by_field
+FAILED backend/tests/test_tool_registry.py::test_partial_legacy_validation_directory_is_preserved_separately
+======================== 41 failed, 973 passed in 2.13s ========================

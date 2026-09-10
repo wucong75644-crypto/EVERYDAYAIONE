@@ -59,7 +59,7 @@ def environment(monkeypatch):
         discovered_tools=set(), build_context_prompt=lambda: "",
     ))
     from services.handlers.permission_mode import PermissionMode
-    monkeypatch.setattr(stream_setup, "_prepare_permission_and_tools", lambda *_args: (PermissionMode("ask"), []))
+    monkeypatch.setattr(stream_setup, "_prepare_permission_and_tools", lambda *_args, **_kwargs: (PermissionMode("ask"), []))
     events, sessions = [], []
     def configure(*adapters, max_concurrency=None):
         factory = Mock(side_effect=adapters)

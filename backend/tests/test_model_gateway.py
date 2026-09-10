@@ -587,7 +587,7 @@ async def test_prepare_chat_stream_opens_gateway_for_shared_web_actor_path(
     monkeypatch.setattr(
         stream_setup,
         "_prepare_permission_and_tools",
-        lambda *_args: (SimpleNamespace(), []),
+        lambda *_args, **_kwargs: (SimpleNamespace(), []),
     )
     monkeypatch.setattr(
         stream_setup,

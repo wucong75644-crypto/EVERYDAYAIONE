@@ -15,6 +15,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from services.handlers.chat_tool_mixin import accumulate_tool_call_delta
+from tests.tool_runtime_support import MockHandlerExecutor
 
 
 # ============================================================
@@ -104,7 +105,11 @@ def _make_mixin():
     from services.handlers.chat_tool_mixin import ChatToolMixin
     mixin = MagicMock()
     mixin.db = MagicMock()
-    mixin.org_id = None
+    mixin.org_id = "o1"
+    mixin._actor_enabled = False
+    mixin._actor_invocation_store = None
+    mixin._actor_command_store = None
+    mixin._actor_execution_token = None
     # 绑定真实方法(_extract_file_parts 已删 — 沙盒 IO 统一协议)
     mixin._push_tool_step_update = ChatToolMixin._push_tool_step_update.__get__(mixin)
     return mixin
@@ -122,17 +127,17 @@ class TestExecuteSingleTool:
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
         mock_ws.wait_for_confirm = AsyncMock(return_value=False)
-        executor = AsyncMock()
+        executor = MockHandlerExecutor(mixin=mixin, agent_domain="erp")
 
-        tc = {"name": "erp_execute", "id": "tc1", "arguments": '{"action":"cancel"}'}
+        tc = {"name": "erp_execute", "id": "tc1", "arguments": '{"category":"trade","action":"trade_unhalt","params":{"tid":"test","seller_memo":"test"}}'}
         result = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "test_user", 1,
         )
         tc_out, text, is_error, _display = result
         assert is_error is True
-        assert "拒绝" in text or "超时" in text
+        assert "confirmation_rejected" in text
         # 不应该调用 executor
-        executor.execute.assert_not_called()
+        executor.handler.assert_not_called()
 
     @pytest.mark.asyncio
     @patch("services.handlers.chat_tool_mixin.ws_manager")
@@ -142,8 +147,8 @@ class TestExecuteSingleTool:
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
-        executor = AsyncMock()
-        executor.execute = AsyncMock(return_value="库存100件")
+        executor = MockHandlerExecutor(mixin=mixin, agent_domain="erp")
+        executor.handler = AsyncMock(return_value="库存100件")
 
         tc = {"name": "local_stock_query", "id": "tc1", "arguments": '{"product_code":"SKU001"}'}
         result = await ChatToolMixin._execute_single_tool(
@@ -152,7 +157,7 @@ class TestExecuteSingleTool:
         tc_out, text, is_error, _display = result
         assert is_error is False
         assert "库存100件" in text
-        executor.execute.assert_called_once()
+        executor.handler.assert_called_once()
 
     @pytest.mark.asyncio
     @patch("services.handlers.chat_tool_mixin.ws_manager")
@@ -162,8 +167,8 @@ class TestExecuteSingleTool:
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
-        executor = AsyncMock()
-        executor.execute = AsyncMock(side_effect=Exception("API timeout"))
+        executor = MockHandlerExecutor(mixin=mixin, agent_domain="erp")
+        executor.handler = AsyncMock(side_effect=Exception("API timeout"))
 
         tc = {"name": "erp_product_query", "id": "tc1", "arguments": '{"action":"product_list"}'}
         result = await ChatToolMixin._execute_single_tool(
@@ -181,7 +186,7 @@ class TestExecuteSingleTool:
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
-        executor = AsyncMock()
+        executor = MockHandlerExecutor(mixin=mixin, agent_domain="general")
 
         tc = {"name": "local_stock_query", "id": "tc1", "arguments": "not json{{{"}
         result = await ChatToolMixin._execute_single_tool(
@@ -199,8 +204,8 @@ class TestExecuteSingleTool:
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
-        executor = AsyncMock()
-        executor.execute = AsyncMock(return_value="图片生成中")
+        executor = MockHandlerExecutor(mixin=mixin, agent_domain="general")
+        executor.handler = AsyncMock(return_value="图片生成中")
 
         tc = {"name": "generate_image", "id": "tc1", "arguments": '{"prompt":"cat"}'}
         result = await ChatToolMixin._execute_single_tool(
@@ -208,7 +213,7 @@ class TestExecuteSingleTool:
         )
         tc_out, text, is_error, _display = result
         assert is_error is False
-        executor.execute.assert_called_once()
+        executor.handler.assert_called_once()
 
 
 class TestActorInvocationRecovery:
@@ -267,27 +272,20 @@ class TestActorInvocationRecovery:
                 }
 
         mixin._actor_invocation_store = Store()
-        executor = AsyncMock()
+        executor = MockHandlerExecutor(mixin=mixin, agent_domain="general")
 
-        with patch.object(
-            ChatToolMixin,
-            "_prepare_tool_arguments",
-            new=AsyncMock(return_value={"action": "write"}),
-        ):
-            result = await ChatToolMixin._execute_single_tool(
-                mixin,
-                {"name": "erp_execute", "id": "tool-1", "arguments": '{"action":"write"}'},
-                executor,
-                "task-1",
-                "conversation-1",
-                "message-1",
-                "user-1",
-                1,
-            )
-
+        async def approve(*_):
+            return True
+        executor.tool_confirmer = approve
+        mixin._actor_invocation_store.lookup = lambda **_: None
+        result = await ChatToolMixin._execute_single_tool(
+            mixin, {"name": "generate_image", "id": "tool-1", "arguments": '{"prompt":"x"}'},
+            executor, "task1", "c1", "msg1", "u1", 1,
+        )
         assert result[2] is True
-        assert "未知" in result[1]
-        executor.execute.assert_not_called()
+        assert "UNCERTAIN" in result[1]
+        executor.handler.assert_not_called()
+
 
 
 # ============================================================
@@ -391,8 +389,8 @@ class TestExecuteSingleToolAgentResult:
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
-        executor = AsyncMock()
-        executor.execute = AsyncMock(return_value=AgentResult(
+        executor = MockHandlerExecutor(mixin=mixin, agent_domain="general")
+        executor.handler = AsyncMock(return_value=AgentResult(
             status="success", summary="共 945 条订单",
             source="erp_agent", tokens_used=500,
         ))
@@ -415,8 +413,8 @@ class TestExecuteSingleToolAgentResult:
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
-        executor = AsyncMock()
-        executor.execute = AsyncMock(return_value=AgentResult(
+        executor = MockHandlerExecutor(mixin=mixin, agent_domain="general")
+        executor.handler = AsyncMock(return_value=AgentResult(
             status="error", summary="查询超时",
             source="erp_agent", error_message="查询超时",
         ))
@@ -438,8 +436,8 @@ class TestExecuteSingleToolAgentResult:
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
-        executor = AsyncMock()
-        executor.execute = AsyncMock(return_value=AgentResult(
+        executor = MockHandlerExecutor(mixin=mixin, agent_domain="general")
+        executor.handler = AsyncMock(return_value=AgentResult(
             status="success", summary="ok",
             source="erp_agent",
         ))
@@ -460,8 +458,8 @@ class TestExecuteSingleToolAgentResult:
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
-        executor = AsyncMock()
-        executor.execute = AsyncMock(return_value="搜索结果：3条")
+        executor = MockHandlerExecutor(mixin=mixin, agent_domain="general")
+        executor.handler = AsyncMock(return_value="搜索结果：3条")
 
         tc = {"name": "web_search", "id": "tc1", "arguments": '{"query":"天气"}'}
         tc_out, result, is_error, _display = await ChatToolMixin._execute_single_tool(
@@ -599,7 +597,7 @@ class TestFormBlockResultChannel:
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
-        executor = AsyncMock()
+        executor = MockHandlerExecutor(mixin=mixin, agent_domain="general")
 
         form_data = {
             "type": "form",
@@ -608,7 +606,7 @@ class TestFormBlockResultChannel:
             "title": "创建定时任务",
             "fields": [],
         }
-        executor.execute = AsyncMock(return_value=FormBlockResult(
+        executor.handler = AsyncMock(return_value=FormBlockResult(
             form=form_data,
             llm_hint="已向用户展示创建定时任务，等待用户确认。",
         ))
@@ -643,8 +641,8 @@ class TestFormBlockResultChannel:
         mixin = _make_mixin()
         mixin._emit_tool_audit = MagicMock()
         mock_ws.send_to_task_or_user = AsyncMock()
-        executor = AsyncMock()
-        executor.execute = AsyncMock(return_value=FormBlockResult(
+        executor = MockHandlerExecutor(mixin=mixin, agent_domain="general")
+        executor.handler = AsyncMock(return_value=FormBlockResult(
             form={"type": "form", "form_type": "scheduled_task_update", "fields": []},
         ))
 

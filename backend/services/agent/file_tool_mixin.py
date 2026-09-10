@@ -121,10 +121,18 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
                     error_message=str(e),
                     metadata={"retryable": True},
                 )
+            if Path(path).parent == Path(".") and not path.startswith(".") and not target.is_dir():
+                from services.file_resources import FileTargetResolver, FileTargetError
+                try:
+                    target = FileTargetResolver(self, executor, action="list").resolve(path).path
+                except FileTargetError:
+                    return await self._search_files(executor, {"keyword": path})
             if target.is_file():
                 return await self._describe_single_file(executor, str(target))
             if target.is_dir():
                 return await self._list_directory(executor, args)
+            if Path(path).parent == Path(".") and not path.startswith("."):
+                return await self._search_files(executor, {"keyword": path})
             return AgentResult(
                 summary=f"未找到文件或目录: {path}",
                 status="error",
@@ -150,33 +158,15 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
         from services.agent.file_path_cache import get_file_cache
 
         path = str(args.get("path") or "").strip()
-        keyword = str(args.get("keyword") or "").strip().lower()
-        pattern = str(args.get("file_pattern") or "").strip()
-        assets = list(self.resource_manifest.assets)
-        if path:
-            assets = [
-                asset for asset in assets
-                if asset.workspace_path == path or asset.name == path
-            ]
-        if keyword:
-            assets = [
-                asset for asset in assets
-                if keyword in asset.name.lower()
-                or keyword in asset.workspace_path.lower()
-            ]
-        if pattern:
-            assets = [
-                asset for asset in assets
-                if fnmatch(asset.name, pattern)
-                or fnmatch(asset.workspace_path, pattern)
-            ]
+        from services.tools.resource_access import manifest_matches, resource_boundary
+        assets = manifest_matches(self.resource_manifest, args, resource_boundary(self))
         if not assets:
             return AgentResult(
                 summary="当前任务资源中未找到匹配文件",
                 status="empty",
                 metadata={"resource_scope": "current"},
             )
-        if path and len(assets) == 1:
+        if path and path != "." and not path.endswith("/") and len(assets) == 1:
             try:
                 target = executor.resolve_safe_path(assets[0].workspace_path)
             except (FileNotFoundError, PermissionError, ValueError) as error:
@@ -191,17 +181,11 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
         cache = get_file_cache(self.conversation_id)
         lines = [f"当前任务资源 | 共 {len(assets)} 项", "─" * 50]
         for asset in assets:
-            fid = compute_fid(self.org_id, asset.workspace_path)
-            lines.append(
-                f"  [{fid}] {asset.workspace_path}  "
-                f"({executor._format_size(asset.size or 0)})"
-            )
-            try:
-                target = executor.resolve_safe_path(asset.workspace_path)
-                cache.register(asset.name, workspace=str(target))
-                cache.register(asset.workspace_path, workspace=str(target))
-            except (FileNotFoundError, PermissionError, ValueError):
+            target = executor.resolve_safe_path(asset.workspace_path)
+            if not target.is_file():
+                lines.append(f"  [不可用] {asset.workspace_path}（文件不存在）")
                 continue
+            lines.append(self._file_reference_line(executor, target))
         return AgentResult(
             summary="\n".join(lines),
             status="success",
@@ -211,6 +195,19 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
             },
         )
 
+    def _resource_query_options(self, executor, *, content=False):
+        from services.tools.resource_access import resource_boundary
+        access = resource_boundary(self)
+        # Preserve old direct FileExecutor callers. Filtering precedes result
+        # limits and content search, so unauthorized hits never enter outputs.
+        if any({"list", "read"} <= set(r.actions) and "." in r.directories for r in access.rules):
+            return {}
+        root = Path(executor.workspace_root)
+        return {"path_filter": lambda path: access.permits(
+            "list", str(executor.resolve_safe_path(str(path)).relative_to(root)), browse=True,
+        ) and (not content or access.permits("read", str(
+            executor.resolve_safe_path(str(path)).relative_to(root)) ))}
+
     async def _list_directory(
         self, executor: Any, args: Dict[str, Any],
     ) -> Any:
@@ -218,7 +215,7 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
         from services.agent.agent_result import AgentResult
         from services.agent.file_path_cache import get_file_cache
 
-        data = await executor.file_list_entries(**{
+        data = await executor.file_list_entries(**self._resource_query_options(executor), **{
             k: v for k, v in args.items() if k in ("path", "show_hidden")
         })
 
@@ -242,80 +239,32 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
             lines.append(f"  [目录] {d['name']}/")
 
         for f in data["files"]:
-            size_str = executor._format_size(f["size"])
-            try:
-                rel_path = str(Path(f["abs_path"]).relative_to(
-                    Path(executor.workspace_root)
-                ))
-            except ValueError:
-                rel_path = f["name"]
-            fid = compute_fid(_org_id, rel_path)
-            lines.append(f"  [{fid}] {rel_path}  ({size_str})")
-            cache.register(f["name"], workspace=f["abs_path"])
-            cache.register(rel_path, workspace=f["abs_path"])
+            lines.append(self._file_reference_line(executor, Path(f["abs_path"])))
 
-        if data.get("truncated"):
-            lines.append("\n已达显示上限，部分条目未显示")
-
-        lines.append("")
-        lines.append(
-            "在 code_execute 中用相对路径直接读取（沙盒 cwd=/workspace）；"
-            "xlsx/csv 数据文件请先调 file_analyze 治理后用 pd.read_parquet('staging/x.parquet') 读"
-        )
-
+        if data["truncated"]:
+            lines.append("结果不完整，请缩小搜索范围；不能据此断言目标唯一。")
         return AgentResult(summary="\n".join(lines), status="success")
 
-    async def _search_files(
-        self, executor: Any, args: Dict[str, Any],
-    ) -> Any:
-        """搜索文件，返回结果列表，注册到共享缓存"""
+    async def _search_files(self, executor: Any, args: Dict[str, Any]) -> Any:
         from services.agent.agent_result import AgentResult
-        from services.agent.file_path_cache import get_file_cache
-
-        raw_result = await executor.file_search(**{
+        data = await executor.file_search_entries(**self._resource_query_options(executor, content=bool(args.get("search_content"))), **{
             k: v for k, v in args.items()
             if k in ("keyword", "path", "search_content", "file_pattern")
         })
-
-        if "未找到" in raw_result or not raw_result.strip():
-            return AgentResult(summary=raw_result or "未找到匹配文件", status="empty")
-
-        # 从搜索结果中提取文件路径并注册到缓存，收集编号
-        cache = get_file_cache(self.conversation_id)
-        from services.agent.file_id import compute_fid
-        _org_id = getattr(self, "org_id", None)
-        # 路径允许包含空格；内容搜索结果末尾的 :行号 和预览文本单独剥离。
-        _file_re = re.compile(
-            r"\s+\[文件\]\s+(.+?)(?::\d+)?(?:\s+\|.*)?$"
-        )
-        # 同时为每行 [文件] xxx 前插入 [fid_xxx]，方便 LLM 后续调工具
-        annotated_lines: list[str] = []
-        for line in raw_result.split("\n"):
-            m = _file_re.match(line)
-            if m:
-                rel_path = m.group(1)
-                try:
-                    target = executor.resolve_safe_path(rel_path)
-                    if target.is_file():
-                        cache.register(target.name, workspace=str(target))
-                        cache.register(rel_path, workspace=str(target))
-                except Exception:
-                    pass
-                fid = compute_fid(_org_id, rel_path)
-                # 替换 "[文件] rel_path" → "[文件] [fid_xxx] rel_path"
-                annotated_lines.append(
-                    line.replace("[文件]", f"[文件] [{fid}]", 1)
-                )
+        if data["error"]:
+            return AgentResult(summary=data["error"], status="error", error_message=data["error"])
+        if not data["entries"]:
+            return AgentResult(summary="未找到匹配文件", status="empty")
+        lines = [f"搜索结果 | 共 {len(data['entries'])} 项"]
+        for hit in data["entries"]:
+            if hit["is_dir"]:
+                lines.append(f"  [目录] {hit['path']}")
             else:
-                annotated_lines.append(line)
-
-        lines = ["\n".join(annotated_lines)]
-        lines.append("")
-        lines.append(
-            "在 code_execute 中用相对路径直接读取（沙盒 cwd=/workspace）；"
-            "xlsx/csv 数据文件请先调 file_analyze 治理后用 pd.read_parquet('staging/x.parquet') 读"
-        )
-
+                lines.append(self._file_reference_line(executor, Path(hit["abs_path"])))
+                if hit["preview"] is not None:
+                    lines.append(f"    行 {hit['line']}: {hit['preview']}")
+        if data["truncated"]:
+            lines.append("结果不完整，请缩小搜索范围；不能据此断言目标唯一。")
         return AgentResult(summary="\n".join(lines), status="success")
 
     # ================================================================

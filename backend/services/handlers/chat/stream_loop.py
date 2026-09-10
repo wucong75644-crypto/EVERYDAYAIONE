@@ -121,6 +121,9 @@ class ChatStreamLoop:
                 sink,
             )
         finally:
+            if getattr(self.handler, "_tool_executor_scope", None) == (self.delivery.task_id, self.delivery.conversation_id, self.delivery.user_id, self.handler.org_id):
+                self.handler._tool_executor = None
+                self.handler._tool_executor_scope = None
             monitor.cancel()
             await asyncio.gather(monitor, return_exceptions=True)
             if getattr(self.handler, "_execution_sink", None) is sink:

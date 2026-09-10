@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from services.tool_executor import ToolExecutor
+from tests.tool_runtime_support import IdentityDB
 
 
 # ============================================================
@@ -27,7 +28,7 @@ from services.tool_executor import ToolExecutor
 
 
 def _make_executor(org_id: str | None = "org-test") -> ToolExecutor:
-    return ToolExecutor(db=MagicMock(), user_id="u1", conversation_id="c1", org_id=org_id)
+    return ToolExecutor(db=IdentityDB("u1", org_id), user_id="u1", conversation_id="c1", org_id=org_id, agent_domain="erp")
 
 
 # ============================================================
@@ -48,6 +49,7 @@ class TestExecuteDispatch:
     async def test_dispatches_to_handler(self):
         """已注册工具→调用对应 handler"""
         exe = _make_executor()
+        exe.agent_domain = "general"
         exe._handlers["web_search"] = AsyncMock(return_value="result")
         result = await exe.execute("web_search", {"search_query": "test"})
         assert result == "result"
@@ -58,16 +60,16 @@ class TestExecuteDispatch:
             db=MagicMock(), user_id="u1", conversation_id="c1", org_id="org1",
             allowed_tool_names={"erp_agent"},
         )
-        with pytest.raises(PermissionError, match="用户确认的执行范围"):
+        with pytest.raises(PermissionError, match="outside_authorized_scope"):
             await exe.execute("web_search", {"query": "x"})
 
     @pytest.mark.asyncio
     async def test_preflight_blocks_business_write_even_if_in_scope(self):
         exe = ToolExecutor(
             db=MagicMock(), user_id="u1", conversation_id="c1", org_id="org1",
-            allowed_tool_names={"erp_execute"}, execution_mode="preflight",
+            allowed_tool_names={"erp_execute"}, execution_mode="preflight", agent_domain="erp",
         )
-        with pytest.raises(PermissionError, match="预检禁止"):
+        with pytest.raises(PermissionError, match="execution_mode_forbidden"):
             await exe.execute("erp_execute", {})
 
 

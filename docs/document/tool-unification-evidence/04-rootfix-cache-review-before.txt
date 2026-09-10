@@ -1,0 +1,59 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.2, pytest-9.0.3, pluggy-1.6.0 -- /Users/wucong/EVERYDAYAIONE/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-04/backend
+configfile: pytest.ini
+plugins: time-machine-2.14.1, cov-7.1.0, asyncio-1.3.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 64 items / 62 deselected / 2 selected
+
+backend/tests/test_file_target_execution.py::test_csv_and_tsv_same_bytes_have_distinct_conversion_identity FAILED [ 50%]
+backend/tests/test_file_target_execution.py::test_shared_content_cache_does_not_rebind_its_metadata_to_each_caller FAILED [100%]
+
+=================================== FAILURES ===================================
+________ test_csv_and_tsv_same_bytes_have_distinct_conversion_identity _________
+backend/tests/test_file_target_execution.py:242: in test_csv_and_tsv_same_bytes_have_distinct_conversion_identity
+    assert comma != tab
+E   AssertionError: assert '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-215/test_csv_and_tsv_same_bytes_ha0/staging/_cache_v3.1_8db4d84da82d0020646ed808dff19ce516a74a948820cc5cdbbe1ce69c7e037d_csv.parquet' != '/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-215/test_csv_and_tsv_same_bytes_ha0/staging/_cache_v3.1_8db4d84da82d0020646ed808dff19ce516a74a948820cc5cdbbe1ce69c7e037d_csv.parquet'
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:48:38.776 | INFO     | services.agent.data_query_cache:ensure_parquet_cache_csv:1016 - CSV→Parquet | src=table.csv | rows=1
+____ test_shared_content_cache_does_not_rebind_its_metadata_to_each_caller _____
+backend/tests/test_file_target_execution.py:257: in test_shared_content_cache_does_not_rebind_its_metadata_to_each_caller
+    assert metadata.read_bytes() == before
+E   assert b'{"version":...erprint": ""}' == b'{"version":...erprint": ""}'
+E     
+E     At index 183 diff: b'b' != b'a'
+E     
+E     Full diff:
+E       (b'{"version": "1.0", "status": "warning", "source_file": "/private/var/folders'
+E        b'/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-215/test_shared'
+E     -  b'_content_cache_does0/org/o1/u1/a/report.csv", "processed_at": "2026-09-10T11'...
+E     
+E     ...Full output truncated (73 lines hidden), use '-vv' to show
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 11:48:38.807 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-215/test_shared_content_cache_does0/org/o1/u1
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 11:48:38.814 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-215/test_shared_content_cache_does0/org/o1/u1
+2026-09-10 11:48:38.815 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-215/test_shared_content_cache_does0/org/o1/u1
+2026-09-10 11:48:38.815 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-215/test_shared_content_cache_does0/org/o1/u1
+2026-09-10 11:48:38.821 | INFO     | services.agent.data_query_cache:ensure_parquet_cache_csv:1016 - CSV→Parquet | src=report.csv | rows=1
+2026-09-10 11:48:38.823 | INFO     | services.agent.file_analysis_service:_log_analysis_success:319 - file_analyze OK | report.csv | 1×1 | path=? | model=? | ai_attempts=? | ai_ms=? | total=0.01s
+2026-09-10 11:48:38.825 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-215/test_shared_content_cache_does0/org/o1/u1
+2026-09-10 11:48:38.826 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-215/test_shared_content_cache_does0/org/o1/u1
+2026-09-10 11:48:38.826 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-215/test_shared_content_cache_does0/org/o1/u1
+2026-09-10 11:48:38.827 | INFO     | services.agent.file_analysis_service:_log_analysis_success:319 - file_analyze OK | another.csv | 1×1 | path=? | model=? | ai_attempts=? | ai_ms=? | total=0.0s
+=============================== warnings summary ===============================
+../../.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434
+  /Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+backend/services/adapters/kie/models.py:126
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-04/backend/services/adapters/kie/models.py:126: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class JsonSchema(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED backend/tests/test_file_target_execution.py::test_csv_and_tsv_same_bytes_have_distinct_conversion_identity
+FAILED backend/tests/test_file_target_execution.py::test_shared_content_cache_does_not_rebind_its_metadata_to_each_caller
+================= 2 failed, 62 deselected, 2 warnings in 0.57s =================

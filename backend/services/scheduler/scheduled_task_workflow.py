@@ -36,14 +36,23 @@ def tool_name_set(tools: Iterable[Dict[str, Any]]) -> set[str]:
 
 def preflight_allowed_tool_names(org_id: str) -> set[str]:
     """预检可用工具：只允许读取或隔离沙盒计算，禁止业务副作用。"""
-    from config.chat_tools import SafetyLevel, get_core_tools, get_safety_level
-
-    names = tool_name_set(get_core_tools(org_id=org_id))
-    return {
-        name for name in names
-        if name not in _PREFLIGHT_BLOCKED_TOOLS
-        and get_safety_level(name) != SafetyLevel.DANGEROUS
-    }
+    from services.tools import build_legacy_catalog, ToolPolicy, ToolContext, LegacyAdvertisement
+    from core.config import get_settings
+    registry = build_legacy_catalog()
+    names = frozenset(s.name for s in registry.specs() if "preflight" in s.policy_rules.execution_modes)
+    settings = get_settings()
+    context = ToolContext(
+        actor_user_id="preflight-catalog", workspace_owner_id="preflight-catalog",
+        org_id=org_id, context_scope="user", personal_context_allowed=True,
+        agent_domain="general", permission_mode="auto", execution_mode="preflight",
+        task_id="preflight-catalog", authorized_tool_names=names,
+        authorization_snapshot={"version": 1, "allowed_tools": sorted(names)},
+        feature_flags={key: getattr(settings, key) is True for key in (
+            "file_workspace_enabled", "sandbox_enabled", "crawler_enabled",
+        )},
+    )
+    return set(registry.resolve(context, policy=ToolPolicy(registry),
+                                advertisement=LegacyAdvertisement(names)).advertised)
 
 
 @dataclass(frozen=True)
@@ -200,7 +209,7 @@ def parse_json_object(text: str) -> Dict[str, Any]:
 
 async def create_plan(*, db: Any, org_id: str, definition: Dict[str, Any]) -> tuple[Dict[str, Any], ScheduledExecutionPolicy]:
     """由模型选择工具和初始路径；系统随后验证并收敛权限。"""
-    from config.chat_tools import get_core_tools
+    from services.tools import build_legacy_catalog
     from core.config import get_settings
     from services.model_gateway import (
         ModelCallRequest,
@@ -209,7 +218,8 @@ async def create_plan(*, db: Any, org_id: str, definition: Dict[str, Any]) -> tu
     )
 
     available = preflight_allowed_tool_names(org_id)
-    schemas = get_core_tools(org_id=org_id)
+    catalog = build_legacy_catalog()
+    schemas = [catalog.require(name).to_schema() for name in sorted(available)]
     tool_descriptions = [
         {"name": tool["function"]["name"], "description": tool["function"].get("description", "")[:280]}
         for tool in schemas

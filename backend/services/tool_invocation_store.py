@@ -54,6 +54,18 @@ class DatabaseToolInvocationStore:
     def __init__(self, db: Any) -> None:
         self._db = db
 
+    def lookup(self, *, task_id, conversation_id, turn_id, tool_call_id):
+        """Read an existing record after current access checks; never register IO."""
+        response = (self._db.table("tool_invocations")
+                    .select("tool_name,args_hash,status,result")
+                    .eq("task_id", task_id).eq("conversation_id", conversation_id)
+                    .eq("turn_id", turn_id).eq("tool_call_id", tool_call_id)
+                    .maybe_single().execute())
+        data = response.data if response else None
+        if data is not None and not isinstance(data, dict):
+            raise RuntimeError("ACTOR_TOOL_INVOCATION_LOOKUP_INVALID")
+        return data
+
     def begin(
         self,
         *,

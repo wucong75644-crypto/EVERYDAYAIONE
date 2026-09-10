@@ -17,97 +17,38 @@ class FileDeleteMixin:
     """文件删除 + 恢复工具 Mixin"""
 
     # ================================================================
-    # file_delete：从共享缓存取精确路径 + 物理删除 + 记录 deleted_files
+    # file_delete：消费已准备的目标 + 物理删除 + 记录 deleted_files
     # ================================================================
 
     async def _file_delete(
         self, executor: Any, args: Dict[str, Any], settings: Any,
     ) -> Any:
-        """file_delete：从共享缓存取精确路径，执行删除并记录到 deleted_files 表。
+        """file_delete：消费统一解析/确认后的目标，保留原 deleted_files 记录。
 
         tool_confirm 弹窗确认在 chat_tool_mixin 的 DANGEROUS 级别自动处理，
         执行到这里时用户已经点了确认。
         """
         from services.agent.agent_result import AgentResult
-        from services.agent.file_path_cache import get_file_cache
-
-        cache = get_file_cache(self.conversation_id)
-
-        # 保留同时携带两种参数的旧调用，使用副本，按实际目标去重。
-        file_ids = args.get("file_ids") or []
-        files = args.get("files") or []
-        if isinstance(file_ids, str):
-            file_ids = [file_ids]
-        if isinstance(files, str):
-            files = [files]
-        else:
-            files = list(files)
-        if not file_ids and not files:
-            return AgentResult(
-                summary="未指定要删除的文件",
-                status="error",
-                error_message="file_ids 或 files 至少传一个",
-                metadata={"retryable": True},
-            )
-
-        # fid 优先解析
-        if file_ids:
-            from services.agent.file_id import (
-                is_valid_fid, resolve_fid_to_workspace,
-            )
-            _org_id = getattr(self, "org_id", None)
-            for fid in file_ids:
-                if not is_valid_fid(fid):
-                    return AgentResult(
-                        summary=f"file_id 格式错误: {fid}",
-                        status="error",
-                        error_message=f"file_id 必须 fid_xxx 格式，你传的是 {fid!r}",
-                        metadata={"retryable": True},
-                    )
-                ws = resolve_fid_to_workspace(fid, _org_id, cache)
-                if not ws:
-                    return AgentResult(
-                        summary=f"未找到 file_id={fid}",
-                        status="error",
-                        error_message=f"file_id={fid} 在当前对话附件里找不到",
-                        metadata={"retryable": True},
-                    )
-                files.append(ws)
-
-        targets = []
-        seen = set()
-        skipped = []
-        for name in files:
-            # 带目录的输入必须按原路径校验；不能先被同名缓存改写。
-            # basename 保留唯一名字匹配兼容，缓存/ID 仍不代表路径授权。
-            candidate = name
-            if not os.path.dirname(name):
-                candidate = cache.resolve(name, usage="delete") or name
-            try:
-                target = executor.resolve_safe_path(candidate)
-                exists = target.is_file()
-            except FileNotFoundError:
-                skipped.append(name)
-                continue
-            except (OSError, ValueError) as error:
-                return AgentResult(
-                    summary=f"删除路径不允许或不可用: {name}",
-                    status="error", error_message=str(error),
-                    metadata={"retryable": False},
-                )
-            if not exists:
-                skipped.append(name)
-                continue
-            abs_path = str(target)
-            if abs_path not in seen:
-                seen.add(abs_path)
-                targets.append((name, abs_path))
+        from services.tools.file_calls import active_file_call, resolve_file_call
+        operation = active_file_call("file_delete")
+        is_prepared = operation is not None
+        try:
+            if operation is None:
+                operation = resolve_file_call(self, "file_delete", args, files=executor)
+                await operation.prepare()
+            targets = [(str(target.path) if is_prepared else operation.labels[index], str(target.path))
+                       for index, target in enumerate(operation.targets)]
+            skipped = []
+        except (ValueError, OSError) as error:
+            return AgentResult(summary=str(error), status="error", error_message=str(error),
+                               metadata={"retryable": False})
 
         # 整批校验结束后才执行。保留 OSS 副本和原恢复记录，不能改用
         # FileExecutor.file_delete（它会立即删除 OSS，破坏 30 天恢复）。
         deleted = []
         try:
             for name, abs_path in targets:
+                operation.check()
                 os.remove(abs_path)
                 deleted.append((name, abs_path))
                 logger.info(f"file_delete | path={name} | resolved={abs_path}")
@@ -148,8 +89,10 @@ class FileDeleteMixin:
         """
         from services.agent.agent_result import AgentResult
 
+        from services.tools.file_calls import active_file_call
+        prepared = active_file_call("restore_file")
         filename = args.get("filename", "").strip()
-        if not filename:
+        if not filename and not args.get("record_id"):
             return AgentResult(
                 summary="请指定要恢复的文件名",
                 status="error",
@@ -158,7 +101,8 @@ class FileDeleteMixin:
             )
 
         # 查 deleted_files 表
-        record = await self._find_deleted_record(filename)
+        record = prepared.record if prepared is not None else await self._find_deleted_record(
+            filename, **({"record_id": args["record_id"]} if args.get("record_id") else {}))
         if not record:
             return AgentResult(
                 summary=f"未找到「{filename}」的删除记录。文件可能未被删除，或已超过 30 天恢复期。",
@@ -174,15 +118,25 @@ class FileDeleteMixin:
         # 再走 resolve_safe_path 安全校验（确认在当前用户 _root 内）
         abs_path = str((Path(executor._workspace_base) / rel_path).resolve())
         target_path = executor.resolve_safe_path(abs_path)
+        if target_path.exists():
+            return AgentResult(summary="恢复位置已有文件，未覆盖", status="error",
+                               error_message="RESOURCE_DESTINATION_EXISTS", metadata={"retryable": False})
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
+        import tempfile
+        temporary = None
         try:
-            import asyncio
             from services.oss_service import get_oss_service
             oss = get_oss_service()
-            await asyncio.to_thread(
-                oss.bucket.get_object_to_file, oss_key, str(target_path),
-            )
+            from services.workspace_coordination import finish_file_io
+            fd, temporary = tempfile.mkstemp(prefix=".restore-", dir=target_path.parent)
+            os.close(fd)
+            options = {"headers": {"If-Match": f'"{prepared.backup_etag}"'}} if prepared is not None else {}
+            await finish_file_io(oss.bucket.get_object_to_file, oss_key, temporary, **options)
+            if prepared is not None:
+                prepared.check()
+            # link is an atomic no-clobber publication on the same filesystem.
+            os.link(temporary, target_path)
         except Exception as e:
             logger.error(f"restore_file OSS download failed | key={oss_key} | error={e}")
             return AgentResult(
@@ -190,6 +144,10 @@ class FileDeleteMixin:
                 status="error",
                 error_message=str(e),
             )
+
+        finally:
+            if temporary is not None:
+                Path(temporary).unlink(missing_ok=True)
 
         # 标记 deleted_files 记录为已恢复
         await self._mark_restored(record["id"])
@@ -201,7 +159,7 @@ class FileDeleteMixin:
             status="success",
         )
 
-    async def _find_deleted_record(self, filename: str) -> dict | None:
+    async def _find_deleted_record(self, filename: str, *, record_id=None) -> dict | None:
         """从 deleted_files 表查找匹配的删除记录（未过期、未清理）"""
         try:
             from services.knowledge_config import get_pg_connection, is_kb_available
@@ -212,7 +170,7 @@ class FileDeleteMixin:
                 return None
             async with conn_ctx as conn:
                 async with conn.cursor() as cur:
-                    # 按 relative_path 精确匹配 或 文件名模糊匹配
+                    # 路径/文件名按字面匹配；同名多记录必须显式选择。
                     await cur.execute(
                         """
                         SELECT id, relative_path, oss_object_key
@@ -221,16 +179,24 @@ class FileDeleteMixin:
                           AND user_id = %(user_id)s
                           AND NOT purged
                           AND purge_after > now()
-                          AND (relative_path = %(name)s
-                               OR relative_path LIKE '%%/' || %(name)s)
-                        ORDER BY deleted_at DESC
-                        LIMIT 1
+                          AND ((%(record_id)s::bigint IS NOT NULL AND id = %(record_id)s::bigint)
+                            OR (%(record_id)s::bigint IS NULL AND (relative_path = %(name)s
+                              OR right(relative_path, length(%(name)s) + 1) = '/' || %(name)s)))
+                        ORDER BY relative_path, deleted_at DESC
+                        LIMIT 101
                         """,
-                        {"org_id": self.org_id, "user_id": self.user_id, "name": filename},
+                        {"org_id": self.org_id, "user_id": self.user_id, "name": filename, "record_id": record_id},
                     )
-                    row = await cur.fetchone()
-                    if row:
+                    rows = await cur.fetchall()
+                    if len(rows) > 1:
+                        from services.file_resources import FileTargetError
+                        raise FileTargetError("RESOURCE_AMBIGUOUS", "找到多条删除记录，请指定 record_id",
+                                              [f"{row[1]} (record_id={row[0]})" for row in rows[:30]])
+                    if rows:
+                        row = rows[0]
                         return {"id": row[0], "relative_path": row[1], "oss_object_key": row[2]}
+        except ValueError:
+            raise
         except Exception as e:
             logger.warning(f"restore_file query failed | error={e}")
         return None

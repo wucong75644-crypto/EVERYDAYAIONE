@@ -34,9 +34,10 @@ class TestFileToolSchemas:
         for tool_name in FILE_INFO_TOOLS:
             assert tool_name in FILE_TOOL_SCHEMAS
 
-    def test_file_delete_requires_files(self):
+    def test_file_delete_accepts_selector_alternatives(self):
         schema = FILE_TOOL_SCHEMAS["file_delete"]
-        assert "files" in schema["required"]
+        assert schema["required"] == []
+        assert {"files", "file_ids", "resource_refs"} <= schema["properties"].keys()
 
     def test_file_search_no_required(self):
         schema = FILE_TOOL_SCHEMAS["file_search"]

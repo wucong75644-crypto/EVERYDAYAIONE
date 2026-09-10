@@ -1,0 +1,33 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.2, pytest-9.0.3, pluggy-1.6.0 -- /Users/wucong/EVERYDAYAIONE/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-04/backend
+configfile: pytest.ini
+plugins: time-machine-2.14.1, cov-7.1.0, asyncio-1.3.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 11 items
+
+backend/tests/test_erp_tool_mixin_unit.py::TestGetErpDispatcherErrors::test_org_credentials_not_found PASSED [  9%]
+backend/tests/test_erp_tool_mixin_unit.py::TestGetErpDispatcherErrors::test_personal_user_not_configured PASSED [ 18%]
+backend/tests/test_erp_tool_mixin_unit.py::TestErpDispatchValidation::test_missing_action PASSED [ 27%]
+backend/tests/test_erp_tool_mixin_unit.py::TestErpDispatchValidation::test_dispatcher_error_propagates PASSED [ 36%]
+backend/tests/test_erp_tool_mixin_unit.py::TestErpDispatchValidation::test_query_exception_returns_error PASSED [ 45%]
+backend/tests/test_erp_tool_mixin_unit.py::TestErpExecuteWrite::test_redis_unavailable PASSED [ 54%]
+backend/tests/test_erp_tool_mixin_unit.py::TestErpExecuteWrite::test_idempotency_duplicate PASSED [ 63%]
+backend/tests/test_erp_tool_mixin_unit.py::TestErpExecuteWrite::test_concurrent_lock_conflict PASSED [ 72%]
+backend/tests/test_erp_tool_mixin_unit.py::TestLocalDispatchErrors::test_unknown_tool PASSED [ 81%]
+backend/tests/test_erp_tool_mixin_unit.py::TestLocalDispatchErrors::test_query_exception PASSED [ 90%]
+backend/tests/test_erp_tool_mixin_unit.py::TestErpDispatchSuccess::test_param_doc_returns_success PASSED [100%]
+
+=============================== warnings summary ===============================
+../../.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434
+  /Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+tests/test_erp_tool_mixin_unit.py::TestGetErpDispatcherErrors::test_org_credentials_not_found
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-04/backend/services/adapters/kie/models.py:126: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class JsonSchema(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 11 passed, 2 warnings in 0.25s ========================

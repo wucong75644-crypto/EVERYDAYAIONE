@@ -5,6 +5,8 @@
 注：图像生成功能已迁移到统一消息 API (/messages/generate)
 """
 
+from services.workspace_coordination import workspace_lock, receive_workspace_upload
+
 from pathlib import Path
 from typing import Optional
 
@@ -47,7 +49,6 @@ async def upload_image(
       - workspace_path 供后端 file_path_cache 注册 + AI 历史回看
     base64 路径不落工作区（无原始文件名，仅 OSS）。
     """
-    import aiofiles
 
     from core.config import get_settings
     from core.workspace import resolve_upload_relpath
@@ -107,33 +108,27 @@ async def upload_image(
             upload_relpath_prefix = resolve_upload_relpath(user_id, org_id)
             upload_path = f"{upload_relpath_prefix}/{unique_name}"
             target = executor.resolve_safe_path(upload_path)
-            target.parent.mkdir(parents=True, exist_ok=True)
+            async with workspace_lock(executor.workspace_root, write=True):
+                target = executor.resolve_safe_path(upload_path)
+                total_size = await receive_workspace_upload(
+                    file, target, max_bytes=_IMAGE_MAX_FILE_SIZE,
+                    too_large=lambda size: ValidationError(
+                        message=f"图片过大: {size / 1024 / 1024:.1f}MB，上限 100MB"),
+                )
 
-            total_size = 0
-            async with aiofiles.open(target, "wb") as f:
-                while chunk := await file.read(1024 * 1024):
-                    total_size += len(chunk)
-                    if total_size > _IMAGE_MAX_FILE_SIZE:
-                        await f.close()
-                        target.unlink(missing_ok=True)
-                        raise ValidationError(
-                            message=f"图片过大: {total_size / 1024 / 1024:.1f}MB，上限 100MB"
-                        )
-                    await f.write(chunk)
-
-            # 同步 OSS（失败不致命）
-            cdn_url = None
-            try:
-                from services.oss_service import get_oss_service
-                oss = get_oss_service()
-                rel_path = str(target.relative_to(Path(settings.file_workspace_root).resolve()))
-                cdn_url = await oss.sync_workspace_file(target, rel_path)
-                thumbnail_url = await oss.sync_workspace_thumbnail(target, rel_path) if cdn_url else None
-            except Exception as e:
-                logger.warning(f"Image OSS sync failed | file={filename} | error={e}")
-                thumbnail_url = None
-            if not cdn_url:
-                cdn_url = executor.get_cdn_url(upload_path)
+                # 同步 OSS（失败不致命）
+                cdn_url = None
+                try:
+                    from services.oss_service import get_oss_service
+                    oss = get_oss_service()
+                    rel_path = str(target.relative_to(Path(settings.file_workspace_root).resolve()))
+                    cdn_url = await oss.sync_workspace_file(target, rel_path)
+                    thumbnail_url = await oss.sync_workspace_thumbnail(target, rel_path) if cdn_url else None
+                except Exception as e:
+                    logger.warning(f"Image OSS sync failed | file={filename} | error={e}")
+                    thumbnail_url = None
+                if not cdn_url:
+                    cdn_url = executor.get_cdn_url(upload_path)
 
             mime_type = file.content_type or f"image/{ext if ext != 'jpg' else 'jpeg'}"
             logger.info(

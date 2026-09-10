@@ -406,10 +406,9 @@ def test_policy_never_executes_ws_handler_retry_or_swallows_errors(registry, mon
         text = source.read_text()
         assert "async def " not in text and "import asyncio" not in text
         assert "websocket" not in text.lower() and "ToolExecutor" not in text
-    # Registry test also verifies the entire production tree has no reverse import.
-    for source in [root / "services/agent/tool_executor.py", root / "services/agent/tool_loop_executor.py",
-                   root / "services/handlers/chat_tool_mixin.py", root / "services/handlers/chat_tool_helpers.py"]:
-        assert "services.tools" not in source.read_text()
+    # 04 switches production entrypoints; policy/action rules remain pure above.
+    assert "services.tools.runtime" in (root / "services/agent/tool_executor.py").read_text()
+
 
 
 @pytest.mark.parametrize("values", [{"operation": "invented"}, {"plan_allowed": 1}, {"execution_modes": "scheduled"},

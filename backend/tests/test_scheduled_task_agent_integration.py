@@ -29,6 +29,7 @@ from services.agent.scheduled_task_agent import (
     MAX_SCHEDULED_TURNS,
 )
 from services.agent.agent_result import AgentResult
+from tests.tool_runtime_support import MockHandlerExecutor
 from services.agent.tool_output import ColumnMeta, OutputFormat
 
 
@@ -97,13 +98,19 @@ class FakeAdapter:
         )
 
 
-class FakeToolExecutor:
+class FakeToolExecutor(MockHandlerExecutor):
     """模拟 ToolExecutor"""
     def __init__(self, results: dict | None = None):
+        super().__init__(user_id="user_zhangsan", org_id="org_lanchuang",
+                         conversation_id="scheduled_production_task_int_001", agent_domain="general",
+                         task_id="task_int_001", execution_mode="scheduled",
+                         allowed_tool_names={"erp_agent", "code_execute"},
+                         tool_policy_snapshot={"version": 1, "allowed_tools": ["erp_agent", "code_execute"]})
+        self.handler.side_effect = self._mock_handler
         self.results = results or {}
         self.calls: list = []
 
-    async def execute(self, tool_name: str, args: dict) -> str:
+    async def _mock_handler(self, tool_name: str, args: dict) -> str:
         self.calls.append((tool_name, args))
         if tool_name in self.results:
             r = self.results[tool_name]
@@ -136,7 +143,7 @@ def make_task(**overrides) -> dict:
         "consecutive_failures": 0,
         # 集成测试验证已通过预检的执行循环；无策略历史任务的拒绝行为由
         # test_scheduled_task_agent.py 单独覆盖。
-        "execution_policy": {"allowed_tools": ["erp_agent", "code_execute"]},
+        "execution_policy": {"version": 1, "allowed_tools": ["erp_agent", "code_execute"]},
     }
     base.update(overrides)
     return base
@@ -237,8 +244,7 @@ class TestExecuteHappyPath:
         ])
         executor = FakeToolExecutor(results={"code_execute": sandbox_output})
 
-        with patch("config.chat_tools.get_core_tools", return_value=[]), \
-             patch("services.adapters.factory.create_chat_adapter", return_value=adapter), \
+        with patch("services.adapters.factory.create_chat_adapter", return_value=adapter), \
              patch("services.agent.tool_executor.ToolExecutor", return_value=executor):
 
             agent = ScheduledTaskAgent(MagicMock(), make_task())

@@ -20,6 +20,7 @@ class PreparedChatStream:
     stream_kwargs: dict[str, Any]
     tool_context: Any
     budget: Any
+    execution_context: Any = None
 
     @property
     def adapter(self) -> Any:
@@ -70,6 +71,24 @@ async def prepare_chat_stream(
             context_anchor=context_anchor,
         )
     context_ready_at = time.monotonic()
+    from services.handlers.context_snapshot import ContextAnchor
+    if isinstance(context_anchor, ContextAnchor):
+        import asyncio
+        from services.handlers.resource_manifest import build_resource_manifest
+        input_content = [part.model_dump(mode="json") if hasattr(part, "model_dump") else part
+                         for part in content]
+
+        async def load_resources():
+            return await asyncio.to_thread(
+                build_resource_manifest, handler.db, task_id=context_anchor.task_id,
+                input_message_id=context_anchor.input_message_id,
+                conversation_id=context_anchor.conversation_id, turn_id=context_anchor.turn_id,
+                org_id=context_anchor.org_id, input_content=input_content,
+            )
+
+        handler._tool_resource_manifest_loader = load_resources
+        if replay_context is not None:
+            handler._resource_manifest = await load_resources()
     logger.info(
         f"Pre-stream timing | task={task_id} | memory=0ms | "
         f"context={int((context_ready_at - started_at) * 1000)}ms"
@@ -110,10 +129,16 @@ async def prepare_chat_stream(
             f"setup_total={int((time.monotonic() - started_at) * 1000)}ms"
         )
 
+        from services.tools.runtime_context import chat_context
+        execution_context = chat_context(
+            handler, user_id=user_id, conversation_id=conversation_id, task_id=task_id,
+            permission_mode=permission_mode, budget=budget, cancellation=cancellation_event,
+        )
         permission, core_tools = _prepare_permission_and_tools(
             permission_mode,
             handler.org_id,
             getattr(handler, "_personal_context_allowed", True),
+            execution_context=execution_context,
         )
         stream_kwargs = {}
         tool_context = _prepare_request_context(
@@ -133,6 +158,7 @@ async def prepare_chat_stream(
             stream_kwargs=stream_kwargs,
             tool_context=tool_context,
             budget=budget,
+            execution_context=execution_context,
         )
     except BaseException:
         await model_gateway.close()
@@ -151,18 +177,19 @@ def _prepare_permission_and_tools(
     permission_mode: str,
     org_id: str | None,
     personal_context_allowed: bool,
+    *, execution_context=None,
 ) -> tuple[Any, list[dict[str, Any]]]:
-    from config.chat_tools import get_tools_for_mode
+    from services.tools import ToolContext, ToolPolicy, LegacyAdvertisement, build_legacy_catalog
     from services.handlers.permission_mode import PermissionMode
 
     permission = PermissionMode(mode=permission_mode)
     logger.info(f"Permission mode | mode={permission.mode.value}")
-    tools = get_tools_for_mode(permission.mode.value, org_id=org_id)
-    if not personal_context_allowed:
-        tools = [
-            tool for tool in tools
-            if _tool_name(tool) not in _PERSONAL_TOOLS
-        ]
+    if execution_context is None:
+        from services.tools.runtime_context import catalog_context
+        execution_context = catalog_context(org_id, permission.mode.value, personal_context_allowed)
+    registry = build_legacy_catalog()
+    tools = registry.resolve(execution_context, policy=ToolPolicy(registry),
+                             advertisement=LegacyAdvertisement()).advertised_schemas()
     return permission, tools
 
 

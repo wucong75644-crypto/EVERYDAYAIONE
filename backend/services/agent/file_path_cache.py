@@ -52,7 +52,7 @@ class FileEntry:
         False → "未分析。如需查询数据，调用 file_analyze(...)。"
         True  → "已分析。直接用 code_execute + get_file + duckdb 查询。"
     """
-    __slots__ = ("name", "workspace", "parquet", "analyzed")
+    __slots__ = ("name", "workspace", "parquet", "analyzed", "source_version")
 
     def __init__(
         self, name: str, workspace: str = "", parquet: str = "",
@@ -62,6 +62,18 @@ class FileEntry:
         self.workspace = workspace
         self.parquet = parquet
         self.analyzed = analyzed
+        self.source_version = None
+
+    def refresh(self):
+        from services.file_resources import file_version
+        try:
+            version = file_version(Path(self.workspace)) if self.workspace else None
+        except (OSError, ValueError):
+            version = None
+        if self.source_version != version:
+            self.parquet = ""
+            self.analyzed = False
+            self.source_version = version
 
     def to_dict(self) -> dict[str, str]:
         return {"name": self.name, "workspace": self.workspace, "parquet": self.parquet}
@@ -112,6 +124,7 @@ class FilePathCache:
             self._files.append(entry)
         if workspace:
             entry.workspace = workspace
+            entry.refresh()
         if parquet:
             entry.parquet = parquet
         # 拿到目录限定路径后，先前登记的 basename 仅保留为兼容别名。
@@ -227,11 +240,15 @@ class FilePathCache:
 
     def _resolve_entry(self, name: str) -> Optional[FileEntry]:
         """四级递进匹配查找 FileEntry。"""
+        for entry in self._files:
+            entry.refresh()
         # 1. 精确匹配
         if name in self._paths:
             return self._unique(self._paths[name])
         if name in self._entries:
             return self._unique(self._entries[name])
+        if os.path.dirname(name):
+            return None
         basename = os.path.basename(name)
         if basename in self._entries:
             return self._unique(self._entries[basename])

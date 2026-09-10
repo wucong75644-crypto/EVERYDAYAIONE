@@ -216,7 +216,25 @@ class KernelManager:
 
         async with kernel.lock:
             kernel.last_active = time.monotonic()
-            return await self._send_and_recv(kernel, code, timeout)
+            pending = asyncio.create_task(self._send_and_recv(kernel, code, timeout))
+            try:
+                return await asyncio.shield(pending)
+            except asyncio.CancelledError:
+                # Keep the caller's workspace lease until the worker acknowledges
+                # interruption. Otherwise cancelled code can outlive the lock.
+                from services.workspace_coordination import drain_file_task
+                async def settle():
+                    self.interrupt(conversation_id)
+                    try:
+                        await asyncio.wait_for(asyncio.shield(pending), timeout=5)
+                    except Exception:
+                        await self._destroy_kernel(conversation_id)
+                    finally:
+                        if not pending.done():
+                            pending.cancel()
+                        await asyncio.gather(pending, return_exceptions=True)
+                await drain_file_task(asyncio.create_task(settle()))
+                raise
 
     async def destroy(self, conversation_id: str) -> None:
         """销毁指定 Kernel"""
@@ -414,6 +432,7 @@ class KernelManager:
             )
         except asyncio.TimeoutError:
             from services.sandbox.sandbox_constants import TIMEOUT_MESSAGE
+            await self._destroy_kernel(kernel.conversation_id)
             return "timeout", TIMEOUT_MESSAGE.format(timeout=timeout), []
 
         if not response_line:

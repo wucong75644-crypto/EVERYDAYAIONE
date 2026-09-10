@@ -79,6 +79,8 @@ class FileExecutor(FileQueryExtensionsMixin, FileWriteExtensionsMixin):
         workspace_root: str,
         user_id: str = "",
         org_id: Optional[str] = None,
+        *,
+        create_root: bool = True,
     ) -> None:
         base = Path(workspace_root).resolve()
 
@@ -91,7 +93,8 @@ class FileExecutor(FileQueryExtensionsMixin, FileWriteExtensionsMixin):
         else:
             self._root = base
 
-        self._root.mkdir(parents=True, exist_ok=True)
+        if create_root:
+            self._root.mkdir(parents=True, exist_ok=True)
 
         # workspace 基础路径（用于计算 OSS object_key）
         self._workspace_base = base

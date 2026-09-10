@@ -55,6 +55,26 @@ async def km():
 # 基础功能
 # ============================================================
 
+
+async def test_cancel_waits_for_kernel_ack_and_preserves_state(km, temp_dirs):
+    """Cancellation consumes the interrupted response before releasing execution."""
+    ws, st, out = temp_dirs()
+    assert await km.get_or_create("cancel-safe", ws, st, out)
+    await km.execute("cancel-safe", "kept = 42", 10)
+    from pathlib import Path
+    marker = Path(ws) / "started.txt"
+    code = f"import time\nopen({str(marker)!r}, 'w').close()\ntime.sleep(60)"
+    task = asyncio.create_task(km.execute("cancel-safe", code, 70))
+    async def started():
+        while not marker.exists():
+            await asyncio.sleep(0.01)
+    await asyncio.wait_for(started(), 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 7)
+    status, stdout, _ = await km.execute("cancel-safe", "print(kept)", 10)
+    assert status == "ok" and "42" in stdout
+
 class TestBasic:
 
     async def test_create_and_execute(self, km, temp_dirs):

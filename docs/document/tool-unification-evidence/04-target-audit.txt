@@ -1,0 +1,47 @@
+2026-09-10 10:33:27.262 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool04-audit-xfukkdl3/org/o1/u1
+2026-09-10 10:33:27.262 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool04-audit-xfukkdl3/org/o1/u1
+2026-09-10 10:33:27.262 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool04-audit-xfukkdl3/org/o1/u1
+2026-09-10 10:33:27.263 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool04-audit-xfukkdl3/org/o1/u1
+2026-09-10 10:33:27.263 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool04-audit-xfukkdl3/org/o1/u1
+2026-09-10 10:33:27.273 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool04-audit-xfukkdl3/org/o1/u1
+2026-09-10 10:33:27.274 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool04-audit-xfukkdl3/org/o1/u1
+2026-09-10 10:33:27.282 | INFO     | services.agent.file_delete_mixin:_restore_file:197 - restore_file | file=report.csv | oss_key=mock-backup | target=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool04-audit-xfukkdl3/org/o1/u1/uploads/report.csv
+2026-09-10 10:33:28.247 | INFO     | services.agent.data_query_cache:ensure_parquet_cache_csv:1040 - CSV→Parquet | src=large.csv | rows=524,289
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l1dcachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l2cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l3cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.optional.neon'. Detail: [errno 1] Operation not permitted
+[
+  {
+    "case": "explicit_path_rewritten",
+    "observed": "different/report.csv resolved to uploads/report.csv"
+  },
+  {
+    "case": "cold_worker_fid",
+    "observed": "same existing file ID unavailable without conversation cache"
+  },
+  {
+    "case": "nonexistent_manifest_hit",
+    "observed": "missing file listed with actionable-looking fid"
+  },
+  {
+    "case": "search_display_parsing",
+    "observed": "filename containing pipe rendered with ID for truncated nonexistent path"
+  },
+  {
+    "case": "confirmation_file_version",
+    "observed": "after approval same path with changed bytes reached mock Handler once"
+  },
+  {
+    "case": "ambiguous_task_id",
+    "observed": "two matching short IDs silently select first row"
+  },
+  {
+    "case": "restore_destination_conflict",
+    "observed": "real restore Handler with mocked OSS overwrites existing temp file"
+  },
+  {
+    "case": "analysis_stale_tail",
+    "observed": "CSV tail changed beyond 1 MiB; real converter reused Parquet containing old value 2 instead of 9"
+  }
+]

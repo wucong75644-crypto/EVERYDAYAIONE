@@ -96,11 +96,13 @@ class TestRawDataAttachmentBaseline:
 class TestAnalyzedDataAttachmentBaseline:
     """已分析的 xlsx：XML 应指向 pd.read_parquet + 给出 parquet 路径"""
 
-    def test_analyzed_action_points_to_pd_read_parquet(self):
+    def test_analyzed_action_points_to_pd_read_parquet(self, tmp_path):
+        source = tmp_path / "report.xlsx"
+        source.write_bytes(b"source")
         cache = get_file_cache(_CONV + "-analyzed")
         cache.register(
-            "report.xlsx",
-            workspace="/abs/report.xlsx",
+            "上传/2026-06/report.xlsx",
+            workspace=str(source),
             parquet="/host/staging/x/report.parquet",
         )
         cache.set_analyzed("report.xlsx", True)
@@ -116,6 +118,12 @@ class TestAnalyzedDataAttachmentBaseline:
         assert "<parquet>staging/report.parquet</parquet>" in out
         assert "<action>" in out
         assert "pd.read_parquet" in out or "read_parquet" in out
+        other = ChatContextMixin._format_attachments(
+            [_file("report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                   wp="different/report.xlsx")], conversation_id=_CONV + "-analyzed",
+        )
+        assert "<status>raw</status>" in other
+        assert "<parquet>" not in other
 
 
 class TestDocAttachmentBaseline:
@@ -344,16 +352,18 @@ class TestBuildWorkspacePromptStateAware:
                 f"工具调用方式应由 attachments XML 的 <action> 单一声明"
             )
 
-    def test_state_aware_for_analyzed_xlsx(self):
+    def test_state_aware_for_analyzed_xlsx(self, tmp_path):
         """analyzed xlsx 应标记「已分析」"""
         from services.handlers.chat_context.attachments import (
             build_workspace_prompt,
         )
         from services.agent.file_path_cache import get_file_cache
         conv = "test-state-aware-analyzed"
+        source = tmp_path / "report.xlsx"
+        source.write_bytes(b"source")
         cache = get_file_cache(conv)
         cache.register(
-            "report.xlsx", workspace="/abs/report.xlsx",
+            "上传/report.xlsx", workspace=str(source),
             parquet="/staging/r.parquet",
         )
         cache.set_analyzed("report.xlsx", True)

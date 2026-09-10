@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from services.workspace_coordination import finish_file_io
 import os
 import re
 import time
@@ -227,7 +228,7 @@ _MAX_LOCKS = 100
 # V2 缓存 schema 版本：升级时改这个数字，所有用户旧缓存自动失效（强制重算）
 # v2.0 → v2.1：PathB calamine 改造 + PathA/B null_ratio bug 修复 + ""列识别（2026-06-03）
 # v2.1 → v2.2：cache_key 改用内容指纹（zip CRC / csv md5），snapshot 改存 fingerprint（2026-06-04）
-_CACHE_SCHEMA_VERSION = "v3.0"  # V3：骨架抽取 + AI 一次裁决（删 grain，加 table_role）
+_CACHE_SCHEMA_VERSION = "v3.1"  # 全文件 SHA256；旧前缀指纹缓存不再命中
 
 # V2.2 #19: ensure_parquet_cache 总超时（兜底防挂死，业界通用 10 分钟）
 # 覆盖：AI 失败链 195s（3×65s 含网络抖动）+ scan 大文件 90s + 转换 60s + 写盘/meta 余量
@@ -518,33 +519,10 @@ def validate_xlsx_safety(abs_path: str) -> None:
 
 
 def _compute_file_fingerprint(abs_path: str) -> str:
-    """计算文件内容指纹（替代 mtime+size 弱校验）。
+    """Full source content identity; read failures never become cache hits."""
+    from services.file_resources import content_digest
+    return content_digest(abs_path)
 
-    xlsx/xls 是 zip 容器 → 用所有 entry 的 (filename, CRC32, size) 拼接 md5
-    csv/tsv/其他 → 首 1MB md5
-
-    返回 12 位 hex（48 bit），生日悖论下 ~1M 文件不会碰撞。
-    """
-    ext = Path(abs_path).suffix.lower()
-    try:
-        if ext in (".xlsx", ".xls"):
-            try:
-                with zipfile.ZipFile(abs_path) as z:
-                    sig = "|".join(
-                        f"{i.filename}:{i.CRC}:{i.file_size}"
-                        for i in z.infolist()
-                    )
-                    return hashlib.md5(sig.encode()).hexdigest()[:12]
-            except zipfile.BadZipFile:
-                # 不是 zip（损坏或假 xlsx）→ 用首 64KB md5 兜底
-                pass
-        # csv/tsv/兜底：首 1MB md5
-        with open(abs_path, "rb") as f:
-            return hashlib.md5(f.read(1024 * 1024)).hexdigest()[:12]
-    except OSError as e:
-        logger.warning(f"fingerprint compute failed | path={abs_path} | err={e}")
-        # 完全失败兜底用路径 hash（退化为 v2.1 行为）
-        return hashlib.md5(abs_path.encode()).hexdigest()[:12]
 _convert_locks: dict[str, asyncio.Lock] = {}
 
 
@@ -634,7 +612,7 @@ async def ensure_parquet_cache(
         FileAnalyzeError: AI 三次裁决全部失败
         ValueError: 空文件
     """
-    # v2.2: 缓存 key 改用文件内容指纹（zip CRC sum / csv 首 1MB md5）
+    # 缓存 key 使用完整文件内容指纹，不能只比较前缀或容器元数据。
     # 优势：1) 文件重命名不重算 2) 同 size 改内容也能检测到
     fingerprint = _compute_file_fingerprint(excel_path)
     sheet_label = sheet or "sheet0"
@@ -704,7 +682,7 @@ async def ensure_parquet_cache(
         )
 
     # 新锁协议（修 #1+#2+#5）：refcount 保护 + 进程间 fcntl 文件锁
-    lock_key = f"{excel_path}:{sheet_label}"
+    lock_key = str(cache_path)
     lock_file_path = str(cache_path) + ".lock"
 
     # V3.1: scanner 持有 cached_df 跨 AI 等待期,
@@ -726,7 +704,6 @@ async def ensure_parquet_cache(
         from services.agent.file_ai_judge import adjudicate, FileAnalyzeError
         from services.agent.file_cleaning_strategy import CleaningStrategy
 
-        loop = asyncio.get_running_loop()
 
         # Smell 3 观测：记录 file_analyze 各阶段耗时
         _fn = Path(excel_path).name
@@ -735,10 +712,10 @@ async def ensure_parquet_cache(
         # 代码扫描在线程池（IO/CPU 密集）
         scanner = None
         try:
-            scanner = await loop.run_in_executor(None, make_scanner, excel_path, None)
+            scanner = await finish_file_io(make_scanner, excel_path, None)
             # V3.1: 立即把 scanner 放入 holder,即使 scan() 抛异常也能让外层 finally 释放
             _scanner_holder[0] = scanner
-            evidence = await loop.run_in_executor(None, scanner.scan)
+            evidence = await finish_file_io(scanner.scan)
         except FileAnalyzeError:
             raise
         except MemoryError as e:
@@ -884,15 +861,15 @@ async def ensure_parquet_cache(
         # V3.1: scanner 作为最后一个参数传入,复用 _cached_df / _cached_sheet_dfs
         if evidence.path_type == "D":
             # 路径 D：传 decision + strategy（按 sheets[i].role 过滤 meta/aggregated/skip）
-            sheet_names = await loop.run_in_executor(
-                None, _convert_all_sheets_to_parquet,
+            sheet_names = await finish_file_io(
+                _convert_all_sheets_to_parquet,
                 excel_path, str(cache_path), src_mtime, src_size,
                 str(snapshot_path),
                 decision, strategy, scanner,
             )
         else:
-            sheet_names = await loop.run_in_executor(
-                None, _convert_excel_to_parquet,
+            sheet_names = await finish_file_io(
+                _convert_excel_to_parquet,
                 excel_path, str(cache_path), sheet, src_mtime, src_size,
                 str(snapshot_path), adapter, strategy, scanner,
             )
@@ -913,8 +890,8 @@ async def ensure_parquet_cache(
 
         # V2: 补充 ai_decision / cleaning_strategy / xml_view 到 meta.json
         # V2.2 #16: 同时存 schema_fingerprint
-        await loop.run_in_executor(
-            None, _enrich_meta_v2,
+        await finish_file_io(
+            _enrich_meta_v2,
             str(cache_path), excel_path, decision, strategy, staging_dir,
             schema_fp,
         )
@@ -934,7 +911,7 @@ async def ensure_parquet_cache(
         entry = await _acquire_convert_lock(lock_key)
         try:
             async with entry.lock:                      # 进程内互斥（修 #1）
-                with _FileLock(lock_file_path):         # 进程间互斥（修 #5）
+                async with _FileLock(lock_file_path):         # 进程间互斥（修 #5）
                     return await _do_convert()
         finally:
             # V3.1: 不管 _do_convert 成功/失败/超时取消,都释放 scanner cached_df
@@ -977,11 +954,12 @@ async def ensure_parquet_cache_csv(
     """
     import pandas as pd
 
-    # v2.2: cache_key 用内容指纹（同 ensure_parquet_cache 协议）
+    # Parser configuration is part of identity: identical CSV/TSV bytes differ.
     fingerprint = _compute_file_fingerprint(csv_path)
+    format_label = "tsv" if csv_path.lower().endswith(".tsv") else "csv"
     from services.agent.cache_naming import make_cache_parquet_name
     cache_name = make_cache_parquet_name(
-        _CACHE_SCHEMA_VERSION, fingerprint, "csv",
+        _CACHE_SCHEMA_VERSION, fingerprint, format_label,
     )
     staging = Path(staging_dir)
     cache_path = staging / cache_name
@@ -994,11 +972,11 @@ async def ensure_parquet_cache_csv(
         return str(cache_path), None
 
     # 新锁协议（与 ensure_parquet_cache 一致）
-    lock_key = f"{csv_path}:csv"
+    lock_key = str(cache_path)
     lock_file_path = str(cache_path) + ".lock"
 
     def _do_convert():
-        sep = "\t" if csv_path.lower().endswith(".tsv") else ","
+        sep = "\t" if format_label == "tsv" else ","
         # V2.2: 多级编码兜底链（UTF-8/GBK/BIG5/SJIS/EUC-KR/Latin-1）
         df = _read_csv_smart(csv_path, sep)
         if df.empty:
@@ -1032,11 +1010,10 @@ async def ensure_parquet_cache_csv(
     entry = await _acquire_convert_lock(lock_key)
     try:
         async with entry.lock:
-            with _FileLock(lock_file_path):
+            async with _FileLock(lock_file_path):
                 if _snapshot_matches_fp(cache_path, snapshot_path, fingerprint):
                     return str(cache_path), None
-                loop = asyncio.get_running_loop()
-                rows = await loop.run_in_executor(None, _do_convert)
+                rows = await finish_file_io(_do_convert)
                 logger.info(
                     f"CSV→Parquet | src={Path(csv_path).name} | rows={rows:,}"
                 )
@@ -1187,38 +1164,29 @@ def _release_convert_lock(key: str) -> None:
 
 
 class _FileLock:
-    """fcntl.flock 阻塞独占锁（POSIX）— 跨进程互斥。
-
-    用法：
-        with _FileLock(lock_path):
-            ...  # 临界区
-    """
+    """Awaitable cross-process cache lock; cancellation never leaves an owner."""
     def __init__(self, lock_path: str):
         self.lock_path = lock_path
         self._fd = None
 
-    def __enter__(self):
-        # 上层确保 lock_path 父目录存在
-        self._fd = open(self.lock_path, "w")
+    async def __aenter__(self):
+        import fcntl
+        self._fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR, 0o600)
         try:
-            import fcntl
-            fcntl.flock(self._fd, fcntl.LOCK_EX)
-        except ImportError:
-            # Windows 退化为无效锁（生产环境是 Linux ECS，不会走到这里）
-            logger.warning("fcntl unavailable → file lock disabled")
-        return self
+            while True:
+                try:
+                    fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    return self
+                except BlockingIOError:
+                    await asyncio.sleep(0.025)
+        except BaseException:
+            os.close(self._fd)
+            self._fd = None
+            raise
 
-    def __exit__(self, *_):
-        try:
-            import fcntl
-            fcntl.flock(self._fd, fcntl.LOCK_UN)
-        except ImportError:
-            pass
-        finally:
-            try:
-                self._fd.close()
-            except OSError:
-                pass
+    async def __aexit__(self, *_):
+        os.close(self._fd)
+        self._fd = None
 
 _HEADER_MAX_SCAN = 20   # 扫描前 N 行寻找表头
 

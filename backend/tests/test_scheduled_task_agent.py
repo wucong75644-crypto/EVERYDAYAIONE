@@ -17,6 +17,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from types import SimpleNamespace
 
+from tests.tool_runtime_support import IdentityDB
 from services.agent.scheduled_task_agent import (
     ScheduledTaskAgent,
     ScheduledTaskResult,
@@ -46,7 +47,7 @@ def make_task(**overrides) -> dict:
         "last_summary": None,
         "run_count": 0,
         "consecutive_failures": 0,
-        "execution_policy": {"allowed_tools": ["erp_agent"]},
+        "execution_policy": {"version": 1, "allowed_tools": ["erp_agent"]},
     }
     base.update(overrides)
     return base
@@ -58,7 +59,7 @@ def make_task(**overrides) -> dict:
 
 class TestBuildLightContext:
     def test_basic_task(self):
-        agent = ScheduledTaskAgent(MagicMock(), make_task())
+        agent = ScheduledTaskAgent(IdentityDB(make_task()["user_id"], make_task()["org_id"]), make_task())
         messages = agent._build_light_context()
 
         # 应该有 system + system + user
@@ -124,7 +125,7 @@ class TestBuildLightContext:
 class TestGenerateSummary:
     @pytest.mark.asyncio
     async def test_short_text_returned_as_is(self):
-        agent = ScheduledTaskAgent(MagicMock(), make_task())
+        agent = ScheduledTaskAgent(IdentityDB(make_task()["user_id"], make_task()["org_id"]), make_task())
         text = "短文本，不需要摘要"
         adapter = MagicMock()
         summary = await agent._generate_summary(text, adapter)
@@ -132,7 +133,7 @@ class TestGenerateSummary:
 
     @pytest.mark.asyncio
     async def test_long_text_calls_llm(self):
-        agent = ScheduledTaskAgent(MagicMock(), make_task())
+        agent = ScheduledTaskAgent(IdentityDB(make_task()["user_id"], make_task()["org_id"]), make_task())
         text = "x" * 1000  # 长文本
 
         # mock adapter.stream_chat
@@ -150,7 +151,7 @@ class TestGenerateSummary:
 
     @pytest.mark.asyncio
     async def test_empty_text(self):
-        agent = ScheduledTaskAgent(MagicMock(), make_task())
+        agent = ScheduledTaskAgent(IdentityDB(make_task()["user_id"], make_task()["org_id"]), make_task())
         adapter = MagicMock()
         assert await agent._generate_summary("", adapter) == ""
 
@@ -197,7 +198,7 @@ class TestExecutionOutcome:
 
     @pytest.mark.asyncio
     async def test_missing_final_synthesis_is_error_and_preserves_tool_failure(self):
-        agent = ScheduledTaskAgent(MagicMock(), make_task())
+        agent = ScheduledTaskAgent(IdentityDB(make_task()["user_id"], make_task()["org_id"]), make_task())
         adapter = MagicMock()
         adapter.close = AsyncMock()
         loop = MagicMock()
@@ -212,11 +213,10 @@ class TestExecutionOutcome:
 
         with patch.object(agent, "_prepare_template", new_callable=AsyncMock), \
              patch.object(agent, "_build_tool_loop", return_value=(loop, MagicMock())), \
-             patch("config.chat_tools.get_core_tools", return_value=[]), \
              patch("services.adapters.factory.create_chat_adapter", return_value=adapter), \
-             patch("services.agent.tool_executor.ToolExecutor"), \
              patch("core.config.get_settings", return_value=SimpleNamespace(
                  agent_loop_model=None, file_workspace_root="/tmp",
+                 file_workspace_enabled=True, sandbox_enabled=True, crawler_enabled=False,
              )), \
              patch("core.workspace.resolve_staging_dir", return_value="/tmp/staging"):
             result = await agent.execute()
@@ -229,7 +229,7 @@ class TestExecutionOutcome:
     @pytest.mark.asyncio
     async def test_wrap_up_text_after_failure_is_not_a_successful_delivery(self):
         """模型能写出失败解释，不代表定时任务已完成。"""
-        agent = ScheduledTaskAgent(MagicMock(), make_task())
+        agent = ScheduledTaskAgent(IdentityDB(make_task()["user_id"], make_task()["org_id"]), make_task())
         adapter = MagicMock()
         adapter.close = AsyncMock()
         loop = MagicMock()
@@ -244,11 +244,10 @@ class TestExecutionOutcome:
 
         with patch.object(agent, "_prepare_template", new_callable=AsyncMock), \
              patch.object(agent, "_build_tool_loop", return_value=(loop, MagicMock())), \
-             patch("config.chat_tools.get_core_tools", return_value=[]), \
              patch("services.adapters.factory.create_chat_adapter", return_value=adapter), \
-             patch("services.agent.tool_executor.ToolExecutor"), \
              patch("core.config.get_settings", return_value=SimpleNamespace(
                  agent_loop_model=None, file_workspace_root="/tmp",
+                 file_workspace_enabled=True, sandbox_enabled=True, crawler_enabled=False,
              )), \
              patch("core.workspace.resolve_staging_dir", return_value="/tmp/staging"):
             result = await agent.execute()

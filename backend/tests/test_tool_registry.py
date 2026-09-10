@@ -167,7 +167,7 @@ def test_three_representative_parameter_contracts_field_by_field(registry):
     expected = {
         "search_knowledge": ({"query": "string"}, ["query"]),
         "file_search": ({"path": "string", "keyword": "string", "file_pattern": "string", "scope": "string"}, []),
-        "file_delete": ({"file_ids": "array", "files": "array"}, []),
+        "file_delete": ({"file_ids": "array", "files": "array", "resource_refs": "array"}, []),
     }
     old = {t["function"]["name"]: t for t in get_chat_tools("org-a")}
     for name, (properties, required) in expected.items():
@@ -369,16 +369,14 @@ def test_risk_parallel_cache_and_effects_are_independent(registry):
     assert not spec.cacheable and spec.parallelizable and spec.effects == ("file_index",)
 
 
-def test_catalog_import_has_no_reverse_production_dependency():
+def test_catalog_factories_remain_independent_of_production_runtime():
+    # 04 deliberately imports services.tools in runtime consumers. Catalog
+    # factories must remain independent to prevent initialization recursion.
     backend = Path(__file__).resolve().parents[1]
-    offenders = []
-    for directory in (backend / "config", backend / "services"):
-        for path in directory.rglob("*.py"):
-            if path.is_relative_to(backend / "services" / "tools"):
-                continue
-            if "from services.tools" in path.read_text() or "import services.tools" in path.read_text():
-                offenders.append(str(path.relative_to(backend)))
-    assert not offenders
+    for path in (backend / "config").rglob("*.py"):
+        assert "from services.tools" not in path.read_text()
+    legacy = (backend / "services/tools/legacy.py").read_text()
+    assert "from services.agent.tool_executor import" not in legacy
 
 
 def test_partial_legacy_validation_directory_is_preserved_separately(registry):
@@ -393,7 +391,7 @@ def test_partial_legacy_validation_directory_is_preserved_separately(registry):
     # Preserve the pre-existing difference; do not turn old validator 'files'
     # required into a new model schema requirement that rejects legal file_ids.
     delete = registry.require("file_delete")
-    assert delete.to_legacy_validation_schema()["required"] == ["files"]
+    assert delete.to_legacy_validation_schema()["required"] == []
     assert "required" not in delete.to_schema()["function"]["parameters"]
 
 

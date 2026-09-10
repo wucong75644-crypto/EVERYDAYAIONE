@@ -253,7 +253,7 @@ async def _handle_message(
         approved = payload.get("approved", False)
         task_id = payload.get("task_id")
         conversation_id = payload.get("conversation_id")
-        if tool_call_id and task_id and conversation_id:
+        if tool_call_id and task_id and conversation_id and type(approved) is bool:
             persisted, error_code = await _persist_actor_tool_confirmation(
                 user_id=user_id,
                 task_id=str(task_id),

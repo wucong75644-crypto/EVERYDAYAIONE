@@ -179,6 +179,9 @@ async def execute_chat(
                 await flush_progress()
         raise
     finally:
+        if getattr(handler, "_tool_executor_scope", None) == (request.task_id, request.conversation_id, request.user_id, handler.org_id):
+            handler._tool_executor = None
+            handler._tool_executor_scope = None
         await model_gateway.close()
         if getattr(handler, "_adapter", None) is model_gateway:
             handler._adapter = None
@@ -234,6 +237,7 @@ async def _run_loop(
             messages=prepared.messages,
             tool_context=prepared.tool_context,
             permission=prepared.permission,
+            execution_context=prepared.execution_context,
         )
         current_model_round = model_round
         turn_text, turn_thinking, calls, previewed_call_ids = await _read_turn(
@@ -292,6 +296,13 @@ async def _run_loop(
             runtime=runtime,
             totals=totals,
         )
+        executor = getattr(handler, "_tool_executor", None)
+        resource_stop = getattr(getattr(executor, "_tool_runtime", None), "resource_stop_reason", "")
+        if isinstance(resource_stop, str) and resource_stop:
+            blocks.append({"type": "text", "text": resource_stop})
+            totals.text += resource_stop
+            await sink.on_block(blocks[-1])
+            return None
         # FormBlockResult 是一个完整的交付物，不再发起额外的模型回合。
         # 这样既避免重复文案，也保证表单是该消息唯一的确认入口。
         if getattr(handler, "_terminal_form_pending", False):
@@ -583,6 +594,14 @@ async def _execute_tools(
         cancellation_event, request, prepared.messages, blocks,
         totals, "before_tool",
     )
+    # Only this task's authenticated replay blocks supply browse provenance.
+    # No new checkpoint fields and no parsing of model prose/tool output.
+    handler._tool_selection_history_task_id = request.task_id
+    handler._tool_selection_history = tuple(
+        dict(block) for block in blocks
+        if block.get("type") == "tool_step" and block.get("tool_name") == "file_search"
+        and block.get("status") == "completed"
+    )
     results = await handler._execute_tool_calls(
         calls,
         request.task_id,
@@ -593,6 +612,8 @@ async def _execute_tools(
         messages=prepared.messages,
         budget=prepared.budget,
         cancellation_event=cancellation_event,
+        permission_mode=prepared.permission.mode.value,
+        agent_domain=prepared.execution_context.agent_domain,
     )
     if runtime:
         tool_call_ids = [call["id"] for call in calls]

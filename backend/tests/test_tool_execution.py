@@ -146,6 +146,8 @@ async def test_unknown_tool_or_missing_handler_preserves_value_error(name, missi
     old = ToolExecutor(None, "actor", "conversation", "org")
     old._handlers.pop(name, None)
     with pytest.raises(ValueError) as legacy:
+        from tests.tool_runtime_support import IdentityDB
+        old.db = IdentityDB(old.user_id, old.org_id)
         await old.execute(name, {})
     assert type(new.value) is type(legacy.value)
     assert str(new.value) == str(legacy.value)

@@ -1,0 +1,114 @@
+BASE 0f65d72dd00a0fce6885d4df0b7977454f666812
+HEAD 0f65d72dd00a0fce6885d4df0b7977454f666812
+BRANCH codex/task/20260909225830-tool-unification-04
+ROOT /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-04
+TREE 0f65d72dd00a0fce6885d4df0b7977454f666812 c38a4f18c3ec0ae8193af3c7b9750877df6ae933
+TREE origin/main c38a4f18c3ec0ae8193af3c7b9750877df6ae933
+TREE 2ed4d783 c38a4f18c3ec0ae8193af3c7b9750877df6ae933
+PASS block 01-03 ancestry and block 03 final candidate tree equality
+TESTED SOURCE FINGERPRINTS (BASE + uncommitted task changes; HEAD is not this candidate)
+128ea74cce53b0ad50397657dc88a14a8194204bd4d65c643fbc4733903f7701 backend/api/routes/ws.py
+1e7446c5983ca2e4f1e9ea82e3cefa3fbcc0c3114398580e0ebcd10c14431ab7 backend/services/agent/scheduled_task_agent.py
+5d5460099198deb9bf32a6066b1e6d0a29080662193b72f81457e0ee1666ff3d backend/services/agent/tool_executor.py
+0c82dad25ad09caaa1a846a4e9ecea90572ceafc5957bb1e87c63f2980e553e3 backend/services/agent/tool_loop_executor.py
+22500a4209a6981f4aec5e9c17e6fbc1b9968cef0468dfbf57b81da7597fc02a backend/services/agent/tool_loop_helpers.py
+39decb37244094b7548eca05bba0ce8df9dcaf199c9e293d92fa21e1a5d31187 backend/services/file_executor.py
+8ae2631c198ae526a1fc4e414f45559bb49f9a3dd71f346887c060ce12a9bb35 backend/services/handlers/chat/execution_engine.py
+e426cb68c91009dc8f7cb3a3b05ded8a2856a9518fb62773e2ede029ed3e0962 backend/services/handlers/chat/execution_scope.py
+cf67436a5ad4f87912528c4de96ca24c90e12fc0ce69ad20573ffbbc24798fa7 backend/services/handlers/chat/stream_loop.py
+873ffb592f99bea325b87057d90710f33162e2c1e16777024a9a634edb250a6d backend/services/handlers/chat/stream_setup.py
+93364c32e8397f4f5dfa2d5327a195927c8aa67196cb0a9c80f192f6ff47fe6a backend/services/handlers/chat/tool_lifecycle.py
+4cca0dfbeef2c5aaee8e2bcea0d893e2c3bed5928b0bef93aa0774f548e032eb backend/services/handlers/chat/tool_loop.py
+1787661fc6f5c518c78e2f6eeb8dc0372056b584f5fdbf2f9fd0b1bd1f0b47d7 backend/services/handlers/chat_tool_mixin.py
+77305cd72ac63aa5b4175e97847d2dd406f442859d929279e10e87fe38c7b22a backend/services/scheduler/scheduled_task_workflow.py
+711e0a57481fc084538de654c4beb22faaa9975f97c504031f5ac2111c02eff1 backend/services/tool_invocation_store.py
+2b46b5ac72a079427dcc7a48ffcd5d6526f0efc27a64447a144d6835d80b1d6c backend/services/tools/execution.py
+daded802e07e6c26483dc65a68c5c35f493326f96981573b320863281222428f backend/services/tools/policy.py
+2ea5530fd99a4eb5d6b4278926093395ca94a3fd86f8ca455c466072394ce563 backend/services/tools/runtime.py
+0b0b4008c395766a674fe88fbf05b38e9f03c1ec60635fea3f5f87af74c04edc backend/services/tools/runtime_context.py
+2a6e406afcf4af630171903492c31f97a0976ab63636068469d90700dfeb0497 backend/tests/test_chat_execution_engine.py
+569df7110e7c61d34a2b3381052064e675d0c51fa44bebab84c460280d29d485 backend/tests/test_chat_gateway_retry_integration.py
+0c52c41a9f8db3ebd40ded7b022453dd6ad07eb7586f4eb5e8c097c2d39700ba backend/tests/test_chat_tool_loop.py
+bc6692249846bed4b70331da85ca86b9ade52deebd95add6bf89987b2154a495 backend/tests/test_chat_tool_mixin.py
+5d6cb80613d82e30e0895b7fd1f048fd2d8765dacf71cbfbfc1527583ebd32ec backend/tests/test_file_handles_e2e.py
+eb45144a188f59ee741d4a90bbfbafda023616675f5f359fbcac437e5f42a4b1 backend/tests/test_model_gateway.py
+0b2be6c8d6615e72ac95ef2bc5388de92e5d384d1479cb1c381a416c0f54e470 backend/tests/test_scheduled_task_agent.py
+f26e19914ccfabdcb9938eb7fbbb32c2c0fcf3e4d3c50c6183d8773167bc967a backend/tests/test_scheduled_task_agent_integration.py
+d658f610566dfe3a77e53719c2888f74ce43831a483f824efd7c72a266d4b514 backend/tests/test_tool_confirm.py
+7fe633c5c4a01c828e393f0b884ecac359bf2668d25d48deee9123ef5ad983c1 backend/tests/test_tool_execution.py
+ba12108e75b3704a5470f2a31ffdc76060ce52c369ef92eddc33927858805f1f backend/tests/test_tool_executor.py
+a5a32b489f61bfe36296af144557f230f346ce986b51b9f029a67c6d2f731cbc backend/tests/test_tool_loop_helpers.py
+6f3e9c41c43e5e3480ee822d28fa91a47da5b74a7e6c717ecbee9b77a6554569 backend/tests/test_tool_loop_parallel.py
+d999a60bf1e0f688fec76dd60b150c9e4e86b41e0e28bac14c71d35f5c1cde4c backend/tests/test_tool_policy.py
+91b2f8011b823c1ac1c36e46a78bb8ab28de4e8b76f424e0a1826f07e09dba86 backend/tests/test_tool_production_integration.py
+259a36f8a169372ccfdcbc99026fabfca2523e8abe339993eec9a1c39400ea16 backend/tests/test_tool_registry.py
+ff489faf6bc3b349f735f56ec24d7378ee1526b3a8c8ad81ba235219a499d342 backend/tests/test_ws_tool_confirmation.py
+779d397ee670a63646e1848263e8f0f5f1eb819ea87163fd70759841f0715f5b backend/tests/tool_runtime_support.py
+PASS AST parse, diff --check, shell syntax, task scope
+UNCHANGED AST backend/services/agent/tool_executor.py::ToolExecutor: _erp_agent, _erp_analyze, _erp_api_search, _fetch_all_pages, _get_conversation_image_parts, _image_agent, _manage_scheduled_task, _search_knowledge, _web_search, has_handler
+UNCHANGED AST backend/services/file_executor.py::FileExecutor: _format_size, _is_text_file, extract_user_relative_path, generate_unique_filename, get_cdn_url, resolve_safe_path, workspace_root
+UNCHANGED AST backend/services/tool_invocation_store.py::DatabaseToolInvocationStore: __init__, begin, complete, mark_stale
+PASS existing invocation serializer/deserializer/hash and fenced RPC methods unchanged
+UNCHANGED FILE backend/services/agent/agent_result.py
+UNCHANGED FILE backend/services/agent/tool_output.py
+UNCHANGED FILE backend/services/tools/result.py
+UNCHANGED FILE backend/services/tools/dispatcher.py
+UNCHANGED FILE backend/services/tools/legacy_handler.py
+UNCHANGED FILE backend/schemas/websocket.py
+UNCHANGED FILE backend/services/handlers/chat_tool_result_mixin.py
+UNCHANGED FILE backend/services/agent/tool_result_cache.py
+UNCHANGED FILE backend/services/agent/tool_audit.py
+UNCHANGED FILE backend/services/agent/erp_agent.py
+UNCHANGED FILE backend/services/agent/file_tool_mixin.py
+UNCHANGED FILE backend/services/agent/file_delete_mixin.py
+UNCHANGED FILE backend/services/agent/sandbox_tool_mixin.py
+UNCHANGED FILE backend/services/conversation_execution.py
+UNCHANGED FILE backend/services/conversation_worker.py
+UNCHANGED FILE backend/services/handlers/chat/executor.py
+UNCHANGED FILE backend/services/model_gateway.py
+UNCHANGED TREE backend/config
+UNCHANGED TREE backend/services/kuaimai
+UNCHANGED TREE backend/services/erp
+UNCHANGED TREE backend/services/media
+UNCHANGED TREE backend/services/sandbox
+UNCHANGED TREE backend/migrations
+UNCHANGED TREE frontend
+PASS shared Chat/Actor safe-point calls unchanged
+PRODUCTION CONSTRUCTOR backend/services/agent/scheduled_task_agent.py:314 ToolLoopExecutor
+PRODUCTION CONSTRUCTOR backend/services/agent/scheduled_task_agent.py:147 ToolExecutor
+PRODUCTION CONSTRUCTOR backend/services/handlers/chat_tool_mixin.py:115 ToolExecutor
+PRODUCTION CONSTRUCTOR backend/services/tools/runtime.py:36 ToolExecutionService
+PASS production constructors fully enumerated
+CALLSITE SEARCH tool_runtime\.execute|runtime\.execute|dispatcher\.dispatch|_handlers\.get|return await handler\( 
+backend/services/handlers/factory.py:51:        handler_cls = cls._handlers.get(gen_type)
+backend/services/handlers/chat_tool_mixin.py:225:            envelope = await runtime.execute(
+backend/services/message_gateway.py:258:            status = await push_dispatcher.dispatch(
+backend/services/tools/legacy_handler.py:13:        self._handler = executor._handlers.get(handler_key)
+backend/services/kuaimai/erp_sync_service.py:285:        return await handler(start, end)
+backend/services/kuaimai/erp_analytics_alert.py:182:        return await handler(db, org_id, filters, tr, limit)
+backend/services/tools/execution.py:67:            raw = await self.dispatcher.dispatch(approved)
+backend/services/tools/dispatcher.py:49:        handler = self._handlers.get((approved.spec.executor_type, approved.spec.handler_key))
+backend/services/tools/dispatcher.py:53:        return await handler(thaw(approved.call.arguments))
+backend/services/scheduler/chat_task_manager.py:388:        return await handler(args)
+backend/services/agent/tool_executor.py:149:        return (await self.tool_runtime.execute(tool_name, arguments, call_id=call_id)).to_legacy()
+backend/services/agent/tool_loop_helpers.py:71:            executor.tool_runtime.execute(tool_name, args, call_id=call_id, cache=cache),
+
+CALLSITE SEARCH registry\.resolve|tool_runtime\.advertised|tool_runtime\.batches 
+backend/services/handlers/chat_tool_mixin.py:141:                   for batch in executor.tool_runtime.batches(normalized)]
+backend/services/handlers/chat/stream_setup.py:191:    tools = registry.resolve(execution_context, policy=ToolPolicy(registry),
+backend/services/handlers/chat/tool_loop.py:42:    current_tools = registry.resolve(
+backend/services/tools/runtime.py:45:        return self.registry.resolve(
+backend/services/agent/tool_loop_helpers.py:39:    selected_tools[:] = registry.resolve(
+backend/services/agent/scheduled_task_agent.py:163:            all_tools = executor.tool_runtime.advertised(policy.allowed_tools)
+backend/services/agent/tool_loop_executor.py:102:        selected_tools[:] = self.executor.tool_runtime.advertised(
+backend/services/agent/tool_loop_executor.py:678:        planned = self.executor.tool_runtime.batches(
+backend/services/agent/tool_loop_executor.py:778:                selected_tools[:] = self.executor.tool_runtime.advertised(
+backend/services/scheduler/scheduled_task_workflow.py:54:    return set(registry.resolve(context, policy=ToolPolicy(registry),
+
+CALLSITE SEARCH _request_user_confirm\(|partition_tool_calls\(|validate_runtime_tool\( 
+backend/services/handlers/chat_tool_helpers.py:10:def partition_tool_calls(
+backend/services/planner/validator.py:109:def validate_runtime_tool(
+backend/services/agent/tool_loop_executor.py:491:    async def _request_user_confirm(
+
+PASS: remaining private Handler calls belong to Dispatcher/business internals; no model entry dispatches _handlers directly
+No new persistence payload or schema. WS approved is validated as literal bool; fields/builders/frontend unchanged.

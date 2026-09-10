@@ -54,6 +54,17 @@ class ToolExecutor(
         execution_mode: str = "interactive",
         erp_step_timeout_sec: float | None = None,
         tool_policy_snapshot: Dict[str, Any] | None = None,
+        permission_mode: str = "auto",
+        agent_domain: str = "general",
+        task_id: str | None = None,
+        context_scope: str = "user",
+        personal_context_allowed: bool = True,
+        execution_scope=None,
+        channel_scope_id: str | None = None,
+        tool_entrypoint: str = "legacy_internal",
+        tool_confirmer=None,
+        resource_manifest_loader=None,
+        resource_access_boundary=None,
     ) -> None:
         self.db = db
         self.user_id = user_id
@@ -67,6 +78,19 @@ class ToolExecutor(
         self.execution_budget = execution_budget
         self.cancellation_event = cancellation_event
         self.execution_mode = execution_mode
+        self.permission_mode = permission_mode
+        self.agent_domain = agent_domain
+        self.task_id = task_id
+        self._task_id = task_id
+        self.context_scope = context_scope
+        self.personal_context_allowed = personal_context_allowed
+        self.execution_scope = execution_scope
+        self.channel_scope_id = channel_scope_id
+        self.tool_entrypoint = tool_entrypoint
+        self.tool_confirmer = tool_confirmer
+        self.resource_manifest_loader = resource_manifest_loader
+        self.resource_access_boundary = resource_access_boundary
+        self._tool_runtime = None
         self.erp_step_timeout_sec = erp_step_timeout_sec
         self.tool_policy_snapshot = dict(tool_policy_snapshot or {})
         self._runtime_capability_registry = None
@@ -107,7 +131,14 @@ class ToolExecutor(
         """检查工具是否有已注册的 handler（兜底扩充用）"""
         return tool_name in self._handlers
 
-    async def execute(self, tool_name: str, arguments: Dict[str, Any]):
+    @property
+    def tool_runtime(self):
+        if self._tool_runtime is None:
+            from services.tools.runtime import ToolRuntime
+            self._tool_runtime = ToolRuntime(self)
+        return self._tool_runtime
+
+    async def execute(self, tool_name: str, arguments: Dict[str, Any], *, call_id=None):
         """执行同步工具，返回 ToolOutput 或 str。
 
         底层工具返回 ToolOutput 时直接透传，
@@ -117,29 +148,7 @@ class ToolExecutor(
             ValueError: 未知工具名
             Exception: 工具执行异常（由调用方 catch 后回传大脑）
         """
-        if self.tool_policy_snapshot:
-            from config.chat_tools import get_core_tools
-            from services.planner import CapabilityRegistry, validate_runtime_tool
-            if self._runtime_capability_registry is None:
-                self._runtime_capability_registry = CapabilityRegistry.from_tool_schemas(
-                    get_core_tools(org_id=self.org_id),
-                )
-            validate_runtime_tool(
-                tool_name, self.tool_policy_snapshot,
-                registry=self._runtime_capability_registry,
-                execution_mode=self.execution_mode,
-            )
-        if self.allowed_tool_names is not None and tool_name not in self.allowed_tool_names:
-            raise PermissionError(f"该工具未在用户确认的执行范围内: {tool_name}")
-        if self.execution_mode == "preflight" and tool_name in {
-            "manage_scheduled_task", "erp_execute", "trigger_erp_sync", "file_delete",
-            "generate_image", "generate_video", "image_agent",
-        }:
-            raise PermissionError(f"预检禁止执行有副作用的工具: {tool_name}")
-        handler = self._handlers.get(tool_name)
-        if not handler:
-            raise ValueError(f"Unknown sync tool: {tool_name}")
-        return await handler(arguments)
+        return (await self.tool_runtime.execute(tool_name, arguments, call_id=call_id)).to_legacy()
 
     # ========================================
     # 通用工具实现

@@ -276,7 +276,9 @@ class TestRestoreFileInCoreTools:
         from config.chat_tools import get_chat_tools
         tools = get_chat_tools(org_id=None)
         rf = next(t for t in tools if t["function"]["name"] == "restore_file")
-        assert "filename" in rf["function"]["parameters"]["required"]
+        params = rf["function"]["parameters"]
+        assert {"filename", "record_id"} <= params["properties"].keys()
+        assert params["required"] == []  # either selector; runtime requires one
 
 
 class TestCommonToolsSplit:
