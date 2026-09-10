@@ -1,5 +1,5 @@
 BASE 0f65d72dd00a0fce6885d4df0b7977454f666812
-HEAD 20636929f7b78346991b357630240d932ed5772d
+HEAD ba3570936b9d43e15bf19ee28fbdb15ec9ebc294
 BRANCH codex/task/20260909225830-tool-unification-04
 ROOT /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-04
 TREE 0f65d72dd00a0fce6885d4df0b7977454f666812 c38a4f18c3ec0ae8193af3c7b9750877df6ae933
@@ -48,6 +48,8 @@ a75d99306405dff49308434a7d31b34f022606aa244f948d03752efb298964b5 backend/service
 f6367884b910b11f87fc6e77d6783dbc48c7a7880ad2f05e1a5a699a10a7b169 backend/services/tools/runtime_context.py
 b1c5ab231154ce84d0dfd1089e01a8e8a5e7e5c247d72d797796619a511430c0 backend/services/wecom/wecom_file_mixin.py
 eb21315d2cf2e579d2f1d2415b95ee5c8f99d4c6a6e6570e010d17694a08d592 backend/services/workspace_coordination.py
+b3b9c101d5262916f4b58e713384db2aa813b99a7f586a30c0ad8f486b69d1fe backend/tests/test_attachment_routing_baseline.py
+994791d217371ec3ec65214add7c45c0cbfda6cae7c9f5a232c513071b8527de backend/tests/test_attachments_xml.py
 2a6e406afcf4af630171903492c31f97a0976ab63636068469d90700dfeb0497 backend/tests/test_chat_execution_engine.py
 569df7110e7c61d34a2b3381052064e675d0c51fa44bebab84c460280d29d485 backend/tests/test_chat_gateway_retry_integration.py
 0c52c41a9f8db3ebd40ded7b022453dd6ad07eb7586f4eb5e8c097c2d39700ba backend/tests/test_chat_tool_loop.py
@@ -55,6 +57,7 @@ bc6692249846bed4b70331da85ca86b9ade52deebd95add6bf89987b2154a495 backend/tests/t
 89083393e8176720ef7da16a232d8bd8337b1b02c58b759bf0f80f813858a4dd backend/tests/test_chat_tools.py
 5d846cb5adf945c2db2d98cf8890296372ff3246a3cfca838d26ad4bd8e885af backend/tests/test_file_cache_identity.py
 36da700ec3a48667efab50a183ab0dfabbd642eb188ed965cd0652cb93dcbf78 backend/tests/test_file_handles_e2e.py
+2258ec3f1f4a32bc88dd1fb8af8a6d81fc53dbb88be308d85a2b7e0abad79581 backend/tests/test_file_scanners.py
 3146a0cf3cc5ef251da6e9f1c38e1f68a51d970c3e2b9c6f37d1b450b83f19dd backend/tests/test_file_target_execution.py
 0969ebfa6d6536bfc6198dc6bc3b24a444b39b649ba3116110f6107694820222 backend/tests/test_file_tool_boundaries.py
 a1be696d3f8cbf0d974a6c43f696baf5d10d8884b044f56ded5b9a0af60b9e33 backend/tests/test_file_tool_mixin.py
@@ -108,17 +111,17 @@ PRODUCTION CONSTRUCTOR backend/services/handlers/chat_tool_mixin.py:115 ToolExec
 PRODUCTION CONSTRUCTOR backend/services/tools/runtime.py:39 ToolExecutionService
 PASS production constructors fully enumerated
 CALLSITE SEARCH tool_runtime\.execute|runtime\.execute|dispatcher\.dispatch|_handlers\.get|return await handler\( 
-backend/services/handlers/factory.py:51:        handler_cls = cls._handlers.get(gen_type)
-backend/services/handlers/chat_tool_mixin.py:225:            envelope = await runtime.execute(
 backend/services/message_gateway.py:258:            status = await push_dispatcher.dispatch(
 backend/services/tools/legacy_handler.py:13:        self._handler = executor._handlers.get(handler_key)
 backend/services/tools/execution.py:67:            raw = await self.dispatcher.dispatch(approved)
 backend/services/tools/dispatcher.py:49:        handler = self._handlers.get((approved.spec.executor_type, approved.spec.handler_key))
 backend/services/tools/dispatcher.py:53:        return await handler(thaw(approved.call.arguments))
 backend/services/kuaimai/erp_analytics_alert.py:182:        return await handler(db, org_id, filters, tr, limit)
+backend/services/handlers/chat_tool_mixin.py:225:            envelope = await runtime.execute(
 backend/services/agent/tool_executor.py:149:        return (await self.tool_runtime.execute(tool_name, arguments, call_id=call_id)).to_legacy()
-backend/services/scheduler/chat_task_manager.py:388:        return await handler(args)
+backend/services/handlers/factory.py:51:        handler_cls = cls._handlers.get(gen_type)
 backend/services/agent/tool_loop_helpers.py:71:            executor.tool_runtime.execute(tool_name, args, call_id=call_id, cache=cache),
+backend/services/scheduler/chat_task_manager.py:388:        return await handler(args)
 backend/services/kuaimai/erp_sync_service.py:285:        return await handler(start, end)
 
 CALLSITE SEARCH registry\.resolve|tool_runtime\.advertised|tool_runtime\.batches 
@@ -130,8 +133,8 @@ backend/services/scheduler/scheduled_task_workflow.py:54:    return set(registry
 backend/services/agent/tool_loop_executor.py:102:        selected_tools[:] = self.executor.tool_runtime.advertised(
 backend/services/agent/tool_loop_executor.py:678:        planned = self.executor.tool_runtime.batches(
 backend/services/agent/tool_loop_executor.py:778:                selected_tools[:] = self.executor.tool_runtime.advertised(
-backend/services/agent/scheduled_task_agent.py:163:            all_tools = executor.tool_runtime.advertised(policy.allowed_tools)
 backend/services/agent/tool_loop_helpers.py:39:    selected_tools[:] = registry.resolve(
+backend/services/agent/scheduled_task_agent.py:163:            all_tools = executor.tool_runtime.advertised(policy.allowed_tools)
 
 CALLSITE SEARCH _request_user_confirm\(|partition_tool_calls\(|validate_runtime_tool\( 
 backend/services/handlers/chat_tool_helpers.py:10:def partition_tool_calls(

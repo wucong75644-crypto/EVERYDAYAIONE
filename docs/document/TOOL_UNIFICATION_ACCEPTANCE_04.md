@@ -1,5 +1,19 @@
 # 工具统一 04：技术验收记录
 
+## 2026-09-10 发布全量门禁复验（提交前快照；最终状态见交付消息）
+
+首个提交候选 ba3570936b9d43e15bf19ee28fbdb15ec9ebc294 已推送，但生产发布被后端全量测试拦下：9145 passed、4 failed、37 skipped、4 xfailed；前端 1309 项测试和构建通过且已部署，后端未同步，生产候选标记已失效。不能把首轮当作完整发布成功。技术结论等待修正后的受控发布全量复验；最终候选 SHA/状态以本次最终 RELEASE_RESULT 为准。
+
+四项失败属于已批准行为对应的旧测试前提：三个附件显示测试只登记 /abs/report.xlsx，却请求上传目录中的另一个完整路径，依赖已禁止的 basename 回退；一个缓存版本测试仍要求 v3.0。三个 fixture 现登记与附件相同的完整路径并提供真实临时源文件，保留 analyzed/Parquet 断言，额外断言不同目录同名附件仍为 raw；版本精确要求 v3.1，未改为无约束判断。业务代码没有为通过测试恢复模糊别名或旧缓存。
+
+定向复验命令（同本轮测试专用环境）：pytest test_attachment_routing_baseline.py、test_attachments_xml.py、test_file_scanners.py::TestV22Fixes::test_cache_schema_version_v3、test_file_target_execution.py，结果 114 passed、4 原有 xfailed。见 [初次全量失败](tool-unification-evidence/04-release-initial-failures.txt)、[复验](tool-unification-evidence/04-release-fixture-retest.txt)。A-04-06/G-03/G-04 补充采用此证据；下一次受控发布继续运行完整套件，不跳过失败测试。
+
+附带环境记录：本机共享 Python 3.14 环境扩大运行整个 scanner 模块出现 13 项环境相关失败（含 Arrow 字符串算子不匹配、缺少 lxml）；这些用例均在同业务代码的发布 Python 3.12 隔离环境中通过。原始输出和逐项对照保留在 [本地 3.14 记录](tool-unification-evidence/04-release-local314-environment.txt)。本次没有修改共享依赖或 scanner 业务来掩盖差异，受控发布固定 Python 3.12 并安装项目 requirements。
+
+原受控入口因保守策略保留 executor_unconfirmed 锁；已核验原本地 PID 停止、本地无发布执行器、远端无部署进程、候选标记不存在，使用原所有者和 release_owned_lock 恢复锁。没有盲目删锁、抢锁或把任务合入 main。任务分支/工作树保留。
+
+---
+
 ## 2026-09-10 根因修复复验（当前有效状态）
 
 **技术验收通过，用户已指令提交部署；用户验收未关闭。** NAS 不覆盖发布探针已于本次发布准备阶段通过并清理临时目录。此文档随候选提交；最终发布 SHA/部署状态由 RELEASE_RESULT 及交付消息记录。 本段覆盖下方所有历史状态。生产发布标记仍为 `20636929f7b78346991b357630240d932ed5772d`（preview，2026-09-09T16:01:26Z）。生产验证包括只读诊断、已有锁文件的 flock 检查和隔离临时目录的 no-clobber 探针，无业务数据写入/删除。

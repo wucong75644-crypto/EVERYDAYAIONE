@@ -809,9 +809,9 @@ class TestV22Fixes:
         assert _compute_file_fingerprint(str(f1)) != _compute_file_fingerprint(str(f2))
 
     def test_cache_schema_version_v3(self):
-        """V3: schema 版本升级到 v3.0（删 grain + 加 table_role 后强制重算）"""
+        """完整源内容/解析配置缓存升级必须使旧 v3.0 缓存失效。"""
         from services.agent.data_query_cache import _CACHE_SCHEMA_VERSION
-        assert _CACHE_SCHEMA_VERSION == "v3.0"
+        assert _CACHE_SCHEMA_VERSION == "v3.1"
 
     def test_path_d_file_size_defense(self, tmp_path, monkeypatch):
         """#6: 多 sheet 文件超过 150MB → raise file_too_large"""

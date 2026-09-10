@@ -1,0 +1,571 @@
+......................xxxx................................FFF.FF..FFF..F [ 40%]
+F..................F................F..F................................ [ 81%]
+................................                                         [100%]
+=================================== FAILURES ===================================
+_____________________ TestPathAScanner.test_basic_evidence _____________________
+backend/tests/test_file_scanners.py:116: in test_basic_evidence
+    pool = make_scanner(str(f)).scan()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_scanners_paths.py:82: in scan
+    columns_ev = self._scan_columns(df)
+                 ^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_scanners.py:225: in _scan_columns
+    if non_null.abs().max() >= 1e10:
+       ^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/generic.py:1584: in abs
+    res_mgr = self._mgr.apply(np.abs)
+              ^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/managers.py:440: in apply
+    applied = b.apply(f, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/blocks.py:347: in apply
+    result = func(self.values, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:845: in __array_ufunc__
+    result = super().__array_ufunc__(ufunc, method, *inputs, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/base.py:2704: in __array_ufunc__
+    result = arraylike.maybe_dispatch_ufunc_to_dunder_op(
+pandas/_libs/ops_dispatch.pyx:105: in pandas._libs.ops_dispatch.maybe_dispatch_ufunc_to_dunder_op
+    ???
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:890: in __abs__
+    return self._from_pyarrow_array(pc.abs_checked(self._pa_array))
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pyarrow/compute.py:254: in wrapper
+    return func.call(args, None, memory_pool)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pyarrow/_compute.pyx:399: in pyarrow._compute.Function.call
+    ???
+pyarrow/error.pxi:155: in pyarrow.lib.pyarrow_internal_check_status
+    ???
+pyarrow/error.pxi:92: in pyarrow.lib.check_status
+    ???
+E   pyarrow.lib.ArrowNotImplementedError: Function 'abs_checked' has no kernel matching input types (large_string)
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 12:35:34.753 | INFO     | services.agent.file_scanners:make_scanner:490 - make_scanner | path=A | file=small.xlsx | rows=3 | header_row=0 | reason=small_single_region
+2026-09-10 12:35:34.754 | WARNING  | services.agent.file_meta.formulas:extract_formulas:30 - lxml not installed, skip formula extraction
+_______________ TestPathAScanner.test_suspicious_multi_null_row ________________
+backend/tests/test_file_scanners.py:149: in test_suspicious_multi_null_row
+    pool = make_scanner(str(f)).scan()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_scanners_paths.py:82: in scan
+    columns_ev = self._scan_columns(df)
+                 ^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_scanners.py:225: in _scan_columns
+    if non_null.abs().max() >= 1e10:
+       ^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/generic.py:1584: in abs
+    res_mgr = self._mgr.apply(np.abs)
+              ^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/managers.py:440: in apply
+    applied = b.apply(f, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/blocks.py:347: in apply
+    result = func(self.values, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:845: in __array_ufunc__
+    result = super().__array_ufunc__(ufunc, method, *inputs, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/base.py:2704: in __array_ufunc__
+    result = arraylike.maybe_dispatch_ufunc_to_dunder_op(
+pandas/_libs/ops_dispatch.pyx:105: in pandas._libs.ops_dispatch.maybe_dispatch_ufunc_to_dunder_op
+    ???
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:890: in __abs__
+    return self._from_pyarrow_array(pc.abs_checked(self._pa_array))
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pyarrow/compute.py:254: in wrapper
+    return func.call(args, None, memory_pool)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pyarrow/_compute.pyx:399: in pyarrow._compute.Function.call
+    ???
+pyarrow/error.pxi:155: in pyarrow.lib.pyarrow_internal_check_status
+    ???
+pyarrow/error.pxi:92: in pyarrow.lib.check_status
+    ???
+E   pyarrow.lib.ArrowNotImplementedError: Function 'abs_checked' has no kernel matching input types (large_string)
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 12:35:34.871 | INFO     | services.agent.file_scanners:make_scanner:490 - make_scanner | path=A | file=high_null.xlsx | rows=4 | header_row=0 | reason=small_single_region
+2026-09-10 12:35:34.872 | WARNING  | services.agent.file_meta.formulas:extract_formulas:30 - lxml not installed, skip formula extraction
+_________________ TestPathAScanner.test_key_samples_head_tail __________________
+backend/tests/test_file_scanners.py:165: in test_key_samples_head_tail
+    pool = make_scanner(str(f)).scan()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_scanners_paths.py:82: in scan
+    columns_ev = self._scan_columns(df)
+                 ^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_scanners.py:225: in _scan_columns
+    if non_null.abs().max() >= 1e10:
+       ^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/generic.py:1584: in abs
+    res_mgr = self._mgr.apply(np.abs)
+              ^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/managers.py:440: in apply
+    applied = b.apply(f, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/blocks.py:347: in apply
+    result = func(self.values, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:845: in __array_ufunc__
+    result = super().__array_ufunc__(ufunc, method, *inputs, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/base.py:2704: in __array_ufunc__
+    result = arraylike.maybe_dispatch_ufunc_to_dunder_op(
+pandas/_libs/ops_dispatch.pyx:105: in pandas._libs.ops_dispatch.maybe_dispatch_ufunc_to_dunder_op
+    ???
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:890: in __abs__
+    return self._from_pyarrow_array(pc.abs_checked(self._pa_array))
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pyarrow/compute.py:254: in wrapper
+    return func.call(args, None, memory_pool)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pyarrow/_compute.pyx:399: in pyarrow._compute.Function.call
+    ???
+pyarrow/error.pxi:155: in pyarrow.lib.pyarrow_internal_check_status
+    ???
+pyarrow/error.pxi:92: in pyarrow.lib.check_status
+    ???
+E   pyarrow.lib.ArrowNotImplementedError: Function 'abs_checked' has no kernel matching input types (large_string)
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 12:35:34.975 | INFO     | services.agent.file_scanners:make_scanner:490 - make_scanner | path=A | file=for_samples.xlsx | rows=20 | header_row=0 | reason=small_single_region
+2026-09-10 12:35:34.976 | WARNING  | services.agent.file_meta.formulas:extract_formulas:30 - lxml not installed, skip formula extraction
+________________ TestPathAScanner.test_release_cached_clears_df ________________
+backend/tests/test_file_scanners.py:197: in test_release_cached_clears_df
+    scanner.scan()
+backend/services/agent/file_scanners_paths.py:82: in scan
+    columns_ev = self._scan_columns(df)
+                 ^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_scanners.py:225: in _scan_columns
+    if non_null.abs().max() >= 1e10:
+       ^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/generic.py:1584: in abs
+    res_mgr = self._mgr.apply(np.abs)
+              ^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/managers.py:440: in apply
+    applied = b.apply(f, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/blocks.py:347: in apply
+    result = func(self.values, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:845: in __array_ufunc__
+    result = super().__array_ufunc__(ufunc, method, *inputs, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/base.py:2704: in __array_ufunc__
+    result = arraylike.maybe_dispatch_ufunc_to_dunder_op(
+pandas/_libs/ops_dispatch.pyx:105: in pandas._libs.ops_dispatch.maybe_dispatch_ufunc_to_dunder_op
+    ???
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:890: in __abs__
+    return self._from_pyarrow_array(pc.abs_checked(self._pa_array))
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pyarrow/compute.py:254: in wrapper
+    return func.call(args, None, memory_pool)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pyarrow/_compute.pyx:399: in pyarrow._compute.Function.call
+    ???
+pyarrow/error.pxi:155: in pyarrow.lib.pyarrow_internal_check_status
+    ???
+pyarrow/error.pxi:92: in pyarrow.lib.check_status
+    ???
+E   pyarrow.lib.ArrowNotImplementedError: Function 'abs_checked' has no kernel matching input types (large_string)
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 12:35:35.094 | INFO     | services.agent.file_scanners:make_scanner:490 - make_scanner | path=A | file=release.xlsx | rows=3 | header_row=0 | reason=small_single_region
+2026-09-10 12:35:35.095 | WARNING  | services.agent.file_meta.formulas:extract_formulas:30 - lxml not installed, skip formula extraction
+____________ TestPathAScanner.test_release_cached_handles_exception ____________
+backend/tests/test_file_scanners.py:211: in test_release_cached_handles_exception
+    scanner.scan()
+backend/services/agent/file_scanners_paths.py:82: in scan
+    columns_ev = self._scan_columns(df)
+                 ^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_scanners.py:225: in _scan_columns
+    if non_null.abs().max() >= 1e10:
+       ^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/generic.py:1584: in abs
+    res_mgr = self._mgr.apply(np.abs)
+              ^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/managers.py:440: in apply
+    applied = b.apply(f, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/blocks.py:347: in apply
+    result = func(self.values, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:845: in __array_ufunc__
+    result = super().__array_ufunc__(ufunc, method, *inputs, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/base.py:2704: in __array_ufunc__
+    result = arraylike.maybe_dispatch_ufunc_to_dunder_op(
+pandas/_libs/ops_dispatch.pyx:105: in pandas._libs.ops_dispatch.maybe_dispatch_ufunc_to_dunder_op
+    ???
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:890: in __abs__
+    return self._from_pyarrow_array(pc.abs_checked(self._pa_array))
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pyarrow/compute.py:254: in wrapper
+    return func.call(args, None, memory_pool)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pyarrow/_compute.pyx:399: in pyarrow._compute.Function.call
+    ???
+pyarrow/error.pxi:155: in pyarrow.lib.pyarrow_internal_check_status
+    ???
+pyarrow/error.pxi:92: in pyarrow.lib.check_status
+    ???
+E   pyarrow.lib.ArrowNotImplementedError: Function 'abs_checked' has no kernel matching input types (large_string)
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 12:35:35.194 | INFO     | services.agent.file_scanners:make_scanner:490 - make_scanner | path=A | file=release_safe.xlsx | rows=1 | header_row=0 | reason=small_single_region
+2026-09-10 12:35:35.195 | WARNING  | services.agent.file_meta.formulas:extract_formulas:30 - lxml not installed, skip formula extraction
+_ TestPathBParallelFormulaExtraction.test_parallel_extracts_formulas_correctly _
+backend/tests/test_file_scanners.py:328: in test_parallel_extracts_formulas_correctly
+    pool = scanner.scan()
+           ^^^^^^^^^^^^^^
+backend/services/agent/file_scanners_paths.py:430: in scan
+    acc.process_chunk(df, chunk_start_local)
+backend/services/agent/file_scanners_paths.py:182: in process_chunk
+    m = float(non_null.abs().max())
+              ^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/generic.py:1584: in abs
+    res_mgr = self._mgr.apply(np.abs)
+              ^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/managers.py:440: in apply
+    applied = b.apply(f, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/blocks.py:347: in apply
+    result = func(self.values, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:845: in __array_ufunc__
+    result = super().__array_ufunc__(ufunc, method, *inputs, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/base.py:2704: in __array_ufunc__
+    result = arraylike.maybe_dispatch_ufunc_to_dunder_op(
+pandas/_libs/ops_dispatch.pyx:105: in pandas._libs.ops_dispatch.maybe_dispatch_ufunc_to_dunder_op
+    ???
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:890: in __abs__
+    return self._from_pyarrow_array(pc.abs_checked(self._pa_array))
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pyarrow/compute.py:254: in wrapper
+    return func.call(args, None, memory_pool)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pyarrow/_compute.pyx:399: in pyarrow._compute.Function.call
+    ???
+pyarrow/error.pxi:155: in pyarrow.lib.pyarrow_internal_check_status
+    ???
+pyarrow/error.pxi:92: in pyarrow.lib.check_status
+    ???
+E   pyarrow.lib.ArrowNotImplementedError: Function 'abs_checked' has no kernel matching input types (large_string)
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 12:35:35.635 | INFO     | services.agent.file_scanners:make_scanner:468 - make_scanner | path=B | file=large_with_formula.xlsx | rows=5,000 | header_row=0 | reason=large_file
+2026-09-10 12:35:35.678 | WARNING  | services.agent.file_meta.formulas:extract_formulas:30 - lxml not installed, skip formula extraction
+------------------------------ Captured log call -------------------------------
+WARNING  fastexcel.types.dtype:mod.rs:245 Could not determine dtype for column 3, falling back to string
+WARNING  fastexcel.types.dtype:mod.rs:245 Could not determine dtype for column 3, falling back to string
+WARNING  fastexcel.types.dtype:mod.rs:245 Could not determine dtype for column 3, falling back to string
+_ TestPathBParallelFormulaExtraction.test_formula_extraction_failure_does_not_break_scan _
+backend/tests/test_file_scanners.py:355: in test_formula_extraction_failure_does_not_break_scan
+    pool = scanner.scan()
+           ^^^^^^^^^^^^^^
+backend/services/agent/file_scanners_paths.py:430: in scan
+    acc.process_chunk(df, chunk_start_local)
+backend/services/agent/file_scanners_paths.py:182: in process_chunk
+    m = float(non_null.abs().max())
+              ^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/generic.py:1584: in abs
+    res_mgr = self._mgr.apply(np.abs)
+              ^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/managers.py:440: in apply
+    applied = b.apply(f, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/blocks.py:347: in apply
+    result = func(self.values, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:845: in __array_ufunc__
+    result = super().__array_ufunc__(ufunc, method, *inputs, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/base.py:2704: in __array_ufunc__
+    result = arraylike.maybe_dispatch_ufunc_to_dunder_op(
+pandas/_libs/ops_dispatch.pyx:105: in pandas._libs.ops_dispatch.maybe_dispatch_ufunc_to_dunder_op
+    ???
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:890: in __abs__
+    return self._from_pyarrow_array(pc.abs_checked(self._pa_array))
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pyarrow/compute.py:254: in wrapper
+    return func.call(args, None, memory_pool)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pyarrow/_compute.pyx:399: in pyarrow._compute.Function.call
+    ???
+pyarrow/error.pxi:155: in pyarrow.lib.pyarrow_internal_check_status
+    ???
+pyarrow/error.pxi:92: in pyarrow.lib.check_status
+    ???
+E   pyarrow.lib.ArrowNotImplementedError: Function 'abs_checked' has no kernel matching input types (large_string)
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 12:35:36.018 | INFO     | services.agent.file_scanners:make_scanner:468 - make_scanner | path=B | file=large_failing_formula.xlsx | rows=5,000 | header_row=0 | reason=large_file
+------------------------------ Captured log call -------------------------------
+WARNING  fastexcel.types.dtype:mod.rs:245 Could not determine dtype for column 3, falling back to string
+WARNING  fastexcel.types.dtype:mod.rs:245 Could not determine dtype for column 3, falling back to string
+WARNING  fastexcel.types.dtype:mod.rs:245 Could not determine dtype for column 3, falling back to string
+_ TestPathBParallelFormulaExtraction.test_formula_extraction_timeout_does_not_break_scan _
+backend/tests/test_file_scanners.py:381: in test_formula_extraction_timeout_does_not_break_scan
+    pool = scanner.scan()
+           ^^^^^^^^^^^^^^
+backend/services/agent/file_scanners_paths.py:430: in scan
+    acc.process_chunk(df, chunk_start_local)
+backend/services/agent/file_scanners_paths.py:182: in process_chunk
+    m = float(non_null.abs().max())
+              ^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/generic.py:1584: in abs
+    res_mgr = self._mgr.apply(np.abs)
+              ^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/managers.py:440: in apply
+    applied = b.apply(f, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/blocks.py:347: in apply
+    result = func(self.values, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:845: in __array_ufunc__
+    result = super().__array_ufunc__(ufunc, method, *inputs, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/base.py:2704: in __array_ufunc__
+    result = arraylike.maybe_dispatch_ufunc_to_dunder_op(
+pandas/_libs/ops_dispatch.pyx:105: in pandas._libs.ops_dispatch.maybe_dispatch_ufunc_to_dunder_op
+    ???
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:890: in __abs__
+    return self._from_pyarrow_array(pc.abs_checked(self._pa_array))
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pyarrow/compute.py:254: in wrapper
+    return func.call(args, None, memory_pool)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pyarrow/_compute.pyx:399: in pyarrow._compute.Function.call
+    ???
+pyarrow/error.pxi:155: in pyarrow.lib.pyarrow_internal_check_status
+    ???
+pyarrow/error.pxi:92: in pyarrow.lib.check_status
+    ???
+E   pyarrow.lib.ArrowNotImplementedError: Function 'abs_checked' has no kernel matching input types (large_string)
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 12:35:36.396 | INFO     | services.agent.file_scanners:make_scanner:468 - make_scanner | path=B | file=large_slow_formula.xlsx | rows=5,000 | header_row=0 | reason=large_file
+------------------------------ Captured log call -------------------------------
+WARNING  fastexcel.types.dtype:mod.rs:245 Could not determine dtype for column 3, falling back to string
+WARNING  fastexcel.types.dtype:mod.rs:245 Could not determine dtype for column 3, falling back to string
+WARNING  fastexcel.types.dtype:mod.rs:245 Could not determine dtype for column 3, falling back to string
+________________ TestRealDataRegression.test_small_file_path_a _________________
+backend/tests/test_file_scanners.py:456: in test_small_file_path_a
+    pool = scanner.scan()
+           ^^^^^^^^^^^^^^
+backend/services/agent/file_scanners_paths.py:82: in scan
+    columns_ev = self._scan_columns(df)
+                 ^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_scanners.py:225: in _scan_columns
+    if non_null.abs().max() >= 1e10:
+       ^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/generic.py:1584: in abs
+    res_mgr = self._mgr.apply(np.abs)
+              ^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/managers.py:440: in apply
+    applied = b.apply(f, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/blocks.py:347: in apply
+    result = func(self.values, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:845: in __array_ufunc__
+    result = super().__array_ufunc__(ufunc, method, *inputs, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/base.py:2704: in __array_ufunc__
+    result = arraylike.maybe_dispatch_ufunc_to_dunder_op(
+pandas/_libs/ops_dispatch.pyx:105: in pandas._libs.ops_dispatch.maybe_dispatch_ufunc_to_dunder_op
+    ???
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:890: in __abs__
+    return self._from_pyarrow_array(pc.abs_checked(self._pa_array))
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pyarrow/compute.py:254: in wrapper
+    return func.call(args, None, memory_pool)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pyarrow/_compute.pyx:399: in pyarrow._compute.Function.call
+    ???
+pyarrow/error.pxi:155: in pyarrow.lib.pyarrow_internal_check_status
+    ???
+pyarrow/error.pxi:92: in pyarrow.lib.check_status
+    ???
+E   pyarrow.lib.ArrowNotImplementedError: Function 'abs_checked' has no kernel matching input types (large_string)
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 12:35:37.802 | INFO     | services.agent.file_scanners:make_scanner:490 - make_scanner | path=A | file=4月 销售主题分析-按订单商品明细-20260508134809_1d1705a783dab9d1-1.xlsx | rows=85,031 | header_row=1 | reason=small_single_region
+2026-09-10 12:35:38.897 | WARNING  | services.agent.file_meta.formulas:extract_formulas:30 - lxml not installed, skip formula extraction
+------------------------------ Captured log call -------------------------------
+WARNING  fastexcel.types.dtype:mod.rs:245 Could not determine dtype for column 12, falling back to string
+WARNING  fastexcel.types.dtype:mod.rs:245 Could not determine dtype for column 13, falling back to string
+WARNING  fastexcel.types.dtype:mod.rs:245 Could not determine dtype for column 12, falling back to string
+WARNING  fastexcel.types.dtype:mod.rs:245 Could not determine dtype for column 13, falling back to string
+________________ TestRealDataRegression.test_large_file_path_a _________________
+backend/tests/test_file_scanners.py:471: in test_large_file_path_a
+    pool = scanner.scan()
+           ^^^^^^^^^^^^^^
+backend/services/agent/file_scanners_paths.py:82: in scan
+    columns_ev = self._scan_columns(df)
+                 ^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_scanners.py:225: in _scan_columns
+    if non_null.abs().max() >= 1e10:
+       ^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/generic.py:1584: in abs
+    res_mgr = self._mgr.apply(np.abs)
+              ^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/managers.py:440: in apply
+    applied = b.apply(f, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/blocks.py:347: in apply
+    result = func(self.values, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:845: in __array_ufunc__
+    result = super().__array_ufunc__(ufunc, method, *inputs, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/base.py:2704: in __array_ufunc__
+    result = arraylike.maybe_dispatch_ufunc_to_dunder_op(
+pandas/_libs/ops_dispatch.pyx:105: in pandas._libs.ops_dispatch.maybe_dispatch_ufunc_to_dunder_op
+    ???
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:890: in __abs__
+    return self._from_pyarrow_array(pc.abs_checked(self._pa_array))
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pyarrow/compute.py:254: in wrapper
+    return func.call(args, None, memory_pool)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pyarrow/_compute.pyx:399: in pyarrow._compute.Function.call
+    ???
+pyarrow/error.pxi:155: in pyarrow.lib.pyarrow_internal_check_status
+    ???
+pyarrow/error.pxi:92: in pyarrow.lib.check_status
+    ???
+E   pyarrow.lib.ArrowNotImplementedError: Function 'abs_checked' has no kernel matching input types (large_string)
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 12:35:46.408 | INFO     | services.agent.file_scanners:make_scanner:490 - make_scanner | path=A | file=4月销售主题分析-按订单商品明细-20260508134809_1d1705a783dab9d1.xlsx | rows=500,000 | header_row=1 | reason=small_single_region
+2026-09-10 12:35:53.151 | WARNING  | services.agent.file_meta.formulas:extract_formulas:30 - lxml not installed, skip formula extraction
+------------------------------ Captured log call -------------------------------
+WARNING  fastexcel.types.dtype:mod.rs:245 Could not determine dtype for column 12, falling back to string
+WARNING  fastexcel.types.dtype:mod.rs:245 Could not determine dtype for column 13, falling back to string
+WARNING  fastexcel.types.dtype:mod.rs:245 Could not determine dtype for column 12, falling back to string
+WARNING  fastexcel.types.dtype:mod.rs:245 Could not determine dtype for column 13, falling back to string
+__________ TestV22Phase2.test_schema_fingerprint_differs_on_structure __________
+backend/tests/test_file_scanners.py:956: in test_schema_fingerprint_differs_on_structure
+    fp1 = _compute_schema_fingerprint(make_scanner(str(f1)).scan())
+                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_scanners_paths.py:82: in scan
+    columns_ev = self._scan_columns(df)
+                 ^^^^^^^^^^^^^^^^^^^^^^
+backend/services/agent/file_scanners.py:225: in _scan_columns
+    if non_null.abs().max() >= 1e10:
+       ^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/generic.py:1584: in abs
+    res_mgr = self._mgr.apply(np.abs)
+              ^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/managers.py:440: in apply
+    applied = b.apply(f, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/blocks.py:347: in apply
+    result = func(self.values, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:845: in __array_ufunc__
+    result = super().__array_ufunc__(ufunc, method, *inputs, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/base.py:2704: in __array_ufunc__
+    result = arraylike.maybe_dispatch_ufunc_to_dunder_op(
+pandas/_libs/ops_dispatch.pyx:105: in pandas._libs.ops_dispatch.maybe_dispatch_ufunc_to_dunder_op
+    ???
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:890: in __abs__
+    return self._from_pyarrow_array(pc.abs_checked(self._pa_array))
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pyarrow/compute.py:254: in wrapper
+    return func.call(args, None, memory_pool)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pyarrow/_compute.pyx:399: in pyarrow._compute.Function.call
+    ???
+pyarrow/error.pxi:155: in pyarrow.lib.pyarrow_internal_check_status
+    ???
+pyarrow/error.pxi:92: in pyarrow.lib.check_status
+    ???
+E   pyarrow.lib.ArrowNotImplementedError: Function 'abs_checked' has no kernel matching input types (large_string)
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 12:35:54.051 | INFO     | services.agent.file_scanners:make_scanner:490 - make_scanner | path=A | file=orders.xlsx | rows=50 | header_row=0 | reason=small_single_region
+2026-09-10 12:35:54.051 | WARNING  | services.agent.file_meta.formulas:extract_formulas:30 - lxml not installed, skip formula extraction
+_ TestCSVEncodingFallback.test_smart_read_csv_decodes_correctly[latin-1-names4] _
+backend/tests/test_file_scanners.py:1182: in test_smart_read_csv_decodes_correctly
+    assert df["name"].iloc[0] == names[0], (
+E   AssertionError: latin-1 编码读出 'M黮ler' 期望 'Müller'
+E   assert 'M黮ler' == 'Müller'
+E     
+E     - Müller
+E     + M黮ler
+_______ TestPathBLargeFileCalamine.test_large_file_via_calamine_chunking _______
+backend/tests/test_file_scanners.py:1235: in test_large_file_via_calamine_chunking
+    pool = scanner.scan()
+           ^^^^^^^^^^^^^^
+backend/services/agent/file_scanners_paths.py:430: in scan
+    acc.process_chunk(df, chunk_start_local)
+backend/services/agent/file_scanners_paths.py:182: in process_chunk
+    m = float(non_null.abs().max())
+              ^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/generic.py:1584: in abs
+    res_mgr = self._mgr.apply(np.abs)
+              ^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/managers.py:440: in apply
+    applied = b.apply(f, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/internals/blocks.py:347: in apply
+    result = func(self.values, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:845: in __array_ufunc__
+    result = super().__array_ufunc__(ufunc, method, *inputs, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/base.py:2704: in __array_ufunc__
+    result = arraylike.maybe_dispatch_ufunc_to_dunder_op(
+pandas/_libs/ops_dispatch.pyx:105: in pandas._libs.ops_dispatch.maybe_dispatch_ufunc_to_dunder_op
+    ???
+../../.venv/lib/python3.14/site-packages/pandas/core/arrays/arrow/array.py:890: in __abs__
+    return self._from_pyarrow_array(pc.abs_checked(self._pa_array))
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.14/site-packages/pyarrow/compute.py:254: in wrapper
+    return func.call(args, None, memory_pool)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pyarrow/_compute.pyx:399: in pyarrow._compute.Function.call
+    ???
+pyarrow/error.pxi:155: in pyarrow.lib.pyarrow_internal_check_status
+    ???
+pyarrow/error.pxi:92: in pyarrow.lib.check_status
+    ???
+E   pyarrow.lib.ArrowNotImplementedError: Function 'abs_checked' has no kernel matching input types (large_string)
+----------------------------- Captured stderr call -----------------------------
+2026-09-10 12:35:54.484 | INFO     | services.agent.file_scanners:make_scanner:468 - make_scanner | path=B | file=large.xlsx | rows=5,000 | header_row=0 | reason=large_file
+2026-09-10 12:35:54.526 | WARNING  | services.agent.file_meta.formulas:extract_formulas:30 - lxml not installed, skip formula extraction
+=============================== warnings summary ===============================
+../../.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434
+  /Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+backend/services/adapters/kie/models.py:126
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-04/backend/services/adapters/kie/models.py:126: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class JsonSchema(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED backend/tests/test_file_scanners.py::TestPathAScanner::test_basic_evidence
+FAILED backend/tests/test_file_scanners.py::TestPathAScanner::test_suspicious_multi_null_row
+FAILED backend/tests/test_file_scanners.py::TestPathAScanner::test_key_samples_head_tail
+FAILED backend/tests/test_file_scanners.py::TestPathAScanner::test_release_cached_clears_df
+FAILED backend/tests/test_file_scanners.py::TestPathAScanner::test_release_cached_handles_exception
+FAILED backend/tests/test_file_scanners.py::TestPathBParallelFormulaExtraction::test_parallel_extracts_formulas_correctly
+FAILED backend/tests/test_file_scanners.py::TestPathBParallelFormulaExtraction::test_formula_extraction_failure_does_not_break_scan
+FAILED backend/tests/test_file_scanners.py::TestPathBParallelFormulaExtraction::test_formula_extraction_timeout_does_not_break_scan
+FAILED backend/tests/test_file_scanners.py::TestRealDataRegression::test_small_file_path_a
+FAILED backend/tests/test_file_scanners.py::TestRealDataRegression::test_large_file_path_a
+FAILED backend/tests/test_file_scanners.py::TestV22Phase2::test_schema_fingerprint_differs_on_structure
+FAILED backend/tests/test_file_scanners.py::TestCSVEncodingFallback::test_smart_read_csv_decodes_correctly[latin-1-names4]
+FAILED backend/tests/test_file_scanners.py::TestPathBLargeFileCalamine::test_large_file_via_calamine_chunking
+13 failed, 159 passed, 4 xfailed, 2 warnings in 23.04s
+
+Same-business-code release Python 3.12 comparison:
+RELEASE_PY312_PASSED tests/test_file_scanners.py::TestPathAScanner::test_basic_evidence
+RELEASE_PY312_PASSED tests/test_file_scanners.py::TestPathAScanner::test_suspicious_multi_null_row
+RELEASE_PY312_PASSED tests/test_file_scanners.py::TestPathAScanner::test_key_samples_head_tail
+RELEASE_PY312_PASSED tests/test_file_scanners.py::TestPathAScanner::test_release_cached_clears_df
+RELEASE_PY312_PASSED tests/test_file_scanners.py::TestPathAScanner::test_release_cached_handles_exception
+RELEASE_PY312_PASSED tests/test_file_scanners.py::TestPathBParallelFormulaExtraction::test_parallel_extracts_formulas_correctly
+RELEASE_PY312_PASSED tests/test_file_scanners.py::TestPathBParallelFormulaExtraction::test_formula_extraction_failure_does_not_break_scan
+RELEASE_PY312_PASSED tests/test_file_scanners.py::TestPathBParallelFormulaExtraction::test_formula_extraction_timeout_does_not_break_scan
+RELEASE_PY312_PASSED tests/test_file_scanners.py::TestRealDataRegression::test_small_file_path_a
+RELEASE_PY312_PASSED tests/test_file_scanners.py::TestRealDataRegression::test_large_file_path_a
+RELEASE_PY312_PASSED tests/test_file_scanners.py::TestV22Phase2::test_schema_fingerprint_differs_on_structure
+RELEASE_PY312_PASSED tests/test_file_scanners.py::TestCSVEncodingFallback::test_smart_read_csv_decodes_correctly[latin-1-names4]
+RELEASE_PY312_PASSED tests/test_file_scanners.py::TestPathBLargeFileCalamine::test_large_file_via_calamine_chunking

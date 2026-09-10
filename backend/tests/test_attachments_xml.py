@@ -156,11 +156,13 @@ class TestAnalyzedStateSwitch:
         # 未分析时不应该有 parquet 字段
         assert "<parquet>" not in out
 
-    def test_analyzed_status_exposes_parquet_path(self):
+    def test_analyzed_status_exposes_parquet_path(self, tmp_path):
+        source = tmp_path / "report.xlsx"
+        source.write_bytes(b"source")
         cache = get_file_cache(_CONV + "-state-b")
         cache.register(
-            "report.xlsx",
-            workspace="/abs/report.xlsx",
+            "上传/2026-06/report.xlsx",
+            workspace=str(source),
             parquet="/host/staging/conv-x/report.parquet",
         )
         cache.set_analyzed("report.xlsx", True)

@@ -1,0 +1,28 @@
+=================================== FAILURES ===================================
+_ TestAnalyzedDataAttachmentBaseline.test_analyzed_action_points_to_pd_read_parquet _
+tests/test_attachment_routing_baseline.py:115: in test_analyzed_action_points_to_pd_read_parquet
+    assert "<status>analyzed</status>" in out
+E   assert '<status>analyzed</status>' in '\n\n<attachments count="1">\n  <file>\n    <id>fid_aeb766af</id>\n    <name>report.xlsx</name>\n    <path>上传/2026-06/report.xlsx</path>\n    <size>1.0KB</size>\n    <status>raw</status>\n    <action>调 file_analyze 转 Parquet（仅 .xlsx/.xls/.csv/.tsv 支持）</action>\n  </file>\n</attachments>\n\n【附件使用规则】\n- 调工具(file_analyze/file_delete 等)时，file_id 参数必须 copy `id` 字段（fid_xxx）\n- 回复用户、生成图表标题、说明分析对象时，引用 `name` 字段\n- 沙盒 code_execute 内读取数据时，用 `path` 字段（如 pd.read_excel(path)）\n- 已治理数据文件直接 pd.read_parquet(`parquet` 字段)；不要重复 file_analyze'
+____ TestBuildWorkspacePromptStateAware.test_state_aware_for_analyzed_xlsx _____
+tests/test_attachment_routing_baseline.py:366: in test_state_aware_for_analyzed_xlsx
+    assert "已分析" in out
+E   AssertionError: assert '已分析' in '用户当前消息附加了 1 个文件：\n  - [fid_4b05f141] report.xlsx (86.9 KB) — 数据文件（待治理）'
+______ TestAnalyzedStateSwitch.test_analyzed_status_exposes_parquet_path _______
+tests/test_attachments_xml.py:172: in test_analyzed_status_exposes_parquet_path
+    assert "<status>analyzed</status>" in out
+E   assert '<status>analyzed</status>' in '\n\n<attachments count="1">\n  <file>\n    <id>fid_aeb766af</id>\n    <name>report.xlsx</name>\n    <path>上传/2026-06/report.xlsx</path>\n    <size>1.0KB</size>\n    <status>raw</status>\n    <action>调 file_analyze 转 Parquet（仅 .xlsx/.xls/.csv/.tsv 支持）</action>\n  </file>\n</attachments>\n\n【附件使用规则】\n- 调工具(file_analyze/file_delete 等)时，file_id 参数必须 copy `id` 字段（fid_xxx）\n- 回复用户、生成图表标题、说明分析对象时，引用 `name` 字段\n- 沙盒 code_execute 内读取数据时，用 `path` 字段（如 pd.read_excel(path)）\n- 已治理数据文件直接 pd.read_parquet(`parquet` 字段)；不要重复 file_analyze'
+__________________ TestV22Fixes.test_cache_schema_version_v3 ___________________
+tests/test_file_scanners.py:814: in test_cache_schema_version_v3
+    assert _CACHE_SCHEMA_VERSION == "v3.0"
+E   AssertionError: assert 'v3.1' == 'v3.0'
+E     
+E     - v3.0
+E     ?    ^
+E     + v3.1
+E     ?    ^
+=========================== short test summary info ============================
+FAILED tests/test_attachment_routing_baseline.py::TestAnalyzedDataAttachmentBaseline::test_analyzed_action_points_to_pd_read_parquet
+FAILED tests/test_attachment_routing_baseline.py::TestBuildWorkspacePromptStateAware::test_state_aware_for_analyzed_xlsx
+FAILED tests/test_attachments_xml.py::TestAnalyzedStateSwitch::test_analyzed_status_exposes_parquet_path
+FAILED tests/test_file_scanners.py::TestV22Fixes::test_cache_schema_version_v3
+====== 4 failed, 9145 passed, 37 skipped, 4 xfailed in 246.15s (0:04:06) =======
