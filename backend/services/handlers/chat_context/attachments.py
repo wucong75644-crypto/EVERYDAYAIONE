@@ -56,6 +56,26 @@ def _ext_of(name: str) -> str:
     return ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
 
 
+def format_current_attachment_refs(
+    workspace_files: List[Dict[str, Any]],
+    org_id: Optional[str] = None,
+) -> str:
+    """Bind this user's attachments to their message; tool rules stay in system.
+
+    Only the current input supplies these paths. This projection neither searches
+    historical files nor grants access; Runtime still validates every selector.
+    """
+    from services.agent.file_id import compute_fid
+
+    refs = [
+        {"file_id": compute_fid(org_id, f["workspace_path"]),
+         "name": f.get("name") or f["workspace_path"],
+         "path": f["workspace_path"]}
+        for f in workspace_files if f.get("workspace_path")
+    ]
+    return "本条消息附件：\n" + json.dumps(refs, ensure_ascii=False) if refs else ""
+
+
 def format_attachments(
     workspace_files: List[Dict[str, Any]],
     conversation_id: Optional[str] = None,

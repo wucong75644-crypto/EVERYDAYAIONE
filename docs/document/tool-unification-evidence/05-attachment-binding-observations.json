@@ -1,0 +1,584 @@
+{
+  "production_sha": "1df0e01c472e3b55b6e13d0e906199a78920ed5c",
+  "production_cases": [
+    {
+      "time": "2026-09-11 09:52:30 +08:00",
+      "source": "workspace",
+      "db_url_path_present": true,
+      "file_exists": true,
+      "model_context_has_current_fid_path": true,
+      "current_user_has_attachment_identity": false,
+      "observed": "claimed_no_attachment_without_read_call"
+    },
+    {
+      "time": "2026-09-11 09:53:35 +08:00",
+      "source": "upload",
+      "db_url_path_present": true,
+      "file_exists": true,
+      "model_context_has_current_fid_path": true,
+      "current_user_has_attachment_identity": false,
+      "observed": "searched_previous_file_instead_of_current_attachment"
+    }
+  ],
+  "complete_before_comparison": [
+    {
+      "event": "run_started",
+      "pid": 736839,
+      "max_calls": 6,
+      "model": "qwen3.5-plus",
+      "at": "2026-09-11T02:26:26.701438+00:00"
+    },
+    {
+      "event": "call_started",
+      "index": 0,
+      "scenario": "workspace",
+      "variant": "before",
+      "expected_file": "测试分摊明细.xlsx",
+      "at": "2026-09-11T02:26:26.701719+00:00"
+    },
+    {
+      "event": "call_finished",
+      "index": 0,
+      "scenario": "workspace",
+      "variant": "before",
+      "expected_file": "测试分摊明细.xlsx",
+      "text": "",
+      "calls": [
+        {
+          "name": "file_analyze",
+          "arguments": "{\"file_id\": \"fid_d84eaf29\"}"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 9309,
+        "completion_tokens": 33,
+        "total_tokens": 9342,
+        "completion_tokens_details": {
+          "text_tokens": 33
+        },
+        "prompt_tokens_details": {
+          "text_tokens": 9309,
+          "cache_write_tokens": 8785,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 8785
+          },
+          "cache_creation_input_tokens": 8785,
+          "cache_type": "ephemeral",
+          "cached_tokens": 0
+        }
+      },
+      "finish_reason": "tool_calls",
+      "at": "2026-09-11T02:26:28.553600+00:00"
+    },
+    {
+      "event": "call_started",
+      "index": 1,
+      "scenario": "workspace",
+      "variant": "current",
+      "expected_file": "测试分摊明细.xlsx",
+      "at": "2026-09-11T02:26:28.553727+00:00"
+    },
+    {
+      "event": "call_finished",
+      "index": 1,
+      "scenario": "workspace",
+      "variant": "current",
+      "expected_file": "测试分摊明细.xlsx",
+      "text": "",
+      "calls": [
+        {
+          "name": "file_analyze",
+          "arguments": "{\"file_id\": \"fid_d84eaf29\"}"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 9744,
+        "completion_tokens": 33,
+        "total_tokens": 9777,
+        "completion_tokens_details": {
+          "text_tokens": 33
+        },
+        "prompt_tokens_details": {
+          "text_tokens": 9744,
+          "cache_write_tokens": 8952,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 8952
+          },
+          "cache_creation_input_tokens": 8952,
+          "cache_type": "ephemeral",
+          "cached_tokens": 0
+        }
+      },
+      "finish_reason": "tool_calls",
+      "at": "2026-09-11T02:26:30.071839+00:00"
+    },
+    {
+      "event": "call_started",
+      "index": 2,
+      "scenario": "workspace",
+      "variant": "single_system",
+      "expected_file": "测试分摊明细.xlsx",
+      "at": "2026-09-11T02:26:30.071956+00:00"
+    },
+    {
+      "event": "call_finished",
+      "index": 2,
+      "scenario": "workspace",
+      "variant": "single_system",
+      "expected_file": "测试分摊明细.xlsx",
+      "text": "您发送了“读取文件”，但没有指定具体要读取哪个文件，也没有附加新的文件。\n\n请问您是想：\n1. 读取之前提到的 **测试分摊明细.xlsx**、**旧发票.xlsx** 或 **历史订单.xlsx**？\n2. 还是您准备上传一个新文件让我读取？\n\n请明确文件名或上传文件，我即可为您处理。",
+      "calls": [],
+      "usage": {
+        "prompt_tokens": 9738,
+        "completion_tokens": 78,
+        "total_tokens": 9816,
+        "completion_tokens_details": {
+          "text_tokens": 78
+        },
+        "prompt_tokens_details": {
+          "text_tokens": 9738,
+          "cache_write_tokens": 9389,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 9389
+          },
+          "cache_creation_input_tokens": 9389,
+          "cache_type": "ephemeral",
+          "cached_tokens": 0
+        }
+      },
+      "finish_reason": "stop",
+      "at": "2026-09-11T02:26:33.293924+00:00"
+    },
+    {
+      "event": "call_started",
+      "index": 3,
+      "scenario": "reupload",
+      "variant": "before",
+      "expected_file": "测试平台订单.xlsx",
+      "at": "2026-09-11T02:26:33.294036+00:00"
+    },
+    {
+      "event": "call_finished",
+      "index": 3,
+      "scenario": "reupload",
+      "variant": "before",
+      "expected_file": "测试平台订单.xlsx",
+      "text": "",
+      "calls": [
+        {
+          "name": "file_analyze",
+          "arguments": "{\"file_id\": \"fid_6561ee7e\"}"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 9354,
+        "completion_tokens": 33,
+        "total_tokens": 9387,
+        "completion_tokens_details": {
+          "text_tokens": 33
+        },
+        "prompt_tokens_details": {
+          "text_tokens": 9354,
+          "cache_write_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "cache_type": "ephemeral",
+          "cached_tokens": 8785
+        }
+      },
+      "finish_reason": "tool_calls",
+      "at": "2026-09-11T02:26:35.168060+00:00"
+    },
+    {
+      "event": "call_started",
+      "index": 4,
+      "scenario": "reupload",
+      "variant": "current",
+      "expected_file": "测试平台订单.xlsx",
+      "at": "2026-09-11T02:26:35.168179+00:00"
+    },
+    {
+      "event": "call_finished",
+      "index": 4,
+      "scenario": "reupload",
+      "variant": "current",
+      "expected_file": "测试平台订单.xlsx",
+      "text": "",
+      "calls": [
+        {
+          "name": "file_analyze",
+          "arguments": "{\"file_id\": \"fid_6561ee7e\"}"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 9790,
+        "completion_tokens": 34,
+        "total_tokens": 9824,
+        "completion_tokens_details": {
+          "text_tokens": 34
+        },
+        "prompt_tokens_details": {
+          "text_tokens": 9790,
+          "cache_write_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "cache_type": "ephemeral",
+          "cached_tokens": 8952
+        }
+      },
+      "finish_reason": "tool_calls",
+      "at": "2026-09-11T02:26:37.188783+00:00"
+    },
+    {
+      "event": "call_started",
+      "index": 5,
+      "scenario": "reupload",
+      "variant": "single_system",
+      "expected_file": "测试平台订单.xlsx",
+      "at": "2026-09-11T02:26:37.188897+00:00"
+    },
+    {
+      "event": "call_finished",
+      "index": 5,
+      "scenario": "reupload",
+      "variant": "single_system",
+      "expected_file": "测试平台订单.xlsx",
+      "text": "当前对话中没有检测到名为“测试分摊明细.xlsx”的附件文件。\n\n请您重新上传该文件，或者确认文件名是否正确。一旦文件上传成功，我将立即为您读取并分析其内容。",
+      "calls": [],
+      "usage": {
+        "prompt_tokens": 9784,
+        "completion_tokens": 41,
+        "total_tokens": 9825,
+        "completion_tokens_details": {
+          "text_tokens": 41
+        },
+        "prompt_tokens_details": {
+          "text_tokens": 9784,
+          "cache_write_tokens": 9399,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 9399
+          },
+          "cache_creation_input_tokens": 9399,
+          "cache_type": "ephemeral",
+          "cached_tokens": 0
+        }
+      },
+      "finish_reason": "stop",
+      "at": "2026-09-11T02:26:38.678015+00:00"
+    },
+    {
+      "event": "run_finished",
+      "attempted_calls": 6,
+      "at": "2026-09-11T02:26:38.678122+00:00"
+    }
+  ],
+  "complete_candidate_comparison": [
+    {
+      "event": "run_started",
+      "pid": 737016,
+      "max_calls": 6,
+      "model": "qwen3.5-plus",
+      "at": "2026-09-11T02:36:42.222010+00:00"
+    },
+    {
+      "event": "call_started",
+      "index": 0,
+      "scenario": "workspace",
+      "variant": "bound_native",
+      "expected_file": "测试分摊明细.xlsx",
+      "at": "2026-09-11T02:36:42.222125+00:00"
+    },
+    {
+      "event": "call_finished",
+      "index": 0,
+      "scenario": "workspace",
+      "variant": "bound_native",
+      "expected_file": "测试分摊明细.xlsx",
+      "text": "",
+      "calls": [
+        {
+          "name": "file_analyze",
+          "arguments": "{\"file_id\": \"fid_d84eaf29\"}"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 9787,
+        "completion_tokens": 33,
+        "total_tokens": 9820,
+        "completion_tokens_details": {
+          "text_tokens": 33
+        },
+        "prompt_tokens_details": {
+          "text_tokens": 9787,
+          "cache_write_tokens": 8952,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 8952
+          },
+          "cache_creation_input_tokens": 8952,
+          "cache_type": "ephemeral",
+          "cached_tokens": 0
+        }
+      },
+      "finish_reason": "tool_calls",
+      "at": "2026-09-11T02:36:44.150680+00:00"
+    },
+    {
+      "event": "call_started",
+      "index": 1,
+      "scenario": "workspace",
+      "variant": "bound_single_system",
+      "expected_file": "测试分摊明细.xlsx",
+      "at": "2026-09-11T02:36:44.150802+00:00"
+    },
+    {
+      "event": "call_finished",
+      "index": 1,
+      "scenario": "workspace",
+      "variant": "bound_single_system",
+      "expected_file": "测试分摊明细.xlsx",
+      "text": "",
+      "calls": [
+        {
+          "name": "file_analyze",
+          "arguments": "{\"file_id\": \"fid_d84eaf29\"}"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 9781,
+        "completion_tokens": 33,
+        "total_tokens": 9814,
+        "completion_tokens_details": {
+          "text_tokens": 33
+        },
+        "prompt_tokens_details": {
+          "text_tokens": 9781,
+          "cache_write_tokens": 9389,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 9389
+          },
+          "cache_creation_input_tokens": 9389,
+          "cache_type": "ephemeral",
+          "cached_tokens": 0
+        }
+      },
+      "finish_reason": "tool_calls",
+      "at": "2026-09-11T02:36:45.995433+00:00"
+    },
+    {
+      "event": "call_started",
+      "index": 2,
+      "scenario": "workspace",
+      "variant": "bound_long_history",
+      "expected_file": "测试分摊明细.xlsx",
+      "at": "2026-09-11T02:36:45.995587+00:00"
+    },
+    {
+      "event": "call_finished",
+      "index": 2,
+      "scenario": "workspace",
+      "variant": "bound_long_history",
+      "expected_file": "测试分摊明细.xlsx",
+      "text": "",
+      "calls": [
+        {
+          "name": "file_analyze",
+          "arguments": "{\"file_id\": \"fid_d84eaf29\"}"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 13837,
+        "completion_tokens": 33,
+        "total_tokens": 13870,
+        "completion_tokens_details": {
+          "text_tokens": 33
+        },
+        "prompt_tokens_details": {
+          "text_tokens": 13837,
+          "cache_write_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "cache_type": "ephemeral",
+          "cached_tokens": 8952
+        }
+      },
+      "finish_reason": "tool_calls",
+      "at": "2026-09-11T02:36:48.129909+00:00"
+    },
+    {
+      "event": "call_started",
+      "index": 3,
+      "scenario": "reupload",
+      "variant": "bound_native",
+      "expected_file": "测试平台订单.xlsx",
+      "at": "2026-09-11T02:36:48.130037+00:00"
+    },
+    {
+      "event": "call_finished",
+      "index": 3,
+      "scenario": "reupload",
+      "variant": "bound_native",
+      "expected_file": "测试平台订单.xlsx",
+      "text": "",
+      "calls": [
+        {
+          "name": "file_analyze",
+          "arguments": "{\"file_id\": \"fid_6561ee7e\"}"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 9841,
+        "completion_tokens": 34,
+        "total_tokens": 9875,
+        "completion_tokens_details": {
+          "text_tokens": 34
+        },
+        "prompt_tokens_details": {
+          "text_tokens": 9841,
+          "cache_write_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "cache_type": "ephemeral",
+          "cached_tokens": 8952
+        }
+      },
+      "finish_reason": "tool_calls",
+      "at": "2026-09-11T02:36:50.110011+00:00"
+    },
+    {
+      "event": "call_started",
+      "index": 4,
+      "scenario": "reupload",
+      "variant": "bound_single_system",
+      "expected_file": "测试平台订单.xlsx",
+      "at": "2026-09-11T02:36:50.110128+00:00"
+    },
+    {
+      "event": "call_finished",
+      "index": 4,
+      "scenario": "reupload",
+      "variant": "bound_single_system",
+      "expected_file": "测试平台订单.xlsx",
+      "text": "",
+      "calls": [
+        {
+          "name": "file_analyze",
+          "arguments": "{\"file_id\": \"fid_6561ee7e\"}"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 9835,
+        "completion_tokens": 34,
+        "total_tokens": 9869,
+        "completion_tokens_details": {
+          "text_tokens": 34
+        },
+        "prompt_tokens_details": {
+          "text_tokens": 9835,
+          "cache_write_tokens": 9399,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 9399
+          },
+          "cache_creation_input_tokens": 9399,
+          "cache_type": "ephemeral",
+          "cached_tokens": 0
+        }
+      },
+      "finish_reason": "tool_calls",
+      "at": "2026-09-11T02:36:52.202911+00:00"
+    },
+    {
+      "event": "call_started",
+      "index": 5,
+      "scenario": "reupload",
+      "variant": "bound_long_history",
+      "expected_file": "测试平台订单.xlsx",
+      "at": "2026-09-11T02:36:52.203031+00:00"
+    },
+    {
+      "event": "call_finished",
+      "index": 5,
+      "scenario": "reupload",
+      "variant": "bound_long_history",
+      "expected_file": "测试平台订单.xlsx",
+      "text": "",
+      "calls": [
+        {
+          "name": "file_analyze",
+          "arguments": "{\"file_id\": \"fid_6561ee7e\"}"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 13891,
+        "completion_tokens": 34,
+        "total_tokens": 13925,
+        "completion_tokens_details": {
+          "text_tokens": 34
+        },
+        "prompt_tokens_details": {
+          "text_tokens": 13891,
+          "cache_write_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "cache_type": "ephemeral",
+          "cached_tokens": 8952
+        }
+      },
+      "finish_reason": "tool_calls",
+      "at": "2026-09-11T02:36:54.020784+00:00"
+    },
+    {
+      "event": "run_finished",
+      "attempted_calls": 6,
+      "at": "2026-09-11T02:36:54.020890+00:00"
+    }
+  ],
+  "candidate_live_passed": 6,
+  "candidate_live_tool_executions": 0,
+  "candidate_source_sha256": {
+    "backend/services/handlers/chat_context/attachments.py": "376d7cfc6cb5de645605cb75cd3b7cfda4b9cba55bfe8e06dc92f760fe8b4835",
+    "backend/services/prompt_builder/builder.py": "cfca8204e9b5df8e201f46adf7e5d41346c71825324889638a7ea8a121087fc4",
+    "backend/services/prompt_builder/layers/user_layer.py": "d73a11f481067c960ee811c3faf2b4efc0ab9c482f12a36d1d15acbc5e16094b"
+  },
+  "limitations": [
+    "Synthetic histories and file metadata, not replay of production business content.",
+    "Each model condition sampled once; no claim of universal determinism.",
+    "First simplified experiment returned one result; other call outcomes unknown after transport failure.",
+    "Production user acceptance remains open; no new deployment."
+  ],
+  "fixture_sha256": {
+    "05-attachment-before-fixtures.json": "3165611fd47d01371d7fa9be43163e29d63cc61db890297ae032ac5978fb6efc",
+    "05-attachment-binding-fixtures.json": "3af68e96229181c9ffa1c90534cec83d7d98201c1872500978f313d2c5fefa0f"
+  },
+  "unchanged_boundaries_vs_deployed_sha": [
+    "frontend/src/services/messageSender.ts",
+    "frontend/src/components/chat/attachments/attachmentSubmission.ts",
+    "backend/services/handlers/chat/executor.py",
+    "backend/services/handlers/chat/execution_engine.py",
+    "backend/services/handlers/chat/tool_loop.py",
+    "backend/services/handlers/chat_context/history_loader.py",
+    "backend/services/handlers/context_snapshot.py",
+    "backend/services/handlers/resource_manifest.py",
+    "backend/services/handlers/tool_loop_context.py",
+    "backend/services/adapters/dashscope/chat_adapter.py"
+  ],
+  "offline_regression": {
+    "candidate_passed": 718,
+    "baseline_passed": 705,
+    "new_binding_tests": 13,
+    "prechange_binding_failed": 11,
+    "prechange_compatibility_passed": 2,
+    "skipped": 3,
+    "skip_reason": "Existing V1 gather tests superseded by PromptBuilder",
+    "wecom_pending_keepalive_warning": "Reproduced on clean deployed HEAD; unchanged by candidate"
+  }
+}
