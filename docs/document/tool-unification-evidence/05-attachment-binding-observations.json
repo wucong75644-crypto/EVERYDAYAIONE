@@ -572,13 +572,29 @@
     "backend/services/adapters/dashscope/chat_adapter.py"
   ],
   "offline_regression": {
-    "candidate_passed": 718,
+    "candidate_passed": 774,
     "baseline_passed": 705,
     "new_binding_tests": 13,
     "prechange_binding_failed": 11,
     "prechange_compatibility_passed": 2,
     "skipped": 3,
     "skip_reason": "Existing V1 gather tests superseded by PromptBuilder",
-    "wecom_pending_keepalive_warning": "Reproduced on clean deployed HEAD; unchanged by candidate"
+    "wecom_pending_keepalive_warning": "Reproduced on clean deployed HEAD; unchanged by candidate",
+    "initial_candidate_passed": 718,
+    "extended_files": [
+      "backend/tests/test_pdf_upload.py",
+      "backend/tests/test_tool_result_05_production_regressions.py"
+    ]
+  },
+  "release_attempt_26d2f2f2": {
+    "frontend_passed": 1309,
+    "backend_passed": 9359,
+    "backend_failed": 5,
+    "backend_skipped": 37,
+    "backend_xfailed": 4,
+    "failure": "Old tests assume string content instead of current attachment text parts",
+    "backend_deployed": false,
+    "frontend_deployed": true,
+    "recovery": "SSH restored; local owner and remote executors stopped; candidate absent; owner-checked coordination release completed"
   }
 }

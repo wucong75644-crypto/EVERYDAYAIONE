@@ -1,6 +1,6 @@
 # 05 附件读取生产复验与当前消息绑定
 
-2026-09-11。生产版本为 `1df0e01c472e3b55b6e13d0e906199a78920ed5c`。本次候选尚未提交部署，用户验收未关闭；**05 不能标记技术通过，不能进入 06**。此前部署成功只证明发布及自动检查通过，不能替代附件读取验收。
+2026-09-11。生产版本为 `1df0e01c472e3b55b6e13d0e906199a78920ed5c`。首次候选 `26d2f2f2` 已提交推送，但后端测试失败；修正旧契约测试后待重新完整发布，用户验收未关闭；**05 不能标记技术通过，不能进入 06**。此前部署成功只证明发布及自动检查通过，不能替代附件读取验收。
 
 ## 生产事实与结论边界
 
@@ -63,7 +63,7 @@
 
 [新增 13 项测试](../../backend/tests/test_current_attachment_binding.py)中，11 项附件绑定断言在未修改代码上失败、2 项原兼容行为通过。这是输入关联约束回归，**不是**原生产模型错误的离线复现。修复后 13 项全部通过，包含工作区/上传、xlsx/csv/pdf/png、字符原样保留、混合附件和图片不重、无附件不借用历史、legacy inline，以及真实 PromptBuilder → DashScope HTTP body → 原 checkpoint 链路。
 
-使用 `bash docs/document/tool-unification-evidence/run-05-attachment-binding.sh` 可复验同组检查。最终受影响回归 **718 passed、3 skipped、0 failed/error/xfail**，见[完整结果](tool-unification-evidence/05-attachment-binding-regression.txt)。3 项均为原 V1 gather 测试跳过，未改跳过条件。企微测试退出时有 StreamKeepAlive 未清理协程提示；在干净导出的已部署 HEAD 上，同组原测试 **705 passed / 同样 3 skipped** 且复现同一提示，见[基线](tool-unification-evidence/05-attachment-baseline-regression.txt)，不是本次新增回归。本任务不顺带修改企微保活机制。
+使用 `bash docs/document/tool-unification-evidence/run-05-attachment-binding.sh` 可复验同组检查。扩充遗漏的 PDF 上传与生产回归测试后，最终受影响回归 **774 passed、3 skipped、0 failed/error/xfail**，见[完整结果](tool-unification-evidence/05-attachment-binding-regression.txt)。3 项均为原 V1 gather 测试跳过，未改跳过条件。企微测试退出时有 StreamKeepAlive 未清理协程提示；在干净导出的已部署 HEAD 上，同组原测试 **705 passed / 同样 3 skipped** 且复现同一提示，见[基线](tool-unification-evidence/05-attachment-baseline-regression.txt)，不是本次新增回归。本任务不顺带修改企微保活机制。
 
 合成请求可用 [fixture 构造器](tool-unification-evidence/build-05-attachment-fixtures.py)离线重建，已逐字段验证与实际发送的两组输入完全相等；构造器不调用模型。输入指纹、生产文件源码指纹、全部实际模型响应与 tokens 保存在观察记录中。原 18 份结果协议 goldens 未修改。
 
@@ -78,8 +78,14 @@
 | A-05-05 | 新 text part 经实际 HTTP 和旧 checkpoint 无损对照；没有新增审计/业务投递 | 自动化通过 |
 | G-01 | 附件读取验收缺陷，3 个生产文件局部修改，无 06 内容 | 通过 |
 | G-02 | 必需的原生产场景和人工验收未闭合 | **未通过** |
-| G-03 | 718 通过；3 原有跳过及企微保活提示有干净 HEAD 对照 | 通过 |
+| G-03 | 774 通过；3 原有跳过及企微保活提示有干净 HEAD 对照 | 通过 |
 | G-04 | API/工具 schema/ToolResult 两种结果投影/WS/原持久化不改 | 通过 |
 | G-05 | 版本、对照、候选范围、限制与回退已交接 | 通过 |
 
-生产仍是 `1df0e01c`，本候选未部署。待用户“提交部署”后，在同一旧会话分别插入工作区文件和重新上传文件，再发送新消息“读取文件”；核对实际读取的是当前文件、文件和图片能打开、没有自行执行旧统计任务。旧冻结 checkpoint 的继续执行不代表新消息投影已生效。用户验收关闭之前保留本工作树，不进入下一块。
+首次发布仅完成前端（本次无前端源码变更），后端附件修复尚未上线。用户已授权提交部署，受控完整发布成功后，在同一旧会话分别插入工作区文件和重新上传文件，再发送新消息“读取文件”；核对实际读取的是当前文件、文件和图片能打开、没有自行执行旧统计任务。旧冻结 checkpoint 的继续执行不代表新消息投影已生效。用户验收关闭之前保留本工作树，不进入下一块。
+
+## 本次发布门禁发现与复验
+
+首次候选 `26d2f2f2` 的完整发布测试：前端 1309 passed；后端 9359 passed、5 failed、37 skipped、4 xfailed。失败的 5 项来自 `test_pdf_upload.py` 的一个用例及 `test_tool_result_05_production_regressions.py` 的四个参数组合，仍假设用户内容是字符串。此前 718 项定向测试遗漏了这两个文件，这是验证范围缺口。已改为精确断言原文 text part、当前附件 file_id/name/path、原 inline XML 分支，以及 HTTP 和旧 checkpoint 内容完全一致，没有删除字段、弱化断言或新增 skip。扩大后的定向组 774 passed、3 原有 skipped；生产源码没有进一步变化，原 6 次模型验证仍适用。
+
+后端测试失败后 SSH 一度网络不可达，入口保留发布锁并报告 executor_unconfirmed；未立即重跑。连接恢复后确认：本机锁所有者进程 21931 和部署执行器已退出、远端没有在途发布进程、后端服务 active、完整候选标记不存在。通过原 release-coordination 的 owner 校验、invalidate、release_owned_lock 恢复锁状态，再准备新的受控完整发布。首次发布不构成技术通过；最终部署 SHA、全量结果及健康状态以当前任务的 RELEASE_RESULT 为准。

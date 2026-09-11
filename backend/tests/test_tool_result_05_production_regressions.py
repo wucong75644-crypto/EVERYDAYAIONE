@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from services.agent.agent_result import AgentResult
+from services.agent.file_id import compute_fid
 from services.handlers.chat_context.attachments import format_attachments, build_workspace_prompt
 from services.handlers.chat.execution_engine import _build_replay_context
 from services.handlers.resource_manifest import ResourceManifest, ResourceAsset
@@ -37,7 +38,7 @@ async def test_current_user_and_attachment_survive_provider_and_checkpoint(monke
         {"role": "assistant", "content": "旧表统计完成，文件和图已生成。"},
     ]
     user = UserLayer.render(UserMessageInput(
-        text=text, workspace_files=files, attachments_as_system=as_system,
+        text=text, workspace_files=files, attachments_as_system=as_system, org_id="o1",
         attachments_xml=format_attachments(files, org_id="o1"),
         workspace_prompt=build_workspace_prompt(files, org_id="o1"),
     ))
@@ -59,7 +60,19 @@ async def test_current_user_and_attachment_survive_provider_and_checkpoint(monke
     current_indices = [i for i, m in enumerate(sent) if "新表.csv" in str(m["content"])]
     assert current_indices
     assert sent[-1] == user.user_message
-    assert sent[-1]["content"].startswith(text)
+    if as_system:
+        parts = sent[-1]["content"]
+        assert len(parts) == 2
+        assert parts[0] == {"type": "text", "text": text}
+        assert parts[1]["type"] == "text"
+        label, refs_json = parts[1]["text"].split("\n", 1)
+        assert label == "本条消息附件："
+        assert json.loads(refs_json) == [{
+            "file_id": compute_fid("o1", files[0]["workspace_path"]),
+            "name": files[0]["name"], "path": files[0]["workspace_path"],
+        }]
+    else:
+        assert sent[-1]["content"] == text + format_attachments(files, org_id="o1")
     focus = next(m["content"] for m in sent if "以用户最新一条消息为准" in str(m["content"]))
     assert "明确要求继续" in focus
     replay = _build_replay_context(messages, [], 0)

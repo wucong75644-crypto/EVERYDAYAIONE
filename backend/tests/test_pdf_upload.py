@@ -10,6 +10,7 @@ PDF 上传功能单元测试
 """
 
 import sys
+import json
 from pathlib import Path
 
 backend_dir = Path(__file__).parent.parent
@@ -441,7 +442,7 @@ class TestBuildLlmMessagesWorkspace:
 
         messages 净化后（messages_attachments_as_system=True）：
         - attachments XML 在 user 前的独立 system message 中
-        - user content 保持纯净（仅 text_content）
+        - user 第一段保留原文，第二段绑定当前附件身份
         - 设计文档：docs/document/TECH_messages数组结构净化.md
         """
         mock_db.set_table_data("messages", [])
@@ -461,11 +462,21 @@ class TestBuildLlmMessagesWorkspace:
             text_content="分析这个CSV",
         )
 
-        # user 纯净
+        # 原文不变；同一 user 消息中明确绑定当前文件，完整 XML 仍在 system。
+        from services.agent.file_id import compute_fid
         user_msg = result[-1]
         assert user_msg["role"] == "user"
-        assert user_msg["content"] == "分析这个CSV"
-        assert "<attachments" not in user_msg["content"]
+        parts = user_msg["content"]
+        assert len(parts) == 2
+        assert parts[0] == {"type": "text", "text": "分析这个CSV"}
+        assert parts[1]["type"] == "text"
+        label, refs_json = parts[1]["text"].split("\n", 1)
+        assert label == "本条消息附件："
+        assert json.loads(refs_json) == [{
+            "file_id": compute_fid(None, "上传/2026-06/sales.csv"),
+            "name": "sales.csv", "path": "上传/2026-06/sales.csv",
+        }]
+        assert "<attachments" not in parts[1]["text"]
 
         # 紧贴 user 前一条是独立 system 含 attachments XML
         att_msg = result[-2]
