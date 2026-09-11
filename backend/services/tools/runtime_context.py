@@ -154,16 +154,27 @@ def check_result_resources(context, value):
     """
     from core.config import get_settings
     from services.file_executor import FileExecutor
+    from services.tools.result_payload import extension_of
+    from services.tools.result import ToolResult
+    if isinstance(value, ToolResult):
+        value = value.raw
+    extension = extension_of(value)
+    if extension is not None:
+        value = extension["raw"] or {}
     payloads = value.get("emit_payloads", []) if isinstance(value, dict) else getattr(value, "emit_payloads", [])
-    if not payloads:
+    ref = value.get("file_ref") if isinstance(value, dict) else getattr(value, "file_ref", None)
+    paths = [p["workspace_path"] for p in payloads if isinstance(p, dict) and p.get("workspace_path")]
+    if ref is not None:
+        paths.append(ref.get("path") if isinstance(ref, dict) else ref.path)
+    if not paths:
         return
     files = FileExecutor(get_settings().file_workspace_root, context.workspace_owner_id,
                          context.org_id, create_root=False)
-    root = Path(files.workspace_root)
-    for payload in payloads:
-        if not isinstance(payload, dict) or not payload.get("workspace_path"):
-            continue
-        path = Path(payload["workspace_path"])
+    root = Path(files.workspace_root).resolve()
+    for value in paths:
+        if not isinstance(value, str) or not value:
+            raise PermissionError("replay_resource_reference_invalid: 工具未执行")
+        path = Path(value)
         target = path if path.is_absolute() else root / path
         try:
             target.resolve().relative_to(root)

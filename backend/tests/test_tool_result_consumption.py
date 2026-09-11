@@ -317,7 +317,10 @@ async def test_cache_failure_state_and_single_audit_per_consumption(setup,monkey
     for id in ('first','cached'):
         await loop._execute_tools([tc('search_knowledge',{'file':'overview'},id)],[],'',ctx)
         result=loop._turn_tool_outcomes[0][1]
-        assert result.status=='error' and result.is_failure and result.raw is raw
+        assert result.status=='error' and result.is_failure
+        assert result.raw.summary==raw.summary and result.agent_context['tokens_used']==raw.tokens_used
+        assert result.metadata==raw.metadata
+        assert (result.raw is raw)==(id=='first')  # 06 caches an isolated snapshot
         assert result.execution.cached == (id=='cached')
     await asyncio.sleep(0)
     assert len(writes)==2 and [w.is_cached for w in writes]==[False,True]
@@ -344,7 +347,7 @@ async def test_explicit_legacy_persistence_projection_and_old_reader(setup,case)
         assert recovered.status==raw.status and recovered.error_message==raw.error_message
     else: assert recovered==(raw if isinstance(raw,str) else str(raw))
     assert 'ToolResult(' not in json.dumps(payload)
-    with pytest.raises(TypeError,match='legacy_persistence_value'): serialize_tool_result(result)
+    assert serialize_tool_result(result)==payload  # 06 reader-first default still writes legacy projection
     with pytest.raises(TypeError,match='Project ToolResult'): _build_replay_context([{'content':result}],[],0)
 
 

@@ -77,7 +77,7 @@ class ChatToolResultMixin:
             fields["result_length"] = len(result.model_content("chat"))
         ChatToolResultMixin._audit_tool_result(
             self, context, fields["result_length"], fields["status"], fields["truncated"],
-            is_cached=fields["cached"],
+            is_cached=fields["cached"], execution=fields["execution"],
         )
         await ChatToolResultMixin._send_tool_result(
             self, context, not result.is_failure, display[:100],
@@ -263,19 +263,15 @@ class ChatToolResultMixin:
         result_length: int,
         status: str,
         truncated: bool = False,
-        *, is_cached: bool | None = None,
+        *, is_cached: bool | None = None, execution: dict | None = None,
     ) -> None:
-        self._emit_tool_audit(
-            context.task_id,
-            context.conversation_id,
-            context.user_id,
-            context.tool_name,
-            context.tool_call_id,
-            context.turn,
-            context.args,
-            result_length,
-            context.elapsed_ms,
-            status,
-            truncated,
-            **({"is_cached": is_cached} if is_cached is not None else {}),
-        )
+        try:
+            self._emit_tool_audit(
+                context.task_id, context.conversation_id, context.user_id,
+                context.tool_name, context.tool_call_id, context.turn, context.args,
+                result_length, context.elapsed_ms, status, truncated,
+                **({"is_cached": is_cached} if is_cached is not None else {}),
+                **({"execution": execution} if execution is not None else {}),
+            )
+        except Exception as error:
+            logger.warning(f"Tool audit dispatch failed | call={context.tool_call_id} | error={type(error).__name__}")

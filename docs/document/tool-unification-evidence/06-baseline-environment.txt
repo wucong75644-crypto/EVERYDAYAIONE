@@ -1,0 +1,143 @@
+Baseline cdba58f9018ff45be2ebde0b802471ca634d8727, isolated git archive: /private/tmp/tool06-baseline-o8am6cj6
+Command: /Users/wucong/EVERYDAYAIONE/.venv/bin/python -m pytest backend/tests/test_emit_three_engines.py backend/tests/test_emit_auto_hooks.py backend/tests/test_loop_hooks.py backend/tests/test_tool_loop_helpers.py backend/tests/test_tool_invocation_uncertain_integration.py -o addopts= -v --tb=short
+============================= test session starts ==============================
+platform darwin -- Python 3.14.2, pytest-9.0.3, pluggy-1.6.0 -- /Users/wucong/EVERYDAYAIONE/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /private/tmp/tool06-baseline-o8am6cj6/backend
+configfile: pytest.ini
+plugins: time-machine-2.14.1, cov-7.1.0, asyncio-1.3.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 72 items
+
+backend/tests/test_emit_three_engines.py::TestMimebundleDispatch::test_plotly_dispatched_as_chart PASSED [  1%]
+backend/tests/test_emit_three_engines.py::TestMimebundleDispatch::test_vegalite_dispatched_as_chart PASSED [  2%]
+backend/tests/test_emit_three_engines.py::TestMimebundleDispatch::test_png_dispatched_as_image_with_inline_bytes PASSED [  4%]
+backend/tests/test_emit_three_engines.py::TestMimebundleDispatch::test_svg_dispatched_as_image_inline PASSED [  5%]
+backend/tests/test_emit_three_engines.py::TestMimebundleDispatch::test_html_dataframe_dispatched_as_table PASSED [  6%]
+backend/tests/test_emit_three_engines.py::TestMimebundleDispatch::test_html_non_table_returns_none PASSED [  8%]
+backend/tests/test_emit_three_engines.py::TestMimebundleDispatch::test_html_empty_table_returns_none PASSED [  9%]
+backend/tests/test_emit_three_engines.py::TestMimebundleDispatch::test_html_multi_table_takes_first PASSED [ 11%]
+backend/tests/test_emit_three_engines.py::TestMimebundleDispatch::test_html_unnamed_index_column_stripped PASSED [ 12%]
+backend/tests/test_emit_three_engines.py::TestMimebundleDispatch::test_html_nan_converted_to_none_for_json_safety PASSED [ 13%]
+backend/tests/test_emit_three_engines.py::TestMimebundleDispatch::test_json_returns_none PASSED [ 15%]
+backend/tests/test_emit_three_engines.py::TestMimebundleDispatch::test_markdown_returns_none PASSED [ 16%]
+backend/tests/test_emit_three_engines.py::TestMimebundleDispatch::test_unknown_mime_returns_none PASSED [ 18%]
+backend/tests/test_emit_three_engines.py::TestAutoEmitMissed::test_savefig_png_auto_emitted_as_image PASSED [ 19%]
+backend/tests/test_emit_three_engines.py::TestAutoEmitMissed::test_excel_auto_emitted_as_file PASSED [ 20%]
+backend/tests/test_emit_three_engines.py::TestAutoEmitMissed::test_dedupe_llm_explicit_emit_wins PASSED [ 22%]
+backend/tests/test_emit_three_engines.py::TestAutoEmitMissed::test_unchanged_file_not_emitted PASSED [ 23%]
+backend/tests/test_emit_three_engines.py::TestExplicitEmit::test_emit_chart_payload PASSED [ 25%]
+backend/tests/test_emit_three_engines.py::TestExplicitEmit::test_emit_file_payload PASSED [ 26%]
+backend/tests/test_emit_three_engines.py::TestExplicitEmit::test_emit_image_payload PASSED [ 27%]
+backend/tests/test_emit_three_engines.py::TestExplicitEmit::test_emit_table_payload PASSED [ 29%]
+backend/tests/test_emit_three_engines.py::TestCoverageMatrix::test_all_scenarios_have_coverage PASSED [ 30%]
+backend/tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_install_hook_sets_chinese_font_rcparams PASSED [ 31%]
+backend/tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box PASSED [ 33%]
+backend/tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_aliases_registered_to_real_font SKIPPED [ 34%]
+backend/tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_alias_registration_dedupes_on_second_call SKIPPED [ 36%]
+backend/tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_macos_no_wqy_skips_registration_gracefully PASSED [ 37%]
+backend/tests/test_emit_auto_hooks.py::TestIPythonDisplayShim::test_install_creates_modules PASSED [ 38%]
+backend/tests/test_emit_auto_hooks.py::TestIPythonDisplayShim::test_plotly_mime_to_emit_chart PASSED [ 40%]
+backend/tests/test_emit_auto_hooks.py::TestIPythonDisplayShim::test_vegalite_mime_to_emit_chart PASSED [ 41%]
+backend/tests/test_emit_auto_hooks.py::TestIPythonDisplayShim::test_unknown_mime_ignored PASSED [ 43%]
+backend/tests/test_emit_auto_hooks.py::TestIPythonDisplayShim::test_display_with_repr_mimebundle PASSED [ 44%]
+backend/tests/test_emit_auto_hooks.py::TestIPythonDisplayShim::test_idempotent_install PASSED [ 45%]
+backend/tests/test_emit_auto_hooks.py::TestMatplotlibHook::test_plt_show_auto_emit_image PASSED [ 47%]
+backend/tests/test_emit_auto_hooks.py::TestMatplotlibHook::test_no_figure_no_emit PASSED [ 48%]
+backend/tests/test_loop_hooks.py::TestLoopHookBase::test_on_turn_start_noop PASSED [ 50%]
+backend/tests/test_loop_hooks.py::TestLoopHookBase::test_on_tool_start_noop PASSED [ 51%]
+backend/tests/test_loop_hooks.py::TestLoopHookBase::test_on_tool_end_noop PASSED [ 52%]
+backend/tests/test_loop_hooks.py::TestLoopHookBase::test_on_text_synthesis_returns_input_unchanged PASSED [ 54%]
+backend/tests/test_loop_hooks.py::TestProgressNotifyHook::test_no_task_id_skips_publish PASSED [ 55%]
+backend/tests/test_loop_hooks.py::TestProgressNotifyHook::test_with_task_id_calls_publish PASSED [ 56%]
+backend/tests/test_loop_hooks.py::TestProgressNotifyHook::test_exit_signal_tools_skipped PASSED [ 58%]
+backend/tests/test_loop_hooks.py::TestProgressNotifyHook::test_publish_failure_does_not_raise PASSED [ 59%]
+backend/tests/test_loop_hooks.py::TestToolAuditHook::test_creates_audit_task PASSED [ 61%]
+backend/tests/test_loop_hooks.py::TestToolAuditHook::test_audit_does_not_raise_on_failure PASSED [ 62%]
+backend/tests/test_loop_hooks.py::TestTemporalValidatorHook::test_validation_patches_text PASSED [ 63%]
+backend/tests/test_loop_hooks.py::TestTemporalValidatorHook::test_emits_deviations_when_present PASSED [ 65%]
+backend/tests/test_loop_hooks.py::TestTemporalValidatorHook::test_validator_failure_returns_original PASSED [ 66%]
+backend/tests/test_loop_hooks.py::TestFailureReflectionHook::test_error_prefix_triggers_injection PASSED [ 68%]
+backend/tests/test_loop_hooks.py::TestFailureReflectionHook::test_timeout_prefix_triggers_injection PASSED [ 69%]
+backend/tests/test_loop_hooks.py::TestFailureReflectionHook::test_business_error_string_does_not_trigger PASSED [ 70%]
+backend/tests/test_loop_hooks.py::TestFailureReflectionHook::test_traceback_triggers_injection PASSED [ 72%]
+backend/tests/test_loop_hooks.py::TestFailureReflectionHook::test_empty_result_does_not_trigger PASSED [ 73%]
+backend/tests/test_loop_hooks.py::TestAmbiguityDetectionHook::test_multi_product_match_triggers PASSED [ 75%]
+backend/tests/test_loop_hooks.py::TestAmbiguityDetectionHook::test_multi_sku_match_triggers PASSED [ 76%]
+backend/tests/test_loop_hooks.py::TestAmbiguityDetectionHook::test_single_match_does_not_trigger PASSED [ 77%]
+backend/tests/test_loop_hooks.py::TestAmbiguityDetectionHook::test_exact_code_match_does_not_trigger PASSED [ 79%]
+backend/tests/test_loop_hooks.py::TestAmbiguityDetectionHook::test_non_target_tool_does_not_trigger PASSED [ 80%]
+backend/tests/test_loop_hooks.py::TestAmbiguityDetectionHook::test_empty_result_does_not_trigger PASSED [ 81%]
+backend/tests/test_loop_hooks.py::TestToolAuditHookV6::test_token_and_trace_passed_to_entry PASSED [ 83%]
+backend/tests/test_loop_hooks.py::TestToolAuditHookV6::test_kwargs_backward_compatible PASSED [ 84%]
+backend/tests/test_loop_hooks.py::TestToolAuditHookV6::test_other_hooks_accept_kwargs PASSED [ 86%]
+backend/tests/test_tool_loop_helpers.py::TestNormalExecution::test_str_result_audit_success PASSED [ 87%]
+backend/tests/test_tool_loop_helpers.py::TestNormalExecution::test_agent_result_success_audit_success PASSED [ 88%]
+backend/tests/test_tool_loop_helpers.py::TestNormalExecution::test_agent_result_error_syncs_audit_status PASSED [ 90%]
+backend/tests/test_tool_loop_helpers.py::TestNormalExecution::test_agent_result_timeout_syncs_audit_status PASSED [ 91%]
+backend/tests/test_tool_loop_helpers.py::TestNormalExecution::test_agent_result_empty_audit_success PASSED [ 93%]
+backend/tests/test_tool_loop_helpers.py::TestCacheHit::test_cache_hit_returns_directly PASSED [ 94%]
+backend/tests/test_tool_loop_helpers.py::TestExceptionHandling::test_timeout_wraps_as_agent_result PASSED [ 95%]
+backend/tests/test_tool_loop_helpers.py::TestExceptionHandling::test_generic_exception_wraps_as_agent_result PASSED [ 97%]
+backend/tests/test_tool_loop_helpers.py::TestBudgetIntegration::test_budget_tool_timeout_used PASSED [ 98%]
+backend/tests/test_tool_invocation_uncertain_integration.py::test_stale_running_is_uncertain_and_success_is_replayed SKIPPED [100%]/Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/unraisableexception.py:33: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+  gc.collect()
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+
+
+=============================== warnings summary ===============================
+../../../Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434
+  /Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+backend/services/adapters/kie/models.py:126
+  /private/tmp/tool06-baseline-o8am6cj6/backend/services/adapters/kie/models.py:126: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class JsonSchema(BaseModel):
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /private/tmp/tool06-baseline-o8am6cj6/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 37329 (\N{CJK UNIFIED IDEOGRAPH-91D1}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /private/tmp/tool06-baseline-o8am6cj6/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 39069 (\N{CJK UNIFIED IDEOGRAPH-989D}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /private/tmp/tool06-baseline-o8am6cj6/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 38144 (\N{CJK UNIFIED IDEOGRAPH-9500}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /private/tmp/tool06-baseline-o8am6cj6/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 21806 (\N{CJK UNIFIED IDEOGRAPH-552E}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /private/tmp/tool06-baseline-o8am6cj6/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 23545 (\N{CJK UNIFIED IDEOGRAPH-5BF9}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /private/tmp/tool06-baseline-o8am6cj6/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 27604 (\N{CJK UNIFIED IDEOGRAPH-6BD4}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /private/tmp/tool06-baseline-o8am6cj6/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 36816 (\N{CJK UNIFIED IDEOGRAPH-8FD0}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /private/tmp/tool06-baseline-o8am6cj6/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 33829 (\N{CJK UNIFIED IDEOGRAPH-8425}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /private/tmp/tool06-baseline-o8am6cj6/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 36864 (\N{CJK UNIFIED IDEOGRAPH-9000}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /private/tmp/tool06-baseline-o8am6cj6/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 27454 (\N{CJK UNIFIED IDEOGRAPH-6B3E}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_auto_hooks.py::TestIPythonDisplayShim::test_unknown_mime_ignored
+  /private/tmp/tool06-baseline-o8am6cj6/backend/services/sandbox/emit_auto_hooks.py:223: DeprecationWarning: The `source` parameter emit a  deprecation warning since IPython 8.0, it had no effects for a long time and will  be removed in future versions.
+    _orig_publish(data, metadata, source, transient=transient, update=update, **kwargs)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================= 69 passed, 3 skipped, 13 warnings in 10.00s ==================

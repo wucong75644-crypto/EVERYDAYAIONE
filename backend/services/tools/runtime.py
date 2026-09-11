@@ -147,13 +147,25 @@ class ToolRuntime:
                     file_call.resolver.access = resource_boundary(self.executor)
                     await file_call.verify()
                 if cache is not None and decision.cacheable:
-                    raw = cache.get(name, cache_arguments(call))
+                    try:
+                        raw = cache.get(name, cache_arguments(call))
+                    except Exception as error:
+                        from loguru import logger
+                        logger.warning(f"tool_cache_read_failed | error={type(error).__name__}")
+                        raise
                     if raw is not None:
                         check_result_resources(context, raw)
-                        result = ToolResult.wrap(raw, call=call, context=context, decision=decision)
-                        return replace(result, execution=replace(
-                            result.execution, handler_started=False, attempts=0, cached=True,
-                        ))
+                        if isinstance(raw, dict) and "tool_result" in raw:
+                            from .result_payload import restore_result
+                            result = restore_result(raw, call=call, context=context, decision=decision)
+                        else:
+                            result = ToolResult.wrap(raw, call=call, context=context, decision=decision)
+                        if result.execution.cancelled:
+                            raise asyncio.CancelledError()
+                        if result.execution.status != "succeeded":
+                            from .result import UncertainToolInvocationError
+                            raise UncertainToolInvocationError("CACHED_TOOL_RESULT_NOT_COMPLETED")
+                        return result.reused(call=call, context=context, decision=decision, cached=True)
                 if lifecycle is not None:
                     return await lifecycle.begin(call, context, decision)
                 return None
@@ -165,13 +177,16 @@ class ToolRuntime:
                     await lifecycle.complete(result)
                 if cache is not None and result.exception is None and result.decision.cacheable:
                     try:
-                        cache.put(name, cache_arguments(call), result.to_legacy())
+                        cache.put(name, cache_arguments(call), result)
                     except Exception as error:
                         from loguru import logger
                         logger.warning(f"tool_cache_write_failed | error={type(error).__name__}")
 
             def cache_arguments(call):
                 args = thaw(call.arguments)
+                args["_tool_cache_scope"] = [context.actor_user_id, context.workspace_owner_id,
+                    context.org_id, context.conversation_id, context.task_id, context.context_scope,
+                    context.execution_mode, context.agent_domain]
                 if file_call is not None:
                     args["_resource_versions"] = thaw(context.resource_versions)
                 return args

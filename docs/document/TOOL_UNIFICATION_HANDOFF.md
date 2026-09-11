@@ -1,5 +1,22 @@
 # 工具统一：共同约束与板块交接
 
+## 当前有效状态：板块 06（2026-09-11）
+
+用户明确确认 01–05 已验收进入 main。本任务受控 start 基准为 `cdba58f9018ff45be2ebde0b802471ca634d8727`；其 tree 与 05 最终 `87b07718` 相同，01–05 提交祖先关系已核验。[06 源检查](tool-unification-evidence/06-source-checks.json) 保存证据。下方 05 的“未关闭/不能进入 06”均为当时快照，不覆盖本段与用户最新确认。
+
+板块 06：**技术验收通过，待提交部署及用户验收**。分支 `codex/task/20260911165104-tool-unification-06`，工作树 `/Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-06`；被测版本为上述 HEAD 加当前未提交差异，尚无发布候选 SHA。
+
+- [06 逐项验收](TOOL_UNIFICATION_ACCEPTANCE_06.md)：A-06-01～06、G-01～05 均有证据，最终 2035 passed、0 failed/error/xfail、2 个原字体环境 skipped；76 个新增必需场景无跳过。原隔离 PostgreSQL opt-in 测试没有运行数据库验证，不计为通过。
+- [06 载荷、缓存、审计和回退契约](TOOL_UNIFICATION_PERSISTENCE_06.md)：新增 result_payload.encode_result/restore_result；AgentResult/FileRead/Form、FileRef/emit、error/retry、token/thinking 和必要审计事实有界保存。未知版本/坏载荷不回退为成功，超限拒绝存储；runtime metadata 的数据库/锁/异常对象不会 stringify。
+- `serialize_tool_result(ToolResult)` 按 `TOOL_RESULT_PAYLOAD_WRITE_VERSION=0/1` 写入；**默认 0，先部署所有兼容 reader，再受控启用 1**。reader 始终支持旧格式及 v1；回设 writer=0 仍可读已有 v1。没有数据库迁移，不清空历史记录。
+- 回退边界：旧版本 `cdba58f9018ff45be2ebde0b802471ca634d8727` 的原 reader 已实际读取新载荷外壳，但会丢失结构化 FileRef/图片/表单、retry/token/thinking；只算有损降级读取。完整恢复要求保留本块 R1 兼容 reader（当前源码指纹可查，正式候选 SHA 在提交部署时记录），不能宣布启用 v1 后可直接无损回退旧版本。
+- Actor runtime/lifecycle 在当前授权和资源包含检查后恢复，succeeded 仍表示调用完成，业务 error 可回放；running/uncertain 禁止重做。取消继续传播，策略拒绝不创建 uncertain。原 RPC、状态枚举、lease、资格、业务锁和 Handler 保留。
+- 生产缓存改为有界快照，增加现有身份/作用域 key；命中保留真实业务状态。`ToolResult.chargeable_tokens` 在缓存/回放为 0，原 token/thinking 不丢失；未修改 code_execute 缓存资格、restore_file 风险/回放或目录定义。
+- 复用 ToolAuditEntry/record_tool_audit；原表字段不变。execution 事实由同一 writer 写现有结构化日志，含 cached/replayed/status/attempts/original_tokens/chargeable_tokens。数据库没有新增 replay 列，需关联日志查看；不承诺 best-effort 写入零丢失。ToolLoop 同轮模型 token 只归属一条审计，投递异常时补交本批尚未审计的已完成结果，不重做 Handler。
+- 下一块 07 的代码前置已具备；仍需用户指令提交部署 → 按兼容发布次序核验指定会话 → 用户明确验收关闭 → 核验 main。**本任务不进入 07，未推送/部署/合并/清理。**
+
+## 以下为板块 05 及更早交付时快照
+
 > 2026-09-11 最新生产复验：1df0e01c 的工作区插入与重新上传均出现模型未识别当前附件。已准备当前 user 消息绑定附件的候选，774 项回归及 6 次真实模型合成对照通过，首次部署被 5 项旧字符串断言拦截，修正后等待重新完整发布，原生产场景待复验；05 不得标记技术通过或进入 06。见 [附件绑定调查与增量验收](TOOL_UNIFICATION_05_ATTACHMENT_BINDING.md)。以下保留此前实施记录。
 
 ## 当前状态：板块 05

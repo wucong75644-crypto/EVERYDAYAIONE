@@ -13,6 +13,7 @@ Anthropic Claude Code AgentLoop 的"配置 + 策略 + 中间件"模式。
 from __future__ import annotations
 
 import hashlib
+import asyncio
 import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
@@ -705,76 +706,98 @@ class ToolLoopExecutor:
         steer_message = None
         image_blocks = []
 
-        for idx, (tc, tool_name, args, result, audit_status, is_cached, elapsed_ms) in enumerate(results):
-            now_iso = datetime.now(timezone.utc).isoformat()
+        audited = set()
+        try:
+            for idx, (tc, tool_name, args, result, audit_status, is_cached, elapsed_ms) in enumerate(results):
+                now_iso = datetime.now(timezone.utc).isoformat()
 
-            # Both projections and artifacts come from the same live envelope.
-            if isinstance(result, ToolResult):
-                warnings = result.validation_issues()
-                if warnings:
-                    logger.warning(f"ToolOutput validation | tool={tool_name} | issues={warnings}")
-            content = result.model_content("tool_loop") if isinstance(result, ToolResult) else result or ""
-            self._register_result_files(result, tool_name)
-            is_truncated = False
-            # Preserve the old AgentResult projection/budget; stage plain text only.
-            if not isinstance(result, ToolResult) or result.kind == "string":
-                from services.agent.tool_result_envelope import wrap_for_erp_agent, PERSISTED_OUTPUT_TAG
-                content = wrap_for_erp_agent(tool_name, content, tight=False)
-                is_truncated = bool(content and (PERSISTED_OUTPUT_TAG in content or "⚠ 输出过长" in content))
+                # Both projections and artifacts come from the same live envelope.
                 if isinstance(result, ToolResult):
-                    result = result.with_model_content("tool_loop", content, truncated=is_truncated)
+                    warnings = result.validation_issues()
+                    if warnings:
+                        logger.warning(f"ToolOutput validation | tool={tool_name} | issues={warnings}")
+                content = result.model_content("tool_loop") if isinstance(result, ToolResult) else result or ""
+                self._register_result_files(result, tool_name)
+                is_truncated = False
+                # Preserve the old AgentResult projection/budget; stage plain text only.
+                if not isinstance(result, ToolResult) or result.kind == "string":
+                    from services.agent.tool_result_envelope import wrap_for_erp_agent, PERSISTED_OUTPUT_TAG
+                    content = wrap_for_erp_agent(tool_name, content, tight=False)
+                    is_truncated = bool(content and (PERSISTED_OUTPUT_TAG in content or "⚠ 输出过长" in content))
+                    if isinstance(result, ToolResult):
+                        result = result.with_model_content("tool_loop", content, truncated=is_truncated)
 
-            # Step 4: 入 messages
-            if steer_hit:
-                messages.append({"role": "tool", "tool_call_id": tc["id"],
-                                 "content": "⚠ 用户发送了新消息，跳过此工具调用。"})
-            else:
-                messages.append({"role": "tool", "tool_call_id": tc["id"],
-                                 "timestamp": now_iso, "content": content})
-                accumulated = content
-            if isinstance(result, ToolResult):
-                image_blocks.extend(result.model_image_blocks)
+                # Step 4: 入 messages
+                if steer_hit:
+                    messages.append({"role": "tool", "tool_call_id": tc["id"],
+                                     "content": "⚠ 用户发送了新消息，跳过此工具调用。"})
+                else:
+                    messages.append({"role": "tool", "tool_call_id": tc["id"],
+                                     "timestamp": now_iso, "content": content})
+                    accumulated = content
+                if isinstance(result, ToolResult):
+                    image_blocks.extend(result.model_image_blocks)
 
-            # 停止策略：记录本轮工具结果（供 run() 中 classify 使用）
-            self._turn_tool_outcomes.append((tool_name, result, audit_status))
+                # 停止策略：记录本轮工具结果（供 run() 中 classify 使用）
+                self._turn_tool_outcomes.append((tool_name, result, audit_status))
 
-            # Hook 链：单工具执行后（审计 + 失败反思等）
-            for hook in self.hooks:
-                if steer_hit and not isinstance(hook, ToolAuditHook):
-                    continue
-                await hook.on_tool_end(
-                    hook_ctx, tool_name, args, result,
-                    audit_status, elapsed_ms,
-                    is_cached, is_truncated, tc["id"],
-                    turn_prompt_tokens=turn_prompt_tokens,
-                    turn_completion_tokens=turn_completion_tokens,
-                )
-
-            # ── 打断检查点：用户在工具执行期间发了新消息 ──
-            if hook_ctx.task_id and not steer_hit:
-                from services.websocket_manager import ws_manager
-                _steer = ws_manager.check_steer(hook_ctx.task_id)
-                if _steer:
-                    logger.info(
-                        f"ToolLoop steer | task={hook_ctx.task_id} | "
-                        f"msg={_steer[:50]}"
+                # Hook 链：单工具执行后（审计 + 失败反思等）
+                for hook in self.hooks:
+                    if steer_hit and not isinstance(hook, ToolAuditHook):
+                        continue
+                    if isinstance(hook, ToolAuditHook):
+                        audited.add(tc["id"])  # reserve before await; audit failure is not a retry
+                    await hook.on_tool_end(
+                        hook_ctx, tool_name, args, result,
+                        audit_status, elapsed_ms,
+                        is_cached, is_truncated, tc["id"],
+                        # These are model-turn totals, not per-tool usage. Attribute
+                        # them once even when a turn dispatches several tools.
+                        turn_prompt_tokens=turn_prompt_tokens if idx == 0 else 0,
+                        turn_completion_tokens=turn_completion_tokens if idx == 0 else 0,
                     )
-                    # Business calls have already completed. Continue collecting
-                    # their artifacts/audits even when model feedback is skipped.
-                    steer_message = _steer
-                    steer_hit = True
 
-            # 自动扩展：模型调了隐藏工具 → 从全量列表动态注入
-            if self.strategy.enable_tool_expansion and not steer_hit:
-                selected_tools[:] = self.executor.tool_runtime.advertised(
-                    (t["function"]["name"] for t in selected_tools),
-                    discovered_names=(tool_name,),
-                )
+                # ── 打断检查点：用户在工具执行期间发了新消息 ──
+                if hook_ctx.task_id and not steer_hit:
+                    from services.websocket_manager import ws_manager
+                    _steer = ws_manager.check_steer(hook_ctx.task_id)
+                    if _steer:
+                        logger.info(
+                            f"ToolLoop steer | task={hook_ctx.task_id} | "
+                            f"msg={_steer[:50]}"
+                        )
+                        # Business calls have already completed. Continue collecting
+                        # their artifacts/audits even when model feedback is skipped.
+                        steer_message = _steer
+                        steer_hit = True
 
-        if image_blocks:
-            messages.append({"role": "user", "content": [
-                {"type": "text", "text": "[系统：以下是工具返回的图片]"}, *image_blocks,
-            ]})
-        if steer_message:
-            messages.append({"role": "user", "content": steer_message})
+                # 自动扩展：模型调了隐藏工具 → 从全量列表动态注入
+                if self.strategy.enable_tool_expansion and not steer_hit:
+                    selected_tools[:] = self.executor.tool_runtime.advertised(
+                        (t["function"]["name"] for t in selected_tools),
+                        discovered_names=(tool_name,),
+                    )
+
+            if image_blocks:
+                messages.append({"role": "user", "content": [
+                    {"type": "text", "text": "[系统：以下是工具返回的图片]"}, *image_blocks,
+                ]})
+            if steer_message:
+                messages.append({"role": "user", "content": steer_message})
+        except (Exception, asyncio.CancelledError):
+            # All business calls in this batch already completed. A display/file
+            # failure must not hide their audit facts or trigger another dispatch.
+            logger.warning("tool_result_delivery_failed | completed={} | audited={}", len(results), len(audited))
+            for idx, (tc, name, args, result, status, cached, ms) in enumerate(results):
+                if tc["id"] in audited:
+                    continue
+                for hook in self.hooks:
+                    if isinstance(hook, ToolAuditHook):
+                        audited.add(tc["id"])
+                        await hook.on_tool_end(
+                            hook_ctx, name, args, result, status, ms, cached, False, tc["id"],
+                            turn_prompt_tokens=turn_prompt_tokens if idx == 0 else 0,
+                            turn_completion_tokens=turn_completion_tokens if idx == 0 else 0,
+                        )
+            raise
         return accumulated

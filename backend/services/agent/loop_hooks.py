@@ -185,10 +185,11 @@ class ToolAuditHook(LoopHook):
                 prompt_tokens=turn_prompt_tokens,
                 completion_tokens=turn_completion_tokens,
                 trace_id=get_trace_id(),
+                execution=fields["execution"] if isinstance(result, ToolResult) else {},
             )
             asyncio.create_task(record_tool_audit(ctx.db, entry))
         except Exception as e:
-            logger.debug(f"ToolAuditHook failed | tool={tool_name} | error={e}")
+            logger.warning(f"ToolAuditHook failed | tool={tool_name} | error={type(e).__name__}")
 
 
 # ============================================================

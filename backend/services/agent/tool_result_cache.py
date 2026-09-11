@@ -53,10 +53,23 @@ class ToolResultCache:
     def put(self, tool_name: str, args: Dict[str, Any], result: Any) -> None:
         if not self.is_cacheable(tool_name):
             return
-        # 大小判断：AgentResult 用 summary 长度，str 用自身长度
+        from services.tools.result import ToolResult
+        if isinstance(result, ToolResult):
+            from services.tools.result_payload import encode_result
+            if result.execution.status != "succeeded" or result.execution.cancelled:
+                return
+            result = encode_result(result)
+            if len(json.dumps(result, ensure_ascii=False)) > self._CACHE_MAX_VALUE_CHARS:
+                return
+            if len(self._store) < self._CACHE_MAX_ENTRIES:
+                self._store[self._key(tool_name, args)] = (result, time.monotonic())
+            return
+        # 大小判断：兼容直接调用方也按完整安全载荷衡量，保留原对象返回 API
         from services.agent.agent_result import AgentResult
         if isinstance(result, AgentResult):
-            if len(result.summary) > self._CACHE_MAX_VALUE_CHARS:
+            from services.tools.result_payload import _JSONBoundary, _agent_value
+            value = _agent_value(result, _JSONBoundary())
+            if len(json.dumps(value, ensure_ascii=False)) > self._CACHE_MAX_VALUE_CHARS:
                 return
         elif isinstance(result, str):
             if len(result) > self._CACHE_MAX_VALUE_CHARS:

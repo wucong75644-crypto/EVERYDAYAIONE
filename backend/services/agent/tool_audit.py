@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict
 
 from loguru import logger
@@ -40,6 +40,8 @@ class ToolAuditEntry:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     trace_id: str = ""
+    # Correlated structured log only: the existing table has no replay column.
+    execution: dict[str, Any] = field(default_factory=dict)
 
 
 def build_args_hash(args: Dict[str, Any]) -> str:
@@ -58,6 +60,13 @@ async def record_tool_audit(db: Any, entry: ToolAuditEntry) -> None:
 
     try:
         row = asdict(entry)
+        execution = row.pop("execution")
+        if execution:
+            logger.bind(tool_execution=execution, tool_call_id=entry.tool_call_id,
+                        task_id=entry.task_id, trace_id=entry.trace_id).info(
+                "Tool audit execution | tool={} | call={} | facts={}",
+                entry.tool_name, entry.tool_call_id, json.dumps(execution, ensure_ascii=False),
+            )
         await asyncio.to_thread(
             lambda: db.table("tool_audit_log").insert(
                 row, returning=False,
