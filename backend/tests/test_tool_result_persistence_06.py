@@ -31,6 +31,14 @@ from tests.tool_runtime_support import MockHandlerExecutor
 BASE = 'cdba58f9018ff45be2ebde0b802471ca634d8727'
 
 
+def test_writer_rollout_default_and_explicit_rollback(monkeypatch):
+    from core.config import Settings
+    monkeypatch.delenv('TOOL_RESULT_PAYLOAD_WRITE_VERSION', raising=False)
+    assert Settings(_env_file=None).tool_result_payload_write_version == 1
+    monkeypatch.setenv('TOOL_RESULT_PAYLOAD_WRITE_VERSION', '0')
+    assert Settings(_env_file=None).tool_result_payload_write_version == 0
+
+
 def envelope(raw):
     executor = MockHandlerExecutor(agent_domain='general', task_id='task1')
     call = ToolCall('call', 'generate_image', {'prompt': 'fixture'})

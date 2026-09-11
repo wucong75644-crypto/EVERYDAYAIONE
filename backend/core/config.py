@@ -82,8 +82,8 @@ class Settings(BaseSettings):
     app_port: int = 8000
     conversation_actor_web_enabled: bool = False
     conversation_actor_worker_enabled: bool = False
-    # Reader-first rollout: enable only after all Actor readers support payload v1.
-    tool_result_payload_write_version: int = Field(default=0, ge=0, le=1)
+    # R1 e097e392 readers were deployed before this writer rollout; 0 stops new v1 writes.
+    tool_result_payload_write_version: int = Field(default=1, ge=0, le=1)
 
     # CORS 允许的域名（逗号分隔，生产环境必须配置）
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173"

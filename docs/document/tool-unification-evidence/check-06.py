@@ -31,13 +31,13 @@ ledger='backend/services/tool_invocation_store.py'
 def node(data,name): return next(n for n in ast.parse(data).body if getattr(n,'name',None)==name)
 for name in ['ToolInvocationStore','DatabaseToolInvocationStore','hash_tool_arguments']:
  assert ast.dump(node(old(ledger),name))==ast.dump(node((root/ledger).read_bytes(),name)),name
-changed=git('diff','--name-only').splitlines()+git('ls-files','--others','--exclude-standard').splitlines()
+changed=git('diff','--name-only',base).splitlines()+git('ls-files','--others','--exclude-standard').splitlines()
 assert all(p.startswith(('backend/core/','backend/services/','backend/tests/','docs/document/')) for p in changed)
 assert not any(p.startswith('backend/migrations/') for p in changed)
 source=sorted(p for p in changed if p.startswith(('backend/core/','backend/services/','backend/tests/')))
 checksums={p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in source}
 print(json.dumps({'base':base,'head':git('rev-parse','HEAD'),'branch':git('branch','--show-current'),
- 'tested_version':'HEAD plus working-tree sources listed below; no candidate commit yet',
+ 'tested_version':'HEAD plus any working-tree sources listed below; compare fingerprints with final release candidate',
  'prerequisites_01_05_in_main':True,'same_tree_as_05_final':'87b07718',
  'unchanged_boundaries':unchanged,'actor_store_rpc_and_hash_unchanged':True,'database_schema_unchanged':True,
  'source_identity':hashlib.sha256(json.dumps(checksums,sort_keys=True).encode()).hexdigest(),

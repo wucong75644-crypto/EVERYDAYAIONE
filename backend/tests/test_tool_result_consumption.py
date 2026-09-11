@@ -329,7 +329,9 @@ async def test_cache_failure_state_and_single_audit_per_consumption(setup,monkey
 
 
 @pytest.mark.parametrize('case',CASES)
-async def test_explicit_legacy_persistence_projection_and_old_reader(setup,case):
+async def test_explicit_legacy_persistence_projection_and_old_reader(setup,case,monkeypatch):
+    from core.config import get_settings
+    monkeypatch.setattr(get_settings(), 'tool_result_payload_write_version', 0)
     from services.tool_invocation_store import serialize_tool_result,deserialize_tool_result
     _,root=setup
     call,raw=sample(case,root)
@@ -347,7 +349,7 @@ async def test_explicit_legacy_persistence_projection_and_old_reader(setup,case)
         assert recovered.status==raw.status and recovered.error_message==raw.error_message
     else: assert recovered==(raw if isinstance(raw,str) else str(raw))
     assert 'ToolResult(' not in json.dumps(payload)
-    assert serialize_tool_result(result)==payload  # 06 reader-first default still writes legacy projection
+    assert serialize_tool_result(result)==payload  # Explicit reader-first/rollback write setting.
     with pytest.raises(TypeError,match='Project ToolResult'): _build_replay_context([{'content':result}],[],0)
 
 
@@ -416,7 +418,10 @@ async def test_steer_keeps_completed_artifacts_and_audits(setup,monkeypatch):
 
 
 @pytest.mark.parametrize('failure',['business','delivery'])
-async def test_actor_ledger_and_audit_written_once_without_business_redo(setup,monkeypatch,failure):
+@pytest.mark.parametrize('write_version',[0,1])
+async def test_actor_ledger_and_audit_written_once_without_business_redo(setup,monkeypatch,failure,write_version):
+    from core.config import get_settings
+    monkeypatch.setattr(get_settings(), 'tool_result_payload_write_version', write_version)
     from tests.test_tool_production_integration import InvocationStore,actor_harness
     from services.tool_invocation_store import serialize_tool_result
     store=InvocationStore();host=actor_harness(store)
@@ -433,7 +438,16 @@ async def test_actor_ledger_and_audit_written_once_without_business_redo(setup,m
         assert output[1].is_failure and output[2] is True
     executor.handler.assert_awaited_once();host._emit_tool_audit.assert_called_once()
     assert len(store.completed)==1 and store.completed[0]['status']=='succeeded'
-    assert store.completed[0]['result']==serialize_tool_result(raw)
+    payload=store.completed[0]['result']
+    if write_version == 0:
+        assert payload==serialize_tool_result(raw)
+    else:
+        from services.tool_invocation_store import deserialize_tool_result
+        assert payload['tool_result']['version']==1
+        recovered=deserialize_tool_result(payload)
+        assert recovered.summary==raw.summary and recovered.status==raw.status
+        assert recovered.error_message==raw.error_message and recovered.emit_payloads==raw.emit_payloads
+        assert recovered.metadata==raw.metadata and recovered.tokens_used==raw.tokens_used
 
 
 async def test_current_actor_uncertain_never_reexecutes_or_counts_success(setup):
