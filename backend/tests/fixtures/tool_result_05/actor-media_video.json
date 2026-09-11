@@ -1,0 +1,203 @@
+{
+  "ws": [
+    [
+      "client-1",
+      "user-1",
+      "org-1",
+      {
+        "type": "message_start",
+        "payload": {
+          "model": "model-1",
+          "delivery_session_id": "session-1",
+          "stream_id": "stream-1",
+          "execution_attempt": 2,
+          "delivery_seq": 1
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "client-1",
+        "conversation_id": "conv-1",
+        "message_id": "message-1"
+      }
+    ],
+    [
+      "client-1",
+      "user-1",
+      "org-1",
+      {
+        "type": "content_block_add",
+        "payload": {
+          "block": {
+            "type": "tool_step",
+            "tool_call_id": "call",
+            "tool_name": "generate_video",
+            "status": "running"
+          },
+          "delivery_session_id": "session-1",
+          "stream_id": "stream-1",
+          "execution_attempt": 2,
+          "delivery_seq": 2
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "client-1",
+        "conversation_id": "conv-1",
+        "message_id": "message-1"
+      }
+    ],
+    [
+      "client-1",
+      "user-1",
+      "org-1",
+      {
+        "type": "content_block_add",
+        "payload": {
+          "block": {
+            "type": "tool_step",
+            "tool_call_id": "call",
+            "tool_name": "generate_video",
+            "status": "completed",
+            "output": "视频完成",
+            "elapsed_ms": "<NONNEGATIVE_ELAPSED_MS>"
+          },
+          "delivery_session_id": "session-1",
+          "stream_id": "stream-1",
+          "execution_attempt": 2,
+          "delivery_seq": 3
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "client-1",
+        "conversation_id": "conv-1",
+        "message_id": "message-1"
+      }
+    ],
+    [
+      "client-1",
+      "user-1",
+      "org-1",
+      {
+        "type": "content_block_add",
+        "payload": {
+          "block": {
+            "type": "file",
+            "url": "https://example.test/sample.mp4",
+            "name": "sample.mp4",
+            "mime_type": "video/mp4",
+            "size": 12,
+            "workspace_path": "videos/sample.mp4"
+          },
+          "delivery_session_id": "session-1",
+          "stream_id": "stream-1",
+          "execution_attempt": 2,
+          "delivery_seq": 4
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "client-1",
+        "conversation_id": "conv-1",
+        "message_id": "message-1"
+      }
+    ],
+    [
+      "client-1",
+      "user-1",
+      "org-1",
+      {
+        "type": "stream_end",
+        "payload": {
+          "delivery_session_id": "session-1",
+          "stream_id": "stream-1",
+          "execution_attempt": 2,
+          "delivery_seq": 5
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "client-1",
+        "conversation_id": "conv-1",
+        "message_id": "message-1"
+      }
+    ]
+  ],
+  "events": [
+    [
+      "message_start",
+      {
+        "model": "model-1"
+      }
+    ],
+    [
+      "content_block_add",
+      {
+        "block": {
+          "type": "tool_step",
+          "tool_call_id": "call",
+          "tool_name": "generate_video",
+          "status": "running"
+        }
+      }
+    ],
+    [
+      "content_block_add",
+      {
+        "block": {
+          "type": "tool_step",
+          "tool_call_id": "call",
+          "tool_name": "generate_video",
+          "status": "completed",
+          "output": "视频完成",
+          "elapsed_ms": "<NONNEGATIVE_ELAPSED_MS>"
+        }
+      }
+    ],
+    [
+      "content_block_add",
+      {
+        "block": {
+          "type": "file",
+          "url": "https://example.test/sample.mp4",
+          "name": "sample.mp4",
+          "mime_type": "video/mp4",
+          "size": 12,
+          "workspace_path": "videos/sample.mp4"
+        }
+      }
+    ],
+    [
+      "stream_end",
+      {}
+    ]
+  ],
+  "checkpoint": {
+    "messages": [
+      {
+        "role": "tool",
+        "tool_call_id": "call",
+        "content": [
+          {
+            "type": "text",
+            "text": "视频完成"
+          }
+        ]
+      }
+    ],
+    "content_blocks": [
+      {
+        "type": "tool_step",
+        "tool_call_id": "call",
+        "tool_name": "generate_video",
+        "status": "completed",
+        "elapsed_ms": "<NONNEGATIVE_ELAPSED_MS>",
+        "output": "视频完成"
+      },
+      {
+        "type": "file",
+        "url": "https://example.test/sample.mp4",
+        "name": "sample.mp4",
+        "mime_type": "video/mp4",
+        "size": 12,
+        "workspace_path": "videos/sample.mp4"
+      }
+    ],
+    "turn_index": 0,
+    "tool_call_ids": [
+      "call"
+    ],
+    "next_model_round": 1
+  }
+}

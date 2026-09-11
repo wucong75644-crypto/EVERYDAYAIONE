@@ -1,0 +1,28 @@
+........................................................................ [ 10%]
+.............................sss........................................ [ 20%]
+........................................................................ [ 30%]
+........................................................................ [ 40%]
+........................................................................ [ 50%]
+........................................................................ [ 61%]
+........................................................................ [ 71%]
+........................................................................ [ 81%]
+........................................................................ [ 91%]
+............................................................             [100%]
+=============================== warnings summary ===============================
+../../../Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1441
+  /Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1441: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+../../../Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:295
+  /Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:295: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.10/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] backend/tests/test_chat_context.py:1101: V1 gather 编排已由 PromptBuilder._parallel_fetch 取代
+SKIPPED [1] backend/tests/test_chat_context.py:1132: V1 gather 编排已由 PromptBuilder._parallel_fetch 取代
+SKIPPED [1] backend/tests/test_chat_context.py:1155: V1 gather 编排已由 PromptBuilder._parallel_fetch 取代
+705 passed, 3 skipped, 2 warnings in 6.17s
+Task was destroyed but it is pending!
+task: <Task pending name='Task-1417' coro=<StreamKeepAlive._loop() running at /private/tmp/tool05-attachment-baseline.VKUnNs/backend/services/wecom/stream_keepalive.py:66> wait_for=<Future pending cb=[Task.task_wakeup()]> cb=[register_stream_keepalive.<locals>.<lambda>() at /private/tmp/tool05-attachment-baseline.VKUnNs/backend/services/wecom/stream_keepalive.py:96]>

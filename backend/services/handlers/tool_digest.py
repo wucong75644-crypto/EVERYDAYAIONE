@@ -2,7 +2,8 @@
 工具执行摘要（Tool Execution Digest）
 
 从当前工具循环提取结构化摘要，持久化到 generation_params.tool_digest。
-下轮闭合历史只注入工具名、安全叙事参数和状态，不注入代码或资源路径。
+下轮闭合历史以此兼容摘要补齐缺少显式工具步骤的记录，不注入旧工具代码。
+展示产物的独立交付事实由 history_outcomes 从现有 blocks 投影。
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 
-# 当前执行循环保留完整 tool result；关闭 Turn 后仅加载本摘要。
+# 当前执行循环保留完整 tool result；关闭 Turn 后加载交付事实和兼容摘要。
 # 文件资源位置必须由当前 ResourceManifest、附件或本轮 file_analyze 提供。
 
 # 错误标记（字面量匹配，不是正则）

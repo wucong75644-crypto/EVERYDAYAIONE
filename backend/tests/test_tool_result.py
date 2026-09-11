@@ -124,7 +124,7 @@ def test_file_read_text_image_and_actual_chat_injection_unchanged(type, url):
     result = wrap(raw, "file_search")
     assert result.to_legacy() is raw
     assert result.model_content("chat") == raw.text == unpack_tool_result(raw)
-    assert result.model_content("tool_loop") is raw  # existing loop passes non-Agent values through
+    assert result.model_content("tool_loop") == raw.text  # 05: normalized live file projection
     assert result.display["text"] == raw.text
     call = {"name": "file_search", "id": "call"}
     messages = []
@@ -150,7 +150,7 @@ async def test_form_exact_payload_hint_and_terminal_behavior():
     result = wrap(raw)
     assert result.to_legacy() is raw
     assert result.model_content("chat") == raw.llm_hint
-    assert result.model_content("tool_loop") is raw
+    assert result.model_content("tool_loop") == raw.llm_hint
     assert result.artifacts.form is raw.form
     assert result.display == {"text": "表单已展示", "form": raw.form, "terminal_form": True}
     host = MagicMock()

@@ -114,6 +114,7 @@ async def execute_chat(
     handler._pending_emit_payloads = []
     handler._pending_form_block = None
     handler._terminal_form_pending = False
+    handler._tool_result_stop_reason = ""
     # 保留 T3 的跨 Task 关联出口；模型 retry 已在 Gateway 内执行。
     handler._last_model_attempt_context = None
     totals = StreamTotals()
@@ -298,9 +299,11 @@ async def _run_loop(
         )
         executor = getattr(handler, "_tool_executor", None)
         resource_stop = getattr(getattr(executor, "_tool_runtime", None), "resource_stop_reason", "")
-        if isinstance(resource_stop, str) and resource_stop:
-            blocks.append({"type": "text", "text": resource_stop})
-            totals.text += resource_stop
+        result_stop = getattr(handler, "_tool_result_stop_reason", "")
+        stop_message = resource_stop or result_stop
+        if isinstance(stop_message, str) and stop_message:
+            blocks.append({"type": "text", "text": stop_message})
+            totals.text += stop_message
             await sink.on_block(blocks[-1])
             return None
         # FormBlockResult 是一个完整的交付物，不再发起额外的模型回合。
@@ -718,12 +721,18 @@ def _build_replay_context(
     next_model_round: int | None = None,
 ) -> dict[str, Any]:
     """构造模型可重放上下文；不把 token 级 DeliveryProgress 当 checkpoint。"""
+    def legacy_default(value):
+        from services.tools.result import ToolResult
+        if isinstance(value, ToolResult):
+            raise TypeError("Project ToolResult into model messages/content blocks before checkpoint")
+        return str(value)
+
     payload = {
         "messages": json.loads(
-            json.dumps(messages, ensure_ascii=False, default=str),
+            json.dumps(messages, ensure_ascii=False, default=legacy_default),
         ),
         "content_blocks": json.loads(
-            json.dumps(blocks, ensure_ascii=False, default=str),
+            json.dumps(blocks, ensure_ascii=False, default=legacy_default),
         ),
         "turn_index": turn_index,
         "tool_call_ids": list(tool_call_ids or []),

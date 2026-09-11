@@ -186,6 +186,7 @@ class PromptBuilder:
 
         user_inp = UserMessageInput(
             text=inp.text_content,
+            org_id=inp.org_id,
             workspace_files=inp.workspace_files,
             attachments_xml=attachments_xml,
             workspace_prompt=workspace_prompt,

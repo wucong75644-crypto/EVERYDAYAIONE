@@ -125,7 +125,8 @@ class TestBuildContextPrompt:
         ctx.failed_tools = ["erp_trade_query"]
         prompt = ctx.build_context_prompt()
         assert "erp_trade_query" in prompt
-        assert "换其他工具" in prompt
+        assert "历史失败工具" in prompt and "当前状态未知" in prompt
+        assert "换其他工具" not in prompt
 
     def test_combines_multiple_contexts(self):
         from services.handlers.tool_loop_context import ToolLoopContext

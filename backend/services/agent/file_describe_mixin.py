@@ -20,8 +20,13 @@ class FileDescribeMixin:
         relative = str(path.relative_to(Path(executor.workspace_root)))
         cache = get_file_cache(self.conversation_id)
         cache.register(relative, workspace=str(path))
-        return (f"  [文件] [{compute_fid(self.org_id, relative)}] {json.dumps(relative, ensure_ascii=False)}"
+        line = (f"  [文件] [{compute_fid(self.org_id, relative)}] {json.dumps(relative, ensure_ascii=False)}"
                 f"\n    resource_ref: {reference}")
+        if path.suffix.lower() in self._ANALYZE_EXTENSIONS:
+            from config.file_call_contract import file_analyze_arguments
+            arguments = file_analyze_arguments(resource_ref=reference)
+            line += f"\n    read_call (file_analyze): {json.dumps(arguments, ensure_ascii=False)}"
+        return line
 
     async def _describe_single_file(
         self,
@@ -66,8 +71,8 @@ class FileDescribeMixin:
             logger.warning(f"file_search image | no CDN URL for {abs_path}")
         if extension in self._ANALYZE_EXTENSIONS:
             hint = (
-                f"数据文件需先 file_analyze('{relative_path}') "
-                "治理后用 pd.read_parquet 读"
+                "数据文件的 file_analyze 参数直接复制上方 read_call；"
+                "治理后用返回的 Parquet 路径读取。"
             )
         else:
             hint = (

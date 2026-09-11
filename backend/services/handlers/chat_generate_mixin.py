@@ -24,7 +24,10 @@ def unpack_tool_result(result: Any) -> Any:
     """把工具返回值转换为模型上下文内容。"""
     from schemas.multimodal import FileReadResult
     from services.agent.agent_result import AgentResult
+    from services.tools.result import ToolResult
 
+    if isinstance(result, ToolResult):
+        return result.model_content("chat")
     if isinstance(result, AgentResult):
         return result.to_message_content()
     if isinstance(result, FileReadResult):
@@ -38,7 +41,10 @@ def extract_display_text(result: Any) -> str:
     """提取工具结果的原始展示文本。"""
     from schemas.multimodal import FileReadResult
     from services.agent.agent_result import AgentResult
+    from services.tools.result import ToolResult
 
+    if isinstance(result, ToolResult):
+        return result.display["text"]
     if isinstance(result, AgentResult):
         return result.summary or ""
     if isinstance(result, FileReadResult):

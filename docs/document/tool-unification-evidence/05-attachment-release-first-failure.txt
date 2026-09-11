@@ -1,0 +1,6 @@
+FAILED tests/test_pdf_upload.py::TestBuildLlmMessagesWorkspace::test_workspace_file_injects_attachments_xml
+FAILED tests/test_tool_result_05_production_regressions.py::test_current_user_and_attachment_survive_provider_and_checkpoint[\u8bfb\u53d6\u6587\u4ef6-True-True]
+FAILED tests/test_tool_result_05_production_regressions.py::test_current_user_and_attachment_survive_provider_and_checkpoint[\u8bfb\u53d6\u6587\u4ef6-False-True]
+FAILED tests/test_tool_result_05_production_regressions.py::test_current_user_and_attachment_survive_provider_and_checkpoint[\u6309\u521a\u624d\u7684\u65b9\u5f0f\u751f\u6210\u6c47\u603b\u8868\u548c\u56fe-True-True]
+FAILED tests/test_tool_result_05_production_regressions.py::test_current_user_and_attachment_survive_provider_and_checkpoint[\u6309\u521a\u624d\u7684\u65b9\u5f0f\u751f\u6210\u6c47\u603b\u8868\u548c\u56fe-False-True]
+====== 5 failed, 9359 passed, 37 skipped, 4 xfailed in 301.51s (0:05:01) =======

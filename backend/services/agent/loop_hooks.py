@@ -44,7 +44,7 @@ class LoopHook:
         ctx: HookContext,
         tool_name: str,
         args: Dict[str, Any],
-        result: str,
+        result: Any,
         status: str,
         elapsed_ms: int,
         is_cached: bool,
@@ -143,7 +143,7 @@ class ToolAuditHook(LoopHook):
         ctx: HookContext,
         tool_name: str,
         args: Dict[str, Any],
-        result: str,
+        result: Any,
         status: str,
         elapsed_ms: int,
         is_cached: bool,
@@ -157,6 +157,17 @@ class ToolAuditHook(LoopHook):
                 ToolAuditEntry, build_args_hash, record_tool_audit,
             )
             from services.agent.observability import get_trace_id
+            from services.tools.result import ToolResult
+            if isinstance(result, ToolResult):
+                fields = result.audit_fields()
+                result_length = fields["result_length"]
+                if result_length is None:
+                    result_length = len(result.model_content("tool_loop"))
+                status = fields["status"]
+                is_cached = fields["cached"]
+                is_truncated = fields["truncated"]
+            else:
+                result_length = len(result) if isinstance(result, (str, bytes)) else 0
             entry = ToolAuditEntry(
                 task_id=ctx.task_id or "",
                 conversation_id=ctx.conversation_id,
@@ -166,7 +177,7 @@ class ToolAuditHook(LoopHook):
                 tool_call_id=tool_call_id,
                 turn=ctx.turn,
                 args_hash=build_args_hash(args),
-                result_length=len(result) if isinstance(result, (str, bytes)) else 0,
+                result_length=result_length,
                 elapsed_ms=elapsed_ms,
                 status=status,
                 is_cached=is_cached,
@@ -244,7 +255,7 @@ class FailureReflectionHook(LoopHook):
         ctx: HookContext,
         tool_name: str,
         args: Dict[str, Any],
-        result: str,
+        result: Any,
         status: str,
         elapsed_ms: int,
         is_cached: bool,
@@ -252,6 +263,9 @@ class FailureReflectionHook(LoopHook):
         tool_call_id: str,
         **kwargs: Any,
     ) -> None:
+        from services.tools.result import ToolResult
+        if isinstance(result, ToolResult):
+            result = result.display["text"]
         if not result:
             return
         text = str(result)
@@ -294,7 +308,7 @@ class AmbiguityDetectionHook(LoopHook):
         ctx: HookContext,
         tool_name: str,
         args: Dict[str, Any],
-        result: str,
+        result: Any,
         status: str,
         elapsed_ms: int,
         is_cached: bool,
@@ -302,6 +316,9 @@ class AmbiguityDetectionHook(LoopHook):
         tool_call_id: str,
         **kwargs: Any,
     ) -> None:
+        from services.tools.result import ToolResult
+        if isinstance(result, ToolResult):
+            result = result.display["text"]
         if not result or tool_name not in self._AMBIGUITY_TOOLS:
             return
 

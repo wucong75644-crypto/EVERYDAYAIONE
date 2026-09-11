@@ -42,61 +42,67 @@ def inject_tool(
     ).advertised_schemas()
 
 
-async def invoke_tool_with_cache(
-    executor: Any,
-    cache: Any,
-    tool_name: str,
-    args: Dict[str, Any],
-    budget: Any,
-    default_timeout: float,
-    *, call_id: str | None = None,
-) -> Tuple[Any, str, bool, int]:
-    """缓存命中检查 → 否则执行工具（含超时控制）。
+async def invoke_tool_result_with_cache(
+    executor: Any, cache: Any, tool_name: str, args: Dict[str, Any],
+    budget: Any, default_timeout: float, *, call_id: str | None = None,
+):
+    """The live loop consumes the envelope, including cached failures and effects."""
+    from dataclasses import replace
+    from uuid import uuid4
+    from services.tools import ToolCall, ToolResult
 
-    Returns:
-        (result, audit_status, is_cached, elapsed_ms)
-        result: 工具返回值（AgentResult / str / 其他）
-        audit_status: "success" | "timeout" | "error"
-    """
-    audit_start = time.monotonic()
-    audit_status = "success"
-    is_cached = False
-
-    # 超时控制（动态：min(单工具上限, 剩余预算)）
-    tool_timeout = (
-        budget.tool_timeout(default_timeout) if budget else default_timeout
-    )
+    started = time.monotonic()
+    tool_timeout = budget.tool_timeout(default_timeout) if budget else default_timeout
+    runtime = executor.tool_runtime
+    call = ToolCall(call_id or str(uuid4()), tool_name, args)
     try:
         result = await asyncio.wait_for(
-            executor.tool_runtime.execute(tool_name, args, call_id=call_id, cache=cache),
+            runtime.execute(tool_name, args, call_id=call.call_id, cache=cache),
             timeout=tool_timeout,
         )
-        is_cached = result.execution.cached
-        result = result.to_legacy()
-    except asyncio.TimeoutError:
-        logger.warning(
-            f"ToolLoop tool timeout | tool={tool_name} | "
-            f"timeout={tool_timeout:.1f}s"
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:
+        context = runtime.context(call.call_id)
+        decision = runtime.policy.decide(tool_name, context, args)
+        cancelled = getattr(error.__cause__, "tool_result", None)
+        result = ToolResult.from_exception(
+            error, call=call, context=context, decision=cancelled.decision if cancelled else decision,
+            handler_started=cancelled.execution.handler_started if cancelled else False,
         )
-        result = AgentResult(
-            summary=f"工具执行超时（{int(tool_timeout)}秒），请缩小查询范围",
-            status="timeout",
-            error_message=f"Timeout: {int(tool_timeout)}s",
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    result = replace(result, execution=replace(result.execution, elapsed_ms=elapsed_ms),
+                     audit={**result.audit, "elapsed_ms": elapsed_ms})
+    if result.exception is not None:
+        legacy_error = _legacy_loop_error(result, tool_timeout)
+        result = result.with_model_content(
+            "tool_loop", legacy_error.to_tool_content() + result.uncertainty_notice,
         )
-        audit_status = "timeout"
-    except Exception as e:
-        logger.error(f"ToolLoop tool error | tool={tool_name} | error={e}")
-        result = AgentResult(
-            summary=f"工具执行失败: {e}",
-            status="error",
-            error_message=str(e),
-            metadata={"retryable": False},
-        )
-        audit_status = "error"
+    status = ("timeout" if result.status == "timeout" else "error") if result.is_failure else "success"
+    return result, status, result.execution.cached, elapsed_ms
 
-    # AgentResult 状态 → audit_status 同步（工具内部返回结构化错误时）
-    if isinstance(result, AgentResult) and result.is_failure:
-        audit_status = "timeout" if result.status == "timeout" else "error"
 
-    elapsed_ms = int((time.monotonic() - audit_start) * 1000)
-    return result, audit_status, is_cached, elapsed_ms
+def _legacy_loop_error(result, timeout):
+    if result.status == "timeout":
+        return AgentResult(
+            summary=f"工具执行超时（{int(timeout)}秒），请缩小查询范围",
+            status="timeout", error_message=f"Timeout: {int(timeout)}s",
+        )
+    return AgentResult(
+        summary=f"工具执行失败: {result.exception}", status="error",
+        error_message=str(result.exception), metadata={"retryable": False},
+    )
+
+
+async def invoke_tool_with_cache(
+    executor: Any, cache: Any, tool_name: str, args: Dict[str, Any],
+    budget: Any, default_timeout: float, *, call_id: str | None = None,
+) -> Tuple[Any, str, bool, int]:
+    """Legacy helper API; production ToolLoop uses invoke_tool_result_with_cache."""
+    result, status, cached, ms = await invoke_tool_result_with_cache(
+        executor, cache, tool_name, args, budget, default_timeout, call_id=call_id,
+    )
+    if result.exception is not None:
+        timeout = budget.tool_timeout(default_timeout) if budget else default_timeout
+        return _legacy_loop_error(result, timeout), status, cached, ms
+    return result.to_legacy(), status, cached, ms

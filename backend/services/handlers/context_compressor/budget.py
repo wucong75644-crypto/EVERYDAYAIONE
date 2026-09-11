@@ -11,6 +11,7 @@
 from typing import Any, Dict, List
 
 from loguru import logger
+from services.handlers.chat_context.history_outcomes import archived_outcome_content
 
 from services.handlers.context_compressor.tokens import (
     _extract_text,
@@ -112,7 +113,10 @@ def enforce_budget(
             continue  # system 消息始终保留
         if _is_archived(msg):
             continue
-        messages[i]["content"] = "[已归档]"
+        messages[i]["content"] = (
+            archived_outcome_content(msg.get("content"))
+            if msg.get("role") == "assistant" else None
+        ) or "[已归档]"
         compacted += 1
 
     if compacted:
@@ -227,8 +231,12 @@ def _enforce_history_budget_core(
         if hist_tokens <= max_tokens:
             break
         saved = _msg_tokens(messages[idx])
-        messages[idx]["content"] = "[已归档]"
-        hist_tokens -= saved
+        msg = messages[idx]
+        msg["content"] = (
+            archived_outcome_content(msg.get("content"))
+            if msg.get("role") == "assistant" else None
+        ) or "[已归档]"
+        hist_tokens -= max(0, saved - _msg_tokens(msg))
         compacted += 1
 
     if compacted:

@@ -3,6 +3,7 @@
 职责:
   - 拼接附件 XML (workspace files + 当轮 attachments)
   - 拼接 user 原话 (不加时间戳前缀)
+  - 当前附件身份与 user 原话在同一消息中，原话 text part 不改写
   - 处理多模态 (image_urls / file_urls 转 content list)
   - 支持 messages_attachments_as_system 配置 (向后兼容)
 
@@ -26,6 +27,7 @@ class UserMessageInput:
     image_urls: List[str] = field(default_factory=list)
     file_urls: List[str] = field(default_factory=list)
     attachments_as_system: bool = True              # True=独立 system block, False=附加到 user text
+    org_id: Optional[str] = None
 
 
 @dataclass
@@ -48,13 +50,23 @@ class UserLayer:
         else:
             user_text = inp.text + (inp.attachments_xml or "")
 
+        # Keep attachment identity in the same turn as the user's request.
+        # The full XML/action rules remain in their original system block.
+        attachment_refs = ""
+        if inp.attachments_as_system and inp.workspace_files:
+            from services.handlers.chat_context.attachments import format_current_attachment_refs
+            attachment_refs = format_current_attachment_refs(inp.workspace_files, inp.org_id)
+
         # 构造 user message (多模态判断)
-        if inp.image_urls or inp.file_urls:
+        if attachment_refs or inp.image_urls or inp.file_urls:
             media_parts = [
                 {"type": "image_url", "image_url": {"url": u}}
                 for u in (inp.image_urls + inp.file_urls)
             ]
-            content = [{"type": "text", "text": user_text}, *media_parts]
+            content = [{"type": "text", "text": user_text}]
+            if attachment_refs:
+                content.append({"type": "text", "text": attachment_refs})
+            content.extend(media_parts)
         else:
             content = user_text
 

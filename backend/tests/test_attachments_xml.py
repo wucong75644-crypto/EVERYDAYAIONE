@@ -256,7 +256,7 @@ class TestMultiFileRendering:
 
 
 class TestAttachmentsAsSystem:
-    """flag=True 时：attachments XML 走 Layer 6.7 独立 system，user content 纯净"""
+    """XML/action 仍走 system；user 原文不改写，当前文件身份另有 text part。"""
 
     @pytest.fixture
     def chat_handler_db(self):
@@ -269,7 +269,7 @@ class TestAttachmentsAsSystem:
 
     @pytest.mark.asyncio
     async def test_layer67_system_injected_user_pure(self, chat_handler_db):
-        """flag=True：messages 中存在独立 system attachments，user content 等于 text_content"""
+        """flag=True：完整 XML 独立注入；本轮 user 保留原话并携带文件身份"""
         from unittest.mock import AsyncMock, patch
         from schemas.message import FilePart
 
@@ -290,11 +290,12 @@ class TestAttachmentsAsSystem:
                 conversation_id="conv-att-system", text_content="分析下",
             )
 
-        # user 必须纯净
+        # 原文仍单独保留；文件身份和本轮请求绑定。
         last = messages[-1]
         assert last["role"] == "user"
-        assert last["content"] == "分析下"
-        assert "<attachments" not in last["content"]
+        assert last["content"][0] == {"type": "text", "text": "分析下"}
+        assert "上传/2026-06/账单.xlsx" in last["content"][1]["text"]
+        assert "<attachments" not in str(last["content"])
 
         # 紧贴 user 前必有一条独立 system 含 attachments XML
         prev = messages[-2]
@@ -353,9 +354,11 @@ class TestAttachmentsAsSystem:
         # 多模态 list 形式
         assert isinstance(last["content"], list)
         text_parts = [p for p in last["content"] if p.get("type") == "text"]
-        assert len(text_parts) == 1
+        assert len(text_parts) == 2
         assert text_parts[0]["text"] == "对比这两个"
         assert "<attachments" not in text_parts[0]["text"]
+        assert "截图.png" in text_parts[1]["text"]
+        assert "账单.xlsx" in text_parts[1]["text"]
 
 
 class TestAttachmentsLegacyPath:

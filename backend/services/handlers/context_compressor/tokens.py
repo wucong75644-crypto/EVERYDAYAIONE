@@ -61,17 +61,11 @@ def _is_archived(msg: Dict[str, Any]) -> bool:
 def deduplicate_system_prompts(messages: List[Dict[str, Any]]) -> None:
     """移除工具循环中累积的重复 system prompt（原地修改）
 
-    tool_context.build_context_prompt() 每轮 append 新的 system 消息，
-    新一条包含旧一条的全部信息，旧的完全冗余。
-    只保留最新一条含"已识别编码"/"已用工具"的 system 消息。
+    只识别工具上下文组件拥有的消息，不按正文中出现的工具词语删规则。
+    正常 prepare_tool_turn 已执行替换；此处兼容旧 checkpoint 和预算入口。
     """
-    # 找到所有工具循环上下文 system 消息的索引
-    ctx_indices = []
-    for i, msg in enumerate(messages):
-        if msg.get("role") == "system":
-            content = msg.get("content", "")
-            if "已识别编码" in content or "已用工具" in content or "失败工具" in content:
-                ctx_indices.append(i)
+    from services.handlers.tool_loop_context import is_tool_context_message
+    ctx_indices = [i for i, msg in enumerate(messages) if is_tool_context_message(msg)]
 
     # 只保留最后一条，删除更早的
     if len(ctx_indices) > 1:

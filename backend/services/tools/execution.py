@@ -65,7 +65,15 @@ class ToolExecutionService:
         self._check_cancelled(context)
         try:
             raw = await self.dispatcher.dispatch(approved)
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as error:
+            # wait_for keeps this exception as TimeoutError.__cause__. Carry the
+            # actual dispatch state to the timeout consumer, while cancellation
+            # itself still propagates and the ledger's running guard stays intact.
+            error.tool_result = ToolResult.from_exception(
+                error, call=call, context=context, decision=decision,
+                handler_started=approved.state.handler_started,
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+            )
             raise
         except Exception as error:
             result = ToolResult.from_exception(

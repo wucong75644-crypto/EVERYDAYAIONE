@@ -1,0 +1,38 @@
+{
+  "purpose": "historical diagnosis; not a context fix or model test",
+  "extractor_identical": true,
+  "results": {
+    "c4053fef7999e28fecafde0f00a4bffffa7eca8f^": {
+      "source_sha256": "12e039b79fc796e494a8bf0bf494b6afd0abac795f628cc7dfece745b0a60214",
+      "messages": [
+        {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "synthetic-form-call",
+              "type": "function",
+              "function": {
+                "name": "manage_scheduled_task",
+                "arguments": "{\"action\": \"create\"}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "synthetic-form-call",
+          "content": "表单已展示"
+        }
+      ]
+    },
+    "c4053fef7999e28fecafde0f00a4bffffa7eca8f": {
+      "source_sha256": "584abac62de3e59c58e9d3fb0ea9cbf9eaa692ef39137951e39bd346fabacf57",
+      "messages": []
+    },
+    "887b28ae4aedb5d4dde5f0cbbd1bcb4484fda9ba": {
+      "source_sha256": "584abac62de3e59c58e9d3fb0ea9cbf9eaa692ef39137951e39bd346fabacf57",
+      "messages": []
+    }
+  }
+}

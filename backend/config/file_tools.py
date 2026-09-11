@@ -8,6 +8,8 @@ restore_file 恢复文件。
 
 from typing import Any, Dict, List, Set
 
+from config.file_call_contract import FILE_ANALYZE_SELECTOR_GUIDANCE
+
 
 # 文件工具名集合（INFO 类型：结果回传大脑）
 FILE_INFO_TOOLS: Set[str] = {
@@ -73,7 +75,8 @@ def build_file_tools() -> List[Dict[str, Any]]:
                     "- path：指定目录或精确相对路径；不完整文件名请用 keyword\n"
                     "- keyword：按文件名关键词搜索\n"
                     "- file_pattern：按通配符过滤（如 *.csv）\n\n"
-                    "多个候选请先选择完整路径；优先把 resource_ref 原样传给分析或删除工具。CSV/Excel 需另调 file_analyze。"
+                    "多个候选请先选择完整路径；优先把 resource_ref 原样传给分析或删除工具。CSV/Excel 需另调 file_analyze。\n"
+                    + FILE_ANALYZE_SELECTOR_GUIDANCE
                 ),
                 "parameters": {
                     "type": "object",
@@ -121,7 +124,8 @@ def build_file_tools() -> List[Dict[str, Any]]:
                     "- 图片文件（.png/.jpg/.jpeg/.gif/.webp/.bmp）— 已通过视觉通道注入\n"
                     "- PDF/Word/PPT/文本文件 — 用 code_execute + 对应库读取\n\n"
                     "Returns: 列名、数据类型、行数、样本数据、Parquet 缓存相对路径。\n"
-                    "支持扩展名: .xlsx .xls .csv .tsv（其他不支持）"
+                    "支持扩展名: .xlsx .xls .csv .tsv（其他不支持）\n"
+                    + FILE_ANALYZE_SELECTOR_GUIDANCE
                 ),
                 "parameters": {
                     "type": "object",

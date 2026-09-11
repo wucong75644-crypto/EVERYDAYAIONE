@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from services.handlers.chat_tool_mixin import accumulate_tool_call_delta
 from tests.tool_runtime_support import MockHandlerExecutor
+from services.tools import ToolResult
 
 
 # ============================================================
@@ -135,7 +136,7 @@ class TestExecuteSingleTool:
         )
         tc_out, text, is_error, _display = result
         assert is_error is True
-        assert "confirmation_rejected" in text
+        assert "confirmation_rejected" in (text.model_content("chat") if isinstance(text, ToolResult) else text)
         # 不应该调用 executor
         executor.handler.assert_not_called()
 
@@ -156,7 +157,7 @@ class TestExecuteSingleTool:
         )
         tc_out, text, is_error, _display = result
         assert is_error is False
-        assert "库存100件" in text
+        assert "库存100件" in (text.model_content("chat") if isinstance(text, ToolResult) else text)
         executor.handler.assert_called_once()
 
     @pytest.mark.asyncio
@@ -176,7 +177,7 @@ class TestExecuteSingleTool:
         )
         tc_out, text, is_error, _display = result
         assert is_error is True
-        assert "失败" in text
+        assert "失败" in (text.model_content("chat") if isinstance(text, ToolResult) else text)
 
     @pytest.mark.asyncio
     @patch("services.handlers.chat_tool_mixin.ws_manager")
@@ -194,7 +195,7 @@ class TestExecuteSingleTool:
         )
         tc_out, text, is_error, _display = result
         assert is_error is True
-        assert "参数解析失败" in text
+        assert "参数解析失败" in (text.model_content("chat") if isinstance(text, ToolResult) else text)
 
     @pytest.mark.asyncio
     @patch("services.handlers.chat_tool_mixin.ws_manager")
@@ -283,7 +284,7 @@ class TestActorInvocationRecovery:
             executor, "task1", "c1", "msg1", "u1", 1,
         )
         assert result[2] is True
-        assert "UNCERTAIN" in result[1]
+        assert "UNCERTAIN" in result[1].model_content("chat")
         executor.handler.assert_not_called()
 
 
@@ -400,8 +401,9 @@ class TestExecuteSingleToolAgentResult:
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
 
-        assert isinstance(result, AgentResult)
-        assert result.summary == "共 945 条订单"
+        assert isinstance(result, ToolResult)
+        assert isinstance(result.raw, AgentResult)
+        assert result.display["text"] == "共 945 条订单"
         assert is_error is False
 
     @pytest.mark.asyncio
@@ -424,7 +426,8 @@ class TestExecuteSingleToolAgentResult:
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
 
-        assert isinstance(result, AgentResult)
+        assert isinstance(result, ToolResult)
+        assert isinstance(result.raw, AgentResult)
         assert is_error is True
 
     @pytest.mark.asyncio
@@ -466,7 +469,8 @@ class TestExecuteSingleToolAgentResult:
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
 
-        assert isinstance(result, str)
+        assert isinstance(result, ToolResult)
+        assert isinstance(result.model_content("chat"), str)
         assert is_error is False
 
 
@@ -619,8 +623,9 @@ class TestFormBlockResultChannel:
 
         # 返回 llm_hint 字符串
         assert is_error is False
-        assert isinstance(result, str)
-        assert "等待用户确认" in result
+        assert isinstance(result, ToolResult)
+        assert isinstance(result.model_content("chat"), str)
+        assert "等待用户确认" in result.model_content("chat")
         # form 暂存到 _pending_form_block（chat_handler 统一处理）
         assert mixin._pending_form_block is not None
         assert mixin._pending_form_block["form_type"] == "scheduled_task_create"

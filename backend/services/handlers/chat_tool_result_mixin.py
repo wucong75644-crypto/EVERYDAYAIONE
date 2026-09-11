@@ -34,7 +34,10 @@ class ChatToolResultMixin:
         from schemas.multimodal import FileReadResult
         from services.agent.agent_result import AgentResult
         from services.scheduler.chat_task_manager import FormBlockResult
+        from services.tools.result import ToolResult
 
+        if isinstance(result, ToolResult):
+            return await ChatToolResultMixin._process_unified_result(self, tool_call, result, context)
         if isinstance(result, AgentResult):
             return await ChatToolResultMixin._process_agent_result(
                 self, tool_call, result, context,
@@ -50,6 +53,39 @@ class ChatToolResultMixin:
         return await ChatToolResultMixin._process_string_result(
             self, tool_call, result, context,
         )
+
+    async def _process_unified_result(self, tool_call, result, context) -> tuple:
+        from services.agent.tool_result_envelope import wrap_for_erp_agent, PERSISTED_OUTPUT_TAG
+
+        # Cancellation must never turn into a success block or ordinary error.
+        if result.execution.cancelled:
+            result.model_content("chat")
+        if result.execution.status == "uncertain":
+            self._tool_result_stop_reason = result.model_content("chat")
+        display = result.display["text"]
+        fields = result.audit_fields()
+        if result.display["terminal_form"]:
+            self._pending_form_block = result.artifacts.form
+            self._terminal_form_pending = True
+        if result.kind == "string":
+            content = wrap_for_erp_agent(context.tool_name, result.model_content("chat"))
+            truncated = PERSISTED_OUTPUT_TAG in content or "⚠ 输出过长" in content
+            result = result.with_model_content("chat", content, truncated=truncated)
+            fields["result_length"] = len(content)
+            fields["truncated"] = result.audit_fields()["truncated"]
+        elif result.exception is not None:
+            fields["result_length"] = len(result.model_content("chat"))
+        ChatToolResultMixin._audit_tool_result(
+            self, context, fields["result_length"], fields["status"], fields["truncated"],
+            is_cached=fields["cached"],
+        )
+        await ChatToolResultMixin._send_tool_result(
+            self, context, not result.is_failure, display[:100],
+        )
+        await ChatToolResultMixin._finish_tool_step(
+            self, context, not result.is_failure, display,
+        )
+        return tool_call, result, result.is_failure, display
 
     async def _process_agent_result(
         self,
@@ -227,6 +263,7 @@ class ChatToolResultMixin:
         result_length: int,
         status: str,
         truncated: bool = False,
+        *, is_cached: bool | None = None,
     ) -> None:
         self._emit_tool_audit(
             context.task_id,
@@ -240,4 +277,5 @@ class ChatToolResultMixin:
             context.elapsed_ms,
             status,
             truncated,
+            **({"is_cached": is_cached} if is_cached is not None else {}),
         )

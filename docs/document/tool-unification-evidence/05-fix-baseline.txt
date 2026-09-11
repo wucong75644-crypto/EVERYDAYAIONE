@@ -1,0 +1,55 @@
+FFFFFF.                                                                  [100%]
+=================================== FAILURES ===================================
+_ test_current_attachment_does_not_precede_old_request[\u8bfb\u53d6\u6587\u4ef6-True] _
+backend/tests/test_tool_result_05_production_regressions.py:58: in test_current_attachment_does_not_precede_old_request
+    assert current_indices and all(i > end_of_history for i in current_indices)
+E   assert ([3, 7] and False)
+E    +  where False = all(<generator object test_current_attachment_does_not_precede_old_request.<locals>.<genexpr> at 0x10a3efae0>)
+_ test_current_attachment_does_not_precede_old_request[\u8bfb\u53d6\u6587\u4ef6-False] _
+backend/tests/test_tool_result_05_production_regressions.py:58: in test_current_attachment_does_not_precede_old_request
+    assert current_indices and all(i > end_of_history for i in current_indices)
+E   assert ([3, 7] and False)
+E    +  where False = all(<generator object test_current_attachment_does_not_precede_old_request.<locals>.<genexpr> at 0x10a5504a0>)
+_ test_current_attachment_does_not_precede_old_request[\u6309\u521a\u624d\u7684\u65b9\u5f0f\u751f\u6210\u6c47\u603b\u8868\u548c\u56fe-True] _
+backend/tests/test_tool_result_05_production_regressions.py:58: in test_current_attachment_does_not_precede_old_request
+    assert current_indices and all(i > end_of_history for i in current_indices)
+E   assert ([3, 7] and False)
+E    +  where False = all(<generator object test_current_attachment_does_not_precede_old_request.<locals>.<genexpr> at 0x10a550ba0>)
+_ test_current_attachment_does_not_precede_old_request[\u6309\u521a\u624d\u7684\u65b9\u5f0f\u751f\u6210\u6c47\u603b\u8868\u548c\u56fe-False] _
+backend/tests/test_tool_result_05_production_regressions.py:58: in test_current_attachment_does_not_precede_old_request
+    assert current_indices and all(i > end_of_history for i in current_indices)
+E   assert ([3, 7] and False)
+E    +  where False = all(<generator object test_current_attachment_does_not_precede_old_request.<locals>.<genexpr> at 0x10a551460>)
+_______ test_attachment_call_is_valid_without_inventing_reference[chat] ________
+backend/tests/test_tool_result_05_production_regressions.py:81: in test_attachment_call_is_valid_without_inventing_reference
+    assert call is not None, "Attached file must supply a copyable read call, not only an ambiguous ID."
+E   AssertionError: Attached file must supply a copyable read call, not only an ambiguous ID.
+E   assert None is not None
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 23:20:01.280 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-262/test_attachment_call_is_valid_0/org/o1/u1
+_______ test_attachment_call_is_valid_without_inventing_reference[loop] ________
+backend/tests/test_tool_result_05_production_regressions.py:81: in test_attachment_call_is_valid_without_inventing_reference
+    assert call is not None, "Attached file must supply a copyable read call, not only an ambiguous ID."
+E   AssertionError: Attached file must supply a copyable read call, not only an ambiguous ID.
+E   assert None is not None
+---------------------------- Captured stderr setup -----------------------------
+2026-09-10 23:20:01.283 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/pytest-of-wucong/pytest-262/test_attachment_call_is_valid_1/org/o1/u1
+=============================== warnings summary ===============================
+../../.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434
+  /Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+backend/services/adapters/kie/models.py:126
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-05/backend/services/adapters/kie/models.py:126: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class JsonSchema(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED backend/tests/test_tool_result_05_production_regressions.py::test_current_attachment_does_not_precede_old_request[\u8bfb\u53d6\u6587\u4ef6-True]
+FAILED backend/tests/test_tool_result_05_production_regressions.py::test_current_attachment_does_not_precede_old_request[\u8bfb\u53d6\u6587\u4ef6-False]
+FAILED backend/tests/test_tool_result_05_production_regressions.py::test_current_attachment_does_not_precede_old_request[\u6309\u521a\u624d\u7684\u65b9\u5f0f\u751f\u6210\u6c47\u603b\u8868\u548c\u56fe-True]
+FAILED backend/tests/test_tool_result_05_production_regressions.py::test_current_attachment_does_not_precede_old_request[\u6309\u521a\u624d\u7684\u65b9\u5f0f\u751f\u6210\u6c47\u603b\u8868\u548c\u56fe-False]
+FAILED backend/tests/test_tool_result_05_production_regressions.py::test_attachment_call_is_valid_without_inventing_reference[chat]
+FAILED backend/tests/test_tool_result_05_production_regressions.py::test_attachment_call_is_valid_without_inventing_reference[loop]
+6 failed, 1 passed, 2 warnings in 0.66s

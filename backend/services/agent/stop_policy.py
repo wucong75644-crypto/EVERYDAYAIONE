@@ -77,7 +77,21 @@ def classify_tool_result(
 
     优先级：audit_status > AgentResult 结构化状态 > 关键词 fallback。
     """
-    # ── 第一优先级：audit_status（来自 tool_loop_helpers） ──
+    from services.tools.result import ToolResult
+    if isinstance(result, ToolResult):
+        if result.execution.cancelled or result.execution.status == "uncertain":
+            return ResultClass.FATAL
+        if not result.is_failure:
+            return ResultClass.SUCCESS
+        if result.status in {"denied", "confirmation_required"}:
+            return ResultClass.FATAL
+        if result.error and result.error.retryable is False:
+            return ResultClass.FATAL
+        if result.status == "timeout":
+            return ResultClass.RETRYABLE
+        return _classify_error_text(result.error.message if result.error else "")
+
+    # ── 第一优先级：audit_status（旧调用方兼容） ──
     if audit_status == "success":
         return ResultClass.SUCCESS
     if audit_status == "timeout":

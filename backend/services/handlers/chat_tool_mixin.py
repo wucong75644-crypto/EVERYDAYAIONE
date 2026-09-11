@@ -169,11 +169,11 @@ class ChatToolMixin(ChatToolResultMixin):
                     results.append(result)
 
         # ── AgentResult 处理:聚合 emit_payloads (沙盒 IO 统一协议) ──
-        from services.agent.agent_result import AgentResult
+        from services.tools.result import ToolResult
         for tc, result, _is_error, _display in results:
-            if not isinstance(result, AgentResult):
+            if not isinstance(result, ToolResult) or result.kind != "agent":
                 continue
-            payloads = _collect_interactive_agent_payloads(tc["name"], result)
+            payloads = result.collect_payloads("chat")
             logger.info(
                 f"AgentResult emit_payloads check | tool={tc['name']} | "
                 f"count={len(payloads)} | "
@@ -184,11 +184,11 @@ class ChatToolMixin(ChatToolResultMixin):
                     self._pending_emit_payloads = []
                 self._pending_emit_payloads.extend(payloads)
             # 展示文本(供 content_block_add 推送)
-            self._last_erp_display_text = result.summary
+            self._last_erp_display_text = result.display["text"]
             self._last_erp_display_files = payloads
             # token 统计
             self._erp_agent_tokens = (
-                getattr(self, "_erp_agent_tokens", 0) + result.tokens_used
+                getattr(self, "_erp_agent_tokens", 0) + result.agent_context["tokens_used"]
             )
 
         # 清理遗留 _pending_schemas(兼容 fetch_all_pages 等仍写入的场景)
@@ -232,7 +232,7 @@ class ChatToolMixin(ChatToolResultMixin):
                 tc["name"], args, call_id=tc["id"],
                 lifecycle=ActorToolLifecycle(self, runtime.context(tc["id"])),
             )
-            result = envelope.to_legacy()
+            result = envelope
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -498,6 +498,7 @@ class ChatToolMixin(ChatToolResultMixin):
         tool_name: str, tool_call_id: str, turn: int,
         args: dict, result_length: int, elapsed_ms: int,
         status: str, is_truncated: bool = False,
+        *, is_cached: bool = False,
     ) -> None:
         """[C1] fire-and-forget 审计日志"""
         from services.agent.tool_audit import (
@@ -509,7 +510,7 @@ class ChatToolMixin(ChatToolResultMixin):
             tool_name=tool_name, tool_call_id=tool_call_id,
             turn=turn, args_hash=build_args_hash(args),
             result_length=result_length, elapsed_ms=elapsed_ms,
-            status=status, is_truncated=is_truncated,
+            status=status, is_truncated=is_truncated, is_cached=is_cached,
         )))
 
     @staticmethod

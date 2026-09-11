@@ -244,7 +244,7 @@ async def test_chat_actor_real_engine_uses_scope_across_model_rounds(fixture, mo
         execution_context=e.tool_runtime.context(), budget=ExecutionBudget(max_turns=8),
         core_tools=e.tool_runtime.advertised(), messages=[],
         tool_context=SimpleNamespace(discovered_tools=set(), build_context_prompt=lambda: "",
-                                     update_from_result=lambda *_: None),
+                                     update_from_batch=lambda *_: None),
         permission=SimpleNamespace(mode=SimpleNamespace(value="auto"), need_exit_attachment=False,
                                    get_reminder=lambda _: ""),
     )

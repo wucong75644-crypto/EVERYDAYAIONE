@@ -1,0 +1,592 @@
+{
+  "ws": [
+    [
+      "client-1",
+      "user-1",
+      "org-1",
+      {
+        "type": "message_start",
+        "payload": {
+          "model": "model-1",
+          "delivery_session_id": "session-1",
+          "stream_id": "stream-1",
+          "execution_attempt": 2,
+          "delivery_seq": 1
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "client-1",
+        "conversation_id": "conv-1",
+        "message_id": "message-1"
+      }
+    ],
+    [
+      "client-1",
+      "user-1",
+      "org-1",
+      {
+        "type": "content_block_add",
+        "payload": {
+          "block": {
+            "type": "tool_step",
+            "tool_call_id": "call",
+            "tool_name": "manage_scheduled_task",
+            "status": "running"
+          },
+          "delivery_session_id": "session-1",
+          "stream_id": "stream-1",
+          "execution_attempt": 2,
+          "delivery_seq": 2
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "client-1",
+        "conversation_id": "conv-1",
+        "message_id": "message-1"
+      }
+    ],
+    [
+      "client-1",
+      "user-1",
+      "org-1",
+      {
+        "type": "content_block_add",
+        "payload": {
+          "block": {
+            "type": "tool_step",
+            "tool_call_id": "call",
+            "tool_name": "manage_scheduled_task",
+            "status": "completed",
+            "output": "表单已展示",
+            "elapsed_ms": "<NONNEGATIVE_ELAPSED_MS>"
+          },
+          "delivery_session_id": "session-1",
+          "stream_id": "stream-1",
+          "execution_attempt": 2,
+          "delivery_seq": 3
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "client-1",
+        "conversation_id": "conv-1",
+        "message_id": "message-1"
+      }
+    ],
+    [
+      "client-1",
+      "user-1",
+      "org-1",
+      {
+        "type": "content_block_add",
+        "payload": {
+          "block": {
+            "type": "form",
+            "form_type": "scheduled_task_create",
+            "form_id": "task_create_00000000",
+            "title": "创建定时任务",
+            "description": "步骤 1/4 · 尚未创建任务。提交后 AI 会规划调用路径并进行只读安全试跑；请在变更方案卡片中查看结果并确认。",
+            "fields": [
+              {
+                "type": "text",
+                "name": "name",
+                "label": "任务名称",
+                "required": true,
+                "default_value": "日报",
+                "placeholder": "如：每日销售日报"
+              },
+              {
+                "type": "textarea",
+                "name": "prompt",
+                "label": "执行内容",
+                "required": true,
+                "default_value": "汇总日报",
+                "placeholder": "AI 每次执行时的任务指令"
+              },
+              {
+                "type": "select",
+                "name": "schedule_type",
+                "label": "执行频率",
+                "required": true,
+                "default_value": "daily",
+                "options": [
+                  {
+                    "label": "仅一次",
+                    "value": "once"
+                  },
+                  {
+                    "label": "每天",
+                    "value": "daily"
+                  },
+                  {
+                    "label": "每周",
+                    "value": "weekly"
+                  },
+                  {
+                    "label": "每月",
+                    "value": "monthly"
+                  }
+                ]
+              },
+              {
+                "type": "time",
+                "name": "time_str",
+                "label": "执行时间",
+                "required": true,
+                "default_value": "09:00"
+              },
+              {
+                "type": "checkbox_group",
+                "name": "weekdays",
+                "label": "每周几",
+                "required": false,
+                "default_value": [
+                  1,
+                  2,
+                  3,
+                  4,
+                  5
+                ],
+                "options": [
+                  {
+                    "label": "周一",
+                    "value": "1"
+                  },
+                  {
+                    "label": "周二",
+                    "value": "2"
+                  },
+                  {
+                    "label": "周三",
+                    "value": "3"
+                  },
+                  {
+                    "label": "周四",
+                    "value": "4"
+                  },
+                  {
+                    "label": "周五",
+                    "value": "5"
+                  },
+                  {
+                    "label": "周六",
+                    "value": "6"
+                  },
+                  {
+                    "label": "周日",
+                    "value": "0"
+                  }
+                ],
+                "visible_when": {
+                  "field": "schedule_type",
+                  "value": "weekly"
+                }
+              },
+              {
+                "type": "number",
+                "name": "day_of_month",
+                "label": "每月几号",
+                "required": false,
+                "default_value": 1,
+                "placeholder": "1-31",
+                "visible_when": {
+                  "field": "schedule_type",
+                  "value": "monthly"
+                }
+              },
+              {
+                "type": "select",
+                "name": "push_target",
+                "label": "推送到",
+                "required": true,
+                "default_value": "{\"type\":\"web\",\"user_id\":\"u1\"}",
+                "options": [
+                  {
+                    "label": "推送给我（网页）",
+                    "value": "{\"type\":\"web\",\"user_id\":\"u1\"}"
+                  }
+                ]
+              }
+            ],
+            "submit_text": "规划并安全试跑",
+            "cancel_text": "取消"
+          },
+          "delivery_session_id": "session-1",
+          "stream_id": "stream-1",
+          "execution_attempt": 2,
+          "delivery_seq": 4
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "client-1",
+        "conversation_id": "conv-1",
+        "message_id": "message-1"
+      }
+    ],
+    [
+      "client-1",
+      "user-1",
+      "org-1",
+      {
+        "type": "message_chunk",
+        "payload": {
+          "chunk": "请在上方表单中确认信息后点击提交。",
+          "delivery_session_id": "session-1",
+          "stream_id": "stream-1",
+          "execution_attempt": 2,
+          "delivery_seq": 5
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "client-1",
+        "conversation_id": "conv-1",
+        "message_id": "message-1"
+      }
+    ],
+    [
+      "client-1",
+      "user-1",
+      "org-1",
+      {
+        "type": "stream_end",
+        "payload": {
+          "delivery_session_id": "session-1",
+          "stream_id": "stream-1",
+          "execution_attempt": 2,
+          "delivery_seq": 6
+        },
+        "timestamp": "<UNIX_MILLISECONDS>",
+        "task_id": "client-1",
+        "conversation_id": "conv-1",
+        "message_id": "message-1"
+      }
+    ]
+  ],
+  "events": [
+    [
+      "message_start",
+      {
+        "model": "model-1"
+      }
+    ],
+    [
+      "content_block_add",
+      {
+        "block": {
+          "type": "tool_step",
+          "tool_call_id": "call",
+          "tool_name": "manage_scheduled_task",
+          "status": "running"
+        }
+      }
+    ],
+    [
+      "content_block_add",
+      {
+        "block": {
+          "type": "tool_step",
+          "tool_call_id": "call",
+          "tool_name": "manage_scheduled_task",
+          "status": "completed",
+          "output": "表单已展示",
+          "elapsed_ms": "<NONNEGATIVE_ELAPSED_MS>"
+        }
+      }
+    ],
+    [
+      "content_block_add",
+      {
+        "block": {
+          "type": "form",
+          "form_type": "scheduled_task_create",
+          "form_id": "task_create_00000000",
+          "title": "创建定时任务",
+          "description": "步骤 1/4 · 尚未创建任务。提交后 AI 会规划调用路径并进行只读安全试跑；请在变更方案卡片中查看结果并确认。",
+          "fields": [
+            {
+              "type": "text",
+              "name": "name",
+              "label": "任务名称",
+              "required": true,
+              "default_value": "日报",
+              "placeholder": "如：每日销售日报"
+            },
+            {
+              "type": "textarea",
+              "name": "prompt",
+              "label": "执行内容",
+              "required": true,
+              "default_value": "汇总日报",
+              "placeholder": "AI 每次执行时的任务指令"
+            },
+            {
+              "type": "select",
+              "name": "schedule_type",
+              "label": "执行频率",
+              "required": true,
+              "default_value": "daily",
+              "options": [
+                {
+                  "label": "仅一次",
+                  "value": "once"
+                },
+                {
+                  "label": "每天",
+                  "value": "daily"
+                },
+                {
+                  "label": "每周",
+                  "value": "weekly"
+                },
+                {
+                  "label": "每月",
+                  "value": "monthly"
+                }
+              ]
+            },
+            {
+              "type": "time",
+              "name": "time_str",
+              "label": "执行时间",
+              "required": true,
+              "default_value": "09:00"
+            },
+            {
+              "type": "checkbox_group",
+              "name": "weekdays",
+              "label": "每周几",
+              "required": false,
+              "default_value": [
+                1,
+                2,
+                3,
+                4,
+                5
+              ],
+              "options": [
+                {
+                  "label": "周一",
+                  "value": "1"
+                },
+                {
+                  "label": "周二",
+                  "value": "2"
+                },
+                {
+                  "label": "周三",
+                  "value": "3"
+                },
+                {
+                  "label": "周四",
+                  "value": "4"
+                },
+                {
+                  "label": "周五",
+                  "value": "5"
+                },
+                {
+                  "label": "周六",
+                  "value": "6"
+                },
+                {
+                  "label": "周日",
+                  "value": "0"
+                }
+              ],
+              "visible_when": {
+                "field": "schedule_type",
+                "value": "weekly"
+              }
+            },
+            {
+              "type": "number",
+              "name": "day_of_month",
+              "label": "每月几号",
+              "required": false,
+              "default_value": 1,
+              "placeholder": "1-31",
+              "visible_when": {
+                "field": "schedule_type",
+                "value": "monthly"
+              }
+            },
+            {
+              "type": "select",
+              "name": "push_target",
+              "label": "推送到",
+              "required": true,
+              "default_value": "{\"type\":\"web\",\"user_id\":\"u1\"}",
+              "options": [
+                {
+                  "label": "推送给我（网页）",
+                  "value": "{\"type\":\"web\",\"user_id\":\"u1\"}"
+                }
+              ]
+            }
+          ],
+          "submit_text": "规划并安全试跑",
+          "cancel_text": "取消"
+        }
+      }
+    ],
+    [
+      "message_chunk",
+      {
+        "chunk": "请在上方表单中确认信息后点击提交。"
+      }
+    ],
+    [
+      "stream_end",
+      {}
+    ]
+  ],
+  "checkpoint": {
+    "messages": [
+      {
+        "role": "tool",
+        "tool_call_id": "call",
+        "content": "等待用户提交表单"
+      }
+    ],
+    "content_blocks": [
+      {
+        "type": "tool_step",
+        "tool_call_id": "call",
+        "tool_name": "manage_scheduled_task",
+        "status": "completed",
+        "elapsed_ms": "<NONNEGATIVE_ELAPSED_MS>",
+        "output": "表单已展示"
+      },
+      {
+        "type": "form",
+        "form_type": "scheduled_task_create",
+        "form_id": "task_create_00000000",
+        "title": "创建定时任务",
+        "description": "步骤 1/4 · 尚未创建任务。提交后 AI 会规划调用路径并进行只读安全试跑；请在变更方案卡片中查看结果并确认。",
+        "fields": [
+          {
+            "type": "text",
+            "name": "name",
+            "label": "任务名称",
+            "required": true,
+            "default_value": "日报",
+            "placeholder": "如：每日销售日报"
+          },
+          {
+            "type": "textarea",
+            "name": "prompt",
+            "label": "执行内容",
+            "required": true,
+            "default_value": "汇总日报",
+            "placeholder": "AI 每次执行时的任务指令"
+          },
+          {
+            "type": "select",
+            "name": "schedule_type",
+            "label": "执行频率",
+            "required": true,
+            "default_value": "daily",
+            "options": [
+              {
+                "label": "仅一次",
+                "value": "once"
+              },
+              {
+                "label": "每天",
+                "value": "daily"
+              },
+              {
+                "label": "每周",
+                "value": "weekly"
+              },
+              {
+                "label": "每月",
+                "value": "monthly"
+              }
+            ]
+          },
+          {
+            "type": "time",
+            "name": "time_str",
+            "label": "执行时间",
+            "required": true,
+            "default_value": "09:00"
+          },
+          {
+            "type": "checkbox_group",
+            "name": "weekdays",
+            "label": "每周几",
+            "required": false,
+            "default_value": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "options": [
+              {
+                "label": "周一",
+                "value": "1"
+              },
+              {
+                "label": "周二",
+                "value": "2"
+              },
+              {
+                "label": "周三",
+                "value": "3"
+              },
+              {
+                "label": "周四",
+                "value": "4"
+              },
+              {
+                "label": "周五",
+                "value": "5"
+              },
+              {
+                "label": "周六",
+                "value": "6"
+              },
+              {
+                "label": "周日",
+                "value": "0"
+              }
+            ],
+            "visible_when": {
+              "field": "schedule_type",
+              "value": "weekly"
+            }
+          },
+          {
+            "type": "number",
+            "name": "day_of_month",
+            "label": "每月几号",
+            "required": false,
+            "default_value": 1,
+            "placeholder": "1-31",
+            "visible_when": {
+              "field": "schedule_type",
+              "value": "monthly"
+            }
+          },
+          {
+            "type": "select",
+            "name": "push_target",
+            "label": "推送到",
+            "required": true,
+            "default_value": "{\"type\":\"web\",\"user_id\":\"u1\"}",
+            "options": [
+              {
+                "label": "推送给我（网页）",
+                "value": "{\"type\":\"web\",\"user_id\":\"u1\"}"
+              }
+            ]
+          }
+        ],
+        "submit_text": "规划并安全试跑",
+        "cancel_text": "取消"
+      }
+    ],
+    "turn_index": 0,
+    "tool_call_ids": [
+      "call"
+    ],
+    "next_model_round": 1
+  }
+}
