@@ -7,13 +7,36 @@
 - 已使用/失败的工具
 - 通过 erp_api_search 发现的新工具名
 
-每轮结束后 update_from_result()，下一轮开始前 build_context_prompt()。
+每批结果通过 update_from_batch() 更新，下一轮开始前 build_context_prompt()。
+旧 update_from_result() 门面保留；累计失败列表只作历史记录。
 """
 
 import re
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from loguru import logger
+
+_CONTEXT_MARKER = "[工具循环上下文]"
+
+
+def is_tool_context_message(message: dict) -> bool:
+    content = message.get("content")
+    if message.get("role") != "system" or not isinstance(content, str):
+        return False
+    if content.startswith(_CONTEXT_MARKER + "\n"):
+        return True
+    # Old versions had no marker. Match their complete generated line forms,
+    # not arbitrary system prompts that happen to mention a failed tool.
+    prefixes = ("已识别编码: ", "已用工具: ", "⚠ 数据同步延迟中，", "上轮失败工具: ")
+    lines = content.splitlines()
+    return bool(lines) and all(line.startswith(prefixes) for line in lines)
+
+
+def replace_context_prompt(messages: list[dict], prompt: Optional[str]) -> None:
+    """Replace only this component's message, including old checkpoint summaries."""
+    messages[:] = [m for m in messages if not is_tool_context_message(m)]
+    if prompt:
+        messages.append({"role": "system", "content": prompt})
 
 
 class ToolLoopContext:
@@ -31,11 +54,26 @@ class ToolLoopContext:
         self.used_tools: List[str] = []               # 已使用的工具
         self.failed_tools: List[str] = []             # 执行失败的工具
         self.discovered_tools: Set[str] = set()       # 通过搜索发现的新工具名
+        self.recent_results: list[tuple[dict, Any, bool, str]] = []
+
+    def update_from_batch(self, results: list[tuple]) -> None:
+        """Keep each call's complete result; a tool name is not a recovery identity.
+
+        Original tool messages/audit retain prior attempts. This view describes
+        only the latest batch and never declares earlier failures resolved.
+        """
+        self.recent_results = list(results)
+        for call, result, is_error, display in results:
+            self._update_metadata(call["name"], display, is_error)
 
     def update_from_result(
         self, tool_name: str, result: str, is_error: bool,
     ) -> None:
-        """从工具执行结果中提取上下文信息"""
+        """Compatibility entry for callers without a unified result."""
+        self.recent_results = [({"name": tool_name, "id": ""}, None, is_error, result)]
+        self._update_metadata(tool_name, result, is_error)
+
+    def _update_metadata(self, tool_name: str, result: str, is_error: bool) -> None:
         self.used_tools.append(tool_name)
         if is_error:
             self.failed_tools.append(tool_name)
@@ -84,13 +122,29 @@ class ToolLoopContext:
                 "⚠ 数据同步延迟中，如需实时数据请用远程 erp_* 工具"
             )
 
-        if self.failed_tools:
+        if self.recent_results:
+            from services.tools.result import ToolResult
+            lines.append("最近一批工具调用（历史尝试保留在对应工具消息中）：")
+            for call, result, is_error, _ in self.recent_results:
+                if isinstance(result, ToolResult):
+                    status = result.status
+                    detail = f"执行={result.execution.status}"
+                    if result.execution.cancelled:
+                        status = "cancelled"
+                    if result.execution.status == "uncertain":
+                        detail += "；执行效果未知，不要自动重试"
+                    if result.error:
+                        detail += f"；错误类型={result.error.kind}"
+                else:
+                    status, detail = ("error" if is_error else "returned"), "旧返回格式"
+                lines.append(f"- {call['name']} [{call.get('id') or 'legacy'}]: {status}；{detail}")
+        elif self.failed_tools:
             unique_failed = list(dict.fromkeys(self.failed_tools))[-3:]
             lines.append(
-                f"上轮失败工具: {', '.join(unique_failed)}，考虑换其他工具或参数"
+                f"历史失败工具: {', '.join(unique_failed)}（当前状态未知）"
             )
 
-        return "\n".join(lines) if lines else None
+        return "\n".join([_CONTEXT_MARKER, *lines]) if lines else None
 
     def _extract_identified_codes(self, result: str) -> None:
         """从 local_product_identify 结果中提取编码映射"""

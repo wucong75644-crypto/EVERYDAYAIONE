@@ -1,0 +1,332 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-8.3.4, pluggy-1.6.0 -- /Users/wucong/EVERYDAYAIONE/backend/venv/bin/python
+cachedir: .pytest_cache
+rootdir: /private/tmp/tool05-context-baseline.145ulW/backend
+configfile: pytest.ini
+plugins: anyio-4.12.1, asyncio-0.25.2, cov-7.1.0, time-machine-2.14.1
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=function
+collecting ... collected 44 items
+
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block0-\u5df2\u63d0\u4f9b\u8868\u5355] FAILED [  2%]
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block1-staging/\u6c47\u603b.csv] FAILED [  4%]
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block2-\u5df2\u5c55\u793a\u8868\u683c] FAILED [  6%]
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block3-\u9500\u552e\u8d70\u52bf] FAILED [  9%]
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block4-\u8ba2\u5355\u6d41\u7a0b] FAILED [ 11%]
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block5-a.png] FAILED [ 13%]
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block6-\u751f\u6210\u5931\u8d25] FAILED [ 15%]
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block7-a.mp4] FAILED [ 18%]
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block8-a.mp3] FAILED [ 20%]
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block9-\u5e93\u5b58\u4e3a 7] FAILED [ 22%]
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block0-\u5df2\u63d0\u4f9b\u8868\u5355] FAILED [ 25%]
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block1-staging/\u6c47\u603b.csv] FAILED [ 27%]
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block2-\u5df2\u5c55\u793a\u8868\u683c] FAILED [ 29%]
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block3-\u9500\u552e\u8d70\u52bf] FAILED [ 31%]
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block4-\u8ba2\u5355\u6d41\u7a0b] FAILED [ 34%]
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block5-a.png] FAILED [ 36%]
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block6-\u751f\u6210\u5931\u8d25] FAILED [ 38%]
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block7-a.mp4] FAILED [ 40%]
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block8-a.mp3] FAILED [ 43%]
+backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block9-\u5e93\u5b58\u4e3a 7] FAILED [ 45%]
+backend/tests/test_context_result_restoration.py::test_form_projection_does_not_invent_mutable_business_success FAILED [ 47%]
+backend/tests/test_context_result_restoration.py::test_text_and_distinct_same_name_files_keep_their_own_references FAILED [ 50%]
+backend/tests/test_context_result_restoration.py::test_distinct_tables_are_not_collapsed_just_because_their_titles_match FAILED [ 52%]
+backend/tests/test_context_result_restoration.py::test_legacy_digest_without_text_has_an_independent_history_message FAILED [ 54%]
+backend/tests/test_context_result_restoration.py::test_explicit_step_state_is_not_duplicated_or_overruled_by_old_digest FAILED [ 56%]
+backend/tests/test_context_result_restoration.py::test_tool_steps_keep_status_without_old_code_or_success_inference FAILED [ 59%]
+backend/tests/test_context_result_restoration.py::test_live_context_uses_actual_result_state_and_retains_original[success] FAILED [ 61%]
+backend/tests/test_context_result_restoration.py::test_live_context_uses_actual_result_state_and_retains_original[error] FAILED [ 63%]
+backend/tests/test_context_result_restoration.py::test_live_context_uses_actual_result_state_and_retains_original[timeout] FAILED [ 65%]
+backend/tests/test_context_result_restoration.py::test_live_context_uses_actual_result_state_and_retains_original[empty] FAILED [ 68%]
+backend/tests/test_context_result_restoration.py::test_live_context_uses_actual_result_state_and_retains_original[partial] FAILED [ 70%]
+backend/tests/test_context_result_restoration.py::test_live_context_uses_actual_result_state_and_retains_original[plan] FAILED [ 72%]
+backend/tests/test_context_result_restoration.py::test_live_context_uses_actual_result_state_and_retains_original[cancelled] FAILED [ 75%]
+backend/tests/test_context_result_restoration.py::test_live_context_uses_actual_result_state_and_retains_original[uncertain] FAILED [ 77%]
+backend/tests/test_context_result_restoration.py::test_failure_then_success_updates_one_prompt_without_erasing_failure[a.csv] FAILED [ 79%]
+backend/tests/test_context_result_restoration.py::test_failure_then_success_updates_one_prompt_without_erasing_failure[b.csv] FAILED [ 81%]
+backend/tests/test_context_result_restoration.py::test_parallel_batch_preserves_each_call_and_replaces_legacy_prompt FAILED [ 84%]
+backend/tests/test_context_result_restoration.py::test_budget_dedup_does_not_delete_unrelated_rules_or_duplicate_current_context FAILED [ 86%]
+backend/tests/test_context_result_restoration.py::test_projection_cache_isolated_from_old_empty_history FAILED [ 88%]
+backend/tests/test_context_result_restoration.py::test_budget_compression_keeps_delivery_facts_when_body_is_archived[total] FAILED [ 90%]
+backend/tests/test_context_result_restoration.py::test_budget_compression_keeps_delivery_facts_when_body_is_archived[history] FAILED [ 93%]
+backend/tests/test_context_result_restoration.py::test_loop_summary_keeps_historical_outcomes_and_latest_tool_pairs FAILED [ 95%]
+backend/tests/test_context_result_restoration.py::test_history_cache_snapshot_provider_and_checkpoint_preserve_outcomes[\u8bfb\u53d6\u6587\u4ef6] FAILED [ 97%]
+backend/tests/test_context_result_restoration.py::test_history_cache_snapshot_provider_and_checkpoint_preserve_outcomes[\u6309\u521a\u624d\u7684\u65b9\u5f0f\u751f\u6210\u6c47\u603b\u8868\u548c\u56fe] FAILED [100%]
+
+=================================== FAILURES ===================================
+_ test_nontext_completed_outcome_survives_without_reexecuting[blocks-block0-\u5df2\u63d0\u4f9b\u8868\u5355] _
+backend/tests/test_context_result_restoration.py:45: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert len(messages) == 1 and messages[0]["role"] == "assistant"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+_ test_nontext_completed_outcome_survives_without_reexecuting[blocks-block1-staging/\u6c47\u603b.csv] _
+backend/tests/test_context_result_restoration.py:45: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert len(messages) == 1 and messages[0]["role"] == "assistant"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+_ test_nontext_completed_outcome_survives_without_reexecuting[blocks-block2-\u5df2\u5c55\u793a\u8868\u683c] _
+backend/tests/test_context_result_restoration.py:45: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert len(messages) == 1 and messages[0]["role"] == "assistant"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+_ test_nontext_completed_outcome_survives_without_reexecuting[blocks-block3-\u9500\u552e\u8d70\u52bf] _
+backend/tests/test_context_result_restoration.py:45: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert len(messages) == 1 and messages[0]["role"] == "assistant"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+_ test_nontext_completed_outcome_survives_without_reexecuting[blocks-block4-\u8ba2\u5355\u6d41\u7a0b] _
+backend/tests/test_context_result_restoration.py:45: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert len(messages) == 1 and messages[0]["role"] == "assistant"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+_ test_nontext_completed_outcome_survives_without_reexecuting[blocks-block5-a.png] _
+backend/tests/test_context_result_restoration.py:46: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert messages[0]["content"].count(expected) == 1
+E   AssertionError: assert 0 == 1
+E    +  where 0 = <built-in method count of str object at 0x1093dd7d0>('a.png')
+E    +    where <built-in method count of str object at 0x1093dd7d0> = '📊 [已生成图表]\n📊 [已生成图表]'.count
+_ test_nontext_completed_outcome_survives_without_reexecuting[blocks-block6-\u751f\u6210\u5931\u8d25] _
+backend/tests/test_context_result_restoration.py:45: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert len(messages) == 1 and messages[0]["role"] == "assistant"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+_ test_nontext_completed_outcome_survives_without_reexecuting[blocks-block7-a.mp4] _
+backend/tests/test_context_result_restoration.py:45: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert len(messages) == 1 and messages[0]["role"] == "assistant"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+_ test_nontext_completed_outcome_survives_without_reexecuting[blocks-block8-a.mp3] _
+backend/tests/test_context_result_restoration.py:45: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert len(messages) == 1 and messages[0]["role"] == "assistant"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+_ test_nontext_completed_outcome_survives_without_reexecuting[blocks-block9-\u5e93\u5b58\u4e3a 7] _
+backend/tests/test_context_result_restoration.py:45: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert len(messages) == 1 and messages[0]["role"] == "assistant"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+_ test_nontext_completed_outcome_survives_without_reexecuting[json-block0-\u5df2\u63d0\u4f9b\u8868\u5355] _
+backend/tests/test_context_result_restoration.py:45: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert len(messages) == 1 and messages[0]["role"] == "assistant"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+_ test_nontext_completed_outcome_survives_without_reexecuting[json-block1-staging/\u6c47\u603b.csv] _
+backend/tests/test_context_result_restoration.py:45: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert len(messages) == 1 and messages[0]["role"] == "assistant"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+_ test_nontext_completed_outcome_survives_without_reexecuting[json-block2-\u5df2\u5c55\u793a\u8868\u683c] _
+backend/tests/test_context_result_restoration.py:45: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert len(messages) == 1 and messages[0]["role"] == "assistant"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+_ test_nontext_completed_outcome_survives_without_reexecuting[json-block3-\u9500\u552e\u8d70\u52bf] _
+backend/tests/test_context_result_restoration.py:45: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert len(messages) == 1 and messages[0]["role"] == "assistant"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+_ test_nontext_completed_outcome_survives_without_reexecuting[json-block4-\u8ba2\u5355\u6d41\u7a0b] _
+backend/tests/test_context_result_restoration.py:45: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert len(messages) == 1 and messages[0]["role"] == "assistant"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+_ test_nontext_completed_outcome_survives_without_reexecuting[json-block5-a.png] _
+backend/tests/test_context_result_restoration.py:46: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert messages[0]["content"].count(expected) == 1
+E   AssertionError: assert 0 == 1
+E    +  where 0 = <built-in method count of str object at 0x1093de3a0>('a.png')
+E    +    where <built-in method count of str object at 0x1093de3a0> = '📊 [已生成图表]\n📊 [已生成图表]'.count
+_ test_nontext_completed_outcome_survives_without_reexecuting[json-block6-\u751f\u6210\u5931\u8d25] _
+backend/tests/test_context_result_restoration.py:45: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert len(messages) == 1 and messages[0]["role"] == "assistant"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+_ test_nontext_completed_outcome_survives_without_reexecuting[json-block7-a.mp4] _
+backend/tests/test_context_result_restoration.py:45: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert len(messages) == 1 and messages[0]["role"] == "assistant"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+_ test_nontext_completed_outcome_survives_without_reexecuting[json-block8-a.mp3] _
+backend/tests/test_context_result_restoration.py:45: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert len(messages) == 1 and messages[0]["role"] == "assistant"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+_ test_nontext_completed_outcome_survives_without_reexecuting[json-block9-\u5e93\u5b58\u4e3a 7] _
+backend/tests/test_context_result_restoration.py:45: in test_nontext_completed_outcome_survives_without_reexecuting
+    assert len(messages) == 1 and messages[0]["role"] == "assistant"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+________ test_form_projection_does_not_invent_mutable_business_success _________
+backend/tests/test_context_result_restoration.py:58: in test_form_projection_does_not_invent_mutable_business_success
+    assert snapshots[0] and "已提供表单" in snapshots[0][0]["content"]
+E   assert ([])
+_______ test_text_and_distinct_same_name_files_keep_their_own_references _______
+backend/tests/test_context_result_restoration.py:69: in test_text_and_distinct_same_name_files_keep_their_own_references
+    assert "a/汇总.csv" in text and "b/汇总.csv" in text
+E   AssertionError: assert ('a/汇总.csv' in '已完成。')
+____ test_distinct_tables_are_not_collapsed_just_because_their_titles_match ____
+backend/tests/test_context_result_restoration.py:75: in test_distinct_tables_are_not_collapsed_just_because_their_titles_match
+    text = history(tables + [copy.deepcopy(tables[0])])[0]["content"]
+E   IndexError: list index out of range
+______ test_legacy_digest_without_text_has_an_independent_history_message ______
+backend/tests/test_context_result_restoration.py:85: in test_legacy_digest_without_text_has_an_independent_history_message
+    assert len(messages) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+____ test_explicit_step_state_is_not_duplicated_or_overruled_by_old_digest _____
+backend/tests/test_context_result_restoration.py:96: in test_explicit_step_state_is_not_duplicated_or_overruled_by_old_digest
+    assert messages[0]["content"].count("file_analyze") == 1
+E   IndexError: list index out of range
+______ test_tool_steps_keep_status_without_old_code_or_success_inference _______
+backend/tests/test_context_result_restoration.py:106: in test_tool_steps_keep_status_without_old_code_or_success_inference
+    assert len(messages) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+___ test_live_context_uses_actual_result_state_and_retains_original[success] ___
+backend/tests/test_context_result_restoration.py:157: in test_live_context_uses_actual_result_state_and_retains_original
+    assert status in prompt
+E   TypeError: argument of type 'NoneType' is not iterable
+____ test_live_context_uses_actual_result_state_and_retains_original[error] ____
+backend/tests/test_context_result_restoration.py:157: in test_live_context_uses_actual_result_state_and_retains_original
+    assert status in prompt
+E   AssertionError: assert 'error' in '上轮失败工具: file_analyze，考虑换其他工具或参数'
+___ test_live_context_uses_actual_result_state_and_retains_original[timeout] ___
+backend/tests/test_context_result_restoration.py:157: in test_live_context_uses_actual_result_state_and_retains_original
+    assert status in prompt
+E   AssertionError: assert 'timeout' in '上轮失败工具: file_analyze，考虑换其他工具或参数'
+____ test_live_context_uses_actual_result_state_and_retains_original[empty] ____
+backend/tests/test_context_result_restoration.py:157: in test_live_context_uses_actual_result_state_and_retains_original
+    assert status in prompt
+E   TypeError: argument of type 'NoneType' is not iterable
+___ test_live_context_uses_actual_result_state_and_retains_original[partial] ___
+backend/tests/test_context_result_restoration.py:157: in test_live_context_uses_actual_result_state_and_retains_original
+    assert status in prompt
+E   TypeError: argument of type 'NoneType' is not iterable
+____ test_live_context_uses_actual_result_state_and_retains_original[plan] _____
+backend/tests/test_context_result_restoration.py:157: in test_live_context_uses_actual_result_state_and_retains_original
+    assert status in prompt
+E   TypeError: argument of type 'NoneType' is not iterable
+__ test_live_context_uses_actual_result_state_and_retains_original[cancelled] __
+backend/tests/test_context_result_restoration.py:157: in test_live_context_uses_actual_result_state_and_retains_original
+    assert status in prompt
+E   AssertionError: assert 'cancelled' in '上轮失败工具: file_analyze，考虑换其他工具或参数'
+__ test_live_context_uses_actual_result_state_and_retains_original[uncertain] __
+backend/tests/test_context_result_restoration.py:157: in test_live_context_uses_actual_result_state_and_retains_original
+    assert status in prompt
+E   AssertionError: assert 'uncertain' in '上轮失败工具: file_analyze，考虑换其他工具或参数'
+_ test_failure_then_success_updates_one_prompt_without_erasing_failure[a.csv] __
+backend/tests/test_context_result_restoration.py:182: in test_failure_then_success_updates_one_prompt_without_erasing_failure
+    assert "success-call" in prompts[-1] and "success" in prompts[-1]
+E   AssertionError: assert ('success-call' in '上轮失败工具: file_analyze，考虑换其他工具或参数')
+_ test_failure_then_success_updates_one_prompt_without_erasing_failure[b.csv] __
+backend/tests/test_context_result_restoration.py:182: in test_failure_then_success_updates_one_prompt_without_erasing_failure
+    assert "success-call" in prompts[-1] and "success" in prompts[-1]
+E   AssertionError: assert ('success-call' in '上轮失败工具: file_analyze，考虑换其他工具或参数')
+______ test_parallel_batch_preserves_each_call_and_replaces_legacy_prompt ______
+backend/tests/test_context_result_restoration.py:196: in test_parallel_batch_preserves_each_call_and_replaces_legacy_prompt
+    assert "a-call" in prompt and "error" in prompt and "b-call" in prompt and "success" in prompt
+E   AssertionError: assert ('a-call' in '上轮失败工具: file_analyze，考虑换其他工具或参数')
+_ test_budget_dedup_does_not_delete_unrelated_rules_or_duplicate_current_context _
+backend/tests/test_context_result_restoration.py:209: in test_budget_dedup_does_not_delete_unrelated_rules_or_duplicate_current_context
+    assert messages[0] is rule and len(messages) == 2
+E   AssertionError: assert ({'content': '上轮失败工具: file_analyze，考虑换其他工具或参数', 'role': 'system'} is {'content': '业务规则：必须保留失败工具的原始记录', 'role': 'system'})
+____________ test_projection_cache_isolated_from_old_empty_history _____________
+backend/tests/test_context_result_restoration.py:223: in test_projection_cache_isolated_from_old_empty_history
+    assert await cache.get_closed_messages("c1", 2, "m2", "o1") is None
+E   assert [] is None
+----------------------------- Captured stderr call -----------------------------
+2026-09-11 09:31:34.156 | DEBUG    | services.handlers.conversation_cache:get_closed_messages:90 - context_cache_hit | conversation_id=c1 | revision=2 | task_id=None | turn_id=None
+__ test_budget_compression_keeps_delivery_facts_when_body_is_archived[total] ___
+backend/tests/test_context_result_restoration.py:245: in test_budget_compression_keeps_delivery_facts_when_body_is_archived
+    assert "staging/汇总.csv" in old["content"] and "已提供文件" in old["content"]
+E   AssertionError: assert ('staging/汇总.csv' in '[已归档]')
+----------------------------- Captured stderr call -----------------------------
+2026-09-11 09:31:34.161 | INFO     | services.handlers.context_compressor.budget:enforce_budget:119 - Budget enforced (reverse accumulation) | cut_point=2/8 | compacted=2 | tokens_after=13 | max=250
+_ test_budget_compression_keeps_delivery_facts_when_body_is_archived[history] __
+backend/tests/test_context_result_restoration.py:245: in test_budget_compression_keeps_delivery_facts_when_body_is_archived
+    assert "staging/汇总.csv" in old["content"] and "已提供文件" in old["content"]
+E   AssertionError: assert ('staging/汇总.csv' in '[已归档]')
+----------------------------- Captured stderr call -----------------------------
+2026-09-11 09:31:34.164 | INFO     | services.handlers.context_compressor.budget:_enforce_history_budget_core:235 - History budget enforced | compacted=2 | remaining_tokens=6 | max=250
+______ test_loop_summary_keeps_historical_outcomes_and_latest_tool_pairs _______
+backend/tests/test_context_result_restoration.py:252: in test_loop_summary_keeps_historical_outcomes_and_latest_tool_pairs
+    old = history([{"type": "form", "form_id": "form-before", "title": "创建定时任务"}])[0]
+E   IndexError: list index out of range
+_ test_history_cache_snapshot_provider_and_checkpoint_preserve_outcomes[\u8bfb\u53d6\u6587\u4ef6] _
+backend/tests/test_context_result_restoration.py:304: in test_history_cache_snapshot_provider_and_checkpoint_preserve_outcomes
+    assert len(first.history_messages) == 4
+E   AssertionError: assert 2 == 4
+E    +  where 2 = len([{'content': '统计旧文件并生成汇总表', 'role': 'user'}, {'content': '创建定时任务', 'role': 'user'}])
+E    +    where [{'content': '统计旧文件并生成汇总表', 'role': 'user'}, {'content': '创建定时任务', 'role': 'user'}] = ContextSnapshot(anchor=ContextAnchor(task_id='task1', conversation_id='c1', turn_id='t1', input_message_id='input1', base_revision=4, through_message_id='a4', org_id='o1'), history_messages=[{'role': 'user', 'content': '统计旧文件并生成汇总表'}, {'role': 'user', 'content': '创建定时任务'}], summary_prompt=None, summary_revision=0, conversation_source='', resource_manifest=ResourceManifest(task_id='task1', input_message_id='input1', assets=(ResourceAsset(asset_id='input1:1', name='新表.csv', workspace_path='new.csv', mime_type='', size=None, url='', attachment_set_id=None),), source='input_message')).history_messages
+----------------------------- Captured stderr call -----------------------------
+2026-09-11 09:31:34.205 | DEBUG    | services.handlers.chat_context.history_loader:build_context_messages:256 - Context injected | conversation_id=c1 | count=2 | tokens=6 | budget=8000 | images=0
+2026-09-11 09:31:34.206 | INFO     | services.handlers.context_snapshot:build_context_snapshot:136 - context_snapshot_built | org_id=o1 | conversation_id=c1 | task_id=task1 | turn_id=t1 | input_message_id=input1 | base_revision=4 | history_count=2 | summary_revision=0
+2026-09-11 09:31:34.207 | DEBUG    | services.handlers.conversation_cache:get_closed_messages:90 - context_cache_hit | conversation_id=c1 | revision=4 | task_id=task1 | turn_id=t1
+2026-09-11 09:31:34.207 | INFO     | services.handlers.context_snapshot:build_context_snapshot:136 - context_snapshot_built | org_id=o1 | conversation_id=c1 | task_id=task1 | turn_id=t1 | input_message_id=input1 | base_revision=4 | history_count=2 | summary_revision=0
+_ test_history_cache_snapshot_provider_and_checkpoint_preserve_outcomes[\u6309\u521a\u624d\u7684\u65b9\u5f0f\u751f\u6210\u6c47\u603b\u8868\u548c\u56fe] _
+backend/tests/test_context_result_restoration.py:304: in test_history_cache_snapshot_provider_and_checkpoint_preserve_outcomes
+    assert len(first.history_messages) == 4
+E   AssertionError: assert 2 == 4
+E    +  where 2 = len([{'content': '统计旧文件并生成汇总表', 'role': 'user'}, {'content': '创建定时任务', 'role': 'user'}])
+E    +    where [{'content': '统计旧文件并生成汇总表', 'role': 'user'}, {'content': '创建定时任务', 'role': 'user'}] = ContextSnapshot(anchor=ContextAnchor(task_id='task1', conversation_id='c1', turn_id='t1', input_message_id='input1', base_revision=4, through_message_id='a4', org_id='o1'), history_messages=[{'role': 'user', 'content': '统计旧文件并生成汇总表'}, {'role': 'user', 'content': '创建定时任务'}], summary_prompt=None, summary_revision=0, conversation_source='', resource_manifest=ResourceManifest(task_id='task1', input_message_id='input1', assets=(ResourceAsset(asset_id='input1:1', name='新表.csv', workspace_path='new.csv', mime_type='', size=None, url='', attachment_set_id=None),), source='input_message')).history_messages
+----------------------------- Captured stderr call -----------------------------
+2026-09-11 09:31:34.214 | DEBUG    | services.handlers.chat_context.history_loader:build_context_messages:256 - Context injected | conversation_id=c1 | count=2 | tokens=6 | budget=8000 | images=0
+2026-09-11 09:31:34.214 | INFO     | services.handlers.context_snapshot:build_context_snapshot:136 - context_snapshot_built | org_id=o1 | conversation_id=c1 | task_id=task1 | turn_id=t1 | input_message_id=input1 | base_revision=4 | history_count=2 | summary_revision=0
+2026-09-11 09:31:34.215 | DEBUG    | services.handlers.conversation_cache:get_closed_messages:90 - context_cache_hit | conversation_id=c1 | revision=4 | task_id=task1 | turn_id=t1
+2026-09-11 09:31:34.215 | INFO     | services.handlers.context_snapshot:build_context_snapshot:136 - context_snapshot_built | org_id=o1 | conversation_id=c1 | task_id=task1 | turn_id=t1 | input_message_id=input1 | base_revision=4 | history_count=2 | summary_revision=0
+=============================== warnings summary ===============================
+../../../Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1441
+  /Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1441: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+../../../Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:295
+  /Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:295: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.10/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block0-\u5df2\u63d0\u4f9b\u8868\u5355]
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block1-staging/\u6c47\u603b.csv]
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block2-\u5df2\u5c55\u793a\u8868\u683c]
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block3-\u9500\u552e\u8d70\u52bf]
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block4-\u8ba2\u5355\u6d41\u7a0b]
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block5-a.png]
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block6-\u751f\u6210\u5931\u8d25]
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block7-a.mp4]
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block8-a.mp3]
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[blocks-block9-\u5e93\u5b58\u4e3a 7]
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block0-\u5df2\u63d0\u4f9b\u8868\u5355]
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block1-staging/\u6c47\u603b.csv]
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block2-\u5df2\u5c55\u793a\u8868\u683c]
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block3-\u9500\u552e\u8d70\u52bf]
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block4-\u8ba2\u5355\u6d41\u7a0b]
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block5-a.png]
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block6-\u751f\u6210\u5931\u8d25]
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block7-a.mp4]
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block8-a.mp3]
+FAILED backend/tests/test_context_result_restoration.py::test_nontext_completed_outcome_survives_without_reexecuting[json-block9-\u5e93\u5b58\u4e3a 7]
+FAILED backend/tests/test_context_result_restoration.py::test_form_projection_does_not_invent_mutable_business_success
+FAILED backend/tests/test_context_result_restoration.py::test_text_and_distinct_same_name_files_keep_their_own_references
+FAILED backend/tests/test_context_result_restoration.py::test_distinct_tables_are_not_collapsed_just_because_their_titles_match
+FAILED backend/tests/test_context_result_restoration.py::test_legacy_digest_without_text_has_an_independent_history_message
+FAILED backend/tests/test_context_result_restoration.py::test_explicit_step_state_is_not_duplicated_or_overruled_by_old_digest
+FAILED backend/tests/test_context_result_restoration.py::test_tool_steps_keep_status_without_old_code_or_success_inference
+FAILED backend/tests/test_context_result_restoration.py::test_live_context_uses_actual_result_state_and_retains_original[success]
+FAILED backend/tests/test_context_result_restoration.py::test_live_context_uses_actual_result_state_and_retains_original[error]
+FAILED backend/tests/test_context_result_restoration.py::test_live_context_uses_actual_result_state_and_retains_original[timeout]
+FAILED backend/tests/test_context_result_restoration.py::test_live_context_uses_actual_result_state_and_retains_original[empty]
+FAILED backend/tests/test_context_result_restoration.py::test_live_context_uses_actual_result_state_and_retains_original[partial]
+FAILED backend/tests/test_context_result_restoration.py::test_live_context_uses_actual_result_state_and_retains_original[plan]
+FAILED backend/tests/test_context_result_restoration.py::test_live_context_uses_actual_result_state_and_retains_original[cancelled]
+FAILED backend/tests/test_context_result_restoration.py::test_live_context_uses_actual_result_state_and_retains_original[uncertain]
+FAILED backend/tests/test_context_result_restoration.py::test_failure_then_success_updates_one_prompt_without_erasing_failure[a.csv]
+FAILED backend/tests/test_context_result_restoration.py::test_failure_then_success_updates_one_prompt_without_erasing_failure[b.csv]
+FAILED backend/tests/test_context_result_restoration.py::test_parallel_batch_preserves_each_call_and_replaces_legacy_prompt
+FAILED backend/tests/test_context_result_restoration.py::test_budget_dedup_does_not_delete_unrelated_rules_or_duplicate_current_context
+FAILED backend/tests/test_context_result_restoration.py::test_projection_cache_isolated_from_old_empty_history
+FAILED backend/tests/test_context_result_restoration.py::test_budget_compression_keeps_delivery_facts_when_body_is_archived[total]
+FAILED backend/tests/test_context_result_restoration.py::test_budget_compression_keeps_delivery_facts_when_body_is_archived[history]
+FAILED backend/tests/test_context_result_restoration.py::test_loop_summary_keeps_historical_outcomes_and_latest_tool_pairs
+FAILED backend/tests/test_context_result_restoration.py::test_history_cache_snapshot_provider_and_checkpoint_preserve_outcomes[\u8bfb\u53d6\u6587\u4ef6]
+FAILED backend/tests/test_context_result_restoration.py::test_history_cache_snapshot_provider_and_checkpoint_preserve_outcomes[\u6309\u521a\u624d\u7684\u65b9\u5f0f\u751f\u6210\u6c47\u603b\u8868\u548c\u56fe]
+======================== 44 failed, 2 warnings in 0.56s ========================

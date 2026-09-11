@@ -1,0 +1,28 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-8.3.4, pluggy-1.6.0 -- /Users/wucong/EVERYDAYAIONE/backend/venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-05/backend
+configfile: pytest.ini
+plugins: anyio-4.12.1, asyncio-0.25.2, cov-7.1.0, time-machine-2.14.1
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=function
+collecting ... collected 6 items
+
+backend/tests/test_scheduled_task_draft_delete_integration.py::test_original_constraint_reproduces_production_error PASSED [ 16%]
+backend/tests/test_scheduled_task_draft_delete_integration.py::test_delete_cascades_only_intermediates_and_keeps_idempotent_receipt PASSED [ 33%]
+backend/tests/test_scheduled_task_draft_delete_integration.py::test_delete_preconditions_remain_enforced[wrong_org] PASSED [ 50%]
+backend/tests/test_scheduled_task_draft_delete_integration.py::test_delete_preconditions_remain_enforced[revision] PASSED [ 66%]
+backend/tests/test_scheduled_task_draft_delete_integration.py::test_delete_preconditions_remain_enforced[running] PASSED [ 83%]
+backend/tests/test_scheduled_task_draft_delete_integration.py::test_constraint_rollback_restores_old_behavior PASSED [100%]
+
+=============================== warnings summary ===============================
+../../backend/venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1441
+  /Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1441: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+tests/test_scheduled_task_draft_delete_integration.py::test_original_constraint_reproduces_production_error
+  /Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:295: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.10/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 6 passed, 2 warnings in 1.09s =========================

@@ -46,14 +46,8 @@ def prepare_tool_turn(
     ).advertised_schemas()
 
     if turn > 0:
-        from services.handlers.context_compressor import (
-            deduplicate_system_prompts,
-        )
-
-        deduplicate_system_prompts(messages)
-        context_prompt = tool_context.build_context_prompt()
-        if context_prompt:
-            messages.append({"role": "system", "content": context_prompt})
+        from services.handlers.tool_loop_context import replace_context_prompt
+        replace_context_prompt(messages, tool_context.build_context_prompt())
 
     if permission.need_exit_attachment:
         messages.append(
@@ -168,12 +162,8 @@ def apply_tool_results(
     """把工具结果写回模型消息和 tool_step，返回待注入的图片 URL。"""
     image_urls: list[str] = []
     from services.tools.result import ToolResult
+    tool_context.update_from_batch(tool_results)
     for call, result, is_error, display_text in tool_results:
-        tool_context.update_from_result(
-            call["name"],
-            display_text,
-            is_error,
-        )
         if isinstance(result, ToolResult):
             image_urls.extend(block["image_url"]["url"] for block in result.model_image_blocks)
         elif (

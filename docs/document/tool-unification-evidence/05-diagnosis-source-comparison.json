@@ -1,0 +1,16 @@
+{
+  "comparison": "pre-block05 main versus deployed block05 HEAD",
+  "byte_identical": {
+    "backend/services/handlers/chat_context/history_loader.py": true,
+    "backend/services/handlers/tool_loop_context.py": true,
+    "backend/services/handlers/context_snapshot.py": true,
+    "backend/services/handlers/resource_manifest.py": true,
+    "backend/services/tools/file_calls.py": true,
+    "backend/config/file_tools.py": true,
+    "backend/services/prompt_builder/templates/rules.md": true,
+    "backend/services/prompt_builder/templates/modes.md": true,
+    "backend/services/prompt_builder/templates/tool_strategy.md": true,
+    "backend/services/adapters/dashscope/chat_adapter.py": true
+  },
+  "note": "History information loss, failure hints, selector contract and templates predate block05; this does not establish model causation. No business implementation changed in this investigation."
+}

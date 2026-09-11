@@ -1,0 +1,38 @@
+{
+  "tested_version": "HEAD plus uncommitted item 1/2 changes",
+  "head": "887b28ae4aedb5d4dde5f0cbbd1bcb4484fda9ba",
+  "unchanged_boundaries": [
+    "backend/services/handlers/chat/executor.py",
+    "backend/services/handlers/chat/execution_engine.py",
+    "backend/services/handlers/context_snapshot.py",
+    "backend/services/handlers/resource_manifest.py",
+    "backend/services/handlers/chat_context/history_loader.py",
+    "backend/services/handlers/tool_loop_context.py",
+    "backend/services/prompt_builder/builder.py",
+    "backend/services/tools/file_calls.py",
+    "backend/services/tools/runtime.py",
+    "backend/services/tools/policy.py",
+    "backend/services/tools/result.py",
+    "backend/services/agent/agent_result.py",
+    "backend/services/handlers/chat/execution_sink.py",
+    "backend/services/handlers/chat/tool_lifecycle.py",
+    "backend/services/tool_invocation_store.py"
+  ],
+  "parameter_schemas_identical": true,
+  "changed_descriptions": [
+    "file_search",
+    "file_analyze"
+  ],
+  "sha256": {
+    "backend/config/file_tools.py": "2830cc7bc6036e9f96c8e0e7fa1b66a923cbc62be282f27916ffdab116c42ea0",
+    "backend/config/file_call_contract.py": "d317e6e895b19185e0d0bb866c7e3e4cb575d47d87fd70c29a0d79406990f619",
+    "backend/services/agent/file_describe_mixin.py": "6ace5c65f33c6af8ec5643d6cf774fcbf1f641894324949b4529362a067af11e",
+    "backend/services/handlers/chat_context/attachments.py": "0737450df934f825e636645ee65a0f89488224d5652ad92a20d2665c0bbb7f3e",
+    "backend/migrations/253_scheduled_task_confirmed_draft_delete.sql": "ba1d24fce6fac047fd43ce8011a451a4a67e71c2093775af4c47fe161acdc0ef",
+    "backend/migrations/rollback/253_scheduled_task_confirmed_draft_delete_rollback.sql": "9905293583cba579a39498036c1c6bc0dbbf8e8c6d05d199671e546999cbc4b1",
+    "backend/tests/test_tool_result_05_production_regressions.py": "e3484c7edb398495e08394ae6b7295455bf7d9e1644a2eeacf6e7f318af2f22a",
+    "backend/tests/test_scheduled_task_draft_delete_integration.py": "e9044474e6f3797daf67a4385fb82755ba73ffb0f0b31ae156f682a1b7fa389d"
+  },
+  "grok_reference_commit": "37949780c144e37df692e3d669051a21fec24f20",
+  "grok_validation": "official source comparison only; not compiled or run"
+}

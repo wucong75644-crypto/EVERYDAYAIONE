@@ -1,0 +1,13 @@
+{
+  "purpose": "existing-behavior diagnosis, not acceptance",
+  "observations": {
+    "completed_form_only_history_is_dropped": true,
+    "completed_file_only_history_is_dropped": true,
+    "completed_table_only_history_is_dropped": true,
+    "text_is_preserved_but_nontext_outcome_is_not_projected": true,
+    "failure_hint_survives_later_success": true,
+    "dedup_before_append_can_leave_two_failure_hints": true,
+    "valid_fid_only_passes_selector_syntax": true,
+    "valid_fid_does_not_override_invalid_extra_reference": true
+  }
+}

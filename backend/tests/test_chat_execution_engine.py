@@ -370,7 +370,7 @@ async def test_actor_tool_preview_is_updated_before_tool_execution(monkeypatch):
         messages=[],
         budget=SimpleNamespace(),
         tool_context=SimpleNamespace(
-            update_from_result=lambda *_args: None,
+            update_from_batch=lambda *_args: None,
         ),
     )
     request = SimpleNamespace(

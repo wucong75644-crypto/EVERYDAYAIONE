@@ -1,0 +1,59 @@
+{
+  "version": "HEAD plus uncommitted restoration and item 1/2 changes",
+  "head": "887b28ae4aedb5d4dde5f0cbbd1bcb4484fda9ba",
+  "unchanged_boundaries": [
+    "backend/services/handlers/chat/executor.py",
+    "backend/services/handlers/chat/execution_engine.py",
+    "backend/services/handlers/context_snapshot.py",
+    "backend/services/handlers/resource_manifest.py",
+    "backend/services/prompt_builder/builder.py",
+    "backend/services/tools/file_calls.py",
+    "backend/services/tools/runtime.py",
+    "backend/services/tools/policy.py",
+    "backend/services/tools/result.py",
+    "backend/services/agent/agent_result.py",
+    "backend/services/handlers/chat/execution_sink.py",
+    "backend/services/handlers/chat/actor_sink.py",
+    "backend/services/handlers/chat/tool_lifecycle.py",
+    "backend/services/tool_invocation_store.py"
+  ],
+  "unchanged_protocol_fixtures": 18,
+  "parameter_schemas_identical": true,
+  "cache_payload_unchanged_only_key_isolated": true,
+  "reused_postgres_8_test_evidence_sources_unchanged": [
+    "backend/migrations/253_scheduled_task_confirmed_draft_delete.sql",
+    "backend/migrations/rollback/253_scheduled_task_confirmed_draft_delete_rollback.sql",
+    "backend/tests/test_scheduled_task_draft_delete_integration.py"
+  ],
+  "unchanged_legacy_skips": [
+    "TestBuildLlmMessagesGatherDegradation.test_memory_exception_degrades_to_none",
+    "TestBuildLlmMessagesGatherDegradation.test_summary_exception_degrades_to_none",
+    "TestBuildLlmMessagesGatherDegradation.test_context_exception_degrades_to_empty"
+  ],
+  "sha256": {
+    "backend/config/file_call_contract.py": "d317e6e895b19185e0d0bb866c7e3e4cb575d47d87fd70c29a0d79406990f619",
+    "backend/config/file_tools.py": "2830cc7bc6036e9f96c8e0e7fa1b66a923cbc62be282f27916ffdab116c42ea0",
+    "backend/migrations/253_scheduled_task_confirmed_draft_delete.sql": "ba1d24fce6fac047fd43ce8011a451a4a67e71c2093775af4c47fe161acdc0ef",
+    "backend/migrations/rollback/253_scheduled_task_confirmed_draft_delete_rollback.sql": "9905293583cba579a39498036c1c6bc0dbbf8e8c6d05d199671e546999cbc4b1",
+    "backend/services/agent/file_describe_mixin.py": "6ace5c65f33c6af8ec5643d6cf774fcbf1f641894324949b4529362a067af11e",
+    "backend/services/handlers/chat/tool_loop.py": "3d8134e6e8a39be8a2c120ef604a0f07bdfae286e71c35775676109c3541b681",
+    "backend/services/handlers/chat_context/attachments.py": "0737450df934f825e636645ee65a0f89488224d5652ad92a20d2665c0bbb7f3e",
+    "backend/services/handlers/chat_context/history_loader.py": "2b43ad5e75e3b80a0af2e5bc13f303e52048296ff8dd03f9446aa95a13511cc8",
+    "backend/services/handlers/chat_context/history_outcomes.py": "d8430647a97984fd96b2a5897cd6b7e0afefaa3b60bfebc66f8eb90d221bea94",
+    "backend/services/handlers/context_compressor/budget.py": "7002167fa85211ea9810f40db60fdd85f0044047b7c7677c7ae30f09b040e34d",
+    "backend/services/handlers/context_compressor/summary.py": "7fd1fd0ce7d71eeaed41ac9a5a0e56851179bb363bb908c4702f81232a576518",
+    "backend/services/handlers/context_compressor/tokens.py": "d94782142d716a82c7e537bf8de39288c289e726f2a53c49abcf4c4358094e37",
+    "backend/services/handlers/conversation_cache.py": "bcb9382040f37bc325702953e83da86f424f4cef8117225b8a7b232177e13c3e",
+    "backend/services/handlers/tool_digest.py": "65018a289ed90f2d17359023a1318211bbb3955620b4124c81a816bc2863f9f6",
+    "backend/services/handlers/tool_loop_context.py": "42bd95c02876003d25b8f314b34f7eb5c67fef2d746fa22ebb2753f865ca16ec",
+    "backend/tests/test_chat_context.py": "d67177e525678e7e0afcd9cc17b7bcc4ccd5cb5d40e870e671d47588c97de9a3",
+    "backend/tests/test_chat_execution_engine.py": "3642ea2f397628c4789ec2e6a05104d6d1d740f8c52cbe64a80c1c30089eda52",
+    "backend/tests/test_context_result_restoration.py": "4d6a0fe69c0bcef1552e99cb0c834e4582d14981e9aef96400a56398f1fd26f9",
+    "backend/tests/test_conversation_cache.py": "ccf0105b4deb5c7e23f7ce9232d58464b4b8cddd949db181da971e13668b2c5a",
+    "backend/tests/test_resource_scope_continuity.py": "c4825e0766510a797de153fb5ded7eb451fe90f32a384182c638e466fde9fb30",
+    "backend/tests/test_scheduled_task_draft_delete_integration.py": "e9044474e6f3797daf67a4385fb82755ba73ffb0f0b31ae156f682a1b7fa389d",
+    "backend/tests/test_tool_loop_context.py": "e12e4c9cc234f2b32b3acbb9bc5d00e061782da0b1694dbd86e309d0abce19c7",
+    "backend/tests/test_tool_result_05_production_regressions.py": "e3484c7edb398495e08394ae6b7295455bf7d9e1644a2eeacf6e7f318af2f22a"
+  },
+  "real_model_validation": "not run; no dedicated test key available; no production key loaded"
+}

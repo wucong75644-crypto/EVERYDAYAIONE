@@ -14,7 +14,7 @@ from core.redis import get_redis
 
 _CACHE_TTL = 1800
 _MAX_VALUE_BYTES = 250 * 1024
-_KEY_PREFIX = "conv:msgs"
+_KEY_PREFIX = "conv:msgs:outcomes-v1"  # Projection isolation; the v2 payload stays unchanged.
 _SCHEMA_VERSION = 2
 
 

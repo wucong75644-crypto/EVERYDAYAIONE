@@ -96,8 +96,8 @@ async def compact_loop_with_summary(
         if role in ("assistant", "tool"):
             stale_indices.append(i)
         elif role == "system":
-            content = msg.get("content", "")
-            if "已识别编码" in content or "已用工具" in content:
+            from services.handlers.tool_loop_context import is_tool_context_message
+            if is_tool_context_message(msg):
                 stale_indices.append(i)
 
     if not stale_indices:
@@ -155,9 +155,18 @@ async def compact_loop_with_summary(
         "content": f"[工具循环摘要] {summary}",
     }
 
-    # 从后往前删除 stale 消息（保持 index 稳定）
+    # Keep deterministic historical outcomes in their original turn position;
+    # an LLM summary may omit them while leaving the old user request intact.
+    from services.handlers.chat_context.history_outcomes import archived_outcome_content
+    removed = 0
     for idx in reversed(stale_indices):
-        messages.pop(idx)
+        msg = messages[idx]
+        outcome = archived_outcome_content(msg.get("content")) if msg.get("role") == "assistant" else None
+        if outcome:
+            msg["content"] = outcome
+        else:
+            messages.pop(idx)
+            removed += 1
 
     # 找到第一条 assistant(tool_calls) 的位置，在其前面插入摘要
     insert_pos = 0
@@ -168,7 +177,7 @@ async def compact_loop_with_summary(
     messages.insert(insert_pos, summary_msg)
 
     logger.info(
-        f"Loop summary applied | removed={len(stale_indices)} msgs | "
+        f"Loop summary applied | removed={removed} msgs | "
         f"summary_len={len(summary)} | "
         f"tokens_before={current} | tokens_after={estimate_tokens(messages)}"
     )

@@ -1,0 +1,40 @@
+{
+  "head": "887b28ae4aedb5d4dde5f0cbbd1bcb4484fda9ba",
+  "tested_version": "HEAD plus uncommitted fix files",
+  "unchanged_05_boundaries": [
+    "backend/config/file_tools.py",
+    "backend/services/agent/agent_result.py",
+    "backend/services/tools/result.py",
+    "backend/services/handlers/emit_payloads.py",
+    "backend/services/handlers/chat/actor_sink.py",
+    "backend/services/handlers/chat/execution_sink.py",
+    "backend/services/tool_invocation_store.py",
+    "backend/services/handlers/chat/execution_engine.py",
+    "backend/services/handlers/context_snapshot.py",
+    "backend/services/handlers/chat_context/history_loader.py",
+    "backend/services/adapters/dashscope/chat_adapter.py"
+  ],
+  "defect_source_unchanged_between_6c0737ab_and_887b28ae": [
+    "backend/services/prompt_builder/builder.py",
+    "backend/services/handlers/chat_context/attachments.py",
+    "backend/migrations/244_scheduled_task_preflight_workflow.sql",
+    "backend/migrations/245_scheduled_task_lifecycle_integrity.sql",
+    "backend/migrations/249_scheduled_task_changeset_adapter.sql"
+  ],
+  "fingerprints": {
+    "backend/migrations/253_scheduled_task_confirmed_draft_delete.sql": "ba1d24fce6fac047fd43ce8011a451a4a67e71c2093775af4c47fe161acdc0ef",
+    "backend/migrations/rollback/253_scheduled_task_confirmed_draft_delete_rollback.sql": "9905293583cba579a39498036c1c6bc0dbbf8e8c6d05d199671e546999cbc4b1",
+    "backend/services/handlers/chat_context/attachments.py": "fc104541817999a039337e2ee592c74e1f769968c8b31d1fd34d55334c596b5a",
+    "backend/services/prompt_builder/builder.py": "b5e3e0b840aba3896b0a91e2390c6868c5e7cf12b1986f5cdad6ea02fcd2c5af",
+    "backend/tests/test_scheduled_task_draft_delete_integration.py": "38aa3cf7c58301ea348e7ac28af1b3342fc37b3645d7f2c719fe943712b6ee36",
+    "backend/tests/test_tool_result_05_production_regressions.py": "e2549b6d07b846805b5c5983644b7f51ff7e2e0e0c54c6537596b097b45f6d0b"
+  },
+  "postgres": "postgres (PostgreSQL) 16.14 (Homebrew)",
+  "test_environment": {
+    "python": "3.12.12",
+    "pytest": "8.3.4",
+    "psycopg": "3.3.3",
+    "python-multipart": "0.0.21",
+    "supabase": "2.11.0"
+  }
+}

@@ -796,7 +796,10 @@ class TestBuildContextMessages:
 
         assert len(result) == 1
         # url=None 的图片被跳过，只剩文本 → 纯文本格式
-        assert result[0] == {"role": "assistant", "content": _ts("正在生成")}
+        assert result[0]["role"] == "assistant"
+        assert result[0]["content"].startswith(_ts("正在生成"))
+        assert "图片尚无可用结果" in result[0]["content"]
+        assert "已生成图表" not in result[0]["content"]
 
 
 # ============ Test tool_digest 注入 ============

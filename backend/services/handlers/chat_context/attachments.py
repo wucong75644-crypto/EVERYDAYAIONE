@@ -7,9 +7,12 @@ _STATUS_ACTIONS：单一事实来源（DRY），每个 status 必须有对应 ac
 """
 
 import html
+import json
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
+
+from config.file_call_contract import FILE_ANALYZE_SELECTOR_GUIDANCE, file_analyze_arguments
 
 
 _DATA_EXTS = {".xlsx", ".xls", ".csv", ".tsv"}
@@ -124,7 +127,11 @@ def format_attachments(
         lines.append("  <file>")
         if wp:
             from services.agent.file_id import compute_fid
-            lines.append(f"    <id>{compute_fid(org_id, wp)}</id>")
+            file_id = compute_fid(org_id, wp)
+            lines.append(f"    <id>{file_id}</id>")
+            if status == "raw":
+                arguments = json.dumps(file_analyze_arguments(file_id=file_id), ensure_ascii=False)
+                lines.append(f'    <read_call tool="file_analyze">{_esc(arguments)}</read_call>')
         lines.append(f"    <name>{name}</name>")
         if wp:
             lines.append(f"    <path>{_esc(wp)}</path>")
@@ -144,6 +151,7 @@ def format_attachments(
     lines.append("")
     lines.append("【附件使用规则】")
     lines.append("- 调工具(file_analyze/file_delete 等)时，file_id 参数必须 copy `id` 字段（fid_xxx）")
+    lines.append("- " + FILE_ANALYZE_SELECTOR_GUIDANCE)
     lines.append("- 回复用户、生成图表标题、说明分析对象时，引用 `name` 字段")
     lines.append("- 沙盒 code_execute 内读取数据时，用 `path` 字段（如 pd.read_excel(path)）")
     lines.append("- 已治理数据文件直接 pd.read_parquet(`parquet` 字段)；不要重复 file_analyze")

@@ -22,6 +22,7 @@ from services.handlers.interrupt_anchor import (
     TASK_RESUMPTION_TEMPLATE,
     fix_orphan_tool_calls,
 )
+from .history_outcomes import completed_tool_names, project_completed_assistant
 
 
 def _build_history_query(
@@ -55,14 +56,16 @@ def _row_to_oai_messages(
 ) -> tuple[List[Dict[str, Any]], int]:
     """把数据库消息投影为闭合历史，并限制历史图片数量。
 
-    已关闭 assistant Turn 只保留用户可见文本；仅最新中断 Turn 为任务恢复
-    保留完整 tool call/result 协议。
+    已关闭 assistant Turn 保留正文与交付事实；仅最新中断 Turn 为任务恢复
+    保留完整 tool call/result 协议，不重放完成轮次的旧代码。
     """
     raw_content = row.get("content")
     role = row["role"]
     if role == "assistant" and not preserve_tool_protocol:
-        text = extract_text_from_content(raw_content)
+        text = project_completed_assistant(raw_content)
         messages = [{"role": "assistant", "content": text}] if text else []
+        images = extract_image_urls_from_content(raw_content)[:remaining_images]
+        return messages, len(images)  # Image delivery is already in the outcome view.
     else:
         messages = extract_oai_messages_from_content(
             raw_content, role=role, ts_prefix="",
@@ -143,6 +146,12 @@ def _append_tool_digest(
     if not digest:
         return
 
+    # Explicit step status outranks a legacy digest inferred from result text.
+    represented = completed_tool_names(row.get("content"))
+    if represented and isinstance(digest, dict):
+        digest = {**digest, "tools": [t for t in digest.get("tools", [])
+                                     if t.get("name") not in represented]}
+
     from services.handlers.tool_digest import format_tool_digest
 
     annotation = format_tool_digest(digest)
@@ -158,6 +167,7 @@ def _append_tool_digest(
         None,
     )
     if target is None:
+        messages.append({"role": "assistant", "content": annotation.lstrip()})
         return
     if isinstance(target["content"], str):
         target["content"] += annotation
@@ -239,10 +249,10 @@ async def build_context_messages(
                     max(0, max_images - total_images),
                     preserve_tool_protocol=preserve_tool_protocol,
                 )
-                if not messages:
-                    continue
                 if row["role"] == "assistant":
                     _append_tool_digest(messages, row)
+                if not messages:
+                    continue
                 context.extend(messages)
                 total_images += image_count
                 total_tokens += _estimate_message_tokens(messages)
