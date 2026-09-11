@@ -1,0 +1,1579 @@
+{
+  "base": "ca4c3d7e6a89ef34412cf405efc2d4fb0c1350e2",
+  "head": "ca4c3d7e6a89ef34412cf405efc2d4fb0c1350e2",
+  "branch": "codex/task/20260911215117-tool-unification-07",
+  "tested_version": "HEAD plus working-tree diff; exact backend files are fingerprinted below",
+  "prerequisites": [
+    {
+      "block": 1,
+      "main_merge": "2e8fdb2db242366b790cc623703d5a65dd574632",
+      "accepted_candidate": "b4c854ac43616fb07c08a411a6680df597c76cd5",
+      "ancestor": true,
+      "tree_equal": true
+    },
+    {
+      "block": 2,
+      "main_merge": "8e74f57de1073cbef8b3b8c8256e4409d60c506b",
+      "accepted_candidate": "4084db4ee48e5009b5b4eb3038848ef3cf9b6eba",
+      "ancestor": true,
+      "tree_equal": true
+    },
+    {
+      "block": 3,
+      "main_merge": "0f65d72dd00a0fce6885d4df0b7977454f666812",
+      "accepted_candidate": "2ed4d783a30089ac5c7aa401a6bcea89ffbbd122",
+      "ancestor": true,
+      "tree_equal": true
+    },
+    {
+      "block": 4,
+      "main_merge": "6c0737ab78f2d0cb3b2a8376498e7825b0829431",
+      "accepted_candidate": "1f288018befa9ed5bece130452707b7880b05445",
+      "ancestor": true,
+      "tree_equal": true
+    },
+    {
+      "block": 5,
+      "main_merge": "cdba58f9018ff45be2ebde0b802471ca634d8727",
+      "accepted_candidate": "87b07718235a8e33f4fedf119d36bfacea8dd107",
+      "ancestor": true,
+      "tree_equal": true
+    },
+    {
+      "block": 6,
+      "main_merge": "ca4c3d7e6a89ef34412cf405efc2d4fb0c1350e2",
+      "accepted_candidate": "6e72665b2627156136138f8d00e438d0116b5bc9",
+      "ancestor": true,
+      "tree_equal": true
+    }
+  ],
+  "coverage_issues": [],
+  "inventory": [
+    {
+      "name": "erp_info_query",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "erp_tools"
+      ],
+      "exposure": "public",
+      "domain": "erp",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": true,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.erp_tool_executor.ErpToolMixin._make_erp_handler.<locals>.handler",
+      "handler_key": "erp_info_query",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "erp_product_query",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "erp_tools"
+      ],
+      "exposure": "public",
+      "domain": "erp",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": true,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.erp_tool_executor.ErpToolMixin._make_erp_handler.<locals>.handler",
+      "handler_key": "erp_product_query",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "erp_trade_query",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "erp_tools"
+      ],
+      "exposure": "public",
+      "domain": "erp",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": true,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.erp_tool_executor.ErpToolMixin._make_erp_handler.<locals>.handler",
+      "handler_key": "erp_trade_query",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "erp_aftersales_query",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "erp_tools"
+      ],
+      "exposure": "public",
+      "domain": "erp",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": true,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.erp_tool_executor.ErpToolMixin._make_erp_handler.<locals>.handler",
+      "handler_key": "erp_aftersales_query",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "erp_warehouse_query",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "erp_tools"
+      ],
+      "exposure": "public",
+      "domain": "erp",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": true,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.erp_tool_executor.ErpToolMixin._make_erp_handler.<locals>.handler",
+      "handler_key": "erp_warehouse_query",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "erp_purchase_query",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "erp_tools"
+      ],
+      "exposure": "public",
+      "domain": "erp",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": true,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.erp_tool_executor.ErpToolMixin._make_erp_handler.<locals>.handler",
+      "handler_key": "erp_purchase_query",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "erp_taobao_query",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "erp_tools"
+      ],
+      "exposure": "public",
+      "domain": "erp",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": true,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.erp_tool_executor.ErpToolMixin._make_erp_handler.<locals>.handler",
+      "handler_key": "erp_taobao_query",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "erp_execute",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "erp_tools"
+      ],
+      "exposure": "public",
+      "domain": "erp",
+      "risk": "dangerous",
+      "parallelizable": false,
+      "cacheable": false,
+      "operation": "business_write",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": false,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": true,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.erp_tool_executor.ErpToolMixin._make_erp_handler.<locals>.handler",
+      "handler_key": "erp_execute",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "local_data",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "erp_tools",
+        "erp_local_tools"
+      ],
+      "exposure": "public",
+      "domain": "erp",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": true,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.erp_tool_executor.ErpToolMixin._make_local_handler.<locals>.handler",
+      "handler_key": "local_data",
+      "schema_variants": [],
+      "compatibility_notes": [
+        "handler extra_fields falls back to fields; no new public field is added"
+      ]
+    },
+    {
+      "name": "local_product_stats",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "erp_tools",
+        "erp_local_tools"
+      ],
+      "exposure": "public",
+      "domain": "erp",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": true,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.erp_tool_executor.ErpToolMixin._make_local_handler.<locals>.handler",
+      "handler_key": "local_product_stats",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "local_stock_query",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "erp_tools",
+        "erp_local_tools"
+      ],
+      "exposure": "public",
+      "domain": "erp",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": true,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.erp_tool_executor.ErpToolMixin._make_local_handler.<locals>.handler",
+      "handler_key": "local_stock_query",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "local_product_identify",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "erp_tools",
+        "erp_local_tools"
+      ],
+      "exposure": "public",
+      "domain": "erp",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": true,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.erp_tool_executor.ErpToolMixin._make_local_handler.<locals>.handler",
+      "handler_key": "local_product_identify",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "local_platform_map_query",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "erp_tools",
+        "erp_local_tools"
+      ],
+      "exposure": "public",
+      "domain": "erp",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": true,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.erp_tool_executor.ErpToolMixin._make_local_handler.<locals>.handler",
+      "handler_key": "local_platform_map_query",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "local_compare_stats",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "erp_tools",
+        "erp_local_tools"
+      ],
+      "exposure": "public",
+      "domain": "erp",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": true,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.erp_tool_executor.ErpToolMixin._make_local_handler.<locals>.handler",
+      "handler_key": "local_compare_stats",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "local_shop_list",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "erp_tools",
+        "erp_local_tools"
+      ],
+      "exposure": "public",
+      "domain": "erp",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": true,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.erp_tool_executor.ErpToolMixin._make_local_handler.<locals>.handler",
+      "handler_key": "local_shop_list",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "local_warehouse_list",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "erp_tools",
+        "erp_local_tools"
+      ],
+      "exposure": "public",
+      "domain": "erp",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": true,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.erp_tool_executor.ErpToolMixin._make_local_handler.<locals>.handler",
+      "handler_key": "local_warehouse_list",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "local_supplier_list",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "erp_tools",
+        "erp_local_tools"
+      ],
+      "exposure": "public",
+      "domain": "erp",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": true,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.erp_tool_executor.ErpToolMixin._make_local_handler.<locals>.handler",
+      "handler_key": "local_supplier_list",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "trigger_erp_sync",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "erp_tools",
+        "erp_local_tools"
+      ],
+      "exposure": "public",
+      "domain": "erp",
+      "risk": "dangerous",
+      "parallelizable": false,
+      "cacheable": false,
+      "operation": "business_write",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": false,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": true,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.erp_tool_executor.ErpToolMixin._make_local_handler.<locals>.handler",
+      "handler_key": "trigger_erp_sync",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "social_crawler",
+      "source": "services.tools.definitions.general.build_specs",
+      "groups": [
+        "crawler_tools"
+      ],
+      "exposure": "public",
+      "domain": "general",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "plan_allowed": false,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": false,
+      "personal_context": false,
+      "feature_flags": [
+        "crawler_enabled"
+      ],
+      "core": true,
+      "handler": "services.agent.crawler_tool_mixin.CrawlerToolMixin._social_crawler",
+      "handler_key": "social_crawler",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "file_search",
+      "source": "services.tools.definitions.file_sandbox.build_specs",
+      "groups": [
+        "file_tools"
+      ],
+      "exposure": "public",
+      "domain": "general",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "file_index"
+      ],
+      "requires_org": false,
+      "personal_context": false,
+      "feature_flags": [
+        "file_workspace_enabled"
+      ],
+      "core": true,
+      "handler": "services.agent.file_tool_mixin.FileToolMixin._make_file_handler.<locals>.handler",
+      "handler_key": "file_search",
+      "schema_variants": [],
+      "compatibility_notes": [
+        "scope defaults to current without a bound browse; explicit scope remains a narrowing selection, never authorization"
+      ]
+    },
+    {
+      "name": "file_analyze",
+      "source": "services.tools.definitions.file_sandbox.build_specs",
+      "groups": [
+        "file_tools"
+      ],
+      "exposure": "public",
+      "domain": "general",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "analysis",
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "workspace_artifacts",
+        "file_index"
+      ],
+      "requires_org": false,
+      "personal_context": false,
+      "feature_flags": [
+        "file_workspace_enabled"
+      ],
+      "core": true,
+      "handler": "services.agent.file_tool_mixin.FileToolMixin._make_file_handler.<locals>.handler",
+      "handler_key": "file_analyze",
+      "schema_variants": [],
+      "compatibility_notes": [
+        "file_id preferred; legacy path and scope retained"
+      ]
+    },
+    {
+      "name": "file_delete",
+      "source": "services.tools.definitions.file_sandbox.build_specs",
+      "groups": [
+        "file_tools"
+      ],
+      "exposure": "public",
+      "domain": "general",
+      "risk": "dangerous",
+      "parallelizable": false,
+      "cacheable": false,
+      "operation": "business_write",
+      "execution_modes": [
+        "interactive",
+        "scheduled"
+      ],
+      "plan_allowed": false,
+      "effects": [
+        "workspace_delete",
+        "deletion_record"
+      ],
+      "requires_org": false,
+      "personal_context": false,
+      "feature_flags": [
+        "file_workspace_enabled"
+      ],
+      "core": true,
+      "handler": "services.agent.file_tool_mixin.FileToolMixin._make_file_handler.<locals>.handler",
+      "handler_key": "file_delete",
+      "schema_variants": [],
+      "compatibility_notes": [
+        "file_ids and legacy files retained; handler accepts string or list",
+        "when both are given, resolved file_ids are appended to files; do not replace this behavior"
+      ]
+    },
+    {
+      "name": "restore_file",
+      "source": "services.tools.definitions.file_sandbox.build_specs",
+      "groups": [
+        "file_tools"
+      ],
+      "exposure": "public",
+      "domain": "general",
+      "risk": "safe",
+      "parallelizable": false,
+      "cacheable": false,
+      "operation": "business_write",
+      "execution_modes": [
+        "interactive",
+        "scheduled"
+      ],
+      "plan_allowed": false,
+      "effects": [
+        "workspace_write",
+        "deletion_record"
+      ],
+      "requires_org": false,
+      "personal_context": false,
+      "feature_flags": [
+        "file_workspace_enabled"
+      ],
+      "core": true,
+      "handler": "services.agent.file_tool_mixin.FileToolMixin._make_file_handler.<locals>.handler",
+      "handler_key": "restore_file",
+      "schema_variants": [],
+      "compatibility_notes": [
+        "legacy safe risk and serial scheduling retained despite workspace writes"
+      ]
+    },
+    {
+      "name": "code_execute",
+      "source": "services.tools.definitions.file_sandbox.build_specs",
+      "groups": [
+        "code_tools"
+      ],
+      "exposure": "public",
+      "domain": "shared",
+      "risk": "confirm",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "analysis",
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "kernel_state",
+        "workspace_artifacts"
+      ],
+      "requires_org": false,
+      "personal_context": false,
+      "feature_flags": [
+        "sandbox_enabled"
+      ],
+      "core": true,
+      "handler": "services.agent.sandbox_tool_mixin.SandboxToolMixin._code_execute",
+      "handler_key": "code_execute",
+      "schema_variants": [],
+      "compatibility_notes": [
+        "legacy cache eligibility retained independently; kernel state is not read-only"
+      ]
+    },
+    {
+      "name": "erp_agent",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "common_tools"
+      ],
+      "exposure": "public",
+      "domain": "general",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "plan_allowed": false,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": false,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": true,
+      "handler": "services.agent.tool_executor.ToolExecutor._erp_agent",
+      "handler_key": "erp_agent",
+      "schema_variants": [],
+      "compatibility_notes": [
+        "query -> task in existing validator and handler; task takes precedence"
+      ]
+    },
+    {
+      "name": "erp_analyze",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "common_tools"
+      ],
+      "exposure": "public",
+      "domain": "general",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "analysis",
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": false,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": true,
+      "handler": "services.agent.tool_executor.ToolExecutor._erp_analyze",
+      "handler_key": "erp_analyze",
+      "schema_variants": [],
+      "compatibility_notes": [
+        "query fallback exists in handler only; validator still uses public task schema"
+      ]
+    },
+    {
+      "name": "erp_api_search",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [
+        "common_tools"
+      ],
+      "exposure": "public",
+      "domain": "erp",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": false,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.tool_executor.ToolExecutor._erp_api_search",
+      "handler_key": "erp_api_search",
+      "schema_variants": [
+        "erp_search"
+      ],
+      "compatibility_notes": []
+    },
+    {
+      "name": "search_knowledge",
+      "source": "services.tools.definitions.general.build_specs",
+      "groups": [
+        "common_tools"
+      ],
+      "exposure": "public",
+      "domain": "general",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "none"
+      ],
+      "requires_org": false,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": true,
+      "handler": "services.agent.tool_executor.ToolExecutor._search_knowledge",
+      "handler_key": "search_knowledge",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "web_search",
+      "source": "services.tools.definitions.general.build_specs",
+      "groups": [
+        "common_tools"
+      ],
+      "exposure": "public",
+      "domain": "general",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "read",
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": false,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": true,
+      "handler": "services.agent.tool_executor.ToolExecutor._web_search",
+      "handler_key": "web_search",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "generate_image",
+      "source": "services.tools.definitions.media.build_specs",
+      "groups": [
+        "common_tools"
+      ],
+      "exposure": "public",
+      "domain": "general",
+      "risk": "confirm",
+      "parallelizable": false,
+      "cacheable": false,
+      "operation": "generation",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": false,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": false,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.media_tool_executor.MediaToolMixin._generate_image",
+      "handler_key": "generate_image",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "generate_video",
+      "source": "services.tools.definitions.media.build_specs",
+      "groups": [
+        "common_tools"
+      ],
+      "exposure": "public",
+      "domain": "general",
+      "risk": "confirm",
+      "parallelizable": false,
+      "cacheable": false,
+      "operation": "generation",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": false,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": false,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.media_tool_executor.MediaToolMixin._generate_video",
+      "handler_key": "generate_video",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "image_agent",
+      "source": "services.tools.definitions.media.build_specs",
+      "groups": [
+        "common_tools"
+      ],
+      "exposure": "public",
+      "domain": "general",
+      "risk": "confirm",
+      "parallelizable": false,
+      "cacheable": false,
+      "operation": "generation",
+      "execution_modes": [
+        "interactive",
+        "scheduled"
+      ],
+      "plan_allowed": false,
+      "effects": [
+        "unknown"
+      ],
+      "requires_org": false,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": true,
+      "handler": "services.agent.tool_executor.ToolExecutor._image_agent",
+      "handler_key": "image_agent",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "manage_scheduled_task",
+      "source": "services.tools.definitions.task.build_specs",
+      "groups": [
+        "common_tools"
+      ],
+      "exposure": "public",
+      "domain": "general",
+      "risk": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "operation": "proposal",
+      "execution_modes": [
+        "interactive",
+        "scheduled"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "proposal_or_form"
+      ],
+      "requires_org": true,
+      "personal_context": true,
+      "feature_flags": [],
+      "core": true,
+      "handler": "services.agent.tool_executor.ToolExecutor._manage_scheduled_task",
+      "handler_key": "manage_scheduled_task",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "fetch_all_pages",
+      "source": "services.tools.definitions.erp.build_specs",
+      "groups": [],
+      "exposure": "legacy_internal",
+      "domain": "erp",
+      "risk": "safe",
+      "parallelizable": false,
+      "cacheable": false,
+      "operation": "analysis",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "workspace_artifacts",
+        "file_index"
+      ],
+      "requires_org": true,
+      "personal_context": false,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.tool_executor.ToolExecutor._fetch_all_pages",
+      "handler_key": "fetch_all_pages",
+      "schema_variants": [],
+      "compatibility_notes": []
+    },
+    {
+      "name": "get_conversation_context",
+      "source": "services.tools.definitions.general.build_specs",
+      "groups": [],
+      "exposure": "legacy_internal",
+      "domain": "general",
+      "risk": "safe",
+      "parallelizable": false,
+      "cacheable": false,
+      "operation": "read",
+      "execution_modes": [
+        "interactive"
+      ],
+      "plan_allowed": true,
+      "effects": [
+        "none"
+      ],
+      "requires_org": false,
+      "personal_context": true,
+      "feature_flags": [],
+      "core": false,
+      "handler": "services.agent.conversation_tool_mixin.ConversationToolMixin._get_conversation_context",
+      "handler_key": "get_conversation_context",
+      "schema_variants": [],
+      "compatibility_notes": []
+    }
+  ],
+  "public": 33,
+  "handler_only": 2,
+  "registered": 35,
+  "unregistered": 0,
+  "duplicates": 0,
+  "definition_groups": {
+    "erp": 22,
+    "general": 4,
+    "file_sandbox": 5,
+    "media": 3,
+    "task": 1
+  },
+  "production_constructors": [
+    {
+      "path": "backend/services/agent/scheduled_task_agent.py",
+      "line": 314,
+      "constructor": "ToolLoopExecutor"
+    },
+    {
+      "path": "backend/services/agent/scheduled_task_agent.py",
+      "line": 147,
+      "constructor": "ToolExecutor"
+    },
+    {
+      "path": "backend/services/handlers/chat_tool_mixin.py",
+      "line": 116,
+      "constructor": "ToolExecutor"
+    }
+  ],
+  "unchanged_sources": [
+    "backend/services/tools/policy.py",
+    "backend/services/tools/action_rules.py",
+    "backend/services/tools/runtime.py",
+    "backend/services/tools/runtime_context.py",
+    "backend/services/tools/execution.py",
+    "backend/services/tools/dispatcher.py",
+    "backend/services/tools/legacy_handler.py",
+    "backend/services/tools/result.py",
+    "backend/services/tools/result_payload.py",
+    "backend/services/tool_invocation_store.py",
+    "backend/services/planner/contracts.py",
+    "backend/services/planner/validator.py",
+    "backend/services/agent/tool_selector.py",
+    "backend/config/phase_tools.py",
+    "backend/config/conversation_control_tools.py",
+    "backend/services/scheduler/scheduled_task_change_adapter.py"
+  ],
+  "preserved_functions": {
+    "backend/services/agent/tool_result_cache.py": [
+      "ToolResultCache.__init__",
+      "ToolResultCache._key",
+      "ToolResultCache.get",
+      "ToolResultCache.put"
+    ],
+    "backend/services/scheduler/scheduled_task_workflow.py": [
+      "ScheduledExecutionPolicy.as_dict",
+      "ScheduledExecutionPolicy.from_dict",
+      "_trace_rows",
+      "completion_gate",
+      "create_draft_and_preflight",
+      "create_plan",
+      "parse_json_object",
+      "preflight_allowed_tool_names",
+      "stable_json_hash",
+      "tool_name_set",
+      "validate_plan"
+    ]
+  },
+  "semantic_selection_ast_unchanged": true,
+  "baseline_recapture_identical": true,
+  "planner_descriptor_differences": {
+    "erp_aftersales_query": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "erp_api_search": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "erp_execute": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled"
+        ],
+        "after": [
+          "interactive"
+        ]
+      }
+    },
+    "erp_info_query": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "erp_product_query": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "erp_purchase_query": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "erp_taobao_query": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "erp_trade_query": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "erp_warehouse_query": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "generate_image": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "generate_video": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "image_agent": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive",
+          "scheduled"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "local_compare_stats": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "local_data": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "local_platform_map_query": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "local_product_identify": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "local_product_stats": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "local_shop_list": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "local_stock_query": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "local_supplier_list": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "local_warehouse_list": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "manage_scheduled_task": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive",
+          "scheduled"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "restore_file": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "after": [
+          "interactive",
+          "scheduled"
+        ]
+      },
+      "supports_readonly_preflight": {
+        "before": true,
+        "after": false
+      }
+    },
+    "trigger_erp_sync": {
+      "execution_modes": {
+        "before": [
+          "interactive",
+          "scheduled"
+        ],
+        "after": [
+          "interactive"
+        ]
+      }
+    }
+  },
+  "source_fingerprints": {
+    "backend/config/agent_tools.py": "2dfcd942d7bedc825a053b5ec17e67552917d3962cf758e0378e3a59b01447f4",
+    "backend/config/chat_tools.py": "a00baf0ec316bd9d1bae18008063a1a10a37d51c88c439e6da0f6c69717106c1",
+    "backend/config/code_tools.py": "d39f28bd7a8f169bacccfef2647f2510778c7f092585853a6be1e15dca619266",
+    "backend/config/common_tools.py": "926cd984a973e5c59f621a17ebf98bef027b2c0ead19f72487a2e29cae5637c0",
+    "backend/config/crawler_tools.py": "2c440da6a9b0c2858eab57d1361e7aa9118c5fe1c11f927c333ea5abed668ba9",
+    "backend/config/erp_local_tools.py": "1dae6f2da0d68eae103640a812de40a8cdd794ba2ba00c9ef5297989dd21547c",
+    "backend/config/erp_tools.py": "4ac614f784a6451c020663a62abb171af3270aecab668623adb7d6a3857986e9",
+    "backend/config/file_tools.py": "548cbbc8b223255299d1262ee47b6151e15ef080eba26ba576fe1bc0de1403b6",
+    "backend/config/tool_domains.py": "f6eb1e7f9451e05b01c4544aac813a91e0b06c39b5a5989b3222eeabc848f2df",
+    "backend/config/tool_registry.py": "40cefb00c5db5b2fedc5c8062cfebb9612db597ca40f26e735269bf32a90a4ca",
+    "backend/services/agent/tool_result_cache.py": "48ac494b6d07f656e198e4c1b130284e622e26e473736083fff199f404ea31d7",
+    "backend/services/planner/registry.py": "29ea42cd0e9e06abc36006c47da8dda6f2496088fa1ae80d3f3e146d763687e9",
+    "backend/services/scheduler/scheduled_task_workflow.py": "edb0d845bcf4550b0fc750a2c593a2354bc521f93e1201661a3b7fd2e8c9e9f0",
+    "backend/services/tools/__init__.py": "77b46290519c18dd6fda532101a0ae23480c67472257bbd175d7dceb2aefdd44",
+    "backend/services/tools/catalog.py": "560448599fe3f5f8104de7cf9e7643be7f0f9d19d6d77ff060f6e63db881241d",
+    "backend/services/tools/definitions/__init__.py": "ae746a76d658220ae8398f80caaadabed2d7675457897e99a54d69d34c7a4e1e",
+    "backend/services/tools/definitions/code_schemas.py": "fb4b71e47081fb533a9d7c8a8687ff6c118cabb9cd00f5f8a35d815c7d0c7ec9",
+    "backend/services/tools/definitions/crawler_schemas.py": "8d48ae7597252620e1467e183525804bca4f51a63bd89d5e07b66e7ee83301ff",
+    "backend/services/tools/definitions/erp.py": "7a5eef2814280bdee9386aa532063dd94fe4d7134939ee91d130f1b13974a10d",
+    "backend/services/tools/definitions/erp_local_schemas.py": "0fa5b963e74ab5a6e4f2e1e94bcb3fada2c2ae7fd583242018e8f447e88f0f11",
+    "backend/services/tools/definitions/erp_schemas.py": "54ad74722c810bdcc782e928101582f3c68dac8f129053085d4851f104c79c1f",
+    "backend/services/tools/definitions/file_sandbox.py": "2b6a682e29a808e74d5d78487b728e471fde6ecc5e34a5324636cd462d19b1f2",
+    "backend/services/tools/definitions/file_schemas.py": "257ecb85bb88a14f4611f0f46cbe42afa64797a869b0ece73a59f7502cf00d35",
+    "backend/services/tools/definitions/general.py": "6c6c36f7a172df44bab3cfcbb4531ada719d1087ceea0271fcb130240882b10a",
+    "backend/services/tools/definitions/media.py": "8261fb57f73778233aaaf11752c9ad74edf1a262d9535b0858f77ac4cecf4def",
+    "backend/services/tools/definitions/task.py": "0839de21eb608103d15667b9e5c092ac1141684c95c704fde0c373cc8aebcefe",
+    "backend/services/tools/legacy.py": "5ab7541a89f5343dbc2f6e9981a58b769c29ba4fc07bd988684645022dbee5d6",
+    "backend/services/tools/legacy_policy.py": "5e6db37e49e52f994a1d35c8459d82839d29c41c9b2ce8c45032ba79dc849f63",
+    "backend/services/tools/spec.py": "2e108007d5994970ba239e8d6d93ad97286a2ff488ee025ab6574ef8c4e91c91",
+    "backend/tests/fixtures/tool_catalog_07_baseline.json": "db51a9b0aab7b2d4789a08916f3063f27980f5032f8c364d7436e903bbaf09b7",
+    "backend/tests/test_tool_definitions_07.py": "d080d0c528696b2dd06d0270377101eb7860cd37c16bda4d907228b8a86c1883",
+    "backend/tests/test_tool_definitions_07_entries.py": "25359fcd505e4edd5824d927f3c3e62a2d8b61a981d05a68d4dde95021efc01e",
+    "backend/tests/test_tool_registry.py": "433df9a4c6e86a315fdc7116984be19d59aef80fb181bcee0024807cf92ef0e3"
+  }
+}

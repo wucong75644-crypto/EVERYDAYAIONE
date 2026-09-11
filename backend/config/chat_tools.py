@@ -1,12 +1,11 @@
 """
-ChatHandler 统一工具注册
+ChatHandler 工具目录兼容投影（定义由 ToolSpec 唯一维护）
 
 单循环 Agent 架构下，ChatHandler 直接持有的顶层工具列表。
 AI 大脑看到这些工具描述后自主选择调用，无需路由层。
 
 并发安全标记 (is_concurrency_safe)：
-  True  — 只读查询，可与其他只读工具并行执行
-  False — 写操作或有副作用，必须串行执行
+  读取 Spec.parallelizable；缓存资格、实际副作用分别声明。
 
 安全级别 (safety_level)：
   safe      — 直接执行，不通知用户
@@ -15,6 +14,8 @@ AI 大脑看到这些工具描述后自主选择调用，无需路由层。
 """
 
 import re
+from services.tools.catalog import definition_registry
+
 from enum import Enum
 from typing import Any, Dict, List, Set
 
@@ -48,27 +49,7 @@ from config.image_agent_prompt import IMAGE_AGENT_PROMPT
 # ============================================================
 
 # 只读工具 — 可并行
-_CONCURRENT_SAFE_TOOLS: Set[str] = {
-    # Agent（只读查询/分析，内部自行管理并发）
-    "erp_agent", "erp_analyze",
-    # ERP 查询（远程 + 本地）
-    "erp_info_query", "erp_product_query", "erp_trade_query",
-    "erp_aftersales_query", "erp_warehouse_query", "erp_purchase_query",
-    "erp_taobao_query",
-    "local_data", "local_product_identify", "local_stock_query",
-    "local_product_stats", "local_platform_map_query",
-    "local_compare_stats", "local_shop_list", "local_warehouse_list",
-    "local_supplier_list",
-    # 搜索类
-    "erp_api_search", "search_knowledge", "web_search",
-    "social_crawler",
-    # 代码执行（沙箱隔离，可并行）
-    "code_execute",
-    # 文件操作（只读；file_search 命中图片自动多模态返回）
-    "file_search", "file_analyze",
-    # 定时任务（表单返回 + 列表查询）
-    "manage_scheduled_task",
-}
+_CONCURRENT_SAFE_TOOLS = {s.name for s in definition_registry().specs() if s.parallelizable}
 
 # 写操作工具 — 必须串行
 # erp_execute, trigger_erp_sync, generate_image, generate_video 等
@@ -77,31 +58,23 @@ _CONCURRENT_SAFE_TOOLS: Set[str] = {
 
 def is_concurrency_safe(tool_name: str) -> bool:
     """判断工具是否可以并行执行"""
-    return tool_name in _CONCURRENT_SAFE_TOOLS
+    spec = definition_registry().get(tool_name)
+    return spec.parallelizable if spec else False
 
 
 # ============================================================
 # 工具安全级别
 # ============================================================
 
-# 非 safe 的工具（数量少，显式列出）
+# 非 safe 的旧字典投影（执行和 helper 均重新读取 Spec）
 # 未列出的工具默认为 safe（查询类占绝大多数）
-_SAFETY_LEVELS: Dict[str, SafetyLevel] = {
-    # confirm — 消耗资源，通知用户
-    "generate_image": SafetyLevel.CONFIRM,
-    "generate_video": SafetyLevel.CONFIRM,
-    "image_agent": SafetyLevel.CONFIRM,
-    "code_execute": SafetyLevel.CONFIRM,
-    # dangerous — 写操作，必须用户确认
-    "erp_execute": SafetyLevel.DANGEROUS,
-    "trigger_erp_sync": SafetyLevel.DANGEROUS,
-    "file_delete": SafetyLevel.DANGEROUS,
-}
+_SAFETY_LEVELS = {s.name: SafetyLevel(s.risk_level) for s in definition_registry().specs() if s.risk_level != "safe"}
 
 
 def get_safety_level(tool_name: str) -> SafetyLevel:
     """获取工具的安全级别，未标记的默认为 safe"""
-    return _SAFETY_LEVELS.get(tool_name, SafetyLevel.SAFE)
+    spec = definition_registry().get(tool_name)
+    return SafetyLevel(spec.risk_level) if spec else SafetyLevel.SAFE
 
 
 # ============================================================
@@ -333,35 +306,17 @@ def get_tool_system_prompt() -> str:
 
 
 def get_chat_tools(org_id: str | None = None) -> List[Dict[str, Any]]:
-    """获取 ChatHandler 工具循环使用的完整工具列表
+    """Original directory/order projection, without request authorization.
 
-    按企业配置过滤：散客不加载 ERP 工具，与 ToolExecutor 行为对齐。
-
-    Args:
-        org_id: 企业 ID（None=散客，只返回通用工具）
-
-    Returns:
-        OpenAI function calling 格式的工具列表
+    Keep the legacy distinction: only direct ERP schemas require an organization
+    here. Runtime Registry.resolve still applies availability, identity and policy.
     """
-    tools: List[Dict[str, Any]] = []
-
-    # ERP 工具仅企业用户加载（与 ToolExecutor org_id 过滤对齐）
-    if org_id is not None:
-        tools.extend(build_erp_tools())  # 远程 API + 本地查询
-
-    # 爬虫工具
-    tools.extend(build_crawler_tools())
-
-    # 文件操作工具
-    tools.extend(build_file_tools())
-
-    # 代码执行工具（主 Agent 版，含图表/文档能力）
-    tools.extend(build_code_tools(include_workspace=True))
-
-    # 通用工具（搜索、知识库、图片、视频 — 始终加载）
-    tools.extend(build_common_tools())
-
-    return tools
+    from services.tools.spec import Exposure
+    return [
+        spec.to_schema() for spec in definition_registry().specs()
+        if spec.exposure is Exposure.PUBLIC
+        and (org_id is not None or "erp_tools" not in spec.catalog_groups)
+    ]
 
 
 # ============================================================
@@ -369,38 +324,12 @@ def get_chat_tools(org_id: str | None = None) -> List[Dict[str, Any]]:
 # ============================================================
 
 # 核心工具：每次请求都传给 LLM 的完整 schema
-# ERP Agent 模式：主 Agent 只持有 7 个工具（erp_agent 封装了 17 个 ERP 工具）
-# 主 Agent 只做 7 选 1 路由，ERP 的准确率由 erp_agent 内部保证
-_CORE_TOOLS: Set[str] = {
-    # Agent（封装复杂多步工具）
-    "erp_agent",                # ERP 独立 Agent（内含 17 个 ERP 工具）
-    "erp_analyze",              # ERP 分析（计划模式探索阶段，只分析不执行）
-    # 搜索
-    # 注意：erp_api_search 已移至 ERP 域，主 Agent 不再直接使用
-    # ERP 相关查询统一走 erp_agent，erp_api_search 在其内部可用
-    "search_knowledge",         # 知识库
-    "web_search",               # 互联网搜索
-    "social_crawler",           # 社交平台爬虫（小红书/抖音/B站/微博/知乎）
-    # 生成
-    "image_agent",              # 电商图片生成（单张，电商图模式下使用）
-    # 执行
-    "code_execute",             # 代码执行
-    # 文件操作（file_search 命中图片自动多模态返回）
-    "file_search",              # 文件搜索+准备（数据文件自动转 Parquet；图片直接多模态）
-    "file_analyze",             # 数据文件结构读取（Excel/CSV → Parquet）
-    "file_delete",              # 删除文件（弹窗确认）
-    "restore_file",             # 恢复文件到修改前版本
-    # 定时任务
-    "manage_scheduled_task",    # 定时任务管理（创建/查看/修改/暂停/恢复/删除）
-}
+# 旧核心选择集合；实际每轮展示仍由 Registry/Policy 按上下文取交集。
+_CORE_TOOLS = {s.name for s in definition_registry().specs() if s.core}
 
 
-# plan 模式下移除的执行类工具（架构层过滤，LLM 根本看不到）
-_PLAN_MODE_BLOCKED: Set[str] = {
-    "erp_agent",                # 执行类：plan 模式只允许 erp_analyze
-    "image_agent",              # 生成类：计划阶段不执行
-    "social_crawler",           # 爬取类：计划阶段不需要
-}
+# 旧 helper 的 plan 展示投影；执行限制始终由 ToolPolicy 负责。
+_PLAN_MODE_BLOCKED = {s.name for s in definition_registry().specs() if s.core and not s.legacy_plan_visible}
 
 
 def get_core_tools(org_id: str | None = None) -> List[Dict[str, Any]]:
@@ -411,7 +340,8 @@ def get_core_tools(org_id: str | None = None) -> List[Dict[str, Any]]:
     """
     from config.tool_domains import filter_tools_for_domain
     all_tools = get_chat_tools(org_id)
-    core = [t for t in all_tools if t["function"]["name"] in _CORE_TOOLS]
+    catalog = definition_registry()
+    core = [t for t in all_tools if catalog.require(t["function"]["name"]).core]
     return filter_tools_for_domain(core, "general")
 
 
@@ -448,7 +378,8 @@ def get_tools_for_mode(
     """
     core = get_core_tools(org_id)
     if mode == "plan":
-        tools = [t for t in core if t["function"]["name"] not in _PLAN_MODE_BLOCKED]
+        catalog = definition_registry()
+        tools = [t for t in core if catalog.require(t["function"]["name"]).legacy_plan_visible]
     else:
         tools = core
     return _normalize_tools_bytes(tools)

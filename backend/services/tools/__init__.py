@@ -1,6 +1,7 @@
-"""Isolated tool catalog foundation; production entrypoints still use legacy code."""
+"""Unified tool definitions, policy, execution and result contracts."""
 
 from .context import ToolContext
+from .catalog import build_tool_catalog
 from .legacy import LegacyAdvertisement, build_legacy_catalog, validate_legacy_coverage
 from .registry import ResolvedTools, ToolAccessDecision, ToolAccessPolicy, ToolAdvertisement, ToolRegistry
 from .spec import Exposure, ToolAvailability, ToolPolicyRules, ToolSpec
@@ -13,7 +14,7 @@ from .execution import ToolExecutionService
 __all__ = [
     "Exposure", "ToolAvailability", "ToolSpec", "ToolContext", "ToolRegistry",
     "ToolAccessDecision", "ToolAccessPolicy", "ResolvedTools", "LegacyAdvertisement",
-    "ToolAdvertisement", "build_legacy_catalog", "validate_legacy_coverage",
+    "ToolAdvertisement", "build_tool_catalog", "build_legacy_catalog", "validate_legacy_coverage",
     "ToolPolicyRules", "ToolPolicy", "ToolDecision", "ToolCall", "PlannedToolCall",
     "ConfirmationBinding", "ToolConfirmation",
     "ToolDispatcher", "ToolHandler", "LegacyToolHandler", "build_legacy_handlers",

@@ -56,9 +56,8 @@ def test_catalog_matches_actual_full_directory_and_handler_bindings(registry):
     assert validate_legacy_coverage(
         registry, public_schemas=get_chat_tools("org-a"), handler_names=executor._handlers,
     ) == ()
-    assert {s.name for s in registry.specs() if s.definition_kind == "explicit"} == {
-        "search_knowledge", "file_search", "file_delete",
-    }
+    # 07 completes ownership for all 35 runtime definitions.
+    assert all(s.definition_kind == "explicit" for s in registry.specs())
     assert {s.name for s in registry.specs() if s.exposure is Exposure.LEGACY_INTERNAL} == {
         "fetch_all_pages", "get_conversation_context",
     }
@@ -370,11 +369,14 @@ def test_risk_parallel_cache_and_effects_are_independent(registry):
 
 
 def test_catalog_factories_remain_independent_of_production_runtime():
-    # 04 deliberately imports services.tools in runtime consumers. Catalog
-    # factories must remain independent to prevent initialization recursion.
+    # 07 reverses config -> Spec projection. Definition resources must not
+    # read those compatibility projections, or initialization would recurse.
     backend = Path(__file__).resolve().parents[1]
-    for path in (backend / "config").rglob("*.py"):
-        assert "from services.tools" not in path.read_text()
+    for path in (backend / "services/tools/definitions").rglob("*.py"):
+        source = path.read_text()
+        assert "from config.chat_tools" not in source
+        assert "from config.tool_domains" not in source
+        assert "from config.agent_tools" not in source
     legacy = (backend / "services/tools/legacy.py").read_text()
     assert "from services.agent.tool_executor import" not in legacy
 
@@ -395,11 +397,10 @@ def test_partial_legacy_validation_directory_is_preserved_separately(registry):
     assert "required" not in delete.to_schema()["function"]["parameters"]
 
 
-def test_missing_domain_is_reported_during_catalog_build(monkeypatch):
+def test_old_domain_projection_is_not_an_independent_definition(monkeypatch):
     from config.tool_domains import TOOL_DOMAINS
     monkeypatch.delitem(TOOL_DOMAINS, "search_knowledge")
-    with pytest.raises(ValueError, match="missing domain: search_knowledge"):
-        build_legacy_catalog()
+    assert build_legacy_catalog().require("search_knowledge").domain == "general"
 
 
 def test_every_public_tool_parameter_reader_matches_original(registry):

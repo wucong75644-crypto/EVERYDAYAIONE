@@ -1,5 +1,34 @@
 # 工具统一：共同约束与板块交接
 
+## 当前有效状态：板块 07（2026-09-11）
+
+用户本次明确确认 01–06 已验收进入 main。07 经受控 start 从最新 origin/main `ca4c3d7e6a89ef34412cf405efc2d4fb0c1350e2` 创建；下表各关闭合并均为该基准祖先，且代码树与其验收候选一致。[07 源码证据](tool-unification-evidence/07-source-checks.json) 保存完整 SHA 和核验结果。
+
+| 板块 | main 关闭合并 | 已验收候选 | 记录 |
+|---|---|---|---|
+| 01 | 2e8fdb2d | b4c854ac | [01 验收](TOOL_UNIFICATION_ACCEPTANCE_01.md) |
+| 02 | 8e74f57d | 4084db4e | [02 验收](TOOL_UNIFICATION_ACCEPTANCE_02.md) |
+| 03 | 0f65d72d | 2ed4d783 | [03 验收及修复历史](TOOL_UNIFICATION_ACCEPTANCE_03.md) |
+| 04 | 6c0737ab | 1f288018 | [04 验收](TOOL_UNIFICATION_ACCEPTANCE_04.md) |
+| 05 | cdba58f9 | 87b07718 | [05 验收](TOOL_UNIFICATION_ACCEPTANCE_05.md)、[最终附件修复](TOOL_UNIFICATION_05_ATTACHMENT_BINDING.md) |
+| 06 | ca4c3d7e | 6e72665b | [06 验收](TOOL_UNIFICATION_ACCEPTANCE_06.md)、[v1 writer 上线](TOOL_UNIFICATION_06_WRITER_ROLLOUT.md) |
+| 07 | 尚未提交部署/关闭 | 尚无候选 SHA | [07 逐项验收](TOOL_UNIFICATION_ACCEPTANCE_07.md) |
+
+07：**技术验收通过，待提交部署及用户验收**。任务工作树 `/Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07`，分支 `codex/task/20260911215117-tool-unification-07`；当前 HEAD 为上述基准，**被测版本为 HEAD 加未提交差异**，精确 backend 文件指纹见源码证据，不用基准冒充已测试发布候选。
+
+- [最终架构及接口](TOOL_UNIFICATION_ARCHITECTURE_07.md)、[35 项工具/别名/独立通道目录](TOOL_UNIFICATION_CATALOG_07.md) 是 01–07 当前运行链的代码权威；下文旧板块交付时的“当前/未关闭/不能启动下一块”等保持为历史快照。
+- 定义按 ERP 22 → 文件/沙盒 5 → 媒体 3 → 任务 1 顺序迁移、分别 147/296/173/159 项验证通过，再收拢通用/爬虫/内部上下文 4。33 public + 2 handler-only 全部为显式 ToolSpec，未注册/重复/缺 handler 均为 0。没有增加工具名称或扩大内部可见性。
+- `services/tools/catalog.py::build_tool_catalog` 为规范工厂；`build_legacy_catalog` 原导入/签名保留并委托。原 schema 工厂资源进入 `definitions/*_schemas.py`，其 config build/集合/validator 与 `chat_tools` 风险/并发/目录、`tool_domains` 均为兼容投影。Spec 新增 catalog_order/catalog_groups/core/legacy_plan_visible/schema_variants，只承载原目录和视图差异。
+- Planner CapabilityRegistry 新增 from_specs，原 from_tool_schemas/from_names 从注册 Spec 派生；旧 capability/Planner/执行授权快照字段和版本保持。24 个原描述的执行模式对齐既有 Spec，预检不再把媒体/恢复/任务提案标成只读可用；风险/read/write 标签及实际运行授权保持。通用自定义 Planner API 仍可用，但不能注册运行工具或执行 Handler。
+- `config.tool_registry` 的 domain 为语义选择分组，保留 tags/priority/synonyms 和原算法；它不是权限域。legacy 现在只剩原业务 Handler、展示/旧 schema/API/通道适配和无生产执行消费的描述 helper，没有另一套执行策略。
+- 原无组织 ERP 可见性与业务返回、code_execute 缓存资格、restore_file safe/串行/不可缓存及原 replay 资格保持。ERP 引擎、文件目标/内核、媒体结算、任务提交流程和实际执行 Policy/Dispatcher/Runtime 均未改写。
+- 最终 **2479 passed、0 failed/error/xfail、2 个既有字体环境 skipped**；334 个新增必需场景无跳过。完整契约冻结基准重新采集字节一致；144 组上下文对照、9 种独立进程导入、两用户同 call_id、旧确认 binding 和 3 入口 × 5 代表工具回归通过。失败/fixture 修正、精确命令、全日志和 A-07/G 表见 07 验收。
+- 无数据库/持久化/WS 新变更；06 v1 writer/reader 和调用 ledger 源码逐字保留。回退到 `ca4c3d7e` 即保留 06 读写兼容，不需要 payload 回迁；不得回退到不支持 06 v1 reader 的旧版本。
+- **08 代码前置已具备，但启动仍需本块用户指令提交部署 → 确定候选验证 → 用户指令验收关闭 → main 一致性核验。本任务不进入 08，未推送/部署/合并/清理。** 真实外部业务/生产浏览器/付费生成与用户观感按 07 验证单待完成。
+
+## 以下为 06 及更早板块的交付时快照
+
+
 > **2026-09-11 写入阶段更新**：兼容 reader 版本 `e097e392fd8229cffda363fc85113c31fb995179` 已先部署并完成用户回归；本次第二阶段默认写入切换为 **1**，显式设置 0 可停止新写入且继续读取 v1。当前有效发布顺序、验证和回退依据见 [06 写入阶段验收补充](TOOL_UNIFICATION_06_WRITER_ROLLOUT.md)。最终候选及关闭结果以受控发布/关闭交付消息为准。
 
 以下为首次兼容读取阶段的验收和接口快照；其中“默认 0”“待部署”等时态不覆盖上述第二阶段更新。

@@ -15,6 +15,8 @@
 3. 动态注入时 → filter_tools_for_domain 二次过滤
 """
 
+from services.tools.catalog import definition_registry
+
 from enum import Enum
 from typing import Any, Dict, List, Set
 
@@ -29,53 +31,11 @@ class ToolDomain(str, Enum):
 # ============================================================
 # 工具域注册表
 #
-# 所有工具必须在此注册，未注册的工具默认拒绝访问。
-# 新增工具时在此添加一行即可，validate_registry 会在启动时检查遗漏。
+# 运行工具从 ToolSpec 派生；route_to_chat 仅为旧 Phase 出口分类。
+# 新增运行工具只在 services/tools/definitions 注册。
 # ============================================================
 
-TOOL_DOMAINS: Dict[str, ToolDomain] = {
-    # === general: 主 Agent 可直接使用 ===
-    "erp_agent":        ToolDomain.GENERAL,
-    "erp_analyze":      ToolDomain.GENERAL,
-    "search_knowledge": ToolDomain.GENERAL,
-    "web_search":       ToolDomain.GENERAL,
-    "social_crawler":   ToolDomain.GENERAL,
-    "generate_image":   ToolDomain.GENERAL,
-    "generate_video":   ToolDomain.GENERAL,
-    "image_agent":      ToolDomain.GENERAL,
-    "file_search":      ToolDomain.GENERAL,  # 文件搜索+准备；命中图片自动多模态
-    "file_analyze":     ToolDomain.GENERAL,  # 数据文件结构读取（Excel/CSV → Parquet）
-    "file_delete":      ToolDomain.GENERAL,  # 文件删除（弹窗确认）
-    "restore_file":     ToolDomain.GENERAL,  # 恢复文件
-    "manage_scheduled_task": ToolDomain.GENERAL,
-
-    # === shared: 多个域的 Agent 内部都能用 ===
-    "code_execute":     ToolDomain.SHARED,
-    # data_query 已删除（AI 在 code_execute 中用 duckdb 查询）
-
-    # === erp: 仅 erp_agent 内部可用 ===
-    "erp_api_search":           ToolDomain.ERP,
-    "erp_info_query":           ToolDomain.ERP,
-    "erp_product_query":        ToolDomain.ERP,
-    "erp_trade_query":          ToolDomain.ERP,
-    "erp_aftersales_query":     ToolDomain.ERP,
-    "erp_warehouse_query":      ToolDomain.ERP,
-    "erp_purchase_query":       ToolDomain.ERP,
-    "erp_taobao_query":         ToolDomain.ERP,
-    "erp_execute":              ToolDomain.ERP,
-    "local_data":               ToolDomain.ERP,  # 统一查询引擎
-    "local_product_stats":      ToolDomain.ERP,
-    "local_stock_query":        ToolDomain.ERP,
-    "local_product_identify":   ToolDomain.ERP,
-    "local_platform_map_query": ToolDomain.ERP,
-    "local_compare_stats":      ToolDomain.ERP,
-    "local_shop_list":          ToolDomain.ERP,
-    "local_warehouse_list":     ToolDomain.ERP,
-    "local_supplier_list":      ToolDomain.ERP,
-    "fetch_all_pages":          ToolDomain.ERP,
-    "trigger_erp_sync":         ToolDomain.ERP,
-    "route_to_chat":            ToolDomain.ERP,
-}
+TOOL_DOMAINS = {"route_to_chat": ToolDomain.ERP} | {s.name: ToolDomain(s.domain) for s in definition_registry().specs() if s.name != "get_conversation_context"}
 
 
 # ============================================================
@@ -92,7 +52,12 @@ def can_access(tool_name: str, agent_domain: str) -> bool:
     - ERP 域工具：仅 agent_domain="erp" 可用
     - 未注册工具：拒绝（保守策略）
     """
-    domain = TOOL_DOMAINS.get(tool_name)
+    # Keep the two legacy classification exceptions; neither can add a runtime
+    # handler or bypass Registry exposure checks.
+    if tool_name == "route_to_chat":
+        return agent_domain == "erp"
+    spec = definition_registry().get(tool_name)
+    domain = ToolDomain(spec.domain) if spec is not None and tool_name != "get_conversation_context" else None
     if domain is None:
         return False
     if domain == ToolDomain.SHARED:
@@ -115,4 +80,6 @@ def validate_registry(all_tool_names: Set[str]) -> List[str]:
 
     返回未注册的工具名列表。调用方应 log warning。
     """
-    return sorted(n for n in all_tool_names if n not in TOOL_DOMAINS)
+    catalog_names = {spec.name for spec in definition_registry().specs()
+                     if spec.name != "get_conversation_context"} | {"route_to_chat"}
+    return sorted(all_tool_names - catalog_names)
