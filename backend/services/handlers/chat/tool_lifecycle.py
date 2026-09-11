@@ -1,7 +1,6 @@
-"""Adapter for the existing Actor ledger; no new persistence payloads."""
+"""Actor invocation adapter; preserves the existing ledger states and fencing."""
 
 import asyncio
-from dataclasses import replace
 
 from services.tools.result import ToolResult, UncertainToolInvocationError
 from services.tools.spec import thaw
@@ -49,13 +48,17 @@ class ActorToolLifecycle:
 
     @staticmethod
     def _replayed(payload, call, context, decision):
-        from services.tool_invocation_store import deserialize_tool_result
+        from services.tools.result_payload import restore_result
         from services.tools.runtime_context import check_result_resources
         check_result_resources(context, payload)
-        result = ToolResult.wrap(deserialize_tool_result(payload), call=call,
-                                 context=context, decision=decision)
-        return replace(result, execution=replace(result.execution, handler_started=False,
-                                                 attempts=0, replayed=True))
+        result = restore_result(payload, call=call, context=context, decision=decision)
+        if result.execution.status == "uncertain":
+            raise UncertainToolInvocationError("ACTOR_TOOL_INVOCATION_UNCERTAIN")
+        if result.execution.cancelled:
+            raise asyncio.CancelledError()
+        if result.execution.status != "succeeded":
+            raise PermissionError("ACTOR_TOOL_INVOCATION_RESULT_NOT_COMPLETED")
+        return result.reused(call=call, context=context, decision=decision, replayed=True)
 
     async def begin(self, call, context, decision):
         if not self._enabled(decision):
@@ -88,7 +91,7 @@ class ActorToolLifecycle:
                 self.handler, store=self.store, task_id=self.context.task_id,
                 turn_id=self.handler._actor_turn_id, tool_call_id=self.call.call_id,
                 status="uncertain" if error else "succeeded",
-                result=result.legacy_persistence_value(),
+                result=result,
                 error_message=str(error) if error else "",
             )
         except Exception as exc:

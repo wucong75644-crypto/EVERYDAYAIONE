@@ -188,7 +188,7 @@ class ChatToolMixin(ChatToolResultMixin):
             self._last_erp_display_files = payloads
             # token 统计
             self._erp_agent_tokens = (
-                getattr(self, "_erp_agent_tokens", 0) + result.agent_context["tokens_used"]
+                getattr(self, "_erp_agent_tokens", 0) + result.chargeable_tokens
             )
 
         # 清理遗留 _pending_schemas(兼容 fetch_all_pages 等仍写入的场景)
@@ -240,7 +240,11 @@ class ChatToolMixin(ChatToolResultMixin):
             return await ChatToolResultMixin._process_tool_exception(self, tc, error, result_ctx)
         result_ctx = replace(result_ctx, elapsed_ms=int((time.monotonic() - started_at) * 1000))
         # Delivery errors are outside the business/ledger completion boundary.
-        return await ChatToolResultMixin._process_tool_result(self, tc, result, result_ctx)
+        try:
+            return await ChatToolResultMixin._process_tool_result(self, tc, result, result_ctx)
+        except Exception as error:
+            logger.warning(f"tool_result_delivery_failed | call={tc['id']} | error={type(error).__name__}")
+            raise
 
     async def _begin_actor_tool_invocation(
         self,
@@ -498,7 +502,7 @@ class ChatToolMixin(ChatToolResultMixin):
         tool_name: str, tool_call_id: str, turn: int,
         args: dict, result_length: int, elapsed_ms: int,
         status: str, is_truncated: bool = False,
-        *, is_cached: bool = False,
+        *, is_cached: bool = False, execution: dict | None = None,
     ) -> None:
         """[C1] fire-and-forget 审计日志"""
         from services.agent.tool_audit import (
@@ -511,6 +515,7 @@ class ChatToolMixin(ChatToolResultMixin):
             turn=turn, args_hash=build_args_hash(args),
             result_length=result_length, elapsed_ms=elapsed_ms,
             status=status, is_truncated=is_truncated, is_cached=is_cached,
+            execution=execution or {},
         )))
 
     @staticmethod

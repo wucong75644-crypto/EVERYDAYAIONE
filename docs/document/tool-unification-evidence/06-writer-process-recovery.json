@@ -1,0 +1,50 @@
+[
+  {
+    "phase": "write",
+    "business_status": "success",
+    "pid": 754,
+    "write_version": 1,
+    "handler_calls": 1,
+    "replayed": false,
+    "chargeable_tokens": 33,
+    "historical_tokens": 33,
+    "artifact_retry_thinking_preserved": true,
+    "audit_count": 1
+  },
+  {
+    "phase": "read",
+    "business_status": "success",
+    "pid": 757,
+    "write_version": 0,
+    "handler_calls": 0,
+    "replayed": true,
+    "chargeable_tokens": 0,
+    "historical_tokens": 33,
+    "artifact_retry_thinking_preserved": true,
+    "audit_count": 1
+  },
+  {
+    "phase": "write",
+    "business_status": "error",
+    "pid": 759,
+    "write_version": 1,
+    "handler_calls": 1,
+    "replayed": false,
+    "chargeable_tokens": 33,
+    "historical_tokens": 33,
+    "artifact_retry_thinking_preserved": true,
+    "audit_count": 1
+  },
+  {
+    "phase": "read",
+    "business_status": "error",
+    "pid": 761,
+    "write_version": 0,
+    "handler_calls": 0,
+    "replayed": true,
+    "chargeable_tokens": 0,
+    "historical_tokens": 33,
+    "artifact_retry_thinking_preserved": true,
+    "audit_count": 1
+  }
+]

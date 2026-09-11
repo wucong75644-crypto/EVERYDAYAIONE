@@ -89,6 +89,9 @@ def test_agent_all_fields_and_distinct_model_projections_preserved(fmt, status):
         "args": {"query": "fixture"}, "status": status, "elapsed_ms": 23,
         "result_length": len(raw.summary), "truncated": False, "cached": False,
         "tokens_used": 321, "source": "erp_agent", "metadata": raw.metadata,
+        "execution": {"status": "succeeded", "handler_started": True, "attempts": 1,
+            "cached": False, "replayed": False, "cancelled": False, "effects": ["none"],
+            "source": "erp_agent", "original_tokens": 321, "chargeable_tokens": 321, "payload_version": 0},
     }
     assert audit["metadata"] is raw.metadata
     assert result.execution.status == "succeeded"  # completion != business success

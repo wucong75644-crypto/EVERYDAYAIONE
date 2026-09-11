@@ -164,29 +164,55 @@ def serialize_tool_result(result: Any) -> dict[str, Any]:
     from services.tools.result import ToolResult
 
     if isinstance(result, ToolResult):
-        raise TypeError("ToolResult requires legacy_persistence_value before the legacy serializer")
+        from core.config import get_settings
+        from services.tools.result_payload import encode_result, decode_raw
+        payload = encode_result(result)
+        if get_settings().tool_result_payload_write_version == 1:
+            return payload
+        # Apply the same safety boundary in the reader-first release, while
+        # retaining the legacy outer format and projections for rollback readers.
+        result = (result.legacy_persistence_value() if result.exception is not None
+                  else decode_raw(payload["tool_result"]))
 
+    from schemas.multimodal import FileReadResult
+    from services.scheduler.chat_task_manager import FormBlockResult
+    from services.tools.result_payload import (
+        _JSONBoundary, _agent_value, _record, decode_raw, validate_payload,
+    )
     if isinstance(result, AgentResult):
-        return {
+        # The raw compatibility API has the same safety rules: no runtime handles
+        # may leak through AgentResult.to_tool_content or default=str.
+        safe = decode_raw({"kind": "agent", "raw": _agent_value(result, _JSONBoundary())})
+        return validate_payload({
             "kind": "agent_result",
-            "summary": result.to_tool_content(),
-            "status": str(result.status),
-            "error_message": result.error_message,
-            "emit_payloads": result.emit_payloads,
-        }
+            "summary": safe.to_tool_content(),
+            "status": str(safe.status),
+            "error_message": safe.error_message,
+            "emit_payloads": safe.emit_payloads,
+        })
     if isinstance(result, (str, int, float, bool)) or result is None:
-        return {"kind": "scalar", "value": result}
-    try:
-        json.dumps(result, ensure_ascii=False)
-        return {"kind": "json", "value": result}
-    except (TypeError, ValueError):
-        return {"kind": "scalar", "value": str(result)}
+        return validate_payload({"kind": "scalar", "value": result})
+    if isinstance(result, (FileReadResult, FormBlockResult)):
+        # Preserve the old string projection only for these known value objects,
+        # after checking every field. Never stringify an arbitrary DB/lock/error.
+        _JSONBoundary().copy(_record(result))
+        return validate_payload({"kind": "scalar", "value": str(result)})
+    return validate_payload({"kind": "json", "value": result})
 
 
 def deserialize_tool_result(payload: Any) -> Any:
     """将幂等表的回放载荷恢复为工具循环可接受的结果。"""
     from services.agent.agent_result import AgentResult
 
+    from services.tools.result_payload import extension_of, decode_raw
+    extension = extension_of(payload)
+    if extension is not None:
+        # Full execution/audit restoration requires the currently authorized call.
+        # Actor uses restore_result; the legacy API continues to return raw values.
+        if extension["kind"] == "exception":
+            return AgentResult(summary=extension["error"]["message"], status="error",
+                               error_message=extension["error"]["message"])
+        return decode_raw(extension)
     if not isinstance(payload, dict):
         return str(payload)
     kind = payload.get("kind")

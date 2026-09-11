@@ -1,0 +1,33 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.2, pytest-9.0.3, pluggy-1.6.0 -- /Users/wucong/EVERYDAYAIONE/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-06/backend
+configfile: pytest.ini
+plugins: cov-7.1.0, asyncio-1.3.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 1 item
+
+backend/tests/test_tool_result_persistence_06.py::test_loop_delivery_failure_still_audits_completed_calls_once FAILED [100%]
+
+=================================== FAILURES ===================================
+_________ test_loop_delivery_failure_still_audits_completed_calls_once _________
+backend/tests/test_tool_result_persistence_06.py:381: in test_loop_delivery_failure_still_audits_completed_calls_once
+    assert executor.handler.await_count==2 and len(entries)==2
+E   AssertionError: assert (2 == 2 and 0 == 2)
+E    +  where 2 = <AsyncMock id='4563444000'>.await_count
+E    +    where <AsyncMock id='4563444000'> = <tests.tool_runtime_support.MockHandlerExecutor object at 0x110009e80>.handler
+E    +  and   0 = len([])
+=============================== warnings summary ===============================
+../../.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434
+  /Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+backend/services/adapters/kie/models.py:126
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-06/backend/services/adapters/kie/models.py:126: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class JsonSchema(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED backend/tests/test_tool_result_persistence_06.py::test_loop_delivery_failure_still_audits_completed_calls_once
+======================== 1 failed, 2 warnings in 0.45s =========================

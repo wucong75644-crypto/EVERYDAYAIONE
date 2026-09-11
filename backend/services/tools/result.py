@@ -204,7 +204,7 @@ class ToolResult:
         return collect_agent_result_payloads(self.raw)
 
     def legacy_persistence_value(self) -> Any:
-        """Explicit block-05 boundary; use only with the existing ledger writer.
+        """Legacy write-mode projection retained for reader-first rollout.
 
         Keep its exact AgentResult/scalar/json/error contract. In particular,
         never let the old serializer stringify this in-memory envelope.
@@ -256,10 +256,36 @@ class ToolResult:
             "source", "tokens_used", "confidence", "insights", "follow_up", "thinking_text",
         )}
 
+    @property
+    def chargeable_tokens(self) -> int:
+        """Historical token facts survive reuse, but are never charged again."""
+        return 0 if self.execution.cached or self.execution.replayed else self.agent_context.get("tokens_used", 0)
+
+    def reused(self, *, call, context, decision, cached=False, replayed=False):
+        audit = self._audit(call, context, self.status, 0, self.audit.get("result_length"),
+                            self.raw if self.kind == "agent" else None)
+        if "origin" in self.audit:
+            audit["origin"] = self.audit["origin"]
+        audit.update(truncated=self.audit.get("truncated", False),
+                     payload_version=self.audit.get("payload_version", 0))
+        return replace(self, decision=decision, audit=audit, execution=replace(
+            self.execution, handler_started=False, attempts=0, elapsed_ms=0,
+            cached=cached, replayed=replayed,
+        ))
+
     def audit_fields(self) -> dict[str, Any]:
         """Pre-delivery facts for the existing writer; no write or dedup occurs here."""
         fields = dict(self.audit)
         fields["cached"] = self.execution.cached
+        fields["execution"] = {
+            "status": self.execution.status, "handler_started": self.execution.handler_started,
+            "attempts": self.execution.attempts, "cached": self.execution.cached,
+            "replayed": self.execution.replayed, "cancelled": self.execution.cancelled,
+            "effects": list(self.execution.effects), "source": self.agent_context.get("source", ""),
+            "original_tokens": self.agent_context.get("tokens_used", 0),
+            "chargeable_tokens": self.chargeable_tokens,
+            "payload_version": self.audit.get("payload_version", 0),
+        }
         if self.kind == "form":
             fields["result_length"] = len(json.dumps(self.raw.form))
         return fields
