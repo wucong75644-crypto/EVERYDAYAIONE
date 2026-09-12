@@ -1,8 +1,4 @@
-"""Read existing schema factories/metadata without changing their ownership.
-
-All legacy imports are lazy. In particular common_tools builds its ERPAgent
-summary at runtime; nothing in the old import graph imports services.tools.
-"""
+"""Compatibility catalog API and presentation adapter; no independent policy or definitions."""
 
 from __future__ import annotations
 
@@ -11,39 +7,28 @@ from typing import Iterable, Mapping
 
 from .context import ToolContext
 from .registry import ToolRegistry
-from .legacy_policy import legacy_policy_rules
 from .spec import Exposure, ToolAvailability, ToolSpec
 
 
-# The two handlers absent from get_chat_tools. fetch_all_pages already has an
-# internal factory; get_conversation_context has only a partial validation schema.
-_INTERNAL_SOURCES = {
-    "fetch_all_pages": "config.erp_tools.build_fetch_all_pages_tool",
-    "get_conversation_context": "services.agent.conversation_tool_mixin.ConversationToolMixin",
-}
-_COMPATIBILITY = {
-    "erp_agent": ("query -> task in existing validator and handler; task takes precedence",),
-    "erp_analyze": ("query fallback exists in handler only; validator still uses public task schema",),
-    "file_analyze": ("file_id preferred; legacy path and scope retained",),
-    "file_search": ("scope defaults to current without a bound browse; explicit scope remains a narrowing selection, never authorization",),
-    "file_delete": (
-        "file_ids and legacy files retained; handler accepts string or list",
-        "when both are given, resolved file_ids are appended to files; do not replace this behavior",
-    ),
-    "local_data": ("handler extra_fields falls back to fields; no new public field is added",),
-    "code_execute": ("legacy cache eligibility retained independently; kernel state is not read-only",),
-    "restore_file": ("legacy safe risk and serial scheduling retained despite workspace writes",),
-}
-# Effects are independent observations, not derived from risk/concurrency/cache.
-# Unreviewed legacy business effects remain explicitly unknown for later batches.
-_EFFECTS = {
-    "code_execute": ("kernel_state", "workspace_artifacts"),
-    "file_analyze": ("workspace_artifacts", "file_index"),
-    "restore_file": ("workspace_write", "deletion_record"),
-    "manage_scheduled_task": ("proposal_or_form",),
-    "fetch_all_pages": ("workspace_artifacts", "file_index"),
-    "get_conversation_context": ("none",),
-}
+def __getattr__(name: str):
+    """Preserve old diagnostic imports without restoring metadata ownership."""
+    if name == "legacy_policy_rules":
+        from .legacy_policy import legacy_policy_rules
+        return legacy_policy_rules
+    if name not in {"_INTERNAL_SOURCES", "_COMPATIBILITY", "_EFFECTS"}:
+        raise AttributeError(name)
+    from .catalog import build_tool_catalog
+    specs = build_tool_catalog().specs()
+    if name == "_COMPATIBILITY":
+        return {s.name: s.compatibility_notes for s in specs if s.compatibility_notes}
+    if name == "_EFFECTS":
+        # Original diagnostic subset, not a source used by execution.
+        selected = {"code_execute", "file_analyze", "restore_file", "manage_scheduled_task",
+                    "fetch_all_pages", "get_conversation_context"}
+        return {s.name: s.effects for s in specs if s.name in selected}
+    return {s.name: ("config.erp_tools.build_fetch_all_pages_tool" if s.name == "fetch_all_pages"
+                     else "services.agent.conversation_tool_mixin.ConversationToolMixin")
+            for s in specs if s.exposure is Exposure.LEGACY_INTERNAL}
 
 
 class LegacyAdvertisement:
@@ -76,80 +61,9 @@ class LegacyAdvertisement:
 
 
 def build_legacy_catalog() -> ToolRegistry:
-    """Build 3 explicit specs plus adapters for every existing public/internal tool.
-
-    No request identities, settings reads, DB clients, or ToolExecutors are held.
-    Factory output remains authoritative, including every description/parameter.
-    """
-    from config.chat_tools import get_core_tools, get_safety_level, is_concurrency_safe
-    from config.agent_tools import TOOL_SCHEMAS
-    from config.code_tools import build_code_tools
-    from config.common_tools import build_common_tools
-    from config.crawler_tools import build_crawler_tools
-    from config.erp_tools import build_erp_tools, build_fetch_all_pages_tool
-    from config.file_tools import build_file_tools
-    from config.tool_domains import TOOL_DOMAINS
-    from services.agent.tool_result_cache import ToolResultCache
-
-    registry = ToolRegistry()
-    scheduled_names = frozenset(t["function"]["name"] for t in get_core_tools(org_id="catalog"))
-    families = (
-        ("config.erp_tools.build_erp_tools", build_erp_tools(), True, ()),
-        ("config.crawler_tools.build_crawler_tools", build_crawler_tools(), False, ("crawler_enabled",)),
-        ("config.file_tools.build_file_tools", build_file_tools(), False, ("file_workspace_enabled",)),
-        ("config.code_tools.build_code_tools", build_code_tools(include_workspace=True), False, ("sandbox_enabled",)),
-        ("config.common_tools.build_common_tools", build_common_tools(), False, ()),
-    )
-    explicit = {
-        "search_knowledge": ("safe", True, True, ("none",)),
-        "file_search": ("safe", True, True, ("file_index",)),
-        "file_delete": ("dangerous", False, False, ("workspace_delete", "deletion_record")),
-    }
-    for source, schemas, requires_org, flags in families:
-        for schema in schemas:
-            name = schema["function"]["name"]
-            if name not in TOOL_DOMAINS:
-                raise ValueError(f"Legacy tool missing domain: {name}")
-            if name in explicit:
-                risk, parallel, cacheable, effects = explicit[name]
-            else:
-                risk = get_safety_level(name).value
-                parallel = is_concurrency_safe(name)
-                cacheable = ToolResultCache.is_cacheable(name)
-                effects = _EFFECTS.get(name, ("unknown",))
-            registry.register(ToolSpec(
-                name=name, schema=schema, domain=TOOL_DOMAINS[name].value,
-                availability=ToolAvailability(
-                    requires_org=requires_org or name == "manage_scheduled_task",
-                    requires_personal_context=name == "manage_scheduled_task",
-                    feature_flags=flags,
-                ),
-                risk_level=risk, parallelizable=parallel, cacheable=cacheable,
-                effects=effects, executor_type="legacy", handler_key=name,
-                exposure=Exposure.PUBLIC, source=source,
-                definition_kind="explicit" if name in explicit else "legacy",
-                compatibility_notes=_COMPATIBILITY.get(name, ()),
-                legacy_validation_schema=TOOL_SCHEMAS.get(name),
-                policy_rules=legacy_policy_rules(name, scheduled_names),
-            ))
-    for name, source in _INTERNAL_SOURCES.items():
-        registry.register(ToolSpec(
-            name=name,
-            schema=build_fetch_all_pages_tool() if name == "fetch_all_pages" else None,
-            domain=TOOL_DOMAINS[name].value if name == "fetch_all_pages" else "general",
-            availability=ToolAvailability(
-                requires_org=name == "fetch_all_pages",
-                requires_personal_context=name == "get_conversation_context",
-            ),
-            risk_level=get_safety_level(name).value,
-            parallelizable=is_concurrency_safe(name),
-            cacheable=ToolResultCache.is_cacheable(name), effects=_EFFECTS[name],
-            executor_type="legacy", handler_key=name, exposure=Exposure.LEGACY_INTERNAL,
-            source=source,
-            legacy_validation_schema=TOOL_SCHEMAS.get(name),
-            policy_rules=legacy_policy_rules(name, scheduled_names),
-        ))
-    return registry
+    """Compatibility name for the complete Spec-owned catalog."""
+    from .catalog import build_tool_catalog
+    return build_tool_catalog()
 
 
 def validate_legacy_coverage(

@@ -13,7 +13,15 @@ class ActionFacts:
     denied_reason: str | None = None
 
 
-def resolve_action(spec: ToolSpec, arguments: Mapping[str, Any]) -> ActionFacts:
+def direct_task_management(context) -> bool:
+    """Trusted interactive intent; model arguments cannot enable this path."""
+    return bool(context is not None and context.entrypoint == "model"
+                and context.execution_mode == "interactive"
+                and context.permission_mode != "plan"
+                and context.feature_flags.get("scheduled_task_direct_enabled") is True)
+
+
+def resolve_action(spec: ToolSpec, arguments: Mapping[str, Any], *, context=None) -> ActionFacts:
     rule = spec.policy_rules.action_rule
     operation, risk = spec.policy_rules.operation, spec.risk_level
     if rule is None:
@@ -22,13 +30,15 @@ def resolve_action(spec: ToolSpec, arguments: Mapping[str, Any]) -> ActionFacts:
     if not isinstance(action, str) or not action:
         return ActionFacts(operation, risk, "unknown_action")
     if rule == "scheduled_task":
-        # ChatTaskManager: list reads; all other supported actions only propose.
+        # Compatibility callers keep proposal semantics; trusted chat may submit.
         operations = {
             "list": "read", "create": "proposal", "update": "proposal",
             "pause": "proposal", "resume": "proposal", "delete": "proposal",
         }
         if action not in operations:
             return ActionFacts(operation, risk, "unknown_action")
+        if action != "list" and direct_task_management(context):
+            return ActionFacts("business_write", risk)
         return ActionFacts(operations[action], risk)
 
     from services.kuaimai.registry import (

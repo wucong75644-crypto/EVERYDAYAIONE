@@ -391,7 +391,24 @@ class ToolExecutor(
                 metadata={"retryable": True},
             )
 
-        manager = ChatTaskManager(self.db, self.user_id, self.org_id)
+        from services.tools.action_rules import direct_task_management
+        from services.tools.dispatcher import current_dispatch_call_id
+        call_id = current_dispatch_call_id()
+        context = self.tool_runtime.context()
+        structured_chat = bool(call_id and context.entrypoint == "model" and context.execution_mode == "interactive")
+        if structured_chat and action == "create":
+            from services.scheduler.task_request_context import current_creation_text
+            description = current_creation_text(getattr(self, "_parent_messages", None))
+            if description:
+                args = {**args, "description": description}
+        if call_id and direct_task_management(context):
+            manager = ChatTaskManager(
+                self.db, self.user_id, self.org_id, submission_mode="apply_if_allowed",
+                idempotency_key=f"task-chat:{self.user_id}:{self.conversation_id}:{call_id}",
+                structured_input=structured_chat,
+            )
+        else:
+            manager = ChatTaskManager(self.db, self.user_id, self.org_id, structured_input=structured_chat)
         result = await manager.handle(action, args)
 
         if result.get("type") == "form":
@@ -409,7 +426,9 @@ class ToolExecutor(
 
         return AgentResult(
             summary=result.get("text", str(result)),
-            status="success",
+            status="error" if result.get("success") is False else "success",
+            error_message=result.get("text") if result.get("success") is False else None,
+            metadata={"retryable": result.get("retryable", False)} if result.get("success") is False else {},
         )
 
     # ========================================

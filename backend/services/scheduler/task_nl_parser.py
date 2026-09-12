@@ -7,7 +7,9 @@
 - schedule_type: once / daily / weekly / monthly
 - time_str / weekdays / day_of_month / run_at: 频率字段
 
-降级链：qwen-turbo → 关键词兜底（保证永不阻塞前端表单创建）
+新面板：一次模型提取 → ToolSpec 字段校验；失败保留已有表单供用户修正。
+旧 parse_task_nl 调用保留关键词兜底，旧 parse_task_request 保留来源片段校验。
+新聊天入口直接接收主模型工具参数，不调用本模块做第二次解析。
 
 设计文档: docs/document/UI_定时任务面板设计.md §AI 解析
 """
@@ -84,13 +86,13 @@ def _extract_json(text: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-async def _call_llm(text: str, tz: str) -> Optional[Dict[str, Any]]:
+async def _call_llm(text: str, tz: str, *, system_prompt: str | None = None) -> Optional[Dict[str, Any]]:
     """调 qwen-turbo 解析，失败返回 None"""
     if not settings.dashscope_api_key:
         return None
 
     now_local = datetime.now(ZoneInfo(tz))
-    system_prompt = NL_PARSER_SYSTEM_PROMPT
+    system_prompt = system_prompt or NL_PARSER_SYSTEM_PROMPT
     user_prompt = (
         f"当前时间: {now_local.strftime('%Y-%m-%d %H:%M %z')}\n"
         f"输入: {text.strip()}"
@@ -107,7 +109,7 @@ async def _call_llm(text: str, tz: str) -> Optional[Dict[str, Any]]:
                     {"role": "user", "content": user_prompt},
                 ],
                 "temperature": 0.0,
-                "max_tokens": 300,
+                "max_tokens": 1200 if system_prompt != NL_PARSER_SYSTEM_PROMPT else 300,
             },
         )
         response.raise_for_status()
@@ -171,3 +173,104 @@ async def parse_task_nl(text: str, tz: str = "Asia/Shanghai") -> Dict[str, Any]:
         return parsed
 
     return _fallback(text)
+
+
+async def parse_structured_task_request(text: str, tz: str = "Asia/Shanghai", *, operation: str = "create") -> Dict[str, Any]:
+    """Panel AI fill: one model extraction, then the same fields as chat tools.
+
+    Chat tools already receive these fields and never call this function.
+    The older parser below remains solely for description-only compatibility.
+    """
+    from services.tools.catalog import build_tool_catalog
+    from services.scheduler.task_definition_input import task_definition_input, TaskDefinitionInputError
+    schema = build_tool_catalog().require("manage_scheduled_task").to_schema()["function"]
+    instructions = (
+        "你是任务表单填写助手。仅返回 JSON：{\"definition\":{...},\"recipient\":\"收件对象\"}。"
+        f"本次操作 {operation}，时区 {tz}。根据用户原话一次整理字段；不要执行任务。"
+        "create 保留完整业务内容、日期范围、对象、指标口径、分组、筛选和输出要求。"
+        "prompt 不包含创建任务、触发时间或发送动作。update 仅返回明确修改项，未提及的不填；"
+        "只改输出形式用 output_format。不得猜频率、时间、日期、店铺或收件人。"
+        "收件对象原意保留为 recipient（包括企微等渠道），没有指定则为空。"
+        "缺项省略，不要填空字符串。字段契约："
+        + json.dumps(schema["parameters"]["properties"]["definition"], ensure_ascii=False)
+    )
+    raw = await _call_llm(text, tz, system_prompt=instructions)
+    if not isinstance(raw, dict) or "definition" not in raw:
+        raise TaskDefinitionInputError("未能整理任务信息，请重试或直接填写表单；已有内容已保留。")
+    return task_definition_input(raw["definition"], operation=operation, recipient=raw.get("recipient", ""))
+
+
+async def parse_task_request(text: str, tz: str = "Asia/Shanghai", *, operation: str = "create") -> Dict[str, Any]:
+    """Explicit fields only for direct submission; old form-prefill API stays intact."""
+    prompt = f"""你是定时任务提交前解析器。只输出一个 JSON 对象，不要 Markdown 或解释。
+输入可能包含当前创建请求及其紧邻追问的用户补充（按时间顺序分行），请合并明确要求；有矛盾且无法确定时留空待补齐。
+本次操作：{operation}。这是实际提交前解析，不允许补默认频率、时间、店铺或收件人。
+输出 {{"changes": {{...}}, "evidence": {{字段名: "输入中的原文片段"}}, "recipient": "原文收件人描述或空字符串"}}。
+changes 仅包含用户明确提供的字段；每个字段都须有 evidence，直接引用输入原文。
+字段：name 简短名称；prompt 执行内容；schedule_type 为 once/daily/weekly/monthly；
+time_str 为 HH:MM；weekdays 为 0-6 数组（周日为 0）；day_of_month 为 1-31；run_at 为含时区的 ISO8601 日期时间。
+create 可以提炼 name，prompt 只保留每次实际执行的业务要求，不包含创建/设置定时任务、触发时间或推送动作。
+必须保留业务动作、数据日期范围（如昨天）、店铺、指标口径（如付款订单数）、分组、筛选、排除条件和输出要求。
+表格/排序/环比等输出要求属于 execution，绝不是 delivery；delivery 仅包含发送动作和收件人。
+create 还须输出 request_parts 数组，按原文顺序逐段分为 request（创建任务的操作话术）、execution（业务要求）、schedule（触发安排）、delivery（推送动作和对象）。
+每项为 {{"kind":"execution","text":"逐字原文"}}。所有 text 拼接必须等于完整输入（含标点），不能遗漏、改写或补字；同类可有多段。
+不确定的业务文字保留为 execution，不能为了简化而丢弃。缺少执行内容则不要填 prompt；不要把仅有时间的句子当执行内容。
+店铺、收件人等仍是占位文字时不得猜测具体对象。prompt 不扩展店铺、指标或数据范围。
+update 只返回用户明确要求修改的字段。改时间绝不生成新 name 或 prompt，未提到频率则不改变频率。
+update 仅改变输出形式时，请返回 output_format（表格/列表/项目符号/文字/Markdown表格/CSV），不要改写 prompt。
+weekdays 必须逐一来自原文，时间含糊则不填 time_str，once 缺少具体日期则不填 run_at。
+run_at 与 weekdays 也必须有同名 evidence，不能只提供 schedule_type 的证据。
+收件人未说明则 recipient 为空；说了群、同事、企微等则完整保留在 recipient 中，不能改为自己。
+创建示例，输入：每天上午9点，把昨天A店的销售汇总发给我
+{{"changes":{{"name":"A店销售日报","prompt":"把昨天A店的销售汇总","schedule_type":"daily","time_str":"09:00"}},"evidence":{{"prompt":"把昨天A店的销售汇总","schedule_type":"每天","time_str":"上午9点"}},"recipient":"我","request_parts":[{{"kind":"schedule","text":"每天上午9点，"}},{{"kind":"execution","text":"把昨天A店的销售汇总"}},{{"kind":"delivery","text":"发给我"}}]}}
+创建示例，输入：创建一个定时任务，查询昨天的付款订单数按照平台划分
+{{"changes":{{"name":"昨日付款订单数统计","prompt":"查询昨天的付款订单数按照平台划分"}},"evidence":{{"prompt":"查询昨天的付款订单数按照平台划分"}},"recipient":"","request_parts":[{{"kind":"request","text":"创建一个定时任务，"}},{{"kind":"execution","text":"查询昨天的付款订单数按照平台划分"}}]}}
+创建示例，输入：2030年10月1日9点发A店日报给我
+{{"changes":{{"name":"A店日报","prompt":"发A店日报","schedule_type":"once","run_at":"2030-10-01T09:00:00+08:00"}},"evidence":{{"prompt":"发A店日报","schedule_type":"2030年10月1日9点","run_at":"2030年10月1日9点"}},"recipient":"我","request_parts":[{{"kind":"schedule","text":"2030年10月1日9点"}},{{"kind":"execution","text":"发A店日报"}},{{"kind":"delivery","text":"给我"}}]}}
+修改示例，输入：改到十点
+{{"changes":{{"time_str":"10:00"}},"evidence":{{"time_str":"十点"}},"recipient":""}}
+"""
+    raw = await _call_llm(text, tz, system_prompt=prompt)
+    raw = raw if isinstance(raw, dict) else {}
+    changes, evidence = raw.get("changes"), raw.get("evidence")
+    changes = changes if isinstance(changes, dict) else {}
+    evidence = evidence if isinstance(evidence, dict) else {}
+    allowed = {"name", "prompt", "schedule_type", "time_str", "weekdays", "day_of_month", "run_at", "output_format"}
+    accepted = {k: v for k, v in changes.items() if k in allowed and v not in (None, "") and (
+        operation == "create" and k == "name" or isinstance(evidence.get(k), str)
+        and bool(evidence[k].strip()) and evidence[k] in text
+    )}
+    malformed = set()
+    if accepted.get("time_str") and not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", str(accepted["time_str"])):
+        accepted.pop("time_str")
+        malformed.add("time_str")
+    if accepted.get("schedule_type") not in {None, "once", "daily", "weekly", "monthly"}:
+        accepted.pop("schedule_type")
+        malformed.add("schedule_type")
+    if accepted.get("output_format") not in {None, "表格", "列表", "项目符号", "文字", "Markdown表格", "CSV"}:
+        accepted.pop("output_format")
+    if operation == "create":
+        from services.scheduler.task_request_content import execution_content
+        content = execution_content(text, raw, accepted)
+        if content:
+            accepted["prompt"] = content
+        else:
+            accepted.pop("prompt", None)
+        accepted.setdefault("name", (accepted.get("prompt") or "新建任务")[:20])
+    from services.scheduler.task_schedule_evidence import inconsistent_schedule_fields
+    inconsistent = inconsistent_schedule_fields(text, accepted, evidence, tz) | malformed
+    for field in inconsistent:
+        accepted.pop(field, None)
+    kind = accepted.get("schedule_type")
+    required = ["prompt", "schedule_type"] + ([] if kind == "once" else ["time_str"]) if operation == "create" else []
+    required += {"once": ["run_at"], "weekly": ["weekdays"], "monthly": ["day_of_month"]}.get(kind, [])
+    missing = list(dict.fromkeys([key for key in required if not accepted.get(key)] + sorted(inconsistent)))
+    from services.scheduler.task_submission import unfilled_shop_placeholder
+    if operation == "create" and unfilled_shop_placeholder(text) and "prompt" not in missing:
+        missing.append("prompt")
+    recipient = raw.get("recipient") if isinstance(raw.get("recipient"), str) else ""
+    # A parser omission must not silently redirect a requested group/person to self.
+    if not recipient and re.search(r"群|同事|企微|微信|钉钉|飞书|发送到|推送到|发给(?!我)|推送给(?!我)", text):
+        recipient = text
+    return {"changes": accepted, "missing_fields": missing, "recipient": recipient,
+            "parsed": bool(raw)}

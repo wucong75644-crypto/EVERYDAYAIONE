@@ -1,0 +1,2 @@
+PASS: 35 registered, 33 public, 2 internal; 0 missing/duplicate/handler gaps; protected engines unchanged
+PASS: 2 existing ToolExecutor execution constructions + 1 new read-only capability check; 1 ToolLoopExecutor

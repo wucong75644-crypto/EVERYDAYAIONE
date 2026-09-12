@@ -1,5 +1,56 @@
 # 工具统一：共同约束与板块交接
 
+## 最新复验：执行内容整理（2026-09-12）
+
+生产已完整部署 `eeccf3bd`；用户随后发现任务执行内容包含整句“创建一个定时任务”。生产记录确认原 prompt 被解析器强制覆盖为整段原话、补全表单又隐藏该字段；截图每天 08:00 来自表单补填，非自动默认。现于同一工作树修复原文分类与内容提取，补全时执行内容可见，未知/遗漏业务文字保留；整理失败时原话仍显示但执行内容留空待补充。后端 696、前端 194 项、类型检查及 6 条真实模型合成请求通过。**本轮未提交部署，原生产任务未改，用户验收未关闭，不进入 08。** [完整验收与接口](SCHEDULED_TASK_CONTENT_EXTRACTION_ACCEPTANCE.md)。下方均为历史开发/发布快照。
+
+## 当前有效状态：创建表单生产复验修复（2026-09-12）
+
+发布补充：表单修复已提交为 `5b577e64`，首次全量测试前端 1320、后端 9861 passed，但后端切换检查将已无进程的 systemd failed 状态误判，未完成发布。原四服务已恢复，健康接口 200；完整验收候选失效。现补原发布脚本的状态/PID/cgroup 联合核验，旧入口复现失败、新 16 项回归通过。最终 SHA/部署结果以之后受控发布回执为准，用户验收仍未关闭。以下“未提交/未发布”保留为前次开发快照。
+
+后续升级已以 `8773b8b77ed0932445b9ba8b724fa52498cdbd51` 完成受控生产发布，迁移 254/255 已应用。用户随后报告创建时表单缺失：后端已保存 form，前端运行时枚举拒绝 datetime-local 并剥离条件 not；另发现严格解析混用旧格式指令、模型改写原文。现已在同一任务增量修复，后端 675、前端 193 项复验及类型/构建通过，真实浏览器核验已生成表单可见。**修复是 8773b8b7 + 未提交差异，尚未重新发布，用户验收未关闭，不进入 08。**
+
+[本次完整复验与用户验证单](SCHEDULED_TASK_FORM_FIX_ACCEPTANCE.md) 包含接口、源文件指纹、修复前失败、回退及生产限制。旧工具 schema、授权快照和业务链保持；直接创建保留当前 user 原文并要求补全明确的店铺模板标记，旧 proposal 模式保持。没有第二套执行策略。
+
+## 上次升级开发快照（下列未部署状态为当时记录）
+
+用户在诊断暂停异常、调研和代码方案后明确授权开始开发。已完成原系统 A–D 增量升级，本地技术验证通过：后端 1963 passed/1 opt-in skip（该原测试体另在临时数据库执行通过）、前端 122 passed、TypeScript/构建通过。**本次升级未提交部署、未合并关闭，不进入 08。** [逐项验收及生产验证单](SCHEDULED_TASK_UPGRADE_ACCEPTANCE.md)、[实际接口/迁移/回退](TECH_定时任务增量升级边界.md#8-已实现的接口与运行机制)。
+
+当前分支仍为 `codex/task/20260911215117-tool-unification-07`，HEAD `75fced912ce1ee30668b1a588043b26120ee1e8d`；被测版本是 HEAD + 本次未提交差异，[源码指纹及完整 diff](scheduled-task-upgrade-evidence/source-checks.json) 可追溯。75fced91 的历史部署未取得完整受控完成回执，不等于本次升级已部署；生产状态须在下一次授权发布时重新核验。
+
+35 项工具、别名和 handler-only 清单继续完整，Spec 唯一维护元数据，ERP/文件/沙盒/媒体原语义保持。任务工具 effects 显式增加 task_definition，可信交互的直接管理由统一 Policy 事先判断并禁用缓存；其他模式/旧 helper 保持提案语义。这是明确授权的行为变化，不覆盖原 07 “仅迁移定义”的历史证据。保留 legacy 的原因仍是业务适配、兼容入口和投影，没有第二条权限执行链。
+
+发布本版必须排空在途任务并停止所有旧 Scheduler/HTTP Worker，再执行 254/255 后启动新代码；不能混跑旧调度器。停止当前运行未开放。08 仍须等待本升级的确定候选完成生产验证及用户验收关闭。
+
+## 原 07 交付快照（2026-09-11，以下 SHA/未提交状态为当时记录）
+
+用户本次明确确认 01–06 已验收进入 main。07 经受控 start 从最新 origin/main `ca4c3d7e6a89ef34412cf405efc2d4fb0c1350e2` 创建；下表各关闭合并均为该基准祖先，且代码树与其验收候选一致。[07 源码证据](tool-unification-evidence/07-source-checks.json) 保存完整 SHA 和核验结果。
+
+| 板块 | main 关闭合并 | 已验收候选 | 记录 |
+|---|---|---|---|
+| 01 | 2e8fdb2d | b4c854ac | [01 验收](TOOL_UNIFICATION_ACCEPTANCE_01.md) |
+| 02 | 8e74f57d | 4084db4e | [02 验收](TOOL_UNIFICATION_ACCEPTANCE_02.md) |
+| 03 | 0f65d72d | 2ed4d783 | [03 验收及修复历史](TOOL_UNIFICATION_ACCEPTANCE_03.md) |
+| 04 | 6c0737ab | 1f288018 | [04 验收](TOOL_UNIFICATION_ACCEPTANCE_04.md) |
+| 05 | cdba58f9 | 87b07718 | [05 验收](TOOL_UNIFICATION_ACCEPTANCE_05.md)、[最终附件修复](TOOL_UNIFICATION_05_ATTACHMENT_BINDING.md) |
+| 06 | ca4c3d7e | 6e72665b | [06 验收](TOOL_UNIFICATION_ACCEPTANCE_06.md)、[v1 writer 上线](TOOL_UNIFICATION_06_WRITER_ROLLOUT.md) |
+| 07 | 尚未提交部署/关闭 | 尚无候选 SHA | [07 逐项验收](TOOL_UNIFICATION_ACCEPTANCE_07.md) |
+
+07：**技术验收通过，待提交部署及用户验收**。任务工作树 `/Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07`，分支 `codex/task/20260911215117-tool-unification-07`；当前 HEAD 为上述基准，**被测版本为 HEAD 加未提交差异**，精确 backend 文件指纹见源码证据，不用基准冒充已测试发布候选。
+
+- [最终架构及接口](TOOL_UNIFICATION_ARCHITECTURE_07.md)、[35 项工具/别名/独立通道目录](TOOL_UNIFICATION_CATALOG_07.md) 是 01–07 当前运行链的代码权威；下文旧板块交付时的“当前/未关闭/不能启动下一块”等保持为历史快照。
+- 定义按 ERP 22 → 文件/沙盒 5 → 媒体 3 → 任务 1 顺序迁移、分别 147/296/173/159 项验证通过，再收拢通用/爬虫/内部上下文 4。33 public + 2 handler-only 全部为显式 ToolSpec，未注册/重复/缺 handler 均为 0。没有增加工具名称或扩大内部可见性。
+- `services/tools/catalog.py::build_tool_catalog` 为规范工厂；`build_legacy_catalog` 原导入/签名保留并委托。原 schema 工厂资源进入 `definitions/*_schemas.py`，其 config build/集合/validator 与 `chat_tools` 风险/并发/目录、`tool_domains` 均为兼容投影。Spec 新增 catalog_order/catalog_groups/core/legacy_plan_visible/schema_variants，只承载原目录和视图差异。
+- Planner CapabilityRegistry 新增 from_specs，原 from_tool_schemas/from_names 从注册 Spec 派生；旧 capability/Planner/执行授权快照字段和版本保持。24 个原描述的执行模式对齐既有 Spec，预检不再把媒体/恢复/任务提案标成只读可用；风险/read/write 标签及实际运行授权保持。通用自定义 Planner API 仍可用，但不能注册运行工具或执行 Handler。
+- `config.tool_registry` 的 domain 为语义选择分组，保留 tags/priority/synonyms 和原算法；它不是权限域。legacy 现在只剩原业务 Handler、展示/旧 schema/API/通道适配和无生产执行消费的描述 helper，没有另一套执行策略。
+- 原无组织 ERP 可见性与业务返回、code_execute 缓存资格、restore_file safe/串行/不可缓存及原 replay 资格保持。ERP 引擎、文件目标/内核、媒体结算、任务提交流程和实际执行 Policy/Dispatcher/Runtime 均未改写。
+- 最终 **2479 passed、0 failed/error/xfail、2 个既有字体环境 skipped**；334 个新增必需场景无跳过。完整契约冻结基准重新采集字节一致；144 组上下文对照、9 种独立进程导入、两用户同 call_id、旧确认 binding 和 3 入口 × 5 代表工具回归通过。失败/fixture 修正、精确命令、全日志和 A-07/G 表见 07 验收。
+- 无数据库/持久化/WS 新变更；06 v1 writer/reader 和调用 ledger 源码逐字保留。回退到 `ca4c3d7e` 即保留 06 读写兼容，不需要 payload 回迁；不得回退到不支持 06 v1 reader 的旧版本。
+- **08 代码前置已具备，但启动仍需本块用户指令提交部署 → 确定候选验证 → 用户指令验收关闭 → main 一致性核验。本任务不进入 08，未推送/部署/合并/清理。** 真实外部业务/生产浏览器/付费生成与用户观感按 07 验证单待完成。
+
+## 以下为 06 及更早板块的交付时快照
+
+
 > **2026-09-11 写入阶段更新**：兼容 reader 版本 `e097e392fd8229cffda363fc85113c31fb995179` 已先部署并完成用户回归；本次第二阶段默认写入切换为 **1**，显式设置 0 可停止新写入且继续读取 v1。当前有效发布顺序、验证和回退依据见 [06 写入阶段验收补充](TOOL_UNIFICATION_06_WRITER_ROLLOUT.md)。最终候选及关闭结果以受控发布/关闭交付消息为准。
 
 以下为首次兼容读取阶段的验收和接口快照；其中“默认 0”“待部署”等时态不覆盖上述第二阶段更新。
@@ -292,3 +343,33 @@ Web 的 run_legacy_chat_stream 与 Actor 的 ChatGenerationExecutor.execute 共�
 回退到 `6c0737ab` 无需载荷迁移；实际落盘/恢复对照及 writer/reader AST 证明旧读兼容。真实浏览器文件点击、表单提交、获准媒体样本/生产 ERP 及用户观感未完成，按验收单记录确定部署版本。
 
 06 的代码前置：实时结果已统一且所有落盘边界明确；可据此独立设计新版本 replay/cache/audit 载荷、旧格式读取及跨版本回退。流程前置：用户“提交部署”确定候选 → 用户按 05 验证单验收 → 用户“清理工作树” → 受控关闭核验 main。完成之前不得启动 06。
+
+### 2026-09-12 用户授权的定时任务复查修复
+
+ST-14～18 已本地修复：新建草稿替换、收件对象解析与选择一致、当前创建的连续澄清、时间原文一致性以及 ChangeSet 漏事件恢复。复用既有 Registry/Policy/Dispatcher/Planner、提交和运行链；无工具 schema/别名/授权快照改动或业务内核重写。后端 1032（含独立临时 PG 27）、前端 141、TS/构建通过；6 条既有真实模型原始输出离线重放通过。详细范围、失败复验及指纹见 [本批验收](SCHEDULED_TASK_CONSISTENCY_ACCEPTANCE.md)。
+
+仍为 eeccf3bd 上未提交候选，尚未部署；生产用户验收、01～07 关闭及板块 08 前置不因本地通过而自动推进。遗留入口继续是业务兼容适配，不存在新增独立权限路径。
+
+
+### 2026-09-12 生产反馈 ST-19～23 增补
+
+上批修复已提交部署为 `002286f0057ee53bd7b96ece9ab031a543efce97`，上方“未部署”是此前开发快照。本批在该版本上修复通知选择、混合运行结果展示、创建静态回执、最终消息丢弃 ChangeSet 卡片及暂停反馈。后端 478、前端 146、类型/构建通过；补充 lint 有 1 项已在基准复现的原有报错。逐项证据和限制见 [反馈修复验收](SCHEDULED_TASK_FEEDBACK_ACCEPTANCE.md)。
+
+本批仍为未提交差异，尚未部署/用户验收。新 changeset 最终消息需要保留后端兼容类型，禁止整包直接回退旧 schema，见验收记录的回退探针和保留补丁要求。仅业务适配/消息投影变化，没有另一条权限执行路径；07 仍未用户关闭，不进入 08。
+
+
+### 2026-09-12 创建表单必填校验增补
+
+前批反馈修复已完整发布为 `d851d93e`。用户新截图缺少执行频率，本批 ST-24 恢复可见必填项提交前校验，后端拒绝语义保留但改中文提示；没有默认补频率或改任务授权。前端 30、后端 86 通过，当前未提交部署。详见 [反馈验收第 8 节](SCHEDULED_TASK_FEEDBACK_ACCEPTANCE.md#8-st-24未选频率的创建请求2026-09-12)；07 仍待用户验收关闭。
+
+### 2026-09-12 完整口语请求 ST-25
+
+ST-24 已完整部署为 `d16adf195d4e93df6007239eba4bdbec34f4ca9d`。用户继续报告执行内容被清空；三次获准真实 Qwen 解析证实是 task_request_content 的时间/发送口语校验误拒，已增量修复并回放到 ToolExecutor → ChatTaskManager → 既有提交边界。1072 项定向回归通过，修改后两次真实解析业务内容和每天 08:00 均完整。见 [ST-25 验收、接口与回退](SCHEDULED_TASK_COLLOQUIAL_ACCEPTANCE.md)。本批未提交部署/用户验收，无新权限入口或业务内核改造，07 保留，08 不启动。
+
+### 2026-09-12 ST-26：结构化任务输入升级
+
+用户另行授权采用 Grok Build 的主模型一次提取、工具确定校验、按 ID 补丁修改的分工。实际接口、兼容入口、范围例外及验收见 [ST-26](SCHEDULED_TASK_STRUCTURED_ACCEPTANCE.md)。新交互模型调用不再二次解析 description；面板使用一次提取及相同字段契约。35 Spec / 33 公开 schema / 35 handler，覆盖错误 0；后端 1685 项通过、临时 PostgreSQL 27 项通过，前端相关测试/构建/类型/定向 ESLint 通过。原 opt-in invocation 测试的正文在临时 PG 用例中已通过。新增真实模型联调未获回复，ST-26-07 未验证；未提交部署，技术验收尚未全部通过，07 继续保留，08 不启动。
+
+### 2026-09-12 ST-27：创建前确认表单
+
+用户明确纠正 ST-26 的完整请求直接提交行为：聊天创建始终先显示可编辑确认表单，点击“确认创建”后才开始规划及提交。主模型一次整理与原授权、ChangeSet、执行链保留。后端 1319、前端 37 及 TS/定向 ESLint 通过；本批未提交部署、用户验收待完成，07 不关闭。详见 [ST-27 证据与当前流程](SCHEDULED_TASK_CONFIRMATION_ACCEPTANCE.md)。

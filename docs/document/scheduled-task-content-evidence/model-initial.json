@@ -1,0 +1,97 @@
+[
+  {
+    "input": "创建一个定时任务，查询昨天的付款订单数按照平台划分",
+    "result": {
+      "changes": {
+        "name": "昨日付款订单数统计",
+        "prompt": "查询昨天的付款订单数按照平台划分"
+      },
+      "missing_fields": [
+        "schedule_type",
+        "time_str"
+      ],
+      "recipient": "",
+      "parsed": true
+    }
+  },
+  {
+    "input": "请创建一个定时任务，每天上午9点，查询昨天A店已付款订单数，排除退款订单；按照平台划分，以表格显示，发送到销售群",
+    "result": {
+      "changes": {
+        "name": "A店已付款订单统计",
+        "schedule_type": "daily",
+        "time_str": "09:00"
+      },
+      "missing_fields": [
+        "prompt"
+      ],
+      "recipient": "销售群",
+      "parsed": true
+    }
+  },
+  {
+    "input": "创建测试日报，每天上午9点，把昨天【实际店铺名】的销售汇总发给我",
+    "result": {
+      "changes": {
+        "name": "测试日报",
+        "prompt": "把昨天【实际店铺名】的销售汇总",
+        "schedule_type": "daily",
+        "time_str": "09:00"
+      },
+      "missing_fields": [
+        "prompt"
+      ],
+      "recipient": "我",
+      "parsed": true
+    }
+  },
+  {
+    "input": "2030年10月1日9点发A店日报给我",
+    "result": {
+      "changes": {
+        "name": "A店日报",
+        "prompt": "发A店日报",
+        "schedule_type": "once"
+      },
+      "missing_fields": [
+        "run_at"
+      ],
+      "recipient": "我",
+      "parsed": true
+    }
+  },
+  {
+    "input": "创建一个定时任务，统计昨天A店的销售金额，每天上午9点执行",
+    "result": {
+      "changes": {
+        "name": "A店销售金额统计",
+        "schedule_type": "daily",
+        "time_str": "09:00"
+      },
+      "missing_fields": [
+        "prompt"
+      ],
+      "recipient": "",
+      "parsed": true
+    }
+  },
+  {
+    "input": "创建一个定时任务，每周一和周五上午10点，查询昨天的付款订单数，按平台划分，列出环比变化",
+    "result": {
+      "changes": {
+        "name": "昨日付款订单数统计",
+        "schedule_type": "weekly",
+        "time_str": "10:00",
+        "weekdays": [
+          1,
+          5
+        ]
+      },
+      "missing_fields": [
+        "prompt"
+      ],
+      "recipient": "",
+      "parsed": true
+    }
+  }
+]

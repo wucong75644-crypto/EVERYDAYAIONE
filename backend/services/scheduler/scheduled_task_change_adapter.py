@@ -63,7 +63,7 @@ TASK_FIELDS = (
     "name", "prompt", "cron_expr", "schedule_type", "weekdays", "day_of_month",
     "run_at", "timezone", "push_target", "template_file", "max_credits",
     "retry_count", "timeout_sec", "next_run_at", "status", "execution_policy",
-    "plan_snapshot", "data_scope",
+    "plan_snapshot", "data_scope", "schedule_enabled",
 )
 
 
@@ -110,6 +110,14 @@ def _complete_task_definition(
     """
     value = dict(base) if operation == "update" else {}
     value.update(dict(proposed))
+    value.setdefault("timezone", "Asia/Shanghai")
+    schedule_fields = {"schedule_type", "time_str", "weekdays", "day_of_month"}
+    if operation == "update" and "cron_expr" not in proposed and schedule_fields.intersection(proposed):
+        if any(proposed[key] != base.get(key) for key in schedule_fields.intersection(proposed)):
+            from services.scheduler.task_definition_input import simple_task_time
+            if "time_str" not in proposed and base.get("schedule_type") != "once":
+                value["time_str"] = simple_task_time(base)
+            value["cron_expr"] = None
     for key, default in DEFAULT_TASK_LIMITS.items():
         raw = value.get(key)
         if raw is None or raw == "":
@@ -224,13 +232,17 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
             request.proposed_snapshot, request.context.base_snapshot, operation=operation,
         )
         if operation in {"create", "update"}:
+            if (request.context.policy_snapshot.get("submission") or {}).get("mode") == "apply_if_allowed":
+                from services.scheduler.task_submission import unfilled_shop_placeholder
+                if unfilled_shop_placeholder(str(value.get("prompt") or "")):
+                    raise ScheduledTaskChangeError("请将店铺占位文字替换为实际店铺名称后再提交。")
             for key in ("name", "prompt", "timezone", "push_target"):
                 if not value.get(key):
                     raise ScheduledTaskChangeError(f"定时任务缺少 {key}")
             if not isinstance(value.get("push_target"), Mapping):
                 raise ScheduledTaskChangeError("推送目标必须是对象")
             if not value.get("schedule_type"):
-                raise ScheduledTaskChangeError("定时任务缺少 schedule_type")
+                raise ScheduledTaskChangeError("请选择执行频率")
             schedule_type = str(value["schedule_type"]).lower().strip()
             if schedule_type not in {"once", "daily", "weekly", "monthly", "cron"}:
                 raise ScheduledTaskChangeError(f"不支持的 schedule_type: {schedule_type}")
@@ -246,6 +258,9 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
                     raise ScheduledTaskChangeError("run_at 格式无效") from exc
                 if run_at.tzinfo is None:
                     raise ScheduledTaskChangeError("run_at 必须包含时区")
+                if ((request.context.policy_snapshot.get("submission") or {}).get("mode") == "apply_if_allowed"
+                        and run_at <= datetime.now(timezone.utc)):
+                    raise ScheduledTaskChangeError("执行时间已过，请选择新的时间，或立即运行已有任务。")
                 value["run_at"] = run_at.isoformat()
                 value["cron_expr"] = None
                 value["next_run_at"] = run_at.astimezone(timezone.utc).isoformat()
@@ -277,8 +292,16 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
                 )
             if not isinstance(value["data_scope"], Mapping):
                 raise ScheduledTaskChangeError("数据范围必须是对象")
+        if operation == "resume" and (request.context.policy_snapshot.get("submission") or {}).get("mode") == "apply_if_allowed":
+            from services.scheduler.task_submission import resume_time
+            try:
+                value["next_run_at"] = resume_time(value)
+            except ValueError as exc:
+                raise ScheduledTaskChangeError(str(exc), status_code=409) from exc
         if operation == "resume" and not value.get("next_run_at"):
             raise ScheduledTaskChangeError("恢复任务缺少 next_run_at")
+        if operation in {"pause", "resume"}:
+            value["schedule_enabled"] = operation == "resume"
         return NormalizeResult(proposed_snapshot=value, patch=())
 
     async def authorize(self, request: AuthorizeRequest) -> AuthorizationResult:
@@ -293,6 +316,13 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
         resource = dict(request.context.base_snapshot)
         if request.context.operation == "create":
             resource = {**request.context.proposed_snapshot, "user_id": self.user_id, "org_id": self.org_id}
+        else:
+            rows = self.db.table("scheduled_tasks").select("*").eq(
+                "id", request.context.resource_id,
+            ).eq("org_id", self.org_id).limit(1).execute()
+            resource = (rows.data or [None])[0]
+            if not resource:
+                return AuthorizationResult(False, {}, ("task_not_found",))
         allowed = await check_permission(self.db, self.user_id, self.org_id, permission, resource)
         reasons: list[str] = []
         if not allowed:
@@ -321,7 +351,7 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
                 return ValidationResult(False, {}, ("task_not_found",))
             if str(row.get("revision", 0)) != str(context.base_revision):
                 return ValidationResult(False, {"current_revision": str(row.get("revision", 0))}, ("base_revision_conflict",))
-            if row.get("status") == "running" and context.operation in {"update", "pause", "resume", "delete"}:
+            if row.get("status") == "running" and context.operation in {"update", "delete"}:
                 return ValidationResult(False, {}, ("task_running",))
         if context.operation == "delete" and context.proposed_snapshot:
             return ValidationResult(True, {"destructive": True})
@@ -337,6 +367,14 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
     async def preflight(self, request: PreflightRequest) -> PreflightResult:
         context = request.context
         if context.operation not in {"create", "update"}:
+            if context.operation == "resume" and (context.policy_snapshot.get("submission") or {}).get("mode") == "apply_if_allowed":
+                from services.scheduler.task_submission import valid_execution_policy
+                policy = context.proposed_snapshot.get("execution_policy") or {}
+                if not valid_execution_policy(policy):
+                    return PreflightResult(False, {}, ("execution_authorization_required",))
+                reasons = await self._check_execution_scope(context, policy)
+                if reasons:
+                    return PreflightResult(False, {"full_run": False}, reasons)
             current = self.db.table("scheduled_tasks").select("id, revision, status").eq(
                 "id", context.resource_id,
             ).eq("org_id", self.org_id).limit(1).execute()
@@ -355,10 +393,23 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
             "allowed_tools": tool_policy.get("allowed_tools", []),
             "required_tools": tool_policy.get("required_tools", []),
         }
+        from services.scheduler.task_submission import readonly_tool_scope
+        direct = (context.policy_snapshot.get("submission") or {}).get("mode") == "apply_if_allowed"
+        if direct:
+            reasons = await self._check_execution_scope(context, execution_policy)
+            if reasons:
+                return PreflightResult(False, {"mode": "validated_capability_scope", "full_run": False}, reasons)
+        if (direct
+                and context.policy_snapshot.get("requires_approval") is False
+                and readonly_tool_scope(execution_policy)):
+            return PreflightResult(True, {
+                "mode": "validated_capability_scope", "full_run": False,
+                "allowed_tools": list(execution_policy["allowed_tools"]),
+            })
         task = {
             "id": context.resource_id,
             "org_id": self.org_id,
-            "user_id": self.user_id,
+            "user_id": self._execution_owner(context) if direct else self.user_id,
             **dict(context.proposed_snapshot),
             "execution_policy": execution_policy,
             "plan_snapshot": release,
@@ -380,8 +431,42 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
             reasons=() if passed else tuple(gate.get("reasons", [])) or (result.error_message or "preflight_failed",),
         )
 
+    def _execution_owner(self, context) -> str | None:
+        if context.operation != "create":
+            rows = self.db.table("scheduled_tasks").select("user_id").eq("id", context.resource_id).eq("org_id", self.org_id).limit(1).execute()
+            return (rows.data or [{}])[0].get("user_id")
+        return self.user_id
+
+    async def _check_execution_scope(self, context, policy) -> tuple[str, ...]:
+        """Reuse the execution boundary for cheap availability/identity checks; no tools run."""
+        from services.agent.tool_executor import ToolExecutor
+        from services.tools.runtime_context import refresh_context
+        owner_id = self._execution_owner(context)
+        if not owner_id:
+            return ("task_owner_unavailable",)
+        executor = ToolExecutor(
+            db=self.db, user_id=owner_id, org_id=self.org_id, conversation_id=None,
+            allowed_tool_names=frozenset(policy["allowed_tools"]), execution_mode="scheduled",
+            tool_policy_snapshot=dict(policy), permission_mode="auto", task_id=context.resource_id,
+            tool_entrypoint="model",
+        )
+        runtime = executor.tool_runtime
+        trusted = await refresh_context(executor, runtime.context(), runtime.registry)
+        reasons = []
+        for name in policy["allowed_tools"]:
+            access = runtime.registry.check_access(name, trusted, policy=runtime.policy)
+            if not access.allowed:
+                reasons.append(f"{name}:{access.reason}")
+        return tuple(reasons)
+
     async def commit(self, request: CommitRequest) -> CommitResult:
         context = request.context
+        # Permission can be revoked while planning or awaiting confirmation.
+        authorization = await self.authorize(AuthorizeRequest(
+            context=context, actor_id=self.user_id, actor_type="user",
+        ))
+        if not authorization.allowed:
+            return CommitResult(False, None, conflict={"reason": "permission_revoked"})
         response = self.db.rpc("commit_scheduled_task_changeset", {
             "p_change_set_id": context.id,
             "p_org_id": self.org_id,
@@ -446,14 +531,29 @@ class ScheduledTaskChangeSetService:
         self, *, operation: str, proposed_snapshot: Mapping[str, Any],
         base_snapshot: Mapping[str, Any] | None = None, resource_id: str | None = None,
         idempotency_key: str | None = None,
+        submission_mode: str = "proposal",
     ) -> dict[str, Any]:
         """先持久化可恢复的 ChangeSet，再后台执行耗时规划和只读试跑。"""
         operation = operation.lower().strip()
         if operation not in TASK_OPERATIONS:
             raise ScheduledTaskChangeError(f"不支持的定时任务操作: {operation}")
+        if submission_mode not in {"proposal", "apply_if_allowed"}:
+            raise ScheduledTaskChangeError("不支持的提交模式")
         base = task_snapshot(base_snapshot)
         repo = ChangeSetRepository(self.db)
         existing = repo.get_by_idempotency_key(org_id=self.org_id, idempotency_key=idempotency_key) if idempotency_key else None
+        from services.scheduler.scheduled_task_workflow import stable_json_hash
+        request_hash = stable_json_hash({
+            "operation": operation, "resource_id": resource_id, "mode": submission_mode,
+            "definition": dict(proposed_snapshot) if operation in {"create", "update"} else {},
+        })
+        if existing and submission_mode == "apply_if_allowed":
+            submission = (existing.get("policy_snapshot") or {}).get("submission") or {}
+            if (str(existing.get("created_by")) != self.user_id
+                    or existing.get("resource_type") != TASK_RESOURCE_TYPE
+                    or submission.get("request_hash") != request_hash):
+                raise ScheduledTaskChangeError("该请求标识已绑定其他变更，请重新提交", status_code=409)
+            return self._with_projection(existing, repo)
         # create 没有调用方提供的 resource_id。重复请求必须复用首个
         # ChangeSet 的资源标识，再用归一化后的用户请求进行比对。
         if existing and operation == "create":
@@ -466,7 +566,8 @@ class ScheduledTaskChangeSetService:
         context = ChangeSetContext(
             id=str(uuid4()), org_id=self.org_id, resource_type=TASK_RESOURCE_TYPE,
             resource_id=resource_id, operation=operation, base_revision=base_revision,
-            base_snapshot=base, proposed_snapshot=dict(proposed_snapshot), patch=(), diff={}, policy_snapshot={},
+            base_snapshot=base, proposed_snapshot=dict(proposed_snapshot), patch=(), diff={},
+            policy_snapshot={"submission": {"mode": submission_mode}},
         )
         resolved = await self.adapter.resolve(ResolveRequest(context=context, intent=dict(proposed_snapshot)))
         normalized = await self.adapter.normalize(NormalizeRequest(context=context, proposed_snapshot=resolved.proposed_snapshot))
@@ -501,7 +602,9 @@ class ScheduledTaskChangeSetService:
             "operation": operation, "base_revision": base_revision, "base_snapshot": base,
             "proposed_snapshot": normalized_snapshot, "patch": list(diff.patch), "diff": dict(diff.diff),
             "risk_level": assessment.level.value,
-            "policy_snapshot": {**assessment.as_snapshot(), **authorization.policy_snapshot},
+            "policy_snapshot": {**assessment.as_snapshot(), **authorization.policy_snapshot,
+                                "submission": {"version": "scheduled_task.submit.v1", "mode": submission_mode,
+                                               "actor_id": self.user_id, "request_hash": request_hash}},
             "plan_snapshot": None, "tool_policy_snapshot": None,
             "check_summary": {"authorization": {"passed": True, "reasons": []}, "validation": {"passed": True, "result": dict(validation.result), "reasons": []}, "preflight": {"pending": True}, "risk": assessment.as_snapshot()},
             "idempotency_key": idempotency_key or f"scheduled-task:{uuid4()}",
@@ -512,7 +615,11 @@ class ScheduledTaskChangeSetService:
             row = repo.create(create_payload)
         except ChangeSetIdempotencyConflict as exc:
             winner = exc.existing or (repo.get_by_idempotency_key(org_id=self.org_id, idempotency_key=idempotency_key) if idempotency_key else None)
-            if winner and _same_idempotent_request(
+            if winner and submission_mode == "apply_if_allowed" and str(winner.get("created_by")) == self.user_id and (
+                (winner.get("policy_snapshot") or {}).get("submission") or {}
+            ).get("request_hash") == request_hash:
+                return self._with_projection(winner, repo)
+            if winner and submission_mode == "proposal" and _same_idempotent_request(
                 winner, user_id=self.user_id, resource_id=resource_id,
                 operation=operation, base_revision=base_revision,
                 base=base, normalized_snapshot=normalized_snapshot,
@@ -523,18 +630,24 @@ class ScheduledTaskChangeSetService:
                 status_code=409,
             ) from exc
         import asyncio
-        asyncio.create_task(self.complete(str(row["id"])))
+        if submission_mode == "apply_if_allowed" and operation in {"pause", "resume"}:
+            await self.complete(str(row["id"]))
+            row = repo.get(str(row["id"]), self.org_id)
+        else:
+            asyncio.create_task(self.complete(str(row["id"])))
         return self._with_projection(row, repo)
 
     async def complete(self, change_set_id: str) -> None:
         """推进 begin 已创建的同一条 ChangeSet；任何结果都只改变其状态。"""
         repo = ChangeSetRepository(self.db)
         service = ChangeSetService(repo)
+        owns_planning = False
         try:
             row = repo.get(change_set_id, self.org_id)
             if row.get("status") != "draft":
                 return
             await self._transition(service, change_set_id, "draft", "resolving", "planning_started")
+            owns_planning = True
             context = ChangeSetContext(
                 id=change_set_id, org_id=self.org_id, resource_type=TASK_RESOURCE_TYPE,
                 resource_id=str(row["resource_id"]), operation=str(row["operation"]),
@@ -542,7 +655,8 @@ class ScheduledTaskChangeSetService:
                 proposed_snapshot=dict(row.get("proposed_snapshot") or {}), patch=tuple(row.get("patch") or ()),
                 diff=dict(row.get("diff") or {}), policy_snapshot=dict(row.get("policy_snapshot") or {}),
             )
-            release = await self._build_release(context.operation, context.proposed_snapshot, context.policy_snapshot)
+            release = await self._build_release(context.operation, context.proposed_snapshot, context.policy_snapshot,
+                                                base=context.base_snapshot)
             released_tools = set(release.tool_policy.get("allowed_tools", []))
             external = not await self.adapter._is_self_target(context.proposed_snapshot.get("push_target"))
             assessment = DefaultRiskPolicy().assess(
@@ -559,8 +673,18 @@ class ScheduledTaskChangeSetService:
             if context.operation in {"create", "update"}:
                 snapshot["execution_policy"] = dict(release.tool_policy)
                 snapshot["plan_snapshot"] = release.as_dict()
+            direct = (context.policy_snapshot.get("submission") or {}).get("mode") == "apply_if_allowed"
+            if direct:
+                from services.scheduler.task_submission import submission_assessment
+                assessment = submission_assessment(
+                    context.operation, context.base_snapshot, snapshot, self_target=not external,
+                )
+            release = replace(release, candidate={**dict(release.candidate), "risk_info": assessment.as_snapshot()})
+            if context.operation in {"create", "update"}:
+                snapshot["plan_snapshot"] = release.as_dict()
             context = replace(context, proposed_snapshot=snapshot, plan_snapshot=release.as_dict(), tool_policy_snapshot=release.tool_policy,
-                              policy_snapshot={**assessment.as_snapshot(), **context.policy_snapshot})
+                              policy_snapshot={**context.policy_snapshot, **assessment.as_snapshot()})
+            authorization = await self.adapter.authorize(AuthorizeRequest(context=context, actor_id=self.user_id, actor_type="user"))
             validation = await self.adapter.validate(ValidateRequest(context=context))
             diff = await self.adapter.diff(DiffRequest(context=context))
             context = replace(context, patch=diff.patch, diff=diff.diff)
@@ -572,7 +696,10 @@ class ScheduledTaskChangeSetService:
                 check_summary={"authorization": {"passed": True, "reasons": []}, "validation": {"passed": validation.passed, "result": dict(validation.result), "reasons": list(validation.reasons)}, "preflight": {"pending": True}, "risk": assessment.as_snapshot()},
             )
             await self._transition(service, change_set_id, "resolving", "proposed", "proposed")
-            await self._record(repo, change_set_id, "authorization", True, {}, ())
+            await self._record(repo, change_set_id, "authorization", authorization.allowed, authorization.policy_snapshot, authorization.reasons)
+            if not authorization.allowed:
+                await self._transition(service, change_set_id, "proposed", "failed", "authorization_failed", {"reasons": list(authorization.reasons)})
+                return
             await self._transition(service, change_set_id, "proposed", "validating", "validation_started")
             await self._record(repo, change_set_id, "validation", validation.passed, validation.result, validation.reasons)
             if not validation.passed:
@@ -582,12 +709,17 @@ class ScheduledTaskChangeSetService:
             preflight = await self.adapter.preflight(PreflightRequest(context=context))
             await self._record(repo, change_set_id, "preflight", preflight.passed, preflight.result, preflight.reasons,
                                status="passed" if preflight.passed and preflight.result.get("full_run") else "skipped" if preflight.passed else "failed")
-            await self._transition(service, change_set_id, "preflighting", "awaiting_approval" if preflight.passed else "rejected",
-                                   "awaiting_approval" if preflight.passed else "preflight_rejected", {"reasons": list(preflight.reasons)})
+            if preflight.passed and direct and not assessment.requires_approval:
+                await service.apply_requested(
+                    change_set_id=change_set_id, org_id=self.org_id, actor_id=self.user_id, adapter=self.adapter,
+                )
+            else:
+                await self._transition(service, change_set_id, "preflighting", "awaiting_approval" if preflight.passed else "rejected",
+                                       "awaiting_approval" if preflight.passed else "preflight_rejected", {"reasons": list(preflight.reasons)})
         except Exception as exc:
             try:
                 current = repo.get(change_set_id, self.org_id)
-                if current.get("status") in {"resolving", "proposed", "validating", "preflighting"}:
+                if owns_planning and current.get("status") in {"resolving", "proposed", "validating", "preflighting"}:
                     repo.transition(change_set_id=change_set_id, org_id=self.org_id, expected_status=current["status"], next_status="failed",
                                     actor_id=self.user_id, actor_type="system", event_type="planning_failed",
                                     payload={"error_type": type(exc).__name__})
@@ -767,8 +899,27 @@ class ScheduledTaskChangeSetService:
             await self._transition(service, change_set_id, "preflighting", "awaiting_approval", "awaiting_approval")
         return self._with_projection(repo.get(change_set_id, self.org_id), repo)
 
-    async def _build_release(self, operation: str, snapshot: Mapping[str, Any], risk: Mapping[str, Any]) -> PlanRelease:
+    async def _build_release(self, operation: str, snapshot: Mapping[str, Any], risk: Mapping[str, Any], *, base=None) -> PlanRelease:
         if operation in {"create", "update"}:
+            from services.scheduler.task_submission import plan_inputs_unchanged
+            from config.chat_tools import get_core_tools
+            framework = PlannerFramework(CapabilityRegistry.from_tool_schemas(get_core_tools(org_id=self.org_id)))
+            if operation == "update" and base and plan_inputs_unchanged(base, snapshot):
+                saved = (base.get("plan_snapshot") or {}).get("candidate")
+                if isinstance(saved, Mapping) and saved.get("steps"):
+                    candidate = PlanCandidate(
+                        target={"resource_type": TASK_RESOURCE_TYPE, "operation": operation},
+                        input_contract=saved.get("input_contract") or {}, output_contract=saved.get("output_contract") or {},
+                        steps=tuple(PlanStep(
+                            step_id=step["id"], intent=step["intent"], tools=tuple(step["tools"]),
+                            input=step.get("input") or {}, required=step.get("required", True),
+                            verification=step.get("verify") or "",
+                        ) for step in saved["steps"]),
+                        candidate_tools=tuple(base["execution_policy"]["allowed_tools"]),
+                        verification_conditions=tuple(saved.get("verification_conditions") or ()), risk_info=dict(risk),
+                    )
+                    release = framework.release(candidate, execution_mode="scheduled")
+                    return replace(release, tool_policy={**base["execution_policy"], **release.tool_policy})
             from services.scheduler.scheduled_task_workflow import create_plan
             legacy_plan, legacy_policy = await create_plan(db=self.db, org_id=self.org_id, definition=dict(snapshot))
             candidate = PlanCandidate(
@@ -784,8 +935,6 @@ class ScheduledTaskChangeSetService:
                 verification_conditions=tuple(legacy_plan.get("verification_conditions") or []),
                 risk_info=dict(risk),
             )
-            from config.chat_tools import get_core_tools
-            framework = PlannerFramework(CapabilityRegistry.from_tool_schemas(get_core_tools(org_id=self.org_id)))
             # legacy_plan 已由 scheduled_task_workflow 的白名单校验过；这里再次经过通用 Registry。
             return framework.release(candidate, execution_mode="scheduled")
         candidate = PlanCandidate(

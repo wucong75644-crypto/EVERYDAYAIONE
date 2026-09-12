@@ -29,7 +29,7 @@ class ScheduledTaskExecutor:
     def __init__(self, db: Any) -> None:
         self.db = db
 
-    async def _push_ws_event(self, user_id: str, event_type: str, data: Dict[str, Any]) -> None:
+    async def _push_ws_event(self, user_id: str, event_type: str, data: Dict[str, Any], *, org_id: str | None = None) -> None:
         """通过 WebSocketManager 推送事件到任务创建者前端
 
         Args:
@@ -44,7 +44,7 @@ class ScheduledTaskExecutor:
             await ws_manager.send_to_user(user_id, {
                 "type": event_type,
                 "data": data,
-            })
+            }, org_id=org_id)
         except Exception as e:
             logger.warning(f"_push_ws_event failed | event={event_type} | error={e}")
 
@@ -67,7 +67,7 @@ class ScheduledTaskExecutor:
             "task_id": task["id"],
             "task_name": task["name"],
             "run_id": run_id,
-        })
+        }, org_id=task["org_id"])
 
         credit_handle = None
         try:
@@ -181,6 +181,13 @@ class ScheduledTaskExecutor:
         """
         run_id = str(uuid4())
         try:
+            if task.get("run_token"):
+                response = self.db.rpc("start_scheduled_task_run", {
+                    "p_task_id": task["id"], "p_org_id": task["org_id"],
+                    "p_run_token": task["run_token"],
+                }).execute()
+                data = response.data if response else None
+                return str(data["run_id"]) if isinstance(data, dict) and data.get("outcome") == "started" else None
             self.db.table("scheduled_task_runs").insert({
                 "id": run_id,
                 "task_id": task["id"],
@@ -349,7 +356,7 @@ class ScheduledTaskExecutor:
             tz = task.get("timezone") or "Asia/Shanghai"
 
         previous_status = task.get("_previous_status")
-        if task.get("_manual_run") and previous_status in {"paused", "error"}:
+        if not task.get("run_token") and task.get("_manual_run") and previous_status in {"paused", "error"}:
             next_status = previous_status
             next_run = None
         elif schedule_type == "once":
@@ -390,13 +397,15 @@ class ScheduledTaskExecutor:
             "task_name": task["name"],
             "run_id": run_id,
             "status": "success",
+            "task_status": payload.get("schedule_status", next_status),
+            "schedule_enabled": payload.get("schedule_status", next_status) == "active",
             "summary": result.summary,
             "files": result.files,
             "duration_ms": duration_ms,
             "credits_used": credits_used,
-            "next_run_at": next_run.isoformat() if next_run else None,
+            "next_run_at": payload.get("next_run_at", next_run.isoformat() if next_run else None),
             "push_status": push_status,
-        })
+        }, org_id=task["org_id"])
         return push_status
 
     async def _on_failure(
@@ -414,13 +423,14 @@ class ScheduledTaskExecutor:
 
         # 写失败日志
         try:
-            self.db.table("scheduled_task_runs").update({
-                "status": "failed",
-                "error_message": str(error)[:500],
-                "tokens_used": result.tokens_used if result else 0,
-                "duration_ms": duration_ms,
-                "finished_at": now.isoformat(),
-            }).eq("id", run_id).execute()
+            if not task.get("run_token"):
+                self.db.table("scheduled_task_runs").update({
+                    "status": "failed",
+                    "error_message": str(error)[:500],
+                    "tokens_used": result.tokens_used if result else 0,
+                    "duration_ms": duration_ms,
+                    "finished_at": now.isoformat(),
+                }).eq("id", run_id).execute()
         except Exception as e:
             logger.error(f"_on_failure update run failed | {e}")
 
@@ -436,7 +446,7 @@ class ScheduledTaskExecutor:
 
         # 手动运行暂停/异常任务只产生一次运行记录，不得意外重新开启长期调度。
         previous_status = task.get("_previous_status")
-        if task.get("_manual_run") and previous_status in {"paused", "error"}:
+        if not task.get("run_token") and task.get("_manual_run") and previous_status in {"paused", "error"}:
             update["status"] = previous_status
             update["next_run_at"] = None
         # 强制暂停优先级最高（防止配置 retry_count 巨大导致永不暂停）
@@ -449,11 +459,6 @@ class ScheduledTaskExecutor:
                 logger.error(
                     f"ScheduledTask auto-paused | task={task['id']} | "
                     f"failures={consecutive} | threshold={pause_threshold}"
-                )
-                await self._notify_owner(
-                    task, run_id,
-                    f"⚠️ 定时任务「{task['name']}」连续失败 {consecutive} 次已自动暂停\n"
-                    f"最后错误: {str(error)[:200]}"
                 )
             elif attempts_used < retry_count:
                 # 还有重试机会 → 5 分钟后重试
@@ -488,9 +493,26 @@ class ScheduledTaskExecutor:
                     update["status"] = "active"
 
         try:
-            self.db.table("scheduled_tasks").update(update).eq("id", task["id"]).execute()
+            if task.get("run_token"):
+                response = self.db.rpc("finish_scheduled_task_failure", {
+                    "p_task_id": task["id"], "p_org_id": task["org_id"], "p_run_id": run_id,
+                    "p_update": update, "p_error": str(error)[:500],
+                    "p_tokens": result.tokens_used if result else 0, "p_duration": duration_ms,
+                }).execute()
+                receipt = response.data if response else None
+                if not isinstance(receipt, dict) or receipt.get("outcome") != "finished":
+                    logger.warning(f"scheduled_task_failure_claim_lost | task={task['id']} | run={run_id}")
+                    return
+                update.update({"status": receipt["status"], "next_run_at": receipt.get("next_run_at")})
+            else:
+                self.db.table("scheduled_tasks").update(update).eq("id", task["id"]).execute()
         except Exception as e:
             logger.error(f"_on_failure update task failed | {e}")
+            return
+
+        if update.get("status") == "error":
+            await self._notify_owner(task, run_id,
+                f"⚠️ 定时任务「{task['name']}」连续失败 {consecutive} 次已自动暂停\n最后错误: {str(error)[:200]}")
 
         # WebSocket 推送"失败"事件
         # will_retry: 任务下次仍会自动执行（不论是 5min 重试还是按 cron 正常时间）
@@ -500,11 +522,14 @@ class ScheduledTaskExecutor:
             "task_name": task["name"],
             "run_id": run_id,
             "status": update.get("status", "active"),
+            "task_status": update.get("status", "active"),
+            "schedule_enabled": update.get("status") == "active",
+            "next_run_at": update.get("next_run_at"),
             "error": str(error)[:500],
             "consecutive_failures": consecutive,
             "will_retry": will_retry,
             "duration_ms": duration_ms,
-        })
+        }, org_id=task["org_id"])
 
     async def _notify_owner(
         self, task: Dict[str, Any], run_id: str, message: str,

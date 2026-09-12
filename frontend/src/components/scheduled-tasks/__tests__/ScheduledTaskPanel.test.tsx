@@ -1,11 +1,15 @@
+import { toast } from 'react-hot-toast';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { ChangeSet } from '../../../types/changeset';
 import ScheduledTaskPanel from '../ScheduledTaskPanel';
 import { changeSetService } from '../../../services/changeSet';
+import { scheduledTaskService } from '../../../services/scheduledTask';
+import type { ScheduledTask } from '../../../types/scheduledTask';
 
 const fetchTasks = vi.fn();
+vi.mock('react-hot-toast', () => ({ toast: { success: vi.fn() } }));
 
 vi.mock('framer-motion', () => ({
   AnimatePresence: ({ children }: { children: ReactNode }) => children,
@@ -27,7 +31,9 @@ vi.mock('../../../services/scheduledTask', () => ({
 }));
 
 vi.mock('../TaskList', () => ({
-  TaskList: () => <div data-testid="task-list">任务列表</div>,
+  TaskList: ({ onChangeRequested }: { onChangeRequested: (op: string, task: ScheduledTask) => Promise<void> }) => <div data-testid="task-list">任务列表
+    <button onClick={() => void onChangeRequested('pause', {id:'task-1',revision:'1',name:'日报'} as ScheduledTask)}>暂停日报</button>
+  </div>,
 }));
 
 vi.mock('../ViewSwitcher', () => ({
@@ -58,6 +64,17 @@ describe('ScheduledTaskPanel ChangeSet recovery', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(changeSetService.listActive).mockResolvedValue([makeChangeSet()]);
+  });
+
+  it('applies an ordinary pause in place without opening a confirmation workflow', async () => {
+    vi.mocked(scheduledTaskService.proposeChange).mockResolvedValue(makeChangeSet({status:'applied',operation:'pause'}));
+    render(<ScheduledTaskPanel isOpen onClose={vi.fn()} />);
+    await waitFor(() => expect(fetchTasks).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', {name:'暂停日报'}));
+    await waitFor(() => expect(fetchTasks).toHaveBeenCalledTimes(2));
+    expect(scheduledTaskService.proposeChange).toHaveBeenCalledWith(expect.objectContaining({operation:'pause',submission_mode:'apply_if_allowed',idempotency_key:expect.any(String)}));
+    expect(screen.queryByText('变更卡片:change-1')).not.toBeInTheDocument();
+    expect(toast.success).toHaveBeenCalledWith('已暂停「日报」');
   });
 
   it('keeps the task list as the default entry even when historical changes are pending', async () => {

@@ -1,0 +1,31 @@
+{
+  "base_commit": "d851d93eb47f28c0cde5f77938b2505a8322c3b9",
+  "candidate": "uncommitted task worktree changes",
+  "symptom": "frequency remains unselected; request sent with empty schedule_type",
+  "baseline_reproduction": {
+    "command": "./node_modules/.bin/vitest run src/components/chat/message/__tests__/StructuredConsumers.test.tsx -t 'keeps a missing frequency|validates only visible'",
+    "failed": 2,
+    "reason": "chat:form-submit emitted for missing visible required fields"
+  },
+  "backend": {
+    "command": "python -m pytest tests/test_scheduled_task_changeset_adapter.py tests/test_scheduled_task_request_content.py tests/test_chat_task_manager.py tests/test_ws_form_submit.py -q",
+    "passed": 86
+  },
+  "frontend": {
+    "command": "./node_modules/.bin/vitest run src/components/chat/message/__tests__/StructuredConsumers.test.tsx src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx src/components/chat/message/__tests__/ChangeSetCard.test.tsx",
+    "passed": 30
+  },
+  "static_checks": [
+    "tsc -b --pretty false: passed",
+    "eslint src/components/chat/message/FormBlock.tsx: passed",
+    "git diff --check: passed",
+    "npm run build: passed (existing large-chunk warning)"
+  ],
+  "deployed": false,
+  "sha256": {
+    "backend/services/scheduler/scheduled_task_change_adapter.py": "8cdebb1e73c4732be233b5fcde0fe9e1cf5c046c1f9e9a048a93d18a6a56bd26",
+    "backend/tests/test_scheduled_task_changeset_adapter.py": "73f6d63edd4a513a290f4c1ff082a218ec8794f9b12465e88c6736ebc1e8bbad",
+    "frontend/src/components/chat/message/FormBlock.tsx": "620404bf03bd844fff4eb5869ebbe3814f91208e1d22f744938506d53d2dc6ed",
+    "frontend/src/components/chat/message/__tests__/StructuredConsumers.test.tsx": "d4a012088b08a5b904fb3a4ae7f27f058b0e96c5ba3fcfa5e3d4452ea7cbd253"
+  }
+}

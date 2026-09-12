@@ -1,0 +1,52 @@
+FILES: tests/test_scheduled_task_agent.py tests/test_scheduled_task_agent_integration.py tests/test_scheduled_task_changeset_adapter.py tests/test_scheduled_task_changeset_migration.py tests/test_scheduled_task_chat_results.py tests/test_scheduled_task_delivery_outbox_migration.py tests/test_scheduled_task_delivery_worker.py tests/test_scheduled_task_deploy_drain.py tests/test_scheduled_task_direct_submission.py tests/test_scheduled_task_executor_delivery.py tests/test_scheduled_task_form_incident.py tests/test_scheduled_task_legacy_service_rls_migration.py tests/test_scheduled_task_lifecycle_integrity_migration.py tests/test_scheduled_task_nested_form_state_array_path_migration.py tests/test_scheduled_task_nested_form_state_migration.py tests/test_scheduled_task_request_consistency.py tests/test_scheduled_task_request_content.py tests/test_scheduled_task_simplified_creation.py tests/test_scheduled_task_workflow.py tests/test_scheduled_tasks_routes.py tests/test_chat_task_manager.py tests/test_task_nl_parser.py tests/test_tool_executor.py tests/test_tool_policy.py tests/test_planner_framework.py tests/test_unified_result_e2e.py tests/test_tool_result_05_production_regressions.py tests/test_tool_result_persistence_06.py
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-8.3.4, pluggy-1.6.0
+rootdir: /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/backend
+configfile: pytest.ini
+plugins: anyio-4.12.1, asyncio-0.25.2, cov-7.1.0, time-machine-2.14.1
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=function
+collected 1005 items
+
+tests/test_scheduled_task_agent.py ............                          [  1%]
+tests/test_scheduled_task_agent_integration.py .............             [  2%]
+tests/test_scheduled_task_changeset_adapter.py ............              [  3%]
+tests/test_scheduled_task_changeset_migration.py ...                     [  3%]
+tests/test_scheduled_task_chat_results.py ..............                 [  5%]
+tests/test_scheduled_task_delivery_outbox_migration.py ......            [  5%]
+tests/test_scheduled_task_delivery_worker.py .....                       [  6%]
+tests/test_scheduled_task_deploy_drain.py ................               [  8%]
+tests/test_scheduled_task_direct_submission.py .......................   [ 10%]
+tests/test_scheduled_task_executor_delivery.py ...                       [ 10%]
+tests/test_scheduled_task_form_incident.py ..............                [ 12%]
+tests/test_scheduled_task_legacy_service_rls_migration.py ..             [ 12%]
+tests/test_scheduled_task_lifecycle_integrity_migration.py ...           [ 12%]
+tests/test_scheduled_task_nested_form_state_array_path_migration.py ..   [ 12%]
+tests/test_scheduled_task_nested_form_state_migration.py ..              [ 12%]
+tests/test_scheduled_task_request_consistency.py ...................     [ 14%]
+tests/test_scheduled_task_request_content.py ...................         [ 16%]
+tests/test_scheduled_task_simplified_creation.py ..........              [ 17%]
+tests/test_scheduled_task_workflow.py .......                            [ 18%]
+tests/test_scheduled_tasks_routes.py ................................... [ 21%]
+.......                                                                  [ 22%]
+tests/test_chat_task_manager.py ........................................ [ 26%]
+........                                                                 [ 27%]
+tests/test_task_nl_parser.py ..............                              [ 28%]
+tests/test_tool_executor.py ............................................ [ 33%]
+                                                                         [ 33%]
+tests/test_tool_policy.py .............................................. [ 37%]
+........................................................................ [ 44%]
+........................................................................ [ 52%]
+........................................................................ [ 59%]
+........................................................................ [ 66%]
+........................................................................ [ 73%]
+........................................................................ [ 80%]
+........................................................................ [ 87%]
+..                                                                       [ 88%]
+tests/test_planner_framework.py ...                                      [ 88%]
+tests/test_unified_result_e2e.py ..................                      [ 90%]
+tests/test_tool_result_05_production_regressions.py .................... [ 92%]
+..                                                                       [ 92%]
+tests/test_tool_result_persistence_06.py ............................... [ 95%]
+..............................................                           [100%]
+
+============================= 1005 passed in 3.91s =============================

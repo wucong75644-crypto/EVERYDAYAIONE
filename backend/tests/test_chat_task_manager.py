@@ -689,3 +689,22 @@ class TestLoadPushTargetsExtended:
         # web 目标不依赖 DB，始终存在
         assert len(targets) == 1
         assert "网页" in targets[0]["label"]
+
+
+@pytest.mark.asyncio
+async def test_completion_form_keeps_default_notification_target_selectable():
+    from unittest.mock import AsyncMock, patch
+    manager = ChatTaskManager(None, 'u1', 'org1', submission_mode='apply_if_allowed')
+    targets = [
+        {'label': '推送给我（网页）', 'value': json.dumps({'type': 'web', 'user_id': 'u1'})},
+        {'label': '推送给我（企微）', 'value': json.dumps({'type': 'wecom_user', 'wecom_userid': 'wx1'})},
+    ]
+    request = {'changes': {'name': '日报', 'prompt': '查询昨日订单', 'schedule_type': 'daily'},
+               'recipient': '', 'missing_fields': ['time_str']}
+    with patch('services.scheduler.task_nl_parser.parse_task_request', AsyncMock(return_value=request)), \
+         patch('services.scheduler.chat_task_manager._load_push_targets', AsyncMock(return_value=targets)):
+        form = await manager.handle('create', {'description': '创建日报，查询昨日订单'})
+    target_field = next(field for field in form['fields'] if field['name'] == 'push_target')
+    assert target_field['type'] == 'select'
+    assert target_field['options'] == targets
+    assert json.loads(target_field['default_value']) == {'type': 'web', 'user_id': 'u1'}

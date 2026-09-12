@@ -9,8 +9,9 @@
  *
  * 设计文档: docs/document/UI_定时任务面板设计.md §四
  */
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { AnimatePresence, m } from 'framer-motion';
+import { toast } from 'react-hot-toast';
 import { ArrowLeft, Clock, GitCompare, Plus, X } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { ViewSwitcher } from './ViewSwitcher';
@@ -52,6 +53,7 @@ export default function ScheduledTaskPanel({ isOpen, onClose }: ScheduledTaskPan
   const [changeSetId, setChangeSetId] = useState<string | null>(null);
   const [showPendingChanges, setShowPendingChanges] = useState(false);
   const [pendingChangeSets, setPendingChangeSets] = useState<ChangeSet[]>([]);
+  const requestKeys = useRef(new Map<string, string>());
 
   const loadPendingChangeSets = useCallback(async () => {
     try {
@@ -115,14 +117,23 @@ export default function ScheduledTaskPanel({ isOpen, onClose }: ScheduledTaskPan
   const handleChangeRequested = useCallback(async (
     operation: 'pause' | 'resume' | 'delete', task: ScheduledTask,
   ) => {
+    const identity = `${operation}:${task.id}:${task.revision}`;
+    const key = requestKeys.current.get(identity) || crypto.randomUUID();
+    requestKeys.current.set(identity, key);
     const changeSet = await scheduledTaskService.proposeChange({
       operation,
       task_id: task.id,
+      submission_mode: 'apply_if_allowed',
+      idempotency_key: key,
     });
+    requestKeys.current.delete(identity);
     setShowPendingChanges(false);
-    setChangeSetId(changeSet.id);
+    if (changeSet.status === 'applied') {
+      toast.success(`已${{ pause: '暂停', resume: '恢复', delete: '删除' }[operation]}「${task.name}」`);
+      await fetchTasks();
+    } else setChangeSetId(changeSet.id);
     void loadPendingChangeSets();
-  }, [loadPendingChangeSets]);
+  }, [fetchTasks, loadPendingChangeSets]);
 
   const handleFormProposed = useCallback((nextChangeSetId: string) => {
     setShowForm(false);

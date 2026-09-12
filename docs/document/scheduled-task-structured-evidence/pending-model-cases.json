@@ -1,0 +1,29 @@
+[
+  {
+    "kind": "chat",
+    "text": "创建测试提醒，每天上午八点列出一条学习建议，发给我。"
+  },
+  {
+    "kind": "chat",
+    "text": "创建测试提醒，列出一条学习建议。"
+  },
+  {
+    "kind": "chat",
+    "text": "把测试提醒改到上午十点。",
+    "task_id": "synthetic-task-a"
+  },
+  {
+    "kind": "chat",
+    "text": "把测试提醒改成表格输出，内容不变。",
+    "task_id": "synthetic-task-a"
+  },
+  {
+    "kind": "chat",
+    "text": "暂停测试提醒。",
+    "task_id": "synthetic-task-a"
+  },
+  {
+    "kind": "panel",
+    "text": "每周一上午九点列出一条学习建议，发给我。"
+  }
+]

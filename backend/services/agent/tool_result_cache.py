@@ -4,7 +4,7 @@
 被 ToolLoopExecutor 内部持有，承载读工具的会话级缓存。
 
 设计：
-- 仅缓存读工具（concurrency_safe），写工具不缓存
+- 缓存资格由 ToolSpec.cacheable 单独声明（保留 code_execute 既有资格）
 - 单条结果 > 8000 字符不缓存（防止内存膨胀）
 - 缓存条目上限 50 条（满了跳过新增，简单策略）
 - TTL 5 分钟，过期条目读取时主动删除
@@ -28,9 +28,10 @@ class ToolResultCache:
 
     @staticmethod
     def is_cacheable(tool_name: str) -> bool:
-        """只缓存读工具（从 chat_tools 的 _CONCURRENT_SAFE_TOOLS 判断）"""
-        from config.chat_tools import is_concurrency_safe
-        return is_concurrency_safe(tool_name)
+        """Compatibility query of Spec cache eligibility; concurrency is independent."""
+        from services.tools.catalog import definition_registry
+        spec = definition_registry().get(tool_name)
+        return spec.cacheable if spec else False
 
     @staticmethod
     def _key(tool_name: str, args: Dict[str, Any]) -> str:

@@ -1,0 +1,244 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-8.3.4, pluggy-1.6.0
+rootdir: /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/backend
+configfile: pytest.ini
+plugins: anyio-4.12.1, asyncio-0.25.2, cov-7.1.0, time-machine-2.14.1
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=function
+collected 1029 items
+
+tests/test_scheduled_task_agent.py ............                          [  1%]
+tests/test_scheduled_task_agent_integration.py .............             [  2%]
+tests/test_scheduled_task_changeset_adapter.py ............              [  3%]
+tests/test_scheduled_task_changeset_migration.py ...                     [  3%]
+tests/test_scheduled_task_chat_results.py ..............                 [  5%]
+tests/test_scheduled_task_delivery_outbox_migration.py ......            [  5%]
+tests/test_scheduled_task_delivery_worker.py .....                       [  6%]
+tests/test_scheduled_task_deploy_drain.py ................               [  7%]
+tests/test_scheduled_task_direct_submission.py .......................   [ 10%]
+tests/test_scheduled_task_draft_delete_integration.py EEEEEEEE           [ 10%]
+tests/test_scheduled_task_executor_delivery.py ...                       [ 11%]
+tests/test_scheduled_task_form_incident.py ..............                [ 12%]
+tests/test_scheduled_task_legacy_service_rls_migration.py ..             [ 12%]
+tests/test_scheduled_task_lifecycle_integrity_migration.py ...           [ 13%]
+tests/test_scheduled_task_nested_form_state_array_path_migration.py ..   [ 13%]
+tests/test_scheduled_task_nested_form_state_migration.py ..              [ 13%]
+tests/test_scheduled_task_request_consistency.py ................        [ 14%]
+tests/test_scheduled_task_request_content.py ...................         [ 16%]
+tests/test_scheduled_task_simplified_creation.py ..........              [ 17%]
+tests/test_scheduled_task_upgrade_postgres.py EEEEEEEEEEEEEEEEEEE        [ 19%]
+tests/test_scheduled_task_workflow.py .......                            [ 20%]
+tests/test_scheduled_tasks_routes.py ................................... [ 23%]
+.......                                                                  [ 24%]
+tests/test_chat_task_manager.py ........................................ [ 28%]
+........                                                                 [ 29%]
+tests/test_task_nl_parser.py ..............                              [ 30%]
+tests/test_tool_executor.py ............................................ [ 34%]
+                                                                         [ 34%]
+tests/test_tool_policy.py .............................................. [ 39%]
+........................................................................ [ 46%]
+........................................................................ [ 53%]
+........................................................................ [ 60%]
+........................................................................ [ 67%]
+........................................................................ [ 74%]
+........................................................................ [ 81%]
+........................................................................ [ 88%]
+..                                                                       [ 88%]
+tests/test_planner_framework.py ...                                      [ 88%]
+tests/test_unified_result_e2e.py ..................                      [ 90%]
+tests/test_tool_result_05_production_regressions.py .................... [ 92%]
+..                                                                       [ 92%]
+tests/test_tool_result_persistence_06.py ............................... [ 95%]
+..............................................                           [100%]
+
+==================================== ERRORS ====================================
+____ ERROR at setup of test_original_constraint_reproduces_production_error ____
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-x54xk7ce/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+_ ERROR at setup of test_delete_cascades_only_intermediates_and_keeps_idempotent_receipt _
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-x54xk7ce/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+____ ERROR at setup of test_delete_preconditions_remain_enforced[wrong_org] ____
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-x54xk7ce/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+____ ERROR at setup of test_delete_preconditions_remain_enforced[revision] _____
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-x54xk7ce/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+_____ ERROR at setup of test_delete_preconditions_remain_enforced[running] _____
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-x54xk7ce/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+_______ ERROR at setup of test_constraint_rollback_restores_old_behavior _______
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-x54xk7ce/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+_ ERROR at setup of test_legacy_confirm_then_changeset_delete_lifecycle[False] _
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-x54xk7ce/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+_ ERROR at setup of test_legacy_confirm_then_changeset_delete_lifecycle[True] __
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-x54xk7ce/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+_ ERROR at setup of test_database_enforces_direct_submission_evidence[approval] _
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-akal5abr/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+__ ERROR at setup of test_database_enforces_direct_submission_evidence[high] ___
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-akal5abr/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+_ ERROR at setup of test_database_enforces_direct_submission_evidence[missing_submission] _
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-akal5abr/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+_ ERROR at setup of test_database_enforces_direct_submission_evidence[authorization] _
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-akal5abr/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+_ ERROR at setup of test_database_enforces_direct_submission_evidence[validation] _
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-akal5abr/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+__ ERROR at setup of test_database_enforces_direct_submission_evidence[actor] __
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-akal5abr/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+___ ERROR at setup of test_database_enforces_direct_submission_evidence[org] ___
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-akal5abr/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+__ ERROR at setup of test_database_enforces_direct_submission_evidence[None] ___
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-akal5abr/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+_ ERROR at setup of test_migration_reapply_and_rollback_preserve_old_confirmation _
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-akal5abr/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+_______ ERROR at setup of test_pause_between_claim_and_start_blocks_work _______
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-akal5abr/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+_ ERROR at setup of test_running_pause_survives_success_failure_and_recovery[True-False] _
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-akal5abr/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+_ ERROR at setup of test_running_pause_survives_success_failure_and_recovery[False-False] _
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-akal5abr/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+_ ERROR at setup of test_running_pause_survives_success_failure_and_recovery[False-True] _
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-akal5abr/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+_ ERROR at setup of test_resume_running_keeps_claim_and_old_worker_cannot_finish_new_run _
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-akal5abr/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+_____ ERROR at setup of test_manual_run_does_not_resume_paused_task[True] ______
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-akal5abr/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+_____ ERROR at setup of test_manual_run_does_not_resume_paused_task[False] _____
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-akal5abr/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+_ ERROR at setup of test_concurrent_claims_start_once_and_pause_wins_when_locked_first _
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-akal5abr/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+____ ERROR at setup of test_lifecycle_migration_reapply_and_rollback_guards ____
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-akal5abr/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+_ ERROR at setup of test_existing_actor_uncertain_and_replay_contract_on_disposable_database _
+tests/test_scheduled_task_draft_delete_integration.py:32: in postgres_socket
+    subprocess.run([initdb, "-D", str(data), "-A", "trust", "--no-locale", "-E", "UTF8"],
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['/opt/homebrew/bin/initdb', '-D', '/var/folders/vk/kg6hqyj94xggcy91mcy1blp00000gn/T/tool05-pg-akal5abr/data', '-A', 'trust', '--no-locale', '-E', 'UTF8']' returned non-zero exit status 1.
+=========================== short test summary info ============================
+ERROR tests/test_scheduled_task_draft_delete_integration.py::test_original_constraint_reproduces_production_error
+ERROR tests/test_scheduled_task_draft_delete_integration.py::test_delete_cascades_only_intermediates_and_keeps_idempotent_receipt
+ERROR tests/test_scheduled_task_draft_delete_integration.py::test_delete_preconditions_remain_enforced[wrong_org]
+ERROR tests/test_scheduled_task_draft_delete_integration.py::test_delete_preconditions_remain_enforced[revision]
+ERROR tests/test_scheduled_task_draft_delete_integration.py::test_delete_preconditions_remain_enforced[running]
+ERROR tests/test_scheduled_task_draft_delete_integration.py::test_constraint_rollback_restores_old_behavior
+ERROR tests/test_scheduled_task_draft_delete_integration.py::test_legacy_confirm_then_changeset_delete_lifecycle[False]
+ERROR tests/test_scheduled_task_draft_delete_integration.py::test_legacy_confirm_then_changeset_delete_lifecycle[True]
+ERROR tests/test_scheduled_task_upgrade_postgres.py::test_database_enforces_direct_submission_evidence[approval]
+ERROR tests/test_scheduled_task_upgrade_postgres.py::test_database_enforces_direct_submission_evidence[high]
+ERROR tests/test_scheduled_task_upgrade_postgres.py::test_database_enforces_direct_submission_evidence[missing_submission]
+ERROR tests/test_scheduled_task_upgrade_postgres.py::test_database_enforces_direct_submission_evidence[authorization]
+ERROR tests/test_scheduled_task_upgrade_postgres.py::test_database_enforces_direct_submission_evidence[validation]
+ERROR tests/test_scheduled_task_upgrade_postgres.py::test_database_enforces_direct_submission_evidence[actor]
+ERROR tests/test_scheduled_task_upgrade_postgres.py::test_database_enforces_direct_submission_evidence[org]
+ERROR tests/test_scheduled_task_upgrade_postgres.py::test_database_enforces_direct_submission_evidence[None]
+ERROR tests/test_scheduled_task_upgrade_postgres.py::test_migration_reapply_and_rollback_preserve_old_confirmation
+ERROR tests/test_scheduled_task_upgrade_postgres.py::test_pause_between_claim_and_start_blocks_work
+ERROR tests/test_scheduled_task_upgrade_postgres.py::test_running_pause_survives_success_failure_and_recovery[True-False]
+ERROR tests/test_scheduled_task_upgrade_postgres.py::test_running_pause_survives_success_failure_and_recovery[False-False]
+ERROR tests/test_scheduled_task_upgrade_postgres.py::test_running_pause_survives_success_failure_and_recovery[False-True]
+ERROR tests/test_scheduled_task_upgrade_postgres.py::test_resume_running_keeps_claim_and_old_worker_cannot_finish_new_run
+ERROR tests/test_scheduled_task_upgrade_postgres.py::test_manual_run_does_not_resume_paused_task[True]
+ERROR tests/test_scheduled_task_upgrade_postgres.py::test_manual_run_does_not_resume_paused_task[False]
+ERROR tests/test_scheduled_task_upgrade_postgres.py::test_concurrent_claims_start_once_and_pause_wins_when_locked_first
+ERROR tests/test_scheduled_task_upgrade_postgres.py::test_lifecycle_migration_reapply_and_rollback_guards
+ERROR tests/test_scheduled_task_upgrade_postgres.py::test_existing_actor_uncertain_and_replay_contract_on_disposable_database
+======================= 1002 passed, 27 errors in 7.30s ========================

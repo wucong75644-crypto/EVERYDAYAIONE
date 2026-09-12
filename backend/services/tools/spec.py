@@ -1,4 +1,4 @@
-"""Immutable tool facts. This package is not wired into production execution."""
+"""Immutable facts shared by catalog, policy and compatibility projections."""
 
 from __future__ import annotations
 
@@ -99,8 +99,22 @@ class ToolSpec:
     legacy_validation_schema: Mapping[str, Any] | None = None
     policy_rules: ToolPolicyRules = field(default_factory=ToolPolicyRules)
     replay_requirement: str = "unspecified"
+    catalog_order: int = 0
+    catalog_groups: tuple[str, ...] = ()
+    core: bool = False
+    legacy_plan_visible: bool = True
+    schema_variants: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if type(self.catalog_order) is not int or self.catalog_order < 0:
+            raise ValueError("Invalid catalog_order")
+        if type(self.core) is not bool or type(self.legacy_plan_visible) is not bool:
+            raise ValueError("Invalid catalog presentation flags")
+        object.__setattr__(self, "catalog_groups", tuple(self.catalog_groups))
+        for variant in self.schema_variants.values():
+            if variant.get("function", {}).get("name") != self.name:
+                raise ValueError("Schema variant must preserve tool name")
+        object.__setattr__(self, "schema_variants", freeze(self.schema_variants))
         if not isinstance(self.policy_rules, ToolPolicyRules):
             raise ValueError("Invalid policy_rules")
         if self.replay_requirement not in {"unspecified", "reexecute_allowed", "record_required"}:
@@ -153,9 +167,9 @@ class ToolSpec:
             raise ValueError(f"Invalid schema required fields: {self.name}")
         object.__setattr__(self, "schema", freeze(self.schema))
 
-    def to_schema(self) -> dict[str, Any] | None:
+    def to_schema(self, variant: str | None = None) -> dict[str, Any] | None:
         """Return a fresh original schema, never the catalog's mutable storage."""
-        return thaw(self.schema)
+        return thaw(self.schema_variants[variant] if variant is not None else self.schema)
 
     def to_legacy_validation_schema(self) -> dict[str, Any] | None:
         """Preserve old partial validators separately from model-facing schema."""

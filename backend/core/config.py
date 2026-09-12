@@ -249,6 +249,7 @@ class Settings(BaseSettings):
 
     # 代码执行沙盒配置
     sandbox_enabled: bool = True                  # 沙盒总开关（False 时返回"功能关闭"）
+    scheduled_task_direct_enabled: bool = True   # Requires migrations 254/255 and upgraded scheduler workers.
     sandbox_timeout: float = 120.0                # 代码执行超时（秒）
     sandbox_max_result_chars: int = 50000          # 结果最大字符数（对标 Claude DEFAULT_MAX_RESULT_SIZE_CHARS=50000，子进程安全网）
     sandbox_max_code_length: int = 5000            # 代码最大字符数

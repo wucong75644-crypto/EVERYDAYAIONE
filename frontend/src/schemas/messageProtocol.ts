@@ -62,7 +62,7 @@ const fileRefSchema = z.object({
 }).passthrough();
 
 const formFieldSchema = z.object({
-  type: z.enum(['text', 'textarea', 'select', 'checkbox_group', 'number', 'time', 'hidden']),
+  type: z.enum(['text', 'textarea', 'select', 'checkbox_group', 'number', 'time', 'datetime-local', 'hidden']),
   name: z.string(),
   label: z.string(),
   required: z.boolean().optional(),
@@ -74,7 +74,7 @@ const formFieldSchema = z.object({
   ]).optional(),
   placeholder: optionalString,
   options: z.array(z.object({ label: z.string(), value: z.string() })).optional(),
-  visible_when: z.object({ field: z.string(), value: z.string() }).optional(),
+  visible_when: z.object({ field: z.string(), value: z.string(), not: z.boolean().optional() }).optional(),
 }).passthrough();
 
 const contentPartSchema = z.preprocess(normalizeNullEquivalentFields, z.discriminatedUnion('type', [

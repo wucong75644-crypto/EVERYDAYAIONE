@@ -1,10 +1,10 @@
 """
-工具注册表 — 统一工具元数据 + 同义词表
+工具选择标签与同义词表
 
-为 tool_selector 提供结构化的工具元信息（tags / priority / domain），
-以及业务同义词扩展表。
+为 tool_selector 提供 tags / priority / 选择分组 domain。
+这里的 domain（如 computer/common）不是 ToolSpec 的权限域；不定义 schema、风险或并发。
 
-设计文档: docs/document/TECH_工具系统统一架构方案.md §四、§十一、§十二
+实际边界: docs/document/TOOL_UNIFICATION_ARCHITECTURE_07.md
 """
 
 from dataclasses import dataclass, field

@@ -83,6 +83,7 @@ const scheduledTaskLabels: Record<string, string> = {
   cron_expr: '计划表达式', run_at: '执行时间', timezone: '时区',
   push_target: '通知目标', retry_count: '重试次数', timeout_sec: '超时时间',
   status: '任务状态', next_run_at: '下次执行时间',
+  max_credits: '每次积分上限',
 };
 
 function scheduledFields(snapshot: Record<string, unknown>, operation: string): ChangeSetDisplayField[] {
@@ -97,15 +98,56 @@ function scheduledFields(snapshot: Record<string, unknown>, operation: string): 
     .map((key) => ({ label: scheduledTaskLabels[key], value: displayValue(snapshot[key]) }));
 }
 
+function directTaskFields(snapshot: Record<string, unknown>): ChangeSetDisplayField[] {
+  const zone = typeof snapshot.timezone === 'string' ? snapshot.timezone : 'Asia/Shanghai';
+  const date = (value: unknown) => {
+    if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) return '未设置';
+    try { return new Date(value).toLocaleString('zh-CN', { timeZone: zone, hour12: false }); }
+    catch { return value; }
+  };
+  const recipient = (value: unknown): string => {
+    if (!value || typeof value !== 'object') return '未设置';
+    const target = value as Record<string, unknown>;
+    if (target.type === 'multi' && Array.isArray(target.targets)) return target.targets.map(recipient).join('、');
+    if (target.type === 'web') return '网页通知';
+    return String(target.chat_name || target.name || (target.type === 'wecom_group' ? '企业微信群' : '企业微信个人通知'));
+  };
+  let schedule = snapshot.schedule_type === 'once' ? `单次 · ${date(snapshot.run_at)}` : '自定义计划';
+  const cron = typeof snapshot.cron_expr === 'string' ? snapshot.cron_expr.trim().split(/\s+/) : [];
+  if (cron.length === 5 && /^\d+$/.test(cron[0]) && /^\d+$/.test(cron[1]) && cron[3] === '*') {
+    const time = `${cron[1].padStart(2, '0')}:${cron[0].padStart(2, '0')}`;
+    if (cron[2] === '*' && cron[4] === '*') schedule = `每天 ${time}`;
+    else if (/^\d+$/.test(cron[2]) && cron[4] === '*') schedule = `每月 ${cron[2]} 日 ${time}`;
+    else if (cron[2] === '*' && /^[0-6](,[0-6])*$/.test(cron[4])) {
+      schedule = `每周${cron[4].split(',').map((day) => '日一二三四五六'[Number(day)]).join('、')} ${time}`;
+    }
+  }
+  const fields: ChangeSetDisplayField[] = [
+    { label: '任务名称', value: displayValue(snapshot.name) },
+    { label: '执行内容', value: displayValue(snapshot.prompt) },
+    { label: '时间安排', value: `${schedule}（${zone}）` },
+    { label: '通知目标', value: recipient(snapshot.push_target) },
+  ];
+  if (snapshot.max_credits !== undefined) fields.push({ label: '每次积分上限', value: `${snapshot.max_credits} 积分` });
+  if (snapshot.next_run_at && snapshot.schedule_enabled !== false && snapshot.status !== 'paused') {
+    fields.push({ label: '下次执行时间', value: date(snapshot.next_run_at) });
+  }
+  return fields;
+}
+
 function scheduledDiff(changeSet: ChangeSet): ChangeSetDiffEntry[] {
   const base = changeSet.base_snapshot;
   const proposed = changeSet.proposed_snapshot;
   const keys = new Set([...Object.keys(base), ...Object.keys(proposed)]);
+  const labels = { ...scheduledTaskLabels };
+  if ((changeSet.policy_snapshot.submission as Record<string, unknown> | undefined)?.mode === 'apply_if_allowed') {
+    Object.assign(labels, { execution_policy: '可调用工具及授权范围', data_scope: '数据范围', template_file: '模板文件' });
+  }
   return [...keys]
-    .filter((key) => isDisplayableKey(key) && scheduledTaskLabels[key])
+    .filter((key) => isDisplayableKey(key) && labels[key])
     .filter((key) => JSON.stringify(base[key]) !== JSON.stringify(proposed[key]))
     .map((key) => ({
-      label: scheduledTaskLabels[key],
+      label: labels[key],
       before: displayValue(base[key]),
       after: displayValue(proposed[key]),
     }));
@@ -125,6 +167,11 @@ export const scheduledTaskChangeSetAdapter: ChangeSetResourceAdapter = {
   getSummary: (changeSet) => {
     const snapshot = changeSet.proposed_snapshot;
     const name = typeof snapshot.name === 'string' ? snapshot.name : '定时任务';
+    const action = ({ create: '创建', update: '修改', pause: '暂停', resume: '恢复', delete: '删除' } as Record<string, string>)[changeSet.operation] || '修改';
+    if (changeSet.status === 'applied') return `已${action}「${name}」${changeSet.operation === 'pause' ? '的后续定时；已经开始的本次运行会继续完成。' : '。'}`;
+    if (['failed', 'rejected', 'conflicted', 'cancelled', 'expired'].includes(changeSet.status)) return `本次${action}「${name}」未生效。`;
+    const submission = changeSet.policy_snapshot.submission as Record<string, unknown> | undefined;
+    if (submission?.mode === 'apply_if_allowed' && changeSet.status !== 'awaiting_approval') return `正在检查并${action}「${name}」，完成后更新结果。`;
     return ({
       create: `将创建「${name}」`,
       update: `将修改「${name}」的配置和执行路径`,
@@ -133,10 +180,13 @@ export const scheduledTaskChangeSetAdapter: ChangeSetResourceAdapter = {
       delete: `将永久删除「${name}」`,
     }[changeSet.operation] || `将变更「${name}」`);
   },
-  getFields: (changeSet) => scheduledFields(changeSet.proposed_snapshot, changeSet.operation),
+  getFields: (changeSet) => (changeSet.policy_snapshot.submission as Record<string, unknown> | undefined)?.mode === 'apply_if_allowed'
+    ? directTaskFields(changeSet.proposed_snapshot)
+    : scheduledFields(changeSet.proposed_snapshot, changeSet.operation),
   getDiff: scheduledDiff,
   getPlanSteps: (changeSet) => {
-    const steps = changeSet.plan_snapshot?.steps;
+    const candidate = changeSet.plan_snapshot?.candidate as Record<string, unknown> | undefined;
+    const steps = candidate?.steps || changeSet.plan_snapshot?.steps;
     if (!Array.isArray(steps)) return [];
     return steps.flatMap((step) => {
       if (!step || typeof step !== 'object') return [];

@@ -30,6 +30,25 @@ import { scheduledTaskService } from '../../../services/scheduledTask';
 // 子组件
 // ════════════════════════════════════════════════════════
 
+function isFormFieldVisible(field: FormField, values: Record<string, unknown>): boolean {
+  if (!field.visible_when) return true;
+  const equal = formatFormValue(values[field.visible_when.field]) === field.visible_when.value;
+  return field.visible_when.not ? !equal : equal;
+}
+
+function requiredFieldError(fields: FormField[], values: Record<string, unknown>): string {
+  for (const field of fields) {
+    if (!field.required || field.type === 'hidden' || !isFormFieldVisible(field, values)) continue;
+    const value = values[field.name];
+    const empty = Array.isArray(value) ? value.length === 0 : !formatFormValue(value).trim();
+    if (empty) {
+      const action = field.type === 'select' || field.type === 'checkbox_group' ? '选择' : '填写';
+      return `请${action}${field.label || '必填信息'}`;
+    }
+  }
+  return '';
+}
+
 function TextField({
   field,
   value,
@@ -107,6 +126,9 @@ function SelectField({
         backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")`,
       }}
     >
+      {!value && !(field.options || []).some((opt) => opt.value === '') && (
+        <option value="" disabled>请选择</option>
+      )}
       {(field.options || []).map((opt) => (
         <option key={opt.value} value={opt.value}>
           {opt.label}
@@ -117,6 +139,7 @@ function SelectField({
 }
 
 function TimeField({
+  field,
   value,
   onChange,
 }: {
@@ -126,7 +149,7 @@ function TimeField({
 }) {
   return (
     <input
-      type="time"
+      type={field.type === 'datetime-local' ? 'datetime-local' : 'time'}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       className={cn(
@@ -283,7 +306,7 @@ function FormFields({
     if (field.type === 'text') return <TextField field={field} value={value} onChange={update} />;
     if (field.type === 'textarea') return <TextareaField field={field} value={value} onChange={update} />;
     if (field.type === 'select') return <SelectField field={field} value={value} onChange={update} />;
-    if (field.type === 'time') return <TimeField field={field} value={value} onChange={update} />;
+    if (field.type === 'time' || field.type === 'datetime-local') return <TimeField field={field} value={value} onChange={update} />;
     if (field.type === 'number') return <NumberField field={field} value={value} onChange={update} />;
     if (field.type === 'checkbox_group') {
       const selected = Array.isArray(values[field.name]) ? values[field.name] as number[] : [];
@@ -412,10 +435,16 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
 
   const updateField = useCallback((name: string, value: unknown) => {
     setValues((prev) => ({ ...prev, [name]: value }));
+    setFormError('');
   }, []);
 
   const handleSubmit = useCallback(() => {
     if (status !== 'open') return;
+    const validationError = requiredFieldError(form.fields, values);
+    if (validationError) {
+      setFormError(validationError);
+      return;
+    }
     setStatus('submitting');
     setFormError('');
 
@@ -431,7 +460,7 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
         },
       }),
     );
-  }, [conversationId, form.form_id, form.form_type, messageId, status, values]);
+  }, [conversationId, form.fields, form.form_id, form.form_type, messageId, status, values]);
 
   const handleCancel = useCallback(() => {
     if (status !== 'open') return;
@@ -452,17 +481,14 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
 
   // 判断字段是否可见（visible_when 联动）
   const isFieldVisible = useCallback(
-    (field: FormField) => {
-      if (!field.visible_when) return true;
-      return formatFormValue(values[field.visible_when.field]) === field.visible_when.value;
-    },
+    (field: FormField) => isFormFieldVisible(field, values),
     [values],
   );
 
   if (submitted || cancelled) {
     return (
       <>
-        <m.div
+        {!(submitted && localChangeSetId) && <m.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={SOFT_SPRING}
@@ -477,7 +503,7 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
           <span>{submitted
             ? (submittedMessage || `${form.title} — 已提交`)
             : (submittedMessage || `${form.title} — 已取消`)}</span>
-        </m.div>
+        </m.div>}
         {localChangeSetId && (
           <ChangeSetCard changeSetId={localChangeSetId} fallbackTitle={form.title} actionHandlers={changeSetActionHandlers} />
         )}
@@ -491,12 +517,12 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
       {localChangeSetId && (
         <ChangeSetCard changeSetId={localChangeSetId} fallbackTitle={form.title} actionHandlers={changeSetActionHandlers} />
       )}
-      {!localChangeSetId && <ScheduledTaskWorkflowStage formType={form.form_type} status={status} />}
+      {!localChangeSetId && values._submission_mode !== 'apply_if_allowed' && <ScheduledTaskWorkflowStage formType={form.form_type} status={status} />}
       <FormBlockContent form={form} submitting={submitting}
         onSubmit={handleSubmit} onCancel={handleCancel}
         fields={<FormFields fields={form.fields} values={values}
           isVisible={isFieldVisible} onChange={updateField} />} />
-      {formError && <p className="mx-4 mt-2 text-xs text-red-600 dark:text-red-400">{formError}</p>}
+      {formError && <p role="alert" className="mx-4 mt-2 text-xs text-red-600 dark:text-red-400">{formError}</p>}
     </>
   );
 });

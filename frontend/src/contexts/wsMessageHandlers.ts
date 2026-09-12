@@ -473,6 +473,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
         run_id?: string;
         task_status?: string;
         status?: string;
+        schedule_enabled?: boolean;
         next_run_at?: string;
         summary?: string;
       };
@@ -486,12 +487,14 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       import('../stores/useScheduledTaskStore').then(({ useScheduledTaskStore }) => {
         useScheduledTaskStore.getState().optimisticUpdate(data.task_id!, {
           ...(taskStatus ? { status: taskStatus } : {}),
+          ...(typeof data.schedule_enabled === 'boolean' ? { schedule_enabled: data.schedule_enabled } : {}),
           last_run_at: new Date().toISOString(),
           last_summary: data.summary || null,
           next_run_at: data.next_run_at || null,
         });
         // 重新拉取执行历史
         useScheduledTaskStore.getState().fetchRuns(data.task_id!);
+        void useScheduledTaskStore.getState().fetchTasks();
       });
     },
 
@@ -501,6 +504,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
         run_id?: string;
         task_status?: string;
         status?: string;
+        schedule_enabled?: boolean;
         reason?: string;
         consecutive_failures?: number;
         next_run_at?: string;
@@ -516,10 +520,12 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       import('../stores/useScheduledTaskStore').then(({ useScheduledTaskStore }) => {
         useScheduledTaskStore.getState().optimisticUpdate(data.task_id!, {
           ...(taskStatus ? { status: taskStatus } : {}),
+          ...(typeof data.schedule_enabled === 'boolean' ? { schedule_enabled: data.schedule_enabled } : {}),
           consecutive_failures: data.consecutive_failures || 0,
           next_run_at: data.next_run_at || null,
         });
         useScheduledTaskStore.getState().fetchRuns(data.task_id!);
+        void useScheduledTaskStore.getState().fetchTasks();
       });
     },
 

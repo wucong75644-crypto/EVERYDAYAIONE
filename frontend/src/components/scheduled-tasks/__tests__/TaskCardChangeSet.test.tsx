@@ -22,7 +22,7 @@ vi.mock('../../../stores/useAuthStore', () => ({
 
 vi.mock('../../../hooks/usePermission', () => ({
   usePermission: () => true,
-  useCanExecuteTask: () => false,
+  useCanExecuteTask: () => true,
 }));
 
 function makeTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
@@ -38,6 +38,22 @@ function makeTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
 
 describe('TaskCard ChangeSet actions', () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it('shows future pause independently of the current run and permits a manual paused run', async () => {
+    const onChangeRequested = vi.fn().mockResolvedValue(undefined);
+    const running = makeTask({status: 'running', schedule_enabled: false});
+    const { rerender } = render(<TaskCard task={running} onChangeRequested={onChangeRequested} />);
+    expect(screen.getByText('本次执行中 · 后续定时已暂停')).toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: '立即执行'})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', {name: '恢复'}));
+    await waitFor(() => expect(onChangeRequested).toHaveBeenCalledWith('resume', running));
+    runTaskNow.mockResolvedValue(true);
+    rerender(<TaskCard task={makeTask({status: 'paused', schedule_enabled: false})} onChangeRequested={onChangeRequested} />);
+    fireEvent.click(screen.getByRole('button', {name: '立即执行'}));
+    await waitFor(() => expect(runTaskNow).toHaveBeenCalledWith('task-1'));
+    await waitFor(() => expect(setExpandedTaskId).toHaveBeenCalledWith('task-1'));
+    expect(screen.getByRole('button', {name: '恢复'})).toBeInTheDocument();
+  });
 
   it('routes pause and delete through a proposal instead of mutating the task optimistically', async () => {
     const onChangeRequested = vi.fn().mockResolvedValue(undefined);

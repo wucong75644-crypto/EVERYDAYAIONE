@@ -1,5 +1,7 @@
 # TECH_工具系统统一架构方案
 
+> 2026-09-11：本文保留历史设计记录。01–07 实际运行目录、定义所有权、权限与兼容接口以 [工具统一最终架构](TOOL_UNIFICATION_ARCHITECTURE_07.md)、[完整目录](TOOL_UNIFICATION_CATALOG_07.md) 和 [交接](TOOL_UNIFICATION_HANDOFF.md) 为准；历史语义选择分组不等于当前运行权限域。
+
 > **版本**：V5.0 | **日期**：2026-03-23 | **状态**：方案确认，准备开发
 
 ---

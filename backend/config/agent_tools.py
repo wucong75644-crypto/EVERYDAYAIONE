@@ -59,22 +59,10 @@ SYNC_TOOLS = INFO_TOOLS
 # 工具 Schema（用于验证，防止幻觉调用）
 # ============================================================
 
+from services.tools.catalog import definition_registry
+
+# Route exits remain a separate legacy control protocol, not runtime tools.
 TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
-    # === 信息工具 ===
-    "get_conversation_context": {
-        "required": [],
-        "properties": {"limit": {"type": "integer"}},
-    },
-    "search_knowledge": {
-        "required": ["query"],
-        "properties": {"query": {"type": "string"}},
-    },
-    # === 搜索工具 ===
-    "erp_api_search": {
-        "required": ["query"],
-        "properties": {"query": {"type": "string"}},
-    },
-    # === 路由工具 ===
     "route_to_chat": {
         "required": ["system_prompt"],
         "properties": {
@@ -97,14 +85,8 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "model": {"type": "string"},
         },
     },
-    # === ERP 工具 ===
-    **ERP_TOOL_SCHEMAS,
-    # === 爬虫工具 ===
-    **CRAWLER_TOOL_SCHEMAS,
-    # === 代码执行工具 ===
-    **CODE_TOOL_SCHEMAS,
-    # === 文件操作工具 ===
-    **FILE_TOOL_SCHEMAS,
+    **{spec.name: spec.to_legacy_validation_schema()
+       for spec in definition_registry().specs() if spec.legacy_validation_schema is not None},
 }
 
 

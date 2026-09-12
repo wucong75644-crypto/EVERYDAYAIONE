@@ -1,0 +1,36 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.2, pytest-9.0.3, pluggy-1.6.0 -- /Users/wucong/EVERYDAYAIONE/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/backend
+configfile: pytest.ini
+plugins: time-machine-2.14.1, cov-7.1.0, asyncio-1.3.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 2 items
+
+backend/tests/test_tool_definitions_07.py::test_prior_confirmation_binding_remains_valid[file_delete-args0-general] FAILED [ 50%]
+backend/tests/test_tool_definitions_07.py::test_prior_confirmation_binding_remains_valid[trigger_erp_sync-args1-erp] FAILED [100%]
+
+=================================== FAILURES ===================================
+___ test_prior_confirmation_binding_remains_valid[file_delete-args0-general] ___
+backend/tests/test_tool_definitions_07.py:205: in test_prior_confirmation_binding_remains_valid
+    context = ToolContext(actor_user_id='actor-a', workspace_owner_id='actor-a', org_id='org-a',
+E   TypeError: ToolContext.__init__() missing 1 required keyword-only argument: 'personal_context_allowed'
+__ test_prior_confirmation_binding_remains_valid[trigger_erp_sync-args1-erp] ___
+backend/tests/test_tool_definitions_07.py:205: in test_prior_confirmation_binding_remains_valid
+    context = ToolContext(actor_user_id='actor-a', workspace_owner_id='actor-a', org_id='org-a',
+E   TypeError: ToolContext.__init__() missing 1 required keyword-only argument: 'personal_context_allowed'
+=============================== warnings summary ===============================
+../../.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434
+  /Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+tests/test_tool_definitions_07.py::test_prior_confirmation_binding_remains_valid[file_delete-args0-general]
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/backend/services/adapters/kie/models.py:126: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class JsonSchema(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED backend/tests/test_tool_definitions_07.py::test_prior_confirmation_binding_remains_valid[file_delete-args0-general]
+FAILED backend/tests/test_tool_definitions_07.py::test_prior_confirmation_binding_remains_valid[trigger_erp_sync-args1-erp]
+======================== 2 failed, 2 warnings in 0.34s =========================

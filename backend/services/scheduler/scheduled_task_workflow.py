@@ -14,10 +14,15 @@ from services.planner import CapabilityRegistry, PlanCandidate, PlanStep, Planne
 from services.planner import required_tools_for_steps
 
 
-_PREFLIGHT_BLOCKED_TOOLS = frozenset({
-    "manage_scheduled_task", "erp_execute", "trigger_erp_sync", "file_delete",
-    "generate_image", "generate_video", "image_agent",
-})
+def __getattr__(name: str):
+    if name == "_PREFLIGHT_BLOCKED_TOOLS":
+        # Historical diagnostic import only. Actual preflight uses Registry +
+        # Policy below, including availability and the frozen authorization.
+        from services.tools.catalog import build_tool_catalog
+        return frozenset(s.name for s in build_tool_catalog().specs()
+                         if s.risk_level == "dangerous"
+                         or s.policy_rules.operation in {"generation", "proposal"})
+    raise AttributeError(name)
 
 
 def stable_json_hash(value: Dict[str, Any]) -> str:

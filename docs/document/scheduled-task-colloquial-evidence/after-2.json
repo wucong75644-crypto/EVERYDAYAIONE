@@ -1,0 +1,48 @@
+{
+  "input": "创建一个定时任务。查询昨天的付款订单数按照平台划分，每天八点钟发给我看",
+  "raw": {
+    "changes": {
+      "name": "昨日付款订单数统计",
+      "prompt": "查询昨天的付款订单数按照平台划分",
+      "schedule_type": "daily",
+      "time_str": "08:00"
+    },
+    "evidence": {
+      "prompt": "查询昨天的付款订单数按照平台划分",
+      "schedule_type": "每天",
+      "time_str": "八点钟"
+    },
+    "recipient": "我",
+    "request_parts": [
+      {
+        "kind": "request",
+        "text": "创建一个定时任务。"
+      },
+      {
+        "kind": "execution",
+        "text": "查询昨天的付款订单数按照平台划分"
+      },
+      {
+        "kind": "schedule",
+        "text": "每天八点钟"
+      },
+      {
+        "kind": "delivery",
+        "text": "发给我看"
+      }
+    ]
+  },
+  "result": {
+    "changes": {
+      "name": "昨日付款订单数统计",
+      "prompt": "查询昨天的付款订单数按照平台划分",
+      "schedule_type": "daily",
+      "time_str": "08:00"
+    },
+    "missing_fields": [],
+    "recipient": "我",
+    "parsed": true
+  },
+  "real_model": true,
+  "business_calls": 0
+}

@@ -1,0 +1,357 @@
+{
+  "specs": [
+    {
+      "name": "erp_info_query",
+      "domain": "erp",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "erp_info_query",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "erp_product_query",
+      "domain": "erp",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "erp_product_query",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "erp_trade_query",
+      "domain": "erp",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "erp_trade_query",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "erp_aftersales_query",
+      "domain": "erp",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "erp_aftersales_query",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "erp_warehouse_query",
+      "domain": "erp",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "erp_warehouse_query",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "erp_purchase_query",
+      "domain": "erp",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "erp_purchase_query",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "erp_taobao_query",
+      "domain": "erp",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "erp_taobao_query",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "erp_execute",
+      "domain": "erp",
+      "exposure": "public",
+      "risk": "dangerous",
+      "parallel": false,
+      "cacheable": false,
+      "handler": "erp_execute",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "local_data",
+      "domain": "erp",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "local_data",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "local_product_stats",
+      "domain": "erp",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "local_product_stats",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "local_stock_query",
+      "domain": "erp",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "local_stock_query",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "local_product_identify",
+      "domain": "erp",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "local_product_identify",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "local_platform_map_query",
+      "domain": "erp",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "local_platform_map_query",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "local_compare_stats",
+      "domain": "erp",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "local_compare_stats",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "local_shop_list",
+      "domain": "erp",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "local_shop_list",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "local_warehouse_list",
+      "domain": "erp",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "local_warehouse_list",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "local_supplier_list",
+      "domain": "erp",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "local_supplier_list",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "trigger_erp_sync",
+      "domain": "erp",
+      "exposure": "public",
+      "risk": "dangerous",
+      "parallel": false,
+      "cacheable": false,
+      "handler": "trigger_erp_sync",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "social_crawler",
+      "domain": "general",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "social_crawler",
+      "source": "services.tools.definitions.general.build_specs"
+    },
+    {
+      "name": "file_search",
+      "domain": "general",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "file_search",
+      "source": "services.tools.definitions.file_sandbox.build_specs"
+    },
+    {
+      "name": "file_analyze",
+      "domain": "general",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "file_analyze",
+      "source": "services.tools.definitions.file_sandbox.build_specs"
+    },
+    {
+      "name": "file_delete",
+      "domain": "general",
+      "exposure": "public",
+      "risk": "dangerous",
+      "parallel": false,
+      "cacheable": false,
+      "handler": "file_delete",
+      "source": "services.tools.definitions.file_sandbox.build_specs"
+    },
+    {
+      "name": "restore_file",
+      "domain": "general",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": false,
+      "cacheable": false,
+      "handler": "restore_file",
+      "source": "services.tools.definitions.file_sandbox.build_specs"
+    },
+    {
+      "name": "code_execute",
+      "domain": "shared",
+      "exposure": "public",
+      "risk": "confirm",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "code_execute",
+      "source": "services.tools.definitions.file_sandbox.build_specs"
+    },
+    {
+      "name": "erp_agent",
+      "domain": "general",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "erp_agent",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "erp_analyze",
+      "domain": "general",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "erp_analyze",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "erp_api_search",
+      "domain": "erp",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "erp_api_search",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "search_knowledge",
+      "domain": "general",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "search_knowledge",
+      "source": "services.tools.definitions.general.build_specs"
+    },
+    {
+      "name": "web_search",
+      "domain": "general",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "web_search",
+      "source": "services.tools.definitions.general.build_specs"
+    },
+    {
+      "name": "generate_image",
+      "domain": "general",
+      "exposure": "public",
+      "risk": "confirm",
+      "parallel": false,
+      "cacheable": false,
+      "handler": "generate_image",
+      "source": "services.tools.definitions.media.build_specs"
+    },
+    {
+      "name": "generate_video",
+      "domain": "general",
+      "exposure": "public",
+      "risk": "confirm",
+      "parallel": false,
+      "cacheable": false,
+      "handler": "generate_video",
+      "source": "services.tools.definitions.media.build_specs"
+    },
+    {
+      "name": "image_agent",
+      "domain": "general",
+      "exposure": "public",
+      "risk": "confirm",
+      "parallel": false,
+      "cacheable": false,
+      "handler": "image_agent",
+      "source": "services.tools.definitions.media.build_specs"
+    },
+    {
+      "name": "manage_scheduled_task",
+      "domain": "general",
+      "exposure": "public",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "handler": "manage_scheduled_task",
+      "source": "services.tools.definitions.task.build_specs"
+    },
+    {
+      "name": "fetch_all_pages",
+      "domain": "erp",
+      "exposure": "legacy_internal",
+      "risk": "safe",
+      "parallel": false,
+      "cacheable": false,
+      "handler": "fetch_all_pages",
+      "source": "services.tools.definitions.erp.build_specs"
+    },
+    {
+      "name": "get_conversation_context",
+      "domain": "general",
+      "exposure": "legacy_internal",
+      "risk": "safe",
+      "parallel": false,
+      "cacheable": false,
+      "handler": "get_conversation_context",
+      "source": "services.tools.definitions.general.build_specs"
+    }
+  ],
+  "public_schema_count": 33,
+  "handler_count": 35,
+  "coverage_errors": []
+}

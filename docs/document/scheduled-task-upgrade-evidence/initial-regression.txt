@@ -1,0 +1,119 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-8.3.4, pluggy-1.6.0
+rootdir: /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/backend
+configfile: pytest.ini
+plugins: anyio-4.12.1, asyncio-0.25.2, cov-7.1.0, time-machine-2.14.1
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=function
+collected 1956 items
+
+tests/test_changeset_api.py ..                                           [  0%]
+tests/test_changeset_core.py .........                                   [  0%]
+tests/test_changeset_migration.py ..                                     [  0%]
+tests/test_chat_execution_engine.py ...............                      [  1%]
+tests/test_chat_task_manager.py ........................................ [  3%]
+........                                                                 [  3%]
+tests/test_planner_framework.py ...                                      [  4%]
+tests/test_scheduled_task_agent.py ..........FF                          [  4%]
+tests/test_scheduled_task_agent_integration.py .............             [  5%]
+tests/test_scheduled_task_changeset_adapter.py ............              [  5%]
+tests/test_scheduled_task_changeset_migration.py ...                     [  6%]
+tests/test_scheduled_task_chat_results.py ..............                 [  6%]
+tests/test_scheduled_task_delivery_outbox_migration.py ......            [  7%]
+tests/test_scheduled_task_delivery_worker.py .....                       [  7%]
+tests/test_scheduled_task_direct_submission.py ...................       [  8%]
+tests/test_scheduled_task_draft_delete_integration.py ........           [  8%]
+tests/test_scheduled_task_executor_delivery.py ...                       [  8%]
+tests/test_scheduled_task_legacy_service_rls_migration.py ..             [  8%]
+tests/test_scheduled_task_lifecycle_integrity_migration.py ...           [  9%]
+tests/test_scheduled_task_nested_form_state_array_path_migration.py ..   [  9%]
+tests/test_scheduled_task_nested_form_state_migration.py ..              [  9%]
+tests/test_scheduled_task_simplified_creation.py .......                 [  9%]
+tests/test_scheduled_task_upgrade_postgres.py ..................         [ 10%]
+tests/test_scheduled_task_workflow.py .......                            [ 10%]
+tests/test_scheduled_tasks_routes.py ................................... [ 12%]
+.......                                                                  [ 13%]
+tests/test_scheduler_scanner.py ....................                     [ 14%]
+tests/test_task_nl_parser.py ..............                              [ 14%]
+tests/test_tool_args_validator.py ...................................    [ 16%]
+tests/test_tool_audit.py ..............                                  [ 17%]
+tests/test_tool_confirm.py .........                                     [ 17%]
+tests/test_tool_definitions_07.py ................................F..... [ 19%]
+........................................................................ [ 23%]
+........................................................................ [ 27%]
+........................................................................ [ 30%]
+..........................................................               [ 33%]
+tests/test_tool_definitions_07_entries.py ......................         [ 34%]
+tests/test_tool_digest.py ......................                         [ 36%]
+tests/test_tool_execution.py .........................................   [ 38%]
+tests/test_tool_executor.py ............................................ [ 40%]
+                                                                         [ 40%]
+tests/test_tool_invocation_store.py ...                                  [ 40%]
+tests/test_tool_invocation_uncertain_integration.py s                    [ 40%]
+tests/test_tool_invocation_uncertain_migration.py ..                     [ 40%]
+tests/test_tool_invocations_migration.py ...                             [ 40%]
+tests/test_tool_loop_context.py .................................        [ 42%]
+tests/test_tool_loop_failure_outcome.py .                                [ 42%]
+tests/test_tool_loop_helpers.py .........                                [ 43%]
+tests/test_tool_loop_parallel.py ..........                              [ 43%]
+tests/test_tool_loop_tooloutput.py ............                          [ 44%]
+tests/test_tool_loop_usage.py .                                          [ 44%]
+tests/test_tool_output.py ...................................            [ 46%]
+tests/test_tool_policy.py .............................................. [ 48%]
+........................................................................ [ 52%]
+........................................................................ [ 55%]
+........................................................................ [ 59%]
+........................................................................ [ 63%]
+........................................................................ [ 66%]
+........................................................................ [ 70%]
+........................................................................ [ 74%]
+..                                                                       [ 74%]
+tests/test_tool_production_integration.py .............................. [ 75%]
+........................................................................ [ 79%]
+................                                                         [ 80%]
+tests/test_tool_registry.py ............................................ [ 82%]
+......................................................                   [ 85%]
+tests/test_tool_result.py .............................................. [ 87%]
+...                                                                      [ 87%]
+tests/test_tool_result_05_production_regressions.py .................... [ 88%]
+..                                                                       [ 88%]
+tests/test_tool_result_cache.py .............                            [ 89%]
+tests/test_tool_result_consumption.py .................................. [ 91%]
+........................................                                 [ 93%]
+tests/test_tool_result_envelope.py ..................................... [ 95%]
+............                                                             [ 95%]
+tests/test_tool_result_persistence_06.py ............................... [ 97%]
+..............................................                           [ 99%]
+tests/test_ws_form_submit.py ....                                        [100%]
+
+=================================== FAILURES ===================================
+_ TestExecutionOutcome.test_missing_final_synthesis_is_error_and_preserves_tool_failure _
+tests/test_scheduled_task_agent.py:225: in test_missing_final_synthesis_is_error_and_preserves_tool_failure
+    assert result.error_message == "❌ 沙盒内核启动失败,请稍后重试"
+E   assert "'types.Simpl...rect_enabled'" == '❌ 沙盒内核启动失败,请稍后重试'
+E     
+E     - ❌ 沙盒内核启动失败,请稍后重试
+E     + 'types.SimpleNamespace' object has no attribute 'scheduled_task_direct_enabled'
+----------------------------- Captured stderr call -----------------------------
+2026-09-12 13:58:30.492 | ERROR    | services.agent.scheduled_task_agent:execute:258 - ScheduledTask error | task=task_001 | error='types.SimpleNamespace' object has no attribute 'scheduled_task_direct_enabled'
+_ TestExecutionOutcome.test_wrap_up_text_after_failure_is_not_a_successful_delivery _
+tests/test_scheduled_task_agent.py:256: in test_wrap_up_text_after_failure_is_not_a_successful_delivery
+    assert result.error_message == "erp_agent:timeout"
+E   assert "'types.Simpl...rect_enabled'" == 'erp_agent:timeout'
+E     
+E     - erp_agent:timeout
+E     + 'types.SimpleNamespace' object has no attribute 'scheduled_task_direct_enabled'
+----------------------------- Captured stderr call -----------------------------
+2026-09-12 13:58:30.521 | ERROR    | services.agent.scheduled_task_agent:execute:258 - ScheduledTask error | task=task_001 | error='types.SimpleNamespace' object has no attribute 'scheduled_task_direct_enabled'
+___________ test_full_spec_contract_unchanged[manage_scheduled_task] ___________
+tests/test_tool_definitions_07.py:50: in test_full_spec_contract_unchanged
+    assert actual[key] == value, (name, key)
+E   AssertionError: ('manage_scheduled_task', 'effects')
+E   assert ['proposal_or...k_definition'] == ['proposal_or_form']
+E     
+E     Left contains one more item: 'task_definition'
+E     Use -v to get more diff
+=========================== short test summary info ============================
+FAILED tests/test_scheduled_task_agent.py::TestExecutionOutcome::test_missing_final_synthesis_is_error_and_preserves_tool_failure
+FAILED tests/test_scheduled_task_agent.py::TestExecutionOutcome::test_wrap_up_text_after_failure_is_not_a_successful_delivery
+FAILED tests/test_tool_definitions_07.py::test_full_spec_contract_unchanged[manage_scheduled_task]
+================== 3 failed, 1952 passed, 1 skipped in 14.48s ==================

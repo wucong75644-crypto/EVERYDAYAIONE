@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChangeSet } from '../../../../types/changeset';
 import ChangeSetCard from '../ChangeSetCard';
+import FormBlock from '../FormBlock';
 import { changeSetService } from '../../../../services/changeSet';
 
 vi.mock('../../../../services/changeSet', () => ({
@@ -42,6 +43,24 @@ describe('ChangeSetCard', () => {
   });
 
   afterEach(() => vi.clearAllMocks());
+
+  it('shows a compact human-readable receipt for an applied direct task', async () => {
+    vi.mocked(changeSetService.get).mockResolvedValue(makeChangeSet({
+      operation: 'create', status: 'applied',
+      policy_snapshot: { requires_approval: false, submission: { mode: 'apply_if_allowed' } },
+      proposed_snapshot: { name: 'A店日报', prompt: '只读A店订单', schedule_type: 'daily',
+        cron_expr: '0 9 * * *', timezone: 'Asia/Shanghai', push_target: { type: 'web', user_id: 'user-1' },
+        max_credits: 10, status: 'active' },
+    }));
+    render(<ChangeSetCard changeSetId="change-1" />);
+    expect(await screen.findByText('已创建「A店日报」。')).toBeVisible();
+    expect(screen.getByText('每天 09:00（Asia/Shanghai）')).toBeVisible();
+    expect(screen.getByText('网页通知')).toBeVisible();
+    expect(screen.getByText('10 积分')).toBeVisible();
+    expect(screen.getByText('查看检查和变更记录').closest('details')).not.toHaveAttribute('open');
+    expect(screen.queryByRole('button', { name: '确认提交' })).not.toBeInTheDocument();
+    expect(screen.queryByText('流程已结束')).not.toBeInTheDocument();
+  });
 
   it('reads the current ChangeSet and renders generic sections plus scheduled-task labels', async () => {
     render(<ChangeSetCard changeSetId="change-1" />);
@@ -151,4 +170,62 @@ describe('ChangeSetCard', () => {
     await waitFor(() => expect(changeSetService.get.mock.calls.length).toBeGreaterThan(callsBefore));
     await waitFor(() => expect(onChangeSetUpdated).toHaveBeenCalledWith(expect.objectContaining({ id: 'change-1' })));
   });
+  it('recovers a missed completion without a live event and stops polling at the terminal state', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(changeSetService.get).mockResolvedValue(makeChangeSet({ status: 'preflighting' }));
+      const { unmount } = render(<ChangeSetCard changeSetId="change-1" />);
+      await act(async () => {});
+      vi.mocked(changeSetService.get).mockRejectedValueOnce(new Error('offline'));
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(screen.getByRole('heading', { name: '编辑定时任务' })).toBeVisible();
+      vi.mocked(changeSetService.get).mockResolvedValue(makeChangeSet({ status: 'applied', revision: 3 }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(screen.getByText('变更已提交并记录完成结果。')).toBeVisible();
+      const calls = vi.mocked(changeSetService.get).mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
+      expect(changeSetService.get).toHaveBeenCalledTimes(calls);
+      unmount();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('reconciles on coming online and removes listeners when unmounted', async () => {
+    const { unmount } = render(<ChangeSetCard changeSetId="change-1" />);
+    await screen.findByText('待确认');
+    vi.mocked(changeSetService.get).mockResolvedValue(makeChangeSet({ status: 'applied', revision: 3 }));
+    await act(async () => { window.dispatchEvent(new Event('online')); });
+    expect(await screen.findByText('变更已提交并记录完成结果。')).toBeVisible();
+    unmount();
+    const calls = vi.mocked(changeSetService.get).mock.calls.length;
+    window.dispatchEvent(new Event('online'));
+    expect(changeSetService.get).toHaveBeenCalledTimes(calls);
+  });
+
+  it('does not replace a newly selected card with a late response from the old card', async () => {
+    let finishOld!: (value: ChangeSet) => void;
+    vi.mocked(changeSetService.get).mockImplementation((id) => id === 'change-1'
+      ? new Promise((resolve) => { finishOld = resolve; })
+      : Promise.resolve(makeChangeSet({ id: 'change-2', status: 'applied', revision: 4 })));
+    const onUpdate = vi.fn();
+    const { rerender } = render(<ChangeSetCard changeSetId="change-1" onChangeSetUpdated={onUpdate} />);
+    rerender(<ChangeSetCard changeSetId="change-2" onChangeSetUpdated={onUpdate} />);
+    await screen.findByText('变更已提交并记录完成结果。');
+    await act(async () => { finishOld(makeChangeSet({ status: 'preflighting' })); });
+    expect(screen.getByText('变更已提交并记录完成结果。')).toBeVisible();
+    expect(onUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ id: 'change-1' }));
+  });
+
+  it('renders an applied creation through the real submitted FormBlock without stale checking text', async () => {
+    vi.mocked(changeSetService.get).mockResolvedValue(makeChangeSet({
+      status: 'applied', operation: 'create', proposed_snapshot: { name: '反馈测试' },
+      policy_snapshot: { submission: { mode: 'apply_if_allowed' }, requires_approval: false },
+    }));
+    render(<FormBlock form={{ type: 'form', form_type: 'scheduled_task_create', form_id: 'f1',
+      title: '创建任务', fields: [], status: 'submitted', change_set_id: 'change-1',
+      result_message: '正在检查创建请求，结果将在卡片中更新。',
+    }} messageId="m1" conversationId="c1" />);
+    expect(await screen.findByText('已创建「反馈测试」。')).toBeVisible();
+    expect(screen.queryByText(/正在检查创建请求/)).not.toBeInTheDocument();
+  });
+
 });

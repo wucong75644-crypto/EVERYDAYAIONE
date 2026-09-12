@@ -1,0 +1,84 @@
+{
+  "baseline_head": "d16adf195d4e93df6007239eba4bdbec34f4ca9d",
+  "branch": "codex/task/20260911215117-tool-unification-07",
+  "candidate": "uncommitted worktree diff; no new deployment",
+  "source_sha256": {
+    "backend/api/routes/scheduled_tasks.py": "2c3c3d49924dc0eedbb29cddc83b506d273483ab032512a575324e254c1bc38b",
+    "backend/config/chat_tools.py": "b573668e58923b99fdeb95c9d9ad537c833fbb7ed3a1d9cfe61fdb046e34c8b1",
+    "backend/services/agent/tool_executor.py": "094dd4ece6318f63d62065cf46646ad3b3c84306eb92b5c175b4f1a3b3c41424",
+    "backend/services/scheduler/chat_task_manager.py": "5ea9c28b3ff58bbb3e3e3067d0664b557eea932dbd053e8ac471ccd8732128e5",
+    "backend/services/scheduler/scheduled_task_change_adapter.py": "0458abdd597a33856be91faa4fec14dd59d60667b8804e4b7e8244b45b9c6de4",
+    "backend/services/scheduler/task_definition_input.py": "0253eacb7790c94c2962690f8f415c013d815033e91a6d6a8da1060700dcd869",
+    "backend/services/scheduler/task_nl_parser.py": "f30f26f0f7f4dd8d73e9277ec06a1c005724c1333c7cf7e054d52e683d3f76d7",
+    "backend/services/scheduler/task_request_content.py": "d3a7fa8ababec5a39bd2a1c2c37602ad84d9d37797a834897261434b577a5efc",
+    "backend/services/tools/definitions/task.py": "86e469d7dae4c5e74698da0943e5e22adabb936d32e91cbd5f20de91104e457f",
+    "backend/tests/fixtures/scheduled_task_structured_form.json": "ca67b4704757a16c8552c4acf30d10280435d5da234c9c1d3a3ecc9a3eba8835",
+    "backend/tests/fixtures/scheduled_task_structured_schema.json": "f2c4c69aa4b236ccb6695768004da6328a368d257e7eb9fcf5b8c2c8da099e1a",
+    "backend/tests/test_scheduled_task_colloquial_request.py": "d0eb9ed9bab5f59c04a9a163492261f26402fe7152d35cbf8abf6c01862516de",
+    "backend/tests/test_scheduled_task_form_incident.py": "10253ed8e4d7a46b1657b99f002824209272ae9f621dd9c2e6d2a60659dbc380",
+    "backend/tests/test_scheduled_task_structured_input.py": "35624ca351b65ab6444d25012998354fc3faf857be985e42ce39532d86f427d3",
+    "backend/tests/test_tool_definitions_07.py": "280c32912ffa4e84dff7f56ecf462335d9054a7ae6c32145a265e3b4b7165dda",
+    "frontend/src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx": "cd62c3817db1641608952f0acae1deb385ead5fffe0763619daa36fba3c96642",
+    "frontend/src/components/scheduled-tasks/TaskForm.tsx": "07b5e0971ed6c9ac5d6cff0eb137079c494da4d7a423787e14848df53c2f3757",
+    "frontend/src/components/scheduled-tasks/__tests__/TaskForm.test.tsx": "2d7ab5863c1879ade9b568d2f11cd81d2b46881f46f3b62f05707df11d783a94",
+    "frontend/src/services/__tests__/scheduledTaskStructured.test.ts": "bb9d3a07a197b6aef59774a87d92716e48423559169bf1ef757871a1d264d164",
+    "frontend/src/services/scheduledTask.ts": "7a98ba24ce77e44d52e15c33fd4f1b850c35d2fee1a79a638cf6f60ddc00a823"
+  },
+  "checks": [
+    {
+      "cwd": "backend",
+      "command": "DATABASE_URL=postgresql://test:test@127.0.0.1/test JWT_SECRET_KEY=local-test-key APP_ENV=testing /Users/wucong/EVERYDAYAIONE/backend/venv/bin/python -m pytest -q tests/test_scheduled_task_structured_input.py tests/test_scheduled_task_colloquial_request.py tests/test_scheduled_task_form_incident.py tests/test_scheduled_task_request_content.py tests/test_scheduled_task_request_consistency.py tests/test_scheduled_task_simplified_creation.py tests/test_scheduled_task_changeset_adapter.py tests/test_scheduled_task_direct_submission.py tests/test_scheduled_task_chat_results.py tests/test_scheduled_tasks_routes.py tests/test_chat_task_manager.py tests/test_task_nl_parser.py tests/test_tool_registry.py tests/test_tool_policy.py tests/test_tool_production_integration.py tests/test_tool_executor.py tests/test_tool_definitions_07.py tests/test_chat_tools.py tests/test_scheduled_task_agent.py tests/test_scheduled_task_agent_integration.py tests/test_scheduled_task_delivery_worker.py tests/test_scheduled_task_executor_delivery.py tests/test_scheduled_task_workflow.py tests/test_tool_result_envelope.py tests/test_tool_result_persistence_06.py tests/test_tool_result_05_production_regressions.py tests/test_tool_invocation_uncertain_integration.py tests/test_changeset_core.py tests/test_changeset_api.py",
+      "log": "backend.txt",
+      "result": "1685 passed, 1 skipped; opt-in invocation body rerun in disposable PostgreSQL below"
+    },
+    {
+      "cwd": "backend",
+      "command": "DATABASE_URL=postgresql://test:test@127.0.0.1/test JWT_SECRET_KEY=local-test-key APP_ENV=testing /Users/wucong/EVERYDAYAIONE/backend/venv/bin/python -m pytest -q tests/test_scheduled_task_upgrade_postgres.py tests/test_scheduled_task_draft_delete_integration.py",
+      "log": "postgres.txt",
+      "result": "27 passed; socket-only disposable cluster; approved sandbox escalation for shared memory"
+    },
+    {
+      "cwd": "backend",
+      "command": "DATABASE_URL=postgresql://test:test@127.0.0.1/test JWT_SECRET_KEY=local-test-key APP_ENV=testing /Users/wucong/EVERYDAYAIONE/backend/venv/bin/python -m pytest -q tests/test_scheduled_task_structured_input.py",
+      "log": "structured-contract.txt",
+      "result": "59 passed; final shared frontend fixture assertion included"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npx vitest run src/components/scheduled-tasks/__tests__ src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx src/components/chat/message/__tests__/StructuredConsumers.test.tsx src/services/__tests__/scheduledTaskStructured.test.ts",
+      "log": "frontend.txt",
+      "result": "43 passed"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npx vitest run src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx",
+      "log": "form-wire.txt",
+      "result": "3 passed; includes one subsequently added backend-to-frontend fixture scenario"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run build",
+      "log": "build.txt",
+      "result": "exit 0; chunk size warning"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npx tsc -b",
+      "log": "types.txt",
+      "result": "exit 0"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npx eslint src/components/scheduled-tasks/TaskForm.tsx src/components/scheduled-tasks/__tests__/TaskForm.test.tsx src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx src/services/scheduledTask.ts src/services/__tests__/scheduledTaskStructured.test.ts",
+      "log": "lint.txt",
+      "result": "exit 0"
+    }
+  ],
+  "model_integration": {
+    "status": "not_run_pending_authorization",
+    "new_calls": 0,
+    "prepared_cases": 6,
+    "prior_ST25_calls_used": 3
+  },
+  "production_mutations": false
+}

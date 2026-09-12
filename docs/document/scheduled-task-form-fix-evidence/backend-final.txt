@@ -1,0 +1,30 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-8.3.4, pluggy-1.6.0
+rootdir: /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/backend
+configfile: pytest.ini
+plugins: anyio-4.12.1, asyncio-0.25.2, cov-7.1.0, time-machine-2.14.1
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=function
+collected 675 items
+
+tests/test_scheduled_task_form_incident.py .............                 [  1%]
+tests/test_scheduled_task_simplified_creation.py ..........              [  3%]
+tests/test_chat_task_manager.py ........................................ [  9%]
+........                                                                 [ 10%]
+tests/test_task_nl_parser.py ..............                              [ 12%]
+tests/test_scheduled_task_direct_submission.py .......................   [ 16%]
+tests/test_scheduled_task_changeset_adapter.py ............              [ 17%]
+tests/test_scheduled_task_chat_results.py ..............                 [ 19%]
+tests/test_tool_production_integration.py .............................. [ 24%]
+........................................................................ [ 34%]
+................                                                         [ 37%]
+tests/test_tool_result_consumption.py .................................. [ 42%]
+........................................                                 [ 48%]
+tests/test_tool_definitions_07.py ...................................... [ 53%]
+........................................................................ [ 64%]
+........................................................................ [ 75%]
+........................................................................ [ 85%]
+..........................................................               [ 94%]
+tests/test_tool_definitions_07_entries.py ......................         [ 97%]
+tests/test_chat_execution_engine.py ...............                      [100%]
+
+============================= 675 passed in 7.61s ==============================

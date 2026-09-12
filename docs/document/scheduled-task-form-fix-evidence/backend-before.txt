@@ -1,0 +1,54 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-8.3.4, pluggy-1.6.0
+rootdir: /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/backend
+configfile: pytest.ini
+plugins: anyio-4.12.1, asyncio-0.25.2, cov-7.1.0, time-machine-2.14.1
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=function
+collected 7 items
+
+tests/test_scheduled_task_form_incident.py FFFFF.F                       [100%]
+
+=================================== FAILURES ===================================
+______ test_placeholder_stays_editable_and_never_enters_direct_submission ______
+tests/test_scheduled_task_form_incident.py:29: in test_placeholder_stays_editable_and_never_enters_direct_submission
+    submit.assert_not_awaited()
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:2429: in assert_not_awaited
+    raise AssertionError(msg)
+E   AssertionError: Expected mock to not have been awaited. Awaited 1 times.
+_ test_real_runtime_creation_uses_latest_user_text_not_model_rewrite[\u521b\u5efa\u6d4b\u8bd5\u65e5\u62a5\uff0c\u6bcf\u5929\u4e0a\u53489\u70b9\uff0c\u628a\u6628\u5929\u3010\u5b9e\u9645\u5e97\u94fa\u540d\u3011\u7684\u9500\u552e\u6c47\u603b\u53d1\u7ed9\u6211] _
+tests/test_scheduled_task_form_incident.py:55: in test_real_runtime_creation_uses_latest_user_text_not_model_rewrite
+    assert parser.call_args.args[0] == TEXT
+E   AssertionError: assert '每天9点按所有店铺汇总' == '创建测试日报，每天上午9...际店铺名】的销售汇总发给我'
+E     
+E     - 创建测试日报，每天上午9点，把昨天【实际店铺名】的销售汇总发给我
+E     + 每天9点按所有店铺汇总
+_ test_real_runtime_creation_uses_latest_user_text_not_model_rewrite[content1] _
+tests/test_scheduled_task_form_incident.py:55: in test_real_runtime_creation_uses_latest_user_text_not_model_rewrite
+    assert parser.call_args.args[0] == TEXT
+E   AssertionError: assert '每天9点按所有店铺汇总' == '创建测试日报，每天上午9...际店铺名】的销售汇总发给我'
+E     
+E     - 创建测试日报，每天上午9点，把昨天【实际店铺名】的销售汇总发给我
+E     + 每天9点按所有店铺汇总
+___ test_legacy_parser_shape_fails_closed_but_preserves_text_for_correction ____
+tests/test_scheduled_task_form_incident.py:68: in test_legacy_parser_shape_fails_closed_but_preserves_text_for_correction
+    assert fields["prompt"]["default_value"] == TEXT
+E   AssertionError: assert '' == '创建测试日报，每天上午9...际店铺名】的销售汇总发给我'
+E     
+E     - 创建测试日报，每天上午9点，把昨天【实际店铺名】的销售汇总发给我
+_ test_direct_form_and_api_cannot_submit_an_unfilled_shop_placeholder[apply_if_allowed] _
+tests/test_scheduled_task_form_incident.py:82: in test_direct_form_and_api_cannot_submit_an_unfilled_shop_placeholder
+    with pytest.raises(ScheduledTaskChangeError, match="店铺"):
+E   Failed: DID NOT RAISE <class 'services.scheduler.scheduled_task_change_adapter.ScheduledTaskChangeError'>
+____________ test_strict_parser_prompt_has_only_its_nested_contract ____________
+tests/test_scheduled_task_form_incident.py:95: in test_strict_parser_prompt_has_only_its_nested_contract
+    assert examples and all(set(example) == {"changes", "evidence", "recipient"} for example in examples)
+E   AssertionError: assert ([{'name': '今日付款订单情况', 'prompt': '汇总今日付款订单情况并推送', 'run_at': '2026-04-11T22:00:00+08:00', 'schedule_type': 'once', ...},...time_str': '09:00', ...}, {'day_of_month': 15, 'name': '月度报表', 'prompt': '汇总并推送月度报表', 'schedule_type': 'monthly', ...}] and False)
+E    +  where False = all(<generator object test_strict_parser_prompt_has_only_its_nested_contract.<locals>.<genexpr> at 0x1092db850>)
+=========================== short test summary info ============================
+FAILED tests/test_scheduled_task_form_incident.py::test_placeholder_stays_editable_and_never_enters_direct_submission
+FAILED tests/test_scheduled_task_form_incident.py::test_real_runtime_creation_uses_latest_user_text_not_model_rewrite[\u521b\u5efa\u6d4b\u8bd5\u65e5\u62a5\uff0c\u6bcf\u5929\u4e0a\u53489\u70b9\uff0c\u628a\u6628\u5929\u3010\u5b9e\u9645\u5e97\u94fa\u540d\u3011\u7684\u9500\u552e\u6c47\u603b\u53d1\u7ed9\u6211]
+FAILED tests/test_scheduled_task_form_incident.py::test_real_runtime_creation_uses_latest_user_text_not_model_rewrite[content1]
+FAILED tests/test_scheduled_task_form_incident.py::test_legacy_parser_shape_fails_closed_but_preserves_text_for_correction
+FAILED tests/test_scheduled_task_form_incident.py::test_direct_form_and_api_cannot_submit_an_unfilled_shop_placeholder[apply_if_allowed]
+FAILED tests/test_scheduled_task_form_incident.py::test_strict_parser_prompt_has_only_its_nested_contract
+========================= 6 failed, 1 passed in 0.74s ==========================

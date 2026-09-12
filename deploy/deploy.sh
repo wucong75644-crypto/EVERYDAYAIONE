@@ -315,6 +315,18 @@ sync_backend() {
 
 # 执行 release.sh 已根据任务分支收集的数据库迁移。迁移账本按文件路径和
 # checksum 去重：失败发布后的下一次发布会补跑遗漏迁移，已成功的不会重复执行。
+prepare_scheduled_task_cutover() {
+    local migration_file
+    for migration_file in "${MIGRATION_FILES[@]}"; do
+        if [[ "$migration_file" == backend/migrations/255_scheduled_task_schedule_intent.sql ]]; then
+            log_info "等待定时任务完成，并在任务写锁内停止旧进程后切换迁移..."
+            remote_exec /var/www/everydayai/backend/venv/bin/python - "$EVERYDAYAI_RELEASE_LOCK_TOKEN" \
+                < deploy/scheduled-task-drain.py
+            return
+        fi
+    done
+}
+
 apply_migrations() {
     if [ "$RUN_MIGRATIONS" != true ]; then
         if [ ${#MIGRATION_FILES[@]} -gt 0 ]; then
@@ -659,6 +671,7 @@ EOF
 
     if [ "$FRONTEND_ONLY" != true ]; then
         build_backend
+        prepare_scheduled_task_cutover
         sync_backend
         apply_migrations
         deploy_backend

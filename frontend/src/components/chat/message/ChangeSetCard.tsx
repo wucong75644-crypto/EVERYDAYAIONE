@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -81,6 +81,19 @@ const terminalStatuses = new Set<ChangeSetStatus>([
 const checkLabels: Record<string, string> = {
   validation: '配置校验', preflight: '只读试跑', authorization: '权限检查',
   approval: '审批/确认', conflict: '版本检查', commit: '提交结果', restore: '恢复结果',
+};
+
+const taskReasonLabels: Record<string, string> = {
+  recipient_changed: '推送对象发生变化，请确认接收人。',
+  instruction_scope_changed: '执行内容已改写，请核对店铺、时间范围和输出内容。',
+  data_scope_changed: '数据范围发生变化，请核对本次范围。',
+  tool_scope_expanded: '需要增加可调用工具，请核对执行范围。',
+  usage_increased: '积分上限、重试次数或执行时长增加，请核对费用设置。',
+  usage_requires_review: '请核对任务频率和每次积分上限。',
+  frequency_increased: '执行频率提高，请核对新的时间安排。',
+  template_changed: '任务模板发生变化，需要核对文件和执行结果。',
+  destructive_operation: '删除后无法从这里恢复，请确认任务名称。',
+  execution_requires_review: '执行内容需要额外检查，请核对计划与权限。',
 };
 
 function text(value: unknown): string | undefined {
@@ -201,6 +214,10 @@ function Timeline({ current, events }: { current: ChangeSetStatus; events: Chang
   );
 }
 
+function TaskDetails({ compact, open, children }: { compact: boolean; open: boolean; children: ReactNode }) {
+  return compact ? <Section title="查看检查和变更记录" defaultOpen={open}>{children}</Section> : <>{children}</>;
+}
+
 function ChangeSummary({ changeSet, adapter }: { changeSet: ChangeSet; adapter?: ChangeSetResourceAdapter }) {
   const fields = adapter?.getFields?.(changeSet) || genericFields(changeSet);
   if (!fields.length) return <p className="text-sm text-text-secondary">暂无可展示的配置摘要。</p>;
@@ -236,7 +253,7 @@ function Checks({ checks, nonExecutionPreflightLabel }: {
   return (
     <ul className="space-y-2" aria-label="校验和试跑结果">
       {checks.map((check) => {
-        const passed = check.status === 'passed';
+        const passed = check.status === 'passed' || check.status === 'skipped' && check.result?.full_run === false;
         const failed = check.status === 'failed';
         return <li key={check.id} className="flex min-w-0 items-center gap-2 text-xs">
           {passed ? <CheckCircle2 className="h-4 w-4 shrink-0 text-success" aria-hidden="true" /> : failed ? <XCircle className="h-4 w-4 shrink-0 text-error" aria-hidden="true" /> : <Clock3 className="h-4 w-4 shrink-0 text-text-tertiary" aria-hidden="true" />}
@@ -272,29 +289,41 @@ export default function ChangeSetCard({
     setActiveId(changeSetId);
   }, [changeSetId]);
 
-  const load = useCallback(async () => {
-    if (!activeId) return;
-    setLoading(true);
-    setLoadError(false);
+  const loadSequence = useRef(0);
+  const inFlight = useRef(0);
+  const currentId = useRef(activeId);
+  currentId.current = activeId;
+  const load = useCallback(async (quiet = false) => {
+    if (!activeId || (quiet && inFlight.current > 0)) return;
+    const sequence = ++loadSequence.current;
+    inFlight.current += 1;
+    const isCurrent = () => sequence === loadSequence.current && currentId.current === activeId;
+    if (!quiet) setLoading(true);
     try {
       const next = await changeSetService.get(activeId);
-      setChangeSet(next);
+      if (!isCurrent()) return;
+      setLoadError(false);
+      setChangeSet((previous) => previous?.id === next.id && previous.revision > next.revision ? previous : next);
       onChangeSetUpdated?.(next);
-      setActionNotice('');
+      if (!quiet) setActionNotice('');
       try {
         const timeline = await changeSetService.timeline(activeId);
-        setEvents(timeline.events || []);
+        if (isCurrent()) setEvents(timeline.events || []);
       } catch {
-        setEvents([]);
+        if (isCurrent() && !quiet) setEvents([]);
       }
     } catch {
-      setLoadError(true);
+      if (isCurrent() && !quiet) setLoadError(true);
     } finally {
-      setLoading(false);
+      inFlight.current -= 1;
+      if (isCurrent()) setLoading(false);
     }
   }, [activeId, onChangeSetUpdated]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => { loadSequence.current += 1; };
+  }, [load]);
 
   useEffect(() => {
     const onUpdated = (event: Event) => {
@@ -305,6 +334,23 @@ export default function ChangeSetCard({
     window.addEventListener(CHANGESET_UPDATED_EVENT, onUpdated);
     return () => window.removeEventListener(CHANGESET_UPDATED_EVENT, onUpdated);
   }, [activeId, load]);
+
+  // Live events are hints, not durable state. Reconcile unfinished cards when
+  // a completion event was missed, without replacing the visible card by a spinner.
+  const settled = changeSet?.id === activeId && ['applied', 'cancelled', 'rejected', 'failed', 'expired', 'conflicted'].includes(changeSet.status);
+  const processing = !changeSet || changeSet.id !== activeId || ['draft', 'resolving', 'proposed', 'validating', 'preflighting', 'committing'].includes(changeSet.status);
+  useEffect(() => {
+    if (settled) return;
+    const refresh = () => { void load(true); };
+    const timer = processing ? window.setInterval(refresh, 5000) : undefined;
+    window.addEventListener('online', refresh);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('online', refresh);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [load, settled, processing]);
 
   const adapter = useMemo(
     () => providedAdapter || (changeSet ? getChangeSetResourceAdapter(changeSet) : undefined),
@@ -352,6 +398,8 @@ export default function ChangeSetCard({
   if (!changeSet) return null;
 
   const status = changeSet.status;
+  const submission = changeSet.policy_snapshot.submission as Record<string, unknown> | undefined;
+  const directTask = changeSet.resource_type === 'scheduled_task' && submission?.mode === 'apply_if_allowed';
   const diff = adapter?.getDiff?.(changeSet) || genericDiff(changeSet);
   const planSteps = adapter?.getPlanSteps?.(changeSet) || genericPlanSteps(changeSet);
   const title = adapter?.getTitle?.(changeSet) || fallbackTitle || '变更方案';
@@ -380,6 +428,13 @@ export default function ChangeSetCard({
         <span className={cn('shrink-0 rounded-full px-2 py-1 text-[11px] font-medium', status === 'applied' ? 'bg-success/10 text-success' : status === 'failed' || isConflict || status === 'rejected' ? 'bg-error-light text-error' : 'bg-active text-text-secondary')} aria-label={`当前状态：${statusLabels[status]}`}>{statusLabels[status]}</span>
       </header>
 
+      {directTask && hasApproval && Array.isArray(approvalImpact.reasons) && (
+        <ul className="mx-4 mt-3 space-y-1 text-xs text-text-secondary">
+          {approvalImpact.reasons.filter((reason): reason is string => typeof reason === 'string')
+            .map((reason) => <li key={reason}>{taskReasonLabels[reason] || '请核对本次变更的具体影响。'}</li>)}
+        </ul>
+      )}
+
       {presentation?.notice && (
         <div className={cn(
           'mx-4 mt-3 rounded-[var(--s-radius-control)] px-3 py-2 text-xs',
@@ -390,15 +445,18 @@ export default function ChangeSetCard({
       )}
 
       <div className="min-w-0 px-4">
-        <Section title="状态时间线"><Timeline current={status} events={events} /></Section>
-        <Section title={presentation?.summaryTitle || '变更摘要'}><ChangeSummary changeSet={changeSet} adapter={adapter} /></Section>
-        {presentation?.showDiff !== false && <Section title={`${presentation?.diffTitle || 'Diff'}${diff.length ? ` · ${diff.length} 项` : ''}`}><DiffView entries={diff} /></Section>}
-        <Section title="风险与权限影响"><div className="flex flex-wrap gap-2 text-xs"><span className="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-1 text-warning"><AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />{getRiskLabel(changeSet.risk_level)}</span><span className="inline-flex items-center gap-1 rounded-full bg-active px-2 py-1 text-text-secondary"><ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />{policyText}</span></div></Section>
-        {presentation?.showPlan !== false && <Section title="AI 规划的执行路径"><ol className="list-decimal space-y-1.5 pl-5 text-xs leading-5 text-text-secondary">{planSteps.length ? planSteps.map((step) => <li key={step} className="break-words">{step}</li>) : <li className="list-none pl-0">执行路径将在规划完成后显示。</li>}</ol></Section>}
-        <Section title={presentation?.checksTitle || '校验与只读试跑'}><Checks checks={changeSet.checks} nonExecutionPreflightLabel={presentation?.nonExecutionPreflightLabel} /></Section>
+        {directTask && <Section title="任务摘要"><ChangeSummary changeSet={changeSet} adapter={adapter} /></Section>}
+        <TaskDetails compact={directTask} open={hasApproval || status === 'failed' || status === 'rejected'}>
+        <Section title="状态时间线" defaultOpen={!directTask}><Timeline current={status} events={events} /></Section>
+        {!directTask && <Section title={presentation?.summaryTitle || '变更摘要'}><ChangeSummary changeSet={changeSet} adapter={adapter} /></Section>}
+        {presentation?.showDiff !== false && <Section defaultOpen={!directTask || hasApproval} title={`${presentation?.diffTitle || 'Diff'}${diff.length ? ` · ${diff.length} 项` : ''}`}><DiffView entries={diff} /></Section>}
+        <Section title="风险与权限影响" defaultOpen={!directTask || hasApproval}><div className="flex flex-wrap gap-2 text-xs"><span className="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-1 text-warning"><AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />{getRiskLabel(changeSet.risk_level)}</span><span className="inline-flex items-center gap-1 rounded-full bg-active px-2 py-1 text-text-secondary"><ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />{policyText}</span></div></Section>
+        {presentation?.showPlan !== false && <Section title="AI 规划的执行路径" defaultOpen={!directTask}><ol className="list-decimal space-y-1.5 pl-5 text-xs leading-5 text-text-secondary">{planSteps.length ? planSteps.map((step) => <li key={step} className="break-words">{step}</li>) : <li className="list-none pl-0">执行路径将在规划完成后显示。</li>}</ol></Section>}
+        <Section defaultOpen={!directTask || status === 'failed' || status === 'rejected'} title={presentation?.checksTitle || '校验与只读试跑'}><Checks checks={changeSet.checks} nonExecutionPreflightLabel={directTask ? '执行范围检查' : presentation?.nonExecutionPreflightLabel} /></Section>
+        </TaskDetails>
       </div>
 
-      {(isConflict || status === 'failed' || status === 'rejected' || status === 'expired' || status === 'cancelled' || status === 'applied') && (
+      {(isConflict || status === 'failed' || status === 'rejected' || status === 'expired' || status === 'cancelled' || status === 'applied' && !directTask) && (
         <div className={cn('mx-4 mb-3 rounded-[var(--s-radius-control)] px-3 py-2 text-xs', status === 'applied' ? 'bg-success/10 text-success' : isConflict ? 'bg-warning/10 text-warning' : status === 'cancelled' ? 'bg-active text-text-secondary' : 'bg-error-light text-error')} role={status === 'applied' || status === 'cancelled' ? 'status' : 'alert'}>
           {isConflict ? '任务已被更新，请基于最新版本重新规划。' : statusDescriptions[status]}
         </div>
@@ -412,7 +470,7 @@ export default function ChangeSetCard({
         {canCancel && <Button size="sm" variant="secondary" onClick={() => void handleAction('cancel')} loading={pendingAction === 'cancel'} disabled={!!pendingAction} icon={<X className="h-3.5 w-3.5" />}>{presentation?.cancellationLabel || actionLabel('cancel')}</Button>}
         {actionNotice && <span className="basis-full break-words text-xs text-text-secondary" role="status" aria-live="polite">{actionNotice}</span>}
       </footer>}
-      {!hasActions && <div className="flex items-center gap-2 border-t border-border-default bg-surface-elevated px-4 py-3 text-xs text-text-tertiary"><CheckCircle2 className="h-4 w-4" aria-hidden="true" />流程已结束</div>}
+      {!hasActions && !directTask && <div className="flex items-center gap-2 border-t border-border-default bg-surface-elevated px-4 py-3 text-xs text-text-tertiary"><CheckCircle2 className="h-4 w-4" aria-hidden="true" />流程已结束</div>}
       <span className="sr-only">ChangeSet ID: {activeId}{resourceType ? `，资源类型：${resourceType}` : ''}</span>
     </section>
   );

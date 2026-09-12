@@ -160,3 +160,21 @@ async def test_form_submit_exception(mock_conversation_service, mock_get_db, moc
     assert msg["type"] == "form_submit_result"
     assert msg["payload"]["success"] is False
     assert "失败" in msg["payload"]["message"]
+
+@pytest.mark.parametrize('action,transition_result', [
+    ('cancel', {'outcome': 'transitioned'}),
+    ('submit', {'outcome': 'state_conflict', 'status': 'cancelled'}),
+])
+async def test_cancelled_creation_form_never_reaches_task_submission(action, transition_result):
+    from api.routes.ws import _handle_form_submit
+    db = MagicMock()
+    for method in ('table', 'select', 'eq', 'limit', 'rpc'):
+        getattr(db, method).return_value = db
+    db.execute.side_effect = [MagicMock(data=[{'org_id': 'org-1'}]), MagicMock(data=transition_result)]
+    with patch('api.routes.ws.get_db', return_value=db), \
+         patch('api.routes.ws.ws_manager.send_to_connection', AsyncMock()) as response, \
+         patch('services.conversation_service.ConversationService.get_conversation', AsyncMock(return_value={'id': 'conv-1'})), \
+         patch('services.scheduler.chat_task_manager.handle_form_submit', AsyncMock()) as submit:
+        await _handle_form_submit('conn-1', 'user-1', 'scheduled_task_create', {}, 'conv-1', 'message-1', 'form-1', action=action)
+    submit.assert_not_awaited()
+    assert response.call_args.args[1]['payload']['status'] == 'cancelled'

@@ -1,0 +1,45 @@
+{
+  "reproduced_missing_confirmation_card": true,
+  "reports": [
+    {
+      "transport": "legacy",
+      "metadata_retained": true,
+      "handler_calls": 1,
+      "block_types": [
+        "tool_step"
+      ],
+      "confirmation_cards": 0,
+      "terminal_form": false,
+      "model_message": {
+        "role": "tool",
+        "tool_call_id": "call",
+        "content": [
+          {
+            "type": "text",
+            "text": "暂停方案已生成，请确认后提交。"
+          }
+        ]
+      }
+    },
+    {
+      "transport": "actor",
+      "metadata_retained": true,
+      "handler_calls": 1,
+      "block_types": [
+        "tool_step"
+      ],
+      "confirmation_cards": 0,
+      "terminal_form": false,
+      "model_message": {
+        "role": "tool",
+        "tool_call_id": "call",
+        "content": [
+          {
+            "type": "text",
+            "text": "暂停方案已生成，请确认后提交。"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -105,6 +105,13 @@ class ToolResultPart(BaseModel):
     files: List[Dict[str, Any]] = Field(default_factory=list)
 
 
+class ChangeSetPart(BaseModel):
+    """Reference to server-owned operation state, preserved in final messages."""
+    type: Literal["changeset"] = "changeset"
+    change_set_id: str
+    resource_type: Optional[str] = None
+
+
 class FormPart(BaseModel):
     """表单内容块（聊天内嵌表单，如定时任务创建/修改）
 
@@ -123,6 +130,7 @@ class FormPart(BaseModel):
     result_message: str = ""
     error_message: str = ""
     next_form: Optional[Dict[str, Any]] = None
+    change_set_id: Optional[str] = None
 
 
 class TablePart(BaseModel):
@@ -157,7 +165,7 @@ class EcomPlanPart(BaseModel):
 
 ContentPart = Annotated[
     Union[TextPart, ImagePart, VideoPart, AudioPart, FilePart,
-          ThinkingPart, ToolStepPart, ToolResultPart, FormPart, ChartPart,
+          ThinkingPart, ToolStepPart, ToolResultPart, FormPart, ChangeSetPart, ChartPart,
           DiagramPart, TablePart, InterruptMarkerPart, EcomPlanPart],
     Field(discriminator="type"),
 ]

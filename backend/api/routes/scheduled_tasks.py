@@ -112,6 +112,9 @@ class UpdateScheduledTaskRequest(BaseModel):
 
 class ParseNLRequest(BaseModel):
     text: str = Field(..., max_length=500)
+    explicit_fields_only: bool = False
+    structured_fields: bool = False
+    operation: Literal["create", "update"] = "create"
 
 
 class ConfirmScheduledTaskDraftRequest(BaseModel):
@@ -123,6 +126,7 @@ class ScheduledTaskChangeRequest(BaseModel):
     task_id: Optional[str] = None
     definition: Dict[str, Any] = Field(default_factory=dict)
     idempotency_key: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    submission_mode: Literal["proposal", "apply_if_allowed"] = "proposal"
     # 聊天入口用这些定位键把 ChangeSet ID 回写为消息中的展示引用；
     # 非聊天 API 调用可以不传，不能以消息内容代替 ChangeSet 状态。
     message_id: Optional[str] = None
@@ -306,6 +310,7 @@ async def _propose_task_change(
     definition: Dict[str, Any] | None = None,
     base_task: Dict[str, Any] | None = None,
     idempotency_key: str | None = None,
+    submission_mode: str = "proposal",
 ) -> Dict[str, Any]:
     """新入口先创建 ChangeSet，再由后台完成 Planner 与只读试跑。"""
     task = base_task
@@ -324,7 +329,11 @@ async def _propose_task_change(
         if operation == "pause":
             proposed.update({"status": "paused", "next_run_at": None})
         elif operation == "resume":
-            if task.get("schedule_type") == "once":
+            if submission_mode == "apply_if_allowed":
+                # The adapter computes the next occurrence after idempotent replay.
+                # A retry must return its receipt even if a one-shot time has passed.
+                next_run = None
+            elif task.get("schedule_type") == "once":
                 raw = task.get("run_at")
                 if not raw:
                     raise HTTPException(409, "一次性任务缺少执行时间，不能恢复")
@@ -334,7 +343,7 @@ async def _propose_task_change(
                 next_run = max(run_at, datetime.now(timezone.utc))
             else:
                 next_run = calc_next_run(task["cron_expr"], task.get("timezone", "Asia/Shanghai"))
-            proposed.update({"status": "active", "next_run_at": next_run.isoformat()})
+            proposed.update({"status": "active", "next_run_at": next_run.isoformat() if next_run else None})
     if operation == "create":
         proposed.setdefault("status", "active")
     service = ScheduledTaskChangeSetService(db, user_id=user_id, org_id=org_id)
@@ -344,6 +353,7 @@ async def _propose_task_change(
             resource_id=None if operation == "create" else task_id,
             base_snapshot=task,
             proposed_snapshot=proposed, idempotency_key=idempotency_key,
+            submission_mode=submission_mode,
         )
     except ScheduledTaskChangeError as exc:
         raise HTTPException(exc.status_code, {"message": str(exc), "reasons": exc.details}) from exc
@@ -444,25 +454,27 @@ async def propose_task_changeset(
     references = (payload.message_id, payload.conversation_id, payload.form_id)
     if any(references) and not all(references):
         raise HTTPException(422, "聊天表单引用参数不完整")
+    if all(references):
+        from services.conversation_service import ConversationService
+        await ConversationService(db).get_conversation(payload.conversation_id, user_id, org_id)
+    from core.config import get_settings
+    mode = payload.submission_mode if get_settings().scheduled_task_direct_enabled else "proposal"
     row = await _propose_task_change(
         db=db, scoped_db=scoped_db, user_id=user_id, org_id=org_id,
         operation=payload.operation, task_id=payload.task_id,
         definition=payload.definition, idempotency_key=payload.idempotency_key,
+        submission_mode=mode,
     )
     if all(references):
         try:
-            from services.conversation_service import ConversationService
-
-            await ConversationService(db).get_conversation(
-                payload.conversation_id, user_id, org_id,
-            )
+            from services.scheduler.task_submission import submission_receipt
             response = db.rpc("attach_chat_form_changeset", {
                 "p_message_id": payload.message_id,
                 "p_conversation_id": payload.conversation_id,
                 "p_org_id": org_id,
                 "p_form_id": payload.form_id,
                 "p_change_set_id": str(row["id"]),
-                "p_result_message": "正在生成变更方案，完成后请在卡片中确认。",
+                "p_result_message": submission_receipt(row),
             }).execute()
             attached = response.data if response else None
             outcome = attached.get("outcome") if isinstance(attached, dict) else None
@@ -483,7 +495,7 @@ async def propose_task_changeset(
                 "Scheduled task ChangeSet message reference sync failed | "
                 f"change_set_id={row.get('id')} | error={type(exc).__name__}"
             )
-            raise HTTPException(503, "ChangeSet 已创建，但聊天状态同步失败，请重试") from exc
+            raise HTTPException(503, "任务请求已保存，但聊天状态同步失败，请重试查看结果") from exc
     from api.routes.change_sets import _to_dto
     return {"success": True, "data": _to_dto(row, row.get("checks") or [])}
 
@@ -918,6 +930,15 @@ async def list_runs(
         for run in run_rows:
             run["events"] = event_map.get(str(run["id"]), [])
 
+    # Historical runs contain emit payloads (tables/charts as well as files).
+    # Project through the same converter as chat; leave the stored payload intact.
+    from services.handlers.emit_payloads import build_content_blocks_from_payloads
+    for run in run_rows:
+        payloads = [
+            ({**item, "kind": "file"} if not item.get("kind") and item.get("url") else item)
+            for item in (run.get("result_files") or []) if isinstance(item, dict)
+        ]
+        run["content_blocks"] = build_content_blocks_from_payloads(payloads)
     return {"success": True, "data": run_rows}
 
 
@@ -933,13 +954,28 @@ async def parse_nl_task(
     返回的字段直接对应 CreateScheduledTaskRequest:
     - name / prompt / schedule_type / time_str / weekdays / day_of_month / run_at
 
-    LLM 不可用时降级到关键词兜底，永远返回可用结果。
+    structured_fields 使用共享字段校验，失败返回 422 供界面保留输入。
+    旧调用保留其原有解析及降级约定。
     """
     org_id = _require_org(org_ctx)
     if not await check_permission(db, user_id, org_id, "task.create"):
         raise HTTPException(403, "无权创建定时任务")
 
     from services.scheduler.task_nl_parser import parse_task_nl
+    if payload.structured_fields:
+        from services.scheduler.task_nl_parser import parse_structured_task_request
+        from services.scheduler.task_definition_input import TaskDefinitionInputError
+        try:
+            result = await parse_structured_task_request(payload.text, operation=payload.operation)
+        except TaskDefinitionInputError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"success": True, "data": {**result["changes"], "missing_fields": result["missing_fields"],
+                                           "recipient": result["recipient"], "suggested_target": None}}
+    if payload.explicit_fields_only:
+        from services.scheduler.task_nl_parser import parse_task_request
+        result = await parse_task_request(payload.text, operation=payload.operation)
+        return {"success": True, "data": {**result["changes"], "missing_fields": result["missing_fields"],
+                                           "recipient": result["recipient"], "suggested_target": None}}
     parsed = await parse_task_nl(payload.text, tz="Asia/Shanghai")
 
     # 计算 cron_readable 用于 UI 展示（only for daily/weekly/monthly）

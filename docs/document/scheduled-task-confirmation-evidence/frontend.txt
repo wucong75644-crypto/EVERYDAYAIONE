@@ -1,0 +1,26 @@
+
+ RUN  v3.2.7 /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/frontend
+
+stdout | src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx
+[DEBUG] [22:40:58] [task:restore] Hydrate complete
+
+stdout | src/components/chat/message/__tests__/StructuredConsumers.test.tsx
+[DEBUG] [22:40:58] [task:restore] Hydrate complete
+
+stdout | src/components/chat/message/__tests__/ChangeSetCard.test.tsx
+[DEBUG] [22:40:58] [task:restore] Hydrate complete
+
+stdout | src/components/chat/message/__tests__/MessageContentBlocks.test.tsx
+[DEBUG] [22:40:58] [task:restore] Hydrate complete
+
+ ✓ src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx (5 tests) 95ms
+ ✓ src/components/chat/message/__tests__/StructuredConsumers.test.tsx (14 tests) 164ms
+ ✓ src/components/chat/message/__tests__/ChangeSetCard.test.tsx (14 tests) 226ms
+ ✓ src/components/chat/message/__tests__/MessageContentBlocks.test.tsx (4 tests) 387ms
+   ✓ MessageContentBlocks structured diagrams > dispatches a diagram part through the dedicated structured renderer  311ms
+
+ Test Files  4 passed (4)
+      Tests  37 passed (37)
+   Start at  22:40:57
+   Duration  1.21s (transform 363ms, setup 485ms, collect 1.00s, tests 872ms, environment 632ms, prepare 108ms)
+

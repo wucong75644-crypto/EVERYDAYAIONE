@@ -1,0 +1,3846 @@
+{
+  "base": "ca4c3d7e6a89ef34412cf405efc2d4fb0c1350e2",
+  "specs": {
+    "erp_info_query": {
+      "name": "erp_info_query",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "erp_info_query",
+          "description": "远程API查询ERP基础信息：仓库、店铺、标签、客户、分销商。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "warehouse_list",
+                  "shop_list",
+                  "tag_list",
+                  "customer_list",
+                  "distributor_list"
+                ],
+                "description": "warehouse_list=查询仓库列表（实体仓库信息：名称/编码/地址）。按名称/编码/ID筛选。查虚拟仓用virtual_warehouse(name/code/warehouse_id), shop_list=查询店铺列表（各平台店铺信息：名称/平台/状态）。按名称/简称/ID筛选。获取店铺ID用于其他查询的shop_ids参数(name/shop_id/short_name), tag_list=查询订单/售后标签列表（订单打标分类用）。这是订单标签，商品标签在erp_product_query的tag_list(tag_type), customer_list=查询客户基础资料列表（B2B客户管理）。按名称/编码/昵称/等级筛选。不是查买家信息，买家信息在order_list中(name/code/nick/level/status), distributor_list=查询分销商列表（分销合作伙伴信息）。按名称/状态/ID筛选(name/state/ids)"
+              },
+              "params": {
+                "type": "object",
+                "description": "操作参数（key 必须用下划线格式如 time_type/start_date，禁止驼峰如 timeType/startTime）。不确定参数时只传 action 可获取完整参数文档。"
+              },
+              "page": {
+                "type": "integer",
+                "description": "页码（默认1）"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "每页条数（默认20，最小20）"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "erp_info_query",
+      "exposure": "public",
+      "source": "config.erp_tools.build_erp_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": "erp_query",
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "erp_product_query": {
+      "name": "erp_product_query",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "erp_product_query",
+          "description": "远程API查询ERP商品/SKU/库存/标签/分类/品牌信息。适合本地工具不支持的字段或需要实时数据。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "product_list",
+                  "product_detail",
+                  "sku_info",
+                  "sku_list",
+                  "multi_product",
+                  "multicode_query",
+                  "stock_status",
+                  "warehouse_stock",
+                  "stock_in_out",
+                  "virtual_warehouse",
+                  "history_cost_price",
+                  "tag_list",
+                  "cat_list",
+                  "classify_list",
+                  "brand_list",
+                  "outer_id_list",
+                  "outer_id_by_item",
+                  "item_supplier_list"
+                ],
+                "description": "product_list=按条件搜索商品列表（状态/类型/修改时间）。不支持按名称搜索。返回商品基础信息，不含各仓库存明细。查库存用stock_status(status/start_date/end_date/item_type/order_by/return_purchase), product_detail=查询单个商品完整信息（含SKU列表/价格/条码/重量）。用商家编码outer_id或系统ID查。不含库存数据，查库存用stock_status(item_id/outer_id/return_purchase), sku_info=查询单个SKU属性详情（规格名称/价格/条码/重量）。不含库存数据，查库存直接用stock_status(sku_id/sku_outer_id/return_purchase), sku_list=查询某商品下所有SKU列表（规格/价格/条码）。按主商品编码outer_id查。不含库存，查库存用stock_status(outer_id/item_id/return_purchase), multi_product=批量查询多个商品信息（最多20个）。用多个商家编码outer_ids或系统ID查。不含库存(outer_ids/item_ids/return_skus), multicode_query=通过编码反查关联商品信息。支持主商家编码、规格商家编码、商品条码三种编码查询。⚠ 仅支持开启「一品多码」的商品，未开启的商品查不到(*code/barcode), stock_status=查询库存数量和状态（总库存/可售/锁定/预占/采购在途，含各仓汇总）。支持主编码outer_id或规格编码sku_outer_id。查库存直接用这个，不需要先查sku_info验证。采购在途只有数量，到货日期在采购单备注里(purchase_order_list, status=GOODS_NOT_ARRIVED)(outer_id/sku_outer_id/warehouse_id/stock_statuses/item_type/brand/created/modified/stock_start/stock_end/relation_fields), warehouse_stock=查询商品在各仓库的库存分布（按仓库维度展示）。只能查单个编码，不支持批量。查汇总库存用stock_status(outer_id/sku_outer_id), stock_in_out=查询商品出入库流水记录（采购入库/销售出库/盘盈盘亏/调拨等历史变动）。查商品销量用order_type=2过滤销售出库，销量=各记录num累加。查当前库存用stock_status（⚠️必须传outer_id或sku_outer_id，否则返回全量数据）(outer_id/warehouse_id/start_date/end_date/order_type/order_number), virtual_warehouse=查询虚拟仓列表（预售/活动等虚拟库存场景）。不是实体仓库，查实体仓库用warehouse_list(name), history_cost_price=查询商品历史成本价变动记录。必须先知道系统商品ID和SKU ID（从product_detail或sku_list获取）（⚠️必传item_id+sku_id）(*item_id/*sku_id/start_date/end_date/warehouse_ids), tag_list=查询商品标签列表（商品分类打标用）。这是商品标签，订单标签在erp_basic_query的tag_list(name), cat_list=查询商品自定义分类列表（商家自己创建的分类体系）。不是平台类目, classify_list=查询商品类目列表（系统标准类目）。与cat_list的区别：cat_list是商家自定义分类，这个是系统标准类目, brand_list=查询商品品牌列表。返回所有已创建的品牌名称和ID, outer_id_list=查询商品与平台商品的对应关系（ERP编码↔平台商品ID映射）。用于确认商品在哪些平台店铺有上架(outer_ids/platform_ids/shop_id/taobao_id), outer_id_by_item=按平台商品ID查询对应关系（已知平台商品ID反查ERP编码）。必须传platform_ids(*platform_ids/shop_id/taobao_id), item_supplier_list=查询商品关联的供应商信息（供货关系/采购价）。按商品编码或SKU编码查对应供应商(item_ids/sku_ids/outer_ids/sku_outer_ids)"
+              },
+              "params": {
+                "type": "object",
+                "description": "操作参数（key 必须用下划线格式如 time_type/start_date，禁止驼峰如 timeType/startTime）。不确定参数时只传 action 可获取完整参数文档。"
+              },
+              "page": {
+                "type": "integer",
+                "description": "页码（默认1）"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "每页条数（默认20，最小20）"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "erp_product_query",
+      "exposure": "public",
+      "source": "config.erp_tools.build_erp_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": "erp_query",
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "erp_trade_query": {
+      "name": "erp_trade_query",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "erp_trade_query",
+          "description": "远程API查询ERP订单/出库/物流/波次/唯一码信息。适合本地工具不支持的操作或需要实时数据。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "order_list",
+                  "order_log",
+                  "outstock_query",
+                  "express_query",
+                  "outstock_order_query",
+                  "wave_query",
+                  "wave_sorting_query",
+                  "unique_code_query",
+                  "logistics_company_list",
+                  "logistics_template_list",
+                  "waybill_get",
+                  "upload_memo_flag"
+                ],
+                "description": "order_list=查询订单列表（待付款/待审核/待财审/待打印/待包装/待称重/待发货/已发货/已完成/已关闭）。支持订单号/系统单号/买家/店铺/状态/时间等条件。返回订单头信息+商品明细+收货地址。⚠️不含淘宝和1688订单；拼多多不返回订单号(tid)和金额(payment)。需要拼多多完整数据请用outstock_order_query（仅含已发货或发货流程中的订单）；需要淘宝/1688请用outstock_query(order_id/system_id/buyer/shop_ids/status/time_type/start_date/end_date/order_types/tag_ids/except_ids/exception_status/only_contain/consigned_type/express_nos/query_type/use_has_next/use_cursor/cursor), order_log=查询订单操作日志（审核/验货/发货/拦截/修改等操作记录）。追溯订单处理过程用这个。不是查订单信息，查订单用order_list（⚠️只接受system_ids参数，需先从order_list获取system_id）(system_ids/operators/action/content/start_time/end_time), outstock_query=查询订单列表-全平台全状态版（待付款/待审核/待财审/待打印/待包装/待称重/待发货/已发货/已完成/已关闭，对应ERP后台【交易→订单查询】）。覆盖全平台含全状态（含淘宝/1688/拼多多/抖音/京东/快手/小红书）。支持订单号/系统单号/买家/店铺/状态/时间等条件。返回订单头信息+商品明细+快递单号。⚠️拼多多不返回订单号(tid)和金额(payment)；需要拼多多完整数据请用outstock_order_query（仅含已发货或发货流程中的订单）(order_id/system_id/buyer/shop_ids/status/time_type/start_date/end_date/express_no/express_nos/order_types/tag_ids/except_ids/exception_status/only_contain/consigned_type/query_type/use_has_next/use_cursor/cursor), express_query=查询订单的包裹和快递信息（一单多包裹场景）。用系统单号sid或快递单号查。不含物流轨迹(system_id/express_no), outstock_order_query=销售出库单查询（仅含已发货或发货流程中的订单，对应ERP后台【仓储→波次→销售出库单】）。所有平台均返回完整订单号(tid)和金额(payment/payAmount)，包括拼多多。支持系统单号/平台单号/物流单号/店铺/时间等条件。返回订单头+商品出库明细+快递信息。⚠️待审核/待付款等未进入发货流程的订单查不到；不含淘宝和1688(order_id/system_id/shop_ids/status_list/time_type/start_date/end_date/express_nos/wave_ids/short_ids), wave_query=查询波次信息（批量拣货任务）。波次是仓库批量处理订单的单位。查单个订单物流不用这个(start_date/end_date/pick_start/pick_end/status), wave_sorting_query=查询波次内的分拣明细（各订单分配到哪个格口）。必须先有波次ID，通过wave_query获取(*wave_id), unique_code_query=查询唯一码信息（SN码/IMEI/自定义码）。用于序列号管理的商品追踪。普通商品不用这个(code/system_ids/code_type/type/start_date/end_date/consign_start/consign_end/short_ids/after_sale_codes/wave_id/receive_start/receive_end/create_start/create_end/no_need_total), logistics_company_list=查询已配置的物流公司列表（可按仓库筛选）。查看有哪些快递公司可选。不是查快递单号(warehouse_id), logistics_template_list=查询仓库的物流模板列表（面单模板配置）。必须传仓库ID。不是查快递单号(*warehouse_id), waybill_get=根据系统单号获取已分配的物流单号（快递单号）。仅返回单号，不含物流轨迹。查包裹详情用express_query(system_ids), upload_memo_flag=上传订单备注和旗帜到平台（同步到淘宝等平台显示）。需要订单号+店铺ID+备注+旗帜全部必填(*order_id/*memo/*flag/*shop_id)"
+              },
+              "params": {
+                "type": "object",
+                "description": "操作参数（key 必须用下划线格式如 time_type/start_date，禁止驼峰如 timeType/startTime）。不确定参数时只传 action 可获取完整参数文档。"
+              },
+              "page": {
+                "type": "integer",
+                "description": "页码（默认1）"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "每页条数（默认20，最小20）"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "erp_trade_query",
+      "exposure": "public",
+      "source": "config.erp_tools.build_erp_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": "erp_query",
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "erp_aftersales_query": {
+      "name": "erp_aftersales_query",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "erp_aftersales_query",
+          "description": "远程API查询ERP售后工单/退货/维修单/补款/日志。适合本地工具不支持的操作。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "aftersale_list",
+                  "refund_warehouse",
+                  "replenish_list",
+                  "repair_list",
+                  "repair_detail",
+                  "aftersale_log"
+                ],
+                "description": "aftersale_list=查询售后工单列表（退款/退货/换货/补发/维修等全类型）。支持订单号/系统单号/工单ID/售后类型/店铺/时间等条件。ERP系统内的售后记录（⚠️不支持system_id筛选，须用order_id或work_order_id）(order_id/system_id/work_order_id/work_order_ids/order_ids/type/as_version/shop_ids/warehouse_ids/start_date/end_date/start_apply/end_apply/start_finished/end_finished/platform_id/express_ids/reissue_sid/suite_single), refund_warehouse=查询退货入库单（退货商品的收货和上架记录）。查退货物流状态：等待收货→收货→上架。与aftersale_list的区别：侧重仓库收退货维度（⚠️必传time_type参数）(work_order_ids/ids/shop_ids/warehouse_ids/status/*time_type/start_date/end_date/buyer_name/wangwang), replenish_list=查询登记补款记录（售后补偿金额）。补款是对买家的额外补偿，不是退款。退款信息在aftersale_list中(order_id/work_order_id/shop_ids/status/start_date/end_date), repair_list=查询维修单列表（商品维修工单：待审核→待收货→待维修→待寄出→已完成）。查普通退货/退款用aftersale_list(status/time_type/start_date/end_date/query_type/query_text), repair_detail=查询单个维修单的完整详情（维修项目/费用/进度）。必须传维修单号(*repair_no), aftersale_log=查询售后工单的操作日志（处理记录）。必须传工单ID。查工单列表用aftersale_list(*work_order_id)"
+              },
+              "params": {
+                "type": "object",
+                "description": "操作参数（key 必须用下划线格式如 time_type/start_date，禁止驼峰如 timeType/startTime）。不确定参数时只传 action 可获取完整参数文档。"
+              },
+              "page": {
+                "type": "integer",
+                "description": "页码（默认1）"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "每页条数（默认20，最小20）"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "erp_aftersales_query",
+      "exposure": "public",
+      "source": "config.erp_tools.build_erp_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": "erp_query",
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "erp_warehouse_query": {
+      "name": "erp_warehouse_query",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "erp_warehouse_query",
+          "description": "远程API查询ERP调拨/入出库/盘点/下架/货位/加工单信息。仓储操作无本地工具，必须使用此远程API。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "allocate_list",
+                  "allocate_detail",
+                  "allocate_in_list",
+                  "allocate_in_detail",
+                  "allocate_out_list",
+                  "allocate_out_detail",
+                  "other_in_list",
+                  "other_in_detail",
+                  "other_out_list",
+                  "other_out_detail",
+                  "inventory_sheet_list",
+                  "inventory_sheet_detail",
+                  "unshelve_list",
+                  "unshelve_detail",
+                  "goods_section_list",
+                  "batch_stock_list",
+                  "process_order_list",
+                  "process_order_detail",
+                  "section_record_list",
+                  "goods_section_delete"
+                ],
+                "description": "allocate_list=查询调拨单列表（仓库间商品转移）。按状态/单号/时间筛选。查调拨明细用allocate_detail(status/code/start_date/end_date/label_name), allocate_detail=查询调拨单的商品明细（调拨了哪些商品/数量）。查调拨单列表用allocate_list(code/start_date/end_date/label_name), allocate_in_list=查询调拨入库单列表（目标仓收货维度）。与allocate_list的区别：这个侧重入库端的收货状态(status/code/custom_type/start_date/end_date), allocate_in_detail=查询调拨入库单的商品收货明细。需要调拨入库单ID（从allocate_in_list获取）(allocate_id), allocate_out_list=查询调拨出库单列表（源仓出库维度）。与allocate_list的区别：这个侧重出库端的发货状态(status/code/time_type/start_date/end_date), allocate_out_detail=查询调拨出库单的商品出库明细。需要调拨出库单ID（从allocate_out_list获取）(allocate_id), other_in_list=查询其他入库单列表（非采购/非调拨的入库，如盘盈入库）。采购入库查warehouse_entry_list（手工入库单，非采购入库用此action）(status/code/outer_code/custom_type/start_date/end_date), other_in_detail=查询其他入库单的商品明细。需要入库单ID（从other_in_list获取）(order_id), other_out_list=查询其他出库单列表（非销售/非调拨的出库，如报损出库）。销售出库查outstock_query（手工出库单，非销售出库用此action）(status/code/outer_code/custom_type/start_date/end_date), other_out_detail=查询其他出库单的商品明细。需要出库单ID（从other_out_list获取）(order_id), inventory_sheet_list=查询盘点单列表（库存盘点任务）。按状态/单号/时间筛选。查盘点明细用inventory_sheet_detail(status/code/start_date/end_date), inventory_sheet_detail=查询盘点单的商品盘点明细（盘点数量/差异）。必须传盘点单号(*code/start_date/end_date), unshelve_list=查询下架单列表（货位商品下架任务）。仓库管理场景使用(code/start_date/end_date), unshelve_detail=查询下架单的商品明细。需要下架单ID（从unshelve_list获取）(unshelve_id), goods_section_list=查询货位库存列表（商品在仓库货架的具体位置和数量）。精细化仓库管理场景使用(start_date/end_date), batch_stock_list=查询商品批次效期库存（保质期管理场景，如食品/化妆品）。必须传店铺ID。查普通库存用stock_status（⚠️必传shop_id）(sku_ids/num_iids/tids/*shop_id), process_order_list=查询加工单列表（组装/拆卸任务）。商品组合加工场景使用。不是查商品信息(status/code/type/start_date/end_date/product_start/product_end/finished_start/finished_end/created_start/created_end), process_order_detail=查询加工单的商品加工明细（原料/成品/数量）。需要加工单ID（从process_order_list获取）(product_order_id), section_record_list=查询货位进出记录（商品上架/下架/移位的流水日志）。按单据号或操作时间查询(order_number/start_date/end_date), goods_section_delete=查询货位库存已删除数据列表（历史记录）。这是查询接口，不是删除操作"
+              },
+              "params": {
+                "type": "object",
+                "description": "操作参数（key 必须用下划线格式如 time_type/start_date，禁止驼峰如 timeType/startTime）。不确定参数时只传 action 可获取完整参数文档。"
+              },
+              "page": {
+                "type": "integer",
+                "description": "页码（默认1）"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "每页条数（默认20，最小20）"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "erp_warehouse_query",
+      "exposure": "public",
+      "source": "config.erp_tools.build_erp_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": "erp_query",
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "erp_purchase_query": {
+      "name": "erp_purchase_query",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "erp_purchase_query",
+          "description": "远程API查询ERP供应商/采购单/收货单/采退单/上架单/采购建议。适合本地工具不支持的操作。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "supplier_list",
+                  "purchase_order_list",
+                  "purchase_order_detail",
+                  "purchase_return_list",
+                  "purchase_return_detail",
+                  "warehouse_entry_list",
+                  "warehouse_entry_detail",
+                  "shelf_list",
+                  "shelf_detail",
+                  "purchase_strategy",
+                  "purchase_strategy_calculate",
+                  "purchase_progress",
+                  "purchase_order_history",
+                  "purchase_order_history_detail",
+                  "warehouse_entry_history",
+                  "warehouse_entry_history_detail",
+                  "purchase_return_history",
+                  "purchase_return_history_detail",
+                  "shelf_history",
+                  "shelf_history_detail"
+                ],
+                "description": "supplier_list=查询供应商列表（供应商基础信息）。按启用/停用状态筛选。查商品关联的供应商用item_supplier_list(status), purchase_order_list=查询采购单列表（向供应商下的采购订单）。按状态/单号/时间筛选。查三个月前的用purchase_order_history(code/outer_code/purchase_id/status/time_type/start_date/end_date), purchase_order_detail=查询采购单完整详情（含采购商品明细/数量/价格/到货情况）。需要采购单ID（从purchase_order_list获取）(purchase_id/pt_order_id), purchase_return_list=查询采购退货单列表（向供应商退货）。与售后退货不同，这是采购方向的退货(status/code/outer_code/time_type/tag_name/finance_status/start_date/end_date), purchase_return_detail=查询采购退货单完整详情。需要采退单ID（从purchase_return_list获取）(*return_id), warehouse_entry_list=查询采购收货单列表（供应商送货到仓的收货记录）。按状态/单号/财务状态筛选(status/code/outer_code/finance_status/tag_name/flag/prein_order_id/start_date/end_date), warehouse_entry_detail=查询收货单完整详情（收货商品/数量/差异）。需要收货单ID（从warehouse_entry_list获取）(*entry_id), shelf_list=查询上架单列表（采购收货后的上架任务）。按状态/收货单号/时间筛选(status/time_type/we_code/start_date/end_date), shelf_detail=查询上架单完整详情（上架商品/数量/货位）。需要上架单ID（从shelf_list获取）(*shelf_id), purchase_strategy=查询采购建议（根据销售数据推荐补货商品和数量）。按商品名称或编码搜索。不是查采购单，查采购单用purchase_order_list(*query_key), purchase_strategy_calculate=触发采购建议计算任务（异步，用purchase_progress查进度）。计算完成后用purchase_strategy查看结果(*warehouse_code/ignore_trade_out/ignore_refund), purchase_progress=查询采购建议计算进度（配合purchase_strategy_calculate使用）。不是查采购单进度(progress_type), purchase_order_history=查询归档采购单（三个月前的历史采购单）。必须传起止日期。近期采购单用purchase_order_list（⚠️必传start_date+end_date）(code/purchase_id/status/time_type/*start_date/*end_date), purchase_order_history_detail=查询归档采购单完整详情。需要采购单ID（从purchase_order_history获取）（⚠️必传start_date+end_date）(*purchase_id), warehouse_entry_history=查询归档收货单列表（三个月前的历史收货单）。必须传起止日期（⚠️必传start_date+end_date）(code/status/time_type/finance_status/*start_date/*end_date), warehouse_entry_history_detail=查询归档收货单完整详情。需要收货单ID（从warehouse_entry_history获取）（⚠️必传start_date+end_date）(*entry_id), purchase_return_history=查询归档采退单列表（三个月前的历史采购退货单）。必须传起止日期（⚠️必传start_date+end_date）(code/status/time_type/finance_status/*start_date/*end_date), purchase_return_history_detail=查询归档采退单完整详情。需要采退单ID（从purchase_return_history获取）（⚠️必传start_date+end_date）(*return_id), shelf_history=查询归档上架单列表（三个月前的历史上架单）。必须传起止日期（⚠️必传start_date+end_date）(status/time_type/we_code/*start_date/*end_date), shelf_history_detail=查询归档上架单完整详情。需要上架单ID（从shelf_history获取）（⚠️必传start_date+end_date）(*shelf_id)"
+              },
+              "params": {
+                "type": "object",
+                "description": "操作参数（key 必须用下划线格式如 time_type/start_date，禁止驼峰如 timeType/startTime）。不确定参数时只传 action 可获取完整参数文档。"
+              },
+              "page": {
+                "type": "integer",
+                "description": "页码（默认1）"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "每页条数（默认20，最小20）"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "erp_purchase_query",
+      "exposure": "public",
+      "source": "config.erp_tools.build_erp_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": "erp_query",
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "erp_taobao_query": {
+      "name": "erp_taobao_query",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "erp_taobao_query",
+          "description": "远程API查询淘宝/天猫平台的订单和售后单（通过奇门接口）。返回平台原始数据 {total, trades/workOrders[]}。page_size最小20。支持 shop_id 按店铺筛选。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "order_list",
+                  "refund_list"
+                ],
+                "description": "order_list=淘宝订单列表查询(tid/order_id/sid/system_id/status/date_type/time_type/shop_id/warehouse_id/start_date/end_date/types/tag_ids), refund_list=淘宝售后单列表查询(tid/refund_id/refund_type/as_version/shop_id/warehouse_id/start_date/end_date)"
+              },
+              "params": {
+                "type": "object",
+                "description": "操作参数（key 必须用下划线格式如 time_type/start_date，禁止驼峰如 timeType/startTime）。不确定参数时只传 action 可获取完整参数文档。"
+              },
+              "page": {
+                "type": "integer",
+                "description": "页码（默认1）"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "每页条数（默认20，最小20）"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "erp_taobao_query",
+      "exposure": "public",
+      "source": "config.erp_tools.build_erp_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": "erp_query",
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "erp_execute": {
+      "name": "erp_execute",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "erp_execute",
+          "description": "执行ERP写操作（新增/修改/删除/作废等）。操作前需用户确认。分类: basic(基础): customer_create=新增/修改客户基本信息(customer_id/code/nick/name/type/level/province/city/area/address/remark/email/payment_method/discount_rate/invoice_title/tax_number/bank_name/bank_account/type_code/qq/fax/url/zip_code); product(商品): tag_add=新增商品标签(*name/style), tag_batch_update=设置商品标签(tag_names/tag_ids/*type/*item_info_list), cat_add=新增商品分类, classify_add=新增商品类目, brand_add=新增/修改商品品牌(*name/brand_id), supplier_update=商品关联供应商信息更新, supplier_add=添加商品供应商关系(item_id/outer_id/sku_outer_id/sku_id/suppliers), supplier_modify=修改商品供应商关系, supplier_delete=删除商品供应商关系(item_id/outer_id/supplier_ids/supplier_codes/sku_outer_id/sku_id), product_add_update=修改/新增商品V2, product_add_update_simple=修改/新增普通商品(*outer_id/*title/item_id/skus/short_title/barcode/purchase_price/selling_price/weight/remark/brand/brand_id/cat_id/seller_cids/active_status/unit/make_gift/unique_code_type), import_platform_item=导入平台商品信息, update_history_price=更新商品历史成本价(outer_id/item_id/sku_id/*price/date), stock_update=修改实际库存（编码最多20个）(outer_ids/sku_outer_ids/*warehouse_id/stock_num/over_stock_num/under_stock_num), virtual_stock_update=修改虚拟库存（编码最多20个）(item_ids/*warehouse_id/*stock_num/sku_outer_ids/outer_ids), virtual_stock_batch_update=批量修改虚拟库存, item_type_change=商品类型转换; trade(交易): order_create=创建系统手工单(*shop_id/*warehouse_id/*orders/*payment/order_id/*receiver_name/*receiver_state/*receiver_city/*receiver_district/*receiver_street/*receiver_address/receiver_mobile/receiver_phone/receiver_zip/post_fee/buyer/seller_memo/express_code/force), order_create_new=创建自建平台订单, receiver_update=修改订单收货地址(order_id/system_id/*receiver_name/*receiver_state/*receiver_city/*receiver_district/*receiver_address/receiver_mobile/receiver_phone/receiver_zip), seller_memo_update=修改订单卖家备注与旗帜(order_id/system_id/seller_memo/flag), tag_batch_update=批量修改订单标签(order_ids/system_ids/*tag_ids/*type), order_cancel=订单作废(order_ids/system_ids), order_intercept=订单发货拦截(system_ids), trade_consign=上传发货(system_ids/consign_type/express_code/express_no/operate_type), trade_pack=包装验货(system_id/unique_codes/*can_force/express_no/order_scan_infos), wave_pick_hand=波次手动拣选, unique_code_receive=订单唯一码收货(*unique_code), wave_seed=波次播种回传, unique_code_generate=新增商品唯一码(*generate_params), unique_code_validate=校验波次唯一码(unique_codes/start_time/end_time), unique_code_update=商品唯一码更新(*generate_params), change_warehouse=修改订单仓库(*system_ids/*warehouse_id/force), logistics_template_update=更新订单物流模板(system_ids/logistics_company_id), fast_stock_update=即入即出匹配(outer_id/num/type/need_goods_section/warehouse_code), order_remark_update=修改订单商品备注(*order_id/*remark), order_remark_batch_update=批量修改订单商品备注(system_id/order_id/orders), trade_halt=订单挂起(order_ids/system_ids/*auto_unhalt/unhalt_type/halt_time_unit/halt_time_val/is_urgent), trade_unhalt=订单解挂(order_ids/system_ids); aftersales(售后): workorder_create=创建售后工单(order_id/system_id/shop_id/*warehouse_id/*reason/*after_sale_type/*reissue_list/has_owner/remark/platform_id/buyer_name/buyer_phone/explains/force), workorder_cancel=作废售后工单(*work_order_ids), workorder_resolve=解决售后工单(*work_order_ids), workorder_goods_received=售后工单退货入仓(warehouse_id/external_warehouse_code/*received_orders), workorder_tag_update=更新售后工单标记(*type/*work_order_id/tag_names/tag_ids), workorder_explains_update=更新售后单售后说明(*work_order_id/*explains/*is_append), workorder_batch_change_type=批量修改售后类型(*work_order_ids/*change_type), repair_process=维修单处理(*repair_no/*has_fee/*failure_cause/repair_remark/accessory_url), repair_edit_money=维修单修改费用(*repair_no/*repair_money), repair_pay=维修单付款(*repair_no/*received_time/received_way/*current_price/trade_number/operator_name/operator_time), workorder_remark_update=修改售后工单备注(*work_order_id/*remark), update_platform_refund_money=更新工单平台实退金额(*work_order_id/*platform_refund_money/item_snapshot), update_express=更新工单退货快递信息(*work_order_id/platform_id/express_name/express_id); warehouse(仓储): allocate_add=新增完成的调拨单, allocate_create=新增调拨单, allocate_in_receive=调拨入库单收货(*allocate_id/*receive_details/outer_code), allocate_out_direct=调拨出库单直接出库, other_in_add=新增其他入库单(*items/*warehouse_code/outer_code/custom_type/remark/status/code/in_location), other_in_cancel=作废其他入库单(*ids), other_out_add=新增其他出库单(*items/*warehouse_code/custom_type/outer_code/remark/status/out_location), other_out_cancel=作废其他出库单(*ids), inventory_batch_update=盘点单库存盘点, unshelve_save=新建/修改下架单, unshelve_execute=下架单下架(*unshelve_id), upshelf_batch=暂存区批量上架; purchase(采购): warehouse_entry_receive=收货单收货, warehouse_entry_fast_receive=采购快速收货, warehouse_entry_revert=收货单打回(*entry_ids), shelf_save=上架单上架, supplier_add_update=新建/修改供应商(*code/*name/remark/contact_name/mobile/phone/email/address/category_name/status), purchase_add=新增采购单, purchase_add_update=新建/修改采购单(*supplier_code/*items/*warehouse_code/outer_code/remark/purchase_id/delivery_date/status/pt_order_id/template_name/express_no), purchase_status_update=采购单状态更新, purchase_update_special=更新采购单特殊字段(*purchase_id/outer_code/template_name/express_no/supplier_code), purchase_un_audit=采购单反审核, purchase_return_save=采退单保存(*supplier_code/*items/*warehouse_code/outer_code/purchase_order_id/return_id/remark), purchase_return_out=采退单出库, purchase_return_cancel=采退单作废(*return_id), warehouse_entry_add_update=收货单新增/修改, warehouse_entry_cancel=收货单作废(*entry_ids), pre_in_order_add=预约入库单新增, pre_in_order_update=预约入库单修改, pre_in_order_anti_audit=预约入库单反审核; distribution(分销): add_distributor_money=增加分销余额(*supplier_company_id/*distributor_company_id/*payment_type/*amount), add_distribution_item=添加分销商品(*supplier_company_id/*distributor_company_id/*item_outer_id/item_sku_outer_id_list), add_distributor=注册分销商(*supplier_company_id/*distributor_company_name/*source/*main_phone/*default_user_name/*default_password/version_number), submit_sync_item=提交分销小店商品的同步(*supplier_company_id/*shop_id/item_type)",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "category": {
+                "type": "string",
+                "enum": [
+                  "basic",
+                  "product",
+                  "trade",
+                  "aftersales",
+                  "warehouse",
+                  "purchase",
+                  "distribution"
+                ],
+                "description": "操作分类"
+              },
+              "action": {
+                "type": "string",
+                "description": "操作名称（见各分类的写操作列表）"
+              },
+              "params": {
+                "type": "object",
+                "description": "操作参数（根据具体操作传入）"
+              }
+            },
+            "required": [
+              "category",
+              "action"
+            ]
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "dangerous",
+      "parallelizable": false,
+      "cacheable": false,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "erp_execute",
+      "exposure": "public",
+      "source": "config.erp_tools.build_erp_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [
+          "category",
+          "action"
+        ],
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "business_write",
+        "plan_allowed": false,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": "erp_write",
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "local_data": {
+      "name": "local_data",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "local_data",
+          "description": "本地数据库统一查询工具。支持查询/统计/导出 ERP 全部业务表数据。\n除单据表外还支持：库存(stock)、商品(product)、SKU(sku)、日统计(daily_stats)、平台映射(platform_map)、批次库存(batch_stock)、订单日志(order_log)、售后日志(aftersale_log)。\n用 filters 数组指定过滤条件，任意字段组合均可。\n\n常用字段：\n- order_status/doc_status: 状态(WAIT_AUDIT/WAIT_SEND_GOODS/SELLER_SEND_GOODS/FINISHED/CLOSED)\n- consign_time: 发货时间  |  pay_time: 付款时间  |  doc_created_at: 创建时间\n- shop_name: 店铺名  |  platform: 平台(tb/jd/pdd/fxg/kuaishou/xhs/1688)\n- outer_id: 商品主编码  |  sku_outer_id: SKU编码  |  item_name: 商品名称\n- order_no: 平台订单号  |  express_no: 快递单号\n- supplier_name: 供应商  |  warehouse_name: 仓库\n- amount: 金额  |  pay_amount: 实付金额  |  quantity: 数量\n- cost: 成本  |  gross_profit: 毛利润  |  price: 单价\n- post_fee: 运费  |  discount_fee: 优惠金额  |  refund_money: 退款金额\n- is_scalping: 是否刷单/空包(0=正常,1=刷单)  |  is_exception: 是否异常订单(0/1)\n- is_refund: 是否退款(0/1)  |  is_cancel: 是否取消(0/1)\n- aftersale_type: 售后类型(0~9)  |  refund_status: 退款状态  |  text_reason: 售后原因\n- buyer_nick: 买家昵称  |  status_name: 状态中文名\n\nop: eq(等于) ne(不等于) gt(大于) gte(>=) lt(<) lte(<=) in(在列表中) like(模糊) is_null(是否空) between(区间)\n\n示例1：4月14日已发货订单列表\n  doc_type=order, mode=detail, filters=[\n    {\"field\":\"order_status\",\"op\":\"eq\",\"value\":\"SELLER_SEND_GOODS\"},\n    {\"field\":\"consign_time\",\"op\":\"gte\",\"value\":\"2026-04-14 00:00:00\"},\n    {\"field\":\"consign_time\",\"op\":\"lt\",\"value\":\"2026-04-15 00:00:00\"}]\n\n示例2：淘宝金额>500订单按店铺统计\n  doc_type=order, mode=summary, filters=[\n    {\"field\":\"platform\",\"op\":\"eq\",\"value\":\"tb\"},\n    {\"field\":\"amount\",\"op\":\"gt\",\"value\":500}],\n  group_by=[\"shop_name\"]\n\n示例3：导出3月拼多多发货订单\n  doc_type=order, mode=export, filters=[...],\n  fields=[\"order_no\",\"amount\",\"consign_time\"]",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "doc_type": {
+                "type": "string",
+                "enum": [
+                  "order",
+                  "purchase",
+                  "aftersale",
+                  "receipt",
+                  "shelf",
+                  "purchase_return",
+                  "stock",
+                  "product",
+                  "sku",
+                  "daily_stats",
+                  "platform_map",
+                  "batch_stock",
+                  "order_log",
+                  "aftersale_log"
+                ],
+                "description": "单据类型（新增：stock=库存快照/product=商品/sku=SKU/daily_stats=日统计/platform_map=平台映射/batch_stock=批次库存/order_log=订单日志/aftersale_log=售后日志）"
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "summary",
+                  "detail",
+                  "export"
+                ],
+                "description": "输出模式：summary=聚合统计，detail=明细列表，export=导出文件"
+              },
+              "filters": {
+                "type": "array",
+                "description": "过滤条件数组，每个元素 {field, op, value}",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string",
+                      "description": "列名"
+                    },
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "eq",
+                        "ne",
+                        "gt",
+                        "gte",
+                        "lt",
+                        "lte",
+                        "in",
+                        "like",
+                        "is_null",
+                        "between"
+                      ]
+                    },
+                    "value": {
+                      "description": "过滤值"
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "op",
+                    "value"
+                  ]
+                }
+              },
+              "group_by": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "分组字段（mode=summary时），如 [\"shop_name\"] 或 [\"platform\"]"
+              },
+              "sort_by": {
+                "type": "string",
+                "description": "排序字段（mode=detail时）"
+              },
+              "sort_dir": {
+                "type": "string",
+                "enum": [
+                  "asc",
+                  "desc"
+                ],
+                "description": "排序方向"
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "返回/导出字段列表。mode=export 不传则返回可用字段文档"
+              },
+              "limit": {
+                "type": "integer",
+                "description": "返回行数上限（detail默认20，export默认5000，上限10000）"
+              },
+              "time_type": {
+                "type": "string",
+                "enum": [
+                  "doc_created_at",
+                  "pay_time",
+                  "consign_time"
+                ],
+                "description": "时间列（控制 summary 模式的统计时间维度）。含「付款」用 pay_time，含「发货」用 consign_time，默认 doc_created_at"
+              }
+            },
+            "required": [
+              "doc_type",
+              "filters"
+            ]
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "local_data",
+      "exposure": "public",
+      "source": "config.erp_tools.build_erp_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [
+        "handler extra_fields falls back to fields; no new public field is added"
+      ],
+      "legacy_validation_schema": {
+        "required": [
+          "doc_type",
+          "filters"
+        ],
+        "properties": {
+          "doc_type": {
+            "type": "string"
+          },
+          "filters": {
+            "type": "array"
+          },
+          "mode": {
+            "type": "string"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "local_product_stats": {
+      "name": "local_product_stats",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "local_product_stats",
+          "description": "按商品编码查统计报表（日/周/月维度）。毫秒级响应。返回聚合指标：订单数/销量/销售额、采购数/采购额、售后数/退货数。支持日期范围对比。⚠ 需精确编码，模糊时先 local_product_identify。相关工具：全局统计（不按商品）用 local_data(mode=summary)；查供应链流转用 local_data 按 doc_type 分查。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "product_code": {
+                "type": "string",
+                "description": "商品编码"
+              },
+              "period": {
+                "type": "string",
+                "enum": [
+                  "day",
+                  "week",
+                  "month"
+                ],
+                "description": "统计周期"
+              },
+              "start_date": {
+                "type": "string",
+                "description": "起始日期(YYYY-MM-DD)，默认当月1号"
+              },
+              "end_date": {
+                "type": "string",
+                "description": "结束日期(YYYY-MM-DD)，默认今天"
+              }
+            },
+            "required": [
+              "product_code"
+            ]
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "local_product_stats",
+      "exposure": "public",
+      "source": "config.erp_tools.build_erp_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [
+          "product_code"
+        ],
+        "properties": {
+          "product_code": {
+            "type": "string"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "local_stock_query": {
+      "name": "local_stock_query",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "local_stock_query",
+          "description": "按商品精确编码查库存（可售/总库存/锁定/在途/各仓分布）。毫秒级响应。⚠ 需要精确编码，用户给模糊名称/简称时先调 local_product_identify 确认。相关工具：需要实时数据或本地查不到时改用 erp_product_query(stock_status)；查采购到货进度用 local_data(doc_type=purchase)。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "product_code": {
+                "type": "string",
+                "description": "商品编码（主商家编码或SKU编码）"
+              },
+              "stock_status": {
+                "type": "string",
+                "enum": [
+                  "1",
+                  "2",
+                  "3",
+                  "4",
+                  "6"
+                ],
+                "description": "库存状态(1=正常/2=警戒/3=无货/4=超卖/6=有货)"
+              },
+              "low_stock": {
+                "type": "boolean",
+                "description": "仅显示库存预警，默认false"
+              }
+            },
+            "required": [
+              "product_code"
+            ]
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "local_stock_query",
+      "exposure": "public",
+      "source": "config.erp_tools.build_erp_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [
+          "product_code"
+        ],
+        "properties": {
+          "product_code": {
+            "type": "string"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "local_product_identify": {
+      "name": "local_product_identify",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "local_product_identify",
+          "description": "编码识别与商品搜索。毫秒级响应。三种模式：编码精确匹配（返回1条）、商品名模糊搜索（返回最多20条）、规格名模糊搜索（返回最多20条）。返回编码/名称/规格/条码/供应商。code/name/spec 至少传一个。⚠ 返回多条匹配时，必须列出候选让用户确认目标商品，禁止自行选择第一条。相关工具：识别到编码后可用 local_stock_query 查库存、local_data 查订单/采购/售后、local_product_stats 查统计。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "商品编码/SKU编码/条码（精确匹配）"
+              },
+              "name": {
+                "type": "string",
+                "description": "商品名称关键词（模糊搜索）"
+              },
+              "spec": {
+                "type": "string",
+                "description": "规格名称关键词（模糊搜索，如'红色''120g'）"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "local_product_identify",
+      "exposure": "public",
+      "source": "config.erp_tools.build_erp_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "spec": {
+            "type": "string"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "local_platform_map_query": {
+      "name": "local_platform_map_query",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "local_platform_map_query",
+          "description": "查ERP编码↔平台商品映射（上架/下架检查）。毫秒级响应。返回编码在哪些平台有售，或平台商品ID反查ERP编码。product_code 和 num_iid 至少传一个。相关工具：编码模糊时先 local_product_identify；查库存用 local_stock_query；查该商品在某平台的订单用 local_data(product_code=..., platform=...)。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "product_code": {
+                "type": "string",
+                "description": "ERP商品编码（查此编码在哪些平台有售）"
+              },
+              "num_iid": {
+                "type": "string",
+                "description": "平台商品ID（反查对应ERP编码）"
+              },
+              "user_id": {
+                "type": "string",
+                "description": "店铺ID过滤（只查指定店铺）"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "local_platform_map_query",
+      "exposure": "public",
+      "source": "config.erp_tools.build_erp_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [],
+        "properties": {
+          "product_code": {
+            "type": "string"
+          },
+          "num_iid": {
+            "type": "string"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "local_compare_stats": {
+      "name": "local_compare_stats",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "local_compare_stats",
+          "description": "时间维度对比统计（同比/环比/任意区间对比）。毫秒级响应。由后端确定地计算对比基线（含中文星期/相对时间标签），返回结构化双时间块 + 数据对比。⚠ 涉及「对比/同比/环比/比上周/比上月/比去年」的查询必须用本工具，禁止调用 local_data 两次再让模型口述对比。适合：今天 vs 昨天、本周 vs 上周、本月 vs 上月同期、订单同比去年同期等。相关工具：对比后需要明细数据用 local_data(mode=export)；单商品对比趋势用 local_product_stats。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "doc_type": {
+                "type": "string",
+                "enum": [
+                  "order",
+                  "purchase",
+                  "aftersale",
+                  "receipt",
+                  "shelf",
+                  "purchase_return"
+                ],
+                "description": "统计类型"
+              },
+              "compare_kind": {
+                "type": "string",
+                "enum": [
+                  "wow",
+                  "mom",
+                  "yoy",
+                  "spring_aligned",
+                  "custom"
+                ],
+                "description": "对比模式：wow=环比上周同期；mom=环比上月同期；yoy=同比去年同期；spring_aligned=春节对齐同比（电商专用）；custom=自定义两个区间"
+              },
+              "current_period": {
+                "type": "string",
+                "enum": [
+                  "today",
+                  "yesterday",
+                  "this_week",
+                  "this_month",
+                  "last_n_days",
+                  "custom"
+                ],
+                "description": "当前期：today=今天；yesterday=昨天；this_week=本周；this_month=本月；last_n_days=最近 N 天（配合 current_n）；custom=自定义（配合 current_start/current_end）"
+              },
+              "current_n": {
+                "type": "integer",
+                "description": "current_period=last_n_days 时使用，如 7 表示最近 7 天"
+              },
+              "current_start": {
+                "type": "string",
+                "description": "current_period=custom 时使用，格式 YYYY-MM-DD HH:MM:SS 或 YYYY-MM-DD"
+              },
+              "current_end": {
+                "type": "string",
+                "description": "同上"
+              },
+              "baseline_start": {
+                "type": "string",
+                "description": "compare_kind=custom 时使用，自定义基线起始时间"
+              },
+              "baseline_end": {
+                "type": "string",
+                "description": "同上"
+              },
+              "time_type": {
+                "type": "string",
+                "enum": [
+                  "doc_created_at",
+                  "pay_time",
+                  "consign_time"
+                ],
+                "description": "时间类型（仅 order 类型有效）。默认 doc_created_at（下单时间）"
+              },
+              "shop_name": {
+                "type": "string",
+                "description": "按店铺过滤（模糊匹配）"
+              },
+              "shop_user_id": {
+                "type": "string",
+                "description": "按店铺ID精确过滤（从local_shop_list获取）"
+              },
+              "platform": {
+                "type": "string",
+                "description": "按平台过滤(tb=淘宝/jd=京东/pdd=拼多多/fxg=抖音/kuaishou=快手/xhs=小红书/1688)"
+              },
+              "supplier_name": {
+                "type": "string",
+                "description": "按供应商过滤（模糊匹配）"
+              },
+              "supplier_code": {
+                "type": "string",
+                "description": "按供应商编码精确过滤（从supplier_list获取）"
+              },
+              "warehouse_name": {
+                "type": "string",
+                "description": "按仓库过滤"
+              },
+              "warehouse_id": {
+                "type": "string",
+                "description": "按仓库ID精确过滤（从local_warehouse_list获取）"
+              }
+            },
+            "required": [
+              "doc_type",
+              "compare_kind",
+              "current_period"
+            ]
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "local_compare_stats",
+      "exposure": "public",
+      "source": "config.erp_tools.build_erp_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [
+          "doc_type",
+          "compare_kind",
+          "current_period"
+        ],
+        "properties": {
+          "doc_type": {
+            "type": "string"
+          },
+          "compare_kind": {
+            "type": "string"
+          },
+          "current_period": {
+            "type": "string"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "local_shop_list": {
+      "name": "local_shop_list",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "local_shop_list",
+          "description": "查询店铺列表（含所有店铺，包括新开未出单的）。毫秒级响应。返回店铺名称/平台/状态/ID，按平台分组显示。支持按平台过滤（如只看拼多多店铺）。适合：有哪些店铺、拼多多店铺列表、各平台店铺等查询。相关工具：拿到店铺名后可用 local_data(mode=summary, shop_name=...) 统计该店铺数据。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "platform": {
+                "type": "string",
+                "enum": [
+                  "tb",
+                  "jd",
+                  "pdd",
+                  "fxg",
+                  "kuaishou",
+                  "xhs",
+                  "1688"
+                ],
+                "description": "按平台过滤(tb=淘宝,jd=京东,pdd=拼多多,fxg=抖音,kuaishou=快手,xhs=小红书)"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "local_shop_list",
+      "exposure": "public",
+      "source": "config.erp_tools.build_erp_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [],
+        "properties": {
+          "platform": {
+            "type": "string"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "local_warehouse_list": {
+      "name": "local_warehouse_list",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "local_warehouse_list",
+          "description": "查询仓库列表（实体仓+虚拟仓）。毫秒级响应。返回仓库名称/编码/类型/状态/地址。适合：有哪些仓库、仓库地址、仓库编码等查询。相关工具：拿到仓库名后可用 local_stock_query 查库存分布；查某仓库出入库统计用 local_data(mode=summary, warehouse_name=...)。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "is_virtual": {
+                "type": "boolean",
+                "description": "是否只查虚拟仓（true=只看虚拟仓, false=只看实体仓, 不传=全部）"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "local_warehouse_list",
+      "exposure": "public",
+      "source": "config.erp_tools.build_erp_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [],
+        "properties": {
+          "is_virtual": {
+            "type": "boolean"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "local_supplier_list": {
+      "name": "local_supplier_list",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "local_supplier_list",
+          "description": "查询供应商列表（含编码/联系人/分类）。毫秒级响应。返回供应商名称/编码/状态/联系人/分类，按分类分组显示。支持按分类过滤（如只看某采购员负责的供应商）。适合：有哪些供应商、供应商列表、供应商联系方式等查询。相关工具：拿到供应商名后可用 local_data(doc_type=purchase, mode=summary, supplier_name=...) 统计该供应商采购数据。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "category": {
+                "type": "string",
+                "description": "按分类/采购员过滤（模糊匹配，如'采购陈'）"
+              },
+              "status": {
+                "type": "integer",
+                "description": "按状态过滤（0=停用, 1=启用，不传=全部）"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "local_supplier_list",
+      "exposure": "public",
+      "source": "config.erp_tools.build_erp_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [],
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "trigger_erp_sync": {
+      "name": "trigger_erp_sync",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "trigger_erp_sync",
+          "description": "手动触发ERP数据同步。仅在 local 工具返回 ⚠ 同步警告或查不到预期数据时使用。商品/库存查不到不要用此工具（local_product_identify 会自动兜底）。同步完成后重新调用原查询工具。相关工具：同步后用原查询工具（如 local_data/local_stock_query）验证数据。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "sync_type": {
+                "type": "string",
+                "enum": [
+                  "order",
+                  "purchase",
+                  "receipt",
+                  "shelf",
+                  "aftersale",
+                  "purchase_return",
+                  "product",
+                  "stock",
+                  "supplier",
+                  "platform_map",
+                  "shop",
+                  "warehouse",
+                  "tag",
+                  "category",
+                  "logistics_company",
+                  "allocate",
+                  "allocate_in",
+                  "allocate_out",
+                  "other_in",
+                  "other_out",
+                  "inventory_sheet",
+                  "unshelve",
+                  "process_order",
+                  "section_record",
+                  "goods_section"
+                ],
+                "description": "同步类型"
+              }
+            },
+            "required": [
+              "sync_type"
+            ]
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "dangerous",
+      "parallelizable": false,
+      "cacheable": false,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "trigger_erp_sync",
+      "exposure": "public",
+      "source": "config.erp_tools.build_erp_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [
+          "sync_type"
+        ],
+        "properties": {
+          "sync_type": {
+            "type": "string"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "business_write",
+        "plan_allowed": false,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "social_crawler": {
+      "name": "social_crawler",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "social_crawler",
+          "description": "爬取社交媒体平台的搜索结果。适用于：用户想了解某个话题在社交平台上的讨论、口碑、推荐、评测等场景。支持小红书/抖音/快手/B站/微博/贴吧/知乎。结果返回给你，你可以整理分析后回复用户。注意：此工具执行较慢（30-120秒），仅在用户明确需要社交平台内容时使用。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "platform": {
+                "type": "string",
+                "enum": [
+                  "xhs",
+                  "dy",
+                  "ks",
+                  "bili",
+                  "wb",
+                  "tieba",
+                  "zhihu"
+                ],
+                "description": "目标平台代码：xhs=小红书, dy=抖音, ks=快手, bili=B站, wb=微博, tieba=贴吧, zhihu=知乎。根据用户需求或话题特点选择最合适的平台。美妆/种草→xhs, 视频/娱乐→dy/bili, 热点/新闻→wb, 深度讨论→zhihu"
+              },
+              "keywords": {
+                "type": "string",
+                "description": "搜索关键词（多个用逗号分隔）。从用户消息中提取核心搜索词，保持简洁精准"
+              },
+              "max_results": {
+                "type": "integer",
+                "description": "最大返回条数（默认10，最大30）"
+              },
+              "crawl_type": {
+                "type": "string",
+                "enum": [
+                  "search",
+                  "detail"
+                ],
+                "description": "爬取类型：search=搜索（默认），detail=详情页"
+              }
+            },
+            "required": [
+              "platform",
+              "keywords"
+            ]
+          }
+        }
+      },
+      "domain": "general",
+      "availability": {
+        "requires_org": false,
+        "requires_personal_context": false,
+        "feature_flags": [
+          "crawler_enabled"
+        ]
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "social_crawler",
+      "exposure": "public",
+      "source": "config.crawler_tools.build_crawler_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [
+          "platform",
+          "keywords"
+        ],
+        "properties": {
+          "platform": {
+            "type": "string"
+          },
+          "keywords": {
+            "type": "string"
+          },
+          "max_results": {
+            "type": "integer"
+          },
+          "crawl_type": {
+            "type": "string"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": false,
+        "execution_modes": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "file_search": {
+      "name": "file_search",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "file_search",
+          "description": "检索当前获准范围的文件，返回完整相对路径、resource_ref 和兼容 file_id；不转换文件。\n\nUsage:\n- 无参数且无本轮浏览上下文：检索当前任务附件；scope=workspace 时列工作区根目录\n- path：指定目录或精确相对路径；不完整文件名请用 keyword\n- keyword：按文件名关键词搜索\n- file_pattern：按通配符过滤（如 *.csv）\n\n多个候选请先选择完整路径；优先把 resource_ref 原样传给分析或删除工具。CSV/Excel 需另调 file_analyze。\nfile_analyze 的读取参数直接复制 read_call：本轮附件提供 file_id，搜索结果提供 resource_ref。只传给出的一个选择器，不再补文件名或路径。没有 resource_ref 时省略；它只能是搜索返回的完整 fref1_ 引用，不能填 name、path 或 file_id。旧版合法多选择器调用仍支持，但必须全部指向同一文件。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "目录相对路径（列目录）或文件完整相对路径（描述单文件）。省略 scope 时承接本轮明确浏览范围；无绑定时为 current，歧义时需明确范围。"
+              },
+              "keyword": {
+                "type": "string",
+                "description": "搜索关键词（按文件名匹配）"
+              },
+              "file_pattern": {
+                "type": "string",
+                "description": "文件名通配符（如 *.csv、report*）"
+              },
+              "scope": {
+                "type": "string",
+                "enum": [
+                  "current",
+                  "workspace"
+                ],
+                "description": "显式 current 仅检索本轮附件；省略时可承接本轮浏览范围，无绑定时为 current。只有用户明确要求搜索整个工作区时才使用 workspace。"
+              }
+            }
+          }
+        }
+      },
+      "domain": "general",
+      "availability": {
+        "requires_org": false,
+        "requires_personal_context": false,
+        "feature_flags": [
+          "file_workspace_enabled"
+        ]
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "file_index"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "file_search",
+      "exposure": "public",
+      "source": "config.file_tools.build_file_tools",
+      "definition_kind": "explicit",
+      "compatibility_notes": [
+        "scope defaults to current without a bound browse; explicit scope remains a narrowing selection, never authorization"
+      ],
+      "legacy_validation_schema": {
+        "required": [],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "keyword": {
+            "type": "string"
+          },
+          "file_pattern": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "current",
+              "workspace"
+            ]
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "file_analyze": {
+      "name": "file_analyze",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "file_analyze",
+          "description": "读取数据文件（.xlsx/.xls/.csv/.tsv）的完整结构，自动转为 Parquet 缓存。\n自动处理多级表头、合并单元格、表头偏移、特殊行检测，比手动 openpyxl 读取更准确。\n\nWhen to use:\n- attachments 中 status=raw 的 .xlsx/.xls/.csv/.tsv 文件首次治理\n- 需要 Parquet 路径供 code_execute 中 duckdb/pandas 查询\n\nWhen NOT to use:\n- 已 status=analyzed 的文件 — 直接用 <parquet> 字段 pd.read_parquet，禁止重复治理\n- 图片文件（.png/.jpg/.jpeg/.gif/.webp/.bmp）— 已通过视觉通道注入\n- PDF/Word/PPT/文本文件 — 用 code_execute + 对应库读取\n\nReturns: 列名、数据类型、行数、样本数据、Parquet 缓存相对路径。\n支持扩展名: .xlsx .xls .csv .tsv（其他不支持）\nfile_analyze 的读取参数直接复制 read_call：本轮附件提供 file_id，搜索结果提供 resource_ref。只传给出的一个选择器，不再补文件名或路径。没有 resource_ref 时省略；它只能是搜索返回的完整 fref1_ 引用，不能填 name、path 或 file_id。旧版合法多选择器调用仍支持，但必须全部指向同一文件。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "resource_ref": {
+                "type": "string",
+                "description": "file_search 返回的资源引用，原样复制；可自动确定位置，系统仍检查当前动作权限。文件变化后需重新搜索。"
+              },
+              "file_id": {
+                "type": "string",
+                "pattern": "^fid_[a-z0-9]{8}$",
+                "description": "文件 ID（fid_xxx），从 <attachments> 的 <id> 字段 copy。新搜索结果优先使用 resource_ref。"
+              },
+              "path": {
+                "type": "string",
+                "description": "（兼容老协议）文件名或相对路径。与其他选择器同时提供时必须指向同一文件。"
+              },
+              "scope": {
+                "type": "string",
+                "enum": [
+                  "current",
+                  "workspace"
+                ],
+                "description": "省略时根据已验证资源引用或本轮明确浏览范围定位，无绑定时为 current；显式 current 不扩大。用户指定工作区文件时才使用 workspace。"
+              }
+            }
+          }
+        }
+      },
+      "domain": "general",
+      "availability": {
+        "requires_org": false,
+        "requires_personal_context": false,
+        "feature_flags": [
+          "file_workspace_enabled"
+        ]
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "workspace_artifacts",
+        "file_index"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "file_analyze",
+      "exposure": "public",
+      "source": "config.file_tools.build_file_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [
+        "file_id preferred; legacy path and scope retained"
+      ],
+      "legacy_validation_schema": {
+        "required": [],
+        "properties": {
+          "resource_ref": {
+            "type": "string"
+          },
+          "file_id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "current",
+              "workspace"
+            ]
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "analysis",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "file_delete": {
+      "name": "file_delete",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "file_delete",
+          "description": "删除工作区文件。传入文件名或相对路径列表。\n\n路径从 file_search 返回的结果中获取，无需手动拼写。\n执行前会弹窗让用户确认，用户拒绝则不删除。\n删除后 30 天内可从 CDN 恢复。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "resource_refs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "file_search 返回的 resource_ref 列表，优先使用；不得自行编造。"
+              },
+              "file_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^fid_[a-z0-9]{8}$"
+                },
+                "description": "要删除的 file_id 列表（如 ['fid_a3f2b1c9']）。从 <attachments> 的 <id> 或 file_search 返回的 [fid_xxx] 获取。"
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "（兼容老协议）文件名或相对路径列表。与 file_ids 同时提供时合并；不存在或歧义时整批不执行。"
+              }
+            }
+          }
+        }
+      },
+      "domain": "general",
+      "availability": {
+        "requires_org": false,
+        "requires_personal_context": false,
+        "feature_flags": [
+          "file_workspace_enabled"
+        ]
+      },
+      "risk_level": "dangerous",
+      "parallelizable": false,
+      "cacheable": false,
+      "effects": [
+        "workspace_delete",
+        "deletion_record"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "file_delete",
+      "exposure": "public",
+      "source": "config.file_tools.build_file_tools",
+      "definition_kind": "explicit",
+      "compatibility_notes": [
+        "file_ids and legacy files retained; handler accepts string or list",
+        "when both are given, resolved file_ids are appended to files; do not replace this behavior"
+      ],
+      "legacy_validation_schema": {
+        "required": [],
+        "properties": {
+          "resource_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "file_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "要删除的文件名或相对路径列表"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "business_write",
+        "plan_allowed": false,
+        "execution_modes": [
+          "interactive",
+          "scheduled"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "restore_file": {
+      "name": "restore_file",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "restore_file",
+          "description": "恢复已删除的文件。\n\n当用户说「撤销删除」「恢复文件」「找回文件」时使用。\nfile_delete 删除文件后 30 天内，可从 OSS 下载回 workspace。\n超过 30 天后文件被永久清理，无法恢复。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "record_id": {
+                "type": "integer",
+                "description": "删除记录 ID；同名有多条记录时从候选中选择。"
+              },
+              "filename": {
+                "type": "string",
+                "description": "要恢复的文件名（如 '销售报表.xlsx'）"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "domain": "general",
+      "availability": {
+        "requires_org": false,
+        "requires_personal_context": false,
+        "feature_flags": [
+          "file_workspace_enabled"
+        ]
+      },
+      "risk_level": "safe",
+      "parallelizable": false,
+      "cacheable": false,
+      "effects": [
+        "workspace_write",
+        "deletion_record"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "restore_file",
+      "exposure": "public",
+      "source": "config.file_tools.build_file_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [
+        "legacy safe risk and serial scheduling retained despite workspace writes"
+      ],
+      "legacy_validation_schema": {
+        "required": [],
+        "properties": {
+          "filename": {
+            "type": "string"
+          },
+          "record_id": {
+            "type": "integer"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "business_write",
+        "plan_allowed": false,
+        "execution_modes": [
+          "interactive",
+          "scheduled"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "code_execute": {
+      "name": "code_execute",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "code_execute",
+          "description": "Python 计算与可视化沙盒。底层是 stateful Jupyter kernel,cwd=/workspace,执行超时 120 秒。\n预装 pandas/duckdb/openpyxl/pdfplumber/python-docx 等。\n\nSTATEFUL KERNEL — 必读\n变量、import、DataFrame 跨次 code_execute 调用保留。每次调用相当于在同一 notebook\n里新建一个 cell。已加载的数据**不要重复 pd.read_parquet** — 直接引用上一次的变量名。\nretry 时优先复用已有变量,只有 NameError 才重新加载。\n  错误模式(触发 MemoryError): 每次都 df = pd.read_parquet('staging/x.parquet')\n  正确模式:\n    Call 1: df = pd.read_parquet('staging/x.parquet')\n    Call 2+: 直接用 df,不再 read_parquet\n\nWHEN TO USE\n- 用户要数据图表(柱形图/折线图/饼图等) — 必须调,用 emit_chart 输出 ECharts option\n- 用户要流程图/时序图/状态图/类图/系统关系图/甘特图 — 必须调,用 emit_diagram 输出 Mermaid DSL\n- 用户要导出 Excel/CSV/PDF — 必须调,写文件后用 emit_file 出下载卡片\n- 用户要看数据表格 — 必须调,用 emit_table 渲染\n- 计算/统计/聚合/排序/筛选 — 必须调,用 SQL 或 pandas 算\n\nWHEN NOT TO USE\n- 用户只是闲聊或问概念解释,不需要计算或产出\n- 用户要求获取本地没有的远程数据(用 erp_agent / web_search / file_search)\n\nGRAPHICS — 职责边界\n数值、趋势、统计、分类比较和占比 → emit_chart(option, title='') 输出 ECharts。\n流程、状态、调用关系、时序、类和系统关系 → emit_diagram(source, title='', format='mermaid')。\n普通文字能清楚表达时不生成图形；同一内容禁止同时生成 chart 和 diagram。\n禁止用 Mermaid 做业务统计图，禁止用 ECharts 做时序图、状态图或类图。\nPlotly/Vega-Lite 仅供历史消息读取，新消息不得生成。\n\n数据图表范本(直接抄,改字段):\n  emit_chart({\n    'xAxis': {'type': 'category', 'data': labels},\n    'yAxis': {'type': 'value'},\n    'series': [{'type': 'bar', 'data': values}],\n  }, title='2026-06-20 各平台订单数')\n\n关系图范本:\n  emit_diagram('flowchart TD\\nA[接单] --> B[审核]', title='订单处理流程')\n\n主题/字体/尺寸前端已注入,不要在 layout 里自定义 colorway/template/font/width/height。\n\nFILE / TABLE / IMAGE — 其他产物渲染\n  A. 写到 '下载/' 目录的任何文件 → 自动检测 + 上传 OSS + 前端下载卡片/预览\n     例: df.to_excel('下载/x.xlsx')  # 不需显式调 emit\n  B. cell 末尾的表达式 → 自动 display 富表示(Jupyter 风格)\n     例: df.head()  # 表格自动渲染\n  C. 显式调 emit_* (推荐: 可自定义 title/label):\n     emit_chart(option: dict, title: str = '') -> None       # ECharts 数据图表\n     emit_diagram(source: str, title: str = '', format: str = 'mermaid') -> None\n     emit_file(path: str, label: str | None = None) -> None  # 下载卡片\n     emit_table(df, title: str = '') -> None                 # 交互表格\n     emit_image(path: str, alt: str = '') -> None            # 静态图片(如 matplotlib 出的 PNG)\n  错误: 直接对 emit_xxx 发起 function_call (会报 Unknown sync tool)\n\nPATHS — 全部相对字符串\n- 读用户上传: pd.read_excel('上传/2026-06/x.xlsx')    attachments 给 path 字段\n- 读 parquet: pd.read_parquet('staging/x.parquet')    attachments 给 parquet 字段\n- 读 ERP 结果: pd.read_parquet('staging/erp_xxx.parquet')\n- 写产物: df.to_excel('下载/x.xlsx') + emit_file('下载/x.xlsx')\n- 写缓存: df.to_parquet('staging/x.parquet')           跨调用复用,24h 自动清\n⚠ attachments 的 path/parquet 字段是字面字符串,**完整 copy 不要修改任何字符**\n  (尤其中英文混排的文件名:'4月销售-按订单' 不要美化为 '4 月销售 - 按订单',\n   文件名带空格/连字符也保留原样,否则路径不存在报 IOException)\n\nVERIFY BEFORE ACCESS\n  merge/groupby/pivot/rename 后,**必须先 print(df.columns.tolist())**\n  再访问列名 —— 这些操作可能改名(如 merge 同名列加 _x/_y 后缀)。\n\nCLEAN DATA\n  ragged 列(金额+%混合)已在 file_analyze 阶段预清洗为 {列名}_num float 列。\n  schema 里看到 X_num 时直接用,无需任何转换:df['X_num'].sum() 像普通 float 列。\n  日期混乱列同样预清洗为 {列名}_date datetime 列。\n  极少数 AI 漏标场景需现场清洗时,用 pandas 标准方法:\n    pd.to_numeric(df['x'].str.rstrip('%').str.replace(',',''), errors='coerce')\n\nCAVEATS\n- DuckDB 方言: 中文列名双引号; 转日期 ts::DATE; 拼接 ||; DATE_TRUNC('month', ts)\n- Excel 导出: engine='xlsxwriter',自动处理 NaN/Timestamp\n- 代码语法全英文半角(中文 ,();: 会让 SQL 解析失败)\n- 大数据(>10 万行): 用 SQL `GROUP BY ... LIMIT` 聚合后 `.df()` 拿小结果,\n  禁止 `SELECT * FROM 'big.parquet'` 全量加载(会爆 4GB cgroup OOM)\n- 无网络 / 禁止 sys/subprocess / 删文件用 file_delete 工具",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Python 代码。顶层可直接 await 调用异步函数。用 print() 输出最终结果。"
+              },
+              "description": {
+                "type": "string",
+                "description": "代码功能描述(一句话,如「统计各店铺今日成交额」),用于执行日志审计。"
+              }
+            },
+            "required": [
+              "code",
+              "description"
+            ]
+          }
+        }
+      },
+      "domain": "shared",
+      "availability": {
+        "requires_org": false,
+        "requires_personal_context": false,
+        "feature_flags": [
+          "sandbox_enabled"
+        ]
+      },
+      "risk_level": "confirm",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "kernel_state",
+        "workspace_artifacts"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "code_execute",
+      "exposure": "public",
+      "source": "config.code_tools.build_code_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [
+        "legacy cache eligibility retained independently; kernel state is not read-only"
+      ],
+      "legacy_validation_schema": {
+        "required": [
+          "code",
+          "description"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "analysis",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "erp_agent": {
+      "name": "erp_agent",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "erp_agent",
+          "description": "ERP 数据查询专员，查询订单/库存/采购/售后/商品/SKU/日统计/平台映射/批次库存/操作日志等全量数据，口语化表达和错别字自动识别\n\n使用场景：用户问任何涉及订单/库存/采购/售后/发货/物流/商品/销量的问题；库存快照查询（库存负数/缺货/可用库存<N）、商品主数据（停售/虚拟商品/品牌）；SKU明细、日统计（本月销量Top）、平台映射（哪些平台在售）、批次效期、操作日志；含操作性词汇（对账/核对/处理/优先处理/多少钱/价格）需要先查数据；口语/错别字也要识别：'丁单'=订单，'酷存'=库存，'够不够卖'=库存查询，'到了没'=采购到货，'退了'=售后，'爆单'=销量统计，'查一下呗'=数据查询\n不要用于：写操作（创建/修改/取消）→erp_execute / 非 ERP 数据（天气/新闻）→web_search / 业务规则/操作流程→search_knowledge\n\n能力：\n- 输出模式：export / summary（>200行自动导出文件）\n- 分组统计：按platform/product/shop/status/supplier/warehouse统计\n- 过滤：自动识别京东、天猫、小红书、微店、快手、抖店、抖音、拼多多、淘宝、商品编码、订单号\n- 时间列：apply_date / consign_time / created_at / delivery_date / doc_created_at / finished_at / modified_at / operate_time / pay_time / stat_date / stock_modified_time / synced_at / updated_at（默认 doc_created_at）\n- 异常数据：默认排除刷单，query 中写'包含刷单'则包含\n- 跨域查询：各域数据独立时一次并行查询；超出一次执行能力时进入计划模式（status=plan），返回执行计划由调用方逐步执行\n\n分析能力（v2.2 新增）：\n- 趋势分析：每天/每周/每月的销售额、订单量、退货量等走势\n- 对比分析：环比（vs上月）、同比（vs去年）增长率\n- 占比分析：各平台/商品/店铺的销售额占比、ABC商品分类\n- 跨域指标：退货率、毛利率、客单价、库存周转天数、进销存、发货时效、复购率、供应商评估（共20个指标）\n- 预警查询：缺货预警、滞销预警、积压预警、采购超期\n- 分布分析：订单金额区间分布、客单价分布\n- 大数据导出：50万行以上数据直接导出，无行数限制\n- 可查询信息：单据基础/时间/商品/数量金额/关联方/商品规格/订单物流/买家收件人/状态标记/售后/备注\n  （query 中提到具体信息如'备注''地址''快递单号'会自动返回对应字段）\n\n并行调用：支持并行多次调用：用户请求包含多个独立子任务时，同时发起多个 erp_agent 调用，每个 task 只写一个子任务\n\n返回：\n- summary 模式：{status:'ok', summary:'统计文本', data:[{维度:值, 指标:数字}...]}，直接内联\n- export 模式：{status:'ok', file:'trade_xxx.parquet', rows:N, columns:[...], preview:[前3行]}\n- 导出工作流：erp_agent 存 staging → code_execute 中 duckdb.read_parquet 提取 → 写 Excel\n- 跨域并行：各域数据独立时一次返回多域结果 + 关联计算提示，code_execute 按提示关联\n- 计划模式：{status:'plan', steps:[...]}，调用方按计划逐步执行并传递中间结果\n\n错误处理：\n- 无数据：返回 {status:'empty', suggestion:'建议扩大时间范围或检查平台名'}，转述建议给用户\n- 超时：返回 {status:'timeout'}，建议缩小时间范围或减少数据量后重试\n- 参数错误：返回 {status:'error', message:'具体原因'}，根据 message 修正 task 后重试\n- 数据量过大被拒绝：返回建议的缩小范围策略，按建议调整 task 后重试\n\n限制：\n- 编码/单号IN匹配：单次最多5000个值。超过5000个的跨域关联查询，应分别导出两份数据到staging，再用code_execute按编码JOIN\n\nquery 示例：\n· \"昨天淘宝退货按店铺统计\" → summary + platform=taobao + group_by=shop\n· \"导出本周订单明细\" → export → staging + profile\n· \"编码 HZ001 的库存\" → product_code 过滤\n· \"上月采购到货按供应商统计\" → summary + group_by=supplier\n· \"包含刷单的订单有多少\" → include_invalid=true\n· \"今天刷单有多少\" → is_scalping=true + include_invalid=true\n· \"库存负数的商品有多少\" → doc_type=stock + available_stock<0\n· \"停售商品列表\" → doc_type=product + active_status=2\n· \"本月各商品销量Top10\" → doc_type=daily_stats + sort_by=order_qty\n· \"某商品在哪些平台售卖\" → doc_type=platform_map + product_code过滤\n· \"某订单的操作记录\" → doc_type=order_log + system_id过滤\n· \"每天的销售额趋势\" → query_type=trend + time_granularity=day\n· \"这个月比上个月各平台销售额怎么样\" → query_type=compare + compare_range=mom\n· \"各平台退货率\" → query_type=cross + metrics=[return_rate]\n· \"哪些SKU快卖断了\" → query_type=alert + alert_type=low_stock\n· \"订单金额分布\" → query_type=distribution + metrics=[amount]",
+          "parameters": {
+            "type": "object",
+            "required": [
+              "task"
+            ],
+            "properties": {
+              "task": {
+                "type": "string",
+                "description": "用户本次查询的完整描述。写法：复述用户原话，只做两处替换——时间词→具体日期（如'今天'→'2026-05-03 00:00~15:30'），指代词→具体名称。其他一字不动，不要添加额外说明。e.g. '2026-05-02 00:00~23:59 淘宝退货按店铺统计'；'导出2026-04-28~2026-05-03的订单明细'"
+              },
+              "conversation_context": {
+                "type": "string",
+                "description": "追问时传上轮的查询条件（时间范围/平台/对象/筛选条件），让专家理解上文。不传结果数字，不传你的推测。首轮不传。e.g. '上轮查了2026-05-02淘宝退货，按店铺分组'"
+              }
+            }
+          }
+        }
+      },
+      "domain": "general",
+      "availability": {
+        "requires_org": false,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "erp_agent",
+      "exposure": "public",
+      "source": "config.common_tools.build_common_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [
+        "query -> task in existing validator and handler; task takes precedence"
+      ],
+      "legacy_validation_schema": null,
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": false,
+        "execution_modes": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "erp_analyze": {
+      "name": "erp_analyze",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "erp_analyze",
+          "description": "ERP 查询任务拆解——只分析不执行，不查数据库不调 API，毫秒级返回。将复杂查询拆解为多步计划（数据域、参数、步骤依赖）。仅计划模式下使用：分析后展示方案，等用户确认后再执行，不要分析完直接调 erp_agent。不要用于：参数已明确的查询 → 直接调 erp_agent；非 ERP 分析 → code_execute。",
+          "parameters": {
+            "type": "object",
+            "required": [
+              "task"
+            ],
+            "properties": {
+              "task": {
+                "type": "string",
+                "description": "用户的完整查询原文，不要拆分或改写。e.g. '对比上月和本月各平台退货率，找出退货率上升最多的平台'"
+              },
+              "conversation_context": {
+                "type": "string",
+                "description": "对话背景补充（可选）。追问时传上轮的查询条件，首轮不传"
+              }
+            }
+          }
+        }
+      },
+      "domain": "general",
+      "availability": {
+        "requires_org": false,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "erp_analyze",
+      "exposure": "public",
+      "source": "config.common_tools.build_common_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [
+        "query fallback exists in handler only; validator still uses public task schema"
+      ],
+      "legacy_validation_schema": null,
+      "policy_rules": {
+        "operation": "analysis",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "erp_api_search": {
+      "name": "erp_api_search",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "erp_api_search",
+          "description": "搜索 ERP API 文档的语义搜索工具。不确定用哪个工具、action 或参数格式时先调此工具，返回结果可直接用于下一步调用。支持关键词（如'退货'）和精确查询（如'erp_trade_query:order_list'）。不要用于：查询实际数据 → erp_agent；搜索知识库 → search_knowledge。",
+          "parameters": {
+            "type": "object",
+            "required": [
+              "query"
+            ],
+            "properties": {
+              "query": {
+                "type": "string",
+                "description": "搜索关键词或 tool:action 精确查询。e.g. '退货'、'库存盘点'、'erp_trade_query:order_list'"
+              }
+            }
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": false,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "erp_api_search",
+      "exposure": "public",
+      "source": "config.common_tools.build_common_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "search_knowledge": {
+      "name": "search_knowledge",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "search_knowledge",
+          "description": "搜索企业知识库，查找业务规则、操作流程、SOP、历史经验、培训文档等非数据类信息。基于语义相似度检索，返回最相关的文档片段。\n\n返回：匹配的文档片段列表（含来源和相关度），无匹配时返回空列表。\n\n不要用于：查询业务数据（订单/库存/销售额）→ erp_agent；查询实时信息（天气/新闻）→ web_search；查看工作区文件内容 → file_search + file_analyze + code_execute。",
+          "parameters": {
+            "type": "object",
+            "required": [
+              "query"
+            ],
+            "properties": {
+              "query": {
+                "type": "string",
+                "description": "搜索关键词或自然语言问题。e.g. '退货流程'、'新员工入职操作指南'、'淘宝发货超时规则'"
+              }
+            }
+          }
+        }
+      },
+      "domain": "general",
+      "availability": {
+        "requires_org": false,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "none"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "search_knowledge",
+      "exposure": "public",
+      "source": "config.common_tools.build_common_tools",
+      "definition_kind": "explicit",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "web_search": {
+      "name": "web_search",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "web_search",
+          "description": "搜索互联网获取实时公开信息：天气、新闻、行业资讯、政策法规、技术文档、公司公开信息等。\n\n返回：基于 Google Search 的搜索结果摘要（含来源URL引用），回答中会标注信息来源。无结果时返回空。\n\n不要用于：查询企业内部业务数据（订单/库存）→ erp_agent；查询企业知识库 → search_knowledge；爬取社交平台内容（小红书/抖音帖子）→ social_crawler。",
+          "parameters": {
+            "type": "object",
+            "required": [
+              "query"
+            ],
+            "properties": {
+              "query": {
+                "type": "string",
+                "description": "搜索关键词，简洁精准。e.g. '杭州今天天气'、'2026年跨境电商政策变化'、'快递停发地区最新通知'"
+              }
+            }
+          }
+        }
+      },
+      "domain": "general",
+      "availability": {
+        "requires_org": false,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "web_search",
+      "exposure": "public",
+      "source": "config.common_tools.build_common_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": null,
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive",
+          "scheduled",
+          "preflight"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "generate_image": {
+      "name": "generate_image",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "generate_image",
+          "description": "通用图片生成工具：根据文字描述生成图片（文生图），或基于参考图片生成新图片（图生图）。适用于插画、概念图、logo、创意图、头像等非电商场景。电商商品图请用 image_agent。\n\n两种模式：\n- 纯文字 → 文生图（只传 prompt）\n- 有参考图 → 图生图（prompt + image_urls，用户上传图片时必传 image_urls）\n\n返回：成功 → 图片 URL，前端自动展示。失败 → 错误信息，可修改 prompt 后重试。\n\n不要用于：电商商品图（白底主图、场景图）→ image_agent；视频生成 → generate_video。",
+          "parameters": {
+            "type": "object",
+            "required": [
+              "prompt"
+            ],
+            "properties": {
+              "prompt": {
+                "type": "string",
+                "description": "图片描述，英文效果更好。描述主体、风格、构图、色调等。e.g. 'A cozy coffee shop interior, warm lighting, watercolor style'；'极简风格logo，一只抽象的猫，黑白配色'"
+              },
+              "image_urls": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "参考图片 URL 列表。用户上传了图片并要求画图/改图时必传。图生图模式下，生成结果会参考这些图片的风格和内容"
+              },
+              "aspect_ratio": {
+                "type": "string",
+                "enum": [
+                  "1:1",
+                  "3:4",
+                  "4:3",
+                  "9:16",
+                  "16:9"
+                ],
+                "description": "画面比例。默认 1:1。e.g. 头像/logo→1:1, 手机壁纸→9:16, 横幅→16:9"
+              }
+            }
+          }
+        }
+      },
+      "domain": "general",
+      "availability": {
+        "requires_org": false,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "confirm",
+      "parallelizable": false,
+      "cacheable": false,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "generate_image",
+      "exposure": "public",
+      "source": "config.common_tools.build_common_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": null,
+      "policy_rules": {
+        "operation": "generation",
+        "plan_allowed": false,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "generate_video": {
+      "name": "generate_video",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "generate_video",
+          "description": "根据文字描述生成短视频。调用后异步生成，返回 task_id，视频完成后自动推送给用户。生成通常需要 1-3 分钟。\n\n返回：task_id + 预计等待时间。视频完成后自动展示。\n\n不要用于：图片生成 → generate_image / image_agent；视频编辑/剪辑 → 不支持。",
+          "parameters": {
+            "type": "object",
+            "required": [
+              "prompt"
+            ],
+            "properties": {
+              "prompt": {
+                "type": "string",
+                "description": "视频内容描述，包含场景、动作、风格等。e.g. '一只橘猫在阳光下的窗台上伸懒腰，慢动作，温暖色调'"
+              }
+            }
+          }
+        }
+      },
+      "domain": "general",
+      "availability": {
+        "requires_org": false,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "confirm",
+      "parallelizable": false,
+      "cacheable": false,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "generate_video",
+      "exposure": "public",
+      "source": "config.common_tools.build_common_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": null,
+      "policy_rules": {
+        "operation": "generation",
+        "plan_allowed": false,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "image_agent": {
+      "name": "image_agent",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "image_agent",
+          "description": "生成单张电商商品图片（白底主图、场景氛围图、详情页卖点图、SKU 展示图），输出符合目标平台规范。每次 1 张，前端自动展示。\n\nGuidelines:\n- 有 image_task_meta 时按 images[i].description 逐项调用，每张完成后简短确认即可。\n- 生成后不要描述图片内容，不要问后续问题，不要提及下载。\n- 生成失败时前端自动显示重试按钮，不需要道歉或额外处理。\n- image_urls 和 style 由系统自动注入，不需要传这两个参数。\n- 非电商画图（插画/logo/创意图）→ 用 generate_image，不要用此工具。\n- 局部修图（抠图/换背景）→ 不支持。",
+          "parameters": {
+            "type": "object",
+            "required": [
+              "task"
+            ],
+            "properties": {
+              "task": {
+                "type": "string",
+                "description": "单张图片的完整描述。格式：图片类型 尺寸：主体+背景+光线+构图。e.g. '白底主图 800×800：运动鞋居中，纯白背景，柔光箱45度布光，自然底部投影'；'场景图 750×950：咖啡杯置于原木桌面，背景虚化书房，暖色侧逆光'"
+              },
+              "platform": {
+                "type": "string",
+                "enum": [
+                  "taobao",
+                  "tmall",
+                  "jd",
+                  "pdd",
+                  "douyin",
+                  "xiaohongshu"
+                ],
+                "description": "目标电商平台，决定输出尺寸裁切规范。默认 taobao。e.g. taobao=800×800主图, jd=800×800, pdd=750×352轮播"
+              }
+            }
+          }
+        }
+      },
+      "domain": "general",
+      "availability": {
+        "requires_org": false,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "confirm",
+      "parallelizable": false,
+      "cacheable": false,
+      "effects": [
+        "unknown"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "image_agent",
+      "exposure": "public",
+      "source": "config.common_tools.build_common_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": null,
+      "policy_rules": {
+        "operation": "generation",
+        "plan_allowed": false,
+        "execution_modes": [
+          "interactive",
+          "scheduled"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "manage_scheduled_task": {
+      "name": "manage_scheduled_task",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "manage_scheduled_task",
+          "description": "管理定时任务（自动执行重复性工作，如每日推送报表、定期数据同步）。\n\nActions:\n- create: 传 description 自然语言描述任务和频率，只返回预填配置表单；此时任务尚未创建。用户提交表单后，系统会先规划工具路径并进行只读安全试跑；预检通过后必须再次确认，才会创建正式任务。\n- list: 查看当前任务列表。\n- update: 传 task_name + description 描述变更，返回表单供确认。\n- pause/resume/delete: 传 task_name（模糊匹配）或 task_id 定位任务。\n\n调用 create 后，回复只能说明“配置表单已生成，任务尚未创建”；不得宣称任务已创建、已启用或已开始执行，也不得补充与表单不一致的频率或时间。任务不存在时建议用 list 查看现有任务。不要用于：一次性数据查询 → erp_agent；手动触发执行 → 不支持。",
+          "parameters": {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "create",
+                  "list",
+                  "update",
+                  "pause",
+                  "resume",
+                  "delete"
+                ],
+                "description": "操作类型。create 需配合 description，其余需配合 task_name 或 task_id"
+              },
+              "description": {
+                "type": "string",
+                "description": "create/update 时传：自然语言描述任务内容和频率。e.g. '每天早上9点推送销售日报'、'每周一上午10点生成库存周报'"
+              },
+              "task_name": {
+                "type": "string",
+                "description": "任务名称，用于 update/pause/resume/delete。e.g. '销售日报推送'"
+              },
+              "task_id": {
+                "type": "string",
+                "description": "任务 ID，可传完整 UUID 或前 8 位短 ID"
+              }
+            }
+          }
+        }
+      },
+      "domain": "general",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": true,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": true,
+      "cacheable": true,
+      "effects": [
+        "proposal_or_form"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "manage_scheduled_task",
+      "exposure": "public",
+      "source": "config.common_tools.build_common_tools",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": null,
+      "policy_rules": {
+        "operation": "proposal",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive",
+          "scheduled"
+        ],
+        "action_rule": "scheduled_task",
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "fetch_all_pages": {
+      "name": "fetch_all_pages",
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "fetch_all_pages",
+          "description": "全量翻页工具。包装任意 erp_* 远程查询工具，自动翻页拉取全部数据。适合：导出Excel、全量数据分析、跨数据源关联等需要完整数据的场景。结果自动存为 staging 文件，返回文件路径。配合 code_execute 使用：先用本工具拿全量数据，再用 code_execute 的 read_file 读取并计算/导出。⚠ 翻页耗时较长（100条/页，每页约1秒），请根据预估数据量合理设置 max_pages。⚠ 使用前需先通过 erp_* 工具的两步协议确认参数格式。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string",
+                "description": "要翻页的查询工具名（如 erp_trade_query、erp_product_query）"
+              },
+              "action": {
+                "type": "string",
+                "description": "操作名（如 order_list、stock_status）"
+              },
+              "params": {
+                "type": "object",
+                "description": "查询参数（与直接调用该工具时的 params 相同）"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "每页条数（默认100，最小20，快麦API限制）"
+              },
+              "max_pages": {
+                "type": "integer",
+                "description": "最大翻页数（默认200）。预估数据量少时设小可加速，如预估500条设 max_pages=5"
+              }
+            },
+            "required": [
+              "tool",
+              "action"
+            ]
+          }
+        }
+      },
+      "domain": "erp",
+      "availability": {
+        "requires_org": true,
+        "requires_personal_context": false,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": false,
+      "cacheable": false,
+      "effects": [
+        "workspace_artifacts",
+        "file_index"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "fetch_all_pages",
+      "exposure": "legacy_internal",
+      "source": "config.erp_tools.build_fetch_all_pages_tool",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": null,
+      "policy_rules": {
+        "operation": "analysis",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": "erp_raw_read",
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    },
+    "get_conversation_context": {
+      "name": "get_conversation_context",
+      "schema": null,
+      "domain": "general",
+      "availability": {
+        "requires_org": false,
+        "requires_personal_context": true,
+        "feature_flags": []
+      },
+      "risk_level": "safe",
+      "parallelizable": false,
+      "cacheable": false,
+      "effects": [
+        "none"
+      ],
+      "executor_type": "legacy",
+      "handler_key": "get_conversation_context",
+      "exposure": "legacy_internal",
+      "source": "services.agent.conversation_tool_mixin.ConversationToolMixin",
+      "definition_kind": "legacy",
+      "compatibility_notes": [],
+      "legacy_validation_schema": {
+        "required": [],
+        "properties": {
+          "limit": {
+            "type": "integer"
+          }
+        }
+      },
+      "policy_rules": {
+        "operation": "read",
+        "plan_allowed": true,
+        "execution_modes": [
+          "interactive"
+        ],
+        "action_rule": null,
+        "required_permissions": []
+      },
+      "replay_requirement": "unspecified"
+    }
+  },
+  "helpers": {
+    "None": {
+      "chat": [
+        "social_crawler",
+        "file_search",
+        "file_analyze",
+        "file_delete",
+        "restore_file",
+        "code_execute",
+        "erp_agent",
+        "erp_analyze",
+        "erp_api_search",
+        "search_knowledge",
+        "web_search",
+        "generate_image",
+        "generate_video",
+        "image_agent",
+        "manage_scheduled_task"
+      ],
+      "core": [
+        "social_crawler",
+        "file_search",
+        "file_analyze",
+        "file_delete",
+        "restore_file",
+        "code_execute",
+        "erp_agent",
+        "erp_analyze",
+        "search_knowledge",
+        "web_search",
+        "image_agent",
+        "manage_scheduled_task"
+      ],
+      "ask": [
+        "code_execute",
+        "erp_agent",
+        "erp_analyze",
+        "file_analyze",
+        "file_delete",
+        "file_search",
+        "image_agent",
+        "manage_scheduled_task",
+        "restore_file",
+        "search_knowledge",
+        "social_crawler",
+        "web_search"
+      ],
+      "auto": [
+        "code_execute",
+        "erp_agent",
+        "erp_analyze",
+        "file_analyze",
+        "file_delete",
+        "file_search",
+        "image_agent",
+        "manage_scheduled_task",
+        "restore_file",
+        "search_knowledge",
+        "social_crawler",
+        "web_search"
+      ],
+      "plan": [
+        "code_execute",
+        "erp_analyze",
+        "file_analyze",
+        "file_delete",
+        "file_search",
+        "manage_scheduled_task",
+        "restore_file",
+        "search_knowledge",
+        "web_search"
+      ]
+    },
+    "org-a": {
+      "chat": [
+        "erp_info_query",
+        "erp_product_query",
+        "erp_trade_query",
+        "erp_aftersales_query",
+        "erp_warehouse_query",
+        "erp_purchase_query",
+        "erp_taobao_query",
+        "erp_execute",
+        "local_data",
+        "local_product_stats",
+        "local_stock_query",
+        "local_product_identify",
+        "local_platform_map_query",
+        "local_compare_stats",
+        "local_shop_list",
+        "local_warehouse_list",
+        "local_supplier_list",
+        "trigger_erp_sync",
+        "social_crawler",
+        "file_search",
+        "file_analyze",
+        "file_delete",
+        "restore_file",
+        "code_execute",
+        "erp_agent",
+        "erp_analyze",
+        "erp_api_search",
+        "search_knowledge",
+        "web_search",
+        "generate_image",
+        "generate_video",
+        "image_agent",
+        "manage_scheduled_task"
+      ],
+      "core": [
+        "social_crawler",
+        "file_search",
+        "file_analyze",
+        "file_delete",
+        "restore_file",
+        "code_execute",
+        "erp_agent",
+        "erp_analyze",
+        "search_knowledge",
+        "web_search",
+        "image_agent",
+        "manage_scheduled_task"
+      ],
+      "ask": [
+        "code_execute",
+        "erp_agent",
+        "erp_analyze",
+        "file_analyze",
+        "file_delete",
+        "file_search",
+        "image_agent",
+        "manage_scheduled_task",
+        "restore_file",
+        "search_knowledge",
+        "social_crawler",
+        "web_search"
+      ],
+      "auto": [
+        "code_execute",
+        "erp_agent",
+        "erp_analyze",
+        "file_analyze",
+        "file_delete",
+        "file_search",
+        "image_agent",
+        "manage_scheduled_task",
+        "restore_file",
+        "search_knowledge",
+        "social_crawler",
+        "web_search"
+      ],
+      "plan": [
+        "code_execute",
+        "erp_analyze",
+        "file_analyze",
+        "file_delete",
+        "file_search",
+        "manage_scheduled_task",
+        "restore_file",
+        "search_knowledge",
+        "web_search"
+      ]
+    }
+  },
+  "phase": {
+    "erp": [
+      "erp_info_query",
+      "erp_product_query",
+      "erp_trade_query",
+      "erp_aftersales_query",
+      "erp_warehouse_query",
+      "erp_purchase_query",
+      "erp_taobao_query",
+      "erp_execute",
+      "local_data",
+      "local_product_stats",
+      "local_stock_query",
+      "local_product_identify",
+      "local_platform_map_query",
+      "local_compare_stats",
+      "local_shop_list",
+      "local_warehouse_list",
+      "local_supplier_list",
+      "trigger_erp_sync",
+      "erp_api_search",
+      "fetch_all_pages",
+      "code_execute",
+      "file_search",
+      "file_analyze",
+      "file_delete",
+      "restore_file",
+      "route_to_chat"
+    ],
+    "crawler": [
+      "social_crawler",
+      "route_to_chat"
+    ],
+    "computer": [
+      "file_search",
+      "file_analyze",
+      "file_delete",
+      "restore_file",
+      "code_execute",
+      "route_to_chat"
+    ],
+    "unknown": []
+  },
+  "handlers": {
+    "None": [
+      "code_execute",
+      "erp_agent",
+      "erp_analyze",
+      "erp_api_search",
+      "file_analyze",
+      "file_delete",
+      "file_search",
+      "generate_image",
+      "generate_video",
+      "get_conversation_context",
+      "image_agent",
+      "manage_scheduled_task",
+      "restore_file",
+      "search_knowledge",
+      "social_crawler",
+      "web_search"
+    ],
+    "org-a": [
+      "code_execute",
+      "erp_aftersales_query",
+      "erp_agent",
+      "erp_analyze",
+      "erp_api_search",
+      "erp_execute",
+      "erp_info_query",
+      "erp_product_query",
+      "erp_purchase_query",
+      "erp_taobao_query",
+      "erp_trade_query",
+      "erp_warehouse_query",
+      "fetch_all_pages",
+      "file_analyze",
+      "file_delete",
+      "file_search",
+      "generate_image",
+      "generate_video",
+      "get_conversation_context",
+      "image_agent",
+      "local_compare_stats",
+      "local_data",
+      "local_platform_map_query",
+      "local_product_identify",
+      "local_product_stats",
+      "local_shop_list",
+      "local_stock_query",
+      "local_supplier_list",
+      "local_warehouse_list",
+      "manage_scheduled_task",
+      "restore_file",
+      "search_knowledge",
+      "social_crawler",
+      "trigger_erp_sync",
+      "web_search"
+    ]
+  },
+  "planner": {
+    "code_execute": {
+      "tool_name": "code_execute",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "erp_aftersales_query": {
+      "tool_name": "erp_aftersales_query",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "erp_agent": {
+      "tool_name": "erp_agent",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "erp_analyze": {
+      "tool_name": "erp_analyze",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "erp_api_search": {
+      "tool_name": "erp_api_search",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "erp_execute": {
+      "tool_name": "erp_execute",
+      "output_schema": {},
+      "read_attributes": [],
+      "write_attributes": [
+        "business_state"
+      ],
+      "risk_level": "high",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled"
+      ],
+      "supports_readonly_preflight": false,
+      "version": "capability.v1"
+    },
+    "erp_info_query": {
+      "tool_name": "erp_info_query",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "erp_product_query": {
+      "tool_name": "erp_product_query",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "erp_purchase_query": {
+      "tool_name": "erp_purchase_query",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "erp_taobao_query": {
+      "tool_name": "erp_taobao_query",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "erp_trade_query": {
+      "tool_name": "erp_trade_query",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "erp_warehouse_query": {
+      "tool_name": "erp_warehouse_query",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "file_analyze": {
+      "tool_name": "file_analyze",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "file_delete": {
+      "tool_name": "file_delete",
+      "output_schema": {},
+      "read_attributes": [],
+      "write_attributes": [
+        "business_state"
+      ],
+      "risk_level": "high",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled"
+      ],
+      "supports_readonly_preflight": false,
+      "version": "capability.v1"
+    },
+    "file_search": {
+      "tool_name": "file_search",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "generate_image": {
+      "tool_name": "generate_image",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "generate_video": {
+      "tool_name": "generate_video",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "image_agent": {
+      "tool_name": "image_agent",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "local_compare_stats": {
+      "tool_name": "local_compare_stats",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "local_data": {
+      "tool_name": "local_data",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "local_platform_map_query": {
+      "tool_name": "local_platform_map_query",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "local_product_identify": {
+      "tool_name": "local_product_identify",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "local_product_stats": {
+      "tool_name": "local_product_stats",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "local_shop_list": {
+      "tool_name": "local_shop_list",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "local_stock_query": {
+      "tool_name": "local_stock_query",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "local_supplier_list": {
+      "tool_name": "local_supplier_list",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "local_warehouse_list": {
+      "tool_name": "local_warehouse_list",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "manage_scheduled_task": {
+      "tool_name": "manage_scheduled_task",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "restore_file": {
+      "tool_name": "restore_file",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "search_knowledge": {
+      "tool_name": "search_knowledge",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "social_crawler": {
+      "tool_name": "social_crawler",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    },
+    "trigger_erp_sync": {
+      "tool_name": "trigger_erp_sync",
+      "output_schema": {},
+      "read_attributes": [],
+      "write_attributes": [
+        "business_state"
+      ],
+      "risk_level": "high",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled"
+      ],
+      "supports_readonly_preflight": false,
+      "version": "capability.v1"
+    },
+    "web_search": {
+      "tool_name": "web_search",
+      "output_schema": {},
+      "read_attributes": [
+        "business_data"
+      ],
+      "write_attributes": [],
+      "risk_level": "low",
+      "required_permissions": [],
+      "execution_modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "supports_readonly_preflight": true,
+      "version": "capability.v1"
+    }
+  },
+  "modules": {
+    "chat_tools": {
+      "constants": {
+        "IMAGE_AGENT_PROMPT": "8a6b3ea1311682a97f5446aafde0f8b0df5d636a17e018f0be11c4673935ff56",
+        "_CONCURRENT_SAFE_TOOLS": "9f5f24b0a4aa2654b7c76c7ee09b7cd1f24d15d386073559f856889fe9d380db",
+        "_SAFETY_LEVELS": "f754c6ddf1b3f7e0465704aa671c59f8c53fc403f583bccf6428f87ff506de07",
+        "TOOL_SYSTEM_PROMPT": "06bb1383eeaf7aead37f3b04987b81f7e80c671b71bbe3ce9b57a03574bfea14",
+        "_CORE_TOOLS": "6016a00cc89ec8a288e4ab1a1d6db290997a3fbd0325bf661aee6dc43e86295b",
+        "_PLAN_MODE_BLOCKED": "c001bb902412fde8c463555c917ad013d78a13647598344796687a2947555ed3"
+      },
+      "functions": {
+        "build_common_tools": "() -> List[Dict[str, Any]]",
+        "build_erp_tools": "() -> List[Dict[str, Any]]",
+        "build_crawler_tools": "() -> List[Dict[str, Any]]",
+        "build_code_tools": "(include_workspace: bool = False) -> List[Dict[str, Any]]",
+        "build_file_tools": "() -> List[Dict[str, Any]]",
+        "is_concurrency_safe": "(tool_name: str) -> bool",
+        "get_safety_level": "(tool_name: str) -> config.chat_tools.SafetyLevel",
+        "get_tool_system_prompt": "() -> str",
+        "get_chat_tools": "(org_id: str | None = None) -> List[Dict[str, Any]]",
+        "get_core_tools": "(org_id: str | None = None) -> List[Dict[str, Any]]",
+        "_normalize_tools_bytes": "(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]",
+        "get_tools_for_mode": "(mode: str, org_id: str | None = None) -> List[Dict[str, Any]]",
+        "get_tools_by_names": "(names: Set[str], org_id: str | None = None) -> List[Dict[str, Any]]",
+        "extract_tool_names_from_result": "(result_text: str, org_id: str | None = None, agent_domain: str = 'general') -> Set[str]"
+      }
+    },
+    "tool_domains": {
+      "constants": {
+        "TOOL_DOMAINS": "a8dc8e7a864e764267f3ebb73ef317c90a5b1359abad5432a1b1a1411cab9e50"
+      },
+      "functions": {
+        "can_access": "(tool_name: str, agent_domain: str) -> bool",
+        "filter_tools_for_domain": "(tools: List[Dict[str, Any]], agent_domain: str) -> List[Dict[str, Any]]",
+        "validate_registry": "(all_tool_names: Set[str]) -> List[str]"
+      }
+    },
+    "agent_tools": {
+      "constants": {
+        "CODE_INFO_TOOLS": "16fd2d9a7aa260e0d7a074eac2a3a737e26b617568f62368fd2975a9a8913401",
+        "CODE_TOOL_SCHEMAS": "0ae8d6a51a9f61fb40e173d336197b02088f0e6b351bd65ec8cf592355a1e0a6",
+        "FILE_INFO_TOOLS": "c6b178944a20df6bf2413991d6d8bd7ee20bd6b6d63cf1d4c11f82c35ae9b30f",
+        "FILE_TOOL_SCHEMAS": "75948ddc9a8851f6096ab9f0cf63a1000abdd7b7783743565eeef0fd2f8f0a63",
+        "CRAWLER_INFO_TOOLS": "4a12c44e3c28eaa7a52434c57456231500d4ad2d51ddfd73c5f203689a4bd888",
+        "CRAWLER_TOOL_SCHEMAS": "24663cd0302235ce5e818c10a754fe5aa33b68849d2e8c7a5d0a9e47a1676b42",
+        "ERP_LOCAL_TOOLS": "01b556d5944ae8b9c4659823451ad20c80bd2b25ec4567f5cc726af25eb5570a",
+        "ERP_SYNC_TOOLS": "47f64fdba39652c1ba65327689cc9cba14fa1e0c4d2aae44b0717f9a6839757e",
+        "ERP_TOOL_SCHEMAS": "74ca5010bc21d52f60cff98a8abc8e84fda1c625c974fcc9b1f356126159b80e",
+        "SMART_CONFIG": "22aa49ffb20c6db9ff37c7049eea92251bdf35090f808b98787d62c636b97bb4",
+        "INFO_TOOLS": "20966bbe68de87dad57a255ef69ae03d6e529570b37696b3ddf75487923dc295",
+        "ROUTING_TOOLS": "b9b074310c4d3143d007ff0f9cdeed92c3418fd9c8da339b359983035e43fb9a",
+        "ALL_TOOLS": "d2edcfa5c80668c29e76f24d8fa9ac1967fe40c47dccd994f0342e50a910e3b5",
+        "SYNC_TOOLS": "20966bbe68de87dad57a255ef69ae03d6e529570b37696b3ddf75487923dc295",
+        "TOOL_SCHEMAS": "d092f008b8a9d2a00bfcab94ba2529b27290cb5271110a286eb16428a9e09cdf"
+      },
+      "functions": {
+        "build_code_tools": "(include_workspace: bool = False) -> List[Dict[str, Any]]",
+        "build_file_tools": "() -> List[Dict[str, Any]]",
+        "build_crawler_tools": "() -> List[Dict[str, Any]]",
+        "build_erp_tools": "() -> List[Dict[str, Any]]",
+        "build_erp_search_tool": "() -> Dict[str, Any]",
+        "_get_model_enum": "(category: str) -> List[str]",
+        "_get_model_desc": "(category: str) -> str",
+        "validate_tool_call": "(tool_name: str, arguments: Dict[str, Any]) -> bool"
+      }
+    },
+    "common_tools": {
+      "constants": {},
+      "functions": {
+        "_build_erp_agent_description": "() -> str",
+        "build_common_tools": "() -> List[Dict[str, Any]]"
+      }
+    },
+    "erp_tools": {
+      "constants": {
+        "LOCAL_TOOL_SCHEMAS": "d675d9e3e8b7e713c123fc53067a23924d8850cbd772fd5fbe2330bb7f21cf19",
+        "AFTERSALES_REGISTRY": "44e0d057ec5421f9e2f8c0dd8335fd8f27248c76ca98625e40dd49c80163c55d",
+        "BASIC_REGISTRY": "81fab28d5c312a4019c3aaa7ffc347097973e1ff210f6dc2f2679b5278673f24",
+        "DISTRIBUTION_REGISTRY": "414f3236d54b2755176b59357fac75b208f50fb619c4eb2ab571a6f07c15dcc5",
+        "PRODUCT_REGISTRY": "d71e1d78c25809f4866de435ea9ca1048c59eeb431a933f2331078a13c76ba3b",
+        "PURCHASE_REGISTRY": "acf2c9f6f5d6004f2986b7e26c1b88426fc01d6fc5e0384a36cfdce4f640bf34",
+        "QIMEN_REGISTRY": "90ddd7c71a08774120753c7ba6532720573930ee321e8c127e2e95e40dcb0b95",
+        "TRADE_REGISTRY": "5f0a3ae4bb51b9641b8e06302ffa7777cfbdedd9bb95e7d3bda34291f9f0551b",
+        "WAREHOUSE_REGISTRY": "5e1a951af814eb2eeafaf54ad61ebed2985bf48785f2e62cffe01f48a1504d7b",
+        "ERP_SYNC_TOOLS": "47f64fdba39652c1ba65327689cc9cba14fa1e0c4d2aae44b0717f9a6839757e",
+        "ERP_TOOL_SCHEMAS": "74ca5010bc21d52f60cff98a8abc8e84fda1c625c974fcc9b1f356126159b80e",
+        "ERP_ROUTING_PROMPT": "5f11f275e42cd0e68a908e758f63e3b840219e1d902584fe770293bee018370b"
+      },
+      "functions": {
+        "build_local_tools": "() -> List[Dict[str, Any]]",
+        "_format_action_desc": "(name: str, entry: services.kuaimai.registry.base.ApiEntry) -> str",
+        "_read_actions": "(registry: dict) -> tuple",
+        "_write_actions_by_category": "() -> str",
+        "_build_query_tool": "(name: str, desc: str, registry: dict) -> Dict[str, Any]",
+        "build_erp_tools": "() -> List[Dict[str, Any]]",
+        "build_erp_search_tool": "() -> Dict[str, Any]",
+        "build_fetch_all_pages_tool": "() -> Dict[str, Any]"
+      }
+    },
+    "erp_local_tools": {
+      "constants": {
+        "ERP_LOCAL_TOOLS": "01b556d5944ae8b9c4659823451ad20c80bd2b25ec4567f5cc726af25eb5570a",
+        "LOCAL_TOOL_SCHEMAS": "d675d9e3e8b7e713c123fc53067a23924d8850cbd772fd5fbe2330bb7f21cf19"
+      },
+      "functions": {
+        "_tool": "(name: str, desc: str, props: Dict[str, Any], required: list[str]) -> Dict[str, Any]",
+        "_str": "(desc: str) -> Dict[str, str]",
+        "_int": "(desc: str) -> Dict[str, Any]",
+        "_bool": "(desc: str) -> Dict[str, Any]",
+        "_enum": "(desc: str, values: list[str]) -> Dict[str, Any]",
+        "build_local_tools": "() -> List[Dict[str, Any]]"
+      }
+    },
+    "file_tools": {
+      "constants": {
+        "FILE_ANALYZE_SELECTOR_GUIDANCE": "78e5b08c900d566dd14a5050aad5eaedd0b0ede56766f04006e660666da4f00a",
+        "FILE_INFO_TOOLS": "c6b178944a20df6bf2413991d6d8bd7ee20bd6b6d63cf1d4c11f82c35ae9b30f",
+        "FILE_TOOL_SCHEMAS": "75948ddc9a8851f6096ab9f0cf63a1000abdd7b7783743565eeef0fd2f8f0a63",
+        "FILE_ROUTING_PROMPT": "7e9ca2808e896f13257d40704dc9835ec84efea26fc3ef3e44df2b347e3ddbae"
+      },
+      "functions": {
+        "build_file_tools": "() -> List[Dict[str, Any]]"
+      }
+    },
+    "code_tools": {
+      "constants": {
+        "CODE_INFO_TOOLS": "16fd2d9a7aa260e0d7a074eac2a3a737e26b617568f62368fd2975a9a8913401",
+        "CODE_TOOL_SCHEMAS": "0ae8d6a51a9f61fb40e173d336197b02088f0e6b351bd65ec8cf592355a1e0a6",
+        "_DESCRIPTION": "a0b9347e97cc535ec1da14b3c9fbd42b70c231025ee87a1752696f39fd2a74eb",
+        "CODE_ROUTING_PROMPT": "e036ec3b2b8d764485d6d9da8a5fc2d227517d083f5aa315d31d2d6742828bcd"
+      },
+      "functions": {
+        "build_code_tools": "(include_workspace: bool = False) -> List[Dict[str, Any]]"
+      }
+    },
+    "crawler_tools": {
+      "constants": {
+        "CRAWLER_INFO_TOOLS": "4a12c44e3c28eaa7a52434c57456231500d4ad2d51ddfd73c5f203689a4bd888",
+        "CRAWLER_TOOL_SCHEMAS": "24663cd0302235ce5e818c10a754fe5aa33b68849d2e8c7a5d0a9e47a1676b42",
+        "CRAWLER_ROUTING_PROMPT": "d1a9142d23af358d348f851f3ca4e78f3a7db0c2c311baa83d13ee5eeb8f3b84"
+      },
+      "functions": {
+        "build_crawler_tools": "() -> List[Dict[str, Any]]"
+      }
+    }
+  },
+  "schema_views": {
+    "helpers/None/chat": {},
+    "helpers/None/core": {},
+    "helpers/None/ask": {},
+    "helpers/None/auto": {},
+    "helpers/None/plan": {},
+    "helpers/org-a/chat": {},
+    "helpers/org-a/core": {},
+    "helpers/org-a/ask": {},
+    "helpers/org-a/auto": {},
+    "helpers/org-a/plan": {},
+    "phase/erp": {
+      "erp_api_search": {
+        "type": "function",
+        "function": {
+          "name": "erp_api_search",
+          "description": "搜索 ERP 可用的 API 操作和参数文档。当你不确定该用哪个 action 或哪些参数时调用此工具。支持关键词搜索（如「退款」「库存」）和精确查询（如「erp_trade_query:order_list」）。结果会返回给你，你可以参考后再决定调用哪个 ERP 工具。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "description": "搜索关键词或 tool:action 精确查询"
+              }
+            },
+            "required": [
+              "query"
+            ]
+          }
+        }
+      },
+      "route_to_chat": {
+        "type": "function",
+        "function": {
+          "name": "route_to_chat",
+          "description": "数据采集完毕，汇总回复用户。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "system_prompt": {
+                "type": "string",
+                "description": "适合当前回复的角色设定（一句话）"
+              }
+            },
+            "required": [
+              "system_prompt"
+            ]
+          }
+        }
+      }
+    },
+    "phase/crawler": {
+      "route_to_chat": {
+        "type": "function",
+        "function": {
+          "name": "route_to_chat",
+          "description": "数据采集完毕，汇总回复用户。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "system_prompt": {
+                "type": "string",
+                "description": "适合当前回复的角色设定（一句话）"
+              }
+            },
+            "required": [
+              "system_prompt"
+            ]
+          }
+        }
+      }
+    },
+    "phase/computer": {
+      "route_to_chat": {
+        "type": "function",
+        "function": {
+          "name": "route_to_chat",
+          "description": "数据采集完毕，汇总回复用户。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "system_prompt": {
+                "type": "string",
+                "description": "适合当前回复的角色设定（一句话）"
+              }
+            },
+            "required": [
+              "system_prompt"
+            ]
+          }
+        }
+      }
+    },
+    "phase/unknown": {}
+  }
+}

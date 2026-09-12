@@ -1,0 +1,27 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.2, pytest-9.0.3, pluggy-1.6.0 -- /Users/wucong/EVERYDAYAIONE/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /private/tmp/tool07-baseline/backend
+configfile: pytest.ini
+plugins: time-machine-2.14.1, cov-7.1.0, asyncio-1.3.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 2 items
+
+../../../../../private/tmp/tool07-baseline/backend/tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_aliases_registered_to_real_font SKIPPED [ 50%]
+../../../../../private/tmp/tool07-baseline/backend/tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_alias_registration_dedupes_on_second_call SKIPPED [100%]
+
+=============================== warnings summary ===============================
+../../.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434
+  /Users/wucong/EVERYDAYAIONE/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py:1434: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_aliases_registered_to_real_font
+  /private/tmp/tool07-baseline/backend/services/adapters/kie/models.py:126: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class JsonSchema(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] ../../../../../private/tmp/tool07-baseline/backend/tests/test_emit_three_engines.py:380: wqy 字体未装 (本地开发环境跳过, 生产 Linux 必装)
+SKIPPED [1] ../../../../../private/tmp/tool07-baseline/backend/tests/test_emit_three_engines.py:396: wqy 字体未装
+======================== 2 skipped, 2 warnings in 0.42s ========================

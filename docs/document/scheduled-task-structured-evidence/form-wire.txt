@@ -1,0 +1,13 @@
+
+ RUN  v3.2.7 /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/frontend
+
+stdout | src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx
+[DEBUG] [21:54:12] [task:restore] Hydrate complete
+
+ ✓ src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx (3 tests) 64ms
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  21:54:11
+   Duration  582ms (transform 94ms, setup 87ms, collect 177ms, tests 64ms, environment 121ms, prepare 24ms)
+

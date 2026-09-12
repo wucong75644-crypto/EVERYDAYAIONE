@@ -138,3 +138,15 @@ def test_unknown_content_block_is_ignored() -> None:
     )
 
     assert parts == []
+
+
+def test_submitted_form_keeps_change_reference_through_completion_and_api():
+    from pydantic import TypeAdapter
+    from schemas.message import ContentPart, serialize_content_parts
+    parts = build_content_parts([{
+        "type": "form", "form_type": "scheduled_task_create", "form_id": "form1",
+        "status": "submitted", "change_set_id": "change1", "fields": [],
+    }], fallback_text="")
+    wire = serialize_content_parts(parts)
+    assert wire[0]["change_set_id"] == "change1"
+    assert TypeAdapter(list[ContentPart]).validate_python(wire)[0].change_set_id == "change1"

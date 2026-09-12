@@ -1,0 +1,17 @@
+{
+  "base_commit": "eeccf3bd9485f1e91d253fdacc2c3828700efdd6",
+  "files": {
+    "backend/services/agent/tool_executor.py": "e8945fddcb430074b2eabfe59a0881cc3b5562bab0fa0ee4ef820ab3f1b4330c",
+    "backend/services/scheduler/chat_task_manager.py": "031c1c7f8a6704c662505187fc09cc00739625d65a1615dfaa61188cb8ce9ca5",
+    "backend/services/scheduler/task_nl_parser.py": "2355452f5d5fb2726648d5b552bdd615482368e17af6374b08ca0a168dfab796",
+    "backend/services/scheduler/task_request_content.py": "18b4f8c2a9837e574a6799b6b82bc7f402a260fc17245055543f392a472252e0",
+    "backend/services/scheduler/task_request_context.py": "ae093c821224bf33ad7d54f7bf075dc56f71991c9841d06d6a449d3ca507e29a",
+    "backend/services/scheduler/task_schedule_evidence.py": "450a539ea37ca5ec746779fe65c2437d8c394b889743f0491443dbc21911347a",
+    "frontend/src/components/scheduled-tasks/TaskForm.tsx": "fc88c261ae9a0fa00b8688490ec663dc4a325b1350d6b9a94497b814a2b8f9e8",
+    "frontend/src/components/chat/message/ChangeSetCard.tsx": "5a395da04dd039a1bf30f78264dca2f4652d1e84a4199c04226ca83189d942c0",
+    "backend/tests/test_scheduled_task_request_consistency.py": "f11ee426ef9a91dd21ec8f70ed8c0f3c1330bf4b64a0865cc3902995ae3b0c5d",
+    "backend/tests/test_scheduled_task_form_incident.py": "c77f00d3b31b5b6d82af5a64a2b811c811ad1db8ae7dce48c8d3fd3d12bc8111",
+    "frontend/src/components/scheduled-tasks/__tests__/TaskForm.test.tsx": "d6165ab15e35f74ad79cdd11d4d7e16e45f6d555aa258236911b266aeaef58df",
+    "frontend/src/components/chat/message/__tests__/ChangeSetCard.test.tsx": "ccbd8d44180ebc48a999a4e102a36156795a2a8b85951d3dc18cc641c18e8c63"
+  }
+}

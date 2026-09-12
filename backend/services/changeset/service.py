@@ -131,6 +131,54 @@ class ChangeSetService:
             actor_type=actor_type, adapter=adapter,
         )
 
+    async def apply_requested(
+        self, *, change_set_id: str, org_id: str, actor_id: str,
+        adapter: ChangeSetAdapter,
+    ) -> dict[str, Any]:
+        """Apply a checked, explicit task request without inventing human approval.
+
+        The database enforces the same persisted eligibility and check records.
+        Ordinary proposals and historical awaiting_approval rows never enter here.
+        """
+        current = self.repository.get(change_set_id, org_id)
+        if current["status"] in {"applied", "committing"}:
+            return current
+        policy = current.get("policy_snapshot") or {}
+        submission = policy.get("submission") or {}
+        if not (
+            current["status"] == "preflighting"
+            and current.get("resource_type") == "scheduled_task"
+            and current.get("operation") in {"create", "update", "pause", "resume"}
+            and str(current.get("created_by")) == actor_id
+            and submission.get("version") == "scheduled_task.submit.v1"
+            and submission.get("mode") == "apply_if_allowed"
+            and submission.get("actor_id") == actor_id
+            and policy.get("requires_approval") is False
+            and policy.get("risk_level") in {"low", "medium"}
+        ):
+            raise ChangeSetConcurrencyError("变更没有直接提交依据", current=current)
+        checks = self.repository.list_checks(change_set_id, org_id)
+        for name in ("authorization", "validation", "preflight"):
+            if not any(c.get("check_type") == name and
+                       (c.get("status") == "passed" or name == "preflight" and c.get("status") == "skipped")
+                       and (c.get("result") or {}).get("passed", True) is not False for c in checks):
+                raise ChangeSetConcurrencyError("变更检查尚未通过", current=current)
+        try:
+            committing = self.repository.transition(
+                change_set_id=change_set_id, org_id=org_id,
+                expected_status="preflighting", next_status="committing",
+                actor_id=actor_id, actor_type="user", event_type="request_accepted",
+                payload={"submission_mode": "apply_if_allowed"},
+            )
+        except ChangeSetConcurrencyError:
+            winner = self.repository.get(change_set_id, org_id)
+            if winner["status"] in {"committing", "applied"}:
+                return winner
+            raise
+        return await self._commit(
+            committing, org_id=org_id, actor_id=actor_id, actor_type="user", adapter=adapter,
+        )
+
     def recover_failed(
         self, *, change_set_id: str, org_id: str, actor_id: str,
         actor_type: str = "user", idempotency_key: str | None = None,

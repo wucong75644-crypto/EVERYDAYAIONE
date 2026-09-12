@@ -1,0 +1,42 @@
+
+ RUN  v3.2.7 /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/frontend
+
+ ✓ src/schemas/__tests__/messageProtocol.test.ts (11 tests) 6ms
+stderr | src/utils/__tests__/messageUtils.test.ts > normalizeMessage > should recover structured text values as readable JSON
+[WARN] [17:09:58] [message:protocol] Structured value recovered as JSON text | messageId:msg-1, source:normalizeMessage, blockType:text
+
+stderr | src/utils/__tests__/messageUtils.test.ts > normalizeMessage > should reject unknown content block types
+[WARN] [17:09:58] [message:protocol] Invalid content block rejected | messageId:msg-1, source:normalizeMessage, blockType:unknown_block
+
+ ✓ src/utils/__tests__/messageUtils.test.ts (44 tests) 7ms
+stderr | src/components/scheduled-tasks/__tests__/ScheduledTaskPanel.test.tsx > ScheduledTaskPanel ChangeSet recovery > applies an ordinary pause in place without opening a confirmation workflow
+React does not recognize the `whileHover` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `whilehover` instead. If you accidentally passed it from a parent component, remove it from the DOM element.
+React does not recognize the `whileTap` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `whiletap` instead. If you accidentally passed it from a parent component, remove it from the DOM element.
+
+stdout | src/components/chat/message/__tests__/StructuredConsumers.test.tsx
+[DEBUG] [17:09:58] [task:restore] Hydrate complete
+
+stdout | src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx
+[DEBUG] [17:09:58] [task:restore] Hydrate complete
+
+stdout | src/components/chat/message/__tests__/ChangeSetCard.test.tsx
+[DEBUG] [17:09:58] [task:restore] Hydrate complete
+
+stdout | src/components/chat/message/__tests__/MessageContentBlocks.test.tsx
+[DEBUG] [17:09:58] [task:restore] Hydrate complete
+
+ ✓ src/components/scheduled-tasks/__tests__/TaskCardChangeSet.test.tsx (3 tests) 82ms
+ ✓ src/components/scheduled-tasks/__tests__/ScheduledTaskPanel.test.tsx (4 tests) 140ms
+ ✓ src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx (1 test) 48ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts (78 tests) 160ms
+ ✓ src/contexts/__tests__/WebSocketContext.test.tsx (27 tests) 108ms
+ ✓ src/components/chat/message/__tests__/ChangeSetCard.test.tsx (10 tests) 208ms
+ ✓ src/components/chat/message/__tests__/StructuredConsumers.test.tsx (12 tests) 155ms
+ ✓ src/components/chat/message/__tests__/MessageContentBlocks.test.tsx (4 tests) 381ms
+   ✓ MessageContentBlocks structured diagrams > dispatches a diagram part through the dedicated structured renderer  309ms
+
+ Test Files  10 passed (10)
+      Tests  194 passed (194)
+   Start at  17:09:57
+   Duration  1.87s (transform 992ms, setup 3.01s, collect 2.65s, tests 1.29s, environment 4.51s, prepare 471ms)
+

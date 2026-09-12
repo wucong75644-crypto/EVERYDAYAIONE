@@ -1,10 +1,122 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { FormPart } from '../../../../types/message';
 import FormBlock from '../FormBlock';
 import { TableBlock } from '../TableBlock';
+import { normalizeMessage } from '../../../../utils/messageUtils';
+import { scheduledTaskForm } from '../../../../test/fixtures/scheduledTaskForm';
+import scheduledTaskContentForm from '../../../../test/fixtures/scheduledTaskContentForm.json';
+import type { ReactNode } from 'react';
+
+// Protocol/field contract test: render content without the app's LazyMotion provider.
+vi.mock('framer-motion', () => ({
+  AnimatePresence: ({ children }: { children: ReactNode }) => children,
+  m: { div: ({ children, className }: { children: ReactNode; className?: string }) => <div className={className}>{children}</div> },
+}));
 
 describe('structured message consumers', () => {
+  it('keeps a missing frequency local, then submits the corrected schedule without losing input', async () => {
+    const form = { ...scheduledTaskForm, fields: scheduledTaskForm.fields.map((field) => (
+      field.name === 'schedule_type' ? { ...field, default_value: '' }
+        : field.name === 'time_str' ? { ...field, default_value: '08:00' } : field
+    )) };
+    render(<FormBlock form={form} messageId="missing-frequency-submit" conversationId="c1" />);
+    const listener = vi.fn();
+    window.addEventListener('chat:form-submit', listener);
+    try {
+      fireEvent.click(screen.getByRole('button', { name: '创建任务' }));
+      expect(listener).not.toHaveBeenCalled();
+      expect(screen.getByRole('alert')).toHaveTextContent('请选择执行频率');
+      expect(screen.getByRole('button', { name: '创建任务' })).toBeEnabled();
+      expect(screen.getByRole('textbox')).toHaveValue('汇总A店昨天销售');
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: 'daily' } });
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: '创建任务' }));
+      expect(listener).toHaveBeenCalledOnce();
+      expect((listener.mock.calls[0][0] as CustomEvent).detail.formData).toMatchObject({
+        schedule_type: 'daily', time_str: '08:00', prompt: '汇总A店昨天销售',
+      });
+    } finally { window.removeEventListener('chat:form-submit', listener); }
+  });
+
+  it('validates only visible required fields and leaves cancellation available', () => {
+    const form = { ...scheduledTaskForm, fields: scheduledTaskForm.fields.map((field) => (
+      field.name === 'schedule_type' ? { ...field, default_value: 'once' } : field
+    )) };
+    render(<FormBlock form={form} messageId="once-missing-date" conversationId="c1" />);
+    const listener = vi.fn();
+    window.addEventListener('chat:form-submit', listener);
+    try {
+      fireEvent.click(screen.getByRole('button', { name: '创建任务' }));
+      expect(listener).not.toHaveBeenCalled();
+      expect(screen.getByRole('alert')).toHaveTextContent('请填写执行日期和时间（北京时间）');
+      expect(screen.getByRole('alert')).not.toHaveTextContent('请填写执行时间');
+      fireEvent.click(screen.getByRole('button', { name: '取消' }));
+      expect((listener.mock.calls[0][0] as CustomEvent).detail).toMatchObject({ action: 'cancel', formData: {} });
+    } finally { window.removeEventListener('chat:form-submit', listener); }
+  });
+
+  it('shows backend-extracted business content after refresh and submits it without the creation command', async () => {
+    const message = normalizeMessage({
+      id: 'task-content-message', conversation_id: 'task-content-conversation', role: 'assistant',
+      content: JSON.stringify([scheduledTaskContentForm]), status: 'completed',
+    });
+    const { container } = render(<FormBlock form={message.content[0] as FormPart}
+      messageId={message.id} conversationId={message.conversation_id} />);
+    expect(screen.getByDisplayValue('查询昨天的付款订单数按照平台划分')).toHaveValue('查询昨天的付款订单数按照平台划分');
+    expect(screen.getByText(/你的原始要求：创建一个定时任务/)).toBeInTheDocument();
+    const frequency = screen.getByRole('option', { name: '每天' }).closest('select')!;
+    const notification = screen.getByRole('option', { name: '推送给我（网页）' }).closest('select')!;
+    await waitFor(() => expect(notification).toBeVisible());
+    expect(JSON.parse(notification.value)).toEqual({ type: 'web', user_id: 'u1' });
+    expect(frequency).toHaveValue('');
+    fireEvent.change(frequency, { target: { value: 'daily' } });
+    fireEvent.change(container.querySelector('input[type="time"]')!, { target: { value: '08:00' } });
+    const listener = vi.fn();
+    window.addEventListener('chat:form-submit', listener);
+    fireEvent.click(screen.getByRole('button', { name: '确认创建' }));
+    expect(listener).toHaveBeenCalledOnce();
+    expect((listener.mock.calls[0][0] as CustomEvent).detail.formData).toMatchObject({
+      prompt: '查询昨天的付款订单数按照平台划分', schedule_type: 'daily', time_str: '08:00',
+    });
+    window.removeEventListener('chat:form-submit', listener);
+  });
+
+  it('does not visually default an unparsed schedule to the first option', () => {
+    const form = { ...scheduledTaskForm, fields: scheduledTaskForm.fields.map((field) => (
+      field.name === 'schedule_type' ? { ...field, default_value: '' } : field
+    )) };
+    render(<FormBlock form={form} messageId="missing-frequency" conversationId="conversation-1" />);
+    expect(screen.getByRole('combobox')).toHaveValue('');
+    expect(screen.getByRole('option', { name: '请选择' })).toHaveProperty('selected', true);
+  });
+
+  it('renders a persisted scheduled form after refresh and submits the visible schedule fields', () => {
+    const message = normalizeMessage({
+      id: 'message-date', conversation_id: 'conversation-date', role: 'assistant',
+      content: JSON.stringify([scheduledTaskForm]), status: 'completed',
+    });
+    expect(message.content).toEqual([scheduledTaskForm]);
+    const { container } = render(<FormBlock form={message.content[0] as FormPart}
+      messageId={message.id} conversationId={message.conversation_id} />);
+    expect(screen.getByText('补充任务信息')).toBeInTheDocument();
+    expect(container.querySelector('input[type="time"]')).toBeInTheDocument();
+    expect(container.querySelector('input[type="datetime-local"]')).toBeNull();
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'once' } });
+    expect(container.querySelector('input[type="time"]')).toBeNull();
+    const date = container.querySelector('input[type="datetime-local"]');
+    expect(date).toBeInTheDocument();
+    fireEvent.change(date!, { target: { value: '2099-10-01T09:00' } });
+    const submit = vi.fn();
+    window.addEventListener('chat:form-submit', submit);
+    fireEvent.click(screen.getByRole('button', { name: '创建任务' }));
+    expect(submit).toHaveBeenCalledOnce();
+    expect((submit.mock.calls[0][0] as CustomEvent).detail.formData).toMatchObject({
+      schedule_type: 'once', run_at: '2099-10-01T09:00', _submission_mode: 'apply_if_allowed',
+    });
+    window.removeEventListener('chat:form-submit', submit);
+  });
+
   it('TableBlock renders structured and circular cells without crashing', () => {
     const circular: { self?: unknown } = {};
     circular.self = circular;

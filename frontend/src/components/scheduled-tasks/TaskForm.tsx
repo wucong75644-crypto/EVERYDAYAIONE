@@ -15,7 +15,7 @@
  * - 普通员工（无 task.push_to_others）只能选"推送给我自己"
  * - 管理职位（boss/vp/manager/deputy）可选三个板块全部
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Sparkles, Loader2, User, Users, MessageSquare } from 'lucide-react';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
@@ -53,43 +53,6 @@ const WEEKDAY_LABELS: { value: number; label: string }[] = [
 
 type PushTargetMode = 'self' | 'colleague' | 'group';
 
-const WORKFLOW_STEPS = ['填写配置', '规划与试跑', '变更方案', '已提交'];
-
-function WorkflowProgress({ step, failed = false }: { step: number; failed?: boolean }) {
-  return (
-    <div className="rounded-lg border border-[var(--s-border-default)] bg-[var(--s-surface-sunken)] p-3">
-      <div className="flex items-center gap-1 overflow-x-auto" aria-label={`定时任务第 ${step} 步，共 4 步`}>
-        {WORKFLOW_STEPS.map((label, index) => {
-          const number = index + 1;
-          const isCurrent = number === step;
-          const complete = number < step;
-          return (
-            <div key={label} className="flex min-w-0 items-center gap-1.5">
-              {index > 0 && <span className="h-px w-3 shrink-0 bg-[var(--s-border-default)]" aria-hidden="true" />}
-              <span className={cn(
-                'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-medium',
-                complete ? 'border-[var(--s-success)] bg-[var(--s-success)] text-white' :
-                  isCurrent ? 'border-[var(--s-accent)] bg-[var(--s-accent-soft)] text-[var(--s-accent)]' :
-                    'border-[var(--s-border-default)] text-[var(--s-text-tertiary)]',
-              )}>{number}</span>
-              <span className={cn('whitespace-nowrap text-xs', isCurrent ? 'font-medium text-[var(--s-text-primary)]' : 'text-[var(--s-text-tertiary)]')}>
-                {label}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-      <p className="mt-2 text-xs text-[var(--s-text-secondary)]">
-        {step === 1 && '尚未创建任务。提交配置后，系统才会规划调用路径并进行只读安全试跑。'}
-        {step === 2 && (failed
-          ? '安全试跑未通过。正式任务没有创建；请修改配置后重新试跑。'
-          : '正在只读安全试跑：不扣积分、不发送消息、不写入业务数据。')}
-        {step === 3 && '预检通过，但正式任务仍未创建；确认启用后才会生效。'}
-      </p>
-    </div>
-  );
-}
-
 /** 把 ISO 时间字符串转成 datetime-local 输入框需要的本地时间格式 */
 function isoToLocalDatetime(iso: string | null | undefined): string {
   if (!iso) {
@@ -121,6 +84,7 @@ function localDatetimeToIso(local: string): string {
 
 export function TaskForm({ task, onClose, onProposed }: Props) {
   const isEdit = task !== null;
+  const requestKey = useRef({ signature: '', key: '' });
   const currentUserId = useAuthStore((s) => s.user?.id) || '';
 
   const canPushToOthers = usePermission('task.push_to_others');
@@ -130,7 +94,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
   const [prompt, setPrompt] = useState(task?.prompt || '');
 
   // 频率
-  const [scheduleType, setScheduleType] = useState<ScheduleType>(
+  const [scheduleType, setScheduleType] = useState<ScheduleType | ''>(
     task?.schedule_type || 'daily',
   );
   const [timeStr, setTimeStr] = useState<string>(() => {
@@ -163,6 +127,9 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
     }
     return 'self';
   });
+  const [selfChannel, setSelfChannel] = useState<'web' | 'wecom_user'>(
+    task?.push_target?.type === 'wecom_user' ? 'wecom_user' : 'web',
+  );
   const [colleagueId, setColleagueId] = useState<string>(
     task?.push_target?.type === 'wecom_user'
       ? task.push_target.wecom_userid || ''
@@ -183,6 +150,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
   // 自然语言输入
   const [nlText, setNlText] = useState('');
   const [parsing, setParsing] = useState(false);
+  const [pendingRecipient, setPendingRecipient] = useState('');
 
   // 任何用户都需要自己的 wecom_userid（"推送给我自己"模式构造 push_target）
   // 用 /org-members/me 接口（任何成员都能调，不需要管理员权限）
@@ -226,20 +194,67 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
   }, [task, myWecomUserid]);
 
   const handleNLParse = async () => {
-    if (!nlText.trim()) return;
+    if (parsing || !nlText.trim()) return;
     setParsing(true);
     try {
-      const result = await scheduledTaskService.parseNL(nlText);
-      if (result.name) setName(result.name);
-      if (result.prompt) setPrompt(result.prompt);
-      if (result.schedule_type) setScheduleType(result.schedule_type);
-      if (result.time_str) setTimeStr(result.time_str);
-      if (result.weekdays) setWeekdays(result.weekdays);
-      if (result.day_of_month) setDayOfMonth(result.day_of_month);
-      if (result.run_at) setRunAtLocal(isoToLocalDatetime(result.run_at));
+      const result = await scheduledTaskService.parseNL(nlText, isEdit ? 'update' : 'create');
+      // A new request replaces the draft; only editing an existing task is a patch.
+      if (!isEdit) {
+        setName(result.name || '');
+        setPrompt(result.prompt || '');
+        setScheduleType(result.schedule_type || '');
+        setTimeStr(result.time_str || '');
+        setWeekdays(result.weekdays || []);
+        setDayOfMonth(result.day_of_month || 0);
+        setRunAtLocal(result.run_at ? isoToLocalDatetime(result.run_at) : '');
+        setCustomCron(result.cron_expr || '');
+        setPushMode('self');
+        setSelfChannel('web');
+        setColleagueId('');
+        setGroupId('');
+      } else {
+        if (result.name) setName(result.name);
+        if (result.prompt) setPrompt(result.prompt);
+        else if (result.output_format) setPrompt((current) => `${current}\n输出格式：${result.output_format}`);
+        if (result.schedule_type) setScheduleType(result.schedule_type);
+        if (result.time_str) setTimeStr(result.time_str);
+        if (result.weekdays) setWeekdays(result.weekdays);
+        if (result.day_of_month) setDayOfMonth(result.day_of_month);
+        if (result.run_at) setRunAtLocal(isoToLocalDatetime(result.run_at));
+      }
+      const recipient = (result.recipient || '').trim();
+      const targetName = recipient.replace(/^(?:发送|推送|发)?(?:给|到)/, '').trim();
+      const selfName = targetName.replace(/[（）()\s]/g, '');
+      const selfWeb = ['我', '自己', '我自己', '本人', 'self', '网页', '我网页'].includes(selfName);
+      const selfWecom = ['我企微', '我企业微信', '自己企微', '我自己企微'].includes(selfName);
+      setPendingRecipient('');
+      if (selfWecom) {
+        if (myWecomUserid) {
+          setPushMode('self');
+          setSelfChannel('wecom_user');
+        } else setPendingRecipient(recipient);
+      } else if (recipient && !selfWeb) {
+        // Only match choices already available to this user; the backend still authorizes submission.
+        const matchingGroups = canPushToOthers ? groups.filter((g) => g.chat_name === targetName && g.chatid) : [];
+        const matchingPeople = canPushToOthers ? colleagues.filter((c) => c.nickname === targetName && c.wecom_userid) : [];
+        if (matchingGroups.length + matchingPeople.length === 1) {
+          if (matchingGroups.length) {
+            setPushMode('group');
+            setGroupId(matchingGroups[0].id);
+          } else {
+            setPushMode('colleague');
+            setColleagueId(matchingPeople[0].wecom_userid!);
+          }
+        } else setPendingRecipient(recipient);
+      } else if (recipient) {
+        setPushMode('self');
+        if (selfName.includes('网页')) setSelfChannel('web');
+      }
+      setError(result.missing_fields?.length ? '请补齐下方缺失的任务内容或时间安排。' : null);
       setNlText('');
     } catch (err) {
       logger.error('task-form', 'parse failed', err);
+      setError('解析失败，请重试或手动填写任务。');
     } finally {
       setParsing(false);
     }
@@ -255,15 +270,14 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
 
   const buildPushTarget = (): PushTarget | null => {
     if (pushMode === 'self') {
-      if (myWecomUserid) {
-        return { type: 'wecom_user', wecom_userid: myWecomUserid };
+      if (selfChannel === 'wecom_user') {
+        return myWecomUserid ? { type: 'wecom_user', wecom_userid: myWecomUserid } : null;
       }
-      // 没绑定企微的散客 → 用 web 模式
       return { type: 'web', user_id: currentUserId };
     }
     if (pushMode === 'colleague') {
-      if (!colleagueId) return null;
       const c = colleagues.find((x) => x.wecom_userid === colleagueId);
+      if (!canPushToOthers || !c?.wecom_userid) return null;
       return {
         type: 'wecom_user',
         wecom_userid: colleagueId,
@@ -271,8 +285,8 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
       };
     }
     if (pushMode === 'group') {
-      if (!groupId) return null;
-      const g = groups.find((x) => x.id === groupId);
+      const g = groups.find((x) => x.id === groupId || x.chatid === groupId);
+      if (!canPushToOthers || !g?.chatid) return null;
       return {
         type: 'wecom_group',
         chatid: g?.chatid || '',
@@ -283,7 +297,20 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
   };
 
   const handleSubmit = async () => {
+    if (parsing || submitting) return;
     setError(null);
+    if (pendingRecipient) {
+      setError(`请选择推送对象：${pendingRecipient}`);
+      return;
+    }
+    if (!scheduleType) {
+      setError('请选择执行频率');
+      return;
+    }
+    if (scheduleType === 'monthly' && !dayOfMonth) {
+      setError('请选择每月执行日期');
+      return;
+    }
 
     if (!name.trim() || !prompt.trim()) {
       setError('请填写任务名称和指令');
@@ -305,6 +332,14 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
       setError('请填写 cron 表达式');
       return;
     }
+    if (scheduleType === 'once' && (!runAtLocal || !Number.isFinite(new Date(runAtLocal).getTime()) || new Date(runAtLocal).getTime() <= Date.now())) {
+      setError('请选择未来的执行日期和时间');
+      return;
+    }
+    if (scheduleType !== 'once' && scheduleType !== 'cron' && !timeStr) {
+      setError('请填写执行时间');
+      return;
+    }
 
     const dto: CreateTaskDto = {
       name: name.trim(),
@@ -323,12 +358,15 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
       if (scheduleType === 'monthly') dto.day_of_month = dayOfMonth;
     }
 
+    const signature = JSON.stringify(dto);
+    if (requestKey.current.signature !== signature) requestKey.current = { signature, key: crypto.randomUUID() };
     setSubmitting(true);
     try {
       const changeSet = await scheduledTaskService.proposeChange({
         operation: isEdit ? 'update' : 'create',
         ...(isEdit && task ? { task_id: task.id } : {}),
-        definition: { ...dto },
+        definition: { ...dto, timezone: task?.timezone || 'Asia/Shanghai' },
+        submission_mode: 'apply_if_allowed', idempotency_key: requestKey.current.key,
       });
       onProposed(changeSet.id);
     } catch (err) {
@@ -344,13 +382,12 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
       <>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--s-border-default)]">
           <Loader2 className="w-4 h-4 animate-spin text-[var(--s-accent)]" />
-          <h2 className="text-sm font-medium text-[var(--s-text-primary)]">AI 规划与安全试跑</h2>
+          <h2 className="text-sm font-medium text-[var(--s-text-primary)]">正在检查任务</h2>
         </div>
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-          <WorkflowProgress step={2} />
           <div className="rounded-lg border border-[var(--s-accent)] bg-[var(--s-accent-soft)] p-3">
             <p className="text-sm font-medium text-[var(--s-text-primary)]">正在验证执行路径</p>
-            <p className="text-xs text-[var(--s-text-secondary)] mt-1">AI 正在选择允许调用的工具，并用相同路径完成一次只读试跑。</p>
+            <p className="text-xs text-[var(--s-text-secondary)] mt-1">正在检查时间、权限和执行范围，结果会在任务卡中更新。</p>
           </div>
         </div>
       </>
@@ -376,7 +413,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
 
       {/* 表单内容 */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {!isEdit && <WorkflowProgress step={1} />}
+        {!isEdit && <p className="text-xs text-[var(--s-text-secondary)]">填写执行内容和时间，检查通过后即可创建。需要额外确认时会展示具体变化。</p>}
         {/* AI 智能创建（仅新建时） */}
         {!isEdit && (
           <div className="bg-[var(--s-surface-sunken)] rounded-lg p-3">
@@ -389,6 +426,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
             <div className="flex gap-2">
               <Input
                 value={nlText}
+                disabled={parsing}
                 onChange={(e) => setNlText(e.target.value)}
                 placeholder="如：今晚10点推今日付款订单情况 / 每天9点推销售日报"
                 onKeyDown={(e) => {
@@ -408,7 +446,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
               </Button>
             </div>
             <p className="text-[10px] text-[var(--s-text-tertiary)] mt-1.5">
-              解析后会自动填好下面所有字段，可手动微调
+              解析后填写已明确的信息，缺少的内容请在下方补齐
             </p>
           </div>
         )}
@@ -546,6 +584,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
                   'focus:outline-none focus:border-[var(--c-input-border-focus)]',
                 )}
               >
+                <option value={0}>请选择日期</option>
                 {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
                   <option key={d} value={d}>
                     {d} 日
@@ -587,8 +626,19 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
               icon={<User className="w-4 h-4" />}
               title="推送给我自己"
               selected={pushMode === 'self'}
-              onClick={() => setPushMode('self')}
-            />
+              onClick={() => { setPushMode('self'); setPendingRecipient(''); }}
+            >
+              <select
+                aria-label="通知渠道"
+                value={selfChannel}
+                onChange={(event) => setSelfChannel(event.target.value as 'web' | 'wecom_user')}
+                disabled={pushMode !== 'self'}
+                className="w-full mt-2 px-3 py-2 text-sm rounded bg-[var(--c-input-bg)] border border-[var(--c-input-border)]"
+              >
+                <option value="web">网页通知</option>
+                <option value="wecom_user" disabled={!myWecomUserid}>企业微信个人通知{!myWecomUserid ? '（未绑定）' : ''}</option>
+              </select>
+            </PushTargetCard>
 
             {/* 板块2：推送给同事（仅管理员可见） */}
             {canPushToOthers && (
@@ -600,7 +650,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
               >
                 <select
                   value={colleagueId}
-                  onChange={(e) => setColleagueId(e.target.value)}
+                  onChange={(e) => { setColleagueId(e.target.value); if (e.target.value) setPendingRecipient(''); }}
                   disabled={pushMode !== 'colleague'}
                   className={cn(
                     'w-full mt-2 px-3 py-2 text-sm rounded',
@@ -631,7 +681,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
               >
                 <select
                   value={groupId}
-                  onChange={(e) => setGroupId(e.target.value)}
+                  onChange={(e) => { setGroupId(e.target.value); if (e.target.value) setPendingRecipient(''); }}
                   disabled={pushMode !== 'group'}
                   className={cn(
                     'w-full mt-2 px-3 py-2 text-sm rounded',
@@ -652,6 +702,8 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
           </div>
         </div>
 
+        {pendingRecipient && <p role="alert" className="text-sm text-[var(--s-error)]">要求推送给「{pendingRecipient}」，请从可用对象中明确选择；选择前不会提交。</p>}
+
         {error && (
           <div className="text-xs text-[var(--s-error)] bg-[var(--s-error-soft)] px-3 py-2 rounded">
             {error}
@@ -668,9 +720,10 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
           variant="accent"
           size="sm"
           loading={submitting}
+          disabled={parsing}
           onClick={handleSubmit}
         >
-          {isEdit ? '保存修改' : '规划并安全试跑'}
+          {isEdit ? '保存修改' : '创建任务'}
         </Button>
       </div>
     </>

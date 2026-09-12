@@ -3,16 +3,15 @@
 通过 Agent 工具调用，在聊天中创建/查看/修改/暂停/恢复/删除定时任务。
 返回结构化 FormPart / 文本结果，由前端渲染。
 
-设计要点：
-- create/update: 返回 FormPart 预填表单，提交后只创建 ChangeSet；确认由 ChangeSet 卡片完成
-- list: 返回文本摘要
-- pause/resume/delete: 生成 ChangeSet，等待用户确认
+结构化聊天请求直接校验字段；创建始终先返回确认表单，确认后复用 ChangeSet。
+旧 description 调用保持解析兼容；权限、风险与确认由原提交服务决定。
 
 设计文档: docs/document/TECH_定时任务心跳系统.md
 """
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -367,10 +366,15 @@ def _build_update_form(
 class ChatTaskManager:
     """聊天内定时任务管理器"""
 
-    def __init__(self, db: Any, user_id: str, org_id: str) -> None:
+    def __init__(self, db: Any, user_id: str, org_id: str, *,
+                 submission_mode: str = "proposal", idempotency_key: str | None = None,
+                 structured_input: bool = False) -> None:
         self.db = db
         self.user_id = user_id
         self.org_id = org_id
+        self.submission_mode = submission_mode
+        self.idempotency_key = idempotency_key
+        self.structured_input = structured_input
 
     async def handle(self, action: str, args: Dict[str, Any]) -> Dict[str, Any]:
         """统一入口：根据 action 分发"""
@@ -385,29 +389,91 @@ class ChatTaskManager:
         handler = handlers.get(action)
         if not handler:
             return {"type": "text", "text": f"不支持的操作: {action}"}
-        return await handler(args)
+        from services.scheduler.scheduled_task_change_adapter import ScheduledTaskChangeError
+        from services.scheduler.task_definition_input import TaskDefinitionInputError
+        try:
+            return await handler(args)
+        except TaskDefinitionInputError as exc:
+            return {"type": "text", "text": str(exc), "success": False, "retryable": True}
+        except ScheduledTaskChangeError as exc:
+            return {"type": "text", "text": str(exc), "success": False, "retryable": False}
 
     async def _handle_create(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        """创建：NL 解析 → 返回表单"""
+        """Prepare a creation form; description-only callers retain compatibility."""
         description = args.get("description", "").strip()
+        if self.structured_input or "definition" in args:
+            from services.scheduler.task_definition_input import task_definition_input, TaskDefinitionInputError
+            if "definition" not in args:
+                raise TaskDefinitionInputError("请把用户要求整理为 definition 对象后调用；缺项可省略字段，不要只传 description。")
+            request = task_definition_input(args["definition"], operation="create", recipient=args.get("recipient", ""))
+            return await self._create_from_request(request, description, structured=True)
         if not description:
             return {"type": "text", "text": "请描述你想创建的定时任务，例如：每天早上9点推销售日报"}
 
-        # NL 解析
+        if self.submission_mode == "apply_if_allowed":
+            from services.scheduler.task_nl_parser import parse_task_request
+            request = await parse_task_request(description)
+            return await self._create_from_request(request, description)
+
         parsed = await parse_task_nl(description)
-        logger.info(f"chat_task_manager create | parsed={parsed}")
-
-        # 加载推送目标
         push_targets = await _load_push_targets(self.db, self.user_id, self.org_id)
+        return _build_create_form(parsed, push_targets)
 
-        # 返回表单
-        form = _build_create_form(parsed, push_targets)
+    async def _create_from_request(self, request: Dict[str, Any], description: str, *, structured: bool = False) -> Dict[str, Any]:
+        parsed = request["changes"]
+        targets = await _load_push_targets(self.db, self.user_id, self.org_id)
+        target = self._request_target(request["recipient"], targets)
+        missing = list(request["missing_fields"])
+        from services.scheduler.task_submission import unfilled_shop_placeholder
+        if unfilled_shop_placeholder(description) and "prompt" not in missing:
+            missing.append("prompt")
+        if target is None:
+            missing.append("push_target")
+        form = _build_create_form(parsed, targets)
+        # Complete model fields are a draft, not the user's form confirmation.
+        form.update({
+            "title": "补充任务信息" if missing else "确认创建定时任务",
+            "description": "尚未创建任务。请核对执行内容、时间安排和通知渠道，点击确认后开始检查并创建。"
+                           + (f"你的原始要求：{description}" if description else ""),
+            "submit_text": "确认创建",
+        })
+        if unfilled_shop_placeholder(description):
+            form["description"] += "。请在执行内容中将店铺占位文字替换为实际店铺名称。"
+        for field in form["fields"]:
+            key = field["name"]
+            if key == "push_target":
+                field["default_value"] = json.dumps(target) if target else ""
+            elif key in parsed:
+                field["default_value"] = parsed[key]
+            elif key == "prompt":
+                # The original remains in the form description; do not
+                # prefill an unparsed management request as executable work.
+                field["default_value"] = ""
+                field["placeholder"] = "请根据上方原始要求，补充每次需要执行的业务内容"
+            else:
+                field["default_value"] = [] if key == "weekdays" else ""
+            if key == "time_str":
+                field["visible_when"] = {"field": "schedule_type", "value": "once", "not": True}
+            if key in {"weekdays", "day_of_month"}:
+                field["required"] = True
+        # A one-shot date must not be silently replaced with today/tomorrow.
+        run_at = parsed.get("run_at", "")
+        if run_at:
+            run_at = datetime.fromisoformat(run_at.replace("Z", "+00:00")).astimezone(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None).isoformat(timespec="minutes")
+        form["fields"].append(_build_form_field(
+            "run_at", "datetime-local", "执行日期和时间（北京时间）",
+            required=True, default_value=run_at,
+            visible_when={"field": "schedule_type", "value": "once"},
+        ))
+        form["fields"].append(_build_form_field("_submission_mode", "hidden", "", default_value=self.submission_mode))
+        if structured:
+            form["fields"].append(_build_form_field("_structured_input", "hidden", "", default_value=True))
         return form
 
     async def _handle_list(self, _args: Dict[str, Any]) -> Dict[str, Any]:
         """列出当前用户的定时任务"""
         result = self.db.table("scheduled_tasks") \
-            .select("id, name, status, schedule_type, cron_expr, next_run_at, run_count") \
+            .select("id, name, status, schedule_enabled, schedule_type, cron_expr, next_run_at, run_count") \
             .eq("user_id", self.user_id) \
             .eq("org_id", self.org_id) \
             .order("created_at", desc=True) \
@@ -422,6 +488,8 @@ class ChatTaskManager:
         status_map = {"active": "✅ 运行中", "paused": "⏸ 已暂停", "completed": "✔ 已完成"}
         for t in tasks:
             status = status_map.get(t["status"], t["status"])
+            if t["status"] == "running":
+                status = "本次执行中 · 后续已暂停" if t.get("schedule_enabled") is False else "本次执行中"
             schedule = parse_cron_readable(t["cron_expr"]) if t.get("cron_expr") else t.get("schedule_type", "")
             lines.append(
                 f"- **{t['name']}** — {schedule} | {status} | "
@@ -438,9 +506,46 @@ class ChatTaskManager:
 
         task = await self._find_task(task_id=task_id, task_name=task_name)
         if not task:
-            return {"type": "text", "text": "未找到该任务，请确认任务名称或 ID。"}
+            return {"type": "text", "text": "未找到该任务，请确认任务名称或 ID。", "success": False, "retryable": False}
         if task.get("_ambiguous"):
             return self._ambiguous_task_result(task)
+
+        if self.structured_input or "definition" in args:
+            from services.scheduler.task_definition_input import task_definition_input, TaskDefinitionInputError
+            if "definition" not in args:
+                raise TaskDefinitionInputError("修改任务请传 definition，只包含用户要求修改的字段。")
+            request = task_definition_input(args["definition"], operation="update", base=task, recipient=args.get("recipient", ""))
+            changes = request["changes"]
+            targets = []
+            if request["recipient"]:
+                targets = await _load_push_targets(self.db, self.user_id, self.org_id)
+                target = self._request_target(request["recipient"], targets)
+                if target is None:
+                    request["missing_fields"].append("push_target")
+                else:
+                    changes["push_target"] = target
+            if not changes and not request["missing_fields"]:
+                raise TaskDefinitionInputError("请提供要修改的字段或收件对象；未传字段保持不变。")
+            if not request["missing_fields"]:
+                return await self._begin_request("update", changes, task)
+            return self._structured_update_form(task, request, targets)
+
+        if self.submission_mode == "apply_if_allowed" and args.get("description"):
+            from services.scheduler.task_nl_parser import parse_task_request
+            request = await parse_task_request(args["description"], task.get("timezone") or "Asia/Shanghai", operation="update")
+            changes = request["changes"]
+            output_format = changes.pop("output_format", None)
+            if output_format and "prompt" not in changes:
+                changes["prompt"] = task["prompt"] + "\n输出格式：" + output_format
+            if request["recipient"]:
+                targets = await _load_push_targets(self.db, self.user_id, self.org_id)
+                target = self._request_target(request["recipient"], targets)
+                if target is None:
+                    return {"type": "text", "text": "请明确要推送到哪个群或哪位同事，也可以在任务编辑页选择。"}
+                changes["push_target"] = target
+            if changes and not request["missing_fields"]:
+                return await self._begin_request("update", changes, task)
+            return {"type": "text", "text": "请补充要修改的具体内容，例如「改到每天上午十点」或「名称改为销售日报」。"}
 
         # 从 description 解析变更意图
         description = args.get("description", "")
@@ -454,7 +559,62 @@ class ChatTaskManager:
 
         push_targets = await _load_push_targets(self.db, self.user_id, self.org_id)
         form = _build_update_form(task, changes, push_targets)
+        if self.submission_mode == "apply_if_allowed":
+            form["fields"].append(_build_form_field("_submission_mode", "hidden", "", default_value="apply_if_allowed"))
+            form.update({"description": "保存后检查并应用修改；涉及收件人、执行范围或用量增加时会请你确认。", "submit_text": "保存修改"})
         return form
+
+    def _structured_update_form(self, task, request, targets):
+        """Keep the resolved ID and patch fields; never resend the whole task."""
+        changes = request["changes"]
+        fields = set(changes) | set(request["missing_fields"]) | {"task_id"}
+        form = _build_update_form(task, changes, targets)
+        form["fields"] = [field for field in form["fields"] if field["name"] in fields]
+        for field in form["fields"]:
+            key = field["name"]
+            field.pop("visible_when", None)
+            if key in request["missing_fields"] and key != "prompt":
+                field["default_value"] = [] if key == "weekdays" else ""
+                field["required"] = True
+            elif key == "push_target" and key in changes:
+                field["default_value"] = json.dumps(changes[key])
+        if "run_at" in fields:
+            run_at = changes.get("run_at", "")
+            if run_at:
+                run_at = datetime.fromisoformat(run_at.replace("Z", "+00:00")).astimezone(ZoneInfo(task.get("timezone") or "Asia/Shanghai")).replace(tzinfo=None).isoformat(timespec="minutes")
+            form["fields"].append(_build_form_field("run_at", "datetime-local", "执行日期和时间（北京时间）", required=True, default_value=run_at))
+        form["fields"].append(_build_form_field("_submission_mode", "hidden", "", default_value=self.submission_mode))
+        form["fields"].append(_build_form_field("_structured_input", "hidden", "", default_value=True))
+        form.update(description="补齐本次修改；未显示的原任务字段保持不变。", submit_text="保存修改")
+        return form
+
+    def _request_target(self, recipient: str, targets) -> Dict[str, Any] | None:
+        self_name = re.sub(r"[（）()\s]", "", recipient)
+        self_name = re.sub(r"^(?:发送|推送|发)?(?:给|到)", "", self_name)
+        if not recipient or self_name in {"我", "自己", "我自己", "本人", "self", "网页", "我网页"}:
+            return {"type": "web", "user_id": self.user_id}
+        matches = []
+        for option in targets:
+            target = json.loads(option["value"])
+            name = target.get("chat_name") or target.get("name")
+            if name and name in recipient:
+                matches.append(target)
+            elif self_name in {"我企微", "我企业微信", "自己企微", "我自己企微"} and target.get("type") == "wecom_user" and option["label"].startswith("推送给我"):
+                matches.append(target)
+        return matches[0] if len(matches) == 1 else None
+
+    async def _begin_request(self, operation: str, definition: Dict[str, Any], task=None):
+        from services.scheduler.scheduled_task_change_adapter import ScheduledTaskChangeSetService, ScheduledTaskChangeError
+        from services.scheduler.task_submission import submission_receipt
+        try:
+            row = await ScheduledTaskChangeSetService(self.db, user_id=self.user_id, org_id=self.org_id).begin(
+                operation=operation, proposed_snapshot=definition, base_snapshot=task,
+                resource_id=task["id"] if task else None,
+                submission_mode=self.submission_mode, idempotency_key=self.idempotency_key,
+            )
+        except ScheduledTaskChangeError as exc:
+            return {"type": "text", "text": f"任务尚未生效：{exc}", "success": False, "retryable": False}
+        return {"type": "change_set", "data": row, "text": submission_receipt(row)}
 
     async def _handle_pause(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """暂停任务"""
@@ -463,10 +623,10 @@ class ChatTaskManager:
             task_name=args.get("task_name", ""),
         )
         if not task:
-            return {"type": "text", "text": "未找到该任务。"}
+            return {"type": "text", "text": "未找到该任务。", "success": False, "retryable": False}
         if task.get("_ambiguous"):
             return self._ambiguous_task_result(task)
-        if task["status"] == "paused":
+        if task["status"] == "paused" or task.get("schedule_enabled") is False:
             return {"type": "text", "text": f"任务「{task['name']}」已经是暂停状态。"}
         return await self._propose_chat_change("pause", task)
 
@@ -477,10 +637,10 @@ class ChatTaskManager:
             task_name=args.get("task_name", ""),
         )
         if not task:
-            return {"type": "text", "text": "未找到该任务。"}
+            return {"type": "text", "text": "未找到该任务。", "success": False, "retryable": False}
         if task.get("_ambiguous"):
             return self._ambiguous_task_result(task)
-        if task["status"] == "active":
+        if task["status"] == "active" or task["status"] == "running" and task.get("schedule_enabled") is True:
             return {"type": "text", "text": f"任务「{task['name']}」已经在运行中。"}
         return await self._propose_chat_change("resume", task)
 
@@ -491,7 +651,7 @@ class ChatTaskManager:
             task_name=args.get("task_name", ""),
         )
         if not task:
-            return {"type": "text", "text": "未找到该任务。"}
+            return {"type": "text", "text": "未找到该任务。", "success": False, "retryable": False}
         if task.get("_ambiguous"):
             return self._ambiguous_task_result(task)
         return await self._propose_chat_change("delete", task)
@@ -514,6 +674,8 @@ class ChatTaskManager:
                 return matches[0]
             if len(matches) > 1:
                 return {"_ambiguous": True, "candidates": matches}
+            if self.structured_input:
+                return None  # A supplied ID cannot silently retarget by name.
 
         if task_name:
             result = self.db.table("scheduled_tasks") \
@@ -539,14 +701,16 @@ class ChatTaskManager:
         return {"type": "text", "text": "\n".join(lines)}
 
     async def _propose_chat_change(self, operation: str, task: Dict[str, Any]) -> Dict[str, Any]:
-        """聊天新操作只创建 ChangeSet；旧表单提交路径不复用这里。"""
+        """Propose or submit through the same ChangeSet checks and commit receipt."""
         from services.scheduler.scheduled_task_change_adapter import ScheduledTaskChangeSetService
 
         proposed = dict(task)
         if operation == "pause":
             proposed.update({"status": "paused", "next_run_at": None})
         elif operation == "resume":
-            if task.get("schedule_type") == "once":
+            if self.submission_mode == "apply_if_allowed":
+                next_run = None  # Computed by the adapter after idempotent replay.
+            elif task.get("schedule_type") == "once":
                 next_run = task.get("run_at")
             else:
                 next_run = calc_next_run(task["cron_expr"], task.get("timezone", "Asia/Shanghai")).isoformat()
@@ -556,10 +720,12 @@ class ChatTaskManager:
         ).begin(
             operation=operation, resource_id=task["id"], base_snapshot=task,
             proposed_snapshot=proposed,
+            submission_mode=self.submission_mode, idempotency_key=self.idempotency_key,
         )
+        from services.scheduler.task_submission import submission_receipt
         return {
             "type": "change_set", "data": row,
-            "text": f"正在生成「{task.get('name', '')}」的{operation}变更方案，完成后请确认提交。",
+            "text": submission_receipt(row),
         }
 
 
@@ -596,6 +762,11 @@ async def handle_form_submit(
     if form_type == "scheduled_task_create":
         if not await check_permission(db, user_id, org_id, "task.create"):
             return {"success": False, "message": "无权创建定时任务"}
+        if form_data.get("_structured_input") is True:
+            return await _submit_direct_form(db, user_id, org_id, "create", form_data, idempotency_key,
+                                             submission_mode="apply_if_allowed" if _direct_form(form_data) else "proposal")
+        if _direct_form(form_data):
+            return await _submit_direct_form(db, user_id, org_id, "create", form_data, idempotency_key)
         return await _submit_create(db, user_id, org_id, form_data, idempotency_key=idempotency_key)
 
     if form_type == "scheduled_task_confirm":
@@ -609,9 +780,46 @@ async def handle_form_submit(
     if form_type == "scheduled_task_update":
         if not await check_permission(db, user_id, org_id, "task.edit"):
             return {"success": False, "message": "无权修改定时任务"}
+        if form_data.get("_structured_input") is True:
+            return await _submit_direct_form(db, user_id, org_id, "update", form_data, idempotency_key,
+                                             submission_mode="apply_if_allowed" if _direct_form(form_data) else "proposal")
+        if _direct_form(form_data):
+            return await _submit_direct_form(db, user_id, org_id, "update", form_data, idempotency_key)
         return await _submit_update(db, user_id, org_id, form_data, idempotency_key=idempotency_key)
 
     return {"success": False, "message": f"未知表单类型: {form_type}"}
+
+
+def _direct_form(data):
+    from core.config import get_settings
+    return data.get("_submission_mode") == "apply_if_allowed" and get_settings().scheduled_task_direct_enabled
+
+
+async def _submit_direct_form(db, user_id, org_id, operation, data, idempotency_key, *, submission_mode="apply_if_allowed"):
+    definition = {k: data[k] for k in ("name", "prompt", "schedule_type", "time_str", "weekdays", "day_of_month", "run_at") if k in data}
+    task = None
+    if operation == "update":
+        task = await ChatTaskManager(db, user_id, org_id)._find_task(task_id=str(data.get("task_id") or ""))
+        if not task or task.get("_ambiguous"):
+            return {"success": False, "message": "任务不存在或无权修改"}
+    try:
+        if "push_target" in data:
+            target = data["push_target"]
+            definition["push_target"] = json.loads(target) if isinstance(target, str) else target
+        definition["timezone"] = (task or {}).get("timezone") or "Asia/Shanghai"
+        if (definition.get("schedule_type") or (task or {}).get("schedule_type")) == "once" and "run_at" in definition:
+            from zoneinfo import ZoneInfo
+            dt = datetime.fromisoformat(str(definition.get("run_at") or "").replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=ZoneInfo(definition["timezone"]))
+            definition["run_at"] = dt.isoformat()
+    except (ValueError, TypeError):
+        return {"success": False, "message": "请补齐有效的执行日期、时间和推送目标"}
+    return await _propose_form_change(
+        db=db, user_id=user_id, org_id=org_id, operation=operation, definition=definition,
+        task_id=task["id"] if task else None, base_snapshot=task, idempotency_key=idempotency_key,
+        submission_mode=submission_mode,
+    )
 
 
 async def _submit_create(
@@ -785,22 +993,25 @@ async def _propose_form_change(
     task_id: str | None,
     idempotency_key: str | None,
     base_snapshot: Dict[str, Any] | None = None,
+    submission_mode: str = "proposal",
 ) -> Dict[str, Any]:
     """聊天表单进入统一 ChangeSet 服务；失败也以受控 ChangeSet 状态呈现。"""
+    from services.scheduler.task_submission import submission_receipt
     from services.scheduler.scheduled_task_change_adapter import (
         ScheduledTaskChangeError,
         ScheduledTaskChangeSetService,
     )
 
     try:
-        change_set = await ScheduledTaskChangeSetService(
-            db, user_id=user_id, org_id=org_id,
-        ).propose(
+        service = ScheduledTaskChangeSetService(db, user_id=user_id, org_id=org_id)
+        submit = service.begin if submission_mode == "apply_if_allowed" else service.propose
+        change_set = await submit(
             operation=operation,
             resource_id=task_id,
             base_snapshot=base_snapshot,
             proposed_snapshot=definition,
             idempotency_key=idempotency_key,
+            **({"submission_mode": submission_mode} if submission_mode == "apply_if_allowed" else {}),
         )
     except ScheduledTaskChangeError as exc:
         return {"success": False, "message": str(exc)}
@@ -819,5 +1030,5 @@ async def _propose_form_change(
         "success": True,
         "status": "submitted",
         "change_set_id": str(change_set["id"]),
-        "message": "正在生成变更方案，完成后请在卡片中查看试跑结果并确认。",
+        "message": submission_receipt(change_set),
     }

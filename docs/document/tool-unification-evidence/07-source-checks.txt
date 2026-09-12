@@ -1,0 +1,1 @@
+PASS: 35 mappings; 0 missing/duplicate; 01–06 ancestry/tree; handler bodies and execution paths unchanged; baseline recapture identical

@@ -1,0 +1,148 @@
+{
+  "type": "form",
+  "form_type": "scheduled_task_create",
+  "form_id": "synthetic-task-content-form",
+  "title": "补充任务信息",
+  "description": "尚未创建任务。请核对执行内容、时间安排和通知渠道，点击确认后开始检查并创建。你的原始要求：创建一个定时任务，查询昨天的付款订单数按照平台划分",
+  "fields": [
+    {
+      "type": "text",
+      "name": "name",
+      "label": "任务名称",
+      "required": true,
+      "default_value": "昨日付款订单数统计",
+      "placeholder": "如：每日销售日报"
+    },
+    {
+      "type": "textarea",
+      "name": "prompt",
+      "label": "执行内容",
+      "required": true,
+      "default_value": "查询昨天的付款订单数按照平台划分",
+      "placeholder": "AI 每次执行时的任务指令"
+    },
+    {
+      "type": "select",
+      "name": "schedule_type",
+      "label": "执行频率",
+      "required": true,
+      "default_value": "",
+      "options": [
+        {
+          "label": "仅一次",
+          "value": "once"
+        },
+        {
+          "label": "每天",
+          "value": "daily"
+        },
+        {
+          "label": "每周",
+          "value": "weekly"
+        },
+        {
+          "label": "每月",
+          "value": "monthly"
+        }
+      ]
+    },
+    {
+      "type": "time",
+      "name": "time_str",
+      "label": "执行时间",
+      "required": true,
+      "default_value": "",
+      "visible_when": {
+        "field": "schedule_type",
+        "value": "once",
+        "not": true
+      }
+    },
+    {
+      "type": "checkbox_group",
+      "name": "weekdays",
+      "label": "每周几",
+      "required": true,
+      "default_value": [],
+      "options": [
+        {
+          "label": "周一",
+          "value": "1"
+        },
+        {
+          "label": "周二",
+          "value": "2"
+        },
+        {
+          "label": "周三",
+          "value": "3"
+        },
+        {
+          "label": "周四",
+          "value": "4"
+        },
+        {
+          "label": "周五",
+          "value": "5"
+        },
+        {
+          "label": "周六",
+          "value": "6"
+        },
+        {
+          "label": "周日",
+          "value": "0"
+        }
+      ],
+      "visible_when": {
+        "field": "schedule_type",
+        "value": "weekly"
+      }
+    },
+    {
+      "type": "number",
+      "name": "day_of_month",
+      "label": "每月几号",
+      "required": true,
+      "default_value": "",
+      "placeholder": "1-31",
+      "visible_when": {
+        "field": "schedule_type",
+        "value": "monthly"
+      }
+    },
+    {
+      "type": "select",
+      "name": "push_target",
+      "label": "推送到",
+      "required": true,
+      "default_value": "{\"type\": \"web\", \"user_id\": \"u1\"}",
+      "options": [
+        {
+          "label": "推送给我（网页）",
+          "value": "{\"type\":\"web\",\"user_id\":\"u1\"}"
+        }
+      ]
+    },
+    {
+      "type": "datetime-local",
+      "name": "run_at",
+      "label": "执行日期和时间（北京时间）",
+      "required": true,
+      "default_value": "",
+      "visible_when": {
+        "field": "schedule_type",
+        "value": "once"
+      }
+    },
+    {
+      "type": "hidden",
+      "name": "_submission_mode",
+      "label": "",
+      "required": false,
+      "default_value": "apply_if_allowed"
+    }
+  ],
+  "submit_text": "确认创建",
+  "cancel_text": "取消"
+}
