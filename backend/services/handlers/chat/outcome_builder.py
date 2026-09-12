@@ -6,6 +6,7 @@ from typing import Any
 
 from schemas.message import (
     ChartPart,
+    ChangeSetPart,
     ContentPart,
     DiagramPart,
     FilePart,
@@ -137,6 +138,8 @@ def _build_part(block: dict[str, Any]) -> ContentPart | None:
             interrupted_at=block["interrupted_at"],
             reason=block["reason"],
         )
+    if block_type == "changeset":
+        return ChangeSetPart(**block)
     if block_type == "form":
         return FormPart(**block)
     return None

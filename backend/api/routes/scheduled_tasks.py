@@ -929,6 +929,15 @@ async def list_runs(
         for run in run_rows:
             run["events"] = event_map.get(str(run["id"]), [])
 
+    # Historical runs contain emit payloads (tables/charts as well as files).
+    # Project through the same converter as chat; leave the stored payload intact.
+    from services.handlers.emit_payloads import build_content_blocks_from_payloads
+    for run in run_rows:
+        payloads = [
+            ({**item, "kind": "file"} if not item.get("kind") and item.get("url") else item)
+            for item in (run.get("result_files") or []) if isinstance(item, dict)
+        ]
+        run["content_blocks"] = build_content_blocks_from_payloads(payloads)
     return {"success": True, "data": run_rows}
 
 

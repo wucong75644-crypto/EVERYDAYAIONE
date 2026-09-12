@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChangeSet } from '../../../../types/changeset';
 import ChangeSetCard from '../ChangeSetCard';
+import FormBlock from '../FormBlock';
 import { changeSetService } from '../../../../services/changeSet';
 
 vi.mock('../../../../services/changeSet', () => ({
@@ -212,6 +213,19 @@ describe('ChangeSetCard', () => {
     await act(async () => { finishOld(makeChangeSet({ status: 'preflighting' })); });
     expect(screen.getByText('变更已提交并记录完成结果。')).toBeVisible();
     expect(onUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ id: 'change-1' }));
+  });
+
+  it('renders an applied creation through the real submitted FormBlock without stale checking text', async () => {
+    vi.mocked(changeSetService.get).mockResolvedValue(makeChangeSet({
+      status: 'applied', operation: 'create', proposed_snapshot: { name: '反馈测试' },
+      policy_snapshot: { submission: { mode: 'apply_if_allowed' }, requires_approval: false },
+    }));
+    render(<FormBlock form={{ type: 'form', form_type: 'scheduled_task_create', form_id: 'f1',
+      title: '创建任务', fields: [], status: 'submitted', change_set_id: 'change-1',
+      result_message: '正在检查创建请求，结果将在卡片中更新。',
+    }} messageId="m1" conversationId="c1" />);
+    expect(await screen.findByText('已创建「反馈测试」。')).toBeVisible();
+    expect(screen.queryByText(/正在检查创建请求/)).not.toBeInTheDocument();
   });
 
 });

@@ -21,6 +21,17 @@ async def test_change_set_is_delivered_and_checkpointed(setup, monkeypatch, tran
     actual, results, host, executor, _ = await consumer.chat_run("pause", transport, root, monkeypatch)
     reference = {"type": "changeset", "change_set_id": "change-test", "resource_type": "scheduled_task"}
     assert actual["checkpoint"]["content_blocks"].count(reference) == 1
+    from pydantic import TypeAdapter
+    from schemas.message import ContentPart, serialize_content_parts
+    from services.handlers.chat.outcome_builder import build_content_parts
+    # Final completion overwrites streamed blocks: test the persistence/API boundary.
+    final = serialize_content_parts(build_content_parts(
+        [{**block, **({"elapsed_ms": 0} if block.get("type") == "tool_step" else {})}
+         for block in actual["checkpoint"]["content_blocks"]], fallback_text="",
+    ))
+    assert final.count(reference) == 1
+    assert TypeAdapter(list[ContentPart]).validate_python(final)[-1].change_set_id == "change-test"
+
     assert results[0][1].metadata["change_set"] == change
     assert host._terminal_change_set_pending is True
     assert host._pending_change_set_blocks == []

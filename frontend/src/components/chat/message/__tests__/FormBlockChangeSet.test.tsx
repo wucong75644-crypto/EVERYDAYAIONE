@@ -32,4 +32,14 @@ describe('FormBlock ChangeSet association', () => {
     expect(submitted.detail).not.toHaveProperty('changeSetId');
     window.removeEventListener('chat:form-submit', listener);
   });
+  it('uses the live card instead of the initial checking receipt after submission', () => {
+    render(<FormBlock form={{
+      type: 'form', form_type: 'scheduled_task_create', form_id: 'form-2', title: '创建任务',
+      fields: [], status: 'submitted', change_set_id: 'change-2',
+      result_message: '正在检查创建请求，结果将在卡片中更新。',
+    }} messageId="m2" conversationId="c2" />);
+    expect(screen.getByTestId('changeset-card')).toHaveTextContent('change-2');
+    expect(screen.queryByText(/正在检查创建请求/)).not.toBeInTheDocument();
+  });
+
 });

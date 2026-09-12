@@ -8,6 +8,7 @@
  */
 import { m, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
+import { toast } from 'react-hot-toast';
 import { Pause, Play, Settings, Trash2, Paperclip, Clock, ChevronDown } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
@@ -112,7 +113,10 @@ export function TaskCard({ task, onEdit, onChangeRequested }: Props) {
     setRunningNow(true);
     setChangeError('');
     try {
-      if (!await runTaskNow(task.id)) setChangeError('本次运行未启动，请刷新任务状态后重试。');
+      if (await runTaskNow(task.id)) {
+        setExpandedTaskId(task.id);
+        toast.success('已开始执行，结果将在下方执行记录中更新。');
+      } else setChangeError('本次运行未启动，请刷新任务状态后重试。');
     } finally {
       setRunningNow(false);
     }
@@ -265,7 +269,9 @@ export function TaskCard({ task, onEdit, onChangeRequested }: Props) {
               transition={{ duration: 0.2 }}
               className="overflow-hidden"
             >
-              <TaskRunHistory taskId={task.id} />
+              <div onClick={(event) => event.stopPropagation()}>
+                <TaskRunHistory taskId={task.id} />
+              </div>
             </m.div>
           )}
         </AnimatePresence>

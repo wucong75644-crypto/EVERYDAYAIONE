@@ -787,6 +787,12 @@ class TestRunsAndChatTargets:
                 "finished_at": "2026-04-11T01:00:12Z",
                 "duration_ms": 12000,
                 "result_summary": "销售额 10w",
+                "result_files": [
+                    {"kind": "table", "title": "订单", "columns": ["平台"], "rows": [{"平台": "A"}]},
+                    {"kind": "chart", "title": "趋势", "option": {"series": []}},
+                    {"kind": "file", "url": "/report.csv", "name": "report.csv"},
+                    {"url": "/legacy.csv", "name": "legacy.csv"},
+                ],
                 "credits_used": 3, "tokens_used": 1500,
             },
         ]
@@ -805,6 +811,12 @@ class TestRunsAndChatTargets:
         assert len(body["data"]) == 1
         assert body["data"][0]["status"] == "success"
         assert body["data"][0]["credits_used"] == 3
+        blocks = body["data"][0]["content_blocks"]
+        assert [block["type"] for block in blocks] == ["table", "chart", "file", "file"]
+        assert blocks[0]["rows"] == [{"平台": "A"}]
+        assert blocks[-1]["url"] == "/legacy.csv"
+        assert body["data"][0]["result_files"] == runs[0]["result_files"]
+
 
     def test_list_runs_no_permission_returns_403(self):
         db, _task = self._make_task_db_with_runs()

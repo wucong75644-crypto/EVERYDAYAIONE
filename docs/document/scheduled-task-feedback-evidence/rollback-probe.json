@@ -1,0 +1,11 @@
+{
+  "synthetic_input": {
+    "type": "changeset",
+    "change_set_id": "synthetic-test-change",
+    "resource_type": "scheduled_task"
+  },
+  "baseline_reader_accepts": false,
+  "baseline_error_type": "union_tag_invalid",
+  "candidate_reader_accepts": true,
+  "rollback_requires_retaining_message_compatibility": true
+}

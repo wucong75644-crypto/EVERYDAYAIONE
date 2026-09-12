@@ -1,0 +1,17 @@
+{
+  "base_commit": "002286f0057ee53bd7b96ece9ab031a543efce97",
+  "synthetic_input": {
+    "type": "changeset",
+    "change_set_id": "synthetic-test-change",
+    "resource_type": "scheduled_task"
+  },
+  "baseline_final_content": [],
+  "candidate_final_content": [
+    {
+      "type": "changeset",
+      "change_set_id": "synthetic-test-change",
+      "resource_type": "scheduled_task"
+    }
+  ],
+  "production_data_used": false
+}

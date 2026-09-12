@@ -431,7 +431,7 @@ class ChatTaskManager:
                     field["default_value"] = [] if key == "weekdays" else ""
                 if key == "time_str":
                     field["visible_when"] = {"field": "schedule_type", "value": "once", "not": True}
-                if key != "prompt" and key not in missing and (key in parsed or key == "push_target" and target):
+                if key not in {"prompt", "push_target"} and key not in missing and key in parsed:
                     field["type"] = "hidden"
             # A one-shot date must not be silently replaced with today/tomorrow.
             form["fields"].append(_build_form_field(

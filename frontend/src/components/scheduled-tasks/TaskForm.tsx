@@ -127,6 +127,9 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
     }
     return 'self';
   });
+  const [selfChannel, setSelfChannel] = useState<'web' | 'wecom_user'>(
+    task?.push_target?.type === 'wecom_user' ? 'wecom_user' : 'web',
+  );
   const [colleagueId, setColleagueId] = useState<string>(
     task?.push_target?.type === 'wecom_user'
       ? task.push_target.wecom_userid || ''
@@ -255,10 +258,9 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
 
   const buildPushTarget = (): PushTarget | null => {
     if (pushMode === 'self') {
-      if (myWecomUserid) {
-        return { type: 'wecom_user', wecom_userid: myWecomUserid };
+      if (selfChannel === 'wecom_user') {
+        return myWecomUserid ? { type: 'wecom_user', wecom_userid: myWecomUserid } : null;
       }
-      // 没绑定企微的散客 → 用 web 模式
       return { type: 'web', user_id: currentUserId };
     }
     if (pushMode === 'colleague') {
@@ -613,7 +615,18 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
               title="推送给我自己"
               selected={pushMode === 'self'}
               onClick={() => { setPushMode('self'); setPendingRecipient(''); }}
-            />
+            >
+              <select
+                aria-label="通知渠道"
+                value={selfChannel}
+                onChange={(event) => setSelfChannel(event.target.value as 'web' | 'wecom_user')}
+                disabled={pushMode !== 'self'}
+                className="w-full mt-2 px-3 py-2 text-sm rounded bg-[var(--c-input-bg)] border border-[var(--c-input-border)]"
+              >
+                <option value="web">网页通知</option>
+                <option value="wecom_user" disabled={!myWecomUserid}>企业微信个人通知{!myWecomUserid ? '（未绑定）' : ''}</option>
+              </select>
+            </PushTargetCard>
 
             {/* 板块2：推送给同事（仅管理员可见） */}
             {canPushToOthers && (

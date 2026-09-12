@@ -11,6 +11,7 @@
  */
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { AnimatePresence, m } from 'framer-motion';
+import { toast } from 'react-hot-toast';
 import { ArrowLeft, Clock, GitCompare, Plus, X } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { ViewSwitcher } from './ViewSwitcher';
@@ -127,8 +128,10 @@ export default function ScheduledTaskPanel({ isOpen, onClose }: ScheduledTaskPan
     });
     requestKeys.current.delete(identity);
     setShowPendingChanges(false);
-    if (changeSet.status === 'applied') await fetchTasks();
-    else setChangeSetId(changeSet.id);
+    if (changeSet.status === 'applied') {
+      toast.success(`已${{ pause: '暂停', resume: '恢复', delete: '删除' }[operation]}「${task.name}」`);
+      await fetchTasks();
+    } else setChangeSetId(changeSet.id);
     void loadPendingChangeSets();
   }, [fetchTasks, loadPendingChangeSets]);
 

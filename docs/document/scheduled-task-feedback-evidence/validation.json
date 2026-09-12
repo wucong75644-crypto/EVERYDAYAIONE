@@ -1,0 +1,39 @@
+{
+  "base_commit": "002286f0057ee53bd7b96ece9ab031a543efce97",
+  "candidate": "base plus uncommitted files in source-checks.json",
+  "date": "2026-09-12",
+  "backend": {
+    "cwd": "backend",
+    "command": "DATABASE_URL=postgresql://test:test@127.0.0.1/test JWT_SECRET_KEY=local-test-key APP_ENV=testing /Users/wucong/EVERYDAYAIONE/backend/venv/bin/python -m pytest tests/test_scheduled_task_chat_results.py tests/test_chat_outcome_builder.py tests/test_message_schema.py tests/test_scheduled_tasks_routes.py tests/test_chat_task_manager.py tests/test_scheduled_task_direct_submission.py tests/test_scheduled_task_form_incident.py tests/test_scheduled_task_request_consistency.py tests/test_tool_result_consumption.py tests/test_chat_execution_engine.py tests/test_chat_stream_loop.py tests/test_changeset_api.py tests/test_changeset_core.py tests/test_scheduled_task_changeset_adapter.py tests/test_tool_result_persistence_06.py tests/test_tool_registry.py -q",
+    "passed": 478,
+    "failed": 0,
+    "skipped": 0
+  },
+  "frontend": {
+    "cwd": "frontend",
+    "command": "./node_modules/.bin/vitest run src/components/scheduled-tasks/__tests__ src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx src/components/chat/message/__tests__/ChangeSetCard.test.tsx src/stores/__tests__/useScheduledTaskStore.test.ts src/contexts/__tests__/wsMessageHandlers.test.ts src/schemas/__tests__/messageProtocol.test.ts",
+    "passed": 146,
+    "failed": 0,
+    "skipped": 0,
+    "final_test_wait_cleanup_recheck": {
+      "command": "./node_modules/.bin/vitest run src/components/scheduled-tasks/__tests__/TaskForm.test.tsx",
+      "passed": 11,
+      "already_in_total": true
+    }
+  },
+  "build": {
+    "command": "npm run build",
+    "exit_code": 0,
+    "warning": "large chunks"
+  },
+  "lint": {
+    "status": "failed in baseline and candidate",
+    "rule": "react-hooks/set-state-in-effect",
+    "file": "frontend/src/components/scheduled-tasks/ScheduledTaskPanel.tsx",
+    "baseline_line": 69,
+    "candidate_line": 70,
+    "baseline_command": "git show HEAD:frontend/src/components/scheduled-tasks/ScheduledTaskPanel.tsx | ./node_modules/.bin/eslint --stdin --stdin-filename src/components/scheduled-tasks/ScheduledTaskPanel.tsx"
+  },
+  "deployed": false,
+  "production_writes": false
+}

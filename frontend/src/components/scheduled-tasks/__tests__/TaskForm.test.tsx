@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { orgMembersService } from '../../../services/orgMembers';
 import { TaskForm } from '../TaskForm';
 import { scheduledTaskService } from '../../../services/scheduledTask';
 import { wecomChatTargetsService } from '../../../services/wecomChatTargets';
@@ -27,6 +28,7 @@ async function parse(result: Partial<ParseNLResult>, text = '新的创建请求'
 describe('TaskForm request contract', () => {
   beforeEach(() => {
     vi.clearAllMocks(); access.others = true;
+    vi.mocked(orgMembersService.getMyMemberInfo).mockResolvedValue({} as never);
     vi.mocked(wecomChatTargetsService.listGroups).mockResolvedValue([{ id: 'g1', chatid: 'chat1', chat_name: '销售群' }] as never);
     vi.mocked(scheduledTaskService.proposeChange).mockResolvedValue({ id: 'cs1' } as never);
   });
@@ -98,6 +100,33 @@ describe('TaskForm request contract', () => {
     expect(scheduledTaskService.proposeChange).not.toHaveBeenCalled();
     finish({ ...complete, name: 'B店', prompt: '查询B店' } as ParseNLResult);
     await screen.findByDisplayValue('查询B店');
+  });
+
+  it.each(['web', 'wecom_user'])('lets a mapped user explicitly choose %s', async (channel) => {
+    vi.mocked(orgMembersService.getMyMemberInfo).mockResolvedValue({ wecom_userid: 'wx1' } as never);
+    render(<TaskForm task={null} onClose={vi.fn()} onProposed={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('option', { name: '企业微信个人通知' })).toBeEnabled());
+    expect(screen.getByRole('combobox', { name: '通知渠道' })).toHaveValue('web');
+    await parse(complete as ParseNLResult);
+    fireEvent.change(screen.getByRole('combobox', { name: '通知渠道' }), { target: { value: channel } });
+    fireEvent.click(screen.getByRole('button', { name: '创建任务' }));
+    await waitFor(() => expect(scheduledTaskService.proposeChange).toHaveBeenCalledWith(expect.objectContaining({ definition: expect.objectContaining({
+      push_target: channel === 'web' ? { type: 'web', user_id: 'u1' } : { type: 'wecom_user', wecom_userid: 'wx1' },
+    }) })));
+  });
+
+  it('keeps an existing personal WeCom target when editing', async () => {
+    vi.mocked(orgMembersService.getMyMemberInfo).mockResolvedValue({ wecom_userid: 'wx1' } as never);
+    render(<TaskForm task={{ id: 't1', name: '旧日报', prompt: '查询订单', schedule_type: 'daily',
+      cron_expr: '0 9 * * *', push_target: { type: 'wecom_user', wecom_userid: 'wx1' },
+    } as never} onClose={vi.fn()} onProposed={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('option', { name: '企业微信个人通知' })).toBeEnabled());
+    expect(screen.getByRole('combobox', { name: '通知渠道' })).toHaveValue('wecom_user');
+  });
+  it('does not allow an unbound personal WeCom channel', async () => {
+    render(<TaskForm task={null} onClose={vi.fn()} onProposed={vi.fn()} />);
+    await screen.findByRole('option', { name: '销售群' });
+    expect(screen.getByRole('option', { name: '企业微信个人通知（未绑定）' })).toBeDisabled();
   });
 
 });

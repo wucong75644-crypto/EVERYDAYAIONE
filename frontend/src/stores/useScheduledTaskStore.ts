@@ -33,7 +33,7 @@ interface ScheduledTaskState {
   runs: Record<string, TaskRun[]>;
 
   // ── Actions ──
-  fetchTasks: () => Promise<void>;
+  fetchTasks: (options?: { quiet?: boolean }) => Promise<void>;
   setViewMode: (mode: ViewMode, deptId?: string) => void;
   setExpandedTaskId: (id: string | null) => void;
 
@@ -66,8 +66,8 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
   expandedTaskId: null,
   runs: {},
 
-  fetchTasks: async () => {
-    set({ loading: true, error: null });
+  fetchTasks: async (options) => {
+    if (!options?.quiet) set({ loading: true, error: null });
     try {
       const { viewMode, viewDeptId } = get();
       const tasks = await scheduledTaskService.list(viewMode, viewDeptId || undefined);

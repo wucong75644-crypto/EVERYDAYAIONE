@@ -99,6 +99,7 @@ export interface ScheduledTaskChangeRequest {
 }
 
 export interface TaskRun {
+  content_blocks?: import('./message').ContentPart[];
   id: string;
   task_id: string;
   org_id: string;

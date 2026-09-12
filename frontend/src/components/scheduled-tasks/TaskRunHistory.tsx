@@ -3,7 +3,12 @@
  *
  * 显示最近 N 次执行：状态、耗时、积分、错误信息
  */
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
+import { TableBlock } from '../chat/message/TableBlock';
+import ChartBlock from '../chat/message/ChartBlock';
+import FileCardList from '../chat/media/FileCard';
+import type { ContentPart } from '../../types/message';
+const DiagramBlock = lazy(() => import('../chat/message/DiagramBlock'));
 import { CheckCircle2, XCircle, Clock, Loader2, FileText } from 'lucide-react';
 import { useScheduledTaskStore } from '../../stores/useScheduledTaskStore';
 import { cn } from '../../utils/cn';
@@ -49,6 +54,16 @@ function formatDuration(ms?: number | null): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+function ResultBlock({ block, runId }: { block: ContentPart; runId: string }) {
+  if (block.type === 'table') return <TableBlock {...block} />;
+  if (block.type === 'chart') return <ChartBlock {...block} />;
+  if (block.type === 'file') return <FileCardList files={[block]} />;
+  if (block.type === 'diagram') return <Suspense fallback={<p>关系图加载中…</p>}><DiagramBlock diagram={block} messageId={`scheduled-run-${runId}`} /></Suspense>;
+  if (block.type === 'image' && block.url) return <a href={block.url} target="_blank" rel="noopener noreferrer"><img src={block.url} alt={block.alt || '执行结果'} className="max-w-full" /></a>;
+  if (block.type === 'text') return <p className="whitespace-pre-wrap">{block.text}</p>;
+  return null;
+}
+
 function RunRow({ run }: { run: TaskRun }) {
   const config = STATUS_CONFIG[run.status] || STATUS_CONFIG.skipped;
   const Icon = config.icon;
@@ -77,7 +92,7 @@ function RunRow({ run }: { run: TaskRun }) {
           )}
         </div>
         {run.result_summary && (
-          <p className="text-xs text-[var(--s-text-secondary)] mt-0.5 line-clamp-2">
+          <p className="text-xs text-[var(--s-text-secondary)] mt-0.5 whitespace-pre-wrap">
             {run.result_summary}
           </p>
         )}
@@ -96,9 +111,10 @@ function RunRow({ run }: { run: TaskRun }) {
             ))}
           </div>
         )}
-        {run.result_files && run.result_files.length > 0 && (
+        {run.content_blocks?.map((block, index) => <ResultBlock key={index} block={block} runId={run.id} />)}
+        {!run.content_blocks?.length && run.result_files && run.result_files.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1">
-            {run.result_files.map((f, i) => (
+            {run.result_files.filter((file) => file.url).map((f, i) => (
               <a
                 key={i}
                 href={f.url}
@@ -120,10 +136,25 @@ function RunRow({ run }: { run: TaskRun }) {
 export function TaskRunHistory({ taskId }: Props) {
   const runs = useScheduledTaskStore((s) => s.runs[taskId]);
   const fetchRuns = useScheduledTaskStore((s) => s.fetchRuns);
+  const fetchTasks = useScheduledTaskStore((s) => s.fetchTasks);
+  const running = useScheduledTaskStore((s) => s.tasks.some((task) => task.id === taskId && task.status === 'running'));
+  const hasRunningRun = runs?.some((run) => run.status === 'running') ?? false;
 
   useEffect(() => {
     fetchRuns(taskId);
   }, [taskId, fetchRuns]);
+
+  useEffect(() => {
+    if (!running && !hasRunningRun) return;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      await Promise.all([fetchRuns(taskId), fetchTasks({ quiet: true })]);
+      if (!disposed) timer = setTimeout(refresh, 5000);
+    };
+    timer = setTimeout(refresh, 5000);
+    return () => { disposed = true; clearTimeout(timer); };
+  }, [taskId, running, hasRunningRun, fetchRuns, fetchTasks]);
 
   if (!runs) {
     return (
@@ -144,10 +175,9 @@ export function TaskRunHistory({ taskId }: Props) {
   return (
     <div className="border-t border-[var(--s-border-subtle)] mt-3 pt-2">
       <div className="flex items-center gap-2 px-3 mb-1">
-        <span className="text-[10px] font-medium text-[var(--s-success)]">步骤 4/4 · 已启用</span>
-        <span className="text-xs font-medium text-[var(--s-text-tertiary)] uppercase tracking-wider">执行历史</span>
+        <span className="text-xs font-medium text-[var(--s-text-tertiary)] uppercase tracking-wider">执行结果与历史</span>
       </div>
-      <div className="max-h-64 overflow-y-auto">
+      <div className="max-h-[60vh] overflow-y-auto">
         {runs.slice(0, 10).map((run) => (
           <RunRow key={run.id} run={run} />
         ))}

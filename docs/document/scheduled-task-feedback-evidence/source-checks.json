@@ -1,0 +1,26 @@
+{
+  "base_commit": "002286f0057ee53bd7b96ece9ab031a543efce97",
+  "sha256": {
+    "backend/api/routes/scheduled_tasks.py": "a62bb7dbb376214b82f96b5525fcfe4f58bc39545bbbd9fc3a52730234719e86",
+    "backend/schemas/message.py": "7e80c0e8de86d16efc8ca0a812e2ef78e4ecef3fde8f1dd06438322de50ff997",
+    "backend/services/handlers/chat/outcome_builder.py": "f11180725da6b0a68e674e47c7300b9ff7c64d24b0cc8702a92ad12f262b83f7",
+    "backend/services/scheduler/chat_task_manager.py": "a05b6e985986a0b677109498408d5ef8a5f0d110a2a59267f32610aef808d921",
+    "backend/tests/test_chat_outcome_builder.py": "4b155602a983078ff17d0e80ec4ea656814cc6fb057fac7d231baa4ccfeb0068",
+    "backend/tests/test_chat_task_manager.py": "2250caa604855ad60cf91fa8779baf194c99a26d03ca596bfc0fcd12e281425e",
+    "backend/tests/test_scheduled_task_chat_results.py": "02992ab0d8a2b499cc944e2945b2765106e72555998b11b72dbefdddf48b6705",
+    "backend/tests/test_scheduled_tasks_routes.py": "2a7c6f81741767c7507e15b101f9c954f45778bfbc9767353307e6ac66797ccf",
+    "frontend/src/components/chat/message/FormBlock.tsx": "6fef32dbb26fda619610225027f7ad7d64d0efc8b78ac8643c7e7814d21ee833",
+    "frontend/src/components/chat/message/__tests__/ChangeSetCard.test.tsx": "958b6dcfd2654de935fd4462adffe8683900387f4bc98cf794767efceeca8ecb",
+    "frontend/src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx": "f7913fe76444e4e748d8862353ca47a25e18be44f0d983b76b8bf2f71702de1e",
+    "frontend/src/components/scheduled-tasks/ScheduledTaskPanel.tsx": "262c254398b216d45f27bdf541a1c5d183d5af8da6fa3d910d33c42cbe0dc6f1",
+    "frontend/src/components/scheduled-tasks/TaskCard.tsx": "dc2d6f64a4413bd9a30374d1e4e3463274c38407f2e23bee6bf43ea323bd8898",
+    "frontend/src/components/scheduled-tasks/TaskForm.tsx": "5539757a0c3656279a76afce161408815a9bae4d81e47ddfb78283a69422394d",
+    "frontend/src/components/scheduled-tasks/TaskRunHistory.tsx": "b357d93fbc6b612893e42e24d7d9727988fe20f070f2dd919e8a4f8ffe486051",
+    "frontend/src/components/scheduled-tasks/__tests__/ScheduledTaskPanel.test.tsx": "bf82010973713c47f030b1c6d7d7cc683f7c14dad5365556216b5bcf2c82a1dd",
+    "frontend/src/components/scheduled-tasks/__tests__/TaskCardChangeSet.test.tsx": "f0c77737ae3d57be2233911f4baa0030ac460225fe42a02789cd136ba3fee297",
+    "frontend/src/components/scheduled-tasks/__tests__/TaskForm.test.tsx": "59087cb9c0bbfd14dc95248cfa2e9a76308c810467e571c1383cf58e9df4a20c",
+    "frontend/src/components/scheduled-tasks/__tests__/TaskRunHistory.test.tsx": "353cd5d6106f8ae79cb8d042877eb0afb665feee65a93ce8607db1beff2dd5e3",
+    "frontend/src/stores/useScheduledTaskStore.ts": "875ddb7ae4e438dca059086f12be417edeb14c378950d143ca596e95a9077094",
+    "frontend/src/types/scheduledTask.ts": "66294699ca0f87edc979a7924cc9979a3b95e6cf3c0d19604d822bb6863555f5"
+  }
+}

@@ -51,6 +51,7 @@ describe('TaskCard ChangeSet actions', () => {
     rerender(<TaskCard task={makeTask({status: 'paused', schedule_enabled: false})} onChangeRequested={onChangeRequested} />);
     fireEvent.click(screen.getByRole('button', {name: '立即执行'}));
     await waitFor(() => expect(runTaskNow).toHaveBeenCalledWith('task-1'));
+    await waitFor(() => expect(setExpandedTaskId).toHaveBeenCalledWith('task-1'));
     expect(screen.getByRole('button', {name: '恢复'})).toBeInTheDocument();
   });
 

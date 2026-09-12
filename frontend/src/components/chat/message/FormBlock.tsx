@@ -467,7 +467,7 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
   if (submitted || cancelled) {
     return (
       <>
-        <m.div
+        {!(submitted && localChangeSetId) && <m.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={SOFT_SPRING}
@@ -482,7 +482,7 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
           <span>{submitted
             ? (submittedMessage || `${form.title} — 已提交`)
             : (submittedMessage || `${form.title} — 已取消`)}</span>
-        </m.div>
+        </m.div>}
         {localChangeSetId && (
           <ChangeSetCard changeSetId={localChangeSetId} fallbackTitle={form.title} actionHandlers={changeSetActionHandlers} />
         )}
