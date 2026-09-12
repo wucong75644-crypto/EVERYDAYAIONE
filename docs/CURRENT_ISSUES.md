@@ -1,5 +1,7 @@
 # 当前问题 (CURRENT_ISSUES)
 
+- 2026-09-12 / `5b577e64` 表单修复发布在定时任务停机检查失败：systemd 停机超时清理进程后保留 failed，旧脚本仅接受 inactive。前端已发布、后端未同步；原四服务已恢复、健康 200，完整候选失效。已补状态/PID/cgroup 联合核验及固定安全错误码，旧入口复现失败，新 16 项回归通过，待完整受控重发。未修改任务状态、迁移或业务引擎。见 [ST-10 复验记录](document/SCHEDULED_TASK_FORM_FIX_ACCEPTANCE.md)。
+
 - 2026-09-12 / 8773b8b7 生产验收发现创建任务后表单不显示：后端已存 form，前端运行时协议未接受 datetime-local，条件 not 也被剥离。已补真实 WS/历史消息边界兼容，同时纠正解析输出契约冲突、保留创建原文并拒绝未填写店铺标记的直接提交。后端 675、前端 193 项复验、类型/构建和本地浏览器通过；**修复未重新部署，生产验收仍未关闭**。见 [本次复验](document/SCHEDULED_TASK_FORM_FIX_ACCEPTANCE.md)。下条“未部署”为前次开发快照，其升级实际已发布为 8773b8b7。
 
 - 2026-09-12 / 定时任务暂停及交互升级：原暂停只产生 awaiting_approval，但聊天遗漏 ChangeSet 卡片并继续宣称已暂停。已补统一结果引用、普通明确请求直接提交、运行中暂停后续定时、暂停手动运行和简化创建；在原架构增量完成，无 ERP/沙盒/媒体/Agent 循环重写。后端 1963 passed（另 1 opt-in 入口 skip，其测试体已在临时 PG 通过）、前端 122 passed、TS/构建通过。本升级是 HEAD 75fced91 + 未提交差异，**未部署，生产复验未关闭**。迁移 254/255 需排空在途任务并切换全部旧 Worker；详见 [验收及验证单](document/SCHEDULED_TASK_UPGRADE_ACCEPTANCE.md)。

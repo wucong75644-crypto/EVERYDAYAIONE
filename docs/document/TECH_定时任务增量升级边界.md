@@ -185,6 +185,7 @@ ChangeSet 新增提交分支时同时更新 Python 和 SQL 的迁移规则及条
 1. 本次未执行生产迁移或发布。后续“提交部署”仍走受控 release 入口，并核实确定候选；不能沿用旧发布未完成的结论。
 2. 停止新的任务领取和手动启动，让旧在途运行完成，随后停止全部旧 Scheduler/HTTP Worker；执行 254、255，再启动本版全部相关进程。不能混跑不认识 schedule_enabled 的旧 Worker。
    提交部署准备时已将此要求接入 `deploy.sh::prepare_scheduled_task_cutover`：本地后端检查成功后、同步后端前，使用本次发布锁所有者执行 `scheduled-task-drain.py`。脚本在运行数量非零时释放任务表锁并等待；数量为零时持有 `SHARE ROW EXCLUSIVE` 写锁停止四个原服务，杜绝空闲检查与停机之间的新认领。最长等待 15 分钟；超时不强制改任务状态、不执行迁移。停止失败则中止发布并保留现场。
+   2026-09-12 发布复验补充：systemd 停机超时后可能已清理进程却保留 failed 标签。停机完成现在要求状态 inactive/failed、MainPID/ControlPID 都为 0，并检查完整服务 cgroup（含子组）无残留进程；无法检查时仍拒绝切换。保留同一事务锁和所有者校验，不改变任何任务业务状态。
 3. 255 首次迁移遇到 running 行会拒绝执行，避免猜测历史暂停手动运行的调度意图。迁移可重复应用；不删除或重建任务，不重置已有暂停意图。
 4. 关闭 `scheduled_task_direct_enabled` 可恢复提案交互，但保留新调度 Worker。需回退旧代码时先完成在途运行并停止进程，执行 255 rollback、254 rollback 后切回基准；回退也拒绝 running，已暂停状态保持。真实 PostgreSQL 已覆盖上/下迁移和拒绝条件。
 
