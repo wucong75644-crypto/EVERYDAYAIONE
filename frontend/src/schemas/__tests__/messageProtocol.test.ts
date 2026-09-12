@@ -1,11 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parseContentPart, parseContentParts } from '../messageProtocol';
+import { scheduledTaskForm } from '../../test/fixtures/scheduledTaskForm';
 
 vi.mock('../../utils/logger', () => ({
   logger: { warn: vi.fn() },
 }));
 
 describe('messageProtocol', () => {
+  it('preserves the entire scheduled form including date fields and negated visibility', () => {
+    expect(parseContentPart(scheduledTaskForm)).toEqual(scheduledTaskForm);
+  });
+
+  it('keeps negated visibility even when the date is already known and hidden', () => {
+    const form = { ...scheduledTaskForm, fields: scheduledTaskForm.fields.map((field) => (
+      field.name === 'run_at' ? { ...field, type: 'hidden' } : field
+    )) };
+    expect(parseContentPart(form)).toEqual(form);
+  });
+
   it('keeps user images with legacy nullable metadata after refresh', () => {
     const parsed = parseContentPart({
       type: 'image',

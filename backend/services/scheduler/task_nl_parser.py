@@ -175,15 +175,22 @@ async def parse_task_nl(text: str, tz: str = "Asia/Shanghai") -> Dict[str, Any]:
 
 async def parse_task_request(text: str, tz: str = "Asia/Shanghai", *, operation: str = "create") -> Dict[str, Any]:
     """Explicit fields only for direct submission; old form-prefill API stays intact."""
-    prompt = NL_PARSER_SYSTEM_PROMPT + f"""
+    prompt = f"""你是定时任务提交前解析器。只输出一个 JSON 对象，不要 Markdown 或解释。
 本次操作：{operation}。这是实际提交前解析，不允许补默认频率、时间、店铺或收件人。
 输出 {{"changes": {{...}}, "evidence": {{字段名: "输入中的原文片段"}}, "recipient": "原文收件人描述或空字符串"}}。
 changes 仅包含用户明确提供的字段；每个字段都须有 evidence，直接引用输入原文。
+字段：name 简短名称；prompt 执行内容；schedule_type 为 once/daily/weekly/monthly；
+time_str 为 HH:MM；weekdays 为 0-6 数组（周日为 0）；day_of_month 为 1-31；run_at 为含时区的 ISO8601 日期时间。
 create 可以提炼 name，缺少执行内容则不要填 prompt；不要把仅有时间的句子当执行内容。
+店铺、收件人等仍是占位文字时不得猜测具体对象。prompt 不扩展店铺、指标或数据范围。
 update 只返回用户明确要求修改的字段。改时间绝不生成新 name 或 prompt，未提到频率则不改变频率。
 update 仅改变输出形式时，请返回 output_format（表格/列表/项目符号/文字/Markdown表格/CSV），不要改写 prompt。
 weekdays 必须逐一来自原文，时间含糊则不填 time_str，once 缺少具体日期则不填 run_at。
 收件人未说明则 recipient 为空；说了群、同事、企微等则完整保留在 recipient 中，不能改为自己。
+创建示例，输入：每天上午9点，把昨天A店的销售汇总发给我
+{{"changes":{{"name":"A店销售日报","prompt":"A店的销售汇总","schedule_type":"daily","time_str":"09:00"}},"evidence":{{"prompt":"A店的销售汇总","schedule_type":"每天","time_str":"上午9点"}},"recipient":"我"}}
+修改示例，输入：改到十点
+{{"changes":{{"time_str":"10:00"}},"evidence":{{"time_str":"十点"}},"recipient":""}}
 """
     raw = await _call_llm(text, tz, system_prompt=prompt)
     raw = raw if isinstance(raw, dict) else {}
@@ -210,6 +217,9 @@ weekdays 必须逐一来自原文，时间含糊则不填 time_str，once 缺少
     required = ["prompt", "schedule_type"] + ([] if kind == "once" else ["time_str"]) if operation == "create" else []
     required += {"once": ["run_at"], "weekly": ["weekdays"], "monthly": ["day_of_month"]}.get(kind, [])
     missing = [key for key in required if not accepted.get(key)]
+    from services.scheduler.task_submission import unfilled_shop_placeholder
+    if operation == "create" and unfilled_shop_placeholder(text) and "prompt" not in missing:
+        missing.append("prompt")
     recipient = raw.get("recipient") if isinstance(raw.get("recipient"), str) else ""
     # A parser omission must not silently redirect a requested group/person to self.
     if not recipient and re.search(r"群|同事|企微|微信|钉钉|飞书|发送到|推送到|发给(?!我)|推送给(?!我)", text):

@@ -395,6 +395,22 @@ class ToolExecutor(
         from services.tools.dispatcher import current_dispatch_call_id
         call_id = current_dispatch_call_id()
         if call_id and direct_task_management(self.tool_runtime.context()):
+            if action == "create":
+                # The model selects the action, but must not broaden a shop or
+                # recipient by paraphrasing the user's actual creation request.
+                for message in reversed(getattr(self, "_parent_messages", None) or []):
+                    if message.get("role") != "user":
+                        continue
+                    content = message.get("content")
+                    if isinstance(content, list):
+                        # UserLayer puts the complete user text first; later
+                        # text parts may contain generated attachment references.
+                        content = next((part["text"] for part in content
+                                        if isinstance(part, dict) and part.get("type") == "text"
+                                        and isinstance(part.get("text"), str)), "")
+                    if isinstance(content, str) and content.strip():
+                        args = {**args, "description": content.strip()}
+                    break
             manager = ChatTaskManager(
                 self.db, self.user_id, self.org_id, submission_mode="apply_if_allowed",
                 idempotency_key=f"task-chat:{self.user_id}:{self.conversation_id}:{call_id}",

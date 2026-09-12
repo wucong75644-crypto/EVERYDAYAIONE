@@ -1,0 +1,20 @@
+{
+  "base_commit": "8773b8b77ed0932445b9ba8b724fa52498cdbd51",
+  "branch": "codex/task/20260911215117-tool-unification-07",
+  "working_tree_patch": true,
+  "files": {
+    "backend/services/agent/tool_executor.py": "cd1904f4c9ffcf8cb8ba0bc583cf94c9d26913df3bc7275db109378898984f46",
+    "backend/services/scheduler/chat_task_manager.py": "08eb570fdbd7ad58325d80d47812f1a8ba91c84897e7812ff56bfe01864f69c1",
+    "backend/services/scheduler/scheduled_task_change_adapter.py": "275779e8c8f58a312e987f68324284366edf42fd92e70f978fda05efb0dacc91",
+    "backend/services/scheduler/task_nl_parser.py": "3fc467edab1b3fe6102c6bd5c4441cd98714f03265dd1814642943ce8a63df19",
+    "backend/services/scheduler/task_submission.py": "e7581f90e173f4f7b4748aa4ae35b10b7b480b5e4d48710cb9afc110b73de25e",
+    "backend/tests/test_scheduled_task_form_incident.py": "db38f093299b33dbcf880332ba53a3108c938a3f2cfefb3ba9410aa51d1563e7",
+    "frontend/src/components/chat/message/FormBlock.tsx": "051689876d22555e58dd2abfe57d30b632b5e81b06d5085eb28417b39efe41d1",
+    "frontend/src/components/chat/message/__tests__/MessageContentBlocks.test.tsx": "403e63ba31a5c62d3f4fd28a3ddcc026fabd2eb2df184362e2c41a117ef80748",
+    "frontend/src/components/chat/message/__tests__/StructuredConsumers.test.tsx": "c68f53df13af311ecd4c490785b2d65881d8892fca43f2e1b27ef97202aa8c9c",
+    "frontend/src/contexts/__tests__/wsMessageHandlers.test.ts": "c3e59aff532db7158e5dcdc0f31e3f53091302c5d0cf314092d26b6bfd600648",
+    "frontend/src/schemas/__tests__/messageProtocol.test.ts": "90e4d310cda1d3485a6ad6ef137fc9700ca00650640a8bda20d54c52b7076c98",
+    "frontend/src/schemas/messageProtocol.ts": "6dbd44c99455741698ffde2924fdf38d28740ec0718f14e49f16c41c36a51317",
+    "frontend/src/test/fixtures/scheduledTaskForm.ts": "9f6c4f2086b181c7685afb23d02b2547514fd28b535020d048c5f11eb0185911"
+  }
+}

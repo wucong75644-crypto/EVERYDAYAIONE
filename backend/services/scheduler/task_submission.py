@@ -9,6 +9,15 @@ from services.changeset.risk import RiskAssessment, RiskLevel
 SUBMISSION_VERSION = "scheduled_task.submit.v1"
 
 
+def unfilled_shop_placeholder(text: str) -> bool:
+    """Only explicit template markers, never infer which real shop was intended."""
+    return bool(re.search(
+        r"(?:【\s*(?:实际店铺名|店铺名|店铺名称|指定店铺)\s*】|"
+        r"\[\s*(?:实际店铺名|店铺名|店铺名称|指定店铺)\s*\]|"
+        r"\{\s*(?:实际店铺名|店铺名|店铺名称|指定店铺)\s*\})", text,
+    ))
+
+
 def submission_receipt(row: Mapping) -> str:
     labels = {"create": "创建", "update": "修改", "pause": "暂停", "resume": "恢复", "delete": "删除"}
     action = labels.get(row.get("operation"), "变更")

@@ -413,12 +413,19 @@ class ChatTaskManager:
                 return await self._begin_request("create", {**parsed, "push_target": target, "timezone": "Asia/Shanghai"})
             form = _build_create_form(parsed, targets)
             form.update({"title": "补充任务信息", "description": f"已保留你的要求：{description}", "submit_text": "创建任务"})
+            from services.scheduler.task_submission import unfilled_shop_placeholder
+            if unfilled_shop_placeholder(description):
+                form["description"] += "。请在执行内容中将店铺占位文字替换为实际店铺名称。"
             for field in form["fields"]:
                 key = field["name"]
                 if key == "push_target":
                     field["default_value"] = json.dumps(target) if target else ""
                 elif key in parsed:
                     field["default_value"] = parsed[key]
+                elif key == "prompt":
+                    # A malformed parser response must not erase the user's
+                    # instruction; it remains visible for correction/confirmation.
+                    field["default_value"] = description
                 else:
                     field["default_value"] = [] if key == "weekdays" else ""
                 if key == "time_str":

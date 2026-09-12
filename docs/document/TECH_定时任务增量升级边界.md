@@ -189,3 +189,11 @@ ChangeSet 新增提交分支时同时更新 Python 和 SQL 的迁移规则及条
 4. 关闭 `scheduled_task_direct_enabled` 可恢复提案交互，但保留新调度 Worker。需回退旧代码时先完成在途运行并停止进程，执行 255 rollback、254 rollback 后切回基准；回退也拒绝 running，已暂停状态保持。真实 PostgreSQL 已覆盖上/下迁移和拒绝条件。
 
 停止当前运行尚未开放，需单独补全跨进程取消控制。店铺和业务时间范围继续由原任务指令及 ERP 执行边界解释；本轮不新增店铺授权模型，也不声称仅靠工具名单能证明任意指令改写等价。真实 ERP、模型表达和通知效果列入确定候选的用户生产验证。
+
+### 2026-09-12 创建表单生产复验补充
+
+上文升级已发布为 8773b8b7，254/255 已应用。随后发现 formFieldSchema 与后端既有载荷不一致：datetime-local 导致整块被丢弃，visible_when.not 被剥离。此次在前端统一协议入口补齐字段，WS 与 normalizeMessage 历史读取共用，不另设展示路径。
+
+直接 create 的 description 从当轮上下文最后一条 user 提取；UserLayer 多模态的首个 text 为完整原话，后续生成的附件引用不混入。只创建局部参数副本，不改变调用 JSON、旧 API/计划模式或引入全局请求状态。严格解析使用独立 changes/evidence/recipient 契约，失败保持可编辑原文；明确的店铺模板标记同时由补全表单和原 ChangeSet normalize 边界校验，不能扩大为全店权限。所有实际创建仍经过原授权、规划、检查和 commit 链。
+
+此次没有新迁移、停止/启动语义或通知改动；旧历史表单不改写数据，只修正读取兼容。当前修复尚未重新部署。[逐项复验证据与回退](SCHEDULED_TASK_FORM_FIX_ACCEPTANCE.md)。

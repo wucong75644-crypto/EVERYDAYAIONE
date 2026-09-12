@@ -3,8 +3,45 @@ import { describe, expect, it, vi } from 'vitest';
 import type { FormPart } from '../../../../types/message';
 import FormBlock from '../FormBlock';
 import { TableBlock } from '../TableBlock';
+import { normalizeMessage } from '../../../../utils/messageUtils';
+import { scheduledTaskForm } from '../../../../test/fixtures/scheduledTaskForm';
 
 describe('structured message consumers', () => {
+  it('does not visually default an unparsed schedule to the first option', () => {
+    const form = { ...scheduledTaskForm, fields: scheduledTaskForm.fields.map((field) => (
+      field.name === 'schedule_type' ? { ...field, default_value: '' } : field
+    )) };
+    render(<FormBlock form={form} messageId="missing-frequency" conversationId="conversation-1" />);
+    expect(screen.getByRole('combobox')).toHaveValue('');
+    expect(screen.getByRole('option', { name: '请选择' })).toHaveProperty('selected', true);
+  });
+
+  it('renders a persisted scheduled form after refresh and submits the visible schedule fields', () => {
+    const message = normalizeMessage({
+      id: 'message-date', conversation_id: 'conversation-date', role: 'assistant',
+      content: JSON.stringify([scheduledTaskForm]), status: 'completed',
+    });
+    expect(message.content).toEqual([scheduledTaskForm]);
+    const { container } = render(<FormBlock form={message.content[0] as FormPart}
+      messageId={message.id} conversationId={message.conversation_id} />);
+    expect(screen.getByText('补充任务信息')).toBeInTheDocument();
+    expect(container.querySelector('input[type="time"]')).toBeInTheDocument();
+    expect(container.querySelector('input[type="datetime-local"]')).toBeNull();
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'once' } });
+    expect(container.querySelector('input[type="time"]')).toBeNull();
+    const date = container.querySelector('input[type="datetime-local"]');
+    expect(date).toBeInTheDocument();
+    fireEvent.change(date!, { target: { value: '2099-10-01T09:00' } });
+    const submit = vi.fn();
+    window.addEventListener('chat:form-submit', submit);
+    fireEvent.click(screen.getByRole('button', { name: '创建任务' }));
+    expect(submit).toHaveBeenCalledOnce();
+    expect((submit.mock.calls[0][0] as CustomEvent).detail.formData).toMatchObject({
+      schedule_type: 'once', run_at: '2099-10-01T09:00', _submission_mode: 'apply_if_allowed',
+    });
+    window.removeEventListener('chat:form-submit', submit);
+  });
+
   it('TableBlock renders structured and circular cells without crashing', () => {
     const circular: { self?: unknown } = {};
     circular.self = circular;

@@ -1,0 +1,42 @@
+
+ RUN  v3.2.7 /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/frontend
+
+ ✓ src/schemas/__tests__/messageProtocol.test.ts (11 tests) 6ms
+stderr | src/utils/__tests__/messageUtils.test.ts > normalizeMessage > should recover structured text values as readable JSON
+[WARN] [15:46:09] [message:protocol] Structured value recovered as JSON text | messageId:msg-1, source:normalizeMessage, blockType:text
+
+stderr | src/utils/__tests__/messageUtils.test.ts > normalizeMessage > should reject unknown content block types
+[WARN] [15:46:09] [message:protocol] Invalid content block rejected | messageId:msg-1, source:normalizeMessage, blockType:unknown_block
+
+ ✓ src/utils/__tests__/messageUtils.test.ts (44 tests) 11ms
+stderr | src/components/scheduled-tasks/__tests__/ScheduledTaskPanel.test.tsx > ScheduledTaskPanel ChangeSet recovery > applies an ordinary pause in place without opening a confirmation workflow
+React does not recognize the `whileHover` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `whilehover` instead. If you accidentally passed it from a parent component, remove it from the DOM element.
+React does not recognize the `whileTap` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `whiletap` instead. If you accidentally passed it from a parent component, remove it from the DOM element.
+
+stdout | src/components/chat/message/__tests__/ChangeSetCard.test.tsx
+[DEBUG] [15:46:09] [task:restore] Hydrate complete
+
+stdout | src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx
+[DEBUG] [15:46:09] [task:restore] Hydrate complete
+
+stdout | src/components/chat/message/__tests__/StructuredConsumers.test.tsx
+[DEBUG] [15:46:09] [task:restore] Hydrate complete
+
+stdout | src/components/chat/message/__tests__/MessageContentBlocks.test.tsx
+[DEBUG] [15:46:09] [task:restore] Hydrate complete
+
+ ✓ src/components/scheduled-tasks/__tests__/ScheduledTaskPanel.test.tsx (4 tests) 154ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskCardChangeSet.test.tsx (3 tests) 90ms
+ ✓ src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx (1 test) 81ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts (78 tests) 181ms
+ ✓ src/components/chat/message/__tests__/ChangeSetCard.test.tsx (10 tests) 227ms
+ ✓ src/contexts/__tests__/WebSocketContext.test.tsx (27 tests) 130ms
+ ✓ src/components/chat/message/__tests__/StructuredConsumers.test.tsx (11 tests) 172ms
+ ✓ src/components/chat/message/__tests__/MessageContentBlocks.test.tsx (4 tests) 364ms
+   ✓ MessageContentBlocks structured diagrams > dispatches a diagram part through the dedicated structured renderer  305ms
+
+ Test Files  10 passed (10)
+      Tests  193 passed (193)
+   Start at  15:46:08
+   Duration  1.67s (transform 917ms, setup 1.68s, collect 2.93s, tests 1.42s, environment 2.49s, prepare 512ms)
+

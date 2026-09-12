@@ -2,6 +2,8 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Message } from '../../../../types/message';
 import MessageContentBlocks from '../MessageContentBlocks';
+import { normalizeMessage } from '../../../../utils/messageUtils';
+import { scheduledTaskForm } from '../../../../test/fixtures/scheduledTaskForm';
 
 vi.mock('../DiagramBlock', () => ({
   default: ({
@@ -18,6 +20,20 @@ vi.mock('../DiagramBlock', () => ({
 }));
 
 describe('MessageContentBlocks structured diagrams', () => {
+  it('shows the task form beside the completed tool step from persisted JSON', () => {
+    const message = normalizeMessage({
+      id: 'incident-message', conversation_id: 'incident-conversation', role: 'assistant', status: 'completed',
+      content: JSON.stringify([
+        { type: 'tool_step', tool_name: 'manage_scheduled_task', tool_call_id: 'incident-call', status: 'completed', output: '表单已展示' },
+        scheduledTaskForm,
+      ]),
+    });
+    render(<MessageContentBlocks message={message} imageAssets={[]} fileBlocks={[]}
+      isStreaming={false} isRegenerating={false} textContent="" onImageClick={vi.fn()} />);
+    expect(screen.getByText('补充任务信息')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '创建任务' })).toBeInTheDocument();
+  });
+
   it('dispatches a diagram part through the dedicated structured renderer', async () => {
     const message: Message = {
       id: 'message-1',

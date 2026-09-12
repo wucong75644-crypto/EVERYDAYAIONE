@@ -1,0 +1,359 @@
+
+ RUN  v3.2.7 /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/frontend
+
+ ❯ src/schemas/__tests__/messageProtocol.test.ts (11 tests | 2 failed) 11ms
+   × messageProtocol > preserves the entire scheduled form including date fields and negated visibility 5ms
+     → expected null to deeply equal { type: 'form', …(6) }
+   × messageProtocol > keeps negated visibility even when the date is already known and hidden 2ms
+     → expected { type: 'form', …(6) } to deeply equal { type: 'form', …(6) }
+   ✓ messageProtocol > keeps user images with legacy nullable metadata after refresh 1ms
+   ✓ messageProtocol > accepts every core content block family 1ms
+   ✓ messageProtocol > preserves additive fields on valid blocks 0ms
+   ✓ messageProtocol > rejects malformed known blocks without throwing 0ms
+   ✓ messageProtocol > serializes object text instead of coercing it to object Object 0ms
+   ✓ messageProtocol > rejects non-array content collections 0ms
+   ✓ messageProtocol > rejects invalid diagram formats and empty sources 0ms
+   ✓ messageProtocol > rejects oversized Mermaid source 0ms
+   ✓ messageProtocol > preserves unknown historical chart formats as readable fallback data 0ms
+stdout | src/components/chat/message/__tests__/StructuredConsumers.test.tsx
+[DEBUG] [15:41:11] [task:restore] Hydrate complete
+
+stderr | src/components/chat/message/__tests__/StructuredConsumers.test.tsx > structured message consumers > renders a persisted scheduled form after refresh and submits the visible schedule fields
+[WARN] [15:41:11] [message:protocol] Invalid content block rejected | messageId:message-date, conversationId:conversation-date, source:normalizeMessage, blockType:form
+
+ ❯ src/contexts/__tests__/wsMessageHandlers.test.ts (78 tests | 1 failed) 156ms
+   ✓ scheduled task completion projection > keeps persisted pause intent on scheduled_task_completed and refreshes authoritative state 54ms
+   ✓ scheduled task completion projection > keeps persisted pause intent on scheduled_task_failed and refreshes authoritative state 50ms
+   ✓ wsMessageHandlers > createWSMessageHandlers > should return all 14 handlers 1ms
+   ✓ wsMessageHandlers > message_start > should rebind the active stream before setting status 1ms
+   ✓ wsMessageHandlers > message_start > should ignore messages without message_id 0ms
+   ✓ wsMessageHandlers > message_start > should bind the stream before status when conversation and message are present 0ms
+   ✓ wsMessageHandlers > message_start > should ignore a late start for a locally paused message 0ms
+   ✓ wsMessageHandlers > message_chunk > should immediately flush first chunk and buffer subsequent ones 0ms
+   ✓ wsMessageHandlers > message_chunk > should accumulate subsequent chunks in buffer 1ms
+   ✓ wsMessageHandlers > message_chunk > should trigger onStreamChunk callback immediately 0ms
+   ✓ wsMessageHandlers > message_chunk > should resolve conversation from task mapping when event omits it 0ms
+   ✓ wsMessageHandlers > message_chunk > should ignore late chunks for a locally paused message 0ms
+   ✓ wsMessageHandlers > message_chunk > should accept chunks after the user explicitly resumes the same message 0ms
+   ✓ wsMessageHandlers > message_chunk > should ignore a duplicate delivery sequence 0ms
+   ✓ wsMessageHandlers > message_chunk > should flush subsequent chunks after 16ms 0ms
+   ✓ wsMessageHandlers > message_chunk > should ignore chunk without conversation_id 0ms
+   ✓ wsMessageHandlers > message_chunk > should reject object chunks instead of coercing them to object Object 0ms
+   ✓ wsMessageHandlers > message_progress > should update task progress 2ms
+   ✓ wsMessageHandlers > message_progress > should ignore without task_id 0ms
+   ✓ wsMessageHandlers > stream_end > does not mark message completed before message_done 1ms
+   ✓ wsMessageHandlers > message_done > should complete task with message data 1ms
+   ✓ wsMessageHandlers > message_done > should still updateMessage when already completed (DB data覆盖) 0ms
+   ✓ wsMessageHandlers > message_done > should trigger onComplete callback 0ms
+   ✓ wsMessageHandlers > message_done > should flush chunk buffer before completing 0ms
+   ✓ wsMessageHandlers > message_done > should handle message_done with only message_id (no task) 0ms
+   ✓ wsMessageHandlers > message_done > should keep streaming state at stream_end until message_done 0ms
+   ✓ wsMessageHandlers > message_done > projects an authoritative paused snapshot and clears streaming 1ms
+   ✓ wsMessageHandlers > message_done > should fallback to taskConversationMap for conversationId 0ms
+   ✓ wsMessageHandlers > message_done > should cleanup task subscription on done 0ms
+   ✓ wsMessageHandlers > message_error > should update message status to failed 1ms
+   ✓ wsMessageHandlers > message_error > should keep image errors as failed media content 0ms
+   ✓ wsMessageHandlers > message_error > should clear chunk buffer for failed message 0ms
+   ✓ wsMessageHandlers > message_error > should trigger onError callback 0ms
+   ✓ wsMessageHandlers > message_error > should use default error message when error is missing 0ms
+   ✓ wsMessageHandlers > credits_changed > should update user credits 0ms
+   ✓ wsMessageHandlers > credits_changed > should ignore if no user 2ms
+   ✓ wsMessageHandlers > credits_changed > should ignore if credits is undefined 0ms
+   ✓ wsMessageHandlers > subscribed > should rebind the active message before restoring a running snapshot 1ms
+   ✓ wsMessageHandlers > subscribed > should not bind a paused snapshot as an active stream 1ms
+   ✓ wsMessageHandlers > subscribed > should start a blank projection for a pending resumed task without delivery progress 0ms
+   ✓ wsMessageHandlers > subscribed > should set streaming content from accumulated 0ms
+   ✓ wsMessageHandlers > subscribed > should bind payload message_id before restoring replayed content 0ms
+   ✓ wsMessageHandlers > subscribed > should ignore a running snapshot for a locally paused message 0ms
+   ✓ wsMessageHandlers > subscribed > should not set content if no task mapping 0ms
+   ✓ wsMessageHandlers > subscribed > should not set content if accumulated is empty 0ms
+   ✓ wsMessageHandlers > subscribed > should restore blocks with remaining text when accumulated_blocks present 1ms
+   ✓ wsMessageHandlers > subscribed > should fallback to setStreamingContent when blocks is empty array 0ms
+   ✓ wsMessageHandlers > subscribed > should discard invalid restored blocks and keep valid accumulated text 1ms
+   ✓ wsMessageHandlers > subscribed > should handle blocks without accumulated text 1ms
+   ✓ wsMessageHandlers > subscribed > should project replayed tool events after the snapshot 1ms
+   × wsMessageHandlers > content_block_add > delivers the scheduled task completion form through the real protocol boundary 6ms
+     → expected "spy" to be called with arguments: [ 'conv_1', { type: 'form', …(6) } ]
+
+Number of calls: 0
+
+   ✓ wsMessageHandlers > content_block_add > should append a validated content block 1ms
+   ✓ wsMessageHandlers > content_block_add > should reject malformed content blocks before the store 1ms
+   ✓ wsMessageHandlers > content_block_add > should recover structured text before replacing the store block 1ms
+   ✓ wsMessageHandlers > content_block_add > should project a terminal tool block even when running block was missed 1ms
+   ✓ wsMessageHandlers > flushChunkBuffer > should flush all buffered chunks to store 1ms
+   ✓ wsMessageHandlers > flushChunkBuffer > should do nothing on empty buffer 1ms
+   ✓ wsMessageHandlers > flushChunkBuffer > should use appendContent fallback when no conversationId 0ms
+   ✓ wsMessageHandlers > image_partial_update > should update message content at specified image_index 1ms
+   ✓ wsMessageHandlers > image_partial_update > should handle error in partial update (failed image) 1ms
+   ✓ wsMessageHandlers > image_partial_update > should expand content array if image_index exceeds length 1ms
+   ✓ wsMessageHandlers > image_partial_update > should ignore if message not found 0ms
+   ✓ wsMessageHandlers > image_partial_update > should ignore if message_id is missing 2ms
+   ✓ wsMessageHandlers > image_partial_update > should ignore if image_index is undefined 1ms
+   ✓ wsMessageHandlers > image_partial_update > should reject malformed partial image blocks 1ms
+   ✓ wsMessageHandlers > image_partial_update > should dispatch workspace:changed when content_part has workspace_path (L3) 1ms
+   ✓ wsMessageHandlers > image_partial_update > should NOT dispatch workspace:changed when content_part has no workspace_path (legacy) 1ms
+   ✓ wsMessageHandlers > thinking_chunk > should call appendStreamingThinking with conversation_id and chunk 1ms
+   ✓ wsMessageHandlers > thinking_chunk > should handle chunk from payload.chunk fallback 1ms
+   ✓ wsMessageHandlers > thinking_chunk > should ignore when conversation_id is missing 0ms
+   ✓ wsMessageHandlers > thinking_chunk > should ignore when chunk is empty 0ms
+   ✓ wsMessageHandlers > conversation_updated > should dispatch CustomEvent and markForceRefresh 1ms
+   ✓ wsMessageHandlers > conversation_updated > should ignore when conversation_id is missing 1ms
+   ✓ wsMessageHandlers > error > should not throw on error event 2ms
+   ✓ wsMessageHandlers > suggestions_ready > should call setSuggestions with correct data 1ms
+   ✓ wsMessageHandlers > suggestions_ready > should ignore when conversation_id is missing 1ms
+   ✓ wsMessageHandlers > suggestions_ready > should ignore when suggestions is empty 1ms
+   ✓ wsMessageHandlers > suggestions_ready > should ignore when suggestions is missing 1ms
+ ❯ src/components/chat/message/__tests__/StructuredConsumers.test.tsx (10 tests | 1 failed) 133ms
+   × structured message consumers > renders a persisted scheduled form after refresh and submits the visible schedule fields 6ms
+     → expected [] to deeply equal [ { type: 'form', …(6) } ]
+   ✓ structured message consumers > TableBlock renders structured and circular cells without crashing 10ms
+   ✓ structured message consumers > TableBlock formats numeric, empty and truncated data 22ms
+   ✓ structured message consumers > TableBlock detects numeric and non-numeric string columns 2ms
+   ✓ structured message consumers > FormBlock rejects a malformed structured scalar default 22ms
+   ✓ structured message consumers > FormBlock supports every field type and conditional visibility 41ms
+   ✓ structured message consumers > FormBlock submits current values and handles success 9ms
+   ✓ structured message consumers > FormBlock renders a preflight confirmation form returned by the server 7ms
+   ✓ structured message consumers > FormBlock recovers from submit failure and supports cancellation 8ms
+   ✓ structured message consumers > FormBlock ignores a result belonging to another form and renders persisted cancellation after refresh 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > content_block_add > delivers the scheduled task completion form through the real protocol boundary
+AssertionError: expected "spy" to be called with arguments: [ 'conv_1', { type: 'form', …(6) } ]
+
+Number of calls: 0
+
+ ❯ src/contexts/__tests__/wsMessageHandlers.test.ts:931:40
+    929|         message_id: 'msg_1', conversation_id: 'conv_1', payload: { blo…
+    930|       });
+    931|       expect(store.appendContentBlock).toHaveBeenCalledWith('conv_1', …
+       |                                        ^
+    932|     });
+    933| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  src/schemas/__tests__/messageProtocol.test.ts > messageProtocol > preserves the entire scheduled form including date fields and negated visibility
+AssertionError: expected null to deeply equal { type: 'form', …(6) }
+
+- Expected: 
+{
+  "fields": [
+    {
+      "default_value": "测试日报",
+      "label": "任务名称",
+      "name": "name",
+      "type": "hidden",
+    },
+    {
+      "default_value": "汇总A店昨天销售",
+      "label": "执行内容",
+      "name": "prompt",
+      "required": true,
+      "type": "textarea",
+    },
+    {
+      "default_value": "daily",
+      "label": "执行频率",
+      "name": "schedule_type",
+      "options": [
+        {
+          "label": "每天",
+          "value": "daily",
+        },
+        {
+          "label": "仅一次",
+          "value": "once",
+        },
+      ],
+      "required": true,
+      "type": "select",
+    },
+    {
+      "default_value": "",
+      "label": "执行时间",
+      "name": "time_str",
+      "required": true,
+      "type": "time",
+      "visible_when": {
+        "field": "schedule_type",
+        "not": true,
+        "value": "once",
+      },
+    },
+    {
+      "default_value": "",
+      "label": "执行日期和时间（北京时间）",
+      "name": "run_at",
+      "required": true,
+      "type": "datetime-local",
+      "visible_when": {
+        "field": "schedule_type",
+        "value": "once",
+      },
+    },
+    {
+      "default_value": "{\"type\":\"web\",\"user_id\":\"test-user\"}",
+      "label": "推送到",
+      "name": "push_target",
+      "type": "hidden",
+    },
+    {
+      "default_value": "apply_if_allowed",
+      "label": "",
+      "name": "_submission_mode",
+      "type": "hidden",
+    },
+  ],
+  "form_id": "task-create-test",
+  "form_type": "scheduled_task_create",
+  "status": "open",
+  "submit_text": "创建任务",
+  "title": "补充任务信息",
+  "type": "form",
+}
+
++ Received: 
+null
+
+ ❯ src/schemas/__tests__/messageProtocol.test.ts:11:49
+      9| describe('messageProtocol', () => {
+     10|   it('preserves the entire scheduled form including date fields and ne…
+     11|     expect(parseContentPart(scheduledTaskForm)).toEqual(scheduledTaskF…
+       |                                                 ^
+     12|   });
+     13| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  src/schemas/__tests__/messageProtocol.test.ts > messageProtocol > keeps negated visibility even when the date is already known and hidden
+AssertionError: expected { type: 'form', …(6) } to deeply equal { type: 'form', …(6) }
+
+- Expected
++ Received
+
+@@ -36,11 +36,10 @@
+        "name": "time_str",
+        "required": true,
+        "type": "time",
+        "visible_when": {
+          "field": "schedule_type",
+-         "not": true,
+          "value": "once",
+        },
+      },
+      {
+        "default_value": "",
+
+ ❯ src/schemas/__tests__/messageProtocol.test.ts:18:36
+     16|       field.name === 'run_at' ? { ...field, type: 'hidden' } : field
+     17|     )) };
+     18|     expect(parseContentPart(form)).toEqual(form);
+       |                                    ^
+     19|   });
+     20| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  src/components/chat/message/__tests__/StructuredConsumers.test.tsx > structured message consumers > renders a persisted scheduled form after refresh and submits the visible schedule fields
+AssertionError: expected [] to deeply equal [ { type: 'form', …(6) } ]
+
+- Expected
++ Received
+
+- [
+-   {
+-     "fields": [
+-       {
+-         "default_value": "测试日报",
+-         "label": "任务名称",
+-         "name": "name",
+-         "type": "hidden",
+-       },
+-       {
+-         "default_value": "汇总A店昨天销售",
+-         "label": "执行内容",
+-         "name": "prompt",
+-         "required": true,
+-         "type": "textarea",
+-       },
+-       {
+-         "default_value": "daily",
+-         "label": "执行频率",
+-         "name": "schedule_type",
+-         "options": [
+-           {
+-             "label": "每天",
+-             "value": "daily",
+-           },
+-           {
+-             "label": "仅一次",
+-             "value": "once",
+-           },
+-         ],
+-         "required": true,
+-         "type": "select",
+-       },
+-       {
+-         "default_value": "",
+-         "label": "执行时间",
+-         "name": "time_str",
+-         "required": true,
+-         "type": "time",
+-         "visible_when": {
+-           "field": "schedule_type",
+-           "not": true,
+-           "value": "once",
+-         },
+-       },
+-       {
+-         "default_value": "",
+-         "label": "执行日期和时间（北京时间）",
+-         "name": "run_at",
+-         "required": true,
+-         "type": "datetime-local",
+-         "visible_when": {
+-           "field": "schedule_type",
+-           "value": "once",
+-         },
+-       },
+-       {
+-         "default_value": "{\"type\":\"web\",\"user_id\":\"test-user\"}",
+-         "label": "推送到",
+-         "name": "push_target",
+-         "type": "hidden",
+-       },
+-       {
+-         "default_value": "apply_if_allowed",
+-         "label": "",
+-         "name": "_submission_mode",
+-         "type": "hidden",
+-       },
+-     ],
+-     "form_id": "task-create-test",
+-     "form_type": "scheduled_task_create",
+-     "status": "open",
+-     "submit_text": "创建任务",
+-     "title": "补充任务信息",
+-     "type": "form",
+-   },
+- ]
++ []
+
+ ❯ src/components/chat/message/__tests__/StructuredConsumers.test.tsx:15:29
+     13|       content: JSON.stringify([scheduledTaskForm]), status: 'completed…
+     14|     });
+     15|     expect(message.content).toEqual([scheduledTaskForm]);
+       |                             ^
+     16|     const { container } = render(<FormBlock form={message.content[0] a…
+     17|       messageId={message.id} conversationId={message.conversation_id} …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  3 failed (3)
+      Tests  4 failed | 95 passed (99)
+   Start at  15:41:10
+   Duration  1.07s (transform 263ms, setup 713ms, collect 525ms, tests 300ms, environment 942ms, prepare 109ms)
+

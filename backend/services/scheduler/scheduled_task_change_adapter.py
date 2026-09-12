@@ -227,6 +227,10 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
             request.proposed_snapshot, request.context.base_snapshot, operation=operation,
         )
         if operation in {"create", "update"}:
+            if (request.context.policy_snapshot.get("submission") or {}).get("mode") == "apply_if_allowed":
+                from services.scheduler.task_submission import unfilled_shop_placeholder
+                if unfilled_shop_placeholder(str(value.get("prompt") or "")):
+                    raise ScheduledTaskChangeError("请将店铺占位文字替换为实际店铺名称后再提交。")
             for key in ("name", "prompt", "timezone", "push_target"):
                 if not value.get(key):
                     raise ScheduledTaskChangeError(f"定时任务缺少 {key}")
