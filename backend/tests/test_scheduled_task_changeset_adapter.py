@@ -378,3 +378,20 @@ async def test_normalize_update_merges_hidden_limits_from_current_task():
     assert result.proposed_snapshot["retry_count"] == 3
     assert result.proposed_snapshot["timeout_sec"] == 240
     assert result.proposed_snapshot["cron_expr"] == "0 9 * * *"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("frequency", [None, ""])
+async def test_missing_frequency_is_rejected_with_user_facing_message(frequency):
+    db = _Db()
+    adapter = ScheduledTaskChangeAdapter(db, user_id="u1", org_id="org1")
+    context = ChangeSetContext(
+        id="cs1", org_id="org1", resource_type="scheduled_task", resource_id="task1",
+        operation="create", base_revision="0", base_snapshot={}, proposed_snapshot={},
+        patch=(), diff={}, policy_snapshot={},
+    )
+    with pytest.raises(ScheduledTaskChangeError, match="^请选择执行频率$"):
+        await adapter.normalize(SimpleNamespace(context=context, proposed_snapshot={
+            "name": "日报", "prompt": "查询昨天付款订单数", "time_str": "08:00",
+            "schedule_type": frequency, "push_target": {"type": "wecom_user", "wecom_userid": "wx1"},
+        }))

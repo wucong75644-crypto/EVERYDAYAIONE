@@ -237,7 +237,7 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
             if not isinstance(value.get("push_target"), Mapping):
                 raise ScheduledTaskChangeError("推送目标必须是对象")
             if not value.get("schedule_type"):
-                raise ScheduledTaskChangeError("定时任务缺少 schedule_type")
+                raise ScheduledTaskChangeError("请选择执行频率")
             schedule_type = str(value["schedule_type"]).lower().strip()
             if schedule_type not in {"once", "daily", "weekly", "monthly", "cron"}:
                 raise ScheduledTaskChangeError(f"不支持的 schedule_type: {schedule_type}")

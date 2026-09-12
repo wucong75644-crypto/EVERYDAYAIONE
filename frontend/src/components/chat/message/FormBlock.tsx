@@ -30,6 +30,25 @@ import { scheduledTaskService } from '../../../services/scheduledTask';
 // 子组件
 // ════════════════════════════════════════════════════════
 
+function isFormFieldVisible(field: FormField, values: Record<string, unknown>): boolean {
+  if (!field.visible_when) return true;
+  const equal = formatFormValue(values[field.visible_when.field]) === field.visible_when.value;
+  return field.visible_when.not ? !equal : equal;
+}
+
+function requiredFieldError(fields: FormField[], values: Record<string, unknown>): string {
+  for (const field of fields) {
+    if (!field.required || field.type === 'hidden' || !isFormFieldVisible(field, values)) continue;
+    const value = values[field.name];
+    const empty = Array.isArray(value) ? value.length === 0 : !formatFormValue(value).trim();
+    if (empty) {
+      const action = field.type === 'select' || field.type === 'checkbox_group' ? '选择' : '填写';
+      return `请${action}${field.label || '必填信息'}`;
+    }
+  }
+  return '';
+}
+
 function TextField({
   field,
   value,
@@ -416,10 +435,16 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
 
   const updateField = useCallback((name: string, value: unknown) => {
     setValues((prev) => ({ ...prev, [name]: value }));
+    setFormError('');
   }, []);
 
   const handleSubmit = useCallback(() => {
     if (status !== 'open') return;
+    const validationError = requiredFieldError(form.fields, values);
+    if (validationError) {
+      setFormError(validationError);
+      return;
+    }
     setStatus('submitting');
     setFormError('');
 
@@ -435,7 +460,7 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
         },
       }),
     );
-  }, [conversationId, form.form_id, form.form_type, messageId, status, values]);
+  }, [conversationId, form.fields, form.form_id, form.form_type, messageId, status, values]);
 
   const handleCancel = useCallback(() => {
     if (status !== 'open') return;
@@ -456,11 +481,7 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
 
   // 判断字段是否可见（visible_when 联动）
   const isFieldVisible = useCallback(
-    (field: FormField) => {
-      if (!field.visible_when) return true;
-      const equal = formatFormValue(values[field.visible_when.field]) === field.visible_when.value;
-      return field.visible_when.not ? !equal : equal;
-    },
+    (field: FormField) => isFormFieldVisible(field, values),
     [values],
   );
 
@@ -501,7 +522,7 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
         onSubmit={handleSubmit} onCancel={handleCancel}
         fields={<FormFields fields={form.fields} values={values}
           isVisible={isFieldVisible} onChange={updateField} />} />
-      {formError && <p className="mx-4 mt-2 text-xs text-red-600 dark:text-red-400">{formError}</p>}
+      {formError && <p role="alert" className="mx-4 mt-2 text-xs text-red-600 dark:text-red-400">{formError}</p>}
     </>
   );
 });

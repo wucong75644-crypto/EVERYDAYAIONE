@@ -64,3 +64,18 @@ ST-20 展示的是已经保存的摘要和结构化产物，不宣称补回未�
 首轮候选 `b4f03f925d7397ec6b75fa20ae70bd845b832429`：前端已发布，后端全量 9913 passed、1 failed、37 skipped、4 xfailed，失败于 `test_scheduled_task_request_content.py::test_form_exposes_the_extracted_instruction_before_user_submits_schedule`。共用 JSON fixture 仍把 push_target 写为 hidden，与 ST-19 的 select 契约不一致。修复只更新该字段及对应测试：保留完整表单相等断言，新增目标 select/options 断言；前端由“唯一 combobox”改为分别定位频率与通知选项，测试动画层使用 DOM mock，保留可见性与提交字段检查。
 
 后端 `test_scheduled_task_request_content.py test_chat_task_manager.py` 68 passed；前端 `StructuredConsumers.test.tsx` 12 passed。生产旧候选已失效，没有进入后端同步或重启；已只读确认主要服务 active、无在途部署，发布锁所有者对应本地进程 6312 已退出，随后精确匹配该 owner 后释放锁。正在按用户原“提交部署”授权重新生成候选并完整发布，不能将首轮部分发布视为验收成功。
+
+
+## 8. ST-24：未选频率的创建请求（2026-09-12）
+
+基准为已部署 `d851d93eb47f28c0cde5f77938b2505a8322c3b9`，候选为本节对应的未提交差异。截图中“执行频率”仍为“请选择”，08:00 只是时间，不能据此推断每天执行。根因是 FormBlock.handleSubmit 未消费 required 标记，直接派发 WS 提交事件；Adapter 正确拒绝缺失频率，但报出技术字段名。没有证据表明用户已选频率后丢值，未把该情形认定为根因。
+
+| 验收编号 | 场景及预期 | 实际结果 | 状态 | 证据 |
+|---|---|---|---|---|
+| ST-24-01 | 未选频率时本地提示“请选择执行频率”，不发请求，内容/时间保留；改选后提交 | 基准两项定向复现失败，修复后真实 FormBlock 交互通过 | 通过 | StructuredConsumers.test.tsx 的 missing frequency 用例 |
+| ST-24-02 | 仅检查当前可见必填项；单次任务需日期，隐藏的每日时间不阻止；取消不受校验阻止 | 日期缺项提示、取消和已有单次提交用例通过 | 通过 | StructuredConsumers.test.tsx |
+| ST-24-03 | 绕过前端时后端仍拒绝空频率，提示用户可理解，不能补默认频率或进入创建 | None/空字符串均抛“请选择执行频率”，既有适配器和 WS 表单回归通过 | 通过 | test_scheduled_task_changeset_adapter.py |
+
+前端 30 passed、后端 86 passed，TS、本次修改组件 ESLint 与生产构建通过（保留已有大 chunk 提示）。精确命令及四个源码指纹见 [本批证据](scheduled-task-feedback-evidence/required-fields.json)。验证用合成消息和测试 DB 替身，不读取或改写生产任务、不调用真实模型、ERP 或通知。
+
+G-01～05 增补：仅恢复表单既有 required/visible_when 契约和错误文案，渲染与校验复用同一可见性判断；旧调用、隐藏字段、提交参数、服务端权限/调度/创建状态机保持原样，无迁移或新增持久化类型。可回退本次小补丁到 d851d93e；不得因此丢掉前批 ChangeSet 消息兼容补丁。本批本地行为回归通过，未部署、未用户验收，不进入 08。用户当前可先选择频率继续创建；新候选部署后再验证缺项不会发请求、补选成功以及单次日期条件。

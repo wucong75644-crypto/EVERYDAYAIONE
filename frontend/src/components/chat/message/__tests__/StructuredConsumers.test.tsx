@@ -15,6 +15,47 @@ vi.mock('framer-motion', () => ({
 }));
 
 describe('structured message consumers', () => {
+  it('keeps a missing frequency local, then submits the corrected schedule without losing input', async () => {
+    const form = { ...scheduledTaskForm, fields: scheduledTaskForm.fields.map((field) => (
+      field.name === 'schedule_type' ? { ...field, default_value: '' }
+        : field.name === 'time_str' ? { ...field, default_value: '08:00' } : field
+    )) };
+    render(<FormBlock form={form} messageId="missing-frequency-submit" conversationId="c1" />);
+    const listener = vi.fn();
+    window.addEventListener('chat:form-submit', listener);
+    try {
+      fireEvent.click(screen.getByRole('button', { name: '创建任务' }));
+      expect(listener).not.toHaveBeenCalled();
+      expect(screen.getByRole('alert')).toHaveTextContent('请选择执行频率');
+      expect(screen.getByRole('button', { name: '创建任务' })).toBeEnabled();
+      expect(screen.getByRole('textbox')).toHaveValue('汇总A店昨天销售');
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: 'daily' } });
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: '创建任务' }));
+      expect(listener).toHaveBeenCalledOnce();
+      expect((listener.mock.calls[0][0] as CustomEvent).detail.formData).toMatchObject({
+        schedule_type: 'daily', time_str: '08:00', prompt: '汇总A店昨天销售',
+      });
+    } finally { window.removeEventListener('chat:form-submit', listener); }
+  });
+
+  it('validates only visible required fields and leaves cancellation available', () => {
+    const form = { ...scheduledTaskForm, fields: scheduledTaskForm.fields.map((field) => (
+      field.name === 'schedule_type' ? { ...field, default_value: 'once' } : field
+    )) };
+    render(<FormBlock form={form} messageId="once-missing-date" conversationId="c1" />);
+    const listener = vi.fn();
+    window.addEventListener('chat:form-submit', listener);
+    try {
+      fireEvent.click(screen.getByRole('button', { name: '创建任务' }));
+      expect(listener).not.toHaveBeenCalled();
+      expect(screen.getByRole('alert')).toHaveTextContent('请填写执行日期和时间（北京时间）');
+      expect(screen.getByRole('alert')).not.toHaveTextContent('请填写执行时间');
+      fireEvent.click(screen.getByRole('button', { name: '取消' }));
+      expect((listener.mock.calls[0][0] as CustomEvent).detail).toMatchObject({ action: 'cancel', formData: {} });
+    } finally { window.removeEventListener('chat:form-submit', listener); }
+  });
+
   it('shows backend-extracted business content after refresh and submits it without the creation command', async () => {
     const message = normalizeMessage({
       id: 'task-content-message', conversation_id: 'task-content-conversation', role: 'assistant',
