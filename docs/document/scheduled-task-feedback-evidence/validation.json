@@ -35,5 +35,23 @@
     "baseline_command": "git show HEAD:frontend/src/components/scheduled-tasks/ScheduledTaskPanel.tsx | ./node_modules/.bin/eslint --stdin --stdin-filename src/components/scheduled-tasks/ScheduledTaskPanel.tsx"
   },
   "deployed": false,
-  "production_writes": false
+  "production_writes": false,
+  "release_gate_repair": {
+    "failed_commit": "b4f03f925d7397ec6b75fa20ae70bd845b832429",
+    "backend_passed": 9913,
+    "backend_failed": 1,
+    "backend_skipped": 37,
+    "backend_xfailed": 4,
+    "failure": "test_scheduled_task_request_content.py::test_form_exposes_the_extracted_instruction_before_user_submits_schedule",
+    "fix": "shared fixture notification field hidden -> select; retain full snapshot assertion and precise frontend selectors",
+    "targeted_backend": {
+      "command": "python -m pytest tests/test_scheduled_task_request_content.py tests/test_chat_task_manager.py -q",
+      "passed": 68
+    },
+    "targeted_frontend": {
+      "command": "./node_modules/.bin/vitest run src/components/chat/message/__tests__/StructuredConsumers.test.tsx",
+      "passed": 12
+    },
+    "failed_lock_recovered_after_owner_and_inflight_verification": true
+  }
 }

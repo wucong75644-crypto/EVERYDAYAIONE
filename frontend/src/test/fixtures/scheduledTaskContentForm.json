@@ -112,7 +112,7 @@
       }
     },
     {
-      "type": "hidden",
+      "type": "select",
       "name": "push_target",
       "label": "推送到",
       "required": true,

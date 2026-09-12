@@ -21,6 +21,9 @@
     "frontend/src/components/scheduled-tasks/__tests__/TaskForm.test.tsx": "59087cb9c0bbfd14dc95248cfa2e9a76308c810467e571c1383cf58e9df4a20c",
     "frontend/src/components/scheduled-tasks/__tests__/TaskRunHistory.test.tsx": "353cd5d6106f8ae79cb8d042877eb0afb665feee65a93ce8607db1beff2dd5e3",
     "frontend/src/stores/useScheduledTaskStore.ts": "875ddb7ae4e438dca059086f12be417edeb14c378950d143ca596e95a9077094",
-    "frontend/src/types/scheduledTask.ts": "66294699ca0f87edc979a7924cc9979a3b95e6cf3c0d19604d822bb6863555f5"
+    "frontend/src/types/scheduledTask.ts": "66294699ca0f87edc979a7924cc9979a3b95e6cf3c0d19604d822bb6863555f5",
+    "backend/tests/test_scheduled_task_request_content.py": "dd3e03b5d2b79d91bb6a6e3c861af1171003ca37837bc4d457fe36820330442d",
+    "frontend/src/components/chat/message/__tests__/StructuredConsumers.test.tsx": "a275a32406421f90b9015abd5adff0c9904ec9ef094db18e62776340a7251dcf",
+    "frontend/src/test/fixtures/scheduledTaskContentForm.json": "3f95b3c5d4c9bf6d6451d17daa79b733527c81574c4a474030685b729d986f3e"
   }
 }

@@ -40,6 +40,8 @@ async def test_form_exposes_the_extracted_instruction_before_user_submits_schedu
         form = await manager.handle("create", {"description": TEXT})
     submit.assert_not_awaited()
     fields = {field["name"]: field for field in form["fields"]}
+    assert fields["push_target"]["type"] == "select"
+    assert fields["push_target"]["options"] == TARGETS
     assert fields["prompt"]["type"] == "textarea"
     assert fields["prompt"]["default_value"] == BUSINESS
     assert fields["schedule_type"]["default_value"] == fields["time_str"]["default_value"] == ""

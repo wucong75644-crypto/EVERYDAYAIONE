@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { FormPart } from '../../../../types/message';
 import FormBlock from '../FormBlock';
@@ -6,9 +6,16 @@ import { TableBlock } from '../TableBlock';
 import { normalizeMessage } from '../../../../utils/messageUtils';
 import { scheduledTaskForm } from '../../../../test/fixtures/scheduledTaskForm';
 import scheduledTaskContentForm from '../../../../test/fixtures/scheduledTaskContentForm.json';
+import type { ReactNode } from 'react';
+
+// Protocol/field contract test: render content without the app's LazyMotion provider.
+vi.mock('framer-motion', () => ({
+  AnimatePresence: ({ children }: { children: ReactNode }) => children,
+  m: { div: ({ children, className }: { children: ReactNode; className?: string }) => <div className={className}>{children}</div> },
+}));
 
 describe('structured message consumers', () => {
-  it('shows backend-extracted business content after refresh and submits it without the creation command', () => {
+  it('shows backend-extracted business content after refresh and submits it without the creation command', async () => {
     const message = normalizeMessage({
       id: 'task-content-message', conversation_id: 'task-content-conversation', role: 'assistant',
       content: JSON.stringify([scheduledTaskContentForm]), status: 'completed',
@@ -17,8 +24,12 @@ describe('structured message consumers', () => {
       messageId={message.id} conversationId={message.conversation_id} />);
     expect(screen.getByRole('textbox')).toHaveValue('查询昨天的付款订单数按照平台划分');
     expect(screen.getByText(/你的原始要求：创建一个定时任务/)).toBeInTheDocument();
-    expect(screen.getByRole('combobox')).toHaveValue('');
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'daily' } });
+    const frequency = screen.getByRole('option', { name: '每天' }).closest('select')!;
+    const notification = screen.getByRole('option', { name: '推送给我（网页）' }).closest('select')!;
+    await waitFor(() => expect(notification).toBeVisible());
+    expect(JSON.parse(notification.value)).toEqual({ type: 'web', user_id: 'u1' });
+    expect(frequency).toHaveValue('');
+    fireEvent.change(frequency, { target: { value: 'daily' } });
     fireEvent.change(container.querySelector('input[type="time"]')!, { target: { value: '08:00' } });
     const listener = vi.fn();
     window.addEventListener('chat:form-submit', listener);

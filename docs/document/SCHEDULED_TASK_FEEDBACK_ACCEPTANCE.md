@@ -57,3 +57,10 @@ ST-20 展示的是已经保存的摘要和结构化产物，不宣称补回未�
 5. 删除专用测试任务：先出现待确认卡片；取消不删除，确认后显示已删除并更新列表。此前丢失的待确认请求从“待处理变更”进入，不需要重复创建删除请求。
 
 本批本地修复目标验证通过；补充 lint 原有问题保留如上。尚未部署和用户验收，不能将 07 标记用户通过或进入 08。01～07 原验收入口仍见 TOOL_UNIFICATION_HANDOFF.md，本文件是本次用户复验缺陷的增补证据。
+
+
+## 7. 提交部署门禁失败及复验（2026-09-12）
+
+首轮候选 `b4f03f925d7397ec6b75fa20ae70bd845b832429`：前端已发布，后端全量 9913 passed、1 failed、37 skipped、4 xfailed，失败于 `test_scheduled_task_request_content.py::test_form_exposes_the_extracted_instruction_before_user_submits_schedule`。共用 JSON fixture 仍把 push_target 写为 hidden，与 ST-19 的 select 契约不一致。修复只更新该字段及对应测试：保留完整表单相等断言，新增目标 select/options 断言；前端由“唯一 combobox”改为分别定位频率与通知选项，测试动画层使用 DOM mock，保留可见性与提交字段检查。
+
+后端 `test_scheduled_task_request_content.py test_chat_task_manager.py` 68 passed；前端 `StructuredConsumers.test.tsx` 12 passed。生产旧候选已失效，没有进入后端同步或重启；已只读确认主要服务 active、无在途部署，发布锁所有者对应本地进程 6312 已退出，随后精确匹配该 owner 后释放锁。正在按用户原“提交部署”授权重新生成候选并完整发布，不能将首轮部分发布视为验收成功。
