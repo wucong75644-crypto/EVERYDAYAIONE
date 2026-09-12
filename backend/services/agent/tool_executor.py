@@ -391,7 +391,16 @@ class ToolExecutor(
                 metadata={"retryable": True},
             )
 
-        manager = ChatTaskManager(self.db, self.user_id, self.org_id)
+        from services.tools.action_rules import direct_task_management
+        from services.tools.dispatcher import current_dispatch_call_id
+        call_id = current_dispatch_call_id()
+        if call_id and direct_task_management(self.tool_runtime.context()):
+            manager = ChatTaskManager(
+                self.db, self.user_id, self.org_id, submission_mode="apply_if_allowed",
+                idempotency_key=f"task-chat:{self.user_id}:{self.conversation_id}:{call_id}",
+            )
+        else:
+            manager = ChatTaskManager(self.db, self.user_id, self.org_id)
         result = await manager.handle(action, args)
 
         if result.get("type") == "form":

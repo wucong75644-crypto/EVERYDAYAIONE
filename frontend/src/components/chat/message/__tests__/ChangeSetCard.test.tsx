@@ -43,6 +43,24 @@ describe('ChangeSetCard', () => {
 
   afterEach(() => vi.clearAllMocks());
 
+  it('shows a compact human-readable receipt for an applied direct task', async () => {
+    vi.mocked(changeSetService.get).mockResolvedValue(makeChangeSet({
+      operation: 'create', status: 'applied',
+      policy_snapshot: { requires_approval: false, submission: { mode: 'apply_if_allowed' } },
+      proposed_snapshot: { name: 'A店日报', prompt: '只读A店订单', schedule_type: 'daily',
+        cron_expr: '0 9 * * *', timezone: 'Asia/Shanghai', push_target: { type: 'web', user_id: 'user-1' },
+        max_credits: 10, status: 'active' },
+    }));
+    render(<ChangeSetCard changeSetId="change-1" />);
+    expect(await screen.findByText('已创建「A店日报」。')).toBeVisible();
+    expect(screen.getByText('每天 09:00（Asia/Shanghai）')).toBeVisible();
+    expect(screen.getByText('网页通知')).toBeVisible();
+    expect(screen.getByText('10 积分')).toBeVisible();
+    expect(screen.getByText('查看检查和变更记录').closest('details')).not.toHaveAttribute('open');
+    expect(screen.queryByRole('button', { name: '确认提交' })).not.toBeInTheDocument();
+    expect(screen.queryByText('流程已结束')).not.toBeInTheDocument();
+  });
+
   it('reads the current ChangeSet and renders generic sections plus scheduled-task labels', async () => {
     render(<ChangeSetCard changeSetId="change-1" />);
 

@@ -1,8 +1,18 @@
 # 工具统一：01–07 最终代码架构
 
-更新：2026-09-11。代码基准 `ca4c3d7e6a89ef34412cf405efc2d4fb0c1350e2` 加板块 07 当前差异；状态为**技术验收通过，待提交部署及用户验收**。这份文档描述实际代码，不代表板块 08 整体验收已执行。
+更新：2026-09-12。定义统一已包含于 HEAD `75fced912ce1ee30668b1a588043b26120ee1e8d`；当前另含已授权的定时任务升级未提交差异，**本地技术验证通过，未提交部署，用户验收待完成**。当前源码依据见 [升级验收](SCHEDULED_TASK_UPGRADE_ACCEPTANCE.md)，不代表板块 08 已执行。
 
 配套：[完整目录](TOOL_UNIFICATION_CATALOG_07.md)、[逐项验收](TOOL_UNIFICATION_ACCEPTANCE_07.md)、[01–07 交接](TOOL_UNIFICATION_HANDOFF.md)、[源码与入口证据](tool-unification-evidence/07-source-checks.json)。
+
+## 09-12 增量：任务管理仍在统一运行链上
+
+工具全集、schema、参数别名、域、风险和并行元数据保持 Spec 同源。`manage_scheduled_task` 的 effects 增加 `task_definition`，如实声明获授权交互中的新副作用；`resolve_action(..., context=...)` 只在可信 interactive/model、非 plan 且开关启用时将任务修改判为 business_write。此路径串行、不缓存，任务业务确认由原 ChangeSet 负责。默认旧 helper、plan/preflight/scheduled 不获得直接管理能力。code_execute/restore_file 和无组织 ERP 原语义未变化。
+
+原两处 ToolExecutor 执行构造及 ToolLoopExecutor 保留；增加的一处仅复用 ToolRuntime 检查任务所有者的 scope，不调用 Handler。[当前入口与全部注册映射](scheduled-task-upgrade-evidence/source-checks.json)。模型调度仍由统一 Registry/Policy/Dispatcher 进入原 TaskManager，再进入同一 ChangeSet adapter.commit。
+
+迁移 254 给原 ChangeSet 状态机增加有持久化证据约束的直接提交边；迁移 255 在原任务表分开后续定时意图与本次 running 占用，原执行器完成/失败按 token 和最新意图回写。聊天仍保存已有 changeset 引用和 ToolResult v1。实际 API、快照格式、部署排空及回退要求见 [技术设计第 8 节](TECH_定时任务增量升级边界.md#8-已实现的接口与运行机制)。
+
+以下定义迁移部分及 07 历史源码证据保持原记录；“无任务提交流程变化/无数据迁移”等原 07 结论只对应 09-11 的机械迁移，当前升级以上述增量为准。legacy 仅保留业务适配、旧 API/表单/草稿、展示投影，不是独立执行权限来源。
 
 ## 定义与执行
 

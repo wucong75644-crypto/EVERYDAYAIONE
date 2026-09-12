@@ -17,7 +17,7 @@ def catalog_context(org_id, permission_mode="auto", personal_context_allowed=Tru
         personal_context_allowed=personal_context_allowed, agent_domain="general",
         permission_mode=permission_mode, execution_mode="interactive",
         feature_flags={key: getattr(settings, key, False) is True for key in (
-            "file_workspace_enabled", "sandbox_enabled", "crawler_enabled",
+            "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled",
         )},
     )
 
@@ -54,8 +54,8 @@ def executor_context(executor, *, call_id=None) -> ToolContext:
         execution_mode=executor.execution_mode, entrypoint=executor.tool_entrypoint,
         authorized_tool_names=executor.allowed_tool_names,
         authorization_snapshot=executor.tool_policy_snapshot,
-        feature_flags={name: getattr(settings, name) is True for name in (
-            "file_workspace_enabled", "sandbox_enabled", "crawler_enabled",
+        feature_flags={name: getattr(settings, name, False) is True for name in (
+            "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled",
         )},
         resource_manifest=None if manifest is None else tuple(asdict(a) for a in manifest.assets),
         resource_access=resource_boundary(executor).as_dict(),

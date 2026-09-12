@@ -718,8 +718,9 @@ async def test_execute_chat_preserves_thinking_as_structured_part(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_form_result_stops_tool_loop_before_a_second_model_turn(monkeypatch):
-    """表单已发出时，模型不得再生成与表单重复的确认文案。"""
+@pytest.mark.parametrize("terminal_attr", ["_terminal_form_pending", "_terminal_change_set_pending"])
+async def test_form_result_stops_tool_loop_before_a_second_model_turn(monkeypatch, terminal_attr):
+    """结构化操作结果发出后，不让模型再自行描述提交状态。"""
     read_turns = 0
 
     async def fake_read_turn(*_args, **_kwargs):
@@ -732,7 +733,7 @@ async def test_form_result_stops_tool_loop_before_a_second_model_turn(monkeypatc
         }], set()
 
     async def fake_execute_tools(*, handler, **_kwargs):
-        handler._terminal_form_pending = True
+        setattr(handler, terminal_attr, True)
 
     monkeypatch.setattr(
         "services.handlers.chat.execution_engine._read_turn", fake_read_turn,

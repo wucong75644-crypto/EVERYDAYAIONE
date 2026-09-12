@@ -3,7 +3,7 @@
  *
  * - 状态点 + 任务名 + cron 描述 + 推送目标
  * - 上次执行 / 下次执行
- * - hover 显示操作按钮（暂停 / 立即执行 / 编辑 / 删除）
+ * - 常驻操作按钮（暂停 / 立即执行 / 编辑 / 删除）
  * - 老板/主管视角显示 CreatorBadge
  */
 import { m, AnimatePresence } from 'framer-motion';
@@ -21,6 +21,7 @@ import { usePermission, useCanExecuteTask } from '../../hooks/usePermission';
 import { SOFT_SPRING } from '../../utils/motion';
 import { cn } from '../../utils/cn';
 import type { ScheduledTask } from '../../types/scheduledTask';
+import { ApiRequestError } from '../../services/api';
 
 interface Props {
   task: ScheduledTask;
@@ -74,10 +75,11 @@ export function TaskCard({ task, onEdit, onChangeRequested }: Props) {
   const canDelete = usePermission('task.delete', task);
   const canExecute = useCanExecuteTask(task);
 
-  const isPaused = task.status === 'paused';
+  const isPaused = task.schedule_enabled === false || task.status === 'paused' || task.status === 'error';
   const isError = task.status === 'error';
   const [pendingChange, setPendingChange] = useState(false);
   const [changeError, setChangeError] = useState('');
+  const [runningNow, setRunningNow] = useState(false);
 
   const handleToggle = async () => {
     if (!onChangeRequested || pendingChange) return;
@@ -85,8 +87,8 @@ export function TaskCard({ task, onEdit, onChangeRequested }: Props) {
     try {
       setChangeError('');
       await onChangeRequested(isPaused ? 'resume' : 'pause', task);
-    } catch {
-      setChangeError('暂时无法生成变更方案，请稍后重试。');
+    } catch (error) {
+      setChangeError(error instanceof ApiRequestError ? error.message : '暂时无法生成变更方案，请稍后重试。');
     } finally {
       setPendingChange(false);
     }
@@ -106,7 +108,14 @@ export function TaskCard({ task, onEdit, onChangeRequested }: Props) {
   };
 
   const handleRunNow = async () => {
-    await runTaskNow(task.id);
+    if (runningNow) return;
+    setRunningNow(true);
+    setChangeError('');
+    try {
+      if (!await runTaskNow(task.id)) setChangeError('本次运行未启动，请刷新任务状态后重试。');
+    } finally {
+      setRunningNow(false);
+    }
   };
 
   const handleToggleExpand = (e: React.MouseEvent) => {
@@ -164,6 +173,9 @@ export function TaskCard({ task, onEdit, onChangeRequested }: Props) {
               )}
 
               {/* 下次执行 */}
+              {task.status === 'running' && <p className="text-xs text-[var(--s-text-secondary)] mt-1">
+                {isPaused ? '本次执行中 · 后续定时已暂停' : '本次执行中 · 定时已启用'}
+              </p>}
               {task.next_run_at && task.status === 'active' && (
                 <p className="text-xs text-[var(--s-text-tertiary)] mt-1 flex items-center gap-1">
                   <Clock className="w-3 h-3" />
@@ -190,15 +202,16 @@ export function TaskCard({ task, onEdit, onChangeRequested }: Props) {
           </m.div>
 
           {/* 操作按钮（hover 显示） */}
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            {canExecute && task.status === 'active' && (
+          <div className="flex items-center gap-1">
+            {canExecute && task.status !== 'running' && (
               <Button
                 variant="ghost"
                 size="sm"
                 icon={<Play className="w-3.5 h-3.5" />}
                 onClick={handleRunNow}
+                disabled={runningNow}
                 aria-label="立即执行"
-                title="立即执行"
+                title={isPaused ? '运行一次，保持定时暂停' : '立即执行'}
               />
             )}
             {canEdit && (
@@ -209,7 +222,7 @@ export function TaskCard({ task, onEdit, onChangeRequested }: Props) {
                 onClick={handleToggle}
                 disabled={pendingChange}
                 aria-label={isPaused ? '恢复' : '暂停'}
-                title={isPaused ? '生成恢复方案' : '生成暂停方案'}
+                title={isPaused ? '恢复后续定时' : '暂停后续定时'}
               />
             )}
             {canEdit && onEdit && (

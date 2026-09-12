@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from contextvars import ContextVar
 from typing import Any, Mapping, Protocol
 
 from .policy import ToolCall, ToolDecision
 from .spec import ToolSpec, thaw
+
+
+_dispatch_call_id: ContextVar[str | None] = ContextVar("tool_dispatch_call_id", default=None)
+
+
+def current_dispatch_call_id() -> str | None:
+    """Invocation identity for legacy adapters; scoped across awaits, reset on exit."""
+    return _dispatch_call_id.get()
 
 
 class ToolHandler(Protocol):
@@ -50,4 +59,8 @@ class ToolDispatcher:
         if handler is None:
             raise ValueError(f"Unknown sync tool: {approved.call.name}")
         approved.state.handler_started = True
-        return await handler(thaw(approved.call.arguments))
+        token = _dispatch_call_id.set(approved.call.call_id)
+        try:
+            return await handler(thaw(approved.call.arguments))
+        finally:
+            _dispatch_call_id.reset(token)

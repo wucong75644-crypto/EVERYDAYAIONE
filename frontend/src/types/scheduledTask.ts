@@ -63,6 +63,7 @@ export interface ScheduledTask {
   template_file?: TemplateFile | null;
 
   status: TaskStatus;
+  schedule_enabled?: boolean;
   max_credits: number;
   retry_count: number;
   timeout_sec: number;
@@ -90,6 +91,7 @@ export interface ScheduledTaskChangeRequest {
   task_id?: string;
   definition?: Record<string, unknown>;
   idempotency_key?: string;
+  submission_mode?: 'proposal' | 'apply_if_allowed';
   /** 聊天表单的持久化引用定位，不承载 ChangeSet 状态。 */
   message_id?: string;
   conversation_id?: string;
@@ -186,6 +188,9 @@ export interface UpdateTaskDto {
 }
 
 export interface ParseNLResult {
+  missing_fields?: string[];
+  recipient?: string;
+  output_format?: string;
   name: string;
   prompt: string;
   schedule_type: ScheduleType;

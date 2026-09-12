@@ -1,0 +1,592 @@
+{
+  "base": "75fced912ce1ee30668b1a588043b26120ee1e8d",
+  "head": "75fced912ce1ee30668b1a588043b26120ee1e8d",
+  "branch": "codex/task/20260911215117-tool-unification-07",
+  "tested_version": "HEAD plus the source fingerprints and implementation.patch; not yet a release candidate",
+  "registered": 35,
+  "public": 33,
+  "handler_only": 2,
+  "coverage_issues": [],
+  "inventory": [
+    {
+      "name": "erp_info_query",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "erp_info_query",
+      "schema_variants": []
+    },
+    {
+      "name": "erp_product_query",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "erp_product_query",
+      "schema_variants": []
+    },
+    {
+      "name": "erp_trade_query",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "erp_trade_query",
+      "schema_variants": []
+    },
+    {
+      "name": "erp_aftersales_query",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "erp_aftersales_query",
+      "schema_variants": []
+    },
+    {
+      "name": "erp_warehouse_query",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "erp_warehouse_query",
+      "schema_variants": []
+    },
+    {
+      "name": "erp_purchase_query",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "erp_purchase_query",
+      "schema_variants": []
+    },
+    {
+      "name": "erp_taobao_query",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "erp_taobao_query",
+      "schema_variants": []
+    },
+    {
+      "name": "erp_execute",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "dangerous",
+      "parallel": false,
+      "cacheable": false,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "erp_execute",
+      "schema_variants": []
+    },
+    {
+      "name": "local_data",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "local_data",
+      "schema_variants": []
+    },
+    {
+      "name": "local_product_stats",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "local_product_stats",
+      "schema_variants": []
+    },
+    {
+      "name": "local_stock_query",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "local_stock_query",
+      "schema_variants": []
+    },
+    {
+      "name": "local_product_identify",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "local_product_identify",
+      "schema_variants": []
+    },
+    {
+      "name": "local_platform_map_query",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "local_platform_map_query",
+      "schema_variants": []
+    },
+    {
+      "name": "local_compare_stats",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "local_compare_stats",
+      "schema_variants": []
+    },
+    {
+      "name": "local_shop_list",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "local_shop_list",
+      "schema_variants": []
+    },
+    {
+      "name": "local_warehouse_list",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "local_warehouse_list",
+      "schema_variants": []
+    },
+    {
+      "name": "local_supplier_list",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "local_supplier_list",
+      "schema_variants": []
+    },
+    {
+      "name": "trigger_erp_sync",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "dangerous",
+      "parallel": false,
+      "cacheable": false,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "trigger_erp_sync",
+      "schema_variants": []
+    },
+    {
+      "name": "social_crawler",
+      "source": "services.tools.definitions.general.build_specs",
+      "domain": "general",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "social_crawler",
+      "schema_variants": []
+    },
+    {
+      "name": "file_search",
+      "source": "services.tools.definitions.file_sandbox.build_specs",
+      "domain": "general",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "file_index"
+      ],
+      "exposure": "public",
+      "handler": "file_search",
+      "schema_variants": []
+    },
+    {
+      "name": "file_analyze",
+      "source": "services.tools.definitions.file_sandbox.build_specs",
+      "domain": "general",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "workspace_artifacts",
+        "file_index"
+      ],
+      "exposure": "public",
+      "handler": "file_analyze",
+      "schema_variants": []
+    },
+    {
+      "name": "file_delete",
+      "source": "services.tools.definitions.file_sandbox.build_specs",
+      "domain": "general",
+      "risk": "dangerous",
+      "parallel": false,
+      "cacheable": false,
+      "effects": [
+        "workspace_delete",
+        "deletion_record"
+      ],
+      "exposure": "public",
+      "handler": "file_delete",
+      "schema_variants": []
+    },
+    {
+      "name": "restore_file",
+      "source": "services.tools.definitions.file_sandbox.build_specs",
+      "domain": "general",
+      "risk": "safe",
+      "parallel": false,
+      "cacheable": false,
+      "effects": [
+        "workspace_write",
+        "deletion_record"
+      ],
+      "exposure": "public",
+      "handler": "restore_file",
+      "schema_variants": []
+    },
+    {
+      "name": "code_execute",
+      "source": "services.tools.definitions.file_sandbox.build_specs",
+      "domain": "shared",
+      "risk": "confirm",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "kernel_state",
+        "workspace_artifacts"
+      ],
+      "exposure": "public",
+      "handler": "code_execute",
+      "schema_variants": []
+    },
+    {
+      "name": "erp_agent",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "general",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "erp_agent",
+      "schema_variants": []
+    },
+    {
+      "name": "erp_analyze",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "general",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "erp_analyze",
+      "schema_variants": []
+    },
+    {
+      "name": "erp_api_search",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "erp_api_search",
+      "schema_variants": [
+        "erp_search"
+      ]
+    },
+    {
+      "name": "search_knowledge",
+      "source": "services.tools.definitions.general.build_specs",
+      "domain": "general",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "none"
+      ],
+      "exposure": "public",
+      "handler": "search_knowledge",
+      "schema_variants": []
+    },
+    {
+      "name": "web_search",
+      "source": "services.tools.definitions.general.build_specs",
+      "domain": "general",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "web_search",
+      "schema_variants": []
+    },
+    {
+      "name": "generate_image",
+      "source": "services.tools.definitions.media.build_specs",
+      "domain": "general",
+      "risk": "confirm",
+      "parallel": false,
+      "cacheable": false,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "generate_image",
+      "schema_variants": []
+    },
+    {
+      "name": "generate_video",
+      "source": "services.tools.definitions.media.build_specs",
+      "domain": "general",
+      "risk": "confirm",
+      "parallel": false,
+      "cacheable": false,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "generate_video",
+      "schema_variants": []
+    },
+    {
+      "name": "image_agent",
+      "source": "services.tools.definitions.media.build_specs",
+      "domain": "general",
+      "risk": "confirm",
+      "parallel": false,
+      "cacheable": false,
+      "effects": [
+        "unknown"
+      ],
+      "exposure": "public",
+      "handler": "image_agent",
+      "schema_variants": []
+    },
+    {
+      "name": "manage_scheduled_task",
+      "source": "services.tools.definitions.task.build_specs",
+      "domain": "general",
+      "risk": "safe",
+      "parallel": true,
+      "cacheable": true,
+      "effects": [
+        "proposal_or_form",
+        "task_definition"
+      ],
+      "exposure": "public",
+      "handler": "manage_scheduled_task",
+      "schema_variants": []
+    },
+    {
+      "name": "fetch_all_pages",
+      "source": "services.tools.definitions.erp.build_specs",
+      "domain": "erp",
+      "risk": "safe",
+      "parallel": false,
+      "cacheable": false,
+      "effects": [
+        "workspace_artifacts",
+        "file_index"
+      ],
+      "exposure": "legacy_internal",
+      "handler": "fetch_all_pages",
+      "schema_variants": []
+    },
+    {
+      "name": "get_conversation_context",
+      "source": "services.tools.definitions.general.build_specs",
+      "domain": "general",
+      "risk": "safe",
+      "parallel": false,
+      "cacheable": false,
+      "effects": [
+        "none"
+      ],
+      "exposure": "legacy_internal",
+      "handler": "get_conversation_context",
+      "schema_variants": []
+    }
+  ],
+  "production_constructors": [
+    {
+      "path": "backend/services/scheduler/scheduled_task_change_adapter.py",
+      "line": 438,
+      "constructor": "ToolExecutor"
+    },
+    {
+      "path": "backend/services/agent/scheduled_task_agent.py",
+      "line": 314,
+      "constructor": "ToolLoopExecutor"
+    },
+    {
+      "path": "backend/services/agent/scheduled_task_agent.py",
+      "line": 147,
+      "constructor": "ToolExecutor"
+    },
+    {
+      "path": "backend/services/handlers/chat_tool_mixin.py",
+      "line": 116,
+      "constructor": "ToolExecutor"
+    }
+  ],
+  "protected_sources_unchanged": [
+    "backend/services/kuaimai/",
+    "backend/services/sandbox/",
+    "backend/services/media_tool_executor.py",
+    "backend/services/agent/scheduled_task_agent.py",
+    "backend/services/scheduler/scheduled_task_workflow.py",
+    "backend/services/scheduler/delivery_worker.py",
+    "backend/services/agent/tool_result_cache.py",
+    "backend/config/tool_registry.py",
+    "backend/services/agent/tool_selector.py"
+  ],
+  "source_sha256": {
+    "backend/api/routes/scheduled_tasks.py": "45128c7f0f67e53d299a3186f91910b2013c79b50a470efa1fa8a5c94c8f5728",
+    "backend/core/config.py": "c8d791ebc7b470315eae2d9a32c5c300a2bf008219a881f1b653c716538a7995",
+    "backend/migrations/254_scheduled_task_direct_submission.sql": "221104f465ce627e74e4e07611f138204080068422ca6b56a18e11b2c2935c23",
+    "backend/migrations/255_scheduled_task_schedule_intent.sql": "17890b2c892f32f9c201ec5e5f4eae97b088468aaa878a691ab18dbf18fd2eed",
+    "backend/migrations/rollback/254_scheduled_task_direct_submission_rollback.sql": "bbace13597d193d444a1745640e1f21192e2580f5c3209616f90d17e67377e63",
+    "backend/migrations/rollback/255_scheduled_task_schedule_intent_rollback.sql": "517fb2b8a765d1e858655774fc3f291f8907b126b759f3a2f0414af6162bbbae",
+    "backend/services/agent/tool_executor.py": "f877c9374f15cab8522692cef4f8c50a04315fd21c75674ec03e92df44df884c",
+    "backend/services/changeset/service.py": "acda123b1a23d10b0f8ab345bccf95544d39e100072fcb7fbccd0033e5fc24e3",
+    "backend/services/changeset/state_machine.py": "1b980c1bd0c668dde4d0a4ea87b960c4e8db2fac068a1702bb984054d6087875",
+    "backend/services/handlers/chat/execution_engine.py": "9a76064317a3d3908b94aa216ce01717c8d44f155d997a690ee66fb1a54fc5a6",
+    "backend/services/handlers/chat_tool_result_mixin.py": "01ad34742f66db8a2d43d97f077898a2b0a4932f2c7e1af042e613be9a955f8d",
+    "backend/services/scheduler/chat_task_manager.py": "cde907e9f6de4b42445efc4b61ae765c06b141e7153d50b999c1d35a7c4c34e0",
+    "backend/services/scheduler/scanner.py": "156870d8777cb8f304ab26c6716788d9979c634d76105c65f68236c0c910510c",
+    "backend/services/scheduler/scheduled_task_change_adapter.py": "d3b1067443e3a96f6fd8a160e2fd5c0c2cb083c572c99905f4f8c4a19752e540",
+    "backend/services/scheduler/task_executor.py": "5e5c653000b75d6e02ac38955885a7332b4e138b7c98b61a282357c210375b52",
+    "backend/services/scheduler/task_nl_parser.py": "5bc285f2a3448ac558971826551274282c1426fbc6d9b8457671c4a08a848333",
+    "backend/services/scheduler/task_submission.py": "77f21ebd0027294081cb156827d4d8957ebb2cfd38b3311b875ff6a11917bac8",
+    "backend/services/tools/action_rules.py": "e33bbcc50ec8b0529d5328cbf72a423c5a7aec2582ec809e455d24c76f64938a",
+    "backend/services/tools/definitions/task.py": "0b9a1333980866a5f31b4b434c8e35c0f0d73f4a238269ff7d03bc948039b4a2",
+    "backend/services/tools/dispatcher.py": "6afefa956d27ad0d4d5d66f7281528f11a6d0d7db30288e51763fa8d4dd62ec0",
+    "backend/services/tools/policy.py": "c46725073c832450b141e959d4e65e87561baf51a167d4c93529e22c1ec5855b",
+    "backend/services/tools/runtime_context.py": "4cd3d611efc87674c1871826856b2c0cbaf53ffebea481e25f1ee82ec4c6dd70",
+    "backend/tests/test_chat_execution_engine.py": "4d2a051ae8dc3a0462a663b5842aa6abbd5fce406cd1d819f6cbfb540e9d2650",
+    "backend/tests/test_scheduled_task_changeset_adapter.py": "b232c6f2f2ff9f93866e8d91fab7a187785e91cdf8795be07cfcde002b93ae8d",
+    "backend/tests/test_scheduled_task_chat_results.py": "a0966a6d28d40ccb3d8b96ec2ba33b780f5fdab247a39c52505019c6a8f887d1",
+    "backend/tests/test_scheduled_task_deploy_drain.py": "3ab36f75f3397ad69159ea3f4064f6745c4ccb71a174c437d4582af358202544",
+    "backend/tests/test_scheduled_task_direct_submission.py": "66a5570a855fcefab27713283ff8b1a15bef4ec1f2d298348fb6e361743bca32",
+    "backend/tests/test_scheduled_task_simplified_creation.py": "d911a36902eee1a203f17b4534298a8d403610ee1aa7bb5c51963e36fb3afd46",
+    "backend/tests/test_scheduled_task_upgrade_postgres.py": "176e0768c62e1a717b0314422da688de3c851e402859b117cb65b3f5f7e9ae8f",
+    "backend/tests/test_tool_definitions_07.py": "767c13174a0268a7c05bb7a5869887a1c09af646ed16a67a7d455b7934168b7d",
+    "deploy/deploy.sh": "a554e99745bc44cc9052c5f26eb5aa4a071550985e15ca2bb88e3b3f291c301f",
+    "deploy/scheduled-task-drain.py": "0c2a6a39506fb8606bbd5b54bca74d7e1a6c7ab35889fac054a129efe0281331",
+    "frontend/src/components/chat/message/ChangeSetCard.tsx": "b16f9343b7ce49218ee8de5f5952f77b2284c63bff34c9a46877eb31d8384ca6",
+    "frontend/src/components/chat/message/FormBlock.tsx": "14f4c41a278563f721ab388b436065d0d5ac4a528fe091d85ec4477514459f70",
+    "frontend/src/components/chat/message/__tests__/ChangeSetCard.test.tsx": "492da59fd539795914738d34d10cfc89b0e3b38f63c0e3300967e184c5de86b9",
+    "frontend/src/components/chat/message/changeSetResourceAdapters.ts": "814285c03286e2b3443ebd368c94c2456a0b3e162839c9f2422fce982e4cdcc3",
+    "frontend/src/components/scheduled-tasks/ScheduledTaskPanel.tsx": "b11ae50907d4b3ab6dc4c031d3496c38d9d6f95ee825a4babe904158ce190ae4",
+    "frontend/src/components/scheduled-tasks/TaskCard.tsx": "6ac2d7ccacfb6b90755d50b96a05b667c9bf191b7325f2009ef34b9cc3b9485f",
+    "frontend/src/components/scheduled-tasks/TaskForm.tsx": "aa5ce08fc7b28f7a696b240e8cdeb03be96d57e2ea0223cce38925afe72a36cb",
+    "frontend/src/components/scheduled-tasks/__tests__/ScheduledTaskPanel.test.tsx": "ffd6be5835c30fd76118da00cb801e48dad6448d3c873086c3c903cd66834a0b",
+    "frontend/src/components/scheduled-tasks/__tests__/TaskCardChangeSet.test.tsx": "46f32f5f950107dbb2fbfca336b5c058d3cac555a5f3d323d3b5029be68790e5",
+    "frontend/src/contexts/__tests__/wsMessageHandlers.test.ts": "083ead693f47e06ca2f95ac15c7a39d36c7760d9d2463504c4b6bfcb05cb12a2",
+    "frontend/src/contexts/wsMessageHandlers.ts": "d2d1951caee5daafe42a3c667d3c8e17b38f50f38e67351c62e07a405ff4c9fe",
+    "frontend/src/services/scheduledTask.ts": "1a12d7bc813a5e40d2b56d6fca74f08c66362b03715b7bb9b6f5b0bca204f26f",
+    "frontend/src/types/message.ts": "31e19e09d49e7528b38d3264feed1d3b78cbc6cf2a4a840fe0fde37e9fc5985e",
+    "frontend/src/types/scheduledTask.ts": "154cea3c5870cb74c917677bb01378bea20886fa4b4863c28359fac741c72314"
+  },
+  "patch_sha256": "989c294dcb33e5a62882197f19b2a2acd4c3378e47fc755f589c9cab07df278c"
+}

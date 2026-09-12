@@ -1,0 +1,25 @@
+
+ RUN  v3.2.7 /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/frontend
+
+stderr | src/components/scheduled-tasks/__tests__/ScheduledTaskPanel.test.tsx > ScheduledTaskPanel ChangeSet recovery > applies an ordinary pause in place without opening a confirmation workflow
+React does not recognize the `whileHover` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `whilehover` instead. If you accidentally passed it from a parent component, remove it from the DOM element.
+React does not recognize the `whileTap` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `whiletap` instead. If you accidentally passed it from a parent component, remove it from the DOM element.
+
+stdout | src/components/chat/message/__tests__/ChangeSetCard.test.tsx
+[DEBUG] [14:19:42] [task:restore] Hydrate complete
+
+stdout | src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx
+[DEBUG] [14:19:42] [task:restore] Hydrate complete
+
+ ✓ src/components/scheduled-tasks/__tests__/TaskCardChangeSet.test.tsx (3 tests) 82ms
+ ✓ src/components/scheduled-tasks/__tests__/ScheduledTaskPanel.test.tsx (4 tests) 138ms
+ ✓ src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx (1 test) 46ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts (77 tests) 156ms
+ ✓ src/contexts/__tests__/WebSocketContext.test.tsx (27 tests) 108ms
+ ✓ src/components/chat/message/__tests__/ChangeSetCard.test.tsx (10 tests) 183ms
+
+ Test Files  6 passed (6)
+      Tests  122 passed (122)
+   Start at  14:19:41
+   Duration  1.01s (transform 505ms, setup 1.20s, collect 1.24s, tests 713ms, environment 1.60s, prepare 206ms)
+

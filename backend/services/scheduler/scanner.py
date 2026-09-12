@@ -132,12 +132,12 @@ class ScheduledTaskScanner:
 
         try:
             cutoff = (now - _STALE_RUNNING_THRESHOLD).isoformat()
-            # 找卡死任务：status=running 且 last_run_at 早于阈值（或为空）
+            # 按认领时间恢复；暂停/恢复产生的 updated_at 不能延长运行租期。
             result = (
                 self.db.table("scheduled_tasks")
-                .select("id, cron_expr, timezone, schedule_type")
+                .select("id, org_id, cron_expr, timezone, schedule_type, run_token, claimed_at")
                 .eq("status", "running")
-                .lt("updated_at", cutoff)
+                .lt("claimed_at", cutoff)
                 .execute()
             )
             stale = list(result.data or [])
@@ -158,6 +158,18 @@ class ScheduledTaskScanner:
                 else:
                     next_run = calc_next_run(cron_expr, tz) if cron_expr else None
                     new_status = "active"
+
+                if task.get("run_token"):
+                    response = self.db.rpc("finish_scheduled_task_failure", {
+                        "p_task_id": task_id, "p_org_id": task["org_id"], "p_run_id": task["run_token"],
+                        "p_update": {"status": new_status, "next_run_at": next_run.isoformat() if next_run else None},
+                        "p_error": "进程异常退出，任务自动恢复", "p_tokens": 0, "p_duration": 0,
+                        "p_stale_before": cutoff,
+                    }).execute()
+                    receipt = response.data if response else None
+                    if isinstance(receipt, dict) and receipt.get("outcome") == "finished":
+                        logger.warning(f"ScheduledTaskScanner recovered | task={task_id} | status={receipt['status']}")
+                    continue
 
                 self.db.table("scheduled_tasks").update({
                     "status": new_status,

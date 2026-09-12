@@ -19,6 +19,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createWSMessageHandlers, flushChunkBuffer, type HandlerDeps, type MessageStoreActions } from '../wsMessageHandlers';
 
+const scheduledStore = vi.hoisted(() => ({ optimisticUpdate: vi.fn(), fetchRuns: vi.fn(), fetchTasks: vi.fn() }));
+vi.mock('../../stores/useScheduledTaskStore', () => ({ useScheduledTaskStore: { getState: () => scheduledStore } }));
+
 // Mock 外部依赖
 vi.mock('../../stores/useMessageStore', () => ({
   useMessageStore: vi.fn(),
@@ -109,6 +112,20 @@ function createMockDeps(store: MessageStoreActions): HandlerDeps {
 // ============================================================
 // 测试套件
 // ============================================================
+
+describe('scheduled task completion projection', () => {
+  it.each(['scheduled_task_completed', 'scheduled_task_failed'] as const)('keeps persisted pause intent on %s and refreshes authoritative state', async (event) => {
+    vi.clearAllMocks();
+    const handlers = createWSMessageHandlers(createMockDeps(createMockStore()));
+    handlers[event]({ type: event, data: { task_id: 'task-1', status: event === 'scheduled_task_completed' ? 'success' : 'failed',
+      task_status: 'paused', schedule_enabled: false, next_run_at: null } });
+    await vi.waitFor(() => expect(scheduledStore.optimisticUpdate).toHaveBeenCalledWith('task-1', expect.objectContaining({
+      status: 'paused', schedule_enabled: false, next_run_at: null,
+    })));
+    expect(scheduledStore.fetchTasks).toHaveBeenCalledOnce();
+    expect(scheduledStore.fetchRuns).toHaveBeenCalledWith('task-1');
+  });
+});
 
 describe('wsMessageHandlers', () => {
   let store: MessageStoreActions;

@@ -47,6 +47,10 @@ def test_full_spec_contract_unchanged(catalog, name):
     actual = plain(catalog.require(name))
     for key, value in original.items():
         if key not in {'source', 'definition_kind'}:
+            if name == 'manage_scheduled_task' and key == 'effects':
+                # User-authorized lifecycle upgrade after block 07: trusted chat
+                # can now submit task definitions. Keep the frozen 07 baseline.
+                value = [*value, 'task_definition']
             assert actual[key] == value, (name, key)
 
 

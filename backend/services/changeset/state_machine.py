@@ -39,7 +39,7 @@ ALLOWED_TRANSITIONS: dict[ChangeSetStatus, FrozenSet[ChangeSetStatus]] = {
         ChangeSetStatus.EXPIRED, ChangeSetStatus.CONFLICTED,
     }),
     ChangeSetStatus.PREFLIGHTING: frozenset({
-        ChangeSetStatus.AWAITING_APPROVAL, ChangeSetStatus.REJECTED,
+        ChangeSetStatus.AWAITING_APPROVAL, ChangeSetStatus.COMMITTING, ChangeSetStatus.REJECTED,
         ChangeSetStatus.FAILED, ChangeSetStatus.CANCELLED,
         ChangeSetStatus.EXPIRED, ChangeSetStatus.CONFLICTED,
     }),

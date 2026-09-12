@@ -84,13 +84,13 @@ def _extract_json(text: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-async def _call_llm(text: str, tz: str) -> Optional[Dict[str, Any]]:
+async def _call_llm(text: str, tz: str, *, system_prompt: str | None = None) -> Optional[Dict[str, Any]]:
     """调 qwen-turbo 解析，失败返回 None"""
     if not settings.dashscope_api_key:
         return None
 
     now_local = datetime.now(ZoneInfo(tz))
-    system_prompt = NL_PARSER_SYSTEM_PROMPT
+    system_prompt = system_prompt or NL_PARSER_SYSTEM_PROMPT
     user_prompt = (
         f"当前时间: {now_local.strftime('%Y-%m-%d %H:%M %z')}\n"
         f"输入: {text.strip()}"
@@ -171,3 +171,48 @@ async def parse_task_nl(text: str, tz: str = "Asia/Shanghai") -> Dict[str, Any]:
         return parsed
 
     return _fallback(text)
+
+
+async def parse_task_request(text: str, tz: str = "Asia/Shanghai", *, operation: str = "create") -> Dict[str, Any]:
+    """Explicit fields only for direct submission; old form-prefill API stays intact."""
+    prompt = NL_PARSER_SYSTEM_PROMPT + f"""
+本次操作：{operation}。这是实际提交前解析，不允许补默认频率、时间、店铺或收件人。
+输出 {{"changes": {{...}}, "evidence": {{字段名: "输入中的原文片段"}}, "recipient": "原文收件人描述或空字符串"}}。
+changes 仅包含用户明确提供的字段；每个字段都须有 evidence，直接引用输入原文。
+create 可以提炼 name，缺少执行内容则不要填 prompt；不要把仅有时间的句子当执行内容。
+update 只返回用户明确要求修改的字段。改时间绝不生成新 name 或 prompt，未提到频率则不改变频率。
+update 仅改变输出形式时，请返回 output_format（表格/列表/项目符号/文字/Markdown表格/CSV），不要改写 prompt。
+weekdays 必须逐一来自原文，时间含糊则不填 time_str，once 缺少具体日期则不填 run_at。
+收件人未说明则 recipient 为空；说了群、同事、企微等则完整保留在 recipient 中，不能改为自己。
+"""
+    raw = await _call_llm(text, tz, system_prompt=prompt)
+    raw = raw if isinstance(raw, dict) else {}
+    changes, evidence = raw.get("changes"), raw.get("evidence")
+    changes = changes if isinstance(changes, dict) else {}
+    evidence = evidence if isinstance(evidence, dict) else {}
+    allowed = {"name", "prompt", "schedule_type", "time_str", "weekdays", "day_of_month", "run_at", "output_format"}
+    accepted = {k: v for k, v in changes.items() if k in allowed and v not in (None, "") and (
+        operation == "create" and k == "name" or isinstance(evidence.get(k), str)
+        and bool(evidence[k].strip()) and evidence[k] in text
+    )}
+    if accepted.get("time_str") and not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", str(accepted["time_str"])):
+        accepted.pop("time_str")
+    if accepted.get("schedule_type") not in {None, "once", "daily", "weekly", "monthly"}:
+        accepted.pop("schedule_type")
+    if accepted.get("output_format") not in {None, "表格", "列表", "项目符号", "文字", "Markdown表格", "CSV"}:
+        accepted.pop("output_format")
+    if operation == "create":
+        if accepted.get("prompt"):
+            # The original request is authoritative for shop/data/content scope.
+            accepted["prompt"] = text.strip()
+        accepted.setdefault("name", (accepted.get("prompt") or "新建任务")[:20])
+    kind = accepted.get("schedule_type")
+    required = ["prompt", "schedule_type"] + ([] if kind == "once" else ["time_str"]) if operation == "create" else []
+    required += {"once": ["run_at"], "weekly": ["weekdays"], "monthly": ["day_of_month"]}.get(kind, [])
+    missing = [key for key in required if not accepted.get(key)]
+    recipient = raw.get("recipient") if isinstance(raw.get("recipient"), str) else ""
+    # A parser omission must not silently redirect a requested group/person to self.
+    if not recipient and re.search(r"群|同事|企微|微信|钉钉|飞书|发送到|推送到|发给(?!我)|推送给(?!我)", text):
+        recipient = text
+    return {"changes": accepted, "missing_fields": missing, "recipient": recipient,
+            "parsed": bool(raw)}

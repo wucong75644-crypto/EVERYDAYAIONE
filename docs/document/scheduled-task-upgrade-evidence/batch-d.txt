@@ -1,0 +1,17 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-8.3.4, pluggy-1.6.0
+rootdir: /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/backend
+configfile: pytest.ini
+plugins: anyio-4.12.1, asyncio-0.25.2, cov-7.1.0, time-machine-2.14.1
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=function
+collected 104 items
+
+tests/test_scheduled_task_simplified_creation.py .......                 [  6%]
+tests/test_chat_task_manager.py ........................................ [ 45%]
+........                                                                 [ 52%]
+tests/test_task_nl_parser.py ..............                              [ 66%]
+tests/test_scheduled_task_direct_submission.py ...................       [ 84%]
+tests/test_scheduled_task_changeset_adapter.py ............              [ 96%]
+tests/test_ws_form_submit.py ....                                        [100%]
+
+============================= 104 passed in 0.71s ==============================

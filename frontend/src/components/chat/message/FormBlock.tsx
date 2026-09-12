@@ -117,6 +117,7 @@ function SelectField({
 }
 
 function TimeField({
+  field,
   value,
   onChange,
 }: {
@@ -126,7 +127,7 @@ function TimeField({
 }) {
   return (
     <input
-      type="time"
+      type={field.type === 'datetime-local' ? 'datetime-local' : 'time'}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       className={cn(
@@ -283,7 +284,7 @@ function FormFields({
     if (field.type === 'text') return <TextField field={field} value={value} onChange={update} />;
     if (field.type === 'textarea') return <TextareaField field={field} value={value} onChange={update} />;
     if (field.type === 'select') return <SelectField field={field} value={value} onChange={update} />;
-    if (field.type === 'time') return <TimeField field={field} value={value} onChange={update} />;
+    if (field.type === 'time' || field.type === 'datetime-local') return <TimeField field={field} value={value} onChange={update} />;
     if (field.type === 'number') return <NumberField field={field} value={value} onChange={update} />;
     if (field.type === 'checkbox_group') {
       const selected = Array.isArray(values[field.name]) ? values[field.name] as number[] : [];
@@ -454,7 +455,8 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
   const isFieldVisible = useCallback(
     (field: FormField) => {
       if (!field.visible_when) return true;
-      return formatFormValue(values[field.visible_when.field]) === field.visible_when.value;
+      const equal = formatFormValue(values[field.visible_when.field]) === field.visible_when.value;
+      return field.visible_when.not ? !equal : equal;
     },
     [values],
   );
@@ -491,7 +493,7 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
       {localChangeSetId && (
         <ChangeSetCard changeSetId={localChangeSetId} fallbackTitle={form.title} actionHandlers={changeSetActionHandlers} />
       )}
-      {!localChangeSetId && <ScheduledTaskWorkflowStage formType={form.form_type} status={status} />}
+      {!localChangeSetId && values._submission_mode !== 'apply_if_allowed' && <ScheduledTaskWorkflowStage formType={form.form_type} status={status} />}
       <FormBlockContent form={form} submitting={submitting}
         onSubmit={handleSubmit} onCancel={handleCancel}
         fields={<FormFields fields={form.fields} values={values}

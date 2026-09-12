@@ -63,6 +63,7 @@ class ChatToolResultMixin:
         if result.execution.status == "uncertain":
             self._tool_result_stop_reason = result.model_content("chat")
         display = result.display["text"]
+        ChatToolResultMixin._stage_change_set(self, result.metadata)
         fields = result.audit_fields()
         if result.display["terminal_form"]:
             self._pending_form_block = result.artifacts.form
@@ -96,6 +97,7 @@ class ChatToolResultMixin:
         from services.handlers.chat_generate_mixin import extract_display_text
 
         display = extract_display_text(result)
+        ChatToolResultMixin._stage_change_set(self, result.metadata)
         await ChatToolResultMixin._send_tool_result(
             self, context, not result.is_failure,
             result.summary[:100] if result.summary else "",
@@ -107,6 +109,21 @@ class ChatToolResultMixin:
             self, context, len(result.summary), result.status,
         )
         return tool_call, result, result.is_failure, display
+
+    def _stage_change_set(self, metadata: dict[str, Any]) -> None:
+        """Messages reference the authoritative ChangeSet; they do not own its state."""
+        change = metadata.get("change_set")
+        if not isinstance(change, dict) or not isinstance(change.get("id"), str) or not change["id"]:
+            return
+        pending = self.__dict__.setdefault("_pending_change_set_blocks", [])
+        reference = {"type": "changeset", "change_set_id": change["id"]}
+        if isinstance(change.get("resource_type"), str):
+            reference["resource_type"] = change["resource_type"]
+        if not any(block["change_set_id"] == change["id"] for block in pending):
+            pending.append(reference)
+        # A proposal or applied receipt is the final delivery for this operation.
+        # A further model round must not turn "proposed" into "applied".
+        self._terminal_change_set_pending = True
 
     async def _process_form_result(
         self,

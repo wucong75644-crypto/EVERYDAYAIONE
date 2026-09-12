@@ -15,7 +15,7 @@
  * - 普通员工（无 task.push_to_others）只能选"推送给我自己"
  * - 管理职位（boss/vp/manager/deputy）可选三个板块全部
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Sparkles, Loader2, User, Users, MessageSquare } from 'lucide-react';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
@@ -53,43 +53,6 @@ const WEEKDAY_LABELS: { value: number; label: string }[] = [
 
 type PushTargetMode = 'self' | 'colleague' | 'group';
 
-const WORKFLOW_STEPS = ['填写配置', '规划与试跑', '变更方案', '已提交'];
-
-function WorkflowProgress({ step, failed = false }: { step: number; failed?: boolean }) {
-  return (
-    <div className="rounded-lg border border-[var(--s-border-default)] bg-[var(--s-surface-sunken)] p-3">
-      <div className="flex items-center gap-1 overflow-x-auto" aria-label={`定时任务第 ${step} 步，共 4 步`}>
-        {WORKFLOW_STEPS.map((label, index) => {
-          const number = index + 1;
-          const isCurrent = number === step;
-          const complete = number < step;
-          return (
-            <div key={label} className="flex min-w-0 items-center gap-1.5">
-              {index > 0 && <span className="h-px w-3 shrink-0 bg-[var(--s-border-default)]" aria-hidden="true" />}
-              <span className={cn(
-                'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-medium',
-                complete ? 'border-[var(--s-success)] bg-[var(--s-success)] text-white' :
-                  isCurrent ? 'border-[var(--s-accent)] bg-[var(--s-accent-soft)] text-[var(--s-accent)]' :
-                    'border-[var(--s-border-default)] text-[var(--s-text-tertiary)]',
-              )}>{number}</span>
-              <span className={cn('whitespace-nowrap text-xs', isCurrent ? 'font-medium text-[var(--s-text-primary)]' : 'text-[var(--s-text-tertiary)]')}>
-                {label}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-      <p className="mt-2 text-xs text-[var(--s-text-secondary)]">
-        {step === 1 && '尚未创建任务。提交配置后，系统才会规划调用路径并进行只读安全试跑。'}
-        {step === 2 && (failed
-          ? '安全试跑未通过。正式任务没有创建；请修改配置后重新试跑。'
-          : '正在只读安全试跑：不扣积分、不发送消息、不写入业务数据。')}
-        {step === 3 && '预检通过，但正式任务仍未创建；确认启用后才会生效。'}
-      </p>
-    </div>
-  );
-}
-
 /** 把 ISO 时间字符串转成 datetime-local 输入框需要的本地时间格式 */
 function isoToLocalDatetime(iso: string | null | undefined): string {
   if (!iso) {
@@ -121,6 +84,7 @@ function localDatetimeToIso(local: string): string {
 
 export function TaskForm({ task, onClose, onProposed }: Props) {
   const isEdit = task !== null;
+  const requestKey = useRef({ signature: '', key: '' });
   const currentUserId = useAuthStore((s) => s.user?.id) || '';
 
   const canPushToOthers = usePermission('task.push_to_others');
@@ -229,14 +193,18 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
     if (!nlText.trim()) return;
     setParsing(true);
     try {
-      const result = await scheduledTaskService.parseNL(nlText);
+      const result = await scheduledTaskService.parseNL(nlText, isEdit ? 'update' : 'create');
       if (result.name) setName(result.name);
       if (result.prompt) setPrompt(result.prompt);
+      if (isEdit && result.output_format && !result.prompt) setPrompt(`${task.prompt}\n输出格式：${result.output_format}`);
       if (result.schedule_type) setScheduleType(result.schedule_type);
       if (result.time_str) setTimeStr(result.time_str);
+      else if (!isEdit) setTimeStr('');
       if (result.weekdays) setWeekdays(result.weekdays);
       if (result.day_of_month) setDayOfMonth(result.day_of_month);
       if (result.run_at) setRunAtLocal(isoToLocalDatetime(result.run_at));
+      else if (!isEdit) setRunAtLocal('');
+      if (result.missing_fields?.length || result.recipient) setError('已填入明确的信息，请补齐时间，并核对推送对象。');
       setNlText('');
     } catch (err) {
       logger.error('task-form', 'parse failed', err);
@@ -305,6 +273,14 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
       setError('请填写 cron 表达式');
       return;
     }
+    if (scheduleType === 'once' && (!runAtLocal || !Number.isFinite(new Date(runAtLocal).getTime()) || new Date(runAtLocal).getTime() <= Date.now())) {
+      setError('请选择未来的执行日期和时间');
+      return;
+    }
+    if (scheduleType !== 'once' && scheduleType !== 'cron' && !timeStr) {
+      setError('请填写执行时间');
+      return;
+    }
 
     const dto: CreateTaskDto = {
       name: name.trim(),
@@ -323,12 +299,15 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
       if (scheduleType === 'monthly') dto.day_of_month = dayOfMonth;
     }
 
+    const signature = JSON.stringify(dto);
+    if (requestKey.current.signature !== signature) requestKey.current = { signature, key: crypto.randomUUID() };
     setSubmitting(true);
     try {
       const changeSet = await scheduledTaskService.proposeChange({
         operation: isEdit ? 'update' : 'create',
         ...(isEdit && task ? { task_id: task.id } : {}),
-        definition: { ...dto },
+        definition: { ...dto, timezone: task?.timezone || 'Asia/Shanghai' },
+        submission_mode: 'apply_if_allowed', idempotency_key: requestKey.current.key,
       });
       onProposed(changeSet.id);
     } catch (err) {
@@ -344,13 +323,12 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
       <>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--s-border-default)]">
           <Loader2 className="w-4 h-4 animate-spin text-[var(--s-accent)]" />
-          <h2 className="text-sm font-medium text-[var(--s-text-primary)]">AI 规划与安全试跑</h2>
+          <h2 className="text-sm font-medium text-[var(--s-text-primary)]">正在检查任务</h2>
         </div>
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-          <WorkflowProgress step={2} />
           <div className="rounded-lg border border-[var(--s-accent)] bg-[var(--s-accent-soft)] p-3">
             <p className="text-sm font-medium text-[var(--s-text-primary)]">正在验证执行路径</p>
-            <p className="text-xs text-[var(--s-text-secondary)] mt-1">AI 正在选择允许调用的工具，并用相同路径完成一次只读试跑。</p>
+            <p className="text-xs text-[var(--s-text-secondary)] mt-1">正在检查时间、权限和执行范围，结果会在任务卡中更新。</p>
           </div>
         </div>
       </>
@@ -376,7 +354,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
 
       {/* 表单内容 */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {!isEdit && <WorkflowProgress step={1} />}
+        {!isEdit && <p className="text-xs text-[var(--s-text-secondary)]">填写执行内容和时间，检查通过后即可创建。需要额外确认时会展示具体变化。</p>}
         {/* AI 智能创建（仅新建时） */}
         {!isEdit && (
           <div className="bg-[var(--s-surface-sunken)] rounded-lg p-3">
@@ -670,7 +648,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
           loading={submitting}
           onClick={handleSubmit}
         >
-          {isEdit ? '保存修改' : '规划并安全试跑'}
+          {isEdit ? '保存修改' : '创建任务'}
         </Button>
       </div>
     </>

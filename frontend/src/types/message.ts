@@ -207,7 +207,7 @@ export interface TablePart {
 
 /** 表单字段定义 */
 export interface FormField {
-  type: 'text' | 'textarea' | 'select' | 'checkbox_group' | 'number' | 'time' | 'hidden';
+  type: 'text' | 'textarea' | 'select' | 'checkbox_group' | 'number' | 'time' | 'datetime-local' | 'hidden';
   name: string;
   label: string;
   required?: boolean;
@@ -215,7 +215,7 @@ export interface FormField {
   placeholder?: string;
   options?: Array<{ label: string; value: string }>;
   /** 条件显示：当指定字段等于指定值时才显示此字段 */
-  visible_when?: { field: string; value: string };
+  visible_when?: { field: string; value: string; not?: boolean };
 }
 
 // ============================================================

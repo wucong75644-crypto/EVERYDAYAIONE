@@ -14,7 +14,7 @@ import json
 from dataclasses import dataclass, replace
 from typing import Any, Iterable, Mapping
 
-from .action_rules import resolve_action
+from .action_rules import direct_task_management, resolve_action
 from .context import ToolContext
 from .registry import ToolAccessDecision, ToolRegistry
 from .spec import ToolSpec, freeze, thaw
@@ -192,7 +192,9 @@ class ToolPolicy:
             )
             return ToolDecision(
                 outcome, reason, risk, operation, parallel,
-                spec.cacheable if spec else False, spec.effects if spec else ("unknown",),
+                bool(spec and spec.cacheable and not (
+                    spec.policy_rules.action_rule == "scheduled_task" and direct_task_management(context)
+                )), spec.effects if spec else ("unknown",),
                 spec.replay_requirement if spec else "unspecified", binding,
             )
 
@@ -204,7 +206,7 @@ class ToolPolicy:
             arguments_digest = _digest(arguments)
         except (TypeError, ValueError):
             return result("deny", "invalid_normalized_arguments")
-        facts = resolve_action(spec, arguments)
+        facts = resolve_action(spec, arguments, context=context)
         operation, risk = facts.operation, facts.risk_level
         if facts.denied_reason:
             return result("deny", facts.denied_reason)

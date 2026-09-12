@@ -131,7 +131,9 @@ async def test_adapter_commit_uses_fixed_rpc_and_returns_conflict():
         operation="update", base_revision="3", base_snapshot={}, proposed_snapshot={"name": "n"},
         patch=(), diff={}, policy_snapshot={}, plan_snapshot={}, tool_policy_snapshot={},
     )
-    result = await adapter.commit(CommitRequest(context=context, idempotency_key="k"))
+    from services.changeset.contracts import AuthorizationResult
+    with patch.object(adapter, "authorize", AsyncMock(return_value=AuthorizationResult(True, {}))):
+        result = await adapter.commit(CommitRequest(context=context, idempotency_key="k"))
     assert result.applied is False
     assert result.conflict["current_revision"] == 4
 

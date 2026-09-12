@@ -60,7 +60,7 @@ def build_specs():
             name='manage_scheduled_task', schema=_schema_manage_scheduled_task(),
             domain='general', availability=ToolAvailability(requires_org=True, requires_personal_context=True),
             risk_level='safe', parallelizable=True, cacheable=True,
-            effects=('proposal_or_form',), executor_type="legacy", handler_key='manage_scheduled_task',
+            effects=('proposal_or_form', 'task_definition'), executor_type="legacy", handler_key='manage_scheduled_task',
             exposure=Exposure.PUBLIC,
             source="services.tools.definitions.task.build_specs", definition_kind="explicit",
             catalog_order=32, catalog_groups=('common_tools',), core=True, legacy_plan_visible=True,
