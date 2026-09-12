@@ -95,3 +95,7 @@ Registry 定义不缓存请求状态。用户/工作区 owner/组织/任务/资�
 本块未修改任何持久化格式、数据库迁移、result_payload、writer/reader、WS 或 invocation 状态。可回退到本块基准 `ca4c3d7e`，它已包含 06 的 v1 兼容 reader/writer；不回退到 06 reader 上线之前。源码逐字相同与回放回归均有证据，旧确认 binding 的 schema/规则摘要也保持一致。
 
 08 的确定代码前置为：01–06 已在 main，本块 35 个显式 Spec、兼容投影、Planner 派生与全链回归齐备。流程前置仍需用户指令提交部署、用户验证确定候选、用户指令验收关闭，再核验 main 代码树与候选相同。本任务不执行 08。
+
+### 2026-09-12：任务输入的授权升级
+
+当前 manage_scheduled_task 的工具说明及 definition/recipient schema 由 services/tools/definitions/task.py 唯一维护；config.chat_tools 的兼容指导说明也从该 Spec 派生。交互模型入口 → ToolExecutor → ChatTaskManager(structured_input=True) → task_definition_input → 原 FormPart/ChangeSet 服务。新入口不再通过第二次模型解析 description。旧默认构造、description-only 和解析 API 保留为输入适配；原 Registry/Policy/Dispatcher、Planner、提交 RPC、任务执行和通知链不变。详细接口、补丁语义、权限/确认、回退与未验证事项见 [ST-26](SCHEDULED_TASK_STRUCTURED_ACCEPTANCE.md)。此处是待部署候选，不覆盖历史版本证据。

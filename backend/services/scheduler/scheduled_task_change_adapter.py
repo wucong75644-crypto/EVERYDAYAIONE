@@ -111,8 +111,13 @@ def _complete_task_definition(
     value = dict(base) if operation == "update" else {}
     value.update(dict(proposed))
     value.setdefault("timezone", "Asia/Shanghai")
-    if operation == "update" and "time_str" in proposed and "cron_expr" not in proposed:
-        value["cron_expr"] = None
+    schedule_fields = {"schedule_type", "time_str", "weekdays", "day_of_month"}
+    if operation == "update" and "cron_expr" not in proposed and schedule_fields.intersection(proposed):
+        if any(proposed[key] != base.get(key) for key in schedule_fields.intersection(proposed)):
+            from services.scheduler.task_definition_input import simple_task_time
+            if "time_str" not in proposed and base.get("schedule_type") != "once":
+                value["time_str"] = simple_task_time(base)
+            value["cron_expr"] = None
     for key, default in DEFAULT_TASK_LIMITS.items():
         raw = value.get(key)
         if raw is None or raw == "":

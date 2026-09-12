@@ -109,7 +109,7 @@ export const scheduledTaskService = {
   /** 自然语言解析为结构化任务 */
   async parseNL(text: string, operation?: 'create' | 'update'): Promise<ParseNLResult> {
     const res = await api.post<ApiResponse<ParseNLResult>>(`${BASE}/parse`, {
-      text, ...(operation ? { operation, explicit_fields_only: true } : {}),
+      text, ...(operation ? { operation, explicit_fields_only: true, structured_fields: true } : {}),
     });
     return res.data.data;
   },

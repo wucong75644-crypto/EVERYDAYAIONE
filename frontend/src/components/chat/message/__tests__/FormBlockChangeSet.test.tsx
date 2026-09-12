@@ -43,3 +43,24 @@ describe('FormBlock ChangeSet association', () => {
   });
 
 });
+
+it('submits the backend structured patch with its resolved ID and boolean marker', async () => {
+  const { default: fixture } = await import('../../../../../../backend/tests/fixtures/scheduled_task_structured_form.json');
+  const listener = vi.fn();
+  window.addEventListener('chat:form-submit', listener);
+  try {
+    render(<FormBlock form={fixture as FormPart} messageId="m-patch" conversationId="c-patch" />);
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    expect(listener).not.toHaveBeenCalled();
+    expect(screen.getByText('请选择每周几')).toBeVisible();
+    fireEvent.click(screen.getByText('周一'));
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    const event = listener.mock.calls[0][0] as CustomEvent;
+    expect(event.detail.formData).toEqual({
+      task_id: 'task-a', schedule_type: 'weekly', weekdays: [1],
+      _submission_mode: 'apply_if_allowed', _structured_input: true,
+    });
+  } finally {
+    window.removeEventListener('chat:form-submit', listener);
+  }
+});

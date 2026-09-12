@@ -241,10 +241,7 @@ code_execute 直接 pd.read_parquet('staging/x.parquet') 即可。
 生成通常需要 1-3 分钟。不支持视频编辑/剪辑。
 
 ### manage_scheduled_task — 定时任务管理
-创建/查看/修改/暂停/恢复/删除定时任务。
-create 传 description 描述任务内容和频率，只返回配置表单，不创建任务。
-用户提交后先进行 AI 路径规划和只读安全试跑；预检通过后还需第二次确认才会启用正式任务。
-返回表单后不得称任务“已创建”“已生效”或“已开始执行”，且不得改写表单中的频率和时间。
+__SCHEDULED_TASK_INSTRUCTIONS__
 
 # 执行模式
 
@@ -294,7 +291,7 @@ conversation_context 是专家了解上文的唯一通道。
 
 单次 IN 匹配最多 5000 个值。超过时分别导出到 staging，用 code_execute JOIN。
 
-""" + IMAGE_AGENT_PROMPT
+""".replace("__SCHEDULED_TASK_INSTRUCTIONS__", definition_registry().require("manage_scheduled_task").to_schema()["function"]["description"]) + IMAGE_AGENT_PROMPT
 
 
 def get_tool_system_prompt() -> str:

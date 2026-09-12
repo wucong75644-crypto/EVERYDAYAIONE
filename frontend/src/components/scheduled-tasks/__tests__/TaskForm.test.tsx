@@ -130,3 +130,47 @@ describe('TaskForm request contract', () => {
   });
 
 });
+
+describe('TaskForm structured AI fill', () => {
+  beforeEach(() => {
+    vi.clearAllMocks(); access.others = false;
+    vi.mocked(orgMembersService.getMyMemberInfo).mockResolvedValue({ wecom_userid: 'wx1' } as never);
+    vi.mocked(scheduledTaskService.proposeChange).mockResolvedValue({ id: 'cs1' } as never);
+  });
+  it('honors the requested personal WeCom channel without allowing other recipients', async () => {
+    render(<TaskForm task={null} onClose={vi.fn()} onProposed={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('option', { name: '企业微信个人通知' })).toBeEnabled());
+    await parse({ ...complete, recipient: '我（企微）' } as ParseNLResult);
+    expect(screen.getByRole('combobox', { name: '通知渠道' })).toHaveValue('wecom_user');
+    fireEvent.click(screen.getByRole('button', { name: '创建任务' }));
+    await waitFor(() => expect(scheduledTaskService.proposeChange).toHaveBeenCalledWith(expect.objectContaining({
+      definition: expect.objectContaining({ push_target: { type: 'wecom_user', wecom_userid: 'wx1' } }),
+    })));
+  });
+  it('retains input and edited business fields when structured extraction fails', async () => {
+    render(<TaskForm task={null} onClose={vi.fn()} onProposed={vi.fn()} />);
+    await parse(complete as ParseNLResult);
+    vi.mocked(scheduledTaskService.parseNL).mockRejectedValue(new Error('invalid structured fields'));
+    fireEvent.change(screen.getByPlaceholderText(/今晚10点推/), { target: { value: '新的学习建议' } });
+    fireEvent.click(screen.getByRole('button', { name: '解析' }));
+    await screen.findByText('解析失败，请重试或手动填写任务。');
+    expect(screen.getByPlaceholderText(/今晚10点推/)).toHaveValue('新的学习建议');
+    expect(screen.getByPlaceholderText(/查询昨日各店铺/)).toHaveValue(complete.prompt);
+  });
+  it('keeps the other fields when manually editing an existing task time', async () => {
+    const { container } = render(<TaskForm task={{ id: 't1', name: '原任务', prompt: '读取A店订单，排除退款并按平台汇总',
+      schedule_type: 'weekly', cron_expr: '0 8 * * 1,5', weekdays: [1, 5], timezone: 'Asia/Shanghai',
+      push_target: { type: 'web', user_id: 'u1' },
+    } as never} onClose={vi.fn()} onProposed={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('option', { name: '企业微信个人通知' })).toBeEnabled());
+    fireEvent.change(container.querySelector('input[type="time"]')!, { target: { value: '10:00' } });
+    expect(scheduledTaskService.parseNL).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText(/查询昨日各店铺/)).toHaveValue('读取A店订单，排除退款并按平台汇总');
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    await waitFor(() => expect(scheduledTaskService.proposeChange).toHaveBeenCalledWith(expect.objectContaining({
+      task_id: 't1', operation: 'update', definition: expect.objectContaining({
+        time_str: '10:00', weekdays: [1, 5], schedule_type: 'weekly', name: '原任务', prompt: '读取A店订单，排除退款并按平台汇总',
+      }),
+    })));
+  });
+});

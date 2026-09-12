@@ -9,32 +9,52 @@ def _schema_manage_scheduled_task():
         "function": {
             "name": "manage_scheduled_task",
             "description": (
-                "管理定时任务（自动执行重复性工作，如每日推送报表、定期数据同步）。\n\n"
-                "Actions:\n"
-                "- create: 传 description 自然语言描述任务和频率，只返回预填配置表单；此时任务尚未创建。"
-                "用户提交表单后，系统会先规划工具路径并进行只读安全试跑；预检通过后必须再次确认，才会创建正式任务。\n"
-                "- list: 查看当前任务列表。\n"
-                "- update: 传 task_name + description 描述变更，返回表单供确认。\n"
-                "- pause/resume/delete: 传 task_name（模糊匹配）或 task_id 定位任务。\n\n"
-                "调用 create 后，回复只能说明“配置表单已生成，任务尚未创建”；"
-                "不得宣称任务已创建、已启用或已开始执行，也不得补充与表单不一致的频率或时间。"
-                "任务不存在时建议用 list 查看现有任务。"
-                "不要用于：一次性数据查询 → erp_agent；手动触发执行 → 不支持。"
+                "创建、查看、修改、暂停、恢复、删除定时任务。\n"
+                "create：直接把用户需求整理为 definition 对象，并用 recipient 指定收件对象。"
+                "prompt 是每次实际执行的完整业务要求，保留数据日期、店铺、指标口径、分组、筛选和输出要求；"
+                "不要包含创建任务、触发时间或发送动作。任务将独立运行，不要依赖当前聊天中的省略指代。"
+                "只填写用户明确给出的安排；缺项就省略相应字段，由表单补齐，不能猜默认时间或频率。"
+                "不要先执行一次业务查询。聊天入口不再用 description 做第二次模型解析。\n"
+                "update：用 task_id 和 definition 中的变更字段，只修改用户要求的项。"
+                "只改输出形式用 output_format，不能重写原业务范围。未传字段保持不变。\n"
+                "pause/resume/delete：只传 task_id；还不知道 ID 时用 list 或 task_name 查找，"
+                "同名有歧义须请用户选择，禁止猜 ID。修改不能删除重建。\n"
+                "list：查看已有任务和 ID。\n"
+                "根据真实回执回复：表单表示待补充；检查中表示尚未生效；awaiting_approval 等待卡片确认；"
+                "只有 applied 才能称已创建/修改/暂停/恢复/删除。普通明确请求检查后可直接生效，"
+                "删除及需额外授权的变更必须确认。暂停仅停止后续自动执行，本次已开始的继续完成。"
+                "仅本次查询用 erp_agent；立即运行已有任务请使用任务面板。"
             ),
             "parameters": {
                 "type": "object",
                 "required": ["action"],
                 "properties": {
+                    "definition": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "description": "create 必须传对象（缺项可省略）；update 仅传变更字段。禁止传权限、执行策略或用户 ID。",
+                        "properties": {
+                            "name": {"type": "string", "title": "任务名称", "minLength": 1},
+                            "prompt": {"type": "string", "title": "执行内容", "minLength": 1},
+                            "schedule_type": {"type": "string", "title": "执行频率", "enum": ["once", "daily", "weekly", "monthly"]},
+                            "time_str": {"type": "string", "title": "执行时间", "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$", "description": "周期任务 HH:MM，北京时间。每天八点为 08:00，不是从现在起间隔24小时。"},
+                            "weekdays": {"type": "array", "title": "每周几", "minItems": 1, "uniqueItems": True, "items": {"type": "integer", "minimum": 0, "maximum": 6}, "description": "0为周日，1为周一，依次至6为周六。"},
+                            "day_of_month": {"type": "integer", "title": "每月几号", "minimum": 1, "maximum": 31},
+                            "run_at": {"type": "string", "title": "执行日期和时间", "description": "单次任务必须提供含时区的完整 ISO8601 日期时间，不猜日期。"},
+                            "output_format": {"type": "string", "title": "输出格式", "enum": ["表格", "列表", "项目符号", "文字", "Markdown表格", "CSV"], "description": "只修改输出形式时使用；原业务要求保持。"},
+                        },
+                    },
+                    "recipient": {"type": "string", "description": "用户指定的收件人/渠道原意，如 我、我（企微）、销售群、张三。不知道则省略，不能把指定群改为自己。后端解析真实身份并检查权限。"},
                     "action": {
                         "type": "string",
                         "enum": ["create", "list", "update", "pause", "resume", "delete"],
-                        "description": "操作类型。create 需配合 description，其余需配合 task_name 或 task_id",
+                        "description": "操作类型。create/update 配合 definition；update/pause/resume/delete 配合 task_id 或 task_name；list 无需其他字段。",
                     },
                     "description": {
                         "type": "string",
                         "description": (
-                            "create/update 时传：自然语言描述任务内容和频率。"
-                            "e.g. '每天早上9点推送销售日报'、'每周一上午10点生成库存周报'"
+                            "旧 description-only API 的兼容字段。新聊天调用必须传 definition，"
+                            "本字段只能保留原始要求用于展示，不代替结构化执行内容。"
                         ),
                     },
                     "task_name": {

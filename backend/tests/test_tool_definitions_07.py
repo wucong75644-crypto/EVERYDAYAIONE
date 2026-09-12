@@ -17,10 +17,11 @@ import pytest
 from services.tools import build_legacy_catalog, validate_legacy_coverage
 
 BASELINE = json.loads((Path(__file__).parent / 'fixtures/tool_catalog_07_baseline.json').read_text())
+TASK_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/scheduled_task_structured_schema.json').read_text())
 
 
 def original_schemas(names, view):
-    return [BASELINE['schema_views'].get(view, {}).get(name) or BASELINE['specs'][name]['schema']
+    return [TASK_UPGRADE['schema'] if name == 'manage_scheduled_task' else BASELINE['schema_views'].get(view, {}).get(name) or BASELINE['specs'][name]['schema']
             for name in names]
 
 
@@ -51,6 +52,8 @@ def test_full_spec_contract_unchanged(catalog, name):
                 # User-authorized lifecycle upgrade after block 07: trusted chat
                 # can now submit task definitions. Keep the frozen 07 baseline.
                 value = [*value, 'task_definition']
+            if name == 'manage_scheduled_task' and key == 'schema':
+                value = TASK_UPGRADE['schema']
             assert actual[key] == value, (name, key)
 
 
@@ -97,8 +100,28 @@ def test_old_imports_signatures_and_constant_values(module):
         assert str(inspect.signature(getattr(current, name))) == signature, (module, name)
     for name, digest in BASELINE['modules'][module]['constants'].items():
         value = plain(getattr(current, name))
+        if module == 'chat_tools' and name == 'TOOL_SYSTEM_PROMPT':
+            # Authorized ST-26 changes only this obsolete scheduling guidance.
+            # Restore the frozen old paragraph before checking every other byte.
+            description = TASK_UPGRADE['schema']['function']['description']
+            assert description in value
+            value = value.replace(description, TASK_UPGRADE['legacy_guidance'])
         actual = hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         assert actual == digest, (module, name)
+
+
+def test_task_structured_extension_keeps_every_old_parameter_contract():
+    current = deepcopy(TASK_UPGRADE['schema'])
+    original = BASELINE['specs']['manage_scheduled_task']['schema']
+    properties = current['function']['parameters']['properties']
+    assert set(properties) - set(original['function']['parameters']['properties']) == {'definition', 'recipient'}
+    properties.pop('definition')
+    properties.pop('recipient')
+    # Only guidance changes on old parameters; accepted names/types/enums remain exact.
+    for name in ('action', 'description'):
+        properties[name]['description'] = original['function']['parameters']['properties'][name]['description']
+    current['function']['description'] = original['function']['description']
+    assert current == original
 
 
 @pytest.mark.parametrize('name', [n for n, s in BASELINE['specs'].items() if s['schema']])

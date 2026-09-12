@@ -7,7 +7,9 @@
 - schedule_type: once / daily / weekly / monthly
 - time_str / weekdays / day_of_month / run_at: 频率字段
 
-降级链：qwen-turbo → 关键词兜底（保证永不阻塞前端表单创建）
+新面板：一次模型提取 → ToolSpec 字段校验；失败保留已有表单供用户修正。
+旧 parse_task_nl 调用保留关键词兜底，旧 parse_task_request 保留来源片段校验。
+新聊天入口直接接收主模型工具参数，不调用本模块做第二次解析。
 
 设计文档: docs/document/UI_定时任务面板设计.md §AI 解析
 """
@@ -171,6 +173,31 @@ async def parse_task_nl(text: str, tz: str = "Asia/Shanghai") -> Dict[str, Any]:
         return parsed
 
     return _fallback(text)
+
+
+async def parse_structured_task_request(text: str, tz: str = "Asia/Shanghai", *, operation: str = "create") -> Dict[str, Any]:
+    """Panel AI fill: one model extraction, then the same fields as chat tools.
+
+    Chat tools already receive these fields and never call this function.
+    The older parser below remains solely for description-only compatibility.
+    """
+    from services.tools.catalog import build_tool_catalog
+    from services.scheduler.task_definition_input import task_definition_input, TaskDefinitionInputError
+    schema = build_tool_catalog().require("manage_scheduled_task").to_schema()["function"]
+    instructions = (
+        "你是任务表单填写助手。仅返回 JSON：{\"definition\":{...},\"recipient\":\"收件对象\"}。"
+        f"本次操作 {operation}，时区 {tz}。根据用户原话一次整理字段；不要执行任务。"
+        "create 保留完整业务内容、日期范围、对象、指标口径、分组、筛选和输出要求。"
+        "prompt 不包含创建任务、触发时间或发送动作。update 仅返回明确修改项，未提及的不填；"
+        "只改输出形式用 output_format。不得猜频率、时间、日期、店铺或收件人。"
+        "收件对象原意保留为 recipient（包括企微等渠道），没有指定则为空。"
+        "缺项省略，不要填空字符串。字段契约："
+        + json.dumps(schema["parameters"]["properties"]["definition"], ensure_ascii=False)
+    )
+    raw = await _call_llm(text, tz, system_prompt=instructions)
+    if not isinstance(raw, dict) or "definition" not in raw:
+        raise TaskDefinitionInputError("未能整理任务信息，请重试或直接填写表单；已有内容已保留。")
+    return task_definition_input(raw["definition"], operation=operation, recipient=raw.get("recipient", ""))
 
 
 async def parse_task_request(text: str, tz: str = "Asia/Shanghai", *, operation: str = "create") -> Dict[str, Any]:

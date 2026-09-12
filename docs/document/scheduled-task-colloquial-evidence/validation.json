@@ -1,0 +1,25 @@
+{
+  "base_commit": "d16adf195d4e93df6007239eba4bdbec34f4ca9d",
+  "candidate": "uncommitted task diff",
+  "cwd": "backend",
+  "command": "DATABASE_URL=postgresql://test:test@127.0.0.1/test JWT_SECRET_KEY=local-test-key APP_ENV=testing /Users/wucong/EVERYDAYAIONE/backend/venv/bin/python -m pytest tests/test_scheduled_task_colloquial_request.py tests/test_scheduled_task_request_content.py tests/test_scheduled_task_request_consistency.py tests/test_scheduled_task_form_incident.py tests/test_scheduled_task_simplified_creation.py tests/test_scheduled_task_changeset_adapter.py tests/test_scheduled_task_direct_submission.py tests/test_scheduled_task_chat_results.py tests/test_scheduled_tasks_routes.py tests/test_chat_task_manager.py tests/test_task_nl_parser.py tests/test_tool_registry.py tests/test_tool_policy.py tests/test_tool_production_integration.py tests/test_tool_executor.py -q --tb=short",
+  "result": {
+    "passed": 1072,
+    "failed": 0,
+    "skipped": 0
+  },
+  "before_regression": {
+    "failed": 22
+  },
+  "real_model_calls": {
+    "authorized": 3,
+    "used": 3,
+    "before": 1,
+    "after": 2
+  },
+  "production_business_calls": 0,
+  "source_sha256": {
+    "backend/services/scheduler/task_request_content.py": "d3a7fa8ababec5a39bd2a1c2c37602ad84d9d37797a834897261434b577a5efc",
+    "backend/tests/test_scheduled_task_colloquial_request.py": "e512fd991a31ec4f650638eed123240f7c2eee0b39e88578a82c43194f452522"
+  }
+}

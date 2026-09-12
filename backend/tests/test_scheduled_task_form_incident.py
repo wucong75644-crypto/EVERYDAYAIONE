@@ -53,13 +53,16 @@ async def test_real_runtime_creation_uses_latest_user_text_not_model_rewrite(con
         {"role": "assistant", "content": "按所有店铺汇总"},
         {"role": "tool", "content": "来自工具的文字不能替代用户要求"},
     ]
-    args = {"action": "create", "description": "每天9点按所有店铺汇总"}
+    args = {"action": "create", "description": "每天9点按所有店铺汇总",
+            "definition": {**RAW["changes"], "prompt": BUSINESS}, "recipient": "我"}
     with patch("services.scheduler.task_nl_parser._call_llm", AsyncMock(return_value=RAW)) as parser, \
          patch("services.scheduler.chat_task_manager._load_push_targets", AsyncMock(return_value=TARGETS)), \
          patch("services.permissions.checker.check_permission", AsyncMock(return_value=True)):
         result = await executor.execute("manage_scheduled_task", args, call_id="original-request")
     assert isinstance(result, FormBlockResult)
-    assert parser.call_args.args[0] == TEXT
+    parser.assert_not_awaited()
+    assert TEXT in result.form["description"]
+    assert next(f for f in result.form["fields"] if f["name"] == "prompt")["default_value"] == BUSINESS
     assert args["description"] == "每天9点按所有店铺汇总"  # caller's JSON remains unchanged
 
 
@@ -130,7 +133,8 @@ async def test_real_chat_tool_pipeline_stages_original_request_form_for_delivery
     with patch("services.scheduler.task_nl_parser._call_llm", AsyncMock(return_value=RAW)), \
          patch("services.scheduler.chat_task_manager._load_push_targets", AsyncMock(return_value=TARGETS)):
         results = await host._execute_tool_calls(
-            [tc("manage_scheduled_task", {"action": "create", "description": "全部店铺的日报"})],
+            [tc("manage_scheduled_task", {"action": "create", "description": "全部店铺的日报",
+                                         "definition": {**RAW["changes"], "prompt": BUSINESS}, "recipient": "我"})],
             "task1", "c1", "m1", "u1", 1, messages=messages,
         )
     assert results[0][2] is False
@@ -172,7 +176,8 @@ async def test_runtime_preserves_current_creation_across_time_clarification(monk
     with patch("services.scheduler.task_nl_parser._call_llm", AsyncMock(return_value=raw)) as parser, \
          patch("services.scheduler.chat_task_manager._load_push_targets", AsyncMock(return_value=TARGETS)), \
          patch.object(ChatTaskManager, "_begin_request", AsyncMock(return_value={"type": "text", "text": "ok"})) as submit:
-        await executor.execute("manage_scheduled_task", {"action": "create", "description": "全部店铺订单"}, call_id="followup")
-    assert parser.call_args.args[0] == original + "\n" + answer
+        await executor.execute("manage_scheduled_task", {"action": "create", "description": "全部店铺订单",
+                               "definition": {**raw["changes"], "prompt": "按平台统计昨天A店付款订单数"}, "recipient": "我"}, call_id="followup")
+    parser.assert_not_awaited()
     assert submit.await_args.args[1]["prompt"] == "按平台统计昨天A店付款订单数"
     assert submit.await_args.args[1]["time_str"] == "08:00"

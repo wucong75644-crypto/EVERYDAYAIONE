@@ -1,0 +1,94 @@
+{
+  "type": "form",
+  "form_type": "scheduled_task_update",
+  "form_id": "structured-weekly-patch",
+  "title": "修改定时任务「示例日报」",
+  "description": "补齐本次修改；未显示的原任务字段保持不变。",
+  "fields": [
+    {
+      "type": "hidden",
+      "name": "task_id",
+      "label": "",
+      "required": false,
+      "default_value": "task-a"
+    },
+    {
+      "type": "select",
+      "name": "schedule_type",
+      "label": "执行频率",
+      "required": true,
+      "default_value": "weekly",
+      "options": [
+        {
+          "label": "仅一次",
+          "value": "once"
+        },
+        {
+          "label": "每天",
+          "value": "daily"
+        },
+        {
+          "label": "每周",
+          "value": "weekly"
+        },
+        {
+          "label": "每月",
+          "value": "monthly"
+        }
+      ]
+    },
+    {
+      "type": "checkbox_group",
+      "name": "weekdays",
+      "label": "每周几",
+      "required": true,
+      "default_value": [],
+      "options": [
+        {
+          "label": "周一",
+          "value": "1"
+        },
+        {
+          "label": "周二",
+          "value": "2"
+        },
+        {
+          "label": "周三",
+          "value": "3"
+        },
+        {
+          "label": "周四",
+          "value": "4"
+        },
+        {
+          "label": "周五",
+          "value": "5"
+        },
+        {
+          "label": "周六",
+          "value": "6"
+        },
+        {
+          "label": "周日",
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "type": "hidden",
+      "name": "_submission_mode",
+      "label": "",
+      "required": false,
+      "default_value": "apply_if_allowed"
+    },
+    {
+      "type": "hidden",
+      "name": "_structured_input",
+      "label": "",
+      "required": false,
+      "default_value": true
+    }
+  ],
+  "submit_text": "保存修改",
+  "cancel_text": "取消"
+}

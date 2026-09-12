@@ -201,7 +201,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
       // A new request replaces the draft; only editing an existing task is a patch.
       if (!isEdit) {
         setName(result.name || '');
-        setPrompt(result.missing_fields?.includes('prompt') ? '' : result.prompt || '');
+        setPrompt(result.prompt || '');
         setScheduleType(result.schedule_type || '');
         setTimeStr(result.time_str || '');
         setWeekdays(result.weekdays || []);
@@ -209,6 +209,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
         setRunAtLocal(result.run_at ? isoToLocalDatetime(result.run_at) : '');
         setCustomCron(result.cron_expr || '');
         setPushMode('self');
+        setSelfChannel('web');
         setColleagueId('');
         setGroupId('');
       } else {
@@ -223,8 +224,16 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
       }
       const recipient = (result.recipient || '').trim();
       const targetName = recipient.replace(/^(?:发送|推送|发)?(?:给|到)/, '').trim();
+      const selfName = targetName.replace(/[（）()\s]/g, '');
+      const selfWeb = ['我', '自己', '我自己', '本人', 'self', '网页', '我网页'].includes(selfName);
+      const selfWecom = ['我企微', '我企业微信', '自己企微', '我自己企微'].includes(selfName);
       setPendingRecipient('');
-      if (recipient && !['我', '自己', '我自己'].includes(targetName)) {
+      if (selfWecom) {
+        if (myWecomUserid) {
+          setPushMode('self');
+          setSelfChannel('wecom_user');
+        } else setPendingRecipient(recipient);
+      } else if (recipient && !selfWeb) {
         // Only match choices already available to this user; the backend still authorizes submission.
         const matchingGroups = canPushToOthers ? groups.filter((g) => g.chat_name === targetName && g.chatid) : [];
         const matchingPeople = canPushToOthers ? colleagues.filter((c) => c.nickname === targetName && c.wecom_userid) : [];
@@ -237,7 +246,10 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
             setColleagueId(matchingPeople[0].wecom_userid!);
           }
         } else setPendingRecipient(recipient);
-      } else if (recipient) setPushMode('self');
+      } else if (recipient) {
+        setPushMode('self');
+        if (selfName.includes('网页')) setSelfChannel('web');
+      }
       setError(result.missing_fields?.length ? '请补齐下方缺失的任务内容或时间安排。' : null);
       setNlText('');
     } catch (err) {

@@ -113,6 +113,7 @@ class UpdateScheduledTaskRequest(BaseModel):
 class ParseNLRequest(BaseModel):
     text: str = Field(..., max_length=500)
     explicit_fields_only: bool = False
+    structured_fields: bool = False
     operation: Literal["create", "update"] = "create"
 
 
@@ -953,13 +954,23 @@ async def parse_nl_task(
     返回的字段直接对应 CreateScheduledTaskRequest:
     - name / prompt / schedule_type / time_str / weekdays / day_of_month / run_at
 
-    LLM 不可用时降级到关键词兜底，永远返回可用结果。
+    structured_fields 使用共享字段校验，失败返回 422 供界面保留输入。
+    旧调用保留其原有解析及降级约定。
     """
     org_id = _require_org(org_ctx)
     if not await check_permission(db, user_id, org_id, "task.create"):
         raise HTTPException(403, "无权创建定时任务")
 
     from services.scheduler.task_nl_parser import parse_task_nl
+    if payload.structured_fields:
+        from services.scheduler.task_nl_parser import parse_structured_task_request
+        from services.scheduler.task_definition_input import TaskDefinitionInputError
+        try:
+            result = await parse_structured_task_request(payload.text, operation=payload.operation)
+        except TaskDefinitionInputError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"success": True, "data": {**result["changes"], "missing_fields": result["missing_fields"],
+                                           "recipient": result["recipient"], "suggested_target": None}}
     if payload.explicit_fields_only:
         from services.scheduler.task_nl_parser import parse_task_request
         result = await parse_task_request(payload.text, operation=payload.operation)

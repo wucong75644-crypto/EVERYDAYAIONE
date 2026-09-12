@@ -1,0 +1,128 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-8.3.4, pluggy-1.6.0
+rootdir: /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/backend
+configfile: pytest.ini
+plugins: anyio-4.12.1, asyncio-0.25.2, cov-7.1.0, time-machine-2.14.1
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=function
+collected 22 items
+
+tests/test_scheduled_task_colloquial_request.py FFFFFFFFFFFFFFFFFFFFFF   [100%]
+
+=================================== FAILURES ===================================
+_ test_clock_and_delivery_grammar_preserve_business[\u53d1\u7ed9\u6211\u770b-\u516b\u70b9\u949f] _
+tests/test_scheduled_task_colloquial_request.py:29: in test_clock_and_delivery_grammar_preserve_business
+    assert result["changes"]["prompt"] == BUSINESS
+E   KeyError: 'prompt'
+_ test_clock_and_delivery_grammar_preserve_business[\u53d1\u7ed9\u6211\u770b-8\u70b9\u949f] _
+tests/test_scheduled_task_colloquial_request.py:29: in test_clock_and_delivery_grammar_preserve_business
+    assert result["changes"]["prompt"] == BUSINESS
+E   KeyError: 'prompt'
+_ test_clock_and_delivery_grammar_preserve_business[\u53d1\u7ed9\u6211\u770b-\u65e9\u6668\u516b\u70b9\u949f] _
+tests/test_scheduled_task_colloquial_request.py:29: in test_clock_and_delivery_grammar_preserve_business
+    assert result["changes"]["prompt"] == BUSINESS
+E   KeyError: 'prompt'
+_ test_clock_and_delivery_grammar_preserve_business[\u53d1\u7ed9\u6211\u770b-\u665a\u4e0a\u516b\u70b9\u949f] _
+tests/test_scheduled_task_colloquial_request.py:29: in test_clock_and_delivery_grammar_preserve_business
+    assert result["changes"]["prompt"] == BUSINESS
+E   KeyError: 'prompt'
+_ test_clock_and_delivery_grammar_preserve_business[\u53d1\u7ed9\u6211\u770b\u770b-\u516b\u70b9\u949f] _
+tests/test_scheduled_task_colloquial_request.py:29: in test_clock_and_delivery_grammar_preserve_business
+    assert result["changes"]["prompt"] == BUSINESS
+E   KeyError: 'prompt'
+_ test_clock_and_delivery_grammar_preserve_business[\u53d1\u7ed9\u6211\u770b\u770b-8\u70b9\u949f] _
+tests/test_scheduled_task_colloquial_request.py:29: in test_clock_and_delivery_grammar_preserve_business
+    assert result["changes"]["prompt"] == BUSINESS
+E   KeyError: 'prompt'
+_ test_clock_and_delivery_grammar_preserve_business[\u53d1\u7ed9\u6211\u770b\u770b-\u65e9\u6668\u516b\u70b9\u949f] _
+tests/test_scheduled_task_colloquial_request.py:29: in test_clock_and_delivery_grammar_preserve_business
+    assert result["changes"]["prompt"] == BUSINESS
+E   KeyError: 'prompt'
+_ test_clock_and_delivery_grammar_preserve_business[\u53d1\u7ed9\u6211\u770b\u770b-\u665a\u4e0a\u516b\u70b9\u949f] _
+tests/test_scheduled_task_colloquial_request.py:29: in test_clock_and_delivery_grammar_preserve_business
+    assert result["changes"]["prompt"] == BUSINESS
+E   KeyError: 'prompt'
+_ test_clock_and_delivery_grammar_preserve_business[\u53d1\u9001\u7ed9\u6211\u770b\u4e00\u4e0b-\u516b\u70b9\u949f] _
+tests/test_scheduled_task_colloquial_request.py:29: in test_clock_and_delivery_grammar_preserve_business
+    assert result["changes"]["prompt"] == BUSINESS
+E   KeyError: 'prompt'
+_ test_clock_and_delivery_grammar_preserve_business[\u53d1\u9001\u7ed9\u6211\u770b\u4e00\u4e0b-8\u70b9\u949f] _
+tests/test_scheduled_task_colloquial_request.py:29: in test_clock_and_delivery_grammar_preserve_business
+    assert result["changes"]["prompt"] == BUSINESS
+E   KeyError: 'prompt'
+_ test_clock_and_delivery_grammar_preserve_business[\u53d1\u9001\u7ed9\u6211\u770b\u4e00\u4e0b-\u65e9\u6668\u516b\u70b9\u949f] _
+tests/test_scheduled_task_colloquial_request.py:29: in test_clock_and_delivery_grammar_preserve_business
+    assert result["changes"]["prompt"] == BUSINESS
+E   KeyError: 'prompt'
+_ test_clock_and_delivery_grammar_preserve_business[\u53d1\u9001\u7ed9\u6211\u770b\u4e00\u4e0b-\u665a\u4e0a\u516b\u70b9\u949f] _
+tests/test_scheduled_task_colloquial_request.py:29: in test_clock_and_delivery_grammar_preserve_business
+    assert result["changes"]["prompt"] == BUSINESS
+E   KeyError: 'prompt'
+_ test_clock_and_delivery_grammar_preserve_business[\u63a8\u9001\u7ed9\u6211\u67e5\u6536-\u516b\u70b9\u949f] _
+tests/test_scheduled_task_colloquial_request.py:29: in test_clock_and_delivery_grammar_preserve_business
+    assert result["changes"]["prompt"] == BUSINESS
+E   KeyError: 'prompt'
+_ test_clock_and_delivery_grammar_preserve_business[\u63a8\u9001\u7ed9\u6211\u67e5\u6536-8\u70b9\u949f] _
+tests/test_scheduled_task_colloquial_request.py:29: in test_clock_and_delivery_grammar_preserve_business
+    assert result["changes"]["prompt"] == BUSINESS
+E   KeyError: 'prompt'
+_ test_clock_and_delivery_grammar_preserve_business[\u63a8\u9001\u7ed9\u6211\u67e5\u6536-\u65e9\u6668\u516b\u70b9\u949f] _
+tests/test_scheduled_task_colloquial_request.py:29: in test_clock_and_delivery_grammar_preserve_business
+    assert result["changes"]["prompt"] == BUSINESS
+E   KeyError: 'prompt'
+_ test_clock_and_delivery_grammar_preserve_business[\u63a8\u9001\u7ed9\u6211\u67e5\u6536-\u665a\u4e0a\u516b\u70b9\u949f] _
+tests/test_scheduled_task_colloquial_request.py:29: in test_clock_and_delivery_grammar_preserve_business
+    assert result["changes"]["prompt"] == BUSINESS
+E   KeyError: 'prompt'
+_______ test_short_clock_evidence_and_omitted_grammatical_suffix[False] ________
+tests/test_scheduled_task_colloquial_request.py:43: in test_short_clock_evidence_and_omitted_grammatical_suffix
+    assert result["changes"]["prompt"] == BUSINESS
+E   KeyError: 'prompt'
+________ test_short_clock_evidence_and_omitted_grammatical_suffix[True] ________
+tests/test_scheduled_task_colloquial_request.py:43: in test_short_clock_evidence_and_omitted_grammatical_suffix
+    assert result["changes"]["prompt"] == BUSINESS
+E   AssertionError: assert '查询昨天的付款订单数按照平台划分；钟；看' == '查询昨天的付款订单数按照平台划分'
+E     
+E     - 查询昨天的付款订单数按照平台划分
+E     + 查询昨天的付款订单数按照平台划分；钟；看
+E     ?                 ++++
+_ test_delivery_suffix_does_not_swallow_business_requirements[\u770b\u9000\u6b3e\u7387] _
+tests/test_scheduled_task_colloquial_request.py:54: in test_delivery_suffix_does_not_swallow_business_requirements
+    assert result["changes"]["prompt"] == BUSINESS + "；" + suffix
+E   KeyError: 'prompt'
+_ test_delivery_suffix_does_not_swallow_business_requirements[\u770b\u770b\u5f02\u5e38\u8ba2\u5355] _
+tests/test_scheduled_task_colloquial_request.py:54: in test_delivery_suffix_does_not_swallow_business_requirements
+    assert result["changes"]["prompt"] == BUSINESS + "；" + suffix
+E   KeyError: 'prompt'
+_ test_delivery_suffix_does_not_swallow_business_requirements[\u770b\u4e00\u4e0b\u5e73\u53f0\u5360\u6bd4] _
+tests/test_scheduled_task_colloquial_request.py:54: in test_delivery_suffix_does_not_swallow_business_requirements
+    assert result["changes"]["prompt"] == BUSINESS + "；" + suffix
+E   KeyError: 'prompt'
+__________ test_reported_request_reaches_original_submission_boundary __________
+tests/test_scheduled_task_colloquial_request.py:74: in test_reported_request_reaches_original_submission_boundary
+    assert isinstance(result, AgentResult)
+E   AssertionError: assert False
+E    +  where False = isinstance(FormBlockResult(form={'type': 'form', 'form_type': 'scheduled_task_create', 'form_id': 'task_create_9be62e69', 'title'..._value': 'apply_if_allowed'}], 'submit_text': '创建任务', 'cancel_text': '取消'}, llm_hint='已向用户展示补充任务信息，等待用户确认。不要重复展示表单内容。'), <class 'services.agent.agent_result.AgentResult'>)
+=========================== short test summary info ============================
+FAILED tests/test_scheduled_task_colloquial_request.py::test_clock_and_delivery_grammar_preserve_business[\u53d1\u7ed9\u6211\u770b-\u516b\u70b9\u949f]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_clock_and_delivery_grammar_preserve_business[\u53d1\u7ed9\u6211\u770b-8\u70b9\u949f]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_clock_and_delivery_grammar_preserve_business[\u53d1\u7ed9\u6211\u770b-\u65e9\u6668\u516b\u70b9\u949f]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_clock_and_delivery_grammar_preserve_business[\u53d1\u7ed9\u6211\u770b-\u665a\u4e0a\u516b\u70b9\u949f]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_clock_and_delivery_grammar_preserve_business[\u53d1\u7ed9\u6211\u770b\u770b-\u516b\u70b9\u949f]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_clock_and_delivery_grammar_preserve_business[\u53d1\u7ed9\u6211\u770b\u770b-8\u70b9\u949f]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_clock_and_delivery_grammar_preserve_business[\u53d1\u7ed9\u6211\u770b\u770b-\u65e9\u6668\u516b\u70b9\u949f]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_clock_and_delivery_grammar_preserve_business[\u53d1\u7ed9\u6211\u770b\u770b-\u665a\u4e0a\u516b\u70b9\u949f]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_clock_and_delivery_grammar_preserve_business[\u53d1\u9001\u7ed9\u6211\u770b\u4e00\u4e0b-\u516b\u70b9\u949f]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_clock_and_delivery_grammar_preserve_business[\u53d1\u9001\u7ed9\u6211\u770b\u4e00\u4e0b-8\u70b9\u949f]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_clock_and_delivery_grammar_preserve_business[\u53d1\u9001\u7ed9\u6211\u770b\u4e00\u4e0b-\u65e9\u6668\u516b\u70b9\u949f]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_clock_and_delivery_grammar_preserve_business[\u53d1\u9001\u7ed9\u6211\u770b\u4e00\u4e0b-\u665a\u4e0a\u516b\u70b9\u949f]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_clock_and_delivery_grammar_preserve_business[\u63a8\u9001\u7ed9\u6211\u67e5\u6536-\u516b\u70b9\u949f]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_clock_and_delivery_grammar_preserve_business[\u63a8\u9001\u7ed9\u6211\u67e5\u6536-8\u70b9\u949f]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_clock_and_delivery_grammar_preserve_business[\u63a8\u9001\u7ed9\u6211\u67e5\u6536-\u65e9\u6668\u516b\u70b9\u949f]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_clock_and_delivery_grammar_preserve_business[\u63a8\u9001\u7ed9\u6211\u67e5\u6536-\u665a\u4e0a\u516b\u70b9\u949f]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_short_clock_evidence_and_omitted_grammatical_suffix[False]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_short_clock_evidence_and_omitted_grammatical_suffix[True]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_delivery_suffix_does_not_swallow_business_requirements[\u770b\u9000\u6b3e\u7387]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_delivery_suffix_does_not_swallow_business_requirements[\u770b\u770b\u5f02\u5e38\u8ba2\u5355]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_delivery_suffix_does_not_swallow_business_requirements[\u770b\u4e00\u4e0b\u5e73\u53f0\u5360\u6bd4]
+FAILED tests/test_scheduled_task_colloquial_request.py::test_reported_request_reaches_original_submission_boundary
+============================== 22 failed in 0.66s ==============================

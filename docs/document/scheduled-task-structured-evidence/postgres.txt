@@ -1,0 +1,12 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-8.3.4, pluggy-1.6.0
+rootdir: /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/backend
+configfile: pytest.ini
+plugins: anyio-4.12.1, asyncio-0.25.2, cov-7.1.0, time-machine-2.14.1
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=function
+collected 27 items
+
+tests/test_scheduled_task_upgrade_postgres.py ...................        [ 70%]
+tests/test_scheduled_task_draft_delete_integration.py ........           [100%]
+
+============================== 27 passed in 3.06s ==============================

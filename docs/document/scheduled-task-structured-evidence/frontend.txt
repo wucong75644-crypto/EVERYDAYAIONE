@@ -1,0 +1,32 @@
+
+ RUN  v3.2.7 /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/frontend
+
+ ✓ src/services/__tests__/scheduledTaskStructured.test.ts (3 tests) 2ms
+stderr | src/components/scheduled-tasks/__tests__/ScheduledTaskPanel.test.tsx > ScheduledTaskPanel ChangeSet recovery > applies an ordinary pause in place without opening a confirmation workflow
+React does not recognize the `whileHover` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `whilehover` instead. If you accidentally passed it from a parent component, remove it from the DOM element.
+React does not recognize the `whileTap` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `whiletap` instead. If you accidentally passed it from a parent component, remove it from the DOM element.
+
+ ✓ src/components/scheduled-tasks/__tests__/TaskRunHistory.test.tsx (3 tests) 76ms
+stdout | src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx
+[DEBUG] [21:51:52] [task:restore] Hydrate complete
+
+stdout | src/components/chat/message/__tests__/StructuredConsumers.test.tsx
+[DEBUG] [21:51:52] [task:restore] Hydrate complete
+
+ ✓ src/components/scheduled-tasks/__tests__/ScheduledTaskPanel.test.tsx (4 tests) 196ms
+ ✓ src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx (2 tests) 50ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskCardChangeSet.test.tsx (3 tests) 88ms
+ ✓ src/components/chat/message/__tests__/StructuredConsumers.test.tsx (14 tests) 168ms
+stderr | src/components/scheduled-tasks/__tests__/TaskForm.test.tsx > TaskForm structured AI fill > retains input and edited business fields when structured extraction fails
+[ERROR] [21:51:52] [task-form] parse failed: invalid structured fields
+Error: invalid structured fields
+    at /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/frontend/src/components/scheduled-tasks/__tests__/TaskForm.test.tsx:153:63
+    at file:///Users/wucong/EVERYDAYAIONE/frontend/node_modules/@vitest/runner/dist/chunk-hooks.js:752:20
+
+ ✓ src/components/scheduled-tasks/__tests__/TaskForm.test.tsx (14 tests) 530ms
+
+ Test Files  7 passed (7)
+      Tests  43 passed (43)
+   Start at  21:51:51
+   Duration  1.21s (transform 643ms, setup 1.08s, collect 1.69s, tests 1.11s, environment 1.51s, prepare 254ms)
+

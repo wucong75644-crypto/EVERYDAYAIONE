@@ -10,6 +10,7 @@ from typing import Any, Mapping
 
 _PUNCTUATION = " \t\r\n，,。.;；：:"
 _SCHEDULE_FIELDS = ("schedule_type", "time_str", "run_at", "weekdays", "day_of_month")
+_DELIVERY_ENDING = r"(?:看一下|看看|看|查收)"
 
 
 def _ordered_source_parts(text: str, parts: list[dict]) -> list[dict] | None:
@@ -30,11 +31,17 @@ def _ordered_source_parts(text: str, parts: list[dict]) -> list[dict] | None:
         if start < 0:
             return None
         end = start + len(quote)
-        if part.get("kind") == "schedule" and end < len(offsets):
+        if part.get("kind") in {"schedule", "delivery"} and end < len(offsets):
             suffix = text[offsets[end - 1] + 1:]
-            # The model may omit this grammatical suffix from a schedule span.
-            ending = re.match(r"(?:执行|运行)(?=[\s，,。.;；：:]|$)", suffix)
-            if ending and not any(used[end:end + len(ending[0])]):
+            # Recover only grammatical endings omitted from a metadata span.
+            # Longer clauses (e.g. 看退款率) remain execution requirements.
+            if part["kind"] == "schedule":
+                clock_ending = r"钟?" if quote.endswith(("点", "时")) else ""
+                pattern = clock_ending + r"(?:(?:执行|运行)(?=[\s，,。.;；：:]|$))?"
+            else:
+                pattern = _DELIVERY_ENDING + r"(?=[\s，,。.;；：:]|$)"
+            ending = re.match(pattern, suffix)
+            if ending and ending[0] and not any(used[end:end + len(ending[0])]):
                 end += len(ending[0])
         used[start:end] = [True] * (end - start)
         ordered.append((start, {**part, "text": text[offsets[start]:offsets[end - 1] + 1]}))
@@ -92,21 +99,26 @@ def execution_content(text: str, raw: Mapping[str, Any], accepted: Mapping[str, 
             for quote in quotes:
                 # Schedule evidence must itself be calendar/clock language;
                 # quoting a business instruction is not authority to remove it.
-                if not re.fullmatch(r"[\d零〇一二两三四五六七八九十百每周星期天日月年号早上午中下午晚凌晨点时分半刻整和及、:：/\-T+Z\s]+", quote):
+                if not re.fullmatch(r"[\d零〇一二两三四五六七八九十百每周星期天日月年号早上午中下午晚凌晨间傍点时钟分半刻整和及、:：/\-T+Z\s]+", quote):
                     continue
                 if quote in remaining:
-                    remaining = remaining.replace(quote, "", 1)
+                    # A clock quote may omit 钟 in 八点钟. This suffix is
+                    # removable only directly after its grounded clock quote.
+                    pattern = re.escape(quote) + (r"钟?" if quote.endswith(("点", "时")) else "")
+                    remaining = re.sub(pattern, "", remaining, count=1)
                     used = True
             if not used or not re.fullmatch(r"[\s，,。.;；：:]*?(?:(?:在|于|北京时间|执行|运行|一次|定时|自动)[\s，,。.;；：:]*)*", remaining):
                 return None
         elif kind == "delivery":
+            source = source.strip(_PUNCTUATION)
             recipient = raw.get("recipient")
             if not isinstance(recipient, str) or not recipient or recipient not in source:
                 return None
             delivery = re.search(
                 r"(?:并|然后)?(?:将|把)?(?:结果|报告|报表)?"
-                r"(?:发送|推送|通知|发|送|给)(?:给|到)?\s*" + re.escape(recipient) + r"$",
-                source.strip(_PUNCTUATION),
+                r"(?:发送|推送|通知|发|送|给)(?:给|到)?\s*" + re.escape(recipient)
+                + rf"(?:{_DELIVERY_ENDING})?$",
+                source,
             )
             if not delivery:
                 return None
