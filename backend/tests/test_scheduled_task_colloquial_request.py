@@ -121,13 +121,17 @@ async def test_reported_request_reaches_original_submission_boundary(monkeypatch
          patch.object(ChatTaskManager, "_begin_request", AsyncMock(return_value={"type": "change_set", "data": row})) as submit:
         result = await executor.execute("manage_scheduled_task", {"action": "create", "description": "模型改写",
                                         "definition": record["raw"]["changes"], "recipient": record["raw"]["recipient"]}, call_id="colloquial-request")
-    assert isinstance(result, AgentResult)
-    assert result.metadata["change_set"] == row
+    from services.scheduler.chat_task_manager import FormBlockResult, handle_form_submit
+    assert isinstance(result, FormBlockResult)
     model.assert_not_awaited()
-    submit.assert_awaited_once()
-    operation, definition = submit.call_args.args
-    assert operation == "create"
-    assert definition == {
+    submit.assert_not_awaited()
+    values = {f['name']: f.get('default_value') for f in result.form['fields']}
+    with patch("services.permissions.checker.check_permission", AsyncMock(return_value=True)), \
+         patch("services.scheduler.chat_task_manager._propose_form_change", AsyncMock(return_value={"success": True})) as confirmed:
+        await handle_form_submit(IdentityDB(), "u1", "o1", "scheduled_task_create", values)
+    definition = confirmed.call_args.kwargs['definition']
+    assert confirmed.call_args.kwargs['operation'] == 'create'
+    assert {k: definition[k] for k in ('name', 'prompt', 'schedule_type', 'time_str', 'push_target', 'timezone')} == {
         "name": record["raw"]["changes"].get("name", BUSINESS[:20]), "prompt": BUSINESS,
         "schedule_type": "daily", "time_str": "08:00",
         "push_target": {"type": "web", "user_id": "u1"}, "timezone": "Asia/Shanghai",

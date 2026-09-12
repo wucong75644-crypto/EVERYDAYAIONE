@@ -176,8 +176,10 @@ async def test_runtime_preserves_current_creation_across_time_clarification(monk
     with patch("services.scheduler.task_nl_parser._call_llm", AsyncMock(return_value=raw)) as parser, \
          patch("services.scheduler.chat_task_manager._load_push_targets", AsyncMock(return_value=TARGETS)), \
          patch.object(ChatTaskManager, "_begin_request", AsyncMock(return_value={"type": "text", "text": "ok"})) as submit:
-        await executor.execute("manage_scheduled_task", {"action": "create", "description": "全部店铺订单",
+        result = await executor.execute("manage_scheduled_task", {"action": "create", "description": "全部店铺订单",
                                "definition": {**raw["changes"], "prompt": "按平台统计昨天A店付款订单数"}, "recipient": "我"}, call_id="followup")
     parser.assert_not_awaited()
-    assert submit.await_args.args[1]["prompt"] == "按平台统计昨天A店付款订单数"
-    assert submit.await_args.args[1]["time_str"] == "08:00"
+    submit.assert_not_awaited()
+    fields = {f['name']: f.get('default_value') for f in result.form['fields']}
+    assert fields['prompt'] == "按平台统计昨天A店付款订单数"
+    assert fields['time_str'] == "08:00"

@@ -1,0 +1,28 @@
+{
+  "baseline": "80cb123e505434557b718796fc5fbfc34147b482",
+  "state": "uncommitted, not deployed",
+  "source_sha256": {
+    "backend/services/scheduler/chat_task_manager.py": "4fc47b87fe5efb70e9385a3b8595e8bfd1fd0361d3129c625c69660c6d5a5bcf",
+    "backend/services/tools/definitions/task.py": "48cc38935d451f98ae6d7303476a667e22dd97edd8df4de4d24528740e6ebf68",
+    "backend/tests/fixtures/scheduled_task_creation_confirmation.json": "38caca3c6492659da4072873e6de11233b17ee23be330e3a1b529a83d144345e",
+    "backend/tests/fixtures/scheduled_task_structured_schema.json": "9cb5abd9ca3b2803d35bc6ad3287b8092740e012e8b412d9ccc2447b9943a31c",
+    "backend/tests/test_scheduled_task_colloquial_request.py": "7a8fa09b96fdb8a3c42c6227e324ce587800cfae7116c867fc758a1a89cba01a",
+    "backend/tests/test_scheduled_task_creation_confirmation.py": "59f19b1cfccf9b9469d4863924bcdd5b86b3152afd4e7283a62174ddd3f1eb91",
+    "backend/tests/test_scheduled_task_form_incident.py": "1eb79013e6745a7e1ab207f09fdcb98d8016fb7e2aaa5cc674b3ea325638d277",
+    "backend/tests/test_scheduled_task_request_content.py": "183b09fb9bfdfc43eb484b644616de1d053a6192f67214ed0602e27210a279f8",
+    "backend/tests/test_scheduled_task_simplified_creation.py": "aee6bbec5d66a078af32939430901835dceb622c581ab5a261ea27cbc4ea8283",
+    "backend/tests/test_scheduled_task_structured_input.py": "3f0e564a0b3126f5a1a703343e8834743fabd4d3c008764a20e6b0a0867fcf00",
+    "backend/tests/test_ws_form_submit.py": "097d94a82c8b439af916b1005b66b820c1d0472346a6bea4e32dc83ffc8d52d4",
+    "frontend/src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx": "f937ffa2a1a8824f8c44dfb478e615d1bc742b0596e584c0350dd181f3ee5277",
+    "frontend/src/components/chat/message/__tests__/StructuredConsumers.test.tsx": "41202a9df3c9cf67bb35df29a411c386c4b017ab720e7360d048726053df9734",
+    "frontend/src/test/fixtures/scheduledTaskContentForm.json": "f5f20125cf9d2f63ba6071fa66a2fb30e1678f813e08b3e7c216bbb201f486cc"
+  },
+  "backend_command": "DATABASE_URL=postgresql://test:test@127.0.0.1/test JWT_SECRET_KEY=local-test-key APP_ENV=testing /Users/wucong/EVERYDAYAIONE/backend/venv/bin/python -m pytest -q tests/test_scheduled_task_creation_confirmation.py tests/test_scheduled_task_structured_input.py tests/test_scheduled_task_form_incident.py tests/test_scheduled_task_colloquial_request.py tests/test_scheduled_task_simplified_creation.py tests/test_tool_definitions_07.py tests/test_scheduled_task_chat_results.py tests/test_chat_task_manager.py tests/test_scheduled_task_request_content.py tests/test_scheduled_task_request_consistency.py tests/test_ws_form_submit.py tests/test_scheduled_task_direct_submission.py tests/test_scheduled_task_changeset_adapter.py tests/test_scheduled_tasks_routes.py tests/test_tool_policy.py tests/test_tool_production_integration.py tests/test_tool_result_05_production_regressions.py",
+  "backend_cwd": "backend",
+  "frontend_command": "npx vitest run src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx src/components/chat/message/__tests__/StructuredConsumers.test.tsx src/components/chat/message/__tests__/MessageContentBlocks.test.tsx src/components/chat/message/__tests__/ChangeSetCard.test.tsx",
+  "frontend_cwd": "frontend",
+  "types_command": "npx tsc -b",
+  "lint_command": "npx eslint src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx src/components/chat/message/__tests__/StructuredConsumers.test.tsx",
+  "real_model_calls": 0,
+  "production_changes": false
+}

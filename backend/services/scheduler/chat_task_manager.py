@@ -3,7 +3,7 @@
 通过 Agent 工具调用，在聊天中创建/查看/修改/暂停/恢复/删除定时任务。
 返回结构化 FormPart / 文本结果，由前端渲染。
 
-结构化聊天请求直接校验字段；缺项复用表单，完整请求复用 ChangeSet。
+结构化聊天请求直接校验字段；创建始终先返回确认表单，确认后复用 ChangeSet。
 旧 description 调用保持解析兼容；权限、风险与确认由原提交服务决定。
 
 设计文档: docs/document/TECH_定时任务心跳系统.md
@@ -399,7 +399,7 @@ class ChatTaskManager:
             return {"type": "text", "text": str(exc), "success": False, "retryable": False}
 
     async def _handle_create(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        """New chat submits fields; description-only callers retain compatibility."""
+        """Prepare a creation form; description-only callers retain compatibility."""
         description = args.get("description", "").strip()
         if self.structured_input or "definition" in args:
             from services.scheduler.task_definition_input import task_definition_input, TaskDefinitionInputError
@@ -429,10 +429,14 @@ class ChatTaskManager:
             missing.append("prompt")
         if target is None:
             missing.append("push_target")
-        if not missing:
-            return await self._begin_request("create", {**parsed, "push_target": target, "timezone": "Asia/Shanghai"})
         form = _build_create_form(parsed, targets)
-        form.update({"title": "补充任务信息", "description": f"请核对执行内容并补齐安排。你的原始要求：{description}", "submit_text": "创建任务"})
+        # Complete model fields are a draft, not the user's form confirmation.
+        form.update({
+            "title": "补充任务信息" if missing else "确认创建定时任务",
+            "description": "尚未创建任务。请核对执行内容、时间安排和通知渠道，点击确认后开始检查并创建。"
+                           + (f"你的原始要求：{description}" if description else ""),
+            "submit_text": "确认创建",
+        })
         if unfilled_shop_placeholder(description):
             form["description"] += "。请在执行内容中将店铺占位文字替换为实际店铺名称。"
         for field in form["fields"]:
@@ -450,12 +454,15 @@ class ChatTaskManager:
                 field["default_value"] = [] if key == "weekdays" else ""
             if key == "time_str":
                 field["visible_when"] = {"field": "schedule_type", "value": "once", "not": True}
-            if key not in {"prompt", "push_target"} and key not in missing and key in parsed:
-                field["type"] = "hidden"
+            if key in {"weekdays", "day_of_month"}:
+                field["required"] = True
         # A one-shot date must not be silently replaced with today/tomorrow.
+        run_at = parsed.get("run_at", "")
+        if run_at:
+            run_at = datetime.fromisoformat(run_at.replace("Z", "+00:00")).astimezone(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None).isoformat(timespec="minutes")
         form["fields"].append(_build_form_field(
-            "run_at", "hidden" if parsed.get("run_at") else "datetime-local", "执行日期和时间（北京时间）",
-            required=True, default_value=parsed.get("run_at", ""),
+            "run_at", "datetime-local", "执行日期和时间（北京时间）",
+            required=True, default_value=run_at,
             visible_when={"field": "schedule_type", "value": "once"},
         ))
         form["fields"].append(_build_form_field("_submission_mode", "hidden", "", default_value=self.submission_mode))

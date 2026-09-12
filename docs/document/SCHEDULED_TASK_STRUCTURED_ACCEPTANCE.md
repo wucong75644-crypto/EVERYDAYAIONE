@@ -1,5 +1,7 @@
 # ST-26：结构化定时任务输入升级与验收
 
+> 当前创建顺序已按用户最新纠正改为先确认表单，见 [ST-27](SCHEDULED_TASK_CONFIRMATION_ACCEPTANCE.md)。本文“完整请求直接提交”是 80cb123e 的历史行为，不能作为新候选行为依据。
+
 ## 1. 范围与版本
 
 2026-09-12；工作树 `worktrees/tool-unification-07`；分支 `codex/task/20260911215117-tool-unification-07`；基准 HEAD/此前生产版本 `d16adf195d4e93df6007239eba4bdbec34f4ca9d`。本记录对应该基准上的未提交差异，包含先前 ST-25 口语兼容修复。没有提交、推送、部署、合并 main 或关闭任务。

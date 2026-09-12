@@ -80,9 +80,12 @@ async def test_complete_chat_fields_reach_original_submission_with_actor_target(
     with patch("services.scheduler.chat_task_manager._load_push_targets", AsyncMock(return_value=TARGETS)), \
          patch.object(ChatTaskManager, "_begin_request", AsyncMock(return_value={"type": "change_set", "data": row, "text": "任务已创建。"})) as submit:
         result = await executor.execute("manage_scheduled_task", args, call_id="call-a")
-    assert result.metadata["change_set"] == row
-    assert result.summary == "任务已创建。"
-    assert submit.call_args.args == ("create", {**DEFINITION, "push_target": TASK["push_target"], "timezone": "Asia/Shanghai"})
+    assert isinstance(result, FormBlockResult)
+    submit.assert_not_awaited()
+    fields = {f['name']: f.get('default_value') for f in result.form['fields']}
+    import json
+    assert {k: fields[k] for k in DEFINITION} == DEFINITION
+    assert json.loads(fields['push_target']) == TASK['push_target']
     assert args == {"action": "create", "definition": DEFINITION, "recipient": "我"}
 
 
@@ -307,7 +310,16 @@ async def test_real_tool_changeset_authorization_commit_and_replay(operation, no
          patch('services.websocket_manager.ws_manager.send_to_user', AsyncMock()) as notify, \
          patch('asyncio.create_task', side_effect=lambda coro: pending.append(coro)):
         result = await executor.execute('manage_scheduled_task', args, call_id='chain-call')
-        assert result.metadata['change_set']['status'] == ('applied' if operation in {'pause', 'resume'} else 'draft')
+        if operation == 'create':
+            assert isinstance(result, FormBlockResult)
+            assert not pending and not db.commits and not repo.checks
+            values = {f['name']: f.get('default_value') for f in result.form['fields']}
+            submitted = await handle_form_submit(db, 'u1', 'o1', 'scheduled_task_create', values, idempotency_key='confirmed-form')
+            assert submitted['success'] and repo.row['status'] == 'draft'
+            change_id = submitted['change_set_id']
+        else:
+            assert result.metadata['change_set']['status'] == ('applied' if operation in {'pause', 'resume'} else 'draft')
+            change_id = result.metadata['change_set']['id']
         for coro in pending:
             await coro
         final = 'awaiting_approval' if operation == 'delete' else 'applied'
@@ -320,10 +332,15 @@ async def test_real_tool_changeset_authorization_commit_and_replay(operation, no
             assert (params['p_org_id'], params['p_user_id'], params['p_operation']) == ('o1', 'u1', operation)
             assert params['p_definition']['prompt'] == TASK['prompt']
             if operation == 'update': assert params['p_definition']['cron_expr'] == '0 10 * * *'
-        retry_executor = ToolExecutor(db, 'u1', 'c1', 'o1', tool_entrypoint='model', task_id='turn')
-        replay = await retry_executor.execute('manage_scheduled_task', args, call_id='chain-call')
-        assert replay.metadata['change_set']['id'] == result.metadata['change_set']['id']
-        assert replay.summary == submission_receipt(repo.row)
+        if operation == 'create':
+            replay = await handle_form_submit(db, 'u1', 'o1', 'scheduled_task_create', values, idempotency_key='confirmed-form')
+            assert replay['change_set_id'] == change_id
+            assert replay['message'] == submission_receipt(repo.row)
+        else:
+            retry_executor = ToolExecutor(db, 'u1', 'c1', 'o1', tool_entrypoint='model', task_id='turn')
+            replay = await retry_executor.execute('manage_scheduled_task', args, call_id='chain-call')
+            assert replay.metadata['change_set']['id'] == change_id
+            assert replay.summary == submission_receipt(repo.row)
         assert len(db.commits) == (0 if operation == 'delete' else 1)
 
 

@@ -63,7 +63,7 @@ describe('structured message consumers', () => {
     });
     const { container } = render(<FormBlock form={message.content[0] as FormPart}
       messageId={message.id} conversationId={message.conversation_id} />);
-    expect(screen.getByRole('textbox')).toHaveValue('查询昨天的付款订单数按照平台划分');
+    expect(screen.getByDisplayValue('查询昨天的付款订单数按照平台划分')).toHaveValue('查询昨天的付款订单数按照平台划分');
     expect(screen.getByText(/你的原始要求：创建一个定时任务/)).toBeInTheDocument();
     const frequency = screen.getByRole('option', { name: '每天' }).closest('select')!;
     const notification = screen.getByRole('option', { name: '推送给我（网页）' }).closest('select')!;
@@ -74,7 +74,7 @@ describe('structured message consumers', () => {
     fireEvent.change(container.querySelector('input[type="time"]')!, { target: { value: '08:00' } });
     const listener = vi.fn();
     window.addEventListener('chat:form-submit', listener);
-    fireEvent.click(screen.getByRole('button', { name: '创建任务' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认创建' }));
     expect(listener).toHaveBeenCalledOnce();
     expect((listener.mock.calls[0][0] as CustomEvent).detail.formData).toMatchObject({
       prompt: '查询昨天的付款订单数按照平台划分', schedule_type: 'daily', time_str: '08:00',

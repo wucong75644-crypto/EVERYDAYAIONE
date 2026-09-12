@@ -57,7 +57,7 @@ async def test_parser_drops_ungrounded_update_fields_and_detects_recipient_omiss
 
 
 @pytest.mark.asyncio
-async def test_complete_chat_request_submits_and_incomplete_request_only_exposes_missing_time():
+async def test_complete_and_incomplete_chat_requests_wait_for_form_confirmation():
     manager = ChatTaskManager(_Db(),"u","org",submission_mode="apply_if_allowed",idempotency_key="call")
     parsed = {"changes":{"name":"A店订单","prompt":"每天九点A店订单日报","schedule_type":"daily","time_str":"09:00"},
               "missing_fields":[],"recipient":""}
@@ -66,13 +66,14 @@ async def test_complete_chat_request_submits_and_incomplete_request_only_exposes
     with patch("services.scheduler.task_nl_parser.parse_task_request", AsyncMock(return_value=parsed)), \
          patch("services.scheduler.chat_task_manager._load_push_targets", AsyncMock(return_value=targets)), \
          patch.object(manager,"_begin_request",submit):
-        assert (await manager.handle("create",{"description":"每天九点A店订单日报"}))["type"] == "change_set"
-        assert submit.call_args.args[1]["push_target"] == {"type":"web","user_id":"u"}
+        complete_form = await manager.handle("create",{"description":"每天九点A店订单日报"})
+        assert complete_form["type"] == "form"
+        assert complete_form["submit_text"] == "确认创建"
         parsed["changes"].pop("time_str")
         parsed["missing_fields"] = ["time_str"]
         form = await manager.handle("create",{"description":"每天做A店订单日报"})
     fields = {f["name"]:f for f in form["fields"]}
-    assert submit.await_count == 1
+    submit.assert_not_awaited()
     assert fields["time_str"]["default_value"] == "" and fields["prompt"]["type"] == "textarea"
     assert fields["_submission_mode"]["default_value"] == "apply_if_allowed"
 

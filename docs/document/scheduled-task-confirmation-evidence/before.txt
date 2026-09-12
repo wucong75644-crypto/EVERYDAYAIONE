@@ -1,0 +1,34 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-8.3.4, pluggy-1.6.0
+rootdir: /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/backend
+configfile: pytest.ini
+plugins: anyio-4.12.1, asyncio-0.25.2, cov-7.1.0, time-machine-2.14.1
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=function
+collected 3 items
+
+tests/test_scheduled_task_creation_confirmation.py FFF                   [100%]
+
+=================================== FAILURES ===================================
+_ test_complete_chat_shows_editable_form_without_creating_or_planning[schedule0] _
+tests/test_scheduled_task_creation_confirmation.py:25: in test_complete_chat_shows_editable_form_without_creating_or_planning
+    begin.assert_not_awaited()
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:2429: in assert_not_awaited
+    raise AssertionError(msg)
+E   AssertionError: Expected mock to not have been awaited. Awaited 1 times.
+_ test_complete_chat_shows_editable_form_without_creating_or_planning[schedule1] _
+tests/test_scheduled_task_creation_confirmation.py:25: in test_complete_chat_shows_editable_form_without_creating_or_planning
+    begin.assert_not_awaited()
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:2429: in assert_not_awaited
+    raise AssertionError(msg)
+E   AssertionError: Expected mock to not have been awaited. Awaited 1 times.
+_ test_complete_chat_shows_editable_form_without_creating_or_planning[schedule2] _
+tests/test_scheduled_task_creation_confirmation.py:25: in test_complete_chat_shows_editable_form_without_creating_or_planning
+    begin.assert_not_awaited()
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:2429: in assert_not_awaited
+    raise AssertionError(msg)
+E   AssertionError: Expected mock to not have been awaited. Awaited 1 times.
+=========================== short test summary info ============================
+FAILED tests/test_scheduled_task_creation_confirmation.py::test_complete_chat_shows_editable_form_without_creating_or_planning[schedule0]
+FAILED tests/test_scheduled_task_creation_confirmation.py::test_complete_chat_shows_editable_form_without_creating_or_planning[schedule1]
+FAILED tests/test_scheduled_task_creation_confirmation.py::test_complete_chat_shows_editable_form_without_creating_or_planning[schedule2]
+============================== 3 failed in 0.75s ===============================

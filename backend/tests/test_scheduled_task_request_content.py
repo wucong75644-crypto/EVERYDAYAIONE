@@ -119,8 +119,9 @@ async def test_valid_complete_request_reuses_existing_submission_chain_with_clea
          patch("services.scheduler.chat_task_manager._load_push_targets", AsyncMock(return_value=TARGETS)), \
          patch.object(manager, "_begin_request", AsyncMock(return_value={"type": "change_set"})) as submit:
         result = await manager.handle("create", {"description": text})
-    assert result["type"] == "change_set"
-    assert submit.call_args.args[1]["prompt"] == BUSINESS
+    assert result["type"] == "form"
+    submit.assert_not_awaited()
+    assert next(f for f in result["fields"] if f["name"] == "prompt")["default_value"] == BUSINESS
 
 
 async def test_reordered_segments_and_separator_omission_still_preserve_source_order():

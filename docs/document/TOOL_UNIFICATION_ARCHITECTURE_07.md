@@ -99,3 +99,7 @@ Registry 定义不缓存请求状态。用户/工作区 owner/组织/任务/资�
 ### 2026-09-12：任务输入的授权升级
 
 当前 manage_scheduled_task 的工具说明及 definition/recipient schema 由 services/tools/definitions/task.py 唯一维护；config.chat_tools 的兼容指导说明也从该 Spec 派生。交互模型入口 → ToolExecutor → ChatTaskManager(structured_input=True) → task_definition_input → 原 FormPart/ChangeSet 服务。新入口不再通过第二次模型解析 description。旧默认构造、description-only 和解析 API 保留为输入适配；原 Registry/Policy/Dispatcher、Planner、提交 RPC、任务执行和通知链不变。详细接口、补丁语义、权限/确认、回退与未验证事项见 [ST-26](SCHEDULED_TASK_STRUCTURED_ACCEPTANCE.md)。此处是待部署候选，不覆盖历史版本证据。
+
+### 2026-09-12 ST-27：创建前确认表单
+
+用户明确纠正 ST-26 的完整请求直接提交行为：聊天创建始终先显示可编辑确认表单，点击“确认创建”后才开始规划及提交。主模型一次整理与原授权、ChangeSet、执行链保留。后端 1319、前端 37 及 TS/定向 ESLint 通过；本批未提交部署、用户验收待完成，07 不关闭。详见 [ST-27 证据与当前流程](SCHEDULED_TASK_CONFIRMATION_ACCEPTANCE.md)。

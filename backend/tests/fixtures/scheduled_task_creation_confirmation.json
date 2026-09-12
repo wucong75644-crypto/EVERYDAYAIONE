@@ -1,16 +1,16 @@
 {
   "type": "form",
   "form_type": "scheduled_task_create",
-  "form_id": "synthetic-task-content-form",
-  "title": "补充任务信息",
-  "description": "尚未创建任务。请核对执行内容、时间安排和通知渠道，点击确认后开始检查并创建。你的原始要求：创建一个定时任务，查询昨天的付款订单数按照平台划分",
+  "form_id": "confirmed-create-form",
+  "title": "确认创建定时任务",
+  "description": "尚未创建任务。请核对执行内容、时间安排和通知渠道，点击确认后开始检查并创建。",
   "fields": [
     {
       "type": "text",
       "name": "name",
       "label": "任务名称",
       "required": true,
-      "default_value": "昨日付款订单数统计",
+      "default_value": "示例日报",
       "placeholder": "如：每日销售日报"
     },
     {
@@ -18,7 +18,7 @@
       "name": "prompt",
       "label": "执行内容",
       "required": true,
-      "default_value": "查询昨天的付款订单数按照平台划分",
+      "default_value": "统计昨天示例店的已付款订单，按平台汇总，排除退款订单",
       "placeholder": "AI 每次执行时的任务指令"
     },
     {
@@ -26,7 +26,7 @@
       "name": "schedule_type",
       "label": "执行频率",
       "required": true,
-      "default_value": "",
+      "default_value": "daily",
       "options": [
         {
           "label": "仅一次",
@@ -51,7 +51,7 @@
       "name": "time_str",
       "label": "执行时间",
       "required": true,
-      "default_value": "",
+      "default_value": "08:00",
       "visible_when": {
         "field": "schedule_type",
         "value": "once",
@@ -141,6 +141,13 @@
       "label": "",
       "required": false,
       "default_value": "apply_if_allowed"
+    },
+    {
+      "type": "hidden",
+      "name": "_structured_input",
+      "label": "",
+      "required": false,
+      "default_value": true
     }
   ],
   "submit_text": "确认创建",
