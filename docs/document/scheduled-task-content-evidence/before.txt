@@ -1,0 +1,95 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-8.3.4, pluggy-1.6.0
+rootdir: /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/backend
+configfile: pytest.ini
+plugins: anyio-4.12.1, asyncio-0.25.2, cov-7.1.0, time-machine-2.14.1
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=function
+collected 13 items
+
+tests/test_scheduled_task_request_content.py FFFFFFFFFFFFF               [100%]
+
+=================================== FAILURES ===================================
+__ test_reported_request_extracts_only_business_and_requires_missing_schedule __
+tests/test_scheduled_task_request_content.py:28: in test_reported_request_extracts_only_business_and_requires_missing_schedule
+    assert result["changes"]["prompt"] == BUSINESS
+E   AssertionError: assert '创建一个定时任务，查询昨天的付款订单数按照平台划分' == '查询昨天的付款订单数按照平台划分'
+E     
+E     - 查询昨天的付款订单数按照平台划分
+E     + 创建一个定时任务，查询昨天的付款订单数按照平台划分
+E     ? +++++++++
+___ test_form_exposes_the_extracted_instruction_before_user_submits_schedule ___
+tests/test_scheduled_task_request_content.py:41: in test_form_exposes_the_extracted_instruction_before_user_submits_schedule
+    assert fields["prompt"]["type"] == "textarea"
+E   AssertionError: assert 'hidden' == 'textarea'
+E     
+E     - textarea
+E     + hidden
+_______ test_business_scope_comes_from_complete_source_not_model_rewrite _______
+tests/test_scheduled_task_request_content.py:52: in test_business_scope_comes_from_complete_source_not_model_rewrite
+    assert result["changes"]["prompt"] == BUSINESS
+E   AssertionError: assert '创建一个定时任务，查询昨天的付款订单数按照平台划分' == '查询昨天的付款订单数按照平台划分'
+E     
+E     - 查询昨天的付款订单数按照平台划分
+E     + 创建一个定时任务，查询昨天的付款订单数按照平台划分
+E     ? +++++++++
+_ test_unreliable_partition_requires_correction_instead_of_executing_original[omit_condition] _
+tests/test_scheduled_task_request_content.py:72: in test_unreliable_partition_requires_correction_instead_of_executing_original
+    assert "prompt" not in result["changes"] and "prompt" in result["missing_fields"]
+E   AssertionError: assert ('prompt' not in {'name': '昨日付款订单数统计', 'prompt': '创建一个定时任务，查询昨天的付款订单数按照平台划分'})
+_ test_unreliable_partition_requires_correction_instead_of_executing_original[rewrite_source] _
+tests/test_scheduled_task_request_content.py:72: in test_unreliable_partition_requires_correction_instead_of_executing_original
+    assert "prompt" not in result["changes"] and "prompt" in result["missing_fields"]
+E   AssertionError: assert ('prompt' not in {'name': '昨日付款订单数统计', 'prompt': '创建一个定时任务，查询昨天的付款订单数按照平台划分'})
+_ test_unreliable_partition_requires_correction_instead_of_executing_original[classify_business_as_request] _
+tests/test_scheduled_task_request_content.py:72: in test_unreliable_partition_requires_correction_instead_of_executing_original
+    assert "prompt" not in result["changes"] and "prompt" in result["missing_fields"]
+E   AssertionError: assert ('prompt' not in {'name': '昨日付款订单数统计', 'prompt': '创建一个定时任务，查询昨天的付款订单数按照平台划分'})
+_ test_unreliable_partition_requires_correction_instead_of_executing_original[whole_request_as_execution] _
+tests/test_scheduled_task_request_content.py:72: in test_unreliable_partition_requires_correction_instead_of_executing_original
+    assert "prompt" not in result["changes"] and "prompt" in result["missing_fields"]
+E   AssertionError: assert ('prompt' not in {'name': '昨日付款订单数统计', 'prompt': '创建一个定时任务，查询昨天的付款订单数按照平台划分'})
+_ test_unreliable_partition_requires_correction_instead_of_executing_original[unknown_kind] _
+tests/test_scheduled_task_request_content.py:72: in test_unreliable_partition_requires_correction_instead_of_executing_original
+    assert "prompt" not in result["changes"] and "prompt" in result["missing_fields"]
+E   AssertionError: assert ('prompt' not in {'name': '昨日付款订单数统计', 'prompt': '创建一个定时任务，查询昨天的付款订单数按照平台划分'})
+_ test_unreliable_partition_requires_correction_instead_of_executing_original[missing_parts] _
+tests/test_scheduled_task_request_content.py:72: in test_unreliable_partition_requires_correction_instead_of_executing_original
+    assert "prompt" not in result["changes"] and "prompt" in result["missing_fields"]
+E   AssertionError: assert ('prompt' not in {'name': '昨日付款订单数统计', 'prompt': '创建一个定时任务，查询昨天的付款订单数按照平台划分'})
+_ test_schedule_delivery_removed_but_business_dates_filters_and_output_preserved _
+tests/test_scheduled_task_request_content.py:91: in test_schedule_delivery_removed_but_business_dates_filters_and_output_preserved
+    assert result["changes"]["prompt"] == instruction
+E   AssertionError: assert '请创建一个定时任务，每天...，以表格显示，发送到销售群' == '查询昨天A店已付款订单数...；按照平台划分，以表格显示'
+E     
+E     - 查询昨天A店已付款订单数，排除退款订单；按照平台划分，以表格显示
+E     + 请创建一个定时任务，每天上午9点，查询昨天A店已付款订单数，排除退款订单；按照平台划分，以表格显示，发送到销售群
+___ test_metadata_classification_cannot_drop_business_requirements[schedule] ___
+tests/test_scheduled_task_request_content.py:104: in test_metadata_classification_cannot_drop_business_requirements
+    assert "prompt" in result["missing_fields"]
+E   AssertionError: assert 'prompt' in []
+___ test_metadata_classification_cannot_drop_business_requirements[delivery] ___
+tests/test_scheduled_task_request_content.py:104: in test_metadata_classification_cannot_drop_business_requirements
+    assert "prompt" in result["missing_fields"]
+E   AssertionError: assert 'prompt' in []
+_ test_valid_complete_request_reuses_existing_submission_chain_with_clean_content _
+tests/test_scheduled_task_request_content.py:119: in test_valid_complete_request_reuses_existing_submission_chain_with_clean_content
+    assert submit.call_args.args[1]["prompt"] == BUSINESS
+E   AssertionError: assert '创建一个定时任务，每天9...天的付款订单数按照平台划分' == '查询昨天的付款订单数按照平台划分'
+E     
+E     - 查询昨天的付款订单数按照平台划分
+E     + 创建一个定时任务，每天9点，查询昨天的付款订单数按照平台划分
+=========================== short test summary info ============================
+FAILED tests/test_scheduled_task_request_content.py::test_reported_request_extracts_only_business_and_requires_missing_schedule
+FAILED tests/test_scheduled_task_request_content.py::test_form_exposes_the_extracted_instruction_before_user_submits_schedule
+FAILED tests/test_scheduled_task_request_content.py::test_business_scope_comes_from_complete_source_not_model_rewrite
+FAILED tests/test_scheduled_task_request_content.py::test_unreliable_partition_requires_correction_instead_of_executing_original[omit_condition]
+FAILED tests/test_scheduled_task_request_content.py::test_unreliable_partition_requires_correction_instead_of_executing_original[rewrite_source]
+FAILED tests/test_scheduled_task_request_content.py::test_unreliable_partition_requires_correction_instead_of_executing_original[classify_business_as_request]
+FAILED tests/test_scheduled_task_request_content.py::test_unreliable_partition_requires_correction_instead_of_executing_original[whole_request_as_execution]
+FAILED tests/test_scheduled_task_request_content.py::test_unreliable_partition_requires_correction_instead_of_executing_original[unknown_kind]
+FAILED tests/test_scheduled_task_request_content.py::test_unreliable_partition_requires_correction_instead_of_executing_original[missing_parts]
+FAILED tests/test_scheduled_task_request_content.py::test_schedule_delivery_removed_but_business_dates_filters_and_output_preserved
+FAILED tests/test_scheduled_task_request_content.py::test_metadata_classification_cannot_drop_business_requirements[schedule]
+FAILED tests/test_scheduled_task_request_content.py::test_metadata_classification_cannot_drop_business_requirements[delivery]
+FAILED tests/test_scheduled_task_request_content.py::test_valid_complete_request_reuses_existing_submission_chain_with_clean_content
+============================== 13 failed in 0.55s ==============================

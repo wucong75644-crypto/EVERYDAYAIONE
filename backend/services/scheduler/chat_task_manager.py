@@ -412,7 +412,7 @@ class ChatTaskManager:
             if not missing:
                 return await self._begin_request("create", {**parsed, "push_target": target, "timezone": "Asia/Shanghai"})
             form = _build_create_form(parsed, targets)
-            form.update({"title": "补充任务信息", "description": f"已保留你的要求：{description}", "submit_text": "创建任务"})
+            form.update({"title": "补充任务信息", "description": f"请核对执行内容并补齐安排。你的原始要求：{description}", "submit_text": "创建任务"})
             from services.scheduler.task_submission import unfilled_shop_placeholder
             if unfilled_shop_placeholder(description):
                 form["description"] += "。请在执行内容中将店铺占位文字替换为实际店铺名称。"
@@ -423,14 +423,15 @@ class ChatTaskManager:
                 elif key in parsed:
                     field["default_value"] = parsed[key]
                 elif key == "prompt":
-                    # A malformed parser response must not erase the user's
-                    # instruction; it remains visible for correction/confirmation.
-                    field["default_value"] = description
+                    # The original remains in the form description; do not
+                    # prefill an unparsed management request as executable work.
+                    field["default_value"] = ""
+                    field["placeholder"] = "请根据上方原始要求，补充每次需要执行的业务内容"
                 else:
                     field["default_value"] = [] if key == "weekdays" else ""
                 if key == "time_str":
                     field["visible_when"] = {"field": "schedule_type", "value": "once", "not": True}
-                if key not in missing and (key in parsed or key == "push_target" and target):
+                if key != "prompt" and key not in missing and (key in parsed or key == "push_target" and target):
                     field["type"] = "hidden"
             # A one-shot date must not be silently replaced with today/tomorrow.
             form["fields"].append(_build_form_field(

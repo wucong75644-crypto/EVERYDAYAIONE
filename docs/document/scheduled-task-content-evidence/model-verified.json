@@ -1,0 +1,272 @@
+[
+  {
+    "input": "创建一个定时任务，查询昨天的付款订单数按照平台划分",
+    "raw": {
+      "changes": {
+        "name": "昨日付款订单数统计",
+        "prompt": "查询昨天的付款订单数按照平台划分"
+      },
+      "evidence": {
+        "prompt": "查询昨天的付款订单数按照平台划分"
+      },
+      "recipient": "",
+      "request_parts": [
+        {
+          "kind": "request",
+          "text": "创建一个定时任务，"
+        },
+        {
+          "kind": "execution",
+          "text": "查询昨天的付款订单数按照平台划分"
+        }
+      ]
+    },
+    "result": {
+      "changes": {
+        "name": "昨日付款订单数统计",
+        "prompt": "查询昨天的付款订单数按照平台划分"
+      },
+      "missing_fields": [
+        "schedule_type",
+        "time_str"
+      ],
+      "recipient": "",
+      "parsed": true
+    },
+    "expectations_passed": true
+  },
+  {
+    "input": "请创建一个定时任务，每天上午9点，查询昨天A店已付款订单数，排除退款订单；按照平台划分，以表格显示，发送到销售群",
+    "raw": {
+      "changes": {
+        "name": "A店已付款订单统计",
+        "prompt": "查询昨天A店已付款订单数，排除退款订单；按照平台划分",
+        "schedule_type": "daily",
+        "time_str": "09:00"
+      },
+      "evidence": {
+        "prompt": "查询昨天A店已付款订单数，排除退款订单；按照平台划分",
+        "schedule_type": "每天",
+        "time_str": "上午9点"
+      },
+      "recipient": "销售群",
+      "request_parts": [
+        {
+          "kind": "request",
+          "text": "请创建一个定时任务，"
+        },
+        {
+          "kind": "schedule",
+          "text": "每天上午9点，"
+        },
+        {
+          "kind": "execution",
+          "text": "查询昨天A店已付款订单数，排除退款订单；按照平台划分"
+        },
+        {
+          "kind": "delivery",
+          "text": "发送到销售群"
+        }
+      ]
+    },
+    "result": {
+      "changes": {
+        "name": "A店已付款订单统计",
+        "prompt": "查询昨天A店已付款订单数，排除退款订单；按照平台划分；以表格显示",
+        "schedule_type": "daily",
+        "time_str": "09:00"
+      },
+      "missing_fields": [],
+      "recipient": "销售群",
+      "parsed": true
+    },
+    "expectations_passed": true
+  },
+  {
+    "input": "创建测试日报，每天上午9点，把昨天【实际店铺名】的销售汇总发给我",
+    "raw": {
+      "changes": {
+        "name": "测试日报",
+        "prompt": "把昨天【实际店铺名】的销售汇总",
+        "schedule_type": "daily",
+        "time_str": "09:00"
+      },
+      "evidence": {
+        "prompt": "把昨天【实际店铺名】的销售汇总",
+        "schedule_type": "每天",
+        "time_str": "上午9点"
+      },
+      "recipient": "我",
+      "request_parts": [
+        {
+          "kind": "request",
+          "text": "创建测试日报，"
+        },
+        {
+          "kind": "schedule",
+          "text": "每天上午9点，"
+        },
+        {
+          "kind": "execution",
+          "text": "把昨天【实际店铺名】的销售汇总"
+        },
+        {
+          "kind": "delivery",
+          "text": "发给我"
+        }
+      ]
+    },
+    "result": {
+      "changes": {
+        "name": "测试日报",
+        "prompt": "把昨天【实际店铺名】的销售汇总",
+        "schedule_type": "daily",
+        "time_str": "09:00"
+      },
+      "missing_fields": [
+        "prompt"
+      ],
+      "recipient": "我",
+      "parsed": true
+    },
+    "expectations_passed": true
+  },
+  {
+    "input": "2030年10月1日9点发A店日报给我",
+    "raw": {
+      "changes": {
+        "name": "A店日报",
+        "prompt": "发A店日报",
+        "schedule_type": "once",
+        "run_at": "2030-10-01T09:00:00+08:00"
+      },
+      "evidence": {
+        "prompt": "发A店日报",
+        "schedule_type": "2030年10月1日",
+        "run_at": "2030年10月1日9点"
+      },
+      "recipient": "我",
+      "request_parts": [
+        {
+          "kind": "schedule",
+          "text": "2030年10月1日9点"
+        },
+        {
+          "kind": "execution",
+          "text": "发A店日报"
+        },
+        {
+          "kind": "delivery",
+          "text": "给我"
+        }
+      ]
+    },
+    "result": {
+      "changes": {
+        "name": "A店日报",
+        "prompt": "发A店日报",
+        "schedule_type": "once",
+        "run_at": "2030-10-01T09:00:00+08:00"
+      },
+      "missing_fields": [],
+      "recipient": "我",
+      "parsed": true
+    },
+    "expectations_passed": true
+  },
+  {
+    "input": "创建一个定时任务，统计昨天A店的销售金额，每天上午9点执行",
+    "raw": {
+      "changes": {
+        "name": "A店销售金额统计",
+        "prompt": "统计昨天A店的销售金额",
+        "schedule_type": "daily",
+        "time_str": "09:00"
+      },
+      "evidence": {
+        "prompt": "统计昨天A店的销售金额",
+        "schedule_type": "每天",
+        "time_str": "上午9点"
+      },
+      "recipient": "",
+      "request_parts": [
+        {
+          "kind": "request",
+          "text": "创建一个定时任务，"
+        },
+        {
+          "kind": "execution",
+          "text": "统计昨天A店的销售金额"
+        },
+        {
+          "kind": "schedule",
+          "text": "每天上午9点"
+        }
+      ]
+    },
+    "result": {
+      "changes": {
+        "name": "A店销售金额统计",
+        "prompt": "统计昨天A店的销售金额",
+        "schedule_type": "daily",
+        "time_str": "09:00"
+      },
+      "missing_fields": [],
+      "recipient": "",
+      "parsed": true
+    },
+    "expectations_passed": true
+  },
+  {
+    "input": "创建一个定时任务，每周一和周五上午10点，查询昨天的付款订单数，按平台划分，列出环比变化",
+    "raw": {
+      "changes": {
+        "name": "昨日付款订单数统计",
+        "prompt": "查询昨天的付款订单数，按平台划分，列出环比变化",
+        "schedule_type": "weekly",
+        "time_str": "10:00",
+        "weekdays": [
+          1,
+          5
+        ]
+      },
+      "evidence": {
+        "prompt": "查询昨天的付款订单数，按平台划分，列出环比变化",
+        "schedule_type": "每周一和周五",
+        "time_str": "上午10点",
+        "weekdays": "周一和周五"
+      },
+      "recipient": "",
+      "request_parts": [
+        {
+          "kind": "request",
+          "text": "创建一个定时任务，"
+        },
+        {
+          "kind": "execution",
+          "text": "查询昨天的付款订单数，按平台划分，列出环比变化"
+        },
+        {
+          "kind": "schedule",
+          "text": "每周一和周五上午10点"
+        }
+      ]
+    },
+    "result": {
+      "changes": {
+        "name": "昨日付款订单数统计",
+        "prompt": "查询昨天的付款订单数，按平台划分，列出环比变化",
+        "schedule_type": "weekly",
+        "time_str": "10:00",
+        "weekdays": [
+          1,
+          5
+        ]
+      },
+      "missing_fields": [],
+      "recipient": "",
+      "parsed": true
+    },
+    "expectations_passed": true
+  }
+]

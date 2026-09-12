@@ -5,8 +5,31 @@ import FormBlock from '../FormBlock';
 import { TableBlock } from '../TableBlock';
 import { normalizeMessage } from '../../../../utils/messageUtils';
 import { scheduledTaskForm } from '../../../../test/fixtures/scheduledTaskForm';
+import scheduledTaskContentForm from '../../../../test/fixtures/scheduledTaskContentForm.json';
 
 describe('structured message consumers', () => {
+  it('shows backend-extracted business content after refresh and submits it without the creation command', () => {
+    const message = normalizeMessage({
+      id: 'task-content-message', conversation_id: 'task-content-conversation', role: 'assistant',
+      content: JSON.stringify([scheduledTaskContentForm]), status: 'completed',
+    });
+    const { container } = render(<FormBlock form={message.content[0] as FormPart}
+      messageId={message.id} conversationId={message.conversation_id} />);
+    expect(screen.getByRole('textbox')).toHaveValue('查询昨天的付款订单数按照平台划分');
+    expect(screen.getByText(/你的原始要求：创建一个定时任务/)).toBeInTheDocument();
+    expect(screen.getByRole('combobox')).toHaveValue('');
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'daily' } });
+    fireEvent.change(container.querySelector('input[type="time"]')!, { target: { value: '08:00' } });
+    const listener = vi.fn();
+    window.addEventListener('chat:form-submit', listener);
+    fireEvent.click(screen.getByRole('button', { name: '创建任务' }));
+    expect(listener).toHaveBeenCalledOnce();
+    expect((listener.mock.calls[0][0] as CustomEvent).detail.formData).toMatchObject({
+      prompt: '查询昨天的付款订单数按照平台划分', schedule_type: 'daily', time_str: '08:00',
+    });
+    window.removeEventListener('chat:form-submit', listener);
+  });
+
   it('does not visually default an unparsed schedule to the first option', () => {
     const form = { ...scheduledTaskForm, fields: scheduledTaskForm.fields.map((field) => (
       field.name === 'schedule_type' ? { ...field, default_value: '' } : field

@@ -19,10 +19,13 @@ from tests.test_scheduled_task_changeset_adapter import _Db, _Repo
 async def test_strict_parser_never_uses_legacy_default_time_and_keeps_shop_instruction():
     text = "每天九点把A店的订单日报发给我"
     raw = {"changes": {"name": "订单日报", "prompt": "所有店铺订单", "schedule_type": "daily", "time_str": "09:00"},
-           "evidence": {"prompt": "A店的订单日报", "schedule_type": "每天", "time_str": "九点"}, "recipient": "我"}
+           "evidence": {"prompt": "A店的订单日报", "schedule_type": "每天", "time_str": "九点"}, "recipient": "我",
+           "request_parts": [{"kind": "schedule", "text": "每天九点"},
+                             {"kind": "execution", "text": "把A店的订单日报"},
+                             {"kind": "delivery", "text": "发给我"}]}
     with patch("services.scheduler.task_nl_parser._call_llm", AsyncMock(return_value=raw)):
         result = await parse_task_request(text)
-    assert result["changes"]["prompt"] == text and not result["missing_fields"]
+    assert result["changes"]["prompt"] == "把A店的订单日报" and not result["missing_fields"]
     with patch("services.scheduler.task_nl_parser._call_llm", AsyncMock(return_value=None)):
         strict = await parse_task_request("做订单日报")
         old = await parse_task_nl("做订单日报")
@@ -34,7 +37,10 @@ async def test_strict_parser_never_uses_legacy_default_time_and_keeps_shop_instr
 async def test_one_shot_explicit_date_does_not_ask_for_a_second_time_field():
     request = "2030年10月1日9点发A店日报给我"
     parsed = {"changes": {"prompt": "A店日报", "schedule_type": "once", "run_at": "2030-10-01T09:00:00+08:00"},
-              "evidence": {"prompt": "A店日报", "schedule_type": "2030年10月1日", "run_at": "2030年10月1日9点"}}
+              "evidence": {"prompt": "A店日报", "schedule_type": "2030年10月1日", "run_at": "2030年10月1日9点"},
+              "recipient": "我", "request_parts": [{"kind": "schedule", "text": "2030年10月1日9点"},
+                                                   {"kind": "execution", "text": "发A店日报"},
+                                                   {"kind": "delivery", "text": "给我"}]}
     with patch("services.scheduler.task_nl_parser._call_llm", AsyncMock(return_value=parsed)):
         result = await parse_task_request(request)
     assert result["missing_fields"] == [] and "time_str" not in result["changes"]
@@ -67,7 +73,7 @@ async def test_complete_chat_request_submits_and_incomplete_request_only_exposes
         form = await manager.handle("create",{"description":"每天做A店订单日报"})
     fields = {f["name"]:f for f in form["fields"]}
     assert submit.await_count == 1
-    assert fields["time_str"]["default_value"] == "" and fields["prompt"]["type"] == "hidden"
+    assert fields["time_str"]["default_value"] == "" and fields["prompt"]["type"] == "textarea"
     assert fields["_submission_mode"]["default_value"] == "apply_if_allowed"
 
 

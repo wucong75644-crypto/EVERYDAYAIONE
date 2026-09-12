@@ -198,3 +198,17 @@ ChangeSet 新增提交分支时同时更新 Python 和 SQL 的迁移规则及条
 直接 create 的 description 从当轮上下文最后一条 user 提取；UserLayer 多模态的首个 text 为完整原话，后续生成的附件引用不混入。只创建局部参数副本，不改变调用 JSON、旧 API/计划模式或引入全局请求状态。严格解析使用独立 changes/evidence/recipient 契约，失败保持可编辑原文；明确的店铺模板标记同时由补全表单和原 ChangeSet normalize 边界校验，不能扩大为全店权限。所有实际创建仍经过原授权、规划、检查和 commit 链。
 
 此次没有新迁移、停止/启动语义或通知改动；旧历史表单不改写数据，只修正读取兼容。当前修复尚未重新部署。[逐项复验证据与回退](SCHEDULED_TASK_FORM_FIX_ACCEPTANCE.md)。
+
+### 2026-09-12 执行内容整理复验
+
+eeccf3bd 发布后的复验暴露“原文保真”实现错误：把全文写回 prompt，使任务管理话术变成执行内容。严格创建解析现以模型源片段分类配合 `task_request_content.execution_content` 核验：片段必须源自原话、不重叠；按原序取业务要求，未分类文字保留，仅核验通过的创建/时间/通知信息移出。模型自由改写的 prompt 不作为范围依据。请求局部源片段不进入公开 API，也不持有全局请求状态。
+
+聊天补全表单显示整理后的可编辑执行内容，原话独立放在说明中；无法整理时业务内容留空待补充，避免原话直接作为运行内容再次提交。面板 strict parse 共用原函数，旧预填 API/update 和提交/授权/运行内核不变。现有任务/历史 form 不自动改写。本轮尚未部署，证据见 [内容整理验收](SCHEDULED_TASK_CONTENT_EXTRACTION_ACCEPTANCE.md)。
+
+### 2026-09-12 输入与状态一致性复查修复
+
+面板新建 NL 解析完整替换草稿，编辑保持补丁；缺失信息不能继承上一份请求。recipient 只匹配现有授权选项的唯一名称，未解决对象保留并阻止提交，用户明确选择后继续原授权流程。
+
+模型工具入口通过 `task_request_context.current_creation_text` 恢复紧邻当前创建请求的用户澄清原文，遇新请求/取消/工具边界停止，辅助模块不保存请求状态。`parse_task_request` 的严格创建及更新增加 `task_schedule_evidence`，核验明确时钟/常见频率/单次明确日期和时区，矛盾字段列为缺失；可识别的业务内容保留，旧 `parse_task_nl` 不变。
+
+ChangeSetCard 将 WS 事件作为刷新提示；处理态 5 秒补查、online/focus 补查、终态停止，待人工确认不持续轮询。复用原查询 API，带请求序列和修订保护；没有后台任务/通知或权限内核改造。详见 [ST-14～18 验收](SCHEDULED_TASK_CONSISTENCY_ACCEPTANCE.md)，本批未部署。

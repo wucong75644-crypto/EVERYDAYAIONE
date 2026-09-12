@@ -1,0 +1,22 @@
+{
+  "base_commit": "eeccf3bd9485f1e91d253fdacc2c3828700efdd6",
+  "state": "uncommitted_not_deployed",
+  "files": {
+    "backend/services/scheduler/chat_task_manager.py": "031c1c7f8a6704c662505187fc09cc00739625d65a1615dfaa61188cb8ce9ca5",
+    "backend/services/scheduler/task_nl_parser.py": "45694548f1efc1c342337f131c02b874d95a46561ca8b2185d44632dd65cef3a",
+    "backend/services/scheduler/task_request_content.py": "18b4f8c2a9837e574a6799b6b82bc7f402a260fc17245055543f392a472252e0",
+    "backend/tests/test_scheduled_task_request_content.py": "a52cc3c989517ad149d132ec42676809a9e74b20ed29d9ac0aedf794848623fc",
+    "backend/tests/test_scheduled_task_form_incident.py": "6123123343e2394d8ce8eb2ae9b359ae36d375e5288e031e78e97db9ef433e6d",
+    "backend/tests/test_scheduled_task_simplified_creation.py": "29182594051adf14cc8654b34fa75189ee274b0f862cef4fed1a473983d022c8",
+    "frontend/src/components/chat/message/__tests__/StructuredConsumers.test.tsx": "fcf17937a11b0af60eaae04bf7263819a349482bbe16729b60b74cd304df5c0b",
+    "frontend/src/test/fixtures/scheduledTaskContentForm.json": "48298c6c003da2848ee273e2e7dc7583159faa8df9dea6bc1e3b440ef36d8aad"
+  },
+  "verification": {
+    "backend_passed": 696,
+    "frontend_passed": 194,
+    "typescript_exit_code": 0,
+    "real_model_cases": 6,
+    "real_model_cases_passed": 6
+  },
+  "production_business_mutations": false
+}

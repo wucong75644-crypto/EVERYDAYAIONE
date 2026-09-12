@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -289,29 +289,41 @@ export default function ChangeSetCard({
     setActiveId(changeSetId);
   }, [changeSetId]);
 
-  const load = useCallback(async () => {
-    if (!activeId) return;
-    setLoading(true);
-    setLoadError(false);
+  const loadSequence = useRef(0);
+  const inFlight = useRef(0);
+  const currentId = useRef(activeId);
+  currentId.current = activeId;
+  const load = useCallback(async (quiet = false) => {
+    if (!activeId || (quiet && inFlight.current > 0)) return;
+    const sequence = ++loadSequence.current;
+    inFlight.current += 1;
+    const isCurrent = () => sequence === loadSequence.current && currentId.current === activeId;
+    if (!quiet) setLoading(true);
     try {
       const next = await changeSetService.get(activeId);
-      setChangeSet(next);
+      if (!isCurrent()) return;
+      setLoadError(false);
+      setChangeSet((previous) => previous?.id === next.id && previous.revision > next.revision ? previous : next);
       onChangeSetUpdated?.(next);
-      setActionNotice('');
+      if (!quiet) setActionNotice('');
       try {
         const timeline = await changeSetService.timeline(activeId);
-        setEvents(timeline.events || []);
+        if (isCurrent()) setEvents(timeline.events || []);
       } catch {
-        setEvents([]);
+        if (isCurrent() && !quiet) setEvents([]);
       }
     } catch {
-      setLoadError(true);
+      if (isCurrent() && !quiet) setLoadError(true);
     } finally {
-      setLoading(false);
+      inFlight.current -= 1;
+      if (isCurrent()) setLoading(false);
     }
   }, [activeId, onChangeSetUpdated]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => { loadSequence.current += 1; };
+  }, [load]);
 
   useEffect(() => {
     const onUpdated = (event: Event) => {
@@ -322,6 +334,23 @@ export default function ChangeSetCard({
     window.addEventListener(CHANGESET_UPDATED_EVENT, onUpdated);
     return () => window.removeEventListener(CHANGESET_UPDATED_EVENT, onUpdated);
   }, [activeId, load]);
+
+  // Live events are hints, not durable state. Reconcile unfinished cards when
+  // a completion event was missed, without replacing the visible card by a spinner.
+  const settled = changeSet?.id === activeId && ['applied', 'cancelled', 'rejected', 'failed', 'expired', 'conflicted'].includes(changeSet.status);
+  const processing = !changeSet || changeSet.id !== activeId || ['draft', 'resolving', 'proposed', 'validating', 'preflighting', 'committing'].includes(changeSet.status);
+  useEffect(() => {
+    if (settled) return;
+    const refresh = () => { void load(true); };
+    const timer = processing ? window.setInterval(refresh, 5000) : undefined;
+    window.addEventListener('online', refresh);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('online', refresh);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [load, settled, processing]);
 
   const adapter = useMemo(
     () => providedAdapter || (changeSet ? getChangeSetResourceAdapter(changeSet) : undefined),

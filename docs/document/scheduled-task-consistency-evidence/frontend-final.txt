@@ -1,0 +1,31 @@
+
+ RUN  v3.2.7 /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-07/frontend
+
+ ✓ src/stores/__tests__/useScheduledTaskStore.test.ts (20 tests) 5ms
+stderr | src/components/scheduled-tasks/__tests__/ScheduledTaskPanel.test.tsx > ScheduledTaskPanel ChangeSet recovery > applies an ordinary pause in place without opening a confirmation workflow
+React does not recognize the `whileHover` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `whilehover` instead. If you accidentally passed it from a parent component, remove it from the DOM element.
+React does not recognize the `whileTap` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `whiletap` instead. If you accidentally passed it from a parent component, remove it from the DOM element.
+
+stdout | src/components/chat/message/__tests__/MessageContentBlocks.test.tsx
+[DEBUG] [18:29:52] [task:restore] Hydrate complete
+
+stdout | src/components/chat/message/__tests__/ChangeSetCard.test.tsx
+[DEBUG] [18:29:52] [task:restore] Hydrate complete
+
+stdout | src/components/chat/message/__tests__/StructuredConsumers.test.tsx
+[DEBUG] [18:29:52] [task:restore] Hydrate complete
+
+ ✓ src/components/scheduled-tasks/__tests__/TaskCardChangeSet.test.tsx (3 tests) 82ms
+ ✓ src/components/scheduled-tasks/__tests__/ScheduledTaskPanel.test.tsx (4 tests) 144ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts (78 tests) 163ms
+ ✓ src/components/chat/message/__tests__/ChangeSetCard.test.tsx (13 tests) 225ms
+ ✓ src/components/chat/message/__tests__/StructuredConsumers.test.tsx (12 tests) 166ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskForm.test.tsx (7 tests) 304ms
+ ✓ src/components/chat/message/__tests__/MessageContentBlocks.test.tsx (4 tests) 364ms
+   ✓ MessageContentBlocks structured diagrams > dispatches a diagram part through the dedicated structured renderer  306ms
+
+ Test Files  8 passed (8)
+      Tests  141 passed (141)
+   Start at  18:29:52
+   Duration  1.57s (transform 704ms, setup 1.31s, collect 1.88s, tests 1.45s, environment 2.83s, prepare 350ms)
+

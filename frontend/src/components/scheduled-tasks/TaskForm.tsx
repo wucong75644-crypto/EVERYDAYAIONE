@@ -94,7 +94,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
   const [prompt, setPrompt] = useState(task?.prompt || '');
 
   // 频率
-  const [scheduleType, setScheduleType] = useState<ScheduleType>(
+  const [scheduleType, setScheduleType] = useState<ScheduleType | ''>(
     task?.schedule_type || 'daily',
   );
   const [timeStr, setTimeStr] = useState<string>(() => {
@@ -147,6 +147,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
   // 自然语言输入
   const [nlText, setNlText] = useState('');
   const [parsing, setParsing] = useState(false);
+  const [pendingRecipient, setPendingRecipient] = useState('');
 
   // 任何用户都需要自己的 wecom_userid（"推送给我自己"模式构造 push_target）
   // 用 /org-members/me 接口（任何成员都能调，不需要管理员权限）
@@ -190,24 +191,55 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
   }, [task, myWecomUserid]);
 
   const handleNLParse = async () => {
-    if (!nlText.trim()) return;
+    if (parsing || !nlText.trim()) return;
     setParsing(true);
     try {
       const result = await scheduledTaskService.parseNL(nlText, isEdit ? 'update' : 'create');
-      if (result.name) setName(result.name);
-      if (result.prompt) setPrompt(result.prompt);
-      if (isEdit && result.output_format && !result.prompt) setPrompt(`${task.prompt}\n输出格式：${result.output_format}`);
-      if (result.schedule_type) setScheduleType(result.schedule_type);
-      if (result.time_str) setTimeStr(result.time_str);
-      else if (!isEdit) setTimeStr('');
-      if (result.weekdays) setWeekdays(result.weekdays);
-      if (result.day_of_month) setDayOfMonth(result.day_of_month);
-      if (result.run_at) setRunAtLocal(isoToLocalDatetime(result.run_at));
-      else if (!isEdit) setRunAtLocal('');
-      if (result.missing_fields?.length || result.recipient) setError('已填入明确的信息，请补齐时间，并核对推送对象。');
+      // A new request replaces the draft; only editing an existing task is a patch.
+      if (!isEdit) {
+        setName(result.name || '');
+        setPrompt(result.missing_fields?.includes('prompt') ? '' : result.prompt || '');
+        setScheduleType(result.schedule_type || '');
+        setTimeStr(result.time_str || '');
+        setWeekdays(result.weekdays || []);
+        setDayOfMonth(result.day_of_month || 0);
+        setRunAtLocal(result.run_at ? isoToLocalDatetime(result.run_at) : '');
+        setCustomCron(result.cron_expr || '');
+        setPushMode('self');
+        setColleagueId('');
+        setGroupId('');
+      } else {
+        if (result.name) setName(result.name);
+        if (result.prompt) setPrompt(result.prompt);
+        else if (result.output_format) setPrompt((current) => `${current}\n输出格式：${result.output_format}`);
+        if (result.schedule_type) setScheduleType(result.schedule_type);
+        if (result.time_str) setTimeStr(result.time_str);
+        if (result.weekdays) setWeekdays(result.weekdays);
+        if (result.day_of_month) setDayOfMonth(result.day_of_month);
+        if (result.run_at) setRunAtLocal(isoToLocalDatetime(result.run_at));
+      }
+      const recipient = (result.recipient || '').trim();
+      const targetName = recipient.replace(/^(?:发送|推送|发)?(?:给|到)/, '').trim();
+      setPendingRecipient('');
+      if (recipient && !['我', '自己', '我自己'].includes(targetName)) {
+        // Only match choices already available to this user; the backend still authorizes submission.
+        const matchingGroups = canPushToOthers ? groups.filter((g) => g.chat_name === targetName && g.chatid) : [];
+        const matchingPeople = canPushToOthers ? colleagues.filter((c) => c.nickname === targetName && c.wecom_userid) : [];
+        if (matchingGroups.length + matchingPeople.length === 1) {
+          if (matchingGroups.length) {
+            setPushMode('group');
+            setGroupId(matchingGroups[0].id);
+          } else {
+            setPushMode('colleague');
+            setColleagueId(matchingPeople[0].wecom_userid!);
+          }
+        } else setPendingRecipient(recipient);
+      } else if (recipient) setPushMode('self');
+      setError(result.missing_fields?.length ? '请补齐下方缺失的任务内容或时间安排。' : null);
       setNlText('');
     } catch (err) {
       logger.error('task-form', 'parse failed', err);
+      setError('解析失败，请重试或手动填写任务。');
     } finally {
       setParsing(false);
     }
@@ -230,8 +262,8 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
       return { type: 'web', user_id: currentUserId };
     }
     if (pushMode === 'colleague') {
-      if (!colleagueId) return null;
       const c = colleagues.find((x) => x.wecom_userid === colleagueId);
+      if (!canPushToOthers || !c?.wecom_userid) return null;
       return {
         type: 'wecom_user',
         wecom_userid: colleagueId,
@@ -239,8 +271,8 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
       };
     }
     if (pushMode === 'group') {
-      if (!groupId) return null;
-      const g = groups.find((x) => x.id === groupId);
+      const g = groups.find((x) => x.id === groupId || x.chatid === groupId);
+      if (!canPushToOthers || !g?.chatid) return null;
       return {
         type: 'wecom_group',
         chatid: g?.chatid || '',
@@ -251,7 +283,20 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
   };
 
   const handleSubmit = async () => {
+    if (parsing || submitting) return;
     setError(null);
+    if (pendingRecipient) {
+      setError(`请选择推送对象：${pendingRecipient}`);
+      return;
+    }
+    if (!scheduleType) {
+      setError('请选择执行频率');
+      return;
+    }
+    if (scheduleType === 'monthly' && !dayOfMonth) {
+      setError('请选择每月执行日期');
+      return;
+    }
 
     if (!name.trim() || !prompt.trim()) {
       setError('请填写任务名称和指令');
@@ -367,6 +412,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
             <div className="flex gap-2">
               <Input
                 value={nlText}
+                disabled={parsing}
                 onChange={(e) => setNlText(e.target.value)}
                 placeholder="如：今晚10点推今日付款订单情况 / 每天9点推销售日报"
                 onKeyDown={(e) => {
@@ -386,7 +432,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
               </Button>
             </div>
             <p className="text-[10px] text-[var(--s-text-tertiary)] mt-1.5">
-              解析后会自动填好下面所有字段，可手动微调
+              解析后填写已明确的信息，缺少的内容请在下方补齐
             </p>
           </div>
         )}
@@ -524,6 +570,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
                   'focus:outline-none focus:border-[var(--c-input-border-focus)]',
                 )}
               >
+                <option value={0}>请选择日期</option>
                 {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
                   <option key={d} value={d}>
                     {d} 日
@@ -565,7 +612,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
               icon={<User className="w-4 h-4" />}
               title="推送给我自己"
               selected={pushMode === 'self'}
-              onClick={() => setPushMode('self')}
+              onClick={() => { setPushMode('self'); setPendingRecipient(''); }}
             />
 
             {/* 板块2：推送给同事（仅管理员可见） */}
@@ -578,7 +625,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
               >
                 <select
                   value={colleagueId}
-                  onChange={(e) => setColleagueId(e.target.value)}
+                  onChange={(e) => { setColleagueId(e.target.value); if (e.target.value) setPendingRecipient(''); }}
                   disabled={pushMode !== 'colleague'}
                   className={cn(
                     'w-full mt-2 px-3 py-2 text-sm rounded',
@@ -609,7 +656,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
               >
                 <select
                   value={groupId}
-                  onChange={(e) => setGroupId(e.target.value)}
+                  onChange={(e) => { setGroupId(e.target.value); if (e.target.value) setPendingRecipient(''); }}
                   disabled={pushMode !== 'group'}
                   className={cn(
                     'w-full mt-2 px-3 py-2 text-sm rounded',
@@ -630,6 +677,8 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
           </div>
         </div>
 
+        {pendingRecipient && <p role="alert" className="text-sm text-[var(--s-error)]">要求推送给「{pendingRecipient}」，请从可用对象中明确选择；选择前不会提交。</p>}
+
         {error && (
           <div className="text-xs text-[var(--s-error)] bg-[var(--s-error-soft)] px-3 py-2 rounded">
             {error}
@@ -646,6 +695,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
           variant="accent"
           size="sm"
           loading={submitting}
+          disabled={parsing}
           onClick={handleSubmit}
         >
           {isEdit ? '保存修改' : '创建任务'}

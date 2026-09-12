@@ -17,7 +17,12 @@ from tests.test_tool_production_integration import ChatHarness, setup, tc
 
 TEXT = "创建测试日报，每天上午9点，把昨天【实际店铺名】的销售汇总发给我"
 RAW = {"changes": {"name": "测试日报", "prompt": "销售汇总", "schedule_type": "daily", "time_str": "09:00"},
-       "evidence": {"prompt": "销售汇总", "schedule_type": "每天", "time_str": "上午9点"}, "recipient": "我"}
+       "evidence": {"prompt": "销售汇总", "schedule_type": "每天", "time_str": "上午9点"}, "recipient": "我",
+       "request_parts": [{"kind": "request", "text": "创建测试日报，"},
+                         {"kind": "schedule", "text": "每天上午9点，"},
+                         {"kind": "execution", "text": "把昨天【实际店铺名】的销售汇总"},
+                         {"kind": "delivery", "text": "发给我"}]}
+BUSINESS = "把昨天【实际店铺名】的销售汇总"
 TARGETS = [{"label": "推送给我（网页）", "value": '{"type":"web","user_id":"u1"}'}]
 
 
@@ -30,7 +35,7 @@ async def test_placeholder_stays_editable_and_never_enters_direct_submission():
     submit.assert_not_awaited()
     fields = {field["name"]: field for field in form["fields"]}
     assert fields["prompt"]["type"] == "textarea"
-    assert fields["prompt"]["default_value"] == TEXT
+    assert fields["prompt"]["default_value"] == BUSINESS
     assert fields["time_str"]["default_value"] == "09:00"
     assert fields["schedule_type"]["default_value"] == "daily"
     assert "店铺" in form["description"]
@@ -67,7 +72,8 @@ async def test_legacy_parser_shape_fails_closed_but_preserves_text_for_correctio
         form = await manager.handle("create", {"description": TEXT})
     submit.assert_not_awaited()
     fields = {field["name"]: field for field in form["fields"]}
-    assert fields["prompt"]["default_value"] == TEXT
+    assert fields["prompt"]["default_value"] == ""
+    assert TEXT in form["description"]
     assert fields["prompt"]["type"] == "textarea"
     assert fields["time_str"]["default_value"] == ""
 
@@ -94,7 +100,7 @@ async def test_strict_parser_prompt_has_only_its_nested_contract():
     # Every example is valid for the reader's changes/evidence contract; old flat
     # examples caused the actual model response to discard all supplied fields.
     examples = [json.loads(line) for line in prompt.splitlines() if line.startswith('{')]
-    assert examples and all(set(example) == {"changes", "evidence", "recipient"} for example in examples)
+    assert examples and all({"changes", "evidence", "recipient"} <= set(example) for example in examples)
     assert all(set(example["changes"]) - {"name"} <= set(example["evidence"]) for example in examples)
 
 
@@ -132,7 +138,7 @@ async def test_real_chat_tool_pipeline_stages_original_request_form_for_delivery
     await _consume_emit_payloads(host, blocks, sink)
     form = blocks[0]
     assert form["type"] == "form"
-    assert next(f for f in form["fields"] if f["name"] == "prompt")["default_value"] == TEXT
+    assert next(f for f in form["fields"] if f["name"] == "prompt")["default_value"] == BUSINESS
     assert any(f["type"] == "datetime-local" for f in form["fields"])
     assert sink.blocks == blocks
     assert _build_replay_context(messages, blocks, 0)["content_blocks"] == blocks
@@ -143,3 +149,30 @@ async def test_real_chat_tool_pipeline_stages_original_request_form_for_delivery
 def test_real_shop_names_and_grouping_are_not_template_placeholders(prompt):
     from services.scheduler.task_submission import unfilled_shop_placeholder
     assert not unfilled_shop_placeholder(prompt)
+
+
+async def test_runtime_preserves_current_creation_across_time_clarification(monkeypatch):
+    from core.config import get_settings
+    monkeypatch.setattr(get_settings(), "scheduled_task_direct_enabled", True)
+    executor = ToolExecutor(IdentityDB(), "u1", "c1", "o1", tool_entrypoint="model", task_id="task1")
+    original = "创建定时任务，按平台统计昨天A店付款订单数"
+    answer = "每天上午8点，发给我"
+    executor._parent_messages = [
+        {"role": "user", "content": original},
+        {"role": "assistant", "content": "每天几点执行？"},
+        {"role": "user", "content": answer},
+    ]
+    raw = {"changes": {"name": "A店付款统计", "prompt": "全部店铺", "schedule_type": "daily", "time_str": "08:00"},
+           "evidence": {"prompt": "按平台统计昨天A店付款订单数", "schedule_type": "每天", "time_str": "上午8点"},
+           "recipient": "我", "request_parts": [
+               {"kind": "request", "text": "创建定时任务，"},
+               {"kind": "execution", "text": "按平台统计昨天A店付款订单数"},
+               {"kind": "schedule", "text": "每天上午8点，"},
+               {"kind": "delivery", "text": "发给我"}]}
+    with patch("services.scheduler.task_nl_parser._call_llm", AsyncMock(return_value=raw)) as parser, \
+         patch("services.scheduler.chat_task_manager._load_push_targets", AsyncMock(return_value=TARGETS)), \
+         patch.object(ChatTaskManager, "_begin_request", AsyncMock(return_value={"type": "text", "text": "ok"})) as submit:
+        await executor.execute("manage_scheduled_task", {"action": "create", "description": "全部店铺订单"}, call_id="followup")
+    assert parser.call_args.args[0] == original + "\n" + answer
+    assert submit.await_args.args[1]["prompt"] == "按平台统计昨天A店付款订单数"
+    assert submit.await_args.args[1]["time_str"] == "08:00"

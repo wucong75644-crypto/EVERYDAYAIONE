@@ -169,4 +169,49 @@ describe('ChangeSetCard', () => {
     await waitFor(() => expect(changeSetService.get.mock.calls.length).toBeGreaterThan(callsBefore));
     await waitFor(() => expect(onChangeSetUpdated).toHaveBeenCalledWith(expect.objectContaining({ id: 'change-1' })));
   });
+  it('recovers a missed completion without a live event and stops polling at the terminal state', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(changeSetService.get).mockResolvedValue(makeChangeSet({ status: 'preflighting' }));
+      const { unmount } = render(<ChangeSetCard changeSetId="change-1" />);
+      await act(async () => {});
+      vi.mocked(changeSetService.get).mockRejectedValueOnce(new Error('offline'));
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(screen.getByRole('heading', { name: '编辑定时任务' })).toBeVisible();
+      vi.mocked(changeSetService.get).mockResolvedValue(makeChangeSet({ status: 'applied', revision: 3 }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(screen.getByText('变更已提交并记录完成结果。')).toBeVisible();
+      const calls = vi.mocked(changeSetService.get).mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
+      expect(changeSetService.get).toHaveBeenCalledTimes(calls);
+      unmount();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('reconciles on coming online and removes listeners when unmounted', async () => {
+    const { unmount } = render(<ChangeSetCard changeSetId="change-1" />);
+    await screen.findByText('待确认');
+    vi.mocked(changeSetService.get).mockResolvedValue(makeChangeSet({ status: 'applied', revision: 3 }));
+    await act(async () => { window.dispatchEvent(new Event('online')); });
+    expect(await screen.findByText('变更已提交并记录完成结果。')).toBeVisible();
+    unmount();
+    const calls = vi.mocked(changeSetService.get).mock.calls.length;
+    window.dispatchEvent(new Event('online'));
+    expect(changeSetService.get).toHaveBeenCalledTimes(calls);
+  });
+
+  it('does not replace a newly selected card with a late response from the old card', async () => {
+    let finishOld!: (value: ChangeSet) => void;
+    vi.mocked(changeSetService.get).mockImplementation((id) => id === 'change-1'
+      ? new Promise((resolve) => { finishOld = resolve; })
+      : Promise.resolve(makeChangeSet({ id: 'change-2', status: 'applied', revision: 4 })));
+    const onUpdate = vi.fn();
+    const { rerender } = render(<ChangeSetCard changeSetId="change-1" onChangeSetUpdated={onUpdate} />);
+    rerender(<ChangeSetCard changeSetId="change-2" onChangeSetUpdated={onUpdate} />);
+    await screen.findByText('变更已提交并记录完成结果。');
+    await act(async () => { finishOld(makeChangeSet({ status: 'preflighting' })); });
+    expect(screen.getByText('变更已提交并记录完成结果。')).toBeVisible();
+    expect(onUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ id: 'change-1' }));
+  });
+
 });
