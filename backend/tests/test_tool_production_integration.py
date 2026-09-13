@@ -167,11 +167,11 @@ async def test_real_confirmation_channel(setup, entry, outcome, monkeypatch):
         if outcome == "exception": raise RuntimeError("confirmation failed")
         request_id = message["payload"]["tool_call_id"]
         if outcome in {"approved", "rejected"}:
-            assert manager.resolve_confirm(request_id, outcome == "approved", task_id="task1", conversation_id="c1")
+            assert manager.resolve_confirm(request_id, outcome == "approved", task_id="task1", conversation_id="c1", actor_user_id="u1")
     manager.send_to_task_or_user.side_effect = send
     if outcome == "timeout":
         original = manager.wait_for_confirm
-        manager.wait_for_confirm = lambda call_id, **kw: original(call_id, timeout=.01, task_id=kw["task_id"], conversation_id=kw["conversation_id"])
+        manager.wait_for_confirm = lambda call_id, **kw: original(call_id, **{**kw, "timeout": .01})
     output = await invoke(entry, executor, [tc("file_delete", {"files": ["delete.txt"]})], monkeypatch, harness)
     assert sent.is_set()
     assert executor.handler.await_count == (1 if outcome == "approved" else 0)

@@ -513,6 +513,7 @@ class ToolLoopExecutor:
         if not hook_ctx.task_id:
             return "⚠ 无可用确认通道，操作未执行。"
 
+        waiter = None
         try:
             from schemas.websocket_builders import build_tool_confirm_request
             from services.websocket_manager import ws_manager
@@ -522,6 +523,11 @@ class ToolLoopExecutor:
             if len(args_summary) > 200:
                 args_summary = args_summary[:200] + "..."
 
+            waiter = asyncio.create_task(ws_manager.wait_for_confirm(
+                tool_call_id, timeout=60.0, task_id=hook_ctx.task_id,
+                conversation_id=hook_ctx.conversation_id, actor_user_id=hook_ctx.user_id,
+            ))
+            await asyncio.sleep(0)  # register before publishing the request
             await ws_manager.send_to_task_or_user(
                 hook_ctx.task_id,
                 hook_ctx.user_id,
@@ -538,12 +544,7 @@ class ToolLoopExecutor:
                 ),
             )
 
-            approved = await ws_manager.wait_for_confirm(
-                tool_call_id,
-                timeout=60.0,
-                task_id=hook_ctx.task_id,
-                conversation_id=hook_ctx.conversation_id,
-            )
+            approved = await waiter
             if approved:
                 logger.info(
                     f"Tool confirm approved | tool={tool_name} | "
@@ -564,6 +565,12 @@ class ToolLoopExecutor:
                 f"Tool confirm error | tool={tool_name} | error={e}"
             )
             return "⚠ 确认失败，操作未执行。"
+        finally:
+            if waiter is not None:
+                if not waiter.done():
+                    waiter.cancel()
+                await asyncio.gather(waiter, return_exceptions=True)
+
 
     # ========================================
     # 单轮工具执行

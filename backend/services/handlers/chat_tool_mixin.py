@@ -334,7 +334,7 @@ class ChatToolMixin(ChatToolResultMixin):
                     return payload.get("approved") is True
         waiter = asyncio.create_task(ChatToolMixin._wait_for_tool_confirmation(
             self, tool_call_id=confirmation_id, task_id=context.task_id,
-            conversation_id=context.conversation_id,
+            conversation_id=context.conversation_id, actor_user_id=context.actor_user_id,
             timeout=min(60.0, context.budget.remaining) if context.budget else 60.0,
         ))
         try:
@@ -371,6 +371,7 @@ class ChatToolMixin(ChatToolResultMixin):
         tool_call_id: str,
         task_id: str,
         conversation_id: str,
+        actor_user_id: str,
         timeout: float,
     ) -> bool:
         """等待确认；Actor 进程与 WebSocket 进程分离时以控制事件恢复。"""
@@ -382,6 +383,7 @@ class ChatToolMixin(ChatToolResultMixin):
                 timeout=timeout,
                 task_id=task_id,
                 conversation_id=conversation_id,
+                actor_user_id=actor_user_id,
             )
 
         runtime = getattr(self, "_actor_runtime", None)
@@ -395,6 +397,7 @@ class ChatToolMixin(ChatToolResultMixin):
                 timeout=timeout,
                 task_id=task_id,
                 conversation_id=conversation_id,
+                actor_user_id=actor_user_id,
             )
         )
         durable_wait = asyncio.create_task(
