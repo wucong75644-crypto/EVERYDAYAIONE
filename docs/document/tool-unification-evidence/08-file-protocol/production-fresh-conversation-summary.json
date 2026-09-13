@@ -1,0 +1,109 @@
+{
+  "status": "completed",
+  "production_commit": "8428b72c0c8b36481e5fdbc3bcb3e93070c2f1f9",
+  "provider_calls": 4,
+  "authorization": "user explicitly confirmed 4 calls with original text and identical preference snapshot, no old chat history",
+  "context": "Fresh production renderer and fresh ToolLoopContext; no persisted conversation created; original personal facts snapshot retained; live memory retrieval not rerun",
+  "results": [
+    {
+      "case": "explicit_workspace_1",
+      "user_text": "6月23日各平台订单周同比_c7a21c.xlsx。删除工作区的这个文件",
+      "calls": [
+        {
+          "name": "file_search",
+          "arguments": {
+            "keyword": "6月23日各平台订单周同比_c7a21c.xlsx",
+            "scope": "workspace"
+          }
+        }
+      ],
+      "filename_modified": false,
+      "read_checks": [
+        {
+          "scope": "workspace",
+          "target_found": true,
+          "candidate_count": 1,
+          "error": null,
+          "reason": "Actual production read-only query component; not a business tool invocation"
+        }
+      ],
+      "target_unchanged": true
+    },
+    {
+      "case": "screenshot_2",
+      "user_text": "6月23日各平台订单周同比_c7a21c.xlsx删除这个文件‘",
+      "calls": [
+        {
+          "name": "file_search",
+          "arguments": {
+            "keyword": "6月23日各平台订单周同比_c7a21c.xlsx"
+          }
+        }
+      ],
+      "filename_modified": false,
+      "read_checks": [
+        {
+          "scope": "current",
+          "target_found": false,
+          "reason": "Empty fresh-conversation attachment manifest; no workspace scan"
+        }
+      ],
+      "target_unchanged": true
+    },
+    {
+      "case": "screenshot_3",
+      "user_text": "6月23日各平台订单周同比_c7a21c.xlsx删除这个文件‘",
+      "calls": [
+        {
+          "name": "file_search",
+          "arguments": {
+            "keyword": "6月23日各平台订单周同比_c7a21c.xlsx"
+          }
+        }
+      ],
+      "filename_modified": false,
+      "read_checks": [
+        {
+          "scope": "current",
+          "target_found": false,
+          "reason": "Empty fresh-conversation attachment manifest; no workspace scan"
+        }
+      ],
+      "target_unchanged": true
+    },
+    {
+      "case": "explicit_workspace_4",
+      "user_text": "6月23日各平台订单周同比_c7a21c.xlsx。删除工作区的这个文件",
+      "calls": [
+        {
+          "name": "file_search",
+          "arguments": {
+            "keyword": "6月23日各平台订单周同比_c7a21c.xlsx",
+            "scope": "workspace"
+          }
+        }
+      ],
+      "filename_modified": false,
+      "read_checks": [
+        {
+          "scope": "workspace",
+          "target_found": true,
+          "candidate_count": 1,
+          "error": null,
+          "reason": "Actual production read-only query component; not a business tool invocation"
+        }
+      ],
+      "target_unchanged": true
+    }
+  ],
+  "filename_changes": 0,
+  "usage": {
+    "prompt_tokens": 38024,
+    "completion_tokens": 188,
+    "total_tokens": 38212
+  },
+  "raw_sha256": "67508a1ae2ad14c3b6d4ae04ed18abe9eafbb26c11b5f7fcd4526cdd735f0dfd",
+  "business_invocations": 0,
+  "business_mutations": 0,
+  "target_unchanged": true
+}

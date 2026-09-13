@@ -1,0 +1,32 @@
+{
+  "type": "function",
+  "function": {
+    "name": "file_search",
+    "description": "在指定范围定位文件或发现候选，返回 resource_ref 和兼容 file_id；不转换文件。\n- 用户给出完整文件名或完整相对路径：通过 path 原样复制，不增删空格或改写标点。\n- 只知道关键词：使用 keyword；按类型查找使用 file_pattern（如 *.csv）。\n- 列目录：使用 path 指定目录，根目录为 .。\n普通聊天默认检索获准工作区，其中包含本轮和历史聊天上传文件。只有用户明确限定本轮附件时才用 scope=current。多个候选先选择完整路径；找到后将 resource_ref 原样传给分析或删除工具，已有附件 ID 则直接使用 ID，不再拼写文件名。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "目录、完整文件名或完整相对路径。完整文件名可定位子目录中的文件；原样复制，不增删空格。完整路径必须准确；同名文件需选择完整路径。"
+        },
+        "keyword": {
+          "type": "string",
+          "description": "搜索关键词（按文件名匹配）"
+        },
+        "file_pattern": {
+          "type": "string",
+          "description": "文件名通配符（如 *.csv、report*）"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "current",
+            "workspace"
+          ],
+          "description": "可省略。普通聊天默认 workspace，检索获准工作区及其中的聊天历史附件；current 仅本轮附件，只在用户明确限定时使用。定时/预检任务仍受原授权资源范围约束。"
+        }
+      }
+    }
+  }
+}

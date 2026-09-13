@@ -52,7 +52,7 @@ async def test_real_loop_browses_directories_then_uses_reference(fixture):
         nonlocal turn
         turn += 1
         calls = {1: tc("file_search", {"scope": "workspace"}, "root"),
-                 2: tc("file_search", {"path": "downloads/"}, "directory")}
+                 2: tc("file_search", {"path": "downloads/", "scope": "workspace"}, "directory")}
         if turn == 3:
             result = [m["content"] for m in ctx.messages if m["role"] == "tool"][-1]
             calls[3] = tc("file_analyze", {"resource_ref": reference(result)}, "analyze")
@@ -391,7 +391,7 @@ async def test_expired_resource_authority_never_executes(fixture, at_confirmatio
     assert e.tool_confirmer.await_count == int(at_confirmation)
 
 
-async def test_sibling_parallel_call_cannot_inherit_a_later_completed_search(fixture, monkeypatch):
+async def test_sibling_parallel_analysis_cannot_inherit_a_later_completed_search(fixture, monkeypatch):
     from services.tools import runtime as module
     e, _, create = fixture
     empty(e)
@@ -404,13 +404,14 @@ async def test_sibling_parallel_call_cannot_inherit_a_later_completed_search(fix
             await root_done.wait()
         return await original(owner, context, registry)
     monkeypatch.setattr(module, "refresh_context", refresh)
-    child = asyncio.create_task(e.execute("file_search", {"path": "downloads/"}, call_id="child"))
+    child = asyncio.create_task(e.execute("file_analyze", {"path": "downloads/report.csv"}, call_id="child"))
     await asyncio.wait_for(child_started.wait(), 2)
     await e.execute("file_search", {"scope": "workspace"}, call_id="root")
     root_done.set()
-    result = await asyncio.wait_for(child, 2)
-    assert result.status == "empty" and "当前任务资源" in result.summary
-    assert "report.csv" in str(await e.execute("file_search", {"path": "downloads/"}, call_id="next-round"))
+    with pytest.raises(PermissionError, match="RESOURCE_PATH_NOT_IN_MANIFEST"):
+        await asyncio.wait_for(child, 2)
+    e._handlers["file_analyze"].assert_not_awaited()
+    assert "analysis-ok" in str(await e.execute("file_analyze", {"path": "downloads/report.csv"}, call_id="next-round"))
 
 
 async def test_finite_listing_does_not_fail_on_hidden_staging(fixture):

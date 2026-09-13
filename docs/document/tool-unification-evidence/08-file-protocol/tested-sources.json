@@ -1,0 +1,16 @@
+{
+  "base_commit": "8428b72c0c8b36481e5fdbc3bcb3e93070c2f1f9",
+  "state": "uncommitted candidate; not deployed",
+  "sha256": {
+    "backend/services/agent/file_tool_mixin.py": "b028668edcd3a5731a199915f533e6167832e4e5dae771c6d584d119d04e3855",
+    "backend/services/file_resources.py": "b8a0aff3cf37a2f6b0c2da932f92305344775e4349c5c0339f62d28eefd83e8e",
+    "backend/services/tools/definitions/file_schemas.py": "982049e128f2d4baa1ca4f2454cb60a95a72e27501b56e16c065e116f25175ad",
+    "backend/services/tools/file_calls.py": "e934a3353a978486decb809a9a48581dd237cf4f28a25f18e3a3a99f2f75e723",
+    "backend/tests/test_resource_scope_continuity.py": "081057f539c4cddcb0d056bdf123d9d755c83354878f1dc9a80b292de26db0dd",
+    "backend/tests/test_tool_definitions_07.py": "1f995e975ff330b3bde7f33b30a47989664010c452e985c8fa761af96bf0376b",
+    "backend/tests/test_tool_registry.py": "722d78d40819480ea71c9f8324c136fd466ce9039ddf9bd47a6bb6bc18ba7e3c",
+    "backend/tests/test_tool_result_05_production_regressions.py": "aacebb696634248990d831f9da1c47bb23ae42fb6201f635ad6e2d6fa946a7a4",
+    "backend/tests/test_file_search_protocol_08.py": "1da3a2f40594024cb4d5702910d967abb3d0cf648e8ab1e45d12584c7a78dffc",
+    "backend/tests/fixtures/file_search_protocol_08_schema.json": "a3fa3e038d99bf08d7b0f3ded43912b5b5712b656872a7a574675fff060244b4"
+  }
+}

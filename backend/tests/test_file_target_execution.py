@@ -349,7 +349,7 @@ async def test_missing_manifest_item_has_no_actionable_reference(fixture):
     e, _, _ = fixture
     e.resource_manifest = ResourceManifest("t", "m", (
         ResourceAsset("a", "ghost.csv", "ghost.csv", "text/csv", 3, ""),), "test")
-    result = await e.execute("file_search", {})
+    result = await e.execute("file_search", {"scope": "current"})
     assert "不可用" in result.summary
     assert "fref1_" not in result.summary and "fid_" not in result.summary
 

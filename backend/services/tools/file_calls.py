@@ -187,24 +187,13 @@ def resolve_file_call(owner, name, arguments, *, files=None, check=lambda: None,
     elif name == "file_search":
         if args.get("search_content"):
             access.require("read")
-        from .resource_access import manifest_matches
-        manifest_target = None
-        if resolver.manifest is not None and scope == "current":
-            matched = manifest_matches(resolver.manifest, args, access)
-            path = str(args.get("path") or "")
-            if path and path != "." and not path.endswith("/") and len(matched) == 1:
-                manifest_target = matched[0].workspace_path
-        if manifest_target is not None:
-            args["path"] = manifest_target
-        if (manifest_target is not None or (args.get("path") and not args.get("keyword")
-                and not args.get("file_pattern") and (scope == "workspace" or resolver.manifest is None))):
+        if args.get("path") and not args.get("keyword") and not args.get("file_pattern"):
             target = resolver.files.resolve_safe_path(args["path"])
-            if not target.is_dir() and Path(args["path"]).parent == Path("."):
-                try:
-                    target = resolver.resolve(args["path"]).path
-                except FileTargetError as error:
-                    if error.code not in {"RESOURCE_NOT_FOUND", "RESOURCE_AMBIGUOUS"}:
-                        raise
+            if not target.is_dir():
+                # Use the same scoped identity resolver for current attachments
+                # and workspace names. Ambiguity/incomplete discovery must not
+                # turn into a keyword miss or select a partial candidate set.
+                target = resolver.resolve_search(args["path"]).path
             if target.is_file():
                 resolver.guarded(str(target))
                 args["path"] = str(target.relative_to(resolver.root))

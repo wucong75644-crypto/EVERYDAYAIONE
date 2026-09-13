@@ -183,8 +183,11 @@ def test_attachment_and_tool_schemas_share_selector_contract():
     from config.file_tools import build_file_tools
     assert FILE_ANALYZE_SELECTOR_GUIDANCE in format_attachments([attachment()], org_id="o1")
     schemas = {tool["function"]["name"]: tool["function"] for tool in build_file_tools()}
-    for name in ("file_search", "file_analyze"):
-        assert FILE_ANALYZE_SELECTOR_GUIDANCE in schemas[name]["description"]
+    assert FILE_ANALYZE_SELECTOR_GUIDANCE in schemas["file_analyze"]["description"]
+    # Search advertises discovery only; its results still supply the unchanged
+    # read_call contract tested above, without duplicating analysis instructions.
+    assert FILE_ANALYZE_SELECTOR_GUIDANCE not in schemas["file_search"]["description"]
+    assert "resource_ref" in schemas["file_search"]["description"]
     for args in ({}, {"file_id": "fid_12345678", "resource_ref": "fref1_test"}):
         with pytest.raises(ValueError, match="exactly one"):
             file_analyze_arguments(**args)

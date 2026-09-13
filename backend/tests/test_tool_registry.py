@@ -178,6 +178,7 @@ def test_three_representative_parameter_contracts_field_by_field(registry):
         for key in parameters["properties"]:
             assert parameters["properties"][key] == old[name]["function"]["parameters"]["properties"][key]
     assert registry.require("file_search").to_schema()["function"]["parameters"]["properties"]["scope"]["enum"] == ["current", "workspace"]
+    assert registry.require("file_search").to_legacy_validation_schema()["required"] == []
     delete = registry.require("file_delete").to_schema()["function"]["parameters"]["properties"]
     assert delete["file_ids"]["items"] == {"type": "string", "pattern": "^fid_[a-z0-9]{8}$"}
     assert delete["files"]["items"] == {"type": "string"}

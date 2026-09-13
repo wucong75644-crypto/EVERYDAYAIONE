@@ -1,0 +1,9 @@
+{
+  "scope": "24 additional original-conversation DashScope calls; first 12 diagnosis and next 12 candidate; no business execution",
+  "user_reply": "增加",
+  "used": 24,
+  "remaining": 0,
+  "previous_8_separate": true,
+  "production_mutations": 0,
+  "status": "completed"
+}

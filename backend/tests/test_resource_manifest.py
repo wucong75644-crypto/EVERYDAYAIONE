@@ -113,7 +113,7 @@ def test_filepart_reexport_preserves_asset_id() -> None:
 
 
 @pytest.mark.asyncio
-async def test_file_search_defaults_to_current_manifest(tmp_path) -> None:
+async def test_file_search_explicit_current_manifest(tmp_path) -> None:
     owner = MagicMock(spec=FileToolMixin)
     owner.resource_manifest = _manifest()
     owner.conversation_id = "conv-1"
@@ -124,7 +124,7 @@ async def test_file_search_defaults_to_current_manifest(tmp_path) -> None:
     executor.resolve_safe_path.return_value = tmp_path / "missing.csv"
 
     result = await FileToolMixin._file_search(
-        owner, executor, {}, MagicMock(),
+        owner, executor, {"scope": "current"}, MagicMock(),
     )
 
     assert result.status == "success"

@@ -17,11 +17,12 @@ import pytest
 from services.tools import build_legacy_catalog, validate_legacy_coverage
 
 BASELINE = json.loads((Path(__file__).parent / 'fixtures/tool_catalog_07_baseline.json').read_text())
+FILE_SEARCH_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/file_search_protocol_08_schema.json').read_text())
 TASK_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/scheduled_task_structured_schema.json').read_text())
 
 
 def original_schemas(names, view):
-    return [TASK_UPGRADE['schema'] if name == 'manage_scheduled_task' else BASELINE['schema_views'].get(view, {}).get(name) or BASELINE['specs'][name]['schema']
+    return [FILE_SEARCH_UPGRADE if name == 'file_search' else TASK_UPGRADE['schema'] if name == 'manage_scheduled_task' else BASELINE['schema_views'].get(view, {}).get(name) or BASELINE['specs'][name]['schema']
             for name in names]
 
 
@@ -54,6 +55,10 @@ def test_full_spec_contract_unchanged(catalog, name):
                 value = [*value, 'task_definition']
             if name == 'manage_scheduled_task' and key == 'schema':
                 value = TASK_UPGRADE['schema']
+            if name == 'file_search' and key == 'schema':
+                # F08-05: default chat workspace and full-name identity guidance;
+                # every other spec field still matches the immutable baseline.
+                value = FILE_SEARCH_UPGRADE
             assert actual[key] == value, (name, key)
 
 

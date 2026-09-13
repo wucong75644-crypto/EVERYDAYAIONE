@@ -1,0 +1,20 @@
+{
+  "head": "8428b72c0c8b36481e5fdbc3bcb3e93070c2f1f9",
+  "state": "HEAD + uncommitted candidate; not deployed",
+  "sha256": {
+    "backend/services/agent/file_tool_mixin.py": "0a9f45717c5b99198e2715c13146783e26d9f25b0089588021284c4edad1c4d8",
+    "backend/services/file_resources.py": "b8a0aff3cf37a2f6b0c2da932f92305344775e4349c5c0339f62d28eefd83e8e",
+    "backend/services/tools/definitions/file_schemas.py": "ef65f72cc35501242ee681b4f692f8db4e2c70edb97ab2d0d306ebcd60b8024d",
+    "backend/services/tools/file_calls.py": "e934a3353a978486decb809a9a48581dd237cf4f28a25f18e3a3a99f2f75e723",
+    "backend/services/tools/resource_access.py": "f96ec339705e48e646ac8a08c9e67699de2a63969cffc498fb9ea457f289f17f",
+    "backend/tests/fixtures/file_search_protocol_08_schema.json": "e098d2f8fec9677bdc42bca7d706c5f63f7f788ddbeca3f0f08762f3b85ca6c3",
+    "backend/tests/test_file_search_default_scope_08.py": "7fcd15b34d342e3c455edff8d2cd5a4b7cf94f8d10ffaf085bcdadd2d1afcde9",
+    "backend/tests/test_file_search_protocol_08.py": "b4f489e4669492a4a9110cf0f306879ddb3d351ac623f7b68c42bd7abe6402cf",
+    "backend/tests/test_file_target_execution.py": "6cfa3d1be6ccfe053c48d0ce2804bb3db5c11449bec693a27e3572932979d397",
+    "backend/tests/test_resource_manifest.py": "2f57e8d55861058b412b3dc3f85bce0611279efd159d3edf6e2d45977c666404",
+    "backend/tests/test_resource_scope_continuity.py": "d872ffbded7d0a7396906c2508ab28ac54ee915a985a8a9f2b2bc4c9574441a0",
+    "backend/tests/test_tool_definitions_07.py": "aa8a47b9acb3b64acab78c2df245bf32c7eaea85e35bcd0a399140706a59ce9b",
+    "backend/tests/test_tool_registry.py": "37eb7bfef3253ac5a6c71d3ecb65cbf1b743827aa69b46c96858d7617f01d414",
+    "backend/tests/test_tool_result_05_production_regressions.py": "aacebb696634248990d831f9da1c47bb23ae42fb6201f635ad6e2d6fa946a7a4"
+  }
+}

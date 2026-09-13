@@ -1,0 +1,91 @@
+{
+  "summary": {
+    "original_1": {
+      "calls": 1,
+      "spaced_names": 1,
+      "scope_workspace": 1,
+      "found": 0
+    },
+    "original_2": {
+      "calls": 1,
+      "spaced_names": 1,
+      "scope_workspace": 1,
+      "found": 0
+    },
+    "original_3": {
+      "calls": 1,
+      "spaced_names": 1,
+      "scope_workspace": 1,
+      "found": 1
+    },
+    "original_4": {
+      "calls": 1,
+      "spaced_names": 1,
+      "scope_workspace": 1,
+      "found": 0
+    },
+    "keyword": {
+      "calls": 1,
+      "spaced_names": 0,
+      "scope_workspace": 1,
+      "found": 1
+    },
+    "relative_path": {
+      "calls": 1,
+      "spaced_names": 1,
+      "scope_workspace": 1,
+      "found": 0
+    },
+    "legal_spaces": {
+      "calls": 1,
+      "spaced_names": 0,
+      "scope_workspace": 1,
+      "found": 0
+    },
+    "duplicate_name": {
+      "calls": 1,
+      "spaced_names": 0,
+      "scope_workspace": 1,
+      "found": 0
+    },
+    "unclear_scope": {
+      "calls": 1,
+      "spaced_names": 0,
+      "scope_workspace": 0,
+      "found": 0
+    },
+    "attached_id": {
+      "calls": 1,
+      "spaced_names": 0,
+      "scope_workspace": 0,
+      "found": 0
+    },
+    "delete_reference": {
+      "calls": 1,
+      "spaced_names": 0,
+      "scope_workspace": 0,
+      "found": 0
+    },
+    "analyze_reference": {
+      "calls": 1,
+      "spaced_names": 0,
+      "scope_workspace": 0,
+      "found": 0
+    }
+  },
+  "usage": {
+    "prompt_tokens": 116499,
+    "completion_tokens": 1018,
+    "total_tokens": 117517
+  },
+  "complete": {
+    "type": "complete",
+    "commit": "8428b72c0c8b36481e5fdbc3bcb3e93070c2f1f9",
+    "provider_calls": 12,
+    "business_invocations": 0,
+    "business_mutations": 0,
+    "target_unchanged": true,
+    "completed_at": "2026-09-13T15:46:12.077506+00:00"
+  },
+  "sha256": "a135152aeb6369f7bbe893daf2760b42a74a2ba17e3e3c8a6322acc8bcd4ebbd"
+}
