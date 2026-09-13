@@ -62,6 +62,21 @@ class ToolResult:
     error: ToolError | None = None
     exception: BaseException | None = field(default=None, repr=False)
     model_overrides: dict[str, Any] = field(default_factory=dict, repr=False)
+    # Legacy cache provenance is process-local, never invented historical audit.
+    artifact_cache_source: str | None = field(default=None, repr=False)
+
+    @property
+    def artifact_source(self) -> tuple | None:
+        """Identity of the execution that produced the artifacts, not this reuse."""
+        if self.artifact_cache_source is not None:
+            return ("cache", self.artifact_cache_source)
+        source = self.audit.get("origin", self.audit)
+        if not isinstance(source, dict) or not source.get("tool_call_id"):
+            return None
+        return tuple(source.get(key) for key in (
+            "actor_user_id", "workspace_owner_id", "org_id", "task_id",
+            "conversation_id", "tool_name", "tool_call_id",
+        ))
 
     @classmethod
     def wrap(

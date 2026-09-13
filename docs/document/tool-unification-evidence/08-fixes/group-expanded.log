@@ -1,0 +1,46 @@
+........................................................................ [ 12%]
+........................................................................ [ 24%]
+........................................................................ [ 36%]
+........................................................................ [ 48%]
+........................................................................ [ 61%]
+........................................................................ [ 73%]
+........................................................................ [ 85%]
+........................................................................ [ 97%]
+............                                                             [100%]
+=============================== warnings summary ===============================
+../../backend/venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1441
+  /Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1441: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+../../backend/venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:295
+  /Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:295: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.10/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+tests/test_scheduled_task_request_content.py::test_panel_parse_route_reuses_content_extraction_with_unchanged_public_shape
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/backend/api/routes/file_browse.py:222: DeprecationWarning: `regex` has been deprecated, please use `pattern` instead
+    disposition: str = Query("inline", regex="^(inline|attachment)$",
+
+tests/test_scheduled_task_request_content.py::test_panel_parse_route_reuses_content_extraction_with_unchanged_public_shape
+  /Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/supabase/__init__.py:1: DeprecationWarning: The `gotrue` package is deprecated, is not going to receive updates in the future. Please, use `supabase_auth` instead.
+    from gotrue.errors import (
+
+tests/test_scheduled_task_request_content.py::test_panel_parse_route_reuses_content_extraction_with_unchanged_public_shape
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/backend/api/routes/task.py:265: DeprecationWarning: `regex` has been deprecated, please use `pattern` instead
+    message_id: str = Path(
+
+tests/test_scheduled_task_request_content.py::test_panel_parse_route_reuses_content_extraction_with_unchanged_public_shape
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/backend/api/routes/task.py:384: DeprecationWarning: `regex` has been deprecated, please use `pattern` instead
+    message_id: str = Path(
+
+tests/test_scheduled_task_request_content.py::test_panel_parse_route_reuses_content_extraction_with_unchanged_public_shape
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/backend/api/routes/task.py:463: DeprecationWarning: `regex` has been deprecated, please use `pattern` instead
+    message_id: str = Path(
+
+tests/test_scheduled_task_request_content.py::test_panel_parse_route_reuses_content_extraction_with_unchanged_public_shape
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/backend/api/routes/task.py:548: DeprecationWarning: `regex` has been deprecated, please use `pattern` instead
+    external_task_id: str = Path(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: /Users/wucong/.codex/visualizations/2026/09/12/01a0962b-f2f6-7633-8563-63520b3ee70f/tool-unification-08/fix-evidence/group-expanded.xml -
+588 passed, 8 warnings in 4.59s

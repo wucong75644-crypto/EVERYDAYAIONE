@@ -118,12 +118,16 @@ def encode_result(result: ToolResult) -> dict:
     # Store facts, not Policy decisions, capabilities, argument values or handles.
     from services.tool_invocation_store import hash_tool_arguments
     from .spec import thaw
-    audit = {k: result.audit.get(k) for k in (
+    # Re-encoding a reused result must retain the producing execution's
+    # identity. Current consumption facts remain in result.audit/audit_fields.
+    source_audit = result.audit.get("origin", result.audit)
+    audit = {k: source_audit.get(k) for k in (
         "tool_name", "tool_call_id", "actor_user_id", "workspace_owner_id", "org_id",
         "conversation_id", "task_id", "status", "elapsed_ms", "result_length", "truncated",
         "tokens_used", "source",
     )}
-    audit["args_hash"] = hash_tool_arguments(thaw(result.audit.get("args", {})))
+    audit["args_hash"] = source_audit.get("args_hash") or hash_tool_arguments(thaw(result.audit.get("args", {})))
+    audit["truncated"] = result.audit.get("truncated", False)
     extension = _JSONBoundary().copy({
         "version": VERSION, "kind": result.kind, "status": result.status, "raw": raw,
         "execution": _record(result.execution), "audit": audit,

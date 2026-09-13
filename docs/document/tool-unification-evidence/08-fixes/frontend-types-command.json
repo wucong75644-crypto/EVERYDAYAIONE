@@ -1,0 +1,11 @@
+{
+  "cwd": "/Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/frontend",
+  "argv": [
+    "node",
+    "node_modules/typescript/bin/tsc",
+    "--noEmit",
+    "-p",
+    "tsconfig.app.json"
+  ],
+  "exit": 0
+}

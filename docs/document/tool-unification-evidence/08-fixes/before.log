@@ -1,0 +1,94 @@
+FF..F....F..FF                                                           [100%]
+=================================== FAILURES ===================================
+__ test_confirmation_response_cannot_bypass_execution_boundary[string_false] ___
+backend/tests/test_tool_confirmation_boundary_08.py:59: in test_confirmation_response_cannot_bypass_execution_boundary
+    assert executor.handler.await_count == int(approved)
+E   AssertionError: assert 1 == 0
+E    +  where 1 = <AsyncMock id='4534770128'>.await_count
+E    +    where <AsyncMock id='4534770128'> = <tests.tool_runtime_support.MockHandlerExecutor object at 0x10e4b0f50>.handler
+E    +  and   0 = int(False)
+----------------------------- Captured stderr call -----------------------------
+2026-09-13 10:23:34.409 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/tmp/pytest-of-wucong/pytest-0/test_confirmation_response_can0/org/o1/u1
+2026-09-13 10:23:34.411 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/tmp/pytest-of-wucong/pytest-0/test_confirmation_response_can0/org/o1/u1
+2026-09-13 10:23:34.411 | INFO     | api.routes.ws:_handle_message:299 - Legacy tool confirm response | conn=test-connection | tool_call_id=tool-approval:7bcaa570bbf89f5a9b2734434ecf30b3d2c5b7f449b55a41d2694954e7aa3211 | approved=false | resolved=True
+2026-09-13 10:23:34.412 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/tmp/pytest-of-wucong/pytest-0/test_confirmation_response_can0/org/o1/u1
+__ test_confirmation_response_cannot_bypass_execution_boundary[foreign_actor] __
+backend/tests/test_tool_confirmation_boundary_08.py:59: in test_confirmation_response_cannot_bypass_execution_boundary
+    assert executor.handler.await_count == int(approved)
+E   AssertionError: assert 1 == 0
+E    +  where 1 = <AsyncMock id='4536310992'>.await_count
+E    +    where <AsyncMock id='4536310992'> = <tests.tool_runtime_support.MockHandlerExecutor object at 0x10e6293a0>.handler
+E    +  and   0 = int(False)
+----------------------------- Captured stderr call -----------------------------
+2026-09-13 10:23:34.453 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/tmp/pytest-of-wucong/pytest-0/test_confirmation_response_can1/org/o1/u1
+2026-09-13 10:23:34.454 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/tmp/pytest-of-wucong/pytest-0/test_confirmation_response_can1/org/o1/u1
+2026-09-13 10:23:34.454 | INFO     | api.routes.ws:_handle_message:299 - Legacy tool confirm response | conn=test-connection | tool_call_id=tool-approval:6917bee05441ac168bf6208c100279b0bb05818641d53f1974935ea3812e905c | approved=True | resolved=True
+2026-09-13 10:23:34.455 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/tmp/pytest-of-wucong/pytest-0/test_confirmation_response_can1/org/o1/u1
+___ test_confirmation_response_cannot_bypass_execution_boundary[legacy_true] ___
+backend/tests/test_tool_confirmation_boundary_08.py:65: in test_confirmation_response_cannot_bypass_execution_boundary
+    assert persist.await_args.kwargs["task_id"] == "task1"
+E   AttributeError: 'NoneType' object has no attribute 'kwargs'
+----------------------------- Captured stderr call -----------------------------
+2026-09-13 10:23:34.470 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/tmp/pytest-of-wucong/pytest-0/test_confirmation_response_can4/org/o1/u1
+2026-09-13 10:23:34.471 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/tmp/pytest-of-wucong/pytest-0/test_confirmation_response_can4/org/o1/u1
+2026-09-13 10:23:34.471 | INFO     | api.routes.ws:_handle_message:299 - Legacy tool confirm response | conn=test-connection | tool_call_id=tool-approval:82047166906c7680fda952fb8a973f19aab64b9a21e7eb6e199911d2dd74dbaf | approved=True | resolved=True
+2026-09-13 10:23:34.472 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/tmp/pytest-of-wucong/pytest-0/test_confirmation_response_can4/org/o1/u1
+_____ test_confirmation_response_cannot_bypass_execution_boundary[number] ______
+backend/tests/test_tool_confirmation_boundary_08.py:59: in test_confirmation_response_cannot_bypass_execution_boundary
+    assert executor.handler.await_count == int(approved)
+E   AssertionError: assert 1 == 0
+E    +  where 1 = <AsyncMock id='4536607152'>.await_count
+E    +    where <AsyncMock id='4536607152'> = <tests.tool_runtime_support.MockHandlerExecutor object at 0x10e40e150>.handler
+E    +  and   0 = int(False)
+----------------------------- Captured stderr call -----------------------------
+2026-09-13 10:23:34.605 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/tmp/pytest-of-wucong/pytest-0/test_confirmation_response_can9/org/o1/u1
+2026-09-13 10:23:34.607 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/tmp/pytest-of-wucong/pytest-0/test_confirmation_response_can9/org/o1/u1
+2026-09-13 10:23:34.607 | INFO     | api.routes.ws:_handle_message:299 - Legacy tool confirm response | conn=test-connection | tool_call_id=tool-approval:0e0130d9a2487be811415db9b3c497113da0e5f8319d574e2c474f55b8252ad6 | approved=1 | resolved=True
+2026-09-13 10:23:34.608 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/tmp/pytest-of-wucong/pytest-0/test_confirmation_response_can9/org/o1/u1
+________________ test_cached_tool_artifacts_are_collected_once _________________
+backend/tests/test_tool_artifact_reuse_08.py:37: in test_cached_tool_artifacts_are_collected_once
+    assert len(blocks) == 2, "Cache reuse must not deliver each original file/image twice"
+E   AssertionError: Cache reuse must not deliver each original file/image twice
+E   assert 4 == 2
+E    +  where 4 = len([{'mime_type': '', 'name': 'report.csv', 'size': None, 'type': 'file', ...}, {'alt': '', 'type': 'image', 'url': 'http...e': 'file', ...}, {'alt': '', 'type': 'image', 'url': 'https://example.test/chart.png', 'workspace_path': 'chart.png'}])
+----------------------------- Captured stderr call -----------------------------
+2026-09-13 10:23:34.748 | INFO     | services.tools.runtime:execute:139 - Tool confirm notify | tool=code_execute | task=scheduled-fixture
+2026-09-13 10:23:34.749 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/tmp/pytest-of-wucong/pytest-0/test_cached_tool_artifacts_are0/org/o1/u1
+2026-09-13 10:23:34.756 | INFO     | services.tools.runtime:execute:139 - Tool confirm notify | tool=code_execute | task=scheduled-fixture
+2026-09-13 10:23:34.756 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/tmp/pytest-of-wucong/pytest-0/test_cached_tool_artifacts_are0/org/o1/u1
+2026-09-13 10:23:34.758 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/tmp/pytest-of-wucong/pytest-0/test_cached_tool_artifacts_are0/org/o1/u1
+___________ test_scheduled_agent_final_artifacts_are_collected_once ____________
+backend/tests/test_tool_artifact_reuse_08.py:67: in test_scheduled_agent_final_artifacts_are_collected_once
+    assert len(result.content_blocks) == 2, "Final scheduled result must contain each original artifact once"
+E   AssertionError: Final scheduled result must contain each original artifact once
+E   assert 4 == 2
+E    +  where 4 = len([{'mime_type': '', 'name': 'report.csv', 'size': None, 'type': 'file', ...}, {'alt': '', 'type': 'image', 'url': 'http...e': 'file', ...}, {'alt': '', 'type': 'image', 'url': 'https://example.test/chart.png', 'workspace_path': 'chart.png'}])
+E    +    where [{'mime_type': '', 'name': 'report.csv', 'size': None, 'type': 'file', ...}, {'alt': '', 'type': 'image', 'url': 'http...e': 'file', ...}, {'alt': '', 'type': 'image', 'url': 'https://example.test/chart.png', 'workspace_path': 'chart.png'}] = ScheduledTaskResult(text='已生成报告', summary='已生成报告', status='success', tokens_used=450, turns_used=3, tools_called=['cod...d': True, 'reasons': [], 'tools_called': [], 'successful_tools': ['code_execute'], 'required_tools': ['code_execute']}).content_blocks
+----------------------------- Captured stderr call -----------------------------
+2026-09-13 10:23:34.812 | INFO     | services.tools.runtime:execute:139 - Tool confirm notify | tool=code_execute | task=scheduled-fixture
+2026-09-13 10:23:34.812 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/tmp/pytest-of-wucong/pytest-0/test_scheduled_agent_final_art0/org/o1/u1
+2026-09-13 10:23:34.814 | INFO     | services.agent.tool_loop_executor:run:245 - ToolLoop turn 1 | tools=['code_execute']
+2026-09-13 10:23:34.815 | INFO     | services.tools.runtime:execute:139 - Tool confirm notify | tool=code_execute | task=scheduled-fixture
+2026-09-13 10:23:34.815 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/tmp/pytest-of-wucong/pytest-0/test_scheduled_agent_final_art0/org/o1/u1
+2026-09-13 10:23:34.817 | INFO     | services.file_executor:__init__:101 - FileExecutor initialized | root=/private/tmp/pytest-of-wucong/pytest-0/test_scheduled_agent_final_art0/org/o1/u1
+2026-09-13 10:23:34.817 | INFO     | services.agent.tool_loop_executor:run:245 - ToolLoop turn 2 | tools=['code_execute']
+=============================== warnings summary ===============================
+../../backend/venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1441
+  /Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1441: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+../../backend/venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:295
+  /Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:295: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.10/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: /Users/wucong/.codex/visualizations/2026/09/12/01a0962b-f2f6-7633-8563-63520b3ee70f/tool-unification-08/fix-evidence/before.xml -
+=========================== short test summary info ============================
+FAILED backend/tests/test_tool_confirmation_boundary_08.py::test_confirmation_response_cannot_bypass_execution_boundary[string_false]
+FAILED backend/tests/test_tool_confirmation_boundary_08.py::test_confirmation_response_cannot_bypass_execution_boundary[foreign_actor]
+FAILED backend/tests/test_tool_confirmation_boundary_08.py::test_confirmation_response_cannot_bypass_execution_boundary[legacy_true]
+FAILED backend/tests/test_tool_confirmation_boundary_08.py::test_confirmation_response_cannot_bypass_execution_boundary[number]
+FAILED backend/tests/test_tool_artifact_reuse_08.py::test_cached_tool_artifacts_are_collected_once
+FAILED backend/tests/test_tool_artifact_reuse_08.py::test_scheduled_agent_final_artifacts_are_collected_once
+6 failed, 8 passed, 2 warnings in 1.34s

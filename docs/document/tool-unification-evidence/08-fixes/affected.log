@@ -1,0 +1,31 @@
+
+==================================== ERRORS ====================================
+________ ERROR collecting tests/test_scheduled_task_delivery_worker.py _________
+ImportError while importing test module '/Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/backend/tests/test_scheduled_task_delivery_worker.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/opt/homebrew/Cellar/python@3.12/3.12.12/Frameworks/Python.framework/Versions/3.12/lib/python3.12/importlib/__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+backend/tests/test_scheduled_task_delivery_worker.py:8: in <module>
+    from services.scheduler.delivery_worker import (
+backend/services/scheduler/delivery_worker.py:11: in <module>
+    from services.wecom.delivery_sender import WecomDeliveryItem, WecomDeliverySender
+backend/services/wecom/delivery_sender.py:12: in <module>
+    from services.org.config_resolver import AsyncOrgConfigResolver
+E   ImportError: cannot import name 'AsyncOrgConfigResolver' from 'services.org.config_resolver' (unknown location)
+=============================== warnings summary ===============================
+../../backend/venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1441
+  /Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1441: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+../../backend/venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:295
+  /Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:295: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.10/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: /Users/wucong/.codex/visualizations/2026/09/12/01a0962b-f2f6-7633-8563-63520b3ee70f/tool-unification-08/fix-evidence/affected.xml -
+=========================== short test summary info ============================
+ERROR backend/tests/test_scheduled_task_delivery_worker.py
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+2 warnings, 1 error in 6.04s

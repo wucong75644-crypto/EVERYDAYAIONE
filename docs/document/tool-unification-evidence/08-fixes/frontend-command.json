@@ -1,0 +1,22 @@
+{
+  "cwd": "/Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/frontend",
+  "argv": [
+    "node",
+    "node_modules/vitest/vitest.mjs",
+    "run",
+    "src/components/chat/message/__tests__/ChangeSetCard.test.tsx",
+    "src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx",
+    "src/components/chat/message/__tests__/MessageContentBlocks.test.tsx",
+    "src/components/chat/message/__tests__/StructuredConsumers.test.tsx",
+    "src/components/scheduled-tasks/__tests__/ScheduledTaskPanel.test.tsx",
+    "src/components/scheduled-tasks/__tests__/TaskCardChangeSet.test.tsx",
+    "src/components/scheduled-tasks/__tests__/TaskForm.test.tsx",
+    "src/components/scheduled-tasks/__tests__/TaskRunHistory.test.tsx",
+    "src/contexts/__tests__/wsMessageHandlers.test.ts",
+    "src/schemas/__tests__/messageProtocol.test.ts",
+    "src/services/__tests__/scheduledTaskStructured.test.ts",
+    "--reporter=verbose",
+    "--reporter=json",
+    "--outputFile.json=/Users/wucong/.codex/visualizations/2026/09/12/01a0962b-f2f6-7633-8563-63520b3ee70f/tool-unification-08/fix-evidence/frontend.json"
+  ]
+}
