@@ -1,0 +1,195 @@
+{
+  "passed": 7,
+  "failed": 5,
+  "cases": [
+    {
+      "case": "original_1",
+      "pass": false,
+      "checks": [
+        {
+          "tool": "file_search",
+          "argument_fields": [
+            "keyword",
+            "scope"
+          ],
+          "schema_valid": true,
+          "pass": false,
+          "error_code": null
+        }
+      ]
+    },
+    {
+      "case": "original_2",
+      "pass": false,
+      "checks": [
+        {
+          "tool": "file_search",
+          "argument_fields": [
+            "keyword",
+            "scope"
+          ],
+          "schema_valid": true,
+          "pass": false,
+          "error_code": null
+        }
+      ]
+    },
+    {
+      "case": "original_3",
+      "pass": true,
+      "checks": [
+        {
+          "tool": "file_search",
+          "argument_fields": [
+            "path",
+            "scope"
+          ],
+          "schema_valid": true,
+          "pass": true,
+          "error_code": null
+        }
+      ]
+    },
+    {
+      "case": "original_4",
+      "pass": false,
+      "checks": [
+        {
+          "tool": "file_search",
+          "argument_fields": [
+            "keyword",
+            "scope"
+          ],
+          "schema_valid": true,
+          "pass": false,
+          "error_code": null
+        }
+      ]
+    },
+    {
+      "case": "keyword",
+      "pass": true,
+      "checks": [
+        {
+          "tool": "file_search",
+          "argument_fields": [
+            "keyword",
+            "scope"
+          ],
+          "schema_valid": true,
+          "pass": true,
+          "error_code": null
+        }
+      ]
+    },
+    {
+      "case": "relative_path",
+      "pass": false,
+      "checks": [
+        {
+          "tool": "file_search",
+          "argument_fields": [
+            "path",
+            "scope"
+          ],
+          "schema_valid": true,
+          "pass": false,
+          "error_code": null
+        }
+      ]
+    },
+    {
+      "case": "legal_spaces",
+      "pass": true,
+      "checks": [
+        {
+          "tool": "file_search",
+          "argument_fields": [
+            "path",
+            "scope"
+          ],
+          "schema_valid": true,
+          "pass": true,
+          "error_code": null
+        }
+      ]
+    },
+    {
+      "case": "duplicate_name",
+      "pass": true,
+      "checks": [
+        {
+          "tool": "file_search",
+          "argument_fields": [
+            "path",
+            "scope"
+          ],
+          "schema_valid": true,
+          "pass": true,
+          "error_code": "RESOURCE_AMBIGUOUS"
+        }
+      ]
+    },
+    {
+      "case": "unclear_scope",
+      "pass": false,
+      "checks": [
+        {
+          "tool": "file_search",
+          "argument_fields": [
+            "keyword",
+            "scope"
+          ],
+          "schema_valid": true,
+          "pass": false,
+          "error_code": null
+        }
+      ]
+    },
+    {
+      "case": "attached_id",
+      "pass": true,
+      "checks": [
+        {
+          "tool": "file_analyze",
+          "argument_fields": [
+            "file_id"
+          ],
+          "schema_valid": true,
+          "pass": true,
+          "error_code": null
+        }
+      ]
+    },
+    {
+      "case": "delete_reference",
+      "pass": true,
+      "checks": [
+        {
+          "tool": "file_delete",
+          "argument_fields": [
+            "resource_refs"
+          ],
+          "schema_valid": true,
+          "pass": true,
+          "error_code": null
+        }
+      ]
+    },
+    {
+      "case": "analyze_reference",
+      "pass": true,
+      "checks": [
+        {
+          "tool": "file_analyze",
+          "argument_fields": [
+            "resource_ref"
+          ],
+          "schema_valid": true,
+          "pass": true,
+          "error_code": null
+        }
+      ]
+    }
+  ]
+}

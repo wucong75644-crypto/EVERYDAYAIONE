@@ -259,6 +259,23 @@ class FileTargetResolver:
             return FileTarget(self.guarded(value))
         raise FileTargetError("RESOURCE_NOT_FOUND", f"未找到文件: {value}")
 
+    def resolve_search(self, value: str) -> FileTarget:
+        """Locate names consistently, retaining legacy attachment stem queries."""
+        try:
+            return self.resolve(value)
+        except FileTargetError as error:
+            error.scope = self.scope
+            if (error.code != "RESOURCE_NOT_FOUND" or self.scope == "workspace"
+                    or self.manifest is None or os.path.dirname(value) or Path(value).suffix):
+                raise
+            # Older current-attachment searches accept extension tokens such as
+            # 'png'. Preserve those selectors without degrading full names or
+            # explicit paths, and never silently consume multiple candidates.
+            from services.tools.resource_access import manifest_matches
+            matches = manifest_matches(self.manifest, {"path": value}, self.access)
+            return FileTarget(self._unique(
+                [self.guarded(a.workspace_path) for a in matches], missing=value))
+
     def reference(self, path: Path) -> str:
         path = self.guarded(str(path))
         return self.codec.issue(str(path.relative_to(self.root)), file_version(path))

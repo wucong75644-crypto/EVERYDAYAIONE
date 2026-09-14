@@ -1,0 +1,185 @@
+
+ RUN  v3.2.7 /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/frontend
+
+ ✓ src/services/__tests__/scheduledTaskStructured.test.ts > scheduled task structured parser transport > uses structured fields for panel create 1ms
+ ✓ src/services/__tests__/scheduledTaskStructured.test.ts > scheduled task structured parser transport > uses structured fields for panel update 0ms
+ ✓ src/services/__tests__/scheduledTaskStructured.test.ts > scheduled task structured parser transport > keeps the old invocation contract 0ms
+ ✓ src/schemas/__tests__/messageProtocol.test.ts > messageProtocol > preserves the entire scheduled form including date fields and negated visibility 6ms
+ ✓ src/schemas/__tests__/messageProtocol.test.ts > messageProtocol > keeps negated visibility even when the date is already known and hidden 1ms
+ ✓ src/schemas/__tests__/messageProtocol.test.ts > messageProtocol > keeps user images with legacy nullable metadata after refresh 0ms
+ ✓ src/schemas/__tests__/messageProtocol.test.ts > messageProtocol > accepts every core content block family 1ms
+ ✓ src/schemas/__tests__/messageProtocol.test.ts > messageProtocol > preserves additive fields on valid blocks 0ms
+ ✓ src/schemas/__tests__/messageProtocol.test.ts > messageProtocol > rejects malformed known blocks without throwing 0ms
+ ✓ src/schemas/__tests__/messageProtocol.test.ts > messageProtocol > serializes object text instead of coercing it to object Object 0ms
+ ✓ src/schemas/__tests__/messageProtocol.test.ts > messageProtocol > rejects non-array content collections 0ms
+ ✓ src/schemas/__tests__/messageProtocol.test.ts > messageProtocol > rejects invalid diagram formats and empty sources 0ms
+ ✓ src/schemas/__tests__/messageProtocol.test.ts > messageProtocol > rejects oversized Mermaid source 0ms
+ ✓ src/schemas/__tests__/messageProtocol.test.ts > messageProtocol > preserves unknown historical chart formats as readable fallback data 0ms
+stderr | src/components/scheduled-tasks/__tests__/ScheduledTaskPanel.test.tsx > ScheduledTaskPanel ChangeSet recovery > applies an ordinary pause in place without opening a confirmation workflow
+React does not recognize the `whileHover` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `whilehover` instead. If you accidentally passed it from a parent component, remove it from the DOM element.
+React does not recognize the `whileTap` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `whiletap` instead. If you accidentally passed it from a parent component, remove it from the DOM element.
+
+stdout | src/components/chat/message/__tests__/ChangeSetCard.test.tsx
+[DEBUG] [10:34:34] [task:restore] Hydrate complete
+
+stdout | src/components/chat/message/__tests__/StructuredConsumers.test.tsx
+[DEBUG] [10:34:34] [task:restore] Hydrate complete
+
+stdout | src/components/chat/message/__tests__/MessageContentBlocks.test.tsx
+[DEBUG] [10:34:34] [task:restore] Hydrate complete
+
+stdout | src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx
+[DEBUG] [10:34:34] [task:restore] Hydrate complete
+
+ ✓ src/components/scheduled-tasks/__tests__/TaskRunHistory.test.tsx > shows stored summary, table, chart and download without treating all payloads as files 71ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskRunHistory.test.tsx > recovers a missed completion event by polling while running and stops after completion/unmount 5ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskRunHistory.test.tsx > keeps legacy file links readable 4ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskForm.test.tsx > TaskForm request contract > replaces a new draft and blocks submission when the second request lacks execution content 95ms
+ ✓ src/components/scheduled-tasks/__tests__/ScheduledTaskPanel.test.tsx > ScheduledTaskPanel ChangeSet recovery > applies an ordinary pause in place without opening a confirmation workflow 103ms
+ ✓ src/components/scheduled-tasks/__tests__/ScheduledTaskPanel.test.tsx > ScheduledTaskPanel ChangeSet recovery > keeps the task list as the default entry even when historical changes are pending 7ms
+ ✓ src/components/scheduled-tasks/__tests__/ScheduledTaskPanel.test.tsx > ScheduledTaskPanel ChangeSet recovery > opens a recovered ChangeSet only after the user selects it 18ms
+ ✓ src/components/scheduled-tasks/__tests__/ScheduledTaskPanel.test.tsx > ScheduledTaskPanel ChangeSet recovery > returns to the task list when the panel is closed and opened again 16ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > scheduled task completion projection > keeps persisted pause intent on scheduled_task_completed and refreshes authoritative state 55ms
+ ✓ src/components/chat/message/__tests__/ChangeSetCard.test.tsx > ChangeSetCard > shows a compact human-readable receipt for an applied direct task 62ms
+ ✓ src/components/chat/message/__tests__/ChangeSetCard.test.tsx > ChangeSetCard > reads the current ChangeSet and renders generic sections plus scheduled-task labels 21ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > scheduled task completion projection > keeps persisted pause intent on scheduled_task_failed and refreshes authoritative state 53ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > createWSMessageHandlers > should return all 14 handlers 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_start > should rebind the active stream before setting status 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_start > should ignore messages without message_id 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_start > should bind the stream before status when conversation and message are present 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_start > should ignore a late start for a locally paused message 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_chunk > should immediately flush first chunk and buffer subsequent ones 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_chunk > should accumulate subsequent chunks in buffer 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_chunk > should trigger onStreamChunk callback immediately 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_chunk > should resolve conversation from task mapping when event omits it 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_chunk > should ignore late chunks for a locally paused message 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_chunk > should accept chunks after the user explicitly resumes the same message 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_chunk > should ignore a duplicate delivery sequence 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_chunk > should flush subsequent chunks after 16ms 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_chunk > should ignore chunk without conversation_id 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_chunk > should reject object chunks instead of coercing them to object Object 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_progress > should update task progress 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_progress > should ignore without task_id 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > stream_end > does not mark message completed before message_done 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_done > should complete task with message data 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_done > should still updateMessage when already completed (DB data覆盖) 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_done > should trigger onComplete callback 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_done > should flush chunk buffer before completing 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_done > should handle message_done with only message_id (no task) 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_done > should keep streaming state at stream_end until message_done 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_done > projects an authoritative paused snapshot and clears streaming 2ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_done > should fallback to taskConversationMap for conversationId 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_done > should cleanup task subscription on done 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_error > should update message status to failed 2ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_error > should keep image errors as failed media content 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_error > should clear chunk buffer for failed message 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_error > should trigger onError callback 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > message_error > should use default error message when error is missing 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > credits_changed > should update user credits 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > credits_changed > should ignore if no user 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > credits_changed > should ignore if credits is undefined 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > subscribed > should rebind the active message before restoring a running snapshot 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > subscribed > should not bind a paused snapshot as an active stream 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > subscribed > should start a blank projection for a pending resumed task without delivery progress 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > subscribed > should set streaming content from accumulated 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > subscribed > should bind payload message_id before restoring replayed content 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > subscribed > should ignore a running snapshot for a locally paused message 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > subscribed > should not set content if no task mapping 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > subscribed > should not set content if accumulated is empty 3ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > subscribed > should restore blocks with remaining text when accumulated_blocks present 2ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > subscribed > should fallback to setStreamingContent when blocks is empty array 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > subscribed > should discard invalid restored blocks and keep valid accumulated text 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > subscribed > should handle blocks without accumulated text 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > subscribed > should project replayed tool events after the snapshot 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > content_block_add > delivers the scheduled task completion form through the real protocol boundary 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > content_block_add > should append a validated content block 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > content_block_add > should reject malformed content blocks before the store 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > content_block_add > should recover structured text before replacing the store block 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > content_block_add > should project a terminal tool block even when running block was missed 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > flushChunkBuffer > should flush all buffered chunks to store 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > flushChunkBuffer > should do nothing on empty buffer 0ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > flushChunkBuffer > should use appendContent fallback when no conversationId 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > image_partial_update > should update message content at specified image_index 4ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > image_partial_update > should handle error in partial update (failed image) 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > image_partial_update > should expand content array if image_index exceeds length 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > image_partial_update > should ignore if message not found 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > image_partial_update > should ignore if message_id is missing 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > image_partial_update > should ignore if image_index is undefined 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > image_partial_update > should reject malformed partial image blocks 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > image_partial_update > should dispatch workspace:changed when content_part has workspace_path (L3) 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > image_partial_update > should NOT dispatch workspace:changed when content_part has no workspace_path (legacy) 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > thinking_chunk > should call appendStreamingThinking with conversation_id and chunk 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > thinking_chunk > should handle chunk from payload.chunk fallback 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > thinking_chunk > should ignore when conversation_id is missing 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > thinking_chunk > should ignore when chunk is empty 2ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > conversation_updated > should dispatch CustomEvent and markForceRefresh 2ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > conversation_updated > should ignore when conversation_id is missing 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > error > should not throw on error event 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > suggestions_ready > should call setSuggestions with correct data 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > suggestions_ready > should ignore when conversation_id is missing 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > suggestions_ready > should ignore when suggestions is empty 1ms
+ ✓ src/contexts/__tests__/wsMessageHandlers.test.ts > wsMessageHandlers > suggestions_ready > should ignore when suggestions is missing 1ms
+ ✓ src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx > FormBlock ChangeSet association > keeps form input separate from the server-owned ChangeSet reference 45ms
+ ✓ src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx > FormBlock ChangeSet association > uses the live card instead of the initial checking receipt after submission 2ms
+ ✓ src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx > submits the backend structured patch with its resolved ID and boolean marker 25ms
+ ✓ src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx > waits for explicit confirm on the complete backend creation form 22ms
+ ✓ src/components/chat/message/__tests__/FormBlockChangeSet.test.tsx > waits for explicit cancel on the complete backend creation form 10ms
+ ✓ src/components/chat/message/__tests__/StructuredConsumers.test.tsx > structured message consumers > keeps a missing frequency local, then submits the corrected schedule without losing input 56ms
+ ✓ src/components/chat/message/__tests__/StructuredConsumers.test.tsx > structured message consumers > validates only visible required fields and leaves cancellation available 13ms
+ ✓ src/components/chat/message/__tests__/StructuredConsumers.test.tsx > structured message consumers > shows backend-extracted business content after refresh and submits it without the creation command 19ms
+ ✓ src/components/chat/message/__tests__/StructuredConsumers.test.tsx > structured message consumers > does not visually default an unparsed schedule to the first option 5ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskForm.test.tsx > TaskForm request contract > does not inherit frequency, weekly days or monthly date from a preceding parse 70ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskForm.test.tsx > TaskForm request contract > submits the authorized exact group requested in natural language 40ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskCardChangeSet.test.tsx > TaskCard ChangeSet actions > shows future pause independently of the current run and permits a manual paused run 57ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskCardChangeSet.test.tsx > TaskCard ChangeSet actions > routes pause and delete through a proposal instead of mutating the task optimistically 14ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskCardChangeSet.test.tsx > TaskCard ChangeSet actions > prevents duplicate proposals while a request is pending and renders a safe error on failure 13ms
+ ✓ src/components/chat/message/__tests__/ChangeSetCard.test.tsx > ChangeSetCard > prevents duplicate cancellation while the first action is pending 25ms
+ ✓ src/components/chat/message/__tests__/ChangeSetCard.test.tsx > ChangeSetCard > confirms through the ChangeSet API and renders the applied result 20ms
+ ✓ src/components/chat/message/__tests__/ChangeSetCard.test.tsx > ChangeSetCard > recovers a failed ChangeSet with a new id and does not expose internal errors 14ms
+ ✓ src/components/chat/message/__tests__/ChangeSetCard.test.tsx > ChangeSetCard > shows the conflict recovery guidance and emits replan without guessing a state 13ms
+ ✓ src/components/chat/message/__tests__/ChangeSetCard.test.tsx > ChangeSetCard > offers a new plan for a rejected preflight and delegates it to the host 15ms
+ ✓ src/components/chat/message/__tests__/ChangeSetCard.test.tsx > ChangeSetCard > renders deletion as a destructive confirmation instead of an editing plan 12ms
+ ✓ src/components/chat/message/__tests__/ChangeSetCard.test.tsx > ChangeSetCard > renders pause as a state confirmation without an AI plan or read-only trial claim 12ms
+ ✓ src/components/chat/message/__tests__/StructuredConsumers.test.tsx > structured message consumers > renders a persisted scheduled form after refresh and submits the visible schedule fields 11ms
+ ✓ src/components/chat/message/__tests__/StructuredConsumers.test.tsx > structured message consumers > TableBlock renders structured and circular cells without crashing 2ms
+ ✓ src/components/chat/message/__tests__/StructuredConsumers.test.tsx > structured message consumers > TableBlock formats numeric, empty and truncated data 11ms
+ ✓ src/components/chat/message/__tests__/StructuredConsumers.test.tsx > structured message consumers > TableBlock detects numeric and non-numeric string columns 1ms
+ ✓ src/components/chat/message/__tests__/StructuredConsumers.test.tsx > structured message consumers > FormBlock rejects a malformed structured scalar default 3ms
+ ✓ src/components/chat/message/__tests__/StructuredConsumers.test.tsx > structured message consumers > FormBlock supports every field type and conditional visibility 20ms
+ ✓ src/components/chat/message/__tests__/StructuredConsumers.test.tsx > structured message consumers > FormBlock submits current values and handles success 8ms
+ ✓ src/components/chat/message/__tests__/StructuredConsumers.test.tsx > structured message consumers > FormBlock renders a preflight confirmation form returned by the server 9ms
+ ✓ src/components/chat/message/__tests__/StructuredConsumers.test.tsx > structured message consumers > FormBlock recovers from submit failure and supports cancellation 7ms
+ ✓ src/components/chat/message/__tests__/StructuredConsumers.test.tsx > structured message consumers > FormBlock ignores a result belonging to another form and renders persisted cancellation after refresh 4ms
+ ✓ src/components/chat/message/__tests__/ChangeSetCard.test.tsx > ChangeSetCard > re-reads after a ChangeSet update event, including after a conversation switch 13ms
+ ✓ src/components/chat/message/__tests__/ChangeSetCard.test.tsx > ChangeSetCard > recovers a missed completion without a live event and stops polling at the terminal state 13ms
+ ✓ src/components/chat/message/__tests__/ChangeSetCard.test.tsx > ChangeSetCard > reconciles on coming online and removes listeners when unmounted 13ms
+ ✓ src/components/chat/message/__tests__/ChangeSetCard.test.tsx > ChangeSetCard > does not replace a newly selected card with a late response from the old card 9ms
+ ✓ src/components/chat/message/__tests__/ChangeSetCard.test.tsx > ChangeSetCard > renders an applied creation through the real submitted FormBlock without stale checking text 7ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskForm.test.tsx > TaskForm request contract > requires explicit correction for an unavailable recipient (permission=true) 33ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskForm.test.tsx > TaskForm request contract > requires explicit correction for an unavailable recipient (permission=false) 26ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskForm.test.tsx > TaskForm request contract > does not choose arbitrarily between identically named groups 33ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskForm.test.tsx > TaskForm request contract > cannot submit the preceding draft while a new parse is outstanding 26ms
+stderr | src/components/scheduled-tasks/__tests__/TaskForm.test.tsx > TaskForm structured AI fill > retains input and edited business fields when structured extraction fails
+[ERROR] [10:34:35] [task-form] parse failed: invalid structured fields
+Error: invalid structured fields
+    at /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/frontend/src/components/scheduled-tasks/__tests__/TaskForm.test.tsx:153:63
+    at file:///Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/frontend/node_modules/@vitest/runner/dist/chunk-hooks.js:752:20
+
+ ✓ src/components/scheduled-tasks/__tests__/TaskForm.test.tsx > TaskForm request contract > lets a mapped user explicitly choose web 32ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskForm.test.tsx > TaskForm request contract > lets a mapped user explicitly choose wecom_user 31ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskForm.test.tsx > TaskForm request contract > keeps an existing personal WeCom target when editing 10ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskForm.test.tsx > TaskForm request contract > does not allow an unbound personal WeCom channel 11ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskForm.test.tsx > TaskForm structured AI fill > honors the requested personal WeCom channel without allowing other recipients 18ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskForm.test.tsx > TaskForm structured AI fill > retains input and edited business fields when structured extraction fails 18ms
+ ✓ src/components/scheduled-tasks/__tests__/TaskForm.test.tsx > TaskForm structured AI fill > keeps the other fields when manually editing an existing task time 12ms
+ ✓ src/components/chat/message/__tests__/MessageContentBlocks.test.tsx > MessageContentBlocks structured diagrams > shows the task form beside the completed tool step from persisted JSON 44ms
+ ✓ src/components/chat/message/__tests__/MessageContentBlocks.test.tsx > MessageContentBlocks structured diagrams > dispatches a diagram part through the dedicated structured renderer 310ms
+ ✓ src/components/chat/message/__tests__/MessageContentBlocks.test.tsx > MessageContentBlocks structured diagrams > renders a table part with its structured columns and rows 24ms
+ ✓ src/components/chat/message/__tests__/MessageContentBlocks.test.tsx > MessageContentBlocks structured diagrams > keeps the structured scheduled-task form but hides legacy duplicate confirmation copy 4ms
+
+ Test Files  11 passed (11)
+      Tests  153 passed (153)
+   Start at  10:34:33
+   Duration  1.75s (transform 1.08s, setup 2.87s, collect 2.80s, tests 1.85s, environment 4.20s, prepare 500ms)
+
+JSON report written to /Users/wucong/.codex/visualizations/2026/09/12/01a0962b-f2f6-7633-8563-63520b3ee70f/tool-unification-08/fix-evidence/frontend.json

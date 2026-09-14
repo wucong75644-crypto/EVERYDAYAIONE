@@ -1,0 +1,3390 @@
+{
+  "base_commit": "41732e4f352809f000e34c28789eb71a07000618",
+  "candidate": "08 fix working tree; source fingerprints in fix-evidence",
+  "boundary": "Real Registry/Policy/Runtime/Dispatcher and entrypoints, mocked business handlers and external IO",
+  "all_handlers": {
+    "spec_count": 35,
+    "case_count": 210,
+    "passed": 210,
+    "rows": [
+      {
+        "tool": "erp_info_query",
+        "handler_key": "erp_info_query",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "warehouse_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_info_query",
+        "handler_key": "erp_info_query",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "warehouse_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_info_query",
+        "handler_key": "erp_info_query",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "warehouse_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_info_query",
+        "handler_key": "erp_info_query",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "warehouse_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_info_query",
+        "handler_key": "erp_info_query",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "warehouse_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_info_query",
+        "handler_key": "erp_info_query",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "warehouse_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_product_query",
+        "handler_key": "erp_product_query",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "product_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_product_query",
+        "handler_key": "erp_product_query",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "product_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_product_query",
+        "handler_key": "erp_product_query",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "product_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_product_query",
+        "handler_key": "erp_product_query",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "product_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_product_query",
+        "handler_key": "erp_product_query",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "product_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_product_query",
+        "handler_key": "erp_product_query",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "product_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_trade_query",
+        "handler_key": "erp_trade_query",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "order_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_trade_query",
+        "handler_key": "erp_trade_query",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "order_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_trade_query",
+        "handler_key": "erp_trade_query",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "order_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_trade_query",
+        "handler_key": "erp_trade_query",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "order_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_trade_query",
+        "handler_key": "erp_trade_query",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "order_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_trade_query",
+        "handler_key": "erp_trade_query",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "order_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_aftersales_query",
+        "handler_key": "erp_aftersales_query",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "aftersale_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_aftersales_query",
+        "handler_key": "erp_aftersales_query",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "aftersale_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_aftersales_query",
+        "handler_key": "erp_aftersales_query",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "aftersale_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_aftersales_query",
+        "handler_key": "erp_aftersales_query",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "aftersale_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_aftersales_query",
+        "handler_key": "erp_aftersales_query",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "aftersale_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_aftersales_query",
+        "handler_key": "erp_aftersales_query",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "aftersale_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_warehouse_query",
+        "handler_key": "erp_warehouse_query",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "allocate_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_warehouse_query",
+        "handler_key": "erp_warehouse_query",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "allocate_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_warehouse_query",
+        "handler_key": "erp_warehouse_query",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "allocate_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_warehouse_query",
+        "handler_key": "erp_warehouse_query",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "allocate_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_warehouse_query",
+        "handler_key": "erp_warehouse_query",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "allocate_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_warehouse_query",
+        "handler_key": "erp_warehouse_query",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "allocate_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_purchase_query",
+        "handler_key": "erp_purchase_query",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "supplier_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_purchase_query",
+        "handler_key": "erp_purchase_query",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "supplier_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_purchase_query",
+        "handler_key": "erp_purchase_query",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "supplier_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_purchase_query",
+        "handler_key": "erp_purchase_query",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "supplier_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_purchase_query",
+        "handler_key": "erp_purchase_query",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "supplier_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_purchase_query",
+        "handler_key": "erp_purchase_query",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "supplier_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_taobao_query",
+        "handler_key": "erp_taobao_query",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "order_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_taobao_query",
+        "handler_key": "erp_taobao_query",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "order_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_taobao_query",
+        "handler_key": "erp_taobao_query",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "order_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_taobao_query",
+        "handler_key": "erp_taobao_query",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "order_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_taobao_query",
+        "handler_key": "erp_taobao_query",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "order_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_taobao_query",
+        "handler_key": "erp_taobao_query",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "order_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_execute",
+        "handler_key": "erp_execute",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 1,
+        "arguments": {
+          "category": "trade",
+          "action": "order_create",
+          "params": {}
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_execute",
+        "handler_key": "erp_execute",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "category": "trade",
+          "action": "order_create",
+          "params": {}
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_execute",
+        "handler_key": "erp_execute",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 1,
+        "arguments": {
+          "category": "trade",
+          "action": "order_create",
+          "params": {}
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_execute",
+        "handler_key": "erp_execute",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "category": "trade",
+          "action": "order_create",
+          "params": {}
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_execute",
+        "handler_key": "erp_execute",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 1,
+        "arguments": {
+          "category": "trade",
+          "action": "order_create",
+          "params": {}
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_execute",
+        "handler_key": "erp_execute",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "category": "trade",
+          "action": "order_create",
+          "params": {}
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_data",
+        "handler_key": "local_data",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "doc_type": "order",
+          "filters": [
+            {
+              "field": "fixture",
+              "op": "eq",
+              "value": "fixture"
+            }
+          ]
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_data",
+        "handler_key": "local_data",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "doc_type": "order",
+          "filters": [
+            {
+              "field": "fixture",
+              "op": "eq",
+              "value": "fixture"
+            }
+          ]
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_data",
+        "handler_key": "local_data",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "doc_type": "order",
+          "filters": [
+            {
+              "field": "fixture",
+              "op": "eq",
+              "value": "fixture"
+            }
+          ]
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_data",
+        "handler_key": "local_data",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "doc_type": "order",
+          "filters": [
+            {
+              "field": "fixture",
+              "op": "eq",
+              "value": "fixture"
+            }
+          ]
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_data",
+        "handler_key": "local_data",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "doc_type": "order",
+          "filters": [
+            {
+              "field": "fixture",
+              "op": "eq",
+              "value": "fixture"
+            }
+          ]
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_data",
+        "handler_key": "local_data",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "doc_type": "order",
+          "filters": [
+            {
+              "field": "fixture",
+              "op": "eq",
+              "value": "fixture"
+            }
+          ]
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_product_stats",
+        "handler_key": "local_product_stats",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "product_code": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_product_stats",
+        "handler_key": "local_product_stats",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "product_code": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_product_stats",
+        "handler_key": "local_product_stats",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "product_code": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_product_stats",
+        "handler_key": "local_product_stats",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "product_code": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_product_stats",
+        "handler_key": "local_product_stats",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "product_code": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_product_stats",
+        "handler_key": "local_product_stats",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "product_code": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_stock_query",
+        "handler_key": "local_stock_query",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "product_code": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_stock_query",
+        "handler_key": "local_stock_query",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "product_code": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_stock_query",
+        "handler_key": "local_stock_query",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "product_code": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_stock_query",
+        "handler_key": "local_stock_query",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "product_code": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_stock_query",
+        "handler_key": "local_stock_query",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "product_code": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_stock_query",
+        "handler_key": "local_stock_query",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "product_code": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_product_identify",
+        "handler_key": "local_product_identify",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_product_identify",
+        "handler_key": "local_product_identify",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_product_identify",
+        "handler_key": "local_product_identify",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_product_identify",
+        "handler_key": "local_product_identify",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_product_identify",
+        "handler_key": "local_product_identify",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_product_identify",
+        "handler_key": "local_product_identify",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_platform_map_query",
+        "handler_key": "local_platform_map_query",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_platform_map_query",
+        "handler_key": "local_platform_map_query",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_platform_map_query",
+        "handler_key": "local_platform_map_query",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_platform_map_query",
+        "handler_key": "local_platform_map_query",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_platform_map_query",
+        "handler_key": "local_platform_map_query",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_platform_map_query",
+        "handler_key": "local_platform_map_query",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_compare_stats",
+        "handler_key": "local_compare_stats",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "doc_type": "order",
+          "compare_kind": "wow",
+          "current_period": "today"
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_compare_stats",
+        "handler_key": "local_compare_stats",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "doc_type": "order",
+          "compare_kind": "wow",
+          "current_period": "today"
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_compare_stats",
+        "handler_key": "local_compare_stats",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "doc_type": "order",
+          "compare_kind": "wow",
+          "current_period": "today"
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_compare_stats",
+        "handler_key": "local_compare_stats",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "doc_type": "order",
+          "compare_kind": "wow",
+          "current_period": "today"
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_compare_stats",
+        "handler_key": "local_compare_stats",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "doc_type": "order",
+          "compare_kind": "wow",
+          "current_period": "today"
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_compare_stats",
+        "handler_key": "local_compare_stats",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "doc_type": "order",
+          "compare_kind": "wow",
+          "current_period": "today"
+        },
+        "passed": true
+      },
+      {
+        "tool": "local_shop_list",
+        "handler_key": "local_shop_list",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_shop_list",
+        "handler_key": "local_shop_list",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_shop_list",
+        "handler_key": "local_shop_list",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_shop_list",
+        "handler_key": "local_shop_list",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_shop_list",
+        "handler_key": "local_shop_list",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_shop_list",
+        "handler_key": "local_shop_list",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_warehouse_list",
+        "handler_key": "local_warehouse_list",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_warehouse_list",
+        "handler_key": "local_warehouse_list",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_warehouse_list",
+        "handler_key": "local_warehouse_list",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_warehouse_list",
+        "handler_key": "local_warehouse_list",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_warehouse_list",
+        "handler_key": "local_warehouse_list",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_warehouse_list",
+        "handler_key": "local_warehouse_list",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_supplier_list",
+        "handler_key": "local_supplier_list",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_supplier_list",
+        "handler_key": "local_supplier_list",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_supplier_list",
+        "handler_key": "local_supplier_list",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_supplier_list",
+        "handler_key": "local_supplier_list",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_supplier_list",
+        "handler_key": "local_supplier_list",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "local_supplier_list",
+        "handler_key": "local_supplier_list",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "trigger_erp_sync",
+        "handler_key": "trigger_erp_sync",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 1,
+        "arguments": {
+          "sync_type": "order"
+        },
+        "passed": true
+      },
+      {
+        "tool": "trigger_erp_sync",
+        "handler_key": "trigger_erp_sync",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "sync_type": "order"
+        },
+        "passed": true
+      },
+      {
+        "tool": "trigger_erp_sync",
+        "handler_key": "trigger_erp_sync",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 1,
+        "arguments": {
+          "sync_type": "order"
+        },
+        "passed": true
+      },
+      {
+        "tool": "trigger_erp_sync",
+        "handler_key": "trigger_erp_sync",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "sync_type": "order"
+        },
+        "passed": true
+      },
+      {
+        "tool": "trigger_erp_sync",
+        "handler_key": "trigger_erp_sync",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 1,
+        "arguments": {
+          "sync_type": "order"
+        },
+        "passed": true
+      },
+      {
+        "tool": "trigger_erp_sync",
+        "handler_key": "trigger_erp_sync",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "sync_type": "order"
+        },
+        "passed": true
+      },
+      {
+        "tool": "social_crawler",
+        "handler_key": "social_crawler",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "platform": "xhs",
+          "keywords": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "social_crawler",
+        "handler_key": "social_crawler",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "platform": "xhs",
+          "keywords": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "social_crawler",
+        "handler_key": "social_crawler",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "platform": "xhs",
+          "keywords": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "social_crawler",
+        "handler_key": "social_crawler",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "platform": "xhs",
+          "keywords": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "social_crawler",
+        "handler_key": "social_crawler",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "platform": "xhs",
+          "keywords": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "social_crawler",
+        "handler_key": "social_crawler",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "platform": "xhs",
+          "keywords": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "file_search",
+        "handler_key": "file_search",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "file_search",
+        "handler_key": "file_search",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "file_search",
+        "handler_key": "file_search",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "file_search",
+        "handler_key": "file_search",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "file_search",
+        "handler_key": "file_search",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "file_search",
+        "handler_key": "file_search",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "file_analyze",
+        "handler_key": "file_analyze",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "path": "fixture.csv"
+        },
+        "passed": true
+      },
+      {
+        "tool": "file_analyze",
+        "handler_key": "file_analyze",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "path": "fixture.csv"
+        },
+        "passed": true
+      },
+      {
+        "tool": "file_analyze",
+        "handler_key": "file_analyze",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "path": "fixture.csv"
+        },
+        "passed": true
+      },
+      {
+        "tool": "file_analyze",
+        "handler_key": "file_analyze",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "path": "fixture.csv"
+        },
+        "passed": true
+      },
+      {
+        "tool": "file_analyze",
+        "handler_key": "file_analyze",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "path": "fixture.csv"
+        },
+        "passed": true
+      },
+      {
+        "tool": "file_analyze",
+        "handler_key": "file_analyze",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "path": "fixture.csv"
+        },
+        "passed": true
+      },
+      {
+        "tool": "file_delete",
+        "handler_key": "file_delete",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 1,
+        "arguments": {
+          "files": [
+            "fixture.txt"
+          ]
+        },
+        "passed": true
+      },
+      {
+        "tool": "file_delete",
+        "handler_key": "file_delete",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "files": [
+            "fixture.txt"
+          ]
+        },
+        "passed": true
+      },
+      {
+        "tool": "file_delete",
+        "handler_key": "file_delete",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 1,
+        "arguments": {
+          "files": [
+            "fixture.txt"
+          ]
+        },
+        "passed": true
+      },
+      {
+        "tool": "file_delete",
+        "handler_key": "file_delete",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "files": [
+            "fixture.txt"
+          ]
+        },
+        "passed": true
+      },
+      {
+        "tool": "file_delete",
+        "handler_key": "file_delete",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 1,
+        "arguments": {
+          "files": [
+            "fixture.txt"
+          ]
+        },
+        "passed": true
+      },
+      {
+        "tool": "file_delete",
+        "handler_key": "file_delete",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "files": [
+            "fixture.txt"
+          ]
+        },
+        "passed": true
+      },
+      {
+        "tool": "restore_file",
+        "handler_key": "restore_file",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "filename": "restore-fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "restore_file",
+        "handler_key": "restore_file",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "filename": "restore-fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "restore_file",
+        "handler_key": "restore_file",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "filename": "restore-fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "restore_file",
+        "handler_key": "restore_file",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "filename": "restore-fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "restore_file",
+        "handler_key": "restore_file",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "filename": "restore-fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "restore_file",
+        "handler_key": "restore_file",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "filename": "restore-fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "code_execute",
+        "handler_key": "code_execute",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "code": "fixture",
+          "description": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "code_execute",
+        "handler_key": "code_execute",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "code": "fixture",
+          "description": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "code_execute",
+        "handler_key": "code_execute",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "code": "fixture",
+          "description": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "code_execute",
+        "handler_key": "code_execute",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "code": "fixture",
+          "description": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "code_execute",
+        "handler_key": "code_execute",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "code": "fixture",
+          "description": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "code_execute",
+        "handler_key": "code_execute",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "code": "fixture",
+          "description": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_agent",
+        "handler_key": "erp_agent",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "task": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_agent",
+        "handler_key": "erp_agent",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "task": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_agent",
+        "handler_key": "erp_agent",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "task": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_agent",
+        "handler_key": "erp_agent",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "task": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_agent",
+        "handler_key": "erp_agent",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "task": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_agent",
+        "handler_key": "erp_agent",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "task": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_analyze",
+        "handler_key": "erp_analyze",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "task": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_analyze",
+        "handler_key": "erp_analyze",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "task": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_analyze",
+        "handler_key": "erp_analyze",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "task": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_analyze",
+        "handler_key": "erp_analyze",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "task": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_analyze",
+        "handler_key": "erp_analyze",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "task": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_analyze",
+        "handler_key": "erp_analyze",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "task": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_api_search",
+        "handler_key": "erp_api_search",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "query": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_api_search",
+        "handler_key": "erp_api_search",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "query": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_api_search",
+        "handler_key": "erp_api_search",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "query": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_api_search",
+        "handler_key": "erp_api_search",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "query": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_api_search",
+        "handler_key": "erp_api_search",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "query": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "erp_api_search",
+        "handler_key": "erp_api_search",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "query": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "search_knowledge",
+        "handler_key": "search_knowledge",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "query": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "search_knowledge",
+        "handler_key": "search_knowledge",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "query": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "search_knowledge",
+        "handler_key": "search_knowledge",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "query": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "search_knowledge",
+        "handler_key": "search_knowledge",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "query": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "search_knowledge",
+        "handler_key": "search_knowledge",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "query": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "search_knowledge",
+        "handler_key": "search_knowledge",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "query": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "web_search",
+        "handler_key": "web_search",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "query": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "web_search",
+        "handler_key": "web_search",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "query": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "web_search",
+        "handler_key": "web_search",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "query": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "web_search",
+        "handler_key": "web_search",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "query": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "web_search",
+        "handler_key": "web_search",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "query": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "web_search",
+        "handler_key": "web_search",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "query": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "generate_image",
+        "handler_key": "generate_image",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "prompt": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "generate_image",
+        "handler_key": "generate_image",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "prompt": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "generate_image",
+        "handler_key": "generate_image",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "prompt": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "generate_image",
+        "handler_key": "generate_image",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "prompt": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "generate_image",
+        "handler_key": "generate_image",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "prompt": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "generate_image",
+        "handler_key": "generate_image",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "prompt": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "generate_video",
+        "handler_key": "generate_video",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "prompt": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "generate_video",
+        "handler_key": "generate_video",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "prompt": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "generate_video",
+        "handler_key": "generate_video",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "prompt": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "generate_video",
+        "handler_key": "generate_video",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "prompt": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "generate_video",
+        "handler_key": "generate_video",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "prompt": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "generate_video",
+        "handler_key": "generate_video",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "prompt": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "image_agent",
+        "handler_key": "image_agent",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "task": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "image_agent",
+        "handler_key": "image_agent",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "task": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "image_agent",
+        "handler_key": "image_agent",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "task": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "image_agent",
+        "handler_key": "image_agent",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "task": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "image_agent",
+        "handler_key": "image_agent",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "task": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "image_agent",
+        "handler_key": "image_agent",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "task": "fixture"
+        },
+        "passed": true
+      },
+      {
+        "tool": "manage_scheduled_task",
+        "handler_key": "manage_scheduled_task",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "manage_scheduled_task",
+        "handler_key": "manage_scheduled_task",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "manage_scheduled_task",
+        "handler_key": "manage_scheduled_task",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "manage_scheduled_task",
+        "handler_key": "manage_scheduled_task",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "manage_scheduled_task",
+        "handler_key": "manage_scheduled_task",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "manage_scheduled_task",
+        "handler_key": "manage_scheduled_task",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "action": "list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "fetch_all_pages",
+        "handler_key": "fetch_all_pages",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "tool": "erp_trade_query",
+          "action": "order_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "fetch_all_pages",
+        "handler_key": "fetch_all_pages",
+        "domain": "erp",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "tool": "erp_trade_query",
+          "action": "order_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "fetch_all_pages",
+        "handler_key": "fetch_all_pages",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "tool": "erp_trade_query",
+          "action": "order_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "fetch_all_pages",
+        "handler_key": "fetch_all_pages",
+        "domain": "erp",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "tool": "erp_trade_query",
+          "action": "order_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "fetch_all_pages",
+        "handler_key": "fetch_all_pages",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "tool": "erp_trade_query",
+          "action": "order_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "fetch_all_pages",
+        "handler_key": "fetch_all_pages",
+        "domain": "erp",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {
+          "tool": "erp_trade_query",
+          "action": "order_list"
+        },
+        "passed": true
+      },
+      {
+        "tool": "get_conversation_context",
+        "handler_key": "get_conversation_context",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": true,
+        "expected_calls": 1,
+        "handler_calls": 1,
+        "dispatcher_calls": 1,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "get_conversation_context",
+        "handler_key": "get_conversation_context",
+        "domain": "general",
+        "entry": "legacy",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "get_conversation_context",
+        "handler_key": "get_conversation_context",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": true,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "get_conversation_context",
+        "handler_key": "get_conversation_context",
+        "domain": "general",
+        "entry": "chat",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "get_conversation_context",
+        "handler_key": "get_conversation_context",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": true,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      },
+      {
+        "tool": "get_conversation_context",
+        "handler_key": "get_conversation_context",
+        "domain": "general",
+        "entry": "loop",
+        "authorized": false,
+        "expected_calls": 0,
+        "handler_calls": 0,
+        "dispatcher_calls": 0,
+        "mock_confirm_calls": 0,
+        "arguments": {},
+        "passed": true
+      }
+    ]
+  },
+  "concurrency": [
+    {
+      "entry": "chat",
+      "passed": true,
+      "trace": [
+        {
+          "event": "start",
+          "label": "A",
+          "active": [
+            "A"
+          ]
+        },
+        {
+          "event": "start",
+          "label": "B",
+          "active": [
+            "A",
+            "B"
+          ]
+        },
+        {
+          "event": "end",
+          "label": "A",
+          "active": [
+            "B"
+          ]
+        },
+        {
+          "event": "end",
+          "label": "B",
+          "active": []
+        },
+        {
+          "event": "start",
+          "label": "C",
+          "active": [
+            "C"
+          ]
+        },
+        {
+          "event": "end",
+          "label": "C",
+          "active": []
+        },
+        {
+          "event": "start",
+          "label": "D",
+          "active": [
+            "D"
+          ]
+        },
+        {
+          "event": "end",
+          "label": "D",
+          "active": []
+        },
+        {
+          "event": "start",
+          "label": "E",
+          "active": [
+            "E"
+          ]
+        },
+        {
+          "event": "end",
+          "label": "E",
+          "active": []
+        }
+      ]
+    },
+    {
+      "entry": "loop",
+      "passed": true,
+      "trace": [
+        {
+          "event": "start",
+          "label": "A",
+          "active": [
+            "A"
+          ]
+        },
+        {
+          "event": "start",
+          "label": "B",
+          "active": [
+            "A",
+            "B"
+          ]
+        },
+        {
+          "event": "end",
+          "label": "A",
+          "active": [
+            "B"
+          ]
+        },
+        {
+          "event": "end",
+          "label": "B",
+          "active": []
+        },
+        {
+          "event": "start",
+          "label": "C",
+          "active": [
+            "C"
+          ]
+        },
+        {
+          "event": "end",
+          "label": "C",
+          "active": []
+        },
+        {
+          "event": "start",
+          "label": "D",
+          "active": [
+            "D"
+          ]
+        },
+        {
+          "event": "end",
+          "label": "D",
+          "active": []
+        },
+        {
+          "event": "start",
+          "label": "E",
+          "active": [
+            "E"
+          ]
+        },
+        {
+          "event": "end",
+          "label": "E",
+          "active": []
+        }
+      ]
+    }
+  ],
+  "websocket_confirmation": [
+    {
+      "scenario": "scoped_nonbool_false",
+      "expected_handler_calls": 0,
+      "handler_calls": 0,
+      "policy_outcome": "deny",
+      "policy_reason": "confirmation_rejected",
+      "identity_persistence_adapter_calls": 0,
+      "fixture_unchanged": true,
+      "response": {
+        "actor": "u1",
+        "payload": {
+          "tool_call_id": "tool-approval:7a19acd9a894613f007f8155a7ab606b059834845f6ae75655be7acc18c89d7b",
+          "task_id": "task1",
+          "conversation_id": "c1",
+          "approved": "false"
+        }
+      },
+      "passed": true
+    },
+    {
+      "scenario": "foreign_actor_without_scope",
+      "expected_handler_calls": 0,
+      "handler_calls": 0,
+      "policy_outcome": "deny",
+      "policy_reason": "confirmation_rejected",
+      "identity_persistence_adapter_calls": 0,
+      "fixture_unchanged": true,
+      "response": {
+        "actor": "other-user",
+        "payload": {
+          "tool_call_id": "tool-approval:7a19acd9a894613f007f8155a7ab606b059834845f6ae75655be7acc18c89d7b",
+          "approved": true
+        }
+      },
+      "passed": true
+    },
+    {
+      "scenario": "normal_false",
+      "expected_handler_calls": 0,
+      "handler_calls": 0,
+      "policy_outcome": "deny",
+      "policy_reason": "confirmation_rejected",
+      "identity_persistence_adapter_calls": 1,
+      "fixture_unchanged": true,
+      "response": {
+        "actor": "u1",
+        "payload": {
+          "tool_call_id": "tool-approval:7a19acd9a894613f007f8155a7ab606b059834845f6ae75655be7acc18c89d7b",
+          "task_id": "task1",
+          "conversation_id": "c1",
+          "approved": false
+        }
+      },
+      "passed": true
+    },
+    {
+      "scenario": "normal_true",
+      "expected_handler_calls": 1,
+      "handler_calls": 1,
+      "policy_outcome": "allow",
+      "policy_reason": "confirmed",
+      "identity_persistence_adapter_calls": 1,
+      "fixture_unchanged": true,
+      "response": {
+        "actor": "u1",
+        "payload": {
+          "tool_call_id": "tool-approval:7a19acd9a894613f007f8155a7ab606b059834845f6ae75655be7acc18c89d7b",
+          "task_id": "task1",
+          "conversation_id": "c1",
+          "approved": true
+        }
+      },
+      "passed": true
+    }
+  ]
+}

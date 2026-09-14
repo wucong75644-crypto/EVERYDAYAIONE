@@ -1,0 +1,28 @@
+......................xxxx.............................................. [ 15%]
+................................sss..................................... [ 31%]
+........................................................................ [ 47%]
+........................................................................ [ 62%]
+........................................................................ [ 78%]
+........................................................................ [ 94%]
+...........................                                              [100%]
+=============================== warnings summary ===============================
+../../backend/venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1441
+  /Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1441: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+../../backend/venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:295
+  /Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:295: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.10/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: /Users/wucong/.codex/visualizations/2026/09/12/01a0962b-f2f6-7633-8563-63520b3ee70f/tool-unification-08/fix-evidence/group-affected-extra.xml -
+=========================== short test summary info ============================
+SKIPPED [1] backend/tests/test_chat_context.py:1101: V1 gather 编排已由 PromptBuilder._parallel_fetch 取代
+SKIPPED [1] backend/tests/test_chat_context.py:1132: V1 gather 编排已由 PromptBuilder._parallel_fetch 取代
+SKIPPED [1] backend/tests/test_chat_context.py:1155: V1 gather 编排已由 PromptBuilder._parallel_fetch 取代
+XFAIL backend/tests/test_attachment_routing_baseline.py::TestFileSearchDescriptionContract::test_mentions_image_multimodal - P3 范围：file_search description 加图片多模态说明（B 方案未含）
+XFAIL backend/tests/test_attachment_routing_baseline.py::TestAllToolDescriptionsContract::test_all_under_1024_chars - 额外 finding：erp_execute/local_data/code_execute/erp_agent description 超 1024 字符，留待后续优化
+XFAIL backend/tests/test_attachment_routing_baseline.py::TestSystemPromptModalityBoundary::test_has_modality_section_or_image_guidance_centralized - P4 范围：system prompt 加独立「模态感知」段（B 方案未含）
+XFAIL backend/tests/test_attachment_routing_baseline.py::TestSystemPromptModalityBoundary::test_no_image_guidance_buried_in_file_search_only - P4 范围：system prompt 加独立「模态感知」段（B 方案未含）
+452 passed, 3 skipped, 4 xfailed, 2 warnings in 64.48s (0:01:04)

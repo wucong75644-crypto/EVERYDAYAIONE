@@ -13,6 +13,7 @@
 import hashlib
 import json
 import time
+from uuid import uuid4
 from typing import Any, Dict, Optional, Tuple
 
 
@@ -25,6 +26,24 @@ class ToolResultCache:
 
     def __init__(self) -> None:
         self._store: Dict[str, Tuple[Any, float]] = {}
+        self._source_ids: dict[str, tuple[Any, str]] = {}
+
+    def source_id(self, tool_name: str, args: Dict[str, Any]) -> str | None:
+        """Stable provenance for one legacy entry; get() keeps its old API."""
+        key = self._key(tool_name, args)
+        entry = self._store.get(key)
+        if entry is None or time.monotonic() - entry[1] >= self._CACHE_TTL:
+            self._source_ids.pop(key, None)
+            return None
+        existing = self._source_ids.get(key)
+        if existing is None or existing[0] is not entry:
+            existing = (entry, uuid4().hex)
+            self._source_ids[key] = existing
+        return existing[1]
+
+    def _store_value(self, key: str, value: Any) -> None:
+        self._source_ids.pop(key, None)
+        self._store[key] = (value, time.monotonic())
 
     @staticmethod
     def is_cacheable(tool_name: str) -> bool:
@@ -49,6 +68,7 @@ class ToolResultCache:
             return entry[0]
         # 过期条目删除，释放空间
         del self._store[key]
+        self._source_ids.pop(key, None)
         return None
 
     def put(self, tool_name: str, args: Dict[str, Any], result: Any) -> None:
@@ -63,7 +83,7 @@ class ToolResultCache:
             if len(json.dumps(result, ensure_ascii=False)) > self._CACHE_MAX_VALUE_CHARS:
                 return
             if len(self._store) < self._CACHE_MAX_ENTRIES:
-                self._store[self._key(tool_name, args)] = (result, time.monotonic())
+                self._store_value(self._key(tool_name, args), result)
             return
         # 大小判断：兼容直接调用方也按完整安全载荷衡量，保留原对象返回 API
         from services.agent.agent_result import AgentResult
@@ -82,4 +102,4 @@ class ToolResultCache:
         if len(self._store) >= self._CACHE_MAX_ENTRIES:
             return
         key = self._key(tool_name, args)
-        self._store[key] = (result, time.monotonic())
+        self._store_value(key, result)

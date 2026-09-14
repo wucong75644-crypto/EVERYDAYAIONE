@@ -65,6 +65,8 @@ class ToolLoopExecutor:
         self.hooks: List[LoopHook] = list(hooks or [])
         # 会话级读工具缓存（key=tool_name+args_hash → result, TTL 5 分钟）
         self._cache = ToolResultCache()
+        self._emit_payloads: List[Dict[str, Any]] = []
+        self._collected_artifact_sources: set[tuple] = set()
         # file_registry 已废弃（对齐 Claude 模式后不再需要）
         self._file_registry = None
         # 停止策略：本轮所有工具的原始结果（供 run() 中 classify 使用）
@@ -110,7 +112,8 @@ class ToolLoopExecutor:
         empty_turns = 0
         recent_calls: List[str] = []
         context_recovery_used = False
-        self._emit_payloads: List[Dict[str, Any]] = []
+        self._emit_payloads = []
+        self._collected_artifact_sources.clear()
 
         # ── 停止策略：初始化追踪器和配置 ──
         from services.agent.stop_policy import (
@@ -409,9 +412,14 @@ class ToolLoopExecutor:
         """
         from services.handlers.emit_payloads import collect_agent_result_payloads
 
+        source = result.artifact_source if isinstance(result, ToolResult) else None
+        if source is not None and source in self._collected_artifact_sources:
+            return
         payloads = result.collect_payloads("tool_loop") if isinstance(result, ToolResult) else collect_agent_result_payloads(result)
         if payloads:
             self._emit_payloads.extend(payloads)
+            if source is not None:
+                self._collected_artifact_sources.add(source)
 
     async def _pre_turn_checks(
         self,
@@ -513,6 +521,7 @@ class ToolLoopExecutor:
         if not hook_ctx.task_id:
             return "⚠ 无可用确认通道，操作未执行。"
 
+        waiter = None
         try:
             from schemas.websocket_builders import build_tool_confirm_request
             from services.websocket_manager import ws_manager
@@ -522,6 +531,11 @@ class ToolLoopExecutor:
             if len(args_summary) > 200:
                 args_summary = args_summary[:200] + "..."
 
+            waiter = asyncio.create_task(ws_manager.wait_for_confirm(
+                tool_call_id, timeout=60.0, task_id=hook_ctx.task_id,
+                conversation_id=hook_ctx.conversation_id, actor_user_id=hook_ctx.user_id,
+            ))
+            await asyncio.sleep(0)  # register before publishing the request
             await ws_manager.send_to_task_or_user(
                 hook_ctx.task_id,
                 hook_ctx.user_id,
@@ -538,12 +552,7 @@ class ToolLoopExecutor:
                 ),
             )
 
-            approved = await ws_manager.wait_for_confirm(
-                tool_call_id,
-                timeout=60.0,
-                task_id=hook_ctx.task_id,
-                conversation_id=hook_ctx.conversation_id,
-            )
+            approved = await waiter
             if approved:
                 logger.info(
                     f"Tool confirm approved | tool={tool_name} | "
@@ -564,6 +573,12 @@ class ToolLoopExecutor:
                 f"Tool confirm error | tool={tool_name} | error={e}"
             )
             return "⚠ 确认失败，操作未执行。"
+        finally:
+            if waiter is not None:
+                if not waiter.done():
+                    waiter.cancel()
+                await asyncio.gather(waiter, return_exceptions=True)
+
 
     # ========================================
     # 单轮工具执行

@@ -160,6 +160,9 @@ class ToolRuntime:
                             result = restore_result(raw, call=call, context=context, decision=decision)
                         else:
                             result = ToolResult.wrap(raw, call=call, context=context, decision=decision)
+                            from services.agent.tool_result_cache import ToolResultCache
+                            if isinstance(cache, ToolResultCache):
+                                result = replace(result, artifact_cache_source=cache.source_id(name, cache_arguments(call)))
                         if result.execution.cancelled:
                             raise asyncio.CancelledError()
                         if result.execution.status != "succeeded":

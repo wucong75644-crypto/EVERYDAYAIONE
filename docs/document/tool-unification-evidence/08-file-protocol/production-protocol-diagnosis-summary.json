@@ -1,0 +1,37 @@
+{
+  "summary": {
+    "current": {
+      "calls": 4,
+      "spaced_names": 2,
+      "scope_workspace": 4,
+      "found": 2
+    },
+    "search_only": {
+      "calls": 4,
+      "spaced_names": 3,
+      "scope_workspace": 4,
+      "found": 1
+    },
+    "path_contract": {
+      "calls": 4,
+      "spaced_names": 0,
+      "scope_workspace": 4,
+      "found": 4
+    }
+  },
+  "usage": {
+    "prompt_tokens": 118912,
+    "completion_tokens": 651,
+    "total_tokens": 119563
+  },
+  "complete": {
+    "type": "complete",
+    "commit": "8428b72c0c8b36481e5fdbc3bcb3e93070c2f1f9",
+    "provider_calls": 12,
+    "business_invocations": 0,
+    "business_mutations": 0,
+    "target_unchanged": true,
+    "completed_at": "2026-09-13T15:44:17.461146+00:00"
+  },
+  "sha256": "9eee9d7afedd5d03987b9f4c1a88fb83dbfbea4dd8a7e7c17379d54478409ff9"
+}

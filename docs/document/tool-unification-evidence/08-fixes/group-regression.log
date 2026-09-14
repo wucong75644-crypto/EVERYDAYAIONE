@@ -1,0 +1,82 @@
+........................................................................ [  4%]
+........................................................................ [  9%]
+........................................................................ [ 13%]
+........................................................................ [ 18%]
+........................................................................ [ 23%]
+........................................................................ [ 27%]
+........................................................................ [ 32%]
+........................................................................ [ 36%]
+........................................................................ [ 41%]
+........................................................................ [ 46%]
+........................................................................ [ 50%]
+........................................................................ [ 55%]
+........................................................................ [ 60%]
+........................................................................ [ 64%]
+........................................................................ [ 69%]
+........................................................................ [ 73%]
+........................................................................ [ 78%]
+........................................................................ [ 83%]
+........................................................................ [ 87%]
+........................................................................ [ 92%]
+........................................................................ [ 96%]
+...............................ss..............                          [100%]
+=============================== warnings summary ===============================
+../../backend/venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1441
+  /Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1441: PytestConfigWarning: Unknown config option: env
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+../../backend/venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:295
+  /Users/wucong/EVERYDAYAIONE/backend/venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:295: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.10/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 37329 (\N{CJK UNIFIED IDEOGRAPH-91D1}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 39069 (\N{CJK UNIFIED IDEOGRAPH-989D}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 38144 (\N{CJK UNIFIED IDEOGRAPH-9500}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 21806 (\N{CJK UNIFIED IDEOGRAPH-552E}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 23545 (\N{CJK UNIFIED IDEOGRAPH-5BF9}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 27604 (\N{CJK UNIFIED IDEOGRAPH-6BD4}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 36816 (\N{CJK UNIFIED IDEOGRAPH-8FD0}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 33829 (\N{CJK UNIFIED IDEOGRAPH-8425}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 36864 (\N{CJK UNIFIED IDEOGRAPH-9000}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_three_engines.py::TestMatplotlibChineseFont::test_chinese_font_in_fallback_list_avoids_box
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/backend/tests/test_emit_three_engines.py:355: UserWarning: Glyph 27454 (\N{CJK UNIFIED IDEOGRAPH-6B3E}) missing from font(s) DejaVu Sans.
+    fig.savefig(str(out), dpi=60)
+
+tests/test_emit_auto_hooks.py::TestIPythonDisplayShim::test_unknown_mime_ignored
+  /Users/wucong/EVERYDAYAIONE/worktrees/tool-unification-08-fixes/backend/services/sandbox/emit_auto_hooks.py:223: DeprecationWarning: The `source` parameter emit a  deprecation warning since IPython 8.0, it had no effects for a long time and will  be removed in future versions.
+    _orig_publish(data, metadata, source, transient=transient, update=update, **kwargs)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: /Users/wucong/.codex/visualizations/2026/09/12/01a0962b-f2f6-7633-8563-63520b3ee70f/tool-unification-08/fix-evidence/group-regression.xml -
+=========================== short test summary info ============================
+SKIPPED [1] backend/tests/test_emit_three_engines.py:380: wqy 字体未装 (本地开发环境跳过, 生产 Linux 必装)
+SKIPPED [1] backend/tests/test_emit_three_engines.py:396: wqy 字体未装
+1557 passed, 2 skipped, 13 warnings in 8.75s

@@ -15,7 +15,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 
 from fastapi import WebSocket
 from loguru import logger
@@ -44,6 +44,16 @@ class Connection:
     subscribed_tasks: Set[str] = field(default_factory=set)
 
 
+@dataclass
+class PendingToolConfirmation:
+    event: asyncio.Event
+    actor_user_id: str | None
+    task_id: str | None
+    conversation_id: str | None
+    deadline: float
+    approved: bool | None = None
+
+
 class WebSocketManager(RedisPubSubMixin):
     """
     WebSocket 连接管理器（分布式版）
@@ -60,12 +70,8 @@ class WebSocketManager(RedisPubSubMixin):
         self._conn_index: Dict[str, Connection] = {}
         self._lock = asyncio.Lock()
 
-        # 工具确认等待机制（Phase 3 B5）
-        # key = tool_call_id → (Event, approved: bool | None)
-        self._pending_confirms: Dict[
-            str,
-            Tuple[asyncio.Event, List, Optional[str], Optional[str]],
-        ] = {}
+        # Server-owned binding; a client cannot remove its actor/scope checks.
+        self._pending_confirms: Dict[str, PendingToolConfirmation] = {}
 
         # 用户打断机制（Steer）
         # key = task_id → Event（打断信号）
@@ -364,68 +370,63 @@ class WebSocketManager(RedisPubSubMixin):
         self, tool_call_id: str, timeout: float = 60.0,
         *, task_id: str | None = None,
         conversation_id: str | None = None,
+        actor_user_id: str | None = None,
     ) -> bool:
-        """等待用户确认写操作。
-
-        Args:
-            tool_call_id: 工具调用 ID（唯一标识）
-            timeout: 超时秒数
-
-        Returns:
-            True = 用户确认执行，False = 用户拒绝或超时
-        """
-        event = asyncio.Event()
-        result_holder: List = [None]  # [bool | None]
-        self._pending_confirms[tool_call_id] = (
-            event, result_holder, task_id, conversation_id,
+        """Wait for a single decision; every production caller binds actor/scope."""
+        if tool_call_id in self._pending_confirms:
+            raise ValueError("confirmation_already_pending")
+        pending = PendingToolConfirmation(
+            asyncio.Event(), actor_user_id, task_id, conversation_id,
+            time.monotonic() + timeout,
         )
+        self._pending_confirms[tool_call_id] = pending
         try:
-            await asyncio.wait_for(event.wait(), timeout=timeout)
-            return result_holder[0] is True
+            await asyncio.wait_for(pending.event.wait(), timeout=timeout)
+            return pending.approved is True
         except asyncio.TimeoutError:
-            logger.info(
-                f"Tool confirm timeout | tool_call_id={tool_call_id}"
-            )
+            logger.info(f"Tool confirm timeout | tool_call_id={tool_call_id}")
             return False
         finally:
             self._pending_confirms.pop(tool_call_id, None)
 
-    def resolve_confirm(
-        self,
-        tool_call_id: str,
-        approved: bool,
-        *,
-        task_id: str | None = None,
-        conversation_id: str | None = None,
-    ) -> bool:
-        """前端确认/拒绝后调用，唤醒等待方。
+    def confirmation_scope(
+        self, tool_call_id: str, *, actor_user_id: str,
+        task_id: str | None, conversation_id: str | None,
+    ) -> tuple[str, str] | None:
+        """Complete old WS fields only from a live, fully bound local request.
 
-        Returns:
-            True = 找到并唤醒了等待方，False = 无匹配（已超时或不存在）
+        None means another process may own the Actor waiter. Invalid local
+        bindings raise, so callers cannot fall through to a weaker path.
         """
         pending = self._pending_confirms.get(tool_call_id)
-        if not pending:
-            logger.warning(
-                f"Tool confirm resolve miss | tool_call_id={tool_call_id}"
-            )
+        if pending is None:
+            return None
+        if (not pending.actor_user_id or not pending.task_id or not pending.conversation_id
+                or pending.actor_user_id != actor_user_id
+                or time.monotonic() >= pending.deadline
+                or (task_id is not None and task_id != pending.task_id)
+                or (conversation_id is not None and conversation_id != pending.conversation_id)):
+            raise ValueError("confirmation_scope_invalid")
+        return pending.task_id, pending.conversation_id
+
+    def resolve_confirm(
+        self, tool_call_id: str, approved: bool, *,
+        task_id: str | None = None, conversation_id: str | None = None,
+        actor_user_id: str | None = None,
+    ) -> bool:
+        """First valid response wins. Missing scope never disables a binding."""
+        pending = self._pending_confirms.get(tool_call_id)
+        if pending is None or type(approved) is not bool or time.monotonic() >= pending.deadline:
             return False
-        event, result_holder, expected_task_id, expected_conversation_id = pending
-        if (
-            task_id is not None
-            and expected_task_id is not None
-            and task_id != expected_task_id
-        ) or (
-            conversation_id is not None
-            and expected_conversation_id is not None
-            and conversation_id != expected_conversation_id
-        ):
-            logger.warning(
-                "Tool confirm resolve scope mismatch | "
-                f"tool_call_id={tool_call_id} | task_id={task_id}"
-            )
+        if (pending.actor_user_id != actor_user_id or pending.task_id != task_id
+                or pending.conversation_id != conversation_id):
             return False
-        result_holder[0] = approved
-        event.set()
+        # Unbound calls remain an in-process compatibility API only; WS rejects
+        # them in confirmation_scope before reaching this method.
+        if pending.approved is not None:
+            return pending.approved is approved
+        pending.approved = approved
+        pending.event.set()
         return True
 
     # ================================================================

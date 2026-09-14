@@ -65,14 +65,13 @@ def build_file_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "file_search",
                 "description": (
-                    "检索当前获准范围的文件，返回完整相对路径、resource_ref 和兼容 file_id；不转换文件。\n\n"
-                    "Usage:\n"
-                    "- 无参数且无本轮浏览上下文：检索当前任务附件；scope=workspace 时列工作区根目录\n"
-                    "- path：指定目录或精确相对路径；不完整文件名请用 keyword\n"
-                    "- keyword：按文件名关键词搜索\n"
-                    "- file_pattern：按通配符过滤（如 *.csv）\n\n"
-                    "多个候选请先选择完整路径；优先把 resource_ref 原样传给分析或删除工具。CSV/Excel 需另调 file_analyze。\n"
-                    + FILE_ANALYZE_SELECTOR_GUIDANCE
+                    "在指定范围定位文件或发现候选，返回 resource_ref 和兼容 file_id；不转换文件。\n"
+                    "- 用户给出完整文件名或完整相对路径：通过 path 原样复制，不增删空格或改写标点。\n"
+                    "- 只知道关键词：使用 keyword；按类型查找使用 file_pattern（如 *.csv）。\n"
+                    "- 列目录：使用 path 指定目录，根目录为 .。\n"
+                    "普通聊天默认检索获准工作区，其中包含本轮和历史聊天上传文件。只有用户明确限定本轮附件时才用 scope=current。"
+                    "多个候选先选择完整路径；找到后将 resource_ref 原样传给分析或删除工具，"
+                    "已有附件 ID 则直接使用 ID，不再拼写文件名。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -80,8 +79,8 @@ def build_file_tools() -> List[Dict[str, Any]]:
                         "path": {
                             "type": "string",
                             "description": (
-                                "目录相对路径（列目录）或文件完整相对路径（描述单文件）。"
-                                "省略 scope 时承接本轮明确浏览范围；无绑定时为 current，歧义时需明确范围。"
+                                "目录、完整文件名或完整相对路径。完整文件名可定位子目录中的文件；原样复制，不增删空格。"
+                                "完整路径必须准确；同名文件需选择完整路径。"
                             ),
                         },
                         "keyword": {
@@ -96,8 +95,8 @@ def build_file_tools() -> List[Dict[str, Any]]:
                             "type": "string",
                             "enum": ["current", "workspace"],
                             "description": (
-                                "显式 current 仅检索本轮附件；省略时可承接本轮浏览范围，无绑定时为 current。只有用户明确要求"
-                                "搜索整个工作区时才使用 workspace。"
+                                "可省略。普通聊天默认 workspace，检索获准工作区及其中的聊天历史附件；"
+                                "current 仅本轮附件，只在用户明确限定时使用。定时/预检任务仍受原授权资源范围约束。"
                             ),
                         },
                     },

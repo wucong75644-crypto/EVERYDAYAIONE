@@ -46,6 +46,7 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
         from core.config import get_settings
         from services.agent.agent_result import AgentResult
         from services.file_executor import FileExecutor
+        from services.file_resources import FileTargetError
 
         settings = get_settings()
         if not settings.file_workspace_enabled:
@@ -73,6 +74,13 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
                 return await self._file_delete(executor, args, settings)
             if tool_name == "restore_file":
                 return await self._restore_file(executor, args, settings)
+        except FileTargetError as e:
+            return AgentResult(
+                summary=str(e), status="error", error_message=str(e),
+                metadata={"retryable": False, "error_code": e.code,
+                          "candidates": list(e.candidates), "recovery": e.recovery,
+                          "resource_scope": e.scope or args.get("scope", "current")},
+            )
         except PermissionError as e:
             return AgentResult(
                 summary=f"权限不足: {e}", status="error",
@@ -103,7 +111,8 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
         """file_search 实现：搜索/列目录/定位文件，返回路径。不做 Parquet 转换。"""
         from services.agent.agent_result import AgentResult
 
-        scope = str(args.get("scope") or "current").strip().lower()
+        from services.tools.resource_access import ResourceSelections
+        scope = ResourceSelections().scope(self, "file_search", args, executor)
         if getattr(self, "resource_manifest", None) is not None and scope != "workspace":
             return await self._search_manifest(executor, args)
         path = args.get("path", "")
@@ -122,17 +131,12 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
                     metadata={"retryable": True},
                 )
             if Path(path).parent == Path(".") and not path.startswith(".") and not target.is_dir():
-                from services.file_resources import FileTargetResolver, FileTargetError
-                try:
-                    target = FileTargetResolver(self, executor, action="list").resolve(path).path
-                except FileTargetError:
-                    return await self._search_files(executor, {"keyword": path})
+                from services.file_resources import FileTargetResolver
+                target = FileTargetResolver(self, executor, scope=scope, action="list").resolve_search(path).path
             if target.is_file():
                 return await self._describe_single_file(executor, str(target))
             if target.is_dir():
                 return await self._list_directory(executor, args)
-            if Path(path).parent == Path(".") and not path.startswith("."):
-                return await self._search_files(executor, {"keyword": path})
             return AgentResult(
                 summary=f"未找到文件或目录: {path}",
                 status="error",
@@ -159,6 +163,12 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
 
         path = str(args.get("path") or "").strip()
         from services.tools.resource_access import manifest_matches, resource_boundary
+        if path and path != "." and not path.endswith("/") and not args.get("keyword") and not args.get("file_pattern"):
+            candidate = executor.resolve_safe_path(path)
+            if not candidate.is_dir():
+                from services.file_resources import FileTargetResolver
+                target = FileTargetResolver(self, executor, scope="current", action="list").resolve_search(path).path
+                return await self._describe_single_file(executor, str(target))
         assets = manifest_matches(self.resource_manifest, args, resource_boundary(self))
         if not assets:
             return AgentResult(
@@ -254,7 +264,8 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
         if data["error"]:
             return AgentResult(summary=data["error"], status="error", error_message=data["error"])
         if not data["entries"]:
-            return AgentResult(summary="未找到匹配文件", status="empty")
+            return AgentResult(summary="工作区获准搜索范围内未找到匹配文件", status="empty",
+                               metadata={"resource_scope": "workspace"})
         lines = [f"搜索结果 | 共 {len(data['entries'])} 项"]
         for hit in data["entries"]:
             if hit["is_dir"]:

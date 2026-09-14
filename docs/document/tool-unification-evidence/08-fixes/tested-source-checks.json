@@ -1,0 +1,13 @@
+{
+  "backend/api/routes/ws.py": "9461f9d48ca2c126788e14317642a433bb0f2ed8a8f01568e5bbfb636edc946a",
+  "backend/services/agent/tool_loop_executor.py": "8c18f8b2ad787636a1e8a412628e1e2d90c40f1229d14946c15809fa7e350a39",
+  "backend/services/agent/tool_result_cache.py": "4509af15da3cf4cd03ad853def445a7c9ba55535d131289d0cf319c070091cde",
+  "backend/services/handlers/chat_tool_mixin.py": "17e8704115fe63cf270105ad85248003f278437413043b2a0fbda643ce5c8518",
+  "backend/services/tools/result.py": "ac2460670f3bcd4391162f7a2f1f20e30be53357e4f44da168df190edb4e2e07",
+  "backend/services/tools/result_payload.py": "efa340ff0c536d98766e7f26a7b5aa75c9ff413d68c89579c200131bccd64d3e",
+  "backend/services/tools/runtime.py": "0d06b3ba04320c435346e3d9c24493c62f26ab1273bce3ddcd58dd2d88774cd3",
+  "backend/services/websocket_manager.py": "0361c65af327cfa4d3e2496c402a106df1c3bc40d21c538d9c337fbfbde14812",
+  "backend/tests/test_tool_production_integration.py": "7581d2ff042e33bdb1d711fe57286b826c4e5db3b1885e41db361039b9a3d374",
+  "backend/tests/test_tool_artifact_reuse_08.py": "b616f8dffc3f526dc2dd67c4b0141430e78b6d51e4014e4fdc4996d2cea9d3a2",
+  "backend/tests/test_tool_confirmation_boundary_08.py": "45ae82c226aa376b2d270e63641a70266fcd400cdae1709f898dc943524487e6"
+}

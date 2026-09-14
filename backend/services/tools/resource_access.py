@@ -134,6 +134,11 @@ class ResourceSelections:
                 raise ResourceAccessError("RESOURCE_SCOPE_INVALID", "scope 只能是 current 或 workspace。",
                                           recovery="select_scope")
             return explicit
+        if name == "file_search" and getattr(owner, "execution_mode", "interactive") == "interactive":
+            # Chat uploads (including earlier attachments) live in the same
+            # owner workspace. Search that authorized inventory by default;
+            # current is an explicit restriction, never an implicit empty scope.
+            return "workspace"
         if name not in {"file_search", "file_analyze"}:
             return "workspace"  # legacy write arguments/ledger hashes unchanged
         from services.file_resources import FileTargetResolver, FileReferenceCodec

@@ -248,64 +248,59 @@ async def _handle_message(
             logger.info(f"Task unsubscribed | conn={conn_id} | task={task_id}")
 
     elif msg_type == WSMessageType.TOOL_CONFIRM_RESPONSE.value:
-        # 用户确认/拒绝写操作
         tool_call_id = payload.get("tool_call_id")
-        approved = payload.get("approved", False)
+        approved = payload.get("approved")
         task_id = payload.get("task_id")
         conversation_id = payload.get("conversation_id")
-        if tool_call_id and task_id and conversation_id and type(approved) is bool:
-            persisted, error_code = await _persist_actor_tool_confirmation(
-                user_id=user_id,
-                task_id=str(task_id),
-                conversation_id=str(conversation_id),
-                tool_call_id=str(tool_call_id),
-                approved=bool(approved),
-            )
-            if not persisted and error_code == "CONFIRM_LEGACY":
-                # 仍由旧 ChatGenerateMixin 管理的任务：上下文用于本地 scope 校验，
-                # 但不强制要求其已升级到 Actor 控制事件表。
-                resolved = ws_manager.resolve_confirm(
-                    str(tool_call_id),
-                    bool(approved),
-                    task_id=str(task_id),
-                    conversation_id=str(conversation_id),
-                )
-                logger.info(
-                    f"Legacy scoped tool confirm response | conn={conn_id} | "
-                    f"tool_call_id={tool_call_id} | resolved={resolved}"
-                )
-                return
-            if not persisted:
-                await ws_manager.send_to_connection(conn_id, build_error(
-                    "Confirmation scope is invalid or task is no longer running",
-                    code=error_code,
-                ))
-                return
-            # 同进程的传统等待器立即唤醒；跨进程执行器会从 PostgreSQL 事件恢复。
-            resolved = ws_manager.resolve_confirm(
-                str(tool_call_id),
-                bool(approved),
-                task_id=str(task_id),
-                conversation_id=str(conversation_id),
-            )
-            logger.info(
-                f"Tool confirm response | conn={conn_id} | "
-                f"tool_call_id={tool_call_id} | approved={approved} | "
-                f"resolved={resolved} | persisted={persisted}"
-            )
-        elif tool_call_id:
-            # 老客户端/非 Actor 工具仍走原有内存协议；Actor 前端会发送完整上下文。
-            resolved = ws_manager.resolve_confirm(tool_call_id, bool(approved))
-            logger.info(
-                f"Legacy tool confirm response | conn={conn_id} | "
-                f"tool_call_id={tool_call_id} | approved={approved} | "
-                f"resolved={resolved}"
-            )
-        else:
+        if not isinstance(tool_call_id, str) or not tool_call_id:
             await ws_manager.send_to_connection(conn_id, build_error(
-                "tool_call_id is required",
-                code="MISSING_TOOL_CALL_ID",
-            ))
+                "tool_call_id is required", code="MISSING_TOOL_CALL_ID"))
+            return
+        if type(approved) is not bool:
+            await ws_manager.send_to_connection(conn_id, build_error(
+                "approved must be a boolean", code="CONFIRM_RESPONSE_INVALID"))
+            return
+        if any(value is not None and (not isinstance(value, str) or not value)
+               for value in (task_id, conversation_id)):
+            await ws_manager.send_to_connection(conn_id, build_error(
+                "Confirmation scope is invalid", code="CONFIRM_SCOPE_INVALID"))
+            return
+        try:
+            local_scope = ws_manager.confirmation_scope(
+                tool_call_id, actor_user_id=user_id,
+                task_id=task_id, conversation_id=conversation_id,
+            )
+        except ValueError:
+            await ws_manager.send_to_connection(conn_id, build_error(
+                "Confirmation scope is invalid", code="CONFIRM_SCOPE_INVALID"))
+            return
+        if local_scope is not None:
+            task_id, conversation_id = local_scope
+        if not task_id or not conversation_id:
+            await ws_manager.send_to_connection(conn_id, build_error(
+                "Confirmation scope is required", code="CONFIRM_SCOPE_INVALID"))
+            return
+        persisted, error_code = await _persist_actor_tool_confirmation(
+            user_id=user_id, task_id=task_id, conversation_id=conversation_id,
+            tool_call_id=tool_call_id, approved=approved,
+        )
+        if not persisted and error_code != "CONFIRM_LEGACY":
+            await ws_manager.send_to_connection(conn_id, build_error(
+                "Confirmation scope is invalid or task is no longer running", code=error_code))
+            return
+        # Actor workers recover the validated durable event across processes.
+        # Non-Actor responses require the same bound local waiter.
+        resolved = ws_manager.resolve_confirm(
+            tool_call_id, approved, actor_user_id=user_id,
+            task_id=task_id, conversation_id=conversation_id,
+        )
+        if not persisted and not resolved:
+            await ws_manager.send_to_connection(conn_id, build_error(
+                "Confirmation is no longer pending", code="CONFIRM_SCOPE_INVALID"))
+        logger.info(
+            f"Tool confirm response | conn={conn_id} | tool_call_id={tool_call_id} | "
+            f"approved={approved} | resolved={resolved} | persisted={persisted}"
+        )
 
     elif msg_type == WSMessageType.USER_STEER.value:
         # 用户在 AI 执行中发送新消息（打断当前工具循环）
@@ -452,6 +447,8 @@ async def _persist_actor_tool_confirmation(
     approved: bool,
 ) -> tuple[bool, str]:
     """校验审批归属并写入 PostgreSQL；非 Actor 任务不进入控制事件表。"""
+    if type(approved) is not bool:
+        return False, "CONFIRM_RESPONSE_INVALID"
     try:
         db = await get_async_db()
         task = await _find_task_for_confirmation(db, task_id, user_id)
@@ -462,12 +459,12 @@ async def _persist_actor_tool_confirmation(
             and isinstance(task.get("delivery_context"), dict)
             and task["delivery_context"].get("actor")
         )
-        if not is_actor:
-            return False, "CONFIRM_LEGACY"
         if task.get("conversation_id") != conversation_id:
             return False, "CONFIRM_SCOPE_INVALID"
         if task.get("status") != "running":
             return False, "CONFIRM_SCOPE_INVALID"
+        if not is_actor:
+            return False, "CONFIRM_LEGACY"
 
         result = await DatabaseConversationCommandStore(db).append(
             conversation_id=conversation_id,
@@ -484,7 +481,7 @@ async def _persist_actor_tool_confirmation(
         # 第一个响应胜出；同值重试幂等，冲突响应不覆盖原决定。
         if result.get("already_enqueued") is True:
             existing = result.get("payload")
-            if not isinstance(existing, dict) or bool(existing.get("approved")) != approved:
+            if not isinstance(existing, dict) or existing.get("approved") is not approved:
                 return False, "CONFIRM_SCOPE_INVALID"
         return True, ""
     except Exception as error:
