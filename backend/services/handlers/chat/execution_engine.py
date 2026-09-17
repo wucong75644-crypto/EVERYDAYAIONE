@@ -75,6 +75,88 @@ class ChatExecutionResult:
     retry_context: Any = None
 
 
+_REPEATED_TOOL_CALL_NUDGE = (
+    "[运行时提示] 你刚刚再次请求了完全相同的工具调用。"
+    "请基于已经返回的工具结果继续推理或直接给出结论；"
+    "只有工具或参数发生变化时才可以继续调用工具。"
+)
+_REPEATED_TOOL_CALL_STOP = (
+    "检测到模型连续重复相同的工具调用，已停止执行以避免重复副作用。"
+    "请基于已经获得的工具结果调整后续处理。"
+)
+
+
+@dataclass
+class _RepeatedToolCallGuard:
+    """追踪连续相同的工具批次；状态可随 Actor checkpoint 恢复。"""
+
+    _last_fingerprint: str = ""
+    _consecutive_count: int = 0
+
+    @classmethod
+    def from_replay_context(
+        cls, replay_context: dict[str, Any] | None,
+    ) -> "_RepeatedToolCallGuard":
+        state = (replay_context or {}).get("repeated_tool_call_guard")
+        if not isinstance(state, dict):
+            return cls()
+        fingerprint = state.get("fingerprint")
+        count = state.get("consecutive_count")
+        if (
+            not isinstance(fingerprint, str)
+            or len(fingerprint) != 64
+            or not isinstance(count, int)
+            or isinstance(count, bool)
+            or count not in {1, 2}
+        ):
+            return cls()
+        return cls(fingerprint, count)
+
+    def observe(self, calls: list[dict[str, Any]]) -> str:
+        """返回 continue、nudge 或 stop；只阻止连续的同一批调用。"""
+        fingerprint = self._fingerprint(calls)
+        if fingerprint == self._last_fingerprint:
+            self._consecutive_count += 1
+        else:
+            self._last_fingerprint = fingerprint
+            self._consecutive_count = 1
+        if self._consecutive_count >= 3:
+            return "stop"
+        if self._consecutive_count == 2:
+            return "nudge"
+        return "continue"
+
+    def replay_state(self) -> dict[str, Any]:
+        if not self._last_fingerprint or self._consecutive_count < 1:
+            return {}
+        return {
+            "fingerprint": self._last_fingerprint,
+            "consecutive_count": min(self._consecutive_count, 2),
+        }
+
+    @staticmethod
+    def _fingerprint(calls: list[dict[str, Any]]) -> str:
+        normalized_calls = []
+        for call in calls:
+            arguments = call.get("arguments", "")
+            try:
+                arguments = json.loads(arguments)
+            except (TypeError, ValueError):
+                arguments = str(arguments)
+            normalized_calls.append({
+                "name": str(call.get("name", "")),
+                "arguments": arguments,
+            })
+        raw = json.dumps(
+            normalized_calls,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 async def execute_chat(
     *,
     handler: Any,
@@ -123,6 +205,9 @@ async def execute_chat(
     blocks: list[dict[str, Any]] = _initial_replay_blocks(
         request.replay_context,
     )
+    repeated_tool_call_guard = _RepeatedToolCallGuard.from_replay_context(
+        request.replay_context,
+    )
     try:
         await output.start()
         form_hint = await _run_loop(
@@ -135,6 +220,7 @@ async def execute_chat(
             blocks=blocks,
             runtime=runtime,
             model_round=_initial_model_round(request.replay_context),
+            repeated_tool_call_guard=repeated_tool_call_guard,
         )
         await _apply_budget_stop(prepared, totals, blocks, output)
         await _consume_emit_payloads(handler, blocks, output)
@@ -165,6 +251,7 @@ async def execute_chat(
                 prepared.messages,
                 blocks,
                 prepared.budget.turns_used,
+                repeated_tool_call_guard=repeated_tool_call_guard,
             ),
         )
     except BaseException as error:
@@ -203,9 +290,11 @@ async def _run_loop(
     blocks: list[dict[str, Any]],
     runtime: ConversationTurnRuntime | None,
     model_round: int = 0,
+    repeated_tool_call_guard: _RepeatedToolCallGuard | None = None,
 ) -> str | None:
     thinking_mode = request.thinking_mode
     empty_output_retried = False
+    repeated_tool_call_guard = repeated_tool_call_guard or _RepeatedToolCallGuard()
     while not prepared.budget.stop_reason:
         if runtime:
             runtime.set_state(ConversationState.RUNNING_MODEL)
@@ -216,6 +305,7 @@ async def _run_loop(
                     blocks,
                     prepared.budget.turns_used,
                     next_model_round=model_round,
+                    repeated_tool_call_guard=repeated_tool_call_guard,
                 ),
             )
             _inject_subtask_completions(
@@ -284,6 +374,16 @@ async def _run_loop(
                 blocks.append({"type": "text", "text": fallback_text})
                 await sink.on_block(blocks[-1])
             return None
+        repeated_tool_call_action = repeated_tool_call_guard.observe(calls)
+        if repeated_tool_call_action == "stop":
+            await _stop_repeated_tool_calls(
+                calls=calls,
+                previewed_call_ids=previewed_call_ids,
+                blocks=blocks,
+                sink=sink,
+                totals=totals,
+            )
+            return None
         form_hint = await _execute_tools(
             handler=handler,
             request=request,
@@ -298,6 +398,11 @@ async def _run_loop(
             blocks=blocks,
             runtime=runtime,
             totals=totals,
+            repeated_tool_call_guard=repeated_tool_call_guard,
+            repeated_tool_call_nudge=(
+                _REPEATED_TOOL_CALL_NUDGE
+                if repeated_tool_call_action == "nudge" else None
+            ),
         )
         executor = getattr(handler, "_tool_executor", None)
         resource_stop = getattr(getattr(executor, "_tool_runtime", None), "resource_stop_reason", "")
@@ -575,6 +680,8 @@ async def _execute_tools(
     runtime: ConversationTurnRuntime | None,
     next_model_round: int | None = None,
     totals: StreamTotals | None = None,
+    repeated_tool_call_guard: _RepeatedToolCallGuard | None = None,
+    repeated_tool_call_nudge: str | None = None,
 ) -> str | None:
     totals = totals or StreamTotals()
     prepared.messages.append(_assistant_tool_message(turn_text, calls))
@@ -671,6 +778,11 @@ async def _execute_tools(
         steer_message = request.steer_reader()
         if steer_message:
             prepared.messages.append({"role": "user", "content": steer_message})
+    if repeated_tool_call_nudge:
+        prepared.messages.append({
+            "role": "user",
+            "content": repeated_tool_call_nudge,
+        })
     form_hint = await _consume_emit_payloads(handler, blocks, sink)
     await compact_tool_context(
         messages=prepared.messages,
@@ -686,6 +798,7 @@ async def _execute_tools(
                 turn,
                 tool_call_ids=[call["id"] for call in calls],
                 next_model_round=next_model_round,
+                repeated_tool_call_guard=repeated_tool_call_guard,
             ),
         )
     logger.info(
@@ -723,6 +836,7 @@ def _build_replay_context(
     *,
     tool_call_ids: list[str] | None = None,
     next_model_round: int | None = None,
+    repeated_tool_call_guard: _RepeatedToolCallGuard | None = None,
 ) -> dict[str, Any]:
     """构造模型可重放上下文；不把 token 级 DeliveryProgress 当 checkpoint。"""
     def legacy_default(value):
@@ -743,7 +857,40 @@ def _build_replay_context(
     }
     if next_model_round is not None:
         payload["next_model_round"] = next_model_round
+    if repeated_tool_call_guard is not None:
+        guard_state = repeated_tool_call_guard.replay_state()
+        if guard_state:
+            payload["repeated_tool_call_guard"] = guard_state
     return payload
+
+
+async def _stop_repeated_tool_calls(
+    *,
+    calls: list[dict[str, Any]],
+    previewed_call_ids: set[str],
+    blocks: list[dict[str, Any]],
+    sink: ExecutionSink,
+    totals: StreamTotals,
+) -> None:
+    """终止已被 Actor 预览的第三次相同调用，并交付可见停止说明。"""
+    for call in calls:
+        call_id = call["id"]
+        if call_id not in previewed_call_ids:
+            continue
+        for block in blocks:
+            if block.get("tool_call_id") != call_id:
+                continue
+            block.update({
+                "status": "error",
+                "output": _REPEATED_TOOL_CALL_STOP,
+                "elapsed_ms": 0,
+            })
+            await sink.on_block_update(block)
+            break
+    block = {"type": "text", "text": _REPEATED_TOOL_CALL_STOP}
+    blocks.append(block)
+    totals.text += _REPEATED_TOOL_CALL_STOP
+    await sink.on_block(block)
 
 
 def _inject_subtask_completions(

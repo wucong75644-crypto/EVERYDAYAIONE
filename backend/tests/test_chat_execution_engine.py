@@ -18,7 +18,10 @@ from services.handlers.chat.execution_engine import (
     _execute_tools,
     _initial_model_round,
     _read_turn,
+    _REPEATED_TOOL_CALL_NUDGE,
+    _RepeatedToolCallGuard,
     _run_loop,
+    _stop_repeated_tool_calls,
     execute_chat,
 )
 from services.conversation_commands import SafePoint
@@ -94,6 +97,21 @@ def test_replay_uses_next_model_round_and_supports_legacy_payloads():
         [], [], 2, next_model_round=3,
     )
     assert payload["next_model_round"] == 3
+
+
+def test_repeated_tool_call_guard_normalizes_json_and_restores_checkpoint():
+    guard = _RepeatedToolCallGuard()
+    first = [{"name": "erp_agent", "arguments": '{"b":2,"a":1}'}]
+    same_call = [{"name": "erp_agent", "arguments": '{ "a": 1, "b": 2 }'}]
+
+    assert guard.observe(first) == "continue"
+    assert guard.observe(same_call) == "nudge"
+
+    checkpoint = _build_replay_context(
+        [], [], 1, repeated_tool_call_guard=guard,
+    )
+    restored = _RepeatedToolCallGuard.from_replay_context(checkpoint)
+    assert restored.observe(first) == "stop"
 
 
 def test_actor_tool_completion_command_id_is_bounded_and_stable():
@@ -324,6 +342,94 @@ async def test_run_loop_advances_model_round_identity_independently_of_budget_tu
 
 
 @pytest.mark.asyncio
+async def test_run_loop_nudges_then_stops_repeated_tool_calls(monkeypatch):
+    read_turns = 0
+    executed = []
+
+    async def fake_read_turn(*_args, **_kwargs):
+        nonlocal read_turns
+        read_turns += 1
+        return "", "", [{
+            "id": f"call-{read_turns}",
+            "name": "erp_agent",
+            "arguments": '{"query":"库存"}',
+        }], set()
+
+    async def fake_execute_tools(*, repeated_tool_call_nudge, **_kwargs):
+        executed.append(repeated_tool_call_nudge)
+
+    monkeypatch.setattr(
+        "services.handlers.chat.execution_engine.prepare_tool_turn",
+        lambda **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        "services.handlers.chat.execution_engine._read_turn", fake_read_turn,
+    )
+    monkeypatch.setattr(
+        "services.handlers.chat.execution_engine._execute_tools",
+        fake_execute_tools,
+    )
+    budget = SimpleNamespace(stop_reason=None, turns_used=0)
+    budget.use_turn = lambda: setattr(budget, "turns_used", budget.turns_used + 1)
+    prepared = SimpleNamespace(
+        budget=budget,
+        core_tools=[],
+        tool_context=SimpleNamespace(discovered_tools=set()),
+        messages=[],
+        permission=SimpleNamespace(),
+        execution_context=catalog_context("org-1"),
+    )
+    blocks = []
+    sink = SimpleNamespace(on_block=AsyncMock())
+
+    await _run_loop(
+        handler=SimpleNamespace(org_id="org-1"),
+        request=_request(),
+        prepared=prepared,
+        cancellation_event=asyncio.Event(),
+        sink=sink,
+        totals=SimpleNamespace(text=""),
+        blocks=blocks,
+        runtime=None,
+    )
+
+    assert read_turns == 3
+    assert executed == [None, _REPEATED_TOOL_CALL_NUDGE]
+    assert blocks[-1]["type"] == "text"
+    assert "连续重复" in blocks[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_repeated_tool_call_stop_finalizes_actor_preview():
+    call = {
+        "id": "actor-call:turn-1:round:2:index:0",
+        "name": "erp_agent",
+        "arguments": "{}",
+    }
+    blocks = [{
+        "type": "tool_step",
+        "tool_name": "erp_agent",
+        "tool_call_id": call["id"],
+        "status": "running",
+    }]
+    sink = SimpleNamespace(on_block_update=AsyncMock(), on_block=AsyncMock())
+    totals = SimpleNamespace(text="")
+
+    await _stop_repeated_tool_calls(
+        calls=[call],
+        previewed_call_ids={call["id"]},
+        blocks=blocks,
+        sink=sink,
+        totals=totals,
+    )
+
+    assert blocks[0]["status"] == "error"
+    assert "连续重复" in blocks[0]["output"]
+    sink.on_block_update.assert_awaited_once_with(blocks[0])
+    assert blocks[-1]["type"] == "text"
+
+
+@pytest.mark.asyncio
 async def test_actor_tool_preview_is_updated_before_tool_execution(monkeypatch):
     order = []
 
@@ -392,10 +498,16 @@ async def test_actor_tool_preview_is_updated_before_tool_execution(monkeypatch):
         sink=Sink(),
         blocks=blocks,
         runtime=None,
+        repeated_tool_call_nudge=_REPEATED_TOOL_CALL_NUDGE,
     )
 
     assert order == ["update", "execute"]
     assert len(blocks) == 1
+    assert prepared.messages[-2]["role"] == "tool"
+    assert prepared.messages[-1] == {
+        "role": "user",
+        "content": _REPEATED_TOOL_CALL_NUDGE,
+    }
 
 
 @pytest.mark.asyncio
