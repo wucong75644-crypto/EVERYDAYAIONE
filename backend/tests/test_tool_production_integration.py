@@ -344,7 +344,7 @@ async def test_shared_chat_engine_passes_mode_and_retains_safe_points(setup, mon
     ]))
     runtime = None
     if actor:
-        runtime = Mock(turn_id="turn", command_store=None, execution_token="lease")
+        runtime = Mock(turn_id="turn", command_store=None, execution_token="lease", skill_runtime=None)
         runtime.safe_point = AsyncMock()
         runtime.consume_subtask_completions.return_value = []
         runtime.consume_steer_messages.return_value = []
@@ -355,6 +355,7 @@ async def test_shared_chat_engine_passes_mode_and_retains_safe_points(setup, mon
         model_id="mock", context_anchor=None, permission_mode=mode,
     ), prepared=prepared, cancellation_event=event, sink=sink, totals=StreamTotals(), blocks=[], runtime=runtime)
     assert len(created) == 1
+    assert prepared.execution_context.authorized_tool_names is None
     exe = created[0]
     assert exe.permission_mode == mode and exe.agent_domain == "general"
     assert exe.execution_budget is budget and exe.cancellation_event is event

@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable
 
 from loguru import logger
@@ -34,6 +34,7 @@ from services.conversation_commands import (
 )
 from services.conversation_turn_runtime import ConversationTurnRuntime
 from services.conversation_state import ConversationState
+from services.skills.runtime import ACTIVATE_SKILL, ACTIVATE_SKILL_SCHEMA, control_result
 
 
 @dataclass(frozen=True)
@@ -209,6 +210,14 @@ async def execute_chat(
         request.replay_context,
     )
     try:
+        if runtime is not None or (request.replay_context or {}).get("skill_runtime") is not None:
+            from services.skills.runtime import create_skill_runtime
+            skills = await create_skill_runtime(
+                handler=handler, context=prepared.execution_context, runtime=runtime,
+                replay_context=request.replay_context,
+            )
+            if skills is not None:
+                _apply_skill_context(prepared, skills)
         await output.start()
         form_hint = await _run_loop(
             handler=handler,
@@ -252,6 +261,7 @@ async def execute_chat(
                 blocks,
                 prepared.budget.turns_used,
                 repeated_tool_call_guard=repeated_tool_call_guard,
+                skill_runtime=runtime.skill_runtime if runtime else None,
             ),
         )
     except BaseException as error:
@@ -297,6 +307,8 @@ async def _run_loop(
     repeated_tool_call_guard = repeated_tool_call_guard or _RepeatedToolCallGuard()
     while not prepared.budget.stop_reason:
         if runtime:
+            if runtime.skill_runtime is not None:
+                _apply_skill_context(prepared, runtime.skill_runtime)
             runtime.set_state(ConversationState.RUNNING_MODEL)
             await runtime.safe_point(
                 SafePoint.BEFORE_MODEL,
@@ -332,6 +344,8 @@ async def _run_loop(
             permission=prepared.permission,
             execution_context=prepared.execution_context,
         )
+        if runtime and runtime.skill_runtime is not None and runtime.skill_runtime.directory:
+            tools.append(ACTIVATE_SKILL_SCHEMA)
         current_model_round = model_round
         turn_text, turn_thinking, calls, previewed_call_ids = await _read_turn(
             prepared,
@@ -374,7 +388,10 @@ async def _run_loop(
                 blocks.append({"type": "text", "text": fallback_text})
                 await sink.on_block(blocks[-1])
             return None
-        repeated_tool_call_action = repeated_tool_call_guard.observe(calls)
+        repeated_tool_call_action = (
+            "continue" if any(call["name"] == ACTIVATE_SKILL for call in calls)
+            else repeated_tool_call_guard.observe(calls)
+        )
         if repeated_tool_call_action == "stop":
             await _stop_repeated_tool_calls(
                 calls=calls,
@@ -708,6 +725,13 @@ async def _execute_tools(
         cancellation_event, request, prepared.messages, blocks,
         totals, "before_tool",
     )
+    if any(call["name"] == ACTIVATE_SKILL for call in calls):
+        await _execute_skill_batch(
+            prepared=prepared, calls=calls, runtime=runtime, blocks=blocks,
+            sink=sink, start_times=start_times, turn=turn,
+            next_model_round=next_model_round, repeated_tool_call_guard=repeated_tool_call_guard,
+        )
+        return None
     # Only this task's authenticated replay blocks supply browse provenance.
     # No new checkpoint fields and no parsing of model prose/tool output.
     handler._tool_selection_history_task_id = request.task_id
@@ -728,6 +752,9 @@ async def _execute_tools(
         cancellation_event=cancellation_event,
         permission_mode=prepared.permission.mode.value,
         agent_domain=prepared.execution_context.agent_domain,
+        **({"authorized_tool_names": prepared.execution_context.authorized_tool_names}
+           if runtime and runtime.skill_runtime is not None and runtime.skill_runtime.has_active_skills
+           else {}),
     )
     if runtime:
         tool_call_ids = [call["id"] for call in calls]
@@ -808,6 +835,58 @@ async def _execute_tools(
     return form_hint
 
 
+def _apply_skill_context(prepared: Any, skills: Any) -> None:
+    skills.ensure_messages(prepared.messages)
+    if skills.has_active_skills:
+        current = prepared.execution_context.authorized_tool_names
+        if current is not None:
+            skills.effective_allowed_tool_names &= current
+        prepared.execution_context = replace(
+            prepared.execution_context,
+            authorized_tool_names=skills.effective_allowed_tool_names,
+        )
+
+
+async def _execute_skill_batch(
+    *, prepared, calls, runtime, blocks, sink, start_times, turn,
+    next_model_round, repeated_tool_call_guard,
+) -> None:
+    """Whole model batch barrier, including invalid/disabled activations."""
+    skills = runtime.skill_runtime if runtime else None
+    results = []
+    for call in calls:
+        if call["name"] != ACTIVATE_SKILL:
+            result = control_result("SKILL_ACTIVATION_BARRIER", message="请下一轮重新请求")
+        elif skills is None:
+            result = control_result("SKILL_RUNTIME_DISABLED")
+        else:
+            result = await skills.activate(call.get("arguments", ""))
+        text = json.dumps(result, ensure_ascii=False)
+        results.append((call, text, not result["ok"], text))
+    apply_tool_results(
+        tool_results=results, messages=prepared.messages, content_blocks=blocks,
+        start_times=start_times, tool_context=prepared.tool_context,
+    )
+    if skills is not None:
+        _apply_skill_context(prepared, skills)
+    if runtime:
+        # Save completed call/result pairs, rendered text and scope atomically
+        # before pause/cancel reduction or any external delivery can interrupt.
+        await runtime.safe_point(
+            SafePoint.AFTER_SKILL_ACTIVATION,
+            replay_payload=_build_replay_context(
+                prepared.messages, blocks, turn, tool_call_ids=[c["id"] for c in calls],
+                next_model_round=next_model_round,
+                repeated_tool_call_guard=repeated_tool_call_guard,
+            ),
+        )
+        _inject_steer_messages(prepared.messages, runtime.consume_steer_messages())
+    call_ids = {call["id"] for call in calls}
+    for block in blocks:
+        if block.get("tool_call_id") in call_ids:
+            await sink.on_block_update(block)
+
+
 def _assistant_tool_message(
     text: str,
     calls: list[dict[str, Any]],
@@ -837,6 +916,7 @@ def _build_replay_context(
     tool_call_ids: list[str] | None = None,
     next_model_round: int | None = None,
     repeated_tool_call_guard: _RepeatedToolCallGuard | None = None,
+    skill_runtime: Any = None,
 ) -> dict[str, Any]:
     """构造模型可重放上下文；不把 token 级 DeliveryProgress 当 checkpoint。"""
     def legacy_default(value):
@@ -857,6 +937,8 @@ def _build_replay_context(
     }
     if next_model_round is not None:
         payload["next_model_round"] = next_model_round
+    if skill_runtime is not None:
+        payload["skill_runtime"] = skill_runtime.checkpoint()
     if repeated_tool_call_guard is not None:
         guard_state = repeated_tool_call_guard.replay_state()
         if guard_state:

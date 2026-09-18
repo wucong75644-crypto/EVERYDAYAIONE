@@ -1,6 +1,6 @@
 # Skill 第一期第 1 步：控制面与受控 NAS 存储
 
-本页保留 P1-1 的交付边界。P1-2 的摘要接口、版本优先级和权限解析见 [Skill Catalog 与可见目录](TECH_SkillCatalog与可见目录.md)；P1-1 控制面及正文读取能力仍未接入聊天。
+本页保留 P1-1 的交付边界。P1-2 的摘要接口、版本优先级和权限解析见 [Skill Catalog 与可见目录](TECH_SkillCatalog与可见目录.md)；后续 P1-3 已通过默认关闭的 [Actor SkillRuntime](TECH_ActorSkillRuntime.md) 接入受控正文读取与固定版本恢复。下文未接入聊天的描述属于 P1-1 阶段边界。
 
 ## 范围与代码边界
 

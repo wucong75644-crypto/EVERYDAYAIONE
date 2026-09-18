@@ -51,6 +51,7 @@ class ConversationTurnRuntime:
         self.subtask_store = subtask_store
         self._checkpoint_callback = checkpoint_callback
         self._replay_checkpoint_callback = replay_checkpoint_callback
+        self.skill_runtime = None  # Owned by this turn; never a handler/global cache.
         self.inbox = CommandInbox()
         self._command_event = asyncio.Event()
         self._watcher_stop = asyncio.Event()
@@ -156,12 +157,14 @@ class ConversationTurnRuntime:
             and point in {
                 SafePoint.BEFORE_MODEL,
                 SafePoint.AFTER_TOOL,
+                SafePoint.AFTER_SKILL_ACTIVATION,
                 SafePoint.BEFORE_COMMIT,
             }
         ):
-            result = await self._replay_checkpoint_callback(
-                point, replay_payload,
-            )
+            payload = dict(replay_payload)
+            if self.skill_runtime is not None:
+                payload["skill_runtime"] = self.skill_runtime.checkpoint()
+            result = await self._replay_checkpoint_callback(point, payload)
             if result.get("outcome") in {
                 "ownership_lost", "lease_expired", "terminal",
             }:
