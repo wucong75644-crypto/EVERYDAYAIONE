@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import os
 from urllib.parse import quote
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -73,8 +73,15 @@ class _UploadClient:
 
 
 @pytest.mark.asyncio
-async def test_create_task_schedules_shadow_upload_without_changing_main_request():
+@pytest.mark.parametrize("overseas_proxy", ["http://127.0.0.1:7891", "", None])
+async def test_create_task_prefers_overseas_or_uses_cdn_when_proxy_missing(
+    monkeypatch, overseas_proxy,
+):
     client = make_client()
+    if overseas_proxy is None:
+        monkeypatch.delenv(client.SHADOW_OVERSEAS_PROXY_ENV, raising=False)
+    else:
+        monkeypatch.setenv(client.SHADOW_OVERSEAS_PROXY_ENV, overseas_proxy)
     main_http = MagicMock()
     main_http.post = AsyncMock(
         return_value=MagicMock(
@@ -93,78 +100,76 @@ async def test_create_task_schedules_shadow_upload_without_changing_main_request
         input={"input_urls": [SOURCE_URL, SOURCE_URL]},
     )
 
-    with patch.dict(os.environ, {client.SHADOW_OVERSEAS_PROXY_ENV: ""}), patch.object(
+    with patch.object(
         client, "_get_client", return_value=main_http
-    ), patch.object(client, "_run_shadow_upload", new_callable=AsyncMock) as shadow_upload:
+    ), patch.object(client, "_run_shadow_upload", new_callable=AsyncMock, return_value=[STAGED_URL]) as shadow_upload, \
+         patch("services.adapters.kie.client.save_overseas_shadow_upload_urls", new_callable=AsyncMock) as ready, \
+         patch("services.adapters.kie.client.save_overseas_shadow_upload_status", new_callable=AsyncMock) as failed:
         result = await client.create_task(request)
-        await asyncio.gather(*client._shadow_upload_tasks)
 
     assert result.task_id == "task-123"
     main_http.post.assert_awaited_once()
-    assert main_http.post.await_args.kwargs["json"] == request.model_dump(exclude_none=True)
+    expected = request.model_dump(exclude_none=True)
+    if not overseas_proxy:
+        shadow_upload.assert_not_awaited()
+        ready.assert_not_awaited()
+        failed.assert_awaited_once_with(
+            "task-123", "failed", [SOURCE_URL],
+            request.model_dump(mode="json", exclude={"callBackUrl"}),
+        )
+        assert main_http.post.await_args.kwargs["json"] == expected
+        return
+    expected["input"]["input_urls"] = [STAGED_URL, STAGED_URL]
+    assert main_http.post.await_args.kwargs["json"] == expected
+    assert request.input["input_urls"] == [SOURCE_URL, SOURCE_URL]
     shadow_upload.assert_awaited_once_with(
         model=IMAGE_MODEL,
-        task_id="task-123",
+        task_id=ANY,
         source_urls=[SOURCE_URL],
-        route="auto",
-        proxy_url=None,
+        route="overseas",
+        proxy_url=overseas_proxy,
     )
+    assert shadow_upload.await_args.kwargs["task_id"].startswith("preupload-")
+    ready.assert_awaited_once_with(
+        "task-123", [SOURCE_URL], [STAGED_URL],
+        request=request.model_dump(mode="json", exclude={"callBackUrl"}),
+    )
+    failed.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_shadow_upload_uses_environment_proxy_and_uploads_bytes():
+async def test_upload_precedes_generation_and_cache_uses_real_task_id(monkeypatch):
     client = make_client()
-    upload_client = _UploadClient()
-
-    with patch(
-        "services.adapters.kie.client.httpx.AsyncClient",
-        return_value=_AsyncContext(upload_client),
-    ) as async_client:
-        await client._run_shadow_upload(
-            IMAGE_MODEL,
-            "task-123",
-            [SOURCE_URL],
-            route="auto",
-            proxy_url=None,
-        )
-
-    async_client.assert_called_once()
-    assert async_client.call_args.kwargs["trust_env"] is True
-    assert "proxy" not in async_client.call_args.kwargs
-    upload_client.post.assert_awaited_once()
-    assert upload_client.post.await_args.args == (client.FILE_STREAM_UPLOAD_ENDPOINT,)
-    upload_kwargs = upload_client.post.await_args.kwargs
-    assert upload_kwargs["data"]["uploadPath"] == "everydayai/input-media"
-    assert upload_kwargs["files"]["file"][1:] == (
-        b"image-bytes",
-        "image/png",
-    )
-
-
-@pytest.mark.asyncio
-async def test_create_task_records_task_id_for_both_shadow_routes():
-    client = make_client()
+    events = []
     request = CreateTaskRequest(
         model=IMAGE_MODEL,
         input={"input_urls": [SOURCE_URL]},
+        callBackUrl="https://app.example.com/callback",
     )
+    async def upload(**kwargs):
+        events.append("upload")
+        return [STAGED_URL]
 
-    with patch.dict(
-        os.environ,
-        {client.SHADOW_OVERSEAS_PROXY_ENV: "http://127.0.0.1:7891"},
-    ), patch.object(client, "_run_shadow_upload", new_callable=AsyncMock) as shadow_upload:
-        client._schedule_shadow_upload(request, task_id="task-123")
-        await asyncio.gather(*client._shadow_upload_tasks)
+    async def post(*args, **kwargs):
+        assert events == ["upload"]
+        assert kwargs["json"]["input"]["input_urls"] == [STAGED_URL]
+        assert kwargs["json"]["callBackUrl"] == request.callBackUrl
+        ready.assert_not_awaited()
+        events.append("create")
+        return MagicMock(status_code=200, json=lambda: {
+            "code": 200, "msg": "success", "data": {"taskId": "task-123"},
+        })
 
-    assert {
-        call.kwargs["route"] for call in shadow_upload.await_args_list
-    } == {"auto", "overseas"}
-    assert {
-        call.kwargs["task_id"] for call in shadow_upload.await_args_list
-    } == {"task-123"}
-    overseas = next(call.kwargs for call in shadow_upload.await_args_list if call.kwargs["route"] == "overseas")
-    assert overseas["request_snapshot"] == {"model": IMAGE_MODEL, "input": request.input}
-    assert "callBackUrl" not in overseas["request_snapshot"]
+    monkeypatch.setenv(client.SHADOW_OVERSEAS_PROXY_ENV, "http://127.0.0.1:7891")
+    with patch.object(client, "_run_shadow_upload", side_effect=upload), \
+         patch.object(client, "_get_client", return_value=MagicMock(post=AsyncMock(side_effect=post))), \
+         patch("services.adapters.kie.client.save_overseas_shadow_upload_urls", new_callable=AsyncMock) as ready:
+        result = await client.create_task(request)
+    assert result.task_id == "task-123" and events == ["upload", "create"]
+    ready.assert_awaited_once_with(
+        "task-123", [SOURCE_URL], [STAGED_URL],
+        request={"model": IMAGE_MODEL, "input": request.input},
+    )
 
 
 @pytest.mark.asyncio
@@ -190,11 +195,14 @@ async def test_shadow_upload_overseas_reads_workspace_and_uploads_via_explicit_p
     assert upload_call.kwargs["proxy"] == overseas_proxy
     assert upload_call.kwargs["trust_env"] is False
     upload_client.post.assert_awaited_once()
-    assert upload_client.post.await_args.kwargs["files"]["file"][1] == b"image-bytes"
+    assert upload_client.post.await_args.args == (client.FILE_STREAM_UPLOAD_ENDPOINT,)
+    upload_kwargs = upload_client.post.await_args.kwargs
+    assert upload_kwargs["data"]["uploadPath"] == "everydayai/input-media"
+    assert upload_kwargs["files"]["file"][1:] == (b"image-bytes", "image/png")
 
 
 @pytest.mark.asyncio
-async def test_overseas_shadow_upload_caches_returned_staged_urls():
+async def test_overseas_upload_returns_urls_without_caching_before_task_creation():
     client = make_client()
     upload_client = _UploadClient()
 
@@ -206,7 +214,7 @@ async def test_overseas_shadow_upload_caches_returned_staged_urls():
         new_callable=AsyncMock,
         return_value=True,
     ) as save_staged_urls:
-        await client._run_shadow_upload(
+        staged = await client._run_shadow_upload(
             IMAGE_MODEL,
             "task-123",
             [SOURCE_URL],
@@ -214,12 +222,8 @@ async def test_overseas_shadow_upload_caches_returned_staged_urls():
             proxy_url="http://127.0.0.1:7891",
         )
 
-    save_staged_urls.assert_awaited_once_with(
-        "task-123",
-        [SOURCE_URL],
-        [STAGED_URL],
-        request=None,
-    )
+    assert staged == [STAGED_URL]
+    save_staged_urls.assert_not_awaited()
 
 
 def test_shadow_upload_skips_non_image_kie_requests():
@@ -243,15 +247,106 @@ async def test_partial_overseas_upload_is_failed_not_ready():
          patch.object(client, "_shadow_upload_one", new_callable=AsyncMock, side_effect=[STAGED_URL, None]), \
          patch("services.adapters.kie.client.save_overseas_shadow_upload_status", new_callable=AsyncMock) as status, \
          patch("services.adapters.kie.client.save_overseas_shadow_upload_urls", new_callable=AsyncMock) as ready:
-        await client._run_shadow_upload(IMAGE_MODEL, "partial", [SOURCE_URL, SOURCE_URL + "?second"], "overseas", "http://127.0.0.1:7891")
-    assert [call.args[1] for call in status.await_args_list] == ["pending", "failed"]
+        staged = await client._run_shadow_upload(IMAGE_MODEL, "partial", [SOURCE_URL, SOURCE_URL + "?second"], "overseas", "http://127.0.0.1:7891")
+    assert staged is None
+    status.assert_not_awaited()
     ready.assert_not_awaited()
 
 
-@pytest.mark.parametrize("route", ["auto", "overseas"])
+async def test_parallel_upload_is_bounded_and_returns_input_order_when_finished_out_of_order():
+    client = make_client()
+    sources = [SOURCE_URL + f"?v={i}" for i in range(6)]
+    entered = [asyncio.Event() for _ in sources]
+    release = [asyncio.Event() for _ in sources]
+    finished = [asyncio.Event() for _ in sources]
+    active, peak, completion = set(), 0, []
+
+    async def upload(**kwargs):
+        nonlocal peak
+        index = sources.index(kwargs["source_url"])
+        active.add(index)
+        peak = max(peak, len(active))
+        entered[index].set()
+        try:
+            await release[index].wait()
+            completion.append(index)
+            return f"https://tempfile.redpandaai.co/{index}.png"
+        finally:
+            active.remove(index)
+            finished[index].set()
+
+    with patch("services.adapters.kie.client.httpx.AsyncClient", return_value=_AsyncContext(MagicMock())), \
+         patch.object(client, "_shadow_upload_one", side_effect=upload):
+        pending = asyncio.create_task(client._run_shadow_upload(
+            IMAGE_MODEL, "parallel", sources, "overseas", "http://127.0.0.1:7891",
+        ))
+        try:
+            await asyncio.wait_for(asyncio.gather(*(event.wait() for event in entered[:4])), 1)
+            assert active == {0, 1, 2, 3}
+            assert not entered[4].is_set() and not entered[5].is_set()
+            for index in [3, 2, 5, 4, 1, 0]:
+                await asyncio.wait_for(entered[index].wait(), 1)
+                release[index].set()
+                await asyncio.wait_for(finished[index].wait(), 1)
+            returned = await asyncio.wait_for(pending, 1)
+        finally:
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+    assert peak == 4 and active == set()
+    assert completion == [3, 2, 5, 4, 1, 0]
+    assert returned == [f"https://tempfile.redpandaai.co/{i}.png" for i in range(6)]
+
+
+@pytest.mark.parametrize("stop", ["timeout", "caller_cancel"])
+async def test_parallel_upload_cancels_running_and_queued_children_before_closing_client(monkeypatch, stop):
+    client = make_client()
+    monkeypatch.setenv(client.SHADOW_OVERSEAS_PROXY_ENV, "http://127.0.0.1:7891")
+    monkeypatch.setattr(client, "SHADOW_PREPARE_TIMEOUT", 0.1 if stop == "timeout" else 60)
+    sources = [SOURCE_URL + f"?v={i}" for i in range(6)]
+    request = CreateTaskRequest(model=IMAGE_MODEL, input={"input_urls": sources})
+    entered, active, cancelled = set(), set(), set()
+    all_running = asyncio.Event()
+
+    async def upload(**kwargs):
+        index = sources.index(kwargs["source_url"])
+        entered.add(index)
+        active.add(index)
+        if len(entered) == 4:
+            all_running.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            active.remove(index)
+            cancelled.add(index)
+
+    class UploadContext(_AsyncContext):
+        async def __aexit__(self, *args):
+            assert not active, "all uploads must stop before their shared HTTP client closes"
+            return False
+
+    with patch("services.adapters.kie.client.httpx.AsyncClient", return_value=UploadContext(MagicMock())), \
+         patch.object(client, "_shadow_upload_one", side_effect=upload):
+        pending = asyncio.create_task(client._prepare_shadow_upload(request, sources, "preupload-test"))
+        try:
+            await asyncio.wait_for(all_running.wait(), 1)
+            if stop == "caller_cancel":
+                pending.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await pending
+            else:
+                prepared, staged = await asyncio.wait_for(pending, 1)
+                assert prepared is request and staged is None
+        finally:
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+    assert entered == cancelled == {0, 1, 2, 3}
+    assert not active
+
+
 @pytest.mark.parametrize("input_key", KieClient.SHADOW_IMAGE_INPUT_KEYS)
 async def test_workspace_upload_preserves_mixed_source_order_and_repeated_positions(
-    tmp_path, route, input_key,
+    tmp_path, input_key,
 ):
     client = make_client()
     # 上传、工作区引用、其他对话引用即使同名，也必须按完整 URL 精确读文件。
@@ -266,36 +361,35 @@ async def test_workspace_upload_preserves_mixed_source_order_and_repeated_positi
     sources = client._extract_shadow_image_urls(request)
     staged = [f"https://tempfile.redpandaai.co/{i}.png" for i in [2, 0, 1]]
     upload_client = _UploadClient()
-    upload_client.post.side_effect = [
-        MagicMock(status_code=200, json=lambda url=url: {
-            "success": True, "code": 200, "data": {"downloadUrl": url},
-        }) for url in staged
-    ]
+    async def post(*args, **kwargs):
+        index = kwargs["files"]["file"][1].decode().removeprefix("image-")
+        return MagicMock(status_code=200, json=lambda: {
+            "success": True, "code": 200,
+            "data": {"downloadUrl": f"https://tempfile.redpandaai.co/{index}.png"},
+        })
+    upload_client.post.side_effect = post
     snapshot = request.model_dump(mode="json", exclude={"callBackUrl"})
     with patch("services.adapters.kie.client.httpx.AsyncClient", return_value=_AsyncContext(upload_client)), \
          patch("services.adapters.kie.client.save_overseas_shadow_upload_urls", new_callable=AsyncMock, return_value=True) as ready:
-        await client._run_shadow_upload(
-            IMAGE_MODEL, "ordered", sources, route,
-            "http://127.0.0.1:7891" if route == "overseas" else None, snapshot,
+        returned = await client._run_shadow_upload(
+            IMAGE_MODEL, "ordered", sources, "overseas",
+            "http://127.0.0.1:7891",
         )
 
-    assert [call.kwargs["files"]["file"][1] for call in upload_client.post.await_args_list] == [
-        b"image-2", b"image-0", b"image-1",
+    assert sorted(call.kwargs["files"]["file"][1] for call in upload_client.post.await_args_list) == [
+        b"image-0", b"image-1", b"image-2",
     ]
-    if route == "overseas":
-        ready.assert_awaited_once_with("ordered", sources, staged, request=snapshot)
-        cache = {"source_urls": sources, "staged_urls": staged, "request": snapshot}
-        replayed = replay_request({"model_id": IMAGE_MODEL}, cache, None)
-        assert replayed.input[input_key] == [staged[0], staged[1], staged[2], staged[0]]
-    else:
-        ready.assert_not_awaited()
+    assert returned == staged
+    ready.assert_not_awaited()
+    cache = {"source_urls": sources, "staged_urls": staged, "request": snapshot}
+    replayed = replay_request({"model_id": IMAGE_MODEL}, cache, None)
+    assert replayed.input[input_key] == [staged[0], staged[1], staged[2], staged[0]]
     assert request.input[input_key] == original_order
 
 
-@pytest.mark.parametrize("route", ["auto", "overseas"])
 @pytest.mark.parametrize("failure", ["missing", "unreadable", "upload"])
 async def test_middle_file_failure_never_downloads_or_caches_partial_mapping(
-    tmp_path, route, failure,
+    tmp_path, failure,
 ):
     client = make_client()
     sources = [SOURCE_URL, SOURCE_URL.replace("input.png", "middle.png"), SOURCE_URL.replace("input.png", "last.png")]
@@ -311,24 +405,28 @@ async def test_middle_file_failure_never_downloads_or_caches_partial_mapping(
 
     upload_client = _UploadClient()
     if failure == "upload":
-        upload_client.post.side_effect = [_UploadResponse(), httpx.ReadTimeout("test timeout"), _UploadResponse()]
+        async def post(*args, **kwargs):
+            if kwargs["files"]["file"][1] == b"middle-image":
+                raise httpx.ReadTimeout("test timeout")
+            return _UploadResponse()
+        upload_client.post.side_effect = post
     with patch("services.adapters.kie.client.httpx.AsyncClient", return_value=_AsyncContext(upload_client)) as http_client, \
          patch.object(client, "_read_shadow_image", side_effect=read), \
          patch("services.adapters.kie.client.save_overseas_shadow_upload_status", new_callable=AsyncMock) as status, \
          patch("services.adapters.kie.client.save_overseas_shadow_upload_urls", new_callable=AsyncMock) as ready:
-        await client._run_shadow_upload(
-            IMAGE_MODEL, "missing-middle", sources, route,
-            "http://127.0.0.1:7891" if route == "overseas" else None,
+        returned = await client._run_shadow_upload(
+            IMAGE_MODEL, "missing-middle", sources, "overseas",
+            "http://127.0.0.1:7891",
         )
 
     http_client.assert_called_once()  # 唯一 HTTP 客户端只有上传 POST，没有 CDN GET。
-    assert [call.kwargs["files"]["file"][1] for call in upload_client.post.await_args_list] == (
-        [b"image-bytes", b"middle-image", b"last-image"] if failure == "upload"
+    assert sorted(call.kwargs["files"]["file"][1] for call in upload_client.post.await_args_list) == (
+        [b"image-bytes", b"last-image", b"middle-image"] if failure == "upload"
         else [b"image-bytes", b"last-image"]
     )
     ready.assert_not_awaited()
-    if route == "overseas":
-        assert [call.args[1] for call in status.await_args_list] == ["pending", "failed"]
+    assert returned is None
+    status.assert_not_awaited()
 
 
 @pytest.mark.parametrize("source", [
@@ -393,16 +491,15 @@ def test_workspace_reader_rejects_transforms_versions_and_unknown_parameters(suf
     (USER_ID, "org-b"),
     (USER_ID, None),
 ])
-@pytest.mark.parametrize("route", ["auto", "overseas"])
-async def test_workspace_owner_mismatch_never_reads_or_uploads(user_id, org_id, route):
+async def test_workspace_owner_mismatch_never_reads_or_uploads(user_id, org_id):
     client = KieClient("test-key", shadow_user_id=user_id, shadow_org_id=org_id)
     upload_client = _UploadClient()
     with patch("pathlib.Path.open", side_effect=AssertionError("must not read another owner's file")), \
          patch("services.adapters.kie.client.httpx.AsyncClient", return_value=_AsyncContext(upload_client)), \
          patch("services.adapters.kie.client.save_overseas_shadow_upload_urls", new_callable=AsyncMock) as ready:
         await client._run_shadow_upload(
-            IMAGE_MODEL, "owner-check", [SOURCE_URL], route,
-            "http://127.0.0.1:7891" if route == "overseas" else None,
+            IMAGE_MODEL, "owner-check", [SOURCE_URL], "overseas",
+            "http://127.0.0.1:7891",
         )
     upload_client.post.assert_not_awaited()
     ready.assert_not_awaited()
@@ -452,6 +549,6 @@ async def test_image_factory_passes_trusted_owner_without_changing_kie_payload()
     ))
     request = CreateTaskRequest(model=IMAGE_MODEL, input={"input_urls": [SOURCE_URL]})
     with patch.object(client, "_get_client", return_value=main_http), \
-         patch.object(client, "_schedule_shadow_upload"):
+         patch.dict(os.environ, {client.SHADOW_OVERSEAS_PROXY_ENV: ""}):
         await client.create_task(request)
     assert main_http.post.await_args.kwargs["json"] == request.model_dump(exclude_none=True)
