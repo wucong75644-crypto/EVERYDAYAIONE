@@ -31,6 +31,7 @@ class SafePoint(str, Enum):
     AFTER_MODEL = "after_model"
     BEFORE_TOOL = "before_tool"
     AFTER_TOOL = "after_tool"
+    AFTER_SKILL_ACTIVATION = "after_skill_activation"
     BEFORE_SUBTASK_WAIT = "before_subtask_wait"
     AFTER_SUBTASK_COMPLETE = "after_subtask_complete"
     BEFORE_COMMIT = "before_commit"

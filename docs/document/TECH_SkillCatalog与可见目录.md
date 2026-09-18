@@ -1,5 +1,7 @@
 # Skill 第一期第 2 步：Catalog 与按权限解析的可见目录
 
+后续状态：P1-3 已实现默认关闭的 Actor Turn 激活与精确恢复，见 [Actor SkillRuntime](TECH_ActorSkillRuntime.md)。本文保留 P1-2 目录与公开接口契约；公开返回字段不变，下文“不接入聊天”为该阶段边界。
+
 ## 范围与接口
 
 新增 `GET /api/skills/available?conversation_id=<UUID>`，必须使用现有 Bearer 登录认证。

@@ -51,6 +51,16 @@ class SkillResolver:
     def resolve(
         self, context: SkillResolutionContext, candidates: Iterable[SkillCandidate],
     ) -> list[SkillSummary]:
+        return [SkillSummary(
+            name=c.catalog_metadata.name or c.skill_key, revision=c.revision,
+            description=c.description, triggers=c.catalog_metadata.triggers,
+            source=c.scope_kind, model_selectable=c.catalog_metadata.model_selectable,
+        ) for c in self.select(context, candidates)]
+
+    def select(
+        self, context: SkillResolutionContext, candidates: Iterable[SkillCandidate],
+    ) -> list[SkillCandidate]:
+        """Internal identities for the Actor; public summaries remain unchanged."""
         if "skill_catalog_enabled" not in context.enabled_feature_flags or context.org_id is None:
             return []
         eligible = []
@@ -77,12 +87,7 @@ class SkillResolver:
         for candidate in eligible:
             if candidate.skill_key in visible:
                 continue
-            metadata = candidate.catalog_metadata
-            visible[candidate.skill_key] = SkillSummary(
-                name=metadata.name or candidate.skill_key, revision=candidate.revision,
-                description=candidate.description, triggers=metadata.triggers,
-                source=candidate.scope_kind, model_selectable=metadata.model_selectable,
-            )
+            visible[candidate.skill_key] = candidate
         return list(visible.values())
 
 

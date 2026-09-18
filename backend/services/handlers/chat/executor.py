@@ -79,7 +79,8 @@ class ChatGenerationExecutor:
             resolve_execution_scope(self._db, task, claim.conversation_id),
         )
         replay_context = await self._load_replay_context(task, claim)
-        if replay_context and replay_context.get("checkpoint_kind") == "commit_ready":
+        if (replay_context and replay_context.get("checkpoint_kind") == "commit_ready"
+                and replay_context.get("skill_runtime") is None):
             return _generation_outcome_from_replay(replay_context)
         handler = self._handler_factory(self._handler_db_factory())
         # Actor 运行时上下文供跨进程审批等待器使用；普通 ChatHandler 不依赖这些字段。
@@ -101,6 +102,19 @@ class ChatGenerationExecutor:
             execution_scope.personal_context_allowed
         )
         params = _parse_params(task.get("request_params"))
+        if replay_context and replay_context.get("checkpoint_kind") == "commit_ready":
+            if replay_context.get("skill_runtime") is not None:
+                from services.skills.runtime import create_skill_runtime
+                from services.tools.runtime_context import chat_context
+                await create_skill_runtime(
+                    handler=handler, runtime=runtime, replay_context=replay_context,
+                    context=chat_context(
+                        handler, user_id=str(task["user_id"]), conversation_id=claim.conversation_id,
+                        task_id=claim.task_id, permission_mode=str(params.get("permission_mode") or "auto"),
+                        cancellation=cancellation_event,
+                    ),
+                )
+            return _generation_outcome_from_replay(replay_context)
         sink = (
             self._sink_factory(task, claim, cancellation_event)
             if self._sink_factory else None
@@ -214,6 +228,7 @@ class ChatGenerationExecutor:
         boundary = {
             SafePoint.BEFORE_MODEL: ReplayCheckpointBoundary.BEFORE_MODEL,
             SafePoint.AFTER_TOOL: ReplayCheckpointBoundary.AFTER_TOOL,
+            SafePoint.AFTER_SKILL_ACTIVATION: ReplayCheckpointBoundary.AFTER_SKILL_ACTIVATION,
             SafePoint.BEFORE_COMMIT: ReplayCheckpointBoundary.BEFORE_COMMIT,
         }.get(point)
         if boundary is None:

@@ -105,7 +105,8 @@ async def prepare_chat_stream(
     def prepare_attempt(session, kwargs):
         # 保留工具循环传入的工具列表；Provider 特有搜索工具按每次实际模型添加。
         tools = list(kwargs.get("tools") or [])
-        _prepare_provider_tools(session, tools, needs_google_search, session.model_id, task_id)
+        if prepared.execution_context.authorized_tool_names is None:
+            _prepare_provider_tools(session, tools, needs_google_search, session.model_id, task_id)
         return {**kwargs, "tools": tools} if tools else kwargs
 
     retry_policy.prepare_stream = prepare_attempt
@@ -148,7 +149,7 @@ async def prepare_chat_stream(
             conversation_id,
             task_id,
         )
-        return PreparedChatStream(
+        prepared = PreparedChatStream(
             text_content=text_content,
             messages=messages,
             model_gateway=model_gateway,
@@ -160,6 +161,7 @@ async def prepare_chat_stream(
             budget=budget,
             execution_context=execution_context,
         )
+        return prepared
     except BaseException:
         await model_gateway.close()
         raise

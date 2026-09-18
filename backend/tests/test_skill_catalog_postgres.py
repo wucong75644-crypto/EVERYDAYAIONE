@@ -87,6 +87,29 @@ def test_migration_structure_and_empty_rollback_reapply(database):
     assert conn.execute("SELECT count(*) FROM skill_packages").fetchone()[0] == 0
 
 
+def test_exact_runtime_revision_survives_assignment_switch_but_requires_live_grant(published):
+    from dataclasses import replace
+    conn, repository, a, b, package, revision, storage = published
+    old = storage.validate(package, publication())
+    newer = repository().publish_revision(package.id, replace(old, revision="v2",
+        nas_path=revision_path(package, "v2")))
+    repository(a).set_assignment(package.id, newer.id, enabled=True)
+    reader = repository(a, DatabaseAccessKind.PROJECTION)
+    assert reader.assigned_revision(package.id, "v1").id == revision.id
+    assert reader.assigned_revision(package.id, "v2").id == newer.id
+    with pytest.raises(SkillError, match="PINNED_REVISION_UNAVAILABLE"):
+        reader.assigned_revision(package.id, "missing")
+    with pytest.raises(SkillError, match="PINNED_REVISION_UNAVAILABLE"):
+        repository(b, DatabaseAccessKind.PROJECTION).assigned_revision(package.id, "v1")
+    repository(a).set_assignment(package.id, newer.id, enabled=False)
+    with pytest.raises(SkillError, match="PINNED_REVISION_UNAVAILABLE"):
+        reader.assigned_revision(package.id, "v1")
+    repository(a).set_assignment(package.id, newer.id, enabled=True)
+    repository().retire_revision(package.id, revision.id)
+    with pytest.raises(SkillError, match="PINNED_REVISION_UNAVAILABLE"):
+        reader.assigned_revision(package.id, "v1")
+
+
 def test_populated_rollback_is_refused_atomically(published):
     conn, _, _, _, package, *_ = published
     conn.execute("RESET ROLE")

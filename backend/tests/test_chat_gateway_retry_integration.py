@@ -248,3 +248,25 @@ async def test_fallback_rebuilds_provider_search_tools_without_mutating_common_t
     )
     assert first.stream_chat.call_args.kwargs["tools"] == ([search] if first_search else [])
     assert second.stream_chat.call_args.kwargs["tools"] == ([search] if second_search else [])
+
+
+async def test_provider_search_cannot_bypass_active_skill_ceiling(environment):
+    from dataclasses import replace
+    from services.handlers.chat.stream_setup import prepare_chat_stream
+    adapter = make_adapter(StreamChunk(content="ok"))
+    adapter.supports_google_search = True
+    adapter.create_google_search_tool = Mock(return_value={"googleSearch": {}})
+    environment.configure(adapter)
+    p = await prepare_chat_stream(
+        handler=environment.handler, content=[TextPart(text="test")], user_id="user",
+        conversation_id="conv", task_id="task", model_id=A, permission_mode="auto",
+        needs_google_search=True, params={}, context_anchor=object(),
+    )
+    try:
+        p.execution_context = replace(p.execution_context, authorized_tool_names=frozenset())
+        async for _ in p.model_gateway.stream_chat(messages=p.messages, tools=[]):
+            pass
+    finally:
+        await p.model_gateway.close()
+    adapter.create_google_search_tool.assert_not_called()
+    assert adapter.stream_chat.call_args.kwargs["tools"] == []

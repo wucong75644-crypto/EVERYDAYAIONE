@@ -14,6 +14,7 @@ from psycopg.types.json import Jsonb
 class ReplayCheckpointBoundary(str, Enum):
     BEFORE_MODEL = "before_model"
     AFTER_TOOL = "after_tool"
+    AFTER_SKILL_ACTIVATION = "after_skill_activation"
     BEFORE_COMMIT = "before_commit"
 
 
