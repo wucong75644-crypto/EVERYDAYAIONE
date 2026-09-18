@@ -19,7 +19,7 @@ from services.adapters.kie.image_adapter import KieImageAdapter
 from services.adapters.kie.shadow_upload_store import get_overseas_shadow_upload
 from services.handlers.base import TaskMetadata
 from services.handlers.image_handler import ImageHandler
-from services.kie_image_fallback_service import STATE_KEY, _waiters
+from services.kie_image_fallback_service import _waiters
 from services.task_completion_service import TaskCompletionService
 
 
@@ -133,7 +133,8 @@ async def chain(tmp_path, monkeypatch):
     monkeypatch.setattr("services.adapters.factory.get_settings", lambda: settings)
     state = SimpleNamespace(
         db=Database(), posts=[], uploads={"auto": [], "overseas": []}, events=[],
-        clients=[], http_options=[], mode=None, gate=asyncio.Event(), fail_code="400", success=False,
+        clients=[], http_options=[], mode=None, gate=asyncio.Event(),
+        upload_started=asyncio.Event(), fail_code="400", success=False,
     )
     for key, value in {
         "file_workspace_root": str(tmp_path), "oss_cdn_domain": "cdn.example.com",
@@ -193,15 +194,18 @@ async def chain(tmp_path, monkeypatch):
                 return httpx.Response(200, json={"code": 200, "msg": "success", "data": {"taskId": task_id}})
             assert str(request.url) == KieClient.FILE_STREAM_UPLOAD_ENDPOINT, "unexpected network/CDN download"
             assert request.method == "POST"
-            if route == "overseas" and state.mode == "delayed_ready":
-                await state.gate.wait()
+            assert not state.posts, "overseas upload must finish before first generation"
+            if route == "overseas":
+                state.upload_started.set()
+                if state.mode in {"delayed_ready", "upload_timeout", "main_success_upload_timeout"}:
+                    await state.gate.wait()
             multipart = message_from_bytes(
                 b"Content-Type: " + request.headers["content-type"].encode() + b"\r\n\r\n" + request.content,
                 policy=policy.default,
             )
             data = next(part.get_payload(decode=True) for part in multipart.iter_parts() if part.get_filename())
             state.uploads[route].append(data)
-            if data == b"image-B" and state.mode == f"{route}_upload_failure":
+            if data == b"image-B" and state.mode in {f"{route}_upload_failure", "main_success_upload_failure"}:
                 raise httpx.ReadTimeout("simulated upload timeout", request=request)
             return httpx.Response(200, json={"success": True, "code": 200, "data": {
                 "downloadUrl": f"https://tempfile.redpandaai.co/{route}/{data.decode()}.png",
@@ -224,12 +228,6 @@ async def chain(tmp_path, monkeypatch):
         state.urls.append(f"https://cdn.example.com/workspace/{quote(str(path.relative_to(tmp_path)))}")
     state.input_urls = [state.urls[2] + "#image", state.urls[0] + "?v=123", state.urls[1], state.urls[2] + "#image"]
 
-    async def drain_uploads():
-        tasks = [task for task in asyncio.all_tasks()
-                 if getattr(task.get_coro(), "__qualname__", "") == "KieClient._run_shadow_upload"]
-        if tasks:
-            await asyncio.wait_for(asyncio.gather(*tasks), timeout=3)
-    state.drain_uploads = drain_uploads
     try:
         yield state
     finally:
@@ -239,23 +237,25 @@ async def chain(tmp_path, monkeypatch):
         if _waiters:
             await asyncio.gather(*list(_waiters.values()), return_exceptions=True)
         _waiters.clear()
-        await drain_uploads()
         for client in state.clients:
             await client.aclose()
 
 
 MODES = [
-    "main_success", "retry_success", "retry_failure", "auto_upload_failure",
+    "main_success", "retry_success", "retry_failure",
     "overseas_upload_failure", "missing_file", "foreign_file", "delayed_ready",
     "non400_failure", "local_timeout_late_success", "main_success_missing",
+    "main_success_upload_failure", "main_success_upload_timeout", "upload_timeout",
 ]
 
 
 @pytest.mark.parametrize("delivery", ["callback", "poll"])
 @pytest.mark.parametrize("mode", MODES)
-async def test_workspace_chain(chain, mode, delivery):
+async def test_workspace_chain(chain, mode, delivery, monkeypatch):
     s = chain
     s.mode = mode
+    if mode in {"upload_timeout", "main_success_upload_timeout"}:
+        monkeypatch.setattr(KieClient, "SHADOW_PREPARE_TIMEOUT", 0.01)
     if mode in {"missing_file", "main_success_missing"}:
         s.paths[1].unlink()
     if mode == "foreign_file":
@@ -270,17 +270,32 @@ async def test_workspace_chain(chain, mode, delivery):
     parts = [TextPart(text="Keep reference order C A B C"), *[
         ImagePart(url=url, original_url=url) for url in s.input_urls
     ]]
-    await handler.start(
+    start = asyncio.create_task(handler.start(
         message_id="placeholder", conversation_id="conversation", user_id=USER, content=parts,
         params={"model": MODEL, "resolution": "1K", "aspect_ratio": "1:1", "_org_id": ORG},
         metadata=TaskMetadata(client_task_id="client-task"),
-    )
+    ))
+    if mode == "delayed_ready":
+        await asyncio.wait_for(s.upload_started.wait(), timeout=3)
+        assert not start.done() and s.posts == [] and s.events == []
+        assert s.db.tables["messages"][0]["status"] == "pending"
+        assert s.db.tables["credit_transactions"][0]["status"] == "pending"
+        s.gate.set()
+    await asyncio.wait_for(start, timeout=3)
     assert len(s.db.tables["tasks"]) == len(s.db.tables["credit_transactions"]) == len(s.posts) == 1
     row = s.db.tables["tasks"][0]
     local_id, transaction_id = row["id"], row["credit_transaction_id"]
     cost = row["credits_locked"]
     assert row["external_task_id"] == "original-kie"
-    assert s.posts[0]["input"]["input_urls"] == s.input_urls
+    staged_order = [f"https://tempfile.redpandaai.co/overseas/image-{label}.png" for label in "CABC"]
+    cdn_modes = {
+        "overseas_upload_failure", "missing_file", "foreign_file", "main_success_missing",
+        "main_success_upload_failure", "main_success_upload_timeout", "upload_timeout",
+    }
+    assert s.posts[0]["input"]["input_urls"] == (s.input_urls if mode in cdn_modes else staged_order)
+    cache = await get_overseas_shadow_upload("original-kie")
+    assert cache["status"] == ("failed" if mode in cdn_modes else "ready")
+    assert cache["request"]["input"]["input_urls"] == s.input_urls
     assert s.db.tables["users"][0]["credits"] == 1000 - cost
     assert s.events == []
 
@@ -297,25 +312,15 @@ async def test_workspace_chain(chain, mode, delivery):
                 await adapter.close()
         assert await svc.process_result(task_id, result)
 
-    if mode == "delayed_ready":
-        await deliver("original-kie")
-        assert row["request_params"][STATE_KEY]["phase"] == "waiting"
-        assert s.events == [] and len(s.posts) == 1 and s.db.refunds == 0
-        assert s.db.tables["messages"][0]["status"] == "pending"
-        s.gate.set()
-        await s.drain_uploads()
-        await asyncio.wait_for(asyncio.gather(*list(_waiters.values())), timeout=3)
-    else:
-        await s.drain_uploads()
-        if mode == "local_timeout_late_success":
-            row["started_at"] = (datetime.now(timezone.utc) - timedelta(minutes=11)).isoformat()
-        await deliver(
-            "original-kie", success=mode.startswith("main_success"),
-            fail_code="500" if mode == "non400_failure" else "TIMEOUT" if mode == "local_timeout_late_success" else "400",
-        )
+    if mode == "local_timeout_late_success":
+        row["started_at"] = (datetime.now(timezone.utc) - timedelta(minutes=11)).isoformat()
+    await deliver(
+        "original-kie", success=mode.startswith("main_success"),
+        fail_code="500" if mode == "non400_failure" else "TIMEOUT" if mode == "local_timeout_late_success" else "400",
+    )
 
-    retry = mode in {"retry_success", "retry_failure", "auto_upload_failure", "delayed_ready"}
-    success = mode in {"main_success", "main_success_missing", "retry_success", "auto_upload_failure", "delayed_ready"}
+    retry = mode in {"retry_success", "retry_failure", "delayed_ready"}
+    success = mode.startswith("main_success") or mode in {"retry_success", "delayed_ready"}
     if retry:
         assert row["external_task_id"] == "retry-kie" and row["status"] == "pending"
         assert len(s.posts) == 2 and s.events == [] and s.db.refunds == 0
@@ -345,8 +350,9 @@ async def test_workspace_chain(chain, mode, delivery):
     else:
         assert message["content"][0]["failed"] is True
     assert all(b"foreign-private-image" not in values for values in s.uploads.values())
-    if mode not in {"missing_file", "foreign_file", "main_success_missing"}:
-        assert s.uploads == {route: [b"image-C", b"image-A", b"image-B"] for route in ["auto", "overseas"]}
+    assert s.uploads["auto"] == [], "domestic shadow upload must not run"
+    if mode not in {"missing_file", "foreign_file", "main_success_missing", "upload_timeout", "main_success_upload_timeout"}:
+        assert sorted(s.uploads["overseas"]) == [b"image-A", b"image-B", b"image-C"]
     if mode == "overseas_upload_failure":
         assert (await get_overseas_shadow_upload("original-kie"))["status"] == "failed"
 
@@ -357,7 +363,7 @@ async def test_workspace_chain(chain, mode, delivery):
     api_options = [item for item in s.http_options if item.get("base_url")]
     assert all("proxy" not in item and item.get("trust_env", True) for item in api_options)
     upload_options = [item for item in s.http_options if not item.get("base_url")]
-    assert len(upload_options) == 2
-    assert any(item.get("proxy") == "http://127.0.0.1:7891" and item["trust_env"] is False for item in upload_options)
-    assert any("proxy" not in item and item["trust_env"] is True for item in upload_options)
+    assert len(upload_options) == 1
+    assert upload_options[0]["proxy"] == "http://127.0.0.1:7891"
+    assert upload_options[0]["trust_env"] is False
     print(f"CHAIN_SIMULATION mode={mode} delivery={delivery} status={row['status']} create_count={len(s.posts)} refunds={s.db.refunds}")

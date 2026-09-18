@@ -652,6 +652,7 @@
 | `estimate_cost` | `backend/services/adapters/kie/chat_adapter.py` | 估算积分消耗 | input_tokens, output_tokens | CostEstimate |
 | `KieClient._handle_error_response` | `backend/services/adapters/kie/client.py` | 分类 KIE 错误并记录余额不足告警事件 | status_code, response_data, model | NoReturn |
 | `KieClient.create_task_once` | `backend/services/adapters/kie/client.py` | 正常 API 出口单次提交，无网络重发和影子上传 | request | CreateTaskResponse |
+| `KieClient.create_task` / `_prepare_shadow_upload` | `backend/services/adapters/kie/client.py` | 图片首次生成优先海外临时链接，最多4张并行上传且保留原顺序；失败整组退回 CDN，受理后关联缓存；文本/视频跳过准备 | request / request, source_urls, upload_id | CreateTaskResponse / (request, staged_urls) |
 | `KieImageAdapter.submit_prepared_fallback` | `backend/services/adapters/kie/image_adapter.py` | 重放实际 KIE 图片请求，保留受理不确定语义 | request | ImageGenerateResult |
 | `get_overseas_shadow_upload` | `backend/services/adapters/kie/shadow_upload_store.py` | 海外上传状态、源/临时 URL 映射及请求快照，TTL 一小时 | task_id | dict/None |
 | `chat_completions` | `backend/services/adapters/kie/client.py` | 非流式 Chat API | model, request | ChatCompletionChunk |
