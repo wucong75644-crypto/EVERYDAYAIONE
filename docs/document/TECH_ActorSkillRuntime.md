@@ -63,6 +63,7 @@ checkpoint 的 `skill_runtime` 保存 schema version、turn_id、固定目录候
 | `backend/services/handlers/chat_tool_mixin.py` | 新建/复用执行器应用授权上限 |
 | `backend/tests/test_skill_runtime.py`、`test_skill_runtime_actor.py`、`test_skill_runtime_source.py` | 预算、安全模板、按需加载、屏障、暂停恢复、重试去重、取消、缺失/漂移、收窄、关闭回归 |
 | `backend/tests/test_skill_catalog_postgres.py`、`test_chat_gateway_retry_integration.py` | 固定版本/RLS、内置搜索边界 |
+| `backend/tests/test_tool_production_integration.py` | Actor 测试夹具显式声明 Skill 未启用，断言原工具上限不变 |
 | 本文、`TECH_SkillCatalog与可见目录.md`、`TECH_Skill控制面与受控存储.md` | 当前契约与验证/回滚步骤 |
 
 ## 本地验证
@@ -78,12 +79,19 @@ DATABASE_URL=postgresql://unused JWT_SECRET_KEY=skill-tests-only python -m pytes
   tests/test_conversation_commands.py tests/test_replay_checkpoint_store.py \
   tests/test_tool_policy.py tests/test_tool_execution.py -q
 
+# 发布门禁发现的共享执行链路验证也纳入定向组。
+DATABASE_URL=postgresql://unused JWT_SECRET_KEY=skill-tests-only python -m pytest \
+  tests/test_tool_production_integration.py tests/test_skill_runtime.py \
+  tests/test_skill_runtime_actor.py tests/test_skill_runtime_source.py -q
+
 # PATH 需含 initdb/pg_ctl；测试只启动临时 Unix socket PostgreSQL。
 DATABASE_URL=postgresql://unused JWT_SECRET_KEY=skill-tests-only python -m pytest \
   tests/test_skill_catalog_postgres.py tests/test_skill_resolver_postgres.py -q
 ```
 
 2026-09-18 最终结果：第一组 859 项通过（含 50 项新增 Skill Runtime 定向用例），第二组 34 项通过，共 **893 passed、0 skipped**；`git diff --check` 通过。未调用外部模型或业务服务，未执行生产验证。数据库测试首次因沙箱限制无法初始化；获准启动临时实例后全部通过，不读取项目数据库凭证。
+
+首次提交部署候选 `ecea89e9`：前端 1351 项通过并完成部署；后端完整门禁为 10365 passed、2 failed、37 skipped、4 xfailed，未进入后端同步。两项失败是既有共享 Chat 集成测试的无约束 Mock 将新增 `skill_runtime` 字段自动构造成 Mock。夹具已显式设为 `None`，并增加关闭状态下 ToolContext 授权上限保持原样的断言；不改生产逻辑、不弱化原有权限/安全点断言。扩大定向组 168 项全部通过。首次发布不构成完整候选，最终发布状态以受控入口的 `RELEASE_RESULT` 为准。
 
 ## 生产验证步骤（待明确“提交部署”授权）
 
