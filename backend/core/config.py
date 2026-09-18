@@ -265,6 +265,10 @@ class Settings(BaseSettings):
     file_workspace_enabled: bool = True                          # 文件操作总开关
     file_workspace_root: str = "/mnt/nas-workspace"              # NAS 挂载路径（生产）或本地路径（开发）
 
+    # Skill 控制面：独立受控目录，不接入聊天或工具执行链路。
+    skill_catalog_enabled: bool = False
+    skill_storage_root: Optional[str] = None  # SKILL_STORAGE_ROOT，开启后显式配置
+
     # Staging 清理配置（已废弃：NAS 替代后不再需要清理，保留字段兼容旧引用）
     staging_file_ttl_seconds: int = 86400        # [废弃] 孤儿文件过期时间
     staging_max_size_mb: int = 500               # [废弃] 单用户 staging 目录容量上限
