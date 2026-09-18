@@ -1,11 +1,11 @@
 """Immutable control-plane contracts; skill content is never executable here."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 
 SkillKey = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
@@ -19,6 +19,31 @@ class SkillError(ValueError):
 
 class Contract(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+CatalogText = Annotated[str, Field(min_length=1, max_length=200, pattern=r"\S")]
+ConversationScope = Literal["user", "channel"]
+AgentDomain = Literal["general", "erp"]
+ExecutionMode = Literal["interactive", "scheduled", "preflight"]
+
+
+class SkillCatalogMetadata(Contract):
+    """Published frontmatter `catalog`; immutable with its revision.
+
+    Missing declarations allow no tools or model selection. Empty actor/permission
+    restrictions mean all authorized members of the assigned organization.
+    """
+
+    name: CatalogText | None = None
+    triggers: tuple[CatalogText, ...] = Field(default=(), max_length=32)
+    model_selectable: StrictBool = False
+    conversation_scopes: tuple[ConversationScope, ...] = ("user",)
+    agent_domains: tuple[AgentDomain, ...] = ("general",)
+    execution_modes: tuple[ExecutionMode, ...] = ("interactive",)
+    actor_user_ids: tuple[UUID, ...] = ()
+    required_permissions: tuple[CatalogText, ...] = ()
+    required_feature_flags: tuple[CatalogText, ...] = ()
+    allowed_tool_names: tuple[CatalogText, ...] = ()
 
 
 class PackageCreate(Contract):
@@ -50,6 +75,7 @@ class SkillRevision(PublishRevision):
     package_id: UUID
     nas_path: str  # Canonical relative SKILL.md path under SKILL_STORAGE_ROOT.
     summary: str
+    catalog_metadata: SkillCatalogMetadata = Field(default_factory=SkillCatalogMetadata)
     status: Literal["published", "retired"]
     created_at: datetime
 
@@ -81,6 +107,7 @@ class ValidatedSkill:
     body_sha256: str
     summary: str
     body: str
+    catalog_metadata: SkillCatalogMetadata = field(default_factory=SkillCatalogMetadata)
 
 
 def revision_path(package: SkillPackage | PackageCreate, revision: str) -> str:

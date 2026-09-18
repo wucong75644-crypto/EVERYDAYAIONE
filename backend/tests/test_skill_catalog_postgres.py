@@ -44,6 +44,7 @@ def database(postgres_socket):
         # Sentinel models existing application data unaffected by up/down.
         conn.execute("CREATE TABLE chat_sentinel (body text); INSERT INTO chat_sentinel VALUES ('unchanged')")
         conn.execute(MIGRATION.read_text())
+        conn.execute((MIGRATIONS / "257_skill_catalog_metadata.sql").read_text())
         org_a, org_b, actor = uuid4(), uuid4(), uuid4()
         conn.execute("INSERT INTO organizations VALUES (%s), (%s)", (org_a, org_b))
         conn.execute("SET LOCAL ROLE everydayai")
