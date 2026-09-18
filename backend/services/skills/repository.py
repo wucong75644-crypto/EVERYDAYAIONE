@@ -5,12 +5,15 @@ from uuid import UUID
 
 from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
+from pydantic import ValidationError
 
 from core.db_scope import DatabaseAccessKind, DatabaseScope, SET_DATABASE_SCOPE_SQL
 from services.skills.contracts import (
     ActivationAuditCreate, PackageCreate, SkillAssignment, SkillError,
     SkillPackage, SkillRevision, ValidatedSkill,
 )
+from services.skills.resolver import SkillCandidate
 
 
 class SkillRepository:
@@ -85,10 +88,11 @@ class SkillRepository:
         try:
             with self._cursor() as cursor:
                 cursor.execute("""INSERT INTO public.skill_revisions
-                    (package_id, revision, nas_path, content_sha256, body_sha256, summary)
-                    VALUES (%s, %s, %s, %s, %s, %s) RETURNING *""",
+                    (package_id, revision, nas_path, content_sha256, body_sha256, summary, catalog_metadata)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING *""",
                     (package.id, validated.revision, validated.nas_path,
-                     validated.content_sha256, validated.body_sha256, validated.summary))
+                     validated.content_sha256, validated.body_sha256, validated.summary,
+                     Jsonb(validated.catalog_metadata.model_dump(mode="json", exclude_unset=True))))
                 return SkillRevision.model_validate(cursor.fetchone())
         except UniqueViolation as error:
             raise SkillError("SKILL_REVISION_ALREADY_PUBLISHED") from error
@@ -145,3 +149,23 @@ class SkillRepository:
                     self.scope.actor_user_id, audit.conversation_id, audit.turn_id,
                     self.scope.request_id, audit.outcome, audit.reason_code))
             return cursor.fetchone()["id"]
+
+    def catalog_candidates(self) -> list[SkillCandidate]:
+        """Only enabled, pinned, published revisions; never fetch content or paths."""
+        if self.scope.org_id is None:
+            return []
+        with self._cursor() as cursor:
+            cursor.execute("""SELECT p.id AS package_id, p.skill_key,
+                    p.org_id AS package_org_id, p.scope_kind,
+                    a.org_id AS assignment_org_id, a.priority,
+                    r.revision, r.summary AS description, r.catalog_metadata
+                FROM public.skill_assignments a
+                JOIN public.skill_packages p ON p.id = a.package_id
+                JOIN public.skill_revisions r ON r.package_id = a.package_id AND r.id = a.revision_id
+                WHERE a.org_id = %s AND a.enabled AND r.status = 'published'
+                    AND (p.org_id IS NULL OR p.org_id = a.org_id)""", (self.scope.org_id,))
+            try:
+                return [SkillCandidate.model_validate(row) for row in cursor.fetchall()]
+            except ValidationError:
+                # ValidationError includes raw field values; keep logs secret-free.
+                raise SkillError("SKILL_CATALOG_METADATA_INVALID") from None

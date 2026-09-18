@@ -20,7 +20,7 @@ from api.routes import (
     admin_users, audio, auth, conversation, detail_project, ecom_requirement, error_monitor, file, health, image, image_ecom,
     kuaimai_external, memory, message, models, org, org_members_assignments,
     pdd, qimen, scheduled_tasks, change_sets, subscription, task, webhook, wecom, wecom_auth,
-    wecom_chat_targets, ws,
+    wecom_chat_targets, ws, skills,
 )
 from core.config import get_settings
 from core.exceptions import AppException
@@ -503,6 +503,7 @@ def register_routers(app: FastAPI) -> None:
 
     # 对话
     app.include_router(conversation.router, prefix="/api")
+    app.include_router(skills.router, prefix="/api")
 
     # 消息
     app.include_router(message.router, prefix="/api")

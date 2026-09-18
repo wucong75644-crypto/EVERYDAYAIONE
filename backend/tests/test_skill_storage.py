@@ -45,6 +45,34 @@ def test_valid_document_and_exact_hashes(storage):
     assert result.nas_path == "platform/report/v1/SKILL.md"
 
 
+def test_catalog_metadata_is_validated_at_publication(storage):
+    document = DOCUMENT.replace("description: 报表说明\n", """description: 报表说明
+catalog:
+  name: 业务报表
+  triggers: [汇总业务]
+  model_selectable: true
+  allowed_tool_names: [erp_query]
+  required_permissions: [order.view]
+""")
+    write_skill(storage, document)
+    metadata = storage.validate(PACKAGE, publication(document)).catalog_metadata
+    assert metadata.name == "业务报表" and metadata.triggers == ("汇总业务",)
+    assert metadata.model_selectable is True and metadata.allowed_tool_names == ("erp_query",)
+
+
+@pytest.mark.parametrize("metadata", [
+    "null", "[]", "{model_selectable: 'true'}", "{triggers: abc}",
+    "{execution_modes: [arbitrary]}", "{agent_domains: [admin]}",
+    "{body: secret}", "{nas_path: /secret}", "{allowed_tool_names: ['']}",
+])
+def test_invalid_catalog_metadata_is_rejected_without_echoing_content(storage, metadata):
+    document = DOCUMENT.replace("description: 报表说明\n", f"description: 报表说明\ncatalog: {metadata}\n")
+    write_skill(storage, document)
+    with pytest.raises(SkillError) as error:
+        storage.validate(PACKAGE, publication(document))
+    assert str(error.value) == "SKILL_CATALOG_METADATA_INVALID"
+
+
 def test_crlf_body_is_not_normalized(storage):
     document, body = DOCUMENT.replace("\n", "\r\n"), BODY.replace("\n", "\r\n")
     write_skill(storage, document)

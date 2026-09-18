@@ -7,10 +7,11 @@ from pathlib import Path, PurePosixPath
 import stat
 
 import yaml
+from pydantic import ValidationError
 from yaml.events import AliasEvent
 
 from services.skills.contracts import (
-    PackageCreate, PublishRevision, SkillError, SkillPackage, ValidatedSkill,
+    PackageCreate, PublishRevision, SkillCatalogMetadata, SkillError, SkillPackage, ValidatedSkill,
     revision_path,
 )
 
@@ -123,6 +124,10 @@ class SkillStorage:
         summary = metadata.get("description")
         if not isinstance(summary, str) or not summary.strip() or len(summary) > 2000:
             raise SkillError("SKILL_DESCRIPTION_INVALID")
+        try:
+            catalog_metadata = SkillCatalogMetadata.model_validate(metadata.get("catalog", {}))
+        except ValidationError:
+            raise SkillError("SKILL_CATALOG_METADATA_INVALID") from None
         body = "".join(lines[end + 1:])
         if not body.strip():
             raise SkillError("SKILL_BODY_EMPTY")
@@ -130,4 +135,4 @@ class SkillStorage:
         if not hmac.compare_digest(body_hash, publication.body_sha256):
             raise SkillError("SKILL_BODY_HASH_MISMATCH")
         return ValidatedSkill(path, package.skill_key, publication.revision,
-                              content_hash, body_hash, summary.strip(), body)
+                              content_hash, body_hash, summary.strip(), body, catalog_metadata)
