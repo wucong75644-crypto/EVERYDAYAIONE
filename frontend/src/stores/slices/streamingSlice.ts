@@ -179,6 +179,10 @@ export const createStreamingSlice: StateCreator<
         } else {
           content.push(block);
         }
+      } else if (block.type === 'skill_step') {
+        const existingIndex = content.findIndex((part) => part.type === 'skill_step' && part.step_id === block.step_id);
+        if (existingIndex >= 0) content[existingIndex] = block;
+        else content.push(block);
       } else {
         content.push(block);
       }

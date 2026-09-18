@@ -7,6 +7,16 @@ vi.mock('../../utils/logger', () => ({
 }));
 
 describe('messageProtocol', () => {
+  it('accepts persisted Skill feedback and strips nonpublic fields', () => {
+    expect(parseContentPart({
+      type: 'skill_step', step_id: 'manual-skill', status: 'error',
+      name: null, revision: null, reason: '当前不可用',
+      body: 'secret', nas_path: '/private/path', effective_allowed_tool_names: ['internal'],
+    })).toEqual({
+      type: 'skill_step', step_id: 'manual-skill', status: 'error', reason: '当前不可用',
+    });
+  });
+
   it('preserves the entire scheduled form including date fields and negated visibility', () => {
     expect(parseContentPart(scheduledTaskForm)).toEqual(scheduledTaskForm);
   });

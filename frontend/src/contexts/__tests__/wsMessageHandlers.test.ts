@@ -924,6 +924,16 @@ describe('wsMessageHandlers', () => {
   });
 
   describe('content_block_add', () => {
+    it('delivers Skill activation through the live protocol without private extra fields', () => {
+      const block = { type: 'skill_step', step_id: 'manual-skill', status: 'completed',
+        name: '订单摘要', revision: 'v2' };
+      handlers.content_block_add({
+        message_id: 'msg_1', conversation_id: 'conv_1',
+        payload: { block: { ...block, body: 'private instructions', allowed_tool_names: ['internal'] } },
+      });
+      expect(store.appendContentBlock).toHaveBeenCalledWith('conv_1', block);
+    });
+
     it('delivers the scheduled task completion form through the real protocol boundary', () => {
       handlers.content_block_add({
         message_id: 'msg_1', conversation_id: 'conv_1', payload: { block: scheduledTaskForm },

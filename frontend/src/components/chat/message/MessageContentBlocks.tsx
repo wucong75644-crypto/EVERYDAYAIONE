@@ -19,6 +19,8 @@ import ToolResultBlock from './ToolResultBlock';
 import ToolStepCard from './ToolStepCard';
 import ChangeSetCard from './ChangeSetCard';
 import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
+import { isSkillUiEnabled } from '../../../config/featureFlags';
+import { skillVersion } from '../../../services/skills';
 
 const DiagramBlock = lazy(() => import('./DiagramBlock'));
 
@@ -58,6 +60,14 @@ export default function MessageContentBlocks({
   return (
     <div className={`${MESSAGE_CONTENT_LAYOUT.fill} space-y-1`}>
       {message.content.map((part, idx) => {
+        if (part.type === 'skill_step') {
+          if (!isSkillUiEnabled()) return null;
+          return <div key={part.step_id} role="status" className="py-1 text-xs text-text-tertiary">
+            {part.status === 'completed'
+              ? `已启用 Skill · ${part.name} · ${skillVersion(part.revision ?? '')}`
+              : `Skill 未启用 · ${part.reason ?? '暂时无法启用，请稍后重试。'}`}
+          </div>;
+        }
         if (part.type === 'thinking') {
           const tp = part as { text?: string; duration_ms?: number };
           if (!tp.text && tp.duration_ms == null) return null;

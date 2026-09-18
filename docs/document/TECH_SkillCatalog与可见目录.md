@@ -1,6 +1,6 @@
 # Skill 第一期第 2 步：Catalog 与按权限解析的可见目录
 
-后续状态：P1-3 已实现默认关闭的 Actor Turn 激活与精确恢复，见 [Actor SkillRuntime](TECH_ActorSkillRuntime.md)。本文保留 P1-2 目录与公开接口契约；公开返回字段不变，下文“不接入聊天”为该阶段边界。
+后续状态：P1-3 已实现默认关闭的 Actor Turn 激活与精确恢复，见 [Actor SkillRuntime](TECH_ActorSkillRuntime.md)。P1-4 为手动选择追加稳定 `skill_id`，见 [聊天 Skill 选择与反馈](TECH_Skill聊天选择与反馈.md)。下文“不接入聊天”为 P1-2 阶段边界。
 
 ## 范围与接口
 
@@ -10,6 +10,7 @@
 ```json
 [
   {
+    "skill_id": "report",
     "name": "业务报表",
     "revision": "v2",
     "description": "汇总业务报表",
@@ -20,7 +21,7 @@
 ]
 ```
 
-`source` 仅为 `platform` / `org` 来源类别，不回传包的内部 provenance 字符串。不会返回 skill/package/revision ID、组织或用户 ID、正文、路径、哈希、内部权限配置或凭证。`model_selectable` 只是声明，不会触发模型调用或激活。
+`skill_id` 是稳定的 `skill_key`，用于 P1-4 手动选择，不是数据库主键或授权凭据。`source` 仅为 `platform` / `org` 来源类别，不回传包的内部 provenance 字符串。不会返回 package/revision 数据库 ID、组织或用户 ID、正文、路径、哈希、内部权限配置或凭证。`model_selectable` 只控制模型是否可以主动选择，不限制已授权用户手动选择，也不会自行触发激活。
 
 只接受 `conversation_id` 查询参数，额外参数返回 422。JWT 的 `sub` 确定 actor；查询数据库中的当前活跃用户、属于该 actor 的 user-scope 会话，再从会话记录确定组织，核验组织与成员均活跃。JWT 的组织声明和 `X-Org-Id` 不参与解析。不存在、别人的会话、channel 会话或不匹配的 scope_id 返回 404；用户/组织/成员失效返回 403；缺少或无效认证返回 401。
 

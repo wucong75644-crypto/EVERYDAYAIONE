@@ -25,6 +25,7 @@ const nullEquivalentFields: Record<string, readonly string[]> = {
     'summary', 'code', 'output', 'elapsed_ms', 'input', 'cancelled_at',
   ],
   tool_result: ['files'],
+  skill_step: ['name', 'revision', 'reason'],
   form: ['title', 'description', 'submit_text', 'cancel_text', 'change_set_id'],
   changeset: ['title', 'resource_type', 'snapshot'],
   chart: ['title', 'chart_type', 'spec_format'],
@@ -135,6 +136,14 @@ const contentPartSchema = z.preprocess(normalizeNullEquivalentFields, z.discrimi
     input: optionalString,
     cancelled_at: optionalString,
   }).passthrough(),
+  z.object({
+    type: z.literal('skill_step'),
+    step_id: z.string(),
+    status: z.enum(['completed', 'error']),
+    name: optionalString,
+    revision: optionalString,
+    reason: optionalString,
+  }),
   z.object({
     type: z.literal('tool_result'),
     tool_name: z.string(),

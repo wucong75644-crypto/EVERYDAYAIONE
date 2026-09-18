@@ -24,6 +24,15 @@ describe('streamingSlice - thinking methods', () => {
     store = createTestStore();
   });
 
+  it('keeps Skill feedback during streaming and deduplicates checkpoint replay', () => {
+    store.getState().startStreaming('conv_1', 'msg_1');
+    const block = { type: 'skill_step' as const, step_id: 'manual-skill',
+      status: 'completed' as const, name: '订单摘要', revision: 'v2' };
+    store.getState().appendContentBlock('conv_1', block);
+    store.getState().appendContentBlock('conv_1', block);
+    expect(store.getState().optimisticMessages.get('conv_1')?.[0].content).toEqual([{ type: 'text', text: '' }, block]);
+  });
+
   describe('appendStreamingThinking', () => {
     it('should append chunk to empty thinking', () => {
       store.getState().appendStreamingThinking('conv_1', '思考');

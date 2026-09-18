@@ -207,9 +207,9 @@ export default function InputControls(props: InputControlsProps) {
         </div>
 
         {/* 底部工具栏 */}
-        <div className="flex items-center justify-between mt-1">
+        <div className="flex flex-wrap items-center justify-between gap-y-1 mt-1">
           {/* 左侧：模型选择器、设置、深度思考 */}
-          <div className="flex items-center space-x-1">
+          <div className="flex flex-wrap items-center gap-1">
             {/* 模型选择器 */}
             <ModelSelector
               selectedModel={selectedModel}
@@ -267,6 +267,8 @@ export default function InputControls(props: InputControlsProps) {
               )}
             </div>
 
+            {props.skillSelector}
+
             {/* 深度思考按钮（仅支持的模型显示） */}
             {supportsDeepThinking && onDeepThinkModeChange && (
               <button
@@ -303,7 +305,7 @@ export default function InputControls(props: InputControlsProps) {
           </div>
 
           {/* 右侧：计费提示、上传、发送/语音 */}
-          <div className="flex items-center space-x-2">
+          <div className="ml-auto flex items-center space-x-2">
             {/* 模式选择器（chat 模式）或 计费提示（图片/视频模式） */}
             {effectiveModelType === 'chat' && onPermissionModeChange ? (
               <Popover

@@ -54,6 +54,15 @@ describe('sendMessage idempotent retry', () => {
     vi.useRealTimers();
   });
 
+  it('sends only explicit Skill intent and omits it on ordinary chat', async () => {
+    requestMock.mockResolvedValue(response);
+    await sendMessage({ conversationId: 'conv-1', content: [{ type: 'text', text: 'hello' }],
+      identifiers, selectedSkill: { skill_id: 'orders', revision: 'v2' } });
+    expect(requestMock.mock.calls[0][0].data.selected_skill).toEqual({ skill_id: 'orders', revision: 'v2' });
+    await sendMessage({ conversationId: 'conv-1', content: [{ type: 'text', text: 'next' }], identifiers });
+    expect(requestMock.mock.calls[1][0].data).not.toHaveProperty('selected_skill');
+  });
+
   it('retries a timeout with the same IDs and one optimistic update', async () => {
     requestMock
       .mockRejectedValueOnce(new ApiRequestError(

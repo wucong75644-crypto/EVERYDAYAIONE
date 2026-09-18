@@ -20,6 +20,7 @@ import { useWebSocketContext } from '../../contexts/WebSocketContext';
 import { tabSync } from '../../utils/tabSync';
 import { logger } from '../../utils/logger';
 import { type PermissionMode } from '../useSettingsManager';
+import type { SkillSelection } from '../../services/skills';
 
 interface UseTextMessageHandlerParams {
   selectedModel: UnifiedModel;
@@ -55,6 +56,7 @@ export function useTextMessageHandler({
     files: { url: string; name: string; mime_type: string; size: number; workspace_path?: string }[] | null = null,
     extraParams: Record<string, unknown> | null = null,
     orderedAttachments: OrderedAttachmentInput[] | null = null,
+    selectedSkill?: SkillSelection,
   ) => {
     try {
       const content = orderedAttachments?.length
@@ -84,6 +86,7 @@ export function useTextMessageHandler({
         content,
         generationType: 'chat',
         model: selectedModel.id,
+        selectedSkill,
         params: {
           thinking_effort: thinkingEffort,
           thinking_mode: deepThinkMode ? 'deep_think' : undefined,

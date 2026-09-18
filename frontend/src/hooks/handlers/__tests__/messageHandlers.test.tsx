@@ -29,6 +29,18 @@ describe('message handlers error propagation', () => {
     sendMessageMock.mockReset();
   });
 
+  it('passes Skill identity as a top-level request intent without putting it in model params', async () => {
+    sendMessageMock.mockResolvedValue('task-1');
+    const { result } = renderHook(() => useTextMessageHandler({
+      selectedModel, onMessagePending: vi.fn(), onMessageSent: vi.fn(),
+    }));
+    const selectedSkill = { skill_id: 'orders', revision: 'v2' };
+    await result.current.handleChatMessage('汇总订单', 'conv-1', null, null, null, null, selectedSkill);
+    const sent = sendMessageMock.mock.calls[0][0];
+    expect(sent.selectedSkill).toEqual(selectedSkill);
+    expect(sent.params).not.toHaveProperty('selected_skill');
+  });
+
   it('media handler rethrows a rejected send so the input layer can preserve content', async () => {
     const error = new Error('积分不足');
     sendMessageMock.mockRejectedValueOnce(error);

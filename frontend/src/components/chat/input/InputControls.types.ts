@@ -1,4 +1,4 @@
-import type { KeyboardEvent } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 import type {
   AspectRatio,
   ImageCount,
@@ -13,6 +13,7 @@ import type { MentionResult } from '../../../hooks/useFileMention';
 import type { ChatAttachment } from '../attachments/ChatAttachment.types';
 
 export interface InputControlsProps {
+  skillSelector?: ReactNode;
   prompt: string;
   onPromptChange: (value: string) => void;
   onSubmit: () => void;

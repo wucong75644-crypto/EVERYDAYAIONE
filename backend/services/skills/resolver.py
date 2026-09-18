@@ -13,6 +13,7 @@ from services.skills.contracts import (
 class SkillSummary(Contract):
     """The complete public allowlist; never serialize a package/revision row."""
 
+    skill_id: SkillKey
     name: str
     revision: RevisionKey
     description: str
@@ -52,6 +53,7 @@ class SkillResolver:
         self, context: SkillResolutionContext, candidates: Iterable[SkillCandidate],
     ) -> list[SkillSummary]:
         return [SkillSummary(
+            skill_id=c.skill_key,
             name=c.catalog_metadata.name or c.skill_key, revision=c.revision,
             description=c.description, triggers=c.catalog_metadata.triggers,
             source=c.scope_kind, model_selectable=c.catalog_metadata.model_selectable,
@@ -60,7 +62,7 @@ class SkillResolver:
     def select(
         self, context: SkillResolutionContext, candidates: Iterable[SkillCandidate],
     ) -> list[SkillCandidate]:
-        """Internal identities for the Actor; public summaries remain unchanged."""
+        """Resolve identities from server-owned scope and permissions."""
         if "skill_catalog_enabled" not in context.enabled_feature_flags or context.org_id is None:
             return []
         eligible = []

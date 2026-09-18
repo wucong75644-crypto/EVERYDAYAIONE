@@ -102,6 +102,9 @@ class ChatGenerationExecutor:
             execution_scope.personal_context_allowed
         )
         params = _parse_params(task.get("request_params"))
+        from services.skills.selection import SkillSelection
+        raw_selection = params.pop("_selected_skill", None)
+        selected_skill = SkillSelection.model_validate(raw_selection) if raw_selection is not None else None
         if replay_context and replay_context.get("checkpoint_kind") == "commit_ready":
             if replay_context.get("skill_runtime") is not None:
                 from services.skills.runtime import create_skill_runtime
@@ -164,6 +167,7 @@ class ChatGenerationExecutor:
                     model_id=_normalize_model_id(task.get("model_id")),
                     context_anchor=_build_anchor(claim, task.get("org_id")),
                     params=params,
+                    selected_skill=selected_skill,
                     permission_mode=str(params.get("permission_mode") or "auto"),
                     needs_google_search=bool(params.get("_needs_google_search")),
                     execution_scope=execution_scope,

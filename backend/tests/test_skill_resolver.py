@@ -97,9 +97,10 @@ def test_same_display_name_different_stable_keys_and_public_allowlist():
     items = [candidate(skill_key=key, catalog_metadata=metadata) for key in ("b", "a")]
     result = SkillResolver().resolve(context(), items)
     assert len(result) == 2
+    assert {summary.skill_id for summary in result} == {"a", "b"}
     assert result == SkillResolver().resolve(context(), reversed(items))
     for summary in result:
-        assert summary.model_dump() == dict(name="同名", revision="v1", description="报表摘要",
+        assert summary.model_dump() == dict(skill_id=summary.skill_id, name="同名", revision="v1", description="报表摘要",
                                             triggers=("报表",), source="platform", model_selectable=True)
 
 

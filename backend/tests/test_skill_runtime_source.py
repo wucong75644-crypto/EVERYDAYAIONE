@@ -73,6 +73,12 @@ async def test_actor_source_checks_identity_permissions_and_flags_before_body(mo
     assert await source.discover() == [c]
     identity.assert_called_once()
     checker.check.return_value = False
+    from services.skills.selection import SkillSelection
+    manual = state(source)
+    checker.check.return_value = True
+    await manual.initialize(selection=SkillSelection(skill_id=c.skill_key, revision=c.revision))
+    checker.check.return_value = False
+    assert (await manual.activate_manual(SkillSelection(skill_id=c.skill_key, revision=c.revision)))["code"] == "SKILL_ACCESS_DENIED"
     with pytest.raises(SkillError, match="ACCESS_DENIED"):
         await source.load(c)
     source.repository.assigned_revision.assert_not_called()

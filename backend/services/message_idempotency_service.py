@@ -21,6 +21,7 @@ from schemas.message import (
 
 
 _RUNTIME_PARAM_KEYS = {
+    "_selected_skill",
     "_task_slot_id",
     "_prefetched_summary",
     "_org_id",
@@ -148,6 +149,8 @@ class MessageIdempotencyService:
             "assistant_message_id": body.assistant_message_id,
             "client_task_id": body.client_task_id,
         }
+        if body.selected_skill is not None:
+            payload["selected_skill"] = body.selected_skill.model_dump()
         encoded = json.dumps(
             payload,
             ensure_ascii=False,

@@ -1,6 +1,7 @@
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
 import { toast } from 'react-hot-toast';
 import { uploadAudio } from '../../../services/audio';
+import type { SkillSelection } from '../../../services/skills';
 import { ApiRequestError } from '../../../services/api';
 import { createConversation, type ChatSettings } from '../../../services/conversation';
 import type { ModelType, UnifiedModel } from '../../../constants/models';
@@ -13,6 +14,7 @@ import type {
 } from '../attachments/ChatAttachment.types';
 
 export interface UseInputSubmissionOptions {
+  takeSelectedSkill?: () => SkillSelection | undefined;
   conversationId: string | null;
   selectedModel: UnifiedModel;
   prompt: string;
@@ -34,6 +36,7 @@ export interface UseInputSubmissionOptions {
     files?: Array<{ url: string; name: string; mime_type: string; size: number; workspace_path?: string }> | null,
     extraParams?: Record<string, unknown> | null,
     orderedAttachments?: OrderedAttachmentInput[] | null,
+    selectedSkill?: SkillSelection,
   ) => Promise<void>;
   handleImageGeneration: (
     conversationId: string,
@@ -63,6 +66,7 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
   const handleAudioSubmit = useCallback(async (blob: Blob) => {
     if (options.isSubmitting) return;
     options.setIsSubmitting(true);
+    const selectedSkill = options.takeSelectedSkill?.();
     try {
       let currentId = options.conversationId;
       if (!currentId) {
@@ -75,7 +79,11 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
         options.onConversationCreated(currentId, '语音对话');
       }
       const uploaded = await uploadAudio(blob);
-      await options.handleChatMessage('[语音消息]', currentId, [uploaded.audio_url]);
+      if (selectedSkill) {
+        await options.handleChatMessage('[语音消息]', currentId, [uploaded.audio_url], null, null, null, selectedSkill);
+      } else {
+        await options.handleChatMessage('[语音消息]', currentId, [uploaded.audio_url]);
+      }
     } catch (error) {
       logger.error('inputArea', '发送语音消息失败', error);
       options.setUploadError(error instanceof Error ? error.message : '语音上传失败');
@@ -134,6 +142,7 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
     }
     const imageInputs = attachments.imageInputs.length ? attachments.imageInputs : null;
     const fileData = attachments.files.length ? attachments.files : null;
+    const selectedSkill = options.effectiveModelType === 'chat' ? options.takeSelectedSkill?.() : undefined;
 
     options.clearPromptForSubmission();
     const attachmentTransaction = options.detachAttachmentsForSubmission();
@@ -158,7 +167,10 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
           generation_type_override: 'image_ecom',
         });
       } else if (options.effectiveModelType === 'chat') {
-        if (attachments.orderedAttachments.length > 0) {
+        if (selectedSkill) {
+          await options.handleChatMessage(message, currentId, imageInputs, fileData,
+            null, attachments.orderedAttachments, selectedSkill);
+        } else if (attachments.orderedAttachments.length > 0) {
           await options.handleChatMessage(
             message,
             currentId,
