@@ -115,7 +115,7 @@ async def setup(task, cache, monkeypatch):
         assert model == MODEL
         client = KieClient("test-key")
         client._client = httpx.AsyncClient(base_url=client.BASE_URL, transport=httpx.MockTransport(handler))
-        client._prepare_shadow_upload = AsyncMock(side_effect=AssertionError("Retry must not upload again"))
+        client._schedule_shadow_upload = MagicMock(side_effect=AssertionError("Retry must not upload again"))
         clients.append(client)
         return KieImageAdapter(client, model)
 
