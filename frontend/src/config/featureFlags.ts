@@ -3,7 +3,8 @@ export function isChangeSetChatUiEnabled(): boolean {
   return import.meta.env.VITE_CHANGESET_CHAT_UI !== 'false';
 }
 
-/** Skill UI is independently opt-in; it does not gate server catalog or execution. */
+/** Production rollout; an explicit build override still independently disables the UI. */
 export function isSkillUiEnabled(): boolean {
-  return import.meta.env.VITE_SKILL_UI_ENABLED === 'true';
+  const override = import.meta.env.VITE_SKILL_UI_ENABLED;
+  return override === undefined ? import.meta.env.PROD : override === 'true';
 }

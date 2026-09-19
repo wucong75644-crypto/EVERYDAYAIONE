@@ -117,10 +117,25 @@ describe('Skill selection', () => {
     expect(result.current.selected).toBeNull();
   });
 
-  it('requires explicit opt-in for the independent UI flag', () => {
+  it('honors explicit overrides for the independent UI flag in production', () => {
+    vi.stubEnv('PROD', true);
     vi.stubEnv('VITE_SKILL_UI_ENABLED', '');
     expect(isSkillUiEnabled()).toBe(false);
     vi.stubEnv('VITE_SKILL_UI_ENABLED', 'false');
+    expect(isSkillUiEnabled()).toBe(false);
+    vi.stubEnv('VITE_SKILL_UI_ENABLED', 'true');
+    expect(isSkillUiEnabled()).toBe(true);
+  });
+
+  it('enables the production rollout when no build override is present', () => {
+    vi.stubEnv('PROD', true);
+    vi.stubEnv('VITE_SKILL_UI_ENABLED', undefined);
+    expect(isSkillUiEnabled()).toBe(true);
+  });
+
+  it('keeps development and test UI disabled unless explicitly enabled', () => {
+    vi.stubEnv('PROD', false);
+    vi.stubEnv('VITE_SKILL_UI_ENABLED', undefined);
     expect(isSkillUiEnabled()).toBe(false);
     vi.stubEnv('VITE_SKILL_UI_ENABLED', 'true');
     expect(isSkillUiEnabled()).toBe(true);
