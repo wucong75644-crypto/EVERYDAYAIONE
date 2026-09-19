@@ -11,7 +11,7 @@ import os
 import time
 from pathlib import Path
 from typing import Optional, AsyncIterator, Dict, Any, NoReturn
-from urllib.parse import parse_qsl, unquote, urlsplit
+from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
 import httpx
@@ -109,16 +109,15 @@ class KieClient:
     TASK_POLL_INTERVAL = 2.0  # 任务轮询间隔
     TASK_MAX_WAIT_TIME = 600.0  # 任务最大等待时间 (10分钟)
 
-    # KIE 图片优先使用海外临时空间；上传失败时首次生成退回原 URL。
+    # CDN首次提交不等旁路；后台海外上传的完整结果仅供400单次兜底使用。
     SHADOW_UPLOAD_MAX_BYTES = 30 * 1024 * 1024
     SHADOW_UPLOAD_PATH = "everydayai/input-media"
-    SHADOW_READ_TIMEOUT = 60.0
-    SHADOW_PREPARE_TIMEOUT = 60.0  # 整组前置上传预算，包含等待并发空位的时间。
-    SHADOW_UPLOAD_CONCURRENCY = 4  # 同时读取/上传的图片数，控制原图内存与连接占用。
-    # 仅放行不改变原文件内容的缓存标记与 OSS V1 鉴权参数。
-    SHADOW_ORIGINAL_QUERY_KEYS = frozenset({
-        "v", "t", "ts", "_", "OSSAccessKeyId", "Expires", "Signature", "security-token",
-    })
+    SHADOW_DOWNLOAD_TIMEOUT = httpx.Timeout(
+        connect=10.0,
+        read=60.0,
+        write=10.0,
+        pool=10.0,
+    )
     SHADOW_UPLOAD_TIMEOUT = httpx.Timeout(
         connect=10.0,
         read=90.0,
@@ -149,7 +148,8 @@ class KieClient:
         self.timeout = timeout
         self._stream_timeout = stream_timeout or self.STREAM_TIMEOUT
         self._client: Optional[httpx.AsyncClient] = None
-        # 只接收后端调用方的可信工作区身份，不从 URL 或生成参数推断。
+        self._shadow_upload_tasks: set[asyncio.Task[None]] = set()
+        # 保留现有调用方的身份参数兼容性；CDN 旁路不再读取本地工作区。
         self._shadow_user_id = shadow_user_id
         self._shadow_org_id = shadow_org_id
 
@@ -371,30 +371,9 @@ class KieClient:
         Returns:
             任务创建响应 (包含 taskId)
         """
-        source_urls = self._extract_shadow_image_urls(request)
-        if not source_urls:
-            return await self._create_task_with_retry(request)
-
-        # 上传时尚无 KIE task_id，以本次上传号串联日志；受理后才写真实任务缓存。
-        upload_id = f"preupload-{uuid4().hex}"
-        prepared, staged_urls = await self._prepare_shadow_upload(request, source_urls, upload_id)
-        result = await self._create_task_with_retry(prepared)
+        result = await self._create_task_with_retry(request)
         if result.task_id:
-            snapshot = request.model_dump(mode="json", exclude={"callBackUrl"})
-            if staged_urls:
-                cache_saved = await save_overseas_shadow_upload_urls(
-                    result.task_id, source_urls, staged_urls, request=snapshot,
-                )
-            else:
-                cache_saved = await save_overseas_shadow_upload_status(
-                    result.task_id, "failed", source_urls, snapshot,
-                )
-            logger.info(
-                "KIE_IMAGE_INPUT_BOUND | task_id={} | upload_id={} | "
-                "source={} | source_count={} | cache_saved={}",
-                result.task_id, upload_id, "kie_space" if staged_urls else "cdn",
-                len(source_urls), cache_saved,
-            )
+            self._schedule_shadow_upload(request, task_id=result.task_id)
         return result
 
     @retry(
@@ -435,51 +414,66 @@ class KieClient:
 
         return result
 
-    async def _prepare_shadow_upload(
+    def _schedule_shadow_upload(
         self,
         request: CreateTaskRequest,
-        source_urls: list[str],
-        upload_id: str,
-    ) -> tuple[CreateTaskRequest, Optional[list[str]]]:
-        """复用海外上传与重试 URL 映射；失败时整组保留原请求。"""
+        task_id: str,
+    ) -> None:
+        """首次任务受理后，仅后台启动海外上传，不阻塞主链路。"""
+        source_urls = self._extract_shadow_image_urls(request)
+        if not source_urls:
+            return
+
         overseas_proxy = os.getenv(self.SHADOW_OVERSEAS_PROXY_ENV)
-        if not overseas_proxy:
+        if overseas_proxy:
+            self._schedule_shadow_route(
+                model=request.model,
+                task_id=task_id,
+                source_urls=source_urls,
+                route="overseas",
+                proxy_url=overseas_proxy,
+                request_snapshot=request.model_dump(mode="json", exclude={"callBackUrl"}),
+            )
+        else:
             logger.warning(
-                "KIE_SHADOW_UPLOAD_SKIPPED | upload_id={} | model={} | "
+                "KIE_SHADOW_UPLOAD_SKIPPED | task_id={} | model={} | "
                 "route=overseas | reason=proxy_not_configured | env={}",
-                upload_id, request.model, self.SHADOW_OVERSEAS_PROXY_ENV,
+                task_id,
+                request.model,
+                self.SHADOW_OVERSEAS_PROXY_ENV,
             )
-            return request, None
 
-        try:
-            async with asyncio.timeout(self.SHADOW_PREPARE_TIMEOUT):
-                staged_urls = await self._run_shadow_upload(
-                    model=request.model, task_id=upload_id, source_urls=source_urls,
-                    route="overseas", proxy_url=overseas_proxy,
-                )
-            if not staged_urls:
-                raise ValueError("Incomplete overseas upload")
-
-            # 共用400重试的逐项映射，保留所有参数及重复图片位置；不修改原请求。
-            from services.kie_image_fallback_request import replay_request
-
-            prepared = replay_request(
-                {"model_id": request.model},
-                {"source_urls": source_urls, "staged_urls": staged_urls,
-                 "request": request.model_dump(mode="json", exclude={"callBackUrl"})},
-                request.callBackUrl,
+    def _schedule_shadow_route(
+        self,
+        model: str,
+        task_id: str,
+        source_urls: list[str],
+        route: str,
+        proxy_url: Optional[str],
+        request_snapshot: Optional[dict] = None,
+    ) -> None:
+        """启动一条独立出口的旁路探测任务。"""
+        task = asyncio.create_task(
+            self._run_shadow_upload(
+                model=model,
+                task_id=task_id,
+                source_urls=source_urls,
+                route=route,
+                proxy_url=proxy_url,
+                **({"request_snapshot": request_snapshot} if request_snapshot is not None else {}),
             )
-        except Exception as exc:
-            logger.warning(
-                "KIE_IMAGE_INPUT_CDN_FALLBACK | upload_id={} | model={} | error_type={}",
-                upload_id, request.model, type(exc).__name__,
-            )
-            return request, None
-        logger.info(
-            "KIE_IMAGE_INPUT_PREPARED | upload_id={} | model={} | source_count={}",
-            upload_id, request.model, len(source_urls),
         )
-        return prepared, staged_urls
+        self._shadow_upload_tasks.add(task)
+        task.add_done_callback(self._shadow_upload_tasks.discard)
+        logger.info(
+            "KIE_SHADOW_UPLOAD_SCHEDULED | task_id={} | model={} | route={} | "
+            "source_count={} | transport={}",
+            task_id,
+            model,
+            route,
+            len(source_urls),
+            "explicit-proxy" if proxy_url else "httpx-trust-env",
+        )
 
     @classmethod
     def _extract_shadow_image_urls(cls, request: CreateTaskRequest) -> list[str]:
@@ -513,14 +507,28 @@ class KieClient:
         source_urls: list[str],
         route: str = "auto",
         proxy_url: Optional[str] = None,
-    ) -> Optional[list[str]]:
-        """读取工作区原文件并上传；仅返回完整链接，缓存由创建入口关联任务号。"""
+        request_snapshot: Optional[dict] = None,
+    ) -> None:
+        """下载并上传旁路素材；任何异常都只记录，不影响主任务。"""
         success_count = 0
         failure_count = 0
         staged_urls: list[str] = []
         started_at = time.monotonic()
 
+        if route == "overseas":
+            await save_overseas_shadow_upload_status(
+                task_id, "pending", source_urls, request_snapshot,
+            )
+
         try:
+            download_client_kwargs: Dict[str, Any] = {
+                "timeout": self.SHADOW_DOWNLOAD_TIMEOUT,
+                "follow_redirects": True,
+                "limits": httpx.Limits(max_connections=4, max_keepalive_connections=2),
+                # CDN 下载始终继承现有 7890/HTTP_PROXY 链路；海外旁路只
+                # 切换 KIE 临时空间上传出口。
+                "trust_env": True,
+            }
             upload_client_kwargs: Dict[str, Any] = {
                 "headers": {"Authorization": f"Bearer {self.api_key}"},
                 "timeout": self.SHADOW_UPLOAD_TIMEOUT,
@@ -529,25 +537,26 @@ class KieClient:
             if proxy_url:
                 upload_client_kwargs["proxy"] = proxy_url
 
-            async with httpx.AsyncClient(**upload_client_kwargs) as upload_client:
-                slots = asyncio.Semaphore(self.SHADOW_UPLOAD_CONCURRENCY)
-
-                async def upload_one(source_url: str) -> Optional[str]:
-                    async with slots:
-                        return await self._shadow_upload_one(
-                            model=model, task_id=task_id, source_url=source_url,
-                            upload_client=upload_client, route=route,
+            async with httpx.AsyncClient(**download_client_kwargs) as download_client:
+                async with httpx.AsyncClient(
+                    **upload_client_kwargs,
+                ) as upload_client:
+                    for source_url in source_urls:
+                        staged_url = await self._shadow_upload_one(
+                            model=model,
+                            task_id=task_id,
+                            source_url=source_url,
+                            download_client=download_client,
+                            upload_client=upload_client,
+                            route=route,
                         )
-
-                # gather按输入位置返回；取消时同时收束在途及等待空位的上传。
-                results = await asyncio.gather(
-                    *(upload_one(url) for url in source_urls), return_exceptions=True,
-                )
-                staged_urls = [url for url in results if isinstance(url, str) and url]
-                success_count = len(staged_urls)
-                failure_count = len(source_urls) - success_count
+                        if staged_url:
+                            success_count += 1
+                            staged_urls.append(staged_url)
+                        else:
+                            failure_count += 1
         except Exception as exc:
-            # 初始化/清理异常视为上传失败，由首次生成退回原 URL。
+            # 防止旁路自身的初始化/清理异常产生未处理任务异常。
             failure_count += len(source_urls) - success_count - failure_count
             logger.warning(
                 "KIE_SHADOW_UPLOAD_FAILURE | model={} | stage=client | "
@@ -557,6 +566,25 @@ class KieClient:
                 route,
                 type(exc).__name__,
                 len(source_urls),
+            )
+
+        if route == "overseas" and success_count == len(source_urls):
+            cache_saved = await save_overseas_shadow_upload_urls(
+                task_id,
+                source_urls,
+                staged_urls,
+                request=request_snapshot,
+            )
+            logger.info(
+                "KIE_SHADOW_UPLOAD_FALLBACK_READY | task_id={} | "
+                "source_count={} | cache_saved={}",
+                task_id,
+                len(source_urls),
+                cache_saved,
+            )
+        elif route == "overseas":
+            await save_overseas_shadow_upload_status(
+                task_id, "failed", source_urls, request_snapshot,
             )
 
         logger.info(
@@ -570,24 +598,23 @@ class KieClient:
             failure_count,
             int((time.monotonic() - started_at) * 1000),
         )
-        return staged_urls if success_count == len(source_urls) else None
 
     async def _shadow_upload_one(
         self,
         model: str,
         task_id: str,
         source_url: str,
+        download_client: httpx.AsyncClient,
         upload_client: httpx.AsyncClient,
         route: str,
     ) -> Optional[str]:
-        """执行一次无重试的工作区读取 + KIE 临时空间上传探测。"""
-        stage = "workspace_read"
+        """执行一次无重试的下载 + KIE 临时空间上传探测。"""
+        stage = "download"
         response_status: Optional[int] = None
         started_at = time.monotonic()
         try:
-            content, response_content_type = await asyncio.wait_for(
-                asyncio.to_thread(self._read_shadow_image, source_url),
-                timeout=self.SHADOW_READ_TIMEOUT,
+            content, response_content_type = await self._download_shadow_image(
+                download_client, source_url
             )
             content_type = self._resolve_shadow_content_type(
                 source_url, response_content_type
@@ -628,7 +655,7 @@ class KieClient:
 
             logger.info(
                 "KIE_SHADOW_UPLOAD_SUCCESS | task_id={} | model={} | route={} | "
-                "source=workspace | bytes={} | content_type={} | status_code={} | duration_ms={}",
+                "source=cdn | bytes={} | content_type={} | status_code={} | duration_ms={}",
                 task_id,
                 model,
                 route,
@@ -651,49 +678,23 @@ class KieClient:
             )
             return None
 
-    def _read_shadow_image(self, source_url: str) -> tuple[bytes, str]:
-        """按自有原图 URL 精确映射工作区文件，不搜索同名文件或回退下载。"""
-        from services.assets.asset_identity import resolve_asset_identity
-        from services.file_executor import FileExecutor
-
-        if not self._shadow_user_id:
-            raise PermissionError("shadow workspace owner unavailable")
-        parsed = urlsplit(source_url)
-        object_key = unquote(parsed.path).lstrip("/")
-        identity = resolve_asset_identity(
-            original_url=source_url,
-            workspace_path=None,
-            org_id=self._shadow_org_id,
-            storage_scope="channel" if self._shadow_user_id.startswith("channels/wecom/") else "user",
-            storage_owner_key=self._shadow_user_id,
-        )
-        if identity.storage_provider != "workspace":
-            raise PermissionError("shadow workspace source is outside owner scope")
-        query_keys = {key for key, _ in parse_qsl(
-            parsed.query, keep_blank_values=True, max_num_fields=32,
-        )}
-        # 未知参数、图像处理、versionId 等都不能静默映射到当前原文件。
-        if not query_keys <= self.SHADOW_ORIGINAL_QUERY_KEYS:
-            raise ValueError("shadow source is not a workspace original")
-
-        root = Path(settings.file_workspace_root).resolve()
-        path = root / object_key.removeprefix("workspace/")
-        FileExecutor.extract_user_relative_path(
-            path, root, self._shadow_user_id, self._shadow_org_id,
-        )
-        for item in (path, *path.parents):
-            if item == root:
-                break
-            if item.is_symlink():
-                raise ValueError("shadow workspace symlink is not allowed")
-        content_type = mimetypes.guess_type(path.name)[0] or ""
-        if not content_type.startswith("image/") or not path.is_file():
-            raise ValueError("shadow workspace image unavailable")
-        with path.open("rb") as file:
-            content = file.read(self.SHADOW_UPLOAD_MAX_BYTES + 1)
-        if not content or len(content) > self.SHADOW_UPLOAD_MAX_BYTES:
-            raise ValueError("shadow workspace image has invalid size")
-        return content, content_type
+    async def _download_shadow_image(
+        self,
+        client: httpx.AsyncClient,
+        source_url: str,
+    ) -> tuple[bytes, str]:
+        """通过继承环境代理的客户端下载图片，且不把 URL 写入旁路日志。"""
+        chunks: list[bytes] = []
+        total_size = 0
+        async with client.stream("GET", source_url) as response:
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "")
+            async for chunk in response.aiter_bytes(chunk_size=8192):
+                total_size += len(chunk)
+                if total_size > self.SHADOW_UPLOAD_MAX_BYTES:
+                    raise ValueError("shadow image exceeds size limit")
+                chunks.append(chunk)
+        return b"".join(chunks), content_type
 
     @staticmethod
     def _resolve_shadow_content_type(source_url: str, response_content_type: str) -> str:
