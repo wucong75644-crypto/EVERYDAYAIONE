@@ -1,7 +1,8 @@
-"""真实 Handler→KIE→旁路缓存→一次重试→结算/消息；仅模拟外部边界。"""
+"""真实 Handler→CDN首次生成/后台下载上传→400一次重试→结算；仅模拟外部边界。"""
 
 import asyncio
 import json
+import time
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from email import message_from_bytes, policy
@@ -133,7 +134,7 @@ async def chain(tmp_path, monkeypatch):
     monkeypatch.setattr("services.adapters.factory.get_settings", lambda: settings)
     state = SimpleNamespace(
         db=Database(), posts=[], uploads={"auto": [], "overseas": []}, events=[],
-        clients=[], http_options=[], mode=None, gate=asyncio.Event(),
+        clients=[], http_options=[], downloads=[], shadow_jobs=set(), mode=None, gate=asyncio.Event(),
         upload_started=asyncio.Event(), fail_code="400", success=False,
     )
     for key, value in {
@@ -176,6 +177,11 @@ async def chain(tmp_path, monkeypatch):
             "resultJson": json.dumps({"resultUrls": ["https://kie.example.com/generated.png"]}) if state.success else None,
         }
     state.result_data = result_data
+    original_schedule = KieClient._schedule_shadow_route
+    def schedule(client, *args, **kwargs):
+        original_schedule(client, *args, **kwargs)
+        state.shadow_jobs.update(client._shadow_upload_tasks)
+    monkeypatch.setattr(KieClient, "_schedule_shadow_route", schedule)
     real_http_client = httpx.AsyncClient
 
     def http_client(**kwargs):
@@ -192,12 +198,22 @@ async def chain(tmp_path, monkeypatch):
                 task_id = "original-kie" if len(state.posts) == 1 else "retry-kie"
                 assert len(state.posts) <= 2, "must not submit a third generation"
                 return httpx.Response(200, json={"code": 200, "msg": "success", "data": {"taskId": task_id}})
-            assert str(request.url) == KieClient.FILE_STREAM_UPLOAD_ENDPOINT, "unexpected network/CDN download"
+            if request.url.host == "cdn.example.com":
+                assert request.method == "GET" and route == "auto"
+                assert "authorization" not in request.headers
+                assert state.posts, "primary must be accepted before shadow download"
+                state.downloads.append(str(request.url))
+                index = next(i for i, url in enumerate(state.urls) if httpx.URL(url).path == request.url.path)
+                if index == 1 and state.mode in {"cdn_download_failure", "main_success_download_failure"}:
+                    return httpx.Response(404)
+                return httpx.Response(200, content=f"image-{'ABC'[index]}".encode(),
+                                      headers={"content-type": "image/png"})
+            assert str(request.url) == KieClient.FILE_STREAM_UPLOAD_ENDPOINT
             assert request.method == "POST"
-            assert not state.posts, "overseas upload must finish before first generation"
+            assert state.posts, "shadow upload must not block primary creation"
             if route == "overseas":
                 state.upload_started.set()
-                if state.mode in {"delayed_ready", "upload_timeout", "main_success_upload_timeout"}:
+                if state.mode in {"delayed_ready", "wait_expired", "main_success_slow_shadow"}:
                     await state.gate.wait()
             multipart = message_from_bytes(
                 b"Content-Type: " + request.headers["content-type"].encode() + b"\r\n\r\n" + request.content,
@@ -232,6 +248,8 @@ async def chain(tmp_path, monkeypatch):
         yield state
     finally:
         state.gate.set()
+        if state.shadow_jobs:
+            await asyncio.gather(*state.shadow_jobs, return_exceptions=True)
         for task in list(_waiters.values()):
             task.cancel()
         if _waiters:
@@ -242,62 +260,55 @@ async def chain(tmp_path, monkeypatch):
 
 
 MODES = [
-    "main_success", "retry_success", "retry_failure",
-    "overseas_upload_failure", "missing_file", "foreign_file", "delayed_ready",
-    "non400_failure", "local_timeout_late_success", "main_success_missing",
-    "main_success_upload_failure", "main_success_upload_timeout", "upload_timeout",
+    "main_success", "retry_success", "retry_failure", "overseas_upload_failure",
+    "cdn_download_failure", "missing_local_file", "delayed_ready", "wait_expired",
+    "non400_failure", "local_timeout_late_success",
+    "main_success_download_failure", "main_success_upload_failure", "main_success_slow_shadow",
 ]
 
 
 @pytest.mark.parametrize("delivery", ["callback", "poll"])
 @pytest.mark.parametrize("mode", MODES)
-async def test_workspace_chain(chain, mode, delivery, monkeypatch):
+async def test_cdn_shadow_chain(chain, mode, delivery):
     s = chain
     s.mode = mode
-    if mode in {"upload_timeout", "main_success_upload_timeout"}:
-        monkeypatch.setattr(KieClient, "SHADOW_PREPARE_TIMEOUT", 0.01)
-    if mode in {"missing_file", "main_success_missing"}:
+    if mode == "missing_local_file":
+        # CDN仍有图片时，本地源文件缺失不再影响旁路。
         s.paths[1].unlink()
-    if mode == "foreign_file":
-        s.input_urls[2] = s.input_urls[2].replace(USER, "22222222-2222-4222-8222-222222222222")
-        # 文件确实存在，但属于其他用户；不能通过旁路读取。
-        other = s.paths[1].parents[2] / "22222222-2222-4222-8222-222222222222" / "工作区素材/same.png"
-        other.parent.mkdir(parents=True)
-        other.write_bytes(b"foreign-private-image")
+    s.input_urls[2] += "?x-oss-process=image/resize,w_800&Signature=test"
 
     handler = ImageHandler(s.db)
     handler.org_id = ORG
     parts = [TextPart(text="Keep reference order C A B C"), *[
         ImagePart(url=url, original_url=url) for url in s.input_urls
     ]]
-    start = asyncio.create_task(handler.start(
+    await asyncio.wait_for(handler.start(
         message_id="placeholder", conversation_id="conversation", user_id=USER, content=parts,
         params={"model": MODEL, "resolution": "1K", "aspect_ratio": "1:1", "_org_id": ORG},
         metadata=TaskMetadata(client_task_id="client-task"),
-    ))
-    if mode == "delayed_ready":
-        await asyncio.wait_for(s.upload_started.wait(), timeout=3)
-        assert not start.done() and s.posts == [] and s.events == []
-        assert s.db.tables["messages"][0]["status"] == "pending"
-        assert s.db.tables["credit_transactions"][0]["status"] == "pending"
-        s.gate.set()
-    await asyncio.wait_for(start, timeout=3)
+    ), timeout=3)
     assert len(s.db.tables["tasks"]) == len(s.db.tables["credit_transactions"]) == len(s.posts) == 1
     row = s.db.tables["tasks"][0]
     local_id, transaction_id = row["id"], row["credit_transaction_id"]
     cost = row["credits_locked"]
     assert row["external_task_id"] == "original-kie"
-    staged_order = [f"https://tempfile.redpandaai.co/overseas/image-{label}.png" for label in "CABC"]
-    cdn_modes = {
-        "overseas_upload_failure", "missing_file", "foreign_file", "main_success_missing",
-        "main_success_upload_failure", "main_success_upload_timeout", "upload_timeout",
-    }
-    assert s.posts[0]["input"]["input_urls"] == (s.input_urls if mode in cdn_modes else staged_order)
-    cache = await get_overseas_shadow_upload("original-kie")
-    assert cache["status"] == ("failed" if mode in cdn_modes else "ready")
-    assert cache["request"]["input"]["input_urls"] == s.input_urls
+    assert s.posts[0]["input"]["input_urls"] == s.input_urls
     assert s.db.tables["users"][0]["credits"] == 1000 - cost
     assert s.events == []
+
+    delayed = mode in {"delayed_ready", "wait_expired", "main_success_slow_shadow"}
+    failed_upload = mode in {
+        "overseas_upload_failure", "cdn_download_failure",
+        "main_success_download_failure", "main_success_upload_failure",
+    }
+    if delayed:
+        await asyncio.wait_for(s.upload_started.wait(), timeout=3)
+        assert not s.gate.is_set()
+    else:
+        await asyncio.wait_for(asyncio.gather(*s.shadow_jobs), timeout=3)
+    cache = await get_overseas_shadow_upload("original-kie")
+    assert cache["status"] == ("pending" if delayed else "failed" if failed_upload else "ready")
+    assert cache["request"]["input"]["input_urls"] == s.input_urls
 
     svc = TaskCompletionService(s.db)
     async def deliver(task_id, success=False, fail_code="400"):
@@ -319,8 +330,20 @@ async def test_workspace_chain(chain, mode, delivery, monkeypatch):
         fail_code="500" if mode == "non400_failure" else "TIMEOUT" if mode == "local_timeout_late_success" else "400",
     )
 
-    retry = mode in {"retry_success", "retry_failure", "delayed_ready"}
-    success = mode.startswith("main_success") or mode in {"retry_success", "delayed_ready"}
+    if mode in {"delayed_ready", "wait_expired"}:
+        assert row["status"] == "pending" and s.events == [] and s.db.refunds == 0
+        state = row["request_params"]["_kie_image_fetch_fallback"]
+        assert state["phase"] == "waiting" and 59 < state["wait_deadline"] - time.time() <= 60
+        if mode == "delayed_ready":
+            s.gate.set()
+            await asyncio.wait_for(asyncio.gather(*s.shadow_jobs), timeout=3)
+            await asyncio.wait_for(asyncio.gather(*list(_waiters.values())), timeout=3)
+        else:
+            state["wait_deadline"] = time.time() - 1
+            await deliver("original-kie")
+
+    retry = mode in {"retry_success", "retry_failure", "delayed_ready", "missing_local_file"}
+    success = mode.startswith("main_success") or mode in {"retry_success", "delayed_ready", "missing_local_file"}
     if retry:
         assert row["external_task_id"] == "retry-kie" and row["status"] == "pending"
         assert len(s.posts) == 2 and s.events == [] and s.db.refunds == 0
@@ -330,9 +353,9 @@ async def test_workspace_chain(chain, mode, delivery, monkeypatch):
             f"https://tempfile.redpandaai.co/overseas/image-{label}.png" for label in "CABC"
         ]
         assert s.posts[1] == expected
-        uploads_before = deepcopy(s.uploads)
+        media_before = deepcopy((s.uploads, s.downloads))
         await deliver("retry-kie", success=success)
-        assert s.uploads == uploads_before, "fallback must not upload again"
+        assert (s.uploads, s.downloads) == media_before, "fallback must not download or upload again"
     else:
         assert len(s.posts) == 1
 
@@ -349,21 +372,24 @@ async def test_workspace_chain(chain, mode, delivery, monkeypatch):
         assert message["content"][0]["url"] == RESULT
     else:
         assert message["content"][0]["failed"] is True
-    assert all(b"foreign-private-image" not in values for values in s.uploads.values())
-    assert s.uploads["auto"] == [], "domestic shadow upload must not run"
-    if mode not in {"missing_file", "foreign_file", "main_success_missing", "upload_timeout", "main_success_upload_timeout"}:
-        assert sorted(s.uploads["overseas"]) == [b"image-A", b"image-B", b"image-C"]
-    if mode == "overseas_upload_failure":
-        assert (await get_overseas_shadow_upload("original-kie"))["status"] == "failed"
 
-    # 终态重复通知（包括原先决定保留的“本地超时后 KIE 才成功”）不得再次结算/重提。
+    # 晚到的旁路结果不得把已结束任务再次生成或改写结算。
+    s.gate.set()
+    await asyncio.wait_for(asyncio.gather(*s.shadow_jobs), timeout=3)
+    assert s.uploads["auto"] == [], "domestic shadow upload must not run"
+    assert s.uploads["overseas"] == (
+        [b"image-C", b"image-A"] if mode in {"cdn_download_failure", "main_success_download_failure"}
+        else [b"image-C", b"image-A", b"image-B"]
+    )
+    assert len(s.downloads) == 3, "duplicate image C should be downloaded only once"
+    assert "x-oss-process" in s.downloads[2] and "Signature=test" in s.downloads[2]
     prior = deepcopy((s.db.tables, s.posts, s.events, s.db.refunds))
     await deliver(row["external_task_id"], success=True if mode == "local_timeout_late_success" else success)
     assert (s.db.tables, s.posts, s.events, s.db.refunds) == prior
+
     api_options = [item for item in s.http_options if item.get("base_url")]
     assert all("proxy" not in item and item.get("trust_env", True) for item in api_options)
-    upload_options = [item for item in s.http_options if not item.get("base_url")]
-    assert len(upload_options) == 1
-    assert upload_options[0]["proxy"] == "http://127.0.0.1:7891"
-    assert upload_options[0]["trust_env"] is False
-    print(f"CHAIN_SIMULATION mode={mode} delivery={delivery} status={row['status']} create_count={len(s.posts)} refunds={s.db.refunds}")
+    download_options, upload_options = [item for item in s.http_options if not item.get("base_url")]
+    assert download_options["trust_env"] is True and "proxy" not in download_options
+    assert download_options["follow_redirects"] is True
+    assert upload_options["proxy"] == "http://127.0.0.1:7891" and upload_options["trust_env"] is False
