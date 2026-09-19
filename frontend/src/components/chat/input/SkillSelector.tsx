@@ -1,24 +1,25 @@
 import { useRef, useState } from 'react';
-import { BookOpen, Check } from 'lucide-react';
+import { BookOpen } from 'lucide-react';
 import { Popover } from '../../primitives/Popover';
-import { cn } from '../../../utils/cn';
 import { getAvailableSkills, skillVersion, type SkillSummary } from '../../../services/skills';
 
-interface Props {
+export interface SkillSelectorProps {
   conversationId: string | null;
   ensureConversation: () => Promise<string>;
   selected: SkillSummary | null;
   onSelect: (skill: SkillSummary | null, conversationId: string) => void;
   disabled: boolean;
+  onSelectionComplete?: () => void;
 }
 
-export default function SkillSelector({ conversationId, ensureConversation, selected, onSelect, disabled }: Props) {
+export default function SkillSelector({ conversationId, ensureConversation, selected, onSelect, disabled, onSelectionComplete }: SkillSelectorProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const [catalog, setCatalog] = useState<{ conversationId: string; skills: SkillSummary[] } | null>(null);
   const requestId = useRef(0);
   const creatingConversation = useRef<Promise<string> | null>(null);
+  const returnToInput = useRef(false);
   const skills = catalog?.conversationId === conversationId ? catalog.skills : [];
 
   const refresh = async () => {
@@ -44,21 +45,30 @@ export default function SkillSelector({ conversationId, ensureConversation, sele
   const choose = (skill: SkillSummary | null) => {
     if (!conversationId || disabled) return;
     onSelect(skill, conversationId);
+    returnToInput.current = true;
     setOpen(false);
   };
 
   return <Popover side="top" align="start" className="!p-2 w-72" maxWidth={288}
     open={open && !disabled} onOpenChange={(next) => {
       setOpen(next);
-      if (next) void refresh();
+      if (next) {
+        returnToInput.current = false;
+        void refresh();
+      }
+    }}
+    onCloseAutoFocus={(event) => {
+      if (returnToInput.current && onSelectionComplete) {
+        event.preventDefault();
+        onSelectionComplete();
+      }
+      returnToInput.current = false;
     }}
     trigger={<button type="button" disabled={disabled} aria-label={selected ? `Skill：${selected.name}` : '选择 Skill'}
       title={selected ? `${selected.name} · ${skillVersion(selected.revision)} · 仅本条消息` : '选择 Skill · 仅本条消息'}
-      className={cn('flex items-center gap-1 p-2 rounded-lg text-sm transition-base disabled:opacity-40',
-        selected ? 'bg-accent-light text-accent' : 'text-text-tertiary hover:text-text-primary hover:bg-hover')}>
+      className="flex items-center gap-1 p-2 rounded-lg text-sm transition-base disabled:opacity-40 text-text-tertiary hover:text-text-primary hover:bg-hover">
       <BookOpen className="w-4 h-4 shrink-0" />
-      <span className="hidden sm:inline max-w-24 truncate">{selected?.name ?? 'Skill'}</span>
-      {selected && <Check className="w-3 h-3 shrink-0" />}
+      <span className="hidden sm:inline">Skill</span>
     </button>}>
     <div className="px-2 py-1 text-xs text-text-tertiary">选择 Skill · 仅本条消息</div>
     <button type="button" onClick={() => choose(null)}

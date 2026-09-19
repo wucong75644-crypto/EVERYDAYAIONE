@@ -7,7 +7,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { m } from 'framer-motion';
-import { Send, Pause, Settings, Upload, Brain, Paperclip, FolderOpen, ChevronUp, Zap, ShieldCheck, ListChecks } from 'lucide-react';
+import { Send, Pause, Settings, Upload, Brain, Paperclip, FolderOpen, ChevronUp, Zap, ShieldCheck, ListChecks, BookOpen, X } from 'lucide-react';
 import { Popover, PopoverClose } from '../../primitives/Popover';
 import { cn } from '../../../utils/cn';
 import { SOFT_SPRING } from '../../../utils/motion';
@@ -17,6 +17,8 @@ import AdvancedSettingsMenu from './AdvancedSettingsMenu';
 import UploadMenu from './UploadMenu';
 import AudioRecorder from './AudioRecorder';
 import FileMentionDropdown from './FileMentionDropdown';
+import SkillSelector from './SkillSelector';
+import { skillVersion } from '../../../services/skills';
 import ChatAttachmentPreview from '../attachments/ChatAttachmentPreview';
 import type { InputControlsProps } from './InputControls.types';
 import { useDragDropUpload } from '../../../hooks/useDragDropUpload';
@@ -70,6 +72,13 @@ export default function InputControls(props: InputControlsProps) {
   const uploadMenuRef = useRef<HTMLDivElement>(null);
   const advancedMenuRef = useRef<HTMLDivElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
+  const selectedSkill = props.skillSelector?.selected;
+  const clearSkill = () => {
+    const selector = props.skillSelector;
+    if (!selector?.conversationId || selector.disabled || isSubmitting) return;
+    selector.onSelect(null, selector.conversationId);
+    textareaRef.current?.focus();
+  };
 
   // 拖拽/粘贴统一走 onUnifiedFiles（图片走 useImageUpload，其他走 useFileUpload；
   // 与「上传文件」菜单完全对称）
@@ -90,7 +99,7 @@ export default function InputControls(props: InputControlsProps) {
       const newHeight = Math.min(textarea.scrollHeight, maxHeight);
       textarea.style.height = `${newHeight}px`;
     }
-  }, [prompt]);
+  }, [prompt, selectedSkill]);
 
   // 关闭上传菜单（带动画）
   const closeUploadMenu = () => {
@@ -189,7 +198,28 @@ export default function InputControls(props: InputControlsProps) {
         )}
 
         {/* 输入区域 */}
-        <div className="flex items-start gap-2">
+        <div className="flex flex-wrap items-start gap-x-2">
+          {selectedSkill && (
+            <div
+              role="group"
+              aria-label="已选择的 Skill"
+              title={`${selectedSkill.name} · ${skillVersion(selectedSkill.revision)} · 仅本条消息`}
+              className="mt-1 flex max-w-full shrink-0 items-center gap-1.5 rounded-lg bg-accent-light px-2 py-1 text-sm text-accent sm:max-w-[60%]"
+            >
+              <BookOpen className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 break-words">{selectedSkill.name}</span>
+              <button
+                type="button"
+                onClick={clearSkill}
+                disabled={props.skillSelector?.disabled || isSubmitting}
+                aria-label={`取消 Skill：${selectedSkill.name}`}
+                title="取消 Skill"
+                className="shrink-0 rounded p-0.5 hover:bg-accent/10 focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40"
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             name="chat-input"
@@ -199,8 +229,8 @@ export default function InputControls(props: InputControlsProps) {
               onMentionInputChange?.(e.target.value, e.target.selectionStart ?? e.target.value.length);
             }}
             onKeyDown={onKeyDown}
-            placeholder={hasQuotedImage ? '描述你想要的修改...' : requiresImageUpload ? '该模型需要先上传图片才能生成哦～' : smartSubMode === 'image-ecom' ? '描述你的产品和需求，如"221色拼豆收纳盒 淘宝5张主图"' : '发送消息...'}
-            className="flex-1 resize-none border-none outline-none bg-transparent text-text-primary placeholder:text-text-disabled text-base leading-6 pt-2 pb-1 min-h-[44px] max-h-[120px] overflow-y-auto"
+            placeholder={selectedSkill ? '描述你的需求…' : hasQuotedImage ? '描述你想要的修改...' : requiresImageUpload ? '该模型需要先上传图片才能生成哦～' : smartSubMode === 'image-ecom' ? '描述你的产品和需求，如"221色拼豆收纳盒 淘宝5张主图"' : '发送消息...'}
+            className={cn('min-w-0 flex-1 resize-none border-none outline-none bg-transparent text-text-primary placeholder:text-text-disabled text-base leading-6 pt-2 pb-1 min-h-[44px] max-h-[120px] overflow-y-auto', selectedSkill && 'basis-40')}
             rows={1}
             disabled={isSubmitting}
           />
@@ -267,7 +297,8 @@ export default function InputControls(props: InputControlsProps) {
               )}
             </div>
 
-            {props.skillSelector}
+            {props.skillSelector && <SkillSelector {...props.skillSelector}
+              onSelectionComplete={() => textareaRef.current?.focus()} />}
 
             {/* 深度思考按钮（仅支持的模型显示） */}
             {supportsDeepThinking && onDeepThinkModeChange && (

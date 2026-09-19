@@ -44,6 +44,7 @@ interface PopoverProps {
   /** 受控 open */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  onCloseAutoFocus?: (event: Event) => void;
   /** 自定义 className（追加到 content） */
   className?: string;
   /** 最大宽度（px，默认 320） */
@@ -61,6 +62,7 @@ export function Popover({
   glass = false,
   open: openProp,
   onOpenChange,
+  onCloseAutoFocus,
   className,
   maxWidth = 320,
 }: PopoverProps) {
@@ -87,6 +89,7 @@ export function Popover({
               sideOffset={sideOffset}
               collisionPadding={8}
               onOpenAutoFocus={(e) => e.preventDefault()}
+              onCloseAutoFocus={onCloseAutoFocus}
             >
               <m.div
                 className={cn(

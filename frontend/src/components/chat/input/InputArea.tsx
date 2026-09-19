@@ -7,7 +7,6 @@ import { useState, useEffect, useCallback } from 'react';
 // lucide-react icons moved to InputControls (AI button now inside input)
 import { createConversation, updateConversation } from '../../../services/conversation';
 import { isSkillUiEnabled } from '../../../config/featureFlags';
-import SkillSelector from './SkillSelector';
 import { useTurnSkillSelection } from './useTurnSkillSelection';
 import { useMessageHandlers } from '../../../hooks/useMessageHandlers';
 import { useModelSelection } from '../../../hooks/useModelSelection';
@@ -360,11 +359,11 @@ export default function InputArea({
 
         {/* 主输入控件 */}
         <InputControls
-          skillSelector={skillUiVisible ? <SkillSelector
-            conversationId={conversationId} ensureConversation={ensureSkillConversation}
-            selected={turnSkill.selected} disabled={isSubmitting || isStreaming}
-            onSelect={turnSkill.select}
-          /> : undefined}
+          skillSelector={skillUiVisible ? {
+            conversationId, ensureConversation: ensureSkillConversation,
+            selected: turnSkill.selected, disabled: isSubmitting || isStreaming,
+            onSelect: turnSkill.select,
+          } : undefined}
           prompt={prompt}
           onPromptChange={handlePromptChange}
           onSubmit={handleSubmit}
