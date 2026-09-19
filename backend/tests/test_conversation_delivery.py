@@ -141,12 +141,21 @@ async def test_failed_delivery_pushes_message_error(monkeypatch):
         fake_release,
     )
     websocket = _WebSocket()
-    delivery = ActorTerminalDelivery(_DB(_task("failed")), websocket)
+    task = {**_task("failed"), "fail_code": "MODEL_TIMEOUT"}
+    message = _message("failed")
+    message["content"] = [
+        {"type": "skill_step", "status": "completed", "name": "参考图多方案提示词", "revision": "v1"},
+        {"type": "text", "text": "部分输出"},
+        {"type": "text", "text": "provider down"},
+    ]
+    delivery = ActorTerminalDelivery(_DB(task, message), websocket)
 
     await delivery.notify(_task("running"), {"outcome": "failed"})
 
     assert websocket.messages[0][3]["type"] == "message_error"
     assert websocket.messages[0][3]["payload"]["error"]["message"] == "provider down"
+    assert websocket.messages[0][3]["payload"]["error"]["code"] == "MODEL_TIMEOUT"
+    assert websocket.messages[0][3]["payload"]["message"]["content"] == message["content"]
 
 
 @pytest.mark.asyncio

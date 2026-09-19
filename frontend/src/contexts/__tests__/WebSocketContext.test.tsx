@@ -458,6 +458,27 @@ describe('WebSocketContext - Provider & Hook', () => {
       });
     });
 
+    it.each([false, true])('keeps Skill and partial output on failure (server snapshot: %s)', async (withSnapshot) => {
+      const skill = { type: 'skill_step', status: 'completed', name: '参考图多方案提示词', revision: 'v1' };
+      const partial = { type: 'text', text: '部分回答' };
+      const failure = { type: 'text', text: '\n\n模型响应超时，请重试。' };
+      const existing = { id: 'msg_123', content: [skill, partial], generation_params: { type: 'chat' } };
+      mockMessageStore.getMessage.mockReturnValue(existing);
+      renderHook(() => useWebSocketContext(), { wrapper: createWrapper(mockWs, mockMessageStore) });
+      await act(async () => {
+        mockWs.emit('message_error', {
+          task_id: 'task_123', message_id: 'msg_123', conversation_id: 'conv_123',
+          payload: {
+            error: { code: 'MODEL_TIMEOUT', message: '模型响应超时，请重试。' },
+            ...(withSnapshot ? { message: { ...existing, content: [skill, partial, failure], status: 'failed' } } : {}),
+          },
+        });
+      });
+      expect(mockMessageStore.updateMessage).toHaveBeenCalledWith('msg_123', expect.objectContaining({
+        content: [skill, partial, failure], status: 'failed', is_error: true,
+      }));
+    });
+
     it('should handle message_error with onError callback', async () => {
       const wrapper = createWrapper(mockWs, mockMessageStore);
       const { result } = renderHook(() => useWebSocketContext(), { wrapper });
@@ -673,7 +694,7 @@ describe('WebSocketContext - Provider & Hook', () => {
       }
     });
 
-    it('should clear chunk buffer on message_error for subsequent chunks', async () => {
+    it('should flush pending chunks once before message_error', async () => {
       vi.useFakeTimers();
       try {
         const wrapper = createWrapper(mockWs, mockMessageStore);
@@ -701,7 +722,7 @@ describe('WebSocketContext - Provider & Hook', () => {
           });
         });
 
-        // 立即发送错误（应清除缓冲）
+        // 立即发送错误：先保存未刷新的文字，再清除计时器。
         act(() => {
           mockWs.emit('message_error', {
             message_id: 'msg_123',
@@ -715,8 +736,8 @@ describe('WebSocketContext - Provider & Hook', () => {
           vi.advanceTimersByTime(30);
         });
 
-        // 缓冲的后续 chunk 应该被丢弃，不触发 flush
-        expect(mockMessageStore.appendStreamingContent).not.toHaveBeenCalled();
+        // 保留最后一批输出，并且没有后续重复 flush。
+        expect(mockMessageStore.appendStreamingContent).toHaveBeenCalledTimes(1);
       } finally {
         vi.useRealTimers();
       }

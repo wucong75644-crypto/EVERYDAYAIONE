@@ -1,8 +1,39 @@
 # Skill 第一期第 4 步：聊天手动选择与运行反馈
 
-任务分支：`codex/task/20260918225125-skill-p1-4-chat-ui`。基座与代码回滚点：`b41ebd698b4af585bb93d8f794b86e0e50f1be29`。本任务没有数据库迁移，不修改旧 Runtime 平台路径、Skill 编辑/审核、计划任务或 MCP，也不把选择保存为会话设置。
+任务分支：`codex/task/20260918225125-skill-p1-4-chat-ui`。基座与代码回滚点：`b41ebd698b4af585bb93d8f794b86e0e50f1be29`。P1-4 初次实现没有数据库迁移；2026-09-19 故障修复新增 258 失败快照迁移。不修改旧 Runtime 平台路径、Skill 编辑/审核、计划任务或 MCP，也不把选择保存为会话设置。
 
 2026-09-19 后续：用户提供“基于参考图的多方案生图提示词生成器”作为首个示例，已整理为[参考图多方案提示词 v1](../../examples/skills/README.md)，明确分配给“蓝创”。启用阶段将正式构建 UI 默认打开，开发/测试默认关闭，保留显式构建开关。不新增编辑或管理功能。
+
+## 2026-09-19：首次手动调用超时与反馈丢失（本地修复，未部署）
+
+生产只读证据：21:39:05.201 请求模型，21:39:06.411 收到首块，21:40:05.202 超时。失败任务已选择 `reference-image-prompts/v1`，保存了成功的 `skill_step` 和 4,897 字符正文；交付快照共 309 个序号，助手消息落库内容为空。不是 SkillResolver 拒绝，也不是首次请求完全没有模型响应。
+
+根因与修复：
+
+- Gateway 把普通模型默认 60 秒设成整次请求 deadline，覆盖了聊天已有的整轮执行预算。现在有执行预算、未显式指定 timeout 的请求按排队/首包和后续分块空闲计时，持续输出仍受不可续期的整轮预算约束（默认 600 秒）。显式 timeout、无预算辅助调用仍保留总 deadline；排队不续期，取消、并发槽位和不重试部分输出的规则不变。此修复位于共享 Gateway，适用于所有采用同一预算合同的调用，不是 Skill 特殊放宽。
+- 顶层 MessageItem 漏识别 skill_step；失败分支也跳过结构化块渲染。已补齐完整消息的执行中、完成、失败展示和 UI 开关验证。
+- Actor 失败 RPC 只改状态，没有把 fencing 进度写入助手消息；WebSocket 失败处理还会覆盖内容并丢弃最后一批文字。258 在原事务边界保存 Skill/工具块与去重后的部分正文，追加失败提示，重复/过期执行者不重复写入。失败事件携带规范化消息快照；客户端优先接受该快照，兼容没有快照的旧事件并保留缓冲文字。超时改成中文提示，不向用户展示模型网关内部字段。
+
+迁移只替换 fail_generation_turn，不新增表、权限、索引或生产历史回填。此前失败的消息不会被自动重跑或补写，复验需重新选择 Skill 并发送。
+
+验证：后端 266 项通过，另 5 项既有积分数据库集成测试因专用测试库配置缺失跳过；新增临时 PostgreSQL 8 项均实际运行通过，包括快照合并、普通聊天、失败 Skill、过期执行权、范围不匹配、取消竞态保护、幂等与回滚。前端定向 59 项通过；TypeScript 和正式构建通过（仅原有大 chunk 提示）。Gateway 回归以缩短的时间窗口重现“持续输出超过默认上限”，没有调用生产模型或改变生产数据。
+
+生产验证（下一次明确“提交部署”后）：
+
+1. 用受控 release.sh 发布任务提交并应用 258；核对生产提交、服务健康和 CDN 配置摘要。
+2. 在蓝创重新选“参考图多方案提示词”，上传原图并发送“需要提示词”。应在模型开始回答前看到“已启用 Skill · 参考图多方案提示词 · v1”，长回答不因持续输出到 60 秒而被截断，完成/刷新后提示保留。
+3. 若真实发生超时，页面应保留已启用提示与部分正文，并显示中文错误；刷新后内容一致。下一条不选 Skill 时仍是普通聊天。故障注入只在隔离测试中执行。
+
+回滚点：本轮前已部署提交 `13d7c59842799a1098d6b373243a9ed4c4838a6a`（含 CDN 修复）；数据库配套 `backend/migrations/rollback/258_conversation_failure_snapshot_rollback.sql` 恢复旧函数，不删除已有消息快照。当前没有提交、部署、合并 main 或清理工作树。
+
+改动文件：
+
+- 超时与服务端交付：`backend/services/model_gateway.py`、`backend/core/config.py`、`backend/services/conversation_execution.py`、`backend/services/conversation_delivery.py`、`backend/schemas/websocket_builders.py`。
+- 失败落库：`backend/migrations/258_conversation_failure_snapshot.sql`、`backend/migrations/rollback/258_conversation_failure_snapshot_rollback.sql`。
+- 聊天显示：`frontend/src/components/chat/message/MessageItem.tsx`、`MessageBubbleContent.tsx`（同目录）、`frontend/src/contexts/wsTaskMessageHandlers.ts`。
+- 后端回归：`backend/tests/test_model_gateway_stream_budget.py`、`test_conversation_failure_snapshot_postgres.py`、`test_conversation_execution.py`、`test_conversation_delivery.py`（同目录）。
+- 前端回归：`frontend/src/components/chat/__tests__/MessageItem.test.tsx`、`frontend/src/contexts/__tests__/WebSocketContext.test.tsx`。
+- 文档：本文、`docs/document/TECH_ModelGateway_T6.md`、`docs/CURRENT_ISSUES.md`。
 
 ## 用户行为
 

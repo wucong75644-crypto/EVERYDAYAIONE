@@ -131,6 +131,43 @@ function makeMessage(overrides: Partial<Message> = {}): Message {
 }
 
 describe('MessageItem 用户消息气泡', () => {
+  it.each(['true', 'false'])('完整消息遵循 Skill UI 开关 %s 并保留失败原因', (enabled) => {
+    vi.stubEnv('VITE_SKILL_UI_ENABLED', enabled);
+    try {
+      render(<MessageItem message={makeMessage({
+        status: 'failed', is_error: true, generation_params: { type: 'chat' },
+        content: [
+          { type: 'skill_step', step_id: 'manual-skill', status: 'failed', reason: '当前无权使用此 Skill。' },
+          { type: 'text', text: '模型响应超时，请重试。' },
+        ],
+      })} />);
+      if (enabled === 'true') expect(screen.getByText('Skill 未启用 · 当前无权使用此 Skill。')).toBeInTheDocument();
+      else expect(screen.queryByText(/Skill 未启用/)).not.toBeInTheDocument();
+      expect(screen.getByText('模型响应超时，请重试。')).toBeInTheDocument();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each(['streaming', 'completed', 'failed'] as const)('显示 %s 消息中的 Skill 和正文', (status) => {
+    vi.stubEnv('VITE_SKILL_UI_ENABLED', 'true');
+    try {
+      render(<MessageItem message={makeMessage({
+        status, is_error: status === 'failed', generation_params: { type: 'chat' },
+        content: [
+          { type: 'skill_step', step_id: 'manual-skill', status: 'completed', name: '参考图多方案提示词', revision: 'v1' },
+          { type: 'text', text: '部分回答' },
+          ...(status === 'failed' ? [{ type: 'text' as const, text: '模型响应超时，请重试。' }] : []),
+        ],
+      })} />);
+      expect(screen.getByText('已启用 Skill · 参考图多方案提示词 · v1')).toBeInTheDocument();
+      expect(screen.getByText('部分回答')).toBeInTheDocument();
+      if (status === 'failed') expect(screen.getByText('模型响应超时，请重试。')).toBeInTheDocument();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('同时提供纯色背景和渐变背景，确保不支持渐变的浏览器仍可显示白色文字', () => {
     render(
       <MessageItem

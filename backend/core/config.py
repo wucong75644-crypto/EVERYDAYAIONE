@@ -284,9 +284,9 @@ class Settings(BaseSettings):
     erp_agent_max_turns: int = 8               # ERPAgent 内部轮次上限
     erp_agent_tool_timeout: float = 30.0       # ERPAgent 单工具超时
 
-    # 超时分级配置（按任务类型差异化超时，仅用于非 budget 场景）
-    chat_stream_timeout: float = 60.0         # 聊天流式超时（普通模型）— 已被 budget 替代
-    chat_thinking_timeout: float = 120.0      # 聊天流式超时（推理模型）— 已被 budget 替代
+    # 有 budget 的聊天：排队/首包、分块空闲上限；无 budget：整次请求上限
+    chat_stream_timeout: float = 60.0         # 普通模型
+    chat_thinking_timeout: float = 120.0      # 专用推理模型
     image_generation_timeout: float = 180.0   # 图片生成轮询超时
     video_generation_timeout: float = 600.0   # 视频生成轮询超时（Sora 等，合理长时间）
 

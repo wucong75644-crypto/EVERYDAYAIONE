@@ -91,7 +91,7 @@ export default function MessageBubbleContent({
           ) : (
             <span>{bubbleTextInfo.text}</span>
           )
-        ) : isErrorMessage ? (
+        ) : isErrorMessage && !hasMultiBlocks ? (
           <span className="text-[15px]">{textContent || 'Error occurred'}</span>
         ) : isUser ? (
           <>{textContent}</>
