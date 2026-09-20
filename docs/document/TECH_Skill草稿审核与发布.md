@@ -4,7 +4,7 @@
 
 ## 设计与任务地图
 
-- 在 `skill_drafts` 保存每包唯一工作副本、乐观版本、每次保存由服务端生成的新候选 revision、审核者及审核哈希。状态为 draft → in_review → published；审核退回恢复 draft；published → draft 开始下一版；draft/in_review/published → deprecated；任意未禁用状态 → disabled。废弃/禁用后不再编辑或发布。
+- 在 `skill_drafts` 保存每包唯一工作副本、乐观版本、每次保存由服务端生成的新候选 revision、审核者及审核哈希。状态为 draft → in_review → published；审核退回恢复 draft；published → draft 开始下一版；draft/in_review/published → deprecated；任意未禁用状态 → disabled。废弃后不再编辑或发布；停用期间不能编辑或发布，新增 `enable` 可恢复审计记录中的停用前状态（见下方增量修复，尚未部署）。
 - 草稿与不可变 `skill_revisions` 分离。重新编辑不会停止当前发布版本；已发布正文、摘要、目录元数据、NAS 路径和双哈希继续由数据库不可变约束保护。旧目录中的包可按需建立管理副本，不扫描 NAS 自动导入。
 - 所有组织管理 HTTP 请求使用登录用户和数据库当前 active 用户/组织/成员 owner/admin 身份。客户端 org_id 只是目标，不是授权；正文请求不能提供 scope、路径、发布哈希或审核人。平台包不通过组织端修改。个人创建/自动触发本轮均不开放。
 - 审核冻结正文，单独记录通过或退回；编辑使审核失效。发布需要当前版本已审核；以行锁串行化和 expected_version 拒绝过期保存、重复发布和并发状态操作。
@@ -29,7 +29,7 @@
 
 管理详情和正文只能由该目标组织的 active owner/admin 读取；平台发布正文对组织管理员只读，平台草稿不返回。路径中的组织是精确操作目标，服务端核验该组织成员身份，忽略 JWT org 和 X-Org-Id 的赋权含义。组织切换过程中旧请求不能落到另一个组织。个人无组织入口，不新增个人目录或自动触发。
 
-请求不接受 scope、NAS 路径、revision 编号、审核人或哈希。409 表示过期 expected_version 或重复 skill_key，403/404 表示授权/可见性失败，422 表示状态或内容无效，503 表示服务/存储不可用。NAS 路径、数据库错误和哈希不返回客户端。审核中禁止保存；废弃/禁用均为终态，禁用还拒绝已激活恢复；需要新 Skill 时使用新的稳定标识。
+请求不接受 scope、NAS 路径、revision 编号、审核人或哈希。409 表示过期 expected_version 或重复 skill_key，403/404 表示授权/可见性失败，422 表示状态或内容无效，503 表示服务/存储不可用。NAS 路径、数据库错误和哈希不返回客户端。审核中禁止保存；废弃为终态，停用还拒绝已激活恢复；重新启用仅撤销本次停用，不接受客户端指定目标状态，不产生新 revision。
 
 ## 生产验证与回滚
 
@@ -108,3 +108,30 @@
 基础设施回滚参考：`/etc/fstab.skill-authoring-388fc6d0.bak`。需要回滚时核对现有 fstab，只移除本任务新增的组织子目录条目并卸载该子挂载、重新加载 systemd；保留 NAS 文件及其他挂载，不用旧备份覆盖后续无关配置。应用代码回滚参考 `388fc6d0`，通过受控发布流程执行。
 
 后端写权限例外回滚：仅移除新增的 `/etc/systemd/system/everydayai-backend.service.d/skill-authoring-write.conf`，保留原 `50-skill-storage.conf` 等配置，经 daemon-reload 与受控发布重启后端恢复服务只读限制。已发布的 NAS 文件、数据库 revision 和审计均保留。
+
+## 停用后重新启用修复（2026-09-20，未部署）
+
+用户在 `c7e41279` 发布成功后测试停用，发现无法恢复。根因为原设计把 disabled 设为终态：前端不展示恢复入口，HTTP 动作枚举无 enable，259 数据库触发器也拒绝逆向状态；旧测试只验证禁用后拒绝操作，没有覆盖临时停用后恢复这一使用需求。修复前在临时 PostgreSQL 中复现 enable 被动作契约拒绝。
+
+- 已停用的组织 Skill 在详情页显示主按钮“重新启用”，确认框解释会恢复停用前状态。已有生产停用记录可以直接使用，无需重建 Skill 或重新发布正文。未提供管理副本的旧包仍按既有 disable 行为创建草稿，恢复到其审计记录中的 draft 状态，原已发布版本单独恢复。
+- 增加 `260_skill_reenable.sql`，不改已部署 259 的内容或校验和。借助不可修改的审计中 package、草稿 version、disable 动作、request_id 和事务时间，精确识别本次停用前的 draft 状态及受影响 revision。状态改变仍要求组织 owner/admin、包归属校验、包锁和 expected_version；所有 enable 状态变化由既有触发器记入同一事务审计。
+- 恢复草稿/审核中的内容与审核记录，不发布未审核内容；恢复原 published/deprecated revision，不修改正文、路径、哈希、revision 或版本数量。此前已废弃、retired、单独 disabled 的历史版本不会因本次恢复变成 published；assignment 的目标、开关和权限均保持原样，撤销授权不会自动恢复。
+- 对本次恢复涉及的全部历史 revision 先从 NAS 读回校验双哈希，再原子恢复状态。缺失、篡改或数据库失败均保持停用，允许修复后重试。纯未发布草稿没有 NAS 文件，不依赖 NAS 初始化。Actor 仍按原 revision 和权限恢复；恢复到 deprecated 后新 Turn 仍被阻止。
+- 定向验证：后端 authoring/API/恢复/存储共 137 项通过，含新增真实 PostgreSQL 恢复组 18 项；前端管理和离开保护 24 项通过；TypeScript、定向 ESLint、diff 空白检查通过。独立只读审查未发现阻塞问题，已采纳纯草稿延迟初始化 NAS 的建议。测试只使用隔离数据库与临时目录，未改变生产停用状态。
+
+本次改动文件：
+
+| 范围 | 文件 |
+| --- | --- |
+| 恢复服务与契约 | `backend/services/skills/authoring.py`、`authoring_contracts.py`、`reenable.py` |
+| 迁移与回滚 | `backend/migrations/260_skill_reenable.sql`、`backend/migrations/rollback/260_skill_reenable_rollback.sql` |
+| 按用户要求复用测试 | `deploy/release.sh`、`scripts/testing/test_release_acceptance_lifecycle.sh` |
+| 页面与客户端 | `frontend/src/components/admin/SkillAdminPanel.tsx`、`frontend/src/components/admin/skills/SkillWorkspace.tsx`、`frontend/src/services/skillAdmin.ts` |
+| 回归测试 | `backend/tests/test_skill_reenable_postgres.py`、`test_skill_authoring_postgres.py`、`test_skill_authoring_api.py`、`frontend/src/components/admin/__tests__/SkillAdminPanel.test.tsx` |
+| 文档 | 本文、`docs/document/UI_Skill管理体验优化.md`、`docs/CURRENT_ISSUES.md` |
+
+生产复验：明确“提交部署”后检查 260 迁移账本；进入“组织 Skill → 已停用条目”，点击“重新启用 → 确认启用”，核对停用前状态、原可用版本、版本数和正文不变。用新 Turn 验证原发布版本重新可用，并按原场景验证已激活 Turn 的固定版本恢复。若启用失败，状态仍应为已停用。不得为此重新创建或覆盖用户的 Skill。
+
+回滚点为 `c7e41279523886c9abd3fecaff02733af95ceacc`。应用通过受控流程撤销本次增量；数据库配套 `rollback/260_skill_reenable_rollback.sql` 仅恢复旧 guard 并移除新辅助函数，不删除草稿、审计或 NAS 文件，也不擅自重新停用已恢复记录。当前未提交、未部署，未合并 main 或清理工作树。
+
+2026-09-21 用户明确要求快速提交部署、仅做必要测试。复用上述 137 项后端、24 项前端及类型/静态检查；为受控发布入口增加显式 `--skip-test`，转发执行器已有选项，默认行为不变，仍执行前后端构建、迁移账本、发布锁、来源与 readiness 检查。如果发布前合入 main 改变候选，则停止复用，须对新候选补充必要验证后再发布。新增发布参数用临时 Git/模拟 SSH 的生命周期测试验证，不访问生产。

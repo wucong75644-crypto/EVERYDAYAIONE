@@ -62,7 +62,8 @@ def test_authentication_required(api, headers):
 
 
 @pytest.mark.parametrize('change', ['member', 'inactive_member', 'inactive_org', 'inactive_user', 'nonmember_super_admin'])
-def test_current_database_permissions_required(api, change):
+@pytest.mark.parametrize('operation', ['create', 'enable'])
+def test_current_database_permissions_required(api, change, operation):
     if change == 'member': api.db._tables['org_members']._data[0]['role'] = 'member'
     if change == 'inactive_member': api.db._tables['org_members']._data[0]['status'] = 'disabled'
     if change == 'inactive_org': api.db._tables['organizations']._data[0]['status'] = 'disabled'
@@ -70,7 +71,9 @@ def test_current_database_permissions_required(api, change):
     if change == 'nonmember_super_admin':
         api.db._tables['users']._data[0]['role'] = 'super_admin'
         api.db.set_table_data('org_members', [])
-    assert api.client.post(api.base, json={'skill_key': 'orders'}, headers=api.auth).status_code == 403
+    endpoint, payload = (api.base, {'skill_key': 'orders'}) if operation == 'create' else (
+        f'{api.base}/{api.pid}/transitions', {'action': 'enable', 'expected_version': 5})
+    assert api.client.post(endpoint, json=payload, headers=api.auth).status_code == 403
     api.factory.assert_not_called()
 
 
@@ -107,3 +110,20 @@ def test_safe_failures(api, code, status):
     response = api.client.post(f'{api.base}/{api.pid}/transitions',
         json={'expected_version': 3, 'action': 'publish'}, headers=api.auth)
     assert response.status_code == status
+
+
+def test_reenable_is_an_authorized_versioned_action(api):
+    response = api.client.post(f'{api.base}/{api.pid}/transitions',
+        json={'expected_version': 5, 'action': 'enable'}, headers=api.auth)
+    assert response.status_code == 200
+    data = api.service.transition.call_args.args[1]
+    assert data.action == 'enable' and data.expected_version == 5
+    assert api.factory.call_args.args[0].scope.request_id == response.headers['x-request-id']
+
+
+@pytest.mark.parametrize('field', ['status', 'restore_state', 'revision', 'content', 'org_id'])
+def test_reenable_does_not_accept_client_selected_content_or_restore_state(api, field):
+    response = api.client.post(f'{api.base}/{api.pid}/transitions',
+        json={'expected_version': 5, 'action': 'enable', field: 'forged'}, headers=api.auth)
+    assert response.status_code == 422
+    api.service.transition.assert_not_called()

@@ -9,6 +9,7 @@ from psycopg.types.json import Jsonb
 from services.skills.authoring_contracts import DraftContent, reviewed_document
 from services.skills.contracts import PublishRevision, SkillError, SkillPackage, SkillRevision
 from services.skills.repository import SkillRepository
+from services.skills.reenable import reenable
 from services.skills.storage import SkillStorage
 
 
@@ -181,6 +182,8 @@ class SkillAuthoring:
                         content = DraftContent(description=validated.summary, body=validated.body,
                                                catalog_metadata=validated.catalog_metadata)
                     self._insert_draft(cursor, package_id, content)
+            elif action == 'enable':
+                reenable(cursor, package, draft, self._storage)
             elif action in ('deprecate', 'disable'):
                 if draft and (draft['status'] == 'disabled' or
                               (action == 'deprecate' and draft['status'] == 'deprecated')):

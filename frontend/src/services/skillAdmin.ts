@@ -1,7 +1,7 @@
 import { request } from './api';
 
 export type SkillState = 'draft' | 'in_review' | 'published' | 'deprecated' | 'disabled';
-export type SkillAction = 'start_draft' | 'submit' | 'approve' | 'reject' | 'publish' | 'deprecate' | 'disable';
+export type SkillAction = 'start_draft' | 'submit' | 'approve' | 'reject' | 'publish' | 'deprecate' | 'disable' | 'enable';
 export interface DraftContent {
   description: string;
   body: string;

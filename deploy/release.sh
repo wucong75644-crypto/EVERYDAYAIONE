@@ -42,6 +42,7 @@ usage() {
   --deploy-main SHA      从已合并到 origin/main 的确定提交部署
   --frontend-only        仅部署前端
   --backend-only         仅部署后端
+  --skip-test            复用已完成的定向测试，跳过执行器全量测试；保留构建/迁移/健康检查
   --rollback SHA         从 origin/main 历史中的提交回滚应用版本，不回滚数据库迁移
   -h, --help             显示帮助
 EOF
@@ -61,6 +62,7 @@ deploy_main_sha=''
 accept_and_close=false
 frontend_only=false
 backend_only=false
+skip_test=false
 declare -a task_files=()
 declare -a source_only_files=()
 declare -a migration_files=()
@@ -101,6 +103,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --backend-only)
             backend_only=true
+            shift
+            ;;
+        --skip-test)
+            skip_test=true
             shift
             ;;
         --rollback)
@@ -145,7 +151,7 @@ target_count=0
 
 set +u
 if [[ "$accept_and_close" == true ]]; then
-    [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#source_only_files[@]} -eq 0 && ${#migration_files[@]} -eq 0 && "$frontend_only" == false && "$backend_only" == false ]] \
+    [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#source_only_files[@]} -eq 0 && ${#migration_files[@]} -eq 0 && "$frontend_only" == false && "$backend_only" == false && "$skip_test" == false ]] \
         || fail "--accept-and-close 不接受提交文件或部署范围参数"
 elif [[ -n "$deploy_task_sha" || -n "$deploy_main_sha" ]]; then
     [[ -z "$message" && ${#task_files[@]} -eq 0 && ${#source_only_files[@]} -eq 0 ]] \
@@ -273,6 +279,8 @@ sync_task_branch_with_latest_main() {
     git push origin "$branch" \
         || fail "已同步最新 main，但无法推送合并后的任务提交"
     info "任务候选已同步最新 main，继续测试与部署：$commit_sha"
+    [[ "$skip_test" == false ]] \
+        || fail "main 合入后候选已改变，请对新候选补充必要验证后再复用测试；尚未开始生产部署"
 }
 
 release_worktree=''
@@ -500,6 +508,10 @@ chmod +x deploy/deploy.sh
 deploy_args=()
 [[ "$frontend_only" == true ]] && deploy_args+=(--frontend-only)
 [[ "$backend_only" == true ]] && deploy_args+=(--backend-only)
+if [[ "$skip_test" == true ]]; then
+    info "复用已完成的定向测试；保留构建、迁移与服务健康检查"
+    deploy_args+=(--skip-test)
+fi
 if [[ "$frontend_only" != true ]]; then
     if ((${#task_files[@]} > 0)); then
         for task_file in "${task_files[@]}"; do

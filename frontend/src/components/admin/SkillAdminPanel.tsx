@@ -26,7 +26,8 @@ const confirmations = {
   publish: ['发布新版本？', '审核通过的内容将保存为不可变版本。后续新的解析与激活将使用新版本，已经激活的任务继续使用原版本。', '确认发布'],
   reject: ['退回修改？', '内容将转回草稿，组织管理员可以继续编辑；再次发布前需要重新审核。', '退回草稿'],
   deprecate: ['废弃这项 Skill？', '废弃后会阻止新的解析和激活。已经激活的任务仍可使用原版本恢复。此 Skill 将不能继续编辑或发布，没有直接恢复入口。', '确认废弃'],
-  disable: ['停用这项 Skill？', '停用后将阻止新的解析、激活和已有任务的恢复。仅在需要立即阻止使用时操作；没有直接恢复入口。', '确认停用'],
+  disable: ['停用这项 Skill？', '停用后将阻止新的解析、激活和已有任务的恢复。内容与版本会保留，可在详情页重新启用。', '确认停用'],
+  enable: ['重新启用这项 Skill？', '将恢复停用前的状态和原有版本，内容不会变更。草稿仍需审核发布，已废弃的版本仍保持废弃，已撤销的授权不会恢复。', '确认启用'],
   leave: ['放弃未保存的修改？', '当前修改尚未保存。继续操作会放弃这些修改，保留上次保存的草稿。', '放弃修改并继续'],
 } as const;
 type Confirmation = keyof typeof confirmations;
@@ -156,7 +157,7 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
       const next = await transitionSkill(orgId, detail.package_id, detail.draft?.version ?? 0, value);
       if (token !== generation.current) return;
       show(next);
-      setNotice(value === 'publish' ? '发布成功，新版本已可用。' : value === 'start_draft' ? '修订草稿已创建，原版本保持不变。' : '状态已更新。');
+      setNotice(value === 'publish' ? '发布成功，新版本已可用。' : value === 'start_draft' ? '修订草稿已创建，原版本保持不变。' : value === 'enable' ? '已解除停用，恢复为停用前的状态。' : '状态已更新。');
       await refreshList(token, true);
     });
   }

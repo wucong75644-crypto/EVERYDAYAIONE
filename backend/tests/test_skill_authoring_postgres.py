@@ -52,7 +52,8 @@ def environment(postgres_socket, tmp_path):
     with pool.connection(privileged=True) as conn:
         conn.execute('CREATE TABLE organizations(id UUID PRIMARY KEY)')
         conn.execute('INSERT INTO organizations VALUES (%s),(%s)', (org, other))
-        for migration in ('256_skill_catalog.sql', '257_skill_catalog_metadata.sql', '259_skill_authoring.sql'):
+        for migration in ('256_skill_catalog.sql', '257_skill_catalog_metadata.sql', '259_skill_authoring.sql',
+                          '260_skill_reenable.sql'):
             conn.execute((MIGRATIONS / migration).read_text())
     root = tmp_path / 'nas'
     root.mkdir()
@@ -277,7 +278,7 @@ def test_restore_still_requires_grant_and_hash(environment):
 
 
 @pytest.mark.parametrize('action_name', ['start_draft', 'submit', 'publish', 'deprecate'])
-def test_disabled_is_terminal(environment, action_name):
+def test_disabled_requires_explicit_reenable(environment, action_name):
     svc = environment.service()
     pid = create(svc)
     action(svc, pid, 'disable')
@@ -314,9 +315,11 @@ def test_legacy_package_can_start_managed_draft(environment):
 def test_migration_rollback_reapply_and_populated_refusal(environment):
     rollback = (MIGRATIONS / 'rollback/259_skill_authoring_rollback.sql').read_text()
     with environment.pool.connection(privileged=True) as conn:
+        conn.execute((MIGRATIONS / 'rollback/260_skill_reenable_rollback.sql').read_text())
         conn.execute(rollback)
         assert conn.execute("SELECT to_regclass('skill_drafts')").fetchone()[0] is None
         conn.execute((MIGRATIONS / '259_skill_authoring.sql').read_text())
+        conn.execute((MIGRATIONS / '260_skill_reenable.sql').read_text())
     pid = create(environment.service())
     with environment.pool.connection(privileged=True) as conn:
         with pytest.raises(psycopg.errors.RaiseException, match='AUTHORING_NOT_EMPTY'):

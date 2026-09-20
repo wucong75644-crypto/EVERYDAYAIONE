@@ -23,7 +23,7 @@ export function SkillWorkspace(p: Props) {
     : editing ? (available ? `正在编辑草稿，${available}继续可用。` : '草稿仅用于编辑，审核发布后才可使用。')
       : status === 'in_review' ? (d.draft?.approved_by ? '内容已审核通过，发布后才会启用新版本。' : '审核期间内容已锁定；需要修改时，请先退回草稿。')
         : status === 'deprecated' ? '已阻止新的解析和激活，已激活的任务仍可恢复。'
-          : status === 'disabled' ? '已停止新的解析、激活和已有任务的恢复。'
+          : status === 'disabled' ? '已停止新的解析、激活和已有任务的恢复。点击“重新启用”可恢复停用前的状态。'
             : '当前版本只读。编辑会创建新草稿，不改变正在使用的版本。';
   const usesDraft = !!d.draft && (editing || status === 'in_review' || (stopped && !d.revisions.length));
   const shown = p.tab === 'history' ? p.revisionContent?.content : usesDraft ? p.content : p.revisionContent?.content;
@@ -35,6 +35,7 @@ export function SkillWorkspace(p: Props) {
       <div className="min-w-0"><div className="flex flex-wrap items-center gap-3"><h2 className="break-all text-xl font-semibold">{detailName(d)}</h2><SkillStatus state={status} approved={!!d.draft?.approved_by} /></div><p className="mt-1.5 break-all text-xs text-[var(--s-text-tertiary)]">{d.scope_kind === 'org' ? '组织 Skill' : '平台 Skill'} · {d.skill_key}</p></div>
       <div className="flex flex-wrap items-center gap-2">
         {editing && <><Button variant="secondary" disabled={p.busy || !p.dirty} onClick={p.onSave}>保存草稿</Button><Button disabled={p.busy} onClick={p.onSubmit}>{p.dirty ? '保存并提交审核' : '提交审核'}</Button></>}
+        {d.editable && d.draft && status === 'disabled' && <Button disabled={p.busy} onClick={() => p.onAction('enable')}>重新启用</Button>}
         {d.editable && status === 'in_review' && <><Button variant="secondary" disabled={p.busy} onClick={() => p.onAction('reject')}>退回修改</Button><Button disabled={p.busy} onClick={() => p.onAction(d.draft?.approved_by ? 'publish' : 'approve')}>{d.draft?.approved_by ? '发布新版本' : '审核通过'}</Button></>}
         {d.editable && !editing && (status === 'published' || !d.draft && !stopped) && <Button icon={<SquarePen size={16} />} disabled={p.busy} onClick={() => p.onAction('start_draft')}>{d.revisions.length ? '编辑新版本' : '创建草稿'}</Button>}
         <Dropdown align="end" trigger={<Button variant="secondary" disabled={p.busy} aria-label="更多操作" icon={<Ellipsis size={16} />} />}>
