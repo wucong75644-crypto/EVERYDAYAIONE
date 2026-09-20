@@ -99,8 +99,12 @@
 - `/mnt/platform-skills` 保持只读，已有平台 Skill 文件内容未变。
 - 新建 NAS 的 `/.platform-skills/org` 目录（root:root、0750），仅将其读写挂载到 `/mnt/platform-skills/org`；沿用父挂载的其他选项。
 - `/etc/fstab` 已添加该子目录挂载；systemd 的父挂载 Requires/After 依赖已验证。
+- 后端已有 `50-skill-storage.conf` 通过 `ReadOnlyPaths=/mnt/platform-skills` 将子挂载也设为只读，因此主机 NAS 探针不能代替后端进程验证。首次真实发布返回 503，数据库仍为审核通过、revision 数量为 0，未写入发布文件；主机与后端 `/proc/<pid>/mountinfo` 分别显示组织子挂载 rw/ro，确定是服务命名空间的写入限制。
+- 在后端新增 `skill-authoring-write.conf`（版本化模板：`deploy/everydayai-backend-skill-authoring.conf`），仅追加 `ReadWritePaths=/mnt/platform-skills/org` 与 `RequiresMountsFor=/mnt/platform-skills/org`。原 `ReadOnlyPaths` 和 `InaccessiblePaths=/mnt/nas-workspace/.platform-skills` 保留，Actor 服务配置不变。该例外使用 systemd 支持的只读目录内可写子目录机制；参见 [systemd 执行沙箱文档](https://github.com/systemd/systemd/blob/main/man/systemd.exec.xml)。安装后由受控应用部署重启后端；验收须检查后端实际挂载和真实 HTTP 发布。
 - 真实 NAS 隔离探针验证了完整 revision 原子安装、只读文件、单链接、双哈希校验、相同内容重试保持 inode，以及冲突内容拒绝覆盖。探针未登记业务数据库，临时测试命名空间已清理。业务 Skill 的实际发布由部署后的已授权验收另行核对。
 
 操作使用生产发布锁；配置变更前使旧验收候选失效，完整应用部署成功后由 `deploy/release.sh` 建立新候选。首次检查受到 NFS 新目录缓存延迟影响并安全停止，未写 fstab；确认两个挂载的目录 inode 一致后完成配置。
 
 基础设施回滚参考：`/etc/fstab.skill-authoring-388fc6d0.bak`。需要回滚时核对现有 fstab，只移除本任务新增的组织子目录条目并卸载该子挂载、重新加载 systemd；保留 NAS 文件及其他挂载，不用旧备份覆盖后续无关配置。应用代码回滚参考 `388fc6d0`，通过受控发布流程执行。
+
+后端写权限例外回滚：仅移除新增的 `/etc/systemd/system/everydayai-backend.service.d/skill-authoring-write.conf`，保留原 `50-skill-storage.conf` 等配置，经 daemon-reload 与受控发布重启后端恢复服务只读限制。已发布的 NAS 文件、数据库 revision 和审计均保留。
