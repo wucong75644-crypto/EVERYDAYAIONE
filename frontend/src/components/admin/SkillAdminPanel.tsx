@@ -7,7 +7,7 @@ import {
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Dialog, DialogFooter } from '../primitives/Dialog';
-import { SkillLibrary } from './skills/SkillLibrary';
+import { SkillLibrary, type SkillLibraryScope } from './skills/SkillLibrary';
 import { SkillWorkspace, type RevisionContent } from './skills/SkillWorkspace';
 import { detailState, emptyContent, type SkillNavigationState } from './skills/presentation';
 import './skills/skill-admin.css';
@@ -37,7 +37,7 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
   const [items, setItems] = useState<SkillAdminItem[]>([]);
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [content, setContent] = useState<DraftContent>(emptyContent);
-  const [scope, setScope] = useState<'org' | 'platform'>('org');
+  const [scope, setScope] = useState<SkillLibraryScope>('org');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<SkillState | ''>('');
   const [tab, setTab] = useState<'content' | 'history'>('content');
@@ -208,8 +208,8 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
   }
   const modalOpen = !!confirmation || creating;
   return <section aria-label="Skill 管理" className="skill-admin-theme py-3 text-[var(--s-text-primary)]">
-    {error && !modalOpen && <p role="alert" className="mb-4 rounded-md bg-[var(--s-error-soft)] px-4 py-3 text-sm text-[var(--s-error)]">{error}</p>}
-    {notice && <p role="status" className="mb-4 rounded-md bg-[var(--s-success-soft)] px-4 py-3 text-sm text-[var(--s-success)]">{notice}</p>}
+    {error && !modalOpen && scope !== 'personal' && <p role="alert" className="mb-4 rounded-md bg-[var(--s-error-soft)] px-4 py-3 text-sm text-[var(--s-error)]">{error}</p>}
+    {notice && scope !== 'personal' && <p role="status" className="mb-4 rounded-md bg-[var(--s-success-soft)] px-4 py-3 text-sm text-[var(--s-success)]">{notice}</p>}
     {detail ? <SkillWorkspace detail={detail} content={content} dirty={dirty} busy={busy} tab={tab} revisionContent={revisionContent} reading={reading} readFailed={readFailed}
       onTab={changeTab} onChange={value => { setContent(value); setDirty(true); }} onBack={back} onRefresh={() => requestLeave(() => select(detail.package_id))}
       onSave={() => save()} onSubmit={() => save(true)} onAction={action} onRevision={revision => {

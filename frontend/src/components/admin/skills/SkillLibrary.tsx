@@ -1,14 +1,21 @@
-import { Building2, ChevronRight, FileText, Layers, Plus, RefreshCw, Search } from 'lucide-react';
+import { Building2, ChevronRight, FileText, Layers, LockKeyhole, Plus, RefreshCw, Search, UserRound } from 'lucide-react';
 import type { SkillAdminItem, SkillState } from '../../../services/skillAdmin';
 import { Button } from '../../ui/Button';
 import { Input, inputVariants } from '../../ui/Input';
 import { SkillStatus } from './SkillStatus';
 import { formatDate, stateLabels } from './presentation';
 
+export type SkillLibraryScope = 'personal' | 'org' | 'platform';
+const sources = [
+  { scope: 'personal', label: '我的 Skill', icon: UserRound },
+  { scope: 'org', label: '组织 Skill', icon: Building2 },
+  { scope: 'platform', label: '平台 Skill', icon: Layers },
+] as const;
+
 interface Props {
   items: SkillAdminItem[]; loading: boolean; busy: boolean; failed: boolean;
-  scope: 'org' | 'platform'; query: string; filter: SkillState | '';
-  onScope: (value: 'org' | 'platform') => void; onQuery: (value: string) => void;
+  scope: SkillLibraryScope; query: string; filter: SkillState | '';
+  onScope: (value: SkillLibraryScope) => void; onQuery: (value: string) => void;
   onFilter: (value: SkillState | '') => void; onCreate: () => void;
   onOpen: (id: string) => void; onRefresh: () => void;
 }
@@ -18,16 +25,24 @@ export function SkillLibrary(p: Props) {
     && `${item.name ?? ''} ${item.skill_key} ${item.working_description ?? item.description ?? ''}`.toLowerCase().includes(p.query.trim().toLowerCase()));
   return <>
     <div className="flex flex-wrap items-center justify-between gap-4">
-      <div><h2 className="text-2xl font-semibold tracking-tight">Skill 库</h2><p className="mt-1 text-sm text-[var(--s-text-tertiary)]">把团队的工作方法，变成可以复用的能力。</p></div>
-      <Button icon={<Plus size={16} />} disabled={p.busy} onClick={p.onCreate}>新建 Skill</Button>
+      <div><h2 className="text-2xl font-semibold tracking-tight">Skill 库</h2><p className="mt-1 text-sm text-[var(--s-text-tertiary)]">把个人和团队的工作方法，变成可以复用的能力。</p></div>
+      <Button icon={<Plus size={16} />} disabled={p.busy || p.scope === 'personal'} onClick={p.scope === 'personal' ? undefined : p.onCreate}
+        aria-describedby={p.scope === 'personal' ? 'personal-skill-availability' : undefined}>{p.scope === 'personal' ? '新建个人 Skill' : '新建 Skill'}</Button>
     </div>
-    <div className="mt-6 flex gap-6 border-b border-[var(--s-border-default)]" aria-label="Skill 来源">
-      {(['org', 'platform'] as const).map(scope => <button type="button" key={scope} aria-pressed={p.scope === scope} disabled={p.busy}
-        onClick={() => p.onScope(scope)} className={`flex items-center gap-2 border-b-2 py-3 text-sm font-medium disabled:opacity-50 ${p.scope === scope ? 'border-[var(--s-accent)] text-[var(--s-accent)]' : 'border-transparent text-[var(--s-text-secondary)]'}`}>
-        {scope === 'org' ? <Building2 size={16} /> : <Layers size={16} />}{scope === 'org' ? '组织 Skill' : '平台 Skill'}
-        <span className="rounded bg-[var(--s-surface-sunken)] px-1.5 text-xs text-[var(--s-text-tertiary)]">{p.items.filter(i => i.scope_kind === scope).length}</span>
+    <div className="mt-6 flex gap-4 overflow-x-auto border-b border-[var(--s-border-default)] sm:gap-6" aria-label="Skill 来源">
+      {sources.map(({ scope, label, icon: Icon }) => <button type="button" key={scope} aria-pressed={p.scope === scope} disabled={p.busy}
+        onClick={() => p.onScope(scope)} className={`flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 py-3 text-sm font-medium disabled:opacity-50 ${p.scope === scope ? 'border-[var(--s-accent)] text-[var(--s-accent)]' : 'border-transparent text-[var(--s-text-secondary)]'}`}>
+        <Icon size={16} />{label}
+        {scope !== 'personal' && <span className="rounded bg-[var(--s-surface-sunken)] px-1.5 text-xs text-[var(--s-text-tertiary)]">{p.items.filter(i => i.scope_kind === scope).length}</span>}
       </button>)}
     </div>
+    {p.scope === 'personal' ? <div className="mt-5 rounded-lg border border-[var(--s-border-default)] bg-[var(--s-surface-raised)] px-6 py-14 text-center">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--s-selected)] text-[var(--s-accent)]"><UserRound size={24} /></div>
+      <h3 className="mt-5 text-base font-semibold">你的专属 Skill 空间</h3>
+      <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-[var(--s-text-secondary)]">整理你常用的工作方法和操作说明，让重复的事情更简单。</p>
+      <span className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-[var(--s-surface-sunken)] px-3 py-1 text-xs text-[var(--s-text-tertiary)]"><LockKeyhole size={12} />规划为私有草稿 · 仅自己可见</span>
+      <p id="personal-skill-availability" className="mt-6 text-xs leading-5 text-[var(--s-text-tertiary)]">个人 Skill 的创建与编辑尚未开放。</p>
+    </div> : <>
     <div className="my-4 flex flex-wrap items-center justify-between gap-3">
       <div className="w-full sm:max-w-xs"><Input aria-label="搜索 Skill" placeholder="搜索名称或标识…" icon={<Search size={16} />} value={p.query} onChange={e => p.onQuery(e.target.value)} /></div>
       <div className="flex items-center gap-2">
@@ -58,5 +73,6 @@ export function SkillLibrary(p: Props) {
       </div>}
     </div>
     <p className="mt-3 text-xs text-[var(--s-text-tertiary)]">{p.scope === 'org' ? '组织管理员共同维护 · 发布后供组织使用' : '平台统一维护 · 可查看内容和版本历史'}</p>
+    </>}
   </>;
 }
