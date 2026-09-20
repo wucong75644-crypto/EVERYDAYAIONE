@@ -87,13 +87,23 @@ class SkillAuthoring:
                 d.version, coalesce(d.status, CASE WHEN r.status = 'retired' THEN 'disabled'
                     ELSE r.status END, 'draft') AS status,
                 r.revision AS published_revision, r.summary AS description,
+                CASE WHEN d.package_id IS NOT NULL THEN nullif(d.content->'catalog_metadata'->>'name', '')
+                    ELSE r.catalog_metadata->>'name' END AS name,
+                coalesce(d.content->>'description', r.summary) AS working_description,
+                coalesce(d.updated_at, r.created_at, p.created_at) AS updated_at,
+                ar.revision AS available_revision,
+                CASE WHEN ar.id IS NOT NULL THEN (SELECT count(*) FROM public.skill_revisions prior
+                    WHERE prior.package_id = p.id AND (prior.created_at, prior.id) <= (ar.created_at, ar.id))
+                    END AS available_revision_number,
                 d.approved_by IS NOT NULL AS approved
                 FROM public.skill_packages p
                 LEFT JOIN public.skill_drafts d ON d.package_id = p.id
-                LEFT JOIN LATERAL (SELECT revision, summary, status FROM public.skill_revisions
+                LEFT JOIN LATERAL (SELECT revision, summary, status, catalog_metadata, created_at FROM public.skill_revisions
                     WHERE package_id = p.id ORDER BY created_at DESC, id DESC LIMIT 1) r ON true
+                LEFT JOIN public.skill_assignments a ON a.package_id = p.id AND a.org_id = %s::uuid AND a.enabled
+                LEFT JOIN public.skill_revisions ar ON ar.id = a.revision_id AND ar.status = 'published'
                 WHERE p.org_id IS NULL OR p.org_id = %s::uuid ORDER BY p.skill_key, p.id''',
-                (self.repository.scope.org_id,))
+                (self.repository.scope.org_id, self.repository.scope.org_id))
             return cursor.fetchall()
 
     def detail(self, package_id):
@@ -105,13 +115,19 @@ class SkillAuthoring:
                 FROM public.skill_revisions WHERE package_id = %s ORDER BY created_at DESC, id DESC''',
                 (package_id,))
             revisions = cursor.fetchall()
+            cursor.execute('''SELECT r.revision FROM public.skill_assignments a
+                JOIN public.skill_revisions r ON r.id = a.revision_id AND r.status = 'published'
+                WHERE a.package_id = %s AND a.org_id = %s::uuid AND a.enabled''',
+                (package_id, self.repository.scope.org_id))
+            available = cursor.fetchone()
             # No internal storage paths/hashes are serialized through admin HTTP.
             if draft:
                 draft = {key: draft[key] for key in (
                     'status', 'version', 'revision', 'content', 'approved_by', 'approved_at', 'updated_at')}
             return {'package_id': package.id, 'skill_key': package.skill_key,
                     'scope_kind': package.scope_kind, 'editable': owned,
-                    'draft': draft, 'revisions': revisions}
+                    'draft': draft, 'revisions': revisions,
+                    'available_revision': available['revision'] if available else None}
 
     def read_revision(self, package_id, revision):
         with self._transaction('read') as cursor:

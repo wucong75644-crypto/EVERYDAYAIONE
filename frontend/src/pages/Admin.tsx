@@ -12,6 +12,8 @@
  */
 
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useState } from 'react';
+import type { SkillNavigationState } from '../components/admin/skills/presentation';
 import { ArrowLeft } from 'lucide-react';
 import { useAuthStore } from '../stores/useAuthStore';
 import LoadingScreen from '../components/common/LoadingScreen';
@@ -22,6 +24,7 @@ export default function Admin() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const isAuthLoading = useAuthStore((s) => s.isLoading);
+  const [skillNavigation, setSkillNavigation] = useState<SkillNavigationState>({ dirty: false, busy: false });
 
   if (isAuthLoading) return <LoadingScreen message="加载中..." />;
 
@@ -30,13 +33,17 @@ export default function Admin() {
   void params; // 防止 unused warning
 
   return (
-    <div className="min-h-screen bg-[var(--s-bg-primary)] p-6">
+    <div className="min-h-screen bg-[var(--s-bg-primary)] p-4 sm:p-6">
       <div className="max-w-5xl mx-auto">
         {/* 顶部 */}
         <div className="flex items-center gap-3 mb-6">
           <button
             type="button"
-            onClick={() => navigate(-1)}
+            disabled={skillNavigation.busy}
+            onClick={() => {
+              if (skillNavigation.dirty && !window.confirm('Skill 有未保存的修改。放弃修改并离开？')) return;
+              navigate(-1);
+            }}
             className="p-2 rounded hover:bg-[var(--s-bg-secondary)]"
             aria-label="返回"
           >
@@ -47,7 +54,7 @@ export default function Admin() {
           </div>
         </div>
 
-        <AdminPanel />
+        <AdminPanel onSkillNavigationStateChange={setSkillNavigation} />
       </div>
     </div>
   );

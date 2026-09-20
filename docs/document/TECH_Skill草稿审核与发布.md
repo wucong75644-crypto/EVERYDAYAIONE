@@ -14,7 +14,7 @@
 
 ## 管理体验
 
-沿用 `/admin` 的组织管理员入口和现有视觉令牌，增加 Skill 页签。列表展示来源、草稿状态、最近发布版本；平台 Skill 只读。组织 Skill 可创建、编辑、保存、提交审核、审核通过/退回、发布、废弃、禁用。编辑区显示名称、说明、Markdown 正文和高级目录声明；审核时只读，发布按钮只在审核通过后出现。历史正文按需从受控 NAS 校验后读取，只读展示。废弃/禁用有就地确认及新旧 Turn 影响说明；请求失败保留本地编辑内容，组织切换清空旧数据。
+沿用 `/admin` 的组织管理员入口和现有视觉令牌，增加 Skill 页签。列表按组织/平台分区，支持名称/标识搜索和状态筛选，展示工作状态与实际可用版本；平台 Skill 只读并默认显示正文。组织 Skill 可创建、编辑、保存、提交审核、审核通过/退回、发布、废弃、禁用。编辑区显示名称、说明、Markdown 正文和高级目录声明；审核时只读，发布按钮只在审核通过后出现。历史正文按需从受控 NAS 校验后读取，只读展示。发布、退回、废弃/停用使用确认弹窗及新旧任务影响说明；请求失败保留本地编辑内容，组织切换清空旧数据。
 
 审核允许 owner/admin 对同一草稿分别执行审核和发布，审计记录实际身份，不强制双人分离。审核通过保留 in_review 状态并绑定 approved_by、approved_sha256、approved_at；编辑必须先退回 draft，所有旧审核信息失效。
 
@@ -85,3 +85,8 @@
 | [frontend/src/components/admin/SkillAdminPanel.tsx](../../frontend/src/components/admin/SkillAdminPanel.tsx) | 列表、草稿、审核、发布、历史与废弃 UI |
 | [frontend/src/components/admin/__tests__/SkillAdminPanel.test.tsx](../../frontend/src/components/admin/__tests__/SkillAdminPanel.test.tsx) | 状态、权限、存储、并发或交互定向回归 |
 | [frontend/src/services/skillAdmin.ts](../../frontend/src/services/skillAdmin.ts) | 固定目标组织的管理 API 客户端 |
+
+
+## 2026-09-20 UI 优化补充
+
+用户确认 Skill 库 → 内容详情 → 专注编辑方案后完成实际组件改造。详见 [UI_Skill管理体验优化](UI_Skill管理体验优化.md)，包括完整文件清单、错误与离开保护、定向验证、生产步骤及回滚点。本次未部署，也未改变 NAS 权限、发布事务、状态机或 Actor 恢复边界。

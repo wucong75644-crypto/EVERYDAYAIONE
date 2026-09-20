@@ -402,3 +402,57 @@ def test_non_bypass_rollback_owner_sees_hidden_data_and_preserves_rls(environmen
         assert conn.execute("SELECT relforcerowsecurity FROM pg_class WHERE relname='skill_drafts'").fetchone()[0]
         conn.execute('RESET ROLE')
         assert conn.execute('SELECT package_id FROM skill_drafts').fetchone()[0] == pid
+
+
+def test_library_projects_working_content_and_actual_available_revision(environment):
+    svc = environment.service()
+    pid = create(svc)
+    first = svc.list()[0]
+    assert first['name'] == '订单说明'
+    assert first['working_description'] == CONTENT.description
+    assert first['updated_at'] is not None
+    assert first['available_revision'] is None
+    released = publish(svc, pid)
+    v1 = released['revisions'][0]['revision']
+    assert released['available_revision'] == v1
+    action(svc, pid, 'start_draft')
+    draft = svc.detail(pid)['draft']
+    changed = CONTENT.model_copy(update={'description': '新草稿用途', 'catalog_metadata': CONTENT.catalog_metadata.model_copy(update={'name': '草稿新名称'})})
+    svc.save(pid, SaveDraft(expected_version=draft['version'], content=changed))
+    row = svc.list()[0]
+    assert row['name'] == '草稿新名称' and row['working_description'] == '新草稿用途'
+    assert row['description'] == CONTENT.description  # Existing projection stays compatible.
+    assert row['status'] == 'draft' and row['available_revision'] == v1
+    assert row['available_revision_number'] == 1
+    publish(svc, pid)
+    assert svc.list()[0]['available_revision_number'] == 2
+    # Assignment, rather than the most recent publication, decides what is usable.
+    with environment.pool.connection(privileged=True) as conn:
+        old_id = conn.execute('SELECT id FROM skill_revisions WHERE package_id=%s AND revision=%s', (pid, v1)).fetchone()[0]
+    svc.repository.set_assignment(pid, old_id, enabled=True)
+    assert svc.list()[0]['available_revision_number'] == 1
+    assert svc.detail(pid)['available_revision'] == v1
+    svc.repository.set_assignment(pid, old_id, enabled=False)
+    assert svc.list()[0]['available_revision'] is None
+    assert svc.detail(pid)['available_revision'] is None
+    svc.repository.set_assignment(pid, old_id, enabled=True)
+    action(svc, pid, 'deprecate')
+    assert svc.list()[0]['available_revision'] is None
+    assert svc.detail(pid)['available_revision'] is None
+
+
+def test_library_never_exposes_platform_working_name_or_private_draft(environment):
+    platform, org = environment.service(None), environment.service()
+    pid = create(platform, 'platform-skill')
+    row = org.list()[0]
+    assert row['name'] is None and row['working_description'] is None
+    publish(platform, pid)
+    action(platform, pid, 'start_draft')
+    draft = platform.detail(pid)['draft']
+    private = CONTENT.model_copy(update={'description': 'unpublished secret', 'catalog_metadata': CONTENT.catalog_metadata.model_copy(update={'name': 'private name'})})
+    platform.save(pid, SaveDraft(expected_version=draft['version'], content=private))
+    row = org.list()[0]
+    assert row['name'] == CONTENT.catalog_metadata.name
+    assert row['working_description'] == CONTENT.description
+    assert row['status'] == 'published'
+    assert org.detail(pid)['draft'] is None
