@@ -69,6 +69,7 @@ class ActorTerminalDelivery:
 
     async def _send_failed(self, task: Mapping[str, Any]) -> None:
         push_task_id = _push_task_id(task)
+        message = await self._load_message(str(task["assistant_message_id"]))
         await self._websocket.send_to_task_or_user(
             push_task_id,
             str(task["user_id"]),
@@ -76,8 +77,9 @@ class ActorTerminalDelivery:
                 task_id=push_task_id,
                 conversation_id=str(task["conversation_id"]),
                 message_id=str(task["assistant_message_id"]),
-                error_code="GENERATION_FAILED",
+                error_code=str(task.get("fail_code") or "GENERATION_FAILED"),
                 error_message=str(task.get("error_message") or "生成失败"),
+                message=format_message(message),
             ),
             org_id=task.get("org_id"),
         )

@@ -14,6 +14,7 @@ import { ApiRequestError, request, toApiRequestError } from './api';
 import { useMessageStore, type ContentPart, type Message } from '../stores/useMessageStore';
 import { logger } from '../utils/logger';
 import { pickOriginalImageUrl, toOriginalImageUrl } from '../utils/imageUrlRules';
+import type { SkillSelection } from './skills';
 import {
   applyOptimisticUpdate,
   processApiResponse,
@@ -36,6 +37,7 @@ const RETRY_DELAYS_MS = [500, 1500] as const;
 
 /** API 请求格式 */
 interface GenerateRequest {
+  selected_skill?: SkillSelection;
   operation: MessageOperation;
   content: ContentPart[];
   generation_type?: GenerationType;
@@ -109,6 +111,7 @@ export async function sendMessage(options: SendOptions): Promise<string> {
       data: {
         operation, content, generation_type: generationType,
         model, params, original_message_id: originalMessageId,
+        ...(options.selectedSkill ? { selected_skill: options.selectedSkill } : {}),
         client_request_id: ctx.clientRequestId,
         client_task_id: ctx.clientTaskId,
         created_at: ctx.now.toISOString(),

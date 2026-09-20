@@ -2,3 +2,9 @@
 export function isChangeSetChatUiEnabled(): boolean {
   return import.meta.env.VITE_CHANGESET_CHAT_UI !== 'false';
 }
+
+/** Production rollout; an explicit build override still independently disables the UI. */
+export function isSkillUiEnabled(): boolean {
+  const override = import.meta.env.VITE_SKILL_UI_ENABLED;
+  return override === undefined ? import.meta.env.PROD : override === 'true';
+}

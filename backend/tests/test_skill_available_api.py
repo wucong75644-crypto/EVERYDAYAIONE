@@ -60,7 +60,7 @@ def get(api, *, headers=None, **params):
 def test_authenticated_summary_response_and_server_derived_org(api):
     response = get(api, headers=api[4] | {"X-Org-Id": str(OTHER_ORG)})
     assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
-    assert response.json() == [{"name": "report", "revision": "v1", "description": "报表摘要",
+    assert response.json() == [{"skill_id": "report", "name": "report", "revision": "v1", "description": "报表摘要",
                                 "triggers": [], "source": "platform", "model_selectable": False}]
     scope = api[6].call_args.args[1]
     assert scope.org_id == str(ORG) and scope.actor_user_id == str(ACTOR)

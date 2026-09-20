@@ -74,6 +74,30 @@ function makeOptions(
 describe('useInputSubmission', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it('passes a manual Skill once, outside model params, and does not carry it to the next message', async () => {
+    const selection = { skill_id: 'orders', revision: 'v2' };
+    const takeSelectedSkill = vi.fn().mockReturnValueOnce(selection).mockReturnValue(undefined);
+    const options = makeOptions({ takeSelectedSkill });
+    const { result } = renderHook(() => useInputSubmission(options));
+    await act(() => result.current.handleSubmit());
+    expect(options.handleChatMessage).toHaveBeenLastCalledWith(
+      '保留这段输入', 'conversation-1', null, null, null, [], selection,
+    );
+    await act(() => result.current.handleSubmit());
+    expect(options.handleChatMessage).toHaveBeenLastCalledWith('保留这段输入', 'conversation-1', null, null);
+    expect(options.buildChatSettingsPayload).not.toHaveBeenCalled();
+  });
+
+  it('does not consume a selection when submission is disabled or text is steering the active turn', async () => {
+    const takeSelectedSkill = vi.fn();
+    const options = makeOptions({ takeSelectedSkill, getSendButtonState: () => ({ disabled: true }) });
+    const { result, rerender } = renderHook((o) => useInputSubmission(o), { initialProps: options });
+    await act(() => result.current.handleSubmit());
+    rerender({ ...options, getSendButtonState: () => ({ disabled: false }), isStreaming: true, sendSteer: () => true });
+    await act(() => result.current.handleSubmit());
+    expect(takeSelectedSkill).not.toHaveBeenCalled();
+  });
+
   it('流式任务中的文本只进入当前 turn，不重复创建 HTTP 任务', async () => {
     const sendSteer = vi.fn(() => true);
     const options = makeOptions({ isStreaming: true, sendSteer });

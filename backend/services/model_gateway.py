@@ -74,7 +74,9 @@ class ModelCallRequest:
 
     task_id 是业务任务 ID；trace_id 复用既有全链路追踪。request_id 可由
     调用方为单次模型请求显式指定；未指定时 Gateway 在真正开始 Provider 调用
-    前生成。timeout 和 cancel_token 由 Gateway 统一落实为请求 deadline 与取消边界；
+    前生成。显式 timeout 和 cancel_token 由 Gateway 落实为请求 deadline 与取消边界；
+    有执行预算且未指定 timeout 时，默认超时限制排队/首包与后续分块空闲，
+    总耗时由不可续期的 budget.remaining 限制；辅助调用保留总 deadline。
     retry_policy 注入既有 RetryContext/IntentRouter，Gateway 负责执行 attempt。
     未注入策略的辅助模型链路保持单次调用和原始异常兼容。
     """
@@ -409,6 +411,9 @@ class ModelGatewaySession:
             stream_timeout = self._stream_timeout
             if stream_timeout is None:
                 stream_timeout = _resolve_request_timeout(self.request)
+            use_idle_timeout = self.request.timeout is None and isinstance(
+                getattr(self.request.budget, "remaining", None), (int, float),
+            )
             loop = asyncio.get_running_loop()
             deadline = loop.time() + stream_timeout
             wait_started = loop.time()
@@ -498,6 +503,10 @@ class ModelGatewaySession:
                 if not first_chunk_emitted:
                     first_chunk_emitted = True
                     emit(SamplingEventType.FIRST_CHUNK)
+                if use_idle_timeout:
+                    # 活跃流不能被普通模型的 60s 总时限截断；整轮预算仍由
+                    # _remaining_timeout 约束。排队与首包仍共享初始 deadline。
+                    deadline = loop.time() + stream_timeout
                 self._output_started = True
                 yield chunk
             emit(SamplingEventType.COMPLETED)

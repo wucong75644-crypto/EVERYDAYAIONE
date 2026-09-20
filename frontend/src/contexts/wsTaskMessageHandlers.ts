@@ -176,6 +176,7 @@ function failMessage(
   deps: HandlerDeps,
   messageId: string,
   error: { code?: string; message?: string } | undefined,
+  snapshot?: Record<string, unknown>,
 ): void {
   const store = deps.getStore();
   const errorText = error?.message || '生成失败';
@@ -188,22 +189,27 @@ function failMessage(
     });
     return;
   }
+  const content = snapshot?.id === messageId
+    ? normalizeMessage(snapshot as NormalizeInput).content
+    : existing?.content ?? [];
+  const last = content[content.length - 1];
+  const hasErrorText = last?.type === 'text' && last.text.trim() === errorText;
   store.updateMessage(messageId, {
     status: 'failed', is_error: true,
     error: { code: error?.code ?? 'UNKNOWN', message: errorText },
-    content: [{ type: 'text', text: errorText }],
+    content: hasErrorText ? content : [
+      ...content,
+      { type: 'text', text: `${content.length ? '\n\n' : ''}${errorText}` },
+    ],
   });
 }
 
 export function handleMessageError(deps: HandlerDeps, msg: WSIncomingMessage): void {
   const { task_id, message_id, conversation_id } = msg;
   const error = (msg.error ?? msg.payload?.error) as { code?: string; message?: string } | undefined;
+  const snapshot = (msg.message ?? msg.payload?.message) as Record<string, unknown> | undefined;
 
-  if (message_id) deps.chunkBufferRef.current.delete(message_id);
-  if (deps.flushTimerRef.current && deps.chunkBufferRef.current.size === 0) {
-    clearTimeout(deps.flushTimerRef.current);
-    deps.flushTimerRef.current = null;
-  }
+  flushPendingChunks(deps);
 
   logger.error('ws:message', 'error received', undefined, {
     taskId: task_id,
@@ -212,7 +218,7 @@ export function handleMessageError(deps: HandlerDeps, msg: WSIncomingMessage): v
   });
 
   const store = deps.getStore();
-  if (message_id) failMessage(deps, message_id, error);
+  if (message_id) failMessage(deps, message_id, error, snapshot);
 
   if (task_id) handleTaskFailure(deps, task_id, error);
   const ownsStreamingSlot = !!conversation_id

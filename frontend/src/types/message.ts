@@ -17,6 +17,7 @@ export type ContentPart =
   | FilePart
   | ThinkingPart
   | ToolStepPart
+  | SkillStepPart
   | ToolResultPart
   | FormPart
   | ChartPart
@@ -29,6 +30,15 @@ export type ContentPart =
 export interface TextPart {
   type: 'text';
   text: string;
+}
+
+export interface SkillStepPart {
+  type: 'skill_step';
+  step_id: string;
+  status: 'completed' | 'error';
+  name?: string;
+  revision?: string;
+  reason?: string;
 }
 
 export interface ImagePart {

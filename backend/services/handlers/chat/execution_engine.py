@@ -35,6 +35,8 @@ from services.conversation_commands import (
 from services.conversation_turn_runtime import ConversationTurnRuntime
 from services.conversation_state import ConversationState
 from services.skills.runtime import ACTIVATE_SKILL, ACTIVATE_SKILL_SCHEMA, control_result
+from services.skills.selection import SkillSelection
+from services.skills.feedback import skill_step
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,7 @@ class ChatExecutionRequest:
     context_anchor: Any
     model_request_id: str | None = None
     params: dict[str, Any] = field(default_factory=dict)
+    selected_skill: SkillSelection | None = None
     permission_mode: str = "auto"
     needs_google_search: bool = False
     calculate_credits: bool = True
@@ -210,15 +213,47 @@ async def execute_chat(
         request.replay_context,
     )
     try:
+        skills = None
+        selection_error = None
         if runtime is not None or (request.replay_context or {}).get("skill_runtime") is not None:
-            from services.skills.runtime import create_skill_runtime
-            skills = await create_skill_runtime(
-                handler=handler, context=prepared.execution_context, runtime=runtime,
-                replay_context=request.replay_context,
-            )
+            from services.skills.runtime import create_skill_runtime, SkillReplayError
+            try:
+                skills = await create_skill_runtime(
+                    handler=handler, context=prepared.execution_context, runtime=runtime,
+                    replay_context=request.replay_context, selection=request.selected_skill,
+                )
+            except SkillReplayError:
+                raise
+            except Exception:
+                if request.selected_skill is None or request.replay_context:
+                    raise
+                selection_error = control_result("SKILL_LOAD_UNAVAILABLE")
             if skills is not None:
                 _apply_skill_context(prepared, skills)
         await output.start()
+        if request.selected_skill is not None and not any(
+            b.get("type") == "skill_step" and b.get("step_id") == "manual-skill" for b in blocks
+        ):
+            if runtime:
+                await runtime.safe_point(SafePoint.BEFORE_TOOL)
+            await _check_cancelled(event, request, prepared.messages, blocks, totals, "before_skill")
+            result = selection_error or control_result("SKILL_RUNTIME_DISABLED")
+            if skills is not None:
+                result = await skills.activate_manual(request.selected_skill)
+            block = skill_step(result, skills, step_id="manual-skill")
+            blocks.append(block)
+            if skills is not None:
+                _apply_skill_context(prepared, skills)
+            if runtime:
+                await runtime.safe_point(
+                    SafePoint.AFTER_SKILL_ACTIVATION,
+                    replay_payload=_build_replay_context(
+                        prepared.messages, blocks, prepared.budget.turns_used,
+                        next_model_round=_initial_model_round(request.replay_context),
+                        repeated_tool_call_guard=repeated_tool_call_guard,
+                    ),
+                )
+            await output.on_block(block)
         form_hint = await _run_loop(
             handler=handler,
             request=request,
@@ -344,7 +379,9 @@ async def _run_loop(
             permission=prepared.permission,
             execution_context=prepared.execution_context,
         )
-        if runtime and runtime.skill_runtime is not None and runtime.skill_runtime.directory:
+        if runtime and runtime.skill_runtime is not None and any(
+            c.catalog_metadata.model_selectable for c in runtime.skill_runtime.directory.values()
+        ):
             tools.append(ACTIVATE_SKILL_SCHEMA)
         current_model_round = model_round
         turn_text, turn_thinking, calls, previewed_call_ids = await _read_turn(
@@ -557,7 +594,7 @@ async def _read_turn(
             accumulate_tool_call_delta(calls, chunk.tool_calls)
             if runtime is not None:
                 for index, call in calls.items():
-                    if index in previewed_indices or not call.get("name"):
+                    if index in previewed_indices or not call.get("name") or call["name"] == ACTIVATE_SKILL:
                         continue
                     preview_id = _actor_tool_preview_id(
                         runtime.turn_id, model_round, index,
@@ -702,9 +739,11 @@ async def _execute_tools(
 ) -> str | None:
     totals = totals or StreamTotals()
     prepared.messages.append(_assistant_tool_message(turn_text, calls))
-    await _sink_tool_calls(sink, calls, turn + 1)
+    await _sink_tool_calls(sink, [c for c in calls if c["name"] != ACTIVATE_SKILL], turn + 1)
     start_times: dict[str, float] = {}
     for call in calls:
+        if call["name"] == ACTIVATE_SKILL:
+            continue
         block = build_running_step(call)
         start_times[call["id"]] = time.monotonic()
         if call["id"] in previewed_call_ids:
@@ -854,6 +893,7 @@ async def _execute_skill_batch(
     """Whole model batch barrier, including invalid/disabled activations."""
     skills = runtime.skill_runtime if runtime else None
     results = []
+    skill_blocks = []
     for call in calls:
         if call["name"] != ACTIVATE_SKILL:
             result = control_result("SKILL_ACTIVATION_BARRIER", message="请下一轮重新请求")
@@ -861,12 +901,15 @@ async def _execute_skill_batch(
             result = control_result("SKILL_RUNTIME_DISABLED")
         else:
             result = await skills.activate(call.get("arguments", ""))
+        if call["name"] == ACTIVATE_SKILL:
+            skill_blocks.append(skill_step(result, skills, step_id=call["id"]))
         text = json.dumps(result, ensure_ascii=False)
         results.append((call, text, not result["ok"], text))
     apply_tool_results(
         tool_results=results, messages=prepared.messages, content_blocks=blocks,
         start_times=start_times, tool_context=prepared.tool_context,
     )
+    blocks.extend(skill_blocks)
     if skills is not None:
         _apply_skill_context(prepared, skills)
     if runtime:
@@ -881,6 +924,8 @@ async def _execute_skill_batch(
             ),
         )
         _inject_steer_messages(prepared.messages, runtime.consume_steer_messages())
+    for block in skill_blocks:
+        await sink.on_block(block)
     call_ids = {call["id"] for call in calls}
     for block in blocks:
         if block.get("tool_call_id") in call_ids:

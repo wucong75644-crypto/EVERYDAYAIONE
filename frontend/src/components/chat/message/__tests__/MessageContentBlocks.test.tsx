@@ -1,9 +1,42 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Message } from '../../../../types/message';
 import MessageContentBlocks from '../MessageContentBlocks';
 import { normalizeMessage } from '../../../../utils/messageUtils';
 import { scheduledTaskForm } from '../../../../test/fixtures/scheduledTaskForm';
+
+afterEach(() => vi.unstubAllEnvs());
+
+describe('Skill feedback', () => {
+  it.each([true, false])('shows activated name and version while streaming=%s and after persistence', (isStreaming) => {
+    vi.stubEnv('VITE_SKILL_UI_ENABLED', 'true');
+    const message = normalizeMessage({
+      id: 'skill-message', conversation_id: 'c1', role: 'assistant', status: 'completed',
+      content: JSON.stringify([{ type: 'skill_step', step_id: 'manual-skill',
+        status: 'completed', name: '订单摘要', revision: 'v2', body: '/private/nas/SKILL.md' }]),
+    });
+    render(<MessageContentBlocks message={message} imageAssets={[]} fileBlocks={[]}
+      isStreaming={isStreaming} isRegenerating={false} textContent="" onImageClick={vi.fn()} />);
+    expect(screen.getByText('已启用 Skill · 订单摘要 · v2')).toBeInTheDocument();
+    expect(screen.queryByText(/private/)).not.toBeInTheDocument();
+  });
+
+  it('shows a readable failure and hides the feedback with UI flag off', () => {
+    vi.stubEnv('VITE_SKILL_UI_ENABLED', 'true');
+    const message = normalizeMessage({
+      id: 'skill-failed', conversation_id: 'c1', role: 'assistant', status: 'completed',
+      content: [{ type: 'skill_step', step_id: 'manual-skill', status: 'error',
+        reason: '该 Skill 当前不可用或你暂无使用权限，请重新选择。' }],
+    });
+    const view = render(<MessageContentBlocks message={message} imageAssets={[]} fileBlocks={[]}
+      isStreaming={false} isRegenerating={false} textContent="" onImageClick={vi.fn()} />);
+    expect(screen.getByText(/Skill 未启用 · 该 Skill 当前不可用/)).toBeInTheDocument();
+    vi.stubEnv('VITE_SKILL_UI_ENABLED', 'false');
+    view.rerender(<MessageContentBlocks message={message} imageAssets={[]} fileBlocks={[]}
+      isStreaming={false} isRegenerating={false} textContent="" onImageClick={vi.fn()} />);
+    expect(screen.queryByText(/Skill 未启用/)).not.toBeInTheDocument();
+  });
+});
 
 vi.mock('../DiagramBlock', () => ({
   default: ({

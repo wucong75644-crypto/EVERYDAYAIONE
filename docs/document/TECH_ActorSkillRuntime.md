@@ -1,5 +1,7 @@
 # Skill 第一期第 3 步：Actor 内的 Turn SkillRuntime
 
+后续状态：P1-4 增加首轮前手动选择与安全 `skill_step` 反馈，见 [聊天 Skill 选择与反馈](TECH_Skill聊天选择与反馈.md)。下述“不增加 UI”和“仅模型显式激活”为 P1-3 阶段边界；P1-4 保持原授权、工具收窄和恢复核验机制。
+
 ## 边界与开关
 
 只接入现有 `ConversationTurnRuntime → execution_engine → ToolExecutor`，不增加用户 UI、HTTP 激活接口、脚本执行或数据库迁移。沿用 P1-1/P1-2 的受控存储、目录权限、不可变 revision 和 assignment；未修改旧 Runtime 平台路径。

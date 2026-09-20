@@ -43,7 +43,7 @@
 
 ## 排队、取消、timeout 与释放
 
-1. 请求 attempt 的 deadline 在入队前建立，**排队和 Provider stream 共用这次 deadline**；不会获槽后重新获得完整 timeout。继续取执行预算 remaining 与 deadline 的较小值。未显式设置时复用现有模型超时解析（普通 Chat 60 秒、专用推理模型 120 秒，均可由原配置覆盖）。
+1. 显式 `timeout` 和无执行预算的辅助请求保留入队前建立的总 deadline，排队与 Provider stream 共用。带执行预算且未指定 `timeout` 的聊天请求：排队和首包共用初始 deadline，收到分块后续期空闲窗口；普通模型默认 60 秒、专用推理模型 120 秒。所有等待仍取 deadline 与不可续期的 `budget.remaining` 较小值（默认整轮 600 秒），持续输出不会在第 60 秒被截断；获槽本身不续期。
 2. 排队到期返回 `ModelGatewayTimeoutError(phase="queue")`，对外仍为 `MODEL_TIMEOUT`，不换模、不记 Provider 失败；没有真正调用 Provider。执行阶段 timeout 保留 T4 的 first_chunk/stream/provider 分类及原熔断记录语义。
 3. 支持 Task.cancel、asyncio.Event、现有轮询 cancel token、session.close；取消优先于同时完成的准入或已就绪 chunk，不向调用方交付取消后的数据。
 4. 等待的 acquire task 总会被取消并收尾。若取消与获槽同时完成，取得的 lease 在 finally 中归还；清理期间再次取消也不能跳过归还。lease.release 幂等，避免关闭与 stream finally 重复增加 semaphore 容量。

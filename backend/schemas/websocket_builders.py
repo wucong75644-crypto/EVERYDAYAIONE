@@ -162,11 +162,15 @@ def build_message_done(
 def build_message_error(
     task_id: str, conversation_id: str, message_id: str,
     error_code: str, error_message: str,
+    message: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """构建生成失败消息"""
+    payload: Dict[str, Any] = {"error": {"code": error_code, "message": error_message}}
+    if message is not None:
+        payload["message"] = message
     return _build_ws_message(
         WSMessageType.MESSAGE_ERROR,
-        {"error": {"code": error_code, "message": error_message}},
+        payload,
         task_id=task_id, conversation_id=conversation_id, message_id=message_id,
     )
 

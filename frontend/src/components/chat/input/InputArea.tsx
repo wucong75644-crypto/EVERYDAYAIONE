@@ -5,7 +5,9 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 // lucide-react icons moved to InputControls (AI button now inside input)
-import { updateConversation } from '../../../services/conversation';
+import { createConversation, updateConversation } from '../../../services/conversation';
+import { isSkillUiEnabled } from '../../../config/featureFlags';
+import { useTurnSkillSelection } from './useTurnSkillSelection';
 import { useMessageHandlers } from '../../../hooks/useMessageHandlers';
 import { useModelSelection } from '../../../hooks/useModelSelection';
 import { useAudioRecording } from '../../../hooks/useAudioRecording';
@@ -70,6 +72,7 @@ export default function InputArea({
   const prompt = controlledPrompt ?? internalPrompt;
   const setPrompt = controlledOnPromptChange ?? setInternalPrompt;
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isPreparingSkillConversation, setIsPreparingSkillConversation] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   // 用户积分（用于禁用积分不足的数量选项）
@@ -203,6 +206,22 @@ export default function InputArea({
   const streamingMessageId = useMessageStore((s) =>
     conversationId ? s.streamingMessages.get(conversationId) ?? null : null
   );
+  const skillUiVisible = isSkillUiEnabled() && effectiveModelType === 'chat';
+  const turnSkill = useTurnSkillSelection(conversationId, skillUiVisible && !isStreaming);
+  const ensureSkillConversation = async () => {
+    if (conversationId) return conversationId;
+    const title = prompt.trim().slice(0, 20) || '新对话';
+    setIsPreparingSkillConversation(true);
+    try {
+      const conversation = await createConversation({
+        title, model_id: selectedModel.id, chat_settings: buildChatSettingsPayload(),
+      });
+      onConversationCreated(conversation.id, title);
+      return conversation.id;
+    } finally {
+      setIsPreparingSkillConversation(false);
+    }
+  };
 
   const { handleStop, handlePause, sendSteer } = useInputTaskControls({
     conversationId,
@@ -257,9 +276,10 @@ export default function InputArea({
     prompt, setPrompt,
   });
   const { handleAudioSubmit, handleSubmit } = useInputSubmission({
+    takeSelectedSkill: turnSkill.take,
     conversationId, selectedModel, prompt, clearPromptForSubmission,
     restorePromptAfterRejection, audioBlob, clearRecording,
-    isSubmitting, setIsSubmitting, setUploadError, setSendError,
+    isSubmitting: isSubmitting || isPreparingSkillConversation, setIsSubmitting, setUploadError, setSendError,
     buildChatSettingsPayload, onConversationCreated, onMessageSent,
     handleChatMessage, handleImageGeneration, handleVideoGeneration,
     isEcomMode, effectiveModelType, smartSubMode, isStreaming, sendSteer,
@@ -306,7 +326,7 @@ export default function InputArea({
   });
 
   const anyUploadingState = isUploading;
-  const sendButtonState = getSendButtonState(isSubmitting, anyUploadingState, !!(prompt.trim() || attachments.length > 0));
+  const sendButtonState = getSendButtonState(isSubmitting || isPreparingSkillConversation, anyUploadingState, !!(prompt.trim() || attachments.length > 0));
 
   // 输入变化时清除发送错误状态 + 隐藏建议
   const handlePromptChange = useCallback((value: string) => {
@@ -339,6 +359,11 @@ export default function InputArea({
 
         {/* 主输入控件 */}
         <InputControls
+          skillSelector={skillUiVisible ? {
+            conversationId, ensureConversation: ensureSkillConversation,
+            selected: turnSkill.selected, disabled: isSubmitting || isStreaming,
+            onSelect: turnSkill.select,
+          } : undefined}
           prompt={prompt}
           onPromptChange={handlePromptChange}
           onSubmit={handleSubmit}

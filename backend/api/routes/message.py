@@ -316,6 +316,10 @@ async def _do_generate_message(
         body.params = {}
     body.params["_prefetched_summary"] = conversation.get("context_summary")
     body.params["_org_id"] = ctx.org_id
+    # Only the typed HTTP intent may populate this internal Actor input.
+    body.params.pop("_selected_skill", None)
+    if gen_type == GenerationType.CHAT and body.selected_skill is not None:
+        body.params["_selected_skill"] = body.selected_skill.model_dump()
 
     # 5. 处理助手消息（根据操作类型）
     assistant_message_id, assistant_message = await prepare_assistant_message(

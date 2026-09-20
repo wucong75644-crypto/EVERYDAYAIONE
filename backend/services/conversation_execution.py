@@ -352,13 +352,18 @@ class ConversationExecutionService:
             error.result.error_code if isinstance(error, ModelGatewayError)
             else type(error).__name__.upper()[:50]
         )
+        error_message = (
+            "模型响应超时，本次回答未完成，请重试。"
+            if error_code == "MODEL_TIMEOUT"
+            else str(error) or type(error).__name__
+        )
         return await self._rpc(
             "fail_generation_turn",
             {
                 "p_task_id": claim.task_id,
                 "p_execution_token": claim.execution_token,
                 "p_error_code": error_code,
-                "p_error_message": str(error) or type(error).__name__,
+                "p_error_message": error_message,
             },
         )
 

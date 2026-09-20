@@ -99,6 +99,24 @@ class _FailingExecutor:
         raise ValueError("provider failed")
 
 
+@pytest.mark.asyncio
+async def test_model_timeout_is_saved_as_readable_error_without_gateway_details():
+    from services.model_gateway import ModelGatewayError, ModelGatewayTimeoutError
+    from services.model_gateway_retry import ModelCallResult
+
+    result = ModelCallResult(request_id="request", model_id="model", status="failed",
+                             attempts=(), usage={}, partial_output=True, error_code="MODEL_TIMEOUT")
+    error = ModelGatewayError(result, ModelGatewayTimeoutError("model", 60, "stream"))
+    db = _FakeDB()
+    service = ConversationExecutionService(db, _FailingExecutor())
+    claim = GenerationClaim.from_rpc(_claimed(), "conv-1", "serial")
+    await service._fail(claim, error)
+    name, params = db.calls[-1]
+    assert name == "fail_generation_turn"
+    assert params["p_error_code"] == "MODEL_TIMEOUT"
+    assert params["p_error_message"] == "模型响应超时，本次回答未完成，请重试。"
+
+
 class _PausingExecutor:
     async def execute(self, task, claim, cancellation_event) -> GenerationOutcome:
         raise ConversationPauseRequested

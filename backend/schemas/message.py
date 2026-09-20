@@ -13,6 +13,7 @@ import json
 
 from schemas.chart import ChartPart
 from schemas.diagram import DiagramPart
+from services.skills.selection import SkillSelection
 from schemas.media_parts import (
     AudioPart,
     FilePart,
@@ -93,6 +94,16 @@ class ToolStepPart(BaseModel):
     elapsed_ms: Optional[int] = None
 
 
+class SkillStepPart(BaseModel):
+    """Public activation feedback; never carries instructions or policy."""
+    type: Literal["skill_step"] = "skill_step"
+    step_id: str
+    status: Literal["completed", "error"]
+    name: Optional[str] = None
+    revision: Optional[str] = None
+    reason: Optional[str] = None
+
+
 class ToolResultPart(BaseModel):
     """工具结果内容块（独立渲染，不被主 Agent 文本覆盖）
 
@@ -166,7 +177,7 @@ class EcomPlanPart(BaseModel):
 ContentPart = Annotated[
     Union[TextPart, ImagePart, VideoPart, AudioPart, FilePart,
           ThinkingPart, ToolStepPart, ToolResultPart, FormPart, ChangeSetPart, ChartPart,
-          DiagramPart, TablePart, InterruptMarkerPart, EcomPlanPart],
+          DiagramPart, TablePart, InterruptMarkerPart, EcomPlanPart, SkillStepPart],
     Field(discriminator="type"),
 ]
 
@@ -349,6 +360,7 @@ class GenerateRequest(BaseModel):
 
     # 类型特定参数
     params: Optional[Dict[str, Any]] = None
+    selected_skill: Optional[SkillSelection] = None
 
     # 重新生成时的原消息 ID
     original_message_id: Optional[str] = Field(None, max_length=100)

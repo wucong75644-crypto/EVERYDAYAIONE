@@ -69,7 +69,7 @@ export default memo(function MessageItem({
   const hasMultiBlocks = useMemo(() => {
     if (!Array.isArray(message.content)) return false;
     return message.content.some((p) =>
-      p.type === 'tool_step' || p.type === 'tool_result' ||
+      p.type === 'skill_step' || p.type === 'tool_step' || p.type === 'tool_result' ||
       p.type === 'image' || p.type === 'file' || p.type === 'form' ||
       p.type === 'chart' || p.type === 'diagram' || p.type === 'table' ||
       p.type === 'changeset' || p.type === 'interrupt_marker' ||

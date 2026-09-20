@@ -18,6 +18,7 @@ from schemas.message import (
     ThinkingPart,
     ToolResultPart,
     ToolStepPart,
+    SkillStepPart,
 )
 
 
@@ -79,6 +80,8 @@ def _build_part(block: dict[str, Any]) -> ContentPart | None:
         )
     if block_type == "text":
         return TextPart(text=block["text"])
+    if block_type == "skill_step":
+        return SkillStepPart(**block)
     if block_type == "tool_step":
         return ToolStepPart(
             tool_name=block["tool_name"],

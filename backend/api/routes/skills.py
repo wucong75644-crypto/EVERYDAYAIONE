@@ -1,4 +1,4 @@
-"""Read-only summary discovery. No Skill identifiers, authority or body inputs."""
+"""Read-only summary discovery. No authority, body or client scope inputs."""
 
 from typing import Annotated
 from uuid import UUID
