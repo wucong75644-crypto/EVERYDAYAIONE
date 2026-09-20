@@ -32,7 +32,7 @@ class Source:
         self.discover = AsyncMock(return_value=self.candidates)
         self.load = AsyncMock(side_effect=self._load)
 
-    async def _load(self, c):
+    async def _load(self, c, *, restoring=False):
         return ValidatedSkill("never-advertise/private/SKILL.md", c.skill_key, c.revision,
                               "1" * 64, digest(self.body), "summary", self.body, c.catalog_metadata)
 

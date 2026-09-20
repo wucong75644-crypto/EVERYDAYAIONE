@@ -16,10 +16,12 @@ import SuperAdminPanel from './SuperAdminPanel';
 import OrgManagePanel from './OrgManagePanel';
 import KuaimaiIntegrationPanel from '../integrations/KuaimaiIntegrationPanel';
 
+const SkillAdminPanel = lazy(() => import('./SkillAdminPanel'));
+
 const ErrorMonitorPanel = lazy(() => import('./ErrorMonitorPanel'));
 const UserManagePanel = lazy(() => import('./UserManagePanel'));
 
-type Tab = 'platform' | 'org' | 'monitoring' | 'kuaimai' | 'users';
+type Tab = 'platform' | 'org' | 'monitoring' | 'kuaimai' | 'users' | 'skills';
 
 
 export default function AdminPanel() {
@@ -31,6 +33,7 @@ export default function AdminPanel() {
   const tabs: { key: Tab; label: string; visible: boolean }[] = [
     { key: 'platform', label: '平台管理', visible: isSuperAdmin },
     { key: 'users', label: '用户管理', visible: isSuperAdmin },
+    { key: 'skills', label: 'Skill 管理', visible: isOrgAdmin },
     { key: 'org', label: '企业管理', visible: isOrgAdmin || isSuperAdmin },
     { key: 'monitoring', label: '系统监控', visible: isSuperAdmin },
     { key: 'kuaimai', label: '🔗 快麦接入', visible: isOrgAdmin },
@@ -82,6 +85,11 @@ export default function AdminPanel() {
         )}
         {activeTab === 'org' && (isOrgAdmin || isSuperAdmin) && (
           <OrgManagePanel orgId={currentOrg?.org_id} />
+        )}
+        {activeTab === 'skills' && isOrgAdmin && currentOrg && (
+          <Suspense fallback={<div>加载中...</div>}>
+            <SkillAdminPanel key={currentOrg.org_id} orgId={currentOrg.org_id} />
+          </Suspense>
         )}
         {activeTab === 'monitoring' && isSuperAdmin && (
           <Suspense fallback={<div className="text-center py-8 text-text-tertiary">加载中...</div>}>

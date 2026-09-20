@@ -150,21 +150,23 @@ class SkillRepository:
                     self.scope.request_id, audit.outcome, audit.reason_code))
             return cursor.fetchone()["id"]
 
-    def assigned_revision(self, package_id: UUID, revision: str) -> SkillRevision:
+    def assigned_revision(self, package_id: UUID, revision: str, *, restoring: bool = False) -> SkillRevision:
         """Read an exact revision of an enabled package, never its latest version.
 
         Assignment changes may select a newer revision for new turns; existing
-        turns still require their pinned published revision and an enabled grant.
+        turns may restore a deprecated revision, but still need an enabled grant.
+        New activations (even from an older directory) require published status.
         """
         org_id = self._require_org()
         with self._cursor() as cursor:
             cursor.execute("""SELECT r.* FROM public.skill_revisions r
                 JOIN public.skill_packages p ON p.id = r.package_id
                 JOIN public.skill_assignments a ON a.package_id = p.id
-                WHERE p.id = %s AND r.revision = %s AND r.status = 'published'
+                WHERE p.id = %s AND r.revision = %s
+                    AND (r.status = 'published' OR (%s AND r.status = 'deprecated'))
                     AND a.org_id = %s AND a.enabled
                     AND (p.org_id IS NULL OR p.org_id = a.org_id)""",
-                (package_id, revision, org_id))
+                (package_id, revision, restoring, org_id))
             row = cursor.fetchone()
         if row is None:
             raise SkillError("SKILL_PINNED_REVISION_UNAVAILABLE")
