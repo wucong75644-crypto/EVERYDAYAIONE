@@ -5,6 +5,7 @@ import { Input, inputVariants } from '../../ui/Input';
 import { SkillDocument } from './SkillDocument';
 import { contentName } from './presentation';
 import { SkillAssetEditor, SkillTemplateEditor } from './SkillAssets';
+import { SkillTemplateInput, SkillTemplateNotice } from './SkillTemplateInput';
 
 const lists = [
   ['triggers', '触发提示', '每行一项，描述适合使用这项 Skill 的任务。'],
@@ -38,8 +39,11 @@ export function SkillDraftEditor({ content, busy, dirty, onChange }: {
             className={`rounded px-3 py-1 text-xs ${preview === value ? 'bg-[var(--s-surface-raised)] text-[var(--s-text-primary)] shadow-sm' : 'text-[var(--s-text-tertiary)]'}`}>{value ? '预览' : '编辑'}</button>)}
         </div>
       </div>
-      {preview ? <SkillDocument body={content.body} /> : <textarea id="skill-body" aria-label="Skill 操作说明" value={content.body} maxLength={1000000} disabled={busy}
-        className={`${inputVariants()} min-h-80 resize-y font-mono leading-7`} spellCheck={false} onChange={e => onChange({ ...content, body: e.target.value })} />}
+      <p className="mb-3 text-xs text-[var(--s-text-tertiary)]">直接写清要做什么、按什么步骤做、输出什么格式。附件和动态信息按需添加。</p>
+      <SkillTemplateNotice content={content} busy={busy} onChange={onChange} />
+      {preview ? <SkillDocument body={content.body} /> : <div className="mt-3"><SkillTemplateInput id="skill-body" label="Skill 操作说明" value={content.body}
+        variables={content.template_variables} maxLength={1000000} busy={busy} className="min-h-60 resize-y leading-7"
+        onChange={(body, variables) => onChange({ ...content, body, ...(variables ? { template_variables: variables } : {}) })} /></div>}
       <div className="mt-2 flex items-center justify-between gap-3 text-xs text-[var(--s-text-tertiary)]"><span className="flex items-center gap-1.5">{dirty ? <CircleDot size={13} /> : <Check size={13} />}{dirty ? '有未保存的修改' : '草稿已保存'}</span><span>支持 Markdown</span></div>
     </div>
     <SkillAssetEditor content={content} busy={busy} onChange={onChange} />

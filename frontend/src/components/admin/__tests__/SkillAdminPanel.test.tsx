@@ -134,6 +134,7 @@ describe('Skill admin workspace', () => {
     fireEvent.change(screen.getByLabelText('用途说明'), { target: { value: '新用途' } });
     fireEvent.click(screen.getByRole('button', { name: '保存并提交审核' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('草稿已保存，但提交审核失败');
+    expect(screen.queryByText('草稿已保存。')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '提交审核' }));
     await screen.findByRole('button', { name: '审核通过' });
     expect(api.saveSkillDraft).toHaveBeenCalledTimes(1);
@@ -141,9 +142,10 @@ describe('Skill admin workspace', () => {
   });
 
   it.each([
-    ['SKILL_TEMPLATE_VARIABLE_UNDECLARED', '勾选对应变量'],
-    ['SKILL_TEMPLATE_VARIABLE_FORBIDDEN', '不支持的模板语法'],
-    ['SKILL_ASSET_REFERENCE_INVALID', '与已添加附件的标识是否一致'],
+    ['SKILL_TEMPLATE_VARIABLE_UNDECLARED', '启用这些信息'],
+    ['SKILL_TEMPLATE_VARIABLE_FORBIDDEN', '通过“插入动态信息”重新选择'],
+    ['SKILL_ASSET_REFERENCE_INVALID', '在操作说明中引用'],
+    ['SKILL_ASSET_NOT_DECLARED', '在操作说明中引用'],
     ['UNKNOWN_VALIDATION', '请检查用途说明、正文、附件'],
   ])('explains review validation %s without exposing raw error content', async (code, guidance) => {
     await open();
@@ -158,16 +160,17 @@ describe('Skill admin workspace', () => {
     expect(api.saveSkillDraft).not.toHaveBeenCalled();
   });
 
-  it('allows declaring the missing server variables and submitting the saved correction', async () => {
+  it('repairs the reported draft with one visible action and submits the saved correction', async () => {
     const draft = detail();
     draft.draft!.content.body = '会话范围：{{args.conversation_scope}}\n是否群组会话：{{args.is_channel}}';
     await open(draft);
+    expect(screen.getByRole('button', { name: '启用这些信息' })).toBeVisible();
     vi.mocked(api.transitionSkill).mockRejectedValueOnce(new ApiRequestError('SKILL_TEMPLATE_VARIABLE_UNDECLARED', 'invalid', 422));
     fireEvent.click(screen.getByRole('button', { name: '提交审核' }));
     await screen.findByRole('alert');
-    fireEvent.click(screen.getByText('高级设置'));
-    fireEvent.click(screen.getByRole('checkbox', { name: /会话范围.*args.conversation_scope/ }));
-    fireEvent.click(screen.getByRole('checkbox', { name: /是否群组会话.*args.is_channel/ }));
+    fireEvent.click(screen.getByRole('button', { name: '启用这些信息' }));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '启用这些信息' })).not.toBeInTheDocument();
     const corrected = detail('draft', false, 2);
     corrected.draft!.content = { ...draft.draft!.content, template_variables: {
       conversation_scope: { type: 'string', source: 'conversation_scope' },

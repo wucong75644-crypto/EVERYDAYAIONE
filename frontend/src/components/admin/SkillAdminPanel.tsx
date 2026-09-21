@@ -19,9 +19,9 @@ function errorMessage(error: unknown): string {
     if (error.status === 404) return 'Skill 或版本已不可用，请刷新列表。';
     if (error.status === 503) return 'Skill 服务或受控存储暂不可用，内容已保留，请稍后重试。';
     if (error.status === 422) {
-      if (error.code === 'SKILL_TEMPLATE_VARIABLE_UNDECLARED') return '正文或模板附件使用了未声明的变量。请在“高级设置 → 服务端模板变量”勾选对应变量，并核对变量名称。';
-      if (error.code === 'SKILL_TEMPLATE_VARIABLE_FORBIDDEN') return '正文或模板附件包含不支持的模板语法。请使用“高级设置 → 服务端模板变量”中列出的变量写法。';
-      if (error.code === 'SKILL_ASSET_REFERENCE_INVALID') return '操作说明中的附件引用无效。请核对 [[asset:附件标识]] 与已添加附件的标识是否一致。';
+      if (error.code === 'SKILL_TEMPLATE_VARIABLE_UNDECLARED') return '正文或模板中的动态信息尚未配置。请查看操作说明上方的提示，点击“启用这些信息”或修正无法识别的内容。';
+      if (error.code === 'SKILL_TEMPLATE_VARIABLE_FORBIDDEN') return '正文或模板中有无法识别的占位符，请删除后通过“插入动态信息”重新选择。';
+      if (error.code === 'SKILL_ASSET_REFERENCE_INVALID' || error.code === 'SKILL_ASSET_NOT_DECLARED') return '操作说明中的附件引用无效。请移除失效的引用，再在对应附件中点击“在操作说明中引用”。';
       return '请检查用途说明、正文、附件、高级设置及当前审核状态。';
     }
   }
@@ -213,6 +213,7 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
           show(next); setNotice('已提交审核，内容已锁定。');
         } catch (e) {
           if (token !== generation.current) return;
+          setNotice('');
           setError(`${dirty ? '草稿已保存，但提交审核失败。' : '提交审核失败。'}${errorMessage(e)}`);
         }
       }
@@ -248,7 +249,7 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
     {error && !modalOpen && scope !== 'personal' && <p role="alert" className="mb-4 rounded-md bg-[var(--s-error-soft)] px-4 py-3 text-sm text-[var(--s-error)]">{error}</p>}
     {notice && scope !== 'personal' && <p role="status" className="mb-4 rounded-md bg-[var(--s-success-soft)] px-4 py-3 text-sm text-[var(--s-success)]">{notice}</p>}
     {detail ? <SkillWorkspace orgId={orgId} onDelete={() => { setError(''); setConfirmation('delete'); }} detail={detail} content={content} dirty={dirty} busy={busy} tab={tab} revisionContent={revisionContent} reading={reading} readFailed={readFailed}
-      onTab={changeTab} onChange={value => { setContent(value); setDirty(true); }} onBack={back} onRefresh={() => requestLeave(() => select(detail.package_id))}
+      onTab={changeTab} onChange={value => { setContent(value); setDirty(true); setError(''); setNotice(''); }} onBack={back} onRefresh={() => requestLeave(() => select(detail.package_id))}
       onSave={() => save()} onSubmit={() => save(true)} onAction={action} onRevision={revision => {
         if (revision === readTarget && !readFailed) return;
         setError(''); setRevisionContent(null); setReading(true); setReadTarget(revision);

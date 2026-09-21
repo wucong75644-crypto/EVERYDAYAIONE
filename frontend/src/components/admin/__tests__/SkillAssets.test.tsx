@@ -16,7 +16,7 @@ describe('Skill attachments', () => {
     expect(container.textContent).not.toMatch(/private\/nas|secret-hash|private attachment body/);
   });
 
-  it('edits assets by stable IDs and supplies explicit server variable types', () => {
+  it('creates and references a template without typing identifiers or configuring variable types', () => {
     function Editor() {
       const [content, setContent] = useState<DraftContent>({ body: '', description: '', catalog_metadata: {} });
       return <>
@@ -27,22 +27,24 @@ describe('Skill attachments', () => {
     }
     render(<Editor />);
     fireEvent.click(screen.getByRole('button', { name: '添加附件' }));
-    fireEvent.click(screen.getByText('附件 1 · 只读参考资料'));
-    fireEvent.change(screen.getByLabelText('附件标识'), { target: { value: 'report' } });
+    expect(screen.getByLabelText('附件名称')).toBeVisible();
     fireEvent.change(screen.getByLabelText('附件名称'), { target: { value: '报告模板' } });
     fireEvent.change(screen.getByLabelText('附件用途'), { target: { value: '月度报告格式' } });
     fireEvent.change(screen.getByLabelText('附件类型'), { target: { value: 'template' } });
-    fireEvent.change(screen.getByLabelText('附件内容'), { target: { value: '组织 {{args.org_id}}' } });
-    fireEvent.click(screen.getByRole('checkbox', { name: /当前组织 ID/ }));
-    fireEvent.click(screen.getByRole('checkbox', { name: /是否群组会话/ }));
+    fireEvent.change(screen.getByLabelText('附件内容'), { target: { value: '组织 ' } });
+    fireEvent.change(screen.getByRole('combobox', { name: '附件内容：插入动态信息' }), { target: { value: 'org_id' } });
+    fireEvent.click(screen.getByRole('button', { name: '在操作说明中引用' }));
     const saved = JSON.parse(screen.getByLabelText('saved content').textContent!);
-    expect(saved.assets).toEqual([{ id: 'report', name: '报告模板', summary: '月度报告格式', kind: 'template',
+    expect(saved.assets).toEqual([{ id: 'attachment-1', name: '报告模板', summary: '月度报告格式', kind: 'template',
       format: 'md', content: '组织 {{args.org_id}}' }]);
-    expect(saved.template_variables).toEqual({ org_id: { type: 'string', source: 'org_id' },
-      is_channel: { type: 'boolean', source: 'is_channel' } });
-    expect(screen.getByText('[[asset:report]]')).toBeInTheDocument();
+    expect(saved.template_variables).toEqual({ org_id: { type: 'string', source: 'org_id' } });
+    expect(saved.body).toBe('请参考附件 [[asset:attachment-1]]。');
+    expect(screen.getByRole('button', { name: '已在操作说明中引用' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: '移除附件' }));
     expect(JSON.parse(screen.getByLabelText('saved content').textContent!).assets).toEqual([]);
+    fireEvent.click(screen.getByRole('button', { name: '添加附件' }));
+    expect(JSON.parse(screen.getByLabelText('saved content').textContent!).assets[0].id).toBe('attachment-2');
+    expect(screen.getByRole('button', { name: '在操作说明中引用' })).toBeEnabled();
   });
 
   it('keeps review content read only and caps the attachment count', () => {
