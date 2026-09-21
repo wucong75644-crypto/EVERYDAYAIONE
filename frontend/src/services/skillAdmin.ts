@@ -2,10 +2,24 @@ import { request } from './api';
 
 export type SkillState = 'draft' | 'in_review' | 'published' | 'deprecated' | 'disabled';
 export type SkillAction = 'start_draft' | 'submit' | 'approve' | 'reject' | 'publish' | 'deprecate' | 'disable' | 'enable';
+export interface SkillAssetSummary {
+  id: string; name: string; summary: string;
+  kind: 'reference' | 'template' | 'example_input' | 'example_output';
+  format: 'md' | 'txt' | 'json' | 'csv';
+  bytes?: number;
+}
+export interface SkillAssetDraft extends SkillAssetSummary { content: string }
+export interface SkillTemplateVariable {
+  type: 'string' | 'boolean';
+  source: 'actor_user_id' | 'org_id' | 'conversation_scope' | 'agent_domain' | 'execution_mode' | 'is_channel';
+}
 export interface DraftContent {
   description: string;
   body: string;
   catalog_metadata: Record<string, unknown>;
+  assets?: SkillAssetDraft[];
+  asset_summaries?: SkillAssetSummary[];
+  template_variables?: Record<string, SkillTemplateVariable>;
 }
 export interface SkillAdminItem {
   package_id: string;

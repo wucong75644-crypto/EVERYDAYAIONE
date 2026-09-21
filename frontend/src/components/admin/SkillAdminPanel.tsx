@@ -18,7 +18,7 @@ function errorMessage(error: unknown): string {
     if (error.status === 403) return '当前账号没有此组织 Skill 的管理权限。';
     if (error.status === 404) return 'Skill 或版本已不可用，请刷新列表。';
     if (error.status === 503) return 'Skill 服务或受控存储暂不可用，内容已保留，请稍后重试。';
-    if (error.status === 422) return '请检查用途说明、正文、高级设置及当前审核状态。';
+    if (error.status === 422) return '请检查用途说明、正文、附件、高级设置及当前审核状态。';
   }
   return '操作未完成，内容已保留，请重试；若结果不确定，请先刷新确认状态。';
 }

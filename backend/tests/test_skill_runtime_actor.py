@@ -44,7 +44,7 @@ def actor(callback=None):
 
 
 def call(name="activate_skill", args=None, id="activate-1"):
-    return {"id": id, "name": name, "arguments": args if args is not None else activate(topic="orders")}
+    return {"id": id, "name": name, "arguments": args if args is not None else activate()}
 
 
 def handler():
@@ -153,7 +153,7 @@ async def test_activation_checkpoint_precedes_pause_or_cancel_and_resumes_exactl
         messages = copy.deepcopy(checkpoint["messages"])
         resumed.ensure_messages(messages)
         assert messages == checkpoint["messages"]
-        assert (await resumed.activate(activate(topic="orders")))["code"] == "SKILL_ALREADY_ACTIVE"
+        assert (await resumed.activate(activate()))["code"] == "SKILL_ALREADY_ACTIVE"
 
 
 async def test_cancellation_before_activation_does_not_load_or_dispatch():
@@ -192,7 +192,7 @@ async def test_execute_chat_restores_before_model_and_closes_gateway_on_invalid_
     source = Source()
     skills = state(source)
     await skills.initialize()
-    await skills.activate(activate(topic="orders"))
+    await skills.activate(activate())
     from services.skills.contracts import SkillError
     source.load.side_effect = SkillError("SKILL_PINNED_REVISION_UNAVAILABLE")
     monkeypatch.setattr("services.skills.runtime_source.ActorSkillSource", lambda *_: source)

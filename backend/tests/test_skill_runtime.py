@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from services.skills.contracts import SkillError, ValidatedSkill
+from services.skills.assets import SkillResources
 from services.skills.renderer import (
     MAX_ARGS_BYTES, MAX_BODY_BYTES, MAX_DIRECTORY_BYTES, MAX_RENDERED_BYTES,
     digest, render,
@@ -34,14 +35,16 @@ class Source:
 
     async def _load(self, c, *, restoring=False):
         return ValidatedSkill("never-advertise/private/SKILL.md", c.skill_key, c.revision,
-                              "1" * 64, digest(self.body), "summary", self.body, c.catalog_metadata)
+                              "1" * 64, digest(self.body), "summary", self.body, c.catalog_metadata,
+                              SkillResources(template_variables={'topic': {'type': 'string', 'source': 'org_id'}})
+                              if '{{args.topic}}' in self.body else SkillResources())
 
 
 def state(source=None, **changes):
     return SkillRuntime(**(dict(
         turn_id="turn-1", source=source or Source(),
         platform_tool_names={"file_search", "file_delete", "web_search"},
-        authorized_tool_names=None, cancellation_event=asyncio.Event(),
+        authorized_tool_names=None, cancellation_event=asyncio.Event(), template_context={"org_id": "orders"},
     ) | changes))
 
 
@@ -59,7 +62,7 @@ async def test_body_is_loaded_only_for_explicit_available_activation():
     for key in ("missing", "hidden", "../report", "/server/secret"):
         assert (await runtime.activate(activate(key)))["code"] == "SKILL_NOT_AVAILABLE"
     source.load.assert_not_awaited()
-    assert (await runtime.activate(activate(topic="orders")))["ok"]
+    assert (await runtime.activate(activate()))["ok"]
     source.load.assert_awaited_once()
     text = json.dumps(runtime.messages(), ensure_ascii=False)
     assert "Read orders." in text and "never-advertise" not in text
@@ -72,23 +75,23 @@ async def test_duplicate_activation_and_retry_after_replay_do_not_reinject_or_wi
     source = Source()
     runtime = state(source)
     await runtime.initialize()
-    assert (await runtime.activate(activate(topic="orders")))["code"] == "SKILL_ACTIVATED"
+    assert (await runtime.activate(activate()))["code"] == "SKILL_ACTIVATED"
     messages = []
     runtime.ensure_messages(messages)
     for _ in range(3):
-        assert (await runtime.activate(activate(topic="orders")))["code"] == "SKILL_ALREADY_ACTIVE"
+        assert (await runtime.activate(activate()))["code"] == "SKILL_ALREADY_ACTIVE"
         runtime.ensure_messages(messages)
     assert len(messages) == 2 and source.load.await_count == 1
     assert (await runtime.activate(activate(topic="different")))["ok"] is False
     checkpoint = runtime.checkpoint()
     saved = checkpoint["active"][0]
     assert set(saved) == {"skill_key", "revision", "body_sha256", "rendered", "rendered_sha256",
-                          "args_summary", "effective_allowed_tool_names"}
+                          "args_summary", "effective_allowed_tool_names", "asset_manifest_sha256", "loaded_asset_ids"}
     assert "orders" not in json.dumps(saved["args_summary"])
     restored = state(source)
     await restored.initialize(checkpoint)
     assert source.load.await_count == 2  # Revalidation is mandatory; rendering is not repeated.
-    assert (await restored.activate(activate(topic="orders")))["code"] == "SKILL_ALREADY_ACTIVE"
+    assert (await restored.activate(activate()))["code"] == "SKILL_ALREADY_ACTIVE"
     restored.ensure_messages(messages)
     assert source.load.await_count == 2 and len(messages) == 2
     assert restored.checkpoint() == checkpoint
@@ -101,18 +104,18 @@ async def test_multiple_skills_intersect_existing_authorization_and_never_expand
         item("empty", tools=()),
     ]), authorized_tool_names={"file_search", "web_search"})
     await runtime.initialize()
-    await runtime.activate(activate(topic="a"))
+    await runtime.activate(activate())
     assert runtime.effective_allowed_tool_names == {"file_search"}
-    await runtime.activate(activate("second", topic="b"))
+    await runtime.activate(activate("second"))
     assert runtime.effective_allowed_tool_names == set()
-    await runtime.activate(activate("empty", topic="c"))
+    await runtime.activate(activate("empty"))
     assert runtime.effective_allowed_tool_names == set()
 
 
 async def test_skill_ceiling_is_enforced_by_dispatch_and_does_not_bypass_confirmation():
     runtime = state(Source([item(tools=("file_search", "file_delete"))]))
     await runtime.initialize()
-    await runtime.activate(activate(topic="files"))
+    await runtime.activate(activate())
     ctx = context(authorized_tool_names=runtime.effective_allowed_tool_names)
     service, _, io = stack("web_search")
     result = await service.execute(ToolCall("call", "web_search", {}), ctx)
@@ -164,7 +167,7 @@ async def test_cancel_before_and_during_load_never_activates():
     await runtime.initialize()
     runtime.cancellation_event.set()
     with pytest.raises(asyncio.CancelledError):
-        await runtime.activate(activate(topic="orders"))
+        await runtime.activate(activate())
     source.load.assert_not_awaited()
     runtime.cancellation_event.clear()
     original = source._load
@@ -175,7 +178,7 @@ async def test_cancel_before_and_during_load_never_activates():
 
     source.load.side_effect = cancel_during_read
     with pytest.raises(asyncio.CancelledError):
-        await runtime.activate(activate(topic="orders"))
+        await runtime.activate(activate())
     assert not runtime.active
 
 
@@ -183,7 +186,7 @@ async def test_restore_uses_pinned_revision_even_when_current_catalog_changes():
     source = Source()
     runtime = state(source)
     await runtime.initialize()
-    await runtime.activate(activate(topic="orders"))
+    await runtime.activate(activate())
     newer = Source([item(revision="v2")])
     restored = state(newer)
     await restored.initialize(runtime.checkpoint())
@@ -196,7 +199,7 @@ async def test_unreplayable_checkpoint_stops_without_latest_fallback(failure):
     source = Source()
     runtime = state(source)
     await runtime.initialize()
-    await runtime.activate(activate(topic="orders"))
+    await runtime.activate(activate())
     checkpoint = runtime.checkpoint()
     if failure == "missing":
         source.load.side_effect = SkillError("SKILL_PINNED_REVISION_UNAVAILABLE")
@@ -221,7 +224,7 @@ async def test_restore_does_not_expand_saved_ceiling_when_authority_grows():
     source = Source([item(tools=("file_search", "file_delete"))])
     runtime = state(source, authorized_tool_names={"file_search"})
     await runtime.initialize()
-    await runtime.activate(activate(topic="x"))
+    await runtime.activate(activate())
     restored = state(source, authorized_tool_names={"file_search", "file_delete"})
     await restored.initialize(runtime.checkpoint())
     assert restored.effective_allowed_tool_names == {"file_search"}
@@ -231,7 +234,7 @@ async def test_repeated_restore_checkpoints_preserve_revoked_authorization():
     source = Source([item(tools=("file_search", "file_delete"))])
     original = state(source)
     await original.initialize()
-    await original.activate(activate(topic="x"))
+    await original.activate(activate())
     restricted = state(source, authorized_tool_names={"file_search"})
     await restricted.initialize(original.checkpoint())
     resumed_again = state(source)
@@ -244,18 +247,22 @@ async def test_failed_activation_returns_secret_free_structured_reason():
     runtime = state(source)
     await runtime.initialize()
     source.load.side_effect = OSError("/server/private/token=secret")
-    assert await runtime.activate(activate(topic="x")) == {"ok": False, "code": "SKILL_LOAD_UNAVAILABLE"}
+    assert await runtime.activate(activate()) == {"ok": False, "code": "SKILL_LOAD_UNAVAILABLE"}
     assert runtime.active == {}
 
 
-async def test_missing_args_reports_only_controlled_names_for_next_activation_attempt():
-    runtime = state()
+async def test_model_args_are_rejected_and_missing_server_values_fail_closed():
+    runtime = state(template_context={})
     await runtime.initialize()
+    assert await runtime.activate(activate(topic="forged")) == {
+        "ok": False, "code": "SKILL_TEMPLATE_ARGS_SERVER_ONLY",
+    }
     assert await runtime.activate(activate()) == {
-        "ok": False, "code": "SKILL_TEMPLATE_ARGS_MISMATCH", "required_args": ["topic"],
+        "ok": False, "code": "SKILL_TEMPLATE_SERVER_VALUE_UNAVAILABLE",
     }
     assert not runtime.active
-    assert (await runtime.activate(activate(topic="orders")))["ok"]
+    runtime.template_context = {"org_id": "orders"}
+    assert (await runtime.activate(activate()))["ok"]
 
 
 @pytest.mark.parametrize("catalog,runtime_enabled", [(False, False), (True, False), (False, True)])

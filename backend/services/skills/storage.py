@@ -16,6 +16,7 @@ from services.skills.contracts import (
     PackageCreate, PublishRevision, SkillCatalogMetadata, SkillError, SkillPackage, ValidatedSkill,
     revision_path,
 )
+from services.skills.assets import SkillResources, verify_asset
 
 MAX_SKILL_BYTES = 1024 * 1024
 
@@ -56,11 +57,11 @@ class SkillStorage:
         ):
             raise SkillError("SKILL_STORAGE_WORKSPACE_OVERLAP")
 
-    def _read(self, nas_path: str) -> bytes:
+    def _read(self, nas_path: str, *, maximum: int = MAX_SKILL_BYTES, asset: bool = False) -> bytes:
         relative = PurePosixPath(nas_path)
         if (not nas_path or "\\" in nas_path or "\x00" in nas_path
                 or relative.is_absolute() or ".." in relative.parts
-                or str(relative) != nas_path or relative.name != "SKILL.md"):
+                or str(relative) != nas_path or (not asset and relative.name != "SKILL.md")):
             raise SkillError("SKILL_PATH_INVALID")
         try:
             target = (self.root / nas_path).resolve(strict=True)
@@ -81,24 +82,40 @@ class SkillStorage:
                     info = os.fstat(stream.fileno())
                     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
                         raise SkillError("SKILL_FILE_NOT_REGULAR_OR_LINKED")
-                    content = stream.read(MAX_SKILL_BYTES + 1)
+                    content = stream.read(maximum + 1)
             finally:
                 os.close(directory_fd)
         except (OSError, RuntimeError) as error:
             raise SkillError("SKILL_STORAGE_READ_REJECTED") from error
-        if len(content) > MAX_SKILL_BYTES:
-            raise SkillError("SKILL_FILE_TOO_LARGE")
+        if len(content) > maximum:
+            raise SkillError('SKILL_ASSET_HASH_MISMATCH' if asset else 'SKILL_FILE_TOO_LARGE')
         return content
 
     def validate(
         self, package: SkillPackage | PackageCreate, publication: PublishRevision,
-        *, nas_path: str | None = None,
+        *, nas_path: str | None = None, verify_assets: bool = True,
     ) -> ValidatedSkill:
         expected_path = revision_path(package, publication.revision)
         path = nas_path if nas_path is not None else expected_path
         if path != expected_path:
             raise SkillError("SKILL_PATH_IDENTITY_MISMATCH")
-        return self.validate_bytes(package, publication, self._read(path))
+        validated = self.validate_bytes(package, publication, self._read(path))
+        if verify_assets:
+            self.read_assets(validated, [a.id for a in validated.resources.assets])
+        return validated
+
+    def read_assets(self, validated: ValidatedSkill, asset_ids) -> dict[str, str]:
+        """Only IDs declared by the verified SKILL.md can reach the file reader."""
+        declared = {a.id: a for a in validated.resources.assets}
+        if len(set(asset_ids)) != len(asset_ids) or not set(asset_ids) <= declared.keys():
+            raise SkillError('SKILL_ASSET_NOT_DECLARED')
+        revision_dir = PurePosixPath(validated.nas_path).parent
+        result = {}
+        for asset_id in asset_ids:
+            entry = declared[asset_id]
+            result[asset_id] = verify_asset(entry, self._read(
+                str(revision_dir / entry.path), maximum=entry.bytes, asset=True))
+        return result
 
     @staticmethod
     def validate_bytes(package, publication: PublishRevision, raw: bytes) -> ValidatedSkill:
@@ -135,6 +152,13 @@ class SkillStorage:
             catalog_metadata = SkillCatalogMetadata.model_validate(metadata.get("catalog", {}))
         except ValidationError:
             raise SkillError("SKILL_CATALOG_METADATA_INVALID") from None
+        try:
+            resources = SkillResources.model_validate({
+                'assets': metadata.get('assets', []),
+                'template_variables': metadata.get('template_variables', {}),
+            })
+        except ValidationError:
+            raise SkillError('SKILL_ASSET_MANIFEST_INVALID') from None
         body = "".join(lines[end + 1:])
         if not body.strip():
             raise SkillError("SKILL_BODY_EMPTY")
@@ -142,9 +166,10 @@ class SkillStorage:
         if not hmac.compare_digest(body_hash, publication.body_sha256):
             raise SkillError("SKILL_BODY_HASH_MISMATCH")
         return ValidatedSkill(path, package.skill_key, publication.revision,
-                              content_hash, body_hash, summary.strip(), body, catalog_metadata)
+                              content_hash, body_hash, summary.strip(), body, catalog_metadata, resources)
 
-    def publish(self, package, publication: PublishRevision, raw: bytes) -> ValidatedSkill:
+    def publish(self, package, publication: PublishRevision, raw: bytes,
+                *, assets: dict[str, bytes] | None = None) -> ValidatedSkill:
         """Install a complete revision directory, never replace a published file.
 
         POSIX directory rename refuses to replace a nonempty revision directory.
@@ -152,8 +177,15 @@ class SkillStorage:
         there is no final file with a temporary second hard link to impede retry.
         """
         validated = self.validate_bytes(package, publication, raw)
+        assets = assets or {}
+        if set(assets) != {a.id for a in validated.resources.assets}:
+            raise SkillError('SKILL_ASSET_NOT_DECLARED')
+        for entry in validated.resources.assets:
+            verify_asset(entry, assets[entry.id])
+        from services.skills.renderer import validate_resource_templates
+        validate_resource_templates(validated, {key: value.decode('utf-8') for key, value in assets.items()})
         parts = PurePosixPath(validated.nas_path).parts
-        directory_fd = staging_fd = None
+        directory_fd = staging_fd = assets_fd = None
         temporary = f".publishing-{uuid4().hex}"
         staged = False
         try:
@@ -179,6 +211,20 @@ class SkillStorage:
                 stream.flush()
                 os.fchmod(stream.fileno(), 0o440)
                 os.fsync(stream.fileno())
+            if assets:
+                os.mkdir('assets', mode=0o750, dir_fd=staging_fd)
+                assets_fd = os.open('assets', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                    dir_fd=staging_fd)
+                for entry in validated.resources.assets:
+                    fd = os.open(PurePosixPath(entry.path).name,
+                                 os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                 0o640, dir_fd=assets_fd)
+                    with os.fdopen(fd, 'wb') as stream:
+                        stream.write(assets[entry.id])
+                        stream.flush()
+                        os.fchmod(stream.fileno(), 0o440)
+                        os.fsync(stream.fileno())
+                os.fsync(assets_fd)
             os.fsync(staging_fd)
             try:
                 os.rename(temporary, parts[-2], src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
@@ -211,10 +257,19 @@ class SkillStorage:
                                 os.unlink("SKILL.md", dir_fd=staging_fd)
                             except FileNotFoundError:
                                 pass
+                            if assets_fd is not None:
+                                for entry in validated.resources.assets:
+                                    try:
+                                        os.unlink(PurePosixPath(entry.path).name, dir_fd=assets_fd)
+                                    except FileNotFoundError:
+                                        pass
+                                os.rmdir('assets', dir_fd=staging_fd)
                         os.rmdir(temporary, dir_fd=directory_fd)
             except OSError as error:
                 raise SkillError("SKILL_STORAGE_WRITE_REJECTED") from error
             finally:
+                if assets_fd is not None:
+                    os.close(assets_fd)
                 if staging_fd is not None:
                     os.close(staging_fd)
                 if directory_fd is not None:

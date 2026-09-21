@@ -82,6 +82,8 @@ async def test_manual_only_skill_is_active_before_first_model_with_narrowed_tool
     ("SKILL_ACCESS_DENIED", "暂无使用权限"),
     ("SKILL_PINNED_REVISION_UNAVAILABLE", "当前不可用"),
     ("SKILL_TEMPLATE_ARGS_MISMATCH", "需要补充参数"),
+    ("SKILL_TEMPLATE_SERVER_VALUE_UNAVAILABLE", "联系管理员检查"),
+    ("SKILL_ASSET_BUDGET_EXCEEDED", "精简引用"),
     ("/secret/nas/body.md policy=internal", "暂时无法启用"),
 ])
 async def test_manual_failure_is_safe_and_normal_chat_continues(execution, failure, reason):

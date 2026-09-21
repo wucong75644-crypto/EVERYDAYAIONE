@@ -1,5 +1,7 @@
 # Skill 第一期第 1 步：控制面与受控 NAS 存储
 
+P2-2 的 [资料附件与模板资产](TECH_Skill资料附件与模板资产.md) 复用已有整文件哈希锁定 frontmatter 资产清单，所有资产位于对应 revision 目录内，读取与恢复都验证声明资产的哈希，无新增数据库迁移。
+
 P2-1 已增加组织管理员草稿、审核、受控 NAS 发布、废弃与禁用，见 [Skill 草稿审核与发布](TECH_Skill草稿审核与发布.md)。下文保留各期原始范围；当前状态和发布写权限以 P2-1 文档为准。
 
 本页保留 P1-1 的交付边界。P1-2 的摘要接口、版本优先级和权限解析见 [Skill Catalog 与可见目录](TECH_SkillCatalog与可见目录.md)；后续 P1-3 已通过默认关闭的 [Actor SkillRuntime](TECH_ActorSkillRuntime.md) 接入受控正文读取与固定版本恢复。下文未接入聊天的描述属于 P1-1 阶段边界。

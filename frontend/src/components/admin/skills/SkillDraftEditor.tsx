@@ -4,6 +4,7 @@ import type { DraftContent } from '../../../services/skillAdmin';
 import { Input, inputVariants } from '../../ui/Input';
 import { SkillDocument } from './SkillDocument';
 import { contentName } from './presentation';
+import { SkillAssetEditor, SkillTemplateEditor } from './SkillAssets';
 
 const lists = [
   ['triggers', '触发提示', '每行一项，描述适合使用这项 Skill 的任务。'],
@@ -41,9 +42,11 @@ export function SkillDraftEditor({ content, busy, dirty, onChange }: {
         className={`${inputVariants()} min-h-80 resize-y font-mono leading-7`} spellCheck={false} onChange={e => onChange({ ...content, body: e.target.value })} />}
       <div className="mt-2 flex items-center justify-between gap-3 text-xs text-[var(--s-text-tertiary)]"><span className="flex items-center gap-1.5">{dirty ? <CircleDot size={13} /> : <Check size={13} />}{dirty ? '有未保存的修改' : '草稿已保存'}</span><span>支持 Markdown</span></div>
     </div>
+    <SkillAssetEditor content={content} busy={busy} onChange={onChange} />
     <details className="border-t border-[var(--s-border-default)] pt-4">
       <summary className="cursor-pointer text-sm font-medium text-[var(--s-text-secondary)]">高级设置</summary>
       <div className="mt-4 space-y-4">
+        <SkillTemplateEditor content={content} busy={busy} onChange={onChange} />
         <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={metadata.model_selectable === true} disabled={busy} onChange={e => updateMetadata('model_selectable', e.target.checked)} /><span>允许模型选择此 Skill<span className="mt-1 block text-xs text-[var(--s-text-tertiary)]">默认关闭。发布与组织授权规则仍然适用。</span></span></label>
         {choices.map(group => {
           const selected = Array.isArray(metadata[group.key]) ? metadata[group.key] as string[] : [...group.fallback];

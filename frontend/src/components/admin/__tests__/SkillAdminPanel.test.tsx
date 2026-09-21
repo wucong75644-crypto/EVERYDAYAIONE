@@ -44,6 +44,16 @@ async function confirmedPublish() {
 }
 
 describe('Skill admin workspace', () => {
+  it('shows attachment summaries from the selected immutable revision', async () => {
+    vi.mocked(api.readSkillRevision).mockResolvedValue({ ...content, asset_summaries: [{
+      id: 'template', name: '发布模板', kind: 'template', summary: '原版本附件摘要', format: 'md', bytes: 60,
+    }] });
+    await open(detail('published'));
+    expect(await screen.findByText('原版本附件摘要')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '附件摘要' })).toHaveTextContent('发布模板');
+    expect(screen.queryByRole('button', { name: '添加附件' })).not.toBeInTheDocument();
+  });
+
   it('separates scopes, searches names/keys and distinguishes working state from available version', async () => {
     render(<SkillAdminPanel orgId="org-1" />);
     expect(await screen.findByRole('button', { name: '打开 订单报告' })).toHaveTextContent('仍在使用');
@@ -208,6 +218,7 @@ describe('Skill admin workspace', () => {
     vi.mocked(api.transitionSkill).mockResolvedValue(detail('published', true, 7));
     fireEvent.click(screen.getByRole('button', { name: '确认解除停用' }));
     await screen.findByText('已解除停用，当前状态：已发布。');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(api.transitionSkill).toHaveBeenLastCalledWith('org-1', 'p1', 6, 'enable');
     expect(screen.queryByRole('button', { name: '解除停用' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '编辑新版本' })).toBeInTheDocument();

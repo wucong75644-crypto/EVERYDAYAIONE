@@ -2,10 +2,18 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TYPE_CHECKING
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
+
+if TYPE_CHECKING:
+    from services.skills.assets import SkillResources
+
+
+def _empty_resources():
+    from services.skills.assets import SkillResources
+    return SkillResources()
 
 
 SkillKey = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
@@ -108,6 +116,7 @@ class ValidatedSkill:
     summary: str
     body: str
     catalog_metadata: SkillCatalogMetadata = field(default_factory=SkillCatalogMetadata)
+    resources: 'SkillResources' = field(default_factory=_empty_resources)
 
 
 def revision_path(package: SkillPackage | PackageCreate, revision: str) -> str:
