@@ -18,6 +18,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import CodeBlock from './CodeBlock';
 import { escapeChineseMath } from '../../../utils/markdownPreprocess';
+import { remarkUnwrapInlineSpans } from '../../../utils/remarkUnwrapInlineSpans';
 import { downloadFile } from '../../../utils/downloadFile';
 import './markdown.css';
 
@@ -56,7 +57,7 @@ function isImageUrl(text: string): boolean {
  *  即使 escapeChineseMath 漏网（比如未来扩展字符），KaTeX 也不会再 console.warn
  *  污染控制台。是 markdownPreprocess 的兜底防线。
  */
-const remarkPlugins: PluggableList = [remarkGfm, remarkMath];
+const remarkPlugins: PluggableList = [remarkGfm, remarkMath, remarkUnwrapInlineSpans];
 const rehypePlugins: PluggableList = [
   [rehypeKatex, { strict: 'ignore' }],
 ];

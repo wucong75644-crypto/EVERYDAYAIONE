@@ -44,6 +44,7 @@ WebSocket block ─ parseContentPart ─┼─> ContentPart[] ─> Zustand Store
 ### 3.3 渲染规则
 
 - Markdown 从 AST 文本节点递归提取源码，不对 React children 做字符串强转。
+- 聊天正文输出 Markdown；涨跌直接使用数值、正负号与箭头，不使用 HTML 上色。兼容旧回复时，`remarkUnwrapInlineSpans` 只移除段落、标题、表格单元格中的行内 `span` 标签，保留数值及 Markdown 内容。代码示例、显式转义文字和完整 HTML 块仍原样显示，不启用 HTML 解析，也不整体丢弃 HTML 块中的数据。
 - `CodeBlock.rawCode` 同时驱动语法高亮与剪贴板；highlight.js 输出只用于派生展示。
 - `formatDisplayValue` 负责 Table、Spreadsheet、Chart 数据视图和工具确认参数中的未知值展示；循环引用使用明确占位文本。
 - `formatFormValue` 只接受字符串、数字、布尔值；对象和数组不进入标量控件。
