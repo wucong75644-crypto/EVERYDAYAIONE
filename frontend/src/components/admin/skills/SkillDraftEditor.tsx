@@ -20,8 +20,8 @@ const choices = [
   { key: 'execution_modes', label: '执行场景', fallback: ['interactive'], options: [['interactive', '交互任务'], ['scheduled', '定时任务'], ['preflight', '执行前检查']] },
 ] as const;
 
-export function SkillDraftEditor({ content, busy, dirty, onChange }: {
-  content: DraftContent; busy: boolean; dirty: boolean; onChange: (value: DraftContent) => void;
+export function SkillDraftEditor({ content, busy, dirty, onChange, onUpload }: {
+  content: DraftContent; busy: boolean; dirty: boolean; onChange: (value: DraftContent) => void; onUpload?: (files: File[]) => void;
 }) {
   const [preview, setPreview] = useState(false);
   const metadata = content.catalog_metadata;
@@ -46,7 +46,7 @@ export function SkillDraftEditor({ content, busy, dirty, onChange }: {
         onChange={(body, variables) => onChange({ ...content, body, ...(variables ? { template_variables: variables } : {}) })} /></div>}
       <div className="mt-2 flex items-center justify-between gap-3 text-xs text-[var(--s-text-tertiary)]"><span className="flex items-center gap-1.5">{dirty ? <CircleDot size={13} /> : <Check size={13} />}{dirty ? '有未保存的修改' : '草稿已保存'}</span><span>支持 Markdown</span></div>
     </div>
-    <SkillAssetEditor content={content} busy={busy} onChange={onChange} />
+    <SkillAssetEditor content={content} busy={busy} onChange={onChange} onUpload={onUpload} />
     <details className="border-t border-[var(--s-border-default)] pt-4">
       <summary className="cursor-pointer text-sm font-medium text-[var(--s-text-secondary)]">高级设置</summary>
       <div className="mt-4 space-y-4">

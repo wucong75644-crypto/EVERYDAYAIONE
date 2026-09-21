@@ -117,7 +117,9 @@ def server_arguments(resources, context: dict) -> dict:
 
 
 def asset_manifest_digest(resources) -> str | None:
-    return digest(encoded(resources.model_dump(mode='json'))) if resources.assets or resources.template_variables else None
+    # Omitted sources preserve the digest of revisions/checkpoints published
+    # before file uploads were supported.
+    return digest(encoded(resources.model_dump(mode='json', exclude_none=True))) if resources.assets or resources.template_variables else None
 
 
 def prepare_resources(skill, context: dict, maximum: int):

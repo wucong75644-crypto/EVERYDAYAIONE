@@ -7,8 +7,14 @@ export interface SkillAssetSummary {
   kind: 'reference' | 'template' | 'example_input' | 'example_output';
   format: 'md' | 'txt' | 'json' | 'csv';
   bytes?: number;
+  file_format?: SkillFileFormat;
+  file_bytes?: number;
 }
-export interface SkillAssetDraft extends SkillAssetSummary { content: string }
+export type SkillFileFormat = 'md' | 'txt' | 'json' | 'csv' | 'docx' | 'pdf' | 'xlsx';
+export interface SkillAssetDraft extends SkillAssetSummary {
+  content: string;
+  source?: { format: SkillFileFormat; base64: string } | null;
+}
 export interface SkillTemplateVariable {
   type: 'string' | 'boolean';
   source: 'actor_user_id' | 'org_id' | 'conversation_scope' | 'agent_domain' | 'execution_mode' | 'is_channel';
@@ -63,6 +69,11 @@ export interface SkillDetail {
 // Explicit organization in the URL survives an organization switch during an
 // in-flight operation. The server revalidates membership for this exact target.
 const base = (orgId: string) => `/skills/admin/orgs/${encodeURIComponent(orgId)}`;
+export const importSkillAttachment = (orgId: string, file: File): Promise<SkillAssetDraft> => {
+  const data = new FormData();
+  data.append('file', file);
+  return request({ method: 'POST', url: `${base(orgId)}/attachments/import`, data });
+};
 export const listManagedSkills = (orgId: string): Promise<SkillAdminItem[]> =>
   request({ method: 'GET', url: base(orgId) });
 export const getManagedSkill = (orgId: string, id: string): Promise<SkillDetail> =>

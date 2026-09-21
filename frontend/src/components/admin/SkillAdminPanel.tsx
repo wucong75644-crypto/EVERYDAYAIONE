@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiRequestError } from '../../services/api';
 import {
-  createManagedSkill, deleteManagedSkill, getManagedSkill, listManagedSkills, readSkillRevision, saveSkillDraft, transitionSkill,
+  createManagedSkill, deleteManagedSkill, getManagedSkill, importSkillAttachment, listManagedSkills, readSkillRevision, saveSkillDraft, transitionSkill,
   type DraftContent, type SkillAction, type SkillAdminItem, type SkillDetail, type SkillState,
 } from '../../services/skillAdmin';
 import { Button } from '../ui/Button';
@@ -10,10 +10,12 @@ import { Dialog, DialogFooter } from '../primitives/Dialog';
 import { SkillLibrary, type SkillLibraryScope } from './skills/SkillLibrary';
 import { SkillWorkspace, type RevisionContent } from './skills/SkillWorkspace';
 import { detailState, emptyContent, stateLabels, type SkillNavigationState } from './skills/presentation';
+import { uploadMessages, validateUploadedAssets, validateUploadSelection } from './skills/attachmentUploads';
 import './skills/skill-admin.css';
 
 function errorMessage(error: unknown): string {
   if (error instanceof ApiRequestError) {
+    if (uploadMessages[error.code]) return uploadMessages[error.code];
     if (error.status === 409) return '内容已被其他管理员修改。未保存的编辑已保留，请复制需要保留的内容，再刷新查看最新版本。';
     if (error.status === 403) return '当前账号没有此组织 Skill 的管理权限。';
     if (error.status === 404) return 'Skill 或版本已不可用，请刷新列表。';
@@ -133,6 +135,21 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
       if (token === generation.current) { setListFailed(true); setError(`${afterWrite ? '操作已完成，但列表刷新失败。' : ''}${errorMessage(e)}`); }
     }
   }
+  function upload(files: File[]) {
+    if (!detail?.editable || detail.draft?.status !== 'draft') return;
+    void perform(async token => {
+      const assets = [...(content.assets || [])];
+      validateUploadSelection(files, assets);
+      for (const file of files) {
+        const imported = await importSkillAttachment(orgId, file);
+        if (token !== generation.current) return;
+        assets.push(imported);
+        validateUploadedAssets(assets);
+      }
+      setContent({ ...content, assets }); setDirty(true);
+      setNotice(`已添加 ${files.length} 份附件，请保存草稿。需要 Skill 使用时，点击附件旁的“在操作说明中引用”。`);
+    });
+  }
   function select(id: string) {
     void perform(async token => {
       const value = await getManagedSkill(orgId, id);
@@ -249,7 +266,7 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
     {error && !modalOpen && scope !== 'personal' && <p role="alert" className="mb-4 rounded-md bg-[var(--s-error-soft)] px-4 py-3 text-sm text-[var(--s-error)]">{error}</p>}
     {notice && scope !== 'personal' && <p role="status" className="mb-4 rounded-md bg-[var(--s-success-soft)] px-4 py-3 text-sm text-[var(--s-success)]">{notice}</p>}
     {detail ? <SkillWorkspace orgId={orgId} onDelete={() => { setError(''); setConfirmation('delete'); }} detail={detail} content={content} dirty={dirty} busy={busy} tab={tab} revisionContent={revisionContent} reading={reading} readFailed={readFailed}
-      onTab={changeTab} onChange={value => { setContent(value); setDirty(true); setError(''); setNotice(''); }} onBack={back} onRefresh={() => requestLeave(() => select(detail.package_id))}
+      onTab={changeTab} onUpload={upload} onChange={value => { setContent(value); setDirty(true); setError(''); setNotice(''); }} onBack={back} onRefresh={() => requestLeave(() => select(detail.package_id))}
       onSave={() => save()} onSubmit={() => save(true)} onAction={action} onRevision={revision => {
         if (revision === readTarget && !readFailed) return;
         setError(''); setRevisionContent(null); setReading(true); setReadTarget(revision);

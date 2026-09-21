@@ -44,6 +44,75 @@ async function confirmedPublish() {
 }
 
 describe('Skill admin workspace', () => {
+  it('uploads into the selected draft, blocks concurrent save and persists the original with the draft', async () => {
+    let resolve!: (asset: api.SkillAssetDraft) => void;
+    vi.mocked(api.importSkillAttachment).mockReturnValue(new Promise(done => { resolve = done; }));
+    await open();
+    const file = new File(['Uploaded text'], 'guide.txt');
+    fireEvent.change(screen.getByLabelText('选择附件文件'), { target: { files: [file] } });
+    expect(api.importSkillAttachment).toHaveBeenCalledWith('org-1', file);
+    expect(screen.getByRole('button', { name: '提交审核' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Skill 库' })).toBeDisabled();
+    expect(screen.getByLabelText('Skill 操作说明')).toBeDisabled();
+    const asset: api.SkillAssetDraft = { id: 'upload-one', name: 'guide.txt', summary: '参考资料：guide.txt', kind: 'reference',
+      format: 'txt', content: 'Uploaded text', source: { format: 'txt', base64: btoa('Uploaded text') } };
+    await act(async () => resolve(asset));
+    expect(screen.getByText('guide.txt')).toBeVisible();
+    expect(screen.getByLabelText('Skill 操作说明')).toHaveValue(content.body);
+    fireEvent.click(screen.getByRole('button', { name: '在操作说明中引用' }));
+    vi.mocked(api.saveSkillDraft).mockResolvedValue(detail('draft', false, 2));
+    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }));
+    await waitFor(() => expect(api.saveSkillDraft).toHaveBeenCalledWith('org-1', 'p1', 1,
+      expect.objectContaining({ assets: [asset], body: content.body + '\n\n请参考附件 [[asset:upload-one]]。' })));
+  });
+
+  it('keeps the draft unchanged when any upload fails and explains the failure', async () => {
+    vi.mocked(api.importSkillAttachment).mockRejectedValue(new ApiRequestError('SKILL_UPLOAD_NO_TEXT', 'private', 422));
+    await open();
+    fireEvent.change(screen.getByLabelText('选择附件文件'), { target: { files: [new File(['image pdf'], 'scan.pdf')] } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('扫描版 PDF 暂不支持');
+    expect(screen.getByLabelText('Skill 操作说明')).toHaveValue(content.body);
+    expect(screen.getByRole('button', { name: '保存草稿' })).toBeDisabled();
+    expect(screen.queryByText('scan.pdf')).not.toBeInTheDocument();
+  });
+
+  it('rejects unsupported and oversized files before sending them', async () => {
+    await open();
+    fireEvent.change(screen.getByLabelText('选择附件文件'), { target: { files: [new File(['image'], 'image.png')] } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('文件格式暂不支持');
+    const file = new File(['document'], 'large.pdf');
+    Object.defineProperty(file, 'size', { value: 2 * 1024 * 1024 + 1 });
+    fireEvent.change(screen.getByLabelText('选择附件文件'), { target: { files: [file] } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('单个附件不能超过 2 MB');
+    expect(api.importSkillAttachment).not.toHaveBeenCalled();
+  });
+
+  it('does not add a partial batch or exceed the combined extracted text budget', async () => {
+    const asset: api.SkillAssetDraft = { id: 'new', name: 'new.txt', summary: 'new', kind: 'reference', format: 'txt', content: 'x'.repeat(65536) };
+    const initial = detail();
+    initial.draft!.content.assets = Array.from({ length: 4 }, (_, i) => ({ ...asset, id: `old-${i}`, name: `old-${i}.txt` }));
+    vi.mocked(api.importSkillAttachment).mockResolvedValue(asset);
+    await open(initial);
+    fireEvent.change(screen.getByLabelText('选择附件文件'), { target: { files: [new File(['new'], 'new.txt')] } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('读取文字合计不能超过 256 KiB');
+    expect(screen.queryByText('new.txt')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存草稿' })).toBeDisabled();
+  });
+
+  it('discards an upload response after switching organizations', async () => {
+    let resolve!: (asset: api.SkillAssetDraft) => void;
+    vi.mocked(api.importSkillAttachment).mockReturnValue(new Promise(done => { resolve = done; }));
+    const { rerender } = render(<SkillAdminPanel orgId="org-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: '打开 订单报告' }));
+    await screen.findByLabelText('选择附件文件');
+    fireEvent.change(screen.getByLabelText('选择附件文件'), { target: { files: [new File(['private'], 'private.txt')] } });
+    rerender(<SkillAdminPanel orgId="org-2" />);
+    await act(async () => resolve({ id: 'private', name: 'private.txt', summary: 'private', kind: 'reference', format: 'txt', content: 'private' }));
+    expect(screen.queryByText('private.txt')).not.toBeInTheDocument();
+    expect(screen.queryByText(/已添加 1 份附件/)).not.toBeInTheDocument();
+    expect(api.saveSkillDraft).not.toHaveBeenCalled();
+  });
+
   it('shows attachment summaries from the selected immutable revision', async () => {
     vi.mocked(api.readSkillRevision).mockResolvedValue({ ...content, asset_summaries: [{
       id: 'template', name: '发布模板', kind: 'template', summary: '原版本附件摘要', format: 'md', bytes: 60,

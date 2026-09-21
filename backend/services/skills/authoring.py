@@ -216,7 +216,8 @@ class SkillAuthoring:
                         content = DraftContent(description=validated.summary, body=validated.body,
                             catalog_metadata=validated.catalog_metadata,
                             template_variables=validated.resources.template_variables,
-                            assets=tuple(AssetDraft(**entry.model_dump(exclude={'path', 'sha256', 'bytes'}),
+                            assets=tuple(AssetDraft(**entry.model_dump(exclude={'path', 'sha256', 'bytes', 'source'}),
+                                source=self._storage().read_source(validated, entry.id),
                                 content=texts[entry.id]) for entry in validated.resources.assets))
                     self._insert_draft(cursor, package_id, content)
             elif action == 'enable':
@@ -264,7 +265,8 @@ class SkillAuthoring:
             if not draft['approved_by'] or draft['approved_sha256'] != publication.content_sha256:
                 raise SkillError('SKILL_APPROVAL_REQUIRED')
             validated = self._storage().publish(package, publication, raw,
-                assets={a.id: a.content.encode('utf-8') for a in content.assets})
+                assets={a.id: a.content.encode('utf-8') for a in content.assets},
+                sources={a.id: a.source.raw() for a in content.assets if a.source})
             cursor.execute('''INSERT INTO public.skill_revisions
                 (package_id, revision, nas_path, content_sha256, body_sha256, summary, catalog_metadata)
                 VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id''',

@@ -56,7 +56,7 @@ def reviewed_document(package, revision: str, content: DraftContent):
         'catalog': content.catalog_metadata.model_dump(mode='json', exclude_unset=True),
     }
     if content.assets:
-        metadata['assets'] = [a.manifest().model_dump() for a in content.assets]
+        metadata['assets'] = [a.manifest().model_dump(exclude_none=True) for a in content.assets]
     if content.template_variables:
         metadata['template_variables'] = {k: v.model_dump() for k, v in content.template_variables.items()}
     raw = ('---\n' + yaml.safe_dump(metadata, allow_unicode=True, sort_keys=False)

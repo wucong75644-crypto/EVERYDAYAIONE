@@ -27,7 +27,8 @@ def publish(storage, content=None, revision='v1', package=PACKAGE):
     content = content or document(attachment())
     publication, raw = reviewed_document(package, revision, content)
     return storage.publish(package, publication, raw,
-                           assets={a.id: a.content.encode('utf-8') for a in content.assets})
+                           assets={a.id: a.content.encode('utf-8') for a in content.assets},
+                           sources={a.id: a.source.raw() for a in content.assets if a.source})
 
 
 @pytest.mark.parametrize('path', ['../outside.txt', '/etc/passwd', 'assets/../guide.md',

@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 from fastapi.responses import JSONResponse
 from psycopg import Error as DatabaseError
 
@@ -13,6 +13,8 @@ from core.db_scope import DatabaseAccessKind, DatabaseScope
 from services.skills.authoring import SkillAuthoring
 from services.skills.authoring_contracts import CreateSkill, ExpectedVersion, SaveDraft, TransitionDraft
 from services.skills.contracts import SkillError
+from services.skills.assets import MAX_SOURCE_BYTES
+from services.skills.imports import import_attachment
 from services.skills.repository import SkillRepository
 
 router = APIRouter(prefix='/skills/admin/orgs/{org_id}', tags=['Skill 管理'])
@@ -71,6 +73,16 @@ def list_skills(admin: Admin):
 @router.post('', status_code=201)
 def create_skill(data: CreateSkill, admin: Admin):
     return run(admin.create, data)
+
+
+@router.post('/attachments/import')
+def upload_attachment(file: UploadFile, admin: Admin):
+    # Same fresh organization-admin authorization as draft editing. Files are
+    # returned as draft data, never written to workspace/OSS/public URLs.
+    try:
+        return run(import_attachment, file.filename or '', file.file.read(MAX_SOURCE_BYTES + 1))
+    finally:
+        file.file.close()
 
 
 @router.get('/{package_id}')

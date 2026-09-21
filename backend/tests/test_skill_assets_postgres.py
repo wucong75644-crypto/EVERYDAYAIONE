@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import psycopg
 import pytest
 
-from services.skills.assets import AssetDraft
+from services.skills.assets import AssetDraft, AssetSourceDraft
 from services.skills.authoring_contracts import CreateSkill, SaveDraft
 from services.skills.contracts import PackageCreate, SkillError
 from services.skills.runtime import SkillReplayError
@@ -164,6 +164,54 @@ def test_legacy_package_management_copy_preserves_assets(environment):
     svc.repository.set_assignment(package.id, saved.id, enabled=True)
     copied = action(svc, package.id, 'start_draft')['draft']['content']
     assert copied['assets'][0]['content'] == 'A private reference.'
-    assert set(copied['assets'][0]) == set(AssetDraft.model_fields)
+    assert set(copied['assets'][0]) == set(AssetDraft.model_fields) - {'source'}
     publish(svc, package.id)
     assert svc.read_revision(package.id, 'v1').asset_summaries[0]['id'] == 'guide'
+
+
+async def test_uploaded_source_survives_old_revision_replay_and_deprecation(environment):
+    original = AssetSourceDraft.from_bytes('txt', b'Original uploaded file')
+    svc, pid, old_revision = create(environment, document(attachment(content='Original uploaded file', source=original)))
+    source = actor_source(environment)
+    runtime = state(source)
+    await runtime.initialize()
+    assert (await runtime.activate(activate('asset-report')))['ok']
+    checkpoint = runtime.checkpoint()
+    action(svc, pid, 'start_draft')
+    draft = svc.detail(pid)['draft']
+    assert AssetSourceDraft.model_validate(draft['content']['assets'][0]['source']).raw() == original.raw()
+    svc.save(pid, SaveDraft(expected_version=draft['version'], content=document(attachment(content='New text',
+        source=AssetSourceDraft.from_bytes('txt', b'New uploaded file')))))
+    publish(svc, pid)
+    restored = state(source)
+    await restored.initialize(checkpoint)
+    assert restored.checkpoint() == checkpoint
+    saved = svc.repository.assigned_revision(pid, old_revision)
+    original_path = (environment.root / saved.nas_path).parent / 'assets/guide.original.txt'
+    assert original_path.read_bytes() == original.raw()
+    action(svc, pid, 'deprecate')
+    fresh = state(source)
+    await fresh.initialize()
+    assert not fresh.directory
+    resumed = state(source)
+    await resumed.initialize(checkpoint)
+    assert resumed.checkpoint() == checkpoint
+    original_path.chmod(0o640)
+    original_path.write_bytes(b'Drifted original')
+    with pytest.raises(SkillReplayError):
+        await state(source).initialize(checkpoint)
+
+
+def test_manage_existing_uploaded_revision_preserves_original(environment):
+    svc = environment.service()
+    package = svc.repository.create_package(PackageCreate(skill_key='imported-legacy', source='managed',
+        scope_kind='org', org_id=environment.org))
+    original = AssetSourceDraft.from_bytes('txt', b'Original upload')
+    skill = publish_storage(svc._storage(), package=package,
+        content=document(attachment(content='Original upload', source=original)))
+    saved = svc.repository.publish_revision(package.id, skill)
+    svc.repository.set_assignment(package.id, saved.id, enabled=True)
+    copied = action(svc, package.id, 'start_draft')['draft']['content']
+    assert AssetSourceDraft.model_validate(copied['assets'][0]['source']).raw() == original.raw()
+    released = publish(svc, package.id)
+    assert svc.read_revision(package.id, released['draft']['revision']).asset_summaries[0]['file_format'] == 'txt'

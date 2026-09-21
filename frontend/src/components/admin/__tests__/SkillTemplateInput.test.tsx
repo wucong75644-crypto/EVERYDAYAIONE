@@ -68,6 +68,6 @@ describe('Skill template authoring', () => {
     render(<Editor initial={{ ...plain, body: '{{args.is_channel}}' }} busy />);
     expect(screen.getByRole('button', { name: '启用这些信息' })).toBeDisabled();
     expect(screen.getByRole('combobox', { name: 'Skill 操作说明：插入动态信息' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '添加附件' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '上传附件' })).toBeDisabled();
   });
 });

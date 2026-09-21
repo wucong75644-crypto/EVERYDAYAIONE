@@ -16,7 +16,7 @@ from services.skills.contracts import (
     PackageCreate, PublishRevision, SkillCatalogMetadata, SkillError, SkillPackage, ValidatedSkill,
     revision_path,
 )
-from services.skills.assets import SkillResources, verify_asset
+from services.skills.assets import AssetSourceDraft, SkillResources, verify_asset, verify_source
 
 MAX_SKILL_BYTES = 1024 * 1024
 
@@ -113,9 +113,21 @@ class SkillStorage:
         result = {}
         for asset_id in asset_ids:
             entry = declared[asset_id]
+            if entry.source:
+                self.read_source(validated, asset_id)
             result[asset_id] = verify_asset(entry, self._read(
                 str(revision_dir / entry.path), maximum=entry.bytes, asset=True))
         return result
+
+    def read_source(self, validated: ValidatedSkill, asset_id: str) -> AssetSourceDraft | None:
+        entry = next((a for a in validated.resources.assets if a.id == asset_id), None)
+        if entry is None:
+            raise SkillError('SKILL_ASSET_NOT_DECLARED')
+        if entry.source is None:
+            return None
+        path = PurePosixPath(validated.nas_path).parent / entry.source.path
+        raw = verify_source(entry.source, self._read(str(path), maximum=entry.source.bytes, asset=True))
+        return AssetSourceDraft.from_bytes(entry.source.format, raw)
 
     @staticmethod
     def validate_bytes(package, publication: PublishRevision, raw: bytes) -> ValidatedSkill:
@@ -169,7 +181,8 @@ class SkillStorage:
                               content_hash, body_hash, summary.strip(), body, catalog_metadata, resources)
 
     def publish(self, package, publication: PublishRevision, raw: bytes,
-                *, assets: dict[str, bytes] | None = None) -> ValidatedSkill:
+                *, assets: dict[str, bytes] | None = None,
+                sources: dict[str, bytes] | None = None) -> ValidatedSkill:
         """Install a complete revision directory, never replace a published file.
 
         POSIX directory rename refuses to replace a nonempty revision directory.
@@ -178,10 +191,17 @@ class SkillStorage:
         """
         validated = self.validate_bytes(package, publication, raw)
         assets = assets or {}
+        sources = sources or {}
         if set(assets) != {a.id for a in validated.resources.assets}:
             raise SkillError('SKILL_ASSET_NOT_DECLARED')
+        if set(sources) != {a.id for a in validated.resources.assets if a.source}:
+            raise SkillError('SKILL_ASSET_NOT_DECLARED')
+        files = {}
         for entry in validated.resources.assets:
             verify_asset(entry, assets[entry.id])
+            files[PurePosixPath(entry.path).name] = assets[entry.id]
+            if entry.source:
+                files[PurePosixPath(entry.source.path).name] = verify_source(entry.source, sources[entry.id])
         from services.skills.renderer import validate_resource_templates
         validate_resource_templates(validated, {key: value.decode('utf-8') for key, value in assets.items()})
         parts = PurePosixPath(validated.nas_path).parts
@@ -215,12 +235,12 @@ class SkillStorage:
                 os.mkdir('assets', mode=0o750, dir_fd=staging_fd)
                 assets_fd = os.open('assets', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                                     dir_fd=staging_fd)
-                for entry in validated.resources.assets:
-                    fd = os.open(PurePosixPath(entry.path).name,
+                for name, data in files.items():
+                    fd = os.open(name,
                                  os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                                  0o640, dir_fd=assets_fd)
                     with os.fdopen(fd, 'wb') as stream:
-                        stream.write(assets[entry.id])
+                        stream.write(data)
                         stream.flush()
                         os.fchmod(stream.fileno(), 0o440)
                         os.fsync(stream.fileno())
@@ -258,9 +278,9 @@ class SkillStorage:
                             except FileNotFoundError:
                                 pass
                             if assets_fd is not None:
-                                for entry in validated.resources.assets:
+                                for name in files:
                                     try:
-                                        os.unlink(PurePosixPath(entry.path).name, dir_fd=assets_fd)
+                                        os.unlink(name, dir_fd=assets_fd)
                                     except FileNotFoundError:
                                         pass
                                 os.rmdir('assets', dir_fd=staging_fd)
