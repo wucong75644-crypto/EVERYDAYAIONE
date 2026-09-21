@@ -67,7 +67,7 @@ assignment 切到 v2 后，v1 Turn 仍恢复 v1 的附件。废弃 revision 不�
 
 验证覆盖路径穿越及编码变体、符号链接/硬链接/FIFO、文件缺失/哈希漂移、未声明读取、摘要模式零附件 IO、单项/Turn/替换后预算、服务端严格类型、非法变量、原子发布失败和重试、取消、重复激活、压缩恢复、废弃/停用/退役、旧资产快照和解除停用历史核验。真实 PostgreSQL 测试仅启动临时 Unix socket 实例，不连接现有数据库。
 
-### 最终本地结果（2026-09-21）
+### 首次发布前本地结果（2026-09-21）
 
 - 后端 **597 passed、0 skipped**：全部 `tests/test_skill*.py`，以及 `test_chat_execution_engine.py`、`test_chat_generation_executor.py`、`test_tool_production_integration.py`、`test_replay_checkpoint_store.py`。包含 PostgreSQL 17 真实 RLS/不可变约束/授权和临时受控存储验证。
 - 前端 **51 passed**：附件 3、管理 33、聊天 Skill 选择 11、输入控件 4。TypeScript `tsc -b`、全部改动前端文件 ESLint 与 `git diff --check` 通过。聊天选择器保留已有 AnimatePresence `act` 提示；没有新增测试失败。
@@ -88,13 +88,25 @@ assignment 切到 v2 后，v1 Turn 仍恢复 v1 的附件。废弃 revision 不�
 | 前端测试 | `frontend/src/components/admin/__tests__/SkillAssets.test.tsx`、`SkillAdminPanel.test.tsx` |
 | 文档 | 本文、`TECH_ActorSkillRuntime.md`、`TECH_Skill控制面与受控存储.md`、`TECH_Skill草稿审核与发布.md` |
 
-## 生产验证步骤（本任务尚未执行）
+## 生产验证步骤
 
 1. 用户明确“提交部署”后，从当前任务工作树执行受控 `deploy/release.sh --message ... --file ...`；本期没有迁移，不合并或清理。
 2. 在专用测试组织创建 Skill，添加四类附件和一个 `org_id` 模板变量，提交、审核、发布；检查当前/历史版本只显示摘要，文件随 revision 一起落地并只读，实际 NAS 支持原子目录 rename。
 3. 激活只含摘要的版本，确认请求无附件正文；新版本正文只引用其中两份，确认模型上下文只包含这两份，变量来自当前服务端上下文。传入非空模型 args 应被拒绝。
 4. 用专用大附件验证超预算拒绝；仅在专用测试包副本中验证越界路径、链接、附件缺失及哈希漂移，确认失败不激活且错误不含服务器路径。恢复测试副本原始字节后再验证。
 5. 激活 v1 后暂停，发布并分配 v2；恢复仍是 v1 的原模板输出与附件。废弃后新 Turn 不可用而旧 Turn 可恢复；停用、退役或撤销授权停止恢复。确认原聊天工具权限和 Skill 控制屏障不变。
+
+### 审核失败排查与提示修复（2026-09-21）
+
+首次任务发布提交为 `584548998115d8f067413257f18e07624808c534`，生产发布标记和前端资源已只读核对。用户测试草稿 `asset-test-0921` 在正文中使用 `conversation_scope` 和 `is_channel`，但 `template_variables` 为空、附件列表为空；在生产只读事务中读取该草稿并调用纯校验函数，复现 `SKILL_TEMPLATE_VARIABLE_UNDECLARED`。没有修改草稿、执行审核或调用模型。
+
+恢复操作：刷新页面，在“高级设置 → 服务端模板变量”勾选“会话范围”和“是否群组会话”，保存并重新提交审核。若验收附件功能，应将三行模板放入 ID 为 `demo-template` 的模板附件，在操作说明中明确引用 `[[asset:demo-template]]`。正文直接使用变量也是合法功能，但不能验证附件加载。
+
+原审核接口只返回 FastAPI `detail`，共享前端错误解析器只读取 `error`，导致具体错误码丢失。增量修复在 Skill 管理接口的 422 业务响应中保留 `detail` 并补充标准 `error`；前端仅对白名单中的未声明变量、非法模板语法、无效附件引用显示针对性修正提示，未知错误仍使用通用提示，不展示服务端原文。审核规则与生命周期行为保持不变。
+
+增量文件：`backend/api/routes/skill_admin.py`、`backend/tests/test_skill_authoring_api.py`、`frontend/src/components/admin/SkillAdminPanel.tsx`、`frontend/src/components/admin/__tests__/SkillAdminPanel.test.tsx`、本文。增量修复的发布状态以受控入口的 `RELEASE_RESULT` 和生产发布标记为准；回滚点为上述首次发布提交，无数据迁移。发布后验收时，先不勾选变量提交，确认出现明确提示且草稿保留；再勾选对应变量，确认保存并提交成功。
+
+增量验证：后端审核接口与资产校验 **81 passed**；前端管理页和附件编辑器 **41 passed**，包含真实错误解析格式、失败后保留正文、勾选类型化变量并使用保存后版本重提审核的回归。TypeScript `tsc -b` 与改动前端文件 ESLint 通过。
 
 ## 回滚点
 

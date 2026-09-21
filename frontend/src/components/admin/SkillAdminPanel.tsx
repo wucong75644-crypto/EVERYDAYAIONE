@@ -18,7 +18,12 @@ function errorMessage(error: unknown): string {
     if (error.status === 403) return '当前账号没有此组织 Skill 的管理权限。';
     if (error.status === 404) return 'Skill 或版本已不可用，请刷新列表。';
     if (error.status === 503) return 'Skill 服务或受控存储暂不可用，内容已保留，请稍后重试。';
-    if (error.status === 422) return '请检查用途说明、正文、附件、高级设置及当前审核状态。';
+    if (error.status === 422) {
+      if (error.code === 'SKILL_TEMPLATE_VARIABLE_UNDECLARED') return '正文或模板附件使用了未声明的变量。请在“高级设置 → 服务端模板变量”勾选对应变量，并核对变量名称。';
+      if (error.code === 'SKILL_TEMPLATE_VARIABLE_FORBIDDEN') return '正文或模板附件包含不支持的模板语法。请使用“高级设置 → 服务端模板变量”中列出的变量写法。';
+      if (error.code === 'SKILL_ASSET_REFERENCE_INVALID') return '操作说明中的附件引用无效。请核对 [[asset:附件标识]] 与已添加附件的标识是否一致。';
+      return '请检查用途说明、正文、附件、高级设置及当前审核状态。';
+    }
   }
   return '操作未完成，内容已保留，请重试；若结果不确定，请先刷新确认状态。';
 }

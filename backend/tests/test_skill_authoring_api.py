@@ -116,6 +116,22 @@ def test_safe_failures(api, code, status):
     assert response.status_code == status
 
 
+@pytest.mark.parametrize('code', [
+    'SKILL_TEMPLATE_VARIABLE_UNDECLARED', 'SKILL_TEMPLATE_VARIABLE_FORBIDDEN',
+    'SKILL_ASSET_REFERENCE_INVALID',
+])
+def test_review_validation_code_reaches_frontend_error_decoder(api, code):
+    api.service.transition.side_effect = SkillError(code)
+    response = api.client.post(f'{api.base}/{api.pid}/transitions',
+        json={'expected_version': 2, 'action': 'submit'}, headers=api.auth)
+    assert response.status_code == 422
+    assert response.headers['cache-control'] == 'no-store'
+    assert response.json() == {
+        'detail': code,
+        'error': {'code': code, 'message': 'Skill 内容或状态校验失败'},
+    }
+
+
 def test_reenable_is_an_authorized_versioned_action(api):
     response = api.client.post(f'{api.base}/{api.pid}/transitions',
         json={'expected_version': 5, 'action': 'enable'}, headers=api.auth)

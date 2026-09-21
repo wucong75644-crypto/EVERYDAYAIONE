@@ -4,6 +4,7 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import JSONResponse
 from psycopg import Error as DatabaseError
 
 from api.deps import CurrentUser, CurrentUserId, Database
@@ -52,7 +53,12 @@ def run(operation, *args):
             raise HTTPException(409, code) from None
         if code.startswith('SKILL_STORAGE_') or 'HASH_MISMATCH' in code:
             raise HTTPException(503, 'SKILL_STORAGE_UNAVAILABLE') from None
-        raise HTTPException(422, code) from None
+        # Keep the existing detail while exposing the stable code to the shared
+        # frontend error decoder. Never include draft content or storage paths.
+        return JSONResponse(status_code=422, headers={'Cache-Control': 'no-store'}, content={
+            'detail': code,
+            'error': {'code': code, 'message': 'Skill 内容或状态校验失败'},
+        })
     except DatabaseError:
         raise HTTPException(503, 'SKILL_DATABASE_UNAVAILABLE') from None
 

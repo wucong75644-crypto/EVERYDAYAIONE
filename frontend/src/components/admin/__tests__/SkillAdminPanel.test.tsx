@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import SkillAdminPanel from '../SkillAdminPanel';
 import * as api from '../../../services/skillAdmin';
-import { ApiRequestError } from '../../../services/api';
+import { ApiRequestError, toApiRequestError } from '../../../services/api';
 
 vi.mock('../../../services/skillAdmin');
 const content: api.DraftContent = { description: '按订单生成报告', body: '# 订单报告\n\nReviewed instructions', catalog_metadata: {
@@ -137,6 +137,47 @@ describe('Skill admin workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: '提交审核' }));
     await screen.findByRole('button', { name: '审核通过' });
     expect(api.saveSkillDraft).toHaveBeenCalledTimes(1);
+    expect(api.transitionSkill).toHaveBeenLastCalledWith('org-1', 'p1', 2, 'submit');
+  });
+
+  it.each([
+    ['SKILL_TEMPLATE_VARIABLE_UNDECLARED', '勾选对应变量'],
+    ['SKILL_TEMPLATE_VARIABLE_FORBIDDEN', '不支持的模板语法'],
+    ['SKILL_ASSET_REFERENCE_INVALID', '与已添加附件的标识是否一致'],
+    ['UNKNOWN_VALIDATION', '请检查用途说明、正文、附件'],
+  ])('explains review validation %s without exposing raw error content', async (code, guidance) => {
+    await open();
+    vi.mocked(api.transitionSkill).mockRejectedValueOnce(toApiRequestError({
+      isAxiosError: true,
+      response: { status: 422, data: { detail: code, error: { code, message: '/private/server/path' } } },
+    }));
+    fireEvent.click(screen.getByRole('button', { name: '提交审核' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(guidance);
+    expect(screen.getByLabelText('Skill 操作说明')).toHaveValue(content.body);
+    expect(screen.queryByText('/private/server/path')).not.toBeInTheDocument();
+    expect(api.saveSkillDraft).not.toHaveBeenCalled();
+  });
+
+  it('allows declaring the missing server variables and submitting the saved correction', async () => {
+    const draft = detail();
+    draft.draft!.content.body = '会话范围：{{args.conversation_scope}}\n是否群组会话：{{args.is_channel}}';
+    await open(draft);
+    vi.mocked(api.transitionSkill).mockRejectedValueOnce(new ApiRequestError('SKILL_TEMPLATE_VARIABLE_UNDECLARED', 'invalid', 422));
+    fireEvent.click(screen.getByRole('button', { name: '提交审核' }));
+    await screen.findByRole('alert');
+    fireEvent.click(screen.getByText('高级设置'));
+    fireEvent.click(screen.getByRole('checkbox', { name: /会话范围.*args.conversation_scope/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /是否群组会话.*args.is_channel/ }));
+    const corrected = detail('draft', false, 2);
+    corrected.draft!.content = { ...draft.draft!.content, template_variables: {
+      conversation_scope: { type: 'string', source: 'conversation_scope' },
+      is_channel: { type: 'boolean', source: 'is_channel' },
+    } };
+    vi.mocked(api.saveSkillDraft).mockResolvedValueOnce(corrected);
+    vi.mocked(api.transitionSkill).mockResolvedValueOnce(detail('in_review', false, 3));
+    fireEvent.click(screen.getByRole('button', { name: '保存并提交审核' }));
+    await screen.findByRole('button', { name: '审核通过' });
+    expect(api.saveSkillDraft).toHaveBeenCalledWith('org-1', 'p1', 1, corrected.draft!.content);
     expect(api.transitionSkill).toHaveBeenLastCalledWith('org-1', 'p1', 2, 'submit');
   });
 
