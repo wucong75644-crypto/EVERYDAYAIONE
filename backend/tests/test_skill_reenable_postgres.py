@@ -50,7 +50,7 @@ def test_disabled_publication_can_be_reenabled_without_new_revision(environment)
     assert all(row[1:] == ('disabled', 'published', environment.actor, request_id) for row in audits)
 
 
-@pytest.mark.parametrize('working_state', ['draft', 'in_review', 'approved', 'published', 'deprecated'])
+@pytest.mark.parametrize('working_state', ['draft', 'in_review', 'approved', 'published'])
 def test_restore_working_state_without_publishing_unreviewed_content(environment, working_state):
     svc = environment.service()
     pid = create(svc)
@@ -62,8 +62,6 @@ def test_restore_working_state_without_publishing_unreviewed_content(environment
             action(svc, pid, 'submit')
         if working_state == 'approved':
             action(svc, pid, 'approve')
-    elif working_state == 'deprecated':
-        action(svc, pid, 'deprecate')
     before = svc.detail(pid)
     with pytest.raises(SkillError, match='TRANSITION_INVALID'):
         action(svc, pid, 'enable')
@@ -74,8 +72,6 @@ def test_restore_working_state_without_publishing_unreviewed_content(environment
         assert enabled['available_revision'] == before['available_revision']
         for field in ('status', 'content', 'revision', 'approved_by', 'approved_at'):
             assert enabled['draft'][field] == before['draft'][field]
-        if working_state == 'deprecated':
-            assert svc.repository.catalog_candidates() == []
 
 
 def test_unpublished_draft_can_be_reenabled_without_nas_but_cannot_skip_review(environment):
@@ -260,6 +256,9 @@ def test_database_reenable_cannot_change_content_or_choose_another_state(environ
 
 def test_preexisting_disabled_record_survives_migration_and_data_preserving_rollback(environment):
     svc = environment.service()
+    # Exercise the older 259/260 guard in isolation; 261 adds this trigger.
+    with environment.pool.connection(privileged=True) as conn:
+        conn.execute('DROP TRIGGER skill_assignment_lifecycle ON skill_assignments')
     with environment.pool.connection(privileged=True) as conn:
         conn.execute((MIGRATIONS / 'rollback/260_skill_reenable_rollback.sql').read_text())
     pid = create(svc)
@@ -312,9 +311,8 @@ async def test_new_turn_and_original_checkpoint_resume_after_reenable(environmen
     await fresh.initialize()
     assert (await fresh.activate(activate('orders')))['ok']
     assert fresh.active['orders'].revision == second['draft']['revision']
-    action(svc, pid, 'deprecate')
     action(svc, pid, 'disable')
-    action(svc, pid, 'enable')
+    action(svc, pid, 'deprecate')
     deprecated = state(source)
     await deprecated.initialize()
     assert deprecated.directory == {}

@@ -135,3 +135,51 @@
 回滚点为 `c7e41279523886c9abd3fecaff02733af95ceacc`。应用通过受控流程撤销本次增量；数据库配套 `rollback/260_skill_reenable_rollback.sql` 仅恢复旧 guard 并移除新辅助函数，不删除草稿、审计或 NAS 文件，也不擅自重新停用已恢复记录。当前未提交、未部署，未合并 main 或清理工作树。
 
 2026-09-21 用户明确要求快速提交部署、仅做必要测试。复用上述 137 项后端、24 项前端及类型/静态检查；为受控发布入口增加显式 `--skip-test`，转发执行器已有选项，默认行为不变，仍执行前后端构建、迁移账本、发布锁、来源与 readiness 检查。如果发布前合入 main 改变候选，则停止复用，须对新候选补充必要验证后再发布。新增发布参数用临时 Git/模拟 SSH 的生命周期测试验证，不访问生产。
+
+
+## 停用直接废弃与安全删除（2026-09-21，未部署）
+
+### 已确认行为
+
+用户明确要求核对后一次修改，选择 B：disabled 可直接 deprecate；deprecated 不再提供停用/启用/编辑/发布，只读查看及安全删除。“开始修改吧”按推荐删除范围授权：从管理列表移除，后台保留已发布 revision、NAS 正文、授权记录与审计；唯一标识不复用，不增加物理清除或恢复删除入口。上一版停用恢复 `254410e7` 已部署，本节是其后续增量。
+
+### 状态、存储与删除保护
+
+- disabled → deprecated 复用本次停用审计关联；仅将这一停用事务影响的 published/deprecated revision 转 deprecated。单独 disabled、retired 的旧版本及撤销的授权不重开。所有受影响 NAS 文件先验证双哈希，任一个失败均回滚。纯草稿无文件时不初始化 NAS。与解除停用一样使用 expected_version 和同包串行锁；新 Turn 禁止，原已激活 Actor 可按旧 revision 恢复。
+- deprecated 禁止 disable，保留以前已处于 disabled-from-deprecated 的恢复兼容。已部署 259/260 不修改；新建迁移 261 扩展 guard。
+- 在 skill_drafts 增加 deleted_at/deleted_by，生命周期 status 保持 deprecated。删除版本号增加并写 to_state=deleted 审计；正文与审批内容不变。管理列表/详情/历史读取入口排除删除标记，原 package/key/revision/NAS/assignment/audits 全部保留。
+- 删除预检和实际删除均要求当前活跃组织管理员与包所有权。GET deletion-check 返回 allowed/reason/计数；DELETE 包入口只接受 expected_version，不接受 force/路径/身份。只有 deprecated 可删除。
+- 检查当前组织未结束 chat tasks：手动 `_selected_skill`、checkpoint directory.package_id、active.skill_key，兼容 state.payload 包装。运行或暂停且缺少完整 Skill 快照、未知/损坏结构、JSON 字符串 request_params 均标记 uncertain 并阻止删除。终态任务即使保留 ready checkpoint 也不阻止删除；新 pending 无选择无快照不属于已建立的引用。
+- 检查函数 SECURITY INVOKER + row_security=off，仅查显式当前 org 的 tasks/checkpoints，避免 RLS 隐藏记录后误判零依赖。没有新增读取其他组织数据的权限。缺表、权限/RLS、数据库异常和超时均失败关闭，前端禁用删除并允许重试。
+- 实际删除依次取得同包 advisory 锁、draft 行锁，再对 tasks 与 conversation_turn_checkpoints 取得短暂 SHARE 锁，保证引用写入/恢复/排队不能跨越最终检查。锁等待 2 秒、服务内单语句 3 秒超时，失败回滚。预检不拿全局表锁。数据库删除 trigger 也再次检查，不能绕过 HTTP 的预检直接标记删除。
+- 所有 revision/assignment 写入在 trigger 内锁 draft 并检查删除标记。repository 与 authoring 写入统一先包锁，再 draft/版本行，关闭删除与内部写入并发窗口；直接 SQL 的反序锁最多产生可重试数据库错误，不能绕过墓碑保护。runtime 读取原版的路径保持兼容；没有修改旧 Runtime 平台路径或 Actor 执行文件。
+
+### 文件范围
+
+| 职责 | 文件 |
+| --- | --- |
+| 状态与删除服务 | `backend/services/skills/authoring.py`、`reenable.py`、新增 `deletion.py`；`repository.py` 统一写锁 |
+| 管理接口 | `backend/api/routes/skill_admin.py` |
+| 迁移/回滚 | 新增 `backend/migrations/261_skill_safe_removal.sql`、`backend/migrations/rollback/261_skill_safe_removal_rollback.sql` |
+| UI/客户端 | `frontend/src/components/admin/SkillAdminPanel.tsx`、`skills/SkillWorkspace.tsx`、新增 `skills/SkillDeletion.tsx`、`frontend/src/services/skillAdmin.ts` |
+| 测试 | 新增 `backend/tests/test_skill_removal_postgres.py`；更新 authoring API/PostgreSQL、reenable PostgreSQL 与 `frontend/src/components/admin/__tests__/SkillAdminPanel.test.tsx` |
+| 记录 | 本文、`UI_Skill管理体验优化.md`、`docs/CURRENT_ISSUES.md` |
+
+### 验证与生产复验
+
+定向验证（非全量）：Skill removal / authoring / reenable / catalog PostgreSQL 及 authoring API；界面 32 项与导航 2 项、TypeScript、改动文件 ESLint。独立只读审查最初发现删除与内部 revision/assignment 未提交写入的竞争，已修复并补并发验证；复审无高置信阻塞问题。具体最终计数见下方完成记录。
+
+覆盖真实临时数据库、NAS 丢失/篡改、原 revision 恢复、新旧 Turn 差异、未知快照、旧 payload、字符串参数、排队/运行/暂停依赖、终态 ready 不阻塞、组织与平台边界、RLS/缺表失败关闭、旧停用数据、并发删除/任务写入/版本授权写入、审计失败原子回滚，以及删后不可管理和标识不复用。
+
+明确“提交部署”后才经 release.sh 发布当前分支并应用 261。发布前只读确认生产 tasks/checkpoints 的权限与 RLS 状态（预检失败不能改为放行）。部署后用户验证：
+1. 停用已发布测试 Skill → 更多操作直接废弃；确认提示新任务仍禁用、旧任务恢复重新允许。
+2. 废弃详情没有启用/停用/编辑/发布，仅正文、历史、返回及删除检查；平台详情无删除。
+3. 有未结束引用或未知状态时删除置灰，原因可见；任务结束后重新检查允许删除。
+4. 确认删除后列表移除，刷新与直接管理 URL 不可再打开；旧历史/NAS/审计仍保留，不能以同 key 重建。
+5. 两个管理页面同时操作，过期版本或变化的依赖被拒绝；失败保留记录，不能显示删除成功。
+
+### 回滚
+
+基准为 `254410e77a3e8f2e3d957f8a8a3bed71baf88313`。尚无 deleted_at 记录时，261 回滚恢复 260 guard/audit 函数并移除新增元数据，不删除 Skill 或 NAS。已有删除标记时回滚脚本主动拒绝，防止条目重新出现；此时必须保留 261 标记、过滤及保护，采用前向修复，不能直接部署旧版应用或删除列。所有发布/回退走受控 release.sh，当前未提交部署、未合并 main、未清理工作树。
+
+完成记录：后端定向测试共 152 项通过（safe removal 29、authoring PostgreSQL 38、reenable 17、catalog PostgreSQL 27、authoring API 41），前端 34 项通过（管理 32、导航 2）。新增检查对非标准 UUID 形态的旧快照按未知处理，避免错误当作无引用。TypeScript、定向 ESLint 与 git diff --check 通过。只复验受改动影响的路径，不执行全量测试；生产迁移和真实界面操作尚未执行。

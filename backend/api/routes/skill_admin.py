@@ -10,7 +10,7 @@ from api.deps import CurrentUser, CurrentUserId, Database
 from core.config import get_settings
 from core.db_scope import DatabaseAccessKind, DatabaseScope
 from services.skills.authoring import SkillAuthoring
-from services.skills.authoring_contracts import CreateSkill, SaveDraft, TransitionDraft
+from services.skills.authoring_contracts import CreateSkill, ExpectedVersion, SaveDraft, TransitionDraft
 from services.skills.contracts import SkillError
 from services.skills.repository import SkillRepository
 
@@ -48,7 +48,7 @@ def run(operation, *args):
             raise HTTPException(403, '不能修改平台或其他组织的 Skill') from None
         if code in ('SKILL_PACKAGE_UNAVAILABLE', 'SKILL_REVISION_UNAVAILABLE'):
             raise HTTPException(404, 'Skill 或版本不存在') from None
-        if code in ('SKILL_VERSION_CONFLICT', 'SKILL_KEY_EXISTS'):
+        if code in ('SKILL_VERSION_CONFLICT', 'SKILL_KEY_EXISTS', 'SKILL_DELETE_IN_USE', 'SKILL_DELETE_CHECK_UNCERTAIN'):
             raise HTTPException(409, code) from None
         if code.startswith('SKILL_STORAGE_') or 'HASH_MISMATCH' in code:
             raise HTTPException(503, 'SKILL_STORAGE_UNAVAILABLE') from None
@@ -85,3 +85,13 @@ def transition(package_id: UUID, data: TransitionDraft, admin: Admin):
 @router.get('/{package_id}/revisions/{revision}')
 def read_revision(package_id: UUID, revision: str, admin: Admin):
     return run(admin.read_revision, package_id, revision)
+
+
+@router.get('/{package_id}/deletion-check')
+def deletion_check(package_id: UUID, admin: Admin):
+    return run(admin.deletion_check, package_id)
+
+
+@router.delete('/{package_id}')
+def delete_skill(package_id: UUID, data: ExpectedVersion, admin: Admin):
+    return run(admin.delete, package_id, data)

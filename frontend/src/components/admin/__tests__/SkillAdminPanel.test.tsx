@@ -25,6 +25,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(api.listManagedSkills).mockResolvedValue([item, platformItem]);
   vi.mocked(api.getManagedSkill).mockResolvedValue(detail());
+  vi.mocked(api.checkSkillDeletion).mockResolvedValue({ allowed: true, reason: null, blocking_tasks: 0, uncertain_tasks: 0 });
   vi.mocked(api.readSkillRevision).mockResolvedValue({ ...content, body: '# 已发布正文\n\nOriginal immutable content' });
 });
 async function open(value = detail()) {
@@ -180,7 +181,7 @@ describe('Skill admin workspace', () => {
     expect(screen.getByLabelText('Skill 操作说明')).toHaveValue('# Local draft\n\nMy pending text');
   });
 
-  it('requires confirmation for deprecation and explains the stronger stop behavior', async () => {
+  it('requires confirmation for deprecation and then offers only safe deletion and read-only views', async () => {
     await open(detail('published'));
     await more('废弃 Skill');
     expect(screen.getByRole('dialog')).toHaveTextContent('已经激活的任务仍可使用原版本恢复');
@@ -189,8 +190,9 @@ describe('Skill admin workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: '确认废弃' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(screen.queryByRole('button', { name: '编辑新版本' })).not.toBeInTheDocument();
-    await more('停用 Skill');
-    expect(screen.getByRole('dialog')).toHaveTextContent('阻止新的解析、激活和已有任务的恢复');
+    expect(screen.queryByRole('button', { name: '更多操作' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '解除停用' })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: '删除 Skill' })).toBeEnabled());
   });
 
   it('shows a primary reenable action after stopping and restores the original version after confirmation', async () => {
@@ -198,41 +200,143 @@ describe('Skill admin workspace', () => {
     vi.mocked(api.transitionSkill).mockResolvedValue({ ...detail('disabled', true, 6), available_revision: null,
       revisions: [{ ...revision, status: 'disabled' }] });
     await more('停用 Skill');
-    expect(screen.getByRole('dialog')).toHaveTextContent('可在详情页重新启用');
+    expect(screen.getByRole('dialog')).toHaveTextContent('可在详情页解除停用');
     fireEvent.click(screen.getByRole('button', { name: '确认停用' }));
-    fireEvent.click(await screen.findByRole('button', { name: '重新启用' }));
+    fireEvent.click(await screen.findByRole('button', { name: '解除停用' }));
     expect(screen.getByRole('dialog')).toHaveTextContent('将恢复停用前的状态和原有版本');
     expect(api.transitionSkill).not.toHaveBeenCalledWith('org-1', 'p1', 6, 'enable');
     vi.mocked(api.transitionSkill).mockResolvedValue(detail('published', true, 7));
-    fireEvent.click(screen.getByRole('button', { name: '确认启用' }));
-    await screen.findByText('已解除停用，恢复为停用前的状态。');
+    fireEvent.click(screen.getByRole('button', { name: '确认解除停用' }));
+    await screen.findByText('已解除停用，当前状态：已发布。');
     expect(api.transitionSkill).toHaveBeenLastCalledWith('org-1', 'p1', 6, 'enable');
-    expect(screen.queryByRole('button', { name: '重新启用' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '解除停用' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '编辑新版本' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /版本历史/ })).toHaveTextContent('1');
     expect(screen.getByText('当前可用版本').nextElementSibling).toHaveTextContent('第 1 版');
   });
 
+  it('can directly deprecate a stopped Skill with an explicit warning about old task recovery', async () => {
+    const deprecated = { ...detail('deprecated', true, 15), available_revision: null,
+      revisions: [{ ...revision, status: 'deprecated' as const }] };
+    vi.mocked(api.listManagedSkills).mockResolvedValue([{ ...item, status: 'deprecated', available_revision: null }]);
+    await open({ ...detail('disabled', true, 14), available_revision: null });
+    await more('废弃 Skill');
+    expect(screen.getByRole('dialog')).toHaveTextContent('重新允许此前已激活的旧任务恢复');
+    expect(api.transitionSkill).not.toHaveBeenCalled();
+    vi.mocked(api.transitionSkill).mockResolvedValueOnce(deprecated);
+    fireEvent.click(screen.getByRole('button', { name: '确认废弃' }));
+    await screen.findByText('已废弃，新的使用已停止，已有任务仍可恢复。');
+    expect(api.transitionSkill).toHaveBeenLastCalledWith('org-1', 'p1', 14, 'deprecate');
+    expect(screen.getByText('已废弃')).toBeInTheDocument();
+    for (const name of ['更多操作', '解除停用', '编辑新版本', '发布新版本']) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+    }
+    await waitFor(() => expect(screen.getByRole('button', { name: '删除 Skill' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: /版本历史/ }));
+    fireEvent.click(screen.getByRole('button', { name: '查看第 1 版' }));
+    await screen.findByText('Original immutable content');
+    fireEvent.click(screen.getByRole('button', { name: 'Skill 库' }));
+    expect(await screen.findByRole('button', { name: '打开 订单报告' })).toHaveTextContent('已废弃');
+  });
+
+  it('restores a legacy stopped deprecated Skill to a read-only deprecated state', async () => {
+    await open({ ...detail('disabled', true, 14), available_revision: null });
+    fireEvent.click(screen.getByRole('button', { name: '解除停用' }));
+    vi.mocked(api.transitionSkill).mockResolvedValue({ ...detail('deprecated', true, 15), available_revision: null });
+    fireEvent.click(screen.getByRole('button', { name: '确认解除停用' }));
+    await screen.findByText('已解除停用，当前状态：已废弃。仍禁止新的使用，已有任务可恢复。');
+    expect(screen.queryByRole('button', { name: '更多操作' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '解除停用' })).not.toBeInTheDocument();
+  });
+
+  it('removes a safe deprecated Skill after confirmation and returns to the refreshed library', async () => {
+    await open({ ...detail('deprecated', true, 15), available_revision: null });
+    await waitFor(() => expect(screen.getByRole('button', { name: '删除 Skill' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: '删除 Skill' }));
+    expect(screen.getByRole('dialog')).toHaveTextContent('历史版本、NAS 正文和审计记录仍保留');
+    expect(api.deleteManagedSkill).not.toHaveBeenCalled();
+    vi.mocked(api.deleteManagedSkill).mockResolvedValue({ package_id: 'p1', deleted: true });
+    vi.mocked(api.listManagedSkills).mockResolvedValue([]);
+    fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
+    await screen.findByText('已从 Skill 库删除，历史版本和审计记录仍保留。');
+    expect(api.deleteManagedSkill).toHaveBeenCalledWith('org-1', 'p1', 15);
+    expect(screen.queryByRole('button', { name: '打开 订单报告' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Skill 库' })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [{ allowed: false, reason: 'SKILL_DELETE_IN_USE', blocking_tasks: 2, uncertain_tasks: 0 }, '有 2 个未结束的任务引用此 Skill'],
+    [{ allowed: false, reason: 'SKILL_DELETE_CHECK_UNCERTAIN', blocking_tasks: 0, uncertain_tasks: 1 }, '有 1 个任务尚不能确认是否仍依赖此 Skill'],
+  ])('disables deletion for blocking or unknown tasks', async (check, message) => {
+    vi.mocked(api.checkSkillDeletion).mockResolvedValue(check as api.SkillDeletionCheck);
+    await open(detail('deprecated'));
+    await screen.findByText(new RegExp(message as string));
+    expect(screen.getByRole('button', { name: '删除 Skill' })).toBeDisabled();
+    expect(api.deleteManagedSkill).not.toHaveBeenCalled();
+    vi.mocked(api.checkSkillDeletion).mockResolvedValue({ allowed: true, reason: null, blocking_tasks: 0, uncertain_tasks: 0 });
+    fireEvent.click(screen.getByRole('button', { name: '重新检查' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '删除 Skill' })).toBeEnabled());
+  });
+
+  it('fails closed when safety checks fail and preserves the detail on a final dependency conflict', async () => {
+    vi.mocked(api.checkSkillDeletion).mockRejectedValueOnce(new Error('private database path'));
+    await open(detail('deprecated'));
+    await screen.findByText('安全检查暂不可用，请重新检查。');
+    expect(screen.getByRole('button', { name: '删除 Skill' })).toBeDisabled();
+    expect(screen.queryByText('private database path')).not.toBeInTheDocument();
+    vi.mocked(api.checkSkillDeletion).mockResolvedValue({ allowed: true, reason: null, blocking_tasks: 0, uncertain_tasks: 0 });
+    fireEvent.click(screen.getByRole('button', { name: '重新检查' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '删除 Skill' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: '删除 Skill' }));
+    vi.mocked(api.deleteManagedSkill).mockRejectedValue(new ApiRequestError('CONFLICT', 'private', 409));
+    fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('状态或任务依赖已变化');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Skill 库' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '重新检查' })).toBeInTheDocument();
+    expect(screen.queryByText('已从 Skill 库删除，历史版本和审计记录仍保留。')).not.toBeInTheDocument();
+  });
+
+  it('does not offer deletion or check dependencies of a platform Skill', async () => {
+    await open({ ...detail('deprecated'), editable: false, scope_kind: 'platform', draft: null,
+      revisions: [{ ...revision, status: 'deprecated' }] });
+    expect(screen.queryByRole('button', { name: '删除 Skill' })).not.toBeInTheDocument();
+    expect(api.checkSkillDeletion).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['draft', false, '草稿'], ['in_review', false, '待审核'], ['in_review', true, '审核通过'],
+  ] as const)('reports the actual restored working state %s (approved=%s)', async (status, approved, label) => {
+    await open({ ...detail('disabled', approved, 6), available_revision: null });
+    fireEvent.click(screen.getByRole('button', { name: '解除停用' }));
+    vi.mocked(api.transitionSkill).mockResolvedValue({ ...detail(status, approved, 7), available_revision: null });
+    fireEvent.click(screen.getByRole('button', { name: '确认解除停用' }));
+    await screen.findByText(`已解除停用，当前状态：${label}。`);
+    expect(screen.getByText('当前可用版本').nextElementSibling).toHaveTextContent('尚未启用');
+  });
+
   it('keeps a stopped Skill and the confirmation open when reenable fails', async () => {
     await open({ ...detail('disabled', true, 6), available_revision: null });
     vi.mocked(api.transitionSkill).mockRejectedValue(new ApiRequestError('STORAGE', 'private path', 503));
-    fireEvent.click(screen.getByRole('button', { name: '重新启用' }));
-    fireEvent.click(screen.getByRole('button', { name: '确认启用' }));
+    fireEvent.click(screen.getByRole('button', { name: '解除停用' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认解除停用' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Skill 服务或受控存储暂不可用');
     expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.queryByText('已解除停用，恢复为停用前的状态。')).not.toBeInTheDocument();
+    expect(screen.queryByText('已解除停用，当前状态：已发布。')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '编辑新版本' })).not.toBeInTheDocument();
   });
 
   it.each(['deprecated', 'published'] as const)('does not offer reenable for %s', async status => {
     await open(detail(status));
-    expect(screen.queryByRole('button', { name: '重新启用' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '解除停用' })).not.toBeInTheDocument();
   });
 
   it('does not let organization admins reenable a platform Skill', async () => {
     await open({ ...detail('disabled'), scope_kind: 'platform', editable: false, draft: null,
       revisions: [{ ...revision, status: 'disabled' }] });
-    expect(screen.queryByRole('button', { name: '重新启用' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '解除停用' })).not.toBeInTheDocument();
   });
 
   it('loads platform body by default, escapes HTML and prevents automatic external images', async () => {

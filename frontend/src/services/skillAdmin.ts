@@ -61,3 +61,14 @@ export const transitionSkill = (orgId: string, id: string, expected_version: num
   request({ method: 'POST', url: `${base(orgId)}/${id}/transitions`, data: { expected_version, action } });
 export const readSkillRevision = (orgId: string, id: string, revision: string): Promise<DraftContent> =>
   request({ method: 'GET', url: `${base(orgId)}/${id}/revisions/${encodeURIComponent(revision)}` });
+
+export interface SkillDeletionCheck {
+  allowed: boolean;
+  reason: string | null;
+  blocking_tasks: number;
+  uncertain_tasks: number;
+}
+export const checkSkillDeletion = (orgId: string, id: string): Promise<SkillDeletionCheck> =>
+  request({ method: 'GET', url: `${base(orgId)}/${id}/deletion-check` });
+export const deleteManagedSkill = (orgId: string, id: string, expected_version: number): Promise<{ package_id: string; deleted: boolean }> =>
+  request({ method: 'DELETE', url: `${base(orgId)}/${id}`, data: { expected_version } });

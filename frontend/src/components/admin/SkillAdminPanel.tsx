@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiRequestError } from '../../services/api';
 import {
-  createManagedSkill, getManagedSkill, listManagedSkills, readSkillRevision, saveSkillDraft, transitionSkill,
+  createManagedSkill, deleteManagedSkill, getManagedSkill, listManagedSkills, readSkillRevision, saveSkillDraft, transitionSkill,
   type DraftContent, type SkillAction, type SkillAdminItem, type SkillDetail, type SkillState,
 } from '../../services/skillAdmin';
 import { Button } from '../ui/Button';
@@ -9,7 +9,7 @@ import { Input } from '../ui/Input';
 import { Dialog, DialogFooter } from '../primitives/Dialog';
 import { SkillLibrary, type SkillLibraryScope } from './skills/SkillLibrary';
 import { SkillWorkspace, type RevisionContent } from './skills/SkillWorkspace';
-import { detailState, emptyContent, type SkillNavigationState } from './skills/presentation';
+import { detailState, emptyContent, stateLabels, type SkillNavigationState } from './skills/presentation';
 import './skills/skill-admin.css';
 
 function errorMessage(error: unknown): string {
@@ -26,8 +26,9 @@ const confirmations = {
   publish: ['发布新版本？', '审核通过的内容将保存为不可变版本。后续新的解析与激活将使用新版本，已经激活的任务继续使用原版本。', '确认发布'],
   reject: ['退回修改？', '内容将转回草稿，组织管理员可以继续编辑；再次发布前需要重新审核。', '退回草稿'],
   deprecate: ['废弃这项 Skill？', '废弃后会阻止新的解析和激活。已经激活的任务仍可使用原版本恢复。此 Skill 将不能继续编辑或发布，没有直接恢复入口。', '确认废弃'],
-  disable: ['停用这项 Skill？', '停用后将阻止新的解析、激活和已有任务的恢复。内容与版本会保留，可在详情页重新启用。', '确认停用'],
-  enable: ['重新启用这项 Skill？', '将恢复停用前的状态和原有版本，内容不会变更。草稿仍需审核发布，已废弃的版本仍保持废弃，已撤销的授权不会恢复。', '确认启用'],
+  disable: ['停用这项 Skill？', '停用后将阻止新的解析、激活和已有任务的恢复。内容与版本会保留，可在详情页解除停用，恢复停用前的状态。', '确认停用'],
+  enable: ['解除停用？', '将恢复停用前的状态和原有版本，内容不会变更。解除停用不会撤销废弃：停用前已废弃的 Skill 仍为已废弃，仅允许已有任务恢复。草稿仍需审核发布，已撤销的授权不会恢复。', '确认解除停用'],
+  delete: ['删除这项 Skill？', '删除后将从 Skill 库移除，不能再编辑、发布或调用。历史版本、NAS 正文和审计记录仍保留，唯一标识不能复用。系统会再次检查任务依赖，有未结束的引用时不会删除。', '确认删除'],
   leave: ['放弃未保存的修改？', '当前修改尚未保存。继续操作会放弃这些修改，保留上次保存的草稿。', '放弃修改并继续'],
 } as const;
 type Confirmation = keyof typeof confirmations;
@@ -157,7 +158,34 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
       const next = await transitionSkill(orgId, detail.package_id, detail.draft?.version ?? 0, value);
       if (token !== generation.current) return;
       show(next);
-      setNotice(value === 'publish' ? '发布成功，新版本已可用。' : value === 'start_draft' ? '修订草稿已创建，原版本保持不变。' : value === 'enable' ? '已解除停用，恢复为停用前的状态。' : '状态已更新。');
+      const status = detailState(next);
+      const label = status === 'in_review' && next.draft?.approved_by ? '审核通过' : stateLabels[status];
+      const messages: Partial<Record<SkillAction, string>> = {
+        publish: '发布成功，新版本已可用。', start_draft: '修订草稿已创建，原版本保持不变。',
+        disable: '已停用，新的使用和已有任务恢复均已停止。',
+        deprecate: '已废弃，新的使用已停止，已有任务仍可恢复。',
+        enable: `已解除停用，当前状态：${label}。${status === 'deprecated' ? '仍禁止新的使用，已有任务可恢复。' : ''}`,
+      };
+      setNotice(messages[value] ?? '状态已更新。');
+      await refreshList(token, true);
+    });
+  }
+  function remove() {
+    if (!detail?.draft) return;
+    void perform(async token => {
+      try {
+        await deleteManagedSkill(orgId, detail.package_id, detail.draft!.version);
+      } catch (e) {
+        if (token !== generation.current) return;
+        setError(e instanceof ApiRequestError && e.status === 409
+          ? '删除未完成：状态或任务依赖已变化。请取消并重新检查，确认安全后再删除。'
+          : errorMessage(e));
+        return;
+      }
+      if (token !== generation.current) return;
+      readGeneration.current++; setConfirmation(null); setDetail(null); setReadTarget(null); setRevisionContent(null);
+      setItems(rows => rows.filter(row => row.package_id !== detail.package_id));
+      setNotice('已从 Skill 库删除，历史版本和审计记录仍保留。');
       await refreshList(token, true);
     });
   }
@@ -208,10 +236,13 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
     });
   }
   const modalOpen = !!confirmation || creating;
+  const confirmationCopy = confirmation === 'deprecate' && detail && detailState(detail) === 'disabled'
+    ? ['废弃已停用的 Skill？', '废弃后仍禁止新的使用，但将重新允许此前已激活的旧任务恢复。此操作不会恢复为已发布，废弃后只保留查看和安全删除。', '确认废弃']
+    : confirmation ? confirmations[confirmation] : null;
   return <section aria-label="Skill 管理" className="skill-admin-theme py-3 text-[var(--s-text-primary)]">
     {error && !modalOpen && scope !== 'personal' && <p role="alert" className="mb-4 rounded-md bg-[var(--s-error-soft)] px-4 py-3 text-sm text-[var(--s-error)]">{error}</p>}
     {notice && scope !== 'personal' && <p role="status" className="mb-4 rounded-md bg-[var(--s-success-soft)] px-4 py-3 text-sm text-[var(--s-success)]">{notice}</p>}
-    {detail ? <SkillWorkspace detail={detail} content={content} dirty={dirty} busy={busy} tab={tab} revisionContent={revisionContent} reading={reading} readFailed={readFailed}
+    {detail ? <SkillWorkspace orgId={orgId} onDelete={() => { setError(''); setConfirmation('delete'); }} detail={detail} content={content} dirty={dirty} busy={busy} tab={tab} revisionContent={revisionContent} reading={reading} readFailed={readFailed}
       onTab={changeTab} onChange={value => { setContent(value); setDirty(true); }} onBack={back} onRefresh={() => requestLeave(() => select(detail.package_id))}
       onSave={() => save()} onSubmit={() => save(true)} onAction={action} onRevision={revision => {
         if (revision === readTarget && !readFailed) return;
@@ -233,15 +264,16 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
       </form>
     </Dialog>
     <Dialog className="skill-admin-theme" open={!!confirmation} onOpenChange={value => { if (!value && !busy) { setConfirmation(null); setError(''); pendingLeave.current = null; } }}
-      title={confirmation ? confirmations[confirmation][0] : ''} description={confirmation ? confirmations[confirmation][1] : ''}
+      title={confirmationCopy?.[0] ?? ''} description={confirmationCopy?.[1] ?? ''}
       closeOnEscape={!busy} closeOnOutsideClick={!busy} showClose={!busy}>
       {error && <p role="alert" className="mt-3 text-sm text-[var(--s-error)]">{error}</p>}
       <DialogFooter><Button variant="secondary" disabled={busy} onClick={() => { setConfirmation(null); setError(''); pendingLeave.current = null; }}>{confirmation === 'leave' ? '继续编辑' : '取消'}</Button>
-        <Button variant={confirmation === 'deprecate' || confirmation === 'disable' || confirmation === 'leave' ? 'danger' : 'accent'} loading={busy} onClick={() => {
+        <Button variant={confirmation === 'deprecate' || confirmation === 'disable' || confirmation === 'delete' || confirmation === 'leave' ? 'danger' : 'accent'} loading={busy} onClick={() => {
           if (!confirmation) return;
           if (confirmation === 'leave') { const pending = pendingLeave.current; setConfirmation(null); pendingLeave.current = null; pending?.(); }
+          else if (confirmation === 'delete') remove();
           else void transition(confirmation);
-        }}>{confirmation ? confirmations[confirmation][2] : '确认'}</Button></DialogFooter>
+        }}>{confirmationCopy?.[2] ?? '确认'}</Button></DialogFooter>
     </Dialog>
   </section>;
 }

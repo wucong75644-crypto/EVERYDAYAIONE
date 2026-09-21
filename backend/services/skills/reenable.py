@@ -3,7 +3,7 @@
 from services.skills.contracts import PublishRevision, SkillError, SkillRevision
 
 
-def reenable(cursor, package, draft, storage_factory):
+def reenable(cursor, package, draft, storage_factory, *, deprecating=False):
     if not draft or draft['status'] != 'disabled':
         raise SkillError('SKILL_TRANSITION_INVALID')
     cursor.execute('SELECT public.skill_disabled_restore_state(%s, %s) AS status',
@@ -11,6 +11,9 @@ def reenable(cursor, package, draft, storage_factory):
     status = cursor.fetchone()['status']
     if status not in ('draft', 'in_review', 'published', 'deprecated'):
         raise SkillError('SKILL_TRANSITION_INVALID')
+
+    if deprecating:
+        status = 'deprecated'
 
     cursor.execute('''SELECT r.*, public.skill_disabled_restore_state(r.package_id, %s, r.id) AS restore_status
         FROM public.skill_revisions r WHERE r.package_id = %s AND r.status = 'disabled'
@@ -26,6 +29,6 @@ def reenable(cursor, package, draft, storage_factory):
             body_sha256=saved.body_sha256), nas_path=saved.nas_path)
     for row in revisions:
         cursor.execute('UPDATE public.skill_revisions SET status = %s WHERE id = %s',
-                       (row['restore_status'], row['id']))
+                       ('deprecated' if deprecating else row['restore_status'], row['id']))
     cursor.execute('''UPDATE public.skill_drafts SET status = %s, version = version + 1
         WHERE package_id = %s''', (status, package.id))

@@ -39,10 +39,11 @@ class SkillAuthoring:
         # Serialize initial draft creation as well as later mutations without
         # granting UPDATE on the immutable package table.
         if owned:
-            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                           ('skill-authoring:' + str(package_id),))
+            self.repository.lock_package_write(cursor, package_id)
         cursor.execute('''SELECT * FROM public.skill_packages WHERE id = %s
-            AND (org_id IS NULL OR org_id = %s::uuid)''',
+            AND (org_id IS NULL OR org_id = %s::uuid)
+            AND NOT EXISTS (SELECT 1 FROM public.skill_drafts d
+                WHERE d.package_id = skill_packages.id AND d.deleted_at IS NOT NULL)''',
             (package_id, self.repository.scope.org_id))
         row = cursor.fetchone()
         if not row:
@@ -103,7 +104,7 @@ class SkillAuthoring:
                     WHERE package_id = p.id ORDER BY created_at DESC, id DESC LIMIT 1) r ON true
                 LEFT JOIN public.skill_assignments a ON a.package_id = p.id AND a.org_id = %s::uuid AND a.enabled
                 LEFT JOIN public.skill_revisions ar ON ar.id = a.revision_id AND ar.status = 'published'
-                WHERE p.org_id IS NULL OR p.org_id = %s::uuid ORDER BY p.skill_key, p.id''',
+                WHERE (p.org_id IS NULL OR p.org_id = %s::uuid) AND d.deleted_at IS NULL ORDER BY p.skill_key, p.id''',
                 (self.repository.scope.org_id, self.repository.scope.org_id))
             return cursor.fetchall()
 
@@ -129,6 +130,35 @@ class SkillAuthoring:
                     'scope_kind': package.scope_kind, 'editable': owned,
                     'draft': draft, 'revisions': revisions,
                     'available_revision': available['revision'] if available else None}
+
+    def deletion_check(self, package_id):
+        from services.skills.deletion import check_deletion
+        with self._transaction('deletion_check') as cursor:
+            cursor.execute("SET LOCAL statement_timeout = '3s'")
+            package = self._package(cursor, package_id, owned=True)
+            draft = self._draft(cursor, package_id)
+            return check_deletion(cursor, package, draft)
+
+    def delete(self, package_id, data):
+        from services.skills.deletion import check_deletion
+        with self._transaction('delete') as cursor:
+            cursor.execute("SET LOCAL statement_timeout = '3s'")
+            cursor.execute("SET LOCAL lock_timeout = '2s'")
+            package = self._package(cursor, package_id, owned=True)
+            draft = self._draft(cursor, package_id)
+            self._check_version(draft, data.expected_version)
+            if not draft or draft['status'] != 'deprecated':
+                raise SkillError('SKILL_TRANSITION_INVALID')
+            # Same order as Actor checkpoint writers. No task/checkpoint state is
+            # modified; bounded locks serialize the final check with their writes.
+            cursor.execute('LOCK TABLE public.tasks, public.conversation_turn_checkpoints IN SHARE MODE')
+            check = check_deletion(cursor, package, draft)
+            if not check['allowed']:
+                raise SkillError(check['reason'])
+            cursor.execute("""UPDATE public.skill_drafts SET deleted_at = now(),
+                deleted_by = %s, version = version + 1 WHERE package_id = %s""",
+                (self.repository.scope.actor_user_id, package_id))
+        return {'package_id': package_id, 'deleted': True}
 
     def read_revision(self, package_id, revision):
         with self._transaction('read') as cursor:
@@ -184,9 +214,10 @@ class SkillAuthoring:
                     self._insert_draft(cursor, package_id, content)
             elif action == 'enable':
                 reenable(cursor, package, draft, self._storage)
+            elif action == 'deprecate' and draft and draft['status'] == 'disabled':
+                reenable(cursor, package, draft, self._storage, deprecating=True)
             elif action in ('deprecate', 'disable'):
-                if draft and (draft['status'] == 'disabled' or
-                              (action == 'deprecate' and draft['status'] == 'deprecated')):
+                if draft and draft['status'] in ('disabled', 'deprecated'):
                     raise SkillError('SKILL_TRANSITION_INVALID')
                 if not draft:
                     draft = self._insert_draft(cursor, package_id, DraftContent())

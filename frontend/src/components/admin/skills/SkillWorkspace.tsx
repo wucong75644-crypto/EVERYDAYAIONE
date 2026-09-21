@@ -5,10 +5,12 @@ import { Dropdown, DropdownDivider, DropdownItem } from '../../ui/Dropdown';
 import { SkillStatus } from './SkillStatus';
 import { SkillDraftEditor } from './SkillDraftEditor';
 import { SkillDocument } from './SkillDocument';
+import { SkillDeletion } from './SkillDeletion';
 import { detailName, detailState, formatDate, revisionLabel } from './presentation';
 
 export interface RevisionContent { revision: string; content: DraftContent }
 interface Props {
+  orgId: string; onDelete: () => void;
   detail: SkillDetail; content: DraftContent; dirty: boolean; busy: boolean;
   tab: 'content' | 'history'; revisionContent: RevisionContent | null; reading: boolean; readFailed: boolean;
   onTab: (value: 'content' | 'history') => void; onChange: (value: DraftContent) => void;
@@ -22,8 +24,8 @@ export function SkillWorkspace(p: Props) {
   const notice = !d.editable ? '由平台维护，组织管理员可查看正文和发布记录。'
     : editing ? (available ? `正在编辑草稿，${available}继续可用。` : '草稿仅用于编辑，审核发布后才可使用。')
       : status === 'in_review' ? (d.draft?.approved_by ? '内容已审核通过，发布后才会启用新版本。' : '审核期间内容已锁定；需要修改时，请先退回草稿。')
-        : status === 'deprecated' ? '已阻止新的解析和激活，已激活的任务仍可恢复。'
-          : status === 'disabled' ? '已停止新的解析、激活和已有任务的恢复。点击“重新启用”可恢复停用前的状态。'
+        : status === 'deprecated' ? '已废弃，不能重新启用、编辑或发布。已有任务仍可恢复；安全检查通过后可以删除。'
+          : status === 'disabled' ? '已停止新的使用和已有任务恢复。“解除停用”只恢复停用前的状态；停用前已废弃的 Skill 仍为已废弃。'
             : '当前版本只读。编辑会创建新草稿，不改变正在使用的版本。';
   const usesDraft = !!d.draft && (editing || status === 'in_review' || (stopped && !d.revisions.length));
   const shown = p.tab === 'history' ? p.revisionContent?.content : usesDraft ? p.content : p.revisionContent?.content;
@@ -35,18 +37,20 @@ export function SkillWorkspace(p: Props) {
       <div className="min-w-0"><div className="flex flex-wrap items-center gap-3"><h2 className="break-all text-xl font-semibold">{detailName(d)}</h2><SkillStatus state={status} approved={!!d.draft?.approved_by} /></div><p className="mt-1.5 break-all text-xs text-[var(--s-text-tertiary)]">{d.scope_kind === 'org' ? '组织 Skill' : '平台 Skill'} · {d.skill_key}</p></div>
       <div className="flex flex-wrap items-center gap-2">
         {editing && <><Button variant="secondary" disabled={p.busy || !p.dirty} onClick={p.onSave}>保存草稿</Button><Button disabled={p.busy} onClick={p.onSubmit}>{p.dirty ? '保存并提交审核' : '提交审核'}</Button></>}
-        {d.editable && d.draft && status === 'disabled' && <Button disabled={p.busy} onClick={() => p.onAction('enable')}>重新启用</Button>}
+        {d.editable && d.draft && status === 'disabled' && <Button disabled={p.busy} onClick={() => p.onAction('enable')}>解除停用</Button>}
         {d.editable && status === 'in_review' && <><Button variant="secondary" disabled={p.busy} onClick={() => p.onAction('reject')}>退回修改</Button><Button disabled={p.busy} onClick={() => p.onAction(d.draft?.approved_by ? 'publish' : 'approve')}>{d.draft?.approved_by ? '发布新版本' : '审核通过'}</Button></>}
         {d.editable && !editing && (status === 'published' || !d.draft && !stopped) && <Button icon={<SquarePen size={16} />} disabled={p.busy} onClick={() => p.onAction('start_draft')}>{d.revisions.length ? '编辑新版本' : '创建草稿'}</Button>}
-        <Dropdown align="end" trigger={<Button variant="secondary" disabled={p.busy} aria-label="更多操作" icon={<Ellipsis size={16} />} />}>
+        {status !== 'deprecated' && <Dropdown align="end" trigger={<Button variant="secondary" disabled={p.busy} aria-label="更多操作" icon={<Ellipsis size={16} />} />}>
           <div className="skill-admin-menu">
           <DropdownItem icon={<RefreshCw size={15} />} onClick={p.onRefresh}>刷新详情</DropdownItem>
-          {d.editable && status !== 'disabled' && <><DropdownDivider />{status !== 'deprecated' && <DropdownItem disabled={p.dirty} variant="danger" onClick={() => p.onAction('deprecate')}>废弃 Skill</DropdownItem>}<DropdownItem disabled={p.dirty} variant="danger" onClick={() => p.onAction('disable')}>停用 Skill</DropdownItem></>}
+          {d.editable && <><DropdownDivider /><DropdownItem disabled={p.dirty} variant="danger" onClick={() => p.onAction('deprecate')}>废弃 Skill</DropdownItem>{status !== 'disabled' && <DropdownItem disabled={p.dirty} variant="danger" onClick={() => p.onAction('disable')}>停用 Skill</DropdownItem>}</>}
           </div>
-        </Dropdown>
+        </Dropdown>}
       </div>
     </div>
     <p className="mt-4 flex items-start gap-2 text-xs leading-5 text-[var(--s-text-tertiary)]">{editing ? <Info size={15} className="mt-0.5 shrink-0" /> : <LockKeyhole size={15} className="mt-0.5 shrink-0" />}{notice}</p>
+    {d.editable && d.draft && status === 'deprecated' && <SkillDeletion orgId={p.orgId} packageId={d.package_id}
+      version={d.draft.version} busy={p.busy} onDelete={p.onDelete} />}
     <div className="mt-5 flex gap-6 border-b border-[var(--s-border-default)]" aria-label="Skill 详情视图">
       {(['content', 'history'] as const).map(tab => <button key={tab} type="button" aria-pressed={p.tab === tab} onClick={() => p.onTab(tab)} disabled={p.busy}
         className={`border-b-2 py-3 text-sm font-medium ${p.tab === tab ? 'border-[var(--s-accent)] text-[var(--s-accent)]' : 'border-transparent text-[var(--s-text-tertiary)]'}`}>

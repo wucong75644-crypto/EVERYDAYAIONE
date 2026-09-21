@@ -35,6 +35,13 @@ class SkillRepository:
                     cursor.execute(SET_DATABASE_SCOPE_SQL, self.scope.settings)
                     yield cursor
 
+    @staticmethod
+    def lock_package_write(cursor, package_id):
+        # Same order for authoring and internal revision/assignment writers:
+        # package advisory lock, then draft, then revision/assignment rows.
+        cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                       ('skill-authoring:' + str(package_id),))
+
     def _require_admin(self):
         if self.scope.access_kind != DatabaseAccessKind.RUNTIME_ADMIN:
             raise SkillError("SKILL_CONTROL_ACCESS_REQUIRED")
@@ -87,6 +94,7 @@ class SkillRepository:
             raise SkillError("SKILL_FRONTMATTER_IDENTITY_MISMATCH")
         try:
             with self._cursor() as cursor:
+                self.lock_package_write(cursor, package_id)
                 cursor.execute("""INSERT INTO public.skill_revisions
                     (package_id, revision, nas_path, content_sha256, body_sha256, summary, catalog_metadata)
                     VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING *""",
@@ -100,6 +108,7 @@ class SkillRepository:
     def retire_revision(self, package_id: UUID, revision_id: UUID) -> SkillRevision:
         self.get_owned_package(package_id)
         with self._cursor() as cursor:
+            self.lock_package_write(cursor, package_id)
             cursor.execute("""UPDATE public.skill_revisions SET status = 'retired'
                 WHERE package_id = %s AND id = %s RETURNING *""", (package_id, revision_id))
             row = cursor.fetchone()
@@ -116,6 +125,7 @@ class SkillRepository:
         if type(enabled) is not bool or type(priority) is not int or not -(2**31) <= priority < 2**31:
             raise SkillError("SKILL_ASSIGNMENT_INVALID")
         with self._cursor() as cursor:
+            self.lock_package_write(cursor, package_id)
             cursor.execute("""INSERT INTO public.skill_assignments
                 (org_id, package_id, revision_id, enabled, priority) VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (org_id, package_id) DO UPDATE SET

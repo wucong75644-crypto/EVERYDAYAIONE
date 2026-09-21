@@ -62,7 +62,7 @@ def test_authentication_required(api, headers):
 
 
 @pytest.mark.parametrize('change', ['member', 'inactive_member', 'inactive_org', 'inactive_user', 'nonmember_super_admin'])
-@pytest.mark.parametrize('operation', ['create', 'enable'])
+@pytest.mark.parametrize('operation', ['create', 'enable', 'delete'])
 def test_current_database_permissions_required(api, change, operation):
     if change == 'member': api.db._tables['org_members']._data[0]['role'] = 'member'
     if change == 'inactive_member': api.db._tables['org_members']._data[0]['status'] = 'disabled'
@@ -73,7 +73,11 @@ def test_current_database_permissions_required(api, change, operation):
         api.db.set_table_data('org_members', [])
     endpoint, payload = (api.base, {'skill_key': 'orders'}) if operation == 'create' else (
         f'{api.base}/{api.pid}/transitions', {'action': 'enable', 'expected_version': 5})
-    assert api.client.post(endpoint, json=payload, headers=api.auth).status_code == 403
+    if operation == 'delete':
+        response = api.client.request('DELETE', f'{api.base}/{api.pid}', json={'expected_version': 5}, headers=api.auth)
+    else:
+        response = api.client.post(endpoint, json=payload, headers=api.auth)
+    assert response.status_code == 403
     api.factory.assert_not_called()
 
 
@@ -127,3 +131,23 @@ def test_reenable_does_not_accept_client_selected_content_or_restore_state(api, 
         json={'expected_version': 5, 'action': 'enable', field: 'forged'}, headers=api.auth)
     assert response.status_code == 422
     api.service.transition.assert_not_called()
+
+
+def test_deletion_check_and_versioned_delete(api):
+    api.service.deletion_check.return_value = {'allowed': True, 'reason': None, 'blocking_tasks': 0, 'uncertain_tasks': 0}
+    api.service.delete.return_value = {'package_id': api.pid, 'deleted': True}
+    assert api.client.get(f'{api.base}/{api.pid}/deletion-check', headers=api.auth).json()['allowed']
+    response = api.client.request('DELETE', f'{api.base}/{api.pid}', json={'expected_version': 8}, headers=api.auth)
+    assert response.status_code == 200 and response.json()['deleted']
+    assert api.service.delete.call_args.args[1].expected_version == 8
+    assert api.factory.call_args.args[0].scope.request_id == response.headers['x-request-id']
+    api.service.delete.reset_mock()
+    assert api.client.request('DELETE', f'{api.base}/{api.pid}', json={'expected_version': 8, 'force': True}, headers=api.auth).status_code == 422
+    api.service.delete.assert_not_called()
+
+
+@pytest.mark.parametrize('code,status', [('SKILL_DELETE_IN_USE',409), ('SKILL_DELETE_CHECK_UNCERTAIN',409), ('SKILL_TRANSITION_INVALID',422)])
+def test_delete_safe_failure_codes(api, code, status):
+    api.service.delete.side_effect = SkillError(code)
+    response = api.client.request('DELETE', f'{api.base}/{api.pid}', json={'expected_version': 8}, headers=api.auth)
+    assert response.status_code == status
