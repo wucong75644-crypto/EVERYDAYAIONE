@@ -183,3 +183,31 @@
 基准为 `254410e77a3e8f2e3d957f8a8a3bed71baf88313`。尚无 deleted_at 记录时，261 回滚恢复 260 guard/audit 函数并移除新增元数据，不删除 Skill 或 NAS。已有删除标记时回滚脚本主动拒绝，防止条目重新出现；此时必须保留 261 标记、过滤及保护，采用前向修复，不能直接部署旧版应用或删除列。所有发布/回退走受控 release.sh，当前未提交部署、未合并 main、未清理工作树。
 
 完成记录：后端定向测试共 152 项通过（safe removal 29、authoring PostgreSQL 38、reenable 17、catalog PostgreSQL 27、authoring API 41），前端 34 项通过（管理 32、导航 2）。新增检查对非标准 UUID 形态的旧快照按未知处理，避免错误当作无引用。TypeScript、定向 ESLint 与 git diff --check 通过。只复验受改动影响的路径，不执行全量测试；生产迁移和真实界面操作尚未执行。
+
+## 历史暂停任务误拦删除修复（2026-09-21，未部署）
+
+前述 261 和界面已随 `705d3044b3810fc07fc324f0c7e01e1a8bd1f622` 部署，构建、迁移和健康检查通过；以上“未部署”为当时开发记录。本节为该版本线上复验后新增的修复，尚未提交部署。
+
+### 根因与证据
+
+“测试日报”删除预检返回 `blocking_tasks=0, uncertain_tasks=36`。36 个都是暂停聊天，快照最后写入时间为 08-28 至 09-18 17:24:33（北京时间），没有手动选择或 Skill runtime 记录；Skill 包创建于 09-20 22:19:46。261 对所有非终态且缺少 runtime 的任务统一标未知，没有区分能以服务器保存时间证明无关的历史暂停任务。原测试只覆盖损坏/缺失记录，未覆盖正常旧版本快照。
+
+### 改动和约束
+
+- 新增 `backend/migrations/262_skill_legacy_pause_removal.sql`，不改已部署的 261。服务预检、最终删除和数据库 trigger 仍复用 `skill_deletion_blockers`。
+- 只对同时满足以下事实的记录豁免“缺少 runtime”：任务与 checkpoint 都为 paused，checkpoint 与任务 Turn 一致，checkpoint 更新时间严格早于包的不可变创建时间，请求参数为对象且不存在 `_selected_skill`，快照为对象、兼容 payload 包装且内外均不存在 `skill_runtime`。仅按任务创建时间或固定日期不能豁免。
+- 显式引用不受豁免影响；正在运行/已恢复、时间等于或晚于包创建、Turn 不符、缺快照、显式 null/异常 payload/字符串参数继续失败关闭。最终删除的 SHARE 锁及检查不变，历史任务在预检后恢复会被重新判定。
+- 创建时间由 `skill_deletion_package_created_at` 在原有 forced RLS 和可信组织作用域内读取；客户端不能提供时间。该辅助函数 SECURITY INVOKER、固定 search_path、仅服务角色可调用；其 `row_security=on` 局部配置退出后还原，原任务扫描仍 `row_security=off`，防止 RLS 隐藏依赖后误报零。没有改 Actor、旧 Runtime、前端或 NAS，也不取消/修改旧任务。
+- 测试文件：新增 `backend/tests/test_skill_legacy_removal_postgres.py`；更新 `backend/tests/test_skill_removal_postgres.py` 的真实快照字段及迁移加载。记录同步本文和 `docs/CURRENT_ISSUES.md`。
+
+### 验证
+
+先用原 261 复现裸快照和 payload 快照两项失败；修复后两文件共 **50 passed**（新增 21、已有删除保护 29），覆盖历史兼容、真实引用、异常边界、并发恢复复查、组织权限、RLS 失败关闭、数据库 trigger 及回滚重放。未执行无关全量测试。
+
+生产使用实际后端数据库角色，在 `BEGIN READ ONLY` 事务中对同一 Skill 执行已部署函数和候选 SELECT：旧值 `0/36`，新值 `0/0`（实际引用/未知任务）。只读对比未安装函数、执行迁移或写入业务数据，不等于已上线。
+
+### 生产验证与回滚
+
+收到本次“提交部署”后经 `deploy/release.sh` 应用 262。用户刷新废弃 Skill 详情，点击“重新检查”；在任务状态未变化的前提下，原 36 个无关历史任务不再拦截，删除按钮可用。实际删除仍由用户确认。存在真实引用或检查失败时应继续禁用，不能强制放行。
+
+应用基准为 `705d3044`。本次只新增查询函数迁移；`backend/migrations/rollback/262_skill_legacy_pause_removal_rollback.sql` 恢复 261 保守检查并移除辅助函数，不删除任何删除标记、版本、NAS 或审计。已有逻辑删除也可保留回退查询，但历史任务误拦将重新出现。禁止为了回退本修复撤销 261 的删除保护。

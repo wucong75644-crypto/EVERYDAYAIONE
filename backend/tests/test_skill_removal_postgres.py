@@ -22,8 +22,10 @@ def removal(environment):
         conn.execute('''CREATE TABLE tasks(id uuid PRIMARY KEY, org_id uuid, turn_id uuid,
             type text NOT NULL DEFAULT 'chat', status text NOT NULL, request_params jsonb)''')
         conn.execute('''CREATE TABLE conversation_turn_checkpoints(task_id uuid PRIMARY KEY REFERENCES tasks(id),
+            turn_id uuid NOT NULL, updated_at timestamptz NOT NULL DEFAULT now(),
             state jsonb NOT NULL, status text NOT NULL DEFAULT 'ready')''')
         conn.execute('GRANT ALL ON tasks, conversation_turn_checkpoints TO everydayai')
+        conn.execute((MIGRATIONS / '262_skill_legacy_pause_removal.sql').read_text())
     return env
 
 
@@ -58,7 +60,8 @@ def task(env, *, pid, status='running', kind='directory', org=None, connection=N
         conn.execute('INSERT INTO tasks(id,org_id,turn_id,status,request_params) VALUES (%s,%s,%s,%s,%s)',
                      (tid, org or env.org, turn, status, Jsonb(params)))
         if kind != 'no_checkpoint':
-            conn.execute('INSERT INTO conversation_turn_checkpoints(task_id,state) VALUES (%s,%s)', (tid, Jsonb(state)))
+            conn.execute('INSERT INTO conversation_turn_checkpoints(task_id,turn_id,state) VALUES (%s,%s,%s)',
+                         (tid, turn, Jsonb(state)))
     if connection:
         insert(connection)
     else:
