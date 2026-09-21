@@ -264,6 +264,7 @@ MODES = [
     "cdn_download_failure", "missing_local_file", "delayed_ready", "wait_expired",
     "non400_failure", "local_timeout_late_success",
     "main_success_download_failure", "main_success_upload_failure", "main_success_slow_shadow",
+    "main_success_after_ten_minutes", "retry_success_after_ten_minutes",
 ]
 
 
@@ -324,7 +325,9 @@ async def test_cdn_shadow_chain(chain, mode, delivery):
         assert await svc.process_result(task_id, result)
 
     if mode == "local_timeout_late_success":
-        row["started_at"] = (datetime.now(timezone.utc) - timedelta(minutes=11)).isoformat()
+        row["started_at"] = (datetime.now(timezone.utc) - timedelta(minutes=16)).isoformat()
+    elif mode == "main_success_after_ten_minutes":
+        row["started_at"] = (datetime.now(timezone.utc) - timedelta(seconds=804)).isoformat()
     await deliver(
         "original-kie", success=mode.startswith("main_success"),
         fail_code="500" if mode == "non400_failure" else "TIMEOUT" if mode == "local_timeout_late_success" else "400",
@@ -342,8 +345,8 @@ async def test_cdn_shadow_chain(chain, mode, delivery):
             state["wait_deadline"] = time.time() - 1
             await deliver("original-kie")
 
-    retry = mode in {"retry_success", "retry_failure", "delayed_ready", "missing_local_file"}
-    success = mode.startswith("main_success") or mode in {"retry_success", "delayed_ready", "missing_local_file"}
+    retry = mode in {"retry_success", "retry_failure", "delayed_ready", "missing_local_file", "retry_success_after_ten_minutes"}
+    success = mode.startswith("main_success") or mode in {"retry_success", "delayed_ready", "missing_local_file", "retry_success_after_ten_minutes"}
     if retry:
         assert row["external_task_id"] == "retry-kie" and row["status"] == "pending"
         assert len(s.posts) == 2 and s.events == [] and s.db.refunds == 0
@@ -354,6 +357,8 @@ async def test_cdn_shadow_chain(chain, mode, delivery):
         ]
         assert s.posts[1] == expected
         media_before = deepcopy((s.uploads, s.downloads))
+        if mode == "retry_success_after_ten_minutes":
+            row["started_at"] = (datetime.now(timezone.utc) - timedelta(seconds=804)).isoformat()
         await deliver("retry-kie", success=success)
         assert (s.uploads, s.downloads) == media_before, "fallback must not download or upload again"
     else:

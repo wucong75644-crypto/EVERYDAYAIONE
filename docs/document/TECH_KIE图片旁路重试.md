@@ -18,6 +18,8 @@
 
 ## 状态与一致性
 
+2026-09-20 图片任务生成超时调整：后端 `IMAGE_TASK_TIMEOUT_MINUTES` 和前端恢复占位符的 `IMAGE_TASK_TIMEOUT` 统一为15分钟。后台清理与KIE完成处理锁内的超时复核共用后端常量；以当前 `started_at` 计时，400重提成功后仍沿用原逻辑重新计时，而非整个对话总共15分钟。10至15分钟内继续等待生成结果；终态幂等规则不变，不自动恢复此前已经失败的任务。视频30分钟、聊天10分钟、创建连接5秒、旁路上传超时和400缓存等待/提交60秒均不改；同步工具调用的独立等待上限不在本次异步图片任务范围内。
+
 独立 KieImageFallbackService 在 TaskCompletionService 失败结算前运行。request_params 内记录 waiting/submitting/submitted/failed、原任务号及等待截止时间；不迁移数据库。等待上传窗口 60 秒。现有回调模式默认 120 秒轮询，故模块内仅短暂轮询上传缓存；就绪、失败或到期后通知原完成入口一次，随后退出。进程重启后原轮询可续接 waiting 阶段，不改变全局频率。
 
 沿用完成处理锁和数据库 version 条件更新，提交前持久化 attempted/submitting 标记。经正常 `7890 → api.kie.ai → overseas-ss` 提交一次，限制 60 秒；不再次启动上传旁路。成功取得新任务号后更新同一本地任务的 external_task_id。
