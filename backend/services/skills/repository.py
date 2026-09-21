@@ -35,6 +35,13 @@ class SkillRepository:
                     cursor.execute(SET_DATABASE_SCOPE_SQL, self.scope.settings)
                     yield cursor
 
+    @staticmethod
+    def lock_package_write(cursor, package_id):
+        # Same order for authoring and internal revision/assignment writers:
+        # package advisory lock, then draft, then revision/assignment rows.
+        cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                       ('skill-authoring:' + str(package_id),))
+
     def _require_admin(self):
         if self.scope.access_kind != DatabaseAccessKind.RUNTIME_ADMIN:
             raise SkillError("SKILL_CONTROL_ACCESS_REQUIRED")
@@ -87,6 +94,7 @@ class SkillRepository:
             raise SkillError("SKILL_FRONTMATTER_IDENTITY_MISMATCH")
         try:
             with self._cursor() as cursor:
+                self.lock_package_write(cursor, package_id)
                 cursor.execute("""INSERT INTO public.skill_revisions
                     (package_id, revision, nas_path, content_sha256, body_sha256, summary, catalog_metadata)
                     VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING *""",
@@ -100,6 +108,7 @@ class SkillRepository:
     def retire_revision(self, package_id: UUID, revision_id: UUID) -> SkillRevision:
         self.get_owned_package(package_id)
         with self._cursor() as cursor:
+            self.lock_package_write(cursor, package_id)
             cursor.execute("""UPDATE public.skill_revisions SET status = 'retired'
                 WHERE package_id = %s AND id = %s RETURNING *""", (package_id, revision_id))
             row = cursor.fetchone()
@@ -116,6 +125,7 @@ class SkillRepository:
         if type(enabled) is not bool or type(priority) is not int or not -(2**31) <= priority < 2**31:
             raise SkillError("SKILL_ASSIGNMENT_INVALID")
         with self._cursor() as cursor:
+            self.lock_package_write(cursor, package_id)
             cursor.execute("""INSERT INTO public.skill_assignments
                 (org_id, package_id, revision_id, enabled, priority) VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (org_id, package_id) DO UPDATE SET
@@ -150,21 +160,23 @@ class SkillRepository:
                     self.scope.request_id, audit.outcome, audit.reason_code))
             return cursor.fetchone()["id"]
 
-    def assigned_revision(self, package_id: UUID, revision: str) -> SkillRevision:
+    def assigned_revision(self, package_id: UUID, revision: str, *, restoring: bool = False) -> SkillRevision:
         """Read an exact revision of an enabled package, never its latest version.
 
         Assignment changes may select a newer revision for new turns; existing
-        turns still require their pinned published revision and an enabled grant.
+        turns may restore a deprecated revision, but still need an enabled grant.
+        New activations (even from an older directory) require published status.
         """
         org_id = self._require_org()
         with self._cursor() as cursor:
             cursor.execute("""SELECT r.* FROM public.skill_revisions r
                 JOIN public.skill_packages p ON p.id = r.package_id
                 JOIN public.skill_assignments a ON a.package_id = p.id
-                WHERE p.id = %s AND r.revision = %s AND r.status = 'published'
+                WHERE p.id = %s AND r.revision = %s
+                    AND (r.status = 'published' OR (%s AND r.status = 'deprecated'))
                     AND a.org_id = %s AND a.enabled
                     AND (p.org_id IS NULL OR p.org_id = a.org_id)""",
-                (package_id, revision, org_id))
+                (package_id, revision, restoring, org_id))
             row = cursor.fetchone()
         if row is None:
             raise SkillError("SKILL_PINNED_REVISION_UNAVAILABLE")

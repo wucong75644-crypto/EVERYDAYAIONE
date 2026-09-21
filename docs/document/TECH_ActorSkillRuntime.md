@@ -1,5 +1,7 @@
 # Skill 第一期第 3 步：Actor 内的 Turn SkillRuntime
 
+P2-1 已增加组织管理员草稿、审核、受控 NAS 发布、废弃与禁用，见 [Skill 草稿审核与发布](TECH_Skill草稿审核与发布.md)。下文保留各期原始范围；当前状态和发布写权限以 P2-1 文档为准。
+
 后续状态：P1-4 增加首轮前手动选择与安全 `skill_step` 反馈，见 [聊天 Skill 选择与反馈](TECH_Skill聊天选择与反馈.md)。下述“不增加 UI”和“仅模型显式激活”为 P1-3 阶段边界；P1-4 保持原授权、工具收窄和恢复核验机制。
 
 ## 边界与开关
@@ -45,7 +47,7 @@ checkpoint 的 `skill_runtime` 保存 schema version、turn_id、固定目录候
 
 `BEFORE_MODEL`、`AFTER_TOOL`、`AFTER_SKILL_ACTIVATION`、`BEFORE_COMMIT` 均持久化该状态。既有 `save_generation_checkpoint` 接受非空 text 安全点，无需修改 RPC/迁移。正文作为 system messages 保存；压缩若移除正文，下次模型调用前从精确渲染结果恢复一次。
 
-恢复不查询最新目录或重新渲染。每个已激活项重新检查身份、当前业务权限、enabled assignment、同一 package 的同一 published revision、NAS 内容及正文哈希，再使用 checkpoint 的渲染文本与工具上限。assignment 切到 v2 后旧 Turn 仍读取 v1；原版本退役/丢失、文件移除、哈希漂移或权限撤销均停止恢复，不替换最新版、不从用户目录兜底。`commit_ready` 也须先校验 Skill。
+恢复不查询最新目录或重新渲染。每个已激活项重新检查身份、当前业务权限、enabled assignment、同一 package 的同一 published/deprecated revision、NAS 内容及正文哈希，再使用 checkpoint 的渲染文本与工具上限。assignment 切到 v2 后旧 Turn 仍读取 v1；原版本 disabled/retired 或丢失、文件移除、哈希漂移或权限撤销均停止恢复，不替换最新版、不从用户目录兜底。`commit_ready` 也须先校验 Skill。
 
 开关关闭后，含已激活 Skill 的 checkpoint 返回 `SKILL_REPLAY_RUNTIME_DISABLED` 并停止，不能按普通上下文继续。无 Skill 的旧 checkpoint 保持原恢复行为。
 

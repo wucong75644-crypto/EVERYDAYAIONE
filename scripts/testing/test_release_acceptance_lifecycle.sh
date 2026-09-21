@@ -161,6 +161,18 @@ rg -Fx -- '--migration-file' "$migration_deploy_args" >/dev/null \
     || fail "任务重试未将显式迁移转发给部署脚本"
 rg -Fx -- 'backend/migrations/242_delivery_outbox.sql' "$migration_deploy_args" >/dev/null \
     || fail "任务重试转发的迁移路径不正确"
+if rg -Fx -- '--skip-test' "$migration_deploy_args" >/dev/null; then
+    fail "默认发布不应跳过测试"
+fi
+(
+    cd "$candidate"
+    DEPLOY_ARGS_FILE="$migration_deploy_args" \
+        ./deploy/release.sh --deploy-task "$candidate_sha" --skip-test
+) > "$tmp_root/reused-tests.log"
+rg -Fx -- '--skip-test' "$migration_deploy_args" >/dev/null \
+    || fail "显式复用测试未转发给部署执行器"
+rg -F 'status_after=DEPLOYED_PENDING_ACCEPTANCE' "$tmp_root/reused-tests.log" >/dev/null \
+    || fail "复用测试的完整发布未建立候选"
 
 (
     cd "$candidate"

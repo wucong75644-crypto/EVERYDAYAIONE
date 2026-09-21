@@ -1,0 +1,41 @@
+/* Classic dark mode still uses legacy colors. Bridge only this workspace and
+   its portals; do not change the shared theme or unrelated admin sections. */
+html[data-theme='classic'].dark :is(.skill-admin-theme, [role='menu']:has(.skill-admin-menu)) {
+  --s-surface-base: var(--color-surface);
+  --s-surface-raised: var(--color-surface-card);
+  --s-surface-overlay: var(--color-surface-card);
+  --s-surface-sunken: var(--color-surface);
+  --s-text-primary: var(--color-text-primary);
+  --s-text-secondary: var(--color-text-secondary);
+  --s-text-tertiary: var(--color-text-tertiary);
+  --s-text-disabled: var(--color-text-disabled);
+  --s-border-default: var(--color-border-default);
+  --s-hover: var(--color-hover);
+  --s-selected: var(--color-accent-light);
+  --s-accent: color-mix(in srgb, var(--color-accent), var(--color-text-primary) 30%);
+  --s-accent-soft: var(--color-accent-light);
+  --s-success: color-mix(in srgb, var(--color-success), var(--color-text-primary) 20%);
+  --s-success-soft: var(--color-success-light);
+  --s-warning: color-mix(in srgb, var(--color-warning), var(--color-text-primary) 20%);
+  --s-warning-soft: var(--color-warning-light);
+  --s-error: color-mix(in srgb, var(--color-error), var(--color-text-primary) 20%);
+  --s-error-soft: var(--color-error-light);
+  --c-button-secondary-bg: var(--s-surface-raised);
+  --c-button-secondary-bg-hover: var(--s-hover);
+  --c-button-secondary-fg: var(--s-text-primary);
+  --c-button-secondary-border: var(--s-border-default);
+  --c-button-ghost-bg-hover: var(--s-hover);
+  --c-button-ghost-fg: var(--s-text-secondary);
+  --c-button-danger-fg: var(--s-error);
+  --c-button-danger-bg-hover: var(--s-error-soft);
+  --c-input-bg: var(--s-surface-raised);
+  --c-input-border: var(--s-border-default);
+  --c-input-fg: var(--s-text-primary);
+  --c-input-placeholder: var(--s-text-tertiary);
+  --c-modal-bg: var(--s-surface-overlay);
+  --c-modal-border: var(--s-border-default);
+  --c-dropdown-bg: var(--s-surface-overlay);
+  --c-dropdown-border: var(--s-border-default);
+  --c-dropdown-item-hover: var(--s-hover);
+  --c-dropdown-item-active: var(--s-selected);
+}
