@@ -1,10 +1,12 @@
 """Read and validate SKILL.md exclusively from the platform-managed NAS root."""
 
+import errno
 import hashlib
 import hmac
 import os
 from pathlib import Path, PurePosixPath
 import stat
+from uuid import uuid4
 
 import yaml
 from pydantic import ValidationError
@@ -35,10 +37,9 @@ class _FrontmatterLoader(yaml.SafeLoader):
 
 
 class SkillStorage:
-    """Read-only storage; publication never writes or overwrites a NAS package.
+    """Controlled immutable files, with exclusive creation for reviewed releases.
 
-    The platform publisher owns this directory; backend processes only need read
-    access. No fallback to a user workspace is permitted, even when misconfigured.
+    No fallback to a user workspace or overwrite of an existing file is allowed.
     """
 
     def __init__(self, root: str | None, *, workspace_root: str):
@@ -97,7 +98,13 @@ class SkillStorage:
         path = nas_path if nas_path is not None else expected_path
         if path != expected_path:
             raise SkillError("SKILL_PATH_IDENTITY_MISMATCH")
-        raw = self._read(path)
+        return self.validate_bytes(package, publication, self._read(path))
+
+    @staticmethod
+    def validate_bytes(package, publication: PublishRevision, raw: bytes) -> ValidatedSkill:
+        path = revision_path(package, publication.revision)
+        if len(raw) > MAX_SKILL_BYTES:
+            raise SkillError("SKILL_FILE_TOO_LARGE")
         content_hash = hashlib.sha256(raw).hexdigest()
         if not hmac.compare_digest(content_hash, publication.content_sha256):
             raise SkillError("SKILL_CONTENT_HASH_MISMATCH")
@@ -136,3 +143,80 @@ class SkillStorage:
             raise SkillError("SKILL_BODY_HASH_MISMATCH")
         return ValidatedSkill(path, package.skill_key, publication.revision,
                               content_hash, body_hash, summary.strip(), body, catalog_metadata)
+
+    def publish(self, package, publication: PublishRevision, raw: bytes) -> ValidatedSkill:
+        """Install a complete revision directory, never replace a published file.
+
+        POSIX directory rename refuses to replace a nonempty revision directory.
+        Crashes can leave only an ignored staging directory or a complete release;
+        there is no final file with a temporary second hard link to impede retry.
+        """
+        validated = self.validate_bytes(package, publication, raw)
+        parts = PurePosixPath(validated.nas_path).parts
+        directory_fd = staging_fd = None
+        temporary = f".publishing-{uuid4().hex}"
+        staged = False
+        try:
+            directory_fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            for component in parts[:-2]:
+                try:
+                    os.mkdir(component, mode=0o750, dir_fd=directory_fd)
+                    os.fsync(directory_fd)
+                except FileExistsError:
+                    pass
+                child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                dir_fd=directory_fd)
+                os.close(directory_fd)
+                directory_fd = child
+            os.mkdir(temporary, mode=0o750, dir_fd=directory_fd)
+            staged = True
+            staging_fd = os.open(temporary, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                 dir_fd=directory_fd)
+            fd = os.open("SKILL.md", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                         0o640, dir_fd=staging_fd)
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(raw)
+                stream.flush()
+                os.fchmod(stream.fileno(), 0o440)
+                os.fsync(stream.fileno())
+            os.fsync(staging_fd)
+            try:
+                os.rename(temporary, parts[-2], src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+                staged = False
+            except OSError as error:
+                if error.errno not in (errno.EEXIST, errno.ENOTEMPTY):
+                    raise
+                # An identical orphan from a failed commit is a valid retry;
+                # readback below rejects any different or unsafe existing file.
+            os.fsync(directory_fd)
+        except OSError as error:
+            raise SkillError("SKILL_STORAGE_WRITE_REJECTED") from error
+        finally:
+            try:
+                if staged and directory_fd is not None:
+                    try:
+                        pending = os.stat(temporary, dir_fd=directory_fd, follow_symlinks=False)
+                    except FileNotFoundError:
+                        pending = None
+                    # A NAS rename may succeed but lose its acknowledgement.
+                    # Never clean via an fd that now refers to the final release.
+                    if pending is not None:
+                        if not stat.S_ISDIR(pending.st_mode):
+                            raise SkillError("SKILL_STORAGE_WRITE_REJECTED")
+                        if staging_fd is not None:
+                            opened = os.fstat(staging_fd)
+                            if (pending.st_dev, pending.st_ino) != (opened.st_dev, opened.st_ino):
+                                raise SkillError("SKILL_STORAGE_WRITE_REJECTED")
+                            try:
+                                os.unlink("SKILL.md", dir_fd=staging_fd)
+                            except FileNotFoundError:
+                                pass
+                        os.rmdir(temporary, dir_fd=directory_fd)
+            except OSError as error:
+                raise SkillError("SKILL_STORAGE_WRITE_REJECTED") from error
+            finally:
+                if staging_fd is not None:
+                    os.close(staging_fd)
+                if directory_fd is not None:
+                    os.close(directory_fd)
+        return self.validate(package, publication)

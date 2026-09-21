@@ -243,7 +243,7 @@ class SkillRuntime:
                 candidate = directory.get(saved.skill_key)
                 if candidate is None or saved.skill_key in active or saved.revision != candidate.revision:
                     raise SkillError("SKILL_REPLAY_IDENTITY_INVALID")
-                validated = await self.source.load(candidate)
+                validated = await self.source.load(candidate, restoring=True)
                 self._check_cancelled()
                 self._validate_identity(candidate, validated)
                 if saved.body_sha256 != validated.body_sha256:

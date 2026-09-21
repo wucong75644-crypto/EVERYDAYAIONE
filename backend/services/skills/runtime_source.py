@@ -61,14 +61,14 @@ class ActorSkillSource:
         context = await self._resolution_context(candidates)
         return SkillResolver().select(context, candidates)
 
-    async def load(self, candidate):
+    async def load(self, candidate, *, restoring: bool = False):
         # Recheck current identity and business permissions, even on replay.
         context = await self._resolution_context([candidate])
         if not SkillResolver().select(context, [candidate]):
             raise SkillError("SKILL_ACCESS_DENIED")
 
         def read():
-            revision = self.repository.assigned_revision(candidate.package_id, candidate.revision)
+            revision = self.repository.assigned_revision(candidate.package_id, candidate.revision, restoring=restoring)
             package = self.repository.get_package(candidate.package_id)
             if (package.skill_key != candidate.skill_key
                     or revision.catalog_metadata != candidate.catalog_metadata):

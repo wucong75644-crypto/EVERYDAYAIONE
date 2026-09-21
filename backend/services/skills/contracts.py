@@ -76,7 +76,7 @@ class SkillRevision(PublishRevision):
     nas_path: str  # Canonical relative SKILL.md path under SKILL_STORAGE_ROOT.
     summary: str
     catalog_metadata: SkillCatalogMetadata = Field(default_factory=SkillCatalogMetadata)
-    status: Literal["published", "retired"]
+    status: Literal["published", "deprecated", "disabled", "retired"]
     created_at: datetime
 
 
