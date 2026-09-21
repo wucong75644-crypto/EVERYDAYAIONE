@@ -336,6 +336,38 @@ class TestHandleTimeout:
 class TestCleanupStaleTasks:
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("elapsed_seconds,should_timeout", [
+        (600, False), (804, False), (899, False), (900, False), (901, True),
+    ])
+    async def test_image_timeout_is_fifteen_minutes(self, worker, db, elapsed_seconds, should_timeout):
+        now = datetime.now(timezone.utc)
+        task = {
+            "id": "image-task", "type": "image",
+            "started_at": (now - timedelta(seconds=elapsed_seconds)).isoformat(),
+        }
+        db._table_mock.execute.return_value = MagicMock(data=[task])
+        with patch("services.background_task_worker.datetime", wraps=datetime) as clock, \
+             patch.object(worker, "_handle_timeout", new_callable=AsyncMock) as handle_timeout:
+            clock.now.return_value = now
+            await worker.cleanup_stale_tasks()
+        if should_timeout:
+            handle_timeout.assert_awaited_once_with(task, 15)
+        else:
+            handle_timeout.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_video_timeout_remains_thirty_minutes(self, worker, db):
+        now = datetime.now(timezone.utc)
+        tasks = [{
+            "id": f"video-{minutes}", "type": "video",
+            "started_at": (now - timedelta(minutes=minutes)).isoformat(),
+        } for minutes in (20, 31)]
+        db._table_mock.execute.return_value = MagicMock(data=tasks)
+        with patch.object(worker, "_handle_timeout", new_callable=AsyncMock) as handle_timeout:
+            await worker.cleanup_stale_tasks()
+        handle_timeout.assert_awaited_once_with(tasks[1], 30)
+
+    @pytest.mark.asyncio
     async def test_no_tasks(self, worker, db):
         """无任务时静默返回"""
         db._table_mock.execute.return_value = MagicMock(data=[])

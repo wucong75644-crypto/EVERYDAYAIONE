@@ -142,6 +142,37 @@ describe('restoreMediaTask', () => {
     expect(mockMarkForceRefresh).not.toHaveBeenCalled();
   });
 
+  it.each([600, 804, 899, 900])('restores an image still pending after %i seconds', (elapsed) => {
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      expect(IMAGE_TASK_TIMEOUT).toBe(15 * 60 * 1000);
+      restoreMediaTask(createPendingImageTask({
+        started_at: new Date(now - elapsed * 1000).toISOString(),
+      }));
+      expect(mockMarkForceRefresh).toHaveBeenCalledWith('conv-1');
+      expect(mockAddMessage).toHaveBeenCalledWith('conv-1', expect.objectContaining({ status: 'pending' }));
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('does not restore an image after fifteen minutes', () => {
+    restoreMediaTask(createPendingImageTask({
+      started_at: new Date(Date.now() - 901 * 1000).toISOString(),
+    }));
+    expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockMarkForceRefresh).not.toHaveBeenCalled();
+  });
+
+  it('still restores a twenty-minute video', () => {
+    restoreMediaTask(createPendingImageTask({
+      type: 'video',
+      started_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    }));
+    expect(mockAddMessage).toHaveBeenCalledOnce();
+  });
+
   it('should not restore tasks without conversation_id', () => {
     const task = createPendingImageTask({
       conversation_id: '',

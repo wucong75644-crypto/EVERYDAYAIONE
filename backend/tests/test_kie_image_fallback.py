@@ -306,10 +306,23 @@ def test_timeout_uses_latest_retry_start(task):
     task["started_at"] = datetime.now(timezone.utc).isoformat()
     assert defer_stale_timeout(task) is True
     task["started_at"] = (datetime.now(timezone.utc) - timedelta(minutes=11)).isoformat()
+    assert defer_stale_timeout(task) is True
+    task["started_at"] = (datetime.now(timezone.utc) - timedelta(minutes=16)).isoformat()
     assert defer_stale_timeout(task) is False
+    task["started_at"] = datetime.now(timezone.utc).isoformat()
     task["request_params"][STATE_KEY] = {"phase": "waiting"}
     assert needs_fallback_resume(task) is True
     assert defer_stale_timeout(task) is False  # 交给模块检查自己的等待截止时间。
+
+
+@pytest.mark.parametrize("elapsed_seconds,defer", [
+    (600, True), (804, True), (899, True), (900, False), (901, False),
+])
+def test_kie_timeout_guard_uses_fifteen_minutes(task, monkeypatch, elapsed_seconds, defer):
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr("services.kie_image_fallback_service.time.time", lambda: now.timestamp())
+    task["started_at"] = (now - timedelta(seconds=elapsed_seconds)).isoformat()
+    assert defer_stale_timeout(task) is defer
 
 
 async def test_completion_keeps_placeholder_until_retry_terminal_result(setup, task, result, monkeypatch):
@@ -331,6 +344,7 @@ async def test_completion_keeps_placeholder_until_retry_terminal_result(setup, t
 
 async def test_locked_completion_ignores_old_timeout_after_retry_started(setup, task, result):
     await setup.service.handle_failure(task, result)
+    setup.db.row["started_at"] = (datetime.now(timezone.utc) - timedelta(seconds=804)).isoformat()
     completion = TaskCompletionService(setup.db)
     completion._handle_failure = AsyncMock()
     timeout = ImageGenerateResult(task_id="retry-kie", status=TaskStatus.FAILED, fail_code="TIMEOUT")
