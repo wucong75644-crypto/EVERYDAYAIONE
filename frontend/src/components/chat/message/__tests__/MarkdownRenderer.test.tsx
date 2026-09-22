@@ -172,3 +172,93 @@ describe('MarkdownRenderer — 中文伪 LaTeX 转义集成', () => {
     expect(downloadFileMock).toHaveBeenCalledWith('/api/workspace/files/data', 'data');
   });
 });
+
+
+describe('MarkdownRenderer — 分析结果中的 HTML 格式兼容', () => {
+  const rows = [
+    ['系统单', '2', '1', '+1', '↑ +100.0%', 'red'],
+    ['京东', '174', '158', '+16', '↑ +10.1%', 'red'],
+    ['抖音', '373', '372', '+1', '↑ +0.3%', 'red'],
+    ['淘宝', '422', '430', '-8', '↓ -1.9%', 'green'],
+    ['1688', '126', '136', '-10', '↓ -7.4%', 'green'],
+    ['拼多多', '5,336', '5,798', '-462', '↓ -8.0%', 'green'],
+    ['小红书', '21', '25', '-4', '↓ -16.0%', 'green'],
+    ['快手', '8', '28', '-20', '↓ -71.4%', 'green'],
+  ];
+  const header = '| 平台 | 今日有效订单 | 昨日有效订单 | 涨跌量 | 涨跌幅 |\n|---|---|---|---|---|';
+
+  it.each(['legacy-html', 'contract'])('截图中的 %s 对比表保留数值和涨跌颜色，不显示 HTML 标签', (format) => {
+    const content = [header, ...rows.map(([platform, today, yesterday, delta, rate, color]) =>
+      `| ${platform} | ${today} | ${yesterday} | ${delta} | ${format === 'legacy-html'
+        ? `<span style="color:${color}">${rate}</span>` : `<span data-color="${color}">${rate}</span>`} |`,
+    )].join('\n');
+    const { container } = render(<MarkdownRenderer content={content} />);
+
+    const renderedRows = Array.from(container.querySelectorAll('tbody tr'));
+    expect(renderedRows).toHaveLength(rows.length);
+    renderedRows.forEach((row, index) => {
+      expect(Array.from(row.querySelectorAll('td'), (cell) => cell.textContent))
+        .toEqual(rows[index].slice(0, 5));
+      expect(row.querySelector('td:last-child [data-color]')).toHaveAttribute('data-color', rows[index][5]);
+      expect(row.querySelector('td:nth-child(2)')).not.toHaveClass('markdown-trend-up', 'markdown-trend-down');
+    });
+    expect(container.textContent).not.toMatch(/<\/?span|style=/);
+    expect(container.querySelector('td span[style]')).toHaveClass('message-color');
+  });
+
+  it('流式标签未闭合时也显示数值，完成后结果一致', () => {
+    const content = `${header}\n| 京东 | 174 | 158 | +16 | <span style="color:red">↑ +10.1%`;
+    const { container, rerender } = render(<MarkdownRenderer content={content} isStreaming />);
+
+    expect(container.querySelector('tbody tr td:last-child')?.textContent).toBe('↑ +10.1%');
+    expect(container.querySelector('tbody tr td:last-child [data-color]')).toHaveAttribute('data-color', 'red');
+    rerender(<MarkdownRenderer content={`${content}</span> |`} />);
+    expect(container.querySelector('tbody tr td:last-child')?.textContent).toBe('↑ +10.1%');
+    expect(container.querySelector('tbody tr td:last-child [data-color]')).toHaveAttribute('data-color', 'red');
+  });
+
+  it('正文行内颜色和 Markdown 强调、比较符号同时保留', () => {
+    const { container } = render(
+      <MarkdownRenderer content={'涨跌：<span style="color:red">**↑ +10.1%**</span>，1 < 2，3 > 2'} />,
+    );
+
+    expect(container.textContent).toBe('涨跌：↑ +10.1%，1 < 2，3 > 2');
+    expect(container.querySelector('strong')).toHaveTextContent('↑ +10.1%');
+  });
+
+  it('不从箭头、正负号、零值或 Markdown 强调猜测颜色', () => {
+    const values = ['**↑ +10.1%**', '↓ **−1.9%**', '↑ 0.0%', '↑ -2.0%', '+10.1%', '`↑ +10.1%`'];
+    const content = ['| 涨跌幅 |', '|---|', ...values.map((value) => `| ${value} |`)].join('\n');
+    const { container } = render(<MarkdownRenderer content={content} />);
+    expect(container.querySelector('[data-color], .markdown-trend-up, .markdown-trend-down')).toBeNull();
+    expect(container.querySelector('strong')).toHaveTextContent('↑ +10.1%');
+  });
+
+  it('HTML 代码示例和显式转义文字仍原样显示', () => {
+    const html = '<span style="color:red">↑ +10.1%</span>';
+    const content = `行内示例：\`${html}\`\n\n\`\`\`html\n${html}\n\`\`\`\n\n&lt;span&gt;示例&lt;/span&gt;`;
+    const { container } = render(<MarkdownRenderer content={content} />);
+
+    expect(Array.from(container.querySelectorAll('code'), (code) => code.textContent)).toEqual([html, html]);
+    expect(container.textContent).toContain('<span>示例</span>');
+    expect(container.querySelector('span[style]')).toBeNull();
+  });
+
+  it('不丢弃完整 HTML 块中的数据，继续按源码显示', () => {
+    const html = '<div>总数：174，<span style="color:red">↑ +10.1%</span></div>';
+    const { container } = render(<MarkdownRenderer content={html} />);
+
+    expect(container.textContent).toBe(html);
+    expect(container.querySelector('span[style]')).toBeNull();
+  });
+
+  it('分析文字中的外部 HTML 不生成可执行 DOM 或注入属性', () => {
+    const { container } = render(
+      <MarkdownRenderer content={'结果：<span onclick="alert(1)" style="position:fixed">↑ +10.1%</span><img src="x" onerror="alert(1)">\n\n<script>alert(1)</script>'} />,
+    );
+
+    expect(container.textContent).toContain('结果：↑ +10.1%');
+    expect(container.textContent).not.toMatch(/<\/?span|onclick|position:fixed/);
+    expect(container.querySelector('script, img, [onclick], [onerror], [style]')).toBeNull();
+  });
+});
