@@ -223,6 +223,7 @@ export default function MessageContentBlocks({
               columns={tp.columns}
               rows={tp.rows}
               truncated={tp.truncated}
+              cell_styles={tp.cell_styles}
             />
           );
         }

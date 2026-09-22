@@ -5,6 +5,8 @@
  * 不引入额外依赖,纯 HTML table + Tailwind
  */
 import { memo, useMemo } from 'react';
+import { presentationColorProps, type TableCellStyles } from '../../../utils/messagePresentation';
+import './presentation.css';
 import { formatDisplayValue } from '../../../utils/displayValue';
 import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 
@@ -13,6 +15,7 @@ interface TableBlockProps {
   columns: string[];
   rows: Record<string, unknown>[];
   truncated?: boolean;
+  cell_styles?: TableCellStyles;
 }
 
 // 注意:后端 services/sandbox/emit_protocol.py:_TABLE_MAX_ROWS 必须保持一致
@@ -36,7 +39,7 @@ function formatCell(value: unknown): string {
   return formatDisplayValue(value);
 }
 
-const TableBlockComponent = ({ title, columns, rows, truncated }: TableBlockProps) => {
+const TableBlockComponent = ({ title, columns, rows, truncated, cell_styles }: TableBlockProps) => {
   // 判断每列是否数字列(用于对齐)
   const numericCols = useMemo(() => {
     const flags: Record<string, boolean> = {};
@@ -86,7 +89,10 @@ const TableBlockComponent = ({ title, columns, rows, truncated }: TableBlockProp
                       numericCols[col] ? 'text-right tabular-nums' : 'text-left'
                     }`}
                   >
-                    {formatCell(row[col])}
+                    <span {...presentationColorProps(cell_styles?.[i]?.[col]?.color)}>
+                      {cell_styles?.[i]?.[col]?.bold === true
+                        ? <strong>{formatCell(row[col])}</strong> : formatCell(row[col])}
+                    </span>
                   </td>
                 ))}
               </tr>

@@ -18,7 +18,9 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import CodeBlock from './CodeBlock';
 import { escapeChineseMath } from '../../../utils/markdownPreprocess';
-import { remarkUnwrapInlineSpans } from '../../../utils/remarkUnwrapInlineSpans';
+import { rehypeInlinePresentation } from '../../../utils/rehypeInlinePresentation';
+import { presentationColorProps } from '../../../utils/messagePresentation';
+import './presentation.css';
 import { downloadFile } from '../../../utils/downloadFile';
 import './markdown.css';
 
@@ -57,8 +59,9 @@ function isImageUrl(text: string): boolean {
  *  即使 escapeChineseMath 漏网（比如未来扩展字符），KaTeX 也不会再 console.warn
  *  污染控制台。是 markdownPreprocess 的兜底防线。
  */
-const remarkPlugins: PluggableList = [remarkGfm, remarkMath, remarkUnwrapInlineSpans];
+const remarkPlugins: PluggableList = [remarkGfm, remarkMath];
 const rehypePlugins: PluggableList = [
+  rehypeInlinePresentation,
   [rehypeKatex, { strict: 'ignore' }],
 ];
 
@@ -77,6 +80,9 @@ function extractAstText(node: unknown): string {
  * 这里覆盖默认的 code/pre/table/a 渲染逻辑。
  */
 const markdownComponents: Components = {
+  span({ children, node, ...rest }) {
+    return <span {...rest} {...presentationColorProps(node?.properties.dataColor)}>{children}</span>;
+  },
   // 代码块：区分行内代码、Mermaid 图表、普通代码块
   code({ children, className, node, ...rest }) {
     const match = /language-(\w+)/.exec(className || '');

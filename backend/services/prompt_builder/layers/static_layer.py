@@ -15,6 +15,8 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from config.message_presentation import PRESENTATION_COLORS_TEXT
+
 _TEMPLATE_DIR = Path(__file__).parent.parent / "templates"
 
 _SECTION_TAGS = (
@@ -51,7 +53,7 @@ def render_static_system() -> str:
     """
     sections = []
     for tag, filename in _SECTION_TAGS:
-        body = _read_template(filename)
+        body = _read_template(filename).replace("{{presentation_colors}}", PRESENTATION_COLORS_TEXT)
         sections.append(f"<{tag}>\n{body}\n</{tag}>")
     return "\n\n".join(sections)
 

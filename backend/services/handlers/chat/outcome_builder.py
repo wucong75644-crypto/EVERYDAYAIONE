@@ -135,6 +135,7 @@ def _build_part(block: dict[str, Any]) -> ContentPart | None:
             columns=block.get("columns", []),
             rows=block.get("rows", []),
             truncated=block.get("truncated", False),
+            cell_styles=block.get("cell_styles"),
         )
     if block_type == "interrupt_marker":
         return InterruptMarkerPart(

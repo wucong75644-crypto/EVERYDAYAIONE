@@ -187,9 +187,10 @@ describe('MarkdownRenderer — 分析结果中的 HTML 格式兼容', () => {
   ];
   const header = '| 平台 | 今日有效订单 | 昨日有效订单 | 涨跌量 | 涨跌幅 |\n|---|---|---|---|---|';
 
-  it('截图中的对比表保留所有数值和箭头，不显示 HTML 标签', () => {
+  it.each(['legacy-html', 'contract'])('截图中的 %s 对比表保留数值和涨跌颜色，不显示 HTML 标签', (format) => {
     const content = [header, ...rows.map(([platform, today, yesterday, delta, rate, color]) =>
-      `| ${platform} | ${today} | ${yesterday} | ${delta} | <span style="color:${color}">${rate}</span> |`,
+      `| ${platform} | ${today} | ${yesterday} | ${delta} | ${format === 'legacy-html'
+        ? `<span style="color:${color}">${rate}</span>` : `<span data-color="${color}">${rate}</span>`} |`,
     )].join('\n');
     const { container } = render(<MarkdownRenderer content={content} />);
 
@@ -198,9 +199,11 @@ describe('MarkdownRenderer — 分析结果中的 HTML 格式兼容', () => {
     renderedRows.forEach((row, index) => {
       expect(Array.from(row.querySelectorAll('td'), (cell) => cell.textContent))
         .toEqual(rows[index].slice(0, 5));
+      expect(row.querySelector('td:last-child [data-color]')).toHaveAttribute('data-color', rows[index][5]);
+      expect(row.querySelector('td:nth-child(2)')).not.toHaveClass('markdown-trend-up', 'markdown-trend-down');
     });
     expect(container.textContent).not.toMatch(/<\/?span|style=/);
-    expect(container.querySelector('td span[style]')).toBeNull();
+    expect(container.querySelector('td span[style]')).toHaveClass('message-color');
   });
 
   it('流式标签未闭合时也显示数值，完成后结果一致', () => {
@@ -208,16 +211,26 @@ describe('MarkdownRenderer — 分析结果中的 HTML 格式兼容', () => {
     const { container, rerender } = render(<MarkdownRenderer content={content} isStreaming />);
 
     expect(container.querySelector('tbody tr td:last-child')?.textContent).toBe('↑ +10.1%');
+    expect(container.querySelector('tbody tr td:last-child [data-color]')).toHaveAttribute('data-color', 'red');
     rerender(<MarkdownRenderer content={`${content}</span> |`} />);
     expect(container.querySelector('tbody tr td:last-child')?.textContent).toBe('↑ +10.1%');
+    expect(container.querySelector('tbody tr td:last-child [data-color]')).toHaveAttribute('data-color', 'red');
   });
 
-  it('正文行内标签降级为内容，Markdown 强调和比较符号保持可见', () => {
+  it('正文行内颜色和 Markdown 强调、比较符号同时保留', () => {
     const { container } = render(
       <MarkdownRenderer content={'涨跌：<span style="color:red">**↑ +10.1%**</span>，1 < 2，3 > 2'} />,
     );
 
     expect(container.textContent).toBe('涨跌：↑ +10.1%，1 < 2，3 > 2');
+    expect(container.querySelector('strong')).toHaveTextContent('↑ +10.1%');
+  });
+
+  it('不从箭头、正负号、零值或 Markdown 强调猜测颜色', () => {
+    const values = ['**↑ +10.1%**', '↓ **−1.9%**', '↑ 0.0%', '↑ -2.0%', '+10.1%', '`↑ +10.1%`'];
+    const content = ['| 涨跌幅 |', '|---|', ...values.map((value) => `| ${value} |`)].join('\n');
+    const { container } = render(<MarkdownRenderer content={content} />);
+    expect(container.querySelector('[data-color], .markdown-trend-up, .markdown-trend-down')).toBeNull();
     expect(container.querySelector('strong')).toHaveTextContent('↑ +10.1%');
   });
 

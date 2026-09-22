@@ -16,13 +16,14 @@ import pytest
 
 from services.tools import build_legacy_catalog, validate_legacy_coverage
 
+PRESENTATION_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/message_presentation_code_schema.json').read_text())
 BASELINE = json.loads((Path(__file__).parent / 'fixtures/tool_catalog_07_baseline.json').read_text())
 FILE_SEARCH_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/file_search_protocol_08_schema.json').read_text())
 TASK_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/scheduled_task_structured_schema.json').read_text())
 
 
 def original_schemas(names, view):
-    return [FILE_SEARCH_UPGRADE if name == 'file_search' else TASK_UPGRADE['schema'] if name == 'manage_scheduled_task' else BASELINE['schema_views'].get(view, {}).get(name) or BASELINE['specs'][name]['schema']
+    return [PRESENTATION_UPGRADE if name == 'code_execute' else FILE_SEARCH_UPGRADE if name == 'file_search' else TASK_UPGRADE['schema'] if name == 'manage_scheduled_task' else BASELINE['schema_views'].get(view, {}).get(name) or BASELINE['specs'][name]['schema']
             for name in names]
 
 
@@ -59,6 +60,8 @@ def test_full_spec_contract_unchanged(catalog, name):
                 # F08-05: default chat workspace and full-name identity guidance;
                 # every other spec field still matches the immutable baseline.
                 value = FILE_SEARCH_UPGRADE
+            if name == 'code_execute' and key == 'schema':
+                value = PRESENTATION_UPGRADE
             assert actual[key] == value, (name, key)
 
 
@@ -111,6 +114,9 @@ def test_old_imports_signatures_and_constant_values(module):
             description = TASK_UPGRADE['schema']['function']['description']
             assert description in value
             value = value.replace(description, TASK_UPGRADE['legacy_guidance'])
+        if module == 'code_tools' and name == '_DESCRIPTION':
+            assert value == PRESENTATION_UPGRADE['function']['description']
+            value = BASELINE['specs']['code_execute']['schema']['function']['description']
         actual = hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         assert actual == digest, (module, name)
 
@@ -322,3 +328,10 @@ assert len(ToolExecutor(None, 'actor-a', 'c1', 'org-a')._handlers) == 35
 '''
     run = subprocess.run([sys.executable, '-c', script, first], text=True, capture_output=True, timeout=30)
     assert run.returncode == 0, run.stderr
+
+
+def test_presentation_extension_changes_only_code_tool_description():
+    current = deepcopy(PRESENTATION_UPGRADE)
+    original = BASELINE['specs']['code_execute']['schema']
+    current['function']['description'] = original['function']['description']
+    assert current == original

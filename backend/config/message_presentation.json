@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "colors": {
+    "red": {
+      "light": "#b91c1c",
+      "dark": "#f87171",
+      "legacy": [
+        "red",
+        "rgb(255,0,0)"
+      ]
+    },
+    "green": {
+      "light": "#15803d",
+      "dark": "#4ade80",
+      "legacy": [
+        "green",
+        "rgb(0,128,0)"
+      ]
+    },
+    "blue": {
+      "light": "#1d4ed8",
+      "dark": "#60a5fa",
+      "legacy": [
+        "blue",
+        "rgb(0,0,255)"
+      ]
+    },
+    "orange": {
+      "light": "#b45309",
+      "dark": "#fbbf24",
+      "legacy": [
+        "orange",
+        "rgb(255,165,0)"
+      ]
+    },
+    "purple": {
+      "light": "#7e22ce",
+      "dark": "#c084fc",
+      "legacy": [
+        "purple",
+        "rgb(128,0,128)"
+      ]
+    },
+    "gray": {
+      "light": "#4b5563",
+      "dark": "#9ca3af",
+      "legacy": [
+        "gray",
+        "grey",
+        "rgb(128,128,128)"
+      ]
+    }
+  }
+}

@@ -1,0 +1,8 @@
+.message-color {
+  color: var(--message-color-light);
+}
+
+.dark .message-color,
+html[data-theme="linear"]:not(.light) .message-color {
+  color: var(--message-color-dark);
+}

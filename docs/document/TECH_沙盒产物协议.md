@@ -75,7 +75,7 @@
 | 1 | `emit_image('下载/x.png')` | C | ✅ |
 | 2 | `emit_chart(echarts_opt, title='...')` | C | ✅ |
 | 3 | `emit_file('下载/x.xlsx', label='...')` | C | ✅ |
-| 4 | `emit_table(df, title='...')` | C | ✅ |
+| 4 | `emit_table(df, title='...', cell_styles=...)` | C | ✅ |
 | 5 | `plt.show()` | A (matplotlib hook) | ✅ |
 | 6 | `fig.show()` (plotly) | A (mimebundle) | ✅ (前端需 Phase 2e plotly.js) |
 | 7 | `Chart.show()` (altair) | A (mimebundle) | ✅ (前端需 Phase 2e vega-embed) |
@@ -122,3 +122,9 @@
 | Phase 2 前 | LLM 写 `fig.show()` plotly 显示失败 | 前端 ChartBlock 只支持 ECharts |
 | Phase 2 前 | LLM 写 `df.head()` cell 末尾不显示表格 | 没用 IPython.display.display |
 | **未来** | **任意同类 bug** | **三引擎全覆盖根治,不再发生** |
+
+## 2026-09-22 表格展示扩展
+
+`emit_table(data, title='', *, cell_styles=None)` 支持可选的逐行单元格样式。`cell_styles` 与数据行数一致，每行是列名到 `{color?, bold?}` 的映射，无样式使用 `{}`；颜色目录和正文渲染共用 `backend/config/message_presentation.json`。`rows` 保留原始数值，不放 HTML/Markdown。
+
+显式样式通过 kernel IPC、emit 转换、消息持久化和前端协议完整传递。200 行截断同时应用于数据和样式。自动 DataFrame 展示保持原有无样式行为；需要颜色时显式调用 emit_table。完整约定见 [结构化消息渲染规则](TECH_结构化消息运行时边界与渲染安全.md#8-2026-09-22-展示契约修复)。

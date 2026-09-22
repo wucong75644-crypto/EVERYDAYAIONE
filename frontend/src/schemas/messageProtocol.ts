@@ -1,6 +1,7 @@
 /** Runtime protocol boundary for message content received from external sources. */
 
 import { z } from 'zod';
+import { isPresentationColor } from '../utils/messagePresentation';
 import type { ContentPart } from '../types/message';
 import { logger } from '../utils/logger';
 
@@ -190,6 +191,11 @@ const contentPartSchema = z.preprocess(normalizeNullEquivalentFields, z.discrimi
     columns: z.array(z.string()),
     rows: z.array(z.record(z.string(), z.unknown())),
     truncated: z.boolean().optional(),
+    // 样式元数据异常不丢弃合法数据，旧客户端/历史消息可安全降级。
+    cell_styles: z.array(z.record(z.string(), z.object({
+      color: z.string().refine(isPresentationColor).optional(),
+      bold: z.boolean().optional(),
+    }).strict())).nullish().catch(undefined).transform((value) => value ?? undefined),
   }).passthrough(),
   z.object({
     type: z.literal('ecom_plan'),
