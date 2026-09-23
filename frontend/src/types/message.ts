@@ -213,6 +213,7 @@ export interface TablePart {
   columns: string[];
   rows: Record<string, unknown>[];
   truncated?: boolean;
+  cell_styles?: import('../utils/messagePresentation').TableCellStyles;
 }
 
 /** 表单字段定义 */

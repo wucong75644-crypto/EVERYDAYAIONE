@@ -11,6 +11,8 @@
 
 from typing import Any, Dict, List, Set
 
+from config.message_presentation import PRESENTATION_COLORS_TEXT
+
 CODE_INFO_TOOLS: Set[str] = {
     "code_execute",
 }
@@ -77,9 +79,16 @@ _DESCRIPTION = (
     "     emit_chart(option: dict, title: str = '') -> None       # ECharts 数据图表\n"
     "     emit_diagram(source: str, title: str = '', format: str = 'mermaid') -> None\n"
     "     emit_file(path: str, label: str | None = None) -> None  # 下载卡片\n"
-    "     emit_table(df, title: str = '') -> None                 # 交互表格\n"
+    "     emit_table(df, title: str = '', *, cell_styles=None) -> None  # 数据表格\n"
     "     emit_image(path: str, alt: str = '') -> None            # 静态图片(如 matplotlib 出的 PNG)\n"
     "  错误: 直接对 emit_xxx 发起 function_call (会报 Unknown sync tool)\n"
+    "\n"
+    "TABLE PRESENTATION — 可选展示契约\n"
+    "rows/df 保留原始值，单元格不会解析 HTML/Markdown。\n"
+    "cell_styles 是与数据行一一对应的 list[dict]，每行按列名指定样式；无样式的行用 {}。\n"
+    f"样式仅支持 color（{PRESENTATION_COLORS_TEXT}）和 bold（bool），省略保持默认。\n"
+    "用法：emit_table(df, cell_styles=[{'指标列': {'color': 'blue', 'bold': True}}, ...])。\n"
+    "根据用户要求及指标含义选择颜色，前端不会从数值正负或箭头推断颜色；样式行数/列名必须匹配数据。\n"
     "\n"
     "PATHS — 全部相对字符串\n"
     "- 读用户上传: pd.read_excel('上传/2026-06/x.xlsx')    attachments 给 path 字段\n"

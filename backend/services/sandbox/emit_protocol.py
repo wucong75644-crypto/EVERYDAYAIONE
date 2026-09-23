@@ -23,6 +23,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from config.message_presentation import validate_cell_styles
+
 # 表格行数上限(防大表撑爆 IPC / 前端渲染)
 # 注意:前端 TableBlock.tsx 也有 MAX_PREVIEW_ROWS,两端必须一致
 _TABLE_MAX_ROWS = 200
@@ -120,7 +122,7 @@ def build_image_payload(path: str, alt: str = "") -> dict:
     return payload
 
 
-def build_table_payload(data: Any, title: str = "") -> dict:
+def build_table_payload(data: Any, title: str = "", *, cell_styles: Any = None) -> dict:
     """构造 table payload(pandas DataFrame / list[dict] / dict)"""
     rows: list[dict] = []
     columns: list[str] = []
@@ -139,6 +141,12 @@ def build_table_payload(data: Any, title: str = "") -> dict:
             f"emit_table data 必须是 DataFrame/list[dict]/dict,收到 {type(data).__name__}"
         )
 
+    styles = validate_cell_styles(cell_styles)
+    if styles is not None:
+        if len(styles) != len(rows):
+            raise ValueError("cell_styles 行数必须与数据行数一致，未设置样式的行使用 {}")
+        if any(set(row) - set(columns) for row in styles):
+            raise ValueError("cell_styles 列名必须来自数据 columns")
     truncated = len(rows) > _TABLE_MAX_ROWS
     if truncated:
         rows = rows[:_TABLE_MAX_ROWS]
@@ -150,6 +158,7 @@ def build_table_payload(data: Any, title: str = "") -> dict:
         "rows": rows,
         "truncated": truncated,
         "total_rows": len(rows) if not truncated else f"{_TABLE_MAX_ROWS}+(截断)",
+        **({"cell_styles": styles[:_TABLE_MAX_ROWS]} if styles is not None else {}),
     }
 
 
@@ -184,5 +193,7 @@ def install_emit_in_globals(sandbox_globals: dict, buffer: list[dict]) -> None:
         lambda path, alt="": buffer.append(build_image_payload(path, alt))
     )
     sandbox_globals["emit_table"] = (
-        lambda data, title="": buffer.append(build_table_payload(data, title))
+        lambda data, title="", *, cell_styles=None: buffer.append(
+            build_table_payload(data, title, cell_styles=cell_styles)
+        )
     )

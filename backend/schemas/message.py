@@ -11,6 +11,7 @@ from typing import Annotated, Any, Dict, Iterable, List, Literal, Optional, Unio
 from pydantic import BaseModel, Field, field_validator
 import json
 
+from config.message_presentation import validate_cell_styles
 from schemas.chart import ChartPart
 from schemas.diagram import DiagramPart
 from services.skills.selection import SkillSelection
@@ -151,6 +152,12 @@ class TablePart(BaseModel):
     columns: List[str] = Field(default_factory=list)
     rows: List[Dict[str, Any]] = Field(default_factory=list)
     truncated: bool = False
+    cell_styles: Optional[List[Dict[str, Dict[str, Any]]]] = None
+
+    @field_validator("cell_styles", mode="before")
+    @classmethod
+    def check_cell_styles(cls, value: Any):
+        return validate_cell_styles(value)
 
 
 class InterruptMarkerPart(BaseModel):

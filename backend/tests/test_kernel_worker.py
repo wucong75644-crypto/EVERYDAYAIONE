@@ -283,6 +283,18 @@ class TestProtocol:
         assert exit_code == 0
 
 
+def test_table_presentation_survives_real_kernel_ipc(kernel_proc):
+    code = (
+        "emit_table([{'变化': 10}], title='样式契约', "
+        "cell_styles=[{'变化': {'color': 'blue', 'bold': True}}])"
+    )
+    result = _send(kernel_proc, {"id": "presentation", "code": code, "timeout": 10})
+    assert result["status"] == "ok"
+    payload = result["emit_payloads"][0]
+    assert payload["rows"] == [{"变化": 10}]
+    assert payload["cell_styles"] == [{"变化": {"color": "blue", "bold": True}}]
+
+
 class TestNonNativeJsonSerialization:
     """emit_payloads 含 numpy / datetime 等非原生类型时,_write_response 必须兜底。
 

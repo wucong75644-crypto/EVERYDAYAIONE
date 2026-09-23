@@ -64,6 +64,7 @@ def build_block_from_payload(payload: Dict[str, Any]) -> Optional[Dict[str, Any]
             "columns": payload.get("columns", []),
             "rows": payload.get("rows", []),
             "truncated": payload.get("truncated", False),
+            **({"cell_styles": payload["cell_styles"]} if payload.get("cell_styles") is not None else {}),
         }
     if kind == "image":
         url = payload.get("url")

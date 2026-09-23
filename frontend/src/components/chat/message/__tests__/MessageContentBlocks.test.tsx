@@ -111,6 +111,7 @@ describe('MessageContentBlocks structured diagrams', () => {
         title: '付款订单',
         columns: ['有效订单数', '有效金额'],
         rows: [{ '有效订单数': 128, '有效金额': 2260.5 }],
+        cell_styles: [{ '有效金额': { color: 'blue', bold: true } }],
       }],
     };
 
@@ -128,7 +129,8 @@ describe('MessageContentBlocks structured diagrams', () => {
 
     expect(screen.getByRole('columnheader', { name: '有效订单数' })).toBeInTheDocument();
     expect(screen.getByText('128')).toBeInTheDocument();
-    expect(screen.getByText('2,260.5')).toBeInTheDocument();
+    expect(screen.getByText('2,260.5').closest('[data-color]')).toHaveAttribute('data-color', 'blue');
+    expect(screen.getByText('2,260.5').tagName).toBe('STRONG');
   });
 
   it('keeps the structured scheduled-task form but hides legacy duplicate confirmation copy', () => {
