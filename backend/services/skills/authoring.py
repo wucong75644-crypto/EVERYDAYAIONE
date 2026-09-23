@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
 
-from services.skills.authoring_contracts import DraftContent, RevisionContent, reviewed_document
+from services.skills.authoring_contracts import DraftContent, RevisionContent, reviewed_document, new_draft_content
 from services.skills.assets import AssetDraft, public_assets
 from services.skills.contracts import PublishRevision, SkillError, SkillPackage, SkillRevision
 from services.skills.repository import SkillRepository
@@ -79,7 +79,7 @@ class SkillAuthoring:
                     VALUES (%s, 'admin', %s, %s) RETURNING *''',
                     (data.skill_key, 'org' if org else 'platform', org))
                 package = SkillPackage.model_validate(cursor.fetchone())
-                self._insert_draft(cursor, package.id, data.content)
+                self._insert_draft(cursor, package.id, new_draft_content(data.content))
                 return {'package_id': package.id}
         except UniqueViolation:
             raise SkillError('SKILL_KEY_EXISTS') from None

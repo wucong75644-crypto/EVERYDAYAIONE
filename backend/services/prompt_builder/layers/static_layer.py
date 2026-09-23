@@ -1,11 +1,12 @@
 """Layer 1: 静态层 —— 永久不变的 system prompt 内容。
 
-包含 5 段模板（templates/*.md）按 XML 包裹后拼接：
+模板（templates/*.md）按 XML 包裹后拼接：
   <role>...</role>           角色 + 工作场景
   <rules>...</rules>         做事原则 + 行动边界
   <workflow>...</workflow>   直接 / 计划 / 提问 三模式
   <tool_strategy>...</tool_strategy>  工具触发策略 + 数字 cite 约束 + 业务规则
   <permission_mode>...</permission_mode>  auto / plan / ask 模式约束
+  <skills>...</skills>  已激活 Skill 的任务与资源职责
 
 该层内容长期不变，命中 prompt cache 长期段，所有请求共享。
 """
@@ -23,6 +24,7 @@ _SECTION_TAGS = (
     ("workflow", "workflow.md"),
     ("tool_strategy", "tool_strategy.md"),
     ("permission_mode", "modes.md"),
+    ("skills", "skills.md"),
 )
 
 

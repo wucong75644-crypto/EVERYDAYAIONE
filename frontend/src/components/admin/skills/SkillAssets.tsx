@@ -46,7 +46,7 @@ export function SkillAssetEditor({ content, busy, onChange, onUpload }: {
     assets: assets.map((asset, i) => i === index ? { ...asset, ...patch } : asset) });
   return <section className="space-y-3 border-t border-[var(--s-border-default)] pt-4" aria-label="编辑附件">
     <h3 className="text-sm font-medium">附件与模板（可选）</h3>
-    <p className="text-xs text-[var(--s-text-tertiary)]">直接上传参考资料、模板或示例文件，无需填写附件内容。需要 Skill 使用时，点击“在操作说明中引用”。</p>
+    <p className="text-xs text-[var(--s-text-tertiary)]">上传方法说明、参考资料、模板或示例文件，无需填写附件内容。点击“在操作说明中引用”，并在操作说明里写清文件的用途。</p>
     <input ref={fileInput} type="file" multiple hidden aria-label="选择附件文件" disabled={busy || assets.length >= 16 || !onUpload}
       accept=".docx,.pdf,.xlsx,.txt,.md,.csv,.json" onChange={event => {
         const files = Array.from(event.target.files || []);
@@ -60,12 +60,12 @@ export function SkillAssetEditor({ content, busy, onChange, onUpload }: {
       <p className="mt-1 text-xs text-[var(--s-text-tertiary)]">{(asset.source?.format || asset.format).toUpperCase()} · {kinds[asset.kind]}</p>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <Button variant="secondary" size="sm" disabled={busy || content.body.includes(`[[asset:${asset.id}]]`)} onClick={() => onChange({ ...content,
-          body: `${content.body}${content.body ? '\n\n' : ''}请参考附件 [[asset:${asset.id}]]。`,
+          body: `${content.body}${content.body ? '\n\n' : ''}附件：[[asset:${asset.id}]]。`,
         })}>{content.body.includes(`[[asset:${asset.id}]]`) ? '已在操作说明中引用' : '在操作说明中引用'}</Button>
         <Button variant="ghost" size="sm" disabled={busy} onClick={() => {
           const marker = `[[asset:${asset.id}]]`;
           onChange({ ...content, assets: assets.filter((_, i) => i !== index),
-            body: content.body.replaceAll(`请参考附件 ${marker}。`, '').replaceAll(marker, '').trimEnd() });
+            body: content.body.replaceAll(`附件：${marker}。`, '').replaceAll(`请参考附件 ${marker}。`, '').replaceAll(marker, '').trimEnd() });
         }}>移除附件</Button>
       </div>
       <details open={expanded === asset.id} className="mt-2">

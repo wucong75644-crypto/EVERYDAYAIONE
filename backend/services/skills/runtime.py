@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, ValidationError
 
@@ -15,7 +15,8 @@ from services.skills.renderer import (
     SkillTemplateArgsError, argument_summary, bounded, digest, encoded,
     asset_manifest_digest, prepare_resources, referenced_assets, render_resources,
 )
-from services.skills.resolver import SkillCandidate, effective_allowed_tool_names
+from services.skills.resolver import SkillCandidate, skill_tool_ceiling
+from services.skills.context import instruction_message, model_messages
 from services.skills.selection import SkillSelection
 
 
@@ -68,6 +69,7 @@ class RuntimeCheckpoint(Contract):
     active: tuple[ActiveSkill, ...] = Field(max_length=MAX_ACTIVE_SKILLS)
     effective_allowed_tool_names: frozenset[str]
     manual_skill_id: SkillKey | None = None
+    context_version: Literal[1, 2] = 1
 
 
 def control_result(code: str, *, ok: bool = False, **details) -> dict:
@@ -88,6 +90,7 @@ class SkillRuntime:
         self.active: dict[str, ActiveSkill] = {}
         self.manual_skill_id: str | None = None
         self.template_context = dict(template_context or {})
+        self.context_version = 2
 
     def _check_cancelled(self):
         if self.cancellation_event.is_set():
@@ -133,17 +136,23 @@ class SkillRuntime:
         if advertised:
             messages.append({"role": "system", "content": self._directory_text(advertised)})
         for active in self.active.values():
-            messages.append({"role": "system", "content": (
-                "[Turn Skill instructions: apply only within existing tool policy and authorization]\n"
-                + f"skill_id={active.skill_key} revision={active.revision}\n" + active.rendered
-            )})
+            messages.append(instruction_message(
+                active, self.directory[active.skill_key],
+                manual=active.skill_key == self.manual_skill_id, context_version=self.context_version,
+            ))
         return messages
 
     def ensure_messages(self, messages: list[dict[str, Any]]):
         # Compression may remove earlier system messages; restore exact bounded text.
-        for message in self.messages():
-            if message not in messages:
-                messages.append(message)
+        missing = [message for message in self.messages() if message not in messages]
+        if self.context_version == 1:
+            messages.extend(missing)
+        else:
+            # Keep task instructions in the leading system context. Never split
+            # an assistant/tool-result pair or mutate the user's original text.
+            boundary = next((i for i, message in enumerate(messages)
+                             if message.get('role') != 'system'), len(messages))
+            messages[boundary:boundary] = missing
 
     def checkpoint(self) -> dict:
         return RuntimeCheckpoint(
@@ -151,7 +160,24 @@ class SkillRuntime:
             active=tuple(self.active.values()),
             effective_allowed_tool_names=self.effective_allowed_tool_names,
             manual_skill_id=self.manual_skill_id,
-        ).model_dump(mode="json", exclude={"manual_skill_id"} if self.manual_skill_id is None else set())
+            context_version=self.context_version,
+        ).model_dump(mode="json", exclude=(
+            ({'manual_skill_id'} if self.manual_skill_id is None else set())
+            | ({'context_version'} if self.context_version == 1 else set())
+        ))
+
+    def model_messages(self, messages, tools):
+        # Rebuild from current filtered schemas; do not persist stale capabilities.
+        if self.context_version == 1 or not self.has_active_skills:
+            return messages
+        return model_messages(messages, tools, [
+            {'skill_id': a.skill_key, 'revision': a.revision,
+             'selection': 'user' if a.skill_key == self.manual_skill_id else 'model'}
+            for a in self.active.values()
+        ], [instruction_message(
+            a, self.directory[a.skill_key], manual=a.skill_key == self.manual_skill_id,
+            context_version=self.context_version,
+        ) for a in self.active.values()])
 
     async def activate_manual(self, selection: SkillSelection) -> dict:
         candidate = self.directory.get(selection.skill_id)
@@ -199,9 +225,8 @@ class SkillRuntime:
             summary = ArgumentSummary.model_validate(argument_summary(values))
             bounded(rendered + "".join(a.rendered for a in self.active.values()),
                     MAX_TURN_RENDERED_BYTES, "SKILL_TURN_BUDGET_EXCEEDED")
-            ceiling = effective_allowed_tool_names(
-                self.platform_tool_names, self.effective_allowed_tool_names,
-                validated.catalog_metadata.allowed_tool_names,
+            ceiling = skill_tool_ceiling(
+                validated.catalog_metadata, self.platform_tool_names, self.effective_allowed_tool_names,
             )
             self.active[candidate.skill_key] = ActiveSkill(
                 skill_key=candidate.skill_key, revision=candidate.revision,
@@ -272,8 +297,8 @@ class SkillRuntime:
                         raise SkillError('SKILL_REPLAY_RENDER_INVALID')
                     await self.source.load_assets(candidate, validated, saved.loaded_asset_ids)
                     self._check_cancelled()
-                declared = frozenset(validated.catalog_metadata.allowed_tool_names)
-                if not saved.effective_allowed_tool_names <= declared:
+                if (validated.catalog_metadata.tool_policy == 'restricted'
+                        and not saved.effective_allowed_tool_names <= set(validated.catalog_metadata.allowed_tool_names)):
                     raise SkillError("SKILL_REPLAY_TOOL_SCOPE_INVALID")
                 if not checkpoint.effective_allowed_tool_names <= saved.effective_allowed_tool_names:
                     raise SkillError("SKILL_REPLAY_TOOL_SCOPE_INVALID")
@@ -284,6 +309,7 @@ class SkillRuntime:
                     "SKILL_REPLAY_RENDER_INVALID")
             self.directory, self.active = directory, active
             self.manual_skill_id = checkpoint.manual_skill_id
+            self.context_version = checkpoint.context_version
             self.effective_allowed_tool_names = ceiling
         except SkillError as error:
             raise SkillReplayError(str(error)) from None

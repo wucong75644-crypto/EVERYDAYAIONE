@@ -132,14 +132,15 @@ def prepare_resources(skill, context: dict, maximum: int):
         base += '\n\n[Skill attachments: summaries]\n' + encoded(public_assets(skill.resources))
     entries = {a.id: a for a in skill.resources.assets}
     required = len(base.encode('utf-8')) + sum(
-        len(asset_header(asset_id).encode('utf-8')) + entries[asset_id].bytes for asset_id in ids)
+        len(asset_header(entries[asset_id]).encode('utf-8')) + entries[asset_id].bytes for asset_id in ids)
     if required > maximum:
         raise SkillError('SKILL_ASSET_BUDGET_EXCEEDED' if skill.resources.assets else 'SKILL_TURN_BUDGET_EXCEEDED')
     return ids, base, values
 
 
-def asset_header(asset_id):
-    return f'\n\n[Skill attachment: {asset_id}]\n'
+def asset_header(asset):
+    return (f'\n\n[Skill attachment: {asset.id}]\n'
+            + encoded({'name': asset.name, 'kind': asset.kind}) + '\n')
 
 
 def render_resources(skill, ids, base, values, texts, maximum):
@@ -152,6 +153,6 @@ def render_resources(skill, ids, base, values, texts, maximum):
         if entry.kind == 'template':
             names = _template_names(content, skill.resources.template_variables)
             content = render(content, {name: values[name] for name in names}, maximum_body=MAX_ASSET_BYTES)
-        base += asset_header(asset_id) + content
+        base += asset_header(entry) + content
         bounded(base, maximum, 'SKILL_ASSET_BUDGET_EXCEEDED')
     return base

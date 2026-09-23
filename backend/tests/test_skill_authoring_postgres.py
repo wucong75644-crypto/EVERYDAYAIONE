@@ -135,6 +135,37 @@ def test_reject_clears_approval_and_stale_editor_conflicts(environment):
         svc.save(pid, SaveDraft(expected_version=1, content=CONTENT))
 
 
+def test_new_policy_is_creation_only_and_legacy_upgrade_creates_reviewed_revision(environment):
+    svc = environment.service()
+    pid = svc.create(CreateSkill(skill_key='new-policy', content=DraftContent(
+        description='新用途', body='使用本轮已授权工具完成任务。')))['package_id']
+    assert svc.detail(pid)['draft']['content']['catalog_metadata']['tool_policy'] == 'platform'
+    published = publish(svc, pid)
+    revision = published['draft']['revision']
+    assert svc.read_revision(pid, revision).catalog_metadata.tool_policy == 'platform'
+
+    legacy = DraftContent(description='旧用途', body='原正文', catalog_metadata={'allowed_tool_names': []})
+    old_id = svc.create(CreateSkill(skill_key='legacy-policy', content=legacy))['package_id']
+    v1 = publish(svc, old_id)['draft']['revision']
+    snapshot = svc.read_revision(old_id, v1)
+    assert snapshot.catalog_metadata.tool_policy == 'restricted'
+    action(svc, old_id, 'start_draft')
+    draft = svc.detail(old_id)['draft']
+    saved = svc.save(old_id, SaveDraft(expected_version=draft['version'], content=legacy))
+    assert 'tool_policy' not in saved['draft']['content']['catalog_metadata']
+    upgraded = legacy.model_copy(update={'catalog_metadata': legacy.catalog_metadata.model_copy(
+        update={'tool_policy': 'platform'})})
+    svc.save(old_id, SaveDraft(expected_version=saved['draft']['version'], content=upgraded))
+    # An edit does not change the serving revision and cannot bypass review.
+    assert svc.read_revision(old_id, v1) == snapshot
+    with pytest.raises(SkillError, match='TRANSITION_INVALID'):
+        action(svc, old_id, 'publish')
+    v2 = publish(svc, old_id)['draft']['revision']
+    assert v2 != v1
+    assert svc.read_revision(old_id, v2).catalog_metadata.tool_policy == 'platform'
+    assert svc.read_revision(old_id, v1) == snapshot
+
+
 @pytest.mark.parametrize('damage', ['write', 'readback', 'database'])
 def test_publish_failure_rolls_back_and_retries(environment, monkeypatch, damage):
     svc = environment.service()

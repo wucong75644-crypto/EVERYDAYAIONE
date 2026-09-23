@@ -68,6 +68,14 @@ describe('Skill attachments', () => {
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ assets: [expect.objectContaining({ content: '新格式' })] }));
   });
 
+  it('removes the previous auto-reference sentence from an existing draft', () => {
+    const onChange = vi.fn();
+    render(<SkillAssetEditor content={{ body: '完成日报。\n\n请参考附件 [[asset:attachment-one]]。',
+      description: '', catalog_metadata: {}, assets: [uploaded] }} busy={false} onChange={onChange} />);
+    fireEvent.click(screen.getByRole('button', { name: '移除附件' }));
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ body: '完成日报。', assets: [] }));
+  });
+
   it('keeps review content read only and caps the attachment count', () => {
     const content: DraftContent = { body: '', description: '', catalog_metadata: {}, assets: Array.from({ length: 16 }, (_, i) => ({ ...uploaded, id: `ref-${i}` })) };
     render(<SkillAssetEditor content={content} busy onChange={() => { throw Error('read only'); }} onUpload={vi.fn()} />);

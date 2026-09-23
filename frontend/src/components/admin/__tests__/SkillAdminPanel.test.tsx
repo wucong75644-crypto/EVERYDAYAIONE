@@ -63,7 +63,7 @@ describe('Skill admin workspace', () => {
     vi.mocked(api.saveSkillDraft).mockResolvedValue(detail('draft', false, 2));
     fireEvent.click(screen.getByRole('button', { name: '保存草稿' }));
     await waitFor(() => expect(api.saveSkillDraft).toHaveBeenCalledWith('org-1', 'p1', 1,
-      expect.objectContaining({ assets: [asset], body: content.body + '\n\n请参考附件 [[asset:upload-one]]。' })));
+      expect.objectContaining({ assets: [asset], body: content.body + '\n\n附件：[[asset:upload-one]]。' })));
   });
 
   it('keeps the draft unchanged when any upload fails and explains the failure', async () => {
@@ -144,7 +144,7 @@ describe('Skill admin workspace', () => {
     fireEvent.change(screen.getByLabelText('唯一标识'), { target: { value: 'orders' } });
     fireEvent.click(screen.getByRole('button', { name: '创建草稿' }));
     await screen.findByLabelText('Skill 操作说明');
-    expect(api.createManagedSkill).toHaveBeenCalledWith('org-1', 'orders', expect.objectContaining({ catalog_metadata: { name: '订单报告' } }));
+    expect(api.createManagedSkill).toHaveBeenCalledWith('org-1', 'orders', expect.objectContaining({ catalog_metadata: { name: '订单报告', tool_policy: 'platform' } }));
     expect(api.saveSkillDraft).not.toHaveBeenCalled();
   });
 

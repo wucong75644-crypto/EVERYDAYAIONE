@@ -242,7 +242,7 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
     void perform(async token => {
       let created: { package_id: string };
       try {
-        created = await createManagedSkill(orgId, newKey, { description: '', body: `# ${newName.trim()}\n\n## 使用场景\n\n## 执行步骤\n\n## 输出要求\n`, catalog_metadata: { name: newName.trim() } });
+        created = await createManagedSkill(orgId, newKey, { description: '', body: `# ${newName.trim()}\n\n## 使用场景\n\n## 执行步骤\n\n## 输出要求\n`, catalog_metadata: { name: newName.trim(), tool_policy: 'platform' } });
       } catch (e) {
         if (token === generation.current) setError(e instanceof ApiRequestError && e.status === 409 ? '该标识已存在，请换一个标识。' : errorMessage(e));
         return;

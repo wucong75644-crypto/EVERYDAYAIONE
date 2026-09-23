@@ -38,6 +38,16 @@ class CreateSkill(Contract):
     content: DraftContent = Field(default_factory=DraftContent)
 
 
+def new_draft_content(content: DraftContent) -> DraftContent:
+    """Creation default only: never reinterpret saved drafts or revisions."""
+    metadata = content.catalog_metadata
+    if not {'tool_policy', 'allowed_tool_names'} & metadata.model_fields_set:
+        return content.model_copy(update={
+            'catalog_metadata': metadata.model_copy(update={'tool_policy': 'platform'}),
+        })
+    return content
+
+
 class ExpectedVersion(Contract):
     expected_version: Annotated[int, Field(strict=True, ge=0)]
 
