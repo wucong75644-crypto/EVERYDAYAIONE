@@ -2,10 +2,30 @@ import { request } from './api';
 
 export type SkillState = 'draft' | 'in_review' | 'published' | 'deprecated' | 'disabled';
 export type SkillAction = 'start_draft' | 'submit' | 'approve' | 'reject' | 'publish' | 'deprecate' | 'disable' | 'enable';
+export interface SkillAssetSummary {
+  id: string; name: string; summary: string;
+  kind: 'reference' | 'template' | 'example_input' | 'example_output';
+  format: 'md' | 'txt' | 'json' | 'csv';
+  bytes?: number;
+  file_format?: SkillFileFormat;
+  file_bytes?: number;
+}
+export type SkillFileFormat = 'md' | 'txt' | 'json' | 'csv' | 'docx' | 'pdf' | 'xlsx';
+export interface SkillAssetDraft extends SkillAssetSummary {
+  content: string;
+  source?: { format: SkillFileFormat; base64: string } | null;
+}
+export interface SkillTemplateVariable {
+  type: 'string' | 'boolean';
+  source: 'actor_user_id' | 'org_id' | 'conversation_scope' | 'agent_domain' | 'execution_mode' | 'is_channel';
+}
 export interface DraftContent {
   description: string;
   body: string;
   catalog_metadata: Record<string, unknown>;
+  assets?: SkillAssetDraft[];
+  asset_summaries?: SkillAssetSummary[];
+  template_variables?: Record<string, SkillTemplateVariable>;
 }
 export interface SkillAdminItem {
   package_id: string;
@@ -49,6 +69,11 @@ export interface SkillDetail {
 // Explicit organization in the URL survives an organization switch during an
 // in-flight operation. The server revalidates membership for this exact target.
 const base = (orgId: string) => `/skills/admin/orgs/${encodeURIComponent(orgId)}`;
+export const importSkillAttachment = (orgId: string, file: File): Promise<SkillAssetDraft> => {
+  const data = new FormData();
+  data.append('file', file);
+  return request({ method: 'POST', url: `${base(orgId)}/attachments/import`, data });
+};
 export const listManagedSkills = (orgId: string): Promise<SkillAdminItem[]> =>
   request({ method: 'GET', url: base(orgId) });
 export const getManagedSkill = (orgId: string, id: string): Promise<SkillDetail> =>

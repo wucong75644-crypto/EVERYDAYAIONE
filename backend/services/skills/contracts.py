@@ -2,10 +2,18 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TYPE_CHECKING
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_serializer, model_validator
+
+if TYPE_CHECKING:
+    from services.skills.assets import SkillResources
+
+
+def _empty_resources():
+    from services.skills.assets import SkillResources
+    return SkillResources()
 
 
 SkillKey = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
@@ -30,8 +38,8 @@ ExecutionMode = Literal["interactive", "scheduled", "preflight"]
 class SkillCatalogMetadata(Contract):
     """Published frontmatter `catalog`; immutable with its revision.
 
-    Missing declarations allow no tools or model selection. Empty actor/permission
-    restrictions mean all authorized members of the assigned organization.
+    Legacy metadata keeps its explicit tool ceiling. New authoring can opt into
+    platform tools; this never grants access or overrides ToolPolicy.
     """
 
     name: CatalogText | None = None
@@ -44,6 +52,21 @@ class SkillCatalogMetadata(Contract):
     required_permissions: tuple[CatalogText, ...] = ()
     required_feature_flags: tuple[CatalogText, ...] = ()
     allowed_tool_names: tuple[CatalogText, ...] = ()
+    tool_policy: Literal['restricted', 'platform'] = 'restricted'
+
+    @model_validator(mode='after')
+    def unambiguous_tool_policy(self):
+        if self.tool_policy == 'platform' and self.allowed_tool_names:
+            raise ValueError('SKILL_TOOL_POLICY_CONFLICT')
+        return self
+
+    @model_serializer(mode='wrap')
+    def preserve_legacy_metadata(self, handler):
+        result = handler(self)
+        # Keep old review hashes and checkpoint metadata byte-compatible.
+        if self.tool_policy == 'restricted':
+            result.pop('tool_policy', None)
+        return result
 
 
 class PackageCreate(Contract):
@@ -108,6 +131,7 @@ class ValidatedSkill:
     summary: str
     body: str
     catalog_metadata: SkillCatalogMetadata = field(default_factory=SkillCatalogMetadata)
+    resources: 'SkillResources' = field(default_factory=_empty_resources)
 
 
 def revision_path(package: SkillPackage | PackageCreate, revision: str) -> str:

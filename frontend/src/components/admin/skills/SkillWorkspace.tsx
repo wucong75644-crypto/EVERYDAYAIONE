@@ -5,6 +5,7 @@ import { Dropdown, DropdownDivider, DropdownItem } from '../../ui/Dropdown';
 import { SkillStatus } from './SkillStatus';
 import { SkillDraftEditor } from './SkillDraftEditor';
 import { SkillDocument } from './SkillDocument';
+import { SkillAssets } from './SkillAssets';
 import { SkillDeletion } from './SkillDeletion';
 import { detailName, detailState, formatDate, revisionLabel } from './presentation';
 
@@ -16,6 +17,7 @@ interface Props {
   onTab: (value: 'content' | 'history') => void; onChange: (value: DraftContent) => void;
   onBack: () => void; onRefresh: () => void; onSave: () => void; onSubmit: () => void;
   onAction: (value: SkillAction) => void; onRevision: (value: string) => void; onRetry: () => void;
+  onUpload: (files: File[]) => void;
 }
 export function SkillWorkspace(p: Props) {
   const d = p.detail, status = detailState(d), editing = d.editable && d.draft?.status === 'draft';
@@ -59,7 +61,7 @@ export function SkillWorkspace(p: Props) {
     </div>
     <div className="mt-5 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_180px]">
       <div className="min-w-0 overflow-hidden rounded-lg border border-[var(--s-border-default)] bg-[var(--s-surface-raised)]">
-        {p.tab === 'content' && editing ? <SkillDraftEditor key={`${d.package_id}:${d.draft?.version}`} content={p.content} dirty={p.dirty} busy={p.busy} onChange={p.onChange} /> : <>
+        {p.tab === 'content' && editing ? <SkillDraftEditor key={`${d.package_id}:${d.draft?.version}`} content={p.content} dirty={p.dirty} busy={p.busy} onChange={p.onChange} onUpload={p.onUpload} /> : <>
           {p.tab === 'history' && <div>
             {d.revisions.length ? d.revisions.map(row => <div key={row.revision} className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--s-border-default)] p-5">
               <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-medium">{revisionLabel(d, row.revision)}</h3><SkillStatus state={row.status} />{row.revision === d.available_revision && <span className="flex items-center gap-1 text-xs text-[var(--s-success)]"><Check size={12} />当前可用</span>}</div><time className="mt-1 block text-xs text-[var(--s-text-tertiary)]" dateTime={row.created_at}>发布于 {formatDate(row.created_at)}</time><code className="mt-1 block break-all text-xs text-[var(--s-text-tertiary)]">{row.revision}</code></div>
@@ -69,6 +71,7 @@ export function SkillWorkspace(p: Props) {
           {(p.tab === 'content' || p.revisionContent || p.reading || p.readFailed) && <>
             <div className="flex flex-wrap justify-between gap-2 border-b border-[var(--s-border-default)] px-5 py-3 text-xs text-[var(--s-text-tertiary)]"><span>{p.revisionContent ? revisionLabel(d, p.revisionContent.revision) : status === 'in_review' ? '待发布内容' : '正文预览'}</span><span>只读</span></div>
             <div className="p-5 sm:p-6">{p.reading ? <p role="status" className="text-sm text-[var(--s-text-tertiary)]">加载版本正文…</p> : p.readFailed ? <div className="space-y-3"><p className="text-sm text-[var(--s-text-tertiary)]">版本正文暂时无法读取。</p><Button variant="secondary" onClick={p.onRetry}>重试读取正文</Button></div> : shown ? <><p className="mb-5 text-sm text-[var(--s-text-tertiary)]">{shown.description}</p><SkillDocument body={shown.body} /></> : <p className="text-sm text-[var(--s-text-tertiary)]">尚未发布内容。</p>}</div>
+            {shown && !p.reading && !p.readFailed && <div className="px-5 pb-5"><SkillAssets assets={shown.asset_summaries || shown.assets || []} /></div>}
           </>}
         </>}
       </div>

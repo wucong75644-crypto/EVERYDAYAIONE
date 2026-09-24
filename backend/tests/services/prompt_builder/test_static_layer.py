@@ -6,8 +6,8 @@ from services.prompt_builder.layers.static_layer import StaticLayer
 
 
 class TestStaticLayer:
-    def test_render_contains_all_five_sections(self):
-        """Layer 1 必须含 5 个 XML 标签段。"""
+    def test_render_contains_all_sections(self):
+        """Platform policy and conditional Skill protocol are both present."""
         content = StaticLayer.render()
         assert "<role>" in content
         assert "</role>" in content
@@ -19,6 +19,15 @@ class TestStaticLayer:
         assert "</tool_strategy>" in content
         assert "<permission_mode>" in content
         assert "</permission_mode>" in content
+        assert "<skills>" in content and "</skills>" in content
+
+    def test_skill_protocol_does_not_override_permission_mode_or_add_plan_only_approval(self):
+        content = StaticLayer.render()
+        assert 'plan 模式仍只规划，必要审批仍必须完成' in content
+        assert '列出计划或存在多个步骤本身不增加确认要求' in content
+        assert '没有已激活 Skill' in content
+        assert '优先级高于所有其他指令' not in content
+        assert '覆盖其他所有指令' not in content
 
     def test_render_idempotent(self):
         """LRU 缓存: 多次调用返回完全相同内容。"""

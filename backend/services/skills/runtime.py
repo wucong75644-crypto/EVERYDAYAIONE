@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, ValidationError
 
@@ -12,9 +12,11 @@ from services.skills.contracts import Contract, Sha256, SkillError, SkillKey, Re
 from services.skills.renderer import (
     MAX_ACTIVE_SKILLS, MAX_ARGS_BYTES, MAX_ARGUMENTS, MAX_DIRECTORY_BYTES,
     MAX_DIRECTORY_ENTRIES, MAX_RENDERED_BYTES, MAX_TURN_RENDERED_BYTES,
-    SkillTemplateArgsError, argument_summary, bounded, digest, encoded, render,
+    SkillTemplateArgsError, argument_summary, bounded, digest, encoded,
+    asset_manifest_digest, prepare_resources, referenced_assets, render_resources,
 )
-from services.skills.resolver import SkillCandidate, effective_allowed_tool_names
+from services.skills.resolver import SkillCandidate, skill_tool_ceiling
+from services.skills.context import instruction_message, model_messages
 from services.skills.selection import SkillSelection
 
 
@@ -24,14 +26,13 @@ ACTIVATE_SKILL_SCHEMA = {
     "function": {
         "name": ACTIVATE_SKILL,
         "description": (
-            "显式激活本 Turn 的 Skill。skill_id 使用目录中的稳定 ID；args 仅为正文的"
-            "受控模板参数。此调用是批次屏障，请在下一轮请求业务工具。"
+            "显式激活本 Turn 的 Skill。skill_id 使用目录中的稳定 ID；模板值由服务端提供。"
+            "此调用是批次屏障，请在下一轮请求业务工具。"
         ),
         "parameters": {
             "type": "object", "additionalProperties": False,
             "properties": {
                 "skill_id": {"type": "string"},
-                "args": {"type": "object", "description": "受控 args 模板变量的标量值"},
             },
             "required": ["skill_id"],
         },
@@ -57,6 +58,8 @@ class ActiveSkill(Contract):
     rendered_sha256: Sha256
     args_summary: ArgumentSummary
     effective_allowed_tool_names: frozenset[str]
+    asset_manifest_sha256: Sha256 | None = None
+    loaded_asset_ids: tuple[SkillKey, ...] = Field(default=(), max_length=16)
 
 
 class RuntimeCheckpoint(Contract):
@@ -66,6 +69,7 @@ class RuntimeCheckpoint(Contract):
     active: tuple[ActiveSkill, ...] = Field(max_length=MAX_ACTIVE_SKILLS)
     effective_allowed_tool_names: frozenset[str]
     manual_skill_id: SkillKey | None = None
+    context_version: Literal[1, 2] = 1
 
 
 def control_result(code: str, *, ok: bool = False, **details) -> dict:
@@ -74,7 +78,7 @@ def control_result(code: str, *, ok: bool = False, **details) -> dict:
 
 class SkillRuntime:
     def __init__(self, *, turn_id: str, source, platform_tool_names, authorized_tool_names,
-                 cancellation_event: asyncio.Event):
+                 cancellation_event: asyncio.Event, template_context: dict | None = None):
         self.turn_id, self.source = turn_id, source
         self.platform_tool_names = frozenset(platform_tool_names)
         # None is ToolContext's existing unrestricted ceiling, not missing identity.
@@ -85,6 +89,8 @@ class SkillRuntime:
         self.directory: dict[str, SkillCandidate] = {}
         self.active: dict[str, ActiveSkill] = {}
         self.manual_skill_id: str | None = None
+        self.template_context = dict(template_context or {})
+        self.context_version = 2
 
     def _check_cancelled(self):
         if self.cancellation_event.is_set():
@@ -130,17 +136,23 @@ class SkillRuntime:
         if advertised:
             messages.append({"role": "system", "content": self._directory_text(advertised)})
         for active in self.active.values():
-            messages.append({"role": "system", "content": (
-                "[Turn Skill instructions: apply only within existing tool policy and authorization]\n"
-                + f"skill_id={active.skill_key} revision={active.revision}\n" + active.rendered
-            )})
+            messages.append(instruction_message(
+                active, self.directory[active.skill_key],
+                manual=active.skill_key == self.manual_skill_id, context_version=self.context_version,
+            ))
         return messages
 
     def ensure_messages(self, messages: list[dict[str, Any]]):
         # Compression may remove earlier system messages; restore exact bounded text.
-        for message in self.messages():
-            if message not in messages:
-                messages.append(message)
+        missing = [message for message in self.messages() if message not in messages]
+        if self.context_version == 1:
+            messages.extend(missing)
+        else:
+            # Keep task instructions in the leading system context. Never split
+            # an assistant/tool-result pair or mutate the user's original text.
+            boundary = next((i for i, message in enumerate(messages)
+                             if message.get('role') != 'system'), len(messages))
+            messages[boundary:boundary] = missing
 
     def checkpoint(self) -> dict:
         return RuntimeCheckpoint(
@@ -148,7 +160,24 @@ class SkillRuntime:
             active=tuple(self.active.values()),
             effective_allowed_tool_names=self.effective_allowed_tool_names,
             manual_skill_id=self.manual_skill_id,
-        ).model_dump(mode="json", exclude={"manual_skill_id"} if self.manual_skill_id is None else set())
+            context_version=self.context_version,
+        ).model_dump(mode="json", exclude=(
+            ({'manual_skill_id'} if self.manual_skill_id is None else set())
+            | ({'context_version'} if self.context_version == 1 else set())
+        ))
+
+    def model_messages(self, messages, tools):
+        # Rebuild from current filtered schemas; do not persist stale capabilities.
+        if self.context_version == 1 or not self.has_active_skills:
+            return messages
+        return model_messages(messages, tools, [
+            {'skill_id': a.skill_key, 'revision': a.revision,
+             'selection': 'user' if a.skill_key == self.manual_skill_id else 'model'}
+            for a in self.active.values()
+        ], [instruction_message(
+            a, self.directory[a.skill_key], manual=a.skill_key == self.manual_skill_id,
+            context_version=self.context_version,
+        ) for a in self.active.values()])
 
     async def activate_manual(self, selection: SkillSelection) -> dict:
         candidate = self.directory.get(selection.skill_id)
@@ -169,7 +198,9 @@ class SkillRuntime:
                     or not isinstance(request.get("skill_id"), str)):
                 raise SkillError("SKILL_ACTIVATION_INVALID")
             args = request.get("args", {})
-            summary = ArgumentSummary.model_validate(argument_summary(args))
+            argument_summary(args)
+            if args:
+                raise SkillError('SKILL_TEMPLATE_ARGS_SERVER_ONLY')
             candidate = self.directory.get(request["skill_id"])
             if candidate is None or (
                 not candidate.catalog_metadata.model_selectable
@@ -178,8 +209,6 @@ class SkillRuntime:
                 raise SkillError("SKILL_NOT_AVAILABLE")
             previous = self.active.get(candidate.skill_key)
             if previous:
-                if previous.args_summary != summary:
-                    raise SkillError("SKILL_ALREADY_ACTIVE_WITH_DIFFERENT_ARGS")
                 return control_result("SKILL_ALREADY_ACTIVE", ok=True, skill_id=candidate.skill_key,
                                       revision=previous.revision)
             if len(self.active) >= MAX_ACTIVE_SKILLS:
@@ -187,18 +216,24 @@ class SkillRuntime:
             validated = await self.source.load(candidate)
             self._check_cancelled()
             self._validate_identity(candidate, validated)
-            rendered = render(validated.body, args)
+            remaining = MAX_TURN_RENDERED_BYTES - sum(len(a.rendered.encode('utf-8')) for a in self.active.values())
+            maximum = min(MAX_RENDERED_BYTES, remaining)
+            ids, base, values = prepare_resources(validated, self.template_context, maximum)
+            texts = await self.source.load_assets(candidate, validated, ids) if ids else {}
+            self._check_cancelled()
+            rendered = render_resources(validated, ids, base, values, texts, maximum)
+            summary = ArgumentSummary.model_validate(argument_summary(values))
             bounded(rendered + "".join(a.rendered for a in self.active.values()),
                     MAX_TURN_RENDERED_BYTES, "SKILL_TURN_BUDGET_EXCEEDED")
-            ceiling = effective_allowed_tool_names(
-                self.platform_tool_names, self.effective_allowed_tool_names,
-                validated.catalog_metadata.allowed_tool_names,
+            ceiling = skill_tool_ceiling(
+                validated.catalog_metadata, self.platform_tool_names, self.effective_allowed_tool_names,
             )
             self.active[candidate.skill_key] = ActiveSkill(
                 skill_key=candidate.skill_key, revision=candidate.revision,
                 body_sha256=validated.body_sha256, rendered=rendered,
                 rendered_sha256=digest(rendered), args_summary=summary,
                 effective_allowed_tool_names=ceiling,
+                asset_manifest_sha256=asset_manifest_digest(validated.resources), loaded_asset_ids=ids,
             )
             self.effective_allowed_tool_names = ceiling
             return control_result("SKILL_ACTIVATED", ok=True, skill_id=candidate.skill_key,
@@ -237,9 +272,12 @@ class SkillRuntime:
                     "SKILL_REPLAY_DIRECTORY_INVALID")
             bounded(encoded([c.model_dump(mode="json") for c in directory.values()]), 65_536,
                     "SKILL_REPLAY_DIRECTORY_INVALID")
+            bounded(''.join(a.rendered for a in checkpoint.active), MAX_TURN_RENDERED_BYTES,
+                    'SKILL_REPLAY_RENDER_INVALID')
             active = {}
             ceiling = self._initial_ceiling & checkpoint.effective_allowed_tool_names
             for saved in checkpoint.active:
+                bounded(saved.rendered, MAX_RENDERED_BYTES, 'SKILL_REPLAY_RENDER_INVALID')
                 candidate = directory.get(saved.skill_key)
                 if candidate is None or saved.skill_key in active or saved.revision != candidate.revision:
                     raise SkillError("SKILL_REPLAY_IDENTITY_INVALID")
@@ -248,11 +286,19 @@ class SkillRuntime:
                 self._validate_identity(candidate, validated)
                 if saved.body_sha256 != validated.body_sha256:
                     raise SkillError("SKILL_REPLAY_HASH_MISMATCH")
+                if (saved.asset_manifest_sha256 != asset_manifest_digest(validated.resources)
+                        or saved.loaded_asset_ids != referenced_assets(validated)):
+                    raise SkillError('SKILL_REPLAY_ASSET_MISMATCH')
                 if saved.rendered_sha256 != digest(saved.rendered):
                     raise SkillError("SKILL_REPLAY_RENDER_MISMATCH")
                 bounded(saved.rendered, MAX_RENDERED_BYTES, "SKILL_REPLAY_RENDER_INVALID")
-                declared = frozenset(validated.catalog_metadata.allowed_tool_names)
-                if not saved.effective_allowed_tool_names <= declared:
+                if saved.loaded_asset_ids:
+                    if sum(a.bytes for a in validated.resources.assets if a.id in saved.loaded_asset_ids) > MAX_RENDERED_BYTES:
+                        raise SkillError('SKILL_REPLAY_RENDER_INVALID')
+                    await self.source.load_assets(candidate, validated, saved.loaded_asset_ids)
+                    self._check_cancelled()
+                if (validated.catalog_metadata.tool_policy == 'restricted'
+                        and not saved.effective_allowed_tool_names <= set(validated.catalog_metadata.allowed_tool_names)):
                     raise SkillError("SKILL_REPLAY_TOOL_SCOPE_INVALID")
                 if not checkpoint.effective_allowed_tool_names <= saved.effective_allowed_tool_names:
                     raise SkillError("SKILL_REPLAY_TOOL_SCOPE_INVALID")
@@ -263,6 +309,7 @@ class SkillRuntime:
                     "SKILL_REPLAY_RENDER_INVALID")
             self.directory, self.active = directory, active
             self.manual_skill_id = checkpoint.manual_skill_id
+            self.context_version = checkpoint.context_version
             self.effective_allowed_tool_names = ceiling
         except SkillError as error:
             raise SkillReplayError(str(error)) from None
@@ -293,6 +340,11 @@ async def create_skill_runtime(*, handler, context, runtime, replay_context=None
         platform_tool_names=(s.name for s in build_legacy_catalog().specs()),
         authorized_tool_names=context.authorized_tool_names,
         cancellation_event=runtime.cancellation_event,
+        template_context={
+            'actor_user_id': context.actor_user_id, 'org_id': context.org_id,
+            'conversation_scope': context.context_scope, 'agent_domain': context.agent_domain,
+            'execution_mode': context.execution_mode, 'is_channel': context.context_scope == 'channel',
+        },
     )
     await state.initialize(checkpoint, selection)
     runtime.skill_runtime = state

@@ -244,6 +244,14 @@ async def execute_chat(
             blocks.append(block)
             if skills is not None:
                 _apply_skill_context(prepared, skills)
+            if not result.get('ok'):
+                boundary = next((i for i, message in enumerate(prepared.messages)
+                                 if message.get('role') != 'system'), len(prepared.messages))
+                prepared.messages.insert(boundary, {'role': 'system', 'content': (
+                    '用户本轮指定的 Skill 未能启用，原因：' + block['reason']
+                    + ' 不得声称按该 Skill 或其附件完成任务。若当前请求依赖此 Skill，'
+                    '说明需要重新选择或修复；仅在请求可独立完成时按普通聊天处理。'
+                )})
             if runtime:
                 await runtime.safe_point(
                     SafePoint.AFTER_SKILL_ACTIVATION,
@@ -497,8 +505,9 @@ async def _read_turn(
     previewed_indices: set[int] = set()
     preview_ids: dict[int, str] = {}
     model_gateway = _get_model_gateway(prepared)
+    skills = runtime.skill_runtime if runtime else None
     stream_kwargs = {
-        "messages": prepared.messages,
+        "messages": skills.model_messages(prepared.messages, tools) if skills else prepared.messages,
         "tools": tools,
         "reasoning_effort": thinking_effort,
         "thinking_mode": thinking_mode,

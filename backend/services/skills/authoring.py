@@ -6,7 +6,8 @@ from uuid import UUID, uuid4
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
 
-from services.skills.authoring_contracts import DraftContent, reviewed_document
+from services.skills.authoring_contracts import DraftContent, RevisionContent, reviewed_document, new_draft_content
+from services.skills.assets import AssetDraft, public_assets
 from services.skills.contracts import PublishRevision, SkillError, SkillPackage, SkillRevision
 from services.skills.repository import SkillRepository
 from services.skills.reenable import reenable
@@ -78,7 +79,7 @@ class SkillAuthoring:
                     VALUES (%s, 'admin', %s, %s) RETURNING *''',
                     (data.skill_key, 'org' if org else 'platform', org))
                 package = SkillPackage.model_validate(cursor.fetchone())
-                self._insert_draft(cursor, package.id, data.content)
+                self._insert_draft(cursor, package.id, new_draft_content(data.content))
                 return {'package_id': package.id}
         except UniqueViolation:
             raise SkillError('SKILL_KEY_EXISTS') from None
@@ -172,8 +173,10 @@ class SkillAuthoring:
             validated = self._storage().validate(package, PublishRevision(
                 revision=saved.revision, content_sha256=saved.content_sha256,
                 body_sha256=saved.body_sha256), nas_path=saved.nas_path)
-            return DraftContent(description=validated.summary, body=validated.body,
-                                catalog_metadata=validated.catalog_metadata)
+            return RevisionContent(description=validated.summary, body=validated.body,
+                                   catalog_metadata=validated.catalog_metadata,
+                                   asset_summaries=public_assets(validated.resources),
+                                   template_variables=validated.resources.template_variables)
 
     def save(self, package_id, data):
         with self._transaction('save') as cursor:
@@ -209,8 +212,13 @@ class SkillAuthoring:
                         validated = self._storage().validate(package, PublishRevision(
                             revision=saved.revision, content_sha256=saved.content_sha256,
                             body_sha256=saved.body_sha256), nas_path=saved.nas_path)
+                        texts = self._storage().read_assets(validated, [a.id for a in validated.resources.assets])
                         content = DraftContent(description=validated.summary, body=validated.body,
-                                               catalog_metadata=validated.catalog_metadata)
+                            catalog_metadata=validated.catalog_metadata,
+                            template_variables=validated.resources.template_variables,
+                            assets=tuple(AssetDraft(**entry.model_dump(exclude={'path', 'sha256', 'bytes', 'source'}),
+                                source=self._storage().read_source(validated, entry.id),
+                                content=texts[entry.id]) for entry in validated.resources.assets))
                     self._insert_draft(cursor, package_id, content)
             elif action == 'enable':
                 reenable(cursor, package, draft, self._storage)
@@ -242,7 +250,8 @@ class SkillAuthoring:
                 approved_sha256 = NULL, approved_at = NULL, version = version + 1 WHERE package_id = %s''',
                 (package.id,))
             return
-        publication, raw = reviewed_document(package, draft['revision'], DraftContent.model_validate(draft['content']))
+        content = DraftContent.model_validate(draft['content'])
+        publication, raw = reviewed_document(package, draft['revision'], content)
         if action == 'submit':
             cursor.execute("UPDATE public.skill_drafts SET status = 'in_review', version = version + 1 WHERE package_id = %s",
                            (package.id,))
@@ -255,7 +264,9 @@ class SkillAuthoring:
         elif action == 'publish':
             if not draft['approved_by'] or draft['approved_sha256'] != publication.content_sha256:
                 raise SkillError('SKILL_APPROVAL_REQUIRED')
-            validated = self._storage().publish(package, publication, raw)
+            validated = self._storage().publish(package, publication, raw,
+                assets={a.id: a.content.encode('utf-8') for a in content.assets},
+                sources={a.id: a.source.raw() for a in content.assets if a.source})
             cursor.execute('''INSERT INTO public.skill_revisions
                 (package_id, revision, nas_path, content_sha256, body_sha256, summary, catalog_metadata)
                 VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id''',

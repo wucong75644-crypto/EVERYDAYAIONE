@@ -4,10 +4,12 @@ import type { DraftContent } from '../../../services/skillAdmin';
 import { Input, inputVariants } from '../../ui/Input';
 import { SkillDocument } from './SkillDocument';
 import { contentName } from './presentation';
+import { SkillAssetEditor, SkillTemplateEditor } from './SkillAssets';
+import { SkillTemplateInput, SkillTemplateNotice } from './SkillTemplateInput';
+import { SkillToolPolicy } from './SkillToolPolicy';
 
 const lists = [
   ['triggers', '触发提示', '每行一项，描述适合使用这项 Skill 的任务。'],
-  ['allowed_tool_names', '允许的工具', '每行一个工具名；只能收窄已有权限，不会授予新权限。'],
   ['actor_user_ids', '限定成员 ID', '每行一个成员 UUID；留空表示不额外限制成员。'],
   ['required_permissions', '必需权限', '每行一个权限名称。'],
   ['required_feature_flags', '必需功能开关', '每行一个功能开关名称。'],
@@ -18,8 +20,8 @@ const choices = [
   { key: 'execution_modes', label: '执行场景', fallback: ['interactive'], options: [['interactive', '交互任务'], ['scheduled', '定时任务'], ['preflight', '执行前检查']] },
 ] as const;
 
-export function SkillDraftEditor({ content, busy, dirty, onChange }: {
-  content: DraftContent; busy: boolean; dirty: boolean; onChange: (value: DraftContent) => void;
+export function SkillDraftEditor({ content, busy, dirty, onChange, onUpload }: {
+  content: DraftContent; busy: boolean; dirty: boolean; onChange: (value: DraftContent) => void; onUpload?: (files: File[]) => void;
 }) {
   const [preview, setPreview] = useState(false);
   const metadata = content.catalog_metadata;
@@ -37,13 +39,19 @@ export function SkillDraftEditor({ content, busy, dirty, onChange }: {
             className={`rounded px-3 py-1 text-xs ${preview === value ? 'bg-[var(--s-surface-raised)] text-[var(--s-text-primary)] shadow-sm' : 'text-[var(--s-text-tertiary)]'}`}>{value ? '预览' : '编辑'}</button>)}
         </div>
       </div>
-      {preview ? <SkillDocument body={content.body} /> : <textarea id="skill-body" aria-label="Skill 操作说明" value={content.body} maxLength={1000000} disabled={busy}
-        className={`${inputVariants()} min-h-80 resize-y font-mono leading-7`} spellCheck={false} onChange={e => onChange({ ...content, body: e.target.value })} />}
+      <p className="mb-3 text-xs text-[var(--s-text-tertiary)]">写清要做什么、需要哪些资料、按什么步骤做、输出什么格式。详细方法可以放在附件中，并在这里说明如何使用。</p>
+      <SkillTemplateNotice content={content} busy={busy} onChange={onChange} />
+      {preview ? <SkillDocument body={content.body} /> : <div className="mt-3"><SkillTemplateInput id="skill-body" label="Skill 操作说明" value={content.body}
+        variables={content.template_variables} maxLength={1000000} busy={busy} className="min-h-60 resize-y leading-7"
+        onChange={(body, variables) => onChange({ ...content, body, ...(variables ? { template_variables: variables } : {}) })} /></div>}
       <div className="mt-2 flex items-center justify-between gap-3 text-xs text-[var(--s-text-tertiary)]"><span className="flex items-center gap-1.5">{dirty ? <CircleDot size={13} /> : <Check size={13} />}{dirty ? '有未保存的修改' : '草稿已保存'}</span><span>支持 Markdown</span></div>
     </div>
+    <SkillAssetEditor content={content} busy={busy} onChange={onChange} onUpload={onUpload} />
+    <SkillToolPolicy content={content} busy={busy} onChange={onChange} />
     <details className="border-t border-[var(--s-border-default)] pt-4">
       <summary className="cursor-pointer text-sm font-medium text-[var(--s-text-secondary)]">高级设置</summary>
       <div className="mt-4 space-y-4">
+        <SkillTemplateEditor content={content} busy={busy} onChange={onChange} />
         <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={metadata.model_selectable === true} disabled={busy} onChange={e => updateMetadata('model_selectable', e.target.checked)} /><span>允许模型选择此 Skill<span className="mt-1 block text-xs text-[var(--s-text-tertiary)]">默认关闭。发布与组织授权规则仍然适用。</span></span></label>
         {choices.map(group => {
           const selected = Array.isArray(metadata[group.key]) ? metadata[group.key] as string[] : [...group.fallback];

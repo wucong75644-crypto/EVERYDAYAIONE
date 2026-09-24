@@ -6,6 +6,7 @@ import math
 import re
 
 from services.skills.contracts import SkillError
+from services.skills.assets import MAX_ASSET_BYTES, public_assets, verify_asset
 
 # UTF-8 byte caps are conservative token upper bounds, independent of provider.
 MAX_BODY_BYTES = 16_384
@@ -17,6 +18,7 @@ MAX_DIRECTORY_ENTRIES = 32
 MAX_ACTIVE_SKILLS = 4
 MAX_ARGUMENTS = 16
 _VARIABLE = re.compile(r"\{\{args\.([a-z][a-z0-9_]{0,31})\}\}")
+_ASSET_REFERENCE = re.compile(r'\[\[asset:([a-z][a-z0-9_-]{0,63})\]\]')
 
 
 class SkillTemplateArgsError(SkillError):
@@ -56,8 +58,8 @@ def argument_summary(args: object) -> dict:
     return {"sha256": digest(serialized), "keys": sorted(args), "bytes": len(serialized.encode("utf-8"))}
 
 
-def render(body: str, args: dict) -> str:
-    bounded(body, MAX_BODY_BYTES, "SKILL_BODY_BUDGET_EXCEEDED")
+def render(body: str, args: dict, *, maximum_body: int = MAX_BODY_BYTES) -> str:
+    bounded(body, maximum_body, "SKILL_BODY_BUDGET_EXCEEDED")
     argument_summary(args)
     names = set(_VARIABLE.findall(body))
     remainder = _VARIABLE.sub("", body)
@@ -73,3 +75,84 @@ def render(body: str, args: dict) -> str:
         body,
     )
     return bounded(rendered, MAX_RENDERED_BYTES, "SKILL_RENDER_BUDGET_EXCEEDED")
+
+
+def referenced_assets(skill) -> tuple[str, ...]:
+    ids = tuple(dict.fromkeys(_ASSET_REFERENCE.findall(skill.body)))
+    if '[[asset:' in _ASSET_REFERENCE.sub('', skill.body):
+        raise SkillError('SKILL_ASSET_REFERENCE_INVALID')
+    if not set(ids) <= {a.id for a in skill.resources.assets}:
+        raise SkillError('SKILL_ASSET_NOT_DECLARED')
+    return ids
+
+
+def _template_names(text: str, declarations) -> set[str]:
+    names = set(_VARIABLE.findall(text))
+    remainder = _VARIABLE.sub('', text)
+    if any(marker in remainder for marker in ('{{', '}}', '${', '{%')):
+        raise SkillError('SKILL_TEMPLATE_VARIABLE_FORBIDDEN')
+    if not names <= declarations.keys():
+        raise SkillError('SKILL_TEMPLATE_VARIABLE_UNDECLARED')
+    return names
+
+
+def validate_resource_templates(skill, texts):
+    referenced_assets(skill)
+    _template_names(skill.body, skill.resources.template_variables)
+    for asset in skill.resources.assets:
+        if asset.kind == 'template':
+            _template_names(texts[asset.id], skill.resources.template_variables)
+
+
+def server_arguments(resources, context: dict) -> dict:
+    values = {}
+    for name, declaration in resources.template_variables.items():
+        value = context.get(declaration.source)
+        expected = str if declaration.type == 'string' else bool
+        if type(value) is not expected:
+            raise SkillError('SKILL_TEMPLATE_SERVER_VALUE_UNAVAILABLE')
+        values[name] = value
+    argument_summary(values)
+    return values
+
+
+def asset_manifest_digest(resources) -> str | None:
+    # Omitted sources preserve the digest of revisions/checkpoints published
+    # before file uploads were supported.
+    return digest(encoded(resources.model_dump(mode='json', exclude_none=True))) if resources.assets or resources.template_variables else None
+
+
+def prepare_resources(skill, context: dict, maximum: int):
+    """Determine reads from the original body, before substitution or asset IO."""
+    ids = referenced_assets(skill)
+    values = server_arguments(skill.resources, context)
+    names = _template_names(skill.body, skill.resources.template_variables)
+    base = render(skill.body, {name: values[name] for name in names})
+    if skill.resources.assets:
+        base += '\n\n[Skill attachments: summaries]\n' + encoded(public_assets(skill.resources))
+    entries = {a.id: a for a in skill.resources.assets}
+    required = len(base.encode('utf-8')) + sum(
+        len(asset_header(entries[asset_id]).encode('utf-8')) + entries[asset_id].bytes for asset_id in ids)
+    if required > maximum:
+        raise SkillError('SKILL_ASSET_BUDGET_EXCEEDED' if skill.resources.assets else 'SKILL_TURN_BUDGET_EXCEEDED')
+    return ids, base, values
+
+
+def asset_header(asset):
+    return (f'\n\n[Skill attachment: {asset.id}]\n'
+            + encoded({'name': asset.name, 'kind': asset.kind}) + '\n')
+
+
+def render_resources(skill, ids, base, values, texts, maximum):
+    if set(texts) != set(ids):
+        raise SkillError('SKILL_ASSET_NOT_DECLARED')
+    entries = {a.id: a for a in skill.resources.assets}
+    for asset_id in ids:
+        entry = entries[asset_id]
+        content = verify_asset(entry, texts[asset_id].encode('utf-8'))
+        if entry.kind == 'template':
+            names = _template_names(content, skill.resources.template_variables)
+            content = render(content, {name: values[name] for name in names}, maximum_body=MAX_ASSET_BYTES)
+        base += asset_header(entry) + content
+        bounded(base, maximum, 'SKILL_ASSET_BUDGET_EXCEEDED')
+    return base

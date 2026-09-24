@@ -112,3 +112,9 @@ def effective_allowed_tool_names(
         return result
 
     return names(platform_tool_names) & names(authorized_tool_names) & names(skill_allowed_tool_names)
+
+
+def skill_tool_ceiling(metadata: SkillCatalogMetadata, platform_tool_names, current_ceiling):
+    """Select the revision's contract, then narrow the existing host ceiling."""
+    declared = platform_tool_names if metadata.tool_policy == 'platform' else metadata.allowed_tool_names
+    return effective_allowed_tool_names(platform_tool_names, current_ceiling, declared)

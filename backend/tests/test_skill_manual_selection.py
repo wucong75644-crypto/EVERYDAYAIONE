@@ -82,6 +82,8 @@ async def test_manual_only_skill_is_active_before_first_model_with_narrowed_tool
     ("SKILL_ACCESS_DENIED", "暂无使用权限"),
     ("SKILL_PINNED_REVISION_UNAVAILABLE", "当前不可用"),
     ("SKILL_TEMPLATE_ARGS_MISMATCH", "需要补充参数"),
+    ("SKILL_TEMPLATE_SERVER_VALUE_UNAVAILABLE", "联系管理员检查"),
+    ("SKILL_ASSET_BUDGET_EXCEEDED", "精简引用"),
     ("/secret/nas/body.md policy=internal", "暂时无法启用"),
 ])
 async def test_manual_failure_is_safe_and_normal_chat_continues(execution, failure, reason):
@@ -92,7 +94,10 @@ async def test_manual_failure_is_safe_and_normal_chat_continues(execution, failu
     assert feedback["status"] == "error" and reason in feedback["reason"]
     assert "name" not in feedback and "revision" not in feedback
     assert failure not in json.dumps(result.content_blocks)
-    assert "Private skill" not in json.dumps(model.await_args.args[0].messages)
+    model_context = json.dumps(model.await_args.args[0].messages, ensure_ascii=False)
+    assert "Private skill" not in model_context
+    assert '不得声称' in model_context and '未能启用' in model_context
+    assert failure not in model_context
     model.assert_awaited_once()
 
 
@@ -130,8 +135,11 @@ async def test_discovery_failure_is_safe(execution):
     model.assert_awaited_once()
 
 
-async def test_manual_pause_resume_pins_revision_and_does_not_duplicate_feedback(execution):
+@pytest.mark.parametrize('failure', [False, True])
+async def test_manual_pause_resume_pins_revision_and_does_not_duplicate_feedback(execution, failure):
     source, model, _ = execution
+    if failure:
+        source.load.side_effect = SkillError('SKILL_ACCESS_DENIED')
     checkpoints = []
     first = actor()
     async def save(point, payload):
@@ -146,7 +154,9 @@ async def test_manual_pause_resume_pins_revision_and_does_not_duplicate_feedback
     model.assert_not_awaited()
     result = await execute_chat(handler=handler(), request=replace(request, replay_context=checkpoints[-1]), runtime=actor())
     assert len([b for b in result.content_blocks if b["type"] == "skill_step"]) == 1
-    assert source.load.await_count == 2  # Revalidation on restore, no second activation.
+    assert source.load.await_count == (1 if failure else 2)  # Failed activation is not retried on resume.
+    if failure:
+        assert '未能启用' in json.dumps(model.await_args.args[0].messages, ensure_ascii=False)
     assert model.await_args.kwargs["model_round"] == 0
 
 

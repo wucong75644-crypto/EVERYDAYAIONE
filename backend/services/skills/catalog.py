@@ -41,7 +41,10 @@ class SkillCatalog:
         self._require_enabled()
         # Check authority before reading a package, including platform packages.
         package = self._repository.get_owned_package(package_id)
-        validated = self._storage().validate(package, publication)
+        storage = self._storage()
+        validated = storage.validate(package, publication)
+        from services.skills.renderer import validate_resource_templates
+        validate_resource_templates(validated, storage.read_assets(validated, [a.id for a in validated.resources.assets]))
         return self._repository.publish_revision(package_id, validated)
 
     def set_assignment(

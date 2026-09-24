@@ -13,7 +13,7 @@ from services.agent.execution_budget import ExecutionBudget
 from services.conversation_commands import CommandType, ConversationCommand, SafePoint
 from services.conversation_state import ConversationPauseRequested, ConversationStopRequested
 from services.conversation_turn_runtime import ConversationTurnRuntime
-from services.handlers.chat.execution_engine import _execute_tools, _run_loop, execute_chat
+from services.handlers.chat.execution_engine import _execute_tools, _read_turn, _run_loop, execute_chat
 from services.handlers.chat.execution_sink import CollectingExecutionSink
 from services.handlers.chat.stream_session import StreamTotals
 from services.handlers.permission_mode import PermissionMode
@@ -44,7 +44,7 @@ def actor(callback=None):
 
 
 def call(name="activate_skill", args=None, id="activate-1"):
-    return {"id": id, "name": name, "arguments": args if args is not None else activate(topic="orders")}
+    return {"id": id, "name": name, "arguments": args if args is not None else activate()}
 
 
 def handler():
@@ -62,6 +62,44 @@ async def batch(runtime, prepared, calls, h=None):
         sink=CollectingExecutionSink(), blocks=blocks, runtime=runtime, next_model_round=1,
     )
     return h, blocks
+
+
+async def test_provider_gets_current_task_binding_and_real_tools_preserving_cached_context():
+    runtime = actor()
+    runtime.skill_runtime = state(Source(body='Use this method for the current request.'))
+    await runtime.skill_runtime.initialize()
+    await runtime.skill_runtime.activate(activate())
+    p = prepared()
+    p.messages = [{'role': 'system', 'content': [{'type': 'text', 'text': 'Host policy',
+                    'cache_control': {'type': 'ephemeral'}}]},
+                  {'role': 'user', 'content': 'Old request'},
+                  {'role': 'assistant', 'content': 'Already completed'},
+                  {'role': 'user', 'content': 'Analyze this'},
+                  {'role': 'assistant', 'tool_calls': [{'id': 'search', 'type': 'function',
+                    'function': {'name': 'file_search', 'arguments': '{}'}}]},
+                  {'role': 'tool', 'tool_call_id': 'search', 'content': 'Existing result'}]
+    runtime.skill_runtime.ensure_messages(p.messages)
+    original = copy.deepcopy(p.messages)
+    p.stream_kwargs = {}
+    captured = []
+    async def stream_chat(**kwargs):
+        captured.append(kwargs)
+        yield SimpleNamespace(content='Done', thinking_content=None, tool_calls=None,
+                              prompt_tokens=1, completion_tokens=1, credits_consumed=None, finish_reason='stop')
+    p.adapter.stream_chat = stream_chat
+    tools = [build_legacy_catalog().require('file_search').to_schema()]
+    result = await _read_turn(p, tools, runtime.cancellation_event, CollectingExecutionSink(),
+                              StreamTotals(), [], runtime)
+    assert result[0] == 'Done'
+    sent = captured[0]['messages']
+    assert captured[0]['tools'] == tools
+    assert sent[0] == original[0]  # Includes provider cache-control blocks.
+    assert sent[-3:] == original[-3:]  # Current user plus complete tool pair.
+    assert '"available_tools":["file_search"]' in sent[-4]['content']
+    assert 'Current Skill task' in sent[-4]['content']
+    assert 'Use this method for the current request.' in sent[-5]['content']
+    assert sum('Turn Skill instructions' in (m.get('content') or '') for m in sent) == 1
+    assert p.messages == original  # Per-request facts do not accumulate in checkpoints.
 
 
 @pytest.mark.parametrize("valid", [True, False])
@@ -153,7 +191,7 @@ async def test_activation_checkpoint_precedes_pause_or_cancel_and_resumes_exactl
         messages = copy.deepcopy(checkpoint["messages"])
         resumed.ensure_messages(messages)
         assert messages == checkpoint["messages"]
-        assert (await resumed.activate(activate(topic="orders")))["code"] == "SKILL_ALREADY_ACTIVE"
+        assert (await resumed.activate(activate()))["code"] == "SKILL_ALREADY_ACTIVE"
 
 
 async def test_cancellation_before_activation_does_not_load_or_dispatch():
@@ -192,7 +230,7 @@ async def test_execute_chat_restores_before_model_and_closes_gateway_on_invalid_
     source = Source()
     skills = state(source)
     await skills.initialize()
-    await skills.activate(activate(topic="orders"))
+    await skills.activate(activate())
     from services.skills.contracts import SkillError
     source.load.side_effect = SkillError("SKILL_PINNED_REVISION_UNAVAILABLE")
     monkeypatch.setattr("services.skills.runtime_source.ActorSkillSource", lambda *_: source)

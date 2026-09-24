@@ -78,6 +78,13 @@ class ActorSkillSource:
             return storage.validate(package, PublishRevision(
                 revision=revision.revision, content_sha256=revision.content_sha256,
                 body_sha256=revision.body_sha256,
-            ), nas_path=revision.nas_path)
+            ), nas_path=revision.nas_path, verify_assets=False)
 
         return await asyncio.to_thread(read)
+
+    async def load_assets(self, candidate, validated, asset_ids):
+        if candidate.skill_key != validated.skill_key or candidate.revision != validated.revision:
+            raise SkillError('SKILL_PINNED_METADATA_MISMATCH')
+        storage = SkillStorage(self.settings.skill_storage_root,
+                               workspace_root=self.settings.file_workspace_root)
+        return await asyncio.to_thread(storage.read_assets, validated, asset_ids)
