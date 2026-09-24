@@ -31,6 +31,7 @@ class Source:
         self.candidates = candidates if candidates is not None else [item()]
         self.body = body
         self.discover = AsyncMock(return_value=self.candidates)
+        self.session_bindings = AsyncMock(return_value=[])
         self.load = AsyncMock(side_effect=self._load)
 
     async def _load(self, c, *, restoring=False):

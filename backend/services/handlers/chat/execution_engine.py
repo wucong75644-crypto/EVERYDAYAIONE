@@ -216,13 +216,13 @@ async def execute_chat(
         skills = None
         selection_error = None
         if runtime is not None or (request.replay_context or {}).get("skill_runtime") is not None:
-            from services.skills.runtime import create_skill_runtime, SkillReplayError
+            from services.skills.runtime import create_skill_runtime, SkillReplayError, SkillBindingError
             try:
                 skills = await create_skill_runtime(
                     handler=handler, context=prepared.execution_context, runtime=runtime,
                     replay_context=request.replay_context, selection=request.selected_skill,
                 )
-            except SkillReplayError:
+            except (SkillReplayError, SkillBindingError):
                 raise
             except Exception:
                 if request.selected_skill is None or request.replay_context:
@@ -231,6 +231,41 @@ async def execute_chat(
             if skills is not None:
                 _apply_skill_context(prepared, skills)
         await output.start()
+        if skills is not None and not request.replay_context:
+            # Freeze session configuration before the first pause/cancel
+            # boundary, including the empty binding set. Resume never rereads it.
+            await runtime.safe_point(
+                SafePoint.BEFORE_MODEL,
+                replay_payload=_build_replay_context(
+                    prepared.messages, blocks, prepared.budget.turns_used,
+                    next_model_round=0,
+                    repeated_tool_call_guard=repeated_tool_call_guard,
+                ),
+            )
+        if skills is not None:
+            for skill_id in skills.session_skill_ids:
+                step_id = "session-skill:" + skill_id
+                if skill_id in skills.active:
+                    continue
+                await runtime.safe_point(SafePoint.BEFORE_TOOL)
+                await _check_cancelled(event, request, prepared.messages, blocks, totals, "before_skill")
+                result = await skills.activate_session(skill_id)
+                block = skill_step(result, skills, step_id=step_id)
+                if not result.get("ok"):
+                    # Never continue without the bound restriction. No model or
+                    # business IO has started. Do not checkpoint partial failure.
+                    raise SkillBindingError("会话固定的 Skill 无法启用：" + block["reason"])
+                blocks.append(block)
+                _apply_skill_context(prepared, skills)
+                await runtime.safe_point(
+                    SafePoint.AFTER_SKILL_ACTIVATION,
+                    replay_payload=_build_replay_context(
+                        prepared.messages, blocks, prepared.budget.turns_used,
+                        next_model_round=_initial_model_round(request.replay_context),
+                        repeated_tool_call_guard=repeated_tool_call_guard,
+                    ),
+                )
+                await output.on_block(block)
         if request.selected_skill is not None and not any(
             b.get("type") == "skill_step" and b.get("step_id") == "manual-skill" for b in blocks
         ):
