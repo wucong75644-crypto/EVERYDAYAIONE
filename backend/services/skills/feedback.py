@@ -17,6 +17,8 @@ def skill_step(result: dict, skills, *, step_id: str) -> dict:
         reason = "该 Skill 当前不可用或你暂无使用权限，请重新选择。"
     elif code == "SKILL_SELECTION_CHANGED":
         reason = "该 Skill 版本已更新，请重新选择后发送。"
+    elif code == "SKILL_SESSION_REVISION_LOCKED":
+        reason = "当前会话已固定该 Skill 的其他版本；本轮继续使用固定版本。如需更换，请先移除会话绑定。"
     elif code in {'SKILL_TEMPLATE_ARGS_SERVER_ONLY', 'SKILL_TEMPLATE_SERVER_VALUE_UNAVAILABLE',
                   'SKILL_TEMPLATE_VARIABLE_UNDECLARED', 'SKILL_TEMPLATE_VARIABLE_FORBIDDEN'}:
         reason = "该 Skill 的模板配置或任务上下文不可用，请联系管理员检查。"

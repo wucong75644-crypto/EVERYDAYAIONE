@@ -20,7 +20,7 @@ def source_for(storage, skill, count=1):
     async def assets(c, validated, ids):
         return storage.read_assets(validated, ids)
     return SimpleNamespace(discover=AsyncMock(return_value=candidates), load=AsyncMock(side_effect=load),
-                           load_assets=AsyncMock(side_effect=assets))
+                           load_assets=AsyncMock(side_effect=assets), session_bindings=AsyncMock(return_value=[]))
 
 
 async def test_turn_asset_budget_rejects_before_reading_or_mutating_state(storage):

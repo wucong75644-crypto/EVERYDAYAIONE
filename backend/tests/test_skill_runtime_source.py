@@ -35,6 +35,7 @@ async def test_restore_requires_original_nas_file_and_hash(storage, damage):
     })
     source = ActorSkillSource(SimpleNamespace(db=SimpleNamespace(pool=object())), source_context(), settings)
     source._resolution_context = AsyncMock(return_value=context())
+    source.session_bindings = AsyncMock(return_value=[])
     source.repository = SimpleNamespace(
         catalog_candidates=Mock(return_value=[c]), get_package=Mock(return_value=PACKAGE),
         assigned_revision=Mock(return_value=SimpleNamespace(

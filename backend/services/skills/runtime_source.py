@@ -8,6 +8,7 @@ from services.permissions.checker import PermissionChecker
 from services.permissions.permission_points import PERMISSIONS
 from services.skills.contracts import PublishRevision, SkillError
 from services.skills.repository import SkillRepository
+from services.skills.binding_repository import SkillBindingRepository
 from services.skills.resolver import SkillResolutionContext, SkillResolver
 from services.skills.storage import SkillStorage
 from services.tools.runtime_context import _check_identity
@@ -60,6 +61,17 @@ class ActorSkillSource:
         candidates = await asyncio.to_thread(self.repository.catalog_candidates)
         context = await self._resolution_context(candidates)
         return SkillResolver().select(context, candidates)
+
+    async def session_bindings(self):
+        # Scheduled/preflight entrypoints must never inherit session settings.
+        if (getattr(self.context, "execution_mode", None) != "interactive" or self.context.context_scope != "user"
+                or self.context.agent_domain != "general" or not self.context.conversation_id
+                or self.context.org_id is None):
+            return []
+        await self._resolution_context([])
+        repository = SkillBindingRepository(self.handler.db.pool, self.repository.scope)
+        rows = await asyncio.to_thread(repository.bindings, self.context.conversation_id)
+        return [repository.candidate(row) for row in rows]
 
     async def load(self, candidate, *, restoring: bool = False):
         # Recheck current identity and business permissions, even on replay.
