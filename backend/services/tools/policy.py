@@ -198,6 +198,8 @@ class ToolPolicy:
                 spec.replay_requirement if spec else "unspecified", binding,
             )
 
+        if name == "activate_skill" and context.execution_mode in {"scheduled", "preflight"}:
+            return result("deny", "SKILL_SCHEDULED_ACTIVATION_FORBIDDEN")
         if not access.allowed:
             return result("deny", access.reason)
         try:

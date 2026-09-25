@@ -76,6 +76,7 @@ class RuntimeCheckpoint(Contract):
     manual_skill_id: SkillKey | None = None
     session_skill_ids: tuple[SkillKey, ...] = Field(default=(), max_length=MAX_ACTIVE_SKILLS)
     context_version: Literal[1, 2] = 1
+    scheduled_snapshot: dict | None = None
 
 
 def control_result(code: str, *, ok: bool = False, **details) -> dict:
@@ -84,8 +85,11 @@ def control_result(code: str, *, ok: bool = False, **details) -> dict:
 
 class SkillRuntime:
     def __init__(self, *, turn_id: str, source, platform_tool_names, authorized_tool_names,
-                 cancellation_event: asyncio.Event, template_context: dict | None = None):
+                 cancellation_event: asyncio.Event, template_context: dict | None = None,
+                 execution_mode: str = "interactive"):
         self.turn_id, self.source = turn_id, source
+        self.execution_mode = execution_mode
+        self.scheduled_snapshot = None
         self.platform_tool_names = frozenset(platform_tool_names)
         # None is ToolContext's existing unrestricted ceiling, not missing identity.
         self._initial_ceiling = (self.platform_tool_names if authorized_tool_names is None
@@ -156,9 +160,31 @@ class SkillRuntime:
             selected = proposed
         self.directory = {c.skill_key: c for c in selected}
 
+    async def initialize_scheduled(self, snapshot, checkpoint=None):
+        from services.skills.scheduled import ScheduledSkillSnapshot, snapshot_ceiling
+        parsed = ScheduledSkillSnapshot.parse(snapshot)
+        self.scheduled_snapshot = parsed.model_dump(mode="json")
+        self._initial_ceiling = snapshot_ceiling(snapshot, self._initial_ceiling)
+        self.effective_allowed_tool_names = self._initial_ceiling
+        if checkpoint is not None:
+            if checkpoint.get("scheduled_snapshot") != self.scheduled_snapshot:
+                raise SkillReplayError("SKILL_SCHEDULED_CHECKPOINT_MISMATCH")
+            await self._restore(checkpoint)
+        else:
+            self.directory = {p.candidate.skill_key: p.candidate for p in parsed.skills}
+        for pin in parsed.skills:
+            if pin.candidate.skill_key not in self.active:
+                result = await self.activate(encoded({"skill_id": pin.candidate.skill_key}), scheduled=True)
+                if not result["ok"]:
+                    raise SkillReplayError(result["code"])
+
+    @property
+    def allows_dynamic_activation(self):
+        return self.execution_mode == "interactive"
+
     def messages(self) -> list[dict[str, str]]:
         messages = []
-        advertised = [c for c in self.directory.values() if c.catalog_metadata.model_selectable]
+        advertised = [c for c in self.directory.values() if c.catalog_metadata.model_selectable and self.allows_dynamic_activation]
         if advertised:
             messages.append({"role": "system", "content": self._directory_text(advertised)})
         for active in self.active.values():
@@ -166,6 +192,7 @@ class SkillRuntime:
                 active, self.directory[active.skill_key],
                 manual=active.skill_key == self.manual_skill_id, context_version=self.context_version,
                 session=active.skill_key in self.session_skill_ids,
+                scheduled=self.scheduled_snapshot is not None,
             ))
         return messages
 
@@ -188,11 +215,12 @@ class SkillRuntime:
             effective_allowed_tool_names=self.effective_allowed_tool_names,
             manual_skill_id=self.manual_skill_id,
             session_skill_ids=self.session_skill_ids,
-            context_version=self.context_version,
+            context_version=self.context_version, scheduled_snapshot=self.scheduled_snapshot,
         ).model_dump(mode="json", exclude=(
             ({'manual_skill_id'} if self.manual_skill_id is None else set())
             | ({'context_version'} if self.context_version == 1 else set())
             | ({'session_skill_ids'} if not self.session_skill_ids else set())
+            | ({'scheduled_snapshot'} if self.scheduled_snapshot is None else set())
         ))
 
     def model_messages(self, messages, tools):
@@ -201,13 +229,13 @@ class SkillRuntime:
             return messages
         return model_messages(messages, tools, [
             {'skill_id': a.skill_key, 'revision': a.revision,
-             'selection': ('session' if a.skill_key in self.session_skill_ids
+             'selection': ('scheduled' if self.scheduled_snapshot is not None else 'session' if a.skill_key in self.session_skill_ids
                            else 'user' if a.skill_key == self.manual_skill_id else 'model')}
             for a in self.active.values()
         ], [instruction_message(
             a, self.directory[a.skill_key], manual=a.skill_key == self.manual_skill_id,
             context_version=self.context_version,
-            session=a.skill_key in self.session_skill_ids,
+            session=a.skill_key in self.session_skill_ids, scheduled=self.scheduled_snapshot is not None,
         ) for a in self.active.values()])
 
     async def activate_manual(self, selection: SkillSelection) -> dict:
@@ -225,8 +253,10 @@ class SkillRuntime:
             raise SkillBindingError("会话 Skill 配置无效，请检查会话设置。")
         return await self.activate(encoded({"skill_id": skill_id}), session=True)
 
-    async def activate(self, raw_arguments: str, *, manual: bool = False, session: bool = False) -> dict:
+    async def activate(self, raw_arguments: str, *, manual: bool = False, session: bool = False, scheduled: bool = False) -> dict:
         self._check_cancelled()
+        if not self.allows_dynamic_activation and not (scheduled and self.scheduled_snapshot is not None):
+            return control_result("SKILL_SCHEDULED_ACTIVATION_FORBIDDEN")
         try:
             if not isinstance(raw_arguments, str):
                 raise SkillError("SKILL_ACTIVATION_INVALID")
@@ -244,6 +274,7 @@ class SkillRuntime:
                 not candidate.catalog_metadata.model_selectable
                 and not (manual and candidate.skill_key == self.manual_skill_id)
                 and not (session and candidate.skill_key in self.session_skill_ids)
+                and not (scheduled and self.scheduled_snapshot is not None)
             ):
                 raise SkillError("SKILL_NOT_AVAILABLE")
             previous = self.active.get(candidate.skill_key)
@@ -299,18 +330,26 @@ class SkillRuntime:
     async def _restore(self, raw):
         try:
             checkpoint = RuntimeCheckpoint.model_validate(raw)
+            if checkpoint.scheduled_snapshot != self.scheduled_snapshot:
+                raise SkillError("SKILL_SCHEDULED_CHECKPOINT_MISMATCH")
             if checkpoint.turn_id != self.turn_id:
                 raise SkillError("SKILL_REPLAY_TURN_MISMATCH")
             directory = {c.skill_key: c for c in checkpoint.directory}
             if len(directory) != len(checkpoint.directory) or any(
                 not c.catalog_metadata.model_selectable and c.skill_key != checkpoint.manual_skill_id
                 and c.skill_key not in checkpoint.session_skill_ids
+                and self.scheduled_snapshot is None
                 for c in directory.values()
             ):
                 raise SkillError("SKILL_REPLAY_DIRECTORY_INVALID")
             if (len(set(checkpoint.session_skill_ids)) != len(checkpoint.session_skill_ids)
                     or not set(checkpoint.session_skill_ids) <= directory.keys()):
                 raise SkillError("SKILL_REPLAY_DIRECTORY_INVALID")
+            if self.scheduled_snapshot is not None:
+                from services.skills.scheduled import ScheduledSkillSnapshot
+                expected = {p.candidate.skill_key: p.candidate for p in ScheduledSkillSnapshot.parse(self.scheduled_snapshot).skills}
+                if directory != expected or checkpoint.manual_skill_id or checkpoint.session_skill_ids:
+                    raise SkillError("SKILL_SCHEDULED_CHECKPOINT_MISMATCH")
             bounded(self._directory_text(directory.values()), MAX_DIRECTORY_BYTES,
                     "SKILL_REPLAY_DIRECTORY_INVALID")
             bounded(encoded([c.model_dump(mode="json") for c in directory.values()]), 65_536,
@@ -371,16 +410,31 @@ async def create_skill_runtime(*, handler, context, runtime, replay_context=None
     checkpoint = (replay_context or {}).get("skill_runtime")
     if checkpoint is not None and not isinstance(checkpoint, dict):
         raise SkillReplayError("SKILL_REPLAY_CHECKPOINT_INVALID")
+    scheduled = getattr(context, "execution_mode", "interactive") in {"scheduled", "preflight"}
+    from services.tools.spec import thaw
+    snapshot = ((checkpoint or {}).get("scheduled_snapshot") if checkpoint is not None else
+                thaw(context.authorization_snapshot).get("skill_revision_snapshot")) if scheduled else None
+    if scheduled and checkpoint and snapshot is None and (checkpoint.get("active") or checkpoint.get("directory")):
+        raise SkillReplayError("SKILL_SCHEDULED_CHECKPOINT_MISMATCH")
     enabled = settings.skill_runtime_enabled is True and settings.skill_catalog_enabled is True
     if not enabled or runtime is None:
-        if checkpoint and (checkpoint.get("active") or checkpoint.get("session_skill_ids")):
+        if (snapshot and snapshot.get("skills")) or (checkpoint and (checkpoint.get("active") or checkpoint.get("session_skill_ids"))):
             raise SkillReplayError("SKILL_REPLAY_RUNTIME_DISABLED")
         return None
     from services.skills.runtime_source import ActorSkillSource
     from services.tools import build_legacy_catalog
 
+    source = ActorSkillSource(handler, context, settings)
+    if scheduled:
+        from dataclasses import replace
+        from services.skills.scheduled import ScheduledSkillSource, EMPTY_SNAPSHOT
+        snapshot = snapshot if snapshot is not None else dict(EMPTY_SNAPSHOT)
+        try:
+            source = ScheduledSkillSource(handler, replace(context, execution_mode="scheduled"), settings, snapshot)
+        except SkillError as exc:
+            raise SkillReplayError(str(exc)) from None
     state = SkillRuntime(
-        turn_id=runtime.turn_id, source=ActorSkillSource(handler, context, settings),
+        turn_id=runtime.turn_id, source=source, execution_mode=context.execution_mode,
         platform_tool_names=(s.name for s in build_legacy_catalog().specs()),
         authorized_tool_names=context.authorized_tool_names,
         cancellation_event=runtime.cancellation_event,
@@ -392,6 +446,12 @@ async def create_skill_runtime(*, handler, context, runtime, replay_context=None
     )
     # A historical Actor checkpoint without Skill state predates bindings; it
     # must not acquire new session configuration while resuming that old Turn.
-    await state.initialize(checkpoint, selection, load_session_bindings=not bool(replay_context))
+    if scheduled:
+        try:
+            await state.initialize_scheduled(snapshot, checkpoint)
+        except SkillError as exc:
+            raise SkillReplayError(str(exc)) from None
+    else:
+        await state.initialize(checkpoint, selection, load_session_bindings=not bool(replay_context))
     runtime.skill_runtime = state
     return state

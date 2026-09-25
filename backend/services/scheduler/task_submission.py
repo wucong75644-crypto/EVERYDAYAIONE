@@ -55,7 +55,7 @@ def readonly_tool_scope(policy: Mapping[str, Any]) -> bool:
 def plan_inputs_unchanged(base: Mapping, proposed: Mapping) -> bool:
     return all(base.get(key) == proposed.get(key) for key in (
         "prompt", "data_scope", "template_file", "push_target",
-    )) and valid_execution_policy(base.get("execution_policy")) and bool(base.get("plan_snapshot"))
+    )) and base.get("skill_revision_snapshot", {"version": 1, "skills": []}) == proposed.get("skill_revision_snapshot", {"version": 1, "skills": []}) and valid_execution_policy(base.get("execution_policy")) and bool(base.get("plan_snapshot"))
 
 
 def _frequency(snapshot: Mapping) -> float:

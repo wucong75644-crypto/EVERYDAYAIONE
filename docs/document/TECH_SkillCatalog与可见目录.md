@@ -1,5 +1,7 @@
 # Skill 第一期第 2 步：Catalog 与按权限解析的可见目录
 
+P2-4 已增加计划任务级预绑定与版本锁定，见 [计划任务 Skill](TECH_Skill计划任务预绑定与版本锁定.md)。scheduled 仅使用任务显式绑定的已审核 revision，不允许动态激活；本文交互式发现与激活约定不适用于计划任务。
+
 P2-1 已增加组织管理员草稿、审核、受控 NAS 发布、废弃与禁用，见 [Skill 草稿审核与发布](TECH_Skill草稿审核与发布.md)。下文保留各期原始范围；当前状态和发布写权限以 P2-1 文档为准。
 
 后续状态：P1-3 已实现默认关闭的 Actor Turn 激活与精确恢复，见 [Actor SkillRuntime](TECH_ActorSkillRuntime.md)。P1-4 为手动选择追加稳定 `skill_id`，见 [聊天 Skill 选择与反馈](TECH_Skill聊天选择与反馈.md)。下文“不接入聊天”为 P1-2 阶段边界。

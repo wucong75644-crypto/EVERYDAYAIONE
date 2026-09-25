@@ -223,6 +223,8 @@ async def create_plan(*, db: Any, org_id: str, definition: Dict[str, Any]) -> tu
     )
 
     available = preflight_allowed_tool_names(org_id)
+    from services.skills.scheduled import snapshot_ceiling, EMPTY_SNAPSHOT
+    available = set(snapshot_ceiling(definition.get("skill_revision_snapshot", EMPTY_SNAPSHOT), available))
     catalog = build_legacy_catalog()
     schemas = [catalog.require(name).to_schema() for name in sorted(available)]
     tool_descriptions = [
@@ -346,9 +348,16 @@ async def create_draft_and_preflight(
     user_id: str,
     definition: Dict[str, Any],
     source_task_id: str | None = None,
+    execution_owner_id: str | None = None,
 ) -> Dict[str, Any]:
     """保存不可执行草稿，规划并以同一 Agent 引擎做零额度预检。"""
     draft_id = str(uuid4())
+    from services.skills.scheduled import bind_scheduled_skills, EMPTY_SNAPSHOT
+    definition = dict(definition)
+    if "skills" in definition:
+        definition["skill_revision_snapshot"] = await bind_scheduled_skills(
+            db, owner=execution_owner_id or user_id, org=org_id, task_id=source_task_id or draft_id, selections=definition.pop("skills"))
+    definition.setdefault("skill_revision_snapshot", dict(EMPTY_SNAPSHOT))
     config_hash = stable_json_hash(definition)
     db.table("scheduled_task_drafts").insert({
         "id": draft_id, "org_id": org_id, "user_id": user_id,
@@ -370,7 +379,7 @@ async def create_draft_and_preflight(
         started = time.monotonic()
         from services.agent.scheduled_task_agent import ScheduledTaskAgent
         preflight_task = {
-            "id": preflight_id, "org_id": org_id, "user_id": user_id,
+            "id": preflight_id, "org_id": org_id, "user_id": execution_owner_id or user_id,
             **definition, "execution_policy": policy.as_dict(), "plan_snapshot": plan, "last_summary": None,
         }
         result = await ScheduledTaskAgent(

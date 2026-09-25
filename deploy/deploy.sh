@@ -318,7 +318,8 @@ sync_backend() {
 prepare_scheduled_task_cutover() {
     local migration_file
     for migration_file in "${MIGRATION_FILES[@]}"; do
-        if [[ "$migration_file" == backend/migrations/255_scheduled_task_schedule_intent.sql ]]; then
+        if [[ "$migration_file" == backend/migrations/255_scheduled_task_schedule_intent.sql \
+           || "$migration_file" == backend/migrations/264_scheduled_skill_snapshots.sql ]]; then
             log_info "等待定时任务完成，并在任务写锁内停止旧进程后切换迁移..."
             remote_exec /var/www/everydayai/backend/venv/bin/python - "$EVERYDAYAI_RELEASE_LOCK_TOKEN" \
                 < deploy/scheduled-task-drain.py

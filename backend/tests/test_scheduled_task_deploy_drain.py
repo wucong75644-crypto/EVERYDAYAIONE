@@ -69,6 +69,7 @@ def test_executor_cuts_over_after_local_checks_and_before_backend_sync():
     script = (PATH.parent / "deploy.sh").read_text()
     assert "build_backend\n        prepare_scheduled_task_cutover\n        sync_backend\n        apply_migrations\n        deploy_backend" in script
     assert "< deploy/scheduled-task-drain.py" in script
+    assert "backend/migrations/264_scheduled_skill_snapshots.sql" in script
 
 
 def service_state(monkeypatch, tmp_path, **overrides):

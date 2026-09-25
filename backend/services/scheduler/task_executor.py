@@ -50,6 +50,8 @@ class ScheduledTaskExecutor:
 
     async def execute(self, task: Dict[str, Any]) -> None:
         """执行单个定时任务（被 Scanner.poll 调用）"""
+        from copy import deepcopy
+        task = deepcopy(task)
         run_id = await self._create_run(task)
         if run_id is None:
             # 无法记录执行历史 → 放弃执行（防止 update WHERE id 全部静默失效）
@@ -187,13 +189,23 @@ class ScheduledTaskExecutor:
                     "p_run_token": task["run_token"],
                 }).execute()
                 data = response.data if response else None
-                return str(data["run_id"]) if isinstance(data, dict) and data.get("outcome") == "started" else None
+                if not isinstance(data, dict) or data.get("outcome") != "started":
+                    return None
+                # The database returns the configuration captured by the claim,
+                # including delayed starts/retries after a newer configuration.
+                if isinstance(data.get("definition_snapshot"), dict):
+                    task.update(data["definition_snapshot"])
+                    task["config_revision"] = data["config_revision"]
+                task["execution_id"] = str(data["run_id"])
+                return str(data["run_id"])
             self.db.table("scheduled_task_runs").insert({
                 "id": run_id,
                 "task_id": task["id"],
                 "org_id": task["org_id"],
                 "execution_id": run_id,
                 "plan_snapshot": task.get("plan_snapshot"),
+                "skill_revision_snapshot": task.get("skill_revision_snapshot", {"version": 1, "skills": []}),
+                "config_revision": task.get("config_revision"),
                 "status": "running",
                 "started_at": datetime.now(timezone.utc).isoformat(),
             }).execute()
@@ -437,7 +449,8 @@ class ScheduledTaskExecutor:
         # 决定下一步：重试 / 暂停 / 恢复
         # retry_count 语义：每次失败时额外的快速重试次数（5 分钟后再试）
         # 用尽重试后，按 cron 正常时间继续；连续失败 3 次后强制暂停
-        retry_count = task.get("retry_count") or 1
+        retry_count = task.get("retry_count") if task.get("retry_count") is not None else 1
+        retry_scheduled = False
         attempts_used = consecutive - 1  # 第 N 次失败 = 已用 N-1 次重试
         update: Dict[str, Any] = {
             "consecutive_failures": consecutive,
@@ -462,6 +475,7 @@ class ScheduledTaskExecutor:
                 )
             elif attempts_used < retry_count:
                 # 还有重试机会 → 5 分钟后重试
+                retry_scheduled = True
                 retry_at = now + timedelta(minutes=5)
                 update["next_run_at"] = retry_at.isoformat()
                 update["status"] = "active"
@@ -496,7 +510,7 @@ class ScheduledTaskExecutor:
             if task.get("run_token"):
                 response = self.db.rpc("finish_scheduled_task_failure", {
                     "p_task_id": task["id"], "p_org_id": task["org_id"], "p_run_id": run_id,
-                    "p_update": update, "p_error": str(error)[:500],
+                    "p_update": {**update, "retry_scheduled": retry_scheduled}, "p_error": str(error)[:500],
                     "p_tokens": result.tokens_used if result else 0, "p_duration": duration_ms,
                 }).execute()
                 receipt = response.data if response else None
