@@ -63,7 +63,7 @@ TASK_FIELDS = (
     "name", "prompt", "cron_expr", "schedule_type", "weekdays", "day_of_month",
     "run_at", "timezone", "push_target", "template_file", "max_credits",
     "retry_count", "timeout_sec", "next_run_at", "status", "execution_policy",
-    "plan_snapshot", "data_scope", "schedule_enabled",
+    "plan_snapshot", "data_scope", "schedule_enabled", "skill_revision_snapshot",
 )
 
 
@@ -79,6 +79,10 @@ def _idempotency_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
     value = dict(snapshot or {})
     value.pop("execution_policy", None)
     value.pop("plan_snapshot", None)
+    from services.skills.scheduled import EMPTY_SNAPSHOT
+    snapshot = value.pop("skill_revision_snapshot", EMPTY_SNAPSHOT)
+    value["skills"] = [{"skill_id": p["candidate"]["skill_key"], "revision": p["candidate"]["revision"]}
+                       for p in snapshot["skills"]]
     return value
 
 
@@ -302,6 +306,21 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
             raise ScheduledTaskChangeError("恢复任务缺少 next_run_at")
         if operation in {"pause", "resume"}:
             value["schedule_enabled"] = operation == "resume"
+        if operation in {"create", "update"}:
+            from services.skills.scheduled import bind_scheduled_skills, EMPTY_SNAPSHOT
+            from services.skills.contracts import SkillError
+            base = request.context.base_snapshot
+            incoming = request.proposed_snapshot
+            if "skill_revision_snapshot" in incoming and incoming["skill_revision_snapshot"] != base.get("skill_revision_snapshot"):
+                raise ScheduledTaskChangeError("Skill 快照只能由服务端生成")
+            try:
+                value["skill_revision_snapshot"] = (
+                    await bind_scheduled_skills(self.db, owner=self._execution_owner(request.context),
+                        org=self.org_id, task_id=request.context.resource_id, selections=value.pop("skills"))
+                    if "skills" in value else base.get("skill_revision_snapshot", dict(EMPTY_SNAPSHOT))
+                )
+            except SkillError as exc:
+                raise ScheduledTaskChangeError(str(exc), status_code=422) from None
         return NormalizeResult(proposed_snapshot=value, patch=())
 
     async def authorize(self, request: AuthorizeRequest) -> AuthorizationResult:
@@ -332,6 +351,16 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
             can_push = await check_permission(self.db, self.user_id, self.org_id, "task.push_to_others", resource)
             if not can_push:
                 reasons.append("permission_denied:task.push_to_others")
+        if allowed and request.context.operation in {"create", "update", "resume"}:
+            from services.skills.scheduled import validate_scheduled_skills, EMPTY_SNAPSHOT
+            from services.skills.contracts import SkillError
+            try:
+                await validate_scheduled_skills(self.db, owner=resource.get("user_id"), org=self.org_id,
+                    task_id=request.context.resource_id,
+                    snapshot=request.context.proposed_snapshot.get("skill_revision_snapshot", EMPTY_SNAPSHOT),
+                    policy=request.context.proposed_snapshot.get("execution_policy") if request.context.plan_snapshot else None)
+            except SkillError as exc:
+                reasons.append(str(exc))
         return AuthorizationResult(
             allowed=not reasons,
             policy_snapshot={"version": "permission.v1", "permissions_checked": [permission], "actor_id": request.actor_id},
@@ -409,7 +438,7 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
         task = {
             "id": context.resource_id,
             "org_id": self.org_id,
-            "user_id": self._execution_owner(context) if direct else self.user_id,
+            "user_id": self._execution_owner(context),
             **dict(context.proposed_snapshot),
             "execution_policy": execution_policy,
             "plan_snapshot": release,

@@ -42,7 +42,27 @@ export interface TaskRunResult {
   files?: Array<{ url: string; name: string; mime?: string; size?: number }>;
 }
 
+export interface ScheduledSkillChoice {
+  skill_id: string;
+  revision: string;
+  name?: string;
+  description?: string;
+}
+
+export interface ScheduledSkillSnapshot {
+  version: 1;
+  skills: Array<{
+    candidate: { skill_key: string; revision: string; catalog_metadata: { name?: string }; description: string };
+    revision_id: string;
+    body_sha256: string;
+    content_sha256: string;
+    allowed_tool_names: string[];
+  }>;
+}
+
 export interface ScheduledTask {
+  config_revision?: string;
+  skill_revision_snapshot?: ScheduledSkillSnapshot;
   id: string;
   org_id: string;
   user_id: string;
@@ -99,6 +119,8 @@ export interface ScheduledTaskChangeRequest {
 }
 
 export interface TaskRun {
+  config_revision?: string;
+  skill_revision_snapshot?: ScheduledSkillSnapshot;
   content_blocks?: import('./message').ContentPart[];
   id: string;
   task_id: string;
@@ -153,6 +175,7 @@ export interface ScheduledTaskDraft {
 }
 
 export interface CreateTaskDto {
+  skills?: Array<Pick<ScheduledSkillChoice, 'skill_id' | 'revision'>>;
   name: string;
   prompt: string;
   timezone?: string;
@@ -171,6 +194,7 @@ export interface CreateTaskDto {
 }
 
 export interface UpdateTaskDto {
+  skills?: Array<Pick<ScheduledSkillChoice, 'skill_id' | 'revision'>>;
   name?: string;
   prompt?: string;
   timezone?: string;

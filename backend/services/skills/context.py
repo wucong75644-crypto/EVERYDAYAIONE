@@ -3,7 +3,7 @@
 from services.skills.renderer import encoded
 
 
-def instruction_message(active, candidate, *, manual: bool, context_version: int, session: bool = False):
+def instruction_message(active, candidate, *, manual: bool, context_version: int, session: bool = False, scheduled: bool = False):
     prefix = '[Turn Skill instructions: apply only within existing tool policy and authorization]\n'
     if context_version == 1:
         # Already persisted conversations retain their original message shape.
@@ -13,9 +13,10 @@ def instruction_message(active, candidate, *, manual: bool, context_version: int
             'skill_id': active.skill_key, 'revision': active.revision,
             'name': candidate.catalog_metadata.name or active.skill_key,
             'description': candidate.description,
-            'selection': 'session' if session else 'user' if manual else 'model',
+            'selection': 'scheduled' if scheduled else 'session' if session else 'user' if manual else 'model',
         })
-        intent = ('此 Skill 已由用户或组织管理员固定到当前会话，本轮使用固定版本。' if session
+        intent = ('此 Skill 已在计划任务配置中明确绑定，必须使用锁定版本；无法补齐必要输入时停止执行。' if scheduled
+                  else '此 Skill 已由用户或组织管理员固定到当前会话，本轮使用固定版本。' if session
                   else '用户已明确选择此 Skill 处理本轮请求。' if manual
                   else '本轮已激活此 Skill，使用它处理当前请求。')
         content = (prefix + metadata + '\n' + intent

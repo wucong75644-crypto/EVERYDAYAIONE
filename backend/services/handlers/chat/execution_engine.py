@@ -422,7 +422,7 @@ async def _run_loop(
             permission=prepared.permission,
             execution_context=prepared.execution_context,
         )
-        if runtime and runtime.skill_runtime is not None and any(
+        if runtime and runtime.skill_runtime is not None and runtime.skill_runtime.allows_dynamic_activation and any(
             c.catalog_metadata.model_selectable for c in runtime.skill_runtime.directory.values()
         ):
             tools.append(ACTIVATE_SKILL_SCHEMA)
@@ -924,9 +924,15 @@ def _apply_skill_context(prepared: Any, skills: Any) -> None:
         current = prepared.execution_context.authorized_tool_names
         if current is not None:
             skills.effective_allowed_tool_names &= current
+        snapshot = dict(prepared.execution_context.authorization_snapshot)
+        if skills.scheduled_snapshot is not None:
+            required = set(snapshot.get("required_permissions") or ())
+            required.update(code for c in skills.directory.values() for code in c.catalog_metadata.required_permissions)
+            snapshot["required_permissions"] = sorted(required)
         prepared.execution_context = replace(
             prepared.execution_context,
             authorized_tool_names=skills.effective_allowed_tool_names,
+            authorization_snapshot=snapshot,
         )
 
 
@@ -941,6 +947,8 @@ async def _execute_skill_batch(
     for call in calls:
         if call["name"] != ACTIVATE_SKILL:
             result = control_result("SKILL_ACTIVATION_BARRIER", message="请下一轮重新请求")
+        elif prepared.execution_context.execution_mode in {"scheduled", "preflight"}:
+            result = control_result("SKILL_SCHEDULED_ACTIVATION_FORBIDDEN")
         elif skills is None:
             result = control_result("SKILL_RUNTIME_DISABLED")
         else:

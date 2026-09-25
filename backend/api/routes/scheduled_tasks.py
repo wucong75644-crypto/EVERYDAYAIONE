@@ -26,6 +26,7 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException, Query
 from loguru import logger
 from pydantic import BaseModel, Field
+from services.skills.selection import SkillSelection
 
 from api.deps import CurrentUserId, OrgCtx, ScopedDB, Database
 from services.permissions.checker import check_permission
@@ -70,6 +71,7 @@ ScheduleType = Literal["once", "daily", "weekly", "monthly", "cron"]
 
 
 class CreateScheduledTaskRequest(BaseModel):
+    skills: List[SkillSelection] = Field(default_factory=list, max_length=4)
     name: str = Field(..., max_length=100)
     prompt: str = Field(..., max_length=5000)
     timezone: str = Field(default="Asia/Shanghai", max_length=50)
@@ -92,6 +94,7 @@ class CreateScheduledTaskRequest(BaseModel):
 
 
 class UpdateScheduledTaskRequest(BaseModel):
+    skills: Optional[List[SkillSelection]] = Field(default=None, max_length=4)
     name: Optional[str] = None
     prompt: Optional[str] = None
     timezone: Optional[str] = None
@@ -277,6 +280,7 @@ def _draft_definition(payload: CreateScheduledTaskRequest, schedule: Dict[str, A
         "push_target": payload.push_target, "template_file": payload.template_file,
         "max_credits": payload.max_credits, "retry_count": payload.retry_count,
         "timeout_sec": payload.timeout_sec, **schedule,
+        "skills": [skill.model_dump(mode="json") for skill in payload.skills],
     }
 
 
@@ -296,6 +300,8 @@ def _revision_definition(
         "retry_count": payload.retry_count if payload.retry_count is not None else task.get("retry_count", 1),
         "timeout_sec": payload.timeout_sec if payload.timeout_sec is not None else task.get("timeout_sec", 180),
         **schedule,
+        **({"skills": [s.model_dump(mode="json") for s in payload.skills]} if payload.skills is not None
+           else {"skill_revision_snapshot": task.get("skill_revision_snapshot", {"version": 1, "skills": []})}),
     }
 
 
@@ -500,6 +506,15 @@ async def propose_task_changeset(
     return {"success": True, "data": _to_dto(row, row.get("checks") or [])}
 
 
+async def _create_checked_draft(**kwargs):
+    from services.scheduler.scheduled_task_workflow import create_draft_and_preflight
+    from services.skills.contracts import SkillError
+    try:
+        return await create_draft_and_preflight(**kwargs)
+    except SkillError as exc:
+        raise HTTPException(422, {"message": "Skill 版本或权限已失效，请重新选择", "code": str(exc)}) from None
+
+
 @router.post("/drafts", summary="规划并试跑定时任务")
 async def create_task_draft(
     payload: CreateScheduledTaskRequest,
@@ -524,8 +539,7 @@ async def create_task_draft(
     # 2. 解析频率字段（once / daily / weekly / monthly / cron）
     schedule = _resolve_schedule_fields(payload, payload.timezone)
 
-    from services.scheduler.scheduled_task_workflow import create_draft_and_preflight
-    draft = await create_draft_and_preflight(
+    draft = await _create_checked_draft(
         db=db, org_id=org_id, user_id=user_id,
         definition=_draft_definition(payload, schedule),
     )
@@ -581,6 +595,14 @@ async def confirm_task_draft(
         schedule = _resolve_schedule_fields(SimpleNamespace(**definition), definition.get("timezone") or "Asia/Shanghai")
     except HTTPException:
         raise HTTPException(409, "任务时间配置已失效，请重新规划并试跑")
+    from services.skills.scheduled import validate_scheduled_skills, EMPTY_SNAPSHOT
+    from services.skills.contracts import SkillError
+    try:
+        await validate_scheduled_skills(db, owner=source.data[0]["user_id"] if source_task_id else user_id,
+            org=org_id, task_id=source_task_id or draft_id,
+            snapshot=definition.get("skill_revision_snapshot", EMPTY_SNAPSHOT), policy=draft.get("execution_policy"))
+    except SkillError as exc:
+        raise HTTPException(409, str(exc)) from None
     task_id = str(uuid4())
     response = db.rpc("confirm_scheduled_task_draft", {
         "p_draft_id": draft_id, "p_org_id": org_id, "p_user_id": user_id,
@@ -661,6 +683,29 @@ async def list_chat_targets(
     return {"success": True, "data": targets}
 
 
+@router.get("/skill-options", summary="计划任务可选的已审核 Skill 版本")
+async def list_task_skill_options(user_id: CurrentUserId, org_ctx: OrgCtx, scoped_db: ScopedDB,
+                                 db: Database, task_id: Optional[str] = None):
+    org_id = _require_org(org_ctx)
+    owner = user_id
+    resource = None
+    if task_id:
+        result = scoped_db.table("scheduled_tasks").select("*").eq("id", task_id).execute()
+        if not result.data:
+            raise HTTPException(404, "任务不存在")
+        resource = result.data[0]
+        owner = resource["user_id"]
+    if not await check_permission(db, user_id, org_id, "task.edit" if task_id else "task.create", resource):
+        raise HTTPException(403, "无权配置计划任务 Skill")
+    from services.skills.scheduled import scheduled_skill_options
+    from services.skills.contracts import SkillError
+    try:
+        options = await scheduled_skill_options(db, owner=owner, org=org_id, task_id=task_id or str(uuid4()))
+    except SkillError:
+        raise HTTPException(403, "计划任务执行者的 Skill 权限不可用") from None
+    return {"success": True, "data": options}
+
+
 @router.get("/{task_id}", summary="任务详情")
 async def get_task(
     task_id: str,
@@ -734,11 +779,11 @@ async def update_task(
 
     # 兼容已经打开的旧任务表单：该路径只创建旧 draft，不直接写入任务。
     # 新入口使用 POST /scheduled-tasks/changesets，统一进入 ChangeSet 适配器。
-    from services.scheduler.scheduled_task_workflow import create_draft_and_preflight
-    draft = await create_draft_and_preflight(
+    draft = await _create_checked_draft(
         db=db,
         org_id=org_id,
         user_id=user_id,
+        execution_owner_id=task["user_id"],
         definition=_revision_definition(task, payload, schedule),
         source_task_id=task_id,
     )

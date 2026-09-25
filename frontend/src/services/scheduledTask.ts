@@ -6,6 +6,7 @@
 import api from './api';
 import type {
   ScheduledTask,
+  ScheduledSkillChoice,
   TaskRun,
   CreateTaskDto,
   UpdateTaskDto,
@@ -25,6 +26,12 @@ interface ApiResponse<T> {
 const BASE = '/scheduled-tasks';
 
 export const scheduledTaskService = {
+  async skillOptions(taskId?: string): Promise<ScheduledSkillChoice[]> {
+    const res = await api.get<ApiResponse<ScheduledSkillChoice[]>>(`${BASE}/skill-options`, {
+      params: taskId ? { task_id: taskId } : {},
+    });
+    return res.data.data;
+  },
   /** 创建任务 */
   async create(dto: CreateTaskDto): Promise<ScheduledTask> {
     const res = await api.post<ApiResponse<ScheduledTask>>(BASE, dto);

@@ -19,6 +19,8 @@ import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Sparkles, Loader2, User, Users, MessageSquare } from 'lucide-react';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
+import { ScheduledSkillPicker } from './ScheduledSkillPicker';
+import { isSkillUiEnabled } from '../../config/featureFlags';
 import { scheduledTaskService } from '../../services/scheduledTask';
 import { orgMembersService } from '../../services/orgMembers';
 import { wecomChatTargetsService } from '../../services/wecomChatTargets';
@@ -28,6 +30,7 @@ import { logger } from '../../utils/logger';
 import { cn } from '../../utils/cn';
 import type {
   ScheduledTask,
+  ScheduledSkillChoice,
   CreateTaskDto,
   ScheduleType,
   PushTarget,
@@ -92,6 +95,13 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
   // ─── 表单字段 ───
   const [name, setName] = useState(task?.name || '');
   const [prompt, setPrompt] = useState(task?.prompt || '');
+  const [skillsChanged, setSkillsChanged] = useState(false);
+  const [skills, setSkills] = useState<ScheduledSkillChoice[]>(() =>
+    task?.skill_revision_snapshot?.skills.map(({ candidate }) => ({
+      skill_id: candidate.skill_key, revision: candidate.revision,
+      name: candidate.catalog_metadata.name || candidate.skill_key, description: candidate.description,
+    })) || []);
+
 
   // 频率
   const [scheduleType, setScheduleType] = useState<ScheduleType | ''>(
@@ -348,6 +358,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
       push_target: target,
     };
 
+    if (skillsChanged) dto.skills = skills.map(({ skill_id, revision }) => ({ skill_id, revision }));
     if (scheduleType === 'once') {
       dto.run_at = localDatetimeToIso(runAtLocal);
     } else if (scheduleType === 'cron') {
@@ -477,6 +488,9 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
             )}
           />
         </div>
+
+        {(isSkillUiEnabled() || skills.length > 0) && <ScheduledSkillPicker taskId={task?.id} selected={skills} disabled={submitting}
+          onChange={(next) => { setSkills(next); setSkillsChanged(true); }} />}
 
         {/* ── 执行频率 ── */}
         <div>

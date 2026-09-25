@@ -72,6 +72,7 @@ class ScheduledTaskAgent:
         self.user_id = task["user_id"]
         self.org_id = task["org_id"]
         self.execution_mode = "scheduled" if execution_mode == "production" else execution_mode
+        self.skill_runtime = None
         self.cancellation_event = cancellation_event or asyncio.Event()
         self.conversation_id = f"scheduled_{execution_mode}_{task['id']}"
 
@@ -170,6 +171,33 @@ class ScheduledTaskAgent:
             if trusted.authorization_snapshot.get("access_denied_reason"):
                 return ScheduledTaskResult(text="任务权限已失效，工具未执行", status="error",
                                            error_message=str(trusted.authorization_snapshot["access_denied_reason"]))
+            from services.skills.scheduled import EMPTY_SNAPSHOT, ScheduledSkillSnapshot, source_for_executor
+            from services.skills.runtime import SkillRuntime, SkillReplayError
+            snapshot = self.task.get("skill_revision_snapshot", EMPTY_SNAPSHOT)
+            pins = ScheduledSkillSnapshot.parse(snapshot)
+            if pins.skills:
+                if not settings.skill_runtime_enabled or not settings.skill_catalog_enabled:
+                    raise SkillReplayError("SKILL_SCHEDULED_RUNTIME_DISABLED")
+                self.skill_runtime = SkillRuntime(
+                    turn_id=str(self.task.get("execution_id") or self.task_id),
+                    source=source_for_executor(executor, settings, snapshot),
+                    platform_tool_names=(s.name for s in executor.tool_runtime.registry.specs()),
+                    authorized_tool_names=policy.allowed_tools, cancellation_event=self.cancellation_event,
+                    execution_mode=self.execution_mode,
+                    template_context={"actor_user_id": self.user_id, "org_id": self.org_id,
+                        "conversation_scope": "user", "agent_domain": "general", "execution_mode": "scheduled",
+                        "is_channel": False},
+                )
+                await self.skill_runtime.initialize_scheduled(snapshot)
+                executor.allowed_tool_names = self.skill_runtime.effective_allowed_tool_names
+                required_permissions = sorted({code for pin in pins.skills
+                    for code in pin.candidate.catalog_metadata.required_permissions})
+                executor.tool_policy_snapshot = {**executor.tool_policy_snapshot,
+                    "required_permissions": required_permissions}
+                all_tools = executor.tool_runtime.advertised(executor.allowed_tool_names)
+                if not policy.required_tools <= executor.allowed_tool_names:
+                    raise SkillReplayError("SKILL_SCHEDULED_TOOL_DENIED")
+                self.skill_runtime.ensure_messages(messages)
             await self._prepare_template()
 
             # 7. 设置 staging 分流目录（用户级隔离）
@@ -311,6 +339,14 @@ class ScheduledTaskAgent:
             request_ctx=self.request_ctx,
         )
 
+        hooks = [ToolAuditHook()]
+        if self.skill_runtime is not None:
+            from services.agent.loop_hooks import LoopHook
+            state = self.skill_runtime
+            class SkillContextHook(LoopHook):
+                async def on_turn_start(self, ctx):
+                    state.ensure_messages(ctx.messages)
+            hooks.append(SkillContextHook())
         tool_loop = ToolLoopExecutor(
             adapter=model_gateway,
             executor=executor,
@@ -328,7 +364,7 @@ class ScheduledTaskAgent:
                 enable_tool_expansion=False,
                 force_tool_use_first=True,
             ),
-            hooks=[ToolAuditHook()],
+            hooks=hooks,
         )
         return tool_loop, hook_ctx
 

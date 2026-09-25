@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { orgMembersService } from '../../../services/orgMembers';
 import { TaskForm } from '../TaskForm';
 import { scheduledTaskService } from '../../../services/scheduledTask';
@@ -9,7 +9,7 @@ import type { ParseNLResult } from '../../../types/scheduledTask';
 const access = vi.hoisted(() => ({ others: true }));
 vi.mock('../../../hooks/usePermission', () => ({ usePermission: () => access.others }));
 vi.mock('../../../stores/useAuthStore', () => ({ useAuthStore: (select: (s: unknown) => unknown) => select({ user: { id: 'u1' } }) }));
-vi.mock('../../../services/scheduledTask', () => ({ scheduledTaskService: { parseNL: vi.fn(), proposeChange: vi.fn() } }));
+vi.mock('../../../services/scheduledTask', () => ({ scheduledTaskService: { parseNL: vi.fn(), proposeChange: vi.fn(), skillOptions: vi.fn() } }));
 vi.mock('../../../services/orgMembers', () => ({ orgMembersService: {
   getMyMemberInfo: vi.fn().mockResolvedValue({}),
   listWecomCollected: vi.fn().mockResolvedValue([{ user_id: 'u2', wecom_userid: 'wx2', nickname: '小王' }]),
@@ -26,11 +26,26 @@ async function parse(result: Partial<ParseNLResult>, text = '新的创建请求'
 }
 
 describe('TaskForm request contract', () => {
+  afterEach(() => vi.unstubAllEnvs());
   beforeEach(() => {
     vi.clearAllMocks(); access.others = true;
     vi.mocked(orgMembersService.getMyMemberInfo).mockResolvedValue({} as never);
     vi.mocked(wecomChatTargetsService.listGroups).mockResolvedValue([{ id: 'g1', chatid: 'chat1', chat_name: '销售群' }] as never);
     vi.mocked(scheduledTaskService.proposeChange).mockResolvedValue({ id: 'cs1' } as never);
+  });
+  it('submits only Skill identity and revision after explicit selection', async () => {
+    vi.stubEnv('VITE_SKILL_UI_ENABLED', 'true');
+    vi.mocked(scheduledTaskService.skillOptions).mockResolvedValue([
+      { skill_id: 'report', revision: 'v1', name: 'Report', description: 'method' },
+    ]);
+    render(<TaskForm task={null} onClose={vi.fn()} onProposed={vi.fn()} />);
+    await parse(complete as ParseNLResult);
+    fireEvent.click(screen.getByText('选择固定 Skill'));
+    fireEvent.click(await screen.findByRole('button', { name: '选择' }));
+    fireEvent.click(screen.getByRole('button', { name: '创建任务' }));
+    await waitFor(() => expect(scheduledTaskService.proposeChange).toHaveBeenCalled());
+    expect(vi.mocked(scheduledTaskService.proposeChange).mock.calls[0][0].definition?.skills)
+      .toEqual([{ skill_id: 'report', revision: 'v1' }]);
   });
   it('replaces a new draft and blocks submission when the second request lacks execution content', async () => {
     render(<TaskForm task={null} onClose={vi.fn()} onProposed={vi.fn()} />);

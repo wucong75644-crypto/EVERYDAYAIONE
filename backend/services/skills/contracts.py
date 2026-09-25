@@ -94,6 +94,7 @@ class PublishRevision(Contract):
 
 
 class SkillRevision(PublishRevision):
+    reviewed: bool = False
     id: UUID
     package_id: UUID
     nas_path: str  # Canonical relative SKILL.md path under SKILL_STORAGE_ROOT.
