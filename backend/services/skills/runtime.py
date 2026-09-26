@@ -102,6 +102,7 @@ class SkillRuntime:
         self.session_skill_ids: tuple[str, ...] = ()
         self.template_context = dict(template_context or {})
         self.context_version = 2
+        self.recommendation_batch = None
 
     def _check_cancelled(self):
         if self.cancellation_event.is_set():
@@ -224,6 +225,19 @@ class SkillRuntime:
         ))
 
     def model_messages(self, messages, tools):
+        if self.recommendation_batch is not None and self.allows_dynamic_activation:
+            suggestions = [{"skill_id": c.skill_id, "revision": c.revision,
+                            "reasons": [r.model_dump(mode="json") for r in c.reasons]}
+                           for c in self.recommendation_batch.candidates
+                           if c.skill_id not in self.active and c.skill_id in self.directory
+                           and self.directory[c.skill_id].revision == c.revision
+                           and self.directory[c.skill_id].catalog_metadata.model_selectable]
+            if suggestions:
+                messages = list(messages)
+                boundary = next((i for i, m in enumerate(messages) if m.get("role") != "system"), len(messages))
+                messages.insert(boundary, {"role": "system", "content": (
+                    "[Skill suggestions — metadata only]\n这些是可忽略的候选，不代表已加载或获得工具权限。"
+                    "需要使用时仍须调用 activate_skill；不合适时继续普通流程。\n" + encoded(suggestions))})
         # Rebuild from current filtered schemas; do not persist stale capabilities.
         if self.context_version == 1 or not self.has_active_skills:
             return messages
@@ -254,6 +268,21 @@ class SkillRuntime:
         return await self.activate(encoded({"skill_id": skill_id}), session=True)
 
     async def activate(self, raw_arguments: str, *, manual: bool = False, session: bool = False, scheduled: bool = False) -> dict:
+        result = await self._activate(raw_arguments, manual=manual, session=session, scheduled=scheduled)
+        if (self.recommendation_batch is not None and not (manual or session or scheduled)
+                and isinstance(raw_arguments, str) and len(raw_arguments) <= MAX_ARGS_BYTES + 256):
+            try:
+                request = json.loads(raw_arguments)
+                key = request.get("skill_id") if isinstance(request, dict) else None
+                candidate = self.directory.get(key) if isinstance(key, str) else None
+            except (ValueError, TypeError):
+                candidate = None
+            if candidate is not None:
+                from services.skills.recommendation_service import model_feedback
+                await model_feedback(self, candidate, result["ok"])
+        return result
+
+    async def _activate(self, raw_arguments: str, *, manual: bool = False, session: bool = False, scheduled: bool = False) -> dict:
         self._check_cancelled()
         if not self.allows_dynamic_activation and not (scheduled and self.scheduled_snapshot is not None):
             return control_result("SKILL_SCHEDULED_ACTIVATION_FORBIDDEN")
@@ -453,5 +482,9 @@ async def create_skill_runtime(*, handler, context, runtime, replay_context=None
             raise SkillReplayError(str(exc)) from None
     else:
         await state.initialize(checkpoint, selection, load_session_bindings=not bool(replay_context))
+    if (not scheduled and checkpoint is None and not replay_context
+            and getattr(settings, "skill_recommendations_enabled", False) is True):
+        from services.skills.recommendation_service import model_recommendations
+        await model_recommendations(state)
     runtime.skill_runtime = state
     return state

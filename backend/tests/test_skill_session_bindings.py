@@ -12,7 +12,7 @@ from services.conversation_commands import CommandType, ConversationCommand, Saf
 from services.conversation_state import ConversationPauseRequested
 from services.handlers.chat.execution_engine import execute_chat
 from services.skills.contracts import SkillError
-from services.skills.runtime import SkillBindingError, SkillReplayError
+from services.skills.runtime import RuntimeCheckpoint, SkillBindingError, SkillReplayError
 from services.skills.runtime_source import ActorSkillSource
 from tests.test_chat_execution_engine import _request
 from tests.test_skill_manual_selection import execution, SELECTION  # noqa: F401
@@ -162,7 +162,8 @@ async def test_old_checkpoint_does_not_pick_up_new_session_configuration():
     source.session_bindings.side_effect = AssertionError("old checkpoint is isolated")
     restored = state(source)
     await restored.initialize(checkpoint)
-    assert restored.checkpoint() == checkpoint
+    # The tool ceiling is a set; JSON array order is not part of replay identity.
+    assert RuntimeCheckpoint.model_validate(restored.checkpoint()) == RuntimeCheckpoint.model_validate(checkpoint)
 
 
 async def test_legacy_actor_checkpoint_without_skill_state_never_reads_bindings(execution):

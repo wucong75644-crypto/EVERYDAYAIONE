@@ -181,3 +181,6 @@ VITE_SKILL_UI_ENABLED=true npm run build
 - `frontend/src/stores/slices/__tests__/streamingThinking.test.ts`
 - `frontend/src/stores/slices/streamingSlice.ts`
 - `frontend/src/types/message.ts`
+
+
+第二期第 5 步新增独立开关控制的建议项，沿用本文的手动选择和激活链路，不自动加载。可信事实、推荐 API、审计、反馈及验证回滚见 [Skill 可信上下文推荐](TECH_Skill可信上下文推荐.md)。

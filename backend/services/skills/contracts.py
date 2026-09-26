@@ -33,6 +33,7 @@ CatalogText = Annotated[str, Field(min_length=1, max_length=200, pattern=r"\S")]
 ConversationScope = Literal["user", "channel"]
 AgentDomain = Literal["general", "erp"]
 ExecutionMode = Literal["interactive", "scheduled", "preflight"]
+SkillFileType = Literal["pdf", "docx", "xlsx", "csv", "pptx", "image", "text"]
 
 
 class SkillCatalogMetadata(Contract):
@@ -52,6 +53,7 @@ class SkillCatalogMetadata(Contract):
     required_permissions: tuple[CatalogText, ...] = ()
     required_feature_flags: tuple[CatalogText, ...] = ()
     allowed_tool_names: tuple[CatalogText, ...] = ()
+    recommended_file_types: tuple[SkillFileType, ...] = Field(default=(), max_length=7)
     tool_policy: Literal['restricted', 'platform'] = 'restricted'
 
     @model_validator(mode='after')
@@ -64,6 +66,8 @@ class SkillCatalogMetadata(Contract):
     def preserve_legacy_metadata(self, handler):
         result = handler(self)
         # Keep old review hashes and checkpoint metadata byte-compatible.
+        if not self.recommended_file_types:
+            result.pop('recommended_file_types', None)
         if self.tool_policy == 'restricted':
             result.pop('tool_policy', None)
         return result

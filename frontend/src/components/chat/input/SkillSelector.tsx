@@ -2,6 +2,8 @@ import { useRef, useState } from 'react';
 import { BookOpen } from 'lucide-react';
 import { Popover } from '../../primitives/Popover';
 import { getAvailableSkills, skillVersion, type SkillSummary } from '../../../services/skills';
+import SkillRecommendations from './SkillRecommendations';
+import { isSkillRecommendationsUiEnabled } from '../../../config/featureFlags';
 import SessionSkillBindings from './SessionSkillBindings';
 
 export interface SkillSelectorProps {
@@ -10,10 +12,11 @@ export interface SkillSelectorProps {
   selected: SkillSummary | null;
   onSelect: (skill: SkillSummary | null, conversationId: string) => void;
   disabled: boolean;
+  permissionMode?: 'auto' | 'ask' | 'plan';
   onSelectionComplete?: () => void;
 }
 
-export default function SkillSelector({ conversationId, ensureConversation, selected, onSelect, disabled, onSelectionComplete }: SkillSelectorProps) {
+export default function SkillSelector({ conversationId, ensureConversation, selected, onSelect, disabled, onSelectionComplete, permissionMode = 'auto' }: SkillSelectorProps) {
   const [open, setOpen] = useState(false);
   const [sessionMode, setSessionMode] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -85,6 +88,9 @@ export default function SkillSelector({ conversationId, ensureConversation, sele
         {failed && <button type="button" onClick={() => void refresh()} className="mt-2 text-accent">重试</button>}
       </div>
       : <>
+    {open && !loading && !failed && conversationId && isSkillRecommendationsUiEnabled() &&
+      <SkillRecommendations key={`${conversationId}:${permissionMode}`} conversationId={conversationId}
+        skills={skills} disabled={disabled} onSelect={choose} permissionMode={permissionMode} />}
     <div className="px-2 py-1 text-xs text-text-tertiary">选择 Skill · 仅本条消息</div>
     <button type="button" onClick={() => choose(null)}
       className="w-full px-2 py-2 text-left text-sm rounded-lg hover:bg-hover text-text-secondary">不手动选择</button>
