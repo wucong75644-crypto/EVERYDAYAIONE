@@ -1,11 +1,11 @@
-"""Read-only summary discovery. No authority, body or client scope inputs."""
+"""Authenticated Skill discovery, explicit bindings and optional recommendation feedback."""
 
 import asyncio
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from psycopg import Error as DatabaseError
 
 from api.deps import CurrentUserId
@@ -14,8 +14,10 @@ from core.database import get_db
 from services.skills.available import available_skills
 from services.skills.resolver import SkillSummary
 from services.skills.bindings import ConversationSkillBindings, SkillBinding, binding_authority
-from services.skills.contracts import SkillError
+from services.skills.contracts import SkillError, SkillFileType
 from services.skills.selection import SkillSelection
+from services.skills.recommendations import RecommendationBatch
+from services.skills.recommendation_service import recommendations_enabled, web_recommendations, web_feedback
 
 
 router = APIRouter(prefix="/skills", tags=["skills"])
@@ -85,4 +87,40 @@ async def add_binding(selection: SkillSelection, bindings: Bindings):
 @router.delete("/conversations/{conversation_id}/bindings/{binding_id}", status_code=204)
 async def remove_binding(binding_id: UUID, bindings: Bindings):
     await binding_operation(bindings.remove, binding_id)
+    return Response(status_code=204, headers={"Cache-Control": "no-store"})
+
+
+class RecommendationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    conversation_id: UUID
+    selected_file_types: tuple[SkillFileType, ...] = Field(default=(), max_length=7)
+    permission_mode: Literal["auto", "ask", "plan"] = "auto"
+
+
+class RecommendationFeedback(SkillSelection):
+    conversation_id: UUID
+    feedback: Literal["selected", "dismissed", "not_relevant"]
+
+
+@router.post("/recommendations", response_model=RecommendationBatch)
+async def get_recommendations(request: RecommendationRequest, user_id: CurrentUserId,
+                              response: Response, settings=Depends(get_settings)):
+    response.headers["Cache-Control"] = "no-store"
+    if not recommendations_enabled(settings):
+        return RecommendationBatch(status="disabled")
+    return await web_recommendations(get_db(), settings, actor_user_id=user_id, **request.model_dump())
+
+
+@router.post("/recommendations/{recommendation_id}/feedback", status_code=204)
+async def record_recommendation_feedback(recommendation_id: UUID, request: RecommendationFeedback,
+                                         user_id: CurrentUserId, settings=Depends(get_settings)):
+    if not recommendations_enabled(settings):
+        raise HTTPException(503, "Skill 推荐暂未开放")
+    try:
+        recorded = await web_feedback(get_db(), actor_user_id=user_id, recommendation_id=recommendation_id,
+                                      **request.model_dump())
+    except DatabaseError:
+        raise HTTPException(503, "暂时无法保存推荐反馈") from None
+    if not recorded:
+        raise HTTPException(404, "推荐不存在或无权反馈")
     return Response(status_code=204, headers={"Cache-Control": "no-store"})

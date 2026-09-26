@@ -297,7 +297,7 @@ export default function InputControls(props: InputControlsProps) {
               )}
             </div>
 
-            {props.skillSelector && <SkillSelector {...props.skillSelector}
+            {props.skillSelector && <SkillSelector {...props.skillSelector} permissionMode={permissionMode}
               onSelectionComplete={() => textareaRef.current?.focus()} />}
 
             {/* 深度思考按钮（仅支持的模型显示） */}

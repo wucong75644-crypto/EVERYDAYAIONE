@@ -268,6 +268,7 @@ class Settings(BaseSettings):
     # Skill 控制面与 Actor Turn Runtime，均默认关闭。
     skill_catalog_enabled: bool = False
     skill_runtime_enabled: bool = False
+    skill_recommendations_enabled: bool = False
     skill_storage_root: Optional[str] = None  # SKILL_STORAGE_ROOT，开启后显式配置
 
     # Staging 清理配置（已废弃：NAS 替代后不再需要清理，保留字段兼容旧引用）

@@ -8,3 +8,8 @@ export function isSkillUiEnabled(): boolean {
   const override = import.meta.env.VITE_SKILL_UI_ENABLED;
   return override === undefined ? import.meta.env.PROD : override === 'true';
 }
+
+/** Suggestions can be withdrawn without hiding explicit Skill selection. */
+export function isSkillRecommendationsUiEnabled(): boolean {
+  return import.meta.env.VITE_SKILL_RECOMMENDATIONS_ENABLED === 'true';
+}
