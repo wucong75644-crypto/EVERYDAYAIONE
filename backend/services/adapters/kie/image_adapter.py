@@ -1,7 +1,7 @@
 """
 KIE 图像模型适配器
 
-适配 Nano Banana 系列图像生成模型
+适配 Nano Banana 和 GPT Image 系列图像生成模型
 """
 
 import json
@@ -50,6 +50,8 @@ class KieImageAdapter(BaseImageAdapter):
     - google/nano-banana: 基础文生图
     - google/nano-banana-edit: 图像编辑 (需要输入图片)
     - nano-banana-pro: 高级文生图 (支持图片参考、高分辨率)
+    - gpt-image-2-5-flare-text-to-image: GPT Image 2.5 Flare 文生图
+    - gpt-image-2-5-flare-image-to-image: GPT Image 2.5 Flare 图生图
     - gpt-image-2-text-to-image: GPT Image 2 文生图 (OpenAI 最强)
     - gpt-image-2-image-to-image: GPT Image 2 图生图 (参考图基础生成)
 
@@ -299,16 +301,16 @@ class KieImageAdapter(BaseImageAdapter):
                 output_format=ImageOutputFormat(fmt),
             ).model_dump()
 
-        elif self.model == "gpt-image-2-text-to-image":
+        elif self.model in {"gpt-image-2-text-to-image", "gpt-image-2-5-flare-text-to-image"}:
             return GptImage2Input(
                 prompt=prompt,
                 aspect_ratio=AspectRatio(size),
                 resolution=ImageResolution(resolution or "1K"),
             ).model_dump()
 
-        elif self.model == "gpt-image-2-image-to-image":
+        elif self.model in {"gpt-image-2-image-to-image", "gpt-image-2-5-flare-image-to-image"}:
             if not image_urls:
-                raise ValueError("gpt-image-2-image-to-image requires image_urls")
+                raise ValueError(f"{self.model} requires image_urls")
             return GptImage2ImageInput(
                 prompt=prompt,
                 input_urls=image_urls,

@@ -3,7 +3,7 @@
 
 两阶段执行：
   Phase 1 — ecom_plan()：调千问VL分析产品+策划方案，返回 ecom_plan 方案卡片
-  Phase 2 — execute()：拿方案中的 prompt 逐张调 gpt-image-2 生图
+  Phase 2 — execute()：拿方案中的 prompt 逐张调 GPT Image 2.5 Flare 生图
 
 也兼容单张生图模式（主Agent工具调用 / 单张重试）。
 
@@ -71,7 +71,7 @@ class ImageAgent(CreditMixin):
     ) -> AgentResult:
         """分析产品并策划电商主图方案。
 
-        调千问VL一步到位输出 gpt-image-2 可执行的 prompt JSON。
+        调千问VL一步到位输出 GPT Image 2.5 Flare 可执行的 prompt JSON。
         返回 AgentResult,emit_payloads 中放 ecom_plan 数据(前端渲染为方案卡片)。
 
         Args:

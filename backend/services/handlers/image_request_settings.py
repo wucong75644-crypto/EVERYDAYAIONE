@@ -28,7 +28,8 @@ def resolve_image_generation_settings(
     model_config = kie_models.get_model_config(model_id)
     if model_config and model_config.get("supports_resolution") and not resolution:
         resolution = "1K"
-    if resolution:
+    # 2.5 支持 auto/1:1 的 2K、4K；保留旧模型的参数归一化行为。
+    if resolution and not model_id.startswith("gpt-image-2-5-"):
         if aspect_ratio == "auto" and resolution != "1K":
             resolution = "1K"
         elif aspect_ratio == "1:1" and resolution == "4K":

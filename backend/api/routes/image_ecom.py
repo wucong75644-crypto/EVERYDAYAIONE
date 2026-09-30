@@ -1,7 +1,7 @@
 """
 电商图模式 API（v2）
 
-- POST /ecom-image/enhance-prompt  方案策划（千问VL一步到位输出gpt-image-2 prompt）
+- POST /ecom-image/enhance-prompt  方案策划（千问VL一步到位输出GPT Image 2.5 Flare prompt）
 - POST /ecom-image/retry           单张图片原位重试
 
 设计文档：docs/document/TECH_电商图片Agent_v2.md
@@ -120,7 +120,7 @@ def sync_text_to_prompt(prompt: str, new_title: str, new_subtitle: str) -> str:
 
 def _estimate_credits(image_count: int) -> dict[str, int]:
     """预估积分消耗。"""
-    per_image = 8  # gpt-image-2 1K 约 6-10 积分，取均值
+    per_image = 8  # 方案沿用保守预估，实际扣费按模型和分辨率计算
     return {
         "estimated_credits": per_image * image_count,
         "per_image_credits": per_image,
@@ -154,7 +154,7 @@ async def enhance_prompt(
 ) -> dict[str, Any]:
     """方案策划 API（v2）— 千问VL一步到位。
 
-    输入产品信息+图片 → 千问VL理解产品+策划方案+输出gpt-image-2 prompt
+    输入产品信息+图片 → 千问VL理解产品+策划方案+输出GPT Image 2.5 Flare prompt
     → 返回结构化 JSON（images[]含每张图的prompt）。
     """
     from core.config import get_settings
