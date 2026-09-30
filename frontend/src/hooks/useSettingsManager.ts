@@ -19,8 +19,9 @@ import {
   resetSettings as clearSettings,
   type UserAdvancedSettings,
 } from '../utils/settingsStorage';
-import { updateConversation, type ChatSettings as ConversationChatSettings } from '../services/conversation';
-import { logger } from '../utils/logger';
+import type { ChatSettings as ConversationChatSettings } from '../services/conversation';
+import { useAuthStore } from '../stores/useAuthStore';
+import { clearNewConversationSettings, getPendingConversationSettings, retryPendingConversationSettings, saveConversationSettings } from '../utils/conversationSettingsPersistence';
 
 // ============================================================
 // 类型定义
@@ -31,6 +32,7 @@ export interface ImageSettings {
   resolution: ImageResolution;
   outputFormat: ImageOutputFormat;
   numImages: ImageCount;
+  taobaoMainImage: boolean;
 }
 
 export interface VideoSettings {
@@ -78,7 +80,7 @@ export interface UseSettingsManagerReturn {
 
 /** 系统默认值（新建对话时使用） */
 const DEFAULTS = {
-  image: { aspectRatio: '1:1' as AspectRatio, resolution: '1024x1024' as ImageResolution, outputFormat: 'png' as ImageOutputFormat, numImages: 1 as ImageCount },
+  image: { aspectRatio: '1:1' as AspectRatio, resolution: '1024x1024' as ImageResolution, outputFormat: 'png' as ImageOutputFormat, numImages: 1 as ImageCount, taobaoMainImage: false },
   video: { frames: '10' as VideoFrames, aspectRatio: 'landscape' as VideoAspectRatio, removeWatermark: false },
   chat: { smartSubMode: 'chat' as SmartSubMode, thinkingEffort: 'low' as const, deepThinkMode: false, permissionMode: 'auto' as PermissionMode, temperature: 1.0, topP: 0.95, topK: 40, maxOutputTokens: 8192 },
 };
@@ -91,6 +93,7 @@ export function useSettingsManager(
   const savedSettings = getSavedSettings();
   // 对话级设置（优先）> localStorage（兜底）> 系统默认值
   const cs = conversationChatSettings;
+  const userId = useAuthStore((state) => state.user?.id) ?? 'anonymous';
 
   // 图像生成参数
   const [imageSettings, setImageSettings] = useState<ImageSettings>({
@@ -98,6 +101,8 @@ export function useSettingsManager(
     resolution: (cs?.image_resolution as ImageResolution) || savedSettings.image.resolution,
     outputFormat: (cs?.image_output_format as ImageOutputFormat) || savedSettings.image.outputFormat,
     numImages: (cs?.image_num_images as ImageCount) ?? savedSettings.image.numImages,
+    taobaoMainImage: ((cs?.image_aspect_ratio || savedSettings.image.aspectRatio) === '1:1') &&
+      (cs?.image_taobao_main_image ?? (conversationId ? false : savedSettings.image.taobaoMainImage ?? false)),
   });
 
   // 视频生成参数
@@ -112,103 +117,111 @@ export function useSettingsManager(
     smartSubMode: (cs?.smart_sub_mode as SmartSubMode) || DEFAULTS.chat.smartSubMode,
     thinkingEffort: (cs?.thinking_effort as ChatSettings['thinkingEffort']) || savedSettings.chat?.thinkingEffort || DEFAULTS.chat.thinkingEffort,
     deepThinkMode: cs?.deep_think_mode ?? DEFAULTS.chat.deepThinkMode,
-    permissionMode: (savedSettings.chat as any)?.permissionMode || DEFAULTS.chat.permissionMode,
+    permissionMode: (savedSettings.chat as Partial<ChatSettings>)?.permissionMode || DEFAULTS.chat.permissionMode,
     temperature: cs?.temperature ?? savedSettings.chat?.temperature ?? DEFAULTS.chat.temperature,
     topP: cs?.top_p ?? savedSettings.chat?.topP ?? DEFAULTS.chat.topP,
     topK: cs?.top_k ?? savedSettings.chat?.topK ?? DEFAULTS.chat.topK,
     maxOutputTokens: cs?.max_output_tokens ?? savedSettings.chat?.maxOutputTokens ?? DEFAULTS.chat.maxOutputTokens,
   });
 
-  // 对话设置恢复：conversationChatSettings 变化时（切换对话 / API 返回），重置本地状态
-  // 不跟踪 conversationId — 只要 settings 变了就恢复，避免异步时序 bug
-  useEffect(() => {
-    const s = conversationChatSettings;
-    setImageSettings({
-      aspectRatio: (s?.image_aspect_ratio as AspectRatio) || DEFAULTS.image.aspectRatio,
-      resolution: (s?.image_resolution as ImageResolution) || DEFAULTS.image.resolution,
-      outputFormat: (s?.image_output_format as ImageOutputFormat) || DEFAULTS.image.outputFormat,
-      numImages: (s?.image_num_images as ImageCount) ?? DEFAULTS.image.numImages,
-    });
-    setVideoSettings({
-      frames: (s?.video_frames as VideoFrames) ?? DEFAULTS.video.frames,
-      aspectRatio: (s?.video_aspect_ratio as VideoAspectRatio) || DEFAULTS.video.aspectRatio,
-      removeWatermark: s?.video_remove_watermark ?? DEFAULTS.video.removeWatermark,
-    });
-    setChatSettings({
-      smartSubMode: (s?.smart_sub_mode as SmartSubMode) || DEFAULTS.chat.smartSubMode,
-      thinkingEffort: (s?.thinking_effort as ChatSettings['thinkingEffort']) || DEFAULTS.chat.thinkingEffort,
-      deepThinkMode: s?.deep_think_mode ?? DEFAULTS.chat.deepThinkMode,
-      permissionMode: DEFAULTS.chat.permissionMode,
-      temperature: s?.temperature ?? DEFAULTS.chat.temperature,
-      topP: s?.top_p ?? DEFAULTS.chat.topP,
-      topK: s?.top_k ?? DEFAULTS.chat.topK,
-      maxOutputTokens: s?.max_output_tokens ?? DEFAULTS.chat.maxOutputTokens,
-    });
-  }, [conversationChatSettings]);
+  const settingsRef = useRef({ image: imageSettings, video: videoSettings, chat: chatSettings });
+  const editedConversationRef = useRef<string | null>(null);
+  const restoredConversationRef = useRef<string | null>(null);
 
-  // 自动保存到对话（debounce 避免频繁请求）
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // API responses received after an edit must not restore an older selection.
+  useEffect(() => {
+    const identity = `${userId}:${conversationId ?? 'new'}`;
+    if (restoredConversationRef.current === `${userId}:new` && conversationId) {
+      clearNewConversationSettings(userId);
+    }
+    restoredConversationRef.current = identity;
+    if (editedConversationRef.current === identity) return;
+    const pending = getPendingConversationSettings(userId, conversationId ?? 'new');
+    const source = pending?.settings ?? conversationChatSettings;
+    const imageDefaults = conversationId ? DEFAULTS.image : getSavedSettings().image;
+    const aspectRatio = (source?.image_aspect_ratio as AspectRatio) || imageDefaults.aspectRatio;
+    const image: ImageSettings = {
+      aspectRatio,
+      resolution: (source?.image_resolution as ImageResolution) || imageDefaults.resolution,
+      outputFormat: (source?.image_output_format as ImageOutputFormat) || imageDefaults.outputFormat,
+      numImages: (source?.image_num_images as ImageCount) ?? imageDefaults.numImages,
+      taobaoMainImage: aspectRatio === '1:1' &&
+        (source?.image_taobao_main_image ?? (conversationId ? false : imageDefaults.taobaoMainImage ?? false)),
+    };
+    const video: VideoSettings = {
+      frames: (source?.video_frames as VideoFrames) ?? DEFAULTS.video.frames,
+      aspectRatio: (source?.video_aspect_ratio as VideoAspectRatio) || DEFAULTS.video.aspectRatio,
+      removeWatermark: source?.video_remove_watermark ?? DEFAULTS.video.removeWatermark,
+    };
+    const chat: ChatSettings = {
+      smartSubMode: (source?.smart_sub_mode as SmartSubMode) || DEFAULTS.chat.smartSubMode,
+      thinkingEffort: (source?.thinking_effort as ChatSettings['thinkingEffort']) || DEFAULTS.chat.thinkingEffort,
+      deepThinkMode: source?.deep_think_mode ?? DEFAULTS.chat.deepThinkMode,
+      permissionMode: DEFAULTS.chat.permissionMode,
+      temperature: source?.temperature ?? DEFAULTS.chat.temperature,
+      topP: source?.top_p ?? DEFAULTS.chat.topP,
+      topK: source?.top_k ?? DEFAULTS.chat.topK,
+      maxOutputTokens: source?.max_output_tokens ?? DEFAULTS.chat.maxOutputTokens,
+    };
+    settingsRef.current = { image, video, chat };
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Restore persisted settings when the conversation changes.
+    setImageSettings(image);
+    setVideoSettings(video);
+    setChatSettings(chat);
+    editedConversationRef.current = pending ? identity : null;
+    if (pending && conversationId) retryPendingConversationSettings(userId, conversationId);
+  }, [conversationId, conversationChatSettings, userId]);
+
   const autoSaveToConversation = useCallback((
     img: ImageSettings, vid: VideoSettings, chat: ChatSettings,
   ) => {
-    if (!conversationId) return;
-    clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      const payload: ConversationChatSettings = {
-        smart_sub_mode: chat.smartSubMode,
-        deep_think_mode: chat.deepThinkMode,
-        thinking_effort: chat.thinkingEffort,
-        temperature: chat.temperature,
-        top_p: chat.topP,
-        top_k: chat.topK,
-        max_output_tokens: chat.maxOutputTokens,
-        image_aspect_ratio: img.aspectRatio,
-        image_resolution: img.resolution,
-        image_output_format: img.outputFormat,
-        image_num_images: img.numImages,
-        video_frames: vid.frames,
-        video_aspect_ratio: vid.aspectRatio,
-        video_remove_watermark: vid.removeWatermark,
-      };
-      updateConversation(conversationId, { chat_settings: payload })
-        .catch((e) => logger.error('settings', '保存对话设置失败', e));
-    }, 500);
-  }, [conversationId]);
+    editedConversationRef.current = `${userId}:${conversationId ?? 'new'}`;
+    const payload: ConversationChatSettings = {
+      smart_sub_mode: chat.smartSubMode,
+      deep_think_mode: chat.deepThinkMode,
+      thinking_effort: chat.thinkingEffort,
+      temperature: chat.temperature,
+      top_p: chat.topP,
+      top_k: chat.topK,
+      max_output_tokens: chat.maxOutputTokens,
+      image_aspect_ratio: img.aspectRatio,
+      image_resolution: img.resolution,
+      image_output_format: img.outputFormat,
+      image_num_images: img.numImages,
+      image_taobao_main_image: img.taobaoMainImage,
+      video_frames: vid.frames,
+      video_aspect_ratio: vid.aspectRatio,
+      video_remove_watermark: vid.removeWatermark,
+    };
+    saveConversationSettings(userId, conversationId ?? null, payload);
+  }, [conversationId, userId]);
 
-  // 设置单个图像参数
   const setImageSetting = useCallback(
     <K extends keyof ImageSettings>(key: K, value: ImageSettings[K]) => {
-      setImageSettings((prev) => {
-        const next = { ...prev, [key]: value };
-        autoSaveToConversation(next, videoSettings, chatSettings);
-        return next;
-      });
-    },
-    [autoSaveToConversation, videoSettings, chatSettings]
+      const next = { ...settingsRef.current.image, [key]: value };
+      if (next.aspectRatio !== '1:1') next.taobaoMainImage = false;
+      settingsRef.current.image = next;
+      setImageSettings(next);
+      autoSaveToConversation(next, settingsRef.current.video, settingsRef.current.chat);
+    }, [autoSaveToConversation],
   );
 
-  // 设置单个视频参数
   const setVideoSetting = useCallback(
     <K extends keyof VideoSettings>(key: K, value: VideoSettings[K]) => {
-      setVideoSettings((prev) => {
-        const next = { ...prev, [key]: value };
-        autoSaveToConversation(imageSettings, next, chatSettings);
-        return next;
-      });
-    },
-    [autoSaveToConversation, imageSettings, chatSettings]
+      const next = { ...settingsRef.current.video, [key]: value };
+      settingsRef.current.video = next;
+      setVideoSettings(next);
+      autoSaveToConversation(settingsRef.current.image, next, settingsRef.current.chat);
+    }, [autoSaveToConversation],
   );
 
-  // 设置单个聊天参数
   const setChatSetting = useCallback(
     <K extends keyof ChatSettings>(key: K, value: ChatSettings[K]) => {
-      setChatSettings((prev) => {
-        const next = { ...prev, [key]: value };
-        autoSaveToConversation(imageSettings, videoSettings, next);
-        return next;
-      });
-    },
-    [autoSaveToConversation, imageSettings, videoSettings]
+      const next = { ...settingsRef.current.chat, [key]: value };
+      settingsRef.current.chat = next;
+      setChatSettings(next);
+      autoSaveToConversation(settingsRef.current.image, settingsRef.current.video, next);
+    }, [autoSaveToConversation],
   );
 
   // 保存当前设置为默认值
@@ -219,6 +232,7 @@ export function useSettingsManager(
         resolution: imageSettings.resolution,
         outputFormat: imageSettings.outputFormat,
         numImages: imageSettings.numImages,
+        taobaoMainImage: imageSettings.taobaoMainImage,
       },
       video: {
         frames: videoSettings.frames,
@@ -239,28 +253,22 @@ export function useSettingsManager(
   // 重置为默认设置
   const resetSettings = useCallback(() => {
     const defaults = clearSettings();
-    setImageSettings({
-      aspectRatio: defaults.image.aspectRatio,
-      resolution: defaults.image.resolution,
-      outputFormat: defaults.image.outputFormat,
-      numImages: defaults.image.numImages,
-    });
-    setVideoSettings({
-      frames: defaults.video.frames,
-      aspectRatio: defaults.video.aspectRatio,
-      removeWatermark: defaults.video.removeWatermark,
-    });
-    setChatSettings({
-      smartSubMode: 'chat',
+    const image: ImageSettings = { ...defaults.image, taobaoMainImage: false };
+    const video: VideoSettings = { ...defaults.video };
+    const chat: ChatSettings = {
+      ...DEFAULTS.chat,
       thinkingEffort: defaults.chat.thinkingEffort,
-      deepThinkMode: DEFAULTS.chat.deepThinkMode,
-      permissionMode: 'auto',
       temperature: defaults.chat.temperature,
       topP: defaults.chat.topP,
       topK: defaults.chat.topK,
       maxOutputTokens: defaults.chat.maxOutputTokens,
-    });
-  }, []);
+    };
+    settingsRef.current = { image, video, chat };
+    setImageSettings(image);
+    setVideoSettings(video);
+    setChatSettings(chat);
+    autoSaveToConversation(image, video, chat);
+  }, [autoSaveToConversation]);
 
   return {
     imageSettings,

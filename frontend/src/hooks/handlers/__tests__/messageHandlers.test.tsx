@@ -104,3 +104,19 @@ describe('message handlers error propagation', () => {
     expect(onMessageSent).not.toHaveBeenCalled();
   });
 });
+
+describe('淘宝主图 request snapshot', () => {
+  it.each([['1:1', true, true], ['1:1', false, false], ['auto', true, false], ['16:9', true, false]] as const)(
+    'sends option for %s with selected=%s', async (aspectRatio, taobaoMainImage, enabled) => {
+      sendMessageMock.mockResolvedValue('task-1');
+      const { result } = renderHook(() => useMediaMessageHandler({
+        type: 'image', selectedModel, aspectRatio, taobaoMainImage,
+        onMessagePending: vi.fn(), onMessageSent: vi.fn(),
+      }));
+      await result.current.handleMediaGeneration('conv-1', '基于这张图生成', ['https://cdn.example.com/reference.png']);
+      const params = sendMessageMock.mock.calls.at(-1)![0].params;
+      if (enabled) expect(params.taobao_main_image).toBe(true);
+      else expect(params).not.toHaveProperty('taobao_main_image');
+    },
+  );
+});

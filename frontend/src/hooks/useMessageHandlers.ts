@@ -23,6 +23,7 @@ interface UseMessageHandlersParams {
   aspectRatio: AspectRatio;
   resolution: ImageResolution;
   outputFormat: ImageOutputFormat;
+  taobaoMainImage?: boolean;
   numImages: ImageCount;
   videoFrames: VideoFrames;
   videoAspectRatio: VideoAspectRatio;
@@ -45,6 +46,7 @@ export function useMessageHandlers(params: UseMessageHandlersParams) {
     aspectRatio,
     resolution,
     outputFormat,
+    taobaoMainImage,
     numImages,
     videoFrames,
     videoAspectRatio,
@@ -82,6 +84,7 @@ export function useMessageHandlers(params: UseMessageHandlersParams) {
     aspectRatio,
     resolution,
     outputFormat,
+    taobaoMainImage,
     numImages,
     onMessagePending,
     onMessageSent,

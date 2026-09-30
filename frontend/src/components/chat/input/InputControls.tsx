@@ -31,6 +31,7 @@ export default function InputControls(props: InputControlsProps) {
     selectedModel, availableModels, modelSelectorLocked, modelSelectorLockTooltip, onSelectModel,
     estimatedCredits, creditsHighlight,
     aspectRatio, onAspectRatioChange, resolution, onResolutionChange, outputFormat, onOutputFormatChange,
+    taobaoMainImage, onTaobaoMainImageChange,
     numImages, onNumImagesChange, userCredits,
     videoFrames, onVideoFramesChange, videoAspectRatio, onVideoAspectRatioChange,
     removeWatermark, onRemoveWatermarkChange, thinkingEffort, onThinkingEffortChange,
@@ -271,6 +272,8 @@ export default function InputControls(props: InputControlsProps) {
                   onResolutionChange={onResolutionChange}
                   outputFormat={outputFormat}
                   onOutputFormatChange={onOutputFormatChange}
+                  taobaoMainImage={taobaoMainImage}
+                  onTaobaoMainImageChange={onTaobaoMainImageChange}
                   numImages={numImages}
                   onNumImagesChange={onNumImagesChange}
                   userCredits={userCredits}

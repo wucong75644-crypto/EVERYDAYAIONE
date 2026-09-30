@@ -249,6 +249,7 @@ export interface MessageError {
 export interface GenerationParams {
   type?: 'chat' | 'image' | 'image_ecom' | 'video' | 'audio';
   model?: string;
+  taobao_main_image?: boolean;
   /** 思考过程内容（持久化在 generation_params 中） */
   thinking_content?: string;
   [key: string]: unknown;

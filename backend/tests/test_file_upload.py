@@ -460,3 +460,108 @@ class TestBuildWorkspaceThumbnailUrl:
         url = "https://kie-cdn.example.com/generated/a.png"
 
         assert build_workspace_thumbnail_url(url) is None
+
+
+class TestTaobaoMainImageOutput:
+    @staticmethod
+    def image_bytes(size=(1024, 1024), image_format='PNG', mode='RGB'):
+        from io import BytesIO
+        from PIL import Image
+        image = Image.new(mode, size, (20, 90, 160, 80) if mode == 'RGBA' else (20, 90, 160))
+        stream = BytesIO()
+        image.save(stream, format=image_format)
+        return stream.getvalue()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('size', [(1024, 1024), (2048, 2048), (4096, 4096), (1440, 1440), (640, 320)])
+    async def test_resize_before_upload_without_source_size_branch(self, ws_root, size):
+        from PIL import Image
+        settings, oss = _patch_settings_and_oss(ws_root)
+        content = self.image_bytes(size)
+        downloader = _make_downloader_mock(content)
+        published = []
+
+        async def upload(file_path, rel_path):
+            with Image.open(file_path) as image:
+                assert image.size == (1440, 1440)
+            published.append(file_path.read_bytes())
+            return 'https://cdn.example.com/converted.png'
+
+        oss.sync_workspace_file.side_effect = upload
+        with patch('core.config.get_settings', return_value=settings), \
+             patch('services.http_downloader.HttpDownloader', return_value=downloader), \
+             patch('services.oss_service.get_oss_service', return_value=oss):
+            payloads = await persist_media_urls_to_workspace(
+                ['https://provider.example/a.png'], 'u1', taobao_main_image=True,
+                extra_fields={'width': size[0], 'height': size[1], 'type': 'image'},
+                meta={'width': size[0], 'height': size[1]},
+            )
+        payload = payloads[0]
+        assert payload['width'] == payload['height'] == 1440
+        assert payload['size'] == len(published[0])
+        assert payload['original_url'] == payload['download_url'] == payload['url']
+        import json
+        sidecar = json.loads(next(ws_root.rglob('.*.meta.json')).read_text())
+        assert sidecar['width'] == sidecar['height'] == 1440
+        assert sidecar['size'] == payload['size']
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('enabled,failures', [(False, 0), (True, 1), (True, 2)])
+    async def test_skip_retry_and_original_fallback(self, ws_root, enabled, failures):
+        from services.image_output import resize_taobao_main_image
+        settings, oss = _patch_settings_and_oss(ws_root)
+        original = self.image_bytes()
+        downloader = _make_downloader_mock(original)
+        calls = []
+
+        def resize(content):
+            assert content == original  # Every retry uses original bytes.
+            calls.append(content)
+            if len(calls) <= failures:
+                raise ValueError('conversion failed')
+            return resize_taobao_main_image(content)
+
+        with patch('core.config.get_settings', return_value=settings), \
+             patch('services.http_downloader.HttpDownloader', return_value=downloader), \
+             patch('services.oss_service.get_oss_service', return_value=oss), \
+             patch('services.image_output.resize_taobao_main_image', side_effect=resize):
+            payloads = await persist_media_urls_to_workspace(
+                ['https://provider.example/a.png'], 'u1', taobao_main_image=enabled,
+                extra_fields={'width': 1024, 'height': 1024},
+            )
+        saved = oss.sync_workspace_file.call_args.args[0].read_bytes()
+        assert len(calls) == (2 if enabled else 0)
+        if not enabled or failures == 2:
+            assert saved == original
+            assert payloads[0]['width'] == payloads[0]['height'] == 1024
+        else:
+            assert saved != original
+            assert payloads[0]['width'] == payloads[0]['height'] == 1440
+        downloader.download.assert_awaited_once()  # Conversion retry does not redownload.
+
+    @pytest.mark.parametrize('image_format,mode', [('PNG', 'RGBA'), ('JPEG', 'RGB')])
+    def test_format_and_transparency_preserved(self, image_format, mode):
+        from io import BytesIO
+        from PIL import Image
+        from services.image_output import resize_taobao_main_image
+        result, mime = resize_taobao_main_image(self.image_bytes(image_format=image_format, mode=mode))
+        with Image.open(BytesIO(result)) as image:
+            assert image.size == (1440, 1440)
+            assert image.format == image_format
+            assert image.mode == mode
+            if mode == 'RGBA':
+                assert image.getextrema()[3] == (80, 80)
+        assert mime == ('image/png' if image_format == 'PNG' else 'image/jpeg')
+
+    @pytest.mark.asyncio
+    async def test_video_is_unchanged_even_if_option_is_passed(self, ws_root):
+        settings, oss = _patch_settings_and_oss(ws_root)
+        original = b'original video bytes'
+        downloader = _make_downloader_mock(original, 'video/mp4')
+        with patch('core.config.get_settings', return_value=settings), \
+             patch('services.http_downloader.HttpDownloader', return_value=downloader), \
+             patch('services.oss_service.get_oss_service', return_value=oss), \
+             patch('services.image_output.resize_taobao_main_image') as resize:
+            await download_url_to_workspace('https://provider.example/a.mp4', 'u1', media_type='video', taobao_main_image=True)
+        resize.assert_not_called()
+        assert oss.sync_workspace_file.call_args.args[0].read_bytes() == original
