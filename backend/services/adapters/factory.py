@@ -435,6 +435,18 @@ IMAGE_MODEL_REGISTRY: Dict[str, Dict] = {
         "display_name": "Nano Banana Pro (4K)",
         "credits_per_image": {"1K": 18, "2K": 18, "4K": 24},
     },
+    "gpt-image-2-5-flare-text-to-image": {
+        "provider": ModelProvider.KIE,
+        "provider_model": "gpt-image-2-5-flare-text-to-image",
+        "display_name": "GPT Image 2.5 Flare",
+        "credits_per_image": {"1K": 6, "2K": 10, "4K": 16},
+    },
+    "gpt-image-2-5-flare-image-to-image": {
+        "provider": ModelProvider.KIE,
+        "provider_model": "gpt-image-2-5-flare-image-to-image",
+        "display_name": "GPT Image 2.5 Flare (图生图)",
+        "credits_per_image": {"1K": 6, "2K": 10, "4K": 16},
+    },
     "gpt-image-2-text-to-image": {
         "provider": ModelProvider.KIE,
         "provider_model": "gpt-image-2-text-to-image",

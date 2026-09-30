@@ -194,6 +194,79 @@ KIE_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "priority": 32,
     },
 
+    "gpt-image-2-5-flare-text-to-image": {
+        "display_name": "GPT Image 2.5 Flare",
+        "description": "默认文生图模型，支持高质量生成和精细编辑",
+        "category": KieModelCategory.IMAGE,
+        "api_pattern": KieAPIPattern.ASYNC_TASK,
+        "provider": "kie",
+        "model_id": "gpt-image-2-5-flare-text-to-image",
+        "api_endpoint": "https://api.kie.ai/api/v1/jobs/createTask",
+
+        # 能力配置
+        "max_prompt_length": 20000,
+        "requires_image_input": False,
+        "supported_sizes": ["1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "21:9", "auto"],
+        "supported_formats": ["png"],
+        "supports_resolution": True,
+        "supported_resolutions": ["1K", "2K", "4K"],
+
+        # KIE 成本 (积分)
+        "kie_cost_per_image_by_resolution": {
+            "1K": 6,
+            "2K": 10,
+            "4K": 16,
+        },
+
+        # 用户定价
+        "user_credits_per_image_by_resolution": {
+            "1K": 6,
+            "2K": 10,
+            "4K": 16,
+        },
+
+        # 状态
+        "is_active": True,
+        "priority": 35,
+    },
+
+    "gpt-image-2-5-flare-image-to-image": {
+        "display_name": "GPT Image 2.5 Flare (图生图)",
+        "description": "默认图生图模型，保留参考图主体并精细编辑",
+        "category": KieModelCategory.IMAGE,
+        "api_pattern": KieAPIPattern.ASYNC_TASK,
+        "provider": "kie",
+        "model_id": "gpt-image-2-5-flare-image-to-image",
+        "api_endpoint": "https://api.kie.ai/api/v1/jobs/createTask",
+
+        # 能力配置
+        "max_prompt_length": 20000,
+        "requires_image_input": True,
+        "max_images": 16,
+        "supported_sizes": ["1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "21:9", "auto"],
+        "supported_formats": ["png"],
+        "supports_resolution": True,
+        "supported_resolutions": ["1K", "2K", "4K"],
+
+        # KIE 成本 (积分)
+        "kie_cost_per_image_by_resolution": {
+            "1K": 6,
+            "2K": 10,
+            "4K": 16,
+        },
+
+        # 用户定价
+        "user_credits_per_image_by_resolution": {
+            "1K": 6,
+            "2K": 10,
+            "4K": 16,
+        },
+
+        # 状态
+        "is_active": True,
+        "priority": 36,
+    },
+
     "gpt-image-2-text-to-image": {
         "display_name": "GPT Image 2",
         "description": "OpenAI 最强文生图模型，真实感/文字渲染/复杂场景极强",

@@ -208,7 +208,7 @@
     "models": [
       {
         "id": "google/nano-banana",
-        "description": "默认文生图模型，速度快费用低(5积分)。用户没有特殊要求时优先选择此模型",
+        "description": "低成本文生图模型，速度快(5积分)。用户明确要求低成本时选择",
         "keywords": [],
         "priority": 1
       },
@@ -219,14 +219,14 @@
         "priority": 2
       },
       {
-        "id": "gpt-image-2-text-to-image",
-        "description": "GPT Image 2，OpenAI最强图片生成，真实感/文字渲染/复杂场景极强(6积分)。用户要求GPT画图、最高质量、逼真照片时选择",
+        "id": "gpt-image-2-5-flare-text-to-image",
+        "description": "GPT Image 2.5 Flare，默认文生图模型，真实感/文字渲染/复杂场景表现出色(6积分)。用户没有特殊要求或要求GPT画图时选择",
         "keywords": ["gpt", "openai", "gpt image"],
         "priority": 3
       },
       {
-        "id": "gpt-image-2-image-to-image",
-        "description": "GPT Image 2图生图，以参考图为基础生成新图片(6积分)。用户上传了图片并要求修改/优化/重新生成时选择",
+        "id": "gpt-image-2-5-flare-image-to-image",
+        "description": "GPT Image 2.5 Flare图生图，以参考图为基础生成新图片(6积分)。用户上传了图片并要求修改/优化/重新生成时选择",
         "keywords": ["gpt", "openai", "gpt image"],
         "priority": 4,
         "requires_image": true
@@ -237,9 +237,22 @@
         "keywords": [],
         "priority": 5,
         "requires_image": true
+      },
+      {
+        "id": "gpt-image-2-text-to-image",
+        "description": "GPT Image 2 旧版文生图(6积分)，仅用户明确要求 2.0 时选择",
+        "keywords": ["gpt image 2.0"],
+        "priority": 6
+      },
+      {
+        "id": "gpt-image-2-image-to-image",
+        "description": "GPT Image 2 旧版图生图(6积分)，仅用户明确要求 2.0 且有参考图时选择",
+        "keywords": [],
+        "priority": 7,
+        "requires_image": true
       }
     ],
-    "default": "gpt-image-2-text-to-image"
+    "default": "gpt-image-2-5-flare-text-to-image"
   },
   "video": {
     "models": [
