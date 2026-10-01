@@ -187,8 +187,8 @@ async def test_incomplete_response_keeps_deliverable_evidence_as_partial():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("status_code", "expected"), [
-    (401, "方舟凭证无效"),
-    (403, "豆包搜索服务尚未开通"),
+    (401, "API Key 鉴权失败"),
+    (403, "搜索服务开通状态及账号权限"),
     (429, "额度不足"),
     (503, "暂时不可用"),
 ])
@@ -219,6 +219,36 @@ async def test_provider_404_exposes_only_safe_actionable_error_code(code, expect
             await provider.search("query", timeout=9.0)
     assert expected in str(caught.value)
     assert "private provider details" not in str(caught.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("status_code", "code", "expected", "not_expected"), [
+    (401, "AuthenticationError", "WEB_SEARCH_ARK_API_KEY", "开通管理"),
+    (403, "AccessDenied", "开通管理 → 应用组件库 → 豆包搜索", "凭证无效"),
+    (403, "NewPermissionCode", "账号权限", "凭证无效"),
+    (403, "unsafe code", "HTTP 403", "unsafe code"),
+])
+async def test_authentication_and_search_activation_failures_are_distinguished(
+    status_code, code, expected, not_expected,
+):
+    # The live model-only request succeeds, while web_search returns this 403.
+    # Provider messages may contain private details and must never be copied.
+    client = _http_client(_response({"error": {
+        "code": code,
+        "message": "Access denied for web search. private-token-do-not-expose",
+    }}, status_code))
+    provider = DoubaoSearchProvider(api_key="secret", base_url="https://ark.example/api/v3", model="fixture")
+    with patch("services.agent.web_search.doubao_provider.httpx.AsyncClient", return_value=client):
+        with pytest.raises(SearchProviderError) as caught:
+            await provider.search("query", timeout=9.0)
+    message = str(caught.value)
+    assert expected in message
+    assert not_expected not in message
+    assert "private-token-do-not-expose" not in message
+    assert f"HTTP {status_code}" in message
+    if code != "unsafe code":
+        assert code in message
+    assert caught.value.retryable is False
 
 
 @pytest.mark.asyncio

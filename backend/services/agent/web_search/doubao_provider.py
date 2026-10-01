@@ -171,6 +171,14 @@ def _provider_error_code(response: httpx.Response) -> str | None:
 
 def _http_error_message(response: httpx.Response) -> str:
     code = _provider_error_code(response)
+    detail = f"HTTP {response.status_code}" + (f"，方舟错误码：{code}" if code else "")
+    if response.status_code == 401:
+        return f"方舟 API Key 鉴权失败，请核对 WEB_SEARCH_ARK_API_KEY（{detail}）"
+    if response.status_code == 403:
+        return (
+            "方舟拒绝联网搜索访问，请在控制台的“开通管理 → 应用组件库 → 豆包搜索”"
+            f"核对搜索服务开通状态及账号权限（{detail}）"
+        )
     if response.status_code == 404:
         known_errors = {
             "PathNotFound": "方舟 Responses API 路径不存在，请核对 API 地址与版本",
@@ -228,8 +236,6 @@ class DoubaoSearchProvider:
         except httpx.RequestError as error:
             raise SearchProviderError("豆包搜索服务暂时无法连接", retryable=True) from error
 
-        if response.status_code in {401, 403}:
-            raise SearchProviderError("方舟凭证无效，或豆包搜索服务尚未开通")
         if response.status_code == 429:
             raise SearchProviderError("豆包搜索请求过于频繁或额度不足", retryable=True)
         if response.status_code >= 500:
