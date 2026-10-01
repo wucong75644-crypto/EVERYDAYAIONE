@@ -76,13 +76,21 @@ bash /tmp/setup-env.sh
 生产端用路径与 SHA-256 账本去重：失败发布后再次部署同一任务会自动补跑遗漏迁移；已应用文件不会重复执行，
 同一路径内容被改写会停止发布。迁移失败时不会重启服务；应用版本回滚也不会自动回滚数据库迁移。
 
-迁移执行账号由本地、忽略提交的 `deploy/config.env` 中 `MIGRATION_EXECUTOR` 选择，
-默认 `application` 使用业务 `DATABASE_URL`。表已归独立 owner、业务账号无 DDL 权限时，
-当前自建 PostgreSQL 服务器使用 `MIGRATION_EXECUTOR=local-postgres`。
-该模式需要无交互 `sudo -u postgres` 和 `/var/run/postgresql` socket；先通过业务连接持有的
-随机 advisory lock 验证本机管理连接是同一个集群和数据库，失败时不会执行迁移。
-它仍使用受控发布锁、迁移文件锁、事务和 checksum 账本，不授予业务账号管理权限。
-远程托管数据库不适用此模式，不得跳过目标核验或授予应用 BYPASSRLS。
+发布在使候选失效和同步文件之前核对生产数据库名、OID 与独立保护文件
+`/var/www/everydayai/.production-database-identity.json`。该文件在核验真实生产数据后建立，
+不从待上传 `.env` 自动生成；缺失或不匹配时停止，保留当前候选。
+这用于防止当前服务器内旧快照库误接，不是跨服务器物理克隆的唯一身份认证。
+
+环境配置不再整份覆盖，必须显式列出本次更新的键：
+
+```bash
+./deploy/upload-env.sh --key WEB_SEARCH_PROVIDER --key WEB_SEARCH_ARK_API_KEY
+```
+
+该入口仅把选中的值合并到生产，保留 Skill、回调、NAS、代理和数据库等其他配置；
+普通补丁禁止修改 DATABASE_URL。备份与临时文件从创建时即为 0600，输出只有键名。
+配置修改使用同一发布锁并使旧验收候选失效，随后使用 release.sh 受控发布重启和复验。
+数据库目标变更须单独核对真实数据及受保护身份文件，不能通过环境同步绕过。
 
 ```bash
 ./release.sh --message "feat: upgrade conversation actor runtime" \

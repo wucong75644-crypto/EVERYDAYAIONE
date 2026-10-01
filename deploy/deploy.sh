@@ -81,8 +81,6 @@ FRONTEND_PORT=3000
 
 # 数据库迁移（可选）
 RUN_MIGRATIONS=true
-# application 或 local-postgres；后者核验同库后使用本机管理账号执行 DDL
-MIGRATION_EXECUTOR=application
 EOF
         log_error "请编辑 deploy/config.env 填写服务器信息后重新运行"
         exit 1
@@ -367,11 +365,9 @@ apply_migrations() {
         fi
     done
 
-    remote_exec bash -s -- "${MIGRATION_EXECUTOR:-application}" "${MIGRATION_FILES[@]}" << 'ENDSSH'
+    remote_exec bash -s -- "${MIGRATION_FILES[@]}" << 'ENDSSH'
         set -euo pipefail
         cd /var/www/everydayai
-        migration_executor=$1
-        shift
         ENV_FILE=/var/www/everydayai/backend/.env
         test -f "$ENV_FILE"
         set -a
@@ -381,27 +377,11 @@ apply_migrations() {
             echo "❌ .env 缺少 DATABASE_URL"
             exit 1
         }
-        case "$migration_executor" in
-            application)
-                migration_psql() { psql "$DATABASE_URL" "$@"; }
-                ;;
-            local-postgres)
-                target=$(/var/www/everydayai/backend/venv/bin/python \
-                    deploy/verify-migration-target.py)
-                read -r migration_db migration_port <<< "$target"
-                test -n "$migration_db" && [[ "$migration_port" =~ ^[0-9]+$ ]]
-                migration_psql() {
-                    sudo -n -u postgres psql -h /var/run/postgresql \
-                        -p "$migration_port" -d "$migration_db" "$@"
-                }
-                ;;
-            *) echo '❌ 不支持的 MIGRATION_EXECUTOR'; exit 1 ;;
-        esac
         # 发布进程间使用同一把文件锁；随后数据库事务内仍取得 advisory lock。
         # 这样“检查迁移账本 → 执行迁移 → 写入账本”不会被并发发布穿插。
         exec 9>/tmp/everydayai-schema-migrations.lock
         flock -x 9
-        migration_psql -X -v ON_ERROR_STOP=1 -c '
+        psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -c '
             CREATE TABLE IF NOT EXISTS public.deployment_schema_migrations (
                 migration_path TEXT PRIMARY KEY,
                 checksum TEXT NOT NULL,
@@ -415,7 +395,7 @@ apply_migrations() {
                 exit 1
             }
             checksum=$(sha256sum "$migration_path" | awk '{print $1}')
-            recorded=$(migration_psql -X -At -v ON_ERROR_STOP=1 \
+            recorded=$(psql "$DATABASE_URL" -X -At -v ON_ERROR_STOP=1 \
                 -c "SELECT checksum FROM public.deployment_schema_migrations WHERE migration_path = '$migration_file';")
             if [ -n "$recorded" ]; then
                 [ "$recorded" = "$checksum" ] || {
@@ -426,7 +406,7 @@ apply_migrations() {
                 continue
             fi
             echo "▶ 应用迁移: $migration_file"
-            migration_psql -X -v ON_ERROR_STOP=1 \
+            psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 \
                 -c "BEGIN; SELECT pg_advisory_xact_lock(hashtextextended('everydayai:migrations', 0));" \
                 -f "$migration_path" \
                 -c "INSERT INTO public.deployment_schema_migrations(migration_path, checksum) VALUES ('$migration_file', '$checksum'); COMMIT;"
@@ -677,6 +657,10 @@ EOF
         validate_release_python
     fi
     test_ssh_connection
+
+    # Compare with independently verified production identity before any sync.
+    remote_exec /var/www/everydayai/backend/venv/bin/python - \
+        < deploy/verify-production-database.py
 
     # 首次部署模式
     if [ "$SETUP_MODE" = true ]; then

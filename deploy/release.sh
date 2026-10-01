@@ -517,6 +517,9 @@ if [[ "$frontend_only" != true ]]; then
         for task_file in "${task_files[@]}"; do
             case "$task_file" in
                 backend/migrations/[0-9][0-9][0-9]_*.sql)
+                    # A reverted, never-merged task migration is a deletion,
+                    # not a request to apply a file absent from this candidate.
+                    [[ -f "$task_file" ]] || continue
                     deploy_args+=(--migration-file "$task_file")
                     ;;
             esac
@@ -541,6 +544,15 @@ executor_context=release.sh-legacy-executor
 if grep -q '^# TASK_DEPLOY_PROTOCOL=2$' deploy/deploy.sh; then
     executor_context=release.sh
 fi
+# A wrong database must fail without destroying the currently tested candidate.
+# Prefer the exact candidate helper; retain the caller's guard for old rollback
+# targets that predate this check.
+database_guard=deploy/verify-production-database.py
+[[ -f "$database_guard" ]] || database_guard="$repo_root/deploy/verify-production-database.py"
+[[ -f "$database_guard" ]] || fail '缺少生产数据库核验入口'
+ssh -p "$SERVER_PORT" -o ConnectTimeout=10 -o BatchMode=yes \
+    "$SERVER_USER@$SERVER_HOST" /var/www/everydayai/backend/venv/bin/python - \
+    < "$database_guard" || fail '生产数据库身份核验失败，保留原生产候选，未启动部署'
 release_remote_state invalidate \
     || fail "无法使旧生产候选失效，未启动部署"
 release_executor_state=in_flight
