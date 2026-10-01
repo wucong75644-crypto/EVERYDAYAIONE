@@ -21,10 +21,11 @@ BASELINE = json.loads((Path(__file__).parent / 'fixtures/tool_catalog_07_baselin
 FILE_SEARCH_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/file_search_protocol_08_schema.json').read_text())
 TASK_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/scheduled_task_structured_schema.json').read_text())
 SMART_IMAGE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/smart_image_25_config_upgrade.json').read_text())
+WEB_SEARCH_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/web_search_protocol_01_schema.json').read_text())
 
 
 def original_schemas(names, view):
-    return [PRESENTATION_UPGRADE if name == 'code_execute' else FILE_SEARCH_UPGRADE if name == 'file_search' else TASK_UPGRADE['schema'] if name == 'manage_scheduled_task' else BASELINE['schema_views'].get(view, {}).get(name) or BASELINE['specs'][name]['schema']
+    return [WEB_SEARCH_UPGRADE if name == 'web_search' else PRESENTATION_UPGRADE if name == 'code_execute' else FILE_SEARCH_UPGRADE if name == 'file_search' else TASK_UPGRADE['schema'] if name == 'manage_scheduled_task' else BASELINE['schema_views'].get(view, {}).get(name) or BASELINE['specs'][name]['schema']
             for name in names]
 
 
@@ -63,6 +64,12 @@ def test_full_spec_contract_unchanged(catalog, name):
                 value = FILE_SEARCH_UPGRADE
             if name == 'code_execute' and key == 'schema':
                 value = PRESENTATION_UPGRADE
+            if name == 'web_search' and key == 'schema':
+                value = WEB_SEARCH_UPGRADE
+            if name == 'web_search' and key == 'cacheable':
+                # Search results are time-sensitive and provider calls may bill;
+                # a cache hit must not masquerade as a fresh search.
+                value = False
             assert actual[key] == value, (name, key)
 
 
@@ -98,7 +105,8 @@ def test_risk_concurrency_cache_and_partial_validator_helpers(catalog, name):
     expected = BASELINE['specs'][name]
     assert get_safety_level(name).value == expected['risk_level']
     assert is_concurrency_safe(name) == expected['parallelizable']
-    assert ToolResultCache.is_cacheable(name) == expected['cacheable']
+    expected_cacheable = False if name == 'web_search' else expected['cacheable']
+    assert ToolResultCache.is_cacheable(name) == expected_cacheable
     assert TOOL_SCHEMAS.get(name) == expected['legacy_validation_schema']
 
 

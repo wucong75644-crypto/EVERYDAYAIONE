@@ -839,43 +839,47 @@ class TestSearchHandlers:
 
 
 class TestWebSearchInline:
-    """_web_search 使用 Gemini Google Search Grounding 的行为测试"""
+    """_web_search exposes bounded answers, evidence and honest search status."""
 
     @pytest.mark.asyncio
     async def test_search_returns_result(self):
         """正常搜索返回 AgentResult"""
         exe = _make_executor()
-        mock_result = {
-            "content": "搜索结果内容",
-            "sources": [{"title": "来源", "url": "https://example.com"}],
-            "search_queries": ["今天天气"],
-        }
+        from services.agent.web_search.contracts import SearchResponse
 
         with patch(
-            "services.agent.web_search_engine.search_with_grounding",
+            "services.agent.web_search.service.search_web",
             new_callable=AsyncMock,
-            return_value=mock_result,
+            return_value=SearchResponse(
+                answer="搜索结果内容", search_queries=("今天天气",), provider="fixture",
+                search_requests=1, status="partial", status_reason="sources_unmapped",
+            ),
         ):
             result = await exe._web_search({"query": "今天天气"})
 
-        assert result.summary == "搜索结果内容"
-        assert result.status == "success"
-        assert result.metadata["sources"] == [{"title": "来源", "url": "https://example.com"}]
+        assert "搜索结果内容" in result.summary
+        assert "不能视为已由网页证实" in result.summary
+        assert result.status == "partial"
+        assert result.metadata["provider"] == "fixture"
 
     @pytest.mark.asyncio
     async def test_search_empty_result(self):
         """搜索无结果时返回友好提示"""
         exe = _make_executor()
 
+        from services.agent.web_search.contracts import SearchResponse
         with patch(
-            "services.agent.web_search_engine.search_with_grounding",
+            "services.agent.web_search.service.search_web",
             new_callable=AsyncMock,
-            return_value=None,
+            return_value=SearchResponse(
+                answer="", provider="fixture", search_requests=1,
+                status="empty", status_reason="no_results",
+            ),
         ):
             result = await exe._web_search({"query": "极冷门关键词"})
 
         assert "极冷门关键词" in result.summary
-        assert "未找到" in result.summary
+        assert "没有找到可用网页资料" in result.summary
         assert result.status == "empty"
 
     @pytest.mark.asyncio
@@ -895,15 +899,62 @@ class TestWebSearchInline:
         assert result.status == "error"
 
     @pytest.mark.asyncio
-    async def test_grounding_exception_returns_none(self):
-        """搜索引擎异常时返回 empty（引擎内部已 catch）"""
+    async def test_provider_failure_is_not_reported_as_no_results(self):
+        """An ambiguous provider miss is an error, never a false empty result."""
         exe = _make_executor()
+        from services.agent.web_search.contracts import SearchProviderError
 
         with patch(
-            "services.agent.web_search_engine.search_with_grounding",
+            "services.agent.web_search.service.search_web",
             new_callable=AsyncMock,
-            return_value=None,
+            side_effect=SearchProviderError("provider unavailable", retryable=True),
         ):
             result = await exe._web_search({"query": "测试"})
 
-        assert result.status == "empty"
+        assert result.status == "error"
+        assert "provider unavailable" in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_search_result_sources_reach_both_model_projections(self):
+        from services.agent.web_search.contracts import SearchResponse, SearchSource
+
+        exe = _make_executor()
+        response = SearchResponse(
+            answer="官方资料说明了当前规则。",
+            sources=(SearchSource(
+                title="官方公告", url="https://example.com/rule",
+                snippet="规则自 2026 年起生效。", citation_spans=((0, 12),),
+            ),),
+            provider="fixture", status="success", search_requests=1,
+        )
+        with patch("services.agent.web_search.service.search_web", new_callable=AsyncMock,
+                   return_value=response):
+            result = await exe._web_search({"query": "当前规则"})
+
+        chat_text = "\n".join(block["text"] for block in result.to_message_content())
+        tool_text = result.to_tool_content()
+        for projection in (chat_text, tool_text):
+            assert "〔S1〕" in projection
+            assert "https://example.com/rule" in projection
+            assert "规则自 2026 年起生效" in projection
+            assert "不可信资料" in projection
+
+    @pytest.mark.asyncio
+    async def test_query_and_parent_budget_are_forwarded(self):
+        from services.agent.web_search.contracts import SearchResponse
+
+        exe = _make_executor()
+        exe.execution_budget = MagicMock(remaining=12.0)
+        with patch("services.agent.web_search.service.search_web", new_callable=AsyncMock,
+                   return_value=SearchResponse(answer="result", status="partial")) as search:
+            await exe._web_search({"query": "完整搜索任务"})
+        search.assert_awaited_once_with("完整搜索任务", timeout=12.0)
+
+    @pytest.mark.asyncio
+    async def test_parent_budget_exhaustion_does_not_call_provider(self):
+        exe = _make_executor()
+        exe.execution_budget = MagicMock(remaining=0.0)
+        with patch("services.agent.web_search.service.search_web", new_callable=AsyncMock) as search:
+            result = await exe._web_search({"query": "预算已耗尽"})
+        assert result.status == "timeout"
+        search.assert_not_awaited()
