@@ -29,7 +29,8 @@ describe('Skill selection', () => {
     const p = props();
     render(wrap(p));
     fireEvent.click(screen.getByRole('button', { name: '选择 Skill' }));
-    fireEvent.click(await screen.findByRole('button', { name: /订单摘要 · v2/ }));
+    const choice = await screen.findByRole('button', { name: /选择 Skill：订单摘要/ });
+    await act(async () => { fireEvent.click(choice); });
     expect(getAvailableSkills).toHaveBeenCalledExactlyOnceWith('conv-1');
     expect(p.onSelect).toHaveBeenCalledWith(skill, 'conv-1');
     expect(p.ensureConversation).not.toHaveBeenCalled();
@@ -51,7 +52,7 @@ describe('Skill selection', () => {
     expect(await screen.findByText('暂时无法获取 Skill，请重试。')).toBeInTheDocument();
     expect(screen.queryByText(/private/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '重试' }));
-    expect(await screen.findByText('订单摘要 · v2')).toBeInTheDocument();
+    expect(await screen.findByText('订单摘要')).toBeInTheDocument();
   });
 
   it('creates a scoped conversation before discovery for the first message', async () => {
@@ -61,7 +62,8 @@ describe('Skill selection', () => {
     fireEvent.click(screen.getByRole('button', { name: '选择 Skill' }));
     await waitFor(() => expect(getAvailableSkills).toHaveBeenCalledWith('conv-new'));
     view.rerender(wrap({ ...p, conversationId: 'conv-new' }));
-    fireEvent.click(await screen.findByRole('button', { name: /订单摘要 · v2/ }));
+    const choice = await screen.findByRole('button', { name: /选择 Skill：订单摘要/ });
+    await act(async () => { fireEvent.click(choice); });
     expect(p.onSelect).toHaveBeenCalledWith(skill, 'conv-new');
   });
 

@@ -88,6 +88,15 @@ describe('useInputSubmission', () => {
     expect(options.buildChatSettingsPayload).not.toHaveBeenCalled();
   });
 
+  it('keeps mixed attachment order and selected Skill separate from message text', async () => {
+    const selection = { skill_id: 'reference-image-prompts', revision: 'v1' };
+    const mixed = snapshot([image('reference.png', 'https://example.test/reference.png'), file('report.pdf', 'https://example.test/report.pdf')]);
+    const options = makeOptions({ takeSelectedSkill: vi.fn(() => selection), hasImages: true, hasFiles: true, attachmentSnapshot: mixed });
+    const { result } = renderHook(() => useInputSubmission(options));
+    await act(() => result.current.handleSubmit());
+    expect(options.handleChatMessage).toHaveBeenCalledWith('保留这段输入', 'conversation-1', mixed.imageInputs, mixed.files, null, mixed.orderedAttachments, selection);
+  });
+
   it('does not consume a selection when submission is disabled or text is steering the active turn', async () => {
     const takeSelectedSkill = vi.fn();
     const options = makeOptions({ takeSelectedSkill, getSendButtonState: () => ({ disabled: true }) });

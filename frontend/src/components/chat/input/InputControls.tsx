@@ -7,7 +7,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { m } from 'framer-motion';
-import { Send, Pause, Settings, Upload, Brain, Paperclip, FolderOpen, ChevronUp, Zap, ShieldCheck, ListChecks, BookOpen, X } from 'lucide-react';
+import { Send, Pause, Settings, Upload, Brain, Paperclip, FolderOpen, ChevronUp, Zap, ShieldCheck, ListChecks } from 'lucide-react';
 import { Popover, PopoverClose } from '../../primitives/Popover';
 import { cn } from '../../../utils/cn';
 import { SOFT_SPRING } from '../../../utils/motion';
@@ -18,7 +18,9 @@ import UploadMenu from './UploadMenu';
 import AudioRecorder from './AudioRecorder';
 import FileMentionDropdown from './FileMentionDropdown';
 import SkillSelector from './SkillSelector';
-import { skillVersion } from '../../../services/skills';
+import SessionSkillBindings, { SkillBindingFeedback } from './SessionSkillBindings';
+import { useInlineSkillLayout } from './useInlineSkillLayout';
+import { useSkillBindings } from './useSkillBindings';
 import ChatAttachmentPreview from '../attachments/ChatAttachmentPreview';
 import type { InputControlsProps } from './InputControls.types';
 import { useDragDropUpload } from '../../../hooks/useDragDropUpload';
@@ -70,16 +72,14 @@ export default function InputControls(props: InputControlsProps) {
   }, [requiresImageUpload]);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const skillPrefixRef = useRef<HTMLDivElement>(null);
+  const revealSkillPrefix = useInlineSkillLayout(textareaRef, skillPrefixRef);
   const uploadMenuRef = useRef<HTMLDivElement>(null);
   const advancedMenuRef = useRef<HTMLDivElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
   const selectedSkill = props.skillSelector?.selected;
-  const clearSkill = () => {
-    const selector = props.skillSelector;
-    if (!selector?.conversationId || selector.disabled || isSubmitting) return;
-    selector.onSelect(null, selector.conversationId);
-    textareaRef.current?.focus();
-  };
+  const skillBindings = useSkillBindings(props.skillSelector?.conversationId ?? null, !!props.skillSelector);
+  const skillScopeBlocked = skillBindings.blocked;
 
   // 拖拽/粘贴统一走 onUnifiedFiles（图片走 useImageUpload，其他走 useFileUpload；
   // 与「上传文件」菜单完全对称）
@@ -88,19 +88,6 @@ export default function InputControls(props: InputControlsProps) {
     textareaRef,
     onFiles: (files) => onUnifiedFiles?.(files),
   });
-
-  // 自动调整文本框高度（最多5行，约120px）
-  useEffect(() => {
-    const textarea = textareaRef.current;
-    if (textarea) {
-      textarea.style.height = 'auto';
-      const lineHeight = 24; // 约等于 text-base 的行高
-      const maxLines = 5;
-      const maxHeight = lineHeight * maxLines;
-      const newHeight = Math.min(textarea.scrollHeight, maxHeight);
-      textarea.style.height = `${newHeight}px`;
-    }
-  }, [prompt, selectedSkill]);
 
   // 关闭上传菜单（带动画）
   const closeUploadMenu = () => {
@@ -141,7 +128,7 @@ export default function InputControls(props: InputControlsProps) {
   // 判断条件
   const supportsDeepThinking = selectedModel.capabilities.thinkingEffort === true;
   const hasContent = prompt.trim().length > 0 || attachments.length > 0;
-  const canSubmit = !sendButtonDisabled && (hasContent || audioBlob);
+  const canSubmit = !sendButtonDisabled && !skillScopeBlocked && (hasContent || audioBlob);
 
   // 发送/语音按钮互斥显示
   const showSendButton = hasContent || audioBlob;
@@ -199,28 +186,18 @@ export default function InputControls(props: InputControlsProps) {
         )}
 
         {/* 输入区域 */}
-        <div className="flex flex-wrap items-start gap-x-2">
-          {selectedSkill && (
-            <div
-              role="group"
-              aria-label="已选择的 Skill"
-              title={`${selectedSkill.name} · ${skillVersion(selectedSkill.revision)} · 仅本条消息`}
-              className="mt-1 flex max-w-full shrink-0 items-center gap-1.5 rounded-lg bg-accent-light px-2 py-1 text-sm text-accent sm:max-w-[60%]"
-            >
-              <BookOpen className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 break-words">{selectedSkill.name}</span>
-              <button
-                type="button"
-                onClick={clearSkill}
-                disabled={props.skillSelector?.disabled || isSubmitting}
-                aria-label={`取消 Skill：${selectedSkill.name}`}
-                title="取消 Skill"
-                className="shrink-0 rounded p-0.5 hover:bg-accent/10 focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40"
-              >
-                <X className="h-4 w-4" aria-hidden="true" />
-              </button>
-            </div>
-          )}
+        <div className="relative isolate flex overflow-hidden">
+          <div ref={skillPrefixRef} onFocusCapture={revealSkillPrefix}
+            className="pointer-events-none absolute left-0 top-2 z-10 w-fit max-w-[calc(100%-72px)]">
+            {props.skillSelector && <div className="pointer-events-auto">
+              <SessionSkillBindings key={props.skillSelector.conversationId ?? 'new'} inline
+                selected={selectedSkill ?? null} state={skillBindings} disabled={props.skillSelector.disabled || isSubmitting}
+                onSelect={(skill) => {
+                  if (props.skillSelector?.conversationId) props.skillSelector.onSelect(skill, props.skillSelector.conversationId);
+                }}
+                onComplete={() => textareaRef.current?.focus()} />
+            </div>}
+          </div>
           <textarea
             ref={textareaRef}
             name="chat-input"
@@ -229,13 +206,17 @@ export default function InputControls(props: InputControlsProps) {
               onPromptChange(e.target.value);
               onMentionInputChange?.(e.target.value, e.target.selectionStart ?? e.target.value.length);
             }}
-            onKeyDown={onKeyDown}
-            placeholder={selectedSkill ? '描述你的需求…' : hasQuotedImage ? '描述你想要的修改...' : requiresImageUpload ? '该模型需要先上传图片才能生成哦～' : smartSubMode === 'image-ecom' ? '描述你的产品和需求，如"221色拼豆收纳盒 淘宝5张主图"' : '发送消息...'}
-            className={cn('min-w-0 flex-1 resize-none border-none outline-none bg-transparent text-text-primary placeholder:text-text-disabled text-base leading-6 pt-2 pb-1 min-h-[44px] max-h-[120px] overflow-y-auto', selectedSkill && 'basis-40')}
+            onKeyDown={(event) => {
+              if (skillScopeBlocked && event.key === 'Enter' && !event.shiftKey) event.preventDefault();
+              else onKeyDown(event);
+            }}
+            placeholder={hasQuotedImage ? '描述你想要的修改...' : requiresImageUpload ? '该模型需要先上传图片才能生成哦～' : smartSubMode === 'image-ecom' ? '描述你的产品和需求，如"221色拼豆收纳盒 淘宝5张主图"' : '发送消息...'}
+            className="min-w-0 flex-1 resize-none border-none outline-none bg-transparent text-text-primary placeholder:text-text-disabled text-base leading-6 pt-2 pb-1 min-h-[44px] max-h-[120px] overflow-y-auto"
             rows={1}
             disabled={isSubmitting}
           />
         </div>
+        {props.skillSelector && <SkillBindingFeedback state={skillBindings} disabled={props.skillSelector.disabled || isSubmitting} />}
 
         {/* 底部工具栏 */}
         <div className="flex flex-wrap items-center justify-between gap-y-1 mt-1">
@@ -301,6 +282,7 @@ export default function InputControls(props: InputControlsProps) {
             </div>
 
             {props.skillSelector && <SkillSelector {...props.skillSelector} permissionMode={permissionMode}
+              disabled={props.skillSelector.disabled || isSubmitting || skillScopeBlocked} bindings={skillBindings.bindings}
               onSelectionComplete={() => textareaRef.current?.focus()} />}
 
             {/* 深度思考按钮（仅支持的模型显示） */}

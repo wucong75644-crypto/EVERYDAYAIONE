@@ -20,6 +20,7 @@ PRESENTATION_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/message_pre
 BASELINE = json.loads((Path(__file__).parent / 'fixtures/tool_catalog_07_baseline.json').read_text())
 FILE_SEARCH_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/file_search_protocol_08_schema.json').read_text())
 TASK_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/scheduled_task_structured_schema.json').read_text())
+SMART_IMAGE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/smart_image_25_config_upgrade.json').read_text())
 
 
 def original_schemas(names, view):
@@ -108,6 +109,13 @@ def test_old_imports_signatures_and_constant_values(module):
         assert str(inspect.signature(getattr(current, name))) == signature, (module, name)
     for name, digest in BASELINE['modules'][module]['constants'].items():
         value = plain(getattr(current, name))
+        if module == 'agent_tools' and name == 'SMART_CONFIG':
+            # 387af4a5 authorized the image-model upgrade after block 07.
+            # Check its exact contract, then restore only this category so the
+            # immutable baseline still guards every unrelated configuration.
+            assert value['image'] == SMART_IMAGE_UPGRADE['image']
+            value = deepcopy(value)
+            value['image'] = SMART_IMAGE_UPGRADE['legacy_image']
         if module == 'chat_tools' and name == 'TOOL_SYSTEM_PROMPT':
             # Authorized ST-26 changes only this obsolete scheduling guidance.
             # Restore the frozen old paragraph before checking every other byte.
