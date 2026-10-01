@@ -2,7 +2,7 @@
 电商图片提示词组装器（v2）
 
 三层拼接：角色+执行规则 + 平台规则（配置文件） + 输出格式+品类启发
-千问 VL 一步到位输出 gpt-image-2 可执行 prompt。
+千问 VL 一步到位输出 GPT Image 2.5 Flare 可执行 prompt。
 
 设计文档：docs/document/TECH_电商图片Agent_v2.md §4
 """
@@ -30,7 +30,7 @@ class PromptBuilder:
         """组装完整的 system prompt。
 
         三层拼接：
-          ① 角色 + gpt-image-2 执行规则（固定）
+          ① 角色 + GPT Image 2.5 Flare 执行规则（固定）
           ② 平台规则（从 platform_rules.py 动态读取）
           ③ 输出格式约束 + prompt 示例 + 品类启发（固定）
 
@@ -135,7 +135,7 @@ class PromptBuilder:
         注入到单张重试的 prompt 前确保风格一致。
 
         Args:
-            task: 单张图的 prompt（已经是 gpt-image-2 格式）
+            task: 单张图的 prompt（已经是 GPT Image 2.5 Flare 格式）
             style_directive: 会话级视觉策略（从 DB 读取）
 
         Returns:

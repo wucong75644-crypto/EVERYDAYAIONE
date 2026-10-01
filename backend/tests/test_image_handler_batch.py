@@ -593,3 +593,32 @@ class TestImageHandlerErrorHandling:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('ratio,batch_ratio,enabled', [('1:1', None, True), ('16:9', None, False), ('1:1', '3:4', False)])
+async def test_taobao_option_is_task_metadata_and_does_not_change_model_request(ratio, batch_ratio, enabled):
+    db = MockImageDB()
+    db.set_users([{'id': 'user_1', 'credits': 1000, 'status': 'active'}])
+    handler = ImageHandler(db)
+    adapter = MockImageAdapter()
+    params = {'model': 'nano-banana', 'aspect_ratio': ratio, 'taobao_main_image': True}
+    if batch_ratio:
+        params['_batch_prompts'] = [{'prompt': 'product photo', 'aspect_ratio': batch_ratio}]
+    with patch('services.adapters.factory.create_image_adapter', return_value=adapter), \
+         patch('config.kie_models.calculate_image_cost', return_value={'user_credits': 5}) as cost, \
+         patch.object(handler, '_build_callback_url', return_value='http://cb'):
+        await handler.start('msg_1', 'conv_1', 'user_1', [], params, TaskMetadata())
+    assert len(db._inserted_tasks) == adapter.call_count == 1
+    assert db._inserted_tasks[0]['request_params']['taobao_main_image'] is enabled
+    assert 'taobao_main_image' not in adapter.generate_calls[0]
+    assert cost.call_args.kwargs['image_count'] == 1
+    params['taobao_main_image'] = False
+    assert db._inserted_tasks[0]['request_params']['taobao_main_image'] is enabled
+
+
+@pytest.mark.parametrize('selected', [True, False])
+def test_legacy_image_completion_and_error_keep_taobao_option(selected):
+    handler = ImageHandler(MockImageDB())
+    extra = handler._extract_extra_gen_params({'request_params': {'aspect_ratio': '1:1', 'taobao_main_image': selected}})
+    assert extra['taobao_main_image'] is selected

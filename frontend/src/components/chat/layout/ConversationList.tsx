@@ -26,6 +26,8 @@ import DeleteConfirmModal from '../modals/DeleteConfirmModal';
 import { MODAL_CLOSE_ANIMATION_DURATION } from '../../../constants/animations';
 import { tabSync } from '../../../utils/tabSync';
 import { logger } from '../../../utils/logger';
+import { useAuthStore } from '../../../stores/useAuthStore';
+import { getPendingConversationSettings } from '../../../utils/conversationSettingsPersistence';
 
 interface ConversationListProps {
   currentConversationId: string | null;
@@ -145,8 +147,12 @@ export default function ConversationList({
       // 避免 URL 已有对话 ID 时重复触发 navigate，导致请求被 cancel
       if (isInitial && !hasAutoSelected.current && !currentConversationIdRef.current && mergedConversations.length > 0) {
         hasAutoSelected.current = true;
-        const mostRecent = mergedConversations[0];
-        onSelectConversationRef.current(mostRecent.id, mostRecent.title, mostRecent.model_id);
+        // A refresh must restore edited draft settings before leaving the new conversation.
+        const userId = useAuthStore.getState().user?.id ?? 'anonymous';
+        if (!getPendingConversationSettings(userId, 'new')) {
+          const mostRecent = mergedConversations[0];
+          onSelectConversationRef.current(mostRecent.id, mostRecent.title, mostRecent.model_id);
+        }
       }
     } catch (error) {
       logger.error('conversationList', '加载对话列表失败', error);

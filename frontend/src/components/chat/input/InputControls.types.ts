@@ -42,6 +42,8 @@ export interface InputControlsProps {
   onResolutionChange: (resolution: ImageResolution) => void;
   outputFormat: ImageOutputFormat;
   onOutputFormatChange: (format: ImageOutputFormat) => void;
+  taobaoMainImage?: boolean;
+  onTaobaoMainImageChange?: (enabled: boolean) => void;
   numImages: ImageCount;
   onNumImagesChange: (count: ImageCount) => void;
   userCredits?: number;

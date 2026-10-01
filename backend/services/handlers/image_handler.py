@@ -88,6 +88,8 @@ class ImageHandler(BaseHandler):
         model_id = settings["model_id"]
         aspect_ratio = settings["aspect_ratio"]
         output_format = params.get("output_format") or "png"
+        if params.get("taobao_main_image") is True:
+            params = {**params, "taobao_main_image": aspect_ratio == "1:1"}
 
         # regenerate_single：仅生成 1 张，使用指定 image_index
         is_regenerate_single = params.get("operation") == "regenerate_single"
@@ -155,7 +157,12 @@ class ImageHandler(BaseHandler):
                     user_id=user_id,
                     model_id=model_id,
                     per_image_credits=per_image_credits,
-                    params=params,
+                    params=({
+                        **params,
+                        "aspect_ratio": task_kwargs["size"],
+                        "resolution": task_kwargs.get("resolution"),
+                        "taobao_main_image": task_kwargs["size"] == "1:1",
+                    } if params.get("taobao_main_image") is True else params),
                     prompt=task_prompt,
                     metadata=metadata,
                 )

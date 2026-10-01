@@ -257,8 +257,8 @@ async def handle_regenerate_or_send_operation(
         if params:
             # 按类型提取前端渲染所需的参数
             _PARAM_KEYS = {
-                GenerationType.IMAGE: ("num_images", "aspect_ratio", "resolution", "output_format"),
-                GenerationType.IMAGE_ECOM: ("num_images", "aspect_ratio"),
+                GenerationType.IMAGE: ("num_images", "aspect_ratio", "resolution", "output_format", "taobao_main_image"),
+                GenerationType.IMAGE_ECOM: ("num_images", "aspect_ratio", "taobao_main_image"),
                 GenerationType.VIDEO: ("aspect_ratio", "n_frames", "remove_watermark"),
                 GenerationType.CHAT: (),  # chat 无渲染参数
             }

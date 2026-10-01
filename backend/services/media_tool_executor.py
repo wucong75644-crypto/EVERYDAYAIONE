@@ -38,7 +38,7 @@ class MediaToolMixin:
 
         # 根据有无参考图片选择模型：图生图 vs 文生图
         if image_urls:
-            model_id = "gpt-image-2-image-to-image"
+            model_id = "gpt-image-2-5-flare-image-to-image"
         else:
             from config.smart_model_config import DEFAULT_IMAGE_MODEL
             model_id = DEFAULT_IMAGE_MODEL

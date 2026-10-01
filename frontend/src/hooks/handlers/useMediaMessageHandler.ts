@@ -25,6 +25,7 @@ interface UseMediaMessageHandlerParams {
   // 图片参数
   aspectRatio?: string;
   outputFormat?: string;
+  taobaoMainImage?: boolean;
   resolution?: string;
   numImages?: number;
 
@@ -46,6 +47,7 @@ export function useMediaMessageHandler(params: UseMediaMessageHandlerParams) {
     aspectRatio,
     resolution,
     outputFormat,
+    taobaoMainImage,
     numImages,
     videoFrames,
     videoAspectRatio,
@@ -86,6 +88,9 @@ export function useMediaMessageHandler(params: UseMediaMessageHandlerParams) {
         mediaParams.resolution = resolution;
         mediaParams.output_format = outputFormat;
         mediaParams.num_images = numImages ?? 1;
+        if (taobaoMainImage && mediaParams.aspect_ratio === '1:1') {
+          mediaParams.taobao_main_image = true;
+        }
       } else if (type === 'video') {
         mediaParams.n_frames = videoFrames;
         mediaParams.aspect_ratio = videoAspectRatio;
@@ -96,7 +101,8 @@ export function useMediaMessageHandler(params: UseMediaMessageHandlerParams) {
       const genType = extraParams?.generation_type_override
         ? String(extraParams.generation_type_override)
         : type;
-      const { generation_type_override: _, ...cleanExtra } = extraParams || {};
+      const cleanExtra = { ...extraParams };
+      delete cleanExtra.generation_type_override;
 
       // 调用统一发送器
       await sendMessage({

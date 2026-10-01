@@ -31,6 +31,8 @@ interface AdvancedSettingsMenuProps {
   onResolutionChange: (res: ImageResolution) => void;
   outputFormat: ImageOutputFormat;
   onOutputFormatChange: (format: ImageOutputFormat) => void;
+  taobaoMainImage?: boolean;
+  onTaobaoMainImageChange?: (enabled: boolean) => void;
   numImages: ImageCount;
   onNumImagesChange: (count: ImageCount) => void;
   userCredits?: number;
@@ -83,6 +85,8 @@ export default function AdvancedSettingsMenu({
   onResolutionChange,
   outputFormat,
   onOutputFormatChange,
+  taobaoMainImage = false,
+  onTaobaoMainImageChange,
   numImages,
   onNumImagesChange,
   userCredits,
@@ -114,6 +118,10 @@ export default function AdvancedSettingsMenu({
   const effectiveModel: UnifiedModel = (modelType !== selectedModel.type)
     ? (IMAGE_MODELS.find((m) => m.supportsResolution) ?? selectedModel)
     : selectedModel;
+  const isGptImage25 = effectiveModel.id.startsWith('gpt-image-2-5-');
+  const aspectRatios = isGptImage25
+    ? ASPECT_RATIOS.filter((ratio) => ratio.value !== '4:5' && ratio.value !== '5:4')
+    : ASPECT_RATIOS;
   return (
     <div
       className={`absolute bottom-full left-0 mb-2 w-80 bg-surface-card rounded-lg shadow-lg border border-border-default p-3 z-10 ${
@@ -126,15 +134,15 @@ export default function AdvancedSettingsMenu({
           <div className="mb-3">
             <label className="block text-xs font-medium text-text-secondary mb-2">宽高比</label>
             <div className="flex flex-wrap gap-2">
-              {ASPECT_RATIOS.map((ratio) => (
+              {aspectRatios.map((ratio) => (
                 <button
                   key={ratio.value}
                   onClick={() => {
                     onAspectRatioChange(ratio.value);
-                    // KIE API 限制：auto 只能 1K，1:1 不能 4K
-                    if (ratio.value === 'auto' && resolution !== '1K') {
+                    // 2.5 已支持 auto/1:1 的 4K，旧模型继续沿用原限制。
+                    if (!isGptImage25 && ratio.value === 'auto' && resolution !== '1K') {
                       onResolutionChange('1K');
-                    } else if (ratio.value === '1:1' && resolution === '4K') {
+                    } else if (!isGptImage25 && ratio.value === '1:1' && resolution === '4K') {
                       onResolutionChange('2K');
                     }
                   }}
@@ -155,10 +163,9 @@ export default function AdvancedSettingsMenu({
               <div className="flex gap-2">
                 {RESOLUTIONS.map((res) => {
                   const resCredits = getPerImageCredits(effectiveModel, res.value);
-                  // KIE API 限制：auto 只能 1K，1:1 不能 4K
-                  const disabled =
+                  const disabled = !isGptImage25 && (
                     (aspectRatio === 'auto' && res.value !== '1K') ||
-                    (aspectRatio === '1:1' && res.value === '4K');
+                    (aspectRatio === '1:1' && res.value === '4K'));
                   const disabledTitle = aspectRatio === 'auto'
                     ? 'Auto 宽高比仅支持 1K 分辨率'
                     : '1:1 宽高比不支持 4K 分辨率';
@@ -201,6 +208,25 @@ export default function AdvancedSettingsMenu({
                 </button>
               ))}
             </div>
+          </div>
+          <div className="mb-3">
+            <label className="block text-xs font-medium text-text-secondary mb-2">输出尺寸</label>
+            <button
+              type="button"
+              aria-pressed={aspectRatio === '1:1' && taobaoMainImage}
+              disabled={aspectRatio !== '1:1'}
+              onClick={() => onTaobaoMainImageChange?.(!taobaoMainImage)}
+              title={aspectRatio !== '1:1' ? '仅支持 1:1 方形图片' : undefined}
+              className={`px-3 py-1 text-xs rounded-md transition-base ${
+                aspectRatio !== '1:1'
+                  ? 'bg-hover text-text-disabled cursor-not-allowed opacity-50'
+                  : taobaoMainImage
+                    ? 'bg-accent text-text-on-accent'
+                    : 'bg-hover text-text-secondary hover:bg-active'
+              }`}
+            >
+              淘宝主图 1440×1440
+            </button>
           </div>
           <div className="mb-3">
             <label className="block text-xs font-medium text-text-secondary mb-2">生成数量</label>

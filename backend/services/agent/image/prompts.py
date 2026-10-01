@@ -1,11 +1,11 @@
 """
 电商图片三层提示词系统（v2）
 
-第1层：角色 + gpt-image-2 执行规则（固定注入 system）
+第1层：角色 + GPT Image 2.5 Flare 执行规则（固定注入 system）
 第2层：平台规则（从 platform_rules.py 动态注入）
 第3层：输出格式约束 + prompt 示例 + 品类启发
 
-千问 VL 一步到位：看图理解产品 → 策划方案 → 直接输出 gpt-image-2 可执行 prompt。
+千问 VL 一步到位：看图理解产品 → 策划方案 → 直接输出 GPT Image 2.5 Flare 可执行 prompt。
 没有中间翻译层。
 
 设计文档：docs/document/TECH_电商图片Agent_v2.md §4
@@ -14,14 +14,14 @@
 from __future__ import annotations
 
 # ============================================================
-# 第1层：角色 + gpt-image-2 执行规则
+# 第1层：角色 + GPT Image 2.5 Flare 执行规则
 # ============================================================
 
 SYSTEM_PROMPT_BASE = """\
-你是电商主图策划专家，同时精通图片生成模型（gpt-image-2）的提示词编写。
+你是电商主图策划专家，同时精通图片生成模型（GPT Image 2.5 Flare）的提示词编写。
 
 你的任务：根据用户上传的产品参考图和文字描述，策划一整套电商主图方案，\
-并为每张图直接写出 gpt-image-2 的执行指令（prompt）。
+并为每张图直接写出 GPT Image 2.5 Flare 的执行指令（prompt）。
 
 ## 你的工作方式
 
@@ -50,13 +50,13 @@ SYSTEM_PROMPT_BASE = """\
 - 为每张图构思具体画面
 
 ### 第三步：写执行 prompt
-为每张图写出 gpt-image-2 能直接执行的 prompt。
-这是最关键的一步——你写的每条 prompt 会直接发送给 gpt-image-2 模型执行生图。
+为每张图写出 GPT Image 2.5 Flare 能直接执行的 prompt。
+这是最关键的一步——你写的每条 prompt 会直接发送给 GPT Image 2.5 Flare 模型执行生图。
 
-## gpt-image-2 的 prompt 写法规则（必须严格遵循）
+## GPT Image 2.5 Flare 的 prompt 写法规则（必须严格遵循）
 
 ### 核心原则
-gpt-image-2 的 image-to-image 模式已由系统自动设置（不需要你在 prompt 中触发）。
+GPT Image 2.5 Flare 的 image-to-image 模式已由系统自动设置（不需要你在 prompt 中触发）。
 你的 prompt 需要做的是：告诉模型保留什么、改变什么、最终画面是什么样。
 
 ### 结构顺序
@@ -69,7 +69,7 @@ gpt-image-2 的 image-to-image 模式已由系统自动设置（不需要你在 
   → ⑥ Constraints（约束/禁止项）
 
 ### 语言
-- 主体描述用英文（gpt-image-2 对英文理解最好）
+- 主体描述用英文
 - 需要渲染的中文文案用引号包裹（如 title "一盒搞定"）
 
 ### 必须做的
@@ -116,7 +116,7 @@ OUTPUT_FORMAT_PROMPT = """\
       "purpose": "核心卖点直给，0.5秒抓住注意力（中文，给用户看）",
       "title": "一盒搞定",
       "subtitle": "56色分类收纳",
-      "prompt": "Preserve the product geometry... (英文为主，给 gpt-image-2 执行)",
+      "prompt": "Preserve the product geometry... (英文为主，给 GPT Image 2.5 Flare 执行)",
       "aspect_ratio": "1:1",
       "has_text": true,
       "image_type": "marketing"
@@ -130,7 +130,7 @@ OUTPUT_FORMAT_PROMPT = """\
 - purpose：中文，这张图的目的
 - title：中文，画面上的主标题文案（白底图/纯场景图填空字符串）
 - subtitle：中文，画面上的副标题文案（可为空字符串）
-- prompt：gpt-image-2 的执行指令，英文为主，中文文案用引号包裹
+- prompt：GPT Image 2.5 Flare 的执行指令，英文为主，中文文案用引号包裹
 - aspect_ratio：宽高比，主图 "1:1"，竖图 "3:4"
 - has_text：布尔值，这张图是否包含文字渲染
 - image_type：枚举 "marketing" / "scene" / "white_bg" / "detail"

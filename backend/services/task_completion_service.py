@@ -572,6 +572,7 @@ class TaskCompletionService:
                     "width": width,
                     "height": height,
                 },
+                **({"taobao_main_image": True} if request_params.get("taobao_main_image") is True else {}),
             )
             for p in payloads:
                 if p.get("url"):

@@ -281,6 +281,8 @@ class MessageMixin:
         extra = {}
         if request_params.get("aspect_ratio"):
             extra["aspect_ratio"] = request_params["aspect_ratio"]
+        if "taobao_main_image" in request_params:
+            extra["taobao_main_image"] = request_params["taobao_main_image"]
         return extra
 
     async def _push_ws_message(

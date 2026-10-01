@@ -619,3 +619,12 @@ describe('extractGenerationParams', () => {
     });
   });
 });
+
+describe('淘宝主图 regeneration', () => {
+  it.each([true, false])('preserves the task output option %s', (taobao_main_image) => {
+    const message = createTestMessage({ generation_params: {
+      type: 'image', model: 'test-model', aspect_ratio: '1:1', resolution: '1K', taobao_main_image,
+    } });
+    expect(extractGenerationParams(message)).toMatchObject({ aspect_ratio: '1:1', resolution: '1K', taobao_main_image });
+  });
+});

@@ -868,3 +868,18 @@ class TestBatchSlotRelease:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('selected,status', [(True, 'completed'), (True, 'failed'), (False, 'completed')])
+async def test_batch_terminal_message_preserves_taobao_option_for_regeneration(selected, status):
+    batch_id = str(uuid4())
+    task = create_batch_task(0, batch_id, status=status, result_data=create_content_part() if status == 'completed' else None)
+    task['request_params'] = {'aspect_ratio': '1:1', 'taobao_main_image': selected}
+    service = BatchCompletionService(MockBatchDB())
+    with patch('services.batch_completion_service.ws_manager') as ws, \
+         patch('services.task_limit_service.release_task_slot', new_callable=AsyncMock):
+        ws.send_to_task_or_user = AsyncMock()
+        await service._finalize_batch(batch_id, [task])
+        event = ws.send_to_task_or_user.call_args.kwargs['message']
+    assert event['payload']['message']['generation_params']['taobao_main_image'] is selected

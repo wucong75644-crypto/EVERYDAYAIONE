@@ -99,6 +99,52 @@ IMAGE_MODEL_CONFIGS = {
             "4K": 24,
         },
     },
+    "gpt-image-2-5-flare-text-to-image": {
+        "model_id": "gpt-image-2-5-flare-text-to-image",
+        "description": "GPT Image 2.5 Flare 文生图（默认图片生成）",
+        "requires_image_input": False,
+        "max_prompt_length": 20000,
+        "supported_sizes": [
+            "1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "21:9", "auto"
+        ],
+        "supported_formats": ["png"],
+        "supports_resolution": True,
+        "supported_resolutions": ["1K", "2K", "4K"],
+        "cost_per_image": {
+            "1K": Decimal("0.03"),
+            "2K": Decimal("0.05"),
+            "4K": Decimal("0.08"),
+        },
+        "credits_per_image": {
+            "1K": 6,
+            "2K": 10,
+            "4K": 16,
+        },
+    },
+    "gpt-image-2-5-flare-image-to-image": {
+        "model_id": "gpt-image-2-5-flare-image-to-image",
+        "description": "GPT Image 2.5 Flare 图生图（以参考图为基础生成）",
+        "requires_image_input": True,
+        "max_images": 16,
+        "max_image_size_mb": 30,
+        "max_prompt_length": 20000,
+        "supported_sizes": [
+            "1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "21:9", "auto"
+        ],
+        "supported_formats": ["png"],
+        "supports_resolution": True,
+        "supported_resolutions": ["1K", "2K", "4K"],
+        "cost_per_image": {
+            "1K": Decimal("0.03"),
+            "2K": Decimal("0.05"),
+            "4K": Decimal("0.08"),
+        },
+        "credits_per_image": {
+            "1K": 6,
+            "2K": 10,
+            "4K": 16,
+        },
+    },
     "gpt-image-2-text-to-image": {
         "model_id": "gpt-image-2-text-to-image",
         "description": "GPT Image 2 文生图（OpenAI 最强图片生成）",

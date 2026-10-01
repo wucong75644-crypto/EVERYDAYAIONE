@@ -107,7 +107,7 @@ class TestPromptBuilderV2:
 
     def test_build_system_prompt_contains_three_layers(self):
         prompt = self.builder.build_system_prompt("taobao")
-        assert "gpt-image-2" in prompt       # 第1层（执行规则）
+        assert "GPT Image 2.5 Flare" in prompt  # 第1层（执行规则）
         assert "淘宝" in prompt              # 第2层（平台规则）
         assert "品类营销要点" in prompt       # 第3层（品类启发）
         assert "Preserve" in prompt          # prompt 结构
