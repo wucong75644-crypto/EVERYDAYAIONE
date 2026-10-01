@@ -20,7 +20,7 @@ class RecommendationFacts(Contract):
 
 
 class RecommendationReason(Contract):
-    code: Literal["organization", "domain", "execution_mode", "tools", "file_type", "session_binding"]
+    code: Literal["organization", "domain", "execution_mode", "tools", "file_type", "session_binding", "task_mode"]
     values: tuple[str, ...] = ()
 
 
@@ -51,6 +51,8 @@ def recommend(facts: RecommendationFacts, candidates, *, audience: Literal["user
         reasons = [RecommendationReason(code="organization"),
                    RecommendationReason(code="domain", values=(context.agent_domain,)),
                    RecommendationReason(code="execution_mode", values=(context.execution_mode,))]
+        if context.task_mode != 'smart':
+            reasons.append(RecommendationReason(code='task_mode', values=(context.task_mode,)))
         score = 0
         if pin == c.revision:
             reasons.append(RecommendationReason(code="session_binding"))
@@ -65,7 +67,7 @@ def recommend(facts: RecommendationFacts, candidates, *, audience: Literal["user
             score += 5
         summary = SkillRecommendation(skill_id=c.skill_key, revision=c.revision,
             name=m.name or c.skill_key, description=c.description, triggers=m.triggers,
-            source=c.scope_kind, model_selectable=m.model_selectable, reasons=tuple(reasons))
+            source=c.scope_kind, model_selectable=m.model_selectable, task_modes=m.task_modes, reasons=tuple(reasons))
         ranked.append((score, c, summary))
     ranked.sort(key=lambda row: (-row[0], -row[1].priority, row[1].scope_kind != "org",
                                  row[1].skill_key, str(row[1].package_id)))

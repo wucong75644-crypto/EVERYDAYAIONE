@@ -81,6 +81,14 @@ class ImageHandler(BaseHandler):
         # 1. 提取参数
         prompt = self._extract_text_content(content)
         image_urls = self._extract_image_urls(content)
+        if self.handler_type == GenerationType.IMAGE:
+            from services.skills.media import prepare_media_prompt
+            prompt = await prepare_media_prompt(
+                self, conversation_id=conversation_id, user_id=user_id,
+                params=params, metadata=metadata,
+                task_mode=params.get('_skill_task_mode') or ('image-i2i' if image_urls else 'image-t2i'),
+                prompt=prompt, image_urls=image_urls,
+            )
         settings = resolve_image_generation_settings(
             params=params,
             has_image_urls=bool(image_urls),

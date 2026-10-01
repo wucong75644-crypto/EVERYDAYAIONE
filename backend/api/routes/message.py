@@ -297,6 +297,8 @@ async def _do_generate_message(
 
     # 1.5+2. 解析生成类型与请求位置上下文
     gen_type = await resolve_generation_context(request, body)
+    from services.skills.media import resolve_task_mode
+    skill_task_mode = resolve_task_mode(gen_type.value, body.skill_task_mode, body.content)
     requested_turn_id = str(uuid.uuid4())
 
     # 3+4. 权限校验、图片积分预检和用户消息创建
@@ -317,8 +319,11 @@ async def _do_generate_message(
     body.params["_prefetched_summary"] = conversation.get("context_summary")
     body.params["_org_id"] = ctx.org_id
     # Only the typed HTTP intent may populate this internal Actor input.
-    body.params.pop("_selected_skill", None)
-    if gen_type == GenerationType.CHAT and body.selected_skill is not None:
+    for private_key in ("_selected_skill", "_skill_task_mode", "_media_skills"):
+        body.params.pop(private_key, None)
+    if gen_type != GenerationType.CHAT:
+        body.params["_skill_task_mode"] = skill_task_mode
+    if body.selected_skill is not None:
         body.params["_selected_skill"] = body.selected_skill.model_dump()
 
     # 5. 处理助手消息（根据操作类型）

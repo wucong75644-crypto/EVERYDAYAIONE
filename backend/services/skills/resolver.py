@@ -6,7 +6,7 @@ from uuid import UUID
 
 from services.skills.contracts import (
     AgentDomain, Contract, ConversationScope, ExecutionMode, RevisionKey,
-    SkillCatalogMetadata, SkillKey,
+    SkillCatalogMetadata, SkillKey, SkillTaskMode,
 )
 
 
@@ -20,6 +20,7 @@ class SkillSummary(Contract):
     triggers: tuple[str, ...]
     source: Literal["platform", "org"]
     model_selectable: bool
+    task_modes: tuple[SkillTaskMode, ...] = ('smart',)
 
 
 class SkillResolutionContext(Contract):
@@ -30,6 +31,7 @@ class SkillResolutionContext(Contract):
     conversation_scope: ConversationScope
     agent_domain: AgentDomain
     execution_mode: ExecutionMode
+    task_mode: SkillTaskMode = 'smart'
     permissions: frozenset[str] = frozenset()
     enabled_feature_flags: frozenset[str] = frozenset()
 
@@ -57,6 +59,7 @@ class SkillResolver:
             name=c.catalog_metadata.name or c.skill_key, revision=c.revision,
             description=c.description, triggers=c.catalog_metadata.triggers,
             source=c.scope_kind, model_selectable=c.catalog_metadata.model_selectable,
+            task_modes=c.catalog_metadata.task_modes,
         ) for c in self.select(context, candidates)]
 
     def select(
@@ -75,6 +78,7 @@ class SkillResolver:
             if candidate.scope_kind == "platform" and candidate.package_org_id is not None:
                 continue
             if (context.conversation_scope not in metadata.conversation_scopes
+                    or context.task_mode not in metadata.task_modes
                     or context.agent_domain not in metadata.agent_domains
                     or context.execution_mode not in metadata.execution_modes
                     or (metadata.actor_user_ids and context.actor_user_id not in metadata.actor_user_ids)

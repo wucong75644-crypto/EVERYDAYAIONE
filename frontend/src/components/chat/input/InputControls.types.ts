@@ -1,5 +1,6 @@
 import type { KeyboardEvent } from 'react';
 import type { SkillSelectorProps } from './SkillSelector';
+import type { SkillBindingsState } from './useSkillBindings';
 import type {
   AspectRatio,
   ImageCount,
@@ -15,6 +16,7 @@ import type { ChatAttachment } from '../attachments/ChatAttachment.types';
 
 export interface InputControlsProps {
   skillSelector?: Omit<SkillSelectorProps, 'onSelectionComplete'>;
+  skillBindingsState?: SkillBindingsState;
   prompt: string;
   onPromptChange: (value: string) => void;
   onSubmit: () => void;

@@ -15,6 +15,7 @@ from config.message_presentation import validate_cell_styles
 from schemas.chart import ChartPart
 from schemas.diagram import DiagramPart
 from services.skills.selection import SkillSelection
+from services.skills.contracts import SkillTaskMode
 from schemas.media_parts import (
     AudioPart,
     FilePart,
@@ -369,6 +370,7 @@ class GenerateRequest(BaseModel):
     # 类型特定参数
     params: Optional[Dict[str, Any]] = None
     selected_skill: Optional[SkillSelection] = None
+    skill_task_mode: Optional[SkillTaskMode] = None
 
     # 重新生成时的原消息 ID
     original_message_id: Optional[str] = Field(None, max_length=100)

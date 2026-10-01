@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ArrowLeft, Check, Images, Info, SlidersHorizontal, X } from 'lucide-react';
 import {
-  getSkillRecommendations, sendSkillRecommendationFeedback, skillVersion,
+  getSkillRecommendations, sendSkillRecommendationFeedback, skillVersion, supportsSkillMode, type SkillTaskMode,
   type SkillBinding, type SkillFileType, type SkillRecommendation, type SkillRecommendationBatch, type SkillSummary,
 } from '../../../services/skills';
 
@@ -13,6 +13,7 @@ function reasonText(reason: SkillRecommendation['reasons'][number]): string {
     case 'organization': return '当前组织可用';
     case 'domain': return reason.values[0] === 'erp' ? '适用于 ERP 业务' : '适用于通用任务';
     case 'execution_mode': return '适用于当前执行场景';
+    case 'task_mode': return '明确支持当前任务模式';
     case 'tools': return '相关工具当前可用';
     case 'file_type': return `匹配所选文件类型：${reason.values.map(v => types.find(([key]) => key === v)?.[1] ?? v).join('、')}`;
     case 'session_binding': return '当前会话已固定此版本';
@@ -21,15 +22,15 @@ function reasonText(reason: SkillRecommendation['reasons'][number]): string {
 
 /** One catalog with optional recommendation annotations; summaries remain catalog-owned. */
 export default function SkillRecommendations({ conversationId, skills, disabled, onSelect, permissionMode,
-  enabled = true, selected = null, bindings = [], onClose }: {
+  enabled = true, taskMode = 'smart', selected = null, bindings = [], onClose }: {
   conversationId: string; skills: SkillSummary[]; disabled: boolean;
   onSelect: (skill: SkillSummary) => void; permissionMode: 'auto' | 'ask' | 'plan';
-  enabled?: boolean; selected?: SkillSummary | null; bindings?: SkillBinding[]; onClose?: () => void;
+  taskMode?: SkillTaskMode; enabled?: boolean; selected?: SkillSummary | null; bindings?: SkillBinding[]; onClose?: () => void;
 }) {
   const [fileType, setFileType] = useState<SkillFileType | ''>('');
   const [view, setView] = useState<'list' | 'detail' | 'files'>('list');
   const [detailId, setDetailId] = useState<string | null>(null);
-  const requestKey = JSON.stringify([conversationId, fileType, permissionMode, enabled]);
+  const requestKey = JSON.stringify([conversationId, fileType, permissionMode, enabled, taskMode]);
   const [loaded, setLoaded] = useState<{ key: string; batch: SkillRecommendationBatch } | null>(null);
   const batch = loaded?.key === requestKey ? loaded.batch : null;
   const [dismissed, setDismissed] = useState<{ key: string; ids: string[] } | null>(null);
@@ -37,18 +38,18 @@ export default function SkillRecommendations({ conversationId, skills, disabled,
   useEffect(() => {
     if (!enabled) return;
     let current = true;
-    void getSkillRecommendations(conversationId, fileType ? [fileType] : [], permissionMode).then(result => {
+    void getSkillRecommendations(conversationId, fileType ? [fileType] : [], permissionMode, ...(taskMode !== 'smart' ? [taskMode] as const : [])).then(result => {
       if (current) setLoaded({ key: requestKey, batch: result });
     }).catch(() => {
       if (current) setLoaded({ key: requestKey, batch: { status: 'unavailable', recommendation_id: null, candidates: [] } });
     });
     return () => { current = false; };
-  }, [conversationId, fileType, permissionMode, requestKey, enabled]);
+  }, [conversationId, fileType, permissionMode, requestKey, enabled, taskMode]);
 
   const candidates = enabled && batch?.status === 'ready' ? batch.candidates.filter(c =>
     !(dismissed?.key === requestKey && dismissed.ids.includes(c.skill_id))
     && skills.some(s => s.skill_id === c.skill_id && s.revision === c.revision)).slice(0, 3) : [];
-  const catalog = [...new Map(skills.map(skill => [skill.skill_id, skill])).values()];
+  const catalog = [...new Map(skills.filter(s => supportsSkillMode(s, taskMode)).map(skill => [skill.skill_id, skill])).values()];
   const ordered = [...catalog].sort((a, b) => Number(candidates.some(c => c.skill_id === b.skill_id))
     - Number(candidates.some(c => c.skill_id === a.skill_id)));
   const detail = catalog.find(skill => skill.skill_id === detailId);

@@ -171,3 +171,26 @@ describe('Skill tags and explicit scope changes', () => {
     expect(getSkillBindings).not.toHaveBeenCalled();
   });
 });
+
+it('keeps sending blocked across a mode switch until an in-flight pin is reconciled', async () => {
+  const { renderHook } = await import('@testing-library/react');
+  const multi = { ...skill, task_modes: ['smart', 'video'] as import('../../../../services/skills').SkillTaskMode[] };
+  let ack!: (result: { binding_id: string }) => void;
+  vi.mocked(addSkillBinding).mockReturnValueOnce(new Promise(r => { ack = r; }));
+  const complete = vi.fn();
+  const { result, rerender } = renderHook(({ mode }) => useSkillBindings('conv-1', true, mode), {
+    initialProps: { mode: 'smart' as import('../../../../services/skills').SkillTaskMode },
+  });
+  await waitFor(() => expect(result.current.ready).toBe(true));
+  act(() => { void result.current.pin(multi, complete); });
+  expect(result.current.blocked).toBe(true);
+  rerender({ mode: 'video' });
+  await act(async () => {});
+  expect(result.current.blocked).toBe(true);
+  vi.mocked(getSkillBindings).mockResolvedValue([{ ...multi, binding_id: 'binding-1', available: true }]);
+  await act(async () => ack({ binding_id: 'binding-1' }));
+  await waitFor(() => expect(result.current.ready).toBe(true));
+  expect(getSkillBindings).toHaveBeenLastCalledWith('conv-1', 'video');
+  expect(result.current.blocked).toBe(false);
+  expect(complete).toHaveBeenCalledOnce();
+});

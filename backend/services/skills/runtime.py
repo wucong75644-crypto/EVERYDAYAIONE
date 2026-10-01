@@ -121,7 +121,7 @@ class SkillRuntime:
         ])
 
     async def initialize(self, checkpoint: dict | None = None, selection: SkillSelection | None = None,
-                         *, load_session_bindings: bool = True):
+                         *, load_session_bindings: bool = True, discover_catalog: bool = True):
         self._check_cancelled()
         if checkpoint is not None:
             await self._restore(checkpoint)
@@ -135,7 +135,7 @@ class SkillRuntime:
             raise SkillBindingError("会话固定的 Skill 超过容量或配置无效，请检查会话设置。")
         self.session_skill_ids = tuple(c.skill_key for c in bindings)
         try:
-            candidates = await self.source.discover()
+            candidates = await self.source.discover() if discover_catalog or selection else []
         except Exception:
             if bindings:
                 raise SkillBindingError("无法加载会话固定的 Skill，请检查会话设置后重试。") from None
@@ -431,7 +431,7 @@ class SkillRuntime:
             raise SkillReplayError("SKILL_REPLAY_UNAVAILABLE") from None
 
 
-async def create_skill_runtime(*, handler, context, runtime, replay_context=None, selection=None):
+async def create_skill_runtime(*, handler, context, runtime, replay_context=None, selection=None, task_mode='smart', recommendations=True, explicit_only=False):
     """Feature gate precedes repository/storage construction, including old Actors."""
     from core.config import get_settings
 
@@ -453,7 +453,8 @@ async def create_skill_runtime(*, handler, context, runtime, replay_context=None
     from services.skills.runtime_source import ActorSkillSource
     from services.tools import build_legacy_catalog
 
-    source = ActorSkillSource(handler, context, settings)
+    source = (ActorSkillSource(handler, context, settings, task_mode=task_mode)
+              if task_mode != 'smart' else ActorSkillSource(handler, context, settings))
     if scheduled:
         from dataclasses import replace
         from services.skills.scheduled import ScheduledSkillSource, EMPTY_SNAPSHOT
@@ -481,8 +482,9 @@ async def create_skill_runtime(*, handler, context, runtime, replay_context=None
         except SkillError as exc:
             raise SkillReplayError(str(exc)) from None
     else:
-        await state.initialize(checkpoint, selection, load_session_bindings=not bool(replay_context))
-    if (not scheduled and checkpoint is None and not replay_context
+        await state.initialize(checkpoint, selection, load_session_bindings=not bool(replay_context),
+                               **({"discover_catalog": False} if explicit_only else {}))
+    if (recommendations and not scheduled and checkpoint is None and not replay_context
             and getattr(settings, "skill_recommendations_enabled", False) is True):
         from services.skills.recommendation_service import model_recommendations
         await model_recommendations(state)

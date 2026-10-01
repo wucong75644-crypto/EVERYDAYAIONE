@@ -60,7 +60,7 @@ async def source_recommendations(source, candidates, bindings, *, audience, turn
         return RecommendationBatch(status="unavailable")
 
 
-async def web_recommendations(db, settings, *, actor_user_id, conversation_id, selected_file_types=(), permission_mode="auto"):
+async def web_recommendations(db, settings, *, actor_user_id, conversation_id, selected_file_types=(), permission_mode="auto", task_mode="smart"):
     if not recommendations_enabled(settings):
         return RecommendationBatch(status="disabled")
     actor = str(UUID(actor_user_id))
@@ -72,7 +72,10 @@ async def web_recommendations(db, settings, *, actor_user_id, conversation_id, s
                       workspace_owner_id=actor, conversation_id=str(conversation_id),
                       feature_flags={key: getattr(settings, key, False) is True for key in (
                           "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled")})
-    source = ActorSkillSource(SimpleNamespace(db=db), context, settings)
+    if task_mode != "smart":
+        context = replace(context, authorized_tool_names=frozenset())
+    source = (ActorSkillSource(SimpleNamespace(db=db), context, settings, task_mode=task_mode)
+              if task_mode != "smart" else ActorSkillSource(SimpleNamespace(db=db), context, settings))
     try:
         candidates = await source.discover()
         bound = await source.session_bindings()

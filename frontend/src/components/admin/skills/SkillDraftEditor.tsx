@@ -15,6 +15,7 @@ const lists = [
   ['required_feature_flags', '必需功能开关', '每行一个功能开关名称。'],
 ] as const;
 const choices = [
+  { key: 'task_modes', label: '适用模式', fallback: ['smart'], options: [['smart', '智能'], ['image-i2i', '图生图'], ['image-t2i', '文生图'], ['image-ecom', '电商图'], ['video', '视频']] },
   { key: 'recommended_file_types', label: '推荐文件类型（仅用于建议）', fallback: [], options: [['pdf', 'PDF'], ['docx', 'Word'], ['xlsx', 'Excel'], ['csv', 'CSV'], ['pptx', 'PowerPoint'], ['image', '图片'], ['text', '文本']] },
   { key: 'conversation_scopes', label: '会话范围', fallback: ['user'], options: [['user', '个人会话'], ['channel', '群组会话']] },
   { key: 'agent_domains', label: '任务领域', fallback: ['general'], options: [['general', '通用'], ['erp', 'ERP']] },

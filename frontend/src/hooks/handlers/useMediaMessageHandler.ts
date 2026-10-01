@@ -15,6 +15,7 @@ import {
 } from '../../services/messageSender';
 import { useWebSocketContext } from '../../contexts/WebSocketContext';
 import { logger } from '../../utils/logger';
+import type { SkillSelection, SkillTaskMode } from '../../services/skills';
 
 export type MediaType = 'image' | 'video';
 
@@ -63,6 +64,8 @@ export function useMediaMessageHandler(params: UseMediaMessageHandlerParams) {
     prompt: string,
     images: string[] | ImageInputInfo[] | null = null,
     extraParams: Record<string, unknown> | null = null,
+    selectedSkill?: SkillSelection,
+    skillTaskMode?: SkillTaskMode,
   ) => {
     try {
       // 构建 content
@@ -111,6 +114,8 @@ export function useMediaMessageHandler(params: UseMediaMessageHandlerParams) {
         generationType: genType as GenerationType,
         model: selectedModel.id,
         params: { ...mediaParams, ...cleanExtra },
+        ...(selectedSkill ? { selectedSkill } : {}),
+        ...(skillTaskMode ? { skillTaskMode } : {}),
         subscribeTask: subscribeTaskWithMapping,
         unsubscribeTask, // 🔥 传入取消订阅函数
       });

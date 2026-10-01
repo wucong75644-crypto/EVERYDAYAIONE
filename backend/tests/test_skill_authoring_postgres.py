@@ -491,3 +491,21 @@ def test_library_never_exposes_platform_working_name_or_private_draft(environmen
     assert row['working_description'] == CONTENT.description
     assert row['status'] == 'published'
     assert org.detail(pid)['draft'] is None
+
+
+def test_media_modes_survive_review_publication_and_nas_validation(environment):
+    env = environment
+    svc = env.service()
+    content = DraftContent(description='白底商品图', body='按参考图保留商品，生成白色背景。',
+                           catalog_metadata={'name': '商品白底图', 'task_modes': ['image-i2i']})
+    pid = svc.create(CreateSkill(skill_key='white-background', content=content))['package_id']
+    publish(svc, pid)
+    candidate = svc.repository.catalog_candidates()[0]
+    assert candidate.catalog_metadata.task_modes == ('image-i2i',)
+    revision = svc.repository.assigned_revision(pid, candidate.revision)
+    package = svc.repository.get_package(pid)
+    from services.skills.contracts import PublishRevision
+    validated = SkillStorage(env.config.skill_storage_root, workspace_root=env.config.file_workspace_root).validate(
+        package, PublishRevision(revision=revision.revision, content_sha256=revision.content_sha256,
+                                 body_sha256=revision.body_sha256), nas_path=revision.nas_path)
+    assert validated.catalog_metadata == candidate.catalog_metadata

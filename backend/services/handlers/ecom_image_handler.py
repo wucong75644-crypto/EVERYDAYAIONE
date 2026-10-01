@@ -47,6 +47,9 @@ class EcomImageHandler(ImageHandler):
         image_task_meta = params.get("image_task_meta")
 
         if image_task_meta and isinstance(image_task_meta, list):
+            if params.get('_selected_skill'):
+                from fastapi import HTTPException
+                raise HTTPException(409, '确认出图将使用已有方案；如需更换 Skill，请先重新策划方案')
             # Phase 2：有方案 → 批量生图
             return await self._phase2_generate(
                 message_id, conversation_id, user_id, content, params, metadata,
@@ -68,7 +71,7 @@ class EcomImageHandler(ImageHandler):
 
         # 后台异步执行（start 立刻返回，不阻塞 HTTP 响应）
         asyncio.create_task(self._phase1_plan(
-            message_id, conversation_id, user_id, content, params, task_id,
+            message_id, conversation_id, user_id, content, params, task_id, metadata=metadata,
         ))
         return task_id
 
@@ -84,6 +87,7 @@ class EcomImageHandler(ImageHandler):
         content: List[Any],
         params: Dict[str, Any],
         task_id: str,
+        metadata: Any = None,
     ) -> None:
         """后台异步：调 ImageAgent.ecom_plan → 通过标准 on_complete 走已有消息完成流程。"""
         from services.agent.image.image_agent import ImageAgent
@@ -92,16 +96,29 @@ class EcomImageHandler(ImageHandler):
             user_text = self._extract_text_content(content)
             image_urls = self._extract_image_urls(content)
             platform = params.get("platform", "taobao")
+            from services.skills.media import load_media_skills, media_skill_messages
+            from services.handlers.base import TaskMetadata
+            state = await load_media_skills(
+                self, conversation_id=conversation_id, user_id=user_id, params=params,
+                metadata=metadata or TaskMetadata(client_task_id=task_id, turn_id=task_id), task_mode='image-ecom',
+            )
+            skill_messages = media_skill_messages(state) if state else []
+            if state:
+                await asyncio.to_thread(lambda: self.db.table('tasks').update({
+                    'request_params': {'phase': 'plan', '_media_skills': params['_media_skills']},
+                }).eq('id', task_id).execute())
 
             agent = ImageAgent(
                 db=self.db,
                 user_id=user_id,
                 conversation_id=conversation_id,
+                **({'org_id': self.org_id, 'task_id': task_id} if state else {}),
             )
             result = await agent.ecom_plan(
                 user_text=user_text,
                 image_urls=image_urls,
                 platform=platform,
+                **({"skill_messages": skill_messages} if skill_messages else {}),
             )
 
             # 构建 content（和 ChatHandler 工具调用返回一样的格式）
@@ -131,7 +148,7 @@ class EcomImageHandler(ImageHandler):
                 f"EcomImageHandler Phase1 failed | message_id={message_id} | error={e}"
             )
             try:
-                await self.on_error(task_id, "ECOM_PLAN_FAILED", str(e))
+                await self.on_error(task_id, "ECOM_PLAN_FAILED", str(getattr(e, "detail", e)))
             except Exception as err:
                 logger.error(f"Phase1 on_error failed: {err}")
 

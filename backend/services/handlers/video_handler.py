@@ -61,6 +61,12 @@ class VideoHandler(BaseHandler):
         # 1. 提取参数
         prompt = self._extract_text_content(content)
         image_url = self._extract_image_url(content)
+        from services.skills.media import prepare_media_prompt
+        prompt = await prepare_media_prompt(
+            self, conversation_id=conversation_id, user_id=user_id,
+            params=params, metadata=metadata, task_mode='video', prompt=prompt,
+            image_urls=[image_url] if image_url else [],
+        )
         model_id = params.get("model") or DEFAULT_VIDEO_MODEL_ID
         aspect_ratio = params.get("aspect_ratio") or "landscape"
         n_frames = params.get("n_frames") or "25"
