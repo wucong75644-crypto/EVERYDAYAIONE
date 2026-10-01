@@ -218,6 +218,9 @@ class DoubaoSearchProvider:
             "instructions": _INSTRUCTIONS,
             "input": query,
             "tools": [{"type": "web_search", "sources": ["doubao"]}],
+            # Search gathers evidence; the calling agent owns deeper analysis.
+            # Seed 2.1 otherwise enables high-effort thinking by default.
+            "thinking": {"type": "disabled"},
             "store": False,
             "max_output_tokens": 2500,
         }

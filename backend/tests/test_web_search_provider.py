@@ -61,6 +61,7 @@ async def test_doubao_provider_requests_search_and_preserves_citation_evidence()
     assert kwargs["timeout"].read == 9.0
     request = client.post.await_args.kwargs["json"]
     assert request["tools"] == [{"type": "web_search", "sources": ["doubao"]}]
+    assert request["thinking"] == {"type": "disabled"}
     assert request["store"] is False
     assert request["input"] == "完整问题和条件"
     assert request["model"] == "fixture"
@@ -364,3 +365,94 @@ async def test_search_provider_concurrency_is_capped_per_process():
          patch("services.agent.web_search.service.DoubaoSearchProvider", return_value=provider):
         await asyncio.gather(*(search_web(f"query-{index}", timeout=2.0) for index in range(8)))
     assert peak == 3
+
+
+@pytest.mark.asyncio
+async def test_search_wall_deadline_cancels_provider_and_releases_slot_without_retry():
+    settings = SimpleNamespace(
+        web_search_provider="doubao", web_search_ark_api_key="configured",
+        web_search_ark_base_url="https://ark.example/api/v3", web_search_ark_model="fixture",
+    )
+    cancelled = asyncio.Event()
+    slots = asyncio.Semaphore(1)
+
+    async def stalls_between_network_phases(query, *, timeout):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    provider = MagicMock()
+    provider.search = AsyncMock(side_effect=stalls_between_network_phases)
+    legacy = AsyncMock()
+    with patch("core.config.get_settings", return_value=settings), \
+         patch("services.agent.web_search.service._SEARCH_SLOTS", slots), \
+         patch("services.agent.web_search.service.DoubaoSearchProvider", return_value=provider), \
+         patch("services.agent.web_search_engine.search_with_grounding", legacy):
+        with pytest.raises(SearchProviderError) as caught:
+            await search_web("slow query", timeout=0.03)
+        assert caught.value.status == "timeout"
+        assert cancelled.is_set()
+        provider.search.assert_awaited_once()
+        legacy.assert_not_awaited()
+
+        provider.search.side_effect = None
+        provider.search.return_value = SearchResponse(answer="next result", status="partial")
+        result = await search_web("next query", timeout=0.2)
+        assert result.answer == "next result"
+
+
+@pytest.mark.asyncio
+async def test_queue_wait_consumes_provider_deadline_instead_of_resetting_budget():
+    settings = SimpleNamespace(
+        web_search_provider="doubao", web_search_ark_api_key="configured",
+        web_search_ark_base_url="https://ark.example/api/v3", web_search_ark_model="fixture",
+    )
+    slots = asyncio.Semaphore(1)
+    await slots.acquire()
+
+    async def release_later():
+        await asyncio.sleep(0.02)
+        slots.release()
+
+    provider = MagicMock()
+    provider.search = AsyncMock(return_value=SearchResponse(answer="result", status="partial"))
+    release = asyncio.create_task(release_later())
+    with patch("core.config.get_settings", return_value=settings), \
+         patch("services.agent.web_search.service._SEARCH_SLOTS", slots), \
+         patch("services.agent.web_search.service.DoubaoSearchProvider", return_value=provider):
+        await search_web("queued query", timeout=0.2)
+    await release
+    assert 0 < provider.search.await_args.kwargs["timeout"] < 0.19
+
+
+@pytest.mark.asyncio
+async def test_external_cancellation_propagates_and_releases_search_slot():
+    settings = SimpleNamespace(
+        web_search_provider="doubao", web_search_ark_api_key="configured",
+        web_search_ark_base_url="https://ark.example/api/v3", web_search_ark_model="fixture",
+    )
+    entered = asyncio.Event()
+    cancelled = asyncio.Event()
+    slots = asyncio.Semaphore(1)
+
+    async def pending(query, *, timeout):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    provider = MagicMock()
+    provider.search = AsyncMock(side_effect=pending)
+    with patch("core.config.get_settings", return_value=settings), \
+         patch("services.agent.web_search.service._SEARCH_SLOTS", slots), \
+         patch("services.agent.web_search.service.DoubaoSearchProvider", return_value=provider):
+        task = asyncio.create_task(search_web("cancelled query", timeout=0.2))
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert cancelled.is_set()
+        await asyncio.wait_for(slots.acquire(), timeout=0.1)
+        slots.release()

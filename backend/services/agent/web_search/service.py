@@ -8,6 +8,8 @@ from collections import defaultdict
 from typing import Any
 from urllib.parse import urlsplit
 
+from loguru import logger
+
 from .contracts import SearchProviderError, SearchResponse, SearchSource
 from .doubao_provider import DoubaoSearchProvider
 
@@ -17,6 +19,7 @@ _UNTRUSTED_NOTICE = (
 )
 _MAX_CONCURRENT_SEARCHES = 3
 _SEARCH_SLOTS = asyncio.Semaphore(_MAX_CONCURRENT_SEARCHES)
+DEFAULT_SEARCH_TIMEOUT_SECONDS = 60.0
 
 
 async def search_web(query: str, *, timeout: float) -> SearchResponse:
@@ -54,9 +57,27 @@ async def search_web(query: str, *, timeout: float) -> SearchResponse:
         if remaining <= 0:
             raise SearchProviderError("等待网页搜索并发额度时已耗尽本次时间预算",
                                       retryable=True, status="timeout")
-        if provider_client is not None:
-            return await provider_client.search(query, timeout=remaining)
-        return await _search_legacy(query, timeout=remaining)
+        operation = (provider_client.search(query, timeout=remaining)
+                     if provider_client is not None else _search_legacy(query, timeout=remaining))
+        # HTTPX limits individual network phases, not total wall time. Keep the
+        # queue and all phases within the same caller deadline.
+        try:
+            result = await asyncio.wait_for(operation, timeout=remaining)
+        except asyncio.TimeoutError as error:
+            raise SearchProviderError("网页搜索超过本次工具的时间预算", retryable=True,
+                                      status="timeout") from error
+        logger.info(
+            "Web search completed | provider={} | status={} | elapsed_ms={} | sources={} | search_requests={}",
+            result.provider, result.status, int((time.monotonic() - started) * 1000),
+            len(result.sources), result.search_requests,
+        )
+        return result
+    except SearchProviderError as error:
+        logger.warning(
+            "Web search failed | provider={} | status={} | elapsed_ms={} | retryable={}",
+            provider, error.status, int((time.monotonic() - started) * 1000), error.retryable,
+        )
+        raise
     finally:
         _SEARCH_SLOTS.release()
 

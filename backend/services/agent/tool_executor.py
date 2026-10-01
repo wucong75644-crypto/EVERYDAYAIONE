@@ -191,7 +191,9 @@ class ToolExecutor(
         """搜索互联网获取实时信息，并把有界证据及来源传给主 Agent。"""
         from services.agent.agent_result import AgentResult
         from services.agent.web_search.contracts import SearchProviderError
-        from services.agent.web_search.service import present_search_response, search_web
+        from services.agent.web_search.service import (
+            DEFAULT_SEARCH_TIMEOUT_SECONDS, present_search_response, search_web,
+        )
 
         raw_query = args.get("query", "")
         if not isinstance(raw_query, str) or not raw_query.strip():
@@ -209,7 +211,7 @@ class ToolExecutor(
                 error_message="Validation: query exceeds 4000 characters",
             )
 
-        timeout = 45.0
+        timeout = DEFAULT_SEARCH_TIMEOUT_SECONDS
         if self.execution_budget is not None:
             remaining = self.execution_budget.remaining
             if remaining <= 0:
@@ -224,7 +226,8 @@ class ToolExecutor(
             result = await search_web(query, timeout=timeout)
         except SearchProviderError as error:
             return AgentResult(
-                summary=f"网页搜索未能完成：{error}",
+                summary=(f"网页搜索未能完成：{error}。本次未取得可用网页证据；"
+                         "不能据此判断资料是否存在，也不能推测产品新旧或网络故障原因。"),
                 status=error.status,
                 error_message=str(error),
                 metadata={"retryable": error.retryable},

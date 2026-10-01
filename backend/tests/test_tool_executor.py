@@ -913,6 +913,17 @@ class TestWebSearchInline:
 
         assert result.status == "error"
         assert "provider unavailable" in result.error_message
+        assert "不能据此判断资料是否存在" in result.to_tool_content()
+
+    @pytest.mark.asyncio
+    async def test_default_search_deadline_allows_provider_that_needs_more_than_45_seconds(self):
+        from services.agent.web_search.contracts import SearchResponse
+
+        exe = _make_executor()
+        with patch("services.agent.web_search.service.search_web", new_callable=AsyncMock,
+                   return_value=SearchResponse(answer="result", status="partial")) as search:
+            await exe._web_search({"query": "小米鹏程N90 配置参数"})
+        assert search.await_args.kwargs["timeout"] == 60.0
 
     @pytest.mark.asyncio
     async def test_search_result_sources_reach_both_model_projections(self):
