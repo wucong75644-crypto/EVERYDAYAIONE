@@ -1,10 +1,10 @@
 import { useRef, useState } from 'react';
-import { BookOpen } from 'lucide-react';
+import { BookOpen, X } from 'lucide-react';
 import { Popover } from '../../primitives/Popover';
-import { getAvailableSkills, skillVersion, type SkillSummary } from '../../../services/skills';
+import { getAvailableSkills, skillVersion, type SkillBinding, type SkillSummary } from '../../../services/skills';
 import SkillRecommendations from './SkillRecommendations';
 import { isSkillRecommendationsUiEnabled } from '../../../config/featureFlags';
-import SessionSkillBindings from './SessionSkillBindings';
+import { cn } from '../../../utils/cn';
 
 export interface SkillSelectorProps {
   conversationId: string | null;
@@ -14,11 +14,11 @@ export interface SkillSelectorProps {
   disabled: boolean;
   permissionMode?: 'auto' | 'ask' | 'plan';
   onSelectionComplete?: () => void;
+  bindings?: SkillBinding[];
 }
 
-export default function SkillSelector({ conversationId, ensureConversation, selected, onSelect, disabled, onSelectionComplete, permissionMode = 'auto' }: SkillSelectorProps) {
+export default function SkillSelector({ conversationId, ensureConversation, selected, onSelect, disabled, onSelectionComplete, permissionMode = 'auto', bindings = [] }: SkillSelectorProps) {
   const [open, setOpen] = useState(false);
-  const [sessionMode, setSessionMode] = useState(false);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const [catalog, setCatalog] = useState<{ conversationId: string; skills: SkillSummary[] } | null>(null);
@@ -54,7 +54,7 @@ export default function SkillSelector({ conversationId, ensureConversation, sele
     setOpen(false);
   };
 
-  return <Popover side="top" align="start" className="!p-2 w-72" maxWidth={288}
+  return <Popover side="top" align="start" className="!p-2 !bg-surface-card !border-border-default w-[min(380px,calc(100vw-16px))]" maxWidth={380}
     open={open && !disabled} onOpenChange={(next) => {
       setOpen(next);
       if (next) {
@@ -70,44 +70,22 @@ export default function SkillSelector({ conversationId, ensureConversation, sele
       returnToInput.current = false;
     }}
     trigger={<button type="button" disabled={disabled} aria-label={selected ? `Skill：${selected.name}` : '选择 Skill'}
-      title={selected ? `${selected.name} · ${skillVersion(selected.revision)} · 仅本条消息` : '选择 Skill 或管理会话固定 Skill'}
-      className="flex items-center gap-1 p-2 rounded-lg text-sm transition-base disabled:opacity-40 text-text-tertiary hover:text-text-primary hover:bg-hover">
+      title={selected ? `${selected.name} · ${skillVersion(selected.revision)} · 仅本条消息` : '选择 Skill'}
+      className={cn('flex items-center gap-1 p-2 rounded-lg text-sm transition-base disabled:opacity-40',
+        selected || bindings.length ? 'bg-accent-light text-accent dark:text-[color-mix(in_srgb,var(--color-accent),white_45%)] hover:bg-accent-light/80' : 'text-text-tertiary hover:text-text-primary hover:bg-hover')}>
       <BookOpen className="w-4 h-4 shrink-0" />
       <span className="hidden sm:inline">Skill</span>
     </button>}>
-    <div className="flex gap-1 p-1 mb-1">
-      <button type="button" aria-pressed={!sessionMode} onClick={() => setSessionMode(false)}
-        className="flex-1 rounded-lg p-2 text-xs text-text-secondary hover:bg-hover">仅本条消息</button>
-      <button type="button" aria-pressed={sessionMode} onClick={() => setSessionMode(true)}
-        className="flex-1 rounded-lg p-2 text-xs text-text-secondary hover:bg-hover">固定到当前会话</button>
-    </div>
-    {sessionMode ? conversationId
-      ? <SessionSkillBindings key={conversationId} conversationId={conversationId} disabled={disabled} />
-      : <div className="p-2 text-sm text-text-tertiary">
-        <p role="status">{failed ? '暂时无法创建会话，请重试。' : '请稍候，正在创建会话…'}</p>
-        {failed && <button type="button" onClick={() => void refresh()} className="mt-2 text-accent">重试</button>}
+    {loading || failed || !conversationId ? <>
+      <div className="flex items-center justify-between px-2 py-1 text-sm font-medium text-text-primary">Skill
+        <button type="button" aria-label="关闭 Skill 面板" onClick={() => setOpen(false)} className="rounded-md p-1 text-text-tertiary hover:bg-hover"><X className="h-4 w-4" /></button>
       </div>
-      : <>
-    {open && !loading && !failed && conversationId && isSkillRecommendationsUiEnabled() &&
-      <SkillRecommendations key={`${conversationId}:${permissionMode}`} conversationId={conversationId}
-        skills={skills} disabled={disabled} onSelect={choose} permissionMode={permissionMode} />}
-    <div className="px-2 py-1 text-xs text-text-tertiary">选择 Skill · 仅本条消息</div>
-    <button type="button" onClick={() => choose(null)}
-      className="w-full px-2 py-2 text-left text-sm rounded-lg hover:bg-hover text-text-secondary">不手动选择</button>
-    {loading ? <p role="status" className="p-2 text-sm text-text-tertiary">正在加载可用 Skill…</p>
-      : failed ? <div className="p-2 text-sm text-text-tertiary">
+      {failed ? <div className="p-3 text-sm text-text-tertiary">
         <p role="status">暂时无法获取 Skill，请重试。</p>
-        <button type="button" onClick={() => void refresh()} className="mt-2 text-accent">重试</button>
-      </div>
-      : skills.length === 0 ? <p role="status" className="p-2 text-sm text-text-tertiary">当前会话暂无可用 Skill</p>
-      : <div className="max-h-64 overflow-y-auto">
-        {skills.map((skill) => <button type="button" key={skill.skill_id} onClick={() => choose(skill)}
-          aria-pressed={selected?.skill_id === skill.skill_id && selected.revision === skill.revision}
-          className="w-full p-2 text-left rounded-lg hover:bg-hover">
-          <div className="text-sm text-text-primary break-words">{skill.name} · {skillVersion(skill.revision)}</div>
-          <div className="mt-1 text-xs text-text-tertiary line-clamp-2">{skill.description}</div>
-        </button>)}
-      </div>}
-    </>}
+        <button type="button" onClick={() => void refresh()} className="mt-2 text-accent dark:text-[color-mix(in_srgb,var(--color-accent),white_45%)]">重试</button>
+      </div> : <p role="status" className="p-3 text-sm text-text-tertiary">正在加载可用 Skill…</p>}
+    </> : <SkillRecommendations key={`${conversationId}:${permissionMode}`} conversationId={conversationId}
+      skills={skills} disabled={disabled} onSelect={choose} permissionMode={permissionMode} selected={selected}
+      bindings={bindings} enabled={isSkillRecommendationsUiEnabled()} onClose={() => setOpen(false)} />}
   </Popover>;
 }
