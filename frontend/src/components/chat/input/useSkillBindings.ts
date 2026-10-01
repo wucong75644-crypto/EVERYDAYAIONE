@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { addSkillBinding, getAvailableSkills, getSkillBindings, removeSkillBinding,
-  type SkillBinding, type SkillSummary } from '../../../services/skills';
+  type SkillBinding, type SkillSummary, type SkillTaskMode } from '../../../services/skills';
 
 interface Confirmation {
   matches: (bindings: SkillBinding[]) => boolean;
@@ -8,14 +8,15 @@ interface Confirmation {
 }
 
 /** Shared by the picker and tags; a write changes scope only after server acknowledgement. */
-export function useSkillBindings(conversationId: string | null, enabled: boolean) {
-  const [data, setData] = useState<{ id: string; bindings: SkillBinding[] } | null>(null);
+export function useSkillBindings(conversationId: string | null, enabled: boolean, taskMode: SkillTaskMode = 'smart') {
+  const [data, setData] = useState<{ id: string; mode: SkillTaskMode; bindings: SkillBinding[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [pending, setPending] = useState(false);
   const [needsRefresh, setNeedsRefresh] = useState(false);
   const [error, setError] = useState('');
-  const requests = useRef({ version: 0, pending: false, confirmation: null as Confirmation | null });
-  const currentData = enabled && data?.id === conversationId ? data : null;
+  const requests = useRef({ version: 0, pending: false, confirmation: null as Confirmation | null,
+    conversationId, refresh: async () => {} });
+  const currentData = enabled && data?.id === conversationId && data.mode === taskMode ? data : null;
   const bindings = currentData?.bindings ?? [];
 
   const refresh = useCallback(async () => {
@@ -24,9 +25,9 @@ export function useSkillBindings(conversationId: string | null, enabled: boolean
     setLoading(true);
     setError('');
     try {
-      const result = await getSkillBindings(conversationId);
+      const result = await getSkillBindings(conversationId, ...(taskMode !== 'smart' ? [taskMode] as const : []));
       if (version !== requests.current.version) return;
-      setData({ id: conversationId, bindings: result });
+      setData({ id: conversationId, mode: taskMode, bindings: result });
       // A timed-out write may have succeeded. Reconcile from the server before enabling send.
       const confirmation = requests.current.confirmation;
       requests.current.confirmation = null;
@@ -37,24 +38,29 @@ export function useSkillBindings(conversationId: string | null, enabled: boolean
     } finally {
       if (version === requests.current.version) setLoading(false);
     }
-  }, [enabled, conversationId]);
+  }, [enabled, conversationId, taskMode]);
 
   useEffect(() => {
     const lifecycle = requests.current;
+    const sameConversation = lifecycle.conversationId === conversationId;
+    lifecycle.conversationId = conversationId;
+    lifecycle.refresh = refresh;
     let active = true;
     queueMicrotask(() => {
       if (!active) return;
       setData(null);
-      setPending(false);
-      setNeedsRefresh(false);
+      setPending(sameConversation && lifecycle.pending);
+      setNeedsRefresh(sameConversation && (lifecycle.pending || !!lifecycle.confirmation));
       setLoading(false);
       setError('');
-      lifecycle.pending = false;
-      lifecycle.confirmation = null;
+      if (!sameConversation) {
+        lifecycle.pending = false;
+        lifecycle.confirmation = null;
+      }
       void refresh();
     });
     return () => { active = false; lifecycle.version++; };
-  }, [refresh]);
+  }, [refresh, conversationId]);
 
   const ready = !!currentData && !loading && !pending && !needsRefresh && !error;
   const mutate = async (operation: (isCurrent: () => boolean, recordIntent: () => void) => Promise<SkillBinding[]>, confirmation: Confirmation) => {
@@ -67,7 +73,7 @@ export function useSkillBindings(conversationId: string | null, enabled: boolean
     try {
       const result = await operation(() => version === requests.current.version, () => { requests.current.confirmation = confirmation; });
       if (version !== requests.current.version) return;
-      setData({ id: conversationId, bindings: result });
+      setData({ id: conversationId, mode: taskMode, bindings: result });
       requests.current.confirmation = null;
       confirmation.complete();
     } catch {
@@ -82,6 +88,12 @@ export function useSkillBindings(conversationId: string | null, enabled: boolean
       if (version === requests.current.version) {
         requests.current.pending = false;
         setPending(false);
+      } else if (requests.current.conversationId === conversationId) {
+        // A mode switch must not release a write whose result is still uncertain.
+        requests.current.pending = false;
+        setPending(false);
+        setNeedsRefresh(true);
+        void requests.current.refresh();
       }
     }
   };
@@ -94,13 +106,13 @@ export function useSkillBindings(conversationId: string | null, enabled: boolean
       if (bindings.length >= 4 || bindings.some(b => b.skill_id === skill.skill_id)) return;
       return mutate(async (_isCurrent, recordIntent) => {
         recordIntent();
-        const result = await addSkillBinding(conversationId!, skill);
+        const result = await addSkillBinding(conversationId!, skill, ...(taskMode !== 'smart' ? [taskMode] as const : []));
         return [...bindings, { ...skill, binding_id: result.binding_id, available: true }];
       }, { complete, matches: result => result.some(b => b.skill_id === skill.skill_id && b.revision === skill.revision) });
     },
     remove: (binding: SkillBinding, complete: () => void, keepForTurn = false) => mutate(async (isCurrent, recordIntent) => {
       if (keepForTurn) {
-        const catalog = await getAvailableSkills(conversationId!);
+        const catalog = await getAvailableSkills(conversationId!, ...(taskMode !== 'smart' ? [taskMode] as const : []));
         // Never replace a pinned older version with the latest revision implicitly.
         if (!isCurrent() || !binding.available || !catalog.some(s => s.skill_id === binding.skill_id && s.revision === binding.revision)) {
           throw new Error('Pinned revision is not available for turn selection');

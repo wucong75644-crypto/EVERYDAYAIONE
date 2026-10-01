@@ -14,7 +14,7 @@ from core.database import get_db
 from services.skills.available import available_skills
 from services.skills.resolver import SkillSummary
 from services.skills.bindings import ConversationSkillBindings, SkillBinding, binding_authority
-from services.skills.contracts import SkillError, SkillFileType
+from services.skills.contracts import SkillError, SkillFileType, SkillTaskMode
 from services.skills.selection import SkillSelection
 from services.skills.recommendations import RecommendationBatch
 from services.skills.recommendation_service import recommendations_enabled, web_recommendations, web_feedback
@@ -26,6 +26,7 @@ router = APIRouter(prefix="/skills", tags=["skills"])
 class AvailableSkillsQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
     conversation_id: UUID
+    task_mode: SkillTaskMode = 'smart'
 
 
 @router.get("/available", response_model=list[SkillSummary])
@@ -39,17 +40,18 @@ async def get_available_skills(
         return []
     return await available_skills(
         get_db(), settings, actor_user_id=user_id, conversation_id=query.conversation_id,
+        **({'task_mode': query.task_mode} if query.task_mode != 'smart' else {}),
     )
 
 
 async def get_bindings(conversation_id: UUID, user_id: CurrentUserId,
-                       response: Response, settings=Depends(get_settings)):
+                       response: Response, settings=Depends(get_settings), task_mode: SkillTaskMode = "smart"):
     response.headers["Cache-Control"] = "no-store"
     if settings.skill_catalog_enabled is not True:
         raise HTTPException(503, "Skill 功能暂未开放")
     db = get_db()
     org, owner = await asyncio.to_thread(binding_authority, db, str(UUID(user_id)), conversation_id)
-    return ConversationSkillBindings(db, settings, user_id, conversation_id, org, owner)
+    return ConversationSkillBindings(db, settings, user_id, conversation_id, org, owner, task_mode=task_mode)
 
 
 Bindings = Annotated[ConversationSkillBindings, Depends(get_bindings)]
@@ -93,6 +95,7 @@ async def remove_binding(binding_id: UUID, bindings: Bindings):
 class RecommendationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     conversation_id: UUID
+    task_mode: SkillTaskMode = "smart"
     selected_file_types: tuple[SkillFileType, ...] = Field(default=(), max_length=7)
     permission_mode: Literal["auto", "ask", "plan"] = "auto"
 
@@ -104,7 +107,7 @@ class RecommendationFeedback(SkillSelection):
 
 @router.post("/recommendations", response_model=RecommendationBatch)
 async def get_recommendations(request: RecommendationRequest, user_id: CurrentUserId,
-                              response: Response, settings=Depends(get_settings)):
+                              response: Response, settings=Depends(get_settings), task_mode: SkillTaskMode = "smart"):
     response.headers["Cache-Control"] = "no-store"
     if not recommendations_enabled(settings):
         return RecommendationBatch(status="disabled")

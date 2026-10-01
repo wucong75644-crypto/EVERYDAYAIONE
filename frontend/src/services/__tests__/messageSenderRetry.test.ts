@@ -195,3 +195,15 @@ describe('sendMessage idempotent retry', () => {
     expect(store.removeMessage).toHaveBeenCalledWith('user-1');
   });
 });
+
+it('keeps media Skill selection and mode separate from content and generation settings', async () => {
+  requestMock.mockResolvedValue({ ...response, generation_type: 'image' });
+  const content = [{ type: 'text' as const, text: '' }, { type: 'image' as const, url: 'https://example.test/item.png' }];
+  const params = { num_images: 2, aspect_ratio: '16:9' };
+  await sendMessage({ conversationId: 'conv-1', content, generationType: 'image', params, identifiers,
+    selectedSkill: { skill_id: 'white-background', revision: 'v1' }, skillTaskMode: 'image-i2i' });
+  expect(requestMock).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({
+    content, params, generation_type: 'image', skill_task_mode: 'image-i2i',
+    selected_skill: { skill_id: 'white-background', revision: 'v1' },
+  }) }));
+});

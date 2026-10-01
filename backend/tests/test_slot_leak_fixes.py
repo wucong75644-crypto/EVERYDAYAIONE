@@ -20,7 +20,7 @@ backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from schemas.message import GenerationType, Message, MessageOperation, TextPart  # noqa: E402
+from schemas.message import GenerateRequest, GenerationType, Message, MessageOperation, TextPart  # noqa: E402
 from api.deps import OrgContext  # noqa: E402
 
 
@@ -40,19 +40,11 @@ def _make_request():
 
 
 def _make_body(params=None):
-    body = MagicMock()
-    body.model = "gemini-3-pro"
-    body.generation_type = GenerationType.CHAT
-    body.operation = MessageOperation.SEND
-    body.content = [TextPart(text="hi")]
-    body.params = params
-    body.created_at = None
-    body.client_request_id = None
-    body.original_message_id = None
-    body.assistant_message_id = None
-    body.placeholder_created_at = None
-    body.client_task_id = "ct1"
-    return body
+    return GenerateRequest(
+        model="gemini-3-pro", generation_type=GenerationType.CHAT,
+        operation=MessageOperation.SEND, content=[TextPart(text="hi")],
+        params=params, client_task_id="ct1",
+    )
 
 
 # ============================================================

@@ -16,6 +16,7 @@ class SkillRecommendationRepository(SkillRepository):
         evidence = {
             "domain": facts.context.agent_domain,
             "execution_mode": facts.context.execution_mode,
+            "task_mode": facts.context.task_mode,
             "available_tool_names": sorted(facts.available_tool_names),
             "selected_file_types": sorted(facts.selected_file_types),
             "session_bindings": facts.session_bindings,

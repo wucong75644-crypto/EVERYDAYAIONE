@@ -6,8 +6,10 @@
 import { useState, useEffect, useCallback } from 'react';
 // lucide-react icons moved to InputControls (AI button now inside input)
 import { createConversation, updateConversation } from '../../../services/conversation';
+import { supportsSkillMode, type SkillTaskMode } from '../../../services/skills';
 import { isSkillUiEnabled } from '../../../config/featureFlags';
 import { useTurnSkillSelection } from './useTurnSkillSelection';
+import { useSkillBindings } from './useSkillBindings';
 import { useMessageHandlers } from '../../../hooks/useMessageHandlers';
 import { useModelSelection } from '../../../hooks/useModelSelection';
 import { useAudioRecording } from '../../../hooks/useAudioRecording';
@@ -219,8 +221,14 @@ export default function InputArea({
   const streamingMessageId = useMessageStore((s) =>
     conversationId ? s.streamingMessages.get(conversationId) ?? null : null
   );
-  const skillUiVisible = isSkillUiEnabled() && effectiveModelType === 'chat';
-  const turnSkill = useTurnSkillSelection(conversationId, skillUiVisible && !isStreaming);
+  const skillUiVisible = isSkillUiEnabled();
+  const skillTaskMode: SkillTaskMode = effectiveModelType === 'chat' ? 'smart'
+    : effectiveModelType === 'video' ? 'video' : isEcomMode ? 'image-ecom'
+    : smartSubMode === 'image-i2i' || smartSubMode === 'image-t2i' ? smartSubMode
+    : submissionSnapshot.imageInputs.length ? 'image-i2i' : 'image-t2i';
+  const turnSkill = useTurnSkillSelection(conversationId, skillUiVisible && !isStreaming, skillTaskMode);
+  const skillBindings = useSkillBindings(conversationId, skillUiVisible, skillTaskMode);
+  const hasSkillIntent = !!turnSkill.selected || skillBindings.bindings.some(binding => binding.available && supportsSkillMode(binding, skillTaskMode));
   const ensureSkillConversation = async () => {
     if (conversationId) return conversationId;
     const title = prompt.trim().slice(0, 20) || '新对话';
@@ -291,6 +299,7 @@ export default function InputArea({
   });
   const { handleAudioSubmit, handleSubmit } = useInputSubmission({
     takeSelectedSkill: turnSkill.take,
+    hasSkillIntent, skillTaskMode: skillUiVisible && effectiveModelType !== 'chat' ? skillTaskMode : undefined, skillScopeBlocked: skillBindings.blocked,
     conversationId, selectedModel, prompt, clearPromptForSubmission,
     restorePromptAfterRejection, audioBlob, clearRecording,
     isSubmitting: isSubmitting || isPreparingSkillConversation, setIsSubmitting, setUploadError, setSendError,
@@ -340,7 +349,7 @@ export default function InputArea({
   });
 
   const anyUploadingState = isUploading;
-  const sendButtonState = getSendButtonState(isSubmitting || isPreparingSkillConversation, anyUploadingState, !!(prompt.trim() || attachments.length > 0));
+  const sendButtonState = getSendButtonState(isSubmitting || isPreparingSkillConversation, anyUploadingState, !!(prompt.trim() || attachments.length > 0 || hasSkillIntent));
 
   // 输入变化时清除发送错误状态 + 隐藏建议
   const handlePromptChange = useCallback((value: string) => {
@@ -373,7 +382,9 @@ export default function InputArea({
 
         {/* 主输入控件 */}
         <InputControls
+          skillBindingsState={skillBindings}
           skillSelector={skillUiVisible ? {
+            taskMode: skillTaskMode,
             conversationId, ensureConversation: ensureSkillConversation,
             selected: turnSkill.selected, disabled: isSubmitting || isStreaming,
             onSelect: turnSkill.select,

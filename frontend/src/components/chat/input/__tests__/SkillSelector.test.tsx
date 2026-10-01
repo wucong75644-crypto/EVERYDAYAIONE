@@ -143,3 +143,37 @@ describe('Skill selection', () => {
     expect(isSkillUiEnabled()).toBe(true);
   });
 });
+
+describe('mode-aware catalog', () => {
+  it('filters incompatible summaries even if the API includes them', async () => {
+    vi.mocked(getAvailableSkills).mockResolvedValue([skill, { ...skill, skill_id: 'video-method', name: '视频方法', task_modes: ['video'] }]);
+    render(wrap({ ...props(), taskMode: 'video' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择 Skill' }));
+    expect(await screen.findByText('视频方法')).toBeInTheDocument();
+    expect(screen.queryByText('订单摘要')).not.toBeInTheDocument();
+    expect(getAvailableSkills).toHaveBeenCalledWith('conv-1', 'video');
+  });
+  it('does not display a delayed catalog after mode changes', async () => {
+    let resolve!: (value: SkillSummary[]) => void;
+    vi.mocked(getAvailableSkills).mockReturnValue(new Promise(r => { resolve = r; }));
+    const p = props();
+    const view = render(wrap({ ...p, taskMode: 'smart' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择 Skill' }));
+    view.rerender(wrap({ ...p, taskMode: 'video' }));
+    await act(async () => resolve([skill]));
+    expect(screen.queryByText('订单摘要')).not.toBeInTheDocument();
+  });
+  it('clears an incompatible choice but keeps a declared multi-mode choice', () => {
+    const { result, rerender } = renderHook(({ mode }) => useTurnSkillSelection('c', true, mode), {
+      initialProps: { mode: 'smart' as import('../../../../services/skills').SkillTaskMode },
+    });
+    act(() => result.current.select(skill, 'c'));
+    rerender({ mode: 'video' });
+    expect(result.current.selected).toBeNull();
+    rerender({ mode: 'smart' });
+    expect(result.current.selected).toBeNull();
+    act(() => result.current.select({ ...skill, task_modes: ['smart', 'video'] }, 'c'));
+    rerender({ mode: 'video' });
+    expect(result.current.selected?.skill_id).toBe(skill.skill_id);
+  });
+});

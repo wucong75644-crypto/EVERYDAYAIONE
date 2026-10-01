@@ -78,7 +78,7 @@ export function useRegenerateHandlers(options: RegenerateHandlersOptions) {
         await sendMessage({
           conversationId,
           content: userMessage.content,
-          generationType: 'image',
+          generationType: determineMessageType(targetMessage) === 'image_ecom' ? 'image_ecom' : 'image',
           model: modelId,
           operation: 'regenerate_single',
           originalMessageId: targetMessage.id,

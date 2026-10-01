@@ -1,4 +1,4 @@
-"""Authenticated Web adapter for summary discovery; no chat execution integration."""
+"""Authenticated summary-only discovery for the selected task mode."""
 
 import asyncio
 from uuid import UUID
@@ -39,7 +39,7 @@ def _conversation_org(db, actor_user_id: str, conversation_id: str) -> str | Non
     return org_id
 
 
-async def available_skills(db, settings, *, actor_user_id: str, conversation_id: UUID) -> list[SkillSummary]:
+async def available_skills(db, settings, *, actor_user_id: str, conversation_id: UUID, task_mode='smart') -> list[SkillSummary]:
     if settings.skill_catalog_enabled is not True:
         return []
     actor_user_id = str(UUID(actor_user_id))
@@ -59,7 +59,7 @@ async def available_skills(db, settings, *, actor_user_id: str, conversation_id:
             permissions.add(code)
     context = SkillResolutionContext(
         actor_user_id=actor_user_id, org_id=org_id, conversation_scope="user",
-        agent_domain="general", execution_mode="interactive", permissions=frozenset(permissions),
+        agent_domain="general", execution_mode="interactive", task_mode=task_mode, permissions=frozenset(permissions),
         enabled_feature_flags=frozenset(
             name for name in type(settings).model_fields if getattr(settings, name) is True
         ),

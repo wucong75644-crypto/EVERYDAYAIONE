@@ -265,6 +265,8 @@ async def handle_regenerate_or_send_operation(
             for key in _PARAM_KEYS.get(gen_type, ()):
                 if key in params:
                     gen_params[key] = params[key]
+            if '_skill_intent' in params:
+                gen_params['_skill_intent'] = params['_skill_intent']
             # 写入大脑渲染提示（前端即时读取）
             if "_render" in params:
                 gen_params["_render"] = params["_render"]

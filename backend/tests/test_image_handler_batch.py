@@ -622,3 +622,24 @@ def test_legacy_image_completion_and_error_keep_taobao_option(selected):
     handler = ImageHandler(MockImageDB())
     extra = handler._extract_extra_gen_params({'request_params': {'aspect_ratio': '1:1', 'taobao_main_image': selected}})
     assert extra['taobao_main_image'] is selected
+
+
+@pytest.mark.asyncio
+async def test_single_retry_uses_original_batch_index_prompt_and_references():
+    db = MockImageDB()
+    db.set_users([{'id': 'user_1', 'credits': 1000, 'status': 'active'}])
+    handler = ImageHandler(db)
+    adapter = MockImageAdapter()
+    params = {'model': 'nano-banana', 'operation': 'regenerate_single', 'image_index': 2,
+              'num_images': 3, '_batch_prompts': [
+                  {'prompt': 'first'}, {'prompt': 'second'},
+                  {'prompt': 'third original method', 'aspect_ratio': '4:3', 'image_urls': ['original-third-image']},
+              ]}
+    with patch('services.adapters.factory.create_image_adapter', return_value=adapter), \
+         patch('config.kie_models.calculate_image_cost', return_value={'user_credits': 5}), \
+         patch.object(handler, '_build_callback_url', return_value='http://cb'):
+        await handler.start('msg_1', 'conv_1', 'user_1', [], params, TaskMetadata(client_task_id='retry'))
+    assert len(adapter.generate_calls) == 1
+    assert adapter.generate_calls[0]['prompt'] == 'third original method'
+    assert adapter.generate_calls[0]['image_urls'] == ['original-third-image']
+    assert db._inserted_tasks[0]['image_index'] == 2

@@ -34,6 +34,7 @@ ConversationScope = Literal["user", "channel"]
 AgentDomain = Literal["general", "erp"]
 ExecutionMode = Literal["interactive", "scheduled", "preflight"]
 SkillFileType = Literal["pdf", "docx", "xlsx", "csv", "pptx", "image", "text"]
+SkillTaskMode = Literal['smart', 'image-i2i', 'image-t2i', 'image-ecom', 'video']
 
 
 class SkillCatalogMetadata(Contract):
@@ -49,6 +50,7 @@ class SkillCatalogMetadata(Contract):
     conversation_scopes: tuple[ConversationScope, ...] = ("user",)
     agent_domains: tuple[AgentDomain, ...] = ("general",)
     execution_modes: tuple[ExecutionMode, ...] = ("interactive",)
+    task_modes: tuple[SkillTaskMode, ...] = Field(default=('smart',), min_length=1, max_length=5)
     actor_user_ids: tuple[UUID, ...] = ()
     required_permissions: tuple[CatalogText, ...] = ()
     required_feature_flags: tuple[CatalogText, ...] = ()
@@ -68,6 +70,8 @@ class SkillCatalogMetadata(Contract):
         # Keep old review hashes and checkpoint metadata byte-compatible.
         if not self.recommended_file_types:
             result.pop('recommended_file_types', None)
+        if self.task_modes == ('smart',):
+            result.pop('task_modes', None)
         if self.tool_policy == 'restricted':
             result.pop('tool_policy', None)
         return result

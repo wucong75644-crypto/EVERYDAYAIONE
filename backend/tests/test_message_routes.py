@@ -14,7 +14,7 @@ from starlette.requests import Request as StarletteRequest
 
 from datetime import datetime, timezone
 
-from schemas.message import GenerationType, Message, TextPart, MessageOperation
+from schemas.message import GenerateRequest, GenerationType, Message, TextPart, MessageOperation
 from api.deps import OrgContext
 
 
@@ -43,19 +43,11 @@ class TestPrefetchedSummaryInjection:
     """generate_message 中 _prefetched_summary 注入到 body.params"""
 
     def _make_body(self, params=None):
-        body = MagicMock()
-        body.model = "gemini-3-pro"
-        body.generation_type = GenerationType.CHAT
-        body.operation = MessageOperation.SEND
-        body.content = [TextPart(text="hi")]
-        body.params = params
-        body.created_at = None
-        body.client_request_id = None
-        body.original_message_id = None
-        body.assistant_message_id = None
-        body.placeholder_created_at = None
-        body.client_task_id = "ct1"
-        return body
+        return GenerateRequest(
+            model="gemini-3-pro", generation_type=GenerationType.CHAT,
+            operation=MessageOperation.SEND, content=[TextPart(text="hi")],
+            params=params, client_task_id="ct1",
+        )
 
     @pytest.mark.asyncio
     async def test_summary_injected_from_conversation(self):
@@ -126,19 +118,11 @@ class TestUserLocationInjection:
     """generate_message 中 IP 提取 + _user_location 注入"""
 
     def _make_body(self, params=None):
-        body = MagicMock()
-        body.model = "gemini-3-pro"
-        body.generation_type = GenerationType.CHAT
-        body.operation = MessageOperation.SEND
-        body.content = [TextPart(text="今天天气")]
-        body.params = params
-        body.created_at = None
-        body.client_request_id = None
-        body.original_message_id = None
-        body.assistant_message_id = None
-        body.placeholder_created_at = None
-        body.client_task_id = "ct1"
-        return body
+        return GenerateRequest(
+            model="gemini-3-pro", generation_type=GenerationType.CHAT,
+            operation=MessageOperation.SEND, content=[TextPart(text="今天天气")],
+            params=params, client_task_id="ct1",
+        )
 
     def _make_request_with_ip(self, ip: str):
         """创建带 X-Real-IP 头的 Request"""

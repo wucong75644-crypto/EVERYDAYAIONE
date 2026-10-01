@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { BookOpen, Check, ChevronDown, MessageSquare, Pin, X } from 'lucide-react';
 import { Popover } from '../../primitives/Popover';
-import { skillVersion, type SkillBinding, type SkillSummary } from '../../../services/skills';
+import { skillVersion, supportsSkillMode, type SkillTaskMode, type SkillBinding, type SkillSummary } from '../../../services/skills';
 import type { SkillBindingsState } from './useSkillBindings';
 
 interface Props {
@@ -11,6 +11,7 @@ interface Props {
   onSelect: (skill: SkillSummary | null) => void;
   onComplete: () => void;
   inline?: boolean;
+  taskMode?: SkillTaskMode;
 }
 function SkillTag({ skill, binding, selected, state, disabled, onSelect, onComplete }: Props & {
   skill: SkillSummary; binding?: SkillBinding;
@@ -70,8 +71,8 @@ function SkillTag({ skill, binding, selected, state, disabled, onSelect, onCompl
 }
 
 export default function SessionSkillBindings(props: Props) {
-  const { selected, state, disabled, inline = false } = props;
-  const tags: { skill: SkillSummary; binding?: SkillBinding }[] = state.bindings.map(binding => ({ skill: binding, binding }));
+  const { selected, state, disabled, inline = false, taskMode = 'smart' } = props;
+  const tags: { skill: SkillSummary; binding?: SkillBinding }[] = state.bindings.filter(b => supportsSkillMode(b, taskMode)).map(binding => ({ skill: binding, binding }));
   if (selected && !state.bindings.some(b => b.skill_id === selected.skill_id && b.revision === selected.revision)) tags.push({ skill: selected });
   if (!tags.length && (inline || (!state.error && !state.pending))) return null;
   return <div aria-label="Skill 标签与使用范围" className={inline ? 'flex w-fit max-w-full flex-wrap items-center gap-1' : 'mb-2 flex flex-wrap items-center gap-2 pt-1'}>

@@ -101,7 +101,7 @@ def test_same_display_name_different_stable_keys_and_public_allowlist():
     assert result == SkillResolver().resolve(context(), reversed(items))
     for summary in result:
         assert summary.model_dump() == dict(skill_id=summary.skill_id, name="同名", revision="v1", description="报表摘要",
-                                            triggers=("报表",), source="platform", model_selectable=True)
+                                            triggers=("报表",), source="platform", model_selectable=True, task_modes=("smart",))
 
 
 def test_legacy_metadata_is_conservative():

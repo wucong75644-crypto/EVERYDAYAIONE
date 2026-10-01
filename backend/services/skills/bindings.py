@@ -43,8 +43,9 @@ def binding_authority(db, actor: str, conversation_id: UUID) -> tuple[str, str]:
 
 
 class ConversationSkillBindings:
-    def __init__(self, db, settings, actor, conversation_id, org, owner):
+    def __init__(self, db, settings, actor, conversation_id, org, owner, *, task_mode="smart"):
         self.db, self.settings = db, settings
+        self.task_mode = task_mode
         self.conversation_id, self.org, self.owner = conversation_id, org, owner
         self.repository = SkillBindingRepository(db.pool, DatabaseScope(
             actor_user_id=actor, org_id=org, access_kind=DatabaseAccessKind.RUNTIME_ADMIN,
@@ -61,7 +62,7 @@ class ConversationSkillBindings:
                 permissions.add(code)
         context = SkillResolutionContext(
             actor_user_id=self.owner, org_id=self.org, conversation_scope="user",
-            agent_domain="general", execution_mode="interactive", permissions=frozenset(permissions),
+            agent_domain="general", execution_mode="interactive", task_mode=self.task_mode, permissions=frozenset(permissions),
             enabled_feature_flags=frozenset(name for name in type(self.settings).model_fields
                                            if getattr(self.settings, name) is True),
         )
@@ -75,6 +76,7 @@ class ConversationSkillBindings:
             binding_id=row["id"], skill_id=c.skill_key, name=c.catalog_metadata.name or c.skill_key,
             revision=c.revision, description=c.description, triggers=c.catalog_metadata.triggers,
             source=c.scope_kind, model_selectable=c.catalog_metadata.model_selectable,
+            task_modes=c.catalog_metadata.task_modes,
             available=bool(row["available"] and c.package_id in eligible),
         ) for row, c in zip(rows, candidates)]
 

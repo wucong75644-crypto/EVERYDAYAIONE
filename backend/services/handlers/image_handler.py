@@ -81,6 +81,14 @@ class ImageHandler(BaseHandler):
         # 1. 提取参数
         prompt = self._extract_text_content(content)
         image_urls = self._extract_image_urls(content)
+        if self.handler_type == GenerationType.IMAGE:
+            from services.skills.media import prepare_media_prompt
+            prompt = await prepare_media_prompt(
+                self, conversation_id=conversation_id, user_id=user_id,
+                params=params, metadata=metadata,
+                task_mode=params.get('_skill_task_mode') or ('image-i2i' if image_urls else 'image-t2i'),
+                prompt=prompt, image_urls=image_urls,
+            )
         settings = resolve_image_generation_settings(
             params=params,
             has_image_urls=bool(image_urls),
@@ -142,9 +150,10 @@ class ImageHandler(BaseHandler):
                 # Agent Loop / Ecom 批量生图：每张图可覆盖 prompt/aspect_ratio/image_urls/resolution
                 task_kwargs = generate_kwargs
                 task_prompt = prompt
-                if batch_prompts and i < len(batch_prompts):
+                batch_index = single_image_index if is_regenerate_single else i
+                if batch_prompts and batch_index < len(batch_prompts):
                     task_kwargs, task_prompt = resolve_batch_item_kwargs(
-                        generate_kwargs, prompt, aspect_ratio, batch_prompts[i],
+                        generate_kwargs, prompt, aspect_ratio, batch_prompts[batch_index],
                     )
 
                 ext_task_id = await self._create_single_task(

@@ -15,3 +15,11 @@ it('writes only the explicit Skill identity and scopes every call to a conversat
   await removeSkillBinding('conv-2', 'binding-1');
   expect(request).toHaveBeenLastCalledWith({ method: 'DELETE', url: '/skills/conversations/conv-2/bindings/binding-1' });
 });
+
+it('uses a mode query without sending metadata or authority in binding writes', async () => {
+  await getSkillBindings('conv-1', 'video');
+  expect(request).toHaveBeenLastCalledWith({ method: 'GET', url: '/skills/conversations/conv-1/bindings', params: { task_mode: 'video' } });
+  await addSkillBinding('conv-1', { skill_id: 'video-method', revision: 'v1' }, 'video');
+  expect(request).toHaveBeenLastCalledWith({ method: 'POST', url: '/skills/conversations/conv-1/bindings', params: { task_mode: 'video' },
+    data: { skill_id: 'video-method', revision: 'v1' } });
+});
