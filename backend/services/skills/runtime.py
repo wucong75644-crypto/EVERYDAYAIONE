@@ -431,11 +431,13 @@ class SkillRuntime:
             raise SkillReplayError("SKILL_REPLAY_UNAVAILABLE") from None
 
 
-async def create_skill_runtime(*, handler, context, runtime, replay_context=None, selection=None, task_mode='smart', recommendations=True, explicit_only=False):
+async def create_skill_runtime(*, handler, context, runtime, replay_context=None, selection=None, task_mode='smart', recommendations=True, explicit_only=False, intent=None, retry=False):
     """Feature gate precedes repository/storage construction, including old Actors."""
     from core.config import get_settings
 
     settings = get_settings()
+    from services.skills.retry import parse_intent, PinnedIntentSource
+    intent = parse_intent(intent) if intent is not None else None
     checkpoint = (replay_context or {}).get("skill_runtime")
     if checkpoint is not None and not isinstance(checkpoint, dict):
         raise SkillReplayError("SKILL_REPLAY_CHECKPOINT_INVALID")
@@ -447,6 +449,8 @@ async def create_skill_runtime(*, handler, context, runtime, replay_context=None
         raise SkillReplayError("SKILL_SCHEDULED_CHECKPOINT_MISMATCH")
     enabled = settings.skill_runtime_enabled is True and settings.skill_catalog_enabled is True
     if not enabled or runtime is None:
+        if intent is not None and intent.required:
+            raise SkillBindingError('原任务的 Skill 当前不可用，无法按原方法重新生成。')
         if (snapshot and snapshot.get("skills")) or (checkpoint and (checkpoint.get("active") or checkpoint.get("session_skill_ids"))):
             raise SkillReplayError("SKILL_REPLAY_RUNTIME_DISABLED")
         return None
@@ -463,6 +467,10 @@ async def create_skill_runtime(*, handler, context, runtime, replay_context=None
             source = ScheduledSkillSource(handler, replace(context, execution_mode="scheduled"), settings, snapshot)
         except SkillError as exc:
             raise SkillReplayError(str(exc)) from None
+    if intent is not None and not scheduled and checkpoint is None:
+        if intent.task_mode != task_mode or intent.selected_skill != selection:
+            raise SkillBindingError('原任务 Skill 的模式或版本记录不一致。')
+        source = PinnedIntentSource(source, intent, retry=retry)
     state = SkillRuntime(
         turn_id=runtime.turn_id, source=source, execution_mode=context.execution_mode,
         platform_tool_names=(s.name for s in build_legacy_catalog().specs()),

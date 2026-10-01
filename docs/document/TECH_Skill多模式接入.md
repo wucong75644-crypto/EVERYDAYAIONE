@@ -123,3 +123,51 @@
 
 - `backend/tests/test_message_routes.py`
 - `backend/tests/test_slot_leak_fixes.py`
+
+## 2026-10-01 手动重试补丁（尚未部署）
+
+用户确认补齐“任务失败后点击重试/重新生成仍使用原 Skill”。当前补丁沿用本任务工作树，基于已测试生产版本 `b8cbee94d581199838034168dc29945fbfc00565`；没有提交、推送或部署本补丁。
+
+### 行为和可信边界
+
+- 首次生成把服务端确认的 Skill 意图保存到助手消息 `generation_params._skill_intent` 和任务 `request_params`：适用模式、仅本条选择、固定项的版本及包身份。空固定集合也保存，重试不会继承随后新增的绑定。
+- `retry`、`regenerate`、`regenerate_single` 先校验用户/组织/会话和原助手消息归属，读取原记录；客户端选择、上传正文、模型输出或伪造私有参数不能替换该历史意图。HTTP 幂等指纹排除服务端派生字段。
+- 原版本仍须已发布且拥有当前组织授权；运行时继续使用原 `activate_manual`/`activate_session`、存储校验、预算和工具权限上限。允许原任务重用仍已发布的旧版本；停用、撤权、版本失效、来源歧义及相关开关关闭都拒绝必需方法，不能降级成普通生成。新任务和定时任务的现有审核要求保持不变。
+- 旧媒体任务可从既有显式选择和激活审计恢复；旧 Actor 聊天从服务端 checkpoint 的手动/固定身份恢复，不把模型自动选择的 active 项当成用户授权。缺少必要记录、快照损坏或来源有歧义时提示重新选择并发送新任务，不猜测历史绑定。
+- 电商方案任务保存完整参数及 Skill 意图，审计更新匹配真正的 external_task_id；已确认方案重试从原任务恢复方案和参考图片，客户端不能把方案阶段重试切换成未确认出图。原固定 Skill 的可用性仍要核验；保留先确认再生成的流程。
+- 单张电商图重生成保持 image_ecom 模式，批次选择原 image_index 的提示词和参考图片。聊天文字、上传附件、布局和原常规生成参数保持现有使用方式；重生成结果仍可能变化。
+
+### 验证
+
+- 后端受影响模块最终 **946 passed，6 skipped**。覆盖真实临时 PostgreSQL 的原版本读取/绑定移除/撤权、同名包隔离、首个占位符存储、三种重生成操作与四类任务的路由恢复、HTTP 私有字段隔离、旧记录、开关、媒体提示词准备、电商确认方案及单图原索引。六项为未启用的真实供应商验收。
+- 前端重生成 Hook、消息幂等重发及错误回滚 **22 passed / 3 files**；TypeScript `tsc -b` 通过。未调用真实图片/视频供应商，未写生产业务数据，未执行本补丁生产验收。
+- 日志：`/private/tmp/skill-retry-final.log`、`/private/tmp/skill-retry-front.log`、`/private/tmp/skill-retry-tsc.log`。`git diff --check` 和旧 Runtime 路径检查通过。
+
+### 发布后核对与回滚
+
+1. 用仅本条 Skill 加附件发送任务，模拟失败后移除输入区标签并点击重试；确认任务仍使用原 Skill、原版本、原模式和原资料。
+2. 原方法发布新版本或更改/移除会话绑定后，重试旧任务仍使用原已发布版本；无 Skill 的旧任务不获得新绑定。
+3. 停用/撤销授权/关闭开关后，重试提示不可用，不调用生成模型或锁定生成积分。
+4. 电商图先规划并确认，失败后重试保持原已确认方案；只重生成第三张时检查使用第三张的提示词、参考图与索引，没有重新策划或修改其他图。
+5. 缺少旧任务记录时必须给出明确提示，不从当前会话配置猜测。
+
+本补丁回滚点为生产已测试的 `b8cbee94`。无数据库迁移；形成仅撤回本补丁的任务提交，再走受控发布，保留消息/任务的历史 JSON。原多模式解析及目录兼容仍需保留，不能回退到不支持 task_modes 的旧基座。发布仍须用户明确“提交部署”，不合并 main 或清理工作树。
+
+### 本补丁文件
+
+- `backend/api/routes/message.py`
+- `backend/api/routes/message_generation_helpers.py`
+- `backend/services/handlers/chat/execution_engine.py`
+- `backend/services/handlers/ecom_image_handler.py`
+- `backend/services/handlers/image_handler.py`
+- `backend/services/message_idempotency_service.py`
+- `backend/services/skills/media.py`
+- `backend/services/skills/repository.py`
+- `backend/services/skills/runtime.py`
+- `backend/services/skills/retry.py`
+- `backend/tests/test_skill_retry_intent.py`
+- `backend/tests/test_skill_bindings_postgres.py`
+- `backend/tests/test_image_handler_batch.py`
+- `frontend/src/hooks/useRegenerateHandlers.ts`
+- `frontend/src/hooks/__tests__/useRegenerateHandlers.test.ts`
+- `docs/document/TECH_Skill多模式接入.md`

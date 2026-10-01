@@ -150,9 +150,10 @@ class ImageHandler(BaseHandler):
                 # Agent Loop / Ecom 批量生图：每张图可覆盖 prompt/aspect_ratio/image_urls/resolution
                 task_kwargs = generate_kwargs
                 task_prompt = prompt
-                if batch_prompts and i < len(batch_prompts):
+                batch_index = single_image_index if is_regenerate_single else i
+                if batch_prompts and batch_index < len(batch_prompts):
                     task_kwargs, task_prompt = resolve_batch_item_kwargs(
-                        generate_kwargs, prompt, aspect_ratio, batch_prompts[i],
+                        generate_kwargs, prompt, aspect_ratio, batch_prompts[batch_index],
                     )
 
                 ext_task_id = await self._create_single_task(

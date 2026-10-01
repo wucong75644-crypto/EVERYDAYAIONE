@@ -24,6 +24,8 @@ _RUNTIME_PARAM_KEYS = {
     "_selected_skill",
     "_skill_task_mode",
     "_media_skills",
+    "_skill_intent",
+    "_skill_retry",
     "_task_slot_id",
     "_prefetched_summary",
     "_org_id",

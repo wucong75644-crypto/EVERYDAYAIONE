@@ -298,6 +298,18 @@ async def _do_generate_message(
     # 1.5+2. 解析生成类型与请求位置上下文
     gen_type = await resolve_generation_context(request, body)
     from services.skills.media import resolve_task_mode
+    from services.skills.retry import original_intent, capture_intent
+    skill_intent = None
+    if body.operation in (MessageOperation.RETRY, MessageOperation.REGENERATE, MessageOperation.REGENERATE_SINGLE):
+        if body.params is None:
+            body.params = {}
+        skill_intent = await original_intent(
+            db, user_id=user_id, org_id=ctx.org_id, conversation_id=conversation_id,
+            message_id=body.original_message_id,
+            task_mode=resolve_task_mode(gen_type.value, None, body.content), params_to_restore=body.params,
+        )
+        body.selected_skill = skill_intent.selected_skill
+        body.skill_task_mode = skill_intent.task_mode
     skill_task_mode = resolve_task_mode(gen_type.value, body.skill_task_mode, body.content)
     requested_turn_id = str(uuid.uuid4())
 
@@ -319,12 +331,20 @@ async def _do_generate_message(
     body.params["_prefetched_summary"] = conversation.get("context_summary")
     body.params["_org_id"] = ctx.org_id
     # Only the typed HTTP intent may populate this internal Actor input.
-    for private_key in ("_selected_skill", "_skill_task_mode", "_media_skills"):
+    for private_key in ("_selected_skill", "_skill_task_mode", "_media_skills", "_skill_intent", "_skill_retry"):
         body.params.pop(private_key, None)
     if gen_type != GenerationType.CHAT:
         body.params["_skill_task_mode"] = skill_task_mode
     if body.selected_skill is not None:
         body.params["_selected_skill"] = body.selected_skill.model_dump()
+
+    if skill_intent is None:
+        skill_intent = await capture_intent(
+            handler, user_id=user_id, conversation_id=conversation_id,
+            task_mode=skill_task_mode, selection=body.selected_skill,
+        )
+    body.params['_skill_intent'] = skill_intent.model_dump(mode='json')
+    body.params['_skill_retry'] = body.operation != MessageOperation.SEND
 
     # 5. 处理助手消息（根据操作类型）
     assistant_message_id, assistant_message = await prepare_assistant_message(

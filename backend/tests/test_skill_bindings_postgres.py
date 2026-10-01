@@ -217,3 +217,36 @@ async def test_media_pin_is_mode_scoped_and_revocation_still_fails_closed(config
     await fresh.initialize()
     assert (await fresh.activate_session('media-method'))['code'] == 'SKILL_PINNED_REVISION_UNAVAILABLE'
     assert len(env.repo().bindings(env.conversation)) == 1
+
+
+async def test_manual_retry_keeps_reviewed_revision_after_new_publication(configured):
+    from services.skills.retry import PinnedIntentSource, SkillIntent
+    from services.skills.selection import SkillSelection
+    env = configured
+    original_revision = env.candidate.revision
+    intent = SkillIntent(task_mode='smart', selected_skill=SkillSelection(skill_id='orders', revision=original_revision))
+    svc = env.service()
+    action(svc, env.pid, 'start_draft')
+    latest = publish(svc, env.pid)['draft']['revision']
+    assert latest != original_revision
+    retry = state(PinnedIntentSource(source(env), intent, retry=True))
+    await retry.initialize(selection=intent.selected_skill)
+    assert (await retry.activate_manual(intent.selected_skill))['ok']
+    assert retry.active['orders'].revision == original_revision
+
+
+async def test_retry_binding_snapshot_survives_removal_but_not_revoked_grant(configured):
+    from services.skills.retry import PinnedIntentSource, SkillIntent
+    from services.skills.selection import SkillSelection
+    from services.skills.runtime import SkillBindingError
+    env = configured
+    bid = env.repo().add_binding(env.conversation, env.candidate)
+    intent = SkillIntent(task_mode='smart', session_skills=(SkillSelection(skill_id='orders', revision=env.candidate.revision),))
+    env.repo().remove_binding(env.conversation, bid)
+    retry = state(PinnedIntentSource(source(env), intent, retry=True))
+    await retry.initialize(discover_catalog=False)
+    assert (await retry.activate_session('orders'))['ok']
+    revision = env.repo().assigned_revision(env.pid, env.candidate.revision)
+    env.repo().set_assignment(env.pid, revision.id, enabled=False)
+    with pytest.raises(SkillBindingError):
+        await state(PinnedIntentSource(source(env), intent, retry=True)).initialize(discover_catalog=False)

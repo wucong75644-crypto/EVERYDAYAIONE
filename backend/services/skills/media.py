@@ -37,15 +37,17 @@ def resolve_task_mode(generation_type, requested, content):
 async def load_media_skills(handler, *, conversation_id, user_id, params, metadata, task_mode):
     """Re-use the same revision-pinned activation as chat, only for explicit intent."""
     settings = get_settings()
+    from services.skills.retry import parse_intent
+    intent = parse_intent(params['_skill_intent']) if '_skill_intent' in params else None
     raw_selection = params.get('_selected_skill')
     selection = SkillSelection.model_validate(raw_selection) if raw_selection is not None else None
     if settings.skill_catalog_enabled is not True:
-        if selection:
+        if selection or (intent is not None and intent.required):
             raise HTTPException(409, 'Skill 功能暂未开放，请移除所选 Skill 后重试')
         return None
     org = await asyncio.to_thread(_conversation_org, handler.db, user_id, conversation_id)
     if org is None:
-        if selection:
+        if selection or (intent is not None and intent.required):
             raise HTTPException(403, '当前会话无权使用该 Skill')
         return None
     if org != handler.org_id:
@@ -60,17 +62,19 @@ async def load_media_skills(handler, *, conversation_id, user_id, params, metada
         from services.skills.runtime_source import ActorSkillSource
         source = ActorSkillSource(handler, context, settings, task_mode=task_mode)
         try:
-            bindings = await source.session_bindings()
+            bindings = intent.session_skills if intent is not None else await source.session_bindings()
         except Exception:
             raise HTTPException(409, '无法确认会话 Skill，请检查设置后重试') from None
-        if selection or bindings:
+        if selection or bindings or (intent is not None and intent.required):
             raise HTTPException(409, 'Skill 功能暂未开放，请移除所选或固定的 Skill 后重试')
         return None
     handle = SimpleNamespace(turn_id=metadata.turn_id or metadata.client_task_id,
                              cancellation_event=asyncio.Event(), skill_runtime=None)
     try:
         state = await create_skill_runtime(handler=handler, context=context, runtime=handle,
-                                           selection=selection, task_mode=task_mode, recommendations=False, explicit_only=True)
+                                           selection=selection, task_mode=task_mode, recommendations=False, explicit_only=True,
+                                           **({'intent': params['_skill_intent'], 'retry': params.get('_skill_retry') is True}
+                                              if intent is not None else {}))
         if state is None:
             raise HTTPException(409, 'Skill 功能暂未开放')
         for key in state.session_skill_ids:

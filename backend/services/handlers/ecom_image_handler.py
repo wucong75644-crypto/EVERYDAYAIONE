@@ -50,6 +50,14 @@ class EcomImageHandler(ImageHandler):
             if params.get('_selected_skill'):
                 from fastapi import HTTPException
                 raise HTTPException(409, '确认出图将使用已有方案；如需更换 Skill，请先重新策划方案')
+            if '_skill_intent' in params:
+                from services.skills.retry import parse_intent
+                if parse_intent(params['_skill_intent']).required:
+                    from services.skills.media import load_media_skills
+                    await load_media_skills(
+                        self, conversation_id=conversation_id, user_id=user_id, params=params,
+                        metadata=metadata, task_mode='image-ecom',
+                    )
             # Phase 2：有方案 → 批量生图
             return await self._phase2_generate(
                 message_id, conversation_id, user_id, content, params, metadata,
@@ -64,7 +72,7 @@ class EcomImageHandler(ImageHandler):
             conversation_id=conversation_id, user_id=user_id,
             task_type="image", status="running",  # DB check 约束只允许 chat/image/video
             model_id="qwen-vl-max",
-            request_params={"phase": "plan"},
+            request_params={"phase": "plan", **self._serialize_params(params), "_org_id": self.org_id},
             metadata=metadata,
         )
         self._insert_task_with_turn_binding(task_data, metadata)
@@ -105,8 +113,8 @@ class EcomImageHandler(ImageHandler):
             skill_messages = media_skill_messages(state) if state else []
             if state:
                 await asyncio.to_thread(lambda: self.db.table('tasks').update({
-                    'request_params': {'phase': 'plan', '_media_skills': params['_media_skills']},
-                }).eq('id', task_id).execute())
+                    'request_params': {'phase': 'plan', **self._serialize_params(params)},
+                }).eq('external_task_id', task_id).eq('conversation_id', conversation_id).eq('user_id', user_id).execute())
 
             agent = ImageAgent(
                 db=self.db,

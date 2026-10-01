@@ -183,14 +183,19 @@ class SkillRepository:
         return SkillRevision.model_validate(row)
 
     def scheduled_candidates(self, skill_key: str, revision: str) -> list[SkillCandidate]:
-        """Explicit selection may pin any published revision of an enabled package."""
+        """Scheduled configuration requires the existing review attestation."""
+        return self.pinned_candidates(skill_key, revision, require_reviewed=True)
+
+    def pinned_candidates(self, skill_key: str, revision: str, *, require_reviewed: bool = False) -> list[SkillCandidate]:
+        """Exact published revision under a current grant; no latest substitution."""
         with self._cursor() as cursor:
             cursor.execute("""SELECT p.id AS package_id,p.skill_key,p.org_id AS package_org_id,p.scope_kind,
                 a.org_id AS assignment_org_id,a.priority,r.revision,r.summary AS description,r.catalog_metadata
                 FROM public.skill_packages p JOIN public.skill_assignments a ON a.package_id=p.id
                 JOIN public.skill_revisions r ON r.package_id=p.id
                 WHERE a.org_id=%s AND a.enabled AND (p.org_id IS NULL OR p.org_id=a.org_id)
-                AND p.skill_key=%s AND r.revision=%s AND r.status='published' AND r.reviewed""",
+                AND p.skill_key=%s AND r.revision=%s AND r.status='published'
+                """ + (' AND r.reviewed' if require_reviewed else ''),
                 (self._require_org(),skill_key,revision))
             return [SkillCandidate.model_validate(row) for row in cursor.fetchall()]
 

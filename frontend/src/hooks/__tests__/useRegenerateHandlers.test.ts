@@ -360,4 +360,15 @@ describe('useRegenerateHandlers', () => {
 
     expect(toast.error).toHaveBeenCalledWith('网络错误');
   });
+  it('preserves ecommerce mode and original inputs when regenerating one image', async () => {
+    const { result } = renderHook(() => useRegenerateHandlers({ conversationId: 'conv-1', setMessages: vi.fn() }));
+    const target = createTestMessage({ generation_params: { type: 'image_ecom' } });
+    const input = createUserMessage({ content: [{ type: 'image', url: 'original-product.png' }, { type: 'text', text: '' }] });
+    await act(async () => { await result.current.handleRegenerateSingle(target, 2, input); });
+    expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      generationType: 'image_ecom', operation: 'regenerate_single', originalMessageId: target.id,
+      content: input.content, params: { image_index: 2 },
+    }));
+  });
+
 });
