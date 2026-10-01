@@ -187,3 +187,66 @@ def test_populated_rollback_refused_and_empty_rollback_reapplies(configured):
         conn.execute(rollback)
         conn.execute((MIGRATIONS / "263_conversation_skill_bindings.sql").read_text())
     assert env.repo().bindings(env.conversation) == []
+
+
+async def test_media_pin_is_mode_scoped_and_revocation_still_fails_closed(configured):
+    from services.skills.authoring_contracts import CreateSkill, DraftContent
+    env = configured
+    svc = env.service()
+    pid = svc.create(CreateSkill(skill_key='media-method', content=DraftContent(
+        description='产品图方法', body='保留参考图商品，使用白色背景。',
+        catalog_metadata={'task_modes': ['image-i2i'], 'model_selectable': False},
+    )))['package_id']
+    publish(svc, pid)
+    media_candidate = next(c for c in env.repo().catalog_candidates() if c.skill_key == 'media-method')
+    env.repo().add_binding(env.conversation, media_candidate)
+    chat = source(env)
+    assert await chat.session_bindings() == []
+    media_source = source(env)
+    media_source.task_mode = 'image-i2i'
+    media_source._resolution_context.return_value = media_source._resolution_context.return_value.model_copy(
+        update={'task_mode': 'image-i2i'})
+    runtime = state(media_source, authorized_tool_names=frozenset())
+    await runtime.initialize()
+    assert (await runtime.activate_session('media-method'))['ok']
+    assert runtime.effective_allowed_tool_names == frozenset()
+    revision = env.repo().assigned_revision(pid, media_candidate.revision)
+    env.repo().set_assignment(pid, revision.id, enabled=False)
+    # The applicable revoked pin remains mandatory; it must not become ordinary generation.
+    fresh = state(media_source, authorized_tool_names=frozenset())
+    await fresh.initialize()
+    assert (await fresh.activate_session('media-method'))['code'] == 'SKILL_PINNED_REVISION_UNAVAILABLE'
+    assert len(env.repo().bindings(env.conversation)) == 1
+
+
+async def test_manual_retry_keeps_reviewed_revision_after_new_publication(configured):
+    from services.skills.retry import PinnedIntentSource, SkillIntent
+    from services.skills.selection import SkillSelection
+    env = configured
+    original_revision = env.candidate.revision
+    intent = SkillIntent(task_mode='smart', selected_skill=SkillSelection(skill_id='orders', revision=original_revision))
+    svc = env.service()
+    action(svc, env.pid, 'start_draft')
+    latest = publish(svc, env.pid)['draft']['revision']
+    assert latest != original_revision
+    retry = state(PinnedIntentSource(source(env), intent, retry=True))
+    await retry.initialize(selection=intent.selected_skill)
+    assert (await retry.activate_manual(intent.selected_skill))['ok']
+    assert retry.active['orders'].revision == original_revision
+
+
+async def test_retry_binding_snapshot_survives_removal_but_not_revoked_grant(configured):
+    from services.skills.retry import PinnedIntentSource, SkillIntent
+    from services.skills.selection import SkillSelection
+    from services.skills.runtime import SkillBindingError
+    env = configured
+    bid = env.repo().add_binding(env.conversation, env.candidate)
+    intent = SkillIntent(task_mode='smart', session_skills=(SkillSelection(skill_id='orders', revision=env.candidate.revision),))
+    env.repo().remove_binding(env.conversation, bid)
+    retry = state(PinnedIntentSource(source(env), intent, retry=True))
+    await retry.initialize(discover_catalog=False)
+    assert (await retry.activate_session('orders'))['ok']
+    revision = env.repo().assigned_revision(env.pid, env.candidate.revision)
+    env.repo().set_assignment(env.pid, revision.id, enabled=False)
+    with pytest.raises(SkillBindingError):
+        await state(PinnedIntentSource(source(env), intent, retry=True)).initialize(discover_catalog=False)

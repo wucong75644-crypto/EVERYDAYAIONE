@@ -215,12 +215,19 @@ async def execute_chat(
     try:
         skills = None
         selection_error = None
+        if runtime is None and '_skill_intent' in request.params:
+            from services.skills.retry import parse_intent
+            from services.skills.runtime import SkillBindingError
+            if parse_intent(request.params['_skill_intent']).required:
+                raise SkillBindingError('当前聊天执行入口无法加载原任务 Skill，请检查设置后重试。')
         if runtime is not None or (request.replay_context or {}).get("skill_runtime") is not None:
             from services.skills.runtime import create_skill_runtime, SkillReplayError, SkillBindingError
             try:
                 skills = await create_skill_runtime(
                     handler=handler, context=prepared.execution_context, runtime=runtime,
                     replay_context=request.replay_context, selection=request.selected_skill,
+                    **({'intent': request.params['_skill_intent'], 'retry': request.params.get('_skill_retry') is True}
+                       if '_skill_intent' in request.params else {}),
                 )
             except (SkillReplayError, SkillBindingError):
                 raise

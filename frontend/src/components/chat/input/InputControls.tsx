@@ -5,6 +5,7 @@
  * 工具栏：左侧（模型/设置/深度思考） | 右侧（计费/上传/发送或语音）
  */
 
+import { supportsSkillMode } from '../../../services/skills';
 import { useState, useRef, useEffect } from 'react';
 import { m } from 'framer-motion';
 import { Send, Pause, Settings, Upload, Brain, Paperclip, FolderOpen, ChevronUp, Zap, ShieldCheck, ListChecks } from 'lucide-react';
@@ -78,7 +79,10 @@ export default function InputControls(props: InputControlsProps) {
   const advancedMenuRef = useRef<HTMLDivElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
   const selectedSkill = props.skillSelector?.selected;
-  const skillBindings = useSkillBindings(props.skillSelector?.conversationId ?? null, !!props.skillSelector);
+  const skillTaskMode = props.skillSelector?.taskMode ?? 'smart';
+  const localSkillBindings = useSkillBindings(props.skillSelector?.conversationId ?? null,
+    !!props.skillSelector && !props.skillBindingsState, skillTaskMode);
+  const skillBindings = props.skillBindingsState ?? localSkillBindings;
   const skillScopeBlocked = skillBindings.blocked;
 
   // 拖拽/粘贴统一走 onUnifiedFiles（图片走 useImageUpload，其他走 useFileUpload；
@@ -127,7 +131,8 @@ export default function InputControls(props: InputControlsProps) {
 
   // 判断条件
   const supportsDeepThinking = selectedModel.capabilities.thinkingEffort === true;
-  const hasContent = prompt.trim().length > 0 || attachments.length > 0;
+  const hasContent = prompt.trim().length > 0 || attachments.length > 0
+    || !!selectedSkill || skillBindings.bindings.some(binding => binding.available && supportsSkillMode(binding, skillTaskMode));
   const canSubmit = !sendButtonDisabled && !skillScopeBlocked && (hasContent || audioBlob);
 
   // 发送/语音按钮互斥显示
@@ -190,7 +195,7 @@ export default function InputControls(props: InputControlsProps) {
           <div ref={skillPrefixRef} onFocusCapture={revealSkillPrefix}
             className="pointer-events-none absolute left-0 top-2 z-10 w-fit max-w-[calc(100%-72px)]">
             {props.skillSelector && <div className="pointer-events-auto">
-              <SessionSkillBindings key={props.skillSelector.conversationId ?? 'new'} inline
+              <SessionSkillBindings key={`${props.skillSelector.conversationId ?? 'new'}:${skillTaskMode}`} taskMode={skillTaskMode} inline
                 selected={selectedSkill ?? null} state={skillBindings} disabled={props.skillSelector.disabled || isSubmitting}
                 onSelect={(skill) => {
                   if (props.skillSelector?.conversationId) props.skillSelector.onSelect(skill, props.skillSelector.conversationId);
@@ -281,8 +286,8 @@ export default function InputControls(props: InputControlsProps) {
               )}
             </div>
 
-            {props.skillSelector && <SkillSelector {...props.skillSelector} permissionMode={permissionMode}
-              disabled={props.skillSelector.disabled || isSubmitting || skillScopeBlocked} bindings={skillBindings.bindings}
+            {props.skillSelector && <SkillSelector key={skillTaskMode} {...props.skillSelector} permissionMode={permissionMode}
+              disabled={props.skillSelector.disabled || isSubmitting || skillScopeBlocked} bindings={skillBindings.bindings.filter(b => supportsSkillMode(b, skillTaskMode))}
               onSelectionComplete={() => textareaRef.current?.focus()} />}
 
             {/* 深度思考按钮（仅支持的模型显示） */}

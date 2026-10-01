@@ -428,3 +428,41 @@ describe('useInputSubmission', () => {
     expect(options.clearRecording).toHaveBeenCalledOnce();
   });
 });
+
+describe('Skill media submission', () => {
+  it.each(['image-i2i', 'image-t2i', 'image-ecom', 'video'] as const)('carries the method separately in %s with optional text', async mode => {
+    const selection = { skill_id: 'routine', revision: 'v1' };
+    const refs = mode === 'image-i2i' ? snapshot([image('item.png', 'https://example.test/item.png')]) : snapshot([]);
+    const options = makeOptions({ prompt: '', hasSkillIntent: true, skillTaskMode: mode,
+      effectiveModelType: mode === 'video' ? 'video' : 'image', smartSubMode: mode,
+      isEcomMode: mode === 'image-ecom', attachmentSnapshot: refs, takeSelectedSkill: vi.fn(() => selection) });
+    const { result } = renderHook(() => useInputSubmission(options));
+    await act(() => result.current.handleSubmit());
+    const handler = mode === 'video' ? options.handleVideoGeneration : options.handleImageGeneration;
+    expect(handler).toHaveBeenCalledWith('conversation-1', '', refs.imageInputs.length ? refs.imageInputs : null,
+      mode === 'image-ecom' ? { generation_type_override: 'image_ecom' } : null, selection, mode);
+    expect(options.handleChatMessage).not.toHaveBeenCalled();
+    expect(options.getSendButtonState).toHaveBeenCalledWith(false, false, true);
+  });
+  it('sends mode for a pinned method without a manual choice', async () => {
+    const options = makeOptions({ prompt: '', hasSkillIntent: true, skillTaskMode: 'video', effectiveModelType: 'video' });
+    const { result } = renderHook(() => useInputSubmission(options));
+    await act(() => result.current.handleSubmit());
+    expect(options.handleVideoGeneration).toHaveBeenCalledWith('conversation-1', '', null, null, undefined, 'video');
+  });
+  it('blocks submission during uncertain scope changes', async () => {
+    const options = makeOptions({ skillScopeBlocked: true, takeSelectedSkill: vi.fn() });
+    const { result } = renderHook(() => useInputSubmission(options));
+    await act(() => result.current.handleSubmit());
+    expect(options.handleChatMessage).not.toHaveBeenCalled();
+    expect(options.takeSelectedSkill).not.toHaveBeenCalled();
+  });
+  it('requires an image before consuming a Skill in image-to-image mode', async () => {
+    const options = makeOptions({ prompt: '', hasSkillIntent: true, effectiveModelType: 'image',
+      smartSubMode: 'image-i2i', skillTaskMode: 'image-i2i', takeSelectedSkill: vi.fn() });
+    const { result } = renderHook(() => useInputSubmission(options));
+    await act(() => result.current.handleSubmit());
+    expect(options.handleImageGeneration).not.toHaveBeenCalled();
+    expect(options.takeSelectedSkill).not.toHaveBeenCalled();
+  });
+});

@@ -4,13 +4,14 @@ import { getPlaceholderText } from '../constants/placeholder';
 import { useMessageStore, type ContentPart, type Message } from '../stores/useMessageStore';
 import { logger } from '../utils/logger';
 import { toApiRequestError } from './api';
-import type { SkillSelection } from './skills';
+import type { SkillSelection, SkillTaskMode } from './skills';
 
 export type GenerationType = 'chat' | 'image' | 'image_ecom' | 'video' | 'audio';
 export type MessageOperation = 'send' | 'regenerate' | 'retry' | 'regenerate_single';
 
 export interface SendOptions {
   selectedSkill?: SkillSelection;
+  skillTaskMode?: SkillTaskMode;
   conversationId: string;
   content: ContentPart[];
   generationType?: GenerationType;

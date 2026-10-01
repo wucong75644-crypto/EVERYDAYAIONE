@@ -15,8 +15,9 @@ from services.tools.runtime_context import _check_identity
 
 
 class ActorSkillSource:
-    def __init__(self, handler, context, settings):
+    def __init__(self, handler, context, settings, *, task_mode='smart'):
         self.handler, self.context, self.settings = handler, context, settings
+        self.task_mode = task_mode
         self.repository = SkillRepository(handler.db.pool, DatabaseScope(
             actor_user_id=context.actor_user_id, org_id=context.org_id,
             access_kind=DatabaseAccessKind.PROJECTION,
@@ -48,7 +49,7 @@ class ActorSkillSource:
         return SkillResolutionContext(
             actor_user_id=context.actor_user_id, org_id=context.org_id,
             conversation_scope=context.context_scope, agent_domain=context.agent_domain,
-            execution_mode=context.execution_mode, permissions=frozenset(permissions),
+            execution_mode=context.execution_mode, task_mode=self.task_mode, permissions=frozenset(permissions),
             enabled_feature_flags=frozenset(
                 name for name in type(self.settings).model_fields
                 if getattr(self.settings, name) is True
@@ -71,7 +72,9 @@ class ActorSkillSource:
         await self._resolution_context([])
         repository = SkillBindingRepository(self.handler.db.pool, self.repository.scope)
         rows = await asyncio.to_thread(repository.bindings, self.context.conversation_id)
-        return [repository.candidate(row) for row in rows]
+        candidates = [repository.candidate(row) for row in rows]
+        # Incompatible pins remain stored; applicable invalid pins still fail closed.
+        return [c for c in candidates if self.task_mode in c.catalog_metadata.task_modes]
 
     async def load(self, candidate, *, restoring: bool = False):
         # Recheck current identity and business permissions, even on replay.

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { BookOpen, X } from 'lucide-react';
 import { Popover } from '../../primitives/Popover';
-import { getAvailableSkills, skillVersion, type SkillBinding, type SkillSummary } from '../../../services/skills';
+import { getAvailableSkills, skillVersion, supportsSkillMode, type SkillTaskMode, type SkillBinding, type SkillSummary } from '../../../services/skills';
 import SkillRecommendations from './SkillRecommendations';
 import { isSkillRecommendationsUiEnabled } from '../../../config/featureFlags';
 import { cn } from '../../../utils/cn';
@@ -12,20 +12,21 @@ export interface SkillSelectorProps {
   selected: SkillSummary | null;
   onSelect: (skill: SkillSummary | null, conversationId: string) => void;
   disabled: boolean;
+  taskMode?: SkillTaskMode;
   permissionMode?: 'auto' | 'ask' | 'plan';
   onSelectionComplete?: () => void;
   bindings?: SkillBinding[];
 }
 
-export default function SkillSelector({ conversationId, ensureConversation, selected, onSelect, disabled, onSelectionComplete, permissionMode = 'auto', bindings = [] }: SkillSelectorProps) {
+export default function SkillSelector({ conversationId, ensureConversation, selected, onSelect, disabled, onSelectionComplete, permissionMode = 'auto', taskMode = 'smart', bindings = [] }: SkillSelectorProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [catalog, setCatalog] = useState<{ conversationId: string; skills: SkillSummary[] } | null>(null);
+  const [catalog, setCatalog] = useState<{ conversationId: string; taskMode: SkillTaskMode; skills: SkillSummary[] } | null>(null);
   const requestId = useRef(0);
   const creatingConversation = useRef<Promise<string> | null>(null);
   const returnToInput = useRef(false);
-  const skills = catalog?.conversationId === conversationId ? catalog.skills : [];
+  const skills = catalog?.conversationId === conversationId && catalog.taskMode === taskMode ? catalog.skills.filter(s => supportsSkillMode(s, taskMode)) : [];
 
   const refresh = async () => {
     const id = ++requestId.current;
@@ -37,9 +38,9 @@ export default function SkillSelector({ conversationId, ensureConversation, sele
         creatingConversation.current = ensureConversation().finally(() => { creatingConversation.current = null; });
       }
       const currentId = conversationId ?? await creatingConversation.current!;
-      const result = await getAvailableSkills(currentId);
+      const result = await getAvailableSkills(currentId, ...(taskMode !== 'smart' ? [taskMode] as const : []));
       if (id !== requestId.current) return;
-      setCatalog({ conversationId: currentId, skills: result });
+      setCatalog({ conversationId: currentId, taskMode, skills: result });
     } catch {
       if (id === requestId.current) setFailed(true);
     } finally {
@@ -84,8 +85,8 @@ export default function SkillSelector({ conversationId, ensureConversation, sele
         <p role="status">暂时无法获取 Skill，请重试。</p>
         <button type="button" onClick={() => void refresh()} className="mt-2 text-accent dark:text-[color-mix(in_srgb,var(--color-accent),white_45%)]">重试</button>
       </div> : <p role="status" className="p-3 text-sm text-text-tertiary">正在加载可用 Skill…</p>}
-    </> : <SkillRecommendations key={`${conversationId}:${permissionMode}`} conversationId={conversationId}
-      skills={skills} disabled={disabled} onSelect={choose} permissionMode={permissionMode} selected={selected}
+    </> : <SkillRecommendations key={`${conversationId}:${permissionMode}:${taskMode}`} conversationId={conversationId}
+      skills={skills} taskMode={taskMode} disabled={disabled} onSelect={choose} permissionMode={permissionMode} selected={selected}
       bindings={bindings} enabled={isSkillRecommendationsUiEnabled()} onClose={() => setOpen(false)} />}
   </Popover>;
 }

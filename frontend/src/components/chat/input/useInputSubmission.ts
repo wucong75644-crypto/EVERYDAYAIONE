@@ -1,7 +1,7 @@
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
 import { toast } from 'react-hot-toast';
 import { uploadAudio } from '../../../services/audio';
-import type { SkillSelection } from '../../../services/skills';
+import type { SkillSelection, SkillTaskMode } from '../../../services/skills';
 import { ApiRequestError } from '../../../services/api';
 import { createConversation, type ChatSettings } from '../../../services/conversation';
 import type { ModelType, UnifiedModel } from '../../../constants/models';
@@ -15,6 +15,9 @@ import type {
 
 export interface UseInputSubmissionOptions {
   takeSelectedSkill?: () => SkillSelection | undefined;
+  hasSkillIntent?: boolean;
+  skillTaskMode?: SkillTaskMode;
+  skillScopeBlocked?: boolean;
   conversationId: string | null;
   selectedModel: UnifiedModel;
   prompt: string;
@@ -43,11 +46,16 @@ export interface UseInputSubmissionOptions {
     prompt: string,
     images?: string[] | ImageInputInfo[] | null,
     params?: Record<string, unknown> | null,
+    selectedSkill?: SkillSelection,
+    skillTaskMode?: SkillTaskMode,
   ) => Promise<void>;
   handleVideoGeneration: (
     conversationId: string,
     prompt: string,
     images?: string[] | ImageInputInfo[] | null,
+    params?: Record<string, unknown> | null,
+    selectedSkill?: SkillSelection,
+    skillTaskMode?: SkillTaskMode,
   ) => Promise<void>;
   isEcomMode: boolean;
   effectiveModelType: ModelType;
@@ -64,7 +72,7 @@ export interface UseInputSubmissionOptions {
 
 export function useInputSubmission(options: UseInputSubmissionOptions) {
   const handleAudioSubmit = useCallback(async (blob: Blob) => {
-    if (options.isSubmitting) return;
+    if (options.isSubmitting || options.skillScopeBlocked) return;
     options.setIsSubmitting(true);
     const selectedSkill = options.takeSelectedSkill?.();
     try {
@@ -94,6 +102,7 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
   }, [options]);
 
   const handleSubmit = useCallback(async () => {
+    if (options.skillScopeBlocked) return;
     if (options.audioBlob) {
       await handleAudioSubmit(options.audioBlob);
       options.clearRecording();
@@ -104,7 +113,7 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
     const state = options.getSendButtonState(
       options.isSubmitting,
       options.isUploading,
-      !!(options.prompt.trim() || options.hasImages || options.hasFiles || hasAttachments),
+      !!(options.prompt.trim() || options.hasImages || options.hasFiles || hasAttachments || options.hasSkillIntent),
     );
     if (state.disabled) return;
     const attachments = options.attachmentSnapshot;
@@ -142,7 +151,7 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
     }
     const imageInputs = attachments.imageInputs.length ? attachments.imageInputs : null;
     const fileData = attachments.files.length ? attachments.files : null;
-    const selectedSkill = options.effectiveModelType === 'chat' ? options.takeSelectedSkill?.() : undefined;
+    const selectedSkill = options.takeSelectedSkill?.();
 
     options.clearPromptForSubmission();
     const attachmentTransaction = options.detachAttachmentsForSubmission();
@@ -163,9 +172,12 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
       }
 
       if (options.isEcomMode) {
-        await options.handleImageGeneration(currentId, message, imageInputs, {
-          generation_type_override: 'image_ecom',
-        });
+        const params = { generation_type_override: 'image_ecom' };
+        if (selectedSkill || options.skillTaskMode) {
+          await options.handleImageGeneration(currentId, message, imageInputs, params, selectedSkill, ...(options.skillTaskMode ? [options.skillTaskMode] as const : []));
+        } else {
+          await options.handleImageGeneration(currentId, message, imageInputs, params);
+        }
       } else if (options.effectiveModelType === 'chat') {
         if (selectedSkill) {
           await options.handleChatMessage(message, currentId, imageInputs, fileData,
@@ -183,9 +195,17 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
           await options.handleChatMessage(message, currentId, imageInputs, fileData);
         }
       } else if (options.effectiveModelType === 'video') {
-        await options.handleVideoGeneration(currentId, message, imageInputs);
+        if (selectedSkill || options.skillTaskMode) {
+          await options.handleVideoGeneration(currentId, message, imageInputs, null, selectedSkill, ...(options.skillTaskMode ? [options.skillTaskMode] as const : []));
+        } else {
+          await options.handleVideoGeneration(currentId, message, imageInputs);
+        }
       } else {
-        await options.handleImageGeneration(currentId, message, imageInputs);
+        if (selectedSkill || options.skillTaskMode) {
+          await options.handleImageGeneration(currentId, message, imageInputs, null, selectedSkill, ...(options.skillTaskMode ? [options.skillTaskMode] as const : []));
+        } else {
+          await options.handleImageGeneration(currentId, message, imageInputs);
+        }
       }
 
     } catch (error) {
