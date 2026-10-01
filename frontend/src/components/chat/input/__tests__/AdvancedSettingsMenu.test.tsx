@@ -45,3 +45,33 @@ describe('GPT Image 2.5 settings', () => {
     expect(p.onResolutionChange).toHaveBeenCalledWith('1K');
   });
 });
+
+describe('淘宝主图 output option', () => {
+  it.each(['1K', '2K', '4K'] as const)('is available for square %s and toggles independently of format', (resolution) => {
+    const p = { ...props('gpt-image-2-5-flare-image-to-image'), resolution,
+      taobaoMainImage: false, onTaobaoMainImageChange: vi.fn() };
+    const view = render(<AdvancedSettingsMenu {...p} />);
+    const button = screen.getByRole('button', { name: '淘宝主图 1440×1440' });
+    expect(button).toBeEnabled();
+    expect(button).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(button);
+    expect(p.onTaobaoMainImageChange).toHaveBeenCalledWith(true);
+    expect(p.onOutputFormatChange).not.toHaveBeenCalled();
+    expect(p.onResolutionChange).not.toHaveBeenCalled();
+    view.rerender(<AdvancedSettingsMenu {...p} taobaoMainImage />);
+    expect(button).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(button);
+    expect(p.onTaobaoMainImageChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it.each(['auto', '16:9', '3:4'] as const)('is disabled for %s', (aspectRatio) => {
+    const p = { ...props('gpt-image-2-5-flare-image-to-image'), aspectRatio,
+      taobaoMainImage: true, onTaobaoMainImageChange: vi.fn() };
+    render(<AdvancedSettingsMenu {...p} />);
+    const button = screen.getByRole('button', { name: '淘宝主图 1440×1440' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(button);
+    expect(p.onTaobaoMainImageChange).not.toHaveBeenCalled();
+  });
+});

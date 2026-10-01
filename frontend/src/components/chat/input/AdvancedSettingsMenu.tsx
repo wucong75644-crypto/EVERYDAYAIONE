@@ -31,6 +31,8 @@ interface AdvancedSettingsMenuProps {
   onResolutionChange: (res: ImageResolution) => void;
   outputFormat: ImageOutputFormat;
   onOutputFormatChange: (format: ImageOutputFormat) => void;
+  taobaoMainImage?: boolean;
+  onTaobaoMainImageChange?: (enabled: boolean) => void;
   numImages: ImageCount;
   onNumImagesChange: (count: ImageCount) => void;
   userCredits?: number;
@@ -83,6 +85,8 @@ export default function AdvancedSettingsMenu({
   onResolutionChange,
   outputFormat,
   onOutputFormatChange,
+  taobaoMainImage = false,
+  onTaobaoMainImageChange,
   numImages,
   onNumImagesChange,
   userCredits,
@@ -204,6 +208,25 @@ export default function AdvancedSettingsMenu({
                 </button>
               ))}
             </div>
+          </div>
+          <div className="mb-3">
+            <label className="block text-xs font-medium text-text-secondary mb-2">输出尺寸</label>
+            <button
+              type="button"
+              aria-pressed={aspectRatio === '1:1' && taobaoMainImage}
+              disabled={aspectRatio !== '1:1'}
+              onClick={() => onTaobaoMainImageChange?.(!taobaoMainImage)}
+              title={aspectRatio !== '1:1' ? '仅支持 1:1 方形图片' : undefined}
+              className={`px-3 py-1 text-xs rounded-md transition-base ${
+                aspectRatio !== '1:1'
+                  ? 'bg-hover text-text-disabled cursor-not-allowed opacity-50'
+                  : taobaoMainImage
+                    ? 'bg-accent text-text-on-accent'
+                    : 'bg-hover text-text-secondary hover:bg-active'
+              }`}
+            >
+              淘宝主图 1440×1440
+            </button>
           </div>
           <div className="mb-3">
             <label className="block text-xs font-medium text-text-secondary mb-2">生成数量</label>

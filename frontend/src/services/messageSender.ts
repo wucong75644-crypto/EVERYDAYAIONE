@@ -388,6 +388,7 @@ export function extractGenerationParams(message: Message): Record<string, unknow
   if (gp.resolution) params.resolution = gp.resolution;
   if (gp.output_format) params.output_format = gp.output_format;
   if (gp.num_images) params.num_images = gp.num_images;
+  if (gp.taobao_main_image !== undefined) params.taobao_main_image = gp.taobao_main_image;
 
   // 视频参数
   if (gp.n_frames) params.n_frames = gp.n_frames;

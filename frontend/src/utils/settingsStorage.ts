@@ -24,6 +24,7 @@ export interface UserAdvancedSettings {
     resolution: ImageResolution;
     outputFormat: ImageOutputFormat;
     numImages: ImageCount;
+    taobaoMainImage?: boolean;
   };
   video: {
     frames: VideoFrames;
@@ -46,6 +47,7 @@ const DEFAULT_SETTINGS: UserAdvancedSettings = {
     resolution: '1K',
     outputFormat: 'png',
     numImages: 1,
+    taobaoMainImage: false,
   },
   video: {
     frames: '10',

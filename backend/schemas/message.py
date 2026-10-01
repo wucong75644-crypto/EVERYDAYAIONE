@@ -226,6 +226,7 @@ class ImageParams(BaseModel):
     aspect_ratio: str = "1:1"
     resolution: Optional[str] = None
     output_format: str = "png"
+    taobao_main_image: bool = False
 
 
 class VideoParams(BaseModel):

@@ -334,3 +334,15 @@ class TestHandleFailureRouting:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+@pytest.mark.asyncio
+async def test_image_completion_uses_task_output_option_and_actual_dimensions():
+    task = make_image_task()
+    task['request_params']['taobao_main_image'] = True
+    service = TaskCompletionService(MockRoutingDB())
+    with patch('services.file_upload.persist_media_urls_to_workspace', new_callable=AsyncMock) as persist:
+        persist.return_value = [{'url': 'https://cdn.example.com/a.png', 'width': 1440, 'height': 1440}]
+        parts = await service._build_content_parts(['https://provider.example/a.png'], 'image', task)
+    assert persist.call_args.kwargs['taobao_main_image'] is True
+    assert parts[0]['width'] == parts[0]['height'] == 1440

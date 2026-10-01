@@ -27,6 +27,7 @@ import { useInputExternalEvents } from './useInputExternalEvents';
 import { useInputDraftTransaction } from './useInputDraftTransaction';
 import { ECOM_TAB_COMPLETIONS, ECOM_TAB_KEYS_SORTED } from './inputCompletions';
 import { useChatAttachmentContext } from '../attachments/ChatAttachmentContext';
+import { getPendingConversationSettings, saveConversationSettings } from '../../../utils/conversationSettingsPersistence';
 
 interface InputAreaProps {
   conversationId: string | null;
@@ -77,6 +78,7 @@ export default function InputArea({
   const [sendError, setSendError] = useState<string | null>(null);
   // 用户积分（用于禁用积分不足的数量选项）
   const userCredits = useAuthStore((s) => s.user?.credits);
+  const settingsUserId = useAuthStore((s) => s.user?.id) ?? 'anonymous';
   // 设置管理 Hook（图像/视频/聊天参数，含智能模式子模式）
   const {
     imageSettings,
@@ -136,10 +138,21 @@ export default function InputArea({
     image_resolution: imageSettings.resolution,
     image_output_format: imageSettings.outputFormat,
     image_num_images: imageSettings.numImages,
+    image_taobao_main_image: imageSettings.taobaoMainImage,
     video_frames: videoSettings.frames,
     video_aspect_ratio: videoSettings.aspectRatio,
     video_remove_watermark: videoSettings.removeWatermark,
   }), [chatSettings, imageSettings, videoSettings]);
+
+  const handleConversationCreated = useCallback((id: string, title: string) => {
+    const pending = getPendingConversationSettings(settingsUserId, 'new');
+    const settings = pending?.settings ?? buildChatSettingsPayload();
+    if (pending || settings.image_taobao_main_image) {
+      // Preserve the draft while the new conversation's detail request is loading.
+      saveConversationSettings(settingsUserId, id, settings);
+    }
+    onConversationCreated(id, title);
+  }, [settingsUserId, buildChatSettingsPayload, onConversationCreated]);
 
   // 自动保存模型到对话的回调
   const handleAutoSaveModel = useCallback((modelId: string) => {
@@ -216,7 +229,7 @@ export default function InputArea({
       const conversation = await createConversation({
         title, model_id: selectedModel.id, chat_settings: buildChatSettingsPayload(),
       });
-      onConversationCreated(conversation.id, title);
+      handleConversationCreated(conversation.id, title);
       return conversation.id;
     } finally {
       setIsPreparingSkillConversation(false);
@@ -244,6 +257,7 @@ export default function InputArea({
     aspectRatio: imageSettings.aspectRatio,
     resolution: imageSettings.resolution,
     outputFormat: imageSettings.outputFormat,
+    taobaoMainImage: imageSettings.taobaoMainImage,
     numImages: imageSettings.numImages,
     videoFrames: videoSettings.frames,
     videoAspectRatio: videoSettings.aspectRatio,
@@ -280,7 +294,7 @@ export default function InputArea({
     conversationId, selectedModel, prompt, clearPromptForSubmission,
     restorePromptAfterRejection, audioBlob, clearRecording,
     isSubmitting: isSubmitting || isPreparingSkillConversation, setIsSubmitting, setUploadError, setSendError,
-    buildChatSettingsPayload, onConversationCreated, onMessageSent,
+    buildChatSettingsPayload, onConversationCreated: handleConversationCreated, onMessageSent,
     handleChatMessage, handleImageGeneration, handleVideoGeneration,
     isEcomMode, effectiveModelType, smartSubMode, isStreaming, sendSteer,
     isUploading, hasImages, hasFiles,
@@ -386,6 +400,8 @@ export default function InputArea({
           onResolutionChange={(v) => setImageSetting('resolution', v)}
           outputFormat={imageSettings.outputFormat}
           onOutputFormatChange={(v) => setImageSetting('outputFormat', v)}
+          taobaoMainImage={imageSettings.taobaoMainImage}
+          onTaobaoMainImageChange={(v) => setImageSetting('taobaoMainImage', v)}
           numImages={imageSettings.numImages}
           onNumImagesChange={(v) => setImageSetting('numImages', v)}
           userCredits={userCredits}

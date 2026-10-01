@@ -284,6 +284,7 @@ async def download_url_to_workspace(
     idx: int = 1,
     max_size_mb: int = 50,
     meta: Optional[dict[str, Any]] = None,
+    taobao_main_image: bool = False,
 ) -> Optional[dict[str, Any]]:
     """下载远程 URL → 工作区子目录 → 双轨 emit_payload。
 
@@ -338,6 +339,25 @@ async def download_url_to_workspace(
             )
             return None
 
+        # Optional output processing happens before NAS/OSS publication.
+        converted = False
+        if media_type == "image" and taobao_main_image:
+            from services.image_output import resize_taobao_main_image
+
+            for attempt in range(2):
+                try:
+                    resized_content, resized_mime = await asyncio.to_thread(
+                        resize_taobao_main_image, content,
+                    )
+                    content, mime_main = resized_content, resized_mime
+                    converted = True
+                    break
+                except Exception as error:
+                    logger.warning(
+                        f"Taobao output resize failed | attempt={attempt + 1}/2 | "
+                        f"fallback={'retry' if attempt == 0 else 'original'} | error={error}"
+                    )
+
         # 3. 文件名
         filename = (
             Path(suggested_name).name if suggested_name
@@ -363,7 +383,8 @@ async def download_url_to_workspace(
 
             # 5. .meta.json sidecar(可选)
             if meta:
-                await _write_meta_sidecar(file_path, url, len(content), mime_main, meta)
+                output_meta = {**meta, "width": 1440, "height": 1440} if converted else meta
+                await _write_meta_sidecar(file_path, url, len(content), mime_main, output_meta)
 
             # 6. 双轨 dict
             payload = await upload_to_payload(
@@ -378,6 +399,8 @@ async def download_url_to_workspace(
             return None
 
         payload["kind"] = media_type
+        if converted:
+            payload.update(width=1440, height=1440)
         _add_media_asset_urls(payload, media_type)
         logger.info(
             f"download_url_to_workspace ok | user={user_id} | "
@@ -398,6 +421,7 @@ async def persist_media_urls_to_workspace(
     meta: Optional[dict[str, Any]] = None,
     extra_fields: Optional[dict[str, Any]] = None,
     max_concurrency: int = _PERSIST_MAX_CONCURRENCY,
+    taobao_main_image: bool = False,
 ) -> list[dict[str, Any]]:
     """并发下载多张媒体到工作区,组装 emit_payloads 列表(顺序保持)。
 
@@ -432,9 +456,13 @@ async def persist_media_urls_to_workspace(
                 media_type=media_type,
                 idx=idx,
                 meta={**base_meta, "index": idx, "total": total},
+                **({"taobao_main_image": True} if taobao_main_image else {}),
             )
         if payload:
-            return {**payload, **extra}
+            merged = {**payload, **extra}
+            if taobao_main_image and "width" in payload and "height" in payload:
+                merged.update(width=payload["width"], height=payload["height"])
+            return merged
         return _add_media_asset_urls({"kind": media_type, "url": src_url, **extra}, media_type)
 
     return await asyncio.gather(

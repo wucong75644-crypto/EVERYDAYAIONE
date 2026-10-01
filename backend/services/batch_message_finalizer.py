@@ -171,6 +171,8 @@ class BatchMessageFinalizer:
         for key in ("aspect_ratio", "resolution", "output_format"):
             if request_params.get(key):
                 generation_params[key] = request_params[key]
+        if "taobao_main_image" in request_params:
+            generation_params["taobao_main_image"] = request_params["taobao_main_image"]
 
         task_id = client_task_id or first_task["external_task_id"]
         message_data = {
