@@ -18,7 +18,8 @@ import UploadMenu from './UploadMenu';
 import AudioRecorder from './AudioRecorder';
 import FileMentionDropdown from './FileMentionDropdown';
 import SkillSelector from './SkillSelector';
-import SessionSkillBindings from './SessionSkillBindings';
+import SessionSkillBindings, { SkillBindingFeedback } from './SessionSkillBindings';
+import { useInlineSkillLayout } from './useInlineSkillLayout';
 import { useSkillBindings } from './useSkillBindings';
 import ChatAttachmentPreview from '../attachments/ChatAttachmentPreview';
 import type { InputControlsProps } from './InputControls.types';
@@ -71,6 +72,8 @@ export default function InputControls(props: InputControlsProps) {
   }, [requiresImageUpload]);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const skillPrefixRef = useRef<HTMLDivElement>(null);
+  const revealSkillPrefix = useInlineSkillLayout(textareaRef, skillPrefixRef);
   const uploadMenuRef = useRef<HTMLDivElement>(null);
   const advancedMenuRef = useRef<HTMLDivElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
@@ -85,19 +88,6 @@ export default function InputControls(props: InputControlsProps) {
     textareaRef,
     onFiles: (files) => onUnifiedFiles?.(files),
   });
-
-  // 自动调整文本框高度（最多5行，约120px）
-  useEffect(() => {
-    const textarea = textareaRef.current;
-    if (textarea) {
-      textarea.style.height = 'auto';
-      const lineHeight = 24; // 约等于 text-base 的行高
-      const maxLines = 5;
-      const maxHeight = lineHeight * maxLines;
-      const newHeight = Math.min(textarea.scrollHeight, maxHeight);
-      textarea.style.height = `${newHeight}px`;
-    }
-  }, [prompt, selectedSkill]);
 
   // 关闭上传菜单（带动画）
   const closeUploadMenu = () => {
@@ -195,15 +185,19 @@ export default function InputControls(props: InputControlsProps) {
           />
         )}
 
-        {props.skillSelector && <SessionSkillBindings key={props.skillSelector.conversationId ?? 'new'}
-          selected={selectedSkill ?? null} state={skillBindings} disabled={props.skillSelector.disabled || isSubmitting}
-          onSelect={(skill) => {
-            if (props.skillSelector?.conversationId) props.skillSelector.onSelect(skill, props.skillSelector.conversationId);
-          }}
-          onComplete={() => textareaRef.current?.focus()} />}
-
         {/* 输入区域 */}
-        <div className="flex">
+        <div className="relative isolate flex overflow-hidden">
+          <div ref={skillPrefixRef} onFocusCapture={revealSkillPrefix}
+            className="pointer-events-none absolute left-0 top-2 z-10 w-fit max-w-[calc(100%-72px)]">
+            {props.skillSelector && <div className="pointer-events-auto">
+              <SessionSkillBindings key={props.skillSelector.conversationId ?? 'new'} inline
+                selected={selectedSkill ?? null} state={skillBindings} disabled={props.skillSelector.disabled || isSubmitting}
+                onSelect={(skill) => {
+                  if (props.skillSelector?.conversationId) props.skillSelector.onSelect(skill, props.skillSelector.conversationId);
+                }}
+                onComplete={() => textareaRef.current?.focus()} />
+            </div>}
+          </div>
           <textarea
             ref={textareaRef}
             name="chat-input"
@@ -222,6 +216,7 @@ export default function InputControls(props: InputControlsProps) {
             disabled={isSubmitting}
           />
         </div>
+        {props.skillSelector && <SkillBindingFeedback state={skillBindings} disabled={props.skillSelector.disabled || isSubmitting} />}
 
         {/* 底部工具栏 */}
         <div className="flex flex-wrap items-center justify-between gap-y-1 mt-1">

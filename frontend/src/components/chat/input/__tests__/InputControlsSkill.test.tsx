@@ -72,8 +72,11 @@ describe('Skill tag in the composer', () => {
     const tag = screen.getByRole('group', { name: '已选择的 Skill' });
     expect(within(tag).getByText(skill.name)).toBeVisible();
     const scope = screen.getByRole('button', { name: /使用范围：参考图/ });
-    expect(tag.nextElementSibling).toBe(scope);
-    expect(tag.parentElement!.parentElement!.nextElementSibling).toContainElement(input);
+    expect(tag).toContainElement(scope);
+    expect(scope).not.toHaveTextContent('仅本条');
+    expect(scope).toHaveAttribute('title', '仅本条');
+    expect(input.parentElement).toContainElement(tag);
+    expect(tag.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(tag).toHaveClass('border', 'bg-hover', 'text-text-secondary');
     expect(tag).not.toHaveClass('bg-accent-light');
     expect(input).toHaveValue('保留我写的需求');
@@ -86,6 +89,21 @@ describe('Skill tag in the composer', () => {
     expect(input).toHaveFocus();
     fireEvent.click(screen.getByTitle('发送消息'));
     expect(onSend).toHaveBeenCalledWith('保留我写的需求', undefined);
+  });
+
+  it('preserves multiline text, caret offsets and keyboard handling with an inline tag', async () => {
+    render(<Composer />);
+    await choose();
+    const input = screen.getByRole('textbox');
+    const prompt = '保持细节清晰\n不要添加新的商品 @资料';
+    fireEvent.change(input, { target: { value: prompt, selectionStart: 18 } });
+    expect(input).toHaveValue(prompt);
+    expect(onMentionInputChange).toHaveBeenLastCalledWith(prompt, 18);
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
+    expect(baseProps.onKeyDown).toHaveBeenCalled();
+    fireEvent.click(screen.getByTitle('发送消息'));
+    expect(onSend).toHaveBeenLastCalledWith(prompt, { skill_id: skill.skill_id, revision: skill.revision });
+    expect(input).toHaveStyle({ textIndent: '' });
   });
 
   it('replaces a Skill from the toolbar and sends it once without prefixing the message text', async () => {
@@ -141,7 +159,8 @@ describe('Skill tag in the composer', () => {
     const before = area.innerHTML;
     const image = screen.getByRole('img', { name: '参考图.png' });
     await choose();
-    expect(area.nextElementSibling).toContainElement(screen.getByRole('group', { name: '已选择的 Skill' }));
+    expect(area.nextElementSibling).toBe(input.parentElement);
+    expect(input.parentElement).toContainElement(screen.getByRole('group', { name: '已选择的 Skill' }));
     expect(area.innerHTML).toBe(before);
     fireEvent.click(image);
     expect(previews.open).toHaveBeenCalled();
