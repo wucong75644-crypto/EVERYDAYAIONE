@@ -201,6 +201,27 @@ async def test_provider_http_failures_are_explicit_and_never_claim_empty(status_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("code", "expected"), [
+    ("PathNotFound", "API 路径不存在"),
+    ("ModelNotOpen", "尚未开通当前模型"),
+    ("InvalidEndpointOrModel.ModelIDAccessDisabled", "不能通过模型 ID 调用"),
+    ("InvalidEndpointOrModel.NotFound", "模型或推理接入点不存在"),
+    ("NewProviderCode", "方舟错误码：NewProviderCode"),
+    ("unsafe code", "HTTP 404"),
+])
+async def test_provider_404_exposes_only_safe_actionable_error_code(code, expected):
+    client = _http_client(_response({
+        "error": {"code": code, "message": "private provider details must stay hidden"},
+    }, 404))
+    provider = DoubaoSearchProvider(api_key="secret", base_url="https://ark.example/api/v3", model="fixture")
+    with patch("services.agent.web_search.doubao_provider.httpx.AsyncClient", return_value=client):
+        with pytest.raises(SearchProviderError) as caught:
+            await provider.search("query", timeout=9.0)
+    assert expected in str(caught.value)
+    assert "private provider details" not in str(caught.value)
+
+
+@pytest.mark.asyncio
 async def test_provider_timeout_keeps_timeout_semantics():
     client = _http_client(None)
     client.post.side_effect = httpx.ReadTimeout("fixture")

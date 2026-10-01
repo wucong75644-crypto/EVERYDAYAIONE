@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -153,6 +154,41 @@ def _clean(value: Any, limit: int) -> str:
     return " ".join(value.split())[:limit]
 
 
+def _provider_error_code(response: httpx.Response) -> str | None:
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    error = error if isinstance(error, dict) else payload
+    code = error.get("code")
+    if not isinstance(code, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,120}", code):
+        return None
+    return code
+
+
+def _http_error_message(response: httpx.Response) -> str:
+    code = _provider_error_code(response)
+    if response.status_code == 404:
+        known_errors = {
+            "PathNotFound": "方舟 Responses API 路径不存在，请核对 API 地址与版本",
+            "ModelNotOpen": "方舟账号尚未开通当前模型，请在控制台开通模型服务",
+            "InvalidEndpointOrModel.ModelIDAccessDisabled": (
+                "当前方舟账号不能通过模型 ID 调用，请改用有权限的推理接入点 ID"
+            ),
+            "InvalidEndpointOrModel.NotFound": (
+                "方舟模型或推理接入点不存在，或当前账号无权访问"
+            ),
+        }
+        if code in known_errors:
+            return f"{known_errors[code]}（{code}）"
+        if code:
+            return f"豆包搜索请求被拒绝（HTTP 404，方舟错误码：{code}）"
+    return f"豆包搜索请求被拒绝（HTTP {response.status_code}）"
+
+
 class DoubaoSearchProvider:
     """One bounded Responses API request; Ark owns the internal web-search loop."""
 
@@ -199,7 +235,7 @@ class DoubaoSearchProvider:
         if response.status_code >= 500:
             raise SearchProviderError("豆包搜索服务暂时不可用", retryable=True)
         if response.status_code >= 400:
-            raise SearchProviderError(f"豆包搜索请求被拒绝（HTTP {response.status_code}）")
+            raise SearchProviderError(_http_error_message(response))
         try:
             payload = response.json()
         except ValueError as error:
