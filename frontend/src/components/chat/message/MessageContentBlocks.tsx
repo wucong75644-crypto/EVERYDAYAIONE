@@ -19,6 +19,7 @@ import ToolResultBlock from './ToolResultBlock';
 import ToolStepCard from './ToolStepCard';
 import ChangeSetCard from './ChangeSetCard';
 import SkillDraftCard from './SkillDraftCard';
+import SkillChatProposalCard from './SkillChatProposalCard';
 import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 import { isSkillUiEnabled } from '../../../config/featureFlags';
 import { skillVersion } from '../../../services/skills';
@@ -252,6 +253,11 @@ export default function MessageContentBlocks({
               resourceType={reference.resource_type}
             />
           );
+        }
+        if (part.type === 'skill_proposal') {
+          const proposal = part as import('../../../types/message').SkillProposalPart;
+          return <SkillChatProposalCard key={`skill-proposal-${proposal.proposal_id}-${idx}`}
+            proposalId={proposal.proposal_id} fallbackTitle={proposal.title} />;
         }
         if (part.type === 'ecom_plan') {
           const ep = part as import('../../../types/message').EcomPlanPart;

@@ -13,6 +13,7 @@ from services.skills.chat_creation import (
     content_digest,
     create_proposal,
 )
+from services.skills.creation_policy import from_features
 from services.skills.trials import (
     TrialConflict,
     estimate_image_trial,
@@ -31,6 +32,16 @@ def settings(**changes):
     )
     values.update(changes)
     return SimpleNamespace(**values)
+
+
+def test_skill_creation_policy_defaults_omitted_flags_and_fails_closed_on_malformed_data():
+    assert from_features({}).as_targets(has_org_membership=True) == {
+        'personal': True, 'org': True, 'platform': True,
+    }
+    assert from_features({'skill_org_submission_enabled': 'true'}).org_submission_enabled is False
+    assert from_features([]).as_targets(has_org_membership=True) == {
+        'personal': False, 'org': False, 'platform': False,
+    }
 
 
 class FakeQuery:
@@ -54,6 +65,42 @@ class FakeDb:
     def table(self, name):
         self.queried.append(name)
         return FakeQuery(self.rows.get(name))
+
+
+class FakeSqlCursor:
+    def __init__(self, pool): self.pool, self.row = pool, None
+    def __enter__(self): return self
+    def __exit__(self, *_args): return False
+    def execute(self, query, params=()):
+        self.pool.statements.append((query, params))
+        if 'INSERT INTO public.skill_chat_proposals' in query and 'RETURNING id, version, status' in query:
+            from uuid import uuid4
+            key = (params[0], params[1], params[3])
+            if key in self.pool.idempotency:
+                self.row = None
+            else:
+                self.row = {'id': uuid4(), 'version': 1, 'status': 'awaiting_confirmation'}
+                self.pool.idempotency[key] = {'id': self.row['id'], 'version': 1,
+                    'status': 'awaiting_confirmation', 'content_sha256': params[6]}
+        elif 'SELECT id, version, status, content_sha256 FROM public.skill_chat_proposals' in query:
+            self.row = self.pool.idempotency.get((params[0], params[1], params[2]))
+        return self
+    def fetchone(self):
+        row, self.row = self.row, None
+        return row
+
+
+class FakeSqlConnection:
+    def __init__(self, pool): self.pool = pool
+    def __enter__(self): return self
+    def __exit__(self, *_args): return False
+    def transaction(self): return self
+    def cursor(self, **_kwargs): return FakeSqlCursor(self.pool)
+
+
+class FakePool:
+    def __init__(self): self.statements, self.idempotency = [], {}
+    def connection(self): return FakeSqlConnection(self)
 
 
 def admin_db():
@@ -107,6 +154,11 @@ def test_candidate_rejects_unknown_publish_or_storage_fields():
         })
 
 
+def test_candidate_requires_nonblank_description():
+    with pytest.raises(ValueError, match="SKILL_CANDIDATE_DESCRIPTION_REQUIRED"):
+        ChatSkillCandidate(name="方案", description="   ", body="按步骤处理。").draft_content()
+
+
 def test_feature_flag_off_blocks_before_any_database_access():
     db = FakeDb({})
     with pytest.raises(PermissionError, match="SKILL_CHAT_CREATION_DISABLED"):
@@ -118,16 +170,55 @@ def test_feature_flag_off_blocks_before_any_database_access():
     assert db.queried == []
 
 
-def test_non_admin_organization_member_cannot_prepare_persisted_candidate():
+def test_regular_member_can_prepare_private_candidate_but_cannot_update_org_draft():
     db = admin_db()
     db.rows["org_members"] = {"status": "active", "role": "member"}
+    actor_id, org_id = str(uuid4()), str(uuid4())
+    db.pool = FakePool()
+    db.rows["conversations"] = {"id": "conversation-1", "user_id": actor_id,
+                                 "org_id": org_id, "scope_type": "user"}
+    result = create_proposal(
+        db, settings(), actor_id=actor_id, org_id=org_id, conversation_id="conversation-1",
+        arguments={"name": "方案", "description": "可复用的处理规则。", "body": "仅写入可复用规则。"},
+    )
+    assert result.metadata['skill_chat_proposal']['id']
+    insert = next(query for query, _params in db.pool.statements if 'INSERT INTO public.skill_chat_proposals' in query)
+    assert 'source_message_refs' in insert and 'content_sha256' in insert
+
     with pytest.raises(PermissionError, match="SKILL_ORG_ADMIN_REQUIRED"):
         create_proposal(
-            db, settings(), actor_id="actor-1", org_id="org-1",
+            db, settings(), actor_id=actor_id, org_id=org_id,
             conversation_id="conversation-1",
-            arguments={"name": "方案", "body": "规则"},
+            arguments={"name": "方案", "description": "可复用的处理规则。", "body": "规则", "target_skill_name": "组织草稿"},
         )
-    assert "conversations" not in db.queried
+
+
+def test_standalone_conversation_can_create_private_candidate_without_org_scope():
+    db = admin_db()
+    actor_id = str(uuid4())
+    db.pool = FakePool()
+    db.rows['users'] = {'status': 'active'}
+    db.rows['conversations'] = {'id': 'conversation-1', 'user_id': actor_id,
+                                 'org_id': None, 'scope_type': 'user'}
+    result = create_proposal(db, settings(), actor_id=actor_id, org_id=None,
+        conversation_id='conversation-1', arguments={'name': '个人整理', 'description': '个人可复用方法。', 'body': '使用用户确认的步骤。'})
+    assert result.metadata['skill_chat_proposal']['id']
+    insert = next(params for query, params in db.pool.statements
+                  if 'INSERT INTO public.skill_chat_proposals' in query)
+    assert insert[2] is None
+
+
+def test_candidate_from_another_users_conversation_is_rejected():
+    db = admin_db()
+    actor_id = str(uuid4())
+    db.pool = FakePool()
+    db.rows['users'] = {'status': 'active'}
+    db.rows['conversations'] = {'id': 'conversation-1', 'user_id': str(uuid4()),
+                                 'org_id': None, 'scope_type': 'user'}
+    with pytest.raises(PermissionError, match='SKILL_ORG_CONVERSATION_REQUIRED'):
+        create_proposal(db, settings(), actor_id=actor_id, org_id=None,
+            conversation_id='conversation-1', arguments={'name': '伪造', 'description': '可复用方法。', 'body': '规则'})
+    assert not db.pool.statements
 
 
 def test_initial_model_advertisement_uses_trusted_admin_fact_and_fails_closed():
@@ -159,12 +250,19 @@ def test_initial_model_advertisement_uses_trusted_admin_fact_and_fails_closed():
     db.rows["org_members"] = {"status": "active", "role": "member"}
     non_admin = asyncio.run(prepare_initial_context(handler, context))
     assert non_admin.feature_flags["skill_org_admin"] is False
-    assert "prepare_skill_draft" not in registry.resolve(
+    assert "prepare_skill_draft" in registry.resolve(
         non_admin, policy=ToolPolicy(registry), advertisement=LegacyAdvertisement(),
     ).allowed
-    assert "prepare_skill_draft" not in registry.resolve(
+    assert "prepare_skill_draft" in registry.resolve(
         non_admin, policy=ToolPolicy(registry), advertisement=LegacyAdvertisement(),
     ).advertised
+
+    db.rows['organizations']['features'] = {'skill_chat_creation_enabled': False}
+    org_disabled = asyncio.run(prepare_initial_context(handler, context))
+    assert org_disabled.feature_flags['skill_chat_creation_enabled'] is False
+    assert 'prepare_skill_draft' not in registry.resolve(
+        org_disabled, policy=ToolPolicy(registry), advertisement=LegacyAdvertisement(),
+    ).allowed
 
     disabled = replace(context, feature_flags={
         "skill_catalog_enabled": True, "skill_chat_creation_enabled": False,
@@ -177,48 +275,31 @@ def test_initial_model_advertisement_uses_trusted_admin_fact_and_fails_closed():
     assert no_lookup_db.queried == []
 
 
-def test_candidate_is_audited_and_staged_without_creating_or_publishing_skill(monkeypatch):
+def test_candidate_is_private_preview_until_user_confirms_scope(monkeypatch):
     import services.skills.chat_creation as creation
 
-    class Repository:
-        def __init__(self, _db):
-            self.row = None
-            self.checks = []
-
-        def get_by_idempotency_key(self, **_kwargs): return None
-        def create(self, payload):
-            self.row = {**payload, "created_by": payload["actor_id"], "status": "draft", "revision": 0}
-            return self.row
-        def transition(self, *, next_status, **_kwargs):
-            self.row = {**self.row, "status": next_status, "revision": self.row["revision"] + 1}
-            return self.row
-        def list_checks(self, *_args): return self.checks
-        def record_check(self, **kwargs):
-            self.checks.append(kwargs)
-            return kwargs
-
-    monkeypatch.setattr(creation, "ChangeSetRepository", Repository)
-    monkeypatch.setattr(creation, "ChangeSetService", lambda _repo: object())
     monkeypatch.setattr(creation, "current_dispatch_call_id", lambda: "call-1")
     db = admin_db()
+    actor_id, org_id = str(uuid4()), str(uuid4())
+    db.pool = FakePool()
+    db.rows['users'] = {'status': 'active'}
+    db.rows['conversations'] = {'id': 'conversation-1', 'user_id': actor_id,
+                                 'org_id': org_id, 'scope_type': 'user'}
     db.rows["messages"] = [{"id": "message-1", "role": "user",
                             "content": [{"type": "text", "text": "规则"}]}]
 
     result = create_proposal(
-        db, settings(), actor_id="actor-1", org_id="org-1",
+        db, settings(), actor_id=actor_id, org_id=org_id,
         conversation_id="conversation-1",
         arguments={"name": "白底图 Skill", "description": "处理商品白底图",
                    "body": "保留商品轮廓，输出纯白背景。", "task_modes": ["image-i2i"]},
     )
-    candidate = result.metadata["change_set"]
-    assert candidate["resource_type"] == "skill_draft"
-    assert candidate["status"] == "awaiting_approval"
-    assert candidate["proposed_snapshot"]["content"]["catalog_metadata"]["model_selectable"] is False
-    assert candidate["proposed_snapshot"]["content"]["catalog_metadata"]["tool_policy"] == "platform"
-    assert candidate["audit_subject"]["source_message_refs"][0]["message_id"] == "message-1"
-    assert "text" not in candidate["audit_subject"]["source_message_refs"][0]
-    assert candidate["audit_subject"]["source_scope"] == "recent_40_messages"
-    assert candidate["policy_snapshot"]["submission"]["mode"] == "explicit_skill_draft_confirmation"
+    candidate = result.metadata["skill_chat_proposal"]
+    assert candidate['name'] == '白底图 Skill' and candidate['id']
+    _query, params = next(item for item in db.pool.statements if 'INSERT INTO public.skill_chat_proposals' in item[0])
+    assert 'sha256' in _query and 'source_message_refs' in _query
+    # The candidate stores hashes and IDs only, never copied user/assistant message bodies.
+    assert all('规则' not in str(param) for param in params)
 
 
 def test_explicit_existing_draft_name_resolves_to_server_owned_package_and_version(monkeypatch):
@@ -261,7 +342,7 @@ def test_explicit_existing_draft_name_resolves_to_server_owned_package_and_versi
                                  "org_id": org_id, "scope_type": "user"}
     result = create_proposal(
         db, settings(), actor_id=actor_id, org_id=org_id, conversation_id="conversation-1",
-        arguments={"name": "更清晰的商品白底图流程", "body": "保留商品结构，输出纯白背景。",
+        arguments={"name": "更清晰的商品白底图流程", "description": "用于创建一致的商品白底图。", "body": "保留商品结构，输出纯白背景。",
                    "target_skill_name": "商品白底图"},
     )
 
@@ -277,54 +358,45 @@ def test_explicit_existing_draft_name_resolves_to_server_owned_package_and_versi
 
 def test_duplicate_candidate_tool_call_replays_the_original_candidate(monkeypatch):
     import services.skills.chat_creation as creation
-
-    content = ChatSkillCandidate(name="方案", body="规则").draft_content()
-    digest = content_digest(content)
-    existing = {
-        "id": str(uuid4()), "org_id": "org-1", "resource_type": "skill_draft",
-        "created_by": "actor-1", "status": "awaiting_approval",
-        "audit_subject": {
-            "conversation_id": "conversation-1", "candidate_sha256": digest,
-            "candidate_operation": "create", "target_package_id": None, "target_version": None,
-        },
-    }
-    repository = SimpleNamespace(
-        get_by_idempotency_key=Mock(return_value=existing), create=Mock(),
-    )
-    monkeypatch.setattr(creation, "ChangeSetRepository", lambda _db: repository)
     monkeypatch.setattr(creation, "current_dispatch_call_id", lambda: "same-call")
-
-    result = create_proposal(
-        admin_db(), settings(), actor_id="actor-1", org_id="org-1",
-        conversation_id="conversation-1", arguments={"name": "方案", "body": "规则"},
-    )
-
-    assert result.metadata["change_set"] is existing
-    repository.create.assert_not_called()
+    db = admin_db()
+    actor_id, org_id = str(uuid4()), str(uuid4())
+    db.pool = FakePool()
+    db.rows['users'] = {'status': 'active'}
+    db.rows['conversations'] = {'id': 'conversation-1', 'user_id': actor_id,
+                                 'org_id': org_id, 'scope_type': 'user'}
+    create_proposal(db, settings(), actor_id=actor_id, org_id=org_id,
+                    conversation_id='conversation-1', arguments={'name': '方案', 'description': '可复用的处理规则。', 'body': '规则'})
+    create_proposal(db, settings(), actor_id=actor_id, org_id=org_id,
+                    conversation_id='conversation-1', arguments={'name': '方案', 'description': '可复用的处理规则。', 'body': '规则'})
+    assert sum('INSERT INTO public.skill_chat_proposals' in query for query, _ in db.pool.statements) == 2
+    assert any('SELECT id, version, status, content_sha256 FROM public.skill_chat_proposals' in query
+               for query, _ in db.pool.statements)
 
 
 def test_candidate_tool_call_rejects_idempotency_key_with_different_content(monkeypatch):
     import services.skills.chat_creation as creation
-
-    existing = {
-        "id": str(uuid4()), "org_id": "org-1", "resource_type": "skill_draft",
-        "created_by": "actor-1", "status": "awaiting_approval",
-        "audit_subject": {
-            "conversation_id": "conversation-1", "candidate_sha256": "0" * 64,
-        },
-    }
-    repository = SimpleNamespace(
-        get_by_idempotency_key=Mock(return_value=existing), create=Mock(),
-    )
-    monkeypatch.setattr(creation, "ChangeSetRepository", lambda _db: repository)
     monkeypatch.setattr(creation, "current_dispatch_call_id", lambda: "same-call")
-
-    with pytest.raises(ValueError, match="SKILL_PROPOSAL_IDEMPOTENCY_CONFLICT"):
-        create_proposal(
-            admin_db(), settings(), actor_id="actor-1", org_id="org-1",
-            conversation_id="conversation-1", arguments={"name": "方案", "body": "规则"},
-        )
-    repository.create.assert_not_called()
+    db = admin_db()
+    actor_id, org_id = str(uuid4()), str(uuid4())
+    db.pool = FakePool()
+    db.rows['users'] = {'status': 'active'}
+    db.rows['conversations'] = {'id': 'conversation-1', 'user_id': actor_id,
+                                 'org_id': org_id, 'scope_type': 'user'}
+    db.pool.idempotency[(actor_id, 'conversation-1', 'skill-authoring:conversation-1:same-call')] = {
+        'id': uuid4(), 'version': 1, 'status': 'awaiting_confirmation', 'content_sha256': '0' * 64,
+    }
+    # A conflict lookup returning a different digest must fail closed.
+    original_execute = FakeSqlCursor.execute
+    def execute_with_conflict(self, query, params=()):
+        original_execute(self, query, params)
+        if 'SELECT id, version, status, content_sha256 FROM public.skill_chat_proposals' in query:
+            self.row = {'id': uuid4(), 'version': 1, 'status': 'awaiting_confirmation', 'content_sha256': '0' * 64}
+        return self
+    monkeypatch.setattr(FakeSqlCursor, 'execute', execute_with_conflict)
+    with pytest.raises(ValueError, match='SKILL_PROPOSAL_IDEMPOTENCY_CONFLICT'):
+        create_proposal(db, settings(), actor_id=actor_id, org_id=org_id,
+                        conversation_id='conversation-1', arguments={'name': '方案', 'description': '可复用的处理规则。', 'body': '规则'})
 
 
 def test_candidate_revision_uses_actor_scoped_runtime_admin_rpc(monkeypatch):
@@ -349,7 +421,7 @@ def test_candidate_revision_uses_actor_scoped_runtime_admin_rpc(monkeypatch):
             "resource_type": "skill_draft", "status": "awaiting_approval",
             "proposed_snapshot": {"skill_key": "chat-skill-1"},
         },
-        arguments={"name": "方案", "body": "规则"}, expected_revision=2,
+        arguments={"name": "方案", "description": "可复用的处理规则。", "body": "规则"}, expected_revision=2,
     )
 
     assert result["revision"] == 3
@@ -360,7 +432,7 @@ def test_candidate_revision_uses_actor_scoped_runtime_admin_rpc(monkeypatch):
 
 
 def test_trial_rejects_stale_candidate_before_claiming_run():
-    content = ChatSkillCandidate(name="方案", body="按步骤处理。").draft_content()
+    content = ChatSkillCandidate(name="方案", description="可复用的处理步骤。", body="按步骤处理。").draft_content()
     digest = content_digest(content)
     changeset = {
         "id": str(uuid4()), "created_by": "actor-1", "resource_type": "skill_draft",
@@ -380,7 +452,7 @@ def test_trial_rejects_stale_candidate_before_claiming_run():
 
 
 def test_trial_rejects_expired_candidate_before_claiming_run():
-    content = ChatSkillCandidate(name="方案", body="按步骤处理。").draft_content()
+    content = ChatSkillCandidate(name="方案", description="可复用的处理步骤。", body="按步骤处理。").draft_content()
     digest = content_digest(content)
     changeset = {
         "id": str(uuid4()), "created_by": "actor-1", "resource_type": "skill_draft",
@@ -416,7 +488,7 @@ def test_trial_replays_a_completed_idempotency_key_without_model_or_image_calls(
     import asyncio
     import services.skills.trials as trials
 
-    content = ChatSkillCandidate(name="方案", body="遵循本次任务规则。").draft_content()
+    content = ChatSkillCandidate(name="方案", description="可复用的处理步骤。", body="遵循本次任务规则。").draft_content()
     digest = content_digest(content)
     run_id = str(uuid4())
     changeset = {
@@ -445,7 +517,7 @@ def test_confirm_recovers_a_committing_candidate_after_a_lost_response(monkeypat
     from services.skills.chat_creation import ChatSkillCandidate
     from api.routes.change_sets import SkillDraftConfirmation
 
-    content = ChatSkillCandidate(name="方案", body="按步骤执行。").draft_content()
+    content = ChatSkillCandidate(name="方案", description="可复用的处理步骤。", body="按步骤执行。").draft_content()
     digest = content_digest(content)
     cs_id = str(uuid4())
     actor_id = str(uuid4())
@@ -501,7 +573,7 @@ def test_confirm_marks_stale_skill_update_conflicted_instead_of_leaving_it_commi
     from api.routes.change_sets import SkillDraftConfirmation
     from services.skills.contracts import SkillError
 
-    content = ChatSkillCandidate(name="方案", body="按步骤执行。").draft_content()
+    content = ChatSkillCandidate(name="方案", description="可复用的处理步骤。", body="按步骤执行。").draft_content()
     digest = content_digest(content)
     cs_id, actor_id, org_id = str(uuid4()), str(uuid4()), str(uuid4())
     row = {

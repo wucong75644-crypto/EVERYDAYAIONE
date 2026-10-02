@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .context import ToolContext
 from .spec import thaw
+from services.skills.creation_policy import from_features
 
 
 def catalog_context(org_id, permission_mode="auto", personal_context_allowed=True):
@@ -87,10 +88,17 @@ async def prepare_initial_context(handler, context: ToolContext) -> ToolContext:
         channel_scope_id=getattr(handler, "channel_scope_id", None),
     )
     try:
-        skill_org_admin = await asyncio.to_thread(_check_identity, identity_executor, context)
+        identity = await asyncio.to_thread(_check_identity, identity_executor, context)
+        skill_org_admin, org_chat_creation_enabled = _identity_flags(identity)
     except Exception:
         skill_org_admin = False
-    return replace(context, feature_flags={**flags, "skill_org_admin": skill_org_admin is True})
+        org_chat_creation_enabled = False
+    return replace(context, feature_flags={
+        **flags,
+        "skill_org_admin": skill_org_admin is True,
+        "skill_chat_creation_enabled": flags.get("skill_chat_creation_enabled") is True
+            and org_chat_creation_enabled is True,
+    })
 
 
 async def refresh_context(executor, context, registry):
@@ -104,8 +112,10 @@ async def refresh_context(executor, context, registry):
     from services.permissions.checker import PermissionChecker
     snapshot = thaw(context.authorization_snapshot)
     skill_org_admin = False
+    org_chat_creation_enabled = False
     try:
-        skill_org_admin = await asyncio.to_thread(_check_identity, executor, context)
+        identity = await asyncio.to_thread(_check_identity, executor, context)
+        skill_org_admin, org_chat_creation_enabled = _identity_flags(identity)
         if executor.resource_manifest_loader is not None:
             executor.resource_manifest = await executor.resource_manifest_loader()
             context = replace(context, resource_manifest=tuple(
@@ -123,13 +133,26 @@ async def refresh_context(executor, context, registry):
             snapshot["access_denied_reason"] = "business_permission_required"
     except Exception:
         snapshot["access_denied_reason"] = "identity_or_authorization_unavailable"
+    chat_creation_enabled = (
+        context.feature_flags.get("skill_chat_creation_enabled") is True
+        and org_chat_creation_enabled is True
+    )
     from .resource_access import resource_boundary
     return replace(
         context,
         authorization_snapshot=snapshot,
-        feature_flags={**dict(context.feature_flags), "skill_org_admin": skill_org_admin is True},
+        feature_flags={**dict(context.feature_flags),
+            "skill_org_admin": skill_org_admin is True,
+            "skill_chat_creation_enabled": chat_creation_enabled},
         resource_access=resource_boundary(executor).as_dict(),
     )
+
+
+def _identity_flags(value):
+    # Existing injected identity checkers may return only the admin boolean.
+    if isinstance(value, tuple) and len(value) == 2:
+        return value
+    return value, True
 
 
 def _check_identity(executor, context):
@@ -144,9 +167,12 @@ def _check_identity(executor, context):
         return data
 
     skill_org_admin = False
+    skill_chat_creation_enabled = True
     if context.org_id:
-        if row("organizations", "status", id=context.org_id).get("status") != "active":
+        organization = row("organizations", "status,features", id=context.org_id)
+        if organization.get("status") != "active":
             raise PermissionError("organization_inactive")
+        skill_chat_creation_enabled = from_features(organization.get("features")).chat_creation_enabled
         member = row("org_members", "status,role", org_id=context.org_id,
                      user_id=context.actor_user_id)
         if member.get("status") != "active":
@@ -168,7 +194,7 @@ def _check_identity(executor, context):
                     or conversation.get("source") != "wecom" or conversation.get("user_id") is not None
                     or str(conversation.get("scope_id") or "") != executor.channel_scope_id):
                 raise PermissionError("channel_scope_mismatch")
-    return skill_org_admin
+    return skill_org_admin, skill_chat_creation_enabled
 
 
 def resolve_resources(executor, name, arguments):

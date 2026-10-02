@@ -18,7 +18,7 @@ class SkillSummary(Contract):
     revision: RevisionKey
     description: str
     triggers: tuple[str, ...]
-    source: Literal["platform", "org"]
+    source: Literal["platform", "org", "personal"]
     model_selectable: bool
     task_modes: tuple[SkillTaskMode, ...] = ('smart',)
 
@@ -42,11 +42,12 @@ class SkillCandidate(Contract):
     package_id: UUID
     skill_key: SkillKey
     package_org_id: UUID | None
-    assignment_org_id: UUID
+    package_user_id: UUID | None = None
+    assignment_org_id: UUID | None
     priority: int
     revision: RevisionKey
     description: str
-    scope_kind: Literal["platform", "org"]
+    scope_kind: Literal["platform", "org", "personal"]
     catalog_metadata: SkillCatalogMetadata
 
 
@@ -66,17 +67,21 @@ class SkillResolver:
         self, context: SkillResolutionContext, candidates: Iterable[SkillCandidate],
     ) -> list[SkillCandidate]:
         """Resolve identities from server-owned scope and permissions."""
-        if "skill_catalog_enabled" not in context.enabled_feature_flags or context.org_id is None:
+        if "skill_catalog_enabled" not in context.enabled_feature_flags:
             return []
         eligible = []
         for candidate in candidates:
             metadata = candidate.catalog_metadata
-            if candidate.assignment_org_id != context.org_id:
-                continue
-            if candidate.scope_kind == "org" and candidate.package_org_id != context.org_id:
-                continue
-            if candidate.scope_kind == "platform" and candidate.package_org_id is not None:
-                continue
+            if candidate.scope_kind == "personal":
+                if candidate.package_user_id != context.actor_user_id:
+                    continue
+            else:
+                if context.org_id is None or candidate.assignment_org_id != context.org_id:
+                    continue
+                if candidate.scope_kind == "org" and candidate.package_org_id != context.org_id:
+                    continue
+                if candidate.scope_kind == "platform" and candidate.package_org_id is not None:
+                    continue
             if (context.conversation_scope not in metadata.conversation_scopes
                     or context.task_mode not in metadata.task_modes
                     or context.agent_domain not in metadata.agent_domains
@@ -88,7 +93,7 @@ class SkillResolver:
             eligible.append(candidate)
         # Explicit assignment priority wins; organization wins ties. Display names
         # never determine identity, and no package/file is modified by resolution.
-        eligible.sort(key=lambda c: (-c.priority, c.scope_kind != "org", c.skill_key, str(c.package_id)))
+        eligible.sort(key=lambda c: (-c.priority, c.scope_kind != "personal", c.skill_key, str(c.package_id)))
         visible = {}
         for candidate in eligible:
             if candidate.skill_key in visible:

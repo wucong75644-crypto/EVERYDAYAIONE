@@ -147,10 +147,15 @@ def test_unknown_permission_is_not_allowed_even_for_boss(api):
     api[7].check.assert_not_called()
 
 
-def test_personal_conversation_has_no_implicit_platform_assignment(api):
+def test_personal_conversation_lists_only_owned_personal_skills(api):
     api[2]._tables["conversations"]._data[0]["org_id"] = None
-    assert get(api).json() == []
-    api[6].assert_not_called()
+    api[5].catalog_candidates.return_value = [candidate(
+        scope_kind="personal", package_user_id=ACTOR, assignment_org_id=None,
+    )]
+    result = get(api).json()
+    assert len(result) == 1 and result[0]["source"] == "personal"
+    assert api[6].call_args.args[1].org_id is None
+    api[7].check.assert_not_called()
 
 
 def test_web_domain_mode_and_feature_flags_are_server_owned(api):

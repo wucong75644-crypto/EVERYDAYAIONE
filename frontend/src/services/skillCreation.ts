@@ -48,7 +48,53 @@ export interface SkillTrialHistory {
   runs: SkillTrialResult[];
 }
 
+export interface SkillChatProposal {
+  id: string;
+  skill_key: string;
+  content: { description: string; body: string; catalog_metadata?: Record<string, unknown> };
+  content_sha256: string;
+  version: number;
+  status: 'awaiting_confirmation' | 'awaiting_review' | 'committed' | 'cancelled' | 'rejected' | 'expired';
+  target_scope?: 'personal' | 'org' | 'platform' | null;
+  result?: { message?: string; package_id?: string; status?: string };
+  source_message_refs?: Array<{ message_id: string; role: string; content_sha256: string }>;
+  source_scope?: string;
+  feedback_rating?: 'helpful' | 'not_helpful' | null;
+  available_targets?: { personal: boolean; org: boolean; platform: boolean };
+}
+
 export const skillCreationService = {
+  async getChatProposal(proposalId: string): Promise<SkillChatProposal> {
+    const response = await api.get<ApiResponse<SkillChatProposal>>(`/skills/authoring/proposals/chat/${proposalId}`);
+    return response.data.data;
+  },
+
+  async confirmChatProposal(proposalId: string, data: {
+    expected_version: number; content_sha256: string; target_scope: 'personal' | 'org' | 'platform';
+  }): Promise<SkillChatProposal> {
+    const response = await api.post<ApiResponse<SkillChatProposal>>(
+      `/skills/authoring/proposals/chat/${proposalId}/confirm`, data,
+    );
+    return response.data.data;
+  },
+
+  async cancelChatProposal(proposalId: string): Promise<void> {
+    await api.post(`/skills/authoring/proposals/chat/${proposalId}/cancel`);
+  },
+
+  async feedbackChatProposal(proposalId: string, rating: 'helpful' | 'not_helpful', feedback_text = ''): Promise<void> {
+    await api.put(`/skills/authoring/proposals/chat/${proposalId}/feedback`, { rating, feedback_text });
+  },
+
+  async listPlatformChatProposals(): Promise<SkillChatProposal[]> {
+    const response = await api.get<SkillChatProposal[] | ApiResponse<SkillChatProposal[]>>('/skills/admin/platform/chat-proposals');
+    return Array.isArray(response.data) ? response.data : response.data.data;
+  },
+
+  async decidePlatformChatProposal(proposalId: string, action: 'approve' | 'reject', reason = ''): Promise<void> {
+    await api.post(`/skills/admin/platform/chat-proposals/${proposalId}/decision`, { action, reason });
+  },
+
   async revise(changeSetId: string, data: SkillCandidateEdit): Promise<ChangeSet> {
     const response = await api.put<ApiResponse<ChangeSet>>(
       `/skills/authoring/proposals/${changeSetId}/revision`, data,

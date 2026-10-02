@@ -14,6 +14,8 @@ import {
   testWecomConnection,
   getWecomStatus,
   createInvitation,
+  updateSkillCreationSettings,
+  type SkillCreationSettings,
   type OrgDetail,
   type OrgMember,
   type WecomFieldStatus,
@@ -34,7 +36,7 @@ interface OrgManagePanelProps {
 }
 
 export default function OrgManagePanel({ orgId }: OrgManagePanelProps) {
-  type SubTab = 'erp' | 'wecom' | 'ai' | 'members' | 'assignments' | 'info';
+  type SubTab = 'erp' | 'wecom' | 'ai' | 'skills' | 'members' | 'assignments' | 'info';
   const [subTab, setSubTab] = useState<SubTab>('erp');
 
   if (!orgId) {
@@ -53,6 +55,7 @@ export default function OrgManagePanel({ orgId }: OrgManagePanelProps) {
           { key: 'erp' as SubTab, label: 'ERP 凭证' },
           { key: 'wecom' as SubTab, label: '企业微信' },
           { key: 'ai' as SubTab, label: 'AI 配置' },
+          { key: 'skills' as SubTab, label: 'Skill 权限' },
           { key: 'members' as SubTab, label: '成员管理' },
           { key: 'assignments' as SubTab, label: '部门职位' },
           { key: 'info' as SubTab, label: '企业信息' },
@@ -74,11 +77,79 @@ export default function OrgManagePanel({ orgId }: OrgManagePanelProps) {
       {subTab === 'erp' && <ErpConfigSection orgId={orgId} />}
       {subTab === 'wecom' && <WecomConfigSection orgId={orgId} />}
       {subTab === 'ai' && <AiConfigSection orgId={orgId} />}
+      {subTab === 'skills' && <SkillCreationSettingsSection orgId={orgId} />}
       {subTab === 'members' && <MembersSection orgId={orgId} />}
       {subTab === 'assignments' && <MemberAssignmentsSection orgId={orgId} />}
       {subTab === 'info' && <OrgInfoSection orgId={orgId} />}
     </div>
   );
+}
+
+function SkillCreationSettingsSection({ orgId }: { orgId: string }) {
+  const [settings, setSettings] = useState<SkillCreationSettings>({
+    chat_creation_enabled: true,
+    org_submission_enabled: true,
+    platform_submission_enabled: true,
+  });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    void getOrgDetail(orgId).then(org => {
+      if (!active) return;
+      const features = org.features || {};
+      setSettings({
+        chat_creation_enabled: features.skill_chat_creation_enabled !== false,
+        org_submission_enabled: features.skill_org_submission_enabled !== false,
+        platform_submission_enabled: features.skill_platform_submission_enabled !== false,
+      });
+    }).catch(() => {
+      if (active) setError('读取 Skill 权限设置失败。');
+    }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [orgId]);
+
+  const save = async () => {
+    setSaving(true); setError(''); setSuccess('');
+    try {
+      const response = await updateSkillCreationSettings(orgId, settings);
+      setSettings(response.data);
+      setSuccess('Skill 权限设置已保存。');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '保存失败，请重试。');
+    } finally { setSaving(false); }
+  };
+
+  if (loading) return <div className="py-8 text-center text-text-tertiary">加载 Skill 权限设置…</div>;
+
+  const options: { key: keyof SkillCreationSettings; title: string; description: string }[] = [
+    { key: 'chat_creation_enabled', title: '允许成员和 AI 整理 Skill', description: '关闭后，本组织聊天不再提供 AI Skill 创建入口；个人手动编辑和已发布 Skill 不受影响。' },
+    { key: 'org_submission_enabled', title: '允许申请发布到组织', description: '成员确认后会建立组织待审核草稿，仍需组织管理员按现有流程审核和发布。' },
+    { key: 'platform_submission_enabled', title: '允许申请发布到平台', description: '成员可以提交平台申请；只有平台管理员审核通过后才会发布。' },
+  ];
+
+  return <section className="space-y-4" aria-label="Skill 创建和发布权限">
+    <div className="rounded-lg border border-border-default bg-surface p-4">
+      <h3 className="text-sm font-semibold text-text-primary">AI 创建与发布范围</h3>
+      <p className="mt-1 text-xs leading-5 text-text-tertiary">新建候选默认只归创建者个人使用。组织或平台范围必须由用户在候选卡片中明确选择，并经过对应审核。</p>
+    </div>
+    {options.map(option => <label key={option.key} className="flex cursor-pointer items-start gap-3 rounded-lg border border-border-default bg-surface p-4">
+      <input
+        type="checkbox"
+        checked={settings[option.key]}
+        disabled={saving || (option.key !== 'chat_creation_enabled' && !settings.chat_creation_enabled)}
+        onChange={event => setSettings(current => ({ ...current, [option.key]: event.target.checked }))}
+        className="mt-0.5 h-4 w-4 accent-accent"
+      />
+      <span><span className="block text-sm font-medium text-text-primary">{option.title}</span><span className="mt-1 block text-xs leading-5 text-text-tertiary">{option.description}</span></span>
+    </label>)}
+    {error && <p role="alert" className="text-sm text-error">{error}</p>}
+    {success && <p role="status" className="text-sm text-success">{success}</p>}
+    <div className="flex justify-end"><button type="button" onClick={() => void save()} disabled={saving} className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-text-on-accent hover:bg-accent-hover disabled:opacity-50">{saving ? '保存中…' : '保存 Skill 权限'}</button></div>
+  </section>;
 }
 
 // ── ERP 凭证配置 ──
@@ -639,4 +710,3 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
     </div>
   );
 }
-

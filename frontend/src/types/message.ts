@@ -25,6 +25,7 @@ export type ContentPart =
   | TablePart
   | EcomPlanPart
   | ChangeSetPart
+  | SkillProposalPart
   | InterruptMarkerPart;
 
 export interface TextPart {
@@ -159,6 +160,13 @@ export interface ChangeSetPart {
   title?: string;
   resource_type?: string;
   snapshot?: Record<string, unknown>;
+}
+
+/** User-owned chat Skill candidate; scope is chosen explicitly in its card. */
+export interface SkillProposalPart {
+  type: 'skill_proposal';
+  proposal_id: string;
+  title?: string;
 }
 
 /** 电商图方案卡片内容块（用户确认后触发生成） */

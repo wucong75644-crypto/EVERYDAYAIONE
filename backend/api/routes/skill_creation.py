@@ -8,11 +8,15 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from api.deps import CurrentUserId, Database, OrgCtx, ScopedDB
+from api.deps import CurrentUser, CurrentUserId, Database, OrgCtx, ScopedDB
 from core.config import get_settings
+from core.db_scope import DatabaseAccessKind, DatabaseScope
 from core.limiter import RATE_LIMITS, limiter
 from services.changeset.repository import ChangeSetConcurrencyError, ChangeSetRepository
 from services.skills.chat_creation import replace_candidate, _org_admin
+from services.skills.authoring import SkillAuthoring
+from services.skills.creation_policy import for_organization
+from services.skills.repository import SkillRepository
 from services.skills.trials import (
     SkillTrialRepository,
     TrialConflict,
@@ -47,6 +51,128 @@ class CandidateRevision(BaseModel):
     triggers: tuple[str, ...] = Field(default=(), max_length=12)
     input_requirements: tuple[str, ...] = Field(default=(), max_length=12)
     open_questions: tuple[str, ...] = Field(default=(), max_length=16)
+
+
+class ConfirmChatProposal(BaseModel):
+    expected_version: int = Field(ge=1)
+    content_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+    target_scope: Literal['personal', 'org', 'platform']
+
+
+class ChatProposalFeedback(BaseModel):
+    rating: Literal['helpful', 'not_helpful']
+    feedback_text: str = Field(default='', max_length=1000)
+
+
+def _chat_proposal_authoring(db, actor_id: str, org_id: str | None = None, owner_scope='personal'):
+    scope = DatabaseScope(actor_user_id=actor_id, org_id=org_id,
+        access_kind=DatabaseAccessKind.RUNTIME_ADMIN, request_id='skill-chat-proposal')
+    return SkillAuthoring(SkillRepository(db.pool, scope, owner_scope=owner_scope), get_settings())
+
+
+@router.get('/chat/{proposal_id}')
+def get_chat_proposal(proposal_id: UUID, actor_id: CurrentUserId, user: CurrentUser, db: Database):
+    _require_chat_creation_enabled()
+    if user.get('status') != 'active':
+        raise HTTPException(403, '当前账号不可访问 Skill 候选')
+    authoring = _chat_proposal_authoring(db, str(actor_id))
+    repo = authoring.repository
+    with repo._cursor() as cursor:
+        cursor.execute('''SELECT id, conversation_id, org_id, skill_key, content, content_sha256,
+            version, status, target_scope, target_org_id, result, source_message_refs, source_scope,
+            feedback_rating, feedback_text, feedback_at, scope_confirmed_by, scope_selected_at,
+            decision_by, decision_at, decision_reason, expires_at, created_at
+            FROM public.skill_chat_proposals WHERE id = %s::uuid AND actor_user_id = %s::uuid''',
+            (proposal_id, actor_id))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(404, 'Skill 候选不存在')
+        can_request_org = False
+        if row['org_id']:
+            cursor.execute('''SELECT 1 FROM public.organizations o JOIN public.org_members m ON m.org_id = o.id
+                WHERE o.id = %s::uuid AND o.status = 'active' AND m.user_id = %s::uuid AND m.status = 'active' ''',
+                (row['org_id'], actor_id))
+            can_request_org = bool(cursor.fetchone())
+    target_policy = for_organization(db, str(row['org_id']) if row['org_id'] else None)
+    return {'success': True, 'data': {
+        **{key: str(row[key]) if key in ('id', 'conversation_id', 'org_id', 'target_org_id') and row[key] else row[key]
+           for key in ('id', 'conversation_id', 'org_id', 'skill_key', 'content', 'content_sha256', 'version',
+                       'status', 'target_scope', 'target_org_id', 'result', 'source_message_refs',
+                       'source_scope', 'feedback_rating', 'feedback_text', 'feedback_at',
+                       'scope_confirmed_by', 'scope_selected_at', 'decision_by', 'decision_at',
+                       'decision_reason', 'expires_at', 'created_at')},
+        'available_targets': target_policy.as_targets(has_org_membership=can_request_org),
+    }}
+
+
+@router.post('/chat/{proposal_id}/confirm')
+def confirm_chat_proposal(proposal_id: UUID, data: ConfirmChatProposal,
+                          actor_id: CurrentUserId, user: CurrentUser, db: Database):
+    _require_chat_creation_enabled()
+    if user.get('status') != 'active':
+        raise HTTPException(403, '当前账号不可创建 Skill')
+    scope = DatabaseScope(actor_user_id=str(actor_id), org_id=None,
+        access_kind=DatabaseAccessKind.RUNTIME_ADMIN, request_id='skill-chat-confirm')
+    lookup = SkillRepository(db.pool, scope, owner_scope='personal')
+    with lookup._cursor() as cursor:
+        cursor.execute('''SELECT org_id FROM public.skill_chat_proposals
+            WHERE id = %s::uuid AND actor_user_id = %s::uuid''', (proposal_id, actor_id))
+        row = cursor.fetchone()
+    if not row:
+        raise HTTPException(404, 'Skill 候选不存在')
+    owner_scope = 'org' if data.target_scope == 'org' else 'personal'
+    conversation_org_id = str(row['org_id']) if row['org_id'] else None
+    authoring = _chat_proposal_authoring(db, str(actor_id), conversation_org_id, owner_scope)
+    try:
+        result = authoring.commit_chat_proposal(proposal_id=proposal_id,
+            expected_version=data.expected_version, content_sha256=data.content_sha256,
+            target_scope=data.target_scope)
+    except Exception as error:
+        code = str(error)
+        if code in ('SKILL_PROPOSAL_UNAVAILABLE', 'SKILL_CONVERSATION_UNAVAILABLE'):
+            raise HTTPException(404, 'Skill 候选或会话不可用') from None
+        if code in ('SKILL_PROPOSAL_STALE', 'SKILL_PROPOSAL_SCOPE_CONFLICT', 'SKILL_KEY_EXISTS'):
+            raise HTTPException(409, code) from None
+        if code in ('SKILL_ORG_MEMBERSHIP_REQUIRED', 'SKILL_ACTOR_UNAVAILABLE',
+                    'SKILL_CHAT_CREATION_DISABLED', 'SKILL_ORG_SUBMISSION_DISABLED',
+                    'SKILL_PLATFORM_SUBMISSION_DISABLED'):
+            raise HTTPException(403, code) from None
+        if code.startswith('SKILL_'):
+            raise HTTPException(422, code) from None
+        raise
+    return {'success': True, 'data': result}
+
+
+@router.post('/chat/{proposal_id}/cancel')
+def cancel_chat_proposal(proposal_id: UUID, actor_id: CurrentUserId, user: CurrentUser, db: Database):
+    _require_chat_creation_enabled()
+    if user.get('status') != 'active':
+        raise HTTPException(403, '当前账号不可访问 Skill 候选')
+    repository = SkillRepository(db.pool, DatabaseScope(actor_user_id=str(actor_id), org_id=None,
+        access_kind=DatabaseAccessKind.RUNTIME_ADMIN, request_id='skill-chat-cancel'), owner_scope='personal')
+    with repository._cursor() as cursor:
+        cursor.execute('''UPDATE public.skill_chat_proposals SET status = 'cancelled', updated_at = now()
+            WHERE id = %s::uuid AND actor_user_id = %s::uuid AND status = 'awaiting_confirmation'
+            RETURNING id''', (proposal_id, actor_id))
+        cancelled = bool(cursor.fetchone())
+    return {'success': True, 'data': {'proposal_id': str(proposal_id), 'cancelled': cancelled}}
+
+
+@router.put('/chat/{proposal_id}/feedback')
+def feedback_chat_proposal(proposal_id: UUID, data: ChatProposalFeedback,
+                           actor_id: CurrentUserId, user: CurrentUser, db: Database):
+    _require_chat_creation_enabled()
+    if user.get('status') != 'active':
+        raise HTTPException(403, '当前账号不可访问 Skill 候选')
+    repository = SkillRepository(db.pool, DatabaseScope(actor_user_id=str(actor_id), org_id=None,
+        access_kind=DatabaseAccessKind.RUNTIME_ADMIN, request_id='skill-chat-feedback'), owner_scope='personal')
+    with repository._cursor() as cursor:
+        cursor.execute('''UPDATE public.skill_chat_proposals SET feedback_rating = %s, feedback_text = %s,
+            feedback_at = now(), updated_at = now() WHERE id = %s::uuid AND actor_user_id = %s::uuid
+            RETURNING id''', (data.rating, data.feedback_text, proposal_id, actor_id))
+        if not cursor.fetchone():
+            raise HTTPException(404, 'Skill 候选不存在')
+    return {'success': True, 'data': {'saved': True}}
 
 
 @router.put('/{change_set_id}/revision')

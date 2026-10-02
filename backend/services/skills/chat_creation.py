@@ -1,4 +1,4 @@
-"""Explicit, organization-admin chat proposals for reusable Skill drafts."""
+"""Explicit chat proposals for private, organization, or platform Skills."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from pydantic import Field
+from psycopg.types.json import Jsonb
 
 from core.db_scope import DatabaseAccessKind, DatabaseScope, ScopedDatabaseClient
 from services.agent.agent_result import AgentResult
@@ -17,12 +18,14 @@ from services.changeset.repository import ChangeSetRepository
 from services.changeset.service import ChangeSetService
 from services.skills.authoring import SkillAuthoring
 from services.skills.authoring_contracts import DraftContent, new_draft_content
+from services.skills.creation_policy import for_organization
 from services.skills.repository import SkillRepository
 from services.tools.dispatcher import current_dispatch_call_id
 
 
 class ChatSkillCandidate(DraftContent):
     name: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1, max_length=2000)
     body: str = Field(min_length=1, max_length=50_000)
     task_modes: tuple[Literal['smart', 'image-i2i', 'image-t2i', 'image-ecom', 'video'], ...] = Field(
         default=('smart',), min_length=1, max_length=5,
@@ -35,6 +38,8 @@ class ChatSkillCandidate(DraftContent):
     supersedes_change_set_id: UUID | None = None
 
     def draft_content(self) -> DraftContent:
+        if not self.description.strip():
+            raise ValueError('SKILL_CANDIDATE_DESCRIPTION_REQUIRED')
         if not self.body.strip():
             raise ValueError('SKILL_CANDIDATE_BODY_REQUIRED')
         metadata = self.catalog_metadata.model_copy(update={
@@ -86,14 +91,15 @@ def _new_key() -> str:
     return 'chat-skill-' + uuid4().hex[:12]
 
 
-def _source_message_refs(db, *, actor_id: str, org_id: str, conversation_id: str,
+def _source_message_refs(db, *, actor_id: str, org_id: str | None, conversation_id: str,
                          requested_message_ids: tuple[UUID, ...] = ()) -> list[dict[str, str]]:
     conversation = db.table('conversations').select(
         'id,user_id,org_id,scope_type',
     ).eq('id', conversation_id).maybe_single().execute()
     row = conversation.data if conversation else None
     if (not isinstance(row, dict) or str(row.get('user_id')) != actor_id
-            or str(row.get('org_id')) != org_id or row.get('scope_type', 'user') != 'user'):
+            or str(row.get('org_id') or '') != str(org_id or '')
+            or row.get('scope_type', 'user') != 'user'):
         raise PermissionError('SKILL_ORG_CONVERSATION_REQUIRED')
     query = db.table('messages').select('id,role,content,turn_id,reply_to_message_id').eq(
         'conversation_id', conversation_id,
@@ -185,13 +191,24 @@ def replace_candidate(db, settings, *, actor_id: str, org_id: str,
 
 def create_proposal(db, settings, *, actor_id: str, org_id: str | None,
                     conversation_id: str | None, arguments: dict) -> AgentResult:
-    """Create a reviewable ChangeSet candidate; never saves or publishes a Skill."""
+    """Create a private preview candidate; never saves or publishes a Skill."""
     if (settings.skill_catalog_enabled is not True
             or getattr(settings, 'skill_chat_creation_enabled', False) is not True):
         raise PermissionError('SKILL_CHAT_CREATION_DISABLED')
-    if not org_id or not conversation_id:
-        raise PermissionError('SKILL_ORG_CONVERSATION_REQUIRED')
-    _org_admin(db, actor_id, org_id)
+    if not conversation_id:
+        raise PermissionError('SKILL_CONVERSATION_REQUIRED')
+    actor = db.table('users').select('status').eq('id', actor_id).maybe_single().execute()
+    if not actor or not actor.data or actor.data.get('status') != 'active':
+        raise PermissionError('SKILL_ACTOR_UNAVAILABLE')
+    policy = for_organization(db, org_id)
+    if not policy.chat_creation_enabled:
+        raise PermissionError('SKILL_CHAT_CREATION_DISABLED')
+    if org_id:
+        member = db.table('org_members').select('status').eq('org_id', org_id).eq(
+            'user_id', actor_id,
+        ).maybe_single().execute()
+        if not member or not member.data or member.data.get('status') != 'active':
+            raise PermissionError('SKILL_ORG_MEMBERSHIP_REQUIRED')
     candidate = ChatSkillCandidate.model_validate(arguments)
     source_message_refs = _source_message_refs(
         db, actor_id=actor_id, org_id=org_id, conversation_id=conversation_id,
@@ -199,6 +216,40 @@ def create_proposal(db, settings, *, actor_id: str, org_id: str | None,
     )
     content = candidate.draft_content()
     digest = content_digest(content)
+    if not candidate.target_skill_name:
+        call_id = current_dispatch_call_id() or str(uuid4())
+        idempotency_key = f'skill-authoring:{conversation_id}:{call_id}'
+        repository = SkillRepository(db.pool, DatabaseScope(
+            actor_user_id=actor_id, org_id=org_id,
+            access_kind=DatabaseAccessKind.RUNTIME_ADMIN, request_id=str(uuid4()),
+        ), owner_scope='personal')
+        with repository._cursor() as cursor:
+            cursor.execute('''INSERT INTO public.skill_chat_proposals
+                (actor_user_id, conversation_id, org_id, idempotency_key, skill_key, content,
+                 content_sha256, source_message_refs, source_scope)
+                VALUES (%s::uuid, %s::uuid, %s::uuid, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (actor_user_id, conversation_id, idempotency_key) DO NOTHING
+                RETURNING id, version, status''',
+                (actor_id, conversation_id, org_id, idempotency_key, _new_key(),
+                 Jsonb(content.model_dump(mode='json')), digest, Jsonb(source_message_refs),
+                 'selected_assistant_turn' if candidate.source_message_ids else 'recent_40_messages'))
+            proposal = cursor.fetchone()
+            if not proposal:
+                cursor.execute('''SELECT id, version, status, content_sha256 FROM public.skill_chat_proposals
+                    WHERE actor_user_id = %s::uuid AND conversation_id = %s::uuid AND idempotency_key = %s''',
+                    (actor_id, conversation_id, idempotency_key))
+                proposal = cursor.fetchone()
+                if not proposal or proposal['content_sha256'] != digest:
+                    raise ValueError('SKILL_PROPOSAL_IDEMPOTENCY_CONFLICT')
+        return AgentResult(
+            summary='Skill 候选已准备好。请核对正文并选择保存范围；确认前不会创建或发布 Skill。',
+            status='success', metadata={'skill_chat_proposal': {
+                'id': str(proposal['id']), 'name': candidate.name,
+            }},
+        )
+    if not org_id:
+        raise PermissionError('SKILL_ORG_CONVERSATION_REQUIRED')
+    _org_admin(db, actor_id, org_id)
     operation = 'update' if candidate.target_skill_name else 'create'
     target_id = None
     expected_version = None

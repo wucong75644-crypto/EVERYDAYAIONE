@@ -239,22 +239,22 @@ def test_feature_snapshots_are_required_and_isolated(registry, name, flag, enabl
     assert (name in result.allowed) is (enabled is True)
 
 
-def test_prepare_skill_draft_requires_all_feature_flags_and_fresh_org_admin(registry):
+def test_prepare_skill_draft_requires_creation_flags_but_not_org_admin(registry):
     enabled = {
         "skill_catalog_enabled": True,
         "skill_chat_creation_enabled": True,
-        "skill_org_admin": True,
     }
     assert "prepare_skill_draft" in resolve(registry, context(feature_flags=enabled)).allowed
     for changed in (
         {**enabled, "skill_catalog_enabled": False},
         {**enabled, "skill_chat_creation_enabled": False},
-        {**enabled, "skill_org_admin": False},
-        {key: value for key, value in enabled.items() if key != "skill_org_admin"},
     ):
         assert "prepare_skill_draft" not in resolve(
             registry, context(feature_flags=changed),
         ).allowed
+    assert "prepare_skill_draft" in resolve(
+        registry, context(feature_flags={**enabled, "skill_org_admin": False}),
+    ).advertised
 
 
 @pytest.mark.parametrize("change", [

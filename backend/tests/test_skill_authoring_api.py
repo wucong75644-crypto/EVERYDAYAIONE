@@ -27,6 +27,7 @@ def api(monkeypatch, mock_db):
     config = settings(skill_catalog_enabled=True)
     app = FastAPI()
     app.include_router(skill_admin.router, prefix='/api')
+    app.include_router(skill_admin.scope_router, prefix='/api')
     app.dependency_overrides[get_db] = lambda: mock_db
     app.dependency_overrides[get_settings] = lambda: config
     @app.exception_handler(AppException)
@@ -53,6 +54,32 @@ def test_exact_target_org_is_validated_ignoring_jwt_org_and_header(api):
     scope = api.factory.call_args.args[0].scope
     assert scope.actor_user_id == api.actor and scope.org_id == api.org
     assert api.client.get(f'/api/skills/admin/orgs/{api.foreign}', headers=api.auth).status_code == 403
+
+
+def test_personal_skill_routes_are_available_to_active_regular_users(api):
+    response = api.client.get('/api/skills/admin/personal', headers=api.auth)
+    assert response.status_code == 200 and response.json() == []
+    repository = api.factory.call_args.args[0]
+    assert repository.owner_scope == 'personal'
+    assert repository.scope.actor_user_id == api.actor and repository.scope.org_id is None
+    created = api.client.post('/api/skills/admin/personal',
+        json={'skill_key': 'private-notes', 'content': {'body': 'Private rule.'}}, headers=api.auth)
+    assert created.status_code == 201
+    assert api.service.create.called
+
+
+def test_personal_skill_routes_still_fail_closed_when_catalog_is_disabled(api):
+    api.config.skill_catalog_enabled = False
+    assert api.client.get('/api/skills/admin/personal', headers=api.auth).status_code == 503
+    api.factory.assert_not_called()
+
+
+def test_platform_skill_routes_require_fresh_super_admin_role(api):
+    assert api.client.get('/api/skills/admin/platform', headers=api.auth).status_code == 403
+    api.factory.assert_not_called()
+    api.db._tables['users']._data[0]['role'] = 'super_admin'
+    assert api.client.get('/api/skills/admin/platform', headers=api.auth).status_code == 200
+    assert api.factory.call_args.args[0].owner_scope == 'platform'
 
 
 @pytest.mark.parametrize('headers', [{}, {'Authorization': 'Bearer invalid'}])
