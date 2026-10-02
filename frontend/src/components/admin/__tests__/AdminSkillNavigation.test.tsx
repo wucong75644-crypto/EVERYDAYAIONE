@@ -20,7 +20,7 @@ describe('Skill navigation protection', () => {
   it('confirms abandoning unsaved edits before switching admin sections', async () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<MemoryRouter><Admin /></MemoryRouter>);
-    fireEvent.click(screen.getByRole('button', { name: 'Skill 管理' }));
+    fireEvent.click(screen.getByRole('button', { name: '我的 Skill' }));
     fireEvent.click(await screen.findByRole('button', { name: '模拟编辑' }));
     fireEvent.click(screen.getByRole('button', { name: '企业管理' }));
     expect(confirm).toHaveBeenCalled();
@@ -32,7 +32,7 @@ describe('Skill navigation protection', () => {
   it('protects the page back button and prevents leaving during a write', async () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<MemoryRouter><Admin /></MemoryRouter>);
-    fireEvent.click(screen.getByRole('button', { name: 'Skill 管理' }));
+    fireEvent.click(screen.getByRole('button', { name: '我的 Skill' }));
     fireEvent.click(await screen.findByRole('button', { name: '模拟编辑' }));
     fireEvent.click(screen.getByRole('button', { name: '返回', exact: true }));
     expect(navigate).not.toHaveBeenCalled();
