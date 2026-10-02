@@ -18,6 +18,8 @@ def catalog_context(org_id, permission_mode="auto", personal_context_allowed=Tru
         permission_mode=permission_mode, execution_mode="interactive",
         feature_flags={key: getattr(settings, key, False) is True for key in (
             "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled",
+            "skill_catalog_enabled", "skill_chat_creation_enabled",
+            "skill_org_admin",
         )},
     )
 
@@ -56,12 +58,39 @@ def executor_context(executor, *, call_id=None) -> ToolContext:
         authorization_snapshot=executor.tool_policy_snapshot,
         feature_flags={name: getattr(settings, name, False) is True for name in (
             "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled",
-        )},
+            "skill_catalog_enabled", "skill_chat_creation_enabled",
+        )} | {"skill_org_admin": False},
         resource_manifest=None if manifest is None else tuple(asdict(a) for a in manifest.assets),
         resource_access=resource_boundary(executor).as_dict(),
         budget=executor.execution_budget, cancellation=executor.cancellation_event,
         confirmation_available=executor.tool_confirmer is not None,
     )
+
+
+async def prepare_initial_context(handler, context: ToolContext) -> ToolContext:
+    """Load the trusted Skill-admin fact before the first model advertisement.
+
+    The runtime rechecks identity again before dispatch. This initial read only
+    controls whether the model sees the proposal tool in its first turn.
+    """
+    flags = dict(context.feature_flags)
+    if (flags.get("skill_catalog_enabled") is not True
+            or flags.get("skill_chat_creation_enabled") is not True
+            or context.execution_mode != "interactive"):
+        return replace(context, feature_flags={**flags, "skill_org_admin": False})
+    from types import SimpleNamespace
+    import asyncio
+
+    identity_executor = SimpleNamespace(
+        db=handler.db,
+        execution_scope=getattr(handler, "execution_scope", None),
+        channel_scope_id=getattr(handler, "channel_scope_id", None),
+    )
+    try:
+        skill_org_admin = await asyncio.to_thread(_check_identity, identity_executor, context)
+    except Exception:
+        skill_org_admin = False
+    return replace(context, feature_flags={**flags, "skill_org_admin": skill_org_admin is True})
 
 
 async def refresh_context(executor, context, registry):
@@ -74,8 +103,9 @@ async def refresh_context(executor, context, registry):
     import asyncio
     from services.permissions.checker import PermissionChecker
     snapshot = thaw(context.authorization_snapshot)
+    skill_org_admin = False
     try:
-        await asyncio.to_thread(_check_identity, executor, context)
+        skill_org_admin = await asyncio.to_thread(_check_identity, executor, context)
         if executor.resource_manifest_loader is not None:
             executor.resource_manifest = await executor.resource_manifest_loader()
             context = replace(context, resource_manifest=tuple(
@@ -94,7 +124,12 @@ async def refresh_context(executor, context, registry):
     except Exception:
         snapshot["access_denied_reason"] = "identity_or_authorization_unavailable"
     from .resource_access import resource_boundary
-    return replace(context, authorization_snapshot=snapshot, resource_access=resource_boundary(executor).as_dict())
+    return replace(
+        context,
+        authorization_snapshot=snapshot,
+        feature_flags={**dict(context.feature_flags), "skill_org_admin": skill_org_admin is True},
+        resource_access=resource_boundary(executor).as_dict(),
+    )
 
 
 def _check_identity(executor, context):
@@ -108,12 +143,15 @@ def _check_identity(executor, context):
             raise PermissionError("identity_unavailable")
         return data
 
+    skill_org_admin = False
     if context.org_id:
         if row("organizations", "status", id=context.org_id).get("status") != "active":
             raise PermissionError("organization_inactive")
-        if row("org_members", "status", org_id=context.org_id,
-               user_id=context.actor_user_id).get("status") != "active":
+        member = row("org_members", "status,role", org_id=context.org_id,
+                     user_id=context.actor_user_id)
+        if member.get("status") != "active":
             raise PermissionError("organization_membership_required")
+        skill_org_admin = member.get("role") in {"owner", "admin"}
     if context.execution_mode == "interactive":
         conversation = row("conversations", "user_id,org_id,scope_type,scope_id,source",
                            id=context.conversation_id)
@@ -130,6 +168,7 @@ def _check_identity(executor, context):
                     or conversation.get("source") != "wecom" or conversation.get("user_id") is not None
                     or str(conversation.get("scope_id") or "") != executor.channel_scope_id):
                 raise PermissionError("channel_scope_mismatch")
+    return skill_org_admin
 
 
 def resolve_resources(executor, name, arguments):

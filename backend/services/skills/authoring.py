@@ -1,6 +1,8 @@
 """Transactional Skill authoring; NAS is written before a release becomes visible."""
 
 from contextlib import contextmanager
+import hashlib
+import json
 from uuid import UUID, uuid4
 
 from psycopg.errors import UniqueViolation
@@ -83,6 +85,75 @@ class SkillAuthoring:
                 return {'package_id': package.id}
         except UniqueViolation:
             raise SkillError('SKILL_KEY_EXISTS') from None
+
+    def commit_chat_draft(self, *, change_set_id, package_id, skill_key, content,
+                          operation, expected_version, content_sha256):
+        """Commit a confirmed chat proposal exactly once with its receipt."""
+        import re
+
+        if (not re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', skill_key)
+                or operation not in ('create', 'update')
+                or hashlib.sha256(json.dumps(content.model_dump(mode='json'), ensure_ascii=False,
+                    sort_keys=True, separators=(',', ':')).encode()).hexdigest() != content_sha256):
+            raise SkillError('SKILL_CANDIDATE_INVALID')
+        org_id = self.repository._require_org()
+        actor_id = self.repository.scope.actor_user_id
+        try:
+            with self._transaction('chat_create' if operation == 'create' else 'chat_update') as cursor:
+                # Recheck authority while holding the business transaction. The
+                # HTTP layer checks before starting; this closes revocation races.
+                cursor.execute('''SELECT 1 FROM public.organizations o
+                    JOIN public.org_members m ON m.org_id = o.id AND m.user_id = %s::uuid
+                    JOIN public.users u ON u.id = m.user_id
+                    WHERE o.id = %s::uuid AND o.status = 'active' AND m.status = 'active'
+                        AND m.role IN ('owner', 'admin') AND u.status = 'active'
+                    FOR SHARE OF o, m, u''', (actor_id, org_id))
+                if not cursor.fetchone():
+                    raise SkillError('SKILL_ORG_ADMIN_REQUIRED')
+                self.repository.lock_package_write(cursor, package_id)
+                cursor.execute('''SELECT package_id, operation, content_sha256, draft_revision, draft_version
+                    FROM public.skill_authoring_receipts WHERE change_set_id = %s AND org_id = %s::uuid''',
+                    (change_set_id, org_id))
+                receipt = cursor.fetchone()
+                if receipt:
+                    if (str(receipt['package_id']) != str(package_id) or receipt['operation'] != operation
+                            or receipt['content_sha256'] != content_sha256):
+                        raise SkillError('SKILL_RECEIPT_CONFLICT')
+                    return {'package_id': str(receipt['package_id']), 'draft_revision': receipt['draft_revision'],
+                            'draft_version': receipt['draft_version'], 'content_sha256': receipt['content_sha256'],
+                            'replayed': True}
+
+                if operation == 'create':
+                    cursor.execute('''INSERT INTO public.skill_packages
+                        (id, skill_key, source, scope_kind, org_id)
+                        VALUES (%s, %s, 'chat', 'org', %s::uuid) RETURNING *''',
+                        (package_id, skill_key, org_id))
+                    package = SkillPackage.model_validate(cursor.fetchone())
+                    draft = self._insert_draft(cursor, package.id, new_draft_content(content))
+                else:
+                    package = self._package(cursor, package_id, owned=True)
+                    if package.skill_key != skill_key:
+                        raise SkillError('SKILL_OWNER_SCOPE_MISMATCH')
+                    draft = self._draft(cursor, package_id)
+                    self._check_version(draft, expected_version)
+                    if not draft or draft['status'] != 'draft':
+                        raise SkillError('SKILL_TRANSITION_INVALID')
+                    cursor.execute('''UPDATE public.skill_drafts SET content = %s, revision = %s,
+                        version = version + 1 WHERE package_id = %s RETURNING *''',
+                        (Jsonb(new_draft_content(content).model_dump(mode='json')),
+                         'v' + uuid4().hex, package_id))
+                    draft = cursor.fetchone()
+                cursor.execute('''INSERT INTO public.skill_authoring_receipts
+                    (change_set_id, org_id, actor_user_id, package_id, operation, content_sha256,
+                     draft_revision, draft_version)
+                    VALUES (%s, %s::uuid, %s::uuid, %s, %s, %s, %s, %s)''',
+                    (change_set_id, org_id, actor_id, package_id, operation, content_sha256,
+                     draft['revision'], draft['version']))
+                return {'package_id': str(package_id), 'draft_revision': draft['revision'],
+                        'draft_version': draft['version'], 'content_sha256': content_sha256,
+                        'replayed': False}
+        except UniqueViolation as error:
+            raise SkillError('SKILL_KEY_EXISTS') from error
 
     def list(self):
         with self._transaction('list') as cursor:

@@ -18,6 +18,7 @@ import ThinkingBlock from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
 import ToolStepCard from './ToolStepCard';
 import ChangeSetCard from './ChangeSetCard';
+import SkillDraftCard from './SkillDraftCard';
 import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 import { isSkillUiEnabled } from '../../../config/featureFlags';
 import { skillVersion } from '../../../services/skills';
@@ -240,6 +241,9 @@ export default function MessageContentBlocks({
         }
         if (part.type === 'changeset') {
           const reference = part as import('../../../types/message').ChangeSetPart;
+          if (reference.resource_type === 'skill_draft') {
+            return <SkillDraftCard key={`skill-draft-${reference.change_set_id}-${idx}`} changeSetId={reference.change_set_id} fallbackTitle={reference.title} />;
+          }
           return (
             <ChangeSetCard
               key={`changeset-${reference.change_set_id}-${idx}`}

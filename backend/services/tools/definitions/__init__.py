@@ -6,7 +6,8 @@ def build_specs():
     from .media import build_specs as media
     from .task import build_specs as task
     from .general import build_specs as general
-    families = (erp(), file_sandbox(), media(), task(), general())
+    from .skills import build_specs as skills
+    families = (erp(), file_sandbox(), media(), task(), general(), skills())
     return tuple(sorted(
         (spec for family in families for spec in family),
         key=lambda spec: spec.catalog_order,

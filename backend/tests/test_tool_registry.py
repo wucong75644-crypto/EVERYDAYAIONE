@@ -56,7 +56,7 @@ def test_catalog_matches_actual_full_directory_and_handler_bindings(registry):
     assert validate_legacy_coverage(
         registry, public_schemas=get_chat_tools("org-a"), handler_names=executor._handlers,
     ) == ()
-    # 07 completes ownership for all 35 runtime definitions.
+    # 07 completes ownership for all 36 runtime definitions.
     assert all(s.definition_kind == "explicit" for s in registry.specs())
     assert {s.name for s in registry.specs() if s.exposure is Exposure.LEGACY_INTERNAL} == {
         "fetch_all_pages", "get_conversation_context",
@@ -239,6 +239,24 @@ def test_feature_snapshots_are_required_and_isolated(registry, name, flag, enabl
     assert (name in result.allowed) is (enabled is True)
 
 
+def test_prepare_skill_draft_requires_all_feature_flags_and_fresh_org_admin(registry):
+    enabled = {
+        "skill_catalog_enabled": True,
+        "skill_chat_creation_enabled": True,
+        "skill_org_admin": True,
+    }
+    assert "prepare_skill_draft" in resolve(registry, context(feature_flags=enabled)).allowed
+    for changed in (
+        {**enabled, "skill_catalog_enabled": False},
+        {**enabled, "skill_chat_creation_enabled": False},
+        {**enabled, "skill_org_admin": False},
+        {key: value for key, value in enabled.items() if key != "skill_org_admin"},
+    ):
+        assert "prepare_skill_draft" not in resolve(
+            registry, context(feature_flags=changed),
+        ).allowed
+
+
 @pytest.mark.parametrize("change", [
     {"actor_user_id": ""}, {"workspace_owner_id": ""}, {"org_id": ""},
     {"workspace_owner_id": "other-user"}, {"context_scope": "channel"},
@@ -312,7 +330,9 @@ def test_sequential_requests_do_not_reuse_user_org_workspace_or_mode(registry):
 @pytest.mark.parametrize("mode", ["ask", "auto", "plan"])
 def test_advertisement_reuses_current_core_rules(registry, mode):
     result = resolve(registry, context(permission_mode=mode))
-    assert result.advertised_schemas() == get_tools_for_mode(mode, "org-a")
+    expected = [schema for schema in get_tools_for_mode(mode, "org-a")
+                if schema["function"]["name"] != "prepare_skill_draft"]
+    assert result.advertised_schemas() == expected
     assert set(result.advertised) <= set(result.allowed)
     # Block 01 retains old plan display facts; Block 02 will decide permission.
     assert ("erp_agent" in result.advertised) is (mode != "plan")
