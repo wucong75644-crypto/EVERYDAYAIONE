@@ -149,7 +149,7 @@ async def test_denial_precedes_handler_cache_and_ledger(setup, entry, case, monk
 
 
 @pytest.mark.parametrize("is_admin", [True, False])
-async def test_skill_draft_refreshes_dynamic_org_admin_before_final_denial(monkeypatch, is_admin):
+async def test_personal_skill_draft_is_available_to_members_and_admins(monkeypatch, is_admin):
     from core import config
     from services.tools import runtime_context
 
@@ -170,8 +170,8 @@ async def test_skill_draft_refreshes_dynamic_org_admin_before_final_denial(monke
     )
 
     identity_check.assert_called_once()
-    assert result.execution.status == ("succeeded" if is_admin else "not_started")
-    assert prepare.await_count == (1 if is_admin else 0)
+    assert result.execution.status == "succeeded"
+    assert prepare.await_count == 1
 
 
 @pytest.mark.parametrize("entry", ["legacy", "chat", "loop"])

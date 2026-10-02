@@ -379,7 +379,8 @@ class SkillAuthoring:
                     OR (p.scope_kind = 'personal' AND p.owner_user_id = %s::uuid))
                     AND (%s IS NULL OR p.scope_kind = %s)) AND d.deleted_at IS NULL
                 ORDER BY p.skill_key, p.id''',
-                (self.repository.scope.org_id, self.repository.scope.actor_user_id,
+                (self.repository.scope.org_id, self.repository.scope.org_id,
+                 self.repository.scope.actor_user_id,
                  self.repository.owner_scope, self.repository.owner_scope))
             return cursor.fetchall()
 

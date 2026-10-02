@@ -93,7 +93,10 @@ class SkillResolver:
             eligible.append(candidate)
         # Explicit assignment priority wins; organization wins ties. Display names
         # never determine identity, and no package/file is modified by resolution.
-        eligible.sort(key=lambda c: (-c.priority, c.scope_kind != "personal", c.skill_key, str(c.package_id)))
+        eligible.sort(key=lambda c: (
+            -c.priority, c.scope_kind != "personal", c.scope_kind != "org",
+            c.skill_key, str(c.package_id),
+        ))
         visible = {}
         for candidate in eligible:
             if candidate.skill_key in visible:
