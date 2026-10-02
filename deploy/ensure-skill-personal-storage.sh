@@ -69,7 +69,7 @@ if [[ -L "$personal_mount" ]]; then
     echo "❌ Skill personal 挂载目录不能是符号链接"
     exit 1
 fi
-if [[ "$(stat -c '%d:%i' "$personal_alias")" != "$(stat -c '%d:%i' "$personal_mount")" ]]; then
+if [[ "$(stat -c '%i' "$personal_alias")" != "$(stat -c '%i' "$personal_mount")" ]]; then
     echo "❌ NAS 别名与 Skill 根目录中的 personal 不是同一个目录"
     exit 1
 fi

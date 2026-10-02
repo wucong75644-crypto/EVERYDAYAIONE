@@ -39,7 +39,7 @@ def test_skill_catalog_release_prepares_the_personal_submount_on_existing_nas() 
     assert 'mount "$personal_mount"' in setup_script
     assert 'stat -c \'%u:%g:%a\' "$personal_mount"' in setup_script
     assert 'if [[ -L "$personal_alias" ]]' in setup_script
-    assert 'stat -c \'%d:%i\' "$personal_alias"' in setup_script
+    assert 'stat -c \'%i\' "$personal_alias"' in setup_script
     assert 'install -D -m 0644 "$dropin_source" "$dropin_target"' in SCRIPT
     assert 'effective_read_only_paths=$(sudo systemctl show everydayai-backend -p ReadOnlyPaths --value)' in SCRIPT
     assert '未保留 Skill 存储根目录只读保护' in SCRIPT
