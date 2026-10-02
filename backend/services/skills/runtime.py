@@ -6,7 +6,7 @@ import asyncio
 import json
 from typing import Any, Literal
 
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, field_serializer
 
 from services.skills.contracts import Contract, Sha256, SkillError, SkillKey, RevisionKey
 from services.skills.renderer import (
@@ -66,6 +66,10 @@ class ActiveSkill(Contract):
     asset_manifest_sha256: Sha256 | None = None
     loaded_asset_ids: tuple[SkillKey, ...] = Field(default=(), max_length=16)
 
+    @field_serializer("effective_allowed_tool_names", when_used="json")
+    def serialize_effective_allowed_tool_names(self, value: frozenset[str]) -> list[str]:
+        return sorted(value)
+
 
 class RuntimeCheckpoint(Contract):
     version: int = Field(default=1, ge=1, le=1)
@@ -77,6 +81,10 @@ class RuntimeCheckpoint(Contract):
     session_skill_ids: tuple[SkillKey, ...] = Field(default=(), max_length=MAX_ACTIVE_SKILLS)
     context_version: Literal[1, 2] = 1
     scheduled_snapshot: dict | None = None
+
+    @field_serializer("effective_allowed_tool_names", when_used="json")
+    def serialize_effective_allowed_tool_names(self, value: frozenset[str]) -> list[str]:
+        return sorted(value)
 
 
 def control_result(code: str, *, ok: bool = False, **details) -> dict:

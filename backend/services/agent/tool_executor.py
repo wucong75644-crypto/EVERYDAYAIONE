@@ -197,29 +197,52 @@ class ToolExecutor(
     # ========================================
 
     async def _web_search(self, args: Dict[str, Any]) -> "AgentResult":
-        """搜索互联网获取实时信息（Gemini Google Search Grounding）"""
+        """搜索互联网获取实时信息，并把有界证据及来源传给主 Agent。"""
         from services.agent.agent_result import AgentResult
-        from services.agent.web_search_engine import search_with_grounding
+        from services.agent.web_search.contracts import SearchProviderError
+        from services.agent.web_search.service import (
+            DEFAULT_SEARCH_TIMEOUT_SECONDS, present_search_response, search_web,
+        )
 
-        query = args.get("query", "").strip()
-        if not query:
+        raw_query = args.get("query", "")
+        if not isinstance(raw_query, str) or not raw_query.strip():
             return AgentResult(
                 summary="搜索查询不能为空",
                 status="error",
                 error_message="Validation: query is required",
                 metadata={"retryable": True},
             )
-
-        result = await search_with_grounding(query)
-        if not result:
+        query = raw_query.strip()
+        if len(query) > 4000:
             return AgentResult(
-                summary=f"搜索「{query}」未找到相关结果",
-                status="empty",
+                summary="搜索问题过长，请保留目标和必要条件后重试",
+                status="error",
+                error_message="Validation: query exceeds 4000 characters",
             )
-        return AgentResult(summary=result["content"], status="success", metadata={
-            "sources": result.get("sources", []),
-            "search_queries": result.get("search_queries", []),
-        })
+
+        timeout = DEFAULT_SEARCH_TIMEOUT_SECONDS
+        if self.execution_budget is not None:
+            remaining = self.execution_budget.remaining
+            if remaining <= 0:
+                return AgentResult(
+                    summary="搜索没有开始：本轮任务的时间预算已耗尽",
+                    status="timeout",
+                    error_message="Execution budget exhausted before web search",
+                )
+            timeout = min(timeout, remaining)
+
+        try:
+            result = await search_web(query, timeout=timeout)
+        except SearchProviderError as error:
+            return AgentResult(
+                summary=(f"网页搜索未能完成：{error}。本次未取得可用网页证据；"
+                         "不能据此判断资料是否存在，也不能推测产品新旧或网络故障原因。"),
+                status=error.status,
+                error_message=str(error),
+                metadata={"retryable": error.retryable},
+            )
+        summary, metadata = present_search_response(result, query=query)
+        return AgentResult(summary=summary, status=result.status, source="web_search", metadata=metadata)
 
     # ========================================
     # 数据查询工具
