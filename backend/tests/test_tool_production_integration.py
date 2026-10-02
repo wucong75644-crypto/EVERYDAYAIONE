@@ -148,6 +148,32 @@ async def test_denial_precedes_handler_cache_and_ledger(setup, entry, case, monk
     lifecycle.begin.assert_not_awaited()
 
 
+@pytest.mark.parametrize("is_admin", [True, False])
+async def test_skill_draft_refreshes_dynamic_org_admin_before_final_denial(monkeypatch, is_admin):
+    from core import config
+    from services.tools import runtime_context
+
+    monkeypatch.setattr(config, "get_settings", lambda: SimpleNamespace(
+        skill_catalog_enabled=True, skill_chat_creation_enabled=True,
+    ))
+    identity_check = Mock(return_value=is_admin)
+    monkeypatch.setattr(runtime_context, "_check_identity", identity_check)
+
+    executor = MockHandlerExecutor(agent_domain="general")
+    prepare = AsyncMock(return_value=AgentResult(summary="候选草稿", status="success"))
+    executor._handlers["prepare_skill_draft"] = prepare
+
+    result = await executor.tool_runtime.execute(
+        "prepare_skill_draft",
+        {"name": "商品图 Skill", "body": "参考图拆解并生成五条视角提示词。"},
+        call_id="skill-draft",
+    )
+
+    identity_check.assert_called_once()
+    assert result.execution.status == ("succeeded" if is_admin else "not_started")
+    assert prepare.await_count == (1 if is_admin else 0)
+
+
 @pytest.mark.parametrize("entry", ["legacy", "chat", "loop"])
 @pytest.mark.parametrize("outcome", ["approved", "rejected", "timeout", "exception", "disconnect"])
 async def test_real_confirmation_channel(setup, entry, outcome, monkeypatch):
