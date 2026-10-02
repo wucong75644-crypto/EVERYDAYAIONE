@@ -19,6 +19,7 @@ from schemas.message import (
     ToolResultPart,
     ToolStepPart,
     SkillStepPart,
+    SkillProposalPart,
 )
 
 
@@ -144,6 +145,8 @@ def _build_part(block: dict[str, Any]) -> ContentPart | None:
         )
     if block_type == "changeset":
         return ChangeSetPart(**block)
+    if block_type == "skill_proposal":
+        return SkillProposalPart(**block)
     if block_type == "form":
         return FormPart(**block)
     return None

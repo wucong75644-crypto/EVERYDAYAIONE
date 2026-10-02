@@ -1,22 +1,23 @@
 import { useEffect, useState } from 'react';
-import { checkSkillDeletion, type SkillDeletionCheck } from '../../../services/skillAdmin';
+import { checkSkillDeletion, type SkillDeletionCheck, type SkillOwner } from '../../../services/skillAdmin';
 import { Button } from '../../ui/Button';
 
-export function SkillDeletion({ orgId, packageId, version, busy, onDelete }: {
-  orgId: string; packageId: string; version: number; busy: boolean; onDelete: () => void;
+export function SkillDeletion({ owner, packageId, version, busy, onDelete }: {
+  owner: SkillOwner; packageId: string; version: number; busy: boolean; onDelete: () => void;
 }) {
   const [attempt, setAttempt] = useState(0);
-  const requestKey = `${orgId}:${packageId}:${version}:${attempt}`;
+  const ownerKey = owner.kind === 'org' ? `org:${owner.orgId}` : owner.kind;
+  const requestKey = `${ownerKey}:${packageId}:${version}:${attempt}`;
   const [result, setResult] = useState<{ key: string; check: SkillDeletionCheck | null } | null>(null);
   const checking = result?.key !== requestKey;
   const check = checking ? null : result.check;
   useEffect(() => {
     let cancelled = false;
-    checkSkillDeletion(orgId, packageId)
+    checkSkillDeletion(owner, packageId)
       .then(value => { if (!cancelled) setResult({ key: requestKey, check: value }); })
       .catch(() => { if (!cancelled) setResult({ key: requestKey, check: null }); });
     return () => { cancelled = true; };
-  }, [orgId, packageId, requestKey]);
+  }, [ownerKey, packageId, requestKey]);
   const explanation = checking ? '正在检查是否可以安全删除…'
     : !check ? '安全检查暂不可用，请重新检查。'
       : check.allowed ? '删除后从 Skill 库移除，保留历史版本和审计，唯一标识不能复用。'

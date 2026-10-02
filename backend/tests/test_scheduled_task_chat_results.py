@@ -41,6 +41,47 @@ async def test_change_set_is_delivered_and_checkpointed(setup, monkeypatch, tran
                message.get("payload", {}).get("block") == reference for message in messages)
 
 
+@pytest.mark.parametrize("transport", ["legacy", "actor"])
+async def test_skill_proposal_is_delivered_and_checkpointed(setup, monkeypatch, transport):
+    _, root = setup
+    raw = AgentResult("Skill 草稿已创建", metadata={"skill_chat_proposal": {
+        "id": "proposal-test",
+        "name": "商品图风格拆解",
+    }})
+    monkeypatch.setattr(consumer, "sample", lambda _case, _root: (
+        tc("manage_scheduled_task", {"action": "pause", "task_name": "日报"}), raw,
+    ))
+
+    actual, results, host, executor, _ = await consumer.chat_run(
+        "skill_proposal", transport, root, monkeypatch,
+    )
+    reference = {
+        "type": "skill_proposal",
+        "proposal_id": "proposal-test",
+        "title": "商品图风格拆解",
+    }
+    assert actual["checkpoint"]["content_blocks"].count(reference) == 1
+
+    from pydantic import TypeAdapter
+    from schemas.message import ContentPart, serialize_content_parts
+    from services.handlers.chat.outcome_builder import build_content_parts
+    final = serialize_content_parts(build_content_parts(
+        [{**block, **({"elapsed_ms": 0} if block.get("type") == "tool_step" else {})}
+         for block in actual["checkpoint"]["content_blocks"]], fallback_text="",
+    ))
+    assert final.count(reference) == 1
+    validated = TypeAdapter(list[ContentPart]).validate_python(final)
+    assert validated[-1].proposal_id == "proposal-test"
+
+    assert results[0][1].metadata["skill_chat_proposal"] == raw.metadata["skill_chat_proposal"]
+    assert host._terminal_change_set_pending is True
+    assert host._pending_change_set_blocks == []
+    executor.handler.assert_awaited_once()
+    messages = [entry[-1] for entry in actual["ws"]]
+    assert any(message.get("type") == "content_block_add" and
+               message.get("payload", {}).get("block") == reference for message in messages)
+
+
 async def test_legacy_result_staging_and_replayed_reference_do_not_duplicate():
     from types import SimpleNamespace
     host = SimpleNamespace(_pending_emit_payloads=[])

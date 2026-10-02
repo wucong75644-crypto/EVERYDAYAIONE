@@ -89,7 +89,14 @@ class ToolRuntime:
         selections = self.resource_selections.snapshot()
         self.check_lifetime(context)
         decision = self.policy.decide(name, context, call.arguments)
-        if decision.outcome == "deny" and not decision.reason.startswith("business_permission_required:"):
+        # Organization-admin status is a database-backed fact and deliberately
+        # starts false in executor_context. Let refresh_context resolve that
+        # one dynamic gate before returning a denial; all other early denials
+        # still avoid authorization I/O.
+        needs_identity_refresh = decision.reason == "feature_unavailable:skill_org_admin"
+        if (decision.outcome == "deny"
+                and not decision.reason.startswith("business_permission_required:")
+                and not needs_identity_refresh):
             return self._observe_resource_result(ToolResult.not_executed(call=call, context=context, decision=decision), context)
         try:
             self.check_argument_scope(call.arguments)

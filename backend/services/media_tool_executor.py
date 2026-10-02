@@ -17,7 +17,10 @@ from loguru import logger
 class MediaToolMixin:
     """图片/视频生成工具 Mixin"""
 
-    async def _generate_image(self, args: Dict[str, Any]) -> "AgentResult":
+    async def _generate_image(
+        self, args: Dict[str, Any], *, task_id_override: str | None = None,
+        trial_metadata: Dict[str, Any] | None = None,
+    ) -> "AgentResult":
         """生成图片：锁积分 → adapter 同步等待 → confirm/refund"""
         from config.kie_models import calculate_image_cost
         from core.exceptions import InsufficientCreditsError
@@ -56,7 +59,7 @@ class MediaToolMixin:
             )
 
         # 2. 锁定积分（原子预扣）
-        task_id = str(uuid4())
+        task_id = task_id_override or str(uuid4())
         try:
             tx_id = self._lock_credits(
                 task_id=task_id, user_id=self.user_id,
@@ -71,12 +74,13 @@ class MediaToolMixin:
                 metadata={"retryable": False},
             )
 
-        adapter = create_image_adapter(
-            model_id, shadow_user_id=getattr(self, "workspace_user_id", self.user_id),
-            shadow_org_id=self.org_id,
-        )
+        adapter = None
         try:
-            return await self._run_image_generation(
+            adapter = create_image_adapter(
+                model_id, shadow_user_id=getattr(self, "workspace_user_id", self.user_id),
+                shadow_org_id=self.org_id,
+            )
+            result = await self._run_image_generation(
                 adapter=adapter,
                 tx_id=tx_id,
                 task_id=task_id,
@@ -84,7 +88,14 @@ class MediaToolMixin:
                 image_urls=image_urls,
                 aspect_ratio=aspect_ratio,
                 model_id=model_id,
+                trial_metadata=trial_metadata,
             )
+            if trial_metadata and result.status == "success":
+                result.metadata.update({
+                    **trial_metadata,
+                    "credits_charged": credits_needed,
+                })
+            return result
         except Exception as e:
             self._refund_credits(tx_id)
             logger.error(f"Image generation error | error={e}")
@@ -92,7 +103,8 @@ class MediaToolMixin:
                 str(e), prompt, aspect_ratio, model_id,
             )
         finally:
-            await adapter.close()
+            if adapter is not None:
+                await adapter.close()
 
     async def _run_image_generation(
         self,
@@ -103,6 +115,7 @@ class MediaToolMixin:
         image_urls: list[str],
         aspect_ratio: str,
         model_id: str,
+        trial_metadata: Dict[str, Any] | None = None,
     ) -> "AgentResult":
         from services.agent.agent_result import AgentResult
         from services.file_upload import persist_media_urls_to_workspace
@@ -135,6 +148,7 @@ class MediaToolMixin:
                 "aspect_ratio": aspect_ratio,
                 "task_id": task_id,
                 "reference_images": image_urls,
+                **(trial_metadata or {}),
             },
         )
         urls = "\n".join(result.image_urls)

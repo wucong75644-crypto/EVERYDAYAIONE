@@ -79,13 +79,15 @@ def test_complete_helpers_handlers_and_schema_order(catalog, org):
     from services.tool_executor import ToolExecutor
     expected = BASELINE['helpers'][str(org)]
     view = 'helpers/' + str(org) + '/'
-    assert get_chat_tools(org) == original_schemas(expected['chat'], view + 'chat')
-    assert get_core_tools(org) == original_schemas(expected['core'], view + 'core')
+    legacy_only = lambda schemas: [schema for schema in schemas
+                                   if schema['function']['name'] != 'prepare_skill_draft']
+    assert legacy_only(get_chat_tools(org)) == original_schemas(expected['chat'], view + 'chat')
+    assert legacy_only(get_core_tools(org)) == original_schemas(expected['core'], view + 'core')
     for mode in ('ask', 'auto', 'plan'):
-        assert get_tools_for_mode(mode, org) == original_schemas(expected[mode], view + mode)
+        assert legacy_only(get_tools_for_mode(mode, org)) == original_schemas(expected[mode], view + mode)
     assert get_tools_by_names(set(BASELINE['specs']), org) == original_schemas(expected['chat'], view + 'chat')
     executor = ToolExecutor(None, 'actor-a', 'conversation-a', org)
-    assert sorted(executor._handlers) == BASELINE['handlers'][str(org)]
+    assert sorted(name for name in executor._handlers if name != 'prepare_skill_draft') == BASELINE['handlers'][str(org)]
     if org:
         assert validate_legacy_coverage(catalog, public_schemas=get_chat_tools(org),
                                         handler_names=executor._handlers) == ()
@@ -117,6 +119,14 @@ def test_old_imports_signatures_and_constant_values(module):
         assert str(inspect.signature(getattr(current, name))) == signature, (module, name)
     for name, digest in BASELINE['modules'][module]['constants'].items():
         value = plain(getattr(current, name))
+        if module == 'tool_domains' and name == 'TOOL_DOMAINS':
+            expected = {
+                tool_name: spec['domain'] for tool_name, spec in BASELINE['specs'].items()
+                if tool_name != 'get_conversation_context'
+            }
+            expected.update({'route_to_chat': 'erp', 'prepare_skill_draft': 'general'})
+            assert value == expected
+            continue
         if module == 'agent_tools' and name == 'SMART_CONFIG':
             # 387af4a5 authorized the image-model upgrade after block 07.
             # Check its exact contract, then restore only this category so the
@@ -203,7 +213,11 @@ def test_entire_context_matrix_preserves_authorization(catalog, baseline_catalog
         resolved = registry.resolve(context, policy=ToolPolicy(registry),
                                     advertisement=LegacyAdvertisement(BASELINE['specs']))
         return sorted(resolved.allowed), sorted(resolved.advertised), dict(resolved.denied)
-    assert result(catalog) == result(baseline_catalog)
+    actual, baseline = result(catalog), result(baseline_catalog)
+    assert actual[0] == baseline[0]
+    assert actual[1] == baseline[1]
+    assert {name: reason for name, reason in actual[2].items() if name in baseline[2]} == baseline[2]
+    assert 'prepare_skill_draft' not in actual[0]
 
 
 @pytest.mark.parametrize('name', BASELINE['planner'])
@@ -338,9 +352,9 @@ importlib.import_module(sys.argv[1])
 from config.chat_tools import get_chat_tools
 from services.tools import build_tool_catalog
 from services.tool_executor import ToolExecutor
-assert len(get_chat_tools('org-a')) == 33
-assert len(build_tool_catalog().specs()) == 35
-assert len(ToolExecutor(None, 'actor-a', 'c1', 'org-a')._handlers) == 35
+assert len(get_chat_tools('org-a')) == 34
+assert len(build_tool_catalog().specs()) == 36
+assert len(ToolExecutor(None, 'actor-a', 'c1', 'org-a')._handlers) == 36
 '''
     run = subprocess.run([sys.executable, '-c', script, first], text=True, capture_output=True, timeout=30)
     assert run.returncode == 0, run.stderr

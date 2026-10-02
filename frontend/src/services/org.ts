@@ -13,6 +13,13 @@ export interface OrgDetail {
   owner_id: string;
   created_at: string;
   member_count?: number;
+  features?: Record<string, boolean>;
+}
+
+export interface SkillCreationSettings {
+  chat_creation_enabled: boolean;
+  org_submission_enabled: boolean;
+  platform_submission_enabled: boolean;
 }
 
 export interface OrgMember {
@@ -127,6 +134,12 @@ export async function updateOrg(
   orgId: string, data: Record<string, string | null>,
 ): Promise<{ success: boolean }> {
   return request({ method: 'PATCH', url: `/org/${orgId}`, data });
+}
+
+export async function updateSkillCreationSettings(
+  orgId: string, data: SkillCreationSettings,
+): Promise<{ success: boolean; data: SkillCreationSettings }> {
+  return request({ method: 'PATCH', url: `/org/${orgId}/skill-settings`, data });
 }
 
 export async function setOrgConfig(

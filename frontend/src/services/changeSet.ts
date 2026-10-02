@@ -32,8 +32,8 @@ export const changeSetService = {
     return res.data.data;
   },
 
-  async confirm(id: string): Promise<ChangeSet> {
-    const res = await api.post<ApiResponse<ChangeSet>>(`${BASE}/${id}/confirm`);
+  async confirm(id: string, confirmation?: { expected_change_set_revision: number; content_sha256: string }): Promise<ChangeSet> {
+    const res = await api.post<ApiResponse<ChangeSet>>(`${BASE}/${id}/confirm`, confirmation);
     return res.data.data;
   },
 

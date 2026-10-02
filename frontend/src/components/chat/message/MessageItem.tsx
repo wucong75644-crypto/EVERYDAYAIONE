@@ -73,7 +73,7 @@ export default memo(function MessageItem({
       p.type === 'image' || p.type === 'file' || p.type === 'form' ||
       p.type === 'chart' || p.type === 'diagram' || p.type === 'table' ||
       p.type === 'changeset' || p.type === 'interrupt_marker' ||
-      p.type === 'ecom_plan'
+      p.type === 'ecom_plan' || p.type === 'skill_proposal'
     );
   }, [message.content]);
 

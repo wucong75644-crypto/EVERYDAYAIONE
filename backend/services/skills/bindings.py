@@ -19,7 +19,7 @@ class SkillBinding(SkillSummary):
     available: bool
 
 
-def binding_authority(db, actor: str, conversation_id: UUID) -> tuple[str, str]:
+def binding_authority(db, actor: str, conversation_id: UUID) -> tuple[str | None, str]:
     def row(table, **filters):
         query = db.table(table).select("*")
         for key, value in filters.items():
@@ -32,9 +32,14 @@ def binding_authority(db, actor: str, conversation_id: UUID) -> tuple[str, str]:
     conversation = row("conversations", id=str(conversation_id))
     owner = str(conversation.get("user_id") or "")
     if (not conversation or conversation.get("scope_type") != "user"
-            or str(conversation.get("scope_id") or "") != owner or not conversation.get("org_id")):
+            or str(conversation.get("scope_id") or "") != owner):
         raise HTTPException(404, "对话不存在或不支持会话 Skill")
-    org = str(conversation["org_id"])
+    org_value = conversation.get("org_id")
+    if not org_value:
+        if owner != actor:
+            raise HTTPException(403, "仅会话所有者可管理个人对话的 Skill")
+        return None, owner
+    org = str(org_value)
     membership = row("org_members", org_id=org, user_id=actor)
     if (row("organizations", id=org).get("status") != "active" or membership.get("status") != "active"
             or (owner != actor and membership.get("role") not in ("owner", "admin"))):

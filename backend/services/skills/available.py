@@ -44,9 +44,6 @@ async def available_skills(db, settings, *, actor_user_id: str, conversation_id:
         return []
     actor_user_id = str(UUID(actor_user_id))
     org_id = await asyncio.to_thread(_conversation_org, db, actor_user_id, str(conversation_id))
-    # P1 assignments require an organization; no implied global/personal grant.
-    if org_id is None:
-        return []
     repository = SkillRepository(db.pool, DatabaseScope(
         actor_user_id=actor_user_id, org_id=org_id, access_kind=DatabaseAccessKind.PROJECTION,
     ))
@@ -54,7 +51,8 @@ async def available_skills(db, settings, *, actor_user_id: str, conversation_id:
     checker = PermissionChecker(db)
     required = {code for candidate in candidates for code in candidate.catalog_metadata.required_permissions}
     permissions = set()
-    for code in sorted(required & PERMISSIONS.keys()):
+    permission_codes = sorted(required & PERMISSIONS.keys()) if org_id is not None else ()
+    for code in permission_codes:
         if await checker.check(actor_user_id, org_id, code):
             permissions.add(code)
     context = SkillResolutionContext(
