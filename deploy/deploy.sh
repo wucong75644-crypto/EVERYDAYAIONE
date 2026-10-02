@@ -433,6 +433,13 @@ require_controlled_release() {
     release_remote_state assert || exit 1
 }
 
+# Personal Skills use the existing dedicated catalog NAS. Prepare its isolated
+# writable child mount under the release lock; skip when the catalog is disabled.
+prepare_skill_personal_mount() {
+    log_info "准备 Skill 个人存储挂载..."
+    remote_exec sudo bash -s < deploy/ensure-skill-personal-storage.sh
+}
+
 # 部署后端到服务器
 deploy_backend() {
     log_info "在服务器上部署后端..."
@@ -456,6 +463,28 @@ deploy_backend() {
         if [ ! -f ".env" ]; then
             echo "❌ .env 文件不存在"
             exit 1
+        fi
+        if grep -Eq '^SKILL_CATALOG_ENABLED=(true|1)$' .env; then
+            dropin_source="/var/www/everydayai/deploy/everydayai-backend-skill-authoring.conf"
+            dropin_target="/etc/systemd/system/everydayai-backend.service.d/skill-authoring-write.conf"
+            if [ ! -f "$dropin_source" ]; then
+                echo "❌ 缺少版本化 Skill 存储权限配置"
+                exit 1
+            fi
+            sudo install -D -m 0644 "$dropin_source" "$dropin_target"
+            sudo systemctl daemon-reload
+            effective_write_paths=$(sudo systemctl show everydayai-backend -p ReadWritePaths --value)
+            effective_read_only_paths=$(sudo systemctl show everydayai-backend -p ReadOnlyPaths --value)
+            case " $effective_read_only_paths " in
+                *" /mnt/platform-skills "*) ;;
+                *) echo "❌ everydayai-backend 未保留 Skill 存储根目录只读保护"; exit 1 ;;
+            esac
+            for path in /mnt/platform-skills/org /mnt/platform-skills/personal; do
+                case " $effective_write_paths " in
+                    *" $path "*) ;;
+                    *) echo "❌ everydayai-backend 缺少 Skill 子目录写权限: $path"; exit 1 ;;
+                esac
+            done
         fi
         pkill -f kernel_worker 2>/dev/null || true
         services=(
@@ -677,6 +706,7 @@ EOF
     if [ "$FRONTEND_ONLY" != true ]; then
         build_backend
         prepare_scheduled_task_cutover
+        prepare_skill_personal_mount
         sync_backend
         apply_migrations
         deploy_backend

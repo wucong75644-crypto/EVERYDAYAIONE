@@ -4,9 +4,27 @@ import { skillCreationService, type SkillChatProposal } from '../../../services/
 import { Button } from '../../ui/Button';
 
 type Target = 'personal' | 'org' | 'platform';
+type RefreshOptions = { preserveError?: boolean };
 const targetLabels: Record<Target, string> = {
   personal: '个人 · 仅自己使用', org: '组织 · 提交组织审核', platform: '平台 · 申请平台审核',
 };
+
+function actionErrorMessage(reason: unknown): string {
+  if (reason && typeof reason === 'object') {
+    const value = reason as {
+      code?: unknown;
+      response?: { data?: { detail?: unknown; error?: { code?: unknown } } };
+    };
+    const code = typeof value.code === 'string' ? value.code
+      : typeof value.response?.data?.error?.code === 'string' ? value.response.data.error.code
+        : typeof value.response?.data?.detail === 'string' ? value.response.data.detail : '';
+    if (code === 'SKILL_STORAGE_WRITE_REJECTED') {
+      return 'Skill 存储当前不可写，候选已保留。请联系管理员处理后重试。';
+    }
+  }
+  return reason instanceof Error && !/^Request failed with status code \d+$/.test(reason.message)
+    ? reason.message : '操作未完成，候选仍保留，请刷新状态后重试。';
+}
 
 export default function SkillChatProposalCard({ proposalId, fallbackTitle }: {
   proposalId: string; fallbackTitle?: string;
@@ -15,15 +33,16 @@ export default function SkillChatProposalCard({ proposalId, fallbackTitle }: {
   const [target, setTarget] = useState<Target>('personal');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async ({ preserveError = false }: RefreshOptions = {}) => {
     try {
       const next = await skillCreationService.getChatProposal(proposalId);
-      setProposal(next); setError('');
+      setProposal(next);
+      if (!preserveError) setError('');
       setTarget(current => next.available_targets?.[current] === false
         ? (['personal', 'org', 'platform'] as const).find(scope => next.available_targets?.[scope] === true) || current
         : current);
     }
-    catch { setError('暂时无法读取 Skill 候选，请刷新页面后重试。'); }
+    catch { if (!preserveError) setError('暂时无法读取 Skill 候选，请刷新页面后重试。'); }
   }, [proposalId]);
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -41,8 +60,8 @@ export default function SkillChatProposalCard({ proposalId, fallbackTitle }: {
         setProposal({ ...proposal, status: 'cancelled' });
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '操作未完成，请刷新候选状态后重试。');
-      await refresh();
+      setError(actionErrorMessage(reason));
+      await refresh({ preserveError: true });
     } finally { setBusy(false); }
   };
   const sendFeedback = async (rating: 'helpful' | 'not_helpful') => {

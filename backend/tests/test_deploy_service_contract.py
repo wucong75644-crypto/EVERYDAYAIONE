@@ -26,6 +26,29 @@ def test_backend_deploy_has_bounded_readiness_check() -> None:
     assert "后端 readiness 超时" in SCRIPT
 
 
+def test_skill_catalog_release_prepares_the_personal_submount_on_existing_nas() -> None:
+    setup_script = (
+        Path(__file__).resolve().parents[2] / "deploy/ensure-skill-personal-storage.sh"
+    ).read_text()
+    assert "prepare_skill_personal_mount()" in SCRIPT
+    assert 'prepare_skill_personal_mount' in SCRIPT
+    assert 'remote_exec sudo bash -s < deploy/ensure-skill-personal-storage.sh' in SCRIPT
+    assert 'personal_alias="$workspace_root/.platform-skills/personal"' in setup_script
+    assert 'expected_personal_source="${platform_source%/}/personal"' in setup_script
+    assert 'cp -a "$fstab" "$backup"' in setup_script
+    assert 'mount "$personal_mount"' in setup_script
+    assert 'stat -c \'%u:%g:%a\' "$personal_mount"' in setup_script
+    assert 'if [[ -L "$personal_alias" ]]' in setup_script
+    assert 'stat -c \'%d:%i\' "$personal_alias"' in setup_script
+    assert 'install -D -m 0644 "$dropin_source" "$dropin_target"' in SCRIPT
+    assert 'effective_read_only_paths=$(sudo systemctl show everydayai-backend -p ReadOnlyPaths --value)' in SCRIPT
+    assert '未保留 Skill 存储根目录只读保护' in SCRIPT
+    assert 'systemctl daemon-reload' in SCRIPT
+    main_body = SCRIPT[SCRIPT.rindex('main() {'):SCRIPT.rindex('# 执行主函数')]
+    assert main_body.index('remote_exec /var/www/everydayai/backend/venv/bin/python -') < main_body.index('prepare_skill_personal_mount')
+    assert main_body.index('build_backend\n        prepare_scheduled_task_cutover\n        prepare_skill_personal_mount') < main_body.index('sync_backend\n')
+
+
 def test_rsync_preserves_runtime_and_sensitive_files() -> None:
     for excluded in (
         ".env*",

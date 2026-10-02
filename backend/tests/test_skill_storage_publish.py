@@ -1,6 +1,7 @@
 """Exclusive NAS creation, verified retries and failed writes."""
 import os
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -17,6 +18,20 @@ def test_publish_creates_readonly_file_and_identical_retry_keeps_inode(storage):
     assert storage.publish(PACKAGE, publication(), DOCUMENT.encode()) == result
     assert target.stat().st_ino == inode
     assert not list(storage.root.rglob('.publishing-*'))
+
+
+def test_personal_publish_reuses_storage_writer_under_owner_namespace(storage):
+    owner = uuid4()
+    package = PACKAGE.model_copy(update={
+        'source': 'chat', 'scope_kind': 'personal', 'owner_user_id': owner,
+    })
+
+    result = storage.publish(package, publication(), DOCUMENT.encode())
+
+    assert result.nas_path == f'personal/{owner}/report/v1/SKILL.md'
+    target = storage.root / revision_path(package, 'v1')
+    assert target.is_file() and target.read_text() == DOCUMENT
+    assert storage.publish(package, publication(), DOCUMENT.encode()) == result
 
 
 def test_existing_file_with_wrong_hash_never_overwritten(storage):
