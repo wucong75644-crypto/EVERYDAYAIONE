@@ -658,6 +658,10 @@ EOF
     fi
     test_ssh_connection
 
+    # Compare with independently verified production identity before any sync.
+    remote_exec /var/www/everydayai/backend/venv/bin/python - \
+        < deploy/verify-production-database.py
+
     # 首次部署模式
     if [ "$SETUP_MODE" = true ]; then
         setup_server

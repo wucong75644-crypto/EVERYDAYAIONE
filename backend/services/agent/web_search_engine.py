@@ -138,7 +138,12 @@ def _parse_gemini_response(data: Dict[str, Any], query: str) -> Optional[Dict[st
                     url = chunk.get("source_url", "")
                     title = chunk.get("site_title", "")
                     if url:
-                        sources.append({"title": title, "url": url})
+                        sources.append({
+                            "title": title,
+                            "url": url,
+                            "site_name": chunk.get("site_name", ""),
+                            "snippet": chunk.get("snippet", ""),
+                        })
         except (_json.JSONDecodeError, TypeError):
             # reasoning_content 不是 JSON 格式，可能是普通思考文本
             pass

@@ -5,7 +5,7 @@
 """
 
 from functools import lru_cache
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     # KIE API 配置
     kie_api_key: Optional[str] = None
     kie_base_url: str = "https://api.kie.ai/v1"
+
+    # 豆包搜索（方舟 Responses API；仅在启用该 provider 时使用）
+    web_search_provider: Literal["auto", "doubao", "legacy"] = "auto"
+    web_search_ark_api_key: Optional[str] = None
+    web_search_ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
+    web_search_ark_model: str = "doubao-seed-2-1-pro-260628"
 
     # Google API 配置（统一适配器 Phase 6 使用）
     google_api_key: Optional[str] = None

@@ -92,11 +92,11 @@ async def test_first_consumption_from_existing_cache_keeps_artifacts(setup):
     executor = MockHandlerExecutor(agent_domain="general")
     executor.handler.return_value = artifact_result()
     previous, old_context = loop_for(executor)
-    await previous._execute_tools([tc("web_search", {"query": "x"}, "one")], [], "", old_context)
+    await previous._execute_tools([tc("search_knowledge", {"query": "x"}, "one")], [], "", old_context)
     current, context = loop_for(executor)
     current._cache = previous._cache
     for call_id in ("two", "three"):
-        await current._execute_tools([tc("web_search", {"query": "x"}, call_id)], [], "", context)
+        await current._execute_tools([tc("search_knowledge", {"query": "x"}, call_id)], [], "", context)
         assert current._turn_tool_outcomes[0][1].execution.cached
     assert executor.handler.await_count == 1
     assert len(previous._emit_payloads) == len(current._emit_payloads) == 1
@@ -111,11 +111,11 @@ async def test_legacy_cache_source_survives_hits_but_not_replacement(setup):
     args = {"query": "x", "_tool_cache_scope": [ctx.actor_user_id, ctx.workspace_owner_id,
             ctx.org_id, ctx.conversation_id, ctx.task_id, ctx.context_scope, ctx.execution_mode, ctx.agent_domain]}
     raw = artifact_result()
-    loop._cache.put("web_search", args, raw)
-    assert loop._cache.get("web_search", args) is raw
+    loop._cache.put("search_knowledge", args, raw)
+    assert loop._cache.get("search_knowledge", args) is raw
     sources = []
     for call_id in ("one", "two"):
-        await loop._execute_tools([tc("web_search", {"query": "x"}, call_id)], [], "", context)
+        await loop._execute_tools([tc("search_knowledge", {"query": "x"}, call_id)], [], "", context)
         result = loop._turn_tool_outcomes[0][1]
         sources.append(result.artifact_source)
         assert result.execution.cached and result.chargeable_tokens == 0
@@ -124,11 +124,11 @@ async def test_legacy_cache_source_survives_hits_but_not_replacement(setup):
     assert len(loop._emit_payloads) == 1
     executor.handler.assert_not_awaited()
     # TTL expiry allows a new real execution, even with the same name and URL.
-    key = ToolResultCache._key("web_search", args)
+    key = ToolResultCache._key("search_knowledge", args)
     entry = loop._cache._store[key]
     loop._cache._store[key] = (entry[0], entry[1] - 400)
     executor.handler.return_value = artifact_result()
-    await loop._execute_tools([tc("web_search", {"query": "x"}, "three")], [], "", context)
+    await loop._execute_tools([tc("search_knowledge", {"query": "x"}, "three")], [], "", context)
     assert executor.handler.await_count == 1
     assert len(loop._emit_payloads) == 2
     assert loop._turn_tool_outcomes[0][1].artifact_source != sources[0]
@@ -171,7 +171,7 @@ async def test_each_run_resets_collection_together_with_output(setup):
     loop, context = loop_for(executor)
     for call_id in ("first-run", "second-run"):
         adapter = FakeAdapter([
-            {"tool_calls": [{"id": call_id, "name": "web_search", "args": '{"query":"x"}'}]},
+            {"tool_calls": [{"id": call_id, "name": "search_knowledge", "args": '{"query":"x"}'}]},
             {"text": "完成"},
         ])
         loop.model_gateway = loop.adapter = adapter
