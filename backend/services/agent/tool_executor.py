@@ -112,6 +112,7 @@ class ToolExecutor(
             "erp_analyze": self._erp_analyze,
             "manage_scheduled_task": self._manage_scheduled_task,
             "image_agent": self._image_agent,
+            "prepare_skill_draft": self._prepare_skill_draft,
         }
         # 注册文件操作工具
         for tool_name in FILE_INFO_TOOLS:
@@ -130,6 +131,14 @@ class ToolExecutor(
     def has_handler(self, tool_name: str) -> bool:
         """检查工具是否有已注册的 handler（兜底扩充用）"""
         return tool_name in self._handlers
+
+    async def _prepare_skill_draft(self, args: Dict[str, Any]):
+        from core.config import get_settings
+        from services.skills.chat_creation import create_proposal
+        return create_proposal(
+            self.db, get_settings(), actor_id=self.user_id, org_id=self.org_id,
+            conversation_id=self.conversation_id, arguments=args,
+        )
 
     @property
     def tool_runtime(self):

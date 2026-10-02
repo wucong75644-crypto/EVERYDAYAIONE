@@ -213,6 +213,45 @@ class TestGetOrg:
         assert resp.status_code == 403
 
 
+class TestSkillCreationSettings:
+    def test_skill_permissions_are_role_checked_and_merged_with_existing_features(self):
+        service = MagicMock()
+        service.get_organization.return_value = {
+            "id": "org-1", "features": {"erp": True, "image_gen": False},
+        }
+        service.update_organization.return_value = {
+            "features": {"erp": True, "image_gen": False,
+                "skill_chat_creation_enabled": True,
+                "skill_org_submission_enabled": False,
+                "skill_platform_submission_enabled": True},
+        }
+        app = _build_app(FakeDB())
+        from api.routes.org import _get_org_service
+        app.dependency_overrides[_get_org_service] = lambda: service
+        response = TestClient(app).patch("/api/org/org-1/skill-settings", json={
+            "chat_creation_enabled": True,
+            "org_submission_enabled": False,
+            "platform_submission_enabled": True,
+        })
+        assert response.status_code == 200
+        service.require_role.assert_called_once_with("org-1", "user-1", ("owner", "admin"))
+        service.update_organization.assert_called_once_with("org-1", "user-1", features={
+            "erp": True, "image_gen": False,
+            "skill_chat_creation_enabled": True,
+            "skill_org_submission_enabled": False,
+            "skill_platform_submission_enabled": True,
+        })
+
+    def test_skill_permissions_reject_non_boolean_values(self):
+        app = _build_app(FakeDB())
+        response = TestClient(app).patch("/api/org/org-1/skill-settings", json={
+            "chat_creation_enabled": "true",
+            "org_submission_enabled": True,
+            "platform_submission_enabled": True,
+        })
+        assert response.status_code == 422
+
+
 # ── accept_invitation 测试 ──────────────────────────────────
 
 

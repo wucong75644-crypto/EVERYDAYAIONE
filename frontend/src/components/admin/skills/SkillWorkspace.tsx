@@ -1,5 +1,5 @@
 import { ArrowLeft, Check, ChevronRight, Ellipsis, Info, LockKeyhole, RefreshCw, SquarePen } from 'lucide-react';
-import type { DraftContent, SkillAction, SkillDetail } from '../../../services/skillAdmin';
+import type { DraftContent, SkillAction, SkillDetail, SkillOwner } from '../../../services/skillAdmin';
 import { Button } from '../../ui/Button';
 import { Dropdown, DropdownDivider, DropdownItem } from '../../ui/Dropdown';
 import { SkillStatus } from './SkillStatus';
@@ -11,7 +11,7 @@ import { detailName, detailState, formatDate, revisionLabel } from './presentati
 
 export interface RevisionContent { revision: string; content: DraftContent }
 interface Props {
-  orgId: string; onDelete: () => void;
+  owner: SkillOwner; onDelete: () => void;
   detail: SkillDetail; content: DraftContent; dirty: boolean; busy: boolean;
   tab: 'content' | 'history'; revisionContent: RevisionContent | null; reading: boolean; readFailed: boolean;
   onTab: (value: 'content' | 'history') => void; onChange: (value: DraftContent) => void;
@@ -21,10 +21,12 @@ interface Props {
 }
 export function SkillWorkspace(p: Props) {
   const d = p.detail, status = detailState(d), editing = d.editable && d.draft?.status === 'draft';
+  const personal = p.owner.kind === 'personal';
   const available = d.available_revision ? revisionLabel(d, d.available_revision) : null;
   const stopped = status === 'deprecated' || status === 'disabled';
   const notice = !d.editable ? '由平台维护，组织管理员可查看正文和发布记录。'
-    : editing ? (available ? `正在编辑草稿，${available}继续可用。` : '草稿仅用于编辑，审核发布后才可使用。')
+    : editing ? (personal ? (available ? `正在编辑草稿，${available}继续可用。发布后仅你自己可使用。` : '个人草稿仅你自己可见，发布后即可在聊天中使用。')
+      : (available ? `正在编辑草稿，${available}继续可用。` : '草稿仅用于编辑，审核发布后才可使用。'))
       : status === 'in_review' ? (d.draft?.approved_by ? '内容已审核通过，发布后才会启用新版本。' : '审核期间内容已锁定；需要修改时，请先退回草稿。')
         : status === 'deprecated' ? '已废弃，不能重新启用、编辑或发布。已有任务仍可恢复；安全检查通过后可以删除。'
           : status === 'disabled' ? '已停止新的使用和已有任务恢复。“解除停用”只恢复停用前的状态；停用前已废弃的 Skill 仍为已废弃。'
@@ -38,7 +40,7 @@ export function SkillWorkspace(p: Props) {
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="min-w-0"><div className="flex flex-wrap items-center gap-3"><h2 className="break-all text-xl font-semibold">{detailName(d)}</h2><SkillStatus state={status} approved={!!d.draft?.approved_by} /></div><p className="mt-1.5 break-all text-xs text-[var(--s-text-tertiary)]">{d.scope_kind === 'org' ? '组织 Skill' : '平台 Skill'} · {d.skill_key}</p></div>
       <div className="flex flex-wrap items-center gap-2">
-        {editing && <><Button variant="secondary" disabled={p.busy || !p.dirty} onClick={p.onSave}>保存草稿</Button><Button disabled={p.busy} onClick={p.onSubmit}>{p.dirty ? '保存并提交审核' : '提交审核'}</Button></>}
+        {editing && <><Button variant="secondary" disabled={p.busy || !p.dirty} onClick={p.onSave}>保存草稿</Button><Button disabled={p.busy} onClick={p.onSubmit}>{personal ? (p.dirty ? '保存并发布' : '发布个人 Skill') : (p.dirty ? '保存并提交审核' : '提交审核')}</Button></>}
         {d.editable && d.draft && status === 'disabled' && <Button disabled={p.busy} onClick={() => p.onAction('enable')}>解除停用</Button>}
         {d.editable && status === 'in_review' && <><Button variant="secondary" disabled={p.busy} onClick={() => p.onAction('reject')}>退回修改</Button><Button disabled={p.busy} onClick={() => p.onAction(d.draft?.approved_by ? 'publish' : 'approve')}>{d.draft?.approved_by ? '发布新版本' : '审核通过'}</Button></>}
         {d.editable && !editing && (status === 'published' || !d.draft && !stopped) && <Button icon={<SquarePen size={16} />} disabled={p.busy} onClick={() => p.onAction('start_draft')}>{d.revisions.length ? '编辑新版本' : '创建草稿'}</Button>}
@@ -51,7 +53,7 @@ export function SkillWorkspace(p: Props) {
       </div>
     </div>
     <p className="mt-4 flex items-start gap-2 text-xs leading-5 text-[var(--s-text-tertiary)]">{editing ? <Info size={15} className="mt-0.5 shrink-0" /> : <LockKeyhole size={15} className="mt-0.5 shrink-0" />}{notice}</p>
-    {d.editable && d.draft && status === 'deprecated' && <SkillDeletion orgId={p.orgId} packageId={d.package_id}
+    {d.editable && d.draft && status === 'deprecated' && <SkillDeletion owner={p.owner} packageId={d.package_id}
       version={d.draft.version} busy={p.busy} onDelete={p.onDelete} />}
     <div className="mt-5 flex gap-6 border-b border-[var(--s-border-default)]" aria-label="Skill 详情视图">
       {(['content', 'history'] as const).map(tab => <button key={tab} type="button" aria-pressed={p.tab === tab} onClick={() => p.onTab(tab)} disabled={p.busy}
@@ -77,8 +79,8 @@ export function SkillWorkspace(p: Props) {
       </div>
       <aside className="min-w-0 border-t border-[var(--s-border-default)] pt-4 text-xs lg:border-0 lg:pt-1">
         <h3 className="font-medium">Skill 信息</h3><dl className="mt-4 grid grid-cols-2 gap-5 lg:grid-cols-1">
-          <div><dt className="text-[var(--s-text-tertiary)]">可用范围</dt><dd className="mt-1">{d.scope_kind === 'org' ? '当前组织' : '平台提供'}</dd></div>
-          <div><dt className="text-[var(--s-text-tertiary)]">维护权限</dt><dd className="mt-1">{d.editable ? '组织管理员' : '平台维护 · 只读'}</dd></div>
+          <div><dt className="text-[var(--s-text-tertiary)]">可用范围</dt><dd className="mt-1">{d.scope_kind === 'personal' ? '仅自己' : d.scope_kind === 'org' ? '当前组织' : '平台提供'}</dd></div>
+          <div><dt className="text-[var(--s-text-tertiary)]">维护权限</dt><dd className="mt-1">{d.editable ? (personal ? '本人' : p.owner.kind === 'platform' ? '平台管理员' : '组织管理员') : '平台维护 · 只读'}</dd></div>
           <div><dt className="text-[var(--s-text-tertiary)]">当前可用版本</dt><dd className="mt-1">{stopped ? '已停止新增使用' : available || (d.revisions.length ? '尚未启用' : '尚未发布')}</dd></div>
           <div><dt className="text-[var(--s-text-tertiary)]">唯一标识</dt><dd className="mt-1 break-all font-mono">{d.skill_key}</dd></div>
           {d.draft && <div><dt className="text-[var(--s-text-tertiary)]">最近更新</dt><dd className="mt-1">{formatDate(d.draft.updated_at)}</dd></div>}

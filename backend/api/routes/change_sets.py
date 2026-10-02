@@ -6,10 +6,14 @@
 from __future__ import annotations
 
 from typing import Any, Dict
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
+from pydantic import BaseModel, Field
 
 from api.deps import CurrentUserId, Database, OrgCtx, ScopedDB
+from core.config import get_settings
+from core.db_scope import DatabaseAccessKind, DatabaseScope
 from schemas.changeset import (
     CancelChangeSetRequest,
     ChangeSetDTO,
@@ -26,9 +30,18 @@ from services.scheduler.scheduled_task_change_adapter import (
     ScheduledTaskChangeAdapter,
     build_change_set_approval_actions,
 )
+from services.skills.chat_creation import commit_draft, content_digest, _org_admin
+from services.skills.authoring_contracts import DraftContent
+from services.skills.contracts import SkillError
+from services.skills.repository import SkillRepository
 
 
 router = APIRouter(prefix="/change-sets", tags=["ChangeSet"])
+
+
+class SkillDraftConfirmation(BaseModel):
+    expected_change_set_revision: int = Field(ge=0)
+    content_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
 def _org_id(org_ctx: Any) -> str:
@@ -62,7 +75,11 @@ def _to_dto(row: Dict[str, Any], checks: list[Dict[str, Any]]) -> Dict[str, Any]
         "checks": checks,
         "risk": policy,
         "plan": row.get("plan_snapshot"),
-        "approval_actions": build_change_set_approval_actions(row),
+        "approval_actions": ([
+            {"action": "confirm", "enabled": True, "method": "POST", "path": f"/api/change-sets/{row.get('id')}/confirm"},
+            {"action": "cancel", "enabled": True, "method": "POST", "path": f"/api/change-sets/{row.get('id')}/cancel"},
+        ] if row.get("resource_type") == "skill_draft" and row.get("status") == "awaiting_approval"
+            else build_change_set_approval_actions(row)),
         "result": {
             "status": row.get("status"),
             "committed_revision": row.get("committed_revision"),
@@ -152,10 +169,120 @@ async def confirm_change_set(
     org_ctx: OrgCtx,
     scoped_db: ScopedDB,
     db: Database,
+    confirmation: SkillDraftConfirmation | None = Body(default=None),
 ) -> Dict[str, Any]:
     org_id = _org_id(org_ctx)
     repo = ChangeSetRepository(scoped_db)
     row = _get_owned(repo, change_set_id, org_id, user_id, org_ctx)
+    if row.get("resource_type") == "skill_draft":
+        if confirmation is None:
+            raise HTTPException(422, "请确认卡片中的 Skill 版本")
+        if row.get("status") == "applied":
+            return {"success": True, "data": _to_dto(row, repo.list_checks(change_set_id, org_id))}
+        settings = get_settings()
+        if (settings.skill_catalog_enabled is not True
+                or settings.skill_chat_creation_enabled is not True):
+            raise HTTPException(404, "Skill 对话创建尚未启用")
+        revision = int(row.get("revision") or 0)
+        if row.get("status") == "awaiting_approval" and revision != confirmation.expected_change_set_revision:
+            raise HTTPException(409, "Skill 候选已更新，请刷新卡片后重新核对")
+        if row.get("status") == "committing" and revision - 1 != confirmation.expected_change_set_revision:
+            raise HTTPException(409, "Skill 候选版本与本次提交不一致")
+        proposal = row.get("proposed_snapshot") or {}
+        content = DraftContent.model_validate(proposal.get("content") or {})
+        digest = content_digest(content)
+        if (digest != confirmation.content_sha256 or digest != proposal.get("content_sha256")
+                or digest != (row.get("audit_subject") or {}).get("candidate_sha256")):
+            raise HTTPException(409, "Skill 候选内容校验失败，请重新打开卡片")
+        try:
+            _org_admin(db, str(user_id), org_id)
+        except PermissionError:
+            raise HTTPException(403, "仅组织管理员可创建 Skill 草稿") from None
+        if row.get("status") == "awaiting_approval":
+            try:
+                row = repo.transition(
+                    change_set_id=change_set_id, org_id=org_id,
+                    expected_status="awaiting_approval", next_status="committing",
+                    actor_id=user_id, actor_type="user", event_type="skill_draft_confirmed",
+                    payload={"candidate_sha256": digest},
+                )
+            except ChangeSetConcurrencyError:
+                row = repo.get(change_set_id, org_id)
+                if row.get("status") == "applied":
+                    return {"success": True, "data": _to_dto(row, repo.list_checks(change_set_id, org_id))}
+                if row.get("status") != "committing":
+                    raise HTTPException(409, "Skill 候选状态已变化") from None
+        elif row.get("status") != "committing":
+            raise HTTPException(409, "Skill 候选当前不能创建草稿")
+        repository = SkillRepository(db.pool, DatabaseScope(
+            actor_user_id=str(user_id), org_id=org_id, access_kind=DatabaseAccessKind.RUNTIME_ADMIN,
+            request_id=str(uuid4()),
+        ))
+        try:
+            receipt = commit_draft(repository, get_settings(), change_set=row,
+                                   actor_id=str(user_id), org_id=org_id)
+        except SkillError as exc:
+            code = str(exc)
+            if code in {
+                "SKILL_VERSION_CONFLICT", "SKILL_TRANSITION_INVALID",
+                "SKILL_PACKAGE_UNAVAILABLE", "SKILL_OWNER_SCOPE_MISMATCH", "SKILL_KEY_EXISTS",
+            }:
+                # The business transaction made no write, so this candidate can
+                # no longer be retried successfully in its current form. Keep
+                # it out of the perpetual `committing` state and preserve the
+                # precise stale-candidate reason in the ChangeSet timeline.
+                try:
+                    repo.record_check(
+                        change_set_id=change_set_id, org_id=org_id, check_type="conflict",
+                        check_key="skill_draft_base", status="failed",
+                        input_data={"content_sha256": digest},
+                        result={"error_code": code}, actor_id=user_id, actor_type="user",
+                    )
+                    row = repo.transition(
+                        change_set_id=change_set_id, org_id=org_id,
+                        expected_status="committing", next_status="conflicted",
+                        actor_id=user_id, actor_type="user", event_type="skill_draft_conflicted",
+                        payload={"error_code": code},
+                    )
+                except Exception:
+                    # A receipt may have committed before a transient response
+                    # failure. Leave `committing` so the idempotent retry can
+                    # recover it from that receipt.
+                    pass
+            status = 409 if code in {
+                "SKILL_VERSION_CONFLICT", "SKILL_TRANSITION_INVALID", "SKILL_KEY_EXISTS",
+            } else 404 if code == "SKILL_PACKAGE_UNAVAILABLE" else 403
+            message = "目标草稿已变化，请重新生成候选" if status == 409 else (
+                "目标 Skill 已不可访问" if status == 404 else "当前账号已无权创建此 Skill 草稿"
+            )
+            raise HTTPException(status, message) from None
+        except PermissionError as exc:
+            raise HTTPException(403, "仅活跃组织管理员可创建 Skill 草稿") from exc
+        except ValueError as exc:
+            code = str(exc)
+            status = 409 if any(token in code for token in ("CONFLICT", "VERSION", "UNAVAILABLE")) else 422
+            raise HTTPException(status, code) from exc
+        try:
+            repo.record_check(
+                change_set_id=change_set_id, org_id=org_id, check_type="commit",
+                check_key="skill_draft_receipt", status="passed",
+                input_data={"content_sha256": digest}, result=receipt,
+                actor_id=user_id, actor_type="user",
+            )
+            row = repo.transition(
+                change_set_id=change_set_id, org_id=org_id,
+                expected_status="committing", next_status="applied",
+                actor_id=user_id, actor_type="user", event_type="skill_draft_created",
+                payload={"package_id": receipt["package_id"],
+                         "draft_revision": receipt["draft_revision"],
+                         "draft_version": receipt["draft_version"],
+                         "content_sha256": digest},
+            )
+        except ChangeSetConcurrencyError:
+            row = repo.get(change_set_id, org_id)
+            if row.get("status") != "applied":
+                raise HTTPException(409, "Skill 草稿已保存，状态正在恢复，请刷新卡片") from None
+        return {"success": True, "data": _to_dto(row, repo.list_checks(change_set_id, org_id))}
     if row.get("resource_type") != "scheduled_task":
         raise HTTPException(422, "当前 ChangeSet 没有可用的业务适配器")
     adapter = ScheduledTaskChangeAdapter(db, user_id=user_id, org_id=org_id)

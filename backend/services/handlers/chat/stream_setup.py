@@ -130,11 +130,12 @@ async def prepare_chat_stream(
             f"setup_total={int((time.monotonic() - started_at) * 1000)}ms"
         )
 
-        from services.tools.runtime_context import chat_context
+        from services.tools.runtime_context import chat_context, prepare_initial_context
         execution_context = chat_context(
             handler, user_id=user_id, conversation_id=conversation_id, task_id=task_id,
             permission_mode=permission_mode, budget=budget, cancellation=cancellation_event,
         )
+        execution_context = await prepare_initial_context(handler, execution_context)
         permission, core_tools = _prepare_permission_and_tools(
             permission_mode,
             handler.org_id,

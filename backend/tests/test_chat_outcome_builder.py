@@ -150,3 +150,27 @@ def test_submitted_form_keeps_change_reference_through_completion_and_api():
     wire = serialize_content_parts(parts)
     assert wire[0]["change_set_id"] == "change1"
     assert TypeAdapter(list[ContentPart]).validate_python(wire)[0].change_set_id == "change1"
+
+
+def test_skill_proposal_reference_survives_completion_and_api():
+    from pydantic import TypeAdapter
+    from schemas.message import ContentPart, SkillProposalPart, serialize_content_parts
+
+    parts = build_content_parts([{
+        "type": "skill_proposal",
+        "proposal_id": "proposal-1",
+        "title": "商品图风格拆解",
+    }], fallback_text="")
+    wire = serialize_content_parts(parts)
+
+    assert parts == [SkillProposalPart(
+        proposal_id="proposal-1",
+        title="商品图风格拆解",
+    )]
+    assert wire == [{
+        "type": "skill_proposal",
+        "proposal_id": "proposal-1",
+        "title": "商品图风格拆解",
+    }]
+    validated = TypeAdapter(list[ContentPart]).validate_python(wire)
+    assert validated[0].proposal_id == "proposal-1"

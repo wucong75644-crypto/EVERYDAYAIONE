@@ -1,14 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiRequestError } from '../../services/api';
 import {
   createManagedSkill, deleteManagedSkill, getManagedSkill, importSkillAttachment, listManagedSkills, readSkillRevision, saveSkillDraft, transitionSkill,
-  type DraftContent, type SkillAction, type SkillAdminItem, type SkillDetail, type SkillState,
+  type DraftContent, type SkillAction, type SkillAdminItem, type SkillDetail, type SkillOwner, type SkillState,
 } from '../../services/skillAdmin';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Dialog, DialogFooter } from '../primitives/Dialog';
 import { SkillLibrary, type SkillLibraryScope } from './skills/SkillLibrary';
 import { SkillWorkspace, type RevisionContent } from './skills/SkillWorkspace';
+import { PlatformSkillRequestQueue } from './skills/PlatformSkillRequestQueue';
 import { detailState, emptyContent, stateLabels, type SkillNavigationState } from './skills/presentation';
 import { uploadMessages, validateUploadedAssets, validateUploadSelection } from './skills/attachmentUploads';
 import './skills/skill-admin.css';
@@ -16,8 +17,8 @@ import './skills/skill-admin.css';
 function errorMessage(error: unknown): string {
   if (error instanceof ApiRequestError) {
     if (uploadMessages[error.code]) return uploadMessages[error.code];
-    if (error.status === 409) return '内容已被其他管理员修改。未保存的编辑已保留，请复制需要保留的内容，再刷新查看最新版本。';
-    if (error.status === 403) return '当前账号没有此组织 Skill 的管理权限。';
+    if (error.status === 409) return '内容已在其他位置修改。未保存的编辑已保留，请复制需要保留的内容，再刷新查看最新版本。';
+    if (error.status === 403) return '当前账号没有此范围 Skill 的管理权限。';
     if (error.status === 404) return 'Skill 或版本已不可用，请刷新列表。';
     if (error.status === 503) return 'Skill 服务或受控存储暂不可用，内容已保留，请稍后重试。';
     if (error.status === 422) {
@@ -40,13 +41,13 @@ const confirmations = {
 } as const;
 type Confirmation = keyof typeof confirmations;
 
-export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
-  orgId: string; onNavigationStateChange?: (state: SkillNavigationState) => void;
+export default function SkillAdminPanel({ orgId, availableScopes, onNavigationStateChange }: {
+  orgId?: string; availableScopes: SkillLibraryScope[]; onNavigationStateChange?: (state: SkillNavigationState) => void;
 }) {
   const [items, setItems] = useState<SkillAdminItem[]>([]);
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [content, setContent] = useState<DraftContent>(emptyContent);
-  const [scope, setScope] = useState<SkillLibraryScope>('org');
+  const [scope, setScope] = useState<SkillLibraryScope>(availableScopes.includes('org') ? 'org' : 'personal');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<SkillState | ''>('');
   const [tab, setTab] = useState<'content' | 'history'>('content');
@@ -65,25 +66,28 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
   const [readFailed, setReadFailed] = useState(false);
   const [readTarget, setReadTarget] = useState<string | null>(null);
   const generation = useRef(0), readGeneration = useRef(0), busyRef = useRef(false);
-  const detailOrg = useRef<string | null>(null);
+  const detailOwnerKey = useRef<string | null>(null);
   const pendingLeave = useRef<(() => void) | null>(null);
+  const ownerFor = useCallback((value = scope): SkillOwner => value === 'org'
+    ? { kind: 'org', orgId: orgId || '' } : { kind: value }, [scope, orgId]);
+  const ownerKey = scope === 'org' ? `org:${orgId || ''}` : scope;
 
   useEffect(() => {
     const token = ++generation.current;
-    detailOrg.current = null;
+    detailOwnerKey.current = null;
     busyRef.current = false;
     setItems([]); setDetail(null); setContent(emptyContent()); setLoading(true); setListFailed(false);
     setError(''); setNotice(''); setDirty(false); setBusy(false); setConfirmation(null); setCreating(false);
-    setNewKey(''); setNewName(''); setScope('org'); setQuery(''); setFilter(''); setTab('content');
+    setNewKey(''); setNewName(''); setQuery(''); setFilter(''); setTab('content');
     setReadTarget(null); setRevisionContent(null); setReading(false); setReadFailed(false);
     pendingLeave.current = null;
-    listManagedSkills(orgId).then(rows => {
+    listManagedSkills(ownerFor()).then(rows => {
       if (token === generation.current) setItems(rows);
     }).catch(e => {
       if (token === generation.current) { setError(errorMessage(e)); setListFailed(true); }
     }).finally(() => { if (token === generation.current) setLoading(false); });
     return () => { generation.current = token + 1; };
-  }, [orgId]);
+  }, [ownerKey, ownerFor]);
 
   useEffect(() => {
     onNavigationStateChange?.({ dirty, busy });
@@ -97,15 +101,15 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
     const token = generation.current, readToken = ++readGeneration.current;
     let cancelled = false;
     setRevisionContent(null); setReadFailed(false);
-    if (!detail || !readTarget || detailOrg.current !== orgId) { setReading(false); return; }
+    if (!detail || !readTarget || detailOwnerKey.current !== ownerKey) { setReading(false); return; }
     setReading(true);
-    readSkillRevision(orgId, detail.package_id, readTarget).then(value => {
+    readSkillRevision(ownerFor(), detail.package_id, readTarget).then(value => {
       if (!cancelled && token === generation.current && readToken === readGeneration.current) setRevisionContent({ revision: readTarget, content: value });
     }).catch(e => {
       if (!cancelled && token === generation.current && readToken === readGeneration.current) { setError(errorMessage(e)); setReadFailed(true); }
     }).finally(() => { if (!cancelled && token === generation.current && readToken === readGeneration.current) setReading(false); });
     return () => { cancelled = true; };
-  }, [orgId, detail, readTarget]);
+  }, [ownerKey, ownerFor, detail, readTarget]);
 
   function defaultRevision(value: SkillDetail) {
     const status = detailState(value);
@@ -113,7 +117,7 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
   }
   function show(value: SkillDetail) {
     readGeneration.current++;
-    detailOrg.current = orgId;
+    detailOwnerKey.current = ownerKey;
     setDetail(value); setContent(value.draft?.content ?? emptyContent()); setDirty(false);
     setTab('content'); setConfirmation(null); setRevisionContent(null); setReadFailed(false);
     const target = defaultRevision(value);
@@ -129,7 +133,7 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
   }
   async function refreshList(token: number, afterWrite = false) {
     try {
-      const rows = await listManagedSkills(orgId);
+      const rows = await listManagedSkills(ownerFor());
       if (token === generation.current) { setItems(rows); setListFailed(false); }
     } catch (e) {
       if (token === generation.current) { setListFailed(true); setError(`${afterWrite ? '操作已完成，但列表刷新失败。' : ''}${errorMessage(e)}`); }
@@ -141,7 +145,7 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
       const assets = [...(content.assets || [])];
       validateUploadSelection(files, assets);
       for (const file of files) {
-        const imported = await importSkillAttachment(orgId, file);
+        const imported = await importSkillAttachment(ownerFor(), file);
         if (token !== generation.current) return;
         assets.push(imported);
         validateUploadedAssets(assets);
@@ -152,7 +156,7 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
   }
   function select(id: string) {
     void perform(async token => {
-      const value = await getManagedSkill(orgId, id);
+      const value = await getManagedSkill(ownerFor(), id);
       if (token === generation.current) show(value);
     });
   }
@@ -177,13 +181,14 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
   async function transition(value: SkillAction) {
     if (!detail) return;
     await perform(async token => {
-      const next = await transitionSkill(orgId, detail.package_id, detail.draft?.version ?? 0, value);
+      const next = await transitionSkill(ownerFor(), detail.package_id, detail.draft?.version ?? 0, value);
       if (token !== generation.current) return;
       show(next);
       const status = detailState(next);
       const label = status === 'in_review' && next.draft?.approved_by ? '审核通过' : stateLabels[status];
       const messages: Partial<Record<SkillAction, string>> = {
         publish: '发布成功，新版本已可用。', start_draft: '修订草稿已创建，原版本保持不变。',
+        publish_private: '个人 Skill 已发布，仅你自己可见和使用。',
         disable: '已停用，新的使用和已有任务恢复均已停止。',
         deprecate: '已废弃，新的使用已停止，已有任务仍可恢复。',
         enable: `已解除停用，当前状态：${label}。${status === 'deprecated' ? '仍禁止新的使用，已有任务可恢复。' : ''}`,
@@ -196,7 +201,7 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
     if (!detail?.draft) return;
     void perform(async token => {
       try {
-        await deleteManagedSkill(orgId, detail.package_id, detail.draft!.version);
+        await deleteManagedSkill(ownerFor(), detail.package_id, detail.draft!.version);
       } catch (e) {
         if (token !== generation.current) return;
         setError(e instanceof ApiRequestError && e.status === 409
@@ -213,25 +218,30 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
   }
   function save(submit = false) {
     if (!detail?.draft) return;
-    if (submit && (!content.body.trim() || !content.description.trim())) { setError('请先填写用途说明和操作说明，再提交审核。'); return; }
+    if (submit && (!content.body.trim() || !content.description.trim())) {
+      setError(scope === 'personal' ? '请先填写用途说明和操作说明，再发布个人 Skill。' : '请先填写用途说明和操作说明，再提交审核。');
+      return;
+    }
     void perform(async token => {
       let current = detail;
       if (dirty) {
         const name = content.catalog_metadata.name;
-        current = await saveSkillDraft(orgId, detail.package_id, detail.draft!.version, { ...content,
+        current = await saveSkillDraft(ownerFor(), detail.package_id, detail.draft!.version, { ...content,
           catalog_metadata: { ...content.catalog_metadata, ...(typeof name === 'string' ? { name: name.trim() || null } : {}) } });
         if (token !== generation.current) return;
         show(current); setNotice('草稿已保存。');
       }
       if (submit) {
         try {
-          const next = await transitionSkill(orgId, current.package_id, current.draft!.version, 'submit');
+          const next = await transitionSkill(ownerFor(), current.package_id, current.draft!.version,
+            scope === 'personal' ? 'publish_private' : 'submit');
           if (token !== generation.current) return;
           show(next); setNotice('已提交审核，内容已锁定。');
         } catch (e) {
           if (token !== generation.current) return;
           setNotice('');
-          setError(`${dirty ? '草稿已保存，但提交审核失败。' : '提交审核失败。'}${errorMessage(e)}`);
+          const verb = scope === 'personal' ? '发布个人 Skill' : '提交审核';
+          setError(`${dirty ? `草稿已保存，但${verb}失败。` : `${verb}失败。`}${errorMessage(e)}`);
         }
       }
       if (token === generation.current) await refreshList(token, true);
@@ -242,18 +252,18 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
     void perform(async token => {
       let created: { package_id: string };
       try {
-        created = await createManagedSkill(orgId, newKey, { description: '', body: `# ${newName.trim()}\n\n## 使用场景\n\n## 执行步骤\n\n## 输出要求\n`, catalog_metadata: { name: newName.trim(), tool_policy: 'platform' } });
+        created = await createManagedSkill(ownerFor(), newKey, { description: '', body: `# ${newName.trim()}\n\n## 使用场景\n\n## 执行步骤\n\n## 输出要求\n`, catalog_metadata: { name: newName.trim(), tool_policy: 'platform' } });
       } catch (e) {
         if (token === generation.current) setError(e instanceof ApiRequestError && e.status === 409 ? '该标识已存在，请换一个标识。' : errorMessage(e));
         return;
       }
       if (token !== generation.current) return;
-      setCreating(false); setNewKey(''); setNewName(''); setScope('org'); setQuery(''); setFilter('');
+      setCreating(false); setNewKey(''); setNewName(''); setQuery(''); setFilter('');
       setNotice('草稿已创建。');
       await refreshList(token, true);
       if (token !== generation.current) return;
       try {
-        const next = await getManagedSkill(orgId, created.package_id);
+        const next = await getManagedSkill(ownerFor(), created.package_id);
         if (token === generation.current) show(next);
       } catch (e) { if (token === generation.current) setError(`草稿已创建，但详情加载失败，请从列表重新打开。${errorMessage(e)}`); }
     });
@@ -263,9 +273,9 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
     ? ['废弃已停用的 Skill？', '废弃后仍禁止新的使用，但将重新允许此前已激活的旧任务恢复。此操作不会恢复为已发布，废弃后只保留查看和安全删除。', '确认废弃']
     : confirmation ? confirmations[confirmation] : null;
   return <section aria-label="Skill 管理" className="skill-admin-theme py-3 text-[var(--s-text-primary)]">
-    {error && !modalOpen && scope !== 'personal' && <p role="alert" className="mb-4 rounded-md bg-[var(--s-error-soft)] px-4 py-3 text-sm text-[var(--s-error)]">{error}</p>}
-    {notice && scope !== 'personal' && <p role="status" className="mb-4 rounded-md bg-[var(--s-success-soft)] px-4 py-3 text-sm text-[var(--s-success)]">{notice}</p>}
-    {detail ? <SkillWorkspace orgId={orgId} onDelete={() => { setError(''); setConfirmation('delete'); }} detail={detail} content={content} dirty={dirty} busy={busy} tab={tab} revisionContent={revisionContent} reading={reading} readFailed={readFailed}
+    {error && !modalOpen && <p role="alert" className="mb-4 rounded-md bg-[var(--s-error-soft)] px-4 py-3 text-sm text-[var(--s-error)]">{error}</p>}
+    {notice && <p role="status" className="mb-4 rounded-md bg-[var(--s-success-soft)] px-4 py-3 text-sm text-[var(--s-success)]">{notice}</p>}
+    {detail ? <SkillWorkspace owner={ownerFor()} onDelete={() => { setError(''); setConfirmation('delete'); }} detail={detail} content={content} dirty={dirty} busy={busy} tab={tab} revisionContent={revisionContent} reading={reading} readFailed={readFailed}
       onTab={changeTab} onUpload={upload} onChange={value => { setContent(value); setDirty(true); setError(''); setNotice(''); }} onBack={back} onRefresh={() => requestLeave(() => select(detail.package_id))}
       onSave={() => save()} onSubmit={() => save(true)} onAction={action} onRevision={revision => {
         if (revision === readTarget && !readFailed) return;
@@ -273,11 +283,14 @@ export default function SkillAdminPanel({ orgId, onNavigationStateChange }: {
         if (revision === readTarget) setDetail({ ...detail });
       }}
       onRetry={() => { setError(''); setDetail({ ...detail }); }} />
-      : <SkillLibrary items={items} loading={loading} failed={listFailed} busy={busy} scope={scope} query={query} filter={filter}
+      : <>
+        {scope === 'platform' && <PlatformSkillRequestQueue onResolved={() => { void perform(token => refreshList(token, true)); }} />}
+        <SkillLibrary items={items} loading={loading} failed={listFailed} busy={busy} scope={scope} query={query} filter={filter} availableScopes={availableScopes}
         onScope={value => { setScope(value); setQuery(''); setFilter(''); }} onQuery={setQuery} onFilter={setFilter}
-        onCreate={() => { setError(''); setCreating(true); }} onOpen={select} onRefresh={() => { void perform(token => refreshList(token)); }} />}
-    <Dialog className="skill-admin-theme" open={creating} onOpenChange={value => { if (!busy) { setCreating(value); setError(''); } }} title="新建组织 Skill"
-      description="从草稿开始，审核发布后供组织使用。" closeOnEscape={!busy} closeOnOutsideClick={!busy} showClose={!busy}>
+        onCreate={() => { setError(''); setCreating(true); }} onOpen={select} onRefresh={() => { void perform(token => refreshList(token)); }} />
+      </>}
+    <Dialog className="skill-admin-theme" open={creating} onOpenChange={value => { if (!busy) { setCreating(value); setError(''); } }} title={`新建${scope === 'personal' ? '个人' : scope === 'org' ? '组织' : '平台'} Skill`}
+      description={scope === 'personal' ? '从个人草稿开始，发布后仅自己可见和使用。' : scope === 'org' ? '从组织草稿开始，审核发布后供组织使用。' : '从平台草稿开始，审核发布后按平台配置开放使用。'} closeOnEscape={!busy} closeOnOutsideClick={!busy} showClose={!busy}>
       <form className="mt-5 space-y-4" onSubmit={e => { e.preventDefault(); create(); }}>
         <Input label="名称" value={newName} maxLength={200} required disabled={busy} placeholder="例如：订单日报" onChange={e => setNewName(e.target.value)} />
         <Input label="唯一标识" value={newKey} maxLength={64} pattern="[a-z][a-z0-9_-]{0,63}" required disabled={busy} placeholder="例如：order-report" onChange={e => setNewKey(e.target.value)} />

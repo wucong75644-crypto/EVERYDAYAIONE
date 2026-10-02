@@ -125,6 +125,13 @@ class ChangeSetPart(BaseModel):
     resource_type: Optional[str] = None
 
 
+class SkillProposalPart(BaseModel):
+    """Reference to a server-owned Skill proposal shown in the chat."""
+    type: Literal["skill_proposal"] = "skill_proposal"
+    proposal_id: str
+    title: Optional[str] = None
+
+
 class FormPart(BaseModel):
     """表单内容块（聊天内嵌表单，如定时任务创建/修改）
 
@@ -184,7 +191,7 @@ class EcomPlanPart(BaseModel):
 
 ContentPart = Annotated[
     Union[TextPart, ImagePart, VideoPart, AudioPart, FilePart,
-          ThinkingPart, ToolStepPart, ToolResultPart, FormPart, ChangeSetPart, ChartPart,
+          ThinkingPart, ToolStepPart, ToolResultPart, FormPart, ChangeSetPart, SkillProposalPart, ChartPart,
           DiagramPart, TablePart, InterruptMarkerPart, EcomPlanPart, SkillStepPart],
     Field(discriminator="type"),
 ]

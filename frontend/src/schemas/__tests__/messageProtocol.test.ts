@@ -17,6 +17,19 @@ describe('messageProtocol', () => {
     });
   });
 
+  it('accepts a persisted Skill proposal card and normalizes a nullable title', () => {
+    expect(parseContentPart({
+      type: 'skill_proposal', proposal_id: 'proposal-1', title: '商品图风格拆解', body: 'private',
+    })).toEqual({
+      type: 'skill_proposal', proposal_id: 'proposal-1', title: '商品图风格拆解',
+    });
+    expect(parseContentPart({
+      type: 'skill_proposal', proposal_id: 'proposal-2', title: null,
+    })).toEqual({
+      type: 'skill_proposal', proposal_id: 'proposal-2',
+    });
+  });
+
   it('preserves the entire scheduled form including date fields and negated visibility', () => {
     expect(parseContentPart(scheduledTaskForm)).toEqual(scheduledTaskForm);
   });
