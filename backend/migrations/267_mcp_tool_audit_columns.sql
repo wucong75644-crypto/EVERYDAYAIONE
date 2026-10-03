@@ -1,6 +1,8 @@
 -- 267: Durable, queryable MCP invocation identity and replay semantics.
 -- Values are allowlisted identifiers and result digests; no MCP payload/token.
 
+SET LOCAL ROLE everydayai_owner;
+
 ALTER TABLE tool_audit_log
     ADD COLUMN IF NOT EXISTS connector_id TEXT,
     ADD COLUMN IF NOT EXISTS capability TEXT,

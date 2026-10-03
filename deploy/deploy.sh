@@ -381,6 +381,12 @@ apply_migrations() {
         # 这样“检查迁移账本 → 执行迁移 → 写入账本”不会被并发发布穿插。
         exec 9>/tmp/everydayai-schema-migrations.lock
         flock -x 9
+        migration_database=$(psql "$DATABASE_URL" -X -q -A -t -v ON_ERROR_STOP=1 \
+            -c 'SELECT current_database();')
+        if [ -z "$migration_database" ] || [[ "$migration_database" == *$'\n'* ]]; then
+            echo "❌ 无法安全确定迁移目标数据库"
+            exit 1
+        fi
         psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -c '
             CREATE TABLE IF NOT EXISTS public.deployment_schema_migrations (
                 migration_path TEXT PRIMARY KEY,
@@ -406,10 +412,10 @@ apply_migrations() {
                 continue
             fi
             echo "▶ 应用迁移: $migration_file"
-            psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 \
-                -c "BEGIN; SELECT pg_advisory_xact_lock(hashtextextended('everydayai:migrations', 0));" \
+            sudo -n -u postgres psql -d "$migration_database" -X -v ON_ERROR_STOP=1 \
+                -c "BEGIN; SELECT pg_advisory_xact_lock(hashtextextended('everydayai:migrations', 0)); SET LOCAL ROLE everydayai_owner;" \
                 -f "$migration_path" \
-                -c "INSERT INTO public.deployment_schema_migrations(migration_path, checksum) VALUES ('$migration_file', '$checksum'); COMMIT;"
+                -c "RESET ROLE; INSERT INTO public.deployment_schema_migrations(migration_path, checksum) VALUES ('$migration_file', '$checksum'); COMMIT;"
             echo "✅ 迁移完成并已记录: $migration_file"
         done
 ENDSSH
@@ -690,6 +696,11 @@ EOF
     # Compare with independently verified production identity before any sync.
     remote_exec /var/www/everydayai/backend/venv/bin/python - \
         < deploy/verify-production-database.py
+    if [ "$RUN_MIGRATIONS" = true ] && [ ${#MIGRATION_FILES[@]} -gt 0 ]; then
+        log_info "核验本地迁移执行账号与生产数据库身份..."
+        remote_exec /var/www/everydayai/backend/venv/bin/python - \
+            < deploy/verify_migration_executor.py
+    fi
 
     # 首次部署模式
     if [ "$SETUP_MODE" = true ]; then
