@@ -68,6 +68,7 @@ class ConversationSkillBindings:
         from services.skills.capability_state import available_capability_names
         available = await asyncio.to_thread(
             available_capability_names, self.db, self.org, self.settings,
+            actor_user_id=self.owner,
         )
         return SkillResolutionContext(
             actor_user_id=self.owner, org_id=self.org, conversation_scope="user",

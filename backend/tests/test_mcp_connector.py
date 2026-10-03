@@ -38,9 +38,12 @@ def enable_test_connector(executor, monkeypatch, *, token="org-test-token"):
     state = {"org_id": executor.org_id, "connector_id": CONNECTOR_ID,
              "enabled": True, "state": "configured", "health_status": "unknown"}
     def rpc(name, params=None):
-        data = state if name == "get_org_mcp_connector_state" else {"ok": True}
+        data = state if name == "api_get_org_mcp_connector_state" else {"ok": True}
         return SimpleNamespace(execute=lambda: SimpleNamespace(data=data))
     monkeypatch.setattr(executor.db, "rpc", rpc, raising=False)
+    monkeypatch.setattr(
+        "services.tools.mcp_org.scoped_mcp_database", lambda db, **_: db,
+    )
     monkeypatch.setattr(
         "services.tools.mcp_org.resolve_org_bearer_token",
         lambda db, *, org_id, actor_user_id: token,
@@ -155,12 +158,17 @@ async def test_org_scoped_secret_bundle_never_crosses_organization(monkeypatch):
         class DB:
             def __init__(self): self.org_id = org_id
             def rpc(self, name):
-                assert name == 'get_mcp_test_readonly_bundle'
+                assert name == 'api_get_mcp_test_readonly_bundle'
                 return SimpleNamespace(execute=lambda: SimpleNamespace(data=response))
         return DB(), envelope
 
     db_a, env_a = database(org_a, 'only-org-a')
     db_b, env_b = database(org_b, 'only-org-b')
+    def bind_org(db, *, org_id, actor_user_id):
+        if db.org_id != org_id:
+            raise ValueError("MCP_CONNECTOR_SCOPE_MISMATCH")
+        return db
+    monkeypatch.setattr("services.tools.mcp_org.scoped_mcp_database", bind_org)
     assert env_a.payload_ciphertext != 'only-org-a'
     assert resolve_org_bearer_token(db_a, org_id=org_a, actor_user_id=org_a) == 'only-org-a'
     assert resolve_org_bearer_token(db_b, org_id=org_b, actor_user_id=org_b) == 'only-org-b'
@@ -197,6 +205,67 @@ def test_secret_control_plane_rejects_malformed_bearer_token():
         ConfigurationControlService._validate_secret_payload(
             definition, {'token': 'token\nwith-newline'},
         )
+
+
+def test_mcp_credential_control_uses_fixed_scoped_facades_and_envelopes(monkeypatch):
+    from types import SimpleNamespace
+    from services.configuration.control_service import ConfigurationControlService
+    from services.configuration.envelope import LocalKEKProvider
+    from services.configuration.material_service import SecretMaterialService
+
+    org_id = "10000000-0000-0000-0000-000000000001"
+    actor = "20000000-0000-0000-0000-000000000002"
+    calls = []
+
+    class DB:
+        def rpc(self, name, params=None):
+            calls.append((name, params or {}))
+            if name == "api_get_org_mcp_connector_credential_status":
+                data = {"key": "mcp.test_readonly.bearer_token", "configured": False, "version": 0}
+            else:
+                data = {"configured": name != "api_delete_org_mcp_connector_credential", "version": 1}
+            return SimpleNamespace(execute=lambda: SimpleNamespace(data=data))
+
+    db = DB()
+    monkeypatch.setattr(
+        "services.tools.mcp_org.scoped_mcp_database", lambda db, **_: db,
+    )
+    provider = LocalKEKProvider(current_version="test-v1", keyring={"test-v1": b"k" * 32})
+    control = ConfigurationControlService(db, SecretMaterialService(provider))
+    scoped = control.for_mcp_actor(org_id=org_id, actor_user_id=actor)
+    assert scoped.mcp_credential_status(org_id=org_id)["configured"] is False
+    result = scoped.set_mcp_organization_credential(
+        org_id=org_id, value={"token": "synthetic-probe-token"}, expected_version=0,
+    )
+    deleted = scoped.delete_mcp_organization_credential(
+        org_id=org_id, expected_version=1,
+    )
+
+    assert [name for name, _ in calls] == [
+        "api_get_org_mcp_connector_credential_status",
+        "api_set_org_mcp_connector_credential",
+        "api_delete_org_mcp_connector_credential",
+    ]
+    assert result["version"] == 1 and deleted["configured"] is False
+    setter_params = calls[1][1]
+    assert setter_params["p_config_key"] == "mcp.test_readonly.bearer_token"
+    assert setter_params["p_value_json"] is None
+    assert setter_params["p_secret_envelope"]["payload_ciphertext"] != "synthetic-probe-token"
+    assert "synthetic-probe-token" not in repr(calls)
+
+
+def test_mcp_application_rpc_scope_is_bound_to_the_requested_org():
+    from services.tools.mcp_org import scoped_mcp_database
+
+    org_id = "10000000-0000-0000-0000-000000000001"
+    actor = "20000000-0000-0000-0000-000000000002"
+    db = SimpleNamespace(org_id=org_id)
+    scoped = scoped_mcp_database(db, org_id=org_id, actor_user_id=actor)
+    assert scoped.scope.org_id == org_id
+    assert scoped.scope.actor_user_id == actor
+    assert scoped.scope.access_kind.value == "runtime"
+    with pytest.raises(ValueError, match="SCOPE_MISMATCH"):
+        scoped_mcp_database(db, org_id="30000000-0000-0000-0000-000000000003", actor_user_id=actor)
 
 
 async def test_dangerous_mcp_write_rejection_uses_tool_policy_confirmation(enabled):
@@ -532,9 +601,13 @@ def test_skill_dependency_projection_tracks_org_connector_enablement(enabled, mo
     from services.skills.capability_state import available_capability_names
     executor = MockHandlerExecutor(agent_domain='general', task_id='task1')
     state = enable_test_connector(executor, monkeypatch)
-    assert 'test.sample.read' in available_capability_names(executor.db, executor.org_id, get_settings())
+    assert 'test.sample.read' in available_capability_names(
+        executor.db, executor.org_id, get_settings(), actor_user_id=executor.user_id,
+    )
     state['enabled'] = False
-    assert 'test.sample.read' not in available_capability_names(executor.db, executor.org_id, get_settings())
+    assert 'test.sample.read' not in available_capability_names(
+        executor.db, executor.org_id, get_settings(), actor_user_id=executor.user_id,
+    )
 
 
 async def test_payload_rollout_disabled_still_records_full_mcp_result(enabled, monkeypatch):

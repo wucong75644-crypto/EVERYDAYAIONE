@@ -526,17 +526,13 @@ async def delete_org_config(
         raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
-def _mcp_connector_state(db: ScopedDB, org_id: str) -> dict[str, object]:
-    from services.tools.mcp_allowlist import CONNECTOR_ID
-    try:
-        response = db.rpc("get_org_mcp_connector_state", {
-            "p_org_id": org_id, "p_connector_id": CONNECTOR_ID,
-        }).execute()
-        data = response.data if response is not None else None
-    except Exception:
+def _mcp_connector_state(
+    db: ScopedDB, org_id: str, actor_user_id: str,
+) -> dict[str, object]:
+    from services.tools.mcp_org import read_connector_state
+    data = read_connector_state(db, org_id, actor_user_id=actor_user_id)
+    if data is None:
         raise HTTPException(status_code=503, detail="MCP Connector 状态暂不可用") from None
-    if not isinstance(data, dict) or data.get("org_id") != org_id:
-        raise HTTPException(status_code=503, detail="MCP Connector 状态暂不可用")
     return data
 
 
@@ -550,7 +546,7 @@ async def get_mcp_connector_status(
     """组织管理员可查看固定 Connector 状态；响应不包含凭证材料。"""
     try:
         svc.require_role(org_id, user_id, ("owner", "admin"))
-        return {"success": True, "data": _mcp_connector_state(db, org_id)}
+        return {"success": True, "data": _mcp_connector_state(db, org_id, user_id)}
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
 
@@ -567,7 +563,10 @@ async def set_mcp_connector_enabled(
     from services.tools.mcp_allowlist import CONNECTOR_ID
     try:
         svc.require_role(org_id, user_id, ("owner", "admin"))
-        response = db.rpc("set_org_mcp_connector_enabled", {
+        from services.tools.mcp_org import scoped_mcp_database
+        response = scoped_mcp_database(
+            db, org_id=org_id, actor_user_id=user_id,
+        ).rpc("api_set_org_mcp_connector_enabled", {
             "p_org_id": org_id,
             "p_connector_id": CONNECTOR_ID,
             "p_enabled": body.enabled,
@@ -589,6 +588,7 @@ async def set_mcp_connector_credential(
     org_id: str,
     body: MCPConnectorCredentialRequest,
     user_id: CurrentUserId,
+    db: ScopedDB,
     svc: OrgService = Depends(_get_org_service),
     control: ConfigurationControlService | None = Depends(_get_configuration_control),
 ):
@@ -597,18 +597,71 @@ async def set_mcp_connector_credential(
         svc.require_role(org_id, user_id, ("owner", "admin"))
         if control is None:
             raise HTTPException(status_code=503, detail="正式凭证存储尚未配置 KEK")
-        statuses = control.list_organization_status(org_id=org_id)
-        current = next((item for item in statuses
-                        if item.get("key") == "mcp.test_readonly.bearer_token"), None)
-        result = control.set_organization(
+        scoped_control = control.for_mcp_actor(
+            org_id=org_id, actor_user_id=user_id,
+        )
+        current = scoped_control.mcp_credential_status(org_id=org_id)
+        result = scoped_control.set_mcp_organization_credential(
             org_id=org_id,
-            key="mcp.test_readonly.bearer_token",
             value={"token": body.token},
-            expected_version=int(current.get("version") or 0) if current else 0,
+            expected_version=int(current.get("version") or 0),
         )
         return {"success": True, "data": {
             "configured": bool(result.get("configured")),
             "version": int(result.get("version") or 0),
+        }}
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+
+
+@router.get("/{org_id}/mcp-connectors/test-readonly/credential", summary="查看 MCP 测试 Connector 凭证状态")
+async def get_mcp_connector_credential_status(
+    org_id: str,
+    user_id: CurrentUserId,
+    db: ScopedDB,
+    svc: OrgService = Depends(_get_org_service),
+    control: ConfigurationControlService | None = Depends(_get_configuration_control),
+):
+    """Return configuration metadata only; the stored token is never exposed."""
+    try:
+        svc.require_role(org_id, user_id, ("owner", "admin"))
+        if control is None:
+            raise HTTPException(status_code=503, detail="正式凭证存储尚未配置 KEK")
+        scoped_control = control.for_mcp_actor(
+            org_id=org_id, actor_user_id=user_id,
+        )
+        data = scoped_control.mcp_credential_status(org_id=org_id)
+        return {"success": True, "data": {
+            "configured": bool(data.get("configured")),
+            "version": int(data.get("version") or 0),
+        }}
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+
+
+@router.delete("/{org_id}/mcp-connectors/test-readonly/credential", summary="撤销 MCP 测试 Connector 凭证")
+async def delete_mcp_connector_credential(
+    org_id: str,
+    user_id: CurrentUserId,
+    db: ScopedDB,
+    expected_version: int = Query(..., ge=0),
+    svc: OrgService = Depends(_get_org_service),
+    control: ConfigurationControlService | None = Depends(_get_configuration_control),
+):
+    """Revoke only the fixed Connector credential using version CAS."""
+    try:
+        svc.require_role(org_id, user_id, ("owner", "admin"))
+        if control is None:
+            raise HTTPException(status_code=503, detail="正式凭证存储尚未配置 KEK")
+        scoped_control = control.for_mcp_actor(
+            org_id=org_id, actor_user_id=user_id,
+        )
+        data = scoped_control.delete_mcp_organization_credential(
+            org_id=org_id, expected_version=expected_version,
+        )
+        return {"success": True, "data": {
+            "configured": bool(data.get("configured")),
+            "version": int(data.get("version") or 0),
         }}
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
@@ -632,7 +685,9 @@ async def test_mcp_connector_connection(
         svc.require_role(org_id, user_id, ("owner", "admin"))
         if bundle_resolver is None:
             raise HTTPException(status_code=503, detail="正式凭证存储尚未配置 KEK")
-        bundle = bundle_resolver.mcp_test_readonly()
+        bundle = bundle_resolver.mcp_test_readonly(
+            actor_user_id=user_id, org_id=org_id,
+        )
         credential = bundle.values.get("mcp.test_readonly.bearer_token")
         token = credential.get("token") if isinstance(credential, Mapping) else None
         if not isinstance(token, str) or not token:
@@ -647,9 +702,10 @@ async def test_mcp_connector_connection(
 
         await bounded_operation(run_probe(), timeout=5.0)
         await asyncio.to_thread(
-            record_connector_health, db, org_id=org_id, status="ready",
+            record_connector_health, db, org_id=org_id,
+            actor_user_id=user_id, status="ready",
         )
-        return {"success": True, "data": _mcp_connector_state(db, org_id)}
+        return {"success": True, "data": _mcp_connector_state(db, org_id, user_id)}
     except HTTPException:
         raise
     except AppException as error:
@@ -667,6 +723,7 @@ async def test_mcp_connector_connection(
         code = code if code in safe_codes else "MCP_REMOTE_ERROR"
         await asyncio.to_thread(
             record_connector_health, db, org_id=org_id,
+            actor_user_id=user_id,
             status="error", error_code=code,
         )
         return {"success": False, "data": {

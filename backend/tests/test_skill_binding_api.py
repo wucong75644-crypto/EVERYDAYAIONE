@@ -113,7 +113,7 @@ def test_required_connector_dependency_is_shown_without_secret_and_blocks_new_bi
     repo.bindings.return_value = [c.model_dump() | {"id": uuid4(), "available": True}]
     repo.catalog_candidates.return_value = [c]
     monkeypatch.setattr("services.skills.capability_state.available_capability_names",
-                        lambda *_: frozenset())
+                        lambda *_, **__: frozenset())
     row = call(binding_api).json()[0]
     assert row["available"] is False
     assert row["capability_status"] == [

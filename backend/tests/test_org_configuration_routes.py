@@ -11,7 +11,9 @@ from api.routes.org import (
     SetConfigRequest,
     MCPConnectorCredentialRequest,
     MCPConnectorEnableRequest,
+    delete_mcp_connector_credential,
     get_mcp_connector_status,
+    get_mcp_connector_credential_status,
     list_org_configs,
     set_org_config,
     set_mcp_connector_credential,
@@ -250,22 +252,28 @@ async def test_connection_tests_reject_non_admin_before_bundle_resolution(
 @pytest.mark.asyncio
 async def test_mcp_credential_route_encrypts_and_never_returns_token() -> None:
     org_service = MagicMock()
+    db = MagicMock()
     control = MagicMock()
-    control.list_organization_status.return_value = [{
-        "key": "mcp.test_readonly.bearer_token", "version": 2,
-    }]
-    control.set_organization.return_value = {"configured": True, "version": 3}
+    scoped_control = MagicMock()
+    scoped_control.mcp_credential_status.return_value = {"version": 2}
+    scoped_control.set_mcp_organization_credential.return_value = {
+        "configured": True, "version": 3,
+    }
+    control.for_mcp_actor.return_value = scoped_control
     secret = "synthetic-org-secret"
 
     result = await set_mcp_connector_credential(
         ORG_ID, MCPConnectorCredentialRequest(token=secret), USER_ID,
-        org_service, control,
+        db, org_service, control,
     )
 
     assert result == {"success": True, "data": {"configured": True, "version": 3}}
     assert secret not in str(result)
-    control.set_organization.assert_called_once_with(
-        org_id=ORG_ID, key="mcp.test_readonly.bearer_token",
+    control.for_mcp_actor.assert_called_once_with(
+        org_id=ORG_ID, actor_user_id=USER_ID,
+    )
+    scoped_control.set_mcp_organization_credential.assert_called_once_with(
+        org_id=ORG_ID,
         value={"token": secret}, expected_version=2,
     )
     org_service.require_role.assert_called_once_with(
@@ -274,9 +282,40 @@ async def test_mcp_credential_route_encrypts_and_never_returns_token() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mcp_enable_and_status_use_fixed_connector_and_redacted_state() -> None:
+async def test_mcp_credential_status_and_revoke_never_expose_material() -> None:
     org_service = MagicMock()
     db = MagicMock()
+    control = MagicMock()
+    scoped_control = MagicMock()
+    scoped_control.mcp_credential_status.return_value = {
+        "configured": True, "version": 4, "token": "must-not-escape",
+    }
+    scoped_control.delete_mcp_organization_credential.return_value = {
+        "configured": False, "version": 5, "token": "must-not-escape",
+    }
+    control.for_mcp_actor.return_value = scoped_control
+
+    status = await get_mcp_connector_credential_status(
+        ORG_ID, USER_ID, db, org_service, control,
+    )
+    revoked = await delete_mcp_connector_credential(
+        ORG_ID, USER_ID, db, 4, org_service, control,
+    )
+
+    assert status == {"success": True, "data": {"configured": True, "version": 4}}
+    assert revoked == {"success": True, "data": {"configured": False, "version": 5}}
+    assert "must-not-escape" not in str(status) + str(revoked)
+    scoped_control.delete_mcp_organization_credential.assert_called_once_with(
+        org_id=ORG_ID, expected_version=4,
+    )
+
+
+@pytest.mark.asyncio
+async def test_mcp_enable_and_status_use_fixed_connector_and_redacted_state(monkeypatch) -> None:
+    org_service = MagicMock()
+    db = MagicMock()
+    db.org_id = ORG_ID
+    monkeypatch.setattr("services.tools.mcp_org.scoped_mcp_database", lambda db, **_: db)
     state = {
         "org_id": ORG_ID, "connector_id": "test-readonly", "enabled": True,
         "state": "ready", "health_status": "ready", "last_error_code": None,
@@ -290,15 +329,17 @@ async def test_mcp_enable_and_status_use_fixed_connector_and_redacted_state() ->
 
     assert changed == {"success": True, "data": state}
     assert viewed == {"success": True, "data": state}
-    assert db.rpc.call_args_list[0].args[0] == "set_org_mcp_connector_enabled"
+    assert db.rpc.call_args_list[0].args[0] == "api_set_org_mcp_connector_enabled"
     assert db.rpc.call_args_list[0].args[1]["p_connector_id"] == "test-readonly"
     assert db.rpc.call_args_list[0].args[1]["p_enabled"] is True
 
 
 @pytest.mark.asyncio
-async def test_mcp_connection_test_returns_health_without_credential() -> None:
+async def test_mcp_connection_test_returns_health_without_credential(monkeypatch) -> None:
     org_service = MagicMock()
     db = MagicMock()
+    db.org_id = ORG_ID
+    monkeypatch.setattr("services.tools.mcp_org.scoped_mcp_database", lambda db, **_: db)
     state = {
         "org_id": ORG_ID, "connector_id": "test-readonly", "enabled": False,
         "state": "disabled", "health_status": "ready", "last_error_code": None,
@@ -316,6 +357,9 @@ async def test_mcp_connection_test_returns_health_without_credential() -> None:
 
     assert result == {"success": True, "data": state}
     assert secret not in str(result)
+    resolver.mcp_test_readonly.assert_called_once_with(
+        actor_user_id=USER_ID, org_id=ORG_ID,
+    )
 
 
 @pytest.mark.asyncio

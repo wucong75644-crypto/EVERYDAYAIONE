@@ -27,7 +27,9 @@ class MCPExecutor:
             raise MCPError("MCP_CREDENTIAL_UNAVAILABLE")
         from .mcp_org import connector_is_enabled, record_connector_health, resolve_org_bearer_token
         db = self._db_provider()
-        if not connector_is_enabled(db, context.org_id):
+        if not connector_is_enabled(
+            db, context.org_id, actor_user_id=context.actor_user_id,
+        ):
             raise MCPError("MCP_CONNECTOR_DISABLED")
         try:
             token = resolve_org_bearer_token(
@@ -36,6 +38,7 @@ class MCPExecutor:
         except MCPError as error:
             await asyncio.to_thread(
                 record_connector_health, db, org_id=context.org_id,
+                actor_user_id=context.actor_user_id,
                 status="error", error_code=error.code,
             )
             raise
@@ -51,7 +54,9 @@ class MCPExecutor:
                 # Recheck immediately before the only remote tool call so an
                 # administrator's disable takes effect while handshake work is
                 # in flight.
-                if not connector_is_enabled(db, context.org_id):
+                if not connector_is_enabled(
+                    db, context.org_id, actor_user_id=context.actor_user_id,
+                ):
                     raise MCPError("MCP_CONNECTOR_DISABLED")
                 result = await client.request("tools/call", {"name": reviewed.remote_name,
                     "arguments": thaw(arguments), "_meta": {"invocation_id": call_id}})
@@ -64,6 +69,7 @@ class MCPExecutor:
         except asyncio.CancelledError:
             await asyncio.to_thread(
                 record_connector_health, db, org_id=context.org_id,
+                actor_user_id=context.actor_user_id,
                 status="error", error_code="MCP_CANCELLED",
             )
             raise
@@ -79,12 +85,14 @@ class MCPExecutor:
             }
             await asyncio.to_thread(
                 record_connector_health, db, org_id=context.org_id,
+                actor_user_id=context.actor_user_id,
                 status="error", error_code=code if code in allowed else "MCP_REMOTE_ERROR",
             )
             raise
         else:
             await asyncio.to_thread(
                 record_connector_health, db, org_id=context.org_id,
+                actor_user_id=context.actor_user_id,
                 status="ready",
             )
             return result

@@ -56,7 +56,8 @@ class ActorSkillSource:
                 if getattr(self.settings, name) is True
             ),
             available_capabilities=await asyncio.to_thread(
-                available_capability_names, self.handler.db, context.org_id, self.settings,
+                available_capability_names, self.handler.db, context.org_id,
+                self.settings, actor_user_id=context.actor_user_id,
             ),
         )
 

@@ -57,7 +57,9 @@ def executor_context(executor, *, call_id=None) -> ToolContext:
     from .mcp_org import connector_is_enabled
     feature_flags["mcp_connector_test_readonly_enabled"] = (
         feature_flags["mcp_connectors_enabled"]
-        and connector_is_enabled(executor.db, executor.org_id)
+        and connector_is_enabled(
+            executor.db, executor.org_id, actor_user_id=executor.user_id,
+        )
     )
     return ToolContext(
         actor_user_id=executor.user_id, workspace_owner_id=executor.workspace_user_id,
@@ -132,6 +134,7 @@ async def refresh_context(executor, context, registry):
             flags.get("mcp_connectors_enabled") is True
             and await asyncio.to_thread(
                 connector_is_enabled, executor.db, context.org_id,
+                actor_user_id=context.actor_user_id,
             )
         )
         context = replace(context, feature_flags=flags)

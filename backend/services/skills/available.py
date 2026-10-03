@@ -64,6 +64,7 @@ async def available_skills(db, settings, *, actor_user_id: str, conversation_id:
         ),
         available_capabilities=await asyncio.to_thread(
             available_capability_names, db, org_id, settings,
+            actor_user_id=actor_user_id,
         ),
     )
     return SkillResolver().resolve(context, candidates)

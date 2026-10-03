@@ -1,7 +1,7 @@
 """Safe logical capability availability for Skill summaries and runtime ceilings."""
 
 
-def available_capability_names(db, org_id, settings):
+def available_capability_names(db, org_id, settings, *, actor_user_id=None):
     """Return registered capability IDs available in this org's current scope.
 
     Only the fixed platform MCP Connector depends on organization activation.
@@ -13,7 +13,9 @@ def available_capability_names(db, org_id, settings):
     mcp_enabled = getattr(settings, "mcp_connectors_enabled", False) is True
     if mcp_enabled and org_id:
         from services.tools.mcp_org import connector_is_enabled
-        mcp_enabled = connector_is_enabled(db, str(org_id))
+        mcp_enabled = connector_is_enabled(
+            db, str(org_id), actor_user_id=actor_user_id,
+        )
     settings_flags = {
         name: getattr(settings, name, False) is True
         for name in type(settings).model_fields
