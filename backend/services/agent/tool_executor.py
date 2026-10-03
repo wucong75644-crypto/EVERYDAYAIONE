@@ -100,6 +100,7 @@ class ToolExecutor(
         self._pending_schemas: list = []  # 已废弃，保留空列表兼容 chat_tool_mixin.clear()
         self._handlers: Dict[str, Callable[..., Coroutine[Any, Any, str]]] = {
             "get_conversation_context": self._get_conversation_context,
+            "get_personal_skill_for_edit": self._get_personal_skill_for_edit,
             "search_knowledge": self._search_knowledge,
             "social_crawler": self._social_crawler,
             "erp_api_search": self._erp_api_search,
@@ -136,6 +137,14 @@ class ToolExecutor(
         from core.config import get_settings
         from services.skills.chat_creation import create_proposal
         return create_proposal(
+            self.db, get_settings(), actor_id=self.user_id, org_id=self.org_id,
+            conversation_id=self.conversation_id, arguments=args,
+        )
+
+    async def _get_personal_skill_for_edit(self, args: Dict[str, Any]):
+        from core.config import get_settings
+        from services.skills.chat_creation import read_personal_skill_for_edit
+        return read_personal_skill_for_edit(
             self.db, get_settings(), actor_id=self.user_id, org_id=self.org_id,
             conversation_id=self.conversation_id, arguments=args,
         )

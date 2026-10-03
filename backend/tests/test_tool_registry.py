@@ -257,6 +257,25 @@ def test_prepare_skill_draft_requires_creation_flags_but_not_org_admin(registry)
     ).advertised
 
 
+def test_get_personal_skill_for_edit_requires_creation_flags_and_personal_context(registry):
+    enabled = {"skill_catalog_enabled": True, "skill_chat_creation_enabled": True}
+    result = resolve(registry, context(feature_flags=enabled))
+    assert "get_personal_skill_for_edit" in result.allowed
+    assert "get_personal_skill_for_edit" in result.advertised
+    for changed in (
+        {**enabled, "skill_catalog_enabled": False},
+        {**enabled, "skill_chat_creation_enabled": False},
+    ):
+        assert "get_personal_skill_for_edit" not in resolve(
+            registry, context(feature_flags=changed),
+        ).allowed
+    assert "get_personal_skill_for_edit" not in resolve(
+        registry, context(feature_flags=enabled, context_scope="channel",
+                          personal_context_allowed=False,
+                          workspace_owner_id="group-a"),
+    ).allowed
+
+
 @pytest.mark.parametrize("change", [
     {"actor_user_id": ""}, {"workspace_owner_id": ""}, {"org_id": ""},
     {"workspace_owner_id": "other-user"}, {"context_scope": "channel"},
@@ -331,7 +350,9 @@ def test_sequential_requests_do_not_reuse_user_org_workspace_or_mode(registry):
 def test_advertisement_reuses_current_core_rules(registry, mode):
     result = resolve(registry, context(permission_mode=mode))
     expected = [schema for schema in get_tools_for_mode(mode, "org-a")
-                if schema["function"]["name"] != "prepare_skill_draft"]
+                if schema["function"]["name"] not in {
+                    "prepare_skill_draft", "get_personal_skill_for_edit",
+                }]
     assert result.advertised_schemas() == expected
     assert set(result.advertised) <= set(result.allowed)
     # Block 01 retains old plan display facts; Block 02 will decide permission.
