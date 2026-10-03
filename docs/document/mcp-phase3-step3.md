@@ -8,15 +8,11 @@
 
 ## 组织管理员操作
 
-以下 API 都要求有效组织会话、`X-Org-Id` 和 `owner`/`admin` 角色；Connector ID 固定在路径中。
+管理员界面只需点击“一键连接并启用”，不要求用户寻找 MCP URL 或输入 Token。该请求要求有效组织会话、`X-Org-Id` 和 `owner`/`admin` 角色，固定调用 `POST /org/{org_id}/mcp-connectors/test-readonly/setup`。服务端在该组织尚无测试凭证时生成随机测试值，使用现有组织配置控制面加密保存，然后检查固定 Server 健康和审核过的工具清单，全部通过后启用 Connector。接口只返回连接状态和安全错误码，不返回凭证。
 
-1. 设置或轮换测试凭证：`PUT /org/{org_id}/mcp-connectors/test-readonly/credential`，请求体为 `{"token":"<synthetic-test-token>"}`。服务端使用现有组织配置控制面验证并加密，响应只含 `configured` 和版本号。
-2. 启用：`PUT /org/{org_id}/mcp-connectors/test-readonly`，请求体为 `{"enabled":true}`。数据库会再次验证管理员权限和组织凭证是否存在。
-3. 测试连接：`POST /org/{org_id}/mcp-connectors/test-readonly/test`。它执行固定健康检查、工具发现和只读合成调用，只返回健康状态与安全错误码。
-4. 查看状态：`GET /org/{org_id}/mcp-connectors/test-readonly`。响应只有启用状态、健康状态、检查时间和白名单错误码。
-5. 禁用：同一 PUT 路径使用 `{"enabled":false}`。每次目录解析、策略重验和远程工具调用前都会读取组织状态；禁用提交完成后新调用会被拒绝。已开始的远程请求按 MCP 取消与 Actor 不确定调用规则收口。
+管理员也可以通过 `GET /org/{org_id}/mcp-connectors/test-readonly` 查看状态，通过 `PUT /org/{org_id}/mcp-connectors/test-readonly` 的 `{"enabled":false}` 立即停用。旧的凭证管理和独立连接测试 API 仍保留兼容；管理页不再要求组织管理员使用它们。每次目录解析、策略重验和工具执行前都会读取组织状态；已开始的远程请求按 MCP 取消与 Actor 不确定调用规则收口。
 
-凭证只在固定 `mcp.test_readonly` Secret Bundle 中出现。数据库按 organization scope 加密，Bundle RPC 校验当前 actor 和 organization；executor 在当前调用内解密，并只传给固定测试子进程。MCP 参数、Skill 元数据、模型消息、审计字段和日志都不接收 Token。服务端返回文本在进入 ToolResult 前会剔除当前凭证。
+凭证只在固定 `mcp.test_readonly` Secret Bundle 中出现。数据库按 organization scope 加密，Bundle RPC 校验当前 actor 和 organization；executor 在当前调用内解密，并只传给固定测试子进程。MCP 参数、Skill 元数据、模型消息、审计字段和日志都不接收 Token。服务端返回文本在进入 ToolResult 前会剔除当前凭证。自动生成的测试值只用于读取合成数据，不是外部服务账号或业务系统凭证。
 
 ## 调用与失败行为
 
@@ -40,11 +36,11 @@ Actor checkpoint 持久化原调用 ID、organization/actor/task/turn 身份、C
 
 本任务没有部署。部署后验证仍只使用测试 Connector 和合成凭证，不要填入任何生产业务凭证：
 
-1. 确认生产已有的 `CONFIG_CONTROL_PLANE_ENABLED=1`、KEK 当前版本及密钥环配置可用；应用 migration 266 和 267 后，启动时配置定义与 Bundle 合约校验应通过。
-2. 保持 `MCP_CONNECTORS_ENABLED=false`，用一个测试组织管理员写入 `synthetic-org-a`，再启用 Connector 并调用连接测试。确认状态为 `ready`，组织配置列表只显示已配置，不显示 Token。
-3. 用另一个测试组织管理员写入 `synthetic-org-b` 并完成同样测试。确认其 Secret Bundle 不能通过第一个组织的 scope 解密；在第一个组织禁用 Connector 后，尝试工具调用应在子进程启动前被策略拒绝。
-4. 仅在获批的生产验证窗口，将 `MCP_CONNECTORS_ENABLED=true` 后滚动重启服务。再次调用测试 Connector，确认 ToolResult、Actor checkpoint 和 `tool_audit_log` 都记录组织、能力、工具、结果摘要与 replay 字段，但不包含任一测试 Token 或结果正文。
-5. 将全局 Feature Flag 设回 false 并重启，然后禁用并清除两个测试组织的测试凭证。全局标志保持关闭是默认回滚动作。
+1. 确认生产已有的 `CONFIG_CONTROL_PLANE_ENABLED=1`、KEK 当前版本及密钥环配置可用；应用 migration 266 和 267 后，启动时配置定义与 Bundle 合约校验应通过。在获批的验证窗口开启 `MCP_CONNECTORS_ENABLED=true` 并滚动重启。
+2. 用一个测试组织管理员点击“一键连接并启用”。确认状态为 `ready`，组织配置列表只显示已配置，不显示 Token；在聊天中请求“用 MCP 查询 sample 记录”，确认工具结果为合成数据。
+3. 用另一个测试组织管理员完成同样的一键连接。确认其 Secret Bundle 不能通过第一个组织的 scope 解密；在第一个组织禁用 Connector 后，尝试工具调用应在子进程启动前被策略拒绝。
+4. 再次调用测试 Connector，确认 ToolResult、Actor checkpoint 和 `tool_audit_log` 都记录组织、能力、工具、结果摘要与 replay 字段，但不包含任一测试 Token 或结果正文。
+5. 将全局 Feature Flag 设回 false 并重启，然后禁用两个测试组织的 Connector；若需彻底清除凭证，由平台运维执行撤销接口。全局标志保持关闭是默认回滚动作。
 
 数据库审计核对可以只读取字段摘要，不拉取 Actor 结果正文：
 
@@ -61,4 +57,4 @@ SELECT org_id, connector_id, capability, tool_name, remote_tool_name,
 
 ## 回滚
 
-先关闭 `MCP_CONNECTORS_ENABLED` 并禁用测试 Connector，阻断新调用；代码回退到本任务之前的版本。若数据库迁移也必须回滚，先执行 `backend/migrations/rollback/267_mcp_tool_audit_columns_rollback.sql`，再执行 `backend/migrations/rollback/266_mcp_org_connector_governance_rollback.sql`。第二个脚本会撤销组织 Connector 状态、固定 Bundle 和配置定义，并删除该测试 Connector 的加密凭证记录。用户重新部署本任务前，必须重新配置测试凭证。
+先关闭 `MCP_CONNECTORS_ENABLED` 并禁用测试 Connector，阻断新调用；代码回退到本任务之前的版本。若数据库迁移也必须回滚，先执行 `backend/migrations/rollback/267_mcp_tool_audit_columns_rollback.sql`，再执行 `backend/migrations/rollback/266_mcp_org_connector_governance_rollback.sql`。第二个脚本会撤销组织 Connector 状态、固定 Bundle 和配置定义，并删除该测试 Connector 的加密凭证记录。重新部署后，只需再次点击一键连接即可生成测试凭证。

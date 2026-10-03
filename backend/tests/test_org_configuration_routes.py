@@ -24,6 +24,7 @@ from api.routes.org import (
     set_org_config,
     set_mcp_connector_credential,
     set_mcp_connector_enabled,
+    setup_mcp_test_connector,
     test_erp_connection as run_erp_connection_test,
     test_mcp_connector_connection as run_mcp_connection_test,
     test_wecom_connection as run_wecom_connection_test,
@@ -418,3 +419,75 @@ async def test_mcp_connection_test_rejects_non_admin_before_secret_resolution() 
     assert captured.value.status_code == 403
     resolver.mcp_test_readonly.assert_not_called()
     db.rpc.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mcp_setup_generates_secret_tests_and_enables_without_returning_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    generated = "server-generated-synthetic-token"
+    monkeypatch.setattr("api.routes.org.secrets.token_urlsafe", lambda _: generated)
+    monkeypatch.setattr(
+        "services.tools.mcp_org.scoped_mcp_database", lambda db, **_: db,
+    )
+    monkeypatch.setattr(
+        "services.tools.mcp_org.record_connector_health", lambda *args, **kwargs: True,
+    )
+    org_service = MagicMock()
+    scoped_control = MagicMock()
+    scoped_control.mcp_credential_status.return_value = {
+        "configured": False, "version": 0,
+    }
+    scoped_control.set_mcp_organization_credential.return_value = {
+        "configured": True, "version": 1,
+    }
+    control = MagicMock()
+    control.for_mcp_actor.return_value = scoped_control
+    bundle = SimpleNamespace(values={
+        "mcp.test_readonly.bearer_token": {"token": generated},
+    })
+    resolver = MagicMock()
+    resolver.mcp_test_readonly.return_value = bundle
+    state = {
+        "org_id": ORG_ID, "connector_id": "test-readonly", "enabled": True,
+        "state": "ready", "health_status": "ready", "last_error_code": None,
+    }
+    db = MagicMock()
+    db.org_id = ORG_ID
+    db.rpc.return_value.execute.return_value.data = state
+
+    result = await setup_mcp_test_connector(
+        ORG_ID, USER_ID, db, org_service, control, resolver,
+    )
+
+    assert result == {"success": True, "data": state}
+    assert generated not in str(result)
+    scoped_control.set_mcp_organization_credential.assert_called_once_with(
+        org_id=ORG_ID, value={"token": generated}, expected_version=0,
+    )
+    assert db.rpc.call_args.args[0] == "api_set_org_mcp_connector_enabled"
+    assert db.rpc.call_args.args[1]["p_enabled"] is True
+    org_service.require_role.assert_called_once_with(
+        ORG_ID, USER_ID, ("owner", "admin"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_mcp_setup_rejects_non_admin_before_generating_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    org_service = MagicMock()
+    org_service.require_role.side_effect = PermissionDeniedError("forbidden")
+    control = MagicMock()
+    resolver = MagicMock()
+
+    with pytest.raises(HTTPException) as captured:
+        await setup_mcp_test_connector(
+            ORG_ID, USER_ID, MagicMock(), org_service, control, resolver,
+        )
+
+    assert captured.value.status_code == 403
+    control.for_mcp_actor.assert_not_called()
+    resolver.mcp_test_readonly.assert_not_called()

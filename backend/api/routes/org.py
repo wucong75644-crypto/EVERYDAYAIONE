@@ -6,6 +6,7 @@
 
 from collections.abc import Mapping
 import os
+import secrets
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -766,6 +767,97 @@ async def test_mcp_connector_connection(
         )
         return {"success": False, "data": {
             "connector_id": CONNECTOR_ID,
+            "state": "error", "health_status": "error", "last_error_code": code,
+        }}
+
+
+@router.post("/{org_id}/mcp-connectors/test-readonly/setup", summary="一键配置并启用只读测试 MCP")
+async def setup_mcp_test_connector(
+    org_id: str,
+    user_id: CurrentUserId,
+    db: ScopedDB,
+    svc: OrgService = Depends(_get_org_service),
+    control: ConfigurationControlService | None = Depends(_get_mcp_configuration_control),
+    bundle_resolver: SecretBundleResolver | None = Depends(_get_mcp_secret_bundle_resolver),
+):
+    """Provision only the synthetic allowlisted connector without user-supplied URLs or secrets."""
+    import asyncio
+    from services.tools.mcp_allowlist import CONNECTOR_ID, registered_specs
+    from services.tools.mcp_boundary import MCPError
+    from services.tools.mcp_client import MCPClient, bounded_operation
+    from services.tools.mcp_org import record_connector_health, scoped_mcp_database
+
+    try:
+        svc.require_role(org_id, user_id, ("owner", "admin"))
+        if control is None or bundle_resolver is None:
+            raise HTTPException(status_code=503, detail="平台 MCP 测试服务尚未开放")
+
+        scoped_control = control.for_mcp_actor(
+            org_id=org_id, actor_user_id=user_id,
+        )
+        credential_status = scoped_control.mcp_credential_status(org_id=org_id)
+        if not credential_status.get("configured"):
+            generated_token = secrets.token_urlsafe(32)
+            saved = scoped_control.set_mcp_organization_credential(
+                org_id=org_id,
+                value={"token": generated_token},
+                expected_version=int(credential_status.get("version") or 0),
+            )
+            if saved.get("configured") is not True:
+                raise HTTPException(status_code=503, detail="无法安全配置测试 Connector")
+
+        bundle = bundle_resolver.mcp_test_readonly(
+            actor_user_id=user_id, org_id=org_id,
+        )
+        credential = bundle.values.get("mcp.test_readonly.bearer_token")
+        token = credential.get("token") if isinstance(credential, Mapping) else None
+        if not isinstance(token, str) or not token:
+            raise HTTPException(status_code=503, detail="无法安全读取测试 Connector 凭证")
+
+        async def run_probe():
+            async with MCPClient(CONNECTOR_ID, bearer_token=token).session() as client:
+                await client.health()
+                discovered = await client.discover()
+                if discovered != registered_specs():
+                    raise MCPError("MCP_SCHEMA_NOT_REVIEWED")
+
+        await bounded_operation(run_probe(), timeout=5.0)
+        await asyncio.to_thread(
+            record_connector_health, db, org_id=org_id,
+            actor_user_id=user_id, status="ready",
+        )
+        response = scoped_mcp_database(
+            db, org_id=org_id, actor_user_id=user_id,
+        ).rpc("api_set_org_mcp_connector_enabled", {
+            "p_org_id": org_id,
+            "p_connector_id": CONNECTOR_ID,
+            "p_enabled": True,
+        }).execute()
+        if not isinstance(response.data, dict):
+            raise HTTPException(status_code=503, detail="测试通过，但无法启用 Connector")
+        return {"success": True, "data": response.data}
+    except HTTPException:
+        raise
+    except AppException as error:
+        raise HTTPException(
+            status_code=error.status_code, detail=error.message,
+        ) from error
+    except Exception as error:
+        code = getattr(error, "code", "MCP_REMOTE_ERROR")
+        safe_codes = {
+            "MCP_AUTH_FAILED", "MCP_CREDENTIAL_UNAVAILABLE", "MCP_HEALTH_FAILED",
+            "MCP_REMOTE_ERROR", "MCP_PROTOCOL_ERROR", "MCP_RESULT_INVALID",
+            "MCP_SCHEMA_NOT_REVIEWED", "MCP_TIMEOUT", "MCP_TOOL_ERROR",
+            "MCP_UNAVAILABLE",
+        }
+        code = code if code in safe_codes else "MCP_REMOTE_ERROR"
+        await asyncio.to_thread(
+            record_connector_health, db, org_id=org_id,
+            actor_user_id=user_id, status="error", error_code=code,
+        )
+        return {"success": False, "data": {
+            "connector_id": CONNECTOR_ID,
+            "enabled": False,
             "state": "error", "health_status": "error", "last_error_code": code,
         }}
 

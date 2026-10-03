@@ -207,6 +207,12 @@ export async function testOrgMcpConnector(
   return request({ method: 'POST', url: `/org/${orgId}/mcp-connectors/test-readonly/test` });
 }
 
+export async function setupOrgMcpConnector(
+  orgId: string,
+): Promise<OrgMcpConnectorResponse> {
+  return request({ method: 'POST', url: `/org/${orgId}/mcp-connectors/test-readonly/setup` });
+}
+
 export async function setOrgConfig(
   orgId: string, key: string, value: string,
 ): Promise<{ success: boolean; message: string }> {
