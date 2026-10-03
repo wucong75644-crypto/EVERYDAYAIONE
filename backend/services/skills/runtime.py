@@ -86,14 +86,17 @@ def control_result(code: str, *, ok: bool = False, **details) -> dict:
 class SkillRuntime:
     def __init__(self, *, turn_id: str, source, platform_tool_names, authorized_tool_names,
                  cancellation_event: asyncio.Event, template_context: dict | None = None,
-                 execution_mode: str = "interactive"):
+                 execution_mode: str = "interactive", available_tool_names=None):
         self.turn_id, self.source = turn_id, source
         self.execution_mode = execution_mode
         self.scheduled_snapshot = None
         self.platform_tool_names = frozenset(platform_tool_names)
+        self.available_tool_names = (self.platform_tool_names if available_tool_names is None else
+                                     self.platform_tool_names & frozenset(available_tool_names))
         # None is ToolContext's existing unrestricted ceiling, not missing identity.
         self._initial_ceiling = (self.platform_tool_names if authorized_tool_names is None
                                  else self.platform_tool_names & frozenset(authorized_tool_names))
+        self._initial_ceiling &= self.available_tool_names
         self.effective_allowed_tool_names = self._initial_ceiling
         self.cancellation_event = cancellation_event
         self.directory: dict[str, SkillCandidate] = {}
@@ -326,6 +329,7 @@ class SkillRuntime:
                     MAX_TURN_RENDERED_BYTES, "SKILL_TURN_BUDGET_EXCEEDED")
             ceiling = skill_tool_ceiling(
                 validated.catalog_metadata, self.platform_tool_names, self.effective_allowed_tool_names,
+                available_tool_names=self.available_tool_names,
             )
             self.active[candidate.skill_key] = ActiveSkill(
                 skill_key=candidate.skill_key, revision=candidate.revision,
@@ -408,8 +412,15 @@ class SkillRuntime:
                         raise SkillError('SKILL_REPLAY_RENDER_INVALID')
                     await self.source.load_assets(candidate, validated, saved.loaded_asset_ids)
                     self._check_cancelled()
-                if (validated.catalog_metadata.tool_policy == 'restricted'
-                        and not saved.effective_allowed_tool_names <= set(validated.catalog_metadata.allowed_tool_names)):
+                metadata = validated.catalog_metadata
+                declared_ceiling = (skill_tool_ceiling(
+                    metadata, self.platform_tool_names, self.platform_tool_names,
+                ) if metadata.required_capabilities or metadata.allowed_capabilities else
+                    self.platform_tool_names if metadata.tool_policy == 'platform' else
+                    frozenset(metadata.allowed_tool_names))
+                if metadata.required_capabilities:
+                    skill_tool_ceiling(metadata, self.platform_tool_names, ceiling)
+                if not saved.effective_allowed_tool_names <= declared_ceiling:
                     raise SkillError("SKILL_REPLAY_TOOL_SCOPE_INVALID")
                 if not checkpoint.effective_allowed_tool_names <= saved.effective_allowed_tool_names:
                     raise SkillError("SKILL_REPLAY_TOOL_SCOPE_INVALID")
@@ -455,7 +466,8 @@ async def create_skill_runtime(*, handler, context, runtime, replay_context=None
             raise SkillReplayError("SKILL_REPLAY_RUNTIME_DISABLED")
         return None
     from services.skills.runtime_source import ActorSkillSource
-    from services.tools import build_legacy_catalog
+    from services.skills.capability_state import available_tool_names as policy_available_tool_names
+    from services.tools.catalog import build_capability_catalog
 
     source = (ActorSkillSource(handler, context, settings, task_mode=task_mode)
               if task_mode != 'smart' else ActorSkillSource(handler, context, settings))
@@ -471,10 +483,13 @@ async def create_skill_runtime(*, handler, context, runtime, replay_context=None
         if intent.task_mode != task_mode or intent.selected_skill != selection:
             raise SkillBindingError('原任务 Skill 的模式或版本记录不一致。')
         source = PinnedIntentSource(source, intent, retry=retry)
+    capability_registry = build_capability_catalog()
+    currently_authorized = policy_available_tool_names(capability_registry, context)
     state = SkillRuntime(
         turn_id=runtime.turn_id, source=source, execution_mode=context.execution_mode,
-        platform_tool_names=(s.name for s in build_legacy_catalog().specs()),
-        authorized_tool_names=context.authorized_tool_names,
+        platform_tool_names=(s.name for s in capability_registry.specs()),
+        authorized_tool_names=currently_authorized,
+        available_tool_names=currently_authorized,
         cancellation_event=runtime.cancellation_event,
         template_context={
             'actor_user_id': context.actor_user_id, 'org_id': context.org_id,

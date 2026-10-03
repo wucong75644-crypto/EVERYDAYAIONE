@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from core.db_scope import DatabaseAccessKind, DatabaseScope
 from services.permissions.checker import PermissionChecker
 from services.permissions.permission_points import PERMISSIONS
+from services.skills.capability_state import available_capability_names
 from services.skills.contracts import PublishRevision, SkillError
 from services.skills.repository import SkillRepository
 from services.skills.binding_repository import SkillBindingRepository
@@ -53,6 +54,9 @@ class ActorSkillSource:
             enabled_feature_flags=frozenset(
                 name for name in type(self.settings).model_fields
                 if getattr(self.settings, name) is True
+            ),
+            available_capabilities=await asyncio.to_thread(
+                available_capability_names, self.handler.db, context.org_id, self.settings,
             ),
         )
 

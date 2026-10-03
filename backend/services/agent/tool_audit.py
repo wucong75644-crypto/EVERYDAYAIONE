@@ -40,8 +40,56 @@ class ToolAuditEntry:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     trace_id: str = ""
-    # Correlated structured log only: the existing table has no replay column.
+    # Correlated structured log only; governed MCP facts use explicit columns.
     execution: dict[str, Any] = field(default_factory=dict)
+    # Present only for a platform-reviewed MCP invocation; values are fixed
+    # identifiers and a result digest, never arguments, results, or credentials.
+    connector_id: str | None = None
+    capability: str | None = None
+    remote_tool_name: str | None = None
+    invocation_status: str | None = None
+    replay_requirement: str | None = None
+    replayed: bool | None = None
+    result_sha256: str | None = None
+    error_code: str | None = None
+
+
+def mcp_audit_columns(fields: dict[str, Any]) -> dict[str, Any]:
+    """Project only the current fixed allowlist facts to durable audit columns."""
+    facts = (
+        fields.get("connector_id"), fields.get("capability"),
+        fields.get("remote_tool_name"), fields.get("replay_requirement"),
+    )
+    if facts != ("test-readonly", "test.sample.read", "lookup_sample", "record_required"):
+        return {}
+    invocation_status = fields.get("invocation_status")
+    replayed = fields.get("replayed")
+    digest = fields.get("result_sha256")
+    error_code = fields.get("error_code")
+    safe_errors = {
+        "MCP_AUTH_FAILED", "MCP_CONNECTOR_DISABLED", "MCP_CREDENTIAL_UNAVAILABLE",
+        "MCP_FEATURE_DISABLED", "MCP_HEALTH_FAILED", "MCP_REMOTE_ERROR",
+        "MCP_PROTOCOL_ERROR", "MCP_RESULT_INVALID", "MCP_SCHEMA_NOT_REVIEWED",
+        "MCP_TIMEOUT", "MCP_TOOL_ERROR", "MCP_UNAVAILABLE", "MCP_CANCELLED",
+    }
+    if (invocation_status not in {"not_started", "succeeded", "failed", "uncertain"}
+            or type(replayed) is not bool
+            or (digest is not None and (
+                not isinstance(digest, str) or len(digest) != 64
+                or any(char not in "0123456789abcdef" for char in digest)
+            ))
+            or (error_code is not None and error_code not in safe_errors)):
+        return {}
+    return {
+        "connector_id": facts[0],
+        "capability": facts[1],
+        "remote_tool_name": facts[2],
+        "replay_requirement": facts[3],
+        "invocation_status": invocation_status,
+        "replayed": replayed,
+        "result_sha256": digest,
+        "error_code": error_code,
+    }
 
 
 def build_args_hash(args: Dict[str, Any]) -> str:

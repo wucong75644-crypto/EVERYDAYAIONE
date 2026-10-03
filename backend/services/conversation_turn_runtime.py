@@ -52,6 +52,7 @@ class ConversationTurnRuntime:
         self._checkpoint_callback = checkpoint_callback
         self._replay_checkpoint_callback = replay_checkpoint_callback
         self.skill_runtime = None  # Owned by this turn; never a handler/global cache.
+        self.mcp_invocations = {}  # Result snapshots only; the ledger remains authoritative.
         self.inbox = CommandInbox()
         self._command_event = asyncio.Event()
         self._watcher_stop = asyncio.Event()
@@ -164,6 +165,8 @@ class ConversationTurnRuntime:
             payload = dict(replay_payload)
             if self.skill_runtime is not None:
                 payload["skill_runtime"] = self.skill_runtime.checkpoint()
+            if self.mcp_invocations:
+                payload["mcp_invocations"] = list(self.mcp_invocations.values())
             result = await self._replay_checkpoint_callback(point, payload)
             if result.get("outcome") in {
                 "ownership_lost", "lease_expired", "terminal",

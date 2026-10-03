@@ -3,10 +3,11 @@
 from collections.abc import Iterable
 from typing import Literal
 from uuid import UUID
+from pydantic import model_serializer
 
 from services.skills.contracts import (
     AgentDomain, Contract, ConversationScope, ExecutionMode, RevisionKey,
-    SkillCatalogMetadata, SkillKey, SkillTaskMode,
+    SkillCapabilityStatus, SkillCatalogMetadata, SkillKey, SkillTaskMode,
 )
 
 
@@ -21,6 +22,14 @@ class SkillSummary(Contract):
     source: Literal["platform", "org"]
     model_selectable: bool
     task_modes: tuple[SkillTaskMode, ...] = ('smart',)
+    capability_status: tuple[SkillCapabilityStatus, ...] = ()
+
+    @model_serializer(mode="wrap")
+    def omit_empty_capability_status(self, handler):
+        result = handler(self)
+        if not self.capability_status:
+            result.pop("capability_status", None)
+        return result
 
 
 class SkillResolutionContext(Contract):
@@ -34,6 +43,9 @@ class SkillResolutionContext(Contract):
     task_mode: SkillTaskMode = 'smart'
     permissions: frozenset[str] = frozenset()
     enabled_feature_flags: frozenset[str] = frozenset()
+    # Production adapters pass the current organization's capability set.
+    # None preserves scope-only callers and older test fixtures.
+    available_capabilities: frozenset[str] | None = None
 
 
 class SkillCandidate(Contract):
@@ -54,13 +66,24 @@ class SkillResolver:
     def resolve(
         self, context: SkillResolutionContext, candidates: Iterable[SkillCandidate],
     ) -> list[SkillSummary]:
-        return [SkillSummary(
-            skill_id=c.skill_key,
-            name=c.catalog_metadata.name or c.skill_key, revision=c.revision,
-            description=c.description, triggers=c.catalog_metadata.triggers,
-            source=c.scope_kind, model_selectable=c.catalog_metadata.model_selectable,
-            task_modes=c.catalog_metadata.task_modes,
-        ) for c in self.select(context, candidates)]
+        return [self.summary(context, c) for c in self.select(context, candidates)]
+
+    @staticmethod
+    def summary(context: SkillResolutionContext, candidate: SkillCandidate) -> SkillSummary:
+        metadata = candidate.catalog_metadata
+        required = set(metadata.required_capabilities)
+        capabilities = sorted(required | set(metadata.allowed_capabilities))
+        available = context.available_capabilities
+        return SkillSummary(
+            skill_id=candidate.skill_key, name=metadata.name or candidate.skill_key,
+            revision=candidate.revision, description=candidate.description,
+            triggers=metadata.triggers, source=candidate.scope_kind,
+            model_selectable=metadata.model_selectable, task_modes=metadata.task_modes,
+            capability_status=tuple(SkillCapabilityStatus(
+                capability=capability, required=capability in required,
+                available=(available is None or capability in available),
+            ) for capability in capabilities),
+        )
 
     def select(
         self, context: SkillResolutionContext, candidates: Iterable[SkillCandidate],
@@ -118,7 +141,29 @@ def effective_allowed_tool_names(
     return names(platform_tool_names) & names(authorized_tool_names) & names(skill_allowed_tool_names)
 
 
-def skill_tool_ceiling(metadata: SkillCatalogMetadata, platform_tool_names, current_ceiling):
+def skill_tool_ceiling(metadata: SkillCatalogMetadata, platform_tool_names, current_ceiling, *, registry=None,
+                       available_tool_names=None):
     """Select the revision's contract, then narrow the existing host ceiling."""
+    from services.skills.contracts import SkillError
+    if metadata.required_capabilities or metadata.allowed_capabilities:
+        if registry is None:
+            from services.tools.catalog import build_capability_catalog
+            registry = build_capability_catalog()
+        try:
+            required = registry.capability_tools(metadata.required_capabilities)
+            allowed = registry.capability_tools(metadata.allowed_capabilities or metadata.required_capabilities)
+        except ValueError:
+            raise SkillError("SKILL_UNKNOWN_CAPABILITY") from None
+        # A capability declaration may replace the legacy name declaration, but
+        # simultaneous declarations intersect; neither can expand the host scope.
+        declared = allowed
+        if metadata.allowed_tool_names:
+            declared &= frozenset(metadata.allowed_tool_names)
+        ceiling = effective_allowed_tool_names(platform_tool_names, current_ceiling, declared)
+        if available_tool_names is not None:
+            ceiling &= effective_allowed_tool_names(platform_tool_names, available_tool_names, platform_tool_names)
+        if not required <= ceiling:
+            raise SkillError("SKILL_REQUIRED_CAPABILITY_UNAVAILABLE")
+        return ceiling
     declared = platform_tool_names if metadata.tool_policy == 'platform' else metadata.allowed_tool_names
     return effective_allowed_tool_names(platform_tool_names, current_ceiling, declared)

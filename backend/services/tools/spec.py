@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import re
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -94,6 +95,7 @@ class ToolSpec:
     handler_key: str
     exposure: Exposure
     source: str
+    capability: str | None = None
     definition_kind: str = "legacy"
     compatibility_notes: tuple[str, ...] = ()
     legacy_validation_schema: Mapping[str, Any] | None = None
@@ -129,8 +131,13 @@ class ToolSpec:
             raise ValueError("ToolSpec missing availability")
         if self.risk_level not in {"safe", "confirm", "dangerous"}:
             raise ValueError("ToolSpec missing/invalid risk_level")
-        if self.executor_type != "legacy":
-            raise ValueError("Only the existing legacy executor is supported")
+        if self.executor_type not in {"legacy", "mcp"}:
+            raise ValueError("Invalid executor_type")
+        if self.capability is not None and (not isinstance(self.capability, str) or
+                re.fullmatch(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+", self.capability) is None):
+            raise ValueError("Invalid capability")
+        if self.executor_type == "mcp" and self.capability is None:
+            raise ValueError("MCP ToolSpec requires capability")
         if not isinstance(self.exposure, Exposure):
             raise ValueError("ToolSpec missing exposure")
         if self.definition_kind not in {"explicit", "legacy"}:

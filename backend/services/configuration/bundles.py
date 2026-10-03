@@ -114,6 +114,13 @@ class SecretBundleResolver:
             "get_kuaimai_viperp_bundle",
         )
 
+    def mcp_test_readonly(self) -> ResolvedConfigurationBundle:
+        """Resolve the fixed test Connector token for the current org only."""
+        return self._resolve(
+            "mcp.test_readonly",
+            "get_mcp_test_readonly_bundle",
+        )
+
     def _resolve(
         self,
         bundle_name: str,
@@ -218,6 +225,12 @@ class AsyncSecretBundleResolver(SecretBundleResolver):
         return await self._resolve_async(
             "kuaimai_external.viperp",
             "get_kuaimai_viperp_bundle",
+        )
+
+    async def mcp_test_readonly(self) -> ResolvedConfigurationBundle:
+        return await self._resolve_async(
+            "mcp.test_readonly",
+            "get_mcp_test_readonly_bundle",
         )
 
     async def _resolve_async(

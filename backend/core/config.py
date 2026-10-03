@@ -266,6 +266,7 @@ class Settings(BaseSettings):
     file_workspace_root: str = "/mnt/nas-workspace"              # NAS 挂载路径（生产）或本地路径（开发）
 
     # Skill 控制面与 Actor Turn Runtime，均默认关闭。
+    mcp_connectors_enabled: bool = False
     skill_catalog_enabled: bool = False
     skill_runtime_enabled: bool = False
     skill_recommendations_enabled: bool = False

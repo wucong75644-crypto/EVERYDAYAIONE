@@ -17,7 +17,7 @@ def catalog_context(org_id, permission_mode="auto", personal_context_allowed=Tru
         personal_context_allowed=personal_context_allowed, agent_domain="general",
         permission_mode=permission_mode, execution_mode="interactive",
         feature_flags={key: getattr(settings, key, False) is True for key in (
-            "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled",
+            "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled", "mcp_connectors_enabled",
         )},
     )
 
@@ -44,6 +44,16 @@ def executor_context(executor, *, call_id=None) -> ToolContext:
     settings = get_settings()
     from .resource_access import resource_boundary
     manifest = executor.resource_manifest
+    feature_flags = {name: getattr(settings, name, False) is True for name in (
+        "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled", "mcp_connectors_enabled",
+    )}
+    # Connector access is separately organization-scoped. A missing row,
+    # mismatched database scope, or failed status read always disables it.
+    from .mcp_org import connector_is_enabled
+    feature_flags["mcp_connector_test_readonly_enabled"] = (
+        feature_flags["mcp_connectors_enabled"]
+        and connector_is_enabled(executor.db, executor.org_id)
+    )
     return ToolContext(
         actor_user_id=executor.user_id, workspace_owner_id=executor.workspace_user_id,
         org_id=executor.org_id, conversation_id=executor.conversation_id,
@@ -54,9 +64,7 @@ def executor_context(executor, *, call_id=None) -> ToolContext:
         execution_mode=executor.execution_mode, entrypoint=executor.tool_entrypoint,
         authorized_tool_names=executor.allowed_tool_names,
         authorization_snapshot=executor.tool_policy_snapshot,
-        feature_flags={name: getattr(settings, name, False) is True for name in (
-            "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled",
-        )},
+        feature_flags=feature_flags,
         resource_manifest=None if manifest is None else tuple(asdict(a) for a in manifest.assets),
         resource_access=resource_boundary(executor).as_dict(),
         budget=executor.execution_budget, cancellation=executor.cancellation_event,
@@ -81,6 +89,15 @@ async def refresh_context(executor, context, registry):
             context = replace(context, resource_manifest=tuple(
                 asdict(asset) for asset in executor.resource_manifest.assets
             ))
+        from .mcp_org import connector_is_enabled
+        flags = dict(context.feature_flags)
+        flags["mcp_connector_test_readonly_enabled"] = (
+            flags.get("mcp_connectors_enabled") is True
+            and await asyncio.to_thread(
+                connector_is_enabled, executor.db, context.org_id,
+            )
+        )
+        context = replace(context, feature_flags=flags)
         codes = {code for spec in registry.specs() for code in spec.policy_rules.required_permissions}
         codes.update(snapshot.get("required_permissions") or ())
         checker = PermissionChecker(executor.db)

@@ -129,6 +129,7 @@ class OrgScopedDB:
         "get_ai_openrouter_bundle",
         "get_erp_runtime_bundle",
         "get_wecom_bot_admin_test_bundle",
+        "get_mcp_test_readonly_bundle",
         "list_actor_organizations",
         "list_actor_pending_invitations",
         "list_all_governed_organizations",

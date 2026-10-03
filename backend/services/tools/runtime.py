@@ -36,7 +36,11 @@ class ToolRuntime:
     def __init__(self, executor):
         self.executor = executor
         self.registry = build_legacy_catalog()
-        self.service = ToolExecutionService(self.registry, ToolDispatcher(build_legacy_handlers(executor)))
+        from .mcp_executor import MCPExecutor
+        self.service = ToolExecutionService(self.registry, ToolDispatcher(
+            build_legacy_handlers(executor), mcp_executor=MCPExecutor(
+                self.context, db_provider=lambda: self.executor.db,
+            )))
         self.policy = self.service.policy
         self._confirmations = {}
         self._pending = {}

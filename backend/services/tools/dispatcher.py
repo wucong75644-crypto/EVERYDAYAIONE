@@ -40,9 +40,13 @@ class _ApprovedCall:
 
 
 class ToolDispatcher:
-    def __init__(self, handlers: Mapping[tuple[str, str], ToolHandler]) -> None:
+    def __init__(self, handlers: Mapping[tuple[str, str], ToolHandler], *, mcp_executor=None) -> None:
         self._handlers = dict(handlers)
         self._issuer = object()
+        from .mcp_executor import MCPExecutor
+        if mcp_executor is not None and not isinstance(mcp_executor, MCPExecutor):
+            raise TypeError("Controlled MCPExecutor required")
+        self._mcp_executor = mcp_executor
 
     def _approve(self, call: ToolCall, spec: ToolSpec, decision: ToolDecision) -> _ApprovedCall:
         # Only ToolExecutionService calls this after consulting its canonical Policy.
@@ -55,6 +59,11 @@ class ToolDispatcher:
                 or approved.decision.outcome != "allow" or approved.state.consumed):
             raise PermissionError("An unused approved tool call is required")
         approved.state.consumed = True
+        if approved.spec.executor_type == "mcp":
+            if self._mcp_executor is None:
+                raise RuntimeError("MCP_EXECUTOR_NOT_CONNECTED")
+            approved.state.handler_started = True
+            return await self._mcp_executor.execute(approved.spec, thaw(approved.call.arguments), approved.call.call_id)
         handler = self._handlers.get((approved.spec.executor_type, approved.spec.handler_key))
         if handler is None:
             raise ValueError(f"Unknown sync tool: {approved.call.name}")

@@ -9,9 +9,15 @@ from fastapi import HTTPException
 
 from api.routes.org import (
     SetConfigRequest,
+    MCPConnectorCredentialRequest,
+    MCPConnectorEnableRequest,
+    get_mcp_connector_status,
     list_org_configs,
     set_org_config,
+    set_mcp_connector_credential,
+    set_mcp_connector_enabled,
     test_erp_connection as run_erp_connection_test,
+    test_mcp_connector_connection as run_mcp_connection_test,
     test_wecom_connection as run_wecom_connection_test,
 )
 from core.exceptions import PermissionDeniedError
@@ -239,3 +245,89 @@ async def test_connection_tests_reject_non_admin_before_bundle_resolution(
     assert getattr(captured.value, "status_code", None) == 403
     bundle_resolver.erp_runtime.assert_not_called()
     bundle_resolver.wecom_bot_admin_test.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mcp_credential_route_encrypts_and_never_returns_token() -> None:
+    org_service = MagicMock()
+    control = MagicMock()
+    control.list_organization_status.return_value = [{
+        "key": "mcp.test_readonly.bearer_token", "version": 2,
+    }]
+    control.set_organization.return_value = {"configured": True, "version": 3}
+    secret = "synthetic-org-secret"
+
+    result = await set_mcp_connector_credential(
+        ORG_ID, MCPConnectorCredentialRequest(token=secret), USER_ID,
+        org_service, control,
+    )
+
+    assert result == {"success": True, "data": {"configured": True, "version": 3}}
+    assert secret not in str(result)
+    control.set_organization.assert_called_once_with(
+        org_id=ORG_ID, key="mcp.test_readonly.bearer_token",
+        value={"token": secret}, expected_version=2,
+    )
+    org_service.require_role.assert_called_once_with(
+        ORG_ID, USER_ID, ("owner", "admin"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_mcp_enable_and_status_use_fixed_connector_and_redacted_state() -> None:
+    org_service = MagicMock()
+    db = MagicMock()
+    state = {
+        "org_id": ORG_ID, "connector_id": "test-readonly", "enabled": True,
+        "state": "ready", "health_status": "ready", "last_error_code": None,
+    }
+    db.rpc.return_value.execute.return_value.data = state
+
+    changed = await set_mcp_connector_enabled(
+        ORG_ID, MCPConnectorEnableRequest(enabled=True), USER_ID, db, org_service,
+    )
+    viewed = await get_mcp_connector_status(ORG_ID, USER_ID, db, org_service)
+
+    assert changed == {"success": True, "data": state}
+    assert viewed == {"success": True, "data": state}
+    assert db.rpc.call_args_list[0].args[0] == "set_org_mcp_connector_enabled"
+    assert db.rpc.call_args_list[0].args[1]["p_connector_id"] == "test-readonly"
+    assert db.rpc.call_args_list[0].args[1]["p_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_connection_test_returns_health_without_credential() -> None:
+    org_service = MagicMock()
+    db = MagicMock()
+    state = {
+        "org_id": ORG_ID, "connector_id": "test-readonly", "enabled": False,
+        "state": "disabled", "health_status": "ready", "last_error_code": None,
+    }
+    db.rpc.return_value.execute.return_value.data = state
+    secret = "synthetic-org-secret"
+    bundle = MagicMock()
+    bundle.values = {"mcp.test_readonly.bearer_token": {"token": secret}}
+    resolver = MagicMock()
+    resolver.mcp_test_readonly.return_value = bundle
+
+    result = await run_mcp_connection_test(
+        ORG_ID, USER_ID, db, org_service, resolver,
+    )
+
+    assert result == {"success": True, "data": state}
+    assert secret not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_mcp_connection_test_rejects_non_admin_before_secret_resolution() -> None:
+    org_service = MagicMock()
+    org_service.require_role.side_effect = PermissionDeniedError("forbidden")
+    db = MagicMock()
+    resolver = MagicMock()
+
+    with pytest.raises(HTTPException) as captured:
+        await run_mcp_connection_test(ORG_ID, USER_ID, db, org_service, resolver)
+
+    assert captured.value.status_code == 403
+    resolver.mcp_test_readonly.assert_not_called()
+    db.rpc.assert_not_called()

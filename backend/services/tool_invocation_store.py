@@ -167,7 +167,10 @@ def serialize_tool_result(result: Any) -> dict[str, Any]:
         from core.config import get_settings
         from services.tools.result_payload import encode_result, decode_raw
         payload = encode_result(result)
-        if get_settings().tool_result_payload_write_version == 1:
+        if (get_settings().tool_result_payload_write_version == 1
+                or result.decision.replay_requirement == "record_required"):
+            # Remote results need durable invocation/audit identity even while
+            # the legacy payload rollout is disabled.
             return payload
         # Apply the same safety boundary in the reader-first release, while
         # retaining the legacy outer format and projections for rollback readers.

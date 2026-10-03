@@ -41,7 +41,7 @@ class CreateSkill(Contract):
 def new_draft_content(content: DraftContent) -> DraftContent:
     """Creation default only: never reinterpret saved drafts or revisions."""
     metadata = content.catalog_metadata
-    if not {'tool_policy', 'allowed_tool_names'} & metadata.model_fields_set:
+    if not {'tool_policy', 'allowed_tool_names', 'required_capabilities', 'allowed_capabilities'} & metadata.model_fields_set:
         return content.model_copy(update={
             'catalog_metadata': metadata.model_copy(update={'tool_policy': 'platform'}),
         })

@@ -78,7 +78,7 @@ def _schema_manage_scheduled_task():
 def build_specs():
     return (
         ToolSpec(
-            name='manage_scheduled_task', schema=_schema_manage_scheduled_task(),
+            name='manage_scheduled_task', capability='platform.manage_scheduled_task', schema=_schema_manage_scheduled_task(),
             domain='general', availability=ToolAvailability(requires_org=True, requires_personal_context=True),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('proposal_or_form', 'task_definition'), executor_type="legacy", handler_key='manage_scheduled_task',

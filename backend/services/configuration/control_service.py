@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import re
 from typing import Any
 
 from core.exceptions import AppException
@@ -327,6 +328,12 @@ class ConfigurationControlService:
         required = set(definition.validation.get("required", ()))
         if set(value) != required or any(
             not isinstance(item, str) or not item
+            for item in value.values()
+        ):
+            raise ConfigurationControlError("CONFIG_VALUE_INVALID", 400)
+        pattern = definition.validation.get("pattern")
+        if pattern is not None and any(
+            len(item) > 4096 or re.fullmatch(str(pattern), item) is None
             for item in value.values()
         ):
             raise ConfigurationControlError("CONFIG_VALUE_INVALID", 400)

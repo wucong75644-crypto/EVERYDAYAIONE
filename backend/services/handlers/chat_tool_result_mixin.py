@@ -79,6 +79,7 @@ class ChatToolResultMixin:
         ChatToolResultMixin._audit_tool_result(
             self, context, fields["result_length"], fields["status"], fields["truncated"],
             is_cached=fields["cached"], execution=fields["execution"],
+            mcp_audit=fields,
         )
         await ChatToolResultMixin._send_tool_result(
             self, context, not result.is_failure, display[:100],
@@ -281,6 +282,7 @@ class ChatToolResultMixin:
         status: str,
         truncated: bool = False,
         *, is_cached: bool | None = None, execution: dict | None = None,
+        mcp_audit: dict | None = None,
     ) -> None:
         try:
             self._emit_tool_audit(
@@ -289,6 +291,7 @@ class ChatToolResultMixin:
                 result_length, context.elapsed_ms, status, truncated,
                 **({"is_cached": is_cached} if is_cached is not None else {}),
                 **({"execution": execution} if execution is not None else {}),
+                **({"mcp_audit": mcp_audit} if mcp_audit is not None else {}),
             )
         except Exception as error:
             logger.warning(f"Tool audit dispatch failed | call={context.tool_call_id} | error={type(error).__name__}")

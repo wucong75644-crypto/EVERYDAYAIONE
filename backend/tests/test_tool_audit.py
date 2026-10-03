@@ -17,6 +17,7 @@ if str(backend_dir) not in sys.path:
 from services.agent.tool_audit import (
     ToolAuditEntry,
     build_args_hash,
+    mcp_audit_columns,
     record_tool_audit,
 )
 
@@ -220,3 +221,58 @@ class TestToolAuditEntryV6:
         assert d["prompt_tokens"] == 1500
         assert d["completion_tokens"] == 300
         assert d["trace_id"] == "trace_xyz"
+
+
+def test_mcp_audit_projection_is_allowlisted_and_token_free():
+    fields = {
+        "connector_id": "test-readonly",
+        "capability": "test.sample.read",
+        "remote_tool_name": "lookup_sample",
+        "replay_requirement": "record_required",
+        "invocation_status": "succeeded",
+        "replayed": False,
+        "result_sha256": "a" * 64,
+        "error_code": None,
+        "token": "must-not-persist",
+    }
+    columns = mcp_audit_columns(fields)
+    entry = ToolAuditEntry(
+        task_id="t1", conversation_id="c1", user_id="u1", org_id="o1",
+        tool_name="mcp_test_lookup", tool_call_id="call1", turn=1,
+        args_hash="abc", result_length=20, elapsed_ms=2, status="success",
+        **columns,
+    )
+
+    assert entry.connector_id == "test-readonly"
+    assert entry.capability == "test.sample.read"
+    assert entry.remote_tool_name == "lookup_sample"
+    assert entry.replay_requirement == "record_required"
+    assert entry.replayed is False and entry.result_sha256 == "a" * 64
+    assert "token" not in columns
+    assert mcp_audit_columns({**fields, "connector_id": "user-controlled"}) == {}
+
+
+@pytest.mark.asyncio
+async def test_mcp_audit_columns_are_written_to_existing_tool_audit_table():
+    mock_db = MagicMock()
+    mock_db.table.return_value.insert.return_value.execute.return_value = None
+    entry = ToolAuditEntry(
+        task_id="t1", conversation_id="c1", user_id="u1", org_id="o1",
+        tool_name="mcp_test_lookup", tool_call_id="mcp-call", turn=2,
+        args_hash="abc", result_length=32, elapsed_ms=7, status="success",
+        **mcp_audit_columns({
+            "connector_id": "test-readonly", "capability": "test.sample.read",
+            "remote_tool_name": "lookup_sample", "replay_requirement": "record_required",
+            "invocation_status": "succeeded", "replayed": False,
+            "result_sha256": "b" * 64,
+        }),
+    )
+
+    await record_tool_audit(mock_db, entry)
+    row = mock_db.table.return_value.insert.call_args.args[0]
+    assert row["org_id"] == "o1"
+    assert row["connector_id"] == "test-readonly"
+    assert row["capability"] == "test.sample.read"
+    assert row["tool_call_id"] == "mcp-call"
+    assert row["result_sha256"] == "b" * 64
+    assert row["replayed"] is False

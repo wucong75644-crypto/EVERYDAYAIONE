@@ -29,12 +29,19 @@ class Contract(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
+CapabilityKey = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")]
 CatalogText = Annotated[str, Field(min_length=1, max_length=200, pattern=r"\S")]
 ConversationScope = Literal["user", "channel"]
 AgentDomain = Literal["general", "erp"]
 ExecutionMode = Literal["interactive", "scheduled", "preflight"]
 SkillFileType = Literal["pdf", "docx", "xlsx", "csv", "pptx", "image", "text"]
 SkillTaskMode = Literal['smart', 'image-i2i', 'image-t2i', 'image-ecom', 'video']
+
+
+class SkillCapabilityStatus(Contract):
+    capability: CapabilityKey
+    required: StrictBool
+    available: StrictBool
 
 
 class SkillCatalogMetadata(Contract):
@@ -55,11 +62,15 @@ class SkillCatalogMetadata(Contract):
     required_permissions: tuple[CatalogText, ...] = ()
     required_feature_flags: tuple[CatalogText, ...] = ()
     allowed_tool_names: tuple[CatalogText, ...] = ()
+    required_capabilities: tuple[CapabilityKey, ...] = Field(default=(), max_length=64)
+    allowed_capabilities: tuple[CapabilityKey, ...] = Field(default=(), max_length=64)
     recommended_file_types: tuple[SkillFileType, ...] = Field(default=(), max_length=7)
     tool_policy: Literal['restricted', 'platform'] = 'restricted'
 
     @model_validator(mode='after')
     def unambiguous_tool_policy(self):
+        if self.allowed_capabilities and not set(self.required_capabilities) <= set(self.allowed_capabilities):
+            raise ValueError('SKILL_CAPABILITY_CONFLICT')
         if self.tool_policy == 'platform' and self.allowed_tool_names:
             raise ValueError('SKILL_TOOL_POLICY_CONFLICT')
         return self
@@ -67,6 +78,9 @@ class SkillCatalogMetadata(Contract):
     @model_serializer(mode='wrap')
     def preserve_legacy_metadata(self, handler):
         result = handler(self)
+        for key in ('required_capabilities', 'allowed_capabilities'):
+            if not getattr(self, key):
+                result.pop(key, None)
         # Keep old review hashes and checkpoint metadata byte-compatible.
         if not self.recommended_file_types:
             result.pop('recommended_file_types', None)

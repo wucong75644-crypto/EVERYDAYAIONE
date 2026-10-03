@@ -15,6 +15,7 @@ export interface SkillSummary extends SkillSelection {
   source: 'platform' | 'org';
   model_selectable: boolean;
   task_modes?: SkillTaskMode[];
+  capability_status?: { capability: string; required: boolean; available: boolean }[];
 }
 
 export interface SkillBinding extends SkillSummary {

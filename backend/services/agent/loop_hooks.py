@@ -154,7 +154,8 @@ class ToolAuditHook(LoopHook):
     ) -> None:
         try:
             from services.agent.tool_audit import (
-                ToolAuditEntry, build_args_hash, record_tool_audit,
+                ToolAuditEntry, build_args_hash, mcp_audit_columns,
+                record_tool_audit,
             )
             from services.agent.observability import get_trace_id
             from services.tools.result import ToolResult
@@ -186,6 +187,7 @@ class ToolAuditHook(LoopHook):
                 completion_tokens=turn_completion_tokens,
                 trace_id=get_trace_id(),
                 execution=fields["execution"] if isinstance(result, ToolResult) else {},
+                **(mcp_audit_columns(fields) if isinstance(result, ToolResult) else {}),
             )
             asyncio.create_task(record_tool_audit(ctx.db, entry))
         except Exception as e:

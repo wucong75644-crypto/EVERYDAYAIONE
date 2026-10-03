@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from core.db_scope import DatabaseAccessKind, DatabaseScope
 from services.permissions.checker import PermissionChecker
 from services.permissions.permission_points import PERMISSIONS
+from services.skills.capability_state import available_capability_names
 from services.skills.repository import SkillRepository
 from services.skills.resolver import SkillResolutionContext, SkillResolver, SkillSummary
 
@@ -62,6 +63,9 @@ async def available_skills(db, settings, *, actor_user_id: str, conversation_id:
         agent_domain="general", execution_mode="interactive", task_mode=task_mode, permissions=frozenset(permissions),
         enabled_feature_flags=frozenset(
             name for name in type(settings).model_fields if getattr(settings, name) is True
+        ),
+        available_capabilities=await asyncio.to_thread(
+            available_capability_names, db, org_id, settings,
         ),
     )
     return SkillResolver().resolve(context, candidates)
