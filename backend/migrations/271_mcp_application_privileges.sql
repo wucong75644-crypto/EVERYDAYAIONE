@@ -1,23 +1,20 @@
 -- 271: Grant the MCP facade owner only the database access it needs.
 -- The general configuration control plane stays behind its existing flag.
 
--- Legacy identity tables are owned by everydayai; configuration and audit
--- tables are owned by everydayai_owner. Grant each role only what it can
--- legitimately delegate.
+-- These protected application tables are owned by everydayai in production.
+-- Let only the MCP facade owner read identity/configuration facts, write the
+-- encrypted configuration envelope, and append its secret-free audit facts.
 SET LOCAL ROLE everydayai;
-GRANT SELECT ON TABLE public.users, public.organizations, public.org_members
-TO everydayai_owner;
-RESET ROLE;
-
-SET LOCAL ROLE everydayai_owner;
-GRANT SELECT ON TABLE public.configuration_definitions,
-    public.configuration_bundle_definitions,
+GRANT SELECT ON TABLE public.users, public.organizations, public.org_members,
+    public.configuration_definitions, public.configuration_bundle_definitions,
     public.configuration_entries, public.secret_records
 TO everydayai_owner;
 GRANT INSERT, UPDATE ON TABLE public.configuration_entries,
     public.secret_records
 TO everydayai_owner;
 GRANT INSERT ON TABLE public.governance_audit_log TO everydayai_owner;
+RESET ROLE;
+SET LOCAL ROLE everydayai_owner;
 
 CREATE OR REPLACE FUNCTION public.mcp_record_connector_audit(
     p_org_id UUID,
@@ -34,7 +31,7 @@ SET search_path = pg_catalog, public
 AS $$
 DECLARE
     v_authority TEXT;
-    v_audit_id UUID;
+    v_audit_id UUID := gen_random_uuid();
 BEGIN
     v_authority := public._assert_mcp_application_actor(p_org_id, TRUE);
     IF p_authority IS DISTINCT FROM v_authority
@@ -51,13 +48,13 @@ BEGIN
             USING ERRCODE = '22023';
     END IF;
     INSERT INTO public.governance_audit_log(
-        org_id, actor_id, authority, action, target_kind,
+        id, org_id, actor_id, authority, action, target_kind,
         target_key, request_id, metadata
     ) VALUES (
-        p_org_id, public.mcp_application_actor_user_id(), v_authority,
+        v_audit_id, p_org_id, public.mcp_application_actor_user_id(), v_authority,
         p_action, p_target_kind, p_target_key,
         NULLIF(current_setting('app.request_id', TRUE), ''), p_metadata
-    ) RETURNING id INTO v_audit_id;
+    );
     RETURN v_audit_id;
 END;
 $$;

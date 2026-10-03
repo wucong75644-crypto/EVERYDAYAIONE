@@ -1,8 +1,3 @@
-SET LOCAL ROLE everydayai;
-REVOKE SELECT ON TABLE public.users, public.organizations, public.org_members
-FROM everydayai_owner;
-RESET ROLE;
-
 SET LOCAL ROLE everydayai_owner;
 
 DO $$
@@ -28,16 +23,18 @@ BEGIN
 END;
 $$;
 
-REVOKE INSERT, UPDATE ON TABLE public.configuration_entries,
-    public.secret_records
-FROM everydayai_owner;
-REVOKE SELECT ON TABLE public.configuration_definitions,
-    public.configuration_bundle_definitions,
-    public.configuration_entries, public.secret_records
-FROM everydayai_owner;
-REVOKE INSERT ON TABLE public.governance_audit_log FROM everydayai_owner;
 DROP FUNCTION IF EXISTS public.mcp_record_connector_audit(
     UUID, TEXT, TEXT, TEXT, TEXT, JSONB
 );
 
+RESET ROLE;
+SET LOCAL ROLE everydayai;
+REVOKE INSERT, UPDATE ON TABLE public.configuration_entries,
+    public.secret_records
+FROM everydayai_owner;
+REVOKE SELECT ON TABLE public.users, public.organizations, public.org_members,
+    public.configuration_definitions, public.configuration_bundle_definitions,
+    public.configuration_entries, public.secret_records
+FROM everydayai_owner;
+REVOKE INSERT ON TABLE public.governance_audit_log FROM everydayai_owner;
 RESET ROLE;

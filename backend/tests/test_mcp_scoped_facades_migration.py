@@ -82,14 +82,22 @@ def database(postgres_socket):
           RETURNS jsonb LANGUAGE sql AS
           $$ SELECT jsonb_build_object('deleted', true, 'version', $5 + 1) $$;
     """)
-    for table in ("users", "organizations", "org_members"):
-        conn.execute(f"ALTER TABLE {table} OWNER TO everydayai")
     for table in (
-        "configuration_definitions", "configuration_bundle_definitions",
-        "configuration_entries", "secret_records",
-        "organization_mcp_connectors", "governance_audit_log",
+        "users", "organizations", "org_members", "configuration_definitions",
+        "configuration_bundle_definitions", "configuration_entries",
+        "secret_records", "governance_audit_log",
     ):
-        conn.execute(f"ALTER TABLE {table} OWNER TO everydayai_owner")
+        conn.execute(f"ALTER TABLE {table} OWNER TO everydayai")
+    conn.execute(
+        "ALTER TABLE organization_mcp_connectors OWNER TO everydayai_owner"
+    )
+    conn.execute(
+        """ALTER TABLE governance_audit_log ENABLE ROW LEVEL SECURITY;
+           ALTER TABLE governance_audit_log FORCE ROW LEVEL SECURITY;
+           CREATE POLICY governance_audit_owner_only ON governance_audit_log
+             TO everydayai_owner USING (current_user = 'everydayai_owner')
+             WITH CHECK (current_user = 'everydayai_owner')"""
+    )
     conn.execute("REVOKE ALL ON FUNCTION get_org_mcp_connector_state(uuid,text) FROM PUBLIC")
     conn.execute("GRANT EXECUTE ON FUNCTION get_org_mcp_connector_state(uuid,text) TO everydayai_runtime")
     conn.execute("REVOKE ALL ON FUNCTION set_org_configuration(uuid,text,text,jsonb,jsonb,bigint) FROM PUBLIC")
@@ -144,6 +152,16 @@ def test_application_facades_recheck_scope_and_admin_without_broad_grants(databa
         'get_org_mcp_connector_state(uuid,text)', 'EXECUTE')""").fetchone()[0]
     assert not conn.execute("""SELECT has_function_privilege('everydayai',
         'set_org_configuration(uuid,text,text,jsonb,jsonb,bigint)', 'EXECUTE')""").fetchone()[0]
+    assert conn.execute(
+        "SELECT has_table_privilege('everydayai_owner', 'governance_audit_log', 'INSERT')"
+    ).fetchone()[0]
+    assert not conn.execute(
+        "SELECT has_table_privilege('everydayai_owner', 'governance_audit_log', 'SELECT')"
+    ).fetchone()[0]
+    assert conn.execute(
+        """SELECT pg_get_userbyid(proowner) = 'everydayai_owner'
+             FROM pg_proc WHERE oid = 'api_set_org_mcp_connector_credential(uuid,text,text,jsonb,jsonb,bigint)'::regprocedure"""
+    ).fetchone()[0]
 
     conn.execute("SET SESSION AUTHORIZATION everydayai")
     set_scope(conn, admin, org)
