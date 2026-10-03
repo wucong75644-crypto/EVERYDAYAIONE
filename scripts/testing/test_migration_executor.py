@@ -49,19 +49,36 @@ class MigrationExecutorTests(unittest.TestCase):
         self.assertIn("sudo", command)
         self.assertEqual(seen["kwargs"], {"check": True, "capture_output": True, "text": True})
 
-    def test_owner_role_preflight_uses_local_admin_and_owner_role(self):
+    def test_role_preflight_covers_existing_migration_owners(self):
         seen = []
 
         def fake_run(command, **kwargs):
             seen.append((command, kwargs))
             return type("Result", (), {"stdout": ""})()
 
-        executor.verify_owner_role("target-db", run=fake_run)
+        executor.verify_migration_roles("target-db", run=fake_run)
         command, kwargs = seen[0]
         self.assertEqual(command[:4], ["sudo", "-n", "-u", "postgres"])
         self.assertEqual(command[command.index("-d") + 1], "target-db")
-        self.assertIn("SET ROLE everydayai_owner; RESET ROLE;", command)
+        self.assertIn("SET ROLE everydayai_owner; RESET ROLE;", command[-1])
+        self.assertIn("SET ROLE everydayai; RESET ROLE;", command[-1])
         self.assertTrue(kwargs["check"])
+
+    def test_audit_table_owner_preflight_requires_existing_table_owner(self):
+        seen = []
+
+        def fake_run(command, **kwargs):
+            seen.append(command)
+            return type("Result", (), {"stdout": "everydayai\n"})()
+
+        executor.verify_audit_table_owner("target-db", run=fake_run)
+        self.assertEqual(seen[0][seen[0].index("-d") + 1], "target-db")
+        self.assertIn("public.tool_audit_log", seen[0][-1])
+        with self.assertRaisesRegex(ValueError, "MIGRATION_AUDIT_TABLE_OWNER_MISMATCH"):
+            executor.verify_audit_table_owner(
+                "target-db",
+                run=lambda *args, **kwargs: type("Result", (), {"stdout": "unexpected"})(),
+            )
 
     def test_release_preflight_runs_before_frontend_sync_and_migrations_run_as_owner(self):
         script = (SOURCE / "deploy/deploy.sh").read_text()
@@ -75,6 +92,8 @@ class MigrationExecutorTests(unittest.TestCase):
         self.assertLess(migration_as_owner, migration_transaction)
         self.assertLess(migration_transaction, migration_file)
         self.assertLess(migration_file, reset_and_record)
+        audit_migration = (SOURCE / "backend/migrations/267_mcp_tool_audit_columns.sql").read_text()
+        self.assertIn("SET LOCAL ROLE everydayai;", audit_migration)
 
 
 if __name__ == "__main__":

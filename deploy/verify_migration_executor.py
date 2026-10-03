@@ -34,13 +34,26 @@ def read_local_identity(database_name, run=subprocess.run):
     return (str(identity[0]), int(identity[1]), int(identity[2]))
 
 
-def verify_owner_role(database_name, run=subprocess.run):
+def verify_migration_roles(database_name, run=subprocess.run):
     run(
         ["sudo", "-n", "-u", "postgres", "psql", "-X", "-q", "-v",
          "ON_ERROR_STOP=1", "-d", database_name, "-c",
-         "SET ROLE everydayai_owner; RESET ROLE;"],
+         "SET ROLE everydayai_owner; RESET ROLE; "
+         "SET ROLE everydayai; RESET ROLE;"],
         check=True, capture_output=True, text=True,
     )
+
+
+def verify_audit_table_owner(database_name, run=subprocess.run):
+    result = run(
+        ["sudo", "-n", "-u", "postgres", "psql", "-X", "-q", "-A", "-t",
+         "-v", "ON_ERROR_STOP=1", "-d", database_name, "-c",
+         "SELECT pg_get_userbyid(relowner) FROM pg_class "
+         "WHERE oid = 'public.tool_audit_log'::regclass;"],
+        check=True, capture_output=True, text=True,
+    )
+    if result.stdout.strip() != "everydayai":
+        raise ValueError("MIGRATION_AUDIT_TABLE_OWNER_MISMATCH")
 
 
 def main():
@@ -64,7 +77,8 @@ def main():
     database_name = application_identity[0]
     local_identity = read_local_identity(database_name)
     verify_same_database_instance(application_identity, local_identity)
-    verify_owner_role(database_name)
+    verify_migration_roles(database_name)
+    verify_audit_table_owner(database_name)
     print("Migration executor database identity and owner role verified")
 
 
