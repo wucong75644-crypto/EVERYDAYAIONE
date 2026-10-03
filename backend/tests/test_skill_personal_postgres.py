@@ -139,9 +139,9 @@ def test_chat_personal_confirmation_publishes_only_after_hash_and_owner_checks(e
         package_row = conn.execute('''SELECT skill_key, owner_user_id FROM skill_packages WHERE id = %s''',
                                    (result['package_id'],)).fetchone()
         revision = conn.execute('''SELECT revision FROM skill_revisions
-            WHERE package_id = %s AND status = 'published' ''', (result['package_id'],)).fetchone()['revision']
-    package = PackageCreate(skill_key=package_row['skill_key'], source='chat', scope_kind='personal',
-                            owner_user_id=package_row['owner_user_id'])
+            WHERE package_id = %s AND status = 'published' ''', (result['package_id'],)).fetchone()[0]
+    package = PackageCreate(skill_key=package_row[0], source='chat', scope_kind='personal',
+                            owner_user_id=package_row[1])
     stored = Path(environment.config.skill_storage_root) / revision_path(package, revision)
     assert stored.is_file() and stored.read_text().endswith(content.body)
     replay = environment.service(org_id=environment.org).commit_chat_proposal(proposal_id=proposal_id, expected_version=1,
@@ -196,7 +196,9 @@ def test_chat_edit_confirmation_publishes_new_revision_of_owned_personal_skill(e
     assert updated.body == '保留原流程并补充新规则。'
     assert updated.catalog_metadata.triggers == ('新触发词',)
     assert updated.catalog_metadata.recommended_file_types == ('pdf',)
-    assert updated.template_variables == {'locale': {'type': 'string', 'source': 'execution_mode'}}
+    assert updated.template_variables['locale'].model_dump() == {
+        'type': 'string', 'source': 'execution_mode',
+    }
 
 
 def test_organization_can_close_ai_creation_and_publication_scopes(environment):
