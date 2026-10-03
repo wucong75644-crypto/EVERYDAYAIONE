@@ -421,15 +421,20 @@ class SkillRuntime:
                     await self.source.load_assets(candidate, validated, saved.loaded_asset_ids)
                     self._check_cancelled()
                 metadata = validated.catalog_metadata
-                declared_ceiling = (skill_tool_ceiling(
-                    metadata, self.platform_tool_names, self.platform_tool_names,
-                ) if metadata.required_capabilities or metadata.allowed_capabilities else
-                    self.platform_tool_names if metadata.tool_policy == 'platform' else
-                    frozenset(metadata.allowed_tool_names))
+                declared_ceiling = None
+                if metadata.required_capabilities or metadata.allowed_capabilities:
+                    declared_ceiling = skill_tool_ceiling(
+                        metadata, self.platform_tool_names, self.platform_tool_names,
+                    )
+                elif metadata.tool_policy == 'restricted':
+                    declared_ceiling = frozenset(metadata.allowed_tool_names)
+                if (declared_ceiling is not None
+                        and not saved.effective_allowed_tool_names <= declared_ceiling):
+                    raise SkillError("SKILL_REPLAY_TOOL_SCOPE_INVALID")
                 if metadata.required_capabilities:
                     skill_tool_ceiling(metadata, self.platform_tool_names, ceiling)
-                if not saved.effective_allowed_tool_names <= declared_ceiling:
-                    raise SkillError("SKILL_REPLAY_TOOL_SCOPE_INVALID")
+                # Platform policy has no Skill-level tool declaration. Its saved
+                # ceiling is narrowed below by the current host authorization.
                 if not checkpoint.effective_allowed_tool_names <= saved.effective_allowed_tool_names:
                     raise SkillError("SKILL_REPLAY_TOOL_SCOPE_INVALID")
                 # Preserve the saved ceiling even if deployment now offers more tools.
