@@ -22,6 +22,27 @@ export interface SkillCreationSettings {
   platform_submission_enabled: boolean;
 }
 
+export interface OrgMcpConnectorState {
+  org_id: string;
+  connector_id: 'test-readonly';
+  enabled: boolean;
+  state: 'disabled' | 'configured' | 'ready' | 'error' | string;
+  health_status: 'unknown' | 'configured' | 'ready' | 'error' | string;
+  last_checked_at?: string | null;
+  last_error_code?: string | null;
+  updated_at?: string | null;
+}
+
+export interface OrgMcpCredentialStatus {
+  configured: boolean;
+  version: number;
+}
+
+export interface OrgMcpConnectorResponse {
+  success: boolean;
+  data: OrgMcpConnectorState;
+}
+
 export interface OrgMember {
   user_id: string;
   nickname: string;
@@ -140,6 +161,50 @@ export async function updateSkillCreationSettings(
   orgId: string, data: SkillCreationSettings,
 ): Promise<{ success: boolean; data: SkillCreationSettings }> {
   return request({ method: 'PATCH', url: `/org/${orgId}/skill-settings`, data });
+}
+
+// ── MCP Connector 管理（固定平台白名单；凭证只写入，不读取）──
+
+export async function getOrgMcpConnectorStatus(orgId: string): Promise<OrgMcpConnectorResponse> {
+  return request({ method: 'GET', url: `/org/${orgId}/mcp-connectors/test-readonly` });
+}
+
+export async function getOrgMcpCredentialStatus(
+  orgId: string,
+): Promise<{ success: boolean; data: OrgMcpCredentialStatus }> {
+  return request({ method: 'GET', url: `/org/${orgId}/mcp-connectors/test-readonly/credential` });
+}
+
+export async function setOrgMcpCredential(
+  orgId: string, token: string,
+): Promise<{ success: boolean; data: OrgMcpCredentialStatus }> {
+  return request({
+    method: 'PUT', url: `/org/${orgId}/mcp-connectors/test-readonly/credential`, data: { token },
+  });
+}
+
+export async function revokeOrgMcpCredential(
+  orgId: string, expectedVersion: number,
+): Promise<{ success: boolean; data: OrgMcpCredentialStatus }> {
+  return request({
+    method: 'DELETE',
+    url: `/org/${orgId}/mcp-connectors/test-readonly/credential`,
+    params: { expected_version: expectedVersion },
+  });
+}
+
+export async function setOrgMcpConnectorEnabled(
+  orgId: string, enabled: boolean,
+): Promise<OrgMcpConnectorResponse> {
+  return request({
+    method: 'PUT', url: `/org/${orgId}/mcp-connectors/test-readonly`, data: { enabled },
+  });
+}
+
+export async function testOrgMcpConnector(
+  orgId: string,
+): Promise<OrgMcpConnectorResponse> {
+  return request({ method: 'POST', url: `/org/${orgId}/mcp-connectors/test-readonly/test` });
 }
 
 export async function setOrgConfig(

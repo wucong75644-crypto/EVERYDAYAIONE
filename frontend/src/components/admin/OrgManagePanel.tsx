@@ -22,6 +22,7 @@ import {
 } from '../../services/org';
 import AiConfigSection from './AiConfigSection';
 import { MemberAssignmentsSection } from './MemberAssignmentsSection';
+import McpConnectorSection from './McpConnectorSection';
 
 // ERP 凭证的 key 列表和中文标签
 const ERP_CONFIG_KEYS = [
@@ -33,10 +34,11 @@ const ERP_CONFIG_KEYS = [
 
 interface OrgManagePanelProps {
   orgId?: string;
+  allowMcpManagement?: boolean;
 }
 
-export default function OrgManagePanel({ orgId }: OrgManagePanelProps) {
-  type SubTab = 'erp' | 'wecom' | 'ai' | 'skills' | 'members' | 'assignments' | 'info';
+export default function OrgManagePanel({ orgId, allowMcpManagement = false }: OrgManagePanelProps) {
+  type SubTab = 'erp' | 'wecom' | 'ai' | 'mcp' | 'skills' | 'members' | 'assignments' | 'info';
   const [subTab, setSubTab] = useState<SubTab>('erp');
 
   if (!orgId) {
@@ -47,21 +49,26 @@ export default function OrgManagePanel({ orgId }: OrgManagePanelProps) {
     );
   }
 
+  const tabs: { key: SubTab; label: string }[] = [
+    { key: 'erp', label: 'ERP 凭证' },
+    { key: 'wecom', label: '企业微信' },
+    { key: 'ai', label: 'AI 配置' },
+    ...(allowMcpManagement ? [{ key: 'mcp' as SubTab, label: 'MCP Connector' }] : []),
+    { key: 'skills', label: 'Skill 权限' },
+    { key: 'members', label: '成员管理' },
+    { key: 'assignments', label: '部门职位' },
+    { key: 'info', label: '企业信息' },
+  ];
+
   return (
     <div className="space-y-4">
       {/* 子 Tab */}
       <div className="flex space-x-1 bg-hover rounded-lg p-1">
-        {([
-          { key: 'erp' as SubTab, label: 'ERP 凭证' },
-          { key: 'wecom' as SubTab, label: '企业微信' },
-          { key: 'ai' as SubTab, label: 'AI 配置' },
-          { key: 'skills' as SubTab, label: 'Skill 权限' },
-          { key: 'members' as SubTab, label: '成员管理' },
-          { key: 'assignments' as SubTab, label: '部门职位' },
-          { key: 'info' as SubTab, label: '企业信息' },
-        ]).map((tab) => (
+        {tabs.map((tab) => (
           <button
             key={tab.key}
+            type="button"
+            aria-pressed={subTab === tab.key}
             className={`flex-1 py-1.5 text-sm rounded-md transition-base ${
               subTab === tab.key
                 ? 'bg-surface-card text-text-primary shadow-sm'
@@ -77,6 +84,7 @@ export default function OrgManagePanel({ orgId }: OrgManagePanelProps) {
       {subTab === 'erp' && <ErpConfigSection orgId={orgId} />}
       {subTab === 'wecom' && <WecomConfigSection orgId={orgId} />}
       {subTab === 'ai' && <AiConfigSection orgId={orgId} />}
+      {subTab === 'mcp' && allowMcpManagement && <McpConnectorSection key={orgId} orgId={orgId} />}
       {subTab === 'skills' && <SkillCreationSettingsSection orgId={orgId} />}
       {subTab === 'members' && <MembersSection orgId={orgId} />}
       {subTab === 'assignments' && <MemberAssignmentsSection orgId={orgId} />}
