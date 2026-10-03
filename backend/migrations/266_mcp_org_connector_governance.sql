@@ -1,7 +1,11 @@
 -- 266: Organization activation and encrypted credentials for the fixed test MCP Connector.
 -- MCP tool access remains behind the global Feature Flag and the normal ToolPolicy.
 
-SET LOCAL ROLE everydayai_owner;
+-- The registry and referenced identity tables are legacy-owned by everydayai.
+-- Create the fixed registry rows and referenced table as their existing owner,
+-- then transfer the Connector table to everydayai_owner before defining its
+-- owner-only policy and SECURITY DEFINER API.
+SET LOCAL ROLE everydayai;
 
 INSERT INTO configuration_definitions(
     definition_version, config_key, contract_json, contract_hash, active
@@ -39,6 +43,9 @@ CREATE TABLE organization_mcp_connectors (
         'MCP_UNAVAILABLE', 'MCP_CANCELLED'
     ))
 );
+RESET ROLE;
+ALTER TABLE organization_mcp_connectors OWNER TO everydayai_owner;
+SET LOCAL ROLE everydayai_owner;
 COMMENT ON TABLE organization_mcp_connectors IS
     'Organization enablement and token-free health facts for platform-reviewed MCP Connectors';
 
@@ -49,7 +56,7 @@ CREATE POLICY organization_mcp_connectors_owner_only ON organization_mcp_connect
     USING (current_user = 'everydayai_owner')
     WITH CHECK (current_user = 'everydayai_owner');
 REVOKE ALL ON TABLE organization_mcp_connectors
-    FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime,
+    FROM PUBLIC, everydayai, everydayai_runtime, everydayai_wecom_runtime,
          everydayai_worker, everydayai_sync;
 
 CREATE OR REPLACE FUNCTION get_mcp_test_readonly_bundle()

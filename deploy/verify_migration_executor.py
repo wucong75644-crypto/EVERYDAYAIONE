@@ -6,6 +6,15 @@ from pathlib import Path
 import subprocess
 
 
+EXPECTED_EXISTING_OBJECT_OWNERS = {
+    "configuration_definitions": "everydayai",
+    "configuration_bundle_definitions": "everydayai",
+    "organizations": "everydayai",
+    "users": "everydayai",
+    "tool_audit_log": "everydayai",
+}
+
+
 IDENTITY_SQL = """SELECT json_build_array(
     current_database(), database.oid,
     floor(extract(epoch FROM pg_postmaster_start_time()))::bigint
@@ -44,16 +53,22 @@ def verify_migration_roles(database_name, run=subprocess.run):
     )
 
 
-def verify_audit_table_owner(database_name, run=subprocess.run):
+def verify_existing_object_owners(database_name, run=subprocess.run):
     result = run(
         ["sudo", "-n", "-u", "postgres", "psql", "-X", "-q", "-A", "-t",
          "-v", "ON_ERROR_STOP=1", "-d", database_name, "-c",
-         "SELECT pg_get_userbyid(relowner) FROM pg_class "
-         "WHERE oid = 'public.tool_audit_log'::regclass;"],
+         "SELECT json_object_agg(relname, owner_name)::text FROM ("
+         "SELECT relation.relname, pg_get_userbyid(relation.relowner) AS owner_name "
+         "FROM pg_class AS relation WHERE relation.oid IN ("
+         "'public.configuration_definitions'::regclass, "
+         "'public.configuration_bundle_definitions'::regclass, "
+         "'public.organizations'::regclass, 'public.users'::regclass, "
+         "'public.tool_audit_log'::regclass)) AS owners;"],
         check=True, capture_output=True, text=True,
     )
-    if result.stdout.strip() != "everydayai":
-        raise ValueError("MIGRATION_AUDIT_TABLE_OWNER_MISMATCH")
+    actual = json.loads(result.stdout.strip())
+    if actual != EXPECTED_EXISTING_OBJECT_OWNERS:
+        raise ValueError("MIGRATION_EXISTING_OBJECT_OWNER_MISMATCH")
 
 
 def main():
@@ -78,8 +93,8 @@ def main():
     local_identity = read_local_identity(database_name)
     verify_same_database_instance(application_identity, local_identity)
     verify_migration_roles(database_name)
-    verify_audit_table_owner(database_name)
-    print("Migration executor database identity and owner role verified")
+    verify_existing_object_owners(database_name)
+    print("Migration executor database identity and object owners verified")
 
 
 if __name__ == "__main__":

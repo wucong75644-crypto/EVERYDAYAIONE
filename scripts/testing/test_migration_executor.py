@@ -64,20 +64,21 @@ class MigrationExecutorTests(unittest.TestCase):
         self.assertIn("SET ROLE everydayai; RESET ROLE;", command[-1])
         self.assertTrue(kwargs["check"])
 
-    def test_audit_table_owner_preflight_requires_existing_table_owner(self):
+    def test_existing_object_owner_preflight_matches_production_contract(self):
         seen = []
+        expected = dict(executor.EXPECTED_EXISTING_OBJECT_OWNERS)
 
         def fake_run(command, **kwargs):
             seen.append(command)
-            return type("Result", (), {"stdout": "everydayai\n"})()
+            return type("Result", (), {"stdout": json.dumps(expected) + "\n"})()
 
-        executor.verify_audit_table_owner("target-db", run=fake_run)
+        executor.verify_existing_object_owners("target-db", run=fake_run)
         self.assertEqual(seen[0][seen[0].index("-d") + 1], "target-db")
-        self.assertIn("public.tool_audit_log", seen[0][-1])
-        with self.assertRaisesRegex(ValueError, "MIGRATION_AUDIT_TABLE_OWNER_MISMATCH"):
-            executor.verify_audit_table_owner(
+        self.assertIn("public.configuration_definitions", seen[0][-1])
+        with self.assertRaisesRegex(ValueError, "MIGRATION_EXISTING_OBJECT_OWNER_MISMATCH"):
+            executor.verify_existing_object_owners(
                 "target-db",
-                run=lambda *args, **kwargs: type("Result", (), {"stdout": "unexpected"})(),
+                run=lambda *args, **kwargs: type("Result", (), {"stdout": "{}"})(),
             )
 
     def test_release_preflight_runs_before_frontend_sync_and_migrations_run_as_owner(self):
@@ -93,6 +94,14 @@ class MigrationExecutorTests(unittest.TestCase):
         self.assertLess(migration_transaction, migration_file)
         self.assertLess(migration_file, reset_and_record)
         audit_migration = (SOURCE / "backend/migrations/267_mcp_tool_audit_columns.sql").read_text()
+        organization_migration = (
+            SOURCE / "backend/migrations/266_mcp_org_connector_governance.sql"
+        ).read_text()
+        self.assertIn("SET LOCAL ROLE everydayai;", organization_migration)
+        self.assertIn(
+            "ALTER TABLE organization_mcp_connectors OWNER TO everydayai_owner;",
+            organization_migration,
+        )
         self.assertIn("SET LOCAL ROLE everydayai;", audit_migration)
 
 
