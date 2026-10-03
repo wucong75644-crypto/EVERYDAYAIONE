@@ -30,6 +30,7 @@ def chat_context(handler, *, user_id, conversation_id, task_id, permission_mode,
     from types import SimpleNamespace
     scope = getattr(handler, "execution_scope", None)
     return executor_context(SimpleNamespace(
+        db=handler.db,
         user_id=user_id, workspace_user_id=getattr(handler, "_workspace_user_id", user_id),
         org_id=handler.org_id, conversation_id=conversation_id, task_id=task_id,
         context_scope=getattr(scope, "context_scope", "user"),
