@@ -233,6 +233,9 @@ class SkillAuthoring:
                 from services.skills.chat_creation import content_digest
                 if content_digest(content) != content_sha256:
                     raise SkillError('SKILL_CANDIDATE_HASH_MISMATCH')
+                if (proposal.get('operation', 'create') == 'update'
+                        and (target_scope != 'personal' or proposal.get('target_scope') != 'personal')):
+                    raise SkillError('SKILL_PROPOSAL_SCOPE_CONFLICT')
                 target_org_id = None
                 if target_scope == 'org':
                     target_org_id = proposal['org_id']
@@ -252,6 +255,81 @@ class SkillAuthoring:
                     return {'proposal_id': str(proposal_id), 'status': 'awaiting_review',
                             'target_scope': 'platform', 'target_org_id': None,
                             'package_id': None, 'result': result, 'replayed': False}
+
+                if proposal.get('operation', 'create') == 'update':
+                    if (target_scope != 'personal' or proposal['target_scope'] != 'personal'
+                            or not proposal.get('target_package_id')
+                            or not proposal.get('target_revision')
+                            or proposal.get('target_draft_version') is None):
+                        raise SkillError('SKILL_PROPOSAL_SCOPE_CONFLICT')
+                    package_id = proposal['target_package_id']
+                    package = self._package(cursor, package_id, owned=True)
+                    if package.scope_kind != 'personal' or str(package.owner_user_id) != str(actor_id):
+                        raise SkillError('SKILL_PACKAGE_UNAVAILABLE')
+                    cursor.execute('''SELECT * FROM public.skill_revisions WHERE package_id = %s
+                        AND status = 'published' ORDER BY created_at DESC, id DESC LIMIT 1 FOR UPDATE''',
+                        (package_id,))
+                    saved_row = cursor.fetchone()
+                    if not saved_row or saved_row['revision'] != proposal['target_revision']:
+                        raise SkillError('SKILL_PROPOSAL_STALE')
+                    saved_revision = SkillRevision.model_validate(saved_row)
+                    draft = self._draft(cursor, package_id)
+                    current_draft_version = int(draft['version']) if draft else 0
+                    if current_draft_version != int(proposal['target_draft_version']):
+                        raise SkillError('SKILL_PROPOSAL_STALE')
+                    if draft and draft['status'] != 'published':
+                        raise SkillError('SKILL_EDIT_DRAFT_CONFLICT')
+
+                    base_content = self._revision_content_for_edit(package, saved_revision)
+                    edited_content = DraftContent.model_validate(proposal['content'])
+                    metadata = base_content.catalog_metadata.model_copy(update={
+                        'name': edited_content.catalog_metadata.name,
+                        'triggers': edited_content.catalog_metadata.triggers,
+                        'task_modes': edited_content.catalog_metadata.task_modes,
+                        'model_selectable': False,
+                        'execution_modes': ('interactive',),
+                        'agent_domains': ('general',),
+                        'conversation_scopes': ('user',),
+                        'tool_policy': 'platform',
+                        'allowed_tool_names': (),
+                        'required_permissions': (),
+                        'required_feature_flags': (),
+                        'actor_user_ids': (),
+                    })
+                    updated_content = new_draft_content(DraftContent(
+                        description=edited_content.description,
+                        body=edited_content.body,
+                        catalog_metadata=metadata,
+                        assets=base_content.assets,
+                        template_variables=base_content.template_variables,
+                    ))
+                    if draft:
+                        cursor.execute('''UPDATE public.skill_drafts SET content = %s, revision = %s,
+                            status = 'draft', approved_by = NULL, approved_sha256 = NULL, approved_at = NULL,
+                            version = version + 1 WHERE package_id = %s RETURNING *''',
+                            (Jsonb(updated_content.model_dump(mode='json')), 'v' + uuid4().hex, package_id))
+                        draft = cursor.fetchone()
+                    else:
+                        draft = self._insert_draft(cursor, package_id, updated_content)
+                    publication, _ = reviewed_document(package, draft['revision'], updated_content)
+                    cursor.execute("UPDATE public.skill_drafts SET status = 'in_review', version = version + 1 WHERE package_id = %s",
+                                   (package_id,))
+                    cursor.execute('''UPDATE public.skill_drafts SET approved_by = %s::uuid,
+                        approved_sha256 = %s, approved_at = now(), version = version + 1
+                        WHERE package_id = %s RETURNING *''',
+                        (actor_id, publication.content_sha256, package_id))
+                    self._review_or_publish(cursor, package, cursor.fetchone(), 'publish')
+                    result = {'message': '个人 Skill 已更新，原有版本保留。',
+                              'package_id': str(package_id), 'status': 'published'}
+                    cursor.execute('''UPDATE public.skill_chat_proposals SET status = 'committed',
+                        package_id = %s, scope_confirmed_by = %s::uuid, scope_selected_at = now(),
+                        decision_by = %s::uuid, decision_at = now(), updated_at = now(), result = %s
+                        WHERE id = %s::uuid''',
+                        (package_id, actor_id, actor_id, Jsonb(result), proposal_id))
+                    return {'proposal_id': str(proposal_id), 'status': 'committed',
+                            'target_scope': 'personal', 'target_org_id': None,
+                            'package_id': str(package_id), 'result': result, 'replayed': False,
+                            'operation': 'update'}
 
                 package_id = uuid4()
                 if target_scope == 'personal':
@@ -464,6 +542,39 @@ class SkillAuthoring:
                                    catalog_metadata=validated.catalog_metadata,
                                    asset_summaries=public_assets(validated.resources),
                                    template_variables=validated.resources.template_variables)
+
+    def read_revision_for_chat_edit(self, package_id, revision):
+        """Read an owned published version as editable data, preserving its resources."""
+        with self._transaction('read') as cursor:
+            package = self._package(cursor, package_id, owned=True)
+            if package.scope_kind != 'personal':
+                raise SkillError('SKILL_PERSONAL_TARGET_REQUIRED')
+            cursor.execute('''SELECT * FROM public.skill_revisions
+                WHERE package_id = %s AND revision = %s AND status = 'published' ''',
+                (package_id, revision))
+            row = cursor.fetchone()
+            if not row:
+                raise SkillError('SKILL_REVISION_UNAVAILABLE')
+            saved = SkillRevision.model_validate(row)
+            return {'revision': saved.revision, 'content': self._revision_content_for_edit(package, saved)}
+
+    def _revision_content_for_edit(self, package, saved):
+        validated = self._storage().validate(package, PublishRevision(
+            revision=saved.revision, content_sha256=saved.content_sha256,
+            body_sha256=saved.body_sha256), nas_path=saved.nas_path)
+        storage = self._storage()
+        asset_text = storage.read_assets(validated, [asset.id for asset in validated.resources.assets])
+        return DraftContent(
+            description=validated.summary,
+            body=validated.body,
+            catalog_metadata=validated.catalog_metadata,
+            assets=tuple(AssetDraft(
+                **asset.model_dump(exclude={'path', 'sha256', 'bytes', 'source'}),
+                source=storage.read_source(validated, asset.id),
+                content=asset_text[asset.id],
+            ) for asset in validated.resources.assets),
+            template_variables=validated.resources.template_variables,
+        )
 
     def save(self, package_id, data):
         with self._transaction('save') as cursor:

@@ -51,6 +51,9 @@ export interface SkillTrialHistory {
 export interface SkillChatProposal {
   id: string;
   skill_key: string;
+  operation?: 'create' | 'update';
+  target_package_id?: string | null;
+  target_revision?: string | null;
   content: { description: string; body: string; catalog_metadata?: Record<string, unknown> };
   content_sha256: string;
   version: number;

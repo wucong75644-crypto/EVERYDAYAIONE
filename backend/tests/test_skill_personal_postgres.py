@@ -60,7 +60,8 @@ def environment(postgres_socket, tmp_path):
                      (conversation, actor, org, str(actor)))
         for migration in ('256_skill_catalog.sql', '257_skill_catalog_metadata.sql', '259_skill_authoring.sql',
                           '260_skill_reenable.sql', '261_skill_safe_removal.sql', '263_conversation_skill_bindings.sql',
-                          '265_skill_recommendations.sql', '267_skill_personal_ownership.sql'):
+                          '265_skill_recommendations.sql', '267_skill_personal_ownership.sql',
+                          '268_skill_chat_edit.sql'):
             conn.execute((MIGRATIONS / migration).read_text())
     root = tmp_path / 'nas'; root.mkdir()
     config = settings(skill_catalog_enabled=True, skill_chat_creation_enabled=True,
@@ -151,6 +152,51 @@ def test_chat_personal_confirmation_publishes_only_after_hash_and_owner_checks(e
     with pytest.raises(ValueError, match='SKILL_PROPOSAL_STALE'):
         environment.service(org_id=environment.org).commit_chat_proposal(proposal_id=stale_id, expected_version=2,
             content_sha256=content_digest(stale_content), target_scope='personal')
+
+
+def test_chat_edit_confirmation_publishes_new_revision_of_owned_personal_skill(environment):
+    service = environment.service()
+    package_id = service.create(CreateSkill(skill_key='chat-edit-target', content=DraftContent(
+        description='旧用途', body='旧规则。', catalog_metadata={
+            'name': '聊天编辑目标', 'triggers': ['原触发词'], 'recommended_file_types': ['pdf'],
+        }, template_variables={'locale': {'type': 'string', 'source': 'execution_mode'}},
+    )))['package_id']
+    published = service.transition(package_id, TransitionDraft(expected_version=1, action='publish_private'))
+    old_revision = published['revisions'][0]['revision']
+
+    edited = ChatSkillCandidate(
+        name='聊天编辑目标', description='新用途', body='保留原流程并补充新规则。',
+        triggers=['新触发词'], target_package_id=package_id,
+        expected_target_revision=old_revision, expected_target_draft_version=published['draft']['version'],
+    ).draft_content()
+    proposal_id = uuid4()
+    with environment.pool.connection(privileged=True) as conn:
+        conn.execute('''INSERT INTO skill_chat_proposals
+            (id, actor_user_id, conversation_id, org_id, idempotency_key, skill_key, content,
+             content_sha256, operation, target_scope, target_package_id, target_revision, target_draft_version)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'update', 'personal', %s, %s, %s)''',
+            (proposal_id, environment.actor, environment.conversation, environment.org,
+             'chat-edit:' + str(proposal_id), 'chat-edit-target',
+             Jsonb(edited.model_dump(mode='json')), content_digest(edited), package_id,
+             old_revision, published['draft']['version']))
+
+    result = environment.service(org_id=environment.org).commit_chat_proposal(
+        proposal_id=proposal_id, expected_version=1, content_sha256=content_digest(edited),
+        target_scope='personal',
+    )
+
+    assert result['status'] == 'committed' and result['operation'] == 'update'
+    assert result['package_id'] == str(package_id)
+    detail = service.detail(package_id)
+    assert detail['scope_kind'] == 'personal'
+    assert len(detail['revisions']) == 2
+    assert {revision['revision'] for revision in detail['revisions']} >= {old_revision}
+    assert detail['available_revision'] != old_revision
+    updated = service.read_revision(package_id, detail['available_revision'])
+    assert updated.body == '保留原流程并补充新规则。'
+    assert updated.catalog_metadata.triggers == ('新触发词',)
+    assert updated.catalog_metadata.recommended_file_types == ('pdf',)
+    assert updated.template_variables == {'locale': {'type': 'string', 'source': 'execution_mode'}}
 
 
 def test_organization_can_close_ai_creation_and_publication_scopes(environment):

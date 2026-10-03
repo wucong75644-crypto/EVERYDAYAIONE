@@ -40,4 +40,28 @@ describe('SkillChatProposalCard', () => {
     await waitFor(() => expect(skillCreationService.getChatProposal).toHaveBeenCalledTimes(2));
     expect(screen.getByText('核对完整内容，选择 Skill 的保存范围。确认前不会保存或发布。')).toBeInTheDocument();
   });
+
+  it('confirms an edit as a personal update without offering another publication scope', async () => {
+    vi.mocked(skillCreationService.getChatProposal).mockResolvedValue({
+      ...makeProposal(), operation: 'update', target_package_id: 'package-1',
+      target_revision: 'v3', available_targets: { personal: true, org: false, platform: false },
+    });
+    vi.mocked(skillCreationService.confirmChatProposal).mockResolvedValue({
+      proposal_id: 'proposal-1', status: 'committed', target_scope: 'personal',
+      result: { message: '个人 Skill 已更新，原有版本保留。' }, replayed: false,
+    });
+    render(<SkillChatProposalCard proposalId="proposal-1" />);
+
+    expect(await screen.findByText('修改目标：个人 Skill · 仅你本人')).toBeInTheDocument();
+    expect(screen.queryByText('保存范围')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '确认发布更新' }));
+
+    await waitFor(() => expect(skillCreationService.confirmChatProposal).toHaveBeenCalledWith(
+      'proposal-1', {
+        expected_version: 1, content_sha256: 'a'.repeat(64), target_scope: 'personal',
+      },
+    ));
+    expect(await screen.findByText('个人 Skill 已更新，原有版本保留。')).toBeInTheDocument();
+    expect(screen.getByText('已更新')).toBeInTheDocument();
+  });
 });

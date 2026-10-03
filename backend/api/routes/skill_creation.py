@@ -79,7 +79,8 @@ def get_chat_proposal(proposal_id: UUID, actor_id: CurrentUserId, user: CurrentU
     repo = authoring.repository
     with repo._cursor() as cursor:
         cursor.execute('''SELECT id, conversation_id, org_id, skill_key, content, content_sha256,
-            version, status, target_scope, target_org_id, result, source_message_refs, source_scope,
+            version, status, operation, target_package_id, target_revision, target_scope,
+            target_org_id, result, source_message_refs, source_scope,
             feedback_rating, feedback_text, feedback_at, scope_confirmed_by, scope_selected_at,
             decision_by, decision_at, decision_reason, expires_at, created_at
             FROM public.skill_chat_proposals WHERE id = %s::uuid AND actor_user_id = %s::uuid''',
@@ -95,13 +96,16 @@ def get_chat_proposal(proposal_id: UUID, actor_id: CurrentUserId, user: CurrentU
             can_request_org = bool(cursor.fetchone())
     target_policy = for_organization(db, str(row['org_id']) if row['org_id'] else None)
     return {'success': True, 'data': {
-        **{key: str(row[key]) if key in ('id', 'conversation_id', 'org_id', 'target_org_id') and row[key] else row[key]
+        **{key: str(row[key]) if key in ('id', 'conversation_id', 'org_id', 'target_org_id', 'target_package_id') and row[key] else row[key]
            for key in ('id', 'conversation_id', 'org_id', 'skill_key', 'content', 'content_sha256', 'version',
-                       'status', 'target_scope', 'target_org_id', 'result', 'source_message_refs',
+                       'status', 'operation', 'target_package_id', 'target_revision', 'target_scope',
+                       'target_org_id', 'result', 'source_message_refs',
                        'source_scope', 'feedback_rating', 'feedback_text', 'feedback_at',
                        'scope_confirmed_by', 'scope_selected_at', 'decision_by', 'decision_at',
                        'decision_reason', 'expires_at', 'created_at')},
-        'available_targets': target_policy.as_targets(has_org_membership=can_request_org),
+        'available_targets': ({'personal': True, 'org': False, 'platform': False}
+                              if row.get('operation') == 'update'
+                              else target_policy.as_targets(has_org_membership=can_request_org)),
     }}
 
 
@@ -131,7 +135,8 @@ def confirm_chat_proposal(proposal_id: UUID, data: ConfirmChatProposal,
         code = str(error)
         if code in ('SKILL_PROPOSAL_UNAVAILABLE', 'SKILL_CONVERSATION_UNAVAILABLE'):
             raise HTTPException(404, 'Skill 候选或会话不可用') from None
-        if code in ('SKILL_PROPOSAL_STALE', 'SKILL_PROPOSAL_SCOPE_CONFLICT', 'SKILL_KEY_EXISTS'):
+        if code in ('SKILL_PROPOSAL_STALE', 'SKILL_PROPOSAL_SCOPE_CONFLICT',
+                    'SKILL_EDIT_DRAFT_CONFLICT', 'SKILL_KEY_EXISTS'):
             raise HTTPException(409, code) from None
         if code in ('SKILL_ORG_MEMBERSHIP_REQUIRED', 'SKILL_ACTOR_UNAVAILABLE',
                     'SKILL_CHAT_CREATION_DISABLED', 'SKILL_ORG_SUBMISSION_DISABLED',
