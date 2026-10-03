@@ -30,7 +30,7 @@ def chat_context(handler, *, user_id, conversation_id, task_id, permission_mode,
     from types import SimpleNamespace
     scope = getattr(handler, "execution_scope", None)
     return executor_context(SimpleNamespace(
-        db=handler.db,
+        db=getattr(handler, "db", None),
         user_id=user_id, workspace_user_id=getattr(handler, "_workspace_user_id", user_id),
         org_id=handler.org_id, conversation_id=conversation_id, task_id=task_id,
         context_scope=getattr(scope, "context_scope", "user"),
@@ -56,10 +56,11 @@ def executor_context(executor, *, call_id=None) -> ToolContext:
     # Connector access is separately organization-scoped. A missing row,
     # mismatched database scope, or failed status read always disables it.
     from .mcp_org import connector_is_enabled
+    database = getattr(executor, "db", None)
     feature_flags["mcp_connector_test_readonly_enabled"] = (
-        feature_flags["mcp_connectors_enabled"]
+        feature_flags["mcp_connectors_enabled"] and database is not None
         and connector_is_enabled(
-            executor.db, executor.org_id, actor_user_id=executor.user_id,
+            database, executor.org_id, actor_user_id=executor.user_id,
         )
     )
     return ToolContext(
