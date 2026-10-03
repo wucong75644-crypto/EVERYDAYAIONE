@@ -59,10 +59,10 @@ class LegacyAdvertisement:
                 and context.permission_mode in {"ask", "auto"}
                 and flags.get("skill_catalog_enabled") is True
                 and flags.get("skill_chat_creation_enabled") is True):
-            # Candidate preparation is available to active members; selecting
-            # an organization or platform target is separately confirmed and
-            # re-authorized by the proposal API. Keep it out of planners and
-            # scheduled work.
+            # Chat Skill discovery and proposals are available in interactive
+            # personal context only. Organization/platform targets still use
+            # the separately authorized proposal flow; keep these tools out
+            # of planners and scheduled work.
             from .catalog import build_tool_catalog
             initial |= frozenset(
                 spec.name for spec in build_tool_catalog().specs()

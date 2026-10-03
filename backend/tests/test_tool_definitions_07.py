@@ -79,7 +79,9 @@ def test_complete_helpers_handlers_and_schema_order(catalog, org):
     from services.tool_executor import ToolExecutor
     expected = BASELINE['helpers'][str(org)]
     view = 'helpers/' + str(org) + '/'
-    chat_skill_tools = {'prepare_skill_draft', 'get_personal_skill_for_edit'}
+    chat_skill_tools = {
+        'list_personal_skills_for_edit', 'prepare_skill_draft', 'get_personal_skill_for_edit',
+    }
     legacy_only = lambda schemas: [schema for schema in schemas
                                    if schema['function']['name'] not in chat_skill_tools]
     assert legacy_only(get_chat_tools(org)) == original_schemas(expected['chat'], view + 'chat')
@@ -126,7 +128,8 @@ def test_old_imports_signatures_and_constant_values(module):
                 if tool_name != 'get_conversation_context'
             }
             expected.update({'route_to_chat': 'erp', 'prepare_skill_draft': 'general',
-                             'get_personal_skill_for_edit': 'general'})
+                             'get_personal_skill_for_edit': 'general',
+                             'list_personal_skills_for_edit': 'general'})
             assert value == expected
             continue
         if module == 'agent_tools' and name == 'SMART_CONFIG':
@@ -354,9 +357,9 @@ importlib.import_module(sys.argv[1])
 from config.chat_tools import get_chat_tools
 from services.tools import build_tool_catalog
 from services.tool_executor import ToolExecutor
-assert len(get_chat_tools('org-a')) == 35
-assert len(build_tool_catalog().specs()) == 37
-assert len(ToolExecutor(None, 'actor-a', 'c1', 'org-a')._handlers) == 37
+assert len(get_chat_tools('org-a')) == 36
+assert len(build_tool_catalog().specs()) == 38
+assert len(ToolExecutor(None, 'actor-a', 'c1', 'org-a')._handlers) == 38
 '''
     run = subprocess.run([sys.executable, '-c', script, first], text=True, capture_output=True, timeout=30)
     assert run.returncode == 0, run.stderr

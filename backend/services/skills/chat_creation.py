@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from psycopg.types.json import Jsonb
 
 from core.db_scope import DatabaseAccessKind, DatabaseScope, ScopedDatabaseClient
@@ -74,7 +74,21 @@ class ChatSkillCandidate(DraftContent):
 
 class PersonalSkillEditRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    name: str = Field(min_length=1, max_length=200)
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    skill_key: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @model_validator(mode='after')
+    def require_exactly_one_target(self):
+        if (self.name is None) == (self.skill_key is None):
+            raise ValueError('Provide exactly one of name or skill_key')
+        return self
+
+
+class PersonalSkillQueryRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    query: str = Field(default='', max_length=200)
+    limit: int = Field(default=20, ge=1, le=50)
+    offset: int = Field(default=0, ge=0, le=10_000)
 
 
 def _canonical(value) -> bytes:
@@ -164,15 +178,16 @@ def _source_message_refs(db, *, actor_id: str, org_id: str | None, conversation_
     return refs
 
 
-def read_personal_skill_for_edit(db, settings, *, actor_id: str, org_id: str | None,
-                                conversation_id: str | None, arguments: dict) -> AgentResult:
-    """Resolve one explicitly named personal Skill without exposing a directory."""
+def _personal_skill_authoring(db, settings, *, actor_id: str, org_id: str | None,
+                              conversation_id: str | None) -> SkillAuthoring:
+    if settings is None:
+        from core.config import get_settings
+        settings = get_settings()
     if (settings.skill_catalog_enabled is not True
             or getattr(settings, 'skill_chat_creation_enabled', False) is not True):
         raise PermissionError('SKILL_CHAT_CREATION_DISABLED')
     if not conversation_id:
         raise PermissionError('SKILL_CONVERSATION_REQUIRED')
-    request = PersonalSkillEditRequest.model_validate(arguments)
     actor = db.table('users').select('status').eq('id', actor_id).maybe_single().execute()
     if not actor or not actor.data or actor.data.get('status') != 'active':
         raise PermissionError('SKILL_ACTOR_UNAVAILABLE')
@@ -198,12 +213,61 @@ def read_personal_skill_for_edit(db, settings, *, actor_id: str, org_id: str | N
         actor_user_id=actor_id, org_id=org_id, access_kind=DatabaseAccessKind.RUNTIME_ADMIN,
         request_id=str(uuid4()),
     ), owner_scope='personal')
-    if settings is None:
-        from core.config import get_settings
-        settings = get_settings()
-    authoring = SkillAuthoring(repository, settings)
+    return SkillAuthoring(repository, settings)
+
+
+def list_personal_skills_for_edit(db, settings, *, actor_id: str, org_id: str | None,
+                                 conversation_id: str | None, arguments: dict) -> AgentResult:
+    """Return a bounded metadata-only directory for the current user's personal Skills."""
+    request = PersonalSkillQueryRequest.model_validate(arguments)
+    authoring = _personal_skill_authoring(
+        db, settings, actor_id=actor_id, org_id=org_id, conversation_id=conversation_id,
+    )
+    query = request.query.strip().casefold()
+    matches = []
+    for item in authoring.list():
+        if item.get('scope_kind') != 'personal':
+            continue
+        if query and not any(query in str(item.get(field) or '').casefold()
+                             for field in ('name', 'skill_key', 'description', 'working_description')):
+            continue
+        matches.append(item)
+
+    page = matches[request.offset:request.offset + request.limit]
+    skills = [{
+        'skill_key': str(item.get('skill_key') or ''),
+        'name': str(item.get('name') or item.get('skill_key') or ''),
+        'description': str(item.get('description') or item.get('working_description') or ''),
+        'status': str(item.get('status') or 'unknown'),
+        'revision': item.get('available_revision'),
+        'can_edit_in_chat': (item.get('status') == 'published'
+                             and bool(item.get('available_revision'))),
+    } for item in page]
+    data = {
+        'skills': skills,
+        'total': len(matches),
+        'offset': request.offset,
+        'limit': request.limit,
+        'has_more': request.offset + len(page) < len(matches),
+    }
+    summary = ('当前用户没有个人 Skill。' if not matches else
+               '以下是当前用户本人名下的 Skill 摘要；不包含正文，且不代表用户已授权修改。')
+    return AgentResult(
+        summary=summary + '\n' + json.dumps(data, ensure_ascii=False, separators=(',', ':')),
+        status='empty' if not matches else 'success',
+    )
+
+
+def read_personal_skill_for_edit(db, settings, *, actor_id: str, org_id: str | None,
+                                conversation_id: str | None, arguments: dict) -> AgentResult:
+    """Resolve one explicitly selected personal Skill without exposing other scopes."""
+    request = PersonalSkillEditRequest.model_validate(arguments)
+    authoring = _personal_skill_authoring(
+        db, settings, actor_id=actor_id, org_id=org_id, conversation_id=conversation_id,
+    )
     matches = [item for item in authoring.list()
-               if item.get('name') == request.name
+               if ((item.get('name') == request.name if request.name is not None
+                    else item.get('skill_key') == request.skill_key))
                and item.get('scope_kind') == 'personal'
                and item.get('status') == 'published']
     if not matches:
