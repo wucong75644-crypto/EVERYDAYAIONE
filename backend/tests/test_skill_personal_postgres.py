@@ -15,6 +15,7 @@ from services.skills.authoring import SkillAuthoring
 from services.skills.authoring_contracts import CreateSkill, DraftContent, TransitionDraft
 from services.skills.binding_repository import SkillBindingRepository
 from services.skills.chat_creation import ChatSkillCandidate, content_digest
+from services.skills.contracts import PackageCreate, revision_path
 from services.skills.repository import SkillRepository
 from services.skills.resolver import SkillResolutionContext, SkillResolver
 from tests.test_scheduled_task_draft_delete_integration import postgres_socket  # noqa: F401
@@ -133,6 +134,15 @@ def test_chat_personal_confirmation_publishes_only_after_hash_and_owner_checks(e
     result = environment.service(org_id=environment.org).commit_chat_proposal(proposal_id=proposal_id, expected_version=1,
         content_sha256=content_digest(content), target_scope='personal')
     assert result['status'] == 'committed' and result['result']['status'] == 'published'
+    with environment.pool.connection(privileged=True) as conn:
+        package_row = conn.execute('''SELECT skill_key, owner_user_id FROM skill_packages WHERE id = %s''',
+                                   (result['package_id'],)).fetchone()
+        revision = conn.execute('''SELECT revision FROM skill_revisions
+            WHERE package_id = %s AND status = 'published' ''', (result['package_id'],)).fetchone()['revision']
+    package = PackageCreate(skill_key=package_row['skill_key'], source='chat', scope_kind='personal',
+                            owner_user_id=package_row['owner_user_id'])
+    stored = Path(environment.config.skill_storage_root) / revision_path(package, revision)
+    assert stored.is_file() and stored.read_text().endswith(content.body)
     replay = environment.service(org_id=environment.org).commit_chat_proposal(proposal_id=proposal_id, expected_version=1,
         content_sha256=content_digest(content), target_scope='personal')
     assert replay['replayed'] is True and replay['package_id'] == result['package_id']

@@ -111,6 +111,18 @@ P2-2 增量见 [Skill 资料附件与模板资产](TECH_Skill资料附件与模�
 
 后端写权限例外回滚：仅移除新增的 `/etc/systemd/system/everydayai-backend.service.d/skill-authoring-write.conf`，保留原 `50-skill-storage.conf` 等配置，经 daemon-reload 与受控发布重启后端恢复服务只读限制。已发布的 NAS 文件、数据库 revision 和审计均保留。
 
+## 个人 Skill 发布存储故障（2026-10-02，代码修复待发布）
+
+生产网页确认个人 Skill 候选时，`POST /api/skills/authoring/proposals/chat/{id}/confirm` 返回 `422 SKILL_STORAGE_WRITE_REJECTED`。只读检查后端有效 systemd 属性和服务 `/proc/<pid>/mountinfo` 后确认：`/mnt/platform-skills` 是只读 NAS 挂载，`/mnt/platform-skills/org` 有独立读写子挂载和服务写权限；NAS 管理别名及服务命名空间下都没有 `personal` 目录或子挂载。个人 revision 路径为 `personal/{owner_user_id}/{skill_key}/{revision}/SKILL.md`，因此个人发布在第一层目录创建时被拒绝。前端随后刷新提案并清空刚设置的错误，导致界面看起来像按钮无响应。
+
+代码修复扩展现有模板 `deploy/everydayai-backend-skill-authoring.conf`，在同一份 Skill 写权限配置中追加 `/mnt/platform-skills/personal`，不新增第二套 systemd 配置；聊天提案卡片保留确认错误，并将 `SKILL_STORAGE_WRITE_REJECTED` 显示为可理解的提示。`SkillStorage` 继续使用已有通用发布逻辑，在 personal 根下按 owner ID 自动创建目录。**不需要重新分配 NAS 容量或创建每用户挂载**：发布器复用现有 Skill NAS，在该 NAS 的受限 `personal` 子目录下按用户 ID 分层。个人文件工作区与 Skill 目录继续分开，避免普通用户文件与受审 Skill 版本混放。
+
+受控发布流程新增幂等的 `deploy/ensure-skill-personal-storage.sh`。它先确认生产 Skill 根和用户 NAS 来自同一 NFS 根、用户 NAS 可写、Skill 父目录只读，再经现有 NAS 别名准备一个 `root:root 0750` 的 `/.platform-skills/personal` 目录；验证该目录在只读 Skill 视图中是同一目录后，复制现有 `org` 子挂载选项到唯一的 personal fstab 项、备份原 fstab 并挂载。任何来源、目录或权限检查失败都会停止，不会放宽 `/mnt/platform-skills` 父目录权限。此步骤安排在生产身份校验和本地后端构建之后、应用文件同步之前。接着部署同一份 systemd drop-in，确认服务保留父目录只读、仅开放 org/personal 子目录，再重启后端。若生产 NAS 的目录策略不允许准备该专用目录，脚本会失败并保留原配置，需先处理 NAS 目录权限，不能改为复用用户文件目录。
+
+生产验收时核对 `systemctl show everydayai-backend -p ReadWritePaths -p ReadOnlyPaths -p RequiresMountsFor` 与后端进程 `/proc/<pid>/mountinfo`：父路径仍为 `ro`，`org` 和 `personal` 各自独立为 `rw`。随后通过真实确认 API 完成个人 Skill 发布，并确认 UI 显示“Skill 已创建”、个人 Skill 库可见、存储 revision 可读回，提案状态为 `committed`。
+
+基础设施回滚：恢复现有 `skill-authoring-write.conf` 为只包含 org 路径；仅移除 `/etc/fstab` 中新增的 personal 子挂载行并卸载 `/mnt/platform-skills/personal`，再执行 `daemon-reload`。部署脚本在修改 fstab 前生成 `/etc/fstab.skill-personal.<UTC 时间>.bak`，可供核对恢复；不要用旧备份覆盖发布后其他 fstab 改动。保留新增 NAS 目录和已发布的个人 Skill 文件、数据库 revision 与审计。应用回滚通过 `deploy/release.sh --rollback <提交 SHA>` 执行。生产配置和数据尚未修改，待用户明确提交部署后才进行真实链路验收。
+
 ## 停用后重新启用修复（2026-09-20，未部署）
 
 用户在 `c7e41279` 发布成功后测试停用，发现无法恢复。根因为原设计把 disabled 设为终态：前端不展示恢复入口，HTTP 动作枚举无 enable，259 数据库触发器也拒绝逆向状态；旧测试只验证禁用后拒绝操作，没有覆盖临时停用后恢复这一使用需求。修复前在临时 PostgreSQL 中复现 enable 被动作契约拒绝。
