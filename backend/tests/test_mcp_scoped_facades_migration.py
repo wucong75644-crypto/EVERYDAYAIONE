@@ -13,6 +13,8 @@ from tests.test_scheduled_task_draft_delete_integration import postgres_socket
 ROOT = Path(__file__).parents[1]
 MIGRATION = ROOT / "migrations/269_mcp_scoped_application_facades.sql"
 ROLLBACK = ROOT / "migrations/rollback/269_mcp_scoped_application_facades_rollback.sql"
+SCOPE_MIGRATION = ROOT / "migrations/270_mcp_application_scope_context.sql"
+SCOPE_ROLLBACK = ROOT / "migrations/rollback/270_mcp_application_scope_context_rollback.sql"
 
 
 @pytest.fixture
@@ -54,10 +56,6 @@ def database(postgres_socket):
             payload_version bigint
         );
         CREATE TABLE governance_audit_log(id uuid);
-        CREATE FUNCTION tenant_actor_user_id() RETURNS uuid LANGUAGE sql AS
-          $$ SELECT NULLIF(current_setting('app.actor_user_id', true), '')::uuid $$;
-        CREATE FUNCTION tenant_org_id() RETURNS uuid LANGUAGE sql AS
-          $$ SELECT NULLIF(current_setting('app.org_id', true), '')::uuid $$;
         CREATE FUNCTION _resolve_configuration_bundle(text, text, uuid, uuid)
           RETURNS jsonb LANGUAGE sql AS
           $$ SELECT jsonb_build_object('bundle', $2, 'actor', $3, 'org_id', $4) $$;
@@ -83,6 +81,7 @@ def database(postgres_socket):
     conn.execute("REVOKE ALL ON FUNCTION set_org_configuration(uuid,text,text,jsonb,jsonb,bigint) FROM PUBLIC")
     conn.execute("GRANT EXECUTE ON FUNCTION set_org_configuration(uuid,text,text,jsonb,jsonb,bigint) TO everydayai_runtime")
     conn.execute(MIGRATION.read_text())
+    conn.execute(SCOPE_MIGRATION.read_text())
     org, other_org, admin, member = [uuid4() for _ in range(4)]
     conn.execute("INSERT INTO organizations VALUES (%s,'active'),(%s,'active')", (org, other_org))
     conn.execute("INSERT INTO users VALUES (%s,'active'),(%s,'active')", (admin, member))
@@ -116,6 +115,14 @@ def set_scope(conn, actor, org):
 
 def test_application_facades_recheck_scope_and_admin_without_broad_grants(database):
     conn, org, other_org, admin, member = database
+    assert conn.execute(
+        "SELECT to_regprocedure('public.tenant_actor_user_id()') IS NULL"
+    ).fetchone()[0]
+    assert conn.execute(
+        "SELECT to_regprocedure('public.tenant_org_id()') IS NULL"
+    ).fetchone()[0]
+    assert not conn.execute("""SELECT has_function_privilege('everydayai',
+        'mcp_application_actor_user_id()', 'EXECUTE')""").fetchone()[0]
     assert conn.execute("""SELECT has_function_privilege('everydayai',
         'api_get_org_mcp_connector_state(uuid,text)', 'EXECUTE')""").fetchone()[0]
     assert not conn.execute("""SELECT has_function_privilege('everydayai',
@@ -139,6 +146,12 @@ def test_application_facades_recheck_scope_and_admin_without_broad_grants(databa
     }
     assert "never-return-this" not in str(credential)
 
+    bundle = conn.execute(
+        "SELECT api_get_mcp_test_readonly_bundle()",
+    ).fetchone()[0]
+    assert bundle["actor"] == str(admin)
+    assert bundle["org_id"] == str(org)
+
     from psycopg.types.json import Jsonb
     stored = conn.execute(
         """SELECT api_set_org_mcp_connector_credential(
@@ -156,6 +169,12 @@ def test_application_facades_recheck_scope_and_admin_without_broad_grants(databa
         (org,),
     ).fetchone()[0]
     assert enabled["enabled"] is True
+
+    health = conn.execute(
+        "SELECT api_record_org_mcp_connector_health(%s,'test-readonly','ready',NULL)",
+        (org,),
+    ).fetchone()[0]
+    assert health["health_status"] == "ready"
 
     set_scope(conn, admin, org)
     with pytest.raises(psycopg.errors.InsufficientPrivilege, match="MCP_CONNECTOR_SCOPE_DENIED"):
@@ -183,3 +202,28 @@ def test_migration_has_an_explicit_rollback():
     rollback = ROLLBACK.read_text()
     assert "DROP FUNCTION" in rollback
     assert "DROP TABLE" not in rollback
+
+
+def test_mcp_scope_context_migration_has_an_explicit_rollback():
+    from scripts.migration_runner import discover_migrations
+
+    migration = next(
+        item for item in discover_migrations()
+        if item.identity == SCOPE_MIGRATION.name
+    )
+    assert migration.rollback_identity == SCOPE_ROLLBACK.name
+    rollback = SCOPE_ROLLBACK.read_text()
+    assert "tenant_actor_user_id()" in rollback
+    assert "DROP FUNCTION" in rollback
+    assert "DROP TABLE" not in rollback
+
+
+def test_mcp_scope_context_rollback_restores_previous_facades(database):
+    conn, *_ = database
+    conn.execute(SCOPE_ROLLBACK.read_text())
+    assert conn.execute(
+        "SELECT to_regprocedure('public.mcp_application_actor_user_id()') IS NULL"
+    ).fetchone()[0]
+    assert conn.execute(
+        "SELECT to_regprocedure('public.mcp_application_org_id()') IS NULL"
+    ).fetchone()[0]
