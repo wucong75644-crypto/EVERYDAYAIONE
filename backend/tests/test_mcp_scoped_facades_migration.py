@@ -15,6 +15,8 @@ MIGRATION = ROOT / "migrations/269_mcp_scoped_application_facades.sql"
 ROLLBACK = ROOT / "migrations/rollback/269_mcp_scoped_application_facades_rollback.sql"
 SCOPE_MIGRATION = ROOT / "migrations/270_mcp_application_scope_context.sql"
 SCOPE_ROLLBACK = ROOT / "migrations/rollback/270_mcp_application_scope_context_rollback.sql"
+PRIVILEGE_MIGRATION = ROOT / "migrations/271_mcp_application_privileges.sql"
+PRIVILEGE_ROLLBACK = ROOT / "migrations/rollback/271_mcp_application_privileges_rollback.sql"
 
 
 @pytest.fixture
@@ -55,7 +57,14 @@ def database(postgres_socket):
             payload_ciphertext text, wrapped_dek text, kek_version text,
             payload_version bigint
         );
-        CREATE TABLE governance_audit_log(id uuid);
+        CREATE TABLE configuration_definitions(id integer);
+        CREATE TABLE configuration_bundle_definitions(id integer);
+        CREATE TABLE governance_audit_log(
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            org_id uuid, actor_id uuid, authority text, action text,
+            target_kind text, target_key text, request_id text,
+            metadata jsonb NOT NULL DEFAULT '{}'::jsonb
+        );
         CREATE FUNCTION _resolve_configuration_bundle(text, text, uuid, uuid)
           RETURNS jsonb LANGUAGE sql AS
           $$ SELECT jsonb_build_object('bundle', $2, 'actor', $3, 'org_id', $4) $$;
@@ -73,15 +82,21 @@ def database(postgres_socket):
           RETURNS jsonb LANGUAGE sql AS
           $$ SELECT jsonb_build_object('deleted', true, 'version', $5 + 1) $$;
     """)
-    conn.execute("GRANT SELECT ON users, organizations, org_members TO everydayai_owner")
-    conn.execute("GRANT SELECT, INSERT, UPDATE ON organization_mcp_connectors TO everydayai_owner")
-    conn.execute("GRANT SELECT ON configuration_entries, secret_records TO everydayai_owner")
+    for table in ("users", "organizations", "org_members"):
+        conn.execute(f"ALTER TABLE {table} OWNER TO everydayai")
+    for table in (
+        "configuration_definitions", "configuration_bundle_definitions",
+        "configuration_entries", "secret_records",
+        "organization_mcp_connectors", "governance_audit_log",
+    ):
+        conn.execute(f"ALTER TABLE {table} OWNER TO everydayai_owner")
     conn.execute("REVOKE ALL ON FUNCTION get_org_mcp_connector_state(uuid,text) FROM PUBLIC")
     conn.execute("GRANT EXECUTE ON FUNCTION get_org_mcp_connector_state(uuid,text) TO everydayai_runtime")
     conn.execute("REVOKE ALL ON FUNCTION set_org_configuration(uuid,text,text,jsonb,jsonb,bigint) FROM PUBLIC")
     conn.execute("GRANT EXECUTE ON FUNCTION set_org_configuration(uuid,text,text,jsonb,jsonb,bigint) TO everydayai_runtime")
     conn.execute(MIGRATION.read_text())
     conn.execute(SCOPE_MIGRATION.read_text())
+    conn.execute(PRIVILEGE_MIGRATION.read_text())
     org, other_org, admin, member = [uuid4() for _ in range(4)]
     conn.execute("INSERT INTO organizations VALUES (%s,'active'),(%s,'active')", (org, other_org))
     conn.execute("INSERT INTO users VALUES (%s,'active'),(%s,'active')", (admin, member))
@@ -176,6 +191,12 @@ def test_application_facades_recheck_scope_and_admin_without_broad_grants(databa
     ).fetchone()[0]
     assert health["health_status"] == "ready"
 
+    deleted = conn.execute(
+        "SELECT api_delete_org_mcp_connector_credential(%s,'mcp.test_readonly.bearer_token',8)",
+        (org,),
+    ).fetchone()[0]
+    assert deleted == {"deleted": True, "version": 9}
+
     set_scope(conn, admin, org)
     with pytest.raises(psycopg.errors.InsufficientPrivilege, match="MCP_CONNECTOR_SCOPE_DENIED"):
         with conn.transaction():
@@ -190,6 +211,21 @@ def test_application_facades_recheck_scope_and_admin_without_broad_grants(databa
                 "SELECT api_set_org_mcp_connector_enabled(%s,'test-readonly',false)",
                 (org,),
             )
+
+    conn.execute("RESET SESSION AUTHORIZATION")
+    audit_rows = conn.execute(
+        """SELECT org_id, actor_id, action, target_kind, target_key, metadata
+             FROM governance_audit_log ORDER BY action""",
+    ).fetchall()
+    assert {row[2] for row in audit_rows} == {
+        "mcp_connector.delete_credential",
+        "mcp_connector.set_credential",
+        "mcp_connector.set_enabled",
+    }
+    assert all(row[0] == org and row[1] == admin for row in audit_rows)
+    assert all(row[3:5] == ("mcp_connector", "test-readonly") for row in audit_rows)
+    assert "never-return-this" not in str(audit_rows)
+    assert "cipher-only" not in str(audit_rows)
 
 
 def test_migration_has_an_explicit_rollback():
@@ -227,3 +263,38 @@ def test_mcp_scope_context_rollback_restores_previous_facades(database):
     assert conn.execute(
         "SELECT to_regprocedure('public.mcp_application_org_id()') IS NULL"
     ).fetchone()[0]
+
+
+def test_mcp_privilege_migration_has_an_explicit_rollback():
+    from scripts.migration_runner import discover_migrations
+
+    migration = next(
+        item for item in discover_migrations()
+        if item.identity == PRIVILEGE_MIGRATION.name
+    )
+    assert migration.rollback_identity == PRIVILEGE_ROLLBACK.name
+    rollback = PRIVILEGE_ROLLBACK.read_text()
+    assert "REVOKE SELECT ON TABLE public.users" in rollback
+    assert "DROP FUNCTION" in rollback
+    assert "DROP TABLE" not in rollback
+
+
+def test_mcp_privilege_rollback_restores_audit_and_revokes_legacy_grants(database):
+    conn, *_ = database
+    assert conn.execute(
+        "SELECT has_table_privilege('everydayai_owner', 'users', 'SELECT')"
+    ).fetchone()[0]
+
+    conn.execute(PRIVILEGE_ROLLBACK.read_text())
+
+    assert conn.execute(
+        "SELECT to_regprocedure('public.mcp_record_connector_audit(uuid,text,text,text,text,jsonb)') IS NULL"
+    ).fetchone()[0]
+    assert not conn.execute(
+        "SELECT has_table_privilege('everydayai_owner', 'users', 'SELECT')"
+    ).fetchone()[0]
+    definition = conn.execute(
+        "SELECT pg_get_functiondef('api_set_org_mcp_connector_enabled(uuid,text,boolean)'::regprocedure)"
+    ).fetchone()[0]
+    assert "_record_governance_audit" in definition
+    assert "mcp_record_connector_audit" not in definition
