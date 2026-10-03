@@ -63,6 +63,44 @@ def _get_secret_bundle_resolver(db: ScopedDB) -> SecretBundleResolver | None:
         return None
 
 
+def _get_mcp_configuration_control(
+    db: ScopedDB,
+) -> ConfigurationControlService | None:
+    """Keep MCP credential storage behind its own rollout flag.
+
+    Enabling the general configuration control plane changes legacy config
+    listing semantics, so the fixed MCP Connector must not toggle that plane.
+    """
+    from core.config import get_settings
+    if get_settings().mcp_connectors_enabled is not True:
+        return None
+    try:
+        return ConfigurationControlService(
+            db,
+            SecretMaterialService(LocalKEKProvider.from_environment()),
+        )
+    except ValueError:
+        logger.warning("MCP credential control disabled: KEK is not configured")
+        return None
+
+
+def _get_mcp_secret_bundle_resolver(
+    db: ScopedDB,
+) -> SecretBundleResolver | None:
+    """Resolve the fixed MCP test credential only when MCP rollout is enabled."""
+    from core.config import get_settings
+    if get_settings().mcp_connectors_enabled is not True:
+        return None
+    try:
+        return SecretBundleResolver(
+            db,
+            SecretMaterialService(LocalKEKProvider.from_environment()),
+        )
+    except ValueError:
+        logger.warning("MCP credential bundle disabled: KEK is not configured")
+        return None
+
+
 def _configuration_status(item: Mapping[str, object]) -> dict[str, object]:
     return {
         "config_key": item.get("key"),
@@ -590,7 +628,7 @@ async def set_mcp_connector_credential(
     user_id: CurrentUserId,
     db: ScopedDB,
     svc: OrgService = Depends(_get_org_service),
-    control: ConfigurationControlService | None = Depends(_get_configuration_control),
+    control: ConfigurationControlService | None = Depends(_get_mcp_configuration_control),
 ):
     """Store the token only through the existing organization envelope encryption."""
     try:
@@ -620,7 +658,7 @@ async def get_mcp_connector_credential_status(
     user_id: CurrentUserId,
     db: ScopedDB,
     svc: OrgService = Depends(_get_org_service),
-    control: ConfigurationControlService | None = Depends(_get_configuration_control),
+    control: ConfigurationControlService | None = Depends(_get_mcp_configuration_control),
 ):
     """Return configuration metadata only; the stored token is never exposed."""
     try:
@@ -646,7 +684,7 @@ async def delete_mcp_connector_credential(
     db: ScopedDB,
     expected_version: int = Query(..., ge=0),
     svc: OrgService = Depends(_get_org_service),
-    control: ConfigurationControlService | None = Depends(_get_configuration_control),
+    control: ConfigurationControlService | None = Depends(_get_mcp_configuration_control),
 ):
     """Revoke only the fixed Connector credential using version CAS."""
     try:
@@ -673,7 +711,7 @@ async def test_mcp_connector_connection(
     user_id: CurrentUserId,
     db: ScopedDB,
     svc: OrgService = Depends(_get_org_service),
-    bundle_resolver: SecretBundleResolver | None = Depends(_get_secret_bundle_resolver),
+    bundle_resolver: SecretBundleResolver | None = Depends(_get_mcp_secret_bundle_resolver),
 ):
     """Exercise the fixed read-only synthetic tool and persist token-free health."""
     import asyncio

@@ -107,6 +107,7 @@ def _rpc_sql(name: str, params: dict[str, Any]) -> tuple[str, list[Any]]:
         "p_lease_seconds": "integer",
     }
     uuid_keys = {
+        "p_org_id",
         "p_action_id", "p_attempt_id", "p_dispatch_intent_id", "p_job_id",
         "p_claim_token", "p_receipt_id", "p_policy_receipt_id",
     }

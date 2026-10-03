@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,6 +13,10 @@ from api.routes.org import (
     SetConfigRequest,
     MCPConnectorCredentialRequest,
     MCPConnectorEnableRequest,
+    _get_configuration_control,
+    _get_mcp_configuration_control,
+    _get_mcp_secret_bundle_resolver,
+    _get_secret_bundle_resolver,
     delete_mcp_connector_credential,
     get_mcp_connector_status,
     get_mcp_connector_credential_status,
@@ -24,11 +30,48 @@ from api.routes.org import (
 )
 from core.exceptions import PermissionDeniedError
 from services.configuration.bundles import ResolvedConfigurationBundle
+from services.configuration.bundles import SecretBundleResolver
+from services.configuration.control_service import ConfigurationControlService
 from services.configuration.resolver import ConfigurationResolutionError
 
 
 ORG_ID = "00000000-0000-0000-0000-000000000010"
 USER_ID = "00000000-0000-0000-0000-000000000001"
+
+
+def test_mcp_secret_dependencies_do_not_enable_general_control_plane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CONFIG_CONTROL_PLANE_ENABLED", raising=False)
+    monkeypatch.setenv("CONFIG_KEK_CURRENT_VERSION", "mcp-test-v1")
+    key = base64.b64encode(b"k" * 32).decode("ascii")
+    monkeypatch.setenv(
+        "CONFIG_KEK_KEYRING_JSON", f'{{"mcp-test-v1":"{key}"}}',
+    )
+    monkeypatch.setattr(
+        "core.config.get_settings",
+        lambda: SimpleNamespace(mcp_connectors_enabled=True),
+    )
+    db = MagicMock()
+
+    assert _get_configuration_control(db) is None
+    assert _get_secret_bundle_resolver(db) is None
+    assert isinstance(_get_mcp_configuration_control(db), ConfigurationControlService)
+    assert isinstance(_get_mcp_secret_bundle_resolver(db), SecretBundleResolver)
+
+
+def test_mcp_secret_dependencies_fail_closed_when_flag_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "core.config.get_settings",
+        lambda: SimpleNamespace(mcp_connectors_enabled=False),
+    )
+    monkeypatch.delenv("CONFIG_KEK_CURRENT_VERSION", raising=False)
+    monkeypatch.delenv("CONFIG_KEK_KEYRING_JSON", raising=False)
+
+    assert _get_mcp_configuration_control(MagicMock()) is None
+    assert _get_mcp_secret_bundle_resolver(MagicMock()) is None
 
 
 @pytest.mark.asyncio

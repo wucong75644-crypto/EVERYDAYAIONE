@@ -28,3 +28,21 @@ def test_rpc_json_params_use_jsonb_adapter():
     assert result.data == 1
     params = cursor.execute.call_args[0][1]
     assert isinstance(params[0], Jsonb)
+
+
+def test_scoped_rpc_org_id_is_cast_to_uuid():
+    from core.db_scope import _rpc_sql
+
+    sql, params = _rpc_sql(
+        "api_get_org_mcp_connector_state",
+        {
+            "p_org_id": "00000000-0000-0000-0000-000000000001",
+            "p_connector_id": "test-readonly",
+        },
+    )
+
+    assert "p_org_id := %s::uuid" in sql
+    assert params == [
+        "00000000-0000-0000-0000-000000000001",
+        "test-readonly",
+    ]
