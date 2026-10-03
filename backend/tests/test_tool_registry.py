@@ -276,6 +276,25 @@ def test_get_personal_skill_for_edit_requires_creation_flags_and_personal_contex
     ).allowed
 
 
+def test_list_personal_skills_for_edit_requires_creation_flags_and_personal_context(registry):
+    enabled = {"skill_catalog_enabled": True, "skill_chat_creation_enabled": True}
+    result = resolve(registry, context(feature_flags=enabled))
+    assert "list_personal_skills_for_edit" in result.allowed
+    assert "list_personal_skills_for_edit" in result.advertised
+    for changed in (
+        {**enabled, "skill_catalog_enabled": False},
+        {**enabled, "skill_chat_creation_enabled": False},
+    ):
+        assert "list_personal_skills_for_edit" not in resolve(
+            registry, context(feature_flags=changed),
+        ).allowed
+    assert "list_personal_skills_for_edit" not in resolve(
+        registry, context(feature_flags=enabled, context_scope="channel",
+                          personal_context_allowed=False,
+                          workspace_owner_id="group-a"),
+    ).allowed
+
+
 @pytest.mark.parametrize("change", [
     {"actor_user_id": ""}, {"workspace_owner_id": ""}, {"org_id": ""},
     {"workspace_owner_id": "other-user"}, {"context_scope": "channel"},
@@ -351,7 +370,8 @@ def test_advertisement_reuses_current_core_rules(registry, mode):
     result = resolve(registry, context(permission_mode=mode))
     expected = [schema for schema in get_tools_for_mode(mode, "org-a")
                 if schema["function"]["name"] not in {
-                    "prepare_skill_draft", "get_personal_skill_for_edit",
+                    "list_personal_skills_for_edit", "prepare_skill_draft",
+                    "get_personal_skill_for_edit",
                 }]
     assert result.advertised_schemas() == expected
     assert set(result.advertised) <= set(result.allowed)
