@@ -94,12 +94,19 @@ class SkillCatalogMetadata(Contract):
 class PackageCreate(Contract):
     skill_key: SkillKey
     source: Annotated[str, Field(min_length=1, max_length=200, pattern=r"\S")]
-    scope_kind: Literal["platform", "org"]
+    scope_kind: Literal["platform", "org", "personal"]
     org_id: UUID | None = None
+    owner_user_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_owner(self):
-        if (self.scope_kind == "org") != (self.org_id is not None):
+        if self.scope_kind == "org":
+            valid = self.org_id is not None and self.owner_user_id is None
+        elif self.scope_kind == "personal":
+            valid = self.org_id is None and self.owner_user_id is not None
+        else:
+            valid = self.org_id is None and self.owner_user_id is None
+        if not valid:
             raise ValueError("SKILL_OWNER_INVALID")
         return self
 
@@ -159,5 +166,7 @@ class ValidatedSkill:
 
 def revision_path(package: SkillPackage | PackageCreate, revision: str) -> str:
     """Ownership is part of the storage namespace, never a caller-supplied path."""
-    owner = "platform" if package.org_id is None else f"org/{package.org_id}"
+    owner = ("platform" if package.scope_kind == "platform" else
+             f"personal/{package.owner_user_id}" if package.scope_kind == "personal" else
+             f"org/{package.org_id}")
     return f"{owner}/{package.skill_key}/{revision}/SKILL.md"

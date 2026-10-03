@@ -319,7 +319,7 @@ async def test_loop_audit_once_per_consumption_and_model_tokens_once_per_turn(se
     async def record(db,entry): entries.append(entry)
     monkeypatch.setattr('services.agent.tool_audit.record_tool_audit',record)
     for suffix in ('a','b'):
-        await loop._execute_tools([tc('search_knowledge',{'file':'overview'},suffix),tc('web_search',{'query':'x'},suffix+'2')],[], '',ctx,
+        await loop._execute_tools([tc('search_knowledge',{'query':'overview'},suffix),tc('search_knowledge',{'query':'external info'},suffix+'2')],[], '',ctx,
                                   turn_prompt_tokens=7,turn_completion_tokens=3)
     await asyncio.sleep(0)
     assert len(entries)==4 and executor.handler.await_count==2

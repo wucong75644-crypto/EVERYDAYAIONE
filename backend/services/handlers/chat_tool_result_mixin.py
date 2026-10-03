@@ -113,6 +113,16 @@ class ChatToolResultMixin:
 
     def _stage_change_set(self, metadata: dict[str, Any]) -> None:
         """Messages reference the authoritative ChangeSet; they do not own its state."""
+        proposal = metadata.get("skill_chat_proposal")
+        if isinstance(proposal, dict) and isinstance(proposal.get("id"), str) and proposal["id"]:
+            pending = self.__dict__.setdefault("_pending_change_set_blocks", [])
+            reference = {"type": "skill_proposal", "proposal_id": proposal["id"],
+                         "title": proposal.get("name")}
+            if not any(block.get("type") == "skill_proposal"
+                       and block.get("proposal_id") == proposal["id"] for block in pending):
+                pending.append(reference)
+            self._terminal_change_set_pending = True
+            return
         change = metadata.get("change_set")
         if not isinstance(change, dict) or not isinstance(change.get("id"), str) or not change["id"]:
             return

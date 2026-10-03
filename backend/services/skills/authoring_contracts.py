@@ -57,7 +57,7 @@ class SaveDraft(ExpectedVersion):
 
 
 class TransitionDraft(ExpectedVersion):
-    action: Literal['start_draft', 'submit', 'approve', 'reject', 'publish', 'deprecate', 'disable', 'enable']
+    action: Literal['start_draft', 'submit', 'approve', 'reject', 'publish', 'publish_private', 'deprecate', 'disable', 'enable']
 
 
 def reviewed_document(package, revision: str, content: DraftContent):

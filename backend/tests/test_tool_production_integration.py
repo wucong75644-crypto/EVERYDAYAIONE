@@ -148,6 +148,32 @@ async def test_denial_precedes_handler_cache_and_ledger(setup, entry, case, monk
     lifecycle.begin.assert_not_awaited()
 
 
+@pytest.mark.parametrize("is_admin", [True, False])
+async def test_personal_skill_draft_is_available_to_members_and_admins(monkeypatch, is_admin):
+    from core import config
+    from services.tools import runtime_context
+
+    monkeypatch.setattr(config, "get_settings", lambda: SimpleNamespace(
+        skill_catalog_enabled=True, skill_chat_creation_enabled=True,
+    ))
+    identity_check = Mock(return_value=is_admin)
+    monkeypatch.setattr(runtime_context, "_check_identity", identity_check)
+
+    executor = MockHandlerExecutor(agent_domain="general")
+    prepare = AsyncMock(return_value=AgentResult(summary="候选草稿", status="success"))
+    executor._handlers["prepare_skill_draft"] = prepare
+
+    result = await executor.tool_runtime.execute(
+        "prepare_skill_draft",
+        {"name": "商品图 Skill", "body": "参考图拆解并生成五条视角提示词。"},
+        call_id="skill-draft",
+    )
+
+    identity_check.assert_called_once()
+    assert result.execution.status == "succeeded"
+    assert prepare.await_count == 1
+
+
 @pytest.mark.parametrize("entry", ["legacy", "chat", "loop"])
 @pytest.mark.parametrize("outcome", ["approved", "rejected", "timeout", "exception", "disconnect"])
 async def test_real_confirmation_channel(setup, entry, outcome, monkeypatch):
@@ -293,10 +319,10 @@ async def test_cache_cannot_survive_revoked_membership(setup):
     executor = MockHandlerExecutor(agent_domain="general")
     runtime = executor.tool_runtime
     args = {"query": "x"}
-    first = await runtime.execute("web_search", args, call_id="a", cache=cache)
-    cached = await runtime.execute("web_search", args, call_id="b", cache=cache)
+    first = await runtime.execute("search_knowledge", args, call_id="a", cache=cache)
+    cached = await runtime.execute("search_knowledge", args, call_id="b", cache=cache)
     executor.db.active = False
-    denied = await runtime.execute("web_search", args, call_id="c", cache=cache)
+    denied = await runtime.execute("search_knowledge", args, call_id="c", cache=cache)
     assert first.execution.handler_started and cached.execution.cached
     assert denied.execution.status == "not_started"
     assert executor.handler.await_count == 1
@@ -693,9 +719,9 @@ async def test_declared_permission_is_loaded_without_trusting_a_prior_boolean(se
 async def test_cache_write_failure_preserves_completed_business_and_single_use(setup):
     executor = MockHandlerExecutor(agent_domain="general")
     cache = Mock(get=Mock(return_value=None), put=Mock(side_effect=RuntimeError("cache unavailable")))
-    result = await executor.tool_runtime.execute("web_search", {"query": "x"}, call_id="cached", cache=cache)
+    result = await executor.tool_runtime.execute("search_knowledge", {"query": "x"}, call_id="cached", cache=cache)
     assert result.execution.status == "succeeded" and result.execution.handler_started
-    duplicate = await executor.tool_runtime.execute("web_search", {"query": "x"}, call_id="cached", cache=cache)
+    duplicate = await executor.tool_runtime.execute("search_knowledge", {"query": "x"}, call_id="cached", cache=cache)
     assert duplicate.execution.status == "not_started"
     executor.handler.assert_awaited_once()
     cache.put.assert_called_once()

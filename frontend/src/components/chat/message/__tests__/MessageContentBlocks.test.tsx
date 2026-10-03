@@ -52,6 +52,29 @@ vi.mock('../DiagramBlock', () => ({
   ),
 }));
 
+vi.mock('../SkillChatProposalCard', () => ({
+  default: ({ proposalId, fallbackTitle }: { proposalId: string; fallbackTitle?: string }) => (
+    <div data-testid="skill-proposal-card">{proposalId}:{fallbackTitle}</div>
+  ),
+}));
+
+describe('MessageContentBlocks Skill proposals', () => {
+  it('renders a proposal reference from persisted message JSON', () => {
+    const message = normalizeMessage({
+      id: 'proposal-message', conversation_id: 'proposal-conversation', role: 'assistant', status: 'completed',
+      content: JSON.stringify([{
+        type: 'skill_proposal', proposal_id: 'proposal-1', title: '商品图风格拆解',
+      }]),
+    });
+
+    render(<MessageContentBlocks message={message} imageAssets={[]} fileBlocks={[]}
+      isStreaming={false} isRegenerating={false} textContent="" onImageClick={vi.fn()} />);
+
+    expect(screen.getByTestId('skill-proposal-card'))
+      .toHaveTextContent('proposal-1:商品图风格拆解');
+  });
+});
+
 describe('MessageContentBlocks structured diagrams', () => {
   it('shows the task form beside the completed tool step from persisted JSON', () => {
     const message = normalizeMessage({

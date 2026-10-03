@@ -61,8 +61,6 @@ class ActorSkillSource:
         )
 
     async def discover(self):
-        if self.context.org_id is None:
-            return []
         candidates = await asyncio.to_thread(self.repository.catalog_candidates)
         context = await self._resolution_context(candidates)
         return SkillResolver().select(context, candidates)
@@ -70,8 +68,7 @@ class ActorSkillSource:
     async def session_bindings(self):
         # Scheduled/preflight entrypoints must never inherit session settings.
         if (getattr(self.context, "execution_mode", None) != "interactive" or self.context.context_scope != "user"
-                or self.context.agent_domain != "general" or not self.context.conversation_id
-                or self.context.org_id is None):
+                or self.context.agent_domain != "general" or not self.context.conversation_id):
             return []
         await self._resolution_context([])
         repository = SkillBindingRepository(self.handler.db.pool, self.repository.scope)

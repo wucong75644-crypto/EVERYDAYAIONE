@@ -13,7 +13,7 @@ import { useAuthStore } from '../../../stores/useAuthStore';
 import { useMessageStore } from '../../../stores/useMessageStore';
 import { useClickOutside } from '../../../hooks/useClickOutside';
 import { useLogout } from '../../../hooks/useLogout';
-import { Brain, Images, Settings2, Search, ChevronsLeft, Plus, X, Settings, LogOut } from 'lucide-react';
+import { BookOpen, Brain, Images, Settings2, Search, ChevronsLeft, Plus, X, Settings, LogOut } from 'lucide-react';
 import ConversationList from './ConversationList';
 import SettingsModal from '../modals/SettingsModal';
 import MemoryModal from '../modals/MemoryModal';
@@ -206,6 +206,17 @@ export default function Sidebar({
         >
           <Brain className="w-4 h-4" />
           <span>AI 记忆</span>
+        </button>
+      </div>
+
+      {/* Personal Skills are available to every signed-in user. */}
+      <div className="px-3 pb-1">
+        <button
+          onClick={() => navigate('/admin?tab=skills')}
+          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-secondary hover:bg-hover rounded-lg transition-base"
+        >
+          <BookOpen className="w-4 h-4" />
+          <span>我的 Skill</span>
         </button>
       </div>
 

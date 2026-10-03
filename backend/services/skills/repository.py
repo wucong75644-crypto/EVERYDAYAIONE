@@ -23,9 +23,10 @@ class SkillRepository:
     Explicit predicates also protect callers using a privileged migration role.
     """
 
-    def __init__(self, pool, scope: DatabaseScope):
+    def __init__(self, pool, scope: DatabaseScope, *, owner_scope: str | None = None):
         self._pool = pool
         self.scope = scope
+        self.owner_scope = owner_scope
 
     @contextmanager
     def _cursor(self):
@@ -53,24 +54,44 @@ class SkillRepository:
 
     def _require_owner(self, package: SkillPackage):
         self._require_admin()
-        if (str(package.org_id) if package.org_id else None) != self.scope.org_id:
+        owner_scope = self.owner_scope or ("org" if self.scope.org_id else "platform")
+        if owner_scope == "personal" and (
+            package.scope_kind != "personal" or str(package.owner_user_id) != self.scope.actor_user_id
+        ):
+            raise SkillError("SKILL_OWNER_SCOPE_MISMATCH")
+        if owner_scope == "org" and (
+            package.scope_kind != "org" or str(package.org_id) != self.scope.org_id
+        ):
+            raise SkillError("SKILL_OWNER_SCOPE_MISMATCH")
+        if owner_scope == "platform" and package.scope_kind != "platform":
             raise SkillError("SKILL_OWNER_SCOPE_MISMATCH")
 
     def create_package(self, package: PackageCreate) -> SkillPackage:
         self._require_admin()
-        if (str(package.org_id) if package.org_id else None) != self.scope.org_id:
+        owner_scope = self.owner_scope or ("org" if self.scope.org_id else "platform")
+        if owner_scope == "personal" and (
+            package.scope_kind != "personal" or str(package.owner_user_id) != self.scope.actor_user_id
+        ):
+            raise SkillError("SKILL_OWNER_SCOPE_MISMATCH")
+        if owner_scope == "org" and (
+            package.scope_kind != "org" or str(package.org_id) != self.scope.org_id
+        ):
+            raise SkillError("SKILL_OWNER_SCOPE_MISMATCH")
+        if owner_scope == "platform" and package.scope_kind != "platform":
             raise SkillError("SKILL_OWNER_SCOPE_MISMATCH")
         with self._cursor() as cursor:
-            cursor.execute("""INSERT INTO public.skill_packages(skill_key, source, scope_kind, org_id)
-                VALUES (%s, %s, %s, %s) RETURNING *""",
-                (package.skill_key, package.source, package.scope_kind, package.org_id))
+            cursor.execute("""INSERT INTO public.skill_packages(skill_key, source, scope_kind, org_id, owner_user_id)
+                VALUES (%s, %s, %s, %s, %s) RETURNING *""",
+                (package.skill_key, package.source, package.scope_kind, package.org_id, package.owner_user_id))
             return SkillPackage.model_validate(cursor.fetchone())
 
     def get_package(self, package_id: UUID) -> SkillPackage:
         with self._cursor() as cursor:
             cursor.execute("""SELECT * FROM public.skill_packages
-                WHERE id = %s AND (org_id IS NULL OR org_id = %s::uuid)""",
-                (package_id, self.scope.org_id))
+                WHERE id = %s AND (scope_kind = 'platform'
+                    OR (scope_kind = 'org' AND org_id = %s::uuid)
+                    OR (scope_kind = 'personal' AND owner_user_id = %s::uuid))""",
+                (package_id, self.scope.org_id, self.scope.actor_user_id))
             row = cursor.fetchone()
         if row is None:
             raise SkillError("SKILL_PACKAGE_UNAVAILABLE")
@@ -79,8 +100,10 @@ class SkillRepository:
     def list_packages(self) -> list[SkillPackage]:
         with self._cursor() as cursor:
             cursor.execute("""SELECT * FROM public.skill_packages
-                WHERE org_id IS NULL OR org_id = %s::uuid ORDER BY skill_key, id""",
-                (self.scope.org_id,))
+                WHERE scope_kind = 'platform'
+                    OR (scope_kind = 'org' AND org_id = %s::uuid)
+                    OR (scope_kind = 'personal' AND owner_user_id = %s::uuid)
+                ORDER BY skill_key, id""", (self.scope.org_id, self.scope.actor_user_id))
             return [SkillPackage.model_validate(row) for row in cursor.fetchall()]
 
     def get_owned_package(self, package_id: UUID) -> SkillPackage:
@@ -167,16 +190,18 @@ class SkillRepository:
         turns may restore a deprecated revision, but still need an enabled grant.
         New activations (even from an older directory) require published status.
         """
-        org_id = self._require_org()
+        org_id = self.scope.org_id
         with self._cursor() as cursor:
             cursor.execute("""SELECT r.* FROM public.skill_revisions r
                 JOIN public.skill_packages p ON p.id = r.package_id
-                JOIN public.skill_assignments a ON a.package_id = p.id
+                LEFT JOIN public.skill_assignments a ON a.package_id = p.id
+                    AND a.org_id IS NOT DISTINCT FROM %s::uuid
                 WHERE p.id = %s AND r.revision = %s
                     AND (r.status = 'published' OR (%s AND r.status = 'deprecated'))
-                    AND a.org_id = %s AND a.enabled
-                    AND (p.org_id IS NULL OR p.org_id = a.org_id)""",
-                (package_id, revision, restoring, org_id))
+                    AND ((p.scope_kind = 'personal' AND p.owner_user_id = %s::uuid)
+                         OR (p.scope_kind = 'org' AND p.org_id = %s::uuid AND a.enabled)
+                         OR (p.scope_kind = 'platform' AND a.enabled))""",
+                (org_id, package_id, revision, restoring, self.scope.actor_user_id, org_id))
             row = cursor.fetchone()
         if row is None:
             raise SkillError("SKILL_PINNED_REVISION_UNAVAILABLE")
@@ -189,30 +214,40 @@ class SkillRepository:
     def pinned_candidates(self, skill_key: str, revision: str, *, require_reviewed: bool = False) -> list[SkillCandidate]:
         """Exact published revision under a current grant; no latest substitution."""
         with self._cursor() as cursor:
-            cursor.execute("""SELECT p.id AS package_id,p.skill_key,p.org_id AS package_org_id,p.scope_kind,
-                a.org_id AS assignment_org_id,a.priority,r.revision,r.summary AS description,r.catalog_metadata
-                FROM public.skill_packages p JOIN public.skill_assignments a ON a.package_id=p.id
-                JOIN public.skill_revisions r ON r.package_id=p.id
-                WHERE a.org_id=%s AND a.enabled AND (p.org_id IS NULL OR p.org_id=a.org_id)
-                AND p.skill_key=%s AND r.revision=%s AND r.status='published'
+            org_id = self.scope.org_id
+            cursor.execute("""SELECT p.id AS package_id,p.skill_key,p.org_id AS package_org_id,
+                    p.owner_user_id AS package_user_id,p.scope_kind,
+                    COALESCE(a.org_id, %s::uuid) AS assignment_org_id,COALESCE(a.priority, 0) AS priority,
+                    r.revision,r.summary AS description,r.catalog_metadata
+                FROM public.skill_packages p JOIN public.skill_revisions r ON r.package_id=p.id
+                LEFT JOIN public.skill_assignments a ON a.package_id=p.id
+                    AND a.org_id IS NOT DISTINCT FROM %s::uuid AND a.enabled
+                WHERE p.skill_key=%s AND r.revision=%s AND r.status='published'
+                  AND ((p.scope_kind='personal' AND p.owner_user_id=%s::uuid)
+                       OR (p.scope_kind IN ('org','platform') AND a.enabled
+                           AND (p.scope_kind='platform' OR p.org_id=a.org_id)))
                 """ + (' AND r.reviewed' if require_reviewed else ''),
-                (self._require_org(),skill_key,revision))
+                (org_id, org_id, skill_key, revision, self.scope.actor_user_id))
             return [SkillCandidate.model_validate(row) for row in cursor.fetchall()]
 
     def catalog_candidates(self) -> list[SkillCandidate]:
         """Only enabled, pinned, published revisions; never fetch content or paths."""
-        if self.scope.org_id is None:
-            return []
         with self._cursor() as cursor:
             cursor.execute("""SELECT p.id AS package_id, p.skill_key,
-                    p.org_id AS package_org_id, p.scope_kind,
-                    a.org_id AS assignment_org_id, a.priority,
+                    p.org_id AS package_org_id,p.owner_user_id AS package_user_id,p.scope_kind,
+                    COALESCE(a.org_id, %s::uuid) AS assignment_org_id,COALESCE(a.priority,0) AS priority,
                     r.revision, r.summary AS description, r.catalog_metadata
-                FROM public.skill_assignments a
-                JOIN public.skill_packages p ON p.id = a.package_id
-                JOIN public.skill_revisions r ON r.package_id = a.package_id AND r.id = a.revision_id
-                WHERE a.org_id = %s AND a.enabled AND r.status = 'published'
-                    AND (p.org_id IS NULL OR p.org_id = a.org_id)""", (self.scope.org_id,))
+                FROM public.skill_packages p
+                JOIN public.skill_revisions r ON r.package_id=p.id AND r.status='published'
+                LEFT JOIN public.skill_assignments a ON a.package_id=p.id
+                    AND a.org_id IS NOT DISTINCT FROM %s::uuid AND a.enabled AND a.revision_id=r.id
+                WHERE (p.scope_kind='personal' AND p.owner_user_id=%s::uuid
+                       AND r.id=(SELECT latest.id FROM public.skill_revisions latest
+                           WHERE latest.package_id=p.id AND latest.status='published'
+                           ORDER BY latest.created_at DESC,latest.id DESC LIMIT 1))
+                   OR (p.scope_kind IN ('org','platform') AND a.enabled
+                       AND (p.scope_kind='platform' OR p.org_id=a.org_id))""",
+                (self.scope.org_id,self.scope.org_id,self.scope.actor_user_id))
             try:
                 return [SkillCandidate.model_validate(row) for row in cursor.fetchall()]
             except ValidationError:

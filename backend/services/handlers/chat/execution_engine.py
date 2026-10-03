@@ -1138,8 +1138,9 @@ async def _consume_emit_payloads(
             await sink.on_block(block)
     handler._pending_emit_payloads = []
     for reference in getattr(handler, "_pending_change_set_blocks", []):
-        if not any(block.get("type") == "changeset" and
-                   block.get("change_set_id") == reference["change_set_id"] for block in blocks):
+        identity = ("proposal_id", reference.get("proposal_id")) if reference.get("type") == "skill_proposal" else ("change_set_id", reference.get("change_set_id"))
+        if not any(block.get("type") == reference.get("type") and block.get(identity[0]) == identity[1]
+                   for block in blocks):
             blocks.append(reference)
             await sink.on_block(reference)
     handler._pending_change_set_blocks = []

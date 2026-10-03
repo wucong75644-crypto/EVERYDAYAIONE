@@ -21,10 +21,11 @@ BASELINE = json.loads((Path(__file__).parent / 'fixtures/tool_catalog_07_baselin
 FILE_SEARCH_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/file_search_protocol_08_schema.json').read_text())
 TASK_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/scheduled_task_structured_schema.json').read_text())
 SMART_IMAGE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/smart_image_25_config_upgrade.json').read_text())
+WEB_SEARCH_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/web_search_protocol_01_schema.json').read_text())
 
 
 def original_schemas(names, view):
-    return [PRESENTATION_UPGRADE if name == 'code_execute' else FILE_SEARCH_UPGRADE if name == 'file_search' else TASK_UPGRADE['schema'] if name == 'manage_scheduled_task' else BASELINE['schema_views'].get(view, {}).get(name) or BASELINE['specs'][name]['schema']
+    return [WEB_SEARCH_UPGRADE if name == 'web_search' else PRESENTATION_UPGRADE if name == 'code_execute' else FILE_SEARCH_UPGRADE if name == 'file_search' else TASK_UPGRADE['schema'] if name == 'manage_scheduled_task' else BASELINE['schema_views'].get(view, {}).get(name) or BASELINE['specs'][name]['schema']
             for name in names]
 
 
@@ -63,6 +64,12 @@ def test_full_spec_contract_unchanged(catalog, name):
                 value = FILE_SEARCH_UPGRADE
             if name == 'code_execute' and key == 'schema':
                 value = PRESENTATION_UPGRADE
+            if name == 'web_search' and key == 'schema':
+                value = WEB_SEARCH_UPGRADE
+            if name == 'web_search' and key == 'cacheable':
+                # Search results are time-sensitive and provider calls may bill;
+                # a cache hit must not masquerade as a fresh search.
+                value = False
             assert actual[key] == value, (name, key)
 
 
@@ -72,13 +79,18 @@ def test_complete_helpers_handlers_and_schema_order(catalog, org):
     from services.tool_executor import ToolExecutor
     expected = BASELINE['helpers'][str(org)]
     view = 'helpers/' + str(org) + '/'
-    assert get_chat_tools(org) == original_schemas(expected['chat'], view + 'chat')
-    assert get_core_tools(org) == original_schemas(expected['core'], view + 'core')
+    chat_skill_tools = {
+        'list_personal_skills_for_edit', 'prepare_skill_draft', 'get_personal_skill_for_edit',
+    }
+    legacy_only = lambda schemas: [schema for schema in schemas
+                                   if schema['function']['name'] not in chat_skill_tools]
+    assert legacy_only(get_chat_tools(org)) == original_schemas(expected['chat'], view + 'chat')
+    assert legacy_only(get_core_tools(org)) == original_schemas(expected['core'], view + 'core')
     for mode in ('ask', 'auto', 'plan'):
-        assert get_tools_for_mode(mode, org) == original_schemas(expected[mode], view + mode)
+        assert legacy_only(get_tools_for_mode(mode, org)) == original_schemas(expected[mode], view + mode)
     assert get_tools_by_names(set(BASELINE['specs']), org) == original_schemas(expected['chat'], view + 'chat')
     executor = ToolExecutor(None, 'actor-a', 'conversation-a', org)
-    assert sorted(executor._handlers) == BASELINE['handlers'][str(org)]
+    assert sorted(name for name in executor._handlers if name not in chat_skill_tools) == BASELINE['handlers'][str(org)]
     if org:
         assert validate_legacy_coverage(catalog, public_schemas=get_chat_tools(org),
                                         handler_names=executor._handlers) == ()
@@ -98,7 +110,8 @@ def test_risk_concurrency_cache_and_partial_validator_helpers(catalog, name):
     expected = BASELINE['specs'][name]
     assert get_safety_level(name).value == expected['risk_level']
     assert is_concurrency_safe(name) == expected['parallelizable']
-    assert ToolResultCache.is_cacheable(name) == expected['cacheable']
+    expected_cacheable = False if name == 'web_search' else expected['cacheable']
+    assert ToolResultCache.is_cacheable(name) == expected_cacheable
     assert TOOL_SCHEMAS.get(name) == expected['legacy_validation_schema']
 
 
@@ -109,6 +122,16 @@ def test_old_imports_signatures_and_constant_values(module):
         assert str(inspect.signature(getattr(current, name))) == signature, (module, name)
     for name, digest in BASELINE['modules'][module]['constants'].items():
         value = plain(getattr(current, name))
+        if module == 'tool_domains' and name == 'TOOL_DOMAINS':
+            expected = {
+                tool_name: spec['domain'] for tool_name, spec in BASELINE['specs'].items()
+                if tool_name != 'get_conversation_context'
+            }
+            expected.update({'route_to_chat': 'erp', 'prepare_skill_draft': 'general',
+                             'get_personal_skill_for_edit': 'general',
+                             'list_personal_skills_for_edit': 'general'})
+            assert value == expected
+            continue
         if module == 'agent_tools' and name == 'SMART_CONFIG':
             # 387af4a5 authorized the image-model upgrade after block 07.
             # Check its exact contract, then restore only this category so the
@@ -195,7 +218,11 @@ def test_entire_context_matrix_preserves_authorization(catalog, baseline_catalog
         resolved = registry.resolve(context, policy=ToolPolicy(registry),
                                     advertisement=LegacyAdvertisement(BASELINE['specs']))
         return sorted(resolved.allowed), sorted(resolved.advertised), dict(resolved.denied)
-    assert result(catalog) == result(baseline_catalog)
+    actual, baseline = result(catalog), result(baseline_catalog)
+    assert actual[0] == baseline[0]
+    assert actual[1] == baseline[1]
+    assert {name: reason for name, reason in actual[2].items() if name in baseline[2]} == baseline[2]
+    assert 'prepare_skill_draft' not in actual[0]
 
 
 @pytest.mark.parametrize('name', BASELINE['planner'])
@@ -330,9 +357,9 @@ importlib.import_module(sys.argv[1])
 from config.chat_tools import get_chat_tools
 from services.tools import build_tool_catalog
 from services.tool_executor import ToolExecutor
-assert len(get_chat_tools('org-a')) == 33
-assert len(build_tool_catalog().specs()) == 35
-assert len(ToolExecutor(None, 'actor-a', 'c1', 'org-a')._handlers) == 35
+assert len(get_chat_tools('org-a')) == 36
+assert len(build_tool_catalog().specs()) == 38
+assert len(ToolExecutor(None, 'actor-a', 'c1', 'org-a')._handlers) == 38
 '''
     run = subprocess.run([sys.executable, '-c', script, first], text=True, capture_output=True, timeout=30)
     assert run.returncode == 0, run.stderr

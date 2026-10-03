@@ -2,9 +2,9 @@
  * 管理后台 — 整页路由组件（不再是 Modal）
  *
  * 按角色动态显示功能模块：
- * - super_admin: 平台管理 / 企业管理 / 系统监控 / 快麦接入
- * - owner/admin: 企业管理 / 快麦接入
- * - member/散客: 不应进入这个页面（路由入口已隐藏）
+ * - super_admin: 平台、企业、监控、快麦和 Skill 管理
+ * - owner/admin: 企业、快麦和个人/组织 Skill 管理
+ * - 普通成员: 个人 Skill 管理
  *
  * 路由：/admin
  * 历史：原先是 Modal，2026-06-09 改造成整页路由 + 合并快麦接入模块
@@ -37,29 +37,27 @@ export default function AdminPanel({ onSkillNavigationStateChange }: {
 
   const isSuperAdmin = user?.role === 'super_admin';
   const isOrgAdmin = !!(currentOrg && ['owner', 'admin'].includes(currentOrg.role));
+  const availableSkillScopes = [
+    'personal' as const,
+    ...(isOrgAdmin ? ['org' as const] : []),
+    ...(isSuperAdmin ? ['platform' as const] : []),
+  ];
 
   const tabs: { key: Tab; label: string; visible: boolean }[] = [
     { key: 'platform', label: '平台管理', visible: isSuperAdmin },
     { key: 'users', label: '用户管理', visible: isSuperAdmin },
-    { key: 'skills', label: 'Skill 管理', visible: isOrgAdmin },
+    { key: 'skills', label: '我的 Skill', visible: true },
     { key: 'org', label: '企业管理', visible: isOrgAdmin || isSuperAdmin },
     { key: 'monitoring', label: '系统监控', visible: isSuperAdmin },
     { key: 'kuaimai', label: '🔗 快麦接入', visible: isOrgAdmin },
   ];
   const visibleTabs = tabs.filter((t) => t.visible);
 
-  // 默认 tab：超管→平台管理；普通管理员→企业管理
+  // Sidebar deep links can open the Skill workspace directly.
   const [activeTab, setActiveTab] = useState<Tab>(
-    isSuperAdmin ? 'platform' : 'org',
+    new URLSearchParams(window.location.search).get('tab') === 'skills'
+      ? 'skills' : isSuperAdmin ? 'platform' : isOrgAdmin ? 'org' : 'skills',
   );
-
-  if (visibleTabs.length === 0) {
-    return (
-      <div className="text-center text-text-tertiary py-12">
-        <p>无管理权限</p>
-      </div>
-    );
-  }
 
   return (
     <div className="flex flex-col h-full">
@@ -98,9 +96,11 @@ export default function AdminPanel({ onSkillNavigationStateChange }: {
         {activeTab === 'org' && (isOrgAdmin || isSuperAdmin) && (
           <OrgManagePanel orgId={currentOrg?.org_id} />
         )}
-        {activeTab === 'skills' && isOrgAdmin && currentOrg && (
+        {activeTab === 'skills' && (
           <Suspense fallback={<div>加载中...</div>}>
-            <SkillAdminPanel key={currentOrg.org_id} orgId={currentOrg.org_id} onNavigationStateChange={updateSkillNavigation} />
+            <SkillAdminPanel key={`${currentOrg?.org_id ?? 'personal'}:${availableSkillScopes.join(',')}`}
+              orgId={currentOrg?.org_id} availableScopes={availableSkillScopes}
+              onNavigationStateChange={updateSkillNavigation} />
           </Suspense>
         )}
         {activeTab === 'monitoring' && isSuperAdmin && (

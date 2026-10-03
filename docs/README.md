@@ -1,6 +1,6 @@
 # 📚 项目文档中心
 
-> **最后更新**：2026-01-29
+> **最后更新**：2026-10-01
 
 ---
 
@@ -14,6 +14,8 @@
 | [TECH_ARCHITECTURE.md](./document/TECH_ARCHITECTURE.md) | 技术架构、数据库设计、API 设计 | ✅ 完成 |
 | [PAGE_DESIGN.md](./document/PAGE_DESIGN.md) | 页面设计、交互流程、UI 规范 | ✅ 完成 |
 | [OSS_CDN_DESIGN.md](./document/OSS_CDN_DESIGN.md) | OSS + CDN 存储方案设计 | ✅ 完成 |
+| [搜索工具开发与质量验证方案](./document/TECH_搜索工具开发与质量验证方案.md) | 搜索架构、首版实现状态、质量目标与试用验证 | P1 首版已实现，真实搜索待验 |
+| [搜索工具评测场景](./document/TEST_搜索工具评测场景.md) | 24 个内容场景与 16 个工程故障场景 | 固定响应工程测试已部分覆盖，内容评测待执行 |
 
 ### 开发辅助文档
 

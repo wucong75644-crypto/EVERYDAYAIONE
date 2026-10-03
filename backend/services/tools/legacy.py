@@ -54,6 +54,20 @@ class LegacyAdvertisement:
             )
         else:
             initial = frozenset()
+        flags = context.feature_flags
+        if (context.execution_mode == "interactive" and context.agent_domain == "general"
+                and context.permission_mode in {"ask", "auto"}
+                and flags.get("skill_catalog_enabled") is True
+                and flags.get("skill_chat_creation_enabled") is True):
+            # Chat Skill discovery and proposals are available in interactive
+            # personal context only. Organization/platform targets still use
+            # the separately authorized proposal flow; keep these tools out
+            # of planners and scheduled work.
+            from .catalog import build_tool_catalog
+            initial |= frozenset(
+                spec.name for spec in build_tool_catalog().specs()
+                if "skill_authoring" in spec.catalog_groups
+            )
         # Current scheduled/preflight loops do not dynamically expand tools.
         if context.execution_mode != "interactive":
             return initial

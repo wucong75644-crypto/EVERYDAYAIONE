@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from psycopg import Error as DatabaseError
 
 from api.deps import CurrentUser, CurrentUserId, Database
@@ -18,6 +19,7 @@ from services.skills.imports import import_attachment
 from services.skills.repository import SkillRepository
 
 router = APIRouter(prefix='/skills/admin/orgs/{org_id}', tags=['Skill 管理'])
+scope_router = APIRouter(prefix='/skills/admin', tags=['Skill 管理'])
 
 
 def get_authoring(org_id: UUID, user_id: CurrentUserId, user: CurrentUser, db: Database,
@@ -40,6 +42,11 @@ def get_authoring(org_id: UUID, user_id: CurrentUserId, user: CurrentUser, db: D
 
 
 Admin = Annotated[SkillAuthoring, Depends(get_authoring)]
+
+
+class PlatformProposalDecision(BaseModel):
+    action: str = Field(pattern=r'^(approve|reject)$')
+    reason: str = Field(default='', max_length=1000)
 
 
 def run(operation, *args):
@@ -112,4 +119,154 @@ def deletion_check(package_id: UUID, admin: Admin):
 
 @router.delete('/{package_id}')
 def delete_skill(package_id: UUID, data: ExpectedVersion, admin: Admin):
+    return run(admin.delete, package_id, data)
+
+
+def get_personal_authoring(user_id: CurrentUserId, user: CurrentUser, db: Database,
+                           response: Response, settings=Depends(get_settings)):
+    response.headers['Cache-Control'] = 'no-store'
+    request_id = str(uuid4())
+    response.headers['X-Request-Id'] = request_id
+    if user.get('status') != 'active':
+        raise HTTPException(403, '当前账号不可管理个人 Skill')
+    if settings.skill_catalog_enabled is not True:
+        raise HTTPException(503, 'Skill 管理尚未启用')
+    repository = SkillRepository(db.pool, DatabaseScope(
+        actor_user_id=user_id, org_id=None, access_kind=DatabaseAccessKind.RUNTIME_ADMIN,
+        request_id=request_id,
+    ), owner_scope='personal')
+    return SkillAuthoring(repository, settings)
+
+
+PersonalAdmin = Annotated[SkillAuthoring, Depends(get_personal_authoring)]
+
+
+@scope_router.get('/personal')
+def list_personal_skills(admin: PersonalAdmin):
+    return run(admin.list)
+
+
+@scope_router.post('/personal', status_code=201)
+def create_personal_skill(data: CreateSkill, admin: PersonalAdmin):
+    return run(admin.create, data)
+
+
+@scope_router.post('/personal/attachments/import')
+def upload_personal_attachment(file: UploadFile, admin: PersonalAdmin):
+    try:
+        return run(import_attachment, file.filename or '', file.file.read(MAX_SOURCE_BYTES + 1))
+    finally:
+        file.file.close()
+
+
+@scope_router.get('/personal/{package_id}')
+def get_personal_skill(package_id: UUID, admin: PersonalAdmin):
+    return run(admin.detail, package_id)
+
+
+@scope_router.put('/personal/{package_id}/draft')
+def save_personal_draft(package_id: UUID, data: SaveDraft, admin: PersonalAdmin):
+    return run(admin.save, package_id, data)
+
+
+@scope_router.post('/personal/{package_id}/transitions')
+def transition_personal_skill(package_id: UUID, data: TransitionDraft, admin: PersonalAdmin):
+    return run(admin.transition, package_id, data)
+
+
+@scope_router.get('/personal/{package_id}/revisions/{revision}')
+def read_personal_revision(package_id: UUID, revision: str, admin: PersonalAdmin):
+    return run(admin.read_revision, package_id, revision)
+
+
+@scope_router.get('/personal/{package_id}/deletion-check')
+def personal_deletion_check(package_id: UUID, admin: PersonalAdmin):
+    return run(admin.deletion_check, package_id)
+
+
+@scope_router.delete('/personal/{package_id}')
+def delete_personal_skill(package_id: UUID, data: ExpectedVersion, admin: PersonalAdmin):
+    return run(admin.delete, package_id, data)
+
+
+def get_platform_authoring(user: CurrentUser, user_id: CurrentUserId, db: Database,
+                           response: Response, settings=Depends(get_settings)):
+    response.headers['Cache-Control'] = 'no-store'
+    request_id = str(uuid4())
+    response.headers['X-Request-Id'] = request_id
+    if user.get('status') != 'active' or user.get('role') != 'super_admin':
+        raise HTTPException(403, '仅平台管理员可管理平台 Skill')
+    if settings.skill_catalog_enabled is not True:
+        raise HTTPException(503, 'Skill 管理尚未启用')
+    repository = SkillRepository(db.pool, DatabaseScope(
+        actor_user_id=user_id, org_id=None, access_kind=DatabaseAccessKind.RUNTIME_ADMIN,
+        request_id=request_id,
+    ), owner_scope='platform')
+    return SkillAuthoring(repository, settings)
+
+
+PlatformAdmin = Annotated[SkillAuthoring, Depends(get_platform_authoring)]
+
+
+@scope_router.get('/platform')
+def list_platform_skills(admin: PlatformAdmin):
+    return run(admin.list)
+
+
+@scope_router.get('/platform/chat-proposals')
+def list_platform_chat_proposals(admin: PlatformAdmin, settings=Depends(get_settings)):
+    if settings.skill_chat_creation_enabled is not True:
+        raise HTTPException(503, 'Skill 对话创建尚未启用')
+    return run(admin.list_platform_chat_proposals)
+
+
+@scope_router.post('/platform/chat-proposals/{proposal_id}/decision')
+def decide_platform_chat_proposal(proposal_id: UUID, data: PlatformProposalDecision,
+                                 admin: PlatformAdmin, settings=Depends(get_settings)):
+    if settings.skill_chat_creation_enabled is not True:
+        raise HTTPException(503, 'Skill 对话创建尚未启用')
+    return run(admin.decide_platform_chat_proposal, proposal_id,
+               approve=data.action == 'approve', reason=data.reason)
+
+
+@scope_router.post('/platform', status_code=201)
+def create_platform_skill(data: CreateSkill, admin: PlatformAdmin):
+    return run(admin.create, data)
+
+
+@scope_router.post('/platform/attachments/import')
+def upload_platform_attachment(file: UploadFile, admin: PlatformAdmin):
+    try:
+        return run(import_attachment, file.filename or '', file.file.read(MAX_SOURCE_BYTES + 1))
+    finally:
+        file.file.close()
+
+
+@scope_router.get('/platform/{package_id}')
+def get_platform_skill(package_id: UUID, admin: PlatformAdmin):
+    return run(admin.detail, package_id)
+
+
+@scope_router.put('/platform/{package_id}/draft')
+def save_platform_draft(package_id: UUID, data: SaveDraft, admin: PlatformAdmin):
+    return run(admin.save, package_id, data)
+
+
+@scope_router.post('/platform/{package_id}/transitions')
+def transition_platform_skill(package_id: UUID, data: TransitionDraft, admin: PlatformAdmin):
+    return run(admin.transition, package_id, data)
+
+
+@scope_router.get('/platform/{package_id}/revisions/{revision}')
+def read_platform_revision(package_id: UUID, revision: str, admin: PlatformAdmin):
+    return run(admin.read_revision, package_id, revision)
+
+
+@scope_router.get('/platform/{package_id}/deletion-check')
+def platform_deletion_check(package_id: UUID, admin: PlatformAdmin):
+    return run(admin.deletion_check, package_id)
+
+
+@scope_router.delete('/platform/{package_id}')
+def delete_platform_skill(package_id: UUID, data: ExpectedVersion, admin: PlatformAdmin):
     return run(admin.delete, package_id, data)

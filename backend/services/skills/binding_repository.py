@@ -14,16 +14,19 @@ class SkillBindingRepository(SkillRepository):
         with self._cursor() as cursor:
             cursor.execute("""SELECT b.id, b.created_at, b.created_by,
                     p.id AS package_id, p.skill_key, p.org_id AS package_org_id,
+                    p.owner_user_id AS package_user_id,
                     p.scope_kind, b.org_id AS assignment_org_id,
                     COALESCE(a.priority, 0) AS priority, r.revision,
                     r.summary AS description, r.catalog_metadata,
-                    (COALESCE(a.enabled, FALSE) AND r.status = 'published') AS available
+                    ((p.scope_kind = 'personal' AND p.owner_user_id = %s::uuid AND r.status = 'published')
+                     OR (p.scope_kind IN ('org','platform') AND COALESCE(a.enabled, FALSE)
+                         AND r.status = 'published')) AS available
                 FROM public.conversation_skill_bindings b
                 JOIN public.skill_packages p ON p.id = b.package_id
                 JOIN public.skill_revisions r ON r.id = b.revision_id AND r.package_id = b.package_id
                 LEFT JOIN public.skill_assignments a ON a.package_id = b.package_id AND a.org_id = b.org_id
-                WHERE b.conversation_id = %s AND b.org_id = %s
-                ORDER BY b.created_at, b.id""", (conversation_id, self._require_org()))
+                WHERE b.conversation_id = %s AND b.org_id IS NOT DISTINCT FROM %s::uuid
+                ORDER BY b.created_at, b.id""", (self.scope.actor_user_id, conversation_id, self.scope.org_id))
             return cursor.fetchall()
 
     @staticmethod
@@ -32,7 +35,6 @@ class SkillBindingRepository(SkillRepository):
 
     def add_binding(self, conversation_id: UUID, candidate: SkillCandidate) -> UUID:
         self._require_admin()
-        org_id = self._require_org()
         with self._cursor() as cursor:
             self.lock_package_write(cursor, candidate.package_id)
             cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
@@ -41,9 +43,15 @@ class SkillBindingRepository(SkillRepository):
                 WHERE conversation_id = %s AND skill_key = %s""", (conversation_id, candidate.skill_key))
             existing = cursor.fetchone()
             cursor.execute("""SELECT r.id FROM public.skill_revisions r
-                JOIN public.skill_assignments a ON a.package_id = r.package_id AND a.revision_id = r.id
+                JOIN public.skill_packages p ON p.id = r.package_id
+                LEFT JOIN public.skill_assignments a ON a.package_id = r.package_id AND a.revision_id = r.id
+                    AND a.org_id IS NOT DISTINCT FROM %s::uuid AND a.enabled
                 WHERE r.package_id = %s AND r.revision = %s AND r.status = 'published'
-                    AND a.org_id = %s AND a.enabled""", (candidate.package_id, candidate.revision, org_id))
+                  AND ((p.scope_kind = 'personal' AND p.owner_user_id = %s::uuid)
+                       OR (p.scope_kind = 'org' AND p.org_id = %s::uuid AND a.enabled)
+                       OR (p.scope_kind = 'platform' AND a.enabled))""",
+                (self.scope.org_id, candidate.package_id, candidate.revision,
+                 self.scope.actor_user_id, self.scope.org_id))
             revision = cursor.fetchone()
             if not revision:
                 raise SkillError("SKILL_BINDING_REVISION_UNAVAILABLE")
@@ -54,7 +62,7 @@ class SkillBindingRepository(SkillRepository):
             cursor.execute("""INSERT INTO public.conversation_skill_bindings
                 (conversation_id, org_id, package_id, revision_id, skill_key, created_by)
                 VALUES (%s, %s, %s, %s, %s, %s) RETURNING id""",
-                (conversation_id, org_id, candidate.package_id, revision["id"],
+                (conversation_id, self.scope.org_id, candidate.package_id, revision["id"],
                  candidate.skill_key, self.scope.actor_user_id))
             return cursor.fetchone()["id"]
 
@@ -62,5 +70,5 @@ class SkillBindingRepository(SkillRepository):
         self._require_admin()
         with self._cursor() as cursor:
             cursor.execute("""DELETE FROM public.conversation_skill_bindings
-                WHERE id = %s AND conversation_id = %s AND org_id = %s""",
-                (binding_id, conversation_id, self._require_org()))
+                WHERE id = %s AND conversation_id = %s AND org_id IS NOT DISTINCT FROM %s::uuid""",
+                (binding_id, conversation_id, self.scope.org_id))

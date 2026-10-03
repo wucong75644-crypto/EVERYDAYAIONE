@@ -10,7 +10,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 
 from api.deps import CurrentUserId, Database, ScopedDB
 from core.exceptions import AppException
@@ -106,6 +106,12 @@ class UpdateOrgRequest(BaseModel):
     logo_url: Optional[str] = None
     features: Optional[dict] = None
     wecom_corp_id: Optional[str] = Field(None, max_length=100)
+
+
+class SkillCreationSettings(BaseModel):
+    chat_creation_enabled: StrictBool
+    org_submission_enabled: StrictBool
+    platform_submission_enabled: StrictBool
 
 
 class AddMemberRequest(BaseModel):
@@ -279,6 +285,34 @@ async def update_org(
             wecom_corp_id=body.wecom_corp_id,
         )
         return {"success": True, "data": org}
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+
+
+@router.patch("/{org_id}/skill-settings", summary="更新组织 Skill 创建权限")
+async def update_skill_creation_settings(
+    org_id: str,
+    body: SkillCreationSettings,
+    user_id: CurrentUserId,
+    svc: OrgService = Depends(_get_org_service),
+):
+    """Only organization owners/admins can change AI creation and request scopes."""
+    try:
+        svc.require_role(org_id, user_id, ("owner", "admin"))
+        org = svc.get_organization(org_id)
+        features = dict(org.get("features") or {})
+        features.update({
+            "skill_chat_creation_enabled": body.chat_creation_enabled,
+            "skill_org_submission_enabled": body.org_submission_enabled,
+            "skill_platform_submission_enabled": body.platform_submission_enabled,
+        })
+        updated = svc.update_organization(org_id, user_id, features=features)
+        return {"success": True, "data": {
+            "chat_creation_enabled": body.chat_creation_enabled,
+            "org_submission_enabled": body.org_submission_enabled,
+            "platform_submission_enabled": body.platform_submission_enabled,
+            "features": updated.get("features", features),
+        }}
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
 

@@ -1,11 +1,19 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import SkillAdminPanel from '../SkillAdminPanel';
+import SkillAdminPanelView from '../SkillAdminPanel';
 import * as api from '../../../services/skillAdmin';
 import { ApiRequestError, toApiRequestError } from '../../../services/api';
 
 vi.mock('../../../services/skillAdmin');
+const orgOwner = { kind: 'org', orgId: 'org-1' } as const;
+const platformOwner = { kind: 'platform' } as const;
+function SkillAdminPanel({ orgId, onNavigationStateChange }: {
+  orgId: string; onNavigationStateChange?: (state: { dirty: boolean; busy: boolean }) => void;
+}) {
+  return <SkillAdminPanelView orgId={orgId} availableScopes={['personal', 'org', 'platform']}
+    onNavigationStateChange={onNavigationStateChange} />;
+}
 const content: api.DraftContent = { description: '按订单生成报告', body: '# 订单报告\n\nReviewed instructions', catalog_metadata: {
   name: '订单报告', triggers: ['订单汇总'], allowed_tool_names: ['file_search'], model_selectable: false,
   conversation_scopes: ['channel'], agent_domains: ['erp'], execution_modes: ['scheduled'], required_permissions: ['orders.read'],
@@ -50,7 +58,7 @@ describe('Skill admin workspace', () => {
     await open();
     const file = new File(['Uploaded text'], 'guide.txt');
     fireEvent.change(screen.getByLabelText('选择附件文件'), { target: { files: [file] } });
-    expect(api.importSkillAttachment).toHaveBeenCalledWith('org-1', file);
+    expect(api.importSkillAttachment).toHaveBeenCalledWith(orgOwner, file);
     expect(screen.getByRole('button', { name: '提交审核' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Skill 库' })).toBeDisabled();
     expect(screen.getByLabelText('Skill 操作说明')).toBeDisabled();
@@ -62,7 +70,7 @@ describe('Skill admin workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: '在操作说明中引用' }));
     vi.mocked(api.saveSkillDraft).mockResolvedValue(detail('draft', false, 2));
     fireEvent.click(screen.getByRole('button', { name: '保存草稿' }));
-    await waitFor(() => expect(api.saveSkillDraft).toHaveBeenCalledWith('org-1', 'p1', 1,
+    await waitFor(() => expect(api.saveSkillDraft).toHaveBeenCalledWith(orgOwner, 'p1', 1,
       expect.objectContaining({ assets: [asset], body: content.body + '\n\n附件：[[asset:upload-one]]。' })));
   });
 
@@ -133,25 +141,25 @@ describe('Skill admin workspace', () => {
     fireEvent.change(screen.getByLabelText('筛选状态'), { target: { value: 'published' } });
     expect(screen.getByText('没有符合条件的 Skill')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /平台 Skill/ }));
-    expect(screen.getByRole('button', { name: '打开 平台说明' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '打开 平台说明' })).toBeInTheDocument();
   });
 
   it('creates a named organization draft atomically and then enters editing', async () => {
     vi.mocked(api.createManagedSkill).mockResolvedValue({ package_id: 'p1' });
     render(<SkillAdminPanel orgId="org-1" />);
-    fireEvent.click(screen.getByRole('button', { name: '新建 Skill' }));
+    fireEvent.click(screen.getByRole('button', { name: '新建组织 Skill' }));
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: '订单报告' } });
     fireEvent.change(screen.getByLabelText('唯一标识'), { target: { value: 'orders' } });
     fireEvent.click(screen.getByRole('button', { name: '创建草稿' }));
     await screen.findByLabelText('Skill 操作说明');
-    expect(api.createManagedSkill).toHaveBeenCalledWith('org-1', 'orders', expect.objectContaining({ catalog_metadata: { name: '订单报告', tool_policy: 'platform' } }));
+    expect(api.createManagedSkill).toHaveBeenCalledWith(orgOwner, 'orders', expect.objectContaining({ catalog_metadata: { name: '订单报告', tool_policy: 'platform' } }));
     expect(api.saveSkillDraft).not.toHaveBeenCalled();
   });
 
   it('retains the creation form on a duplicate identifier', async () => {
     vi.mocked(api.createManagedSkill).mockRejectedValue(new ApiRequestError('CONFLICT', 'private', 409));
     render(<SkillAdminPanel orgId="org-1" />);
-    fireEvent.click(screen.getByRole('button', { name: '新建 Skill' }));
+    fireEvent.click(screen.getByRole('button', { name: '新建组织 Skill' }));
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: '订单报告' } });
     fireEvent.change(screen.getByLabelText('唯一标识'), { target: { value: 'orders' } });
     fireEvent.click(screen.getByRole('button', { name: '创建草稿' }));
@@ -168,8 +176,8 @@ describe('Skill admin workspace', () => {
     fireEvent.change(screen.getByLabelText('Skill 操作说明'), { target: { value: 'Edited draft' } });
     fireEvent.click(screen.getByRole('button', { name: '保存并提交审核' }));
     await screen.findByRole('button', { name: '审核通过' });
-    expect(api.saveSkillDraft).toHaveBeenCalledWith('org-1', 'p1', 1, { ...content, body: 'Edited draft' });
-    expect(api.transitionSkill).toHaveBeenCalledWith('org-1', 'p1', 2, 'submit');
+    expect(api.saveSkillDraft).toHaveBeenCalledWith(orgOwner, 'p1', 1, { ...content, body: 'Edited draft' });
+    expect(api.transitionSkill).toHaveBeenCalledWith(orgOwner, 'p1', 2, 'submit');
     expect(screen.queryByLabelText('Skill 操作说明')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '发布新版本' })).not.toBeInTheDocument();
     vi.mocked(api.transitionSkill).mockResolvedValue(detail('in_review', true, 4));
@@ -177,10 +185,10 @@ describe('Skill admin workspace', () => {
     await screen.findByRole('button', { name: '发布新版本' });
     vi.mocked(api.transitionSkill).mockResolvedValue(detail('published', true, 5));
     fireEvent.click(screen.getByRole('button', { name: '发布新版本' }));
-    expect(api.transitionSkill).not.toHaveBeenCalledWith('org-1', 'p1', 4, 'publish');
+    expect(api.transitionSkill).not.toHaveBeenCalledWith(orgOwner, 'p1', 4, 'publish');
     fireEvent.click(await screen.findByRole('button', { name: '确认发布' }));
     await screen.findByText('发布成功，新版本已可用。');
-    expect(api.transitionSkill).toHaveBeenLastCalledWith('org-1', 'p1', 4, 'publish');
+    expect(api.transitionSkill).toHaveBeenLastCalledWith(orgOwner, 'p1', 4, 'publish');
     await waitFor(() => expect(screen.getByRole('button', { name: '编辑新版本' })).toBeEnabled());
     await screen.findByText('Original immutable content');
   });
@@ -192,7 +200,7 @@ describe('Skill admin workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存草稿' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('未保存的编辑已保留');
     expect(screen.getByLabelText('Skill 操作说明')).toHaveValue('My unsaved work');
-    expect(api.saveSkillDraft).toHaveBeenCalledWith('org-1', 'p1', 1, { ...content, body: 'My unsaved work' });
+    expect(api.saveSkillDraft).toHaveBeenCalledWith(orgOwner, 'p1', 1, { ...content, body: 'My unsaved work' });
     expect(screen.queryByText(/database details/)).not.toBeInTheDocument();
   });
 
@@ -207,7 +215,7 @@ describe('Skill admin workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: '提交审核' }));
     await screen.findByRole('button', { name: '审核通过' });
     expect(api.saveSkillDraft).toHaveBeenCalledTimes(1);
-    expect(api.transitionSkill).toHaveBeenLastCalledWith('org-1', 'p1', 2, 'submit');
+    expect(api.transitionSkill).toHaveBeenLastCalledWith(orgOwner, 'p1', 2, 'submit');
   });
 
   it.each([
@@ -249,8 +257,8 @@ describe('Skill admin workspace', () => {
     vi.mocked(api.transitionSkill).mockResolvedValueOnce(detail('in_review', false, 3));
     fireEvent.click(screen.getByRole('button', { name: '保存并提交审核' }));
     await screen.findByRole('button', { name: '审核通过' });
-    expect(api.saveSkillDraft).toHaveBeenCalledWith('org-1', 'p1', 1, corrected.draft!.content);
-    expect(api.transitionSkill).toHaveBeenLastCalledWith('org-1', 'p1', 2, 'submit');
+    expect(api.saveSkillDraft).toHaveBeenCalledWith(orgOwner, 'p1', 1, corrected.draft!.content);
+    expect(api.transitionSkill).toHaveBeenLastCalledWith(orgOwner, 'p1', 2, 'submit');
   });
 
   it('retains approval after NAS failure and retries inside the publication dialog', async () => {
@@ -327,12 +335,12 @@ describe('Skill admin workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: '确认停用' }));
     fireEvent.click(await screen.findByRole('button', { name: '解除停用' }));
     expect(screen.getByRole('dialog')).toHaveTextContent('将恢复停用前的状态和原有版本');
-    expect(api.transitionSkill).not.toHaveBeenCalledWith('org-1', 'p1', 6, 'enable');
+    expect(api.transitionSkill).not.toHaveBeenCalledWith(orgOwner, 'p1', 6, 'enable');
     vi.mocked(api.transitionSkill).mockResolvedValue(detail('published', true, 7));
     fireEvent.click(screen.getByRole('button', { name: '确认解除停用' }));
     await screen.findByText('已解除停用，当前状态：已发布。');
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(api.transitionSkill).toHaveBeenLastCalledWith('org-1', 'p1', 6, 'enable');
+    expect(api.transitionSkill).toHaveBeenLastCalledWith(orgOwner, 'p1', 6, 'enable');
     expect(screen.queryByRole('button', { name: '解除停用' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '编辑新版本' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /版本历史/ })).toHaveTextContent('1');
@@ -350,7 +358,7 @@ describe('Skill admin workspace', () => {
     vi.mocked(api.transitionSkill).mockResolvedValueOnce(deprecated);
     fireEvent.click(screen.getByRole('button', { name: '确认废弃' }));
     await screen.findByText('已废弃，新的使用已停止，已有任务仍可恢复。');
-    expect(api.transitionSkill).toHaveBeenLastCalledWith('org-1', 'p1', 14, 'deprecate');
+    expect(api.transitionSkill).toHaveBeenLastCalledWith(orgOwner, 'p1', 14, 'deprecate');
     expect(screen.getByText('已废弃')).toBeInTheDocument();
     for (const name of ['更多操作', '解除停用', '编辑新版本', '发布新版本']) {
       expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
@@ -383,7 +391,7 @@ describe('Skill admin workspace', () => {
     vi.mocked(api.listManagedSkills).mockResolvedValue([]);
     fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
     await screen.findByText('已从 Skill 库删除，历史版本和审计记录仍保留。');
-    expect(api.deleteManagedSkill).toHaveBeenCalledWith('org-1', 'p1', 15);
+    expect(api.deleteManagedSkill).toHaveBeenCalledWith(orgOwner, 'p1', 15);
     expect(screen.queryByRole('button', { name: '打开 订单报告' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Skill 库' })).not.toBeInTheDocument();
   });
@@ -469,11 +477,11 @@ describe('Skill admin workspace', () => {
     render(<SkillAdminPanel orgId="org-1" />);
     await screen.findByRole('button', { name: '打开 订单报告' });
     fireEvent.click(screen.getByRole('button', { name: /平台 Skill/ }));
-    fireEvent.click(screen.getByRole('button', { name: '打开 平台说明' }));
+    fireEvent.click(await screen.findByRole('button', { name: '打开 平台说明' }));
     await screen.findByText('<script>untrusted()</script>');
     expect(document.querySelector('script')).toBeNull(); expect(document.querySelector('img')).toBeNull();
     expect(document.querySelector('a[href^="javascript:"]')).toBeNull();
-    expect(api.readSkillRevision).toHaveBeenCalledWith('org-1', 'platform', 'v-immutable');
+    expect(api.readSkillRevision).toHaveBeenCalledWith(platformOwner, 'platform', 'v-immutable');
     expect(screen.queryByRole('button', { name: '编辑新版本' })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '更多操作' }));
     expect(screen.queryByRole('menuitem', { name: '废弃 Skill' })).not.toBeInTheDocument();
@@ -540,7 +548,7 @@ describe('Skill admin workspace', () => {
     const saved = detail('draft', false, 2); vi.mocked(api.saveSkillDraft).mockResolvedValue(saved);
     fireEvent.click(screen.getByRole('button', { name: '保存草稿' }));
     await screen.findByText('草稿已保存。');
-    expect(api.saveSkillDraft).toHaveBeenCalledWith('org-1', 'p1', 1, { ...content, catalog_metadata: { ...content.catalog_metadata, triggers: ['新提示', '另一个提示'], model_selectable: true } });
+    expect(api.saveSkillDraft).toHaveBeenCalledWith(orgOwner, 'p1', 1, { ...content, catalog_metadata: { ...content.catalog_metadata, triggers: ['新提示', '另一个提示'], model_selectable: true } });
     fireEvent.change(screen.getByLabelText('用途说明'), { target: { value: ' ' } });
     fireEvent.click(screen.getByRole('button', { name: '保存并提交审核' }));
     expect(screen.getByRole('alert')).toHaveTextContent('请先填写用途说明和操作说明');

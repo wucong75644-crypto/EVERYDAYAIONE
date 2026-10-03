@@ -45,6 +45,9 @@ def database(postgres_socket):
         conn.execute("CREATE TABLE chat_sentinel (body text); INSERT INTO chat_sentinel VALUES ('unchanged')")
         conn.execute(MIGRATION.read_text())
         conn.execute((MIGRATIONS / "257_skill_catalog_metadata.sql").read_text())
+        # These tests exercise 256/257 rollback and catalog behavior. The
+        # current repository also selects the additive 267 ownership column.
+        conn.execute("ALTER TABLE public.skill_packages ADD COLUMN owner_user_id UUID")
         org_a, org_b, actor = uuid4(), uuid4(), uuid4()
         conn.execute("INSERT INTO organizations VALUES (%s), (%s)", (org_a, org_b))
         conn.execute("SET LOCAL ROLE everydayai")

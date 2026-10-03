@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .context import ToolContext
 from .spec import thaw
+from services.skills.creation_policy import from_features
 
 
 def catalog_context(org_id, permission_mode="auto", personal_context_allowed=True):
@@ -17,7 +18,9 @@ def catalog_context(org_id, permission_mode="auto", personal_context_allowed=Tru
         personal_context_allowed=personal_context_allowed, agent_domain="general",
         permission_mode=permission_mode, execution_mode="interactive",
         feature_flags={key: getattr(settings, key, False) is True for key in (
-            "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled", "mcp_connectors_enabled",
+            "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled",
+            "mcp_connectors_enabled", "skill_catalog_enabled", "skill_chat_creation_enabled",
+            "skill_org_admin",
         )},
     )
 
@@ -45,8 +48,10 @@ def executor_context(executor, *, call_id=None) -> ToolContext:
     from .resource_access import resource_boundary
     manifest = executor.resource_manifest
     feature_flags = {name: getattr(settings, name, False) is True for name in (
-        "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled", "mcp_connectors_enabled",
+        "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled",
+        "mcp_connectors_enabled", "skill_catalog_enabled", "skill_chat_creation_enabled",
     )}
+    feature_flags["skill_org_admin"] = False
     # Connector access is separately organization-scoped. A missing row,
     # mismatched database scope, or failed status read always disables it.
     from .mcp_org import connector_is_enabled
@@ -72,6 +77,39 @@ def executor_context(executor, *, call_id=None) -> ToolContext:
     )
 
 
+async def prepare_initial_context(handler, context: ToolContext) -> ToolContext:
+    """Load the trusted Skill-admin fact before the first model advertisement.
+
+    The runtime rechecks identity again before dispatch. This initial read only
+    controls whether the model sees the proposal tool in its first turn.
+    """
+    flags = dict(context.feature_flags)
+    if (flags.get("skill_catalog_enabled") is not True
+            or flags.get("skill_chat_creation_enabled") is not True
+            or context.execution_mode != "interactive"):
+        return replace(context, feature_flags={**flags, "skill_org_admin": False})
+    from types import SimpleNamespace
+    import asyncio
+
+    identity_executor = SimpleNamespace(
+        db=handler.db,
+        execution_scope=getattr(handler, "execution_scope", None),
+        channel_scope_id=getattr(handler, "channel_scope_id", None),
+    )
+    try:
+        identity = await asyncio.to_thread(_check_identity, identity_executor, context)
+        skill_org_admin, org_chat_creation_enabled = _identity_flags(identity)
+    except Exception:
+        skill_org_admin = False
+        org_chat_creation_enabled = False
+    return replace(context, feature_flags={
+        **flags,
+        "skill_org_admin": skill_org_admin is True,
+        "skill_chat_creation_enabled": flags.get("skill_chat_creation_enabled") is True
+            and org_chat_creation_enabled is True,
+    })
+
+
 async def refresh_context(executor, context, registry):
     """Recheck the same membership rules as OrgContext, without role invention.
 
@@ -82,15 +120,14 @@ async def refresh_context(executor, context, registry):
     import asyncio
     from services.permissions.checker import PermissionChecker
     snapshot = thaw(context.authorization_snapshot)
+    flags = dict(context.feature_flags)
+    flags["mcp_connector_test_readonly_enabled"] = False
+    skill_org_admin = False
+    org_chat_creation_enabled = False
     try:
-        await asyncio.to_thread(_check_identity, executor, context)
-        if executor.resource_manifest_loader is not None:
-            executor.resource_manifest = await executor.resource_manifest_loader()
-            context = replace(context, resource_manifest=tuple(
-                asdict(asset) for asset in executor.resource_manifest.assets
-            ))
+        identity = await asyncio.to_thread(_check_identity, executor, context)
+        skill_org_admin, org_chat_creation_enabled = _identity_flags(identity)
         from .mcp_org import connector_is_enabled
-        flags = dict(context.feature_flags)
         flags["mcp_connector_test_readonly_enabled"] = (
             flags.get("mcp_connectors_enabled") is True
             and await asyncio.to_thread(
@@ -98,6 +135,11 @@ async def refresh_context(executor, context, registry):
             )
         )
         context = replace(context, feature_flags=flags)
+        if executor.resource_manifest_loader is not None:
+            executor.resource_manifest = await executor.resource_manifest_loader()
+            context = replace(context, resource_manifest=tuple(
+                asdict(asset) for asset in executor.resource_manifest.assets
+            ))
         codes = {code for spec in registry.specs() for code in spec.policy_rules.required_permissions}
         codes.update(snapshot.get("required_permissions") or ())
         checker = PermissionChecker(executor.db)
@@ -109,9 +151,28 @@ async def refresh_context(executor, context, registry):
         if any(snapshot["permissions"].get(code) is not True for code in snapshot.get("required_permissions", ())):
             snapshot["access_denied_reason"] = "business_permission_required"
     except Exception:
+        flags["mcp_connector_test_readonly_enabled"] = False
         snapshot["access_denied_reason"] = "identity_or_authorization_unavailable"
+    chat_creation_enabled = (
+        context.feature_flags.get("skill_chat_creation_enabled") is True
+        and org_chat_creation_enabled is True
+    )
     from .resource_access import resource_boundary
-    return replace(context, authorization_snapshot=snapshot, resource_access=resource_boundary(executor).as_dict())
+    return replace(
+        context,
+        authorization_snapshot=snapshot,
+        feature_flags={**flags,
+            "skill_org_admin": skill_org_admin is True,
+            "skill_chat_creation_enabled": chat_creation_enabled},
+        resource_access=resource_boundary(executor).as_dict(),
+    )
+
+
+def _identity_flags(value):
+    # Existing injected identity checkers may return only the admin boolean.
+    if isinstance(value, tuple) and len(value) == 2:
+        return value
+    return value, True
 
 
 def _check_identity(executor, context):
@@ -125,12 +186,18 @@ def _check_identity(executor, context):
             raise PermissionError("identity_unavailable")
         return data
 
+    skill_org_admin = False
+    skill_chat_creation_enabled = True
     if context.org_id:
-        if row("organizations", "status", id=context.org_id).get("status") != "active":
+        organization = row("organizations", "status,features", id=context.org_id)
+        if organization.get("status") != "active":
             raise PermissionError("organization_inactive")
-        if row("org_members", "status", org_id=context.org_id,
-               user_id=context.actor_user_id).get("status") != "active":
+        skill_chat_creation_enabled = from_features(organization.get("features")).chat_creation_enabled
+        member = row("org_members", "status,role", org_id=context.org_id,
+                     user_id=context.actor_user_id)
+        if member.get("status") != "active":
             raise PermissionError("organization_membership_required")
+        skill_org_admin = member.get("role") in {"owner", "admin"}
     if context.execution_mode == "interactive":
         conversation = row("conversations", "user_id,org_id,scope_type,scope_id,source",
                            id=context.conversation_id)
@@ -147,6 +214,7 @@ def _check_identity(executor, context):
                     or conversation.get("source") != "wecom" or conversation.get("user_id") is not None
                     or str(conversation.get("scope_id") or "") != executor.channel_scope_id):
                 raise PermissionError("channel_scope_mismatch")
+    return skill_org_admin, skill_chat_creation_enabled
 
 
 def resolve_resources(executor, name, arguments):

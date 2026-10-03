@@ -146,6 +146,20 @@ class ChangeSetRepository:
             )
         return row
 
+    def replace_skill_proposal(self, *, change_set_id: str, org_id: str, actor_id: str,
+                               expected_revision: int, proposal: Mapping[str, Any],
+                               content_sha256: str) -> dict[str, Any]:
+        response = self._db.rpc("replace_skill_draft_candidate", {
+            "p_change_set_id": change_set_id, "p_org_id": org_id,
+            "p_actor_id": actor_id, "p_expected_revision": expected_revision,
+            "p_proposed_snapshot": dict(proposal), "p_content_sha256": content_sha256,
+        }).execute()
+        data = _response_dict(response, "SKILL_CANDIDATE_REPLACE_RESULT_INVALID")
+        row = data.get("change_set")
+        if data.get("outcome") != "replaced" or not isinstance(row, dict):
+            raise ChangeSetConcurrencyError("Skill 候选已更新或不能编辑", current=row)
+        return row
+
     def list_checks(self, change_set_id: str, org_id: str) -> list[dict[str, Any]]:
         result = self._db.table("change_checks").select("*").eq(
             "change_set_id", change_set_id,

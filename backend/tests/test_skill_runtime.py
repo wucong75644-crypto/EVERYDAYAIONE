@@ -98,6 +98,21 @@ async def test_duplicate_activation_and_retry_after_replay_do_not_reinject_or_wi
     assert restored.checkpoint() == checkpoint
 
 
+async def test_checkpoint_serializes_permission_sets_in_canonical_order():
+    allowed = {"file_search", "file_delete", "web_search"}
+    runtime = state(
+        Source([item(tools=tuple(allowed))]),
+        authorized_tool_names=allowed,
+    )
+    await runtime.initialize()
+    assert (await runtime.activate(activate()))["ok"]
+
+    checkpoint = runtime.checkpoint()
+    expected = sorted(allowed)
+    assert checkpoint["effective_allowed_tool_names"] == expected
+    assert checkpoint["active"][0]["effective_allowed_tool_names"] == expected
+
+
 async def test_multiple_skills_intersect_existing_authorization_and_never_expand():
     runtime = state(Source([
         item(tools=("file_search", "file_delete", "unknown", "*")),

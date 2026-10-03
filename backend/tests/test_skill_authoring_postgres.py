@@ -55,6 +55,9 @@ def environment(postgres_socket, tmp_path):
         for migration in ('256_skill_catalog.sql', '257_skill_catalog_metadata.sql', '259_skill_authoring.sql',
                           '260_skill_reenable.sql', '261_skill_safe_removal.sql'):
             conn.execute((MIGRATIONS / migration).read_text())
+        # Keep this historical 256-261 migration suite independent from 267,
+        # while providing the additive column now selected by SkillRepository.
+        conn.execute('ALTER TABLE public.skill_packages ADD COLUMN owner_user_id UUID')
     root = tmp_path / 'nas'
     root.mkdir()
     config = settings(skill_catalog_enabled=True, skill_storage_root=str(root), file_workspace_root=str(tmp_path / 'workspace'))
