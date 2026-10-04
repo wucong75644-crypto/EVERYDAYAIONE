@@ -88,6 +88,33 @@ export async function getImagePlatformCosts(days: number, page = 1): Promise<Ima
   return request({ method: 'GET', url: '/error-monitor/image-platform-costs', params: { days, page } });
 }
 
+export interface ImageArgumentStats {
+  summary: {
+    recorded_chats: number;
+    initial_calls: number;
+    invalid_initial_calls: number;
+    corrected_calls: number;
+    unresolved_calls: number;
+    correction_rounds: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    estimated_chat_credits: number;
+    cost_unknown_rounds: number;
+    initial_error_rate: number | null;
+    correction_success_rate: number | null;
+  };
+  sample_size: number;
+  truncated: boolean;
+  since: string;
+  until: string;
+  evidence: 'completed_chat_usage';
+  cost_evidence: 'token_estimate';
+}
+
+export async function getImageArgumentStats(days: number): Promise<ImageArgumentStats> {
+  return request({ method: 'GET', url: '/error-monitor/image-argument-stats', params: { days } });
+}
+
 export async function summarizeErrors(days: number = 7): Promise<SummarizeResponse> {
   return request({ method: 'POST', url: '/error-monitor/summarize', params: { days } });
 }

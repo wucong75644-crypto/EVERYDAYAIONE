@@ -42,6 +42,18 @@
 
 接受RPC之前确定的输入拒绝返回 `status=error`、`accepted=false`、`completed=false`、`submission_state=not_accepted`；例如 `IMAGE_MODEL_SELECTION_DISABLED` / `IMAGE_REQUEST_FIELDS_INVALID`。明确告知未创建图片任务、未预扣图片积分，不附加“受理不确定”。RPC异常或回执丢失仍按不确定处理，不能套用输入拒绝后重新提交。此区别不改变通用工具的副作用分类。
 
+### 模型参数校验与一次纠错（本批未发布）
+
+模型入口使用 Registry 中实际 `generate_image` ToolSpec 的同一份 parameters 校验：未知字段、必填、类型、枚举、嵌套引用、定位 oneOf、message_id/content_index 依赖、长度/数量/pattern 均覆盖当前合同。JSON 重复键、顶层非对象和非有限数值拒绝。错误为 `IMAGE_TOOL_ARGUMENTS_INVALID`，包含最多16项路径/原因、当前parameters、`accepted=false`和`submission_state=not_accepted`。发生在确认、invocation领取、接受RPC和图片预扣之前；不静默丢字段、转换类型或重写提示词。
+
+聊天 Actor 仅对这种已证实未执行的类型化校验错误，给模型**最多一个纠错回合**。原文prompt、原图引用/用途/顺序、已给出的规格与稳定变体身份受保护；format/size的明确原意分别锁到output_format/resolution。允许删除错误的模型选择字段并使用服务器默认模型；不会给模型新增选择权。mask、weight、旧image_urls、批量数量等未知语义字段不能删除后继续；不能安全恢复输入时停止，请用户补充。已接受的同批次请求不能被纠错重发；第二次错误或纠错改变受保护输入时停止。供应商失败、受理不确定和结果保存失败不进入参数纠错。
+
+纠错额度保存在现有tool_step checkpoint；调用纠错模型前先记录used。工具执行前通过现有239 RPC保存 `before_tool` checkpoint，绑定整批实际call_id和完整参数hash；没有成功保存就不执行。恢复到已used、dispatch_reserved或done的快照不再请求模型/重新提交：done交付已存真实回执，其余提示核查已有任务和参数。图片子任务继续沿用既有Worker完成、结算和恢复。此为保守停止，可能包含尚未发出的请求，不能声称“已受理”或“肯定未受理”。
+
+旧已接受invocation先按当前权限及原参数检查并重放，不用新schema拒绝原回执。可信legacy_internal仍可通过既有旧参数归一化出口；其他工具的既有参数校验保持。未启用供应商strict模式，也不承诺模型本身不会生成错误参数。Skill正文与发布版本本批不变。
+
+`GET /api/error-monitor/image-argument-stats?days=7` 仅超级管理员可读，days=1..30。读取最近最多5000条已完成chat的 `tasks.result.usage.image_argument_metrics`，超量返回truncated=true；只投影统计JSON，不返回prompt/refs/tool_digest。统计initial_calls、invalid_initial_calls、corrected_calls（真正接受）、unresolved_calls、correction_rounds、纠错prompt/completion_tokens、estimated_chat_credits和两项比例；无分母为null，缺成本单列cost_unknown_rounds。积分使用现有聊天模型定价按已取得的额外Token估算，是聊天费用的组成，不是额外扣款、图片积分或供应商账单；未完成聊天和未取得的usage不作为已统计完整成本。既有平台承担图片报告另行保留。
+
 同一父task/tool_call重复输入返回原身份；同调用不同冻结输入拒绝。不同调用受同一父预算控制，名额在接受时占用，失败不返还尝试次数。当前默认上限4张/100用户积分，配置范围1..8张/1..200积分。
 
 ## 精确历史

@@ -154,3 +154,26 @@ API/状态见[接口文档](API_聊天Skill图片异步任务.md)，迁移顺序
 - 生产不付费续轮补验：任务 `7c48aa95-65ea-5dbd-afae-b7c3405d368c` 自动激活新版Skill，checkpoint/rendered/hash一致，正确说明默认模型和6积分；下一轮 `5c56d74a-af75-562e-86ea-8a9a51b3f1a1` 没重新激活，文字示例仍写format。五轮均无手动选择/固定绑定，无图片任务，余额1266。不能把第一轮成功加载冒充续轮合同通过。
 - 进一步修正已有SkillRuntime的请求投影：无active时此前直接返回leading目录及历史，缺少当前请求旁的选择状态。只有实际提供activate_skill且目录有获准可自动激活项时，把有界当前目录和“本轮未激活、确认/继续先加载、按当前schema准备/执行”的事实放在当前用户消息前；不继承历史绑定、不预加载正文、不改变授权。context_version=1、计划任务及无控制工具场景保持原投影。
 - 该修正的129项定向测试通过（Actor真实provider调用参数、lazy加载、旧消息不变、legacy/无控制工具、目录预算、恢复、推荐、手动/固定与计划快照；日志 `/private/tmp/chat-image-default-confirm-test.log`）。仍需线上续轮验证后判断模型行为，不追加付费图片请求。
+
+### 2026-10-04 参数可靠性机制（本批开发，未提交部署）
+
+阶段3/4补齐，关联 M01/M02/M03/M08/M20/M29/M30、F01/F04/F08/F12、T01/T02/T05/T08/T09/T15/T16。用户确认增加机制解决模型填错字段，继续默认模型；本批基于075726fc，在同一任务工作树实施，没有更改Skill正文、生产Skill目录、接受开关或数据库迁移。
+
+- 共享ToolRuntime/ToolExecutionService使用实际ToolSpec完整校验，错误在确认/调用登记/图片接受前返回明确未受理事实；ChatToolMixin覆盖坏JSON、数组、重复键和非有限数值。通用参数清洗器仅对图片采用同合同严格拒绝，其他工具兼容行为保留。
+- 当前真实聊天Actor实现一次纠错：保护完整prompt、原图顺序/用途、已确认规格、稳定变体，只有首次明确的shape rejection可打开额度。无法确认语义、纠错改变输入、再次错误、受理不确定均停止；修正结果用真实工具回执交付，不加解释性模型轮次。多张仍由多次单图调用，原预算/幂等不变。
+- 恢复状态复用tool_step和239 checkpoint RPC，新增应用层before_tool边界及完整调用hash记录，没有新表。修正模型之前记录used，整批工具执行之前保存dispatch_reserved；缺回调、disabled/ignored或保存异常都阻止IO。从used/dispatch_reserved恢复停止，从done恢复原回执及统计，避免改变批次index/随机variant_id后重复付费。
+- 管理员错误监控新增参数错误率、纠正成功/未纠正、额外Token及估算聊天积分。只查已完成chat的统计JSON，近1..30天、最多5000条并注明截断。估算使用已有模型定价，不是新增扣款或供应商账单；无usage/未完成聊天的成本不宣称覆盖。已有图片平台承担、原生图片/电商/视频/trial执行及账本未改。
+- 独立只读审查发现并修复：恢复纠错可换index重复受理、解析错误绕过限制、覆盖受理不确定提示。复审三项关闭；进一步保守关闭已used纠错模型的重启重试。数据库真实保存与测试RLS见新增临时PG验证，不等同生产ACL。
+
+验证记录：原基线与此前生产两张样本不能替代本批验证。实际模型选择/确认续轮的线上纠错仍待发布后验收，本批无付费调用、生产数据库/控制面写入或部署。
+
+| 本批实际验证 | 结果 | 范围与限制 |
+| --- | --- | --- |
+| 后端27个相关测试文件 | **934 passed**，8.46秒；`/private/tmp/image-argument-final-backend-tests.log` | 真Actor/ToolRuntime执行链配合脚本化模型和业务double，验证自动激活→坏字段→一次修正、完整合同、输入保护、旧回执/旧内部调用、权限、未保存0调用、受理后故障恢复0模型/0调用、used恢复、uncertain提示、统计API与5000条截断；原生图片/电商/媒体、Worker、Actor/Skill和其他工具回归。不是实际Qwen或供应商验证 |
+| 新建临时PG17 Unix socket库 | **3 passed / 0 skip**，0.41秒；`/private/tmp/image-argument-postgres-tests.log` | 使用现有239实际RPC跨连接提交/重载before_tool、旧token拒绝、过期租约拒绝、测试RLS隔离其他actor及实际JSONB统计投影；最小schema/测试RLS不是完整生产权限副本。首次系统PG16启动被沙箱共享内存阻止，改用已有PG17并获工具许可后验证；没有安装依赖。临时集群已停止并删除 |
+| 管理员前端 | **15 passed**；`/private/tmp/image-argument-frontend-tests.log` | 指标展示、读取失败降级与既有操作回归；日志有React act warning，无断言失败 |
+| 类型/构建/静态 | `npm run build`（含tsc）通过，生产TS文件定向ESLint及git diff --check通过 | 构建保留大chunk警告。完整定向lint的测试文件有原有motion mock析构变量5项unused错误，已与HEAD相同位置核验，本批未改该mock；不把它说成全量lint通过 |
+
+新校验文件、chat/image_argument_correction、execution_engine和现有checkpoint适配器为关键后端位置；统计在error_monitor路由及ErrorMonitorPanel。API/状态、发布顺序/兼容回滚和CURRENT_ISSUES同步完成。本批T01/T02/T05/T08/T09/T15/T16相关分支已有上述证据，其余T编号沿用前文原实现证据，不将它们或T17宣布为本批全量重测。仍待受控部署后真实模型自动激活/确认续轮验收、生产checkpoint/统计权限核验；追加供应商测试须另定额度。本批具备本地候选验证证据，未提交、推送、部署、合并main或清理任务工作树。
+
+用户随后明确授权“提交部署”。提交前只读生产预检通过：数据库身份与实际checkpoint RPC/非枚举safe_point兼容；pending/running chat及在途图片均为0，历史paused chat为43，发布锁空闲。最新origin/main仍为32e8ba0d，当前候选已包含。发布前后端并复用以上定向测试，保留构建、迁移账本及服务readiness检查；最终发布状态以本次受控入口结构化回执为准。没有增加生图额度、发布Skill、改生产配置、合并main或授权清理。

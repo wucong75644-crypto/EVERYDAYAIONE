@@ -14,6 +14,8 @@ import {
   listErrors,
   getErrorStats,
   getImagePlatformCosts,
+  getImageArgumentStats,
+  type ImageArgumentStats,
   type ImagePlatformCostReport,
   summarizeErrors,
   resolveError,
@@ -49,6 +51,8 @@ export default function ErrorMonitorPanel() {
   const [imageCosts, setImageCosts] = useState<ImagePlatformCostReport | null>(null);
   const [costError, setCostError] = useState('');
   const [costPage, setCostPage] = useState(1);
+  const [argumentStats, setArgumentStats] = useState<ImageArgumentStats | null>(null);
+  const [argumentError, setArgumentError] = useState('');
 
   // 清除确认弹窗
   const [clearModalOpen, setClearModalOpen] = useState(false);
@@ -102,6 +106,18 @@ export default function ErrorMonitorPanel() {
     return () => { active = false; };
   }, [filterDays, costPage, costRefresh]);
 
+  useEffect(() => {
+    let active = true;
+    setArgumentStats(null);
+    setArgumentError('');
+    getImageArgumentStats(filterDays).then(result => {
+      if (active) setArgumentStats(result);
+    }).catch(() => {
+      if (active) setArgumentError('参数纠错统计暂时不可用');
+    });
+    return () => { active = false; };
+  }, [filterDays, costRefresh]);
+
   // ── 操作 ──────────────────────────────────────────────
   const handleResolve = async (id: number) => {
     try {
@@ -150,6 +166,26 @@ export default function ErrorMonitorPanel() {
   // ── 渲染 ──────────────────────────────────────────────
   return (
     <div className="space-y-4">
+      <Card className="p-4 space-y-3">
+        <div className="font-medium">聊天图片 · 参数纠错（近 {filterDays} 天）</div>
+        <p className="text-sm text-[var(--s-text-secondary)]">统计已完成聊天中的新记录。纠错积分按实际额外 Token 估算，属于聊天费用组成；不是新增生图扣费或供应商账单。</p>
+        {argumentError && <p className="text-sm text-[var(--s-text-secondary)]">{argumentError}</p>}
+        {argumentStats && <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <StatCard label="首次参数错误" value={argumentStats.summary.invalid_initial_calls} />
+            <StatCard label="自动纠正成功" value={argumentStats.summary.corrected_calls} />
+            <StatCard label="未纠正请求" value={argumentStats.summary.unresolved_calls} />
+            <StatCard label="纠错额外 Token" value={argumentStats.summary.prompt_tokens + argumentStats.summary.completion_tokens} />
+          </div>
+          <p className="text-sm text-[var(--s-text-secondary)]">
+            首次错误率：{argumentStats.summary.initial_error_rate === null ? '暂无样本' : `${(argumentStats.summary.initial_error_rate * 100).toFixed(1)}%`}；
+            纠正成功率：{argumentStats.summary.correction_success_rate === null ? '暂无样本' : `${(argumentStats.summary.correction_success_rate * 100).toFixed(1)}%`}；
+            估算纠错积分：{argumentStats.summary.estimated_chat_credits.toFixed(2)}
+            {argumentStats.summary.cost_unknown_rounds > 0 && `（另有 ${argumentStats.summary.cost_unknown_rounds} 轮成本未取得）`}。
+            {argumentStats.truncated && ' 当前显示最近5000条已完成聊天的样本，未覆盖完整时间范围。'}
+          </p>
+        </>}
+      </Card>
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between gap-3">
           <div className="font-medium">图片生成 · 平台承担（近 {filterDays} 天）</div>

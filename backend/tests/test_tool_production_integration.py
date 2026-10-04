@@ -42,6 +42,7 @@ def setup(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "file_workspace_root", str(tmp_path))
     monkeypatch.setattr(settings, "file_workspace_enabled", True)
     monkeypatch.setattr(settings, "sandbox_enabled", True)
+    monkeypatch.setattr(settings, "chat_image_async_enabled", True)
     monkeypatch.setattr("services.oss_service.get_oss_service", lambda: SimpleNamespace(
         bucket=SimpleNamespace(get_object_meta=Mock(return_value=SimpleNamespace(etag="mock-etag")))))
     manager = WebSocketManager()
@@ -72,7 +73,7 @@ def loop_for(executor):
     loop._emit_payloads = []
     ctx = HookContext(db=executor.db, user_id=executor.user_id, org_id=executor.org_id,
                       conversation_id=executor.conversation_id, task_id=None,
-                      request_ctx=None, messages=[], tools_called=[], selected_tools=[])
+                      request_ctx=None, messages=[], tools_called=[], selected_tools=executor.tool_runtime.advertised())
     return loop, ctx
 
 
@@ -91,7 +92,8 @@ async def invoke(entry, executor, calls, monkeypatch, harness=None):
         return output
     if entry == "loop":
         loop, context = loop_for(executor)
-        await loop._execute_tools(calls, [], "", context)
+        context.selected_tools[:] = executor.tool_runtime.advertised(c["name"] for c in calls)
+        await loop._execute_tools(calls, context.selected_tools, "", context)
         return [m["content"] for m in context.messages if m["role"] == "tool"]
     harness = harness or ChatHarness(executor.db)
     harness.db = executor.db
@@ -153,9 +155,8 @@ async def test_personal_skill_draft_is_available_to_members_and_admins(monkeypat
     from core import config
     from services.tools import runtime_context
 
-    monkeypatch.setattr(config, "get_settings", lambda: SimpleNamespace(
-        skill_catalog_enabled=True, skill_chat_creation_enabled=True,
-    ))
+    settings = config.get_settings().model_copy(update={"skill_catalog_enabled": True, "skill_chat_creation_enabled": True})
+    monkeypatch.setattr(config, "get_settings", lambda: settings)
     identity_check = Mock(return_value=is_admin)
     monkeypatch.setattr(runtime_context, "_check_identity", identity_check)
 
@@ -364,7 +365,7 @@ async def test_shared_chat_engine_passes_mode_and_retains_safe_points(setup, mon
                            permission_mode=mode, budget=budget, cancellation=event)
     prepared = SimpleNamespace(budget=budget, permission=PermissionMode(mode=mode), core_tools=[],
                                execution_context=context, tool_context=ToolLoopContext(org_id="o1", agent_domain="general"), messages=[])
-    calls = [tc("web_search", {"query": "x"}, "a"), tc("generate_image", {"prompt": "x"}, "b")]
+    calls = [tc("web_search", {"query": "x"}, "a"), tc("generate_image", {"mode": "text_to_image", "prompt": "x"}, "b")]
     monkeypatch.setattr("services.handlers.chat.execution_engine._read_turn", AsyncMock(side_effect=[
         ("", "", calls, set()), ("结束", "", [], set()),
     ]))
@@ -720,7 +721,7 @@ async def test_chat_reuses_request_service_across_model_rounds(setup, monkeypatc
         return executor
     monkeypatch.setattr("services.tool_executor.ToolExecutor", factory)
     for turn in [1, 2]:
-        await harness._execute_tool_calls([tc("generate_image", {"prompt": "x"})], "task1", "c1", "m1", "u1", turn)
+        await harness._execute_tool_calls([tc("generate_image", {"mode": "text_to_image", "prompt": "x"})], "task1", "c1", "m1", "u1", turn)
     assert len(created) == 1
     handler.assert_awaited_once()
 

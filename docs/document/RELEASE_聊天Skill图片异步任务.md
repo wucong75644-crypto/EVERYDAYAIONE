@@ -104,6 +104,14 @@ DATABASE_URL=postgresql://invalid/test JWT_SECRET_KEY=isolated-test-key \
 
 ## 保留型回滚与故障恢复
 
+### 参数校验/一次纠错增补的发布顺序（2026-10-04，已授权提交部署）
+
+此增补不需要新SQL迁移、Skill发布或生产配置修改。下一次获准“提交部署”时按受控入口发布前后端；先确认既有239 checkpoint RPC、safe_point没有拒绝before_tool的约束和默认模型/管理员灰度配置，停止接收新父聊天并排空或暂停在途聊天，再完整更新应用，避免旧/新Actor混跑。已接受图片继续由原Worker完成与结算。上线先验证不新增付费图片的自动Skill激活/确认续轮、错误字段未创建任务、管理员统计与恢复停止行为；此前2张/24积分授权的图片数量已使用，追加生图先明确新的测试额度。
+
+本次提交前生产只读核验：正式数据库身份匹配，实际`save_generation_checkpoint(uuid,uuid,text,jsonb)`可执行，safe_point为text且无枚举约束，RPC支持before_tool；chat pending/running均为0（历史paused为43），在途图片为0，发布锁空闲。基座仍为`32e8ba0d`。此核验不写业务数据，也不代表已完成发布；最终SHA、构建、服务状态和候选状态以受控入口本次`RELEASE_RESULT`为准。
+
+回退应用前排空本版纠错父聊天，或保留识别image_argument_validation与before_tool的兼容回滚补丁；旧版不识别额度/dispatch标记，不能恢复这些父任务后重新请求模型。不得移除既有图片Worker/读端/结算链，也不修改任务快照或通过最新消息补参数。统计字段为加性，可保留，旧聊天无字段显示暂无样本。本批尚未做生产发布/回滚演练。
+
 - 第一动作关闭 `CHAT_IMAGE_ASYNC_ENABLED` 和透明门，阻止新接受；**保留** Worker/回调/轮询、读端、settling重试、平台退款/统计、trial GET及前端恢复。不得关闭整个图片Worker来回滚接受功能。
 - 273–276对应rollback SQL仅为保留型说明，不DROP函数/索引/策略/快照；执行它们不会撤销既有任务事实。不要回滚到本基座那种完全不识别新版生命周期的应用；必须保留兼容 reader/completion/recovery 的回滚候选。
 - queued未领取可按原子停止合同关闭；已发送/accepted/uncertain不能批量直接退款后重发。沿用核实期限与用户已授权的平台承担政策，真实支出仍需账单核实。

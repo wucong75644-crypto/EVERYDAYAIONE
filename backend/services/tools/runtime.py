@@ -125,6 +125,12 @@ class ToolRuntime:
                 if replay is not None:
                     self.check_lifetime(context)
                     return replay
+            # Replay existing accepted calls first. Fresh model calls must use
+            # the same platform contract as advertisement, before approval,
+            # invocation reservation or any generation business IO.
+            if name == "generate_image" and context.entrypoint == "model":
+                from .argument_validation import validate_model_image_arguments
+                validate_model_image_arguments(self.registry.get(name), call.arguments)
             if file_call is not None:
                 async with workspace_lock(file_call.resolver.root, check=lambda: self.check_lifetime(context)):
                     await file_call.prepare()

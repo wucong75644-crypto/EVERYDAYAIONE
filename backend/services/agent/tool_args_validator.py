@@ -7,6 +7,7 @@
 - Schema 来源 = selected_tools（传给模型的工具定义本身），单一数据源
 - 幻觉参数静默丢弃 + 日志记录（不中断执行）
 - 必填缺失 → 返回错误信息让模型重试
+- generate_image 使用完整当前合同，未知/错误字段拒绝，不清洗；聊天 Actor 限制纠错轮
 - 纯函数，无状态，可独立单测
 """
 from __future__ import annotations
@@ -45,6 +46,12 @@ def validate_tool_args(
         - error_msg=str   → 校验失败，将 error_msg 回传模型重试
     """
     schema = _lookup_schema(tool_name, selected_tools)
+    if tool_name == "generate_image":
+        from services.tools.argument_validation import _issues, ToolArgumentValidationError
+        if schema is None:
+            return args, "IMAGE_TOOL_CONTRACT_UNAVAILABLE：当前轮未提供此工具，不能执行或猜测参数。"
+        issues = _issues(args, schema)
+        return args, str(ToolArgumentValidationError(issues, schema)) if issues else None
     if schema is None:
         # 工具不在 selected_tools 中（动态注入等场景），跳过校验
         return args, None

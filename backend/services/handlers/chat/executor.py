@@ -231,6 +231,7 @@ class ChatGenerationExecutor:
             return {"outcome": "disabled"}
         boundary = {
             SafePoint.BEFORE_MODEL: ReplayCheckpointBoundary.BEFORE_MODEL,
+            SafePoint.BEFORE_TOOL: ReplayCheckpointBoundary.BEFORE_TOOL,
             SafePoint.AFTER_TOOL: ReplayCheckpointBoundary.AFTER_TOOL,
             SafePoint.AFTER_SKILL_ACTIVATION: ReplayCheckpointBoundary.AFTER_SKILL_ACTIVATION,
             SafePoint.BEFORE_COMMIT: ReplayCheckpointBoundary.BEFORE_COMMIT,

@@ -81,7 +81,12 @@
                         "message_id"
                       ]
                     }
-                  ]
+                  ],
+                  "dependentRequired": {
+                    "message_id": [
+                      "content_index"
+                    ]
+                  }
                 }
               },
               "aspect_ratio": {

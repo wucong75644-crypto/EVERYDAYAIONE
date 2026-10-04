@@ -40,6 +40,7 @@ def _schema_generate_image_async():
                             "role":{"type":"string","minLength":1,"maxLength":200},
                         },
                         "oneOf":[{"required":[key]} for key in ("resource_ref","file_id","asset_id","message_id")],
+                        "dependentRequired":{"message_id":["content_index"]},
                     }},
                     "aspect_ratio":{"type":"string","description":"画面比例，如1:1；不是像素尺寸或分辨率"},
                     "resolution":{"type":"string","enum":["1K","2K","4K"],"description":"仅填写默认模型实际支持的分辨率"},

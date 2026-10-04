@@ -165,6 +165,40 @@ class TestSerializeRow:
 
 
 class TestPermission:
+    def test_image_argument_stats_denies_non_admin(self):
+        db = FakeDB()
+        db.enqueue(data={"role": "user"})
+        assert TestClient(_build_app(db, NORMAL_USER_ID)).get('/api/error-monitor/image-argument-stats').status_code == 403
+
+    def test_image_argument_stats_aggregates_facts_without_private_inputs(self):
+        db = FakeDB()
+        db.enqueue(data={"role": "super_admin"})
+        db.enqueue(data=[{"metrics": {
+            "version": 1, "initial_calls": 2, "invalid_initial_calls": 1,
+            "corrected_calls": 1, "correction_rounds": 1, "prompt_tokens": 30,
+            "completion_tokens": 10, "estimated_chat_credits": 0.25, "prompt": "private",
+        }}])
+        response = TestClient(_build_app(db)).get('/api/error-monitor/image-argument-stats?days=7')
+        assert response.status_code == 200
+        report = response.json()
+        assert report['summary']['initial_error_rate'] == 0.5
+        assert report['summary']['corrected_calls'] == 1
+        assert report['summary']['estimated_chat_credits'] == 0.25
+        assert report['sample_size'] == 1 and not report['truncated']
+        assert 'private' not in response.text
+
+    def test_image_argument_stats_rejects_unbounded_window(self):
+        response = TestClient(_build_app(FakeDB())).get('/api/error-monitor/image-argument-stats?days=31')
+        assert response.status_code == 422
+
+    def test_image_argument_stats_labels_bounded_sample(self):
+        db = FakeDB()
+        db.enqueue(data={"role": "super_admin"})
+        db.enqueue(data=[{"metrics": {"version": 1, "initial_calls": 1}}] * 5001)
+        report = TestClient(_build_app(db)).get('/api/error-monitor/image-argument-stats').json()
+        assert report['sample_size'] == report['summary']['recorded_chats'] == 5000
+        assert report['truncated'] is True
+
     def test_non_admin_gets_403(self):
         db = FakeDB()
         # _require_super_admin 查 users 表
