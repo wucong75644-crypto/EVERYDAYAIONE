@@ -429,12 +429,18 @@ async def test_mcp_setup_generates_secret_tests_and_enables_without_returning_se
     from types import SimpleNamespace
 
     generated = "server-generated-synthetic-token"
+    events = []
     monkeypatch.setattr("api.routes.org.secrets.token_urlsafe", lambda _: generated)
     monkeypatch.setattr(
         "services.tools.mcp_org.scoped_mcp_database", lambda db, **_: db,
     )
+
+    def record_health(_db, **kwargs):
+        events.append(("health", kwargs["status"]))
+        return True
+
     monkeypatch.setattr(
-        "services.tools.mcp_org.record_connector_health", lambda *args, **kwargs: True,
+        "services.tools.mcp_org.record_connector_health", record_health,
     )
     org_service = MagicMock()
     scoped_control = MagicMock()
@@ -451,25 +457,40 @@ async def test_mcp_setup_generates_secret_tests_and_enables_without_returning_se
     })
     resolver = MagicMock()
     resolver.mcp_test_readonly.return_value = bundle
-    state = {
+    enabled_state = {
         "org_id": ORG_ID, "connector_id": "test-readonly", "enabled": True,
-        "state": "ready", "health_status": "ready", "last_error_code": None,
+        "state": "configured", "health_status": "configured", "last_error_code": None,
+    }
+    ready_state = {
+        **enabled_state, "state": "ready", "health_status": "ready",
+        "last_checked_at": "2026-10-04T00:00:00Z",
     }
     db = MagicMock()
     db.org_id = ORG_ID
-    db.rpc.return_value.execute.return_value.data = state
+
+    def rpc(name, _args):
+        events.append(name)
+        state = enabled_state if name == "api_set_org_mcp_connector_enabled" else ready_state
+        return SimpleNamespace(execute=lambda: SimpleNamespace(data=state))
+
+    db.rpc.side_effect = rpc
 
     result = await setup_mcp_test_connector(
         ORG_ID, USER_ID, db, org_service, control, resolver,
     )
 
-    assert result == {"success": True, "data": state}
+    assert result == {"success": True, "data": ready_state}
     assert generated not in str(result)
     scoped_control.set_mcp_organization_credential.assert_called_once_with(
         org_id=ORG_ID, value={"token": generated}, expected_version=0,
     )
-    assert db.rpc.call_args.args[0] == "api_set_org_mcp_connector_enabled"
-    assert db.rpc.call_args.args[1]["p_enabled"] is True
+    assert events == [
+        "api_set_org_mcp_connector_enabled", ("health", "ready"),
+        "api_get_org_mcp_connector_state",
+    ]
+    enable_call = db.rpc.call_args_list[0]
+    assert enable_call.args[0] == "api_set_org_mcp_connector_enabled"
+    assert enable_call.args[1]["p_enabled"] is True
     org_service.require_role.assert_called_once_with(
         ORG_ID, USER_ID, ("owner", "admin"),
     )

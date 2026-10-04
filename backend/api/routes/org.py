@@ -827,11 +827,6 @@ async def setup_mcp_test_connector(
 
         failure_stage = "health_and_discovery"
         await bounded_operation(run_probe(), timeout=5.0)
-        failure_stage = "health_record"
-        await asyncio.to_thread(
-            record_connector_health, db, org_id=org_id,
-            actor_user_id=user_id, status="ready",
-        )
         failure_stage = "connector_enable"
         response = scoped_mcp_database(
             db, org_id=org_id, actor_user_id=user_id,
@@ -840,9 +835,29 @@ async def setup_mcp_test_connector(
             "p_connector_id": CONNECTOR_ID,
             "p_enabled": True,
         }).execute()
-        if not isinstance(response.data, dict):
+        if not isinstance(response.data, dict) or response.data.get("enabled") is not True:
             raise HTTPException(status_code=503, detail="测试通过，但无法启用 Connector")
-        return {"success": True, "data": response.data}
+        # Enabling intentionally resets stale health to "configured". Record
+        # this request's successful probe after that transition so the status
+        # returned to the admin UI reflects the check that just completed.
+        failure_stage = "health_record"
+        recorded = await asyncio.to_thread(
+            record_connector_health, db, org_id=org_id,
+            actor_user_id=user_id, status="ready",
+        )
+        if recorded is not True:
+            raise HTTPException(
+                status_code=503,
+                detail="测试通过并已启用，但连接状态未能保存，请刷新状态后重试",
+            )
+        failure_stage = "health_readback"
+        state = _mcp_connector_state(db, org_id, user_id)
+        if state.get("enabled") is not True or state.get("health_status") != "ready":
+            raise HTTPException(
+                status_code=503,
+                detail="测试通过并已启用，但连接状态尚未确认，请刷新状态后重试",
+            )
+        return {"success": True, "data": state}
     except HTTPException:
         raise
     except AppException as error:
