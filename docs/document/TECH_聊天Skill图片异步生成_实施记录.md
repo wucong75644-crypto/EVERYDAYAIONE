@@ -149,3 +149,8 @@ API/状态见[接口文档](API_聊天Skill图片异步任务.md)，迁移顺序
 - 定向验证：默认模型/覆盖拒绝、原模型快照兼容、真实handler接受前准备与RPC错误边界、Skill Actor恢复，共74项通过（Python3.12.12既有backend/venv，日志 `/private/tmp/chat-image-default-model-test.log`）。这些handler测试使用mock数据库边界，不新增真实事务/RLS通过声明。首次使用不完整Python3.14环境缺yaml，4项新测试UUID fixture无效；换用已有完整环境并修正UUID后通过，未安装依赖。
 - 仍待发布后核验新Skill正文/自动激活与续轮；不会追加付费图片请求。本次无数据库迁移，不改变管理员灰度范围、预算或平台承担政策。
 - 最终局部回归1116项通过，涵盖默认模型、接受边界、Actor/Skill恢复、工具执行/Policy、旧工具完整合同和三种执行入口（日志 `/private/tmp/chat-image-default-model-final-test.log`）。旧合同快照仅增加已授权的异步图片/精确历史差异及图片说明，其余工具/schema/权限矩阵继续与原基线精确比较；没有通过回退同步协议或关闭断言制造通过。
+- `0be105ad23749256a312a26b52326b8f96bda6bb` 前后端发布成功，状态DEPLOYED_PENDING_ACCEPTANCE。首次GitHub 22端口拉取超时在应用更新前停止，经同主机密钥校验的SSH443重试成功。线上只读核验工具无model/model_name/size/format参数、默认Flare文/图配对、预算2张/24积分，1K/2K/4K实际单张价格6/10/16；零数据库/供应商调用。
+- 个人包 `e118d32b-75ba-44c8-8b11-f8741bad053b` 已通过既有控制面发布新版 `v0b89c04f1df64626ae86000cc4961a63`，正文SHA256 `83b64d96da3cc0802f0dda6e5255d208197bdc1b991e661be19a33c138cb3764`，NAS读回及权限集合核验成功；目录model_selectable保留true表示AI可以激活Skill，不表示选择生图模型。
+- 生产不付费续轮补验：任务 `7c48aa95-65ea-5dbd-afae-b7c3405d368c` 自动激活新版Skill，checkpoint/rendered/hash一致，正确说明默认模型和6积分；下一轮 `5c56d74a-af75-562e-86ea-8a9a51b3f1a1` 没重新激活，文字示例仍写format。五轮均无手动选择/固定绑定，无图片任务，余额1266。不能把第一轮成功加载冒充续轮合同通过。
+- 进一步修正已有SkillRuntime的请求投影：无active时此前直接返回leading目录及历史，缺少当前请求旁的选择状态。只有实际提供activate_skill且目录有获准可自动激活项时，把有界当前目录和“本轮未激活、确认/继续先加载、按当前schema准备/执行”的事实放在当前用户消息前；不继承历史绑定、不预加载正文、不改变授权。context_version=1、计划任务及无控制工具场景保持原投影。
+- 该修正的129项定向测试通过（Actor真实provider调用参数、lazy加载、旧消息不变、legacy/无控制工具、目录预算、恢复、推荐、手动/固定与计划快照；日志 `/private/tmp/chat-image-default-confirm-test.log`）。仍需线上续轮验证后判断模型行为，不追加付费图片请求。

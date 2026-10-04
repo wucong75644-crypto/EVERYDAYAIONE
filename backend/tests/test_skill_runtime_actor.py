@@ -102,6 +102,53 @@ async def test_provider_gets_current_task_binding_and_real_tools_preserving_cach
     assert p.messages == original  # Per-request facts do not accumulate in checkpoints.
 
 
+async def test_confirm_without_activation_projects_current_directory_next_to_user_before_provider():
+    from services.skills.runtime import ACTIVATE_SKILL_SCHEMA
+    source = Source(body='Never use historical tool aliases.')
+    runtime = actor()
+    runtime.skill_runtime = state(source)
+    await runtime.skill_runtime.initialize()
+    p = prepared()
+    p.messages = [
+        {'role': 'system', 'content': 'Host policy'},
+        {'role': 'user', 'content': 'Prepare a sample'},
+        {'role': 'assistant', 'content': '已启用 Skill；旧参数 format=PNG'},
+        {'role': 'user', 'content': '确认，继续准备，不提交'},
+    ]
+    runtime.skill_runtime.ensure_messages(p.messages)
+    original = copy.deepcopy(p.messages)
+    p.stream_kwargs = {}
+    captured = []
+    async def stream_chat(**kwargs):
+        captured.append(kwargs)
+        yield SimpleNamespace(content='Done', thinking_content=None, tool_calls=None,
+                              prompt_tokens=1, completion_tokens=1, credits_consumed=None, finish_reason='stop')
+    p.adapter.stream_chat = stream_chat
+    await _read_turn(p, [ACTIVATE_SKILL_SCHEMA], runtime.cancellation_event,
+                     CollectingExecutionSink(), StreamTotals(), [], runtime)
+    sent = captured[0]['messages']
+    assert sent[-1] == original[-1] and sent[-3] == original[-2]
+    assert '[Current Skill selection]' in sent[-2]['content']
+    assert '当前轮尚未激活' in sent[-2]['content'] and '先从下面当前目录' in sent[-2]['content']
+    assert '"available_tools":["activate_skill"]' in sent[-2]['content']
+    assert '"skill_id":"report"' in sent[-2]['content']
+    assert 'Never use historical tool aliases.' not in str(sent)  # Body is still lazy.
+    source.load.assert_not_awaited()
+    assert not runtime.skill_runtime.active and p.messages == original
+    assert captured[0]['tools'] == [ACTIVATE_SKILL_SCHEMA]
+
+
+@pytest.mark.parametrize('legacy,allowed', [(True, True), (False, False)])
+async def test_unactivated_catalog_projection_preserves_legacy_and_missing_control_tool(legacy, allowed):
+    from services.skills.runtime import ACTIVATE_SKILL_SCHEMA
+    runtime = state()
+    await runtime.initialize()
+    if legacy:
+        runtime.context_version = 1
+    messages = [{'role': 'user', 'content': '确认'}]
+    assert runtime.model_messages(messages, [ACTIVATE_SKILL_SCHEMA] if allowed else []) == messages
+
+
 @pytest.mark.parametrize("valid", [True, False])
 @pytest.mark.parametrize("reverse", [True, False])
 async def test_activation_barrier_blocks_every_business_call_even_when_activation_fails(valid, reverse):
