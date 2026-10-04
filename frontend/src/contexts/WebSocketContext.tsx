@@ -134,6 +134,8 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   // Redis Pub/Sub 不提供断线回放，回放游标必须由客户端重新发送给服务端。
   useEffect(() => {
     if (!ws.isConnected) return;
+    // Reconcile settlements that happened while this browser was disconnected.
+    void useAuthStore.getState().refreshUser();
     subscribedTasksRef.current.forEach((taskId) => {
       const cursor = deliveryCursorRef.current.get(taskId);
       ws.subscribeTask(taskId, cursor?.lastSeq ?? 0);

@@ -1,6 +1,7 @@
 /** WebSocket 任务完成、失败与图片 partial update 处理。 */
 
 import { normalizeMessage, type Message } from '../stores/useMessageStore';
+import { useAuthStore } from '../stores/useAuthStore';
 import { toast } from 'react-hot-toast';
 import { logger } from '../utils/logger';
 import { tabSync } from '../utils/tabSync';
@@ -162,6 +163,8 @@ export function handleMessageDone(deps: HandlerDeps, msg: WSIncomingMessage): vo
   }
 
   if (!childImage) completeConversation(deps, effectiveConversationId, effectiveMessageId, isNewlyCompleted);
+  // Child tasks have no input-operation callback to refresh their settled balance.
+  if (childImage && isNewlyCompleted) void useAuthStore.getState().refreshUser();
   notifyMessageDone(messageData, isNewlyCompleted);
   notifyWorkspaceChanged(messageData);
 }
@@ -232,6 +235,7 @@ export function handleMessageError(deps: HandlerDeps, msg: WSIncomingMessage): v
     store.completeStreaming(conversation_id);
     store.setIsSending(false);
   }
+  if (childImage) void useAuthStore.getState().refreshUser();
   toast.error(error?.message || '生成失败');
 }
 

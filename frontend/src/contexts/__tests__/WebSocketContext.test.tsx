@@ -151,6 +151,7 @@ describe('WebSocketContext - Provider & Hook', () => {
     mockAuthStore = {
       user: { id: 'user_123', credits: 100 },
       setUser: vi.fn(),
+      refreshUser: vi.fn().mockResolvedValue(undefined),
     };
     mockTaskRestorationStore = {
       hydrateComplete: false,
@@ -177,6 +178,22 @@ describe('WebSocketContext - Provider & Hook', () => {
   // ========================================
 
   describe('Provider & Hook Basics', () => {
+    it('refreshes authoritative credits when connecting after missed image settlement', () => {
+      const wrapper = createWrapper(mockWs, mockMessageStore);
+      renderHook(() => useWebSocketContext(), { wrapper });
+      expect(mockAuthStore.refreshUser).toHaveBeenCalledOnce();
+    });
+
+    it('refreshes credits after reconnecting but not while disconnected', () => {
+      mockWs.isConnected = false;
+      const wrapper = createWrapper(mockWs, mockMessageStore);
+      const { rerender } = renderHook(() => useWebSocketContext(), { wrapper });
+      expect(mockAuthStore.refreshUser).not.toHaveBeenCalled();
+      mockWs.isConnected = true;
+      rerender();
+      expect(mockAuthStore.refreshUser).toHaveBeenCalledOnce();
+    });
+
     it('should provide context value', () => {
       const wrapper = createWrapper(mockWs, mockMessageStore);
       const { result } = renderHook(() => useWebSocketContext(), { wrapper });
@@ -642,13 +659,13 @@ describe('WebSocketContext - Provider & Hook', () => {
 
       const wrapper = createWrapper(mockWs, mockMessageStore);
       const { unmount } = renderHook(() => useWebSocketContext(), { wrapper });
+      const registeredCount = mockWs.subscribe.mock.calls.length;
 
       unmount();
 
       // 所有消息类型的订阅都应该被取消
-      // 17 个原有 + 4 个定时任务事件 + 1 个 content_block_add + 1 个 suggestions_ready
-      // + 1 个 form_submit_result + 1 个 tool_confirm_request + 1 个 changeset_updated
-      expect(unsubscribe).toHaveBeenCalledTimes(27);
+      expect(registeredCount).toBeGreaterThan(0);
+      expect(unsubscribe).toHaveBeenCalledTimes(registeredCount);
     });
 
     it('should clear flush timer on unmount', async () => {
