@@ -10,7 +10,7 @@
 - 最新代码已有 `create_task_once`、适配器、资产 RPC 和 Skill Runtime。复用这些能力，不另建图片任务表、通用 Runtime、资源编号或价格副本。
 - `_RepeatedToolCallGuard` 已按完整参数计算 fingerprint：稳定 `variant_id` 即可区分同提示词变体，无须改造通用循环保护；随机变体受数据库硬预算约束。
 - 原设计中的同步 `_run_image_generation`、内部历史工具、同步图片 trial、聊天孤儿恢复和父流式槽位断点仍存在；本任务已迁移或修复。复检旧同步图片符号已无消费者及实现。
-- 最初仅开发、测试与文档；后续用户明确授权提交部署及首轮最多2张/24积分的生产验证。未合并main、清理工作树或发布/分配生产Skill。
+- 最初仅开发、测试与文档；后续用户明确授权提交部署、首轮最多2张/24积分的生产验证及管理员个人 Skill 发布。未合并main、清理工作树或向组织/平台分配 Skill。
 
 ## 执行顺序和阶段状态
 
@@ -83,7 +83,7 @@ PG使用最小生产字段合同、明确测试RLS及实际040/145/256/257/273�
 
 | T | 本次已覆盖 | 未验证/限制 |
 | --- | --- | --- |
-| T01 | 自动/手动/恢复展示、收窄Policy、隔离published/assignment/hash | 真实模型选择与撤权交互 |
+| T01 | 自动/手动/恢复展示、收窄Policy、隔离published/assignment/hash；生产新对话模型激活与正文hash核验（见下） | 自动激活后真实生图、无方法提示的生成意图命中率、撤权交互 |
 | T02 | mode/模型/规格错配拒绝、单图多参考顺序 | 真实供应商执行效果 |
 | T03 | 当前/历史/生成原图定位、版本/digest拒绝、精确提示词来源 | 真实模型A分析+B生成、歧义询问 |
 | T04 | 接受前无provider调用、独立task/message/slot、子事件不结束父流式 | 浏览器实际并行流式 |
@@ -132,3 +132,20 @@ API/状态见[接口文档](API_聊天Skill图片异步任务.md)，迁移顺序
 - 文生图与图生图最终均completed/published、delivery_pending=false，每张独立消息和一条confirmed的6积分账本、一个资产登记，NAS实际存在1024×1024 PNG。余额1278→1266，共12积分；图生图唯一参考的content_sha256与第一张保存原图字节完全一致，旧图未覆盖。浏览器实际预览蓝色和橙色版本，主造型、姿势、背景与构图保持；这是普通提示词编辑，不宣称精准遮罩效果。
 - 图片运行期间继续纯文字讨论配色，只新增chat，无第三张图，已提交快照未改变。本轮覆盖T01/T02/T03/T04/T06/T07/T11/T12/T16的基本真实路径，不能替代这些编号中的所有边界与故障场景；尤其多Worker、丢响应、退款失败等仍以此前隔离证据为限。真实图片trial、压缩后原文检索、多参考图顺序与A分析/B执行、快照replay、停止竞态、ZIP、原生/电商/视频等真实回归未做。没有生产故障注入或额外付费调用。
 - 本轮发现并修复前端余额滞后（M05/M13，F05/F10，T04/T06/T07/T14）：独立子任务没有原输入operation callback，完成/退款事件未触发用户余额刷新；浏览器重连亦仅恢复任务。新消费逻辑在图片终态及WS连接时读取现有用户信息接口，不改账本、父聊天或流式槽位。回归先复现缺少刷新，再修复；5个相关前端文件共161项通过，app/node TypeScript检查通过。同步修正订阅清理测试按实际注册数检查，避免新增message_pending后旧固定数字失效。
+
+### 发布确认与自动激活补验
+
+- 受控入口返回 `RELEASE_RESULT status=success commit=731f8ba3433938124a04720c6e6890352081e707 mode=preview status_after=DEPLOYED_PENDING_ACCEPTANCE acceptance_candidate=true`，前后端完整发布。浏览器刷新后余额1266，两张完成图片与历史消息仍在；没有合并main或清理工作树。
+- 用户指出此前两张图使用手动选择并固定 Skill。这一证据只证明手动路径，不能宣称已验证模型自主激活。阶段3补验关联 M02/M03/M30、T01/T15，不改授权或业务代码。
+- 新对话 `29dfa5f3-28af-448b-b167-271a57ae1470` 全程未点击 Skill 选择器。第一轮只讨论缺失需求，模型未激活；第二轮要求使用当前可用的专门图片编排方法整理样张提示词及执行顺序，未指定 Skill 名称或工具名，且明确禁止提交生图。模型自行激活“聊天图片编排”，前端出现真实 skill_step，而非文字模拟调用。
+- 生产只读核验：conversation_skill_bindings 为0；两条 chat 的 `_selected_skill` 均不存在，checkpoint.manual_skill_id=null、session_skill_ids=[]。第二条任务 `fd62b052-398a-528a-8ce0-1955807cf27f` 的激活 step_id 为模型 actor-call，不是 manual-skill 或 session-skill；checkpoint.active 含已发布版本，完整 rendered 与正文 SHA256 均为 `ef6135f24995b860e7775948a4a4ce547f36da91591ac9a33e7784fed45fcb91` 且实算hash一致。effective_allowed_tool_names 为 file_search/generate_image/get_conversation_context；现有执行链在激活后取实际 Registry/Policy 过滤展示，未扩权。
+- 新对话仅2条已完成 chat，无图片任务，余额仍1266。已证明模型选择→正文加载→当前轮工具范围，不证明自动激活后的真实生成；没有新增付费图片。未测试无方法提示的实际生成命中率或各模型稳定性。模型准备文字中的价格/规格建议未作为服务器成本证据；以后实际执行仍须服务器校验与成本预览。
+
+### 默认模型收敛与用户确认回归
+
+- 当前阶段3/4修正：M01/M02/M03/M07/M08/M30，F04/F08/F12，T01/T02/T04/T05/T15。用户明确要求简化为平台默认模型，不向AI提供生图模型选择。工具schema移除model，仅展示默认文生图/图生图配对能力；接受端拒绝model/model_name及错误字段，现有模型注册表、原生入口、已冻结任务及快照重试保持兼容。
+- 用户在上述自动激活对话第三轮输入“确认”，任务 `523de9b2-54b6-5108-bc13-575bb5cacad5` 实际使用model_name/size/format且缺mode，接受前被 `IMAGE_REQUEST_FIELDS_INVALID` 拒绝，未产生图片任务，余额1266未变。该轮checkpoint.active为空，上一轮自动激活没有在本轮重新加载；全程无手动绑定。此前两轮的准备验证不足以发现这个续轮问题。
+- 修正工具说明、共享聊天说明及Skill正文为当前字段/default规则，并明确自动Skill只作用于当前轮：确认/继续时需按当前目录重新activate，不能沿用历史参数。接受RPC前确定的输入错误返回not_accepted，不再误报“外部执行结果尚未确定”；RPC抛错/回执丢失继续按不确定处理，不盲目重发。
+- 定向验证：默认模型/覆盖拒绝、原模型快照兼容、真实handler接受前准备与RPC错误边界、Skill Actor恢复，共74项通过（Python3.12.12既有backend/venv，日志 `/private/tmp/chat-image-default-model-test.log`）。这些handler测试使用mock数据库边界，不新增真实事务/RLS通过声明。首次使用不完整Python3.14环境缺yaml，4项新测试UUID fixture无效；换用已有完整环境并修正UUID后通过，未安装依赖。
+- 仍待发布后核验新Skill正文/自动激活与续轮；不会追加付费图片请求。本次无数据库迁移，不改变管理员灰度范围、预算或平台承担政策。
+- 最终局部回归1116项通过，涵盖默认模型、接受边界、Actor/Skill恢复、工具执行/Policy、旧工具完整合同和三种执行入口（日志 `/private/tmp/chat-image-default-model-final-test.log`）。旧合同快照仅增加已授权的异步图片/精确历史差异及图片说明，其余工具/schema/权限矩阵继续与原基线精确比较；没有通过回退同步协议或关闭断言制造通过。

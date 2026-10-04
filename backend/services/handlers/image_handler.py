@@ -50,11 +50,15 @@ class ImageHandler(BaseHandler):
         from core.config import get_settings
         from core.db_scope import DatabaseScope, DatabaseAccessKind, ScopedDatabaseClient
         from services.tools.dispatcher import current_dispatch_call_id
-        from services.handlers.chat_image_request import ChatImageInputResolver, freeze_image_request, chat_image_acceptance_allowed
+        from services.handlers.chat_image_request import (
+            ChatImageInputResolver, ChatImageNotAcceptedError, freeze_image_request,
+            chat_image_acceptance_allowed, validate_chat_image_tool_fields,
+        )
 
         settings=get_settings()
         if not chat_image_acceptance_allowed(settings, getattr(owner, "user_id", None)):
             raise PermissionError("CHAT_IMAGE_ASYNC_DISABLED")
+        validate_chat_image_tool_fields(args)
         call_id=current_dispatch_call_id()
         token=getattr(owner,"image_execution_token",None)
         if (not call_id or not token or not owner.task_id or owner.context_scope != "user"
@@ -69,24 +73,32 @@ class ImageHandler(BaseHandler):
             raise PermissionError("CHAT_IMAGE_PARENT_DENIED")
         resolver=ChatImageInputResolver(owner,base_revision=parent["base_context_revision"],
             input_message_id=str(parent["input_message_id"]))
-        normalized=await asyncio.to_thread(resolver.normalize_legacy,args)
-        if normalized.get("background")=="transparent" and not settings.chat_image_transparent_enabled:
-            raise PermissionError("CHAT_IMAGE_TRANSPARENT_DISABLED")
-        refs=await asyncio.to_thread(resolver.resolve,normalized.get("references",[]))
-        if "source_prompt" in normalized:
-            normalized["source_prompt"] = await asyncio.to_thread(resolver.source_prompt,normalized["source_prompt"],normalized["prompt"])
-        if "source_task_id" in normalized:
-            await asyncio.to_thread(resolver.validate_source_task,normalized["source_task_id"])
-        origin={"parent_task_id":owner.task_id,"tool_call_id":call_id,
-            "actor_user_id":owner.user_id,"workspace_owner_id":owner.workspace_user_id,
-            "org_id":owner.org_id,"context_scope":owner.context_scope,
-            "conversation_id":owner.conversation_id,"turn_id":str(parent["turn_id"]),
-            "input_message_id":str(parent["input_message_id"]),
-            "base_context_revision":parent["base_context_revision"]}
-        origin["skills"] = list(getattr(owner, "image_skill_snapshot", ()))
-        snapshot=freeze_image_request(normalized,refs,origin=origin,
-            max_requests=settings.chat_image_max_requests,max_credits=settings.chat_image_max_credits)
-        await asyncio.to_thread(resolver.verify,refs)
+        try:
+            normalized=await asyncio.to_thread(resolver.normalize_legacy,args)
+            if normalized.get("background")=="transparent" and not settings.chat_image_transparent_enabled:
+                raise PermissionError("CHAT_IMAGE_TRANSPARENT_DISABLED")
+            refs=await asyncio.to_thread(resolver.resolve,normalized.get("references",[]))
+            if "source_prompt" in normalized:
+                normalized["source_prompt"] = await asyncio.to_thread(resolver.source_prompt,normalized["source_prompt"],normalized["prompt"])
+            if "source_task_id" in normalized:
+                await asyncio.to_thread(resolver.validate_source_task,normalized["source_task_id"])
+            origin={"parent_task_id":owner.task_id,"tool_call_id":call_id,
+                "actor_user_id":owner.user_id,"workspace_owner_id":owner.workspace_user_id,
+                "org_id":owner.org_id,"context_scope":owner.context_scope,
+                "conversation_id":owner.conversation_id,"turn_id":str(parent["turn_id"]),
+                "input_message_id":str(parent["input_message_id"]),
+                "base_context_revision":parent["base_context_revision"]}
+            origin["skills"] = list(getattr(owner, "image_skill_snapshot", ()))
+            snapshot=freeze_image_request(normalized,refs,origin=origin,
+                max_requests=settings.chat_image_max_requests,max_credits=settings.chat_image_max_credits)
+            await asyncio.to_thread(resolver.verify,refs)
+        except (ValueError, PermissionError, FileNotFoundError) as error:
+            # Only this input/read boundary precedes acceptance. RPC exceptions
+            # below may mean a committed task; never classify those as rejected.
+            code = str(error)
+            if not code.startswith(("IMAGE_", "CHAT_IMAGE_")) or not code.replace("_", "").isalnum():
+                code = "IMAGE_INPUT_UNAVAILABLE"
+            raise ChatImageNotAcceptedError(code) from error
         if owner.cancellation_event is not None and owner.cancellation_event.is_set():
             raise asyncio.CancelledError()
         scoped=ScopedDatabaseClient(self.db,DatabaseScope(owner.user_id,owner.org_id,DatabaseAccessKind.RUNTIME))

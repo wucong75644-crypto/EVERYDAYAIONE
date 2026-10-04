@@ -19,6 +19,8 @@
 
 沿用当前PostgreSQL、Redis、BackgroundTaskWorker、账本、KIE适配器、文件权限、工作区/OSS和Skill Runtime。没有新依赖/供应商/通用调度服务。图片执行预算不包括聊天模型和另行选择的语义质量检查费用。
 
+2026-10-04后续范围调整：聊天 Skill 的新工具调用只使用平台默认模型及其图生图配对，AI无模型选择参数。无需新迁移或依赖。先部署默认模型工具schema、接受前校验及确定拒绝说明，再经现有个人Skill控制面发布相应正文；目录 `model_selectable` 仍为true，含义是允许AI激活该Skill，不是允许选择生图模型。旧任务/Worker/快照重试仍保留原model，原生入口不变；回滚也不删除旧快照或完成读端。管理员灰度范围和预算不扩大，已用完的2张真实验证额度不因发布重置。
+
 273依赖当前主线Actor/fencing/tasks/messages、用户/成员、既有积分账本及退款函数；275依赖已有Skill草稿trial与change_sets；资产完成依赖既有145资产RPC及实际权限。生产实际数据库角色、owner、FORCE RLS/ACL必须在完整隔离部署副本核验，不能仅用新RPC的GRANT替代。
 
 ## 加性迁移顺序

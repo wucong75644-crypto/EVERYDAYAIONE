@@ -27,18 +27,20 @@
 | `mode` | 必须显式 `text_to_image` / `image_to_image`；文生图不能带生成refs，图生图必须带refs；分析附件不决定mode |
 | `prompt` | 必填、完整非空原文；保留空白，不再native prepare改写，按实际模型长度上限校验 |
 | `references` | 每项恰选 `resource_ref` / `file_id` / `asset_id` / `message_id` 一种；message必须有整数content_index；role必填1..200字符；原图权限、版本、digest由服务器确认 |
-| `model` | 可选；默认模型按显式mode选择对应文/图生图配置；用户明确模型不静默替换 |
+| 生图模型 | 无模型输入参数；服务器按显式mode使用平台默认文生图模型或其图生图配对。当前默认为 GPT Image 2.5 Flare；配置与能力取现有注册表 |
 | `aspect_ratio` / `resolution` / `output_format` | 以当前适配器能力与现有价格配置为准；默认1:1/png，支持分辨率的模型默认1K；不支持规格拒绝 |
 | `source_prompt` | 可选，`{task_id,sha256}`或`{message_id,content_index,sha256}`；逐字核验原提示词，区段位置由服务器定位；不能用摘要替代 |
 | `plan_item_id` / `variant_id` | 可选稳定身份，1..200字符；同prompt变体可区分，不能扩预算或替代call幂等 |
 | `source_task_id` | 可选，当前用户/组织内已完成图片来源；不授予控制其它任务的权限 |
 | `background` | 仅透明开关开放时schema展示，且实际Flare模型支持；`opaque` / `transparent`，透明必须PNG并校验实际alpha；默认不开启 |
 
-禁止 `prompts[]`、`num_images`、数值weight、mask、伪透明参数和内部可信字段。适配器允许的参考数量可能小于schema通用上限16。工具说明实时投影当前模式、规格、参考数和价格，无静态价格副本。
+禁止 `model` / `model_name`、`size` / `format`、`prompts[]`、`num_images`、数值weight、mask、伪透明参数和内部可信字段。模型选择字段在接受前明确拒绝，不静默替换。适配器允许的参考数量可能小于schema通用上限16。工具说明只投影默认模型配对的实际模式、规格、参考数和价格，无静态价格副本。原生生图入口仍保留原模型选择。
 
 兼容旧参数只归一到同一异步出口：prompt-only成为文生图；旧 `image_urls` 必须唯一映射本次当前可信manifest的原图，再转为references。任意URL或旧内部 `task_id_override` 等不再可用；没有第二条同步执行链。
 
 接受通过统一AgentResult/ToolResult返回 `status=submitted`、`completed=false`、`task_id`、`message_id`、`submission_state`、实际模式/规格及估算积分。工具调用成功只表示任务持久化接受；`submission_state=queued` 也不表示供应商受理。接受端不等图片、不发供应商请求、不扣款。
+
+接受RPC之前确定的输入拒绝返回 `status=error`、`accepted=false`、`completed=false`、`submission_state=not_accepted`；例如 `IMAGE_MODEL_SELECTION_DISABLED` / `IMAGE_REQUEST_FIELDS_INVALID`。明确告知未创建图片任务、未预扣图片积分，不附加“受理不确定”。RPC异常或回执丢失仍按不确定处理，不能套用输入拒绝后重新提交。此区别不改变通用工具的副作用分类。
 
 同一父task/tool_call重复输入返回原身份；同调用不同冻结输入拒绝。不同调用受同一父预算控制，名额在接受时占用，失败不返还尝试次数。当前默认上限4张/100用户积分，配置范围1..8张/1..200积分。
 
@@ -61,6 +63,8 @@
 | `PUT /api/tasks/{task_id}/image/feedback` | `{rating: "helpful"\|"not_helpful"}` | 当前用户已发布版本的反馈，原子保存，不发外部消息 |
 
 详情中的input是服务器实际冻结输入，包含schema_version、prompt/prompt_sha256、request_hash、mode/model/spec、完整参考图身份/路径/版本/digest/role/顺序、origin与Skill版本/hash、source_prompt/plan/variant/source_task、budget、estimated_credits及estimated_provider_credits。短消息generation_params仅携带渲染/任务/来源定位，完整内容不塞消息字段。
+
+新工具输入取消模型选择，冻结快照中的实际 `model` 仍保留。Worker、历史详情、原快照重试/新版本及其成本预览继续使用原模型，不因平台默认变更而替换。HTTP estimate 的 model 是旧快照预览所需字段，不是聊天AI选择模型的入口；图片trial的模型来自服务器既有规则。
 
 参考图preview是当前权限及原版本校验后的临时签址，独立于快照。原图已替换/不可访问时available=false，不能显示替换后的图冒充原输入。结果中的task_id/asset_id/source_task_id等为可选加性字段，旧图片消息继续解析。
 

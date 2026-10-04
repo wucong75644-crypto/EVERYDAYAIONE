@@ -34,16 +34,37 @@ INPUT_FIELDS = {
 }
 
 
+class ChatImageNotAcceptedError(ValueError):
+    """Known input rejection before the image acceptance RPC is called."""
+
+
+def validate_chat_image_tool_fields(args: dict) -> None:
+    if not isinstance(args, dict):
+        raise ChatImageNotAcceptedError("IMAGE_REQUEST_FIELDS_INVALID")
+    if "model" in args or "model_name" in args:
+        raise ChatImageNotAcceptedError("IMAGE_MODEL_SELECTION_DISABLED")
+    if set(args) - INPUT_FIELDS:
+        raise ChatImageNotAcceptedError("IMAGE_REQUEST_FIELDS_INVALID")
+
+
+def default_chat_image_model(mode: str) -> str:
+    model = DEFAULT_IMAGE_MODEL_ID
+    return model.replace("text-to-image", "image-to-image") if mode == "image_to_image" else model
+
+
 def canonical_hash(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
         separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
 
 def image_capabilities() -> list[dict]:
-    """Project actual adapter specs and existing live prices; never a price copy."""
+    """Only advertise the server's default pair; frozen older models stay valid."""
     from core.config import get_settings
     models=[]
+    defaults = {default_chat_image_model(mode) for mode in MODES}
     for model, config in IMAGE_MODEL_CONFIGS.items():
+        if model not in defaults:
+            continue
         price=get_model_config(model)
         if not price or price.get("is_active") is not True:
             continue
@@ -74,9 +95,8 @@ def validate_single_image_request(args: dict, reference_count: int) -> dict:
         raise ValueError("IMAGE_PROMPT_REQUIRED")
     if (mode == "text_to_image" and reference_count) or (mode == "image_to_image" and not reference_count):
         raise ValueError("IMAGE_MODE_REFERENCE_MISMATCH")
-    model = args.get("model") or DEFAULT_IMAGE_MODEL_ID
-    if "model" not in args and mode == "image_to_image":
-        model = model.replace("text-to-image", "image-to-image")
+    # Explicit models belong to trusted frozen snapshots/trials, not tool input.
+    model = args.get("model") or default_chat_image_model(mode)
     config = IMAGE_MODEL_CONFIGS.get(model)
     price_config = get_model_config(model)
     if not config or not price_config or price_config.get("is_active") is not True:

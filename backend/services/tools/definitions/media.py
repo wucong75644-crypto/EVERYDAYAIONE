@@ -15,12 +15,15 @@ def _schema_generate_image_async():
             "description": (
                 "持久化接受一个独立图片任务，立即返回 submitted、task_id、message_id、排队阶段和服务器预估积分。"
                 "接受不表示图片完成；结果随后由独立图片消息展示。每次只生成一张，多张通过多次调用。"
+                "模型由服务器使用平台默认模型及其图生图配对，不能由你选择或切换；不要询问模型偏好，不传 model 或 model_name。"
                 "明确指定 text_to_image 或 image_to_image；用于分析的图片不自动成为生成参考图。"
+                "仅使用本次 parameters 定义的字段。比例用 aspect_ratio、分辨率用 resolution、格式用小写 output_format；不传 size 或 format。"
+                '无参考图的调用示例：{"mode":"text_to_image","prompt":"完整原文","aspect_ratio":"1:1","resolution":"1K","output_format":"png"}。'
                 "prompt 是完整最终原文，不再二次改写。只选本次用户指定的原图引用，按用途和顺序传 references。"
                 "先看样张时只提交样张。variant_id 是稳定变体身份，不能扩大服务器预算。"
                 "遇到素材或提示词版本歧义先询问；失败不自动无限重试。"
                 f"本轮上限 {limits.chat_image_max_requests} 张、{limits.chat_image_max_credits} 积分。"
-                "当前服务器能力与单张积分：" + json.dumps(image_capabilities(),ensure_ascii=False,separators=(',',':'))
+                "服务器默认模型的实际能力与单张积分（model为服务器事实，不是可填写参数）：" + json.dumps(image_capabilities(),ensure_ascii=False,separators=(',',':'))
             ),
             "parameters": {
                 "type": "object", "additionalProperties": False,
@@ -38,10 +41,9 @@ def _schema_generate_image_async():
                         },
                         "oneOf":[{"required":[key]} for key in ("resource_ref","file_id","asset_id","message_id")],
                     }},
-                    "model":{"type":"string","description":"可选明确模型；模式和规格必须为该模型实际支持"},
-                    "aspect_ratio":{"type":"string"},
-                    "resolution":{"type":"string","enum":["1K","2K","4K"]},
-                    "output_format":{"type":"string","enum":["png","jpeg","jpg","webp"]},
+                    "aspect_ratio":{"type":"string","description":"画面比例，如1:1；不是像素尺寸或分辨率"},
+                    "resolution":{"type":"string","enum":["1K","2K","4K"],"description":"仅填写默认模型实际支持的分辨率"},
+                    "output_format":{"type":"string","enum":["png","jpeg","jpg","webp"],"description":"小写输出格式，必须为默认模型实际支持"},
                     **({"background":{"type":"string","enum":["opaque","transparent"],"description":"仅 Flare 支持；透明输出需保存后验证真实alpha"}} if limits.chat_image_transparent_enabled else {}),
                     "plan_item_id":{"type":"string","minLength":1,"maxLength":200},
                     "variant_id":{"type":"string","minLength":1,"maxLength":200},

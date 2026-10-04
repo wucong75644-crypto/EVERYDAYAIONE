@@ -127,7 +127,42 @@ def test_async_schema_single_output_and_exact_source():
     assert schema["parameters"]["required"] == ["mode","prompt"]
     assert "num_images" not in schema["parameters"]["properties"]
     assert "prompts" not in schema["parameters"]["properties"]
+    assert "model" not in schema["parameters"]["properties"]
+    assert "model_name" not in schema["parameters"]["properties"]
     assert schema["parameters"]["additionalProperties"] is False
+
+
+def test_tool_advertises_only_default_pair_without_changing_native_models():
+    from services.handlers.chat_image_request import default_chat_image_model, image_capabilities
+    advertised = image_capabilities()
+    assert {model["model"] for model in advertised} == {
+        default_chat_image_model("text_to_image"), default_chat_image_model("image_to_image"),
+    }
+    assert not any(model["model"] == "google/nano-banana" for model in advertised)
+    assert resolve_image_generation_settings({"model":"google/nano-banana"},False)["model_id"] == "google/nano-banana"
+
+
+@pytest.mark.parametrize("args,code", [
+    ({"mode":"text_to_image","prompt":"p","model":"gpt-image-2-5-flare-text-to-image"},"IMAGE_MODEL_SELECTION_DISABLED"),
+    ({"prompt":"p","model_name":"google/nano-banana","size":"1K","format":"PNG"},"IMAGE_MODEL_SELECTION_DISABLED"),
+    ({"mode":"text_to_image","prompt":"p","size":"1K"},"IMAGE_REQUEST_FIELDS_INVALID"),
+])
+def test_new_tool_input_cannot_select_models_or_invent_aliases(args,code):
+    from services.handlers.chat_image_request import ChatImageNotAcceptedError, validate_chat_image_tool_fields
+    with pytest.raises(ChatImageNotAcceptedError,match=code):
+        validate_chat_image_tool_fields(args)
+
+
+def test_frozen_model_remains_valid_when_platform_default_changes(monkeypatch):
+    from services.handlers import chat_image_request
+    monkeypatch.setattr(chat_image_request,"DEFAULT_IMAGE_MODEL_ID","google/nano-banana")
+    snapshot = freeze_image_request({"mode":"text_to_image","prompt":"original"},[],
+        origin={},max_requests=2,max_credits=24)
+    monkeypatch.setattr(chat_image_request,"DEFAULT_IMAGE_MODEL_ID","gpt-image-2-5-flare-text-to-image")
+    verify_frozen_request(snapshot)
+    replay_args = {key:snapshot[key] for key in ("mode","prompt","model","aspect_ratio","resolution","output_format")}
+    validated = validate_single_image_request(replay_args,0)
+    assert validated["model"] == "google/nano-banana" and validated["estimated_credits"] == snapshot["estimated_credits"]
 
 
 def test_legacy_urls_must_be_selected_current_originals(resolver):

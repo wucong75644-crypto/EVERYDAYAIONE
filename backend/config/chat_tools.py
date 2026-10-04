@@ -233,7 +233,11 @@ code_execute 直接 pd.read_parquet('staging/x.parquet') 即可。
 
 ### generate_image — 通用图片生成
 非电商场景的图片生成：插画、概念图、logo、创意图、头像等。
-纯文字→文生图，有参考图→图生图（必须传 image_urls）。
+每次接受一张独立异步图片任务；明确传 mode=text_to_image 或 image_to_image。
+生成参考图按本次用户选择传 references，用于分析的图片不自动成为生成参考图。
+模型由服务器使用平台默认模型及其图生图配对，不传 model/model_name，不询问模型偏好。
+比例用 aspect_ratio，分辨率用 resolution，格式用小写 output_format；不传 size/format。
+严格按当前 tools schema 调用，不从历史回复猜参数；取得真实 task_id 后才能说已提交。
 电商商品图（白底主图、场景图）→ 用 image_agent，效果更专业。
 
 ### generate_video — 视频生成

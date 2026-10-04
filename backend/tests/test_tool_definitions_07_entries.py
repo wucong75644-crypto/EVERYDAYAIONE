@@ -16,10 +16,14 @@ from tests.test_tool_production_integration import setup, invoke, tc
     ('erp_trade_query', {'action': 'order_list'}, 'erp'),
     ('file_search', {}, 'general'),
     ('code_execute', {'code': 'print(1)', 'description': 'contract'}, 'general'),
-    ('generate_image', {'prompt': 'contract'}, 'general'),
+    ('generate_image', {'mode': 'text_to_image', 'prompt': 'contract'}, 'general'),
     ('manage_scheduled_task', {'action': 'list'}, 'general'),
 ])
 async def test_each_migrated_group_reaches_original_handler_once(setup, monkeypatch, entry, name, args, domain):
+    if name == 'generate_image':
+        from core.config import get_settings
+        settings = get_settings().model_copy(update={'chat_image_async_enabled': True, 'chat_image_allowed_user_ids': ''})
+        monkeypatch.setattr('core.config.get_settings', lambda: settings)
     executor = MockHandlerExecutor(agent_domain=domain)
     executor.handler.return_value = AgentResult(summary='group contract', status='success')
     dispatch = AsyncMock(wraps=executor.tool_runtime.service.dispatcher.dispatch)

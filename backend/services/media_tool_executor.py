@@ -20,9 +20,20 @@ class MediaToolMixin:
     async def _generate_image(self, args: Dict[str, Any]) -> "AgentResult":
         """One persistent child acceptance; completion belongs to its worker."""
         from services.handlers.image_handler import ImageHandler
+        from services.handlers.chat_image_request import ChatImageNotAcceptedError
         from services.agent.agent_result import AgentResult
         import json
-        accepted = await ImageHandler(self.db).accept_chat_image(self, args)
+        try:
+            accepted = await ImageHandler(self.db).accept_chat_image(self, args)
+        except ChatImageNotAcceptedError as error:
+            return AgentResult(
+                summary=(f"图片请求未接受：{error}。未创建图片任务，未预扣图片积分。"
+                         "此入口仅使用服务器默认模型，不传 model/model_name；"
+                         "请使用实际工具参数 mode、prompt、aspect_ratio、resolution、output_format，不能用 size/format。"),
+                status="error", error_message=str(error),
+                metadata={"accepted": False, "completed": False, "retryable": False,
+                          "submission_state": "not_accepted"},
+            )
         return AgentResult(
             summary="图片任务已接受，尚未完成；结果随后在独立图片消息展示。" + json.dumps(accepted,ensure_ascii=False),
             status="success", metadata={**accepted, "accepted": True, "completed": False},
