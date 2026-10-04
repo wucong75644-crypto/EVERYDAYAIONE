@@ -145,3 +145,14 @@ describe('messageProtocol', () => {
     });
   });
 });
+
+
+it('keeps image task lineage and only accepts real boolean alpha evidence', () => {
+  const image={ type: 'image', url: 'saved.png', task_id: 'child', source_task_id: 'old',
+    source_message_id: 'message', source_content_index: 3, has_transparency: true,
+    quality_checks: { file_integrity: true, alpha_min: 0, alpha_max: 255 } };
+  expect(parseContentPart(image)).toEqual(image);
+  expect(parseContentPart({ ...image, has_transparency: 'png' })).toBeNull();
+  expect(parseContentPart({ type: 'image', url: 'old.png', has_transparency: null, quality_checks: null }))
+    .toEqual({ type: 'image', url: 'old.png' });
+});

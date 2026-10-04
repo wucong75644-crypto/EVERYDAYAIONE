@@ -360,6 +360,10 @@ cost = calculate_video_cost("sora-2-text-to-video", duration_seconds=15)
 
 ---
 
+## 聊天 Skill 图片异步任务
+
+`generate_image` 已改为单图持久化接受，接受不等于完成；默认关闭新请求，既有任务完成与恢复始终可用。实际输入快照、成本预览、停止排队、原快照重试、新版本反馈以及管理员平台承担统计的合同见 [聊天图片异步 API](document/API_聊天Skill图片异步任务.md)。迁移/Skill发布顺序及保留型回滚见 [发布说明](document/RELEASE_聊天Skill图片异步任务.md)，实际证据与未验证项见 [实施记录](document/TECH_聊天Skill图片异步生成_实施记录.md)。
+
 ## 代码文件清单
 
 ```

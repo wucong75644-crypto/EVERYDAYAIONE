@@ -239,6 +239,7 @@ const GridCell = memo(function GridCell({
           imageUrl={imageAsset.originalUrl}
           thumbnailUrl={imageAsset.thumbnailUrl}
           sourcePart={imageAsset.sourcePart}
+          sourceContentIndex={imageAsset.sourceContentIndex}
           messageId={messageId}
           onClose={() => setContextMenu(null)}
         />,
@@ -276,6 +277,7 @@ export default function AiImageGrid({
             ...(imgPart.width ? { width: imgPart.width } : {}),
             ...(imgPart.height ? { height: imgPart.height } : {}),
             sourcePart: imgPart,
+            sourceContentIndex: content.indexOf(imgPart),
           } : null,
           failed: imgPart.failed || false,
           ...(imgPart.error ? { errorMessage: imgPart.error } : {}),

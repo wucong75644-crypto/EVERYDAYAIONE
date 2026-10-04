@@ -629,7 +629,7 @@ class TestBuildContextMessages:
         assert ("conversation_id", "conv1") in [c.args for c in eq_calls]
         # status 改用 in_ 加载 completed + interrupted（含中断标记，让 LLM 知道被打断）
         in_calls = mock_table.in_.call_args_list
-        assert ("status", ["completed", "interrupted"]) in [c.args for c in in_calls]
+        assert ("status", ["completed", "interrupted", "failed"]) in [c.args for c in in_calls]
         assert ("role", ["user", "assistant"]) in [c.args for c in in_calls]
         mock_table.order.assert_called_once_with("created_at", desc=True)
 

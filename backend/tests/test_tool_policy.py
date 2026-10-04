@@ -24,7 +24,7 @@ def context(**changes):
         context_scope="user", personal_context_allowed=True, agent_domain="general",
         permission_mode="ask", execution_mode="interactive", conversation_id="conversation",
         call_id="call", confirmation_available=True,
-        feature_flags=dict(file_workspace_enabled=True, sandbox_enabled=True, crawler_enabled=True),
+        feature_flags=dict(chat_image_async_enabled=True, file_workspace_enabled=True, sandbox_enabled=True, crawler_enabled=True),
     )
     values.update(changes)
     return ToolContext(**values)

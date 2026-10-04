@@ -17,6 +17,7 @@ from services.skills.chat_creation import replace_candidate, _org_admin
 from services.skills.authoring import SkillAuthoring
 from services.skills.creation_policy import for_organization
 from services.skills.repository import SkillRepository
+from services.handlers.chat_image_request import chat_image_acceptance_allowed
 from services.skills.trials import (
     SkillTrialRepository,
     TrialConflict,
@@ -242,7 +243,7 @@ class TrialFeedback(BaseModel):
     feedback_text: str = Field(default='', max_length=1000)
 
 
-def _get_trial_candidate(change_set_id: UUID, actor_id: str, org_id: str, scoped_db):
+def _get_trial_candidate(change_set_id: UUID, actor_id: str, org_id: str, scoped_db, *, allow_expired=False):
     repository = ChangeSetRepository(scoped_db)
     try:
         row = repository.get(str(change_set_id), org_id)
@@ -250,7 +251,7 @@ def _get_trial_candidate(change_set_id: UUID, actor_id: str, org_id: str, scoped
         raise HTTPException(404, 'Skill 候选不存在') from None
     if str(row.get('created_by')) != actor_id or row.get('resource_type') != 'skill_draft':
         raise HTTPException(403, '无权试用此 Skill 候选')
-    if candidate_is_expired(row):
+    if not allow_expired and candidate_is_expired(row):
         raise HTTPException(409, 'Skill 候选已过期，不能继续试用')
     return row
 
@@ -271,7 +272,7 @@ def get_trials(
         _org_admin(db, actor, org_id)
     except PermissionError:
         raise HTTPException(403, '仅活跃组织管理员可读取 Skill 试用记录') from None
-    _get_trial_candidate(change_set_id, actor, org_id, scoped_db)
+    _get_trial_candidate(change_set_id, actor, org_id, scoped_db, allow_expired=True)
     if settings.skill_draft_trial_enabled is not True:
         return {'success': True, 'data': [], 'trial_enabled': False}
     runs = list_trial_runs(
@@ -323,6 +324,7 @@ def get_trial_estimate(
         'image_to_image': image_to_image,
         'reference_images': reference_images,
         'trial_enabled': settings.skill_draft_trial_enabled is True,
+        'image_trial_enabled': chat_image_acceptance_allowed(settings, actor),
     }}
 
 
@@ -352,7 +354,7 @@ async def create_trial(
             db, settings, actor_id=actor, org_id=org_id, change_set=row,
             expected_revision=data.expected_revision, content_sha256=data.content_sha256,
             mode=data.mode, user_input=data.input_text, idempotency_key=data.idempotency_key,
-            aspect_ratio=data.aspect_ratio, reference_images=references,
+            aspect_ratio=data.aspect_ratio, reference_images=references, reference_sources=available,
             trial_repository=SkillTrialRepository(db.pool, actor_id=actor, org_id=org_id),
         )
     except TrialInProgress:

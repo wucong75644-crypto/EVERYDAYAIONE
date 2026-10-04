@@ -38,7 +38,8 @@ def _build_history_query(
             "context_revision, message_kind"
         )
         .eq("conversation_id", conversation_id)
-        .in_("status", ["completed", "interrupted"])
+        .in_("status", ["completed", "interrupted", "failed"])
+        .eq("(status <> 'failed' OR generation_params->>'origin' = 'chat_image')", True)
         .in_("role", ["user", "assistant"])
     )
     if base_revision is not None:
@@ -239,8 +240,11 @@ async def build_context_messages(
             if not rows:
                 break
             for row in rows:
+                if row.get("status")=="failed" and (row.get("generation_params") or {}).get("origin")!="chat_image":
+                    continue
                 preserve_tool_protocol = False
-                if row["role"] == "assistant" and not first_assistant_seen:
+                if (row["role"] == "assistant" and not first_assistant_seen
+                        and (row.get("generation_params") or {}).get("origin") != "chat_image"):
                     first_assistant_seen = True
                     latest_marker = extract_interrupt_marker(row.get("content"))
                     preserve_tool_protocol = latest_marker is not None

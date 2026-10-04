@@ -277,6 +277,10 @@ class MockSupabaseTable:
         """应用所有过滤条件，返回匹配的行"""
         filtered = data
         for field, value in self._filters.items():
+            if field == "(status <> 'failed' OR generation_params->>'origin' = 'chat_image')":
+                filtered = [row for row in filtered if (row.get("status") != "failed"
+                    or (row.get("generation_params") or {}).get("origin") == "chat_image") == value]
+                continue
             filtered = [d for d in filtered if d.get(field) == value]
 
         for field, values in self._in_filters.items():

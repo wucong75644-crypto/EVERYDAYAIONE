@@ -22,6 +22,9 @@ export interface UploadedImage {
   preview_url?: string;
   download_url?: string;
   asset_id?: string;
+  source_message_id?: string;
+  source_content_index?: number;
+  source_task_id?: string;
   isUploading: boolean;
   error: string | null;
   isQuoted?: boolean; // 是否为引用图片（来自 AI 生成图片的引用，无需上传）
@@ -283,6 +286,9 @@ export function useImageUpload() {
         preview_url: originalUrl,
         download_url: originalUrl,
         asset_id: quotedInput.assetId,
+        source_message_id: quotedInput.sourceMessageId,
+        source_content_index: quotedInput.sourceContentIndex,
+        source_task_id: quotedInput.sourceTaskId,
         sequence: quotedInput.sequence,
         workspace_path: quotedInput.workspacePath,
         name: quotedInput.name,

@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { restoreMediaTask, type PendingTask } from '../taskRestoration';
+import { restoreMediaTask, reconcileChatTaskStates, type PendingTask } from '../taskRestoration';
 import { IMAGE_TASK_TIMEOUT } from '../../config/task';
 
 // ============================================================
@@ -18,12 +18,18 @@ import { IMAGE_TASK_TIMEOUT } from '../../config/task';
 
 const mockAddMessage = vi.fn();
 const mockMarkForceRefresh = vi.fn();
+const mockUpdateMessage = vi.fn();
+const mockClearStreaming = vi.fn();
+const mockImageDetails = vi.fn();
+vi.mock('../../services/chatImage', () => ({ chatImageService: { details: (...args: unknown[]) => mockImageDetails(...args) } }));
 
 vi.mock('../../stores/useMessageStore', () => ({
   useMessageStore: {
     getState: () => ({
       addMessage: mockAddMessage,
       markForceRefresh: mockMarkForceRefresh,
+      updateMessage: mockUpdateMessage,
+      clearConversationStreaming: mockClearStreaming,
     }),
   },
 }));
@@ -221,5 +227,29 @@ describe('restoreMediaTask', () => {
 
     const addedMessage = mockAddMessage.mock.calls[0][1];
     expect(addedMessage.content[0].text).toBe('视频生成中');
+  });
+});
+
+describe('chat image recovery', () => {
+  it('restores an old queued child without the native media timeout', () => {
+    vi.clearAllMocks();
+    restoreMediaTask(createPendingImageTask({ started_at: '2020-01-01T00:00:00Z',
+      request_params: { _media_request_v1: { model: 'actual', origin: {} }, _media_lifecycle_v1: { phase: 'queued' } },
+    }));
+    expect(mockAddMessage).toHaveBeenCalledWith('conv-1', expect.objectContaining({
+      generation_params: expect.objectContaining({ origin: 'chat_image', task_id: 'task-1' }),
+    }));
+  });
+
+  it('merges a terminal child while preserving an active parent stream', async () => {
+    vi.clearAllMocks();
+    mockImageDetails.mockResolvedValue({ message_id: 'image-msg', status: 'completed', result: [{ type: 'image', url: 'saved' }],
+      input: { model: 'actual' }, submission_state: 'published' });
+    const child = createPendingImageTask({ status: 'completed', request_params: { _media_request_v1: { model: 'actual', origin: {} } } });
+    const parent = createPendingImageTask({ id: 'parent', type: 'chat', status: 'running' });
+    await reconcileChatTaskStates([child, parent]);
+    expect(mockImageDetails).toHaveBeenCalledWith('task-1');
+    expect(mockUpdateMessage).toHaveBeenCalledWith('image-msg', expect.objectContaining({ status: 'completed' }));
+    expect(mockClearStreaming).not.toHaveBeenCalled();
   });
 });

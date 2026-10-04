@@ -201,6 +201,9 @@ export interface ImageInputInfo {
   preview_url?: string;
   download_url?: string;
   asset_id?: string;
+  source_message_id?: string;
+  source_content_index?: number;
+  source_task_id?: string;
   /** 工作区文件名，有值时后端注册 file_path_cache */
   name?: string;
   /** 工作区相对路径（如 上传/2026-06/xxx.png） */
@@ -241,6 +244,9 @@ function toImagePart(image: string | ImageInputInfo): ContentPart {
     preview_url: pickOriginalImageUrl(image.preview_url, image.original_url, image.download_url, image.url),
     download_url: pickOriginalImageUrl(image.download_url, image.original_url, image.preview_url, image.url),
     ...(image.asset_id ? { asset_id: image.asset_id } : {}),
+    ...(image.source_message_id ? { source_message_id: image.source_message_id } : {}),
+    ...(image.source_content_index !== undefined ? { source_content_index: image.source_content_index } : {}),
+    ...(image.source_task_id ? { source_task_id: image.source_task_id } : {}),
     ...(image.name ? { name: image.name } : {}),
     ...(image.workspace_path ? { workspace_path: image.workspace_path } : {}),
     ...(image.mime_type ? { mime_type: image.mime_type } : {}),

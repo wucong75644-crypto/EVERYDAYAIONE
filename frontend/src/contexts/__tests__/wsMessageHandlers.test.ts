@@ -110,6 +110,44 @@ function createMockDeps(store: MessageStoreActions): HandlerDeps {
   };
 }
 
+describe('independent chat image delivery', () => {
+  it('accepts a placeholder without registering parent streaming or sending state', () => {
+    const store = createMockStore(); const deps = createMockDeps(store);
+    const handlers = createWSMessageHandlers(deps);
+    handlers.message_pending({ type: 'message_pending', task_id: 'image-task', payload: { message: {
+      id: 'image-msg', conversation_id: 'conv', role: 'assistant', content: [{ type: 'image', url: null }],
+      status: 'pending', generation_params: { origin: 'chat_image', task_id: 'image-task' },
+    } } });
+    expect(store.addMessage).toHaveBeenCalledOnce();
+    expect(store.registerStreamingId).not.toHaveBeenCalled();
+    expect(store.setIsSending).not.toHaveBeenCalled();
+    expect(deps.send).toHaveBeenCalledWith({ type: 'subscribe', payload: { task_id: 'image-task' } });
+  });
+
+  it.each(['completed', 'failed'])('publishes a %s child without ending or flushing its parent', status => {
+    const store = createMockStore(); const deps = createMockDeps(store);
+    deps.chunkBufferRef.current.set('parent-msg', { chunk: 'unfinished parent text', conversationId: 'conv' });
+    createWSMessageHandlers(deps).message_done({ type: 'message_done', task_id: 'image-task', conversation_id: 'conv',
+      payload: { message: { id: 'image-msg', conversation_id: 'conv', role: 'assistant', status,
+        content: [{ type: 'image', url: status === 'completed' ? 'saved' : null, failed: status === 'failed' }],
+        generation_params: { origin: 'chat_image', task_id: 'image-task' } } } });
+    expect(store.updateMessage).toHaveBeenCalledWith('image-msg', expect.objectContaining({ status }));
+    expect(store.setIsSending).not.toHaveBeenCalled();
+    expect(store.markConversationCompleted).not.toHaveBeenCalled();
+    expect(store.completeStreaming).not.toHaveBeenCalled();
+    expect(deps.chunkBufferRef.current.get('parent-msg')?.chunk).toBe('unfinished parent text');
+  });
+
+  it('ignores delayed pending events after a child completed', () => {
+    const store = createMockStore();
+    vi.mocked(store.getMessage).mockReturnValue({ id: 'image-msg', status: 'completed' } as any);
+    createWSMessageHandlers(createMockDeps(store)).message_pending({ type: 'message_pending', task_id: 'image-task',
+      payload: { message: { id: 'image-msg', conversation_id: 'conv', status: 'pending',
+        generation_params: { origin: 'chat_image', task_id: 'image-task' } } } });
+    expect(store.addMessage).not.toHaveBeenCalled();
+  });
+});
+
 // ============================================================
 // 测试套件
 // ============================================================

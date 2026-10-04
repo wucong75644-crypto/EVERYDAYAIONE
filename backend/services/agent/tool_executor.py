@@ -65,6 +65,8 @@ class ToolExecutor(
         tool_confirmer=None,
         resource_manifest_loader=None,
         resource_access_boundary=None,
+        image_execution_token=None,
+        image_skill_snapshot=(),
     ) -> None:
         self.db = db
         self.user_id = user_id
@@ -90,6 +92,8 @@ class ToolExecutor(
         self.tool_confirmer = tool_confirmer
         self.resource_manifest_loader = resource_manifest_loader
         self.resource_access_boundary = resource_access_boundary
+        self.image_execution_token = image_execution_token
+        self.image_skill_snapshot = tuple(image_skill_snapshot)
         self._tool_runtime = None
         self.erp_step_timeout_sec = erp_step_timeout_sec
         self.tool_policy_snapshot = dict(tool_policy_snapshot or {})

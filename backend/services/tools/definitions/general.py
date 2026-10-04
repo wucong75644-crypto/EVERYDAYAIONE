@@ -65,7 +65,22 @@ def _schema_web_search():
     }
 
 
+def _schema_image_history():
+    return {"type": "function", "function": {
+        "name": "get_conversation_context",
+        "description": "读取当前获准会话基线内的精确历史原文及图片来源。历史提示词必须读原文后复用，不能用摘要猜测。返回 message_id/content_index/sha256；task_id 可读取已发布图片实际输入的完整提示词。每次最多20条/8个指定消息。",
+        "parameters": {"type": "object", "additionalProperties": False, "properties": {
+            "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+            "message_ids": {"type": "array", "maxItems": 8, "items": {"type": "string"}},
+            "task_id": {"type": "string"},
+            "text_exact": {"type":"string","minLength":1,"maxLength":20000,"description":"从返回原文逐字选取的完整提示词；服务器确认唯一原文位置并返回它的sha256。"},
+        }},
+    }}
+
+
 def build_specs():
+    from core.config import get_settings
+    image_history = get_settings().chat_image_async_enabled
     schemas = {}
     schemas.update((s["function"]["name"], s) for s in crawler_schemas.build_crawler_tools())
     return (
@@ -123,11 +138,11 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='get_conversation_context', capability='platform.get_conversation_context', schema=None,
+            name='get_conversation_context', capability='platform.get_conversation_context', schema=_schema_image_history() if image_history else None,
             domain='general', availability=ToolAvailability(requires_personal_context=True),
             risk_level='safe', parallelizable=False, cacheable=False,
             effects=('none',), executor_type="legacy", handler_key='get_conversation_context',
-            exposure=Exposure.LEGACY_INTERNAL,
+            exposure=Exposure.PUBLIC if image_history else Exposure.LEGACY_INTERNAL,
             source="services.tools.definitions.general.build_specs", definition_kind="explicit",
             catalog_order=34, catalog_groups=(), core=False, legacy_plan_visible=True,
             compatibility_notes=(),

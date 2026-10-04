@@ -362,6 +362,7 @@ export default function MessageArea({
   const findMessagePair = useCallback((messageId: string): { target: Message; user: Message } | null => {
     const target = mergedMessages.find((m) => m.id === messageId);
     if (!target || target.role !== 'assistant') return null;
+    if (target.generation_params?.origin === 'chat_image') return { target, user: target };
 
     const aiIndex = mergedMessages.findIndex((m) => m.id === messageId);
     for (let i = aiIndex - 1; i >= 0; i--) {

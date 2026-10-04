@@ -3,51 +3,55 @@
 from ..spec import Exposure, ToolAvailability, ToolPolicyRules, ToolSpec
 
 
-def _schema_generate_image():
+def _schema_generate_image_async():
+    import json
+    from core.config import get_settings
+    from services.handlers.chat_image_request import image_capabilities
+    limits=get_settings()
     return {
         "type": "function",
         "function": {
             "name": "generate_image",
             "description": (
-                "通用图片生成工具：根据文字描述生成图片（文生图），或基于参考图片生成新图片（图生图）。"
-                "适用于插画、概念图、logo、创意图、头像等非电商场景。"
-                "电商商品图请用 image_agent。\n\n"
-                "两种模式：\n"
-                "- 纯文字 → 文生图（只传 prompt）\n"
-                "- 有参考图 → 图生图（prompt + image_urls，用户上传图片时必传 image_urls）\n\n"
-                "返回：成功 → 图片 URL，前端自动展示。"
-                "失败 → 错误信息，可修改 prompt 后重试。\n\n"
-                "不要用于：电商商品图（白底主图、场景图）→ image_agent；"
-                "视频生成 → generate_video。"
+                "持久化接受一个独立图片任务，立即返回 submitted、task_id、message_id、排队阶段和服务器预估积分。"
+                "接受不表示图片完成；结果随后由独立图片消息展示。每次只生成一张，多张通过多次调用。"
+                "明确指定 text_to_image 或 image_to_image；用于分析的图片不自动成为生成参考图。"
+                "prompt 是完整最终原文，不再二次改写。只选本次用户指定的原图引用，按用途和顺序传 references。"
+                "先看样张时只提交样张。variant_id 是稳定变体身份，不能扩大服务器预算。"
+                "遇到素材或提示词版本歧义先询问；失败不自动无限重试。"
+                f"本轮上限 {limits.chat_image_max_requests} 张、{limits.chat_image_max_credits} 积分。"
+                "当前服务器能力与单张积分：" + json.dumps(image_capabilities(),ensure_ascii=False,separators=(',',':'))
             ),
             "parameters": {
-                "type": "object",
-                "required": ["prompt"],
+                "type": "object", "additionalProperties": False,
+                "required": ["mode", "prompt"],
                 "properties": {
-                    "prompt": {
-                        "type": "string",
-                        "description": (
-                            "图片描述，英文效果更好。描述主体、风格、构图、色调等。"
-                            "e.g. 'A cozy coffee shop interior, warm lighting, watercolor style'；"
-                            "'极简风格logo，一只抽象的猫，黑白配色'"
-                        ),
-                    },
-                    "image_urls": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": (
-                            "参考图片 URL 列表。用户上传了图片并要求画图/改图时必传。"
-                            "图生图模式下，生成结果会参考这些图片的风格和内容"
-                        ),
-                    },
-                    "aspect_ratio": {
-                        "type": "string",
-                        "enum": ["1:1", "3:4", "4:3", "9:16", "16:9"],
-                        "description": (
-                            "画面比例。默认 1:1。"
-                            "e.g. 头像/logo→1:1, 手机壁纸→9:16, 横幅→16:9"
-                        ),
-                    },
+                    "mode": {"type":"string", "enum":["text_to_image","image_to_image"]},
+                    "prompt": {"type":"string", "minLength":1, "description":"一张图的完整最终提示词原文"},
+                    "references": {"type":"array", "maxItems":16, "items": {
+                        "type":"object", "additionalProperties":False, "required":["role"],
+                        "properties": {
+                            "resource_ref":{"type":"string"}, "file_id":{"type":"string"},
+                            "asset_id":{"type":"string"}, "message_id":{"type":"string"},
+                            "content_index":{"type":"integer","minimum":0},
+                            "role":{"type":"string","minLength":1,"maxLength":200},
+                        },
+                        "oneOf":[{"required":[key]} for key in ("resource_ref","file_id","asset_id","message_id")],
+                    }},
+                    "model":{"type":"string","description":"可选明确模型；模式和规格必须为该模型实际支持"},
+                    "aspect_ratio":{"type":"string"},
+                    "resolution":{"type":"string","enum":["1K","2K","4K"]},
+                    "output_format":{"type":"string","enum":["png","jpeg","jpg","webp"]},
+                    **({"background":{"type":"string","enum":["opaque","transparent"],"description":"仅 Flare 支持；透明输出需保存后验证真实alpha"}} if limits.chat_image_transparent_enabled else {}),
+                    "plan_item_id":{"type":"string","minLength":1,"maxLength":200},
+                    "variant_id":{"type":"string","minLength":1,"maxLength":200},
+                    "source_task_id":{"type":"string"},
+                    "source_prompt":{"type":"object","additionalProperties":False,
+                        "required":["sha256"],"oneOf":[{"required":["message_id","content_index"]},{"required":["task_id"]}],"properties":{
+                            "task_id":{"type":"string"},
+                            "message_id":{"type":"string"},"content_index":{"type":"integer","minimum":0},
+                            "sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+                        }},
                 },
             },
         },
@@ -128,8 +132,8 @@ def _schema_image_agent():
 def build_specs():
     return (
         ToolSpec(
-            name='generate_image', capability='platform.generate_image', schema=_schema_generate_image(),
-            domain='general', availability=ToolAvailability(),
+            name='generate_image', capability='platform.generate_image', schema=_schema_generate_image_async(),
+            domain='general', availability=ToolAvailability(requires_personal_context=True, feature_flags=('chat_image_async_enabled',)),
             risk_level='confirm', parallelizable=False, cacheable=False,
             effects=('unknown',), executor_type="legacy", handler_key='generate_image',
             exposure=Exposure.PUBLIC,

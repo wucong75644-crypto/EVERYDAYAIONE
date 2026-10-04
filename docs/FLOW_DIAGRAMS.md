@@ -556,7 +556,32 @@ flowchart TB
 
 ---
 
+## 聊天 Skill 单图异步执行（2026-10-04）
+
+```mermaid
+flowchart TD
+    Chat[父聊天与现有 Skill Runtime] --> Policy[实际获准工具与原图权限]
+    Policy --> Accept[原子冻结单图输入 / 独立 task 和 pending]
+    Accept --> Receipt[立即返回 submitted / completed false]
+    Accept --> Worker[现有 Worker 有界领取 / 独立槽位 / 原子预扣]
+    Worker --> Send[持久发送标记 / 单次供应商请求]
+    Send --> Known[确认外部 ID / 回调或轮询]
+    Send --> Unknown[受理不确定 / 禁止盲目重发]
+    Unknown -->|期限到期| Platform[用户退款 / 平台成本估算]
+    Known --> Save[记录 provider 结果 / 保存与资产登记]
+    Save -->|保存或登记失败| Save
+    Save --> Publish[账本与独立结果发布事务]
+    Platform --> Publish
+    Publish --> Child[只更新子图片 / trial 仅写试运行]
+    Publish --> Recover[终态未投递 / 可恢复补投递]
+    Recover --> Child
+```
+
+父聊天的 task、Turn、message 与 streaming 槽位保持独立，图片完成不能结束父流式。快照在 `_media_request_v1`，阶段在 `_media_lifecycle_v1`；图片trial没有普通聊天结果消息。关闭新接受开关仍推进在途任务。详细状态/API见 [图片异步合同](document/API_聊天Skill图片异步任务.md)，迁移与回滚见 [发布说明](document/RELEASE_聊天Skill图片异步任务.md)。
+
 ## 更新记录
+
+- **2026-10-04**：新增聊天Skill单图异步接受、未知受理平台承担、独立发布/恢复与trial隔离流程；新接受默认关闭
 
 - **2026-02-07**：更新消息流程图，反映统一消息系统重构（sendUnifiedMessage + WebSocket 模式）
 - **2026-02-04**：创建流转图文档，包含整体架构、组件层级、状态管理、业务流程、通信方式等

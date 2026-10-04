@@ -67,6 +67,7 @@ class ChatToolMixin(ChatToolResultMixin):
         permission_mode: str = "auto",
         agent_domain: str = "general",
         authorized_tool_names: frozenset[str] | None = None,
+        image_skill_snapshot: tuple = (),
     ) -> List[tuple]:
         """执行工具调用：安全检查 → 并行/串行分批 → 返回结果
 
@@ -108,6 +109,8 @@ class ChatToolMixin(ChatToolResultMixin):
             execution_scope=scope, channel_scope_id=getattr(scope, "channel_scope_id", None),
             tool_entrypoint="model",
             allowed_tool_names=authorized_tool_names,
+            image_execution_token=getattr(self, "_actor_execution_token", None),
+            image_skill_snapshot=image_skill_snapshot,
             tool_confirmer=lambda call, ctx, decision: ChatToolMixin._confirm_tool_call(
                 self, call, ctx, decision, message_id,
             ),

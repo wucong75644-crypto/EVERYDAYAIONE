@@ -137,6 +137,13 @@ def build_stream_end(
     )
 
 
+def build_media_pending(task_id: str, conversation_id: str, message: Dict[str, Any], submission_state: str) -> Dict[str, Any]:
+    """A persistent child snapshot; never starts a chat stream."""
+    return _build_ws_message(WSMessageType.MESSAGE_PENDING,
+        {"message": message, "submission_state": submission_state},
+        task_id=task_id, conversation_id=conversation_id, message_id=message.get("id"))
+
+
 def build_message_done(
     task_id: str, conversation_id: str,
     message: Dict[str, Any], credits_consumed: Optional[int] = None,

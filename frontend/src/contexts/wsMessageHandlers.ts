@@ -47,6 +47,26 @@ type HandlerDefinition = (
 ) => void;
 
 const handlerDefinitions: Record<string, HandlerDefinition> = {
+  message_pending: (deps, msg) => {
+      const raw = msg.payload?.message as RawApiMessage | undefined;
+      const params = raw?.generation_params as Record<string, unknown> | undefined;
+      if (!raw?.id || !raw.conversation_id || !msg.task_id
+          || params?.origin !== 'chat_image'
+          || params?.task_id !== msg.task_id) return;
+      const existing = deps.getStore().getMessage(raw.id);
+      if (existing?.status === 'completed' || existing?.status === 'failed') return;
+      if (raw.status === 'completed' || raw.status === 'failed') {
+        handleMessageDone(deps, msg);
+        return;
+      }
+      const message = normalizeMessage(raw);
+      deps.getStore().addMessage(raw.conversation_id, message);
+      deps.taskConversationMapRef.current.set(msg.task_id, raw.conversation_id);
+      if (!deps.subscribedTasksRef.current.has(msg.task_id)) {
+        deps.subscribedTasksRef.current.add(msg.task_id);
+        deps.send({ type: 'subscribe', payload: { task_id: msg.task_id } });
+      }
+    },
   message_start: (deps, msg, projection) => {
       const { message_id } = msg;
       if (!message_id && !projection.resolveMessageId(msg)) return;

@@ -334,3 +334,26 @@ async def test_chat_mixin_propagates_skill_ceiling_to_new_and_cached_executor():
         await h._execute_tool_calls([call("file_search", "{}")], "task-1", "conv-1", "msg", "user", 1,
                                     authorized_tool_names=ceiling)
     assert observed == [{"file_search"}, set(), None]
+
+
+@pytest.mark.parametrize('enabled,personal',[(True,True),(False,True),(True,False)])
+async def test_image_skill_adds_only_currently_allowed_schemas(monkeypatch,enabled,personal):
+    from core.config import Settings
+    from services.handlers.chat.execution_engine import _apply_skill_context
+    from services.handlers.chat.tool_loop import prepare_tool_turn
+    from tests.test_skill_runtime import item
+    settings=Settings(_env_file=None,database_url='postgresql://invalid/test',jwt_secret_key='isolated-test-key',chat_image_async_enabled=True)
+    monkeypatch.setattr('core.config.get_settings',lambda:settings)
+    skills=state(Source([item(tools=('generate_image','get_conversation_context','file_search'))]),
+        platform_tool_names={'generate_image','get_conversation_context','file_search'})
+    await skills.initialize();assert (await skills.activate(activate()))['ok']
+    p=prepared()
+    p.execution_context=replace(p.execution_context,personal_context_allowed=personal,
+        feature_flags={**p.execution_context.feature_flags,'chat_image_async_enabled':enabled})
+    _apply_skill_context(p,skills)
+    tools=prepare_tool_turn(core_tools=p.core_tools,discovered_names=p.tool_context.discovered_tools,org_id='org-1',turn=0,
+        messages=p.messages,tool_context=p.tool_context,permission=p.permission,execution_context=p.execution_context)
+    names={tool['function']['name'] for tool in tools}
+    assert ('generate_image' in names) is (enabled and personal)
+    assert 'web_search' not in names
+    assert p.execution_context.authorized_tool_names=={'generate_image','get_conversation_context','file_search'}

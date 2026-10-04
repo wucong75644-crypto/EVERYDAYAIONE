@@ -43,7 +43,9 @@ interface TaskRequestParams {
   content?: string;
   thinking_effort?: string;
   thinking_mode?: string;
-  [key: string]: string | undefined;
+  _media_request_v1?: { model: string; origin: { destination?: string } };
+  _media_lifecycle_v1?: { phase: string };
+  [key: string]: unknown;
 }
 
 export interface PendingTask {
@@ -57,6 +59,7 @@ export interface PendingTask {
   placeholder_message_id: string | null;
   placeholder_created_at: string | null;
   started_at: string;
+  created_at?: string;
   last_polled_at: string | null;
   // WS 订阅用的客户端任务 ID
   client_task_id?: string | null;
@@ -122,12 +125,14 @@ export async function fetchPendingTasks(): Promise<PendingTask[] | null> {
  */
 export function restoreMediaTask(task: PendingTask) {
   const store = useMessageStore.getState();
+  const snapshot = task.request_params?._media_request_v1;
+  if (snapshot?.origin.destination === 'skill_trial') return;
 
   const maxDuration = task.type === 'image' ? IMAGE_TASK_TIMEOUT : VIDEO_TASK_TIMEOUT;
   const elapsed = Date.now() - new Date(task.started_at).getTime();
 
   // 超时检查：已超时的任务不恢复（后端会标记为失败）
-  if (elapsed > maxDuration) {
+  if (!snapshot && elapsed > maxDuration) {
     logger.warn('task:restore', '任务已超时,跳过恢复', { taskId: task.external_task_id });
     return;
   }
@@ -143,7 +148,7 @@ export function restoreMediaTask(task: PendingTask) {
 
   // 2. 同时添加占位符到 Store（防止 loadMessages 先执行时用了旧缓存）
   //    addMessage 有 ID 去重，loadMessages 从 API 加载后不会重复
-  const placeholderId = task.placeholder_message_id || `restored-${task.external_task_id}`;
+  const placeholderId = task.placeholder_message_id || task.assistant_message_id || `restored-${task.external_task_id}`;
   const renderHints = task.request_params?._render as Record<string, string> | undefined;
   const loadingText = renderHints?.placeholder_text || getPlaceholderText(task.type as MessageType);
 
@@ -151,12 +156,14 @@ export function restoreMediaTask(task: PendingTask) {
     id: placeholderId,
     conversation_id: task.conversation_id,
     role: 'assistant' as const,
-    content: [{ type: 'text' as const, text: loadingText }],
+    content: snapshot ? [{ type: 'image' as const, url: null }] : [{ type: 'text' as const, text: loadingText }],
     status: 'pending' as const,
-    created_at: task.placeholder_created_at || new Date().toISOString(),
+    created_at: task.placeholder_created_at || task.created_at || new Date().toISOString(),
     generation_params: {
       type: task.type,
-      model: task.request_params?.model,
+      model: snapshot?.model || task.request_params?.model,
+      ...(snapshot ? { origin: 'chat_image', task_id: task.id, num_images: 1,
+        submission_state: task.request_params._media_lifecycle_v1?.phase } : {}),
       ...(task.request_params?.num_images ? { num_images: task.request_params.num_images } : {}),
       ...(renderHints ? { _render: renderHints } : {}),
     },
@@ -277,6 +284,30 @@ export async function reconcileChatTaskStates(
   );
   const conversations = new Set<string>();
 
+  // A late child completion must merge only its own result, even while the
+  // parent chat is streaming. Never replace the conversation's partial turn.
+  const childResults = tasks.filter(task => task.type === 'image'
+    && task.request_params?._media_request_v1
+    && task.request_params._media_request_v1.origin.destination !== 'skill_trial'
+    && RECONCILE_TASK_STATUSES.has(task.status) && task.conversation_id);
+  await Promise.all(childResults.map(async task => {
+    const store = useMessageStore.getState();
+    store.markForceRefresh(task.conversation_id);
+    try {
+      const { chatImageService } = await import('../services/chatImage');
+      const result = await chatImageService.details(task.id);
+      const completedMessage = {
+        id: result.message_id, conversation_id: task.conversation_id, role: 'assistant',
+        content: result.result || [], status: result.status === 'completed' ? 'completed' : 'failed',
+        created_at: task.created_at || new Date().toISOString(),
+        generation_params: { origin: 'chat_image', task_id: task.id, type: 'image', num_images: 1,
+          model: result.input.model, submission_state: result.submission_state },
+      } as const;
+      store.updateMessage(result.message_id, completedMessage);
+      store.addMessage(task.conversation_id, completedMessage);
+    } catch (error) { logger.error('task:reconcile', '图片完成消息读取失败，保留刷新标记', error); }
+  }));
+
   for (const task of tasks) {
     if (
       task.type !== 'chat'
@@ -396,7 +427,7 @@ export function subscribeRestoredTasks(
   // 订阅 chat 任务（优先用 client_task_id，与后端推送 ID 一致）
   for (const task of result.chatTasks) {
     if (task.conversation_id) {
-      const subscribeId = task.client_task_id || task.external_task_id;
+      const subscribeId = task.request_params._media_request_v1 ? task.id : task.client_task_id || task.external_task_id;
       subscribeToTask(subscribeId, task.conversation_id);
       logger.info('task:restore:p2', 'Chat 任务已订阅 WS', {
         taskId: subscribeId,
@@ -408,7 +439,7 @@ export function subscribeRestoredTasks(
   // 订阅 media 任务（优先用 client_task_id，与后端推送 ID 一致）
   for (const task of result.mediaTasks) {
     if (task.conversation_id) {
-      const subscribeId = task.client_task_id || task.external_task_id;
+      const subscribeId = task.request_params._media_request_v1 ? task.id : task.client_task_id || task.external_task_id;
       subscribeToTask(subscribeId, task.conversation_id);
       logger.info('task:restore:p2', 'Media 任务已订阅 WS', {
         taskId: subscribeId,

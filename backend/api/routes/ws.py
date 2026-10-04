@@ -799,6 +799,20 @@ async def _check_and_send_completed_task(conn_id: str, task_id: str, user_id: st
             logger.debug(f"Task not found for subscription check | task_id={task_id}")
             return
 
+        snapshot=(task.get("request_params") or {}).get("_media_request_v1")
+        if snapshot:
+            if snapshot["origin"].get("destination")=="skill_trial":
+                return
+            from schemas.websocket import build_media_pending
+            message=await _find_message_by_id(db,task.get("assistant_message_id"))
+            if message:
+                if task.get("status") in {"completed","failed","cancelled"}:
+                    event=build_message_done(task["id"],task["conversation_id"],message,task.get("credits_used",0))
+                else:
+                    event=build_media_pending(task["id"],task["conversation_id"],message,task["request_params"]["_media_lifecycle_v1"]["phase"])
+                await ws_manager.send_to_connection(conn_id,event)
+            return
+
         status = task.get("status")
         if status not in ["completed", "failed", "cancelled"]:
             logger.debug(f"Task not in final state | task_id={task_id} | status={status}")

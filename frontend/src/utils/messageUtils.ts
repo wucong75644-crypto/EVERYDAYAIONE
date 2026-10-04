@@ -80,6 +80,7 @@ export function getImageAssets(message: Message): ImageAsset[] {
         ...(p.height ? { height: p.height } : {}),
         ...(p.name ? { filename: p.name } : {}),
         sourcePart: p,
+        sourceContentIndex: message.content.indexOf(p),
       };
     })
     .filter((asset): asset is ImageAsset => !!asset);

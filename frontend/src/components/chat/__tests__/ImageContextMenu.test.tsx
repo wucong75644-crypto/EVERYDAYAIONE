@@ -42,6 +42,7 @@ describe('ImageContextMenu', () => {
     expect(attachmentMocks.addQuotedImage).toHaveBeenCalledWith({
       url: 'https://cdn.example.com/test.png',
       thumbnailUrl: 'https://cdn.example.com/test-thumb.png',
+      sourceMessageId: defaultProps.messageId,
     });
     expect(defaultProps.onClose).toHaveBeenCalled();
   });
@@ -50,10 +51,12 @@ describe('ImageContextMenu', () => {
     render(
       <ImageContextMenu
         {...defaultProps}
+        sourceContentIndex={4}
         sourcePart={{
           type: 'image',
           url: defaultProps.imageUrl,
           asset_id: 'asset-123',
+          task_id: 'source-image-task',
           workspace_path: '生成/asset-123.png',
           name: 'asset-123.png',
           mime_type: 'image/png',
@@ -67,6 +70,9 @@ describe('ImageContextMenu', () => {
       url: defaultProps.imageUrl,
       thumbnailUrl: defaultProps.thumbnailUrl,
       assetId: 'asset-123',
+      sourceMessageId: defaultProps.messageId,
+      sourceContentIndex: 4,
+      sourceTaskId: 'source-image-task',
       workspacePath: '生成/asset-123.png',
       name: 'asset-123.png',
     }));

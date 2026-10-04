@@ -15,7 +15,7 @@ from services.conversation_task import is_actor_task
 
 async def recover_orphan_tasks(db) -> int:
     """
-    扫描所有 status=running/pending 的任务，将有 accumulated_content 的内容
+    扫描 chat 类型 status=running/pending 的任务，将有 accumulated_content 的内容
     回写到 messages 表，并标记任务为 completed。
 
     注意：此函数使用 raw db（无 org_id 过滤），因为启动恢复需要一次性
@@ -29,7 +29,7 @@ async def recover_orphan_tasks(db) -> int:
             "id, type, external_task_id, placeholder_message_id, conversation_id, "
             "model_id, client_task_id, accumulated_content, accumulated_blocks, "
             "credit_transaction_id, delivery_context, request_params"
-        ).in_(
+        ).eq("type", "chat").in_(
             "status", ["pending", "running"]
         ).execute()
     except Exception as e:
@@ -42,6 +42,10 @@ async def recover_orphan_tasks(db) -> int:
     recovered = 0
 
     for task in response.data:
+        # Defense in depth for custom DB adapters; media is recovered by the
+        # completion/submission Worker, never by a streaming-content heuristic.
+        if task.get("type", "chat") != "chat":
+            continue
         if is_actor_task(task):
             continue
         from services.kie_image_fallback_service import preserve_fallback_on_restart

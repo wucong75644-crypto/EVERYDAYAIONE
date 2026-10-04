@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -68,6 +69,23 @@ class ErrorStatsResponse(BaseModel):
 
 class SummarizeResponse(BaseModel):
     summary: str
+
+
+@router.get("/image-platform-costs", summary="图片平台承担的退款与供应商估算")
+async def image_platform_costs(
+    user_id: CurrentUserId, db: Database,
+    days: int = Query(7, ge=1, le=366),
+    page: int = Query(1, ge=1, le=100000),
+    page_size: int = Query(20, ge=1, le=100),
+) -> dict:
+    _require_super_admin(user_id, db)
+    from core.db_scope import DatabaseAccessKind, DatabaseScope, ScopedDatabaseClient
+    until = datetime.now(ZoneInfo("Asia/Shanghai"))
+    scoped = ScopedDatabaseClient(db, DatabaseScope(user_id, None, DatabaseAccessKind.RUNTIME_ADMIN))
+    return await asyncio.to_thread(lambda: scoped.rpc("chat_image_platform_cost_report", {
+        "p_since": until - timedelta(days=days), "p_until": until,
+        "p_page": page, "p_page_size": page_size,
+    }).execute().data)
 
 
 # ── API 端点 ─────────────────────────────────────────────

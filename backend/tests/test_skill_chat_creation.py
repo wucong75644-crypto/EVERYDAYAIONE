@@ -941,3 +941,56 @@ def test_image_trial_accepts_only_currently_available_user_images():
     assert validate_reference_images([selected], available) == [selected]
     with pytest.raises(PermissionError, match="SKILL_TRIAL_REFERENCE_IMAGE_UNAVAILABLE"):
         validate_reference_images(["https://other.example/image.png"], available)
+
+
+@pytest.mark.parametrize("mode",["text","image"])
+async def test_fresh_trial_text_completes_but_image_only_accepts(monkeypatch,mode):
+    from unittest.mock import AsyncMock
+    import services.skills.trials as trials
+    content=ChatSkillCandidate(name="方案",description="可复用步骤。",body="只编排本次任务。").draft_content()
+    digest=content_digest(content)
+    change={"id":str(uuid4()),"created_by":"actor-1","resource_type":"skill_draft","status":"awaiting_approval","revision":1,
+        "proposed_snapshot":{"content":content.model_dump(mode="json"),"content_sha256":digest},
+        "audit_subject":{"candidate_sha256":digest,"conversation_id":"own-conversation"}}
+    monkeypatch.setattr(trials,"_claim_run",lambda _db,row,**kw:(row,True))
+    model=AsyncMock(return_value=("text-model","  generated original  ",{"credits_charged":2}))
+    update=Mock();accept=AsyncMock(return_value={"status":"running","image_task_id":"child","submission_state":"queued","images":[]})
+    monkeypatch.setattr(trials,"_run_text_model",model);monkeypatch.setattr(trials,"_update_run",update)
+    monkeypatch.setattr("services.handlers.image_handler.ImageHandler.accept_image_trial",accept)
+    result=await trials.run_trial(FakeDb({}),settings(chat_image_async_enabled=True),actor_id="actor-1",org_id="org-1",change_set=change,
+        expected_revision=1,content_sha256=digest,mode=mode,user_input="test",idempotency_key=uuid4(),
+        reference_images=["original-B"] if mode=="image" else None,
+        reference_sources=[{"url":"original-B","message_id":"message-B","content_index":3}])
+    if mode=="text":
+        accept.assert_not_called(); assert update.call_args.kwargs["status"]=="completed"
+        assert result["output"]=="  generated original  "
+    else:
+        update.assert_not_called();accept.assert_awaited_once()
+        args=accept.await_args.kwargs
+        assert args["args"]["prompt"]=="  generated original  " and args["args"]["mode"]=="image_to_image"
+        assert args["args"]["references"]==[{"message_id":"message-B","content_index":3,"role":"reference"}]
+        assert args["conversation_id"]=="own-conversation"
+        assert result["status"]=="running" and result["images"]==[]
+
+
+async def test_image_trial_closed_before_model_or_claim(monkeypatch):
+    from unittest.mock import AsyncMock
+    import services.skills.trials as trials
+    model=AsyncMock();claim=Mock()
+    monkeypatch.setattr(trials,"_run_text_model",model);monkeypatch.setattr(trials,"_claim_run",claim)
+    change={"id":str(uuid4()),"created_by":"actor-1","resource_type":"skill_draft","status":"awaiting_approval","revision":1,
+        "proposed_snapshot":{"content":{"body":"valid"},"content_sha256":"hash"},"audit_subject":{"candidate_sha256":"hash"}}
+    with pytest.raises(PermissionError,match="ASYNC_DISABLED"):
+        await trials.run_trial(FakeDb({}),settings(),actor_id="actor-1",org_id="org-1",change_set=change,expected_revision=1,
+            content_sha256="hash",mode="image",user_input="test",idempotency_key=uuid4())
+    model.assert_not_called();claim.assert_not_called()
+
+
+def test_expired_trial_candidate_remains_readable_but_cannot_accept_new_trial(monkeypatch):
+    from fastapi import HTTPException
+    import api.routes.skill_creation as route
+    row={"id":"change","created_by":"actor","resource_type":"skill_draft","expires_at":"2000-01-01T00:00:00Z"}
+    monkeypatch.setattr(route,"ChangeSetRepository",lambda db:SimpleNamespace(get=lambda *args:row))
+    assert route._get_trial_candidate(uuid4(),"actor","org",None,allow_expired=True)==row
+    with pytest.raises(HTTPException) as error: route._get_trial_candidate(uuid4(),"actor","org",None)
+    assert error.value.status_code==409

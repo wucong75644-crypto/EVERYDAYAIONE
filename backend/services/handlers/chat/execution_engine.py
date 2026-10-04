@@ -845,7 +845,10 @@ async def _execute_tools(
         cancellation_event=cancellation_event,
         permission_mode=prepared.permission.mode.value,
         agent_domain=prepared.execution_context.agent_domain,
-        **({"authorized_tool_names": prepared.execution_context.authorized_tool_names}
+        **({"authorized_tool_names": prepared.execution_context.authorized_tool_names,
+            "image_skill_snapshot": tuple({"skill_key": active.skill_key, "revision": active.revision,
+                "body_sha256": active.body_sha256, "rendered_sha256": active.rendered_sha256}
+                for active in runtime.skill_runtime.active.values())}
            if runtime and runtime.skill_runtime is not None and runtime.skill_runtime.has_active_skills
            else {}),
     )
@@ -944,6 +947,9 @@ def _apply_skill_context(prepared: Any, skills: Any) -> None:
             authorized_tool_names=skills.effective_allowed_tool_names,
             authorization_snapshot=snapshot,
         )
+        if prepared.execution_context.execution_mode == "interactive":
+            # Registry/Policy still filter this already authorized ceiling.
+            prepared.tool_context.discovered_tools.update(skills.effective_allowed_tool_names)
 
 
 async def _execute_skill_batch(

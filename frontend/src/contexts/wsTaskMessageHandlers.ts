@@ -128,7 +128,10 @@ export function handleMessageDone(deps: HandlerDeps, msg: WSIncomingMessage): vo
   const messageData = (msg.message ?? msg.payload?.message) as Record<string, unknown> | undefined;
   const effectiveMessageId = message_id
     || (typeof messageData?.id === 'string' ? messageData.id : undefined);
-  flushPendingChunks(deps);
+  const params = messageData?.generation_params as Record<string, unknown> | undefined;
+  const childImage = params?.origin === 'chat_image'
+    || (!!effectiveMessageId && deps.getStore().getMessage(effectiveMessageId)?.generation_params?.origin === 'chat_image');
+  if (!childImage) flushPendingChunks(deps);
 
   logger.info('ws:message', 'done received', {
     taskId: task_id,
@@ -158,7 +161,7 @@ export function handleMessageDone(deps: HandlerDeps, msg: WSIncomingMessage): vo
     finishMessageWithoutTask(deps, message_id, messageData);
   }
 
-  completeConversation(deps, effectiveConversationId, effectiveMessageId, isNewlyCompleted);
+  if (!childImage) completeConversation(deps, effectiveConversationId, effectiveMessageId, isNewlyCompleted);
   notifyMessageDone(messageData, isNewlyCompleted);
   notifyWorkspaceChanged(messageData);
 }
@@ -209,7 +212,8 @@ export function handleMessageError(deps: HandlerDeps, msg: WSIncomingMessage): v
   const error = (msg.error ?? msg.payload?.error) as { code?: string; message?: string } | undefined;
   const snapshot = (msg.message ?? msg.payload?.message) as Record<string, unknown> | undefined;
 
-  flushPendingChunks(deps);
+  const childImage = !!message_id && deps.getStore().getMessage(message_id)?.generation_params?.origin === 'chat_image';
+  if (!childImage) flushPendingChunks(deps);
 
   logger.error('ws:message', 'error received', undefined, {
     taskId: task_id,
@@ -224,7 +228,7 @@ export function handleMessageError(deps: HandlerDeps, msg: WSIncomingMessage): v
   const ownsStreamingSlot = !!conversation_id
     && !!message_id
     && store.getStreamingMessageId(conversation_id) === message_id;
-  if (ownsStreamingSlot) {
+  if (ownsStreamingSlot && !childImage) {
     store.completeStreaming(conversation_id);
     store.setIsSending(false);
   }

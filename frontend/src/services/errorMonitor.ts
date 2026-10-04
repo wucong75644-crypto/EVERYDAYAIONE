@@ -66,6 +66,28 @@ export async function getErrorStats(): Promise<ErrorStatsResponse> {
   return request({ method: 'GET', url: '/error-monitor/stats' });
 }
 
+export interface ImagePlatformCostReport {
+  summary: {
+    count: number;
+    refunded_user_credits: number;
+    estimated_provider_credits: number;
+    evidence: 'unconfirmed';
+    since: string;
+    until: string;
+  };
+  items: Array<{
+    task_id: string;
+    completed_at: string;
+    cost: { reason?: string; evidence?: string; model: string; resolution: string | null; refunded_user_credits: number; estimated_provider_credits: number };
+  }>;
+  page: number;
+  page_size: number;
+}
+
+export async function getImagePlatformCosts(days: number, page = 1): Promise<ImagePlatformCostReport> {
+  return request({ method: 'GET', url: '/error-monitor/image-platform-costs', params: { days, page } });
+}
+
 export async function summarizeErrors(days: number = 7): Promise<SummarizeResponse> {
   return request({ method: 'POST', url: '/error-monitor/summarize', params: { days } });
 }

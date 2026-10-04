@@ -100,6 +100,7 @@ IMAGE_MODEL_CONFIGS = {
         },
     },
     "gpt-image-2-5-flare-text-to-image": {
+        "supported_backgrounds": ["opaque", "transparent"],
         "model_id": "gpt-image-2-5-flare-text-to-image",
         "description": "GPT Image 2.5 Flare 文生图（默认图片生成）",
         "requires_image_input": False,
@@ -122,6 +123,7 @@ IMAGE_MODEL_CONFIGS = {
         },
     },
     "gpt-image-2-5-flare-image-to-image": {
+        "supported_backgrounds": ["opaque", "transparent"],
         "model_id": "gpt-image-2-5-flare-image-to-image",
         "description": "GPT Image 2.5 Flare 图生图（以参考图为基础生成）",
         "requires_image_input": True,

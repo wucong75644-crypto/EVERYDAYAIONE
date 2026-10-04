@@ -12,6 +12,9 @@ interface ChatAttachmentBase {
   status: ChatAttachmentStatus;
   name: string;
   assetId?: string;
+  sourceMessageId?: string;
+  sourceContentIndex?: number;
+  sourceTaskId?: string;
   workspacePath?: string;
   mimeType?: string;
   size?: number;
@@ -46,6 +49,9 @@ export interface QuotedImageInput {
   thumbnailUrl?: string;
   sequence?: number;
   assetId?: string;
+  sourceMessageId?: string;
+  sourceContentIndex?: number;
+  sourceTaskId?: string;
   workspacePath?: string;
   name?: string;
   mimeType?: string;

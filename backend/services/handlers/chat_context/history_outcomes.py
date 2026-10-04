@@ -80,7 +80,7 @@ def project_completed_assistant(content: Any) -> str:
             label = {"chart": "已提供图表", "diagram": "已提供图示", "ecom_plan": "已提供图片方案"}[kind]
             add(kind, label, _fields(block, "title", "chart_type", "format"), block)
         elif kind in {"image", "video", "audio"}:
-            facts = _fields(block, "name", "alt", "workspace_path", "url")
+            facts = _fields(block, "name", "alt", "workspace_path", "url", "task_id", "source_task_id", "asset_id")
             noun = {"image": "图片", "video": "视频", "audio": "音频"}[kind]
             if block.get("failed") is True:
                 label = f"{noun}生成失败"
@@ -88,7 +88,7 @@ def project_completed_assistant(content: Any) -> str:
             elif not block.get("url") and not block.get("workspace_path"):
                 label = f"{noun}尚无可用结果"
             else:
-                label = "📊 [已生成图表]" if kind == "image" else f"已提供{noun}"
+                label = ("已生成图片" if block.get("task_id") else "📊 [已生成图表]") if kind == "image" else f"已提供{noun}"
             add(kind, label, facts, block)
         elif kind == "tool_step":
             label = {"completed": "调用已返回", "error": "调用失败", "cancelled": "已取消"}.get(block.get("status"))

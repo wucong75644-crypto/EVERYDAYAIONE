@@ -6,6 +6,8 @@
 
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any
+from uuid import UUID
+from typing import Literal
 
 from fastapi import APIRouter, Path, Request
 from loguru import logger
@@ -34,6 +36,76 @@ class MarkTaskFailedRequest(BaseModel):
 router = APIRouter(prefix="/tasks", tags=["任务管理"])
 
 
+def _image_scope(db, ctx):
+    from core.db_scope import ScopedDatabaseClient, DatabaseScope, DatabaseAccessKind
+    return ScopedDatabaseClient(getattr(db, "_db", db), DatabaseScope(ctx.user_id, ctx.org_id, DatabaseAccessKind.RUNTIME))
+
+
+class ReplayImageRequest(BaseModel):
+    request_id: UUID
+    model_config = {"extra": "forbid"}
+
+
+class ImageEstimateRequest(BaseModel):
+    mode: Literal["text_to_image", "image_to_image"]
+    model: str | None = None
+    aspect_ratio: str = "1:1"
+    resolution: str | None = None
+    output_format: str = "png"
+    background: Literal["opaque", "transparent"] | None = None
+    reference_count: int = Field(default=0, ge=0, le=16)
+    image_count: int = Field(default=1, ge=1, le=8)
+    model_config = {"extra": "forbid"}
+
+
+@router.post("/image/estimate", summary="服务器图片成本预览（不创建任务）")
+async def estimate_image(body: ImageEstimateRequest, ctx: OrgCtx):
+    from core.config import get_settings
+    from services.handlers.chat_image_request import validate_single_image_request, chat_image_acceptance_allowed
+    args=body.model_dump(exclude={"reference_count","image_count"},exclude_none=True)
+    try: result=validate_single_image_request({**args,"prompt":"cost preview"},body.reference_count)
+    except ValueError as error: raise ValidationError(str(error)) from error
+    settings=get_settings()
+    total=result["estimated_credits"]*body.image_count
+    return {"model":result["model"], "resolution":result["resolution"],
+        "per_image_credits":result["estimated_credits"], "total_credits":total,
+        "image_count":body.image_count,
+        "background":result.get("background"),
+        "acceptance_enabled":chat_image_acceptance_allowed(settings, ctx.user_id) and (body.background!="transparent" or settings.chat_image_transparent_enabled),
+        "within_budget":body.image_count<=settings.chat_image_max_requests and total<=settings.chat_image_max_credits,
+        "max_requests":settings.chat_image_max_requests,"max_credits":settings.chat_image_max_credits}
+
+
+@router.get("/{task_id}/image", summary="查看聊天图片实际冻结输入")
+async def get_image_input(task_id: UUID, ctx: OrgCtx, db: ScopedDB):
+    from services.handlers.chat_image_controls import ChatImageControls
+    return await ChatImageControls(_image_scope(db, ctx), ctx.user_id, ctx.org_id).details(str(task_id))
+
+
+@router.post("/{task_id}/image/replay", summary="使用原始快照创建图片新版本")
+@limiter.limit("15/minute")
+async def replay_image(request: Request, task_id: UUID, body: ReplayImageRequest, ctx: OrgCtx, db: ScopedDB):
+    from services.handlers.chat_image_controls import ChatImageControls
+    return await ChatImageControls(_image_scope(db, ctx), ctx.user_id, ctx.org_id).replay(str(task_id), str(body.request_id))
+
+
+@router.post("/{task_id}/image/stop", summary="停止尚未领取的聊天图片")
+async def stop_image(task_id: UUID, ctx: OrgCtx, db: ScopedDB):
+    from services.handlers.chat_image_controls import ChatImageControls
+    return await ChatImageControls(_image_scope(db, ctx), ctx.user_id, ctx.org_id).stop(str(task_id))
+
+
+class ImageFeedbackRequest(BaseModel):
+    rating: Literal["helpful", "not_helpful"]
+    model_config = {"extra": "forbid"}
+
+
+@router.put("/{task_id}/image/feedback", summary="记录图片版本反馈")
+async def feedback_image(task_id: UUID, body: ImageFeedbackRequest, ctx: OrgCtx, db: ScopedDB):
+    from services.handlers.chat_image_controls import ChatImageControls
+    return await ChatImageControls(_image_scope(db, ctx), ctx.user_id, ctx.org_id).feedback(str(task_id), body.rating)
+
+
 @router.get("/pending", summary="获取用户活跃任务")
 @limiter.limit("30/minute")
 async def get_pending_tasks(
@@ -57,7 +129,7 @@ async def get_pending_tasks(
             "id, external_task_id, client_task_id, conversation_id, type, status, "
             "request_params, credits_locked, placeholder_message_id, "
             "placeholder_created_at, started_at, last_polled_at, "
-            "accumulated_content, accumulated_blocks, model_id, error_message, assistant_message_id"
+            "accumulated_content, accumulated_blocks, model_id, error_message, assistant_message_id, created_at"
         )
 
         # 查询进行中的任务（OrgScopedDB 自动加 org_id 过滤）
@@ -74,7 +146,8 @@ async def get_pending_tasks(
             "completed_at", cutoff_time
         ).order("started_at", desc=False).execute()
 
-        all_tasks = pending_response.data + recent_completed_response.data
+        all_tasks = [task for task in pending_response.data + recent_completed_response.data
+            if (task.get("request_params") or {}).get("_media_request_v1", {}).get("origin", {}).get("destination") != "skill_trial"]
 
         return {
             "tasks": all_tasks,
@@ -275,7 +348,7 @@ async def cancel_task_by_message_id(
         for field in ("placeholder_message_id", "assistant_message_id"):
             q = db.table("tasks").select(
                 "id, external_task_id, client_task_id, user_id, conversation_id, "
-                "org_id, request_params, delivery_context, status"
+                "org_id, type, request_params, delivery_context, status"
             ).eq(
                 field, message_id
             ).eq("user_id", ctx.user_id).in_(
@@ -295,7 +368,12 @@ async def cancel_task_by_message_id(
                 )
 
                 actor_tasks_present = False
+                media_outcomes = []
                 for task in result.data:
+                    if (task.get("request_params") or {}).get("_media_request_v1"):
+                        actor_tasks_present = True  # child snapshot must not get a chat interrupt marker
+                        media_outcomes.append(_image_scope(db,ctx).rpc("stop_queued_chat_image", {"p_task_id":task["id"],"p_org_id":ctx.org_id}).execute().data)
+                        continue
                     actor_task = is_actor_task(task)
                     actor_control_outcome = None
                     if actor_task:
@@ -353,6 +431,8 @@ async def cancel_task_by_message_id(
                     _conv_id = result.data[0].get("conversation_id") if result.data else None
                     _anchor_messages_immediately(db, message_id, conversation_id=_conv_id)
 
+                if media_outcomes:
+                    return {"success":True,"cancelled_count":sum(item["outcome"]=="stopped" for item in media_outcomes),"media_outcomes":media_outcomes}
                 return {"success": True, "cancelled_count": len(result.data)}
 
         return {"success": True, "cancelled_count": 0}
@@ -572,6 +652,8 @@ async def mark_task_failed(
 
         if not task.data:
             raise NotFoundError(resource="任务", resource_id=external_task_id)
+        if (task.data.get("request_params") or {}).get("_media_request_v1"):
+            return {"success":True,**_image_scope(db,ctx).rpc("stop_queued_chat_image",{"p_task_id":task.data["id"],"p_org_id":ctx.org_id}).execute().data}
 
         # 更新状态（带 user_id 过滤防越权）
         db.table("tasks").update({
