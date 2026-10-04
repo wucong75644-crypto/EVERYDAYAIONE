@@ -46,6 +46,20 @@ describe('quick Skill catalog', () => {
     await screen.findByText('匹配所选文件类型：PDF');
     expect(screen.queryByText(/错误名称|不可信说明/)).not.toBeInTheDocument();
   });
+  it('shows logical dependency status and blocks activation while a required capability is unavailable', async () => {
+    const dependent = { ...skill, capability_status: [
+      { capability: 'crm.customer.read', required: true, available: false },
+    ] };
+    const p = props();
+    render(<SkillRecommendations {...p} skills={[dependent]} />);
+    expect(screen.getByText('依赖能力不可用')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '选择 Skill：PDF 摘要' })).toBeDisabled();
+    details();
+    expect(await screen.findByText('crm.customer.read · 必需 · 依赖能力不可用')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '依赖能力不可用' })).toBeDisabled();
+    expect(screen.queryByText(/Bearer|https?:|token|内部地址/i)).not.toBeInTheDocument();
+    expect(p.onSelect).not.toHaveBeenCalled();
+  });
   it('sends only an explicitly chosen file type and execution mode', async () => {
     render(<SkillRecommendations {...props()} permissionMode="plan" />);
     await waitFor(() => expect(getSkillRecommendations).toHaveBeenCalledWith('conv-1', [], 'plan'));

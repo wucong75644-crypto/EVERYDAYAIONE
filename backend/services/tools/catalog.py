@@ -5,12 +5,23 @@ from .registry import ToolRegistry
 
 def build_tool_catalog() -> ToolRegistry:
     """Fresh registry over immutable definitions, with no request or handler state."""
-    return ToolRegistry(build_specs())
+    specs = build_specs()
+    from core.config import get_settings
+    if getattr(get_settings(), "mcp_connectors_enabled", False) is True:
+        from .mcp_allowlist import registered_specs
+        specs += registered_specs()
+    return ToolRegistry(specs)
+
+
+def build_capability_catalog() -> ToolRegistry:
+    """Stable capability mapping, including reviewed MCP specs while gated off."""
+    from .mcp_allowlist import registered_specs
+    return ToolRegistry((*build_specs(), *registered_specs()))
 
 
 def definition_registry() -> ToolRegistry:
     """Definition projection source for old config factories and constants."""
-    return build_tool_catalog()
+    return ToolRegistry(build_specs())
 
 
 def group_schemas(group: str) -> list[dict]:

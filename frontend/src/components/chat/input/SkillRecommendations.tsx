@@ -62,8 +62,10 @@ export default function SkillRecommendations({ conversationId, skills, disabled,
       conversationId, batch.recommendation_id, skill, value,
     ).catch(() => setFeedbackFailed(requestKey));
   };
+  const requiredCapabilityUnavailable = (skill: SkillSummary) =>
+    skill.capability_status?.some(item => item.required && !item.available) === true;
   const choose = (skill: SkillSummary) => {
-    if (disabled || bindings.some(b => b.skill_id === skill.skill_id)) return;
+    if (disabled || requiredCapabilityUnavailable(skill) || bindings.some(b => b.skill_id === skill.skill_id)) return;
     const recommendation = candidates.find(c => c.skill_id === skill.skill_id && c.revision === skill.revision);
     if (recommendation) feedback(recommendation, 'selected');
     onSelect(skill);
@@ -73,7 +75,7 @@ export default function SkillRecommendations({ conversationId, skills, disabled,
     <div className="flex items-center gap-2 px-1.5 pb-1 text-sm">
       {activeView !== 'list' && <button type="button" className={iconClass} aria-label="返回 Skill 列表" onClick={() => setView('list')}><ArrowLeft className="h-4 w-4" /></button>}
       <h2 className="font-medium text-text-primary">{activeView === 'list' ? 'Skill' : activeView === 'detail' ? 'Skill 详情' : '文件类型'}</h2>
-      {activeView === 'list' && <span className="text-xs text-text-tertiary">{catalog.length} 个可用</span>}
+      {activeView === 'list' && <span className="text-xs text-text-tertiary">{catalog.length} 个 Skill</span>}
       <button type="button" className={`${iconClass} ml-auto`} aria-label="关闭 Skill 面板" onClick={onClose}><X className="h-4 w-4" /></button>
     </div>
     {activeView === 'list' && <>
@@ -83,12 +85,12 @@ export default function SkillRecommendations({ conversationId, skills, disabled,
           const binding = bindings.find(b => b.skill_id === skill.skill_id);
           const chosen = selected?.skill_id === skill.skill_id && selected.revision === skill.revision;
           return <div key={skill.skill_id} className={`flex items-start gap-1 rounded-lg p-1 hover:bg-hover ${chosen || binding ? 'bg-hover' : ''}`}>
-            <button type="button" disabled={disabled || !!binding} aria-pressed={chosen || !!binding}
+            <button type="button" disabled={disabled || !!binding || requiredCapabilityUnavailable(skill)} aria-pressed={chosen || !!binding}
               aria-label={`选择 Skill：${skill.name}`} onClick={() => choose(skill)}
               className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-1 py-2 text-left focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-60">
               <span className="flex h-8 w-8 shrink-0 items-center justify-center self-start rounded-lg bg-surface text-text-tertiary"><Images className="h-4 w-4" aria-hidden="true" /></span>
               <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-text-primary" title={skill.name}>{skill.name}</span><span className="mt-1 block truncate text-xs text-text-tertiary" title={skill.description}>{skill.description}</span></span>
-              <span className="shrink-0 text-xs text-accent dark:text-[color-mix(in_srgb,var(--color-accent),white_45%)]">{binding ? '已固定' : chosen ? '已选' : '选择'}</span>
+              <span className="shrink-0 text-xs text-accent dark:text-[color-mix(in_srgb,var(--color-accent),white_45%)]">{requiredCapabilityUnavailable(skill) ? '依赖能力不可用' : binding ? '已固定' : chosen ? '已选' : '选择'}</span>
             </button>
             <button type="button" aria-label={`Skill 详情：${skill.name}`} onClick={() => { setDetailId(skill.skill_id); setView('detail'); }}
               className={`${iconClass} mt-2`}><Info className="h-4 w-4" /></button>
@@ -105,15 +107,16 @@ export default function SkillRecommendations({ conversationId, skills, disabled,
       <p className="break-words">{detail.description}</p>
       <dl className="my-3 grid grid-cols-[48px_1fr] gap-2"><dt className="text-text-tertiary">版本</dt><dd>{skillVersion(detail.revision)} · {detail.source === 'org' ? '组织 Skill' : '平台 Skill'}</dd>
         {candidate && <><dt className="text-text-tertiary">依据</dt><dd>{candidate.reasons.map(reasonText).join('；')}</dd></>}
+        {detail.capability_status?.length ? <><dt className="text-text-tertiary">能力</dt><dd className="space-y-1">{detail.capability_status.map(item => <div key={item.capability}>{item.capability} · {item.required ? '必需' : '可用范围'} · {item.available ? '可用' : '依赖能力不可用'}</div>)}</dd></> : null}
       </dl>
       {detailBinding && <p className="mb-3">当前会话已固定 {skillVersion(detailBinding.revision)}，可在输入框标签旁切换范围或移除。</p>}
       {candidate && <button type="button" disabled={disabled} aria-label={`不相关：${detail.name}`} className="mb-3 text-text-tertiary hover:text-text-primary disabled:opacity-40" onClick={() => {
         feedback(candidate, 'not_relevant');
         setDismissed(previous => ({ key: requestKey, ids: [...(previous?.key === requestKey ? previous.ids : []), detail.skill_id] }));
       }}>这条建议不相关</button>}
-      <button type="button" disabled={disabled || !!detailBinding} onClick={() => choose(detail)}
+      <button type="button" disabled={disabled || !!detailBinding || requiredCapabilityUnavailable(detail)} onClick={() => choose(detail)}
         className="flex w-full items-center justify-center gap-1 rounded-lg bg-accent-light px-3 py-2 text-sm text-accent dark:text-[color-mix(in_srgb,var(--color-accent),white_45%)] hover:bg-accent/15 disabled:opacity-50">
-        {detailBinding && <Check className="h-4 w-4" />}{detailBinding ? '已固定到当前会话' : '选择，用于本条消息'}
+        {detailBinding && <Check className="h-4 w-4" />}{requiredCapabilityUnavailable(detail) ? '依赖能力不可用' : detailBinding ? '已固定到当前会话' : '选择，用于本条消息'}
       </button>
     </div>}
     {activeView === 'files' && <div className="px-2 pb-2 pt-1 text-xs text-text-tertiary">

@@ -56,7 +56,7 @@ class ConversationSkillBindings:
             actor_user_id=actor, org_id=org, access_kind=DatabaseAccessKind.RUNTIME_ADMIN,
         ))
 
-    async def _select(self, candidates):
+    async def _resolution_context(self, candidates):
         # Admin configuration cannot grant the recipient its administrator's
         # business permissions. Runtime rechecks the recipient again on use.
         checker = PermissionChecker(self.db)
@@ -65,33 +65,50 @@ class ConversationSkillBindings:
         for code in sorted(required & PERMISSIONS.keys()):
             if await checker.check(self.owner, self.org, code):
                 permissions.add(code)
-        context = SkillResolutionContext(
+        from services.skills.capability_state import available_capability_names
+        available = await asyncio.to_thread(
+            available_capability_names, self.db, self.org, self.settings,
+            actor_user_id=self.owner,
+        )
+        return SkillResolutionContext(
             actor_user_id=self.owner, org_id=self.org, conversation_scope="user",
             agent_domain="general", execution_mode="interactive", task_mode=self.task_mode, permissions=frozenset(permissions),
             enabled_feature_flags=frozenset(name for name in type(self.settings).model_fields
                                            if getattr(self.settings, name) is True),
+            available_capabilities=available,
         )
-        return SkillResolver().select(context, candidates)
 
     async def list(self) -> list[SkillBinding]:
         rows = await asyncio.to_thread(self.repository.bindings, self.conversation_id)
         candidates = [self.repository.candidate(row) for row in rows]
-        eligible = {c.package_id for c in await self._select(candidates)}
+        context = await self._resolution_context(candidates)
+        resolver = SkillResolver()
+        eligible = {c.package_id for c in resolver.select(context, candidates)}
+        summaries = [resolver.summary(context, candidate) for candidate in candidates]
         return [SkillBinding(
             binding_id=row["id"], skill_id=c.skill_key, name=c.catalog_metadata.name or c.skill_key,
             revision=c.revision, description=c.description, triggers=c.catalog_metadata.triggers,
             source=c.scope_kind, model_selectable=c.catalog_metadata.model_selectable,
             task_modes=c.catalog_metadata.task_modes,
-            available=bool(row["available"] and c.package_id in eligible),
-        ) for row, c in zip(rows, candidates)]
+            capability_status=summary.capability_status,
+            available=bool(row["available"] and c.package_id in eligible and not any(
+                status.required and not status.available
+                for status in summary.capability_status
+            )),
+        ) for row, c, summary in zip(rows, candidates, summaries)]
 
     async def add(self, selection: SkillSelection) -> UUID:
         candidates = await asyncio.to_thread(self.repository.catalog_candidates)
-        selected = next((c for c in await self._select(candidates) if c.skill_key == selection.skill_id), None)
+        context = await self._resolution_context(candidates)
+        selected = next((c for c in SkillResolver().select(context, candidates)
+                         if c.skill_key == selection.skill_id), None)
         if selected is None:
             raise SkillError("SKILL_NOT_AVAILABLE")
         if selected.revision != selection.revision:
             raise SkillError("SKILL_SELECTION_CHANGED")
+        if any(status.required and not status.available
+               for status in SkillResolver().summary(context, selected).capability_status):
+            raise SkillError("SKILL_REQUIRED_CAPABILITY_UNAVAILABLE")
         return await asyncio.to_thread(self.repository.add_binding, self.conversation_id, selected)
 
     async def remove(self, binding_id: UUID):

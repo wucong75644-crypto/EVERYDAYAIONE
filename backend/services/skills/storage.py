@@ -164,6 +164,14 @@ class SkillStorage:
             catalog_metadata = SkillCatalogMetadata.model_validate(metadata.get("catalog", {}))
         except ValidationError:
             raise SkillError("SKILL_CATALOG_METADATA_INVALID") from None
+        if catalog_metadata.required_capabilities or catalog_metadata.allowed_capabilities:
+            from services.tools.catalog import build_capability_catalog
+            registry = build_capability_catalog()
+            try:
+                registry.capability_tools(catalog_metadata.required_capabilities)
+                registry.capability_tools(catalog_metadata.allowed_capabilities)
+            except ValueError:
+                raise SkillError("SKILL_UNKNOWN_CAPABILITY") from None
         try:
             resources = SkillResources.model_validate({
                 'assets': metadata.get('assets', []),

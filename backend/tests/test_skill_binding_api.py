@@ -107,6 +107,23 @@ def test_stale_revision_is_rejected_and_revoked_binding_remains_removable(bindin
     assert call(binding_api, "DELETE", suffix="/" + response.json()[0]["binding_id"]).status_code == 204
 
 
+def test_required_connector_dependency_is_shown_without_secret_and_blocks_new_binding(binding_api, monkeypatch):
+    _, repo, _, _ = binding_api
+    c = candidate(catalog_metadata={"required_capabilities": ["test.sample.read"]})
+    repo.bindings.return_value = [c.model_dump() | {"id": uuid4(), "available": True}]
+    repo.catalog_candidates.return_value = [c]
+    monkeypatch.setattr("services.skills.capability_state.available_capability_names",
+                        lambda *_, **__: frozenset())
+    row = call(binding_api).json()[0]
+    assert row["available"] is False
+    assert row["capability_status"] == [
+        {"capability": "test.sample.read", "required": True, "available": False},
+    ]
+    assert not any(key in row for key in ("token", "url", "connector_id", "profile_id"))
+    assert call(binding_api, "POST", json={"skill_id": "report", "revision": "v1"}).status_code == 409
+    repo.add_binding.assert_not_called()
+
+
 @pytest.mark.parametrize("change", [
     {"org_id": str(OTHER_ORG)}, {"scope_type": "channel", "user_id": None}, {"scope_id": str(uuid4())},
 ])

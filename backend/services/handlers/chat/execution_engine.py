@@ -171,6 +171,9 @@ async def execute_chat(
 ) -> ChatExecutionResult:
     """执行固定上下文的一次生成，不提交任务、消息或 revision 终态。"""
     event = cancellation_event or asyncio.Event()
+    if runtime:
+        from services.tools.mcp_checkpoint import restore_invocations
+        runtime.mcp_invocations = restore_invocations(request.replay_context, runtime)
     output = sink or CollectingExecutionSink()
     if runtime:
         checkpoint = getattr(output, "flush_progress", None)

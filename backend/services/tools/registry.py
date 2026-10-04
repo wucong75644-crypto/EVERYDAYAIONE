@@ -70,6 +70,18 @@ class ToolRegistry:
             raise KeyError(f"Unknown tool: {name}")
         return self._specs[name]
 
+    def capability_tools(self, capabilities: Iterable[str]) -> frozenset[str]:
+        """Resolve registered facts only; this never authorizes a call."""
+        if isinstance(capabilities, (str, bytes)):
+            raise ValueError("Capabilities must be a collection")
+        result = set()
+        for capability in capabilities:
+            matches = {s.name for s in self._specs.values() if s.capability == capability}
+            if not matches:
+                raise ValueError("SKILL_UNKNOWN_CAPABILITY")
+            result.update(matches)
+        return frozenset(result)
+
     def specs(self) -> tuple[ToolSpec, ...]:
         return tuple(self._specs.values())
 
@@ -115,6 +127,8 @@ class ToolRegistry:
             return "legacy_internal_only"
         if spec.domain not in {"shared", context.agent_domain}:
             return "domain_mismatch"
+        if spec.executor_type == "mcp" and context.feature_flags.get("mcp_connectors_enabled") is not True:
+            return "feature_unavailable:mcp_connectors_enabled"
         availability = spec.availability
         if availability.requires_org and context.org_id is None:
             return "organization_required"

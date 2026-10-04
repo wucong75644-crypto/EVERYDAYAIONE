@@ -15,8 +15,15 @@ class ActorToolLifecycle:
 
     def _enabled(self, decision):
         h = self.handler
+        record_required = decision.replay_requirement == "record_required"
+        actor = getattr(h, "_actor_enabled", False) is True
+        if record_required and getattr(h, "_actor_runtime", None) is not None and not actor:
+            raise PermissionError("MCP_ACTOR_INVOCATION_REQUIRED")
+        if record_required and actor and (self.store is None
+                or not getattr(h, "_actor_turn_id", None) or not getattr(h, "_actor_execution_token", None)):
+            raise PermissionError("MCP_ACTOR_INVOCATION_REQUIRED")
         # Preserve existing invocation qualification, including restore_file.
-        return (decision.risk_level != "safe" and self.store is not None
+        return ((decision.risk_level != "safe" or record_required) and self.store is not None
                 and getattr(h, "_actor_enabled", False) is True
                 and bool(getattr(h, "_actor_turn_id", None))
                 and bool(getattr(h, "_actor_execution_token", None)))

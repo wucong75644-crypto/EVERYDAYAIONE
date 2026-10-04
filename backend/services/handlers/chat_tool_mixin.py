@@ -234,6 +234,11 @@ class ChatToolMixin(ChatToolResultMixin):
                 tc["name"], args, call_id=tc["id"],
                 lifecycle=ActorToolLifecycle(self, runtime.context(tc["id"])),
             )
+            if envelope.decision.replay_requirement == "record_required":
+                actor_runtime = getattr(self, "_actor_runtime", None)
+                if actor_runtime is not None:
+                    from services.tools.mcp_checkpoint import remember_invocation
+                    remember_invocation(actor_runtime, envelope)
             result = envelope
         except asyncio.CancelledError:
             raise
@@ -508,11 +513,13 @@ class ChatToolMixin(ChatToolResultMixin):
         args: dict, result_length: int, elapsed_ms: int,
         status: str, is_truncated: bool = False,
         *, is_cached: bool = False, execution: dict | None = None,
+        mcp_audit: dict | None = None,
     ) -> None:
         """[C1] fire-and-forget 审计日志"""
         from services.agent.tool_audit import (
-            ToolAuditEntry, build_args_hash, record_tool_audit,
+            ToolAuditEntry, build_args_hash, mcp_audit_columns, record_tool_audit,
         )
+        mcp_columns = mcp_audit_columns(mcp_audit or {})
         asyncio.create_task(record_tool_audit(self.db, ToolAuditEntry(
             task_id=task_id, conversation_id=conversation_id,
             user_id=user_id, org_id=self.org_id or "",
@@ -521,6 +528,7 @@ class ChatToolMixin(ChatToolResultMixin):
             result_length=result_length, elapsed_ms=elapsed_ms,
             status=status, is_truncated=is_truncated, is_cached=is_cached,
             execution=execution or {},
+            **mcp_columns,
         )))
 
     @staticmethod

@@ -94,7 +94,7 @@ export default function AdminPanel({ onSkillNavigationStateChange }: {
           </Suspense>
         )}
         {activeTab === 'org' && (isOrgAdmin || isSuperAdmin) && (
-          <OrgManagePanel orgId={currentOrg?.org_id} />
+          <OrgManagePanel orgId={currentOrg?.org_id} allowMcpManagement={isOrgAdmin} />
         )}
         {activeTab === 'skills' && (
           <Suspense fallback={<div>加载中...</div>}>

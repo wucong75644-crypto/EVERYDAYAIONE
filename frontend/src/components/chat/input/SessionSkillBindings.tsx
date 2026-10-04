@@ -31,7 +31,7 @@ function SkillTag({ skill, binding, selected, state, disabled, onSelect, onCompl
       className="flex h-6 max-w-full items-center gap-1 rounded-lg border border-border-default bg-hover px-1.5 text-[13px] leading-5 text-text-secondary">
     <BookOpen className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
     <span className="min-w-0 truncate">{skill.name}</span>
-    {binding && !binding.available && <span className="shrink-0 text-xs text-error">（不可用）</span>}
+    {binding && !binding.available && <span className="shrink-0 text-xs text-error">（{binding.capability_status?.some(item => item.required && !item.available) ? '依赖能力不可用' : '不可用'}）</span>}
     <Popover side="top" align="start" maxWidth={288} className="!p-2 !bg-surface-card !border-border-default w-[min(288px,calc(100vw-16px))]"
       open={open && !disabled} onOpenChange={(next) => { focusInput.current = false; setOpen(next); }}
       onCloseAutoFocus={(event) => { if (focusInput.current) { event.preventDefault(); onComplete(); } }}

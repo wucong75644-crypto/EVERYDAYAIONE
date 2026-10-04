@@ -44,7 +44,9 @@ class ToolExecutionService:
         self._check_cancelled(context)
         decision = self.policy.decide(call.name, context, call.arguments, confirmation=confirmation)
         if decision.outcome != "allow":
-            return ToolResult.not_executed(call=call, context=context, decision=decision)
+            result = ToolResult.not_executed(call=call, context=context, decision=decision)
+            from .mcp_audit import decorate_result
+            return decorate_result(result, self.registry.get(call.name))
         self._check_cancelled(context)
         key = (context.actor_user_id, context.workspace_owner_id, context.org_id,
                context.conversation_id, context.task_id, call.call_id)
@@ -61,7 +63,8 @@ class ToolExecutionService:
         if before_dispatch is not None:
             reused = await before_dispatch(call, context, decision)
             if reused is not None:
-                return reused
+                from .mcp_audit import decorate_result
+                return decorate_result(reused, self.registry.get(call.name))
         self._check_cancelled(context)
         try:
             raw = await self.dispatcher.dispatch(approved)
@@ -84,6 +87,8 @@ class ToolExecutionService:
         else:
             result = ToolResult.wrap(raw, call=call, context=context, decision=decision,
                                      elapsed_ms=int((time.monotonic() - started) * 1000))
+        from .mcp_audit import decorate_result
+        result = decorate_result(result, self.registry.get(call.name))
         if on_result is not None:
             await on_result(result)
         return result

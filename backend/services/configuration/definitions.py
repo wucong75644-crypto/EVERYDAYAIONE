@@ -188,7 +188,14 @@ def _secret(
     secret_name: str,
     payload_fields: tuple[str, ...],
     bundles: tuple[str, ...],
+    payload_pattern: str | None = None,
 ) -> ConfigDefinition:
+    validation: dict[str, Any] = {
+        "payload_fields": list(payload_fields),
+        "required": list(payload_fields),
+    }
+    if payload_pattern is not None:
+        validation["pattern"] = payload_pattern
     return ConfigDefinition(
         key=key,
         value_kind="secret",
@@ -196,10 +203,7 @@ def _secret(
         fallback_policy=fallback,
         user_override=user_override,
         secret_name=secret_name,
-        validation={
-            "payload_fields": list(payload_fields),
-            "required": list(payload_fields),
-        },
+        validation=validation,
         bundles=bundles,
     )
 
@@ -364,6 +368,16 @@ _DEFINITIONS = (
         validation={"max_length": 100, "min_length": 1},
         bundles=("kuaimai_external.viperp",),
     ),
+    _secret(
+        "mcp.test_readonly.bearer_token",
+        scopes=_ORG_SCOPE,
+        fallback="none",
+        user_override="deny",
+        secret_name="mcp.test_readonly_bearer_token",
+        payload_fields=("token",),
+        bundles=("mcp.test_readonly",),
+        payload_pattern=r"^[A-Za-z0-9._~+/-]+=*$",
+    ),
 )
 
 _BUNDLES = (
@@ -459,6 +473,12 @@ _BUNDLES = (
         ),
         optional_keys=(),
         allowed_consumers=("runtime_org_admin", "worker_org"),
+    ),
+    BundleDefinition(
+        name="mcp.test_readonly",
+        required_keys=("mcp.test_readonly.bearer_token",),
+        optional_keys=(),
+        allowed_consumers=("runtime_actor",),
     ),
 )
 

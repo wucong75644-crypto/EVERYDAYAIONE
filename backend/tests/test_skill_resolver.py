@@ -110,6 +110,26 @@ def test_legacy_metadata_is_conservative():
     assert SkillCatalogMetadata().allowed_tool_names == ()
 
 
+def test_unavailable_capability_is_visible_as_logical_status_without_connector_details():
+    item = candidate(catalog_metadata={
+        "required_capabilities": ["test.sample.read"],
+        "allowed_capabilities": ["test.sample.read"],
+    })
+    summaries = SkillResolver().resolve(context(available_capabilities=frozenset()), [item])
+    assert len(summaries) == 1
+    status = summaries[0].model_dump(mode="json")["capability_status"]
+    assert status == [{"capability": "test.sample.read", "required": True, "available": False}]
+    assert not any(token in str(status).lower() for token in ("token", "url", "connector_id", "http"))
+
+
+def test_available_capability_status_is_org_scoped_resolution_fact():
+    item = candidate(catalog_metadata={"required_capabilities": ["test.sample.read"]})
+    available = SkillResolver().resolve(
+        context(available_capabilities=frozenset({"test.sample.read"})), [item],
+    )[0]
+    assert available.capability_status[0].available is True
+
+
 def test_tool_intersection_exhaustively_only_narrows_and_does_not_mutate():
     universe = ("a", "b", "c")
     subsets = [set(part) for n in range(4) for part in combinations(universe, n)]

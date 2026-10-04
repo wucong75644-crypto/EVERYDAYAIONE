@@ -41,8 +41,14 @@ class ReleaseCoordinationTests(unittest.TestCase):
         ssh.write_text(
             f"#!{sys.executable}\n"
             "import os, pathlib, shlex, subprocess, sys, time\n"
-            "args = shlex.split(sys.argv[-1])\n"
-            "assert sys.argv[-2] == 'test@example.invalid', sys.argv\n"
+            "arguments = sys.argv[1:]\n"
+            "host_index = arguments.index('test@example.invalid')\n"
+            "remote_arguments = arguments[host_index + 1:]\n"
+            "if remote_arguments and remote_arguments[0].endswith('/python') and remote_arguments[-1] == '-':\n"
+            "    script = sys.stdin.read()\n"
+            "    assert 'verify_identity' in script, script\n"
+            "    sys.exit(0)\n"
+            "args = shlex.split(remote_arguments[-1])\n"
             "assert args[:3] == ['bash', '-s', '--'], args\n"
             "assert args[3] == os.environ['FAKE_PRODUCTION'], args\n"
             "action = args[4]\n"
@@ -66,8 +72,14 @@ class ReleaseCoordinationTests(unittest.TestCase):
         self.git("config", "user.email", "coordination@example.invalid")
         (self.repository / "deploy").mkdir()
         (self.repository / "scripts").mkdir()
-        for name in ("deploy/release.sh", "deploy/release-coordination.sh", "scripts/task-worktree.sh"):
-            shutil.copy2(SOURCE / name, self.repository / name)
+        for name in (
+            "deploy/release.sh", "deploy/release-coordination.sh",
+            "deploy/verify-production-database.py", "deploy/verify_migration_executor.py",
+            "scripts/task-worktree.sh",
+        ):
+            target = self.repository / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(SOURCE / name, target)
         executor = self.repository / "deploy/deploy.sh"
         executor.write_text(
             "#!/usr/bin/env bash\nset -euo pipefail\n"

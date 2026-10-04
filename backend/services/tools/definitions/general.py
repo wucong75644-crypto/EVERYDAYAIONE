@@ -70,7 +70,7 @@ def build_specs():
     schemas.update((s["function"]["name"], s) for s in crawler_schemas.build_crawler_tools())
     return (
         ToolSpec(
-            name='social_crawler', schema=schemas['social_crawler'],
+            name='social_crawler', capability='platform.social_crawler', schema=schemas['social_crawler'],
             domain='general', availability=ToolAvailability(feature_flags=('crawler_enabled',)),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='social_crawler',
@@ -88,7 +88,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='search_knowledge', schema=_schema_search_knowledge(),
+            name='search_knowledge', capability='knowledge.search', schema=_schema_search_knowledge(),
             domain='general', availability=ToolAvailability(),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('none',), executor_type="legacy", handler_key='search_knowledge',
@@ -106,7 +106,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='web_search', schema=_schema_web_search(),
+            name='web_search', capability='platform.web_search', schema=_schema_web_search(),
             domain='general', availability=ToolAvailability(),
             risk_level='safe', parallelizable=True, cacheable=False,
             effects=('unknown',), executor_type="legacy", handler_key='web_search',
@@ -123,7 +123,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='get_conversation_context', schema=None,
+            name='get_conversation_context', capability='platform.get_conversation_context', schema=None,
             domain='general', availability=ToolAvailability(requires_personal_context=True),
             risk_level='safe', parallelizable=False, cacheable=False,
             effects=('none',), executor_type="legacy", handler_key='get_conversation_context',

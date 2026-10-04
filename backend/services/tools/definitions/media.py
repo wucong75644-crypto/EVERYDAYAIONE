@@ -128,7 +128,7 @@ def _schema_image_agent():
 def build_specs():
     return (
         ToolSpec(
-            name='generate_image', schema=_schema_generate_image(),
+            name='generate_image', capability='platform.generate_image', schema=_schema_generate_image(),
             domain='general', availability=ToolAvailability(),
             risk_level='confirm', parallelizable=False, cacheable=False,
             effects=('unknown',), executor_type="legacy", handler_key='generate_image',
@@ -145,7 +145,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='generate_video', schema=_schema_generate_video(),
+            name='generate_video', capability='platform.generate_video', schema=_schema_generate_video(),
             domain='general', availability=ToolAvailability(),
             risk_level='confirm', parallelizable=False, cacheable=False,
             effects=('unknown',), executor_type="legacy", handler_key='generate_video',
@@ -162,7 +162,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='image_agent', schema=_schema_image_agent(),
+            name='image_agent', capability='platform.image_agent', schema=_schema_image_agent(),
             domain='general', availability=ToolAvailability(),
             risk_level='confirm', parallelizable=False, cacheable=False,
             effects=('unknown',), executor_type="legacy", handler_key='image_agent',

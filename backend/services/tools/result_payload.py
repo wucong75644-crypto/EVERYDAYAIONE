@@ -125,6 +125,8 @@ def encode_result(result: ToolResult) -> dict:
         "tool_name", "tool_call_id", "actor_user_id", "workspace_owner_id", "org_id",
         "conversation_id", "task_id", "status", "elapsed_ms", "result_length", "truncated",
         "tokens_used", "source",
+        "connector_id", "capability", "remote_tool_name", "replay_requirement",
+        "invocation_status", "replayed", "result_sha256", "error_code",
     )}
     audit["args_hash"] = source_audit.get("args_hash") or hash_tool_arguments(thaw(result.audit.get("args", {})))
     audit["truncated"] = result.audit.get("truncated", False)

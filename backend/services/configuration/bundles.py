@@ -114,6 +114,23 @@ class SecretBundleResolver:
             "get_kuaimai_viperp_bundle",
         )
 
+    def mcp_test_readonly(
+        self, *, actor_user_id: str | None = None, org_id: str | None = None,
+    ) -> ResolvedConfigurationBundle:
+        """Resolve the fixed test Connector token for the current org only."""
+        if actor_user_id is None or org_id is None:
+            raise ConfigurationResolutionError("CONFIG_BUNDLE_AUTHORITY_DENIED")
+        from services.tools.mcp_org import scoped_mcp_database
+        scoped_db = scoped_mcp_database(
+            self._db, org_id=org_id, actor_user_id=actor_user_id,
+        )
+        return SecretBundleResolver(
+            scoped_db, self._material_service, self._effective_resolver,
+        )._resolve(
+            "mcp.test_readonly",
+            "api_get_mcp_test_readonly_bundle",
+        )
+
     def _resolve(
         self,
         bundle_name: str,
@@ -218,6 +235,29 @@ class AsyncSecretBundleResolver(SecretBundleResolver):
         return await self._resolve_async(
             "kuaimai_external.viperp",
             "get_kuaimai_viperp_bundle",
+        )
+
+    async def mcp_test_readonly(
+        self, *, actor_user_id: str | None = None, org_id: str | None = None,
+    ) -> ResolvedConfigurationBundle:
+        if actor_user_id is None or org_id is None:
+            raise ConfigurationResolutionError("CONFIG_BUNDLE_AUTHORITY_DENIED")
+        from services.tools.mcp_org import scoped_mcp_database
+        scoped_db = scoped_mcp_database(
+            self._db, org_id=org_id, actor_user_id=actor_user_id,
+        )
+        # The scoped sync caller is intentionally not accepted by the async
+        # resolver. Its async variant will use the same immutable DatabaseScope.
+        from core.db_scope import AsyncScopedDatabaseClient
+        async_scoped_db = AsyncScopedDatabaseClient(
+            getattr(scoped_db, "_client", self._db), scoped_db.scope,
+        )
+        resolver = AsyncSecretBundleResolver(
+            async_scoped_db, self._material_service, self._effective_resolver,
+        )
+        return await resolver._resolve_async(
+            "mcp.test_readonly",
+            "api_get_mcp_test_readonly_bundle",
         )
 
     async def _resolve_async(

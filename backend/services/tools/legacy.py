@@ -71,7 +71,11 @@ class LegacyAdvertisement:
         # Current scheduled/preflight loops do not dynamically expand tools.
         if context.execution_mode != "interactive":
             return initial
-        return initial | discovered_names
+        # Only the platform-reviewed MCP test tool is added; Registry/Policy
+        # still apply current flags, scope and execution mode.
+        from .mcp_allowlist import TOOL_NAME
+        mcp_names = {TOOL_NAME} if context.feature_flags.get("mcp_connectors_enabled") is True else set()
+        return initial | discovered_names | mcp_names
 
 
 def build_legacy_catalog() -> ToolRegistry:

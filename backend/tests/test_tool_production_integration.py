@@ -393,6 +393,41 @@ async def test_shared_chat_engine_passes_mode_and_retains_safe_points(setup, mon
         assert SafePoint.BEFORE_TOOL in points and SafePoint.AFTER_TOOL in points
 
 
+def test_chat_context_keeps_working_when_mcp_is_enabled(monkeypatch):
+    from core.config import get_settings
+    from services.tools.runtime_context import chat_context
+
+    monkeypatch.setattr(get_settings(), "mcp_connectors_enabled", True)
+    monkeypatch.setattr("services.tools.mcp_org.connector_is_enabled", lambda *args, **kwargs: True)
+    context = chat_context(
+        ChatHarness(), user_id="u1", conversation_id="c1", task_id="task1",
+        permission_mode="auto",
+    )
+
+    assert context.feature_flags["mcp_connectors_enabled"] is True
+    assert context.feature_flags["mcp_connector_test_readonly_enabled"] is True
+
+
+def test_chat_context_fails_closed_for_mcp_without_database(monkeypatch):
+    from core.config import get_settings
+    from services.tools.runtime_context import chat_context
+
+    monkeypatch.setattr(get_settings(), "mcp_connectors_enabled", True)
+    connector_check = Mock(side_effect=AssertionError("database is required"))
+    monkeypatch.setattr("services.tools.mcp_org.connector_is_enabled", connector_check)
+    handler = ChatHarness()
+    del handler.db
+
+    context = chat_context(
+        handler, user_id="u1", conversation_id="c1", task_id="task1",
+        permission_mode="auto",
+    )
+
+    assert context.feature_flags["mcp_connectors_enabled"] is True
+    assert context.feature_flags["mcp_connector_test_readonly_enabled"] is False
+    connector_check.assert_not_called()
+
+
 async def test_channel_actor_owner_and_personal_tool_isolation(setup, monkeypatch):
     from services.handlers.chat.execution_scope import ExecutionScope
     scope = ExecutionScope("u1", "channel", "channel-owner", False, "chat-id")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import re
 from typing import Any
 
 from core.exceptions import AppException
@@ -91,6 +92,45 @@ class ConfigurationControlService:
     ) -> None:
         self._db = db
         self._material_service = material_service
+
+    def for_mcp_actor(self, *, org_id: str, actor_user_id: str) -> "ConfigurationControlService":
+        """Return a fixed-scope facade for the MCP organization control routes."""
+        from services.tools.mcp_org import scoped_mcp_database
+        return ConfigurationControlService(
+            scoped_mcp_database(
+                self._db, org_id=org_id, actor_user_id=actor_user_id,
+            ),
+            self._material_service,
+        )
+
+    def mcp_credential_status(self, *, org_id: str) -> dict[str, object]:
+        return self._rpc_object(
+            "api_get_org_mcp_connector_credential_status",
+            {"p_org_id": org_id},
+        )
+
+    def set_mcp_organization_credential(
+        self, *, org_id: str, value: object, expected_version: int,
+    ) -> dict[str, object]:
+        return self._set(
+            rpc_name="api_set_org_mcp_connector_credential",
+            scope_kind="organization",
+            scope_id=org_id,
+            key="mcp.test_readonly.bearer_token",
+            value=value,
+            expected_version=expected_version,
+            extra_params={"p_org_id": org_id},
+        )
+
+    def delete_mcp_organization_credential(
+        self, *, org_id: str, expected_version: int,
+    ) -> dict[str, object]:
+        return self._delete(
+            "api_delete_org_mcp_connector_credential",
+            "mcp.test_readonly.bearer_token",
+            expected_version,
+            {"p_org_id": org_id},
+        )
 
     def set_platform(
         self,
@@ -327,6 +367,12 @@ class ConfigurationControlService:
         required = set(definition.validation.get("required", ()))
         if set(value) != required or any(
             not isinstance(item, str) or not item
+            for item in value.values()
+        ):
+            raise ConfigurationControlError("CONFIG_VALUE_INVALID", 400)
+        pattern = definition.validation.get("pattern")
+        if pattern is not None and any(
+            len(item) > 4096 or re.fullmatch(str(pattern), item) is None
             for item in value.values()
         ):
             raise ConfigurationControlError("CONFIG_VALUE_INVALID", 400)

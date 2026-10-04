@@ -110,7 +110,7 @@ def build_specs():
     schemas.update((s["function"]["name"], s) for s in erp_schemas.build_erp_tools())
     return (
         ToolSpec(
-            name='erp_info_query', schema=schemas['erp_info_query'],
+            name='erp_info_query', capability='platform.erp_info_query', schema=schemas['erp_info_query'],
             domain='erp', availability=ToolAvailability(requires_org=True),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='erp_info_query',
@@ -128,7 +128,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='erp_product_query', schema=schemas['erp_product_query'],
+            name='erp_product_query', capability='platform.erp_product_query', schema=schemas['erp_product_query'],
             domain='erp', availability=ToolAvailability(requires_org=True),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='erp_product_query',
@@ -146,7 +146,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='erp_trade_query', schema=schemas['erp_trade_query'],
+            name='erp_trade_query', capability='platform.erp_trade_query', schema=schemas['erp_trade_query'],
             domain='erp', availability=ToolAvailability(requires_org=True),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='erp_trade_query',
@@ -164,7 +164,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='erp_aftersales_query', schema=schemas['erp_aftersales_query'],
+            name='erp_aftersales_query', capability='platform.erp_aftersales_query', schema=schemas['erp_aftersales_query'],
             domain='erp', availability=ToolAvailability(requires_org=True),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='erp_aftersales_query',
@@ -182,7 +182,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='erp_warehouse_query', schema=schemas['erp_warehouse_query'],
+            name='erp_warehouse_query', capability='platform.erp_warehouse_query', schema=schemas['erp_warehouse_query'],
             domain='erp', availability=ToolAvailability(requires_org=True),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='erp_warehouse_query',
@@ -200,7 +200,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='erp_purchase_query', schema=schemas['erp_purchase_query'],
+            name='erp_purchase_query', capability='platform.erp_purchase_query', schema=schemas['erp_purchase_query'],
             domain='erp', availability=ToolAvailability(requires_org=True),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='erp_purchase_query',
@@ -218,7 +218,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='erp_taobao_query', schema=schemas['erp_taobao_query'],
+            name='erp_taobao_query', capability='platform.erp_taobao_query', schema=schemas['erp_taobao_query'],
             domain='erp', availability=ToolAvailability(requires_org=True),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='erp_taobao_query',
@@ -236,7 +236,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='erp_execute', schema=schemas['erp_execute'],
+            name='erp_execute', capability='platform.erp_execute', schema=schemas['erp_execute'],
             domain='erp', availability=ToolAvailability(requires_org=True),
             risk_level='dangerous', parallelizable=False, cacheable=False,
             effects=('unknown',), executor_type="legacy", handler_key='erp_execute',
@@ -254,7 +254,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='local_data', schema=schemas['local_data'],
+            name='local_data', capability='platform.local_data', schema=schemas['local_data'],
             domain='erp', availability=ToolAvailability(requires_org=True),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='local_data',
@@ -272,7 +272,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='local_product_stats', schema=schemas['local_product_stats'],
+            name='local_product_stats', capability='platform.local_product_stats', schema=schemas['local_product_stats'],
             domain='erp', availability=ToolAvailability(requires_org=True),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='local_product_stats',
@@ -290,7 +290,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='local_stock_query', schema=schemas['local_stock_query'],
+            name='local_stock_query', capability='platform.local_stock_query', schema=schemas['local_stock_query'],
             domain='erp', availability=ToolAvailability(requires_org=True),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='local_stock_query',
@@ -308,7 +308,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='local_product_identify', schema=schemas['local_product_identify'],
+            name='local_product_identify', capability='platform.local_product_identify', schema=schemas['local_product_identify'],
             domain='erp', availability=ToolAvailability(requires_org=True),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='local_product_identify',
@@ -326,7 +326,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='local_platform_map_query', schema=schemas['local_platform_map_query'],
+            name='local_platform_map_query', capability='platform.local_platform_map_query', schema=schemas['local_platform_map_query'],
             domain='erp', availability=ToolAvailability(requires_org=True),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='local_platform_map_query',
@@ -344,7 +344,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='local_compare_stats', schema=schemas['local_compare_stats'],
+            name='local_compare_stats', capability='platform.local_compare_stats', schema=schemas['local_compare_stats'],
             domain='erp', availability=ToolAvailability(requires_org=True),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='local_compare_stats',
@@ -362,7 +362,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='local_shop_list', schema=schemas['local_shop_list'],
+            name='local_shop_list', capability='platform.local_shop_list', schema=schemas['local_shop_list'],
             domain='erp', availability=ToolAvailability(requires_org=True),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='local_shop_list',
@@ -380,7 +380,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='local_warehouse_list', schema=schemas['local_warehouse_list'],
+            name='local_warehouse_list', capability='platform.local_warehouse_list', schema=schemas['local_warehouse_list'],
             domain='erp', availability=ToolAvailability(requires_org=True),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='local_warehouse_list',
@@ -398,7 +398,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='local_supplier_list', schema=schemas['local_supplier_list'],
+            name='local_supplier_list', capability='platform.local_supplier_list', schema=schemas['local_supplier_list'],
             domain='erp', availability=ToolAvailability(requires_org=True),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='local_supplier_list',
@@ -416,7 +416,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='trigger_erp_sync', schema=schemas['trigger_erp_sync'],
+            name='trigger_erp_sync', capability='platform.trigger_erp_sync', schema=schemas['trigger_erp_sync'],
             domain='erp', availability=ToolAvailability(requires_org=True),
             risk_level='dangerous', parallelizable=False, cacheable=False,
             effects=('unknown',), executor_type="legacy", handler_key='trigger_erp_sync',
@@ -434,7 +434,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='erp_agent', schema=_schema_erp_agent(),
+            name='erp_agent', capability='platform.erp_agent', schema=_schema_erp_agent(),
             domain='general', availability=ToolAvailability(),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='erp_agent',
@@ -451,7 +451,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='erp_analyze', schema=_schema_erp_analyze(),
+            name='erp_analyze', capability='platform.erp_analyze', schema=_schema_erp_analyze(),
             domain='general', availability=ToolAvailability(),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='erp_analyze',
@@ -468,7 +468,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='erp_api_search', schema=_schema_erp_api_search(),
+            name='erp_api_search', capability='platform.erp_api_search', schema=_schema_erp_api_search(),
             domain='erp', availability=ToolAvailability(),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('unknown',), executor_type="legacy", handler_key='erp_api_search',
@@ -487,7 +487,7 @@ def build_specs():
             schema_variants={'erp_search': erp_schemas.build_erp_search_tool()},
         ),
         ToolSpec(
-            name='fetch_all_pages', schema=erp_schemas.build_fetch_all_pages_tool(),
+            name='fetch_all_pages', capability='platform.fetch_all_pages', schema=erp_schemas.build_fetch_all_pages_tool(),
             domain='erp', availability=ToolAvailability(requires_org=True),
             risk_level='safe', parallelizable=False, cacheable=False,
             effects=('workspace_artifacts', 'file_index'), executor_type="legacy", handler_key='fetch_all_pages',

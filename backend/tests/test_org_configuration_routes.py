@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -9,18 +12,68 @@ from fastapi import HTTPException
 
 from api.routes.org import (
     SetConfigRequest,
+    MCPConnectorCredentialRequest,
+    MCPConnectorEnableRequest,
+    _get_configuration_control,
+    _get_mcp_configuration_control,
+    _get_mcp_secret_bundle_resolver,
+    _get_secret_bundle_resolver,
+    delete_mcp_connector_credential,
+    get_mcp_connector_status,
+    get_mcp_connector_credential_status,
     list_org_configs,
     set_org_config,
+    set_mcp_connector_credential,
+    set_mcp_connector_enabled,
+    setup_mcp_test_connector,
     test_erp_connection as run_erp_connection_test,
+    test_mcp_connector_connection as run_mcp_connection_test,
     test_wecom_connection as run_wecom_connection_test,
 )
 from core.exceptions import PermissionDeniedError
 from services.configuration.bundles import ResolvedConfigurationBundle
+from services.configuration.bundles import SecretBundleResolver
+from services.configuration.control_service import ConfigurationControlService
 from services.configuration.resolver import ConfigurationResolutionError
 
 
 ORG_ID = "00000000-0000-0000-0000-000000000010"
 USER_ID = "00000000-0000-0000-0000-000000000001"
+
+
+def test_mcp_secret_dependencies_do_not_enable_general_control_plane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CONFIG_CONTROL_PLANE_ENABLED", raising=False)
+    monkeypatch.setenv("CONFIG_KEK_CURRENT_VERSION", "mcp-test-v1")
+    key = base64.b64encode(b"k" * 32).decode("ascii")
+    monkeypatch.setenv(
+        "CONFIG_KEK_KEYRING_JSON", f'{{"mcp-test-v1":"{key}"}}',
+    )
+    monkeypatch.setattr(
+        "core.config.get_settings",
+        lambda: SimpleNamespace(mcp_connectors_enabled=True),
+    )
+    db = MagicMock()
+
+    assert _get_configuration_control(db) is None
+    assert _get_secret_bundle_resolver(db) is None
+    assert isinstance(_get_mcp_configuration_control(db), ConfigurationControlService)
+    assert isinstance(_get_mcp_secret_bundle_resolver(db), SecretBundleResolver)
+
+
+def test_mcp_secret_dependencies_fail_closed_when_flag_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "core.config.get_settings",
+        lambda: SimpleNamespace(mcp_connectors_enabled=False),
+    )
+    monkeypatch.delenv("CONFIG_KEK_CURRENT_VERSION", raising=False)
+    monkeypatch.delenv("CONFIG_KEK_KEYRING_JSON", raising=False)
+
+    assert _get_mcp_configuration_control(MagicMock()) is None
+    assert _get_mcp_secret_bundle_resolver(MagicMock()) is None
 
 
 @pytest.mark.asyncio
@@ -239,3 +292,280 @@ async def test_connection_tests_reject_non_admin_before_bundle_resolution(
     assert getattr(captured.value, "status_code", None) == 403
     bundle_resolver.erp_runtime.assert_not_called()
     bundle_resolver.wecom_bot_admin_test.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mcp_credential_route_encrypts_and_never_returns_token() -> None:
+    org_service = MagicMock()
+    db = MagicMock()
+    control = MagicMock()
+    scoped_control = MagicMock()
+    scoped_control.mcp_credential_status.return_value = {"version": 2}
+    scoped_control.set_mcp_organization_credential.return_value = {
+        "configured": True, "version": 3,
+    }
+    control.for_mcp_actor.return_value = scoped_control
+    secret = "synthetic-org-secret"
+
+    result = await set_mcp_connector_credential(
+        ORG_ID, MCPConnectorCredentialRequest(token=secret), USER_ID,
+        db, org_service, control,
+    )
+
+    assert result == {"success": True, "data": {"configured": True, "version": 3}}
+    assert secret not in str(result)
+    control.for_mcp_actor.assert_called_once_with(
+        org_id=ORG_ID, actor_user_id=USER_ID,
+    )
+    scoped_control.set_mcp_organization_credential.assert_called_once_with(
+        org_id=ORG_ID,
+        value={"token": secret}, expected_version=2,
+    )
+    org_service.require_role.assert_called_once_with(
+        ORG_ID, USER_ID, ("owner", "admin"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_mcp_credential_status_and_revoke_never_expose_material() -> None:
+    org_service = MagicMock()
+    db = MagicMock()
+    control = MagicMock()
+    scoped_control = MagicMock()
+    scoped_control.mcp_credential_status.return_value = {
+        "configured": True, "version": 4, "token": "must-not-escape",
+    }
+    scoped_control.delete_mcp_organization_credential.return_value = {
+        "configured": False, "version": 5, "token": "must-not-escape",
+    }
+    control.for_mcp_actor.return_value = scoped_control
+
+    status = await get_mcp_connector_credential_status(
+        ORG_ID, USER_ID, db, org_service, control,
+    )
+    revoked = await delete_mcp_connector_credential(
+        ORG_ID, USER_ID, db, 4, org_service, control,
+    )
+
+    assert status == {"success": True, "data": {"configured": True, "version": 4}}
+    assert revoked == {"success": True, "data": {"configured": False, "version": 5}}
+    assert "must-not-escape" not in str(status) + str(revoked)
+    scoped_control.delete_mcp_organization_credential.assert_called_once_with(
+        org_id=ORG_ID, expected_version=4,
+    )
+
+
+@pytest.mark.asyncio
+async def test_mcp_enable_and_status_use_fixed_connector_and_redacted_state(monkeypatch) -> None:
+    org_service = MagicMock()
+    db = MagicMock()
+    db.org_id = ORG_ID
+    monkeypatch.setattr("services.tools.mcp_org.scoped_mcp_database", lambda db, **_: db)
+    state = {
+        "org_id": ORG_ID, "connector_id": "test-readonly", "enabled": True,
+        "state": "ready", "health_status": "ready", "last_error_code": None,
+    }
+    db.rpc.return_value.execute.return_value.data = state
+
+    changed = await set_mcp_connector_enabled(
+        ORG_ID, MCPConnectorEnableRequest(enabled=True), USER_ID, db, org_service,
+    )
+    viewed = await get_mcp_connector_status(ORG_ID, USER_ID, db, org_service)
+
+    assert changed == {"success": True, "data": state}
+    assert viewed == {"success": True, "data": state}
+    assert db.rpc.call_args_list[0].args[0] == "api_set_org_mcp_connector_enabled"
+    assert db.rpc.call_args_list[0].args[1]["p_connector_id"] == "test-readonly"
+    assert db.rpc.call_args_list[0].args[1]["p_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_connection_test_returns_health_without_credential(monkeypatch) -> None:
+    org_service = MagicMock()
+    db = MagicMock()
+    db.org_id = ORG_ID
+    monkeypatch.setattr("services.tools.mcp_org.scoped_mcp_database", lambda db, **_: db)
+    state = {
+        "org_id": ORG_ID, "connector_id": "test-readonly", "enabled": False,
+        "state": "disabled", "health_status": "ready", "last_error_code": None,
+    }
+    db.rpc.return_value.execute.return_value.data = state
+    secret = "synthetic-org-secret"
+    bundle = MagicMock()
+    bundle.values = {"mcp.test_readonly.bearer_token": {"token": secret}}
+    resolver = MagicMock()
+    resolver.mcp_test_readonly.return_value = bundle
+
+    result = await run_mcp_connection_test(
+        ORG_ID, USER_ID, db, org_service, resolver,
+    )
+
+    assert result == {"success": True, "data": state}
+    assert secret not in str(result)
+    resolver.mcp_test_readonly.assert_called_once_with(
+        actor_user_id=USER_ID, org_id=ORG_ID,
+    )
+
+
+@pytest.mark.asyncio
+async def test_mcp_connection_test_rejects_non_admin_before_secret_resolution() -> None:
+    org_service = MagicMock()
+    org_service.require_role.side_effect = PermissionDeniedError("forbidden")
+    db = MagicMock()
+    resolver = MagicMock()
+
+    with pytest.raises(HTTPException) as captured:
+        await run_mcp_connection_test(ORG_ID, USER_ID, db, org_service, resolver)
+
+    assert captured.value.status_code == 403
+    resolver.mcp_test_readonly.assert_not_called()
+    db.rpc.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mcp_setup_generates_secret_tests_and_enables_without_returning_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    generated = "server-generated-synthetic-token"
+    events = []
+    monkeypatch.setattr("api.routes.org.secrets.token_urlsafe", lambda _: generated)
+    monkeypatch.setattr(
+        "services.tools.mcp_org.scoped_mcp_database", lambda db, **_: db,
+    )
+
+    def record_health(_db, **kwargs):
+        events.append(("health", kwargs["status"]))
+        return True
+
+    monkeypatch.setattr(
+        "services.tools.mcp_org.record_connector_health", record_health,
+    )
+    org_service = MagicMock()
+    scoped_control = MagicMock()
+    scoped_control.mcp_credential_status.return_value = {
+        "configured": False, "version": 0,
+    }
+    scoped_control.set_mcp_organization_credential.return_value = {
+        "configured": True, "version": 1,
+    }
+    control = MagicMock()
+    control.for_mcp_actor.return_value = scoped_control
+    bundle = SimpleNamespace(values={
+        "mcp.test_readonly.bearer_token": {"token": generated},
+    })
+    resolver = MagicMock()
+    resolver.mcp_test_readonly.return_value = bundle
+    enabled_state = {
+        "org_id": ORG_ID, "connector_id": "test-readonly", "enabled": True,
+        "state": "configured", "health_status": "configured", "last_error_code": None,
+    }
+    ready_state = {
+        **enabled_state, "state": "ready", "health_status": "ready",
+        "last_checked_at": "2026-10-04T00:00:00Z",
+    }
+    db = MagicMock()
+    db.org_id = ORG_ID
+
+    def rpc(name, _args):
+        events.append(name)
+        state = enabled_state if name == "api_set_org_mcp_connector_enabled" else ready_state
+        return SimpleNamespace(execute=lambda: SimpleNamespace(data=state))
+
+    db.rpc.side_effect = rpc
+
+    result = await setup_mcp_test_connector(
+        ORG_ID, USER_ID, db, org_service, control, resolver,
+    )
+
+    assert result == {"success": True, "data": ready_state}
+    assert generated not in str(result)
+    scoped_control.set_mcp_organization_credential.assert_called_once_with(
+        org_id=ORG_ID, value={"token": generated}, expected_version=0,
+    )
+    assert events == [
+        "api_set_org_mcp_connector_enabled", ("health", "ready"),
+        "api_get_org_mcp_connector_state",
+    ]
+    enable_call = db.rpc.call_args_list[0]
+    assert enable_call.args[0] == "api_set_org_mcp_connector_enabled"
+    assert enable_call.args[1]["p_enabled"] is True
+    org_service.require_role.assert_called_once_with(
+        ORG_ID, USER_ID, ("owner", "admin"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_mcp_setup_rejects_non_admin_before_generating_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    org_service = MagicMock()
+    org_service.require_role.side_effect = PermissionDeniedError("forbidden")
+    control = MagicMock()
+    resolver = MagicMock()
+
+    with pytest.raises(HTTPException) as captured:
+        await setup_mcp_test_connector(
+            ORG_ID, USER_ID, MagicMock(), org_service, control, resolver,
+        )
+
+    assert captured.value.status_code == 403
+    control.for_mcp_actor.assert_not_called()
+    resolver.mcp_test_readonly.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mcp_setup_logs_only_redacted_failure_stage_and_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.tools.mcp_boundary import MCPError
+
+    secret = "synthetic-token-never-log"
+
+    class FailingClient:
+        async def health(self):
+            raise MCPError("MCP_REMOTE_ERROR")
+
+        async def discover(self):
+            raise AssertionError("discovery should not run after failed health")
+
+    class ClientFactory:
+        def __init__(self, connector_id, *, bearer_token):
+            assert connector_id == "test-readonly"
+            assert bearer_token == secret
+
+        @asynccontextmanager
+        async def session(self):
+            yield FailingClient()
+
+    monkeypatch.setattr("services.tools.mcp_client.MCPClient", ClientFactory)
+    monkeypatch.setattr(
+        "services.tools.mcp_org.scoped_mcp_database", lambda db, **_: db,
+    )
+    monkeypatch.setattr(
+        "services.tools.mcp_org.record_connector_health", lambda *args, **kwargs: True,
+    )
+    org_service = MagicMock()
+    control = MagicMock()
+    scoped_control = control.for_mcp_actor.return_value
+    scoped_control.mcp_credential_status.return_value = {"configured": True, "version": 1}
+    resolver = MagicMock()
+    resolver.mcp_test_readonly.return_value = SimpleNamespace(values={
+        "mcp.test_readonly.bearer_token": {"token": secret},
+    })
+    db = MagicMock()
+    db.org_id = ORG_ID
+    logger = MagicMock()
+    monkeypatch.setattr("api.routes.org.logger", logger)
+
+    result = await setup_mcp_test_connector(
+        ORG_ID, USER_ID, db, org_service, control, resolver,
+    )
+
+    assert result["success"] is False
+    assert result["data"]["last_error_code"] == "MCP_REMOTE_ERROR"
+    logger.warning.assert_called_once()
+    log_args = logger.warning.call_args.args
+    assert log_args[1:] == ("health_and_discovery", "MCP_REMOTE_ERROR", "MCPError")
+    assert secret not in str(log_args)

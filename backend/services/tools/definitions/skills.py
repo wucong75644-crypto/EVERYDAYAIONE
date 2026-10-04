@@ -110,7 +110,7 @@ def build_specs():
         feature_flags=('skill_catalog_enabled', 'skill_chat_creation_enabled'),
     )
     return (ToolSpec(
-        name='list_personal_skills_for_edit', schema=_schema_list_personal_skills_for_edit(),
+        name='list_personal_skills_for_edit', capability='skill.personal.list', schema=_schema_list_personal_skills_for_edit(),
         domain='general', availability=availability,
         risk_level='safe', parallelizable=False, cacheable=False,
         effects=('skill_metadata_read',), executor_type='legacy',
@@ -123,7 +123,7 @@ def build_specs():
         ),
         replay_requirement='record_required',
     ), ToolSpec(
-        name='get_personal_skill_for_edit', schema=_schema_get_personal_skill_for_edit(),
+        name='get_personal_skill_for_edit', capability='skill.personal.read', schema=_schema_get_personal_skill_for_edit(),
         domain='general', availability=availability,
         risk_level='safe', parallelizable=False, cacheable=False,
         effects=('skill_content_read',), executor_type='legacy',
@@ -136,7 +136,7 @@ def build_specs():
         ),
         replay_requirement='record_required',
     ), ToolSpec(
-        name='prepare_skill_draft', schema=_schema_prepare_skill_draft(),
+        name='prepare_skill_draft', capability='skill.draft.prepare', schema=_schema_prepare_skill_draft(),
         domain='general', availability=availability,
         risk_level='safe', parallelizable=False, cacheable=False,
         effects=('skill_candidate', 'changeset_proposal'), executor_type='legacy',

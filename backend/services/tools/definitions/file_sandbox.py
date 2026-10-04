@@ -11,7 +11,7 @@ def build_specs():
     schemas.update((s["function"]["name"], s) for s in code_schemas.build_code_tools())
     return (
         ToolSpec(
-            name='file_search', schema=schemas['file_search'],
+            name='file_search', capability='workspace.file.search', schema=schemas['file_search'],
             domain='general', availability=ToolAvailability(feature_flags=('file_workspace_enabled',)),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('file_index',), executor_type="legacy", handler_key='file_search',
@@ -29,7 +29,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='file_analyze', schema=schemas['file_analyze'],
+            name='file_analyze', capability='platform.file_analyze', schema=schemas['file_analyze'],
             domain='general', availability=ToolAvailability(feature_flags=('file_workspace_enabled',)),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('workspace_artifacts', 'file_index'), executor_type="legacy", handler_key='file_analyze',
@@ -47,7 +47,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='file_delete', schema=schemas['file_delete'],
+            name='file_delete', capability='workspace.file.delete', schema=schemas['file_delete'],
             domain='general', availability=ToolAvailability(feature_flags=('file_workspace_enabled',)),
             risk_level='dangerous', parallelizable=False, cacheable=False,
             effects=('workspace_delete', 'deletion_record'), executor_type="legacy", handler_key='file_delete',
@@ -65,7 +65,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='restore_file', schema=schemas['restore_file'],
+            name='restore_file', capability='platform.restore_file', schema=schemas['restore_file'],
             domain='general', availability=ToolAvailability(feature_flags=('file_workspace_enabled',)),
             risk_level='safe', parallelizable=False, cacheable=False,
             effects=('workspace_write', 'deletion_record'), executor_type="legacy", handler_key='restore_file',
@@ -83,7 +83,7 @@ def build_specs():
             ),
         ),
         ToolSpec(
-            name='code_execute', schema=schemas['code_execute'],
+            name='code_execute', capability='sandbox.code.execute', schema=schemas['code_execute'],
             domain='shared', availability=ToolAvailability(feature_flags=('sandbox_enabled',)),
             risk_level='confirm', parallelizable=True, cacheable=True,
             effects=('kernel_state', 'workspace_artifacts'), executor_type="legacy", handler_key='code_execute',
