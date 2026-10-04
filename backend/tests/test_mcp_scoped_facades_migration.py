@@ -17,6 +17,8 @@ SCOPE_MIGRATION = ROOT / "migrations/270_mcp_application_scope_context.sql"
 SCOPE_ROLLBACK = ROOT / "migrations/rollback/270_mcp_application_scope_context_rollback.sql"
 PRIVILEGE_MIGRATION = ROOT / "migrations/271_mcp_application_privileges.sql"
 PRIVILEGE_ROLLBACK = ROOT / "migrations/rollback/271_mcp_application_privileges_rollback.sql"
+CONFIG_HELPER_PRIVILEGE_MIGRATION = ROOT / "migrations/272_mcp_configuration_helper_privileges.sql"
+CONFIG_HELPER_PRIVILEGE_ROLLBACK = ROOT / "migrations/rollback/272_mcp_configuration_helper_privileges_rollback.sql"
 
 
 @pytest.fixture
@@ -59,6 +61,10 @@ def database(postgres_socket):
         );
         CREATE TABLE configuration_definitions(id integer);
         CREATE TABLE configuration_bundle_definitions(id integer);
+        CREATE TABLE configuration_policies(
+            org_id uuid, config_key text, locked boolean,
+            allow_user_override boolean
+        );
         CREATE TABLE governance_audit_log(
             id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
             org_id uuid, actor_id uuid, authority text, action text,
@@ -68,10 +74,20 @@ def database(postgres_socket):
         CREATE FUNCTION _resolve_configuration_bundle(text, text, uuid, uuid)
           RETURNS jsonb LANGUAGE sql AS
           $$ SELECT jsonb_build_object('bundle', $2, 'actor', $3, 'org_id', $4) $$;
+        CREATE FUNCTION _validate_configuration_material(
+            text, text, text, jsonb, jsonb
+          ) RETURNS jsonb LANGUAGE sql AS $$ SELECT '{}'::jsonb $$;
         CREATE FUNCTION _write_configuration_entry(
             text, uuid, uuid, text, text, jsonb, jsonb, bigint, uuid
           ) RETURNS jsonb LANGUAGE sql AS
           $$ SELECT jsonb_build_object('key', $5, 'version', $8 + 1, 'configured', true) $$;
+        CREATE FUNCTION _configuration_scope_id(text, uuid, uuid)
+          RETURNS text LANGUAGE sql AS $$ SELECT NULL::text $$;
+        CREATE FUNCTION _project_configuration_entry(uuid, boolean)
+          RETURNS jsonb LANGUAGE sql AS $$ SELECT '{}'::jsonb $$;
+        CREATE FUNCTION _resolve_effective_configuration_item(
+            text, text, boolean, uuid, uuid
+          ) RETURNS jsonb LANGUAGE sql AS $$ SELECT '{}'::jsonb $$;
         CREATE FUNCTION _record_governance_audit(uuid, text, text, text, text, jsonb)
           RETURNS uuid LANGUAGE sql AS $$ SELECT NULL::uuid $$;
         CREATE FUNCTION get_org_mcp_connector_state(uuid, text)
@@ -84,10 +100,19 @@ def database(postgres_socket):
     """)
     for table in (
         "users", "organizations", "org_members", "configuration_definitions",
-        "configuration_bundle_definitions", "configuration_entries",
+        "configuration_bundle_definitions", "configuration_policies", "configuration_entries",
         "secret_records", "governance_audit_log",
     ):
         conn.execute(f"ALTER TABLE {table} OWNER TO everydayai")
+    for signature in (
+        "_resolve_configuration_bundle(text,text,uuid,uuid)",
+        "_validate_configuration_material(text,text,text,jsonb,jsonb)",
+        "_write_configuration_entry(text,uuid,uuid,text,text,jsonb,jsonb,bigint,uuid)",
+        "_configuration_scope_id(text,uuid,uuid)",
+        "_project_configuration_entry(uuid,boolean)",
+        "_resolve_effective_configuration_item(text,text,boolean,uuid,uuid)",
+    ):
+        conn.execute(f"ALTER FUNCTION {signature} OWNER TO everydayai")
     conn.execute(
         "ALTER TABLE organization_mcp_connectors OWNER TO everydayai_owner"
     )
@@ -102,9 +127,28 @@ def database(postgres_socket):
     conn.execute("GRANT EXECUTE ON FUNCTION get_org_mcp_connector_state(uuid,text) TO everydayai_runtime")
     conn.execute("REVOKE ALL ON FUNCTION set_org_configuration(uuid,text,text,jsonb,jsonb,bigint) FROM PUBLIC")
     conn.execute("GRANT EXECUTE ON FUNCTION set_org_configuration(uuid,text,text,jsonb,jsonb,bigint) TO everydayai_runtime")
+    conn.execute("""
+        REVOKE ALL ON FUNCTION
+            _resolve_configuration_bundle(text,text,uuid,uuid),
+            _validate_configuration_material(text,text,text,jsonb,jsonb),
+            _write_configuration_entry(text,uuid,uuid,text,text,jsonb,jsonb,bigint,uuid),
+            _configuration_scope_id(text,uuid,uuid),
+            _project_configuration_entry(uuid,boolean),
+            _resolve_effective_configuration_item(text,text,boolean,uuid,uuid)
+        FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime,
+             everydayai_worker, everydayai_sync
+    """)
     conn.execute(MIGRATION.read_text())
     conn.execute(SCOPE_MIGRATION.read_text())
     conn.execute(PRIVILEGE_MIGRATION.read_text())
+    assert not conn.execute(
+        "SELECT has_function_privilege('everydayai_owner', "
+        "'_write_configuration_entry(text,uuid,uuid,text,text,jsonb,jsonb,bigint,uuid)', 'EXECUTE')"
+    ).fetchone()[0]
+    assert not conn.execute(
+        "SELECT has_table_privilege('everydayai_owner', 'configuration_policies', 'SELECT')"
+    ).fetchone()[0]
+    conn.execute(CONFIG_HELPER_PRIVILEGE_MIGRATION.read_text())
     org, other_org, admin, member = [uuid4() for _ in range(4)]
     conn.execute("INSERT INTO organizations VALUES (%s,'active'),(%s,'active')", (org, other_org))
     conn.execute("INSERT INTO users VALUES (%s,'active'),(%s,'active')", (admin, member))
@@ -158,6 +202,25 @@ def test_application_facades_recheck_scope_and_admin_without_broad_grants(databa
     assert not conn.execute(
         "SELECT has_table_privilege('everydayai_owner', 'governance_audit_log', 'SELECT')"
     ).fetchone()[0]
+    assert conn.execute(
+        "SELECT has_table_privilege('everydayai_owner', 'configuration_policies', 'SELECT')"
+    ).fetchone()[0]
+    for signature in (
+        "_validate_configuration_material(text,text,text,jsonb,jsonb)",
+        "_write_configuration_entry(text,uuid,uuid,text,text,jsonb,jsonb,bigint,uuid)",
+        "_configuration_scope_id(text,uuid,uuid)",
+        "_project_configuration_entry(uuid,boolean)",
+        "_resolve_effective_configuration_item(text,text,boolean,uuid,uuid)",
+        "_resolve_configuration_bundle(text,text,uuid,uuid)",
+    ):
+        assert conn.execute(
+            "SELECT has_function_privilege('everydayai_owner', %s, 'EXECUTE')",
+            (signature,),
+        ).fetchone()[0], signature
+        assert not conn.execute(
+            "SELECT has_function_privilege('everydayai_runtime', %s, 'EXECUTE')",
+            (signature,),
+        ).fetchone()[0], signature
     assert conn.execute(
         """SELECT pg_get_userbyid(proowner) = 'everydayai_owner'
              FROM pg_proc WHERE oid = 'api_set_org_mcp_connector_credential(uuid,text,text,jsonb,jsonb,bigint)'::regprocedure"""
@@ -295,6 +358,40 @@ def test_mcp_privilege_migration_has_an_explicit_rollback():
     assert "REVOKE SELECT ON TABLE public.users" in rollback
     assert "DROP FUNCTION" in rollback
     assert "DROP TABLE" not in rollback
+
+
+def test_mcp_configuration_helper_privileges_have_an_explicit_rollback():
+    from scripts.migration_runner import discover_migrations
+
+    migration = next(
+        item for item in discover_migrations()
+        if item.identity == CONFIG_HELPER_PRIVILEGE_MIGRATION.name
+    )
+    assert migration.rollback_identity == CONFIG_HELPER_PRIVILEGE_ROLLBACK.name
+    rollback = CONFIG_HELPER_PRIVILEGE_ROLLBACK.read_text()
+    assert "REVOKE EXECUTE" in rollback
+    assert "REVOKE SELECT ON TABLE public.configuration_policies" in rollback
+
+
+def test_mcp_configuration_helper_privilege_rollback_restores_narrow_grants(database):
+    conn, *_ = database
+    assert conn.execute(
+        "SELECT has_table_privilege('everydayai_owner', 'configuration_policies', 'SELECT')"
+    ).fetchone()[0]
+    assert conn.execute(
+        "SELECT has_function_privilege('everydayai_owner', "
+        "'_write_configuration_entry(text,uuid,uuid,text,text,jsonb,jsonb,bigint,uuid)', 'EXECUTE')"
+    ).fetchone()[0]
+
+    conn.execute(CONFIG_HELPER_PRIVILEGE_ROLLBACK.read_text())
+
+    assert not conn.execute(
+        "SELECT has_table_privilege('everydayai_owner', 'configuration_policies', 'SELECT')"
+    ).fetchone()[0]
+    assert not conn.execute(
+        "SELECT has_function_privilege('everydayai_owner', "
+        "'_write_configuration_entry(text,uuid,uuid,text,text,jsonb,jsonb,bigint,uuid)', 'EXECUTE')"
+    ).fetchone()[0]
 
 
 def test_mcp_privilege_rollback_restores_audit_and_revokes_legacy_grants(database):
