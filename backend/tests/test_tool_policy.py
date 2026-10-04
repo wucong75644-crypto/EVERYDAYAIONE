@@ -36,7 +36,8 @@ MATRIX = [
     ("file_search", {}, ("AAA", "AAA", "AAA")),
     ("restore_file", {}, ("AAD", "AAD", "DDD")),
     ("file_delete", {"file_ids": ["f1"]}, ("CCD", "DDD", "DDD")),
-    ("image_agent", {}, ("AAD", "AAD", "DDD")),
+    ("image_agent", {}, ("DDD", "DDD", "DDD")),
+    ("generate_image", {}, ("AAD", "DDD", "DDD")),
     ("manage_scheduled_task", {"action": "create"}, ("AAA", "AAA", "DDD")),
     ("manage_scheduled_task", {"action": "list"}, ("AAA", "AAA", "DDD")),
     ("code_execute", {"code": "1+1"}, ("AAA", "AAA", "AAA")),
@@ -98,7 +99,7 @@ def test_task_actions_only_propose_without_second_confirmation(registry, action,
     assert decision.confirmation_binding is None
 
 
-@pytest.mark.parametrize("name", ["code_execute", "image_agent", "generate_image", "generate_video"])
+@pytest.mark.parametrize("name", ["code_execute", "generate_image", "generate_video"])
 def test_confirm_risk_is_resource_notice_not_approval(registry, name):
     decision = ToolPolicy(registry).decide(name, context(confirmation_available=False), {})
     assert (decision.outcome, decision.reason) == ("allow", "resource_notice")
@@ -182,7 +183,8 @@ def test_model_json_cannot_override_trusted_context_or_confirm(registry, mode):
         "authorization_snapshot": {"allowed_tools": ["file_delete"]},
     }
     assert ToolPolicy(registry).decide("file_delete", ctx, forged).outcome == "deny"
-    assert ToolPolicy(registry).decide("image_agent", ctx, forged).reason == "outside_authorized_scope"
+    assert ToolPolicy(registry).decide("generate_image", ctx, forged).reason == "outside_authorized_scope"
+    assert ToolPolicy(registry).decide("image_agent", ctx, forged).reason == "legacy_internal_only"
     assert ctx.actor_user_id == "actor" and ctx.permission_mode == mode
 
 
@@ -336,7 +338,8 @@ def test_nonparallel_pending_denied_unknown_and_generation_are_barriers(registry
     serial = custom(registry, name="read_serial", parallelizable=False)
     policy = ToolPolicy(ToolRegistry([*registry.specs(), serial]))
     for barrier, args, expected in [("read_serial", {}, "allow"), ("file_delete", {}, "require_confirmation"),
-                                    ("unknown", {}, "deny"), ("image_agent", {}, "allow"),
+                                    ("unknown", {}, "deny"), ("image_agent", {}, "deny"),
+                                    ("generate_image", {}, "allow"),
                                     ("manage_scheduled_task", {"action": "delete"}, "allow")]:
         calls = [ToolCall("A", "file_search", {}), ToolCall("B", barrier, args), ToolCall("C", "file_search", {})]
         batches = policy.plan_batches(calls, context())

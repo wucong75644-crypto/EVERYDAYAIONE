@@ -6,6 +6,10 @@
 
 名称不变，一次接受一张图。多张输出由模型多次调用；输入参考图可以多张并保持顺序。输入不含可信父task、Turn、actor、org或内部执行标记，这些来自服务器dispatch上下文。
 
+2026-10-04聊天路由收口：普通聊天及图片Skill统一使用此工具，包括商品图。`generate_image` 进入初始核心工具候选；实际展示与执行仍取Registry/Policy交集，接受开关、账号范围、个人空间、工具授权与plan/非交互限制不变。关闭或无权限时不回退旧图片入口。匹配的可用Skill由模型按当前轮激活，没有预加载或强制固定绑定。实际发布状态以受控入口回执为准。
+
+`image_agent` 从公共/通用/核心工具目录和聊天提示词移除，保留为 `legacy_internal` 兼容绑定。模型入口即使引用历史工具名、discovered工具或Skill名单也返回 `legacy_internal_only` / `not_started`，不进入身份刷新、调用重放、账本或供应商。原生电商页面的EcomImageHandler、批次与专用retry直接使用内部ImageAgent，保持既有路径；该内部路径的历史积分原子性缺陷另见实施记录，未因聊天收口宣称已修复。
+
 ```json
 {
   "mode": "image_to_image",
@@ -42,7 +46,7 @@
 
 接受RPC之前确定的输入拒绝返回 `status=error`、`accepted=false`、`completed=false`、`submission_state=not_accepted`；例如 `IMAGE_MODEL_SELECTION_DISABLED` / `IMAGE_REQUEST_FIELDS_INVALID`。明确告知未创建图片任务、未预扣图片积分，不附加“受理不确定”。RPC异常或回执丢失仍按不确定处理，不能套用输入拒绝后重新提交。此区别不改变通用工具的副作用分类。
 
-### 模型参数校验与一次纠错（本批未发布）
+### 模型参数校验与一次纠错（已发布0e162515，真实模型纠错待验收）
 
 模型入口使用 Registry 中实际 `generate_image` ToolSpec 的同一份 parameters 校验：未知字段、必填、类型、枚举、嵌套引用、定位 oneOf、message_id/content_index 依赖、长度/数量/pattern 均覆盖当前合同。JSON 重复键、顶层非对象和非有限数值拒绝。错误为 `IMAGE_TOOL_ARGUMENTS_INVALID`，包含最多16项路径/原因、当前parameters、`accepted=false`和`submission_state=not_accepted`。发生在确认、invocation领取、接受RPC和图片预扣之前；不静默丢字段、转换类型或重写提示词。
 

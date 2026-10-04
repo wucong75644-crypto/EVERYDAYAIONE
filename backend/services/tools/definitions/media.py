@@ -70,7 +70,7 @@ def _schema_generate_video():
                 "根据文字描述生成短视频。调用后异步生成，返回 task_id，"
                 "视频完成后自动推送给用户。生成通常需要 1-3 分钟。\n\n"
                 "返回：task_id + 预计等待时间。视频完成后自动展示。\n\n"
-                "不要用于：图片生成 → generate_image / image_agent；"
+                "不要用于：图片生成 → generate_image；"
                 "视频编辑/剪辑 → 不支持。"
             ),
             "parameters": {
@@ -141,7 +141,7 @@ def build_specs():
             effects=('unknown',), executor_type="legacy", handler_key='generate_image',
             exposure=Exposure.PUBLIC,
             source="services.tools.definitions.media.build_specs", definition_kind="explicit",
-            catalog_order=29, catalog_groups=('common_tools',), core=False, legacy_plan_visible=True,
+            catalog_order=29, catalog_groups=('common_tools',), core=True, legacy_plan_visible=False,
             compatibility_notes=(),
             policy_rules=ToolPolicyRules(
                 operation='generation',
@@ -173,9 +173,11 @@ def build_specs():
             domain='general', availability=ToolAvailability(),
             risk_level='confirm', parallelizable=False, cacheable=False,
             effects=('unknown',), executor_type="legacy", handler_key='image_agent',
-            exposure=Exposure.PUBLIC,
+            exposure=Exposure.LEGACY_INTERNAL,
             source="services.tools.definitions.media.build_specs", definition_kind="explicit",
-            catalog_order=31, catalog_groups=('common_tools',), core=True, legacy_plan_visible=False,
+            # Native ecommerce keeps its internal handler; models cannot select
+            # this legacy route, including through restored Skill/tool history.
+            catalog_order=31, catalog_groups=(), core=False, legacy_plan_visible=False,
             compatibility_notes=(),
             policy_rules=ToolPolicyRules(
                 operation='generation',

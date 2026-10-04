@@ -41,7 +41,7 @@ def image_upgrade_settings():
 
 
 def original_schemas(names, view):
-    return [CHAT_IMAGE_UPGRADE['spec_changes'][name]['schema'] if name in CHAT_IMAGE_UPGRADE['spec_changes'] else WEB_SEARCH_UPGRADE if name == 'web_search' else PRESENTATION_UPGRADE if name == 'code_execute' else FILE_SEARCH_UPGRADE if name == 'file_search' else TASK_UPGRADE['schema'] if name == 'manage_scheduled_task' else BASELINE['schema_views'].get(view, {}).get(name) or BASELINE['specs'][name]['schema']
+    return [CHAT_IMAGE_UPGRADE['spec_changes'][name]['schema'] if 'schema' in CHAT_IMAGE_UPGRADE['spec_changes'].get(name, {}) else WEB_SEARCH_UPGRADE if name == 'web_search' else PRESENTATION_UPGRADE if name == 'code_execute' else FILE_SEARCH_UPGRADE if name == 'file_search' else TASK_UPGRADE['schema'] if name == 'manage_scheduled_task' else BASELINE['schema_views'].get(view, {}).get(name) or BASELINE['specs'][name]['schema']
             for name in names]
 
 
@@ -98,6 +98,13 @@ def test_complete_helpers_handlers_and_schema_order(catalog, org):
     expected = deepcopy(BASELINE['helpers'][str(org)])
     # Async image orchestration adds exact-history reads to the same helpers.
     expected['chat'].append('get_conversation_context')
+    # Authorized routing change: models get generate_image, never image_agent.
+    for key, names in expected.items():
+        expected[key] = [name for name in names if name != 'image_agent']
+        if key in {'core', 'ask', 'auto'}:
+            expected[key].append('generate_image')
+            expected[key].sort(key=BASELINE['helpers'][str(org)]['chat'].index
+                               if key == 'core' else None)
     view = 'helpers/' + str(org) + '/'
     chat_skill_tools = {
         'list_personal_skills_for_edit', 'prepare_skill_draft', 'get_personal_skill_for_edit',
@@ -141,6 +148,10 @@ def test_old_imports_signatures_and_constant_values(module):
     for name, signature in BASELINE['modules'][module]['functions'].items():
         assert str(inspect.signature(getattr(current, name))) == signature, (module, name)
     for name, digest in BASELINE['modules'][module]['constants'].items():
+        if module == 'chat_tools' and name == 'IMAGE_AGENT_PROMPT':
+            # The retired routing prompt is no longer imported/injected by chat.
+            assert not hasattr(current, name)
+            continue
         value = plain(getattr(current, name))
         if module == 'tool_domains' and name == 'TOOL_DOMAINS':
             expected = {
@@ -160,6 +171,8 @@ def test_old_imports_signatures_and_constant_values(module):
             value = deepcopy(value)
             value['image'] = SMART_IMAGE_UPGRADE['legacy_image']
         if module == 'chat_tools' and name == 'TOOL_SYSTEM_PROMPT':
+            from config.image_agent_prompt import IMAGE_AGENT_PROMPT
+            assert 'image_agent' not in value
             # Authorized ST-26 changes only this obsolete scheduling guidance.
             # Restore the frozen old paragraph before checking every other byte.
             description = TASK_UPGRADE['schema']['function']['description']
@@ -167,6 +180,10 @@ def test_old_imports_signatures_and_constant_values(module):
             value = value.replace(description, TASK_UPGRADE['legacy_guidance'])
             assert CHAT_IMAGE_UPGRADE['current_guidance'] in value
             value = value.replace(CHAT_IMAGE_UPGRADE['current_guidance'], CHAT_IMAGE_UPGRADE['legacy_guidance'])
+            value += IMAGE_AGENT_PROMPT
+        if module == 'chat_tools' and name in {'_CORE_TOOLS', '_PLAN_MODE_BLOCKED'}:
+            assert 'generate_image' in value and 'image_agent' not in value
+            value = sorted((set(value) - {'generate_image'}) | {'image_agent'})
         if module == 'code_tools' and name == '_DESCRIPTION':
             assert value == PRESENTATION_UPGRADE['function']['description']
             value = BASELINE['specs']['code_execute']['schema']['function']['description']
@@ -365,7 +382,10 @@ def test_legacy_diagnostic_imports_are_compatible_projections(catalog):
     assert set(_EFFECTS) == {'code_execute', 'file_analyze', 'restore_file', 'manage_scheduled_task',
                             'fetch_all_pages', 'get_conversation_context'}
     assert all(value == catalog.require(name).effects for name, value in _EFFECTS.items())
-    assert _INTERNAL_SOURCES == {name: BASELINE['specs'][name]['source'] for name in _INTERNAL_SOURCES}
+    assert _INTERNAL_SOURCES == {
+        name: catalog.require(name).source if name == 'image_agent' else BASELINE['specs'][name]['source']
+        for name in _INTERNAL_SOURCES
+    }
     assert legacy_policy_rules('file_search', frozenset({'file_search'})) == catalog.require('file_search').policy_rules
 
 
@@ -381,7 +401,7 @@ importlib.import_module(sys.argv[1])
 from config.chat_tools import get_chat_tools
 from services.tools import build_tool_catalog
 from services.tool_executor import ToolExecutor
-assert len(get_chat_tools('org-a')) == 36
+assert len(get_chat_tools('org-a')) == 35
 assert len(build_tool_catalog().specs()) == 38
 assert len(ToolExecutor(None, 'actor-a', 'c1', 'org-a')._handlers) == 38
 '''

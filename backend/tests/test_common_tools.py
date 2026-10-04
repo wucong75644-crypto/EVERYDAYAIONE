@@ -37,11 +37,12 @@ class TestBuildCommonTools:
         expected = {
             "erp_agent", "erp_analyze", "erp_api_search",
             "search_knowledge", "web_search",
-            "generate_image", "generate_video", "image_agent",
+            "generate_image", "generate_video",
             "manage_scheduled_task",
         }
         for name in expected:
             assert name in names, f"Missing tool: {name}"
+        assert "image_agent" not in names
 
     def test_no_duplicates(self):
         tools = build_common_tools()

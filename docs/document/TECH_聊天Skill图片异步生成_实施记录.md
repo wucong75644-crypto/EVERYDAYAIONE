@@ -177,3 +177,31 @@ API/状态见[接口文档](API_聊天Skill图片异步任务.md)，迁移顺序
 新校验文件、chat/image_argument_correction、execution_engine和现有checkpoint适配器为关键后端位置；统计在error_monitor路由及ErrorMonitorPanel。API/状态、发布顺序/兼容回滚和CURRENT_ISSUES同步完成。本批T01/T02/T05/T08/T09/T15/T16相关分支已有上述证据，其余T编号沿用前文原实现证据，不将它们或T17宣布为本批全量重测。仍待受控部署后真实模型自动激活/确认续轮验收、生产checkpoint/统计权限核验；追加供应商测试须另定额度。本批具备本地候选验证证据，未提交、推送、部署、合并main或清理任务工作树。
 
 用户随后明确授权“提交部署”。提交前只读生产预检通过：数据库身份与实际checkpoint RPC/非枚举safe_point兼容；pending/running chat及在途图片均为0，历史paused chat为43，发布锁空闲。最新origin/main仍为32e8ba0d，当前候选已包含。发布前后端并复用以上定向测试，保留构建、迁移账本及服务readiness检查；最终发布状态以本次受控入口结构化回执为准。没有增加生图额度、发布Skill、改生产配置、合并main或授权清理。
+
+### 两张图片自然语言生产测试阻塞（2026-10-04）
+
+- 受控入口已返回完整发布成功：`0e1625150ce967a7e03c24ccb5c73065925e9169`，前后端、构建及服务readiness通过，`DEPLOYED_PENDING_ACCEPTANCE`。已登录管理员系统监控中的新增纠错统计成功读取，无新样本；工作树保留、main未合并。
+- 用户随后明确授权继续真实流程“从打磨提示词到同时生成两张”。浏览器新建普通聊天`4ea3d8b7-bf2b-4b1f-82e2-f0c39f3919a7`，全程没有选择/固定Skill，生产bindings=0，三条chat的manual_selection为空。两轮分别准备挥手/看书两张1K方图PNG并调整宝蓝色、磨砂塑料、黑色圆眼、无嘴巴等特征；仅chat完成，无图片任务或扣费，起始余额1266。
+- 第三轮自然确认原文生成、仅两张、最多12积分、失败不重试。父task`d30f6119-c131-513f-a2a6-9391e63d7475`的checkpoint.active为空，真实两个工具step均为`image_agent`（round 0/1，各index 0），返回账本task_id的UUID类型错误。没有调用generate_image，没有触发本批参数校验/一次纠错机制。不能把测试结果写成自动Skill或两张异步生成通过。
+- 已只读确认生产credit_transactions.task_id为uuid，22:45:58–22:46:11测试窗口内该账号没有credit_transactions或credits_history记录，本测试会话image task为0；余额1266→1254，两个失败调用各造成6积分无账本扣减。随后余额1248对应22:50:49另一会话的已完成原生图片任务，不把它混入本测试误扣范围。
+- 根因证据：ImageAgent.execute生成`img_ecom_{uuid4().hex[:8]}`传入CreditMixin._lock_credits；后者先独立提交users余额更新，再插入UUID账本，插入异常时前一步未回滚，且未返回transaction_id，普通退款入口无法按账本回退。两份文件blob与origin/main一致；主线init-database.sql已定义该字段UUID，本任务273–276没有改变该类型。新品异步链claim_chat_image_submission把真实UUID task、预扣和账本绑定放在同一数据库事务中，本次未走该链。
+- 当前阶段3/4真实验收受阻，关联M01/M03/M08/M30、F04/F05/F08、T01/T04/T09/T14–T16。原回归漏掉自然请求被电商入口误选及此入口真实UUID/扣费失败边界。已停止新增生图，没有修改生产积分、修复代码或再次部署；12积分尚未补回。需要先处理误扣、旧入口账本原子性及错误路由，再继续两张测试；后续账单修复须真实数据库验证和独立审查。
+
+### 聊天图片统一工具路由修复（2026-10-04）
+
+阶段3/4，M01/M03/M08/M30、F04/F05/F08、T01/T04/T09/T14–T16。用户确认普通聊天及图片Skill固定 `generate_image`，电商专用内部实现保留；本批在同一任务分支0e162515上开发，没有提交/推送/部署、生产写入或新增付费生图。
+
+- 真实调用方复检：普通聊天原核心目录和两套系统提示词同时引导image_agent；EcomImageHandler及原生电商确认事件直接走image_ecom/ImageHandler批次，专用retry直接调用内部ImageAgent，不依赖公共工具展示。保留这些内部绑定，没有删除或复制电商实现。
+- `services/tools/definitions/media.py` 将generate_image纳入初始核心候选并保持plan不可见；image_agent改为legacy_internal、移出common_tools/core。现有Registry检查同时管展示和执行：历史模型调用、discovered名单、Skill名单均不能绕过，明确not_started且不刷新身份/重放invocation/调用账本或供应商。开关、账号灰度、个人空间与授权交集保持；关闭新入口不回退旧工具。
+- `config/chat_tools.py` 和 `prompt_builder/templates/tool_strategy.md` 移除旧电商工具引导，统一当前schema/默认模型、匹配Skill当前轮激活、两张两次接受与真实task_id后告知提交；视频说明同步移除旧替代工具名。Skill正文/控制面未改，也没有手动固定或预加载Skill。
+- 内部诊断来源投影兼容新内部Spec；旧工具完整合同测试保留冻结07基线，只显式记录已批准的路由/说明差异。原生ImageAgent/CreditMixin、数据库、Worker/快照/预算和积分结算未改；路由收口不能被解释为内部账本原子性问题已解决或12积分已退回。
+
+验证：新增16项真实Registry/ToolRuntime/Actor回归修改前14失败/2通过，修改后16通过，稳定复现旧公共路由。覆盖初始与发现展示、关闭/灰度/plan/个人空间/授权交集、旧模型调用执行前拒绝、Skill不能复活旧工具、可信内部兼容，以及脚本化模型自动activate→正文注入→同轮两次单图接受、完整提示词逐字保持和两个子身份。模型/业务/身份DB使用隔离double，不代表实际模型质量、真实积分事务或供应商完成。
+
+- 最终20个相关文件 **1562 passed / 0 skip / 0 failed**，10.08秒；日志 `/private/tmp/chat-image-routing-final-tests.log`。包括共享工具合同/三入口/权限、Actor/Skill、一次参数纠错、原生图片/电商/多模式Skill、接受规格及静态提示词回归。第一次扩大验证的3项失败来自过期目录预期，已将旧内部名单及开关前后的实际展示预期显式更新；未关闭权限断言或替换业务执行机制。
+- 修改Python文件编译检查与 `git diff --check` 通过。无前端/SQL改动，不重复此前构建、真实PG/Redis验证，也不把它们称为本批重测。
+- API、发布状态、收口发布顺序和保留型回滚已同步。后续部署需重启整个后端/Actor统一目录；回滚保留旧工具内部可见性，防止重新开放已知误扣路径。
+
+剩余：本批尚未部署，生产普通聊天仍为0e162515；真实自然语言自动Skill、确认续轮、两次任务最终图片与唯一扣款尚未复验。保留内部电商账本缺陷及12积分误扣待处理；未做生产故障注入、历史计划快照/图片trial的生产回归。新的模型入口会拒绝历史image_agent调用，不将旧工具授权转为generate_image权限；如有旧计划快照依赖该公共工具，发布前需识别并迁移，不能自动切换成另一付费调用。没有宣称整个系统无回归，T17没有本批新验证。
+
+用户随后明确授权本批“提交部署”。本次发布前只读检查正式数据库身份匹配，pending/running聊天和在途图片均0，paused历史43；实际scheduled_tasks与scheduled_task_drafts的计划/权限/Skill快照没有image_agent依赖，无需生产计划迁移。最新origin/main仍32e8ba0d，候选已包含。按release.sh显式16个任务文件提交推送并完整发布前后端，复用1562项回归、不跳过构建/迁移账本/健康检查。自动验证仅无业务副作用的目录与拒绝边界，不补扣/退款、不发起付费供应商或生产Skill发布；最终发布SHA和DEPLOYED_PENDING_ACCEPTANCE状态以受控入口回执为准。工作树保留，main不合并。

@@ -1,5 +1,5 @@
 {
-  "current_guidance": "非电商场景的图片生成：插画、概念图、logo、创意图、头像等。\n每次接受一张独立异步图片任务；明确传 mode=text_to_image 或 image_to_image。\n生成参考图按本次用户选择传 references，用于分析的图片不自动成为生成参考图。\n模型由服务器使用平台默认模型及其图生图配对，不传 model/model_name，不询问模型偏好。\n比例用 aspect_ratio，分辨率用 resolution，格式用小写 output_format；不传 size/format。\n严格按当前 tools schema 调用，不从历史回复猜参数；取得真实 task_id 后才能说已提交。\n电商商品图（白底主图、场景图）→ 用 image_agent，效果更专业。\n\n",
+  "current_guidance": "聊天中的图片生成统一使用 generate_image，包括插画、创意图和商品图。\n有匹配的可用图片 Skill 时先激活，按其方法打磨提示词和拆分图片；Skill 不改变工具权限。\n每次接受一张独立异步图片任务；两张调用两次，明确传 mode=text_to_image 或 image_to_image。\n生成参考图按本次用户选择传 references，用于分析的图片不自动成为生成参考图。\n模型由服务器使用平台默认模型及其图生图配对，不传 model/model_name，不询问模型偏好。\n比例用 aspect_ratio，分辨率用 resolution，格式用小写 output_format；不传 size/format。\n严格按当前 tools schema 调用，不从历史回复猜参数；取得真实 task_id 后才能说已提交。\n工具不可用时说明当前限制；不要根据历史对话调用未展示的旧工具。\n\n",
   "legacy_guidance": "非电商场景的图片生成：插画、概念图、logo、创意图、头像等。\n纯文字→文生图，有参考图→图生图（必须传 image_urls）。\n电商商品图（白底主图、场景图）→ 用 image_agent，效果更专业。\n\n",
   "spec_changes": {
     "generate_image": {
@@ -171,7 +171,9 @@
         "feature_flags": [
           "chat_image_async_enabled"
         ]
-      }
+      },
+      "core": true,
+      "legacy_plan_visible": false
     },
     "get_conversation_context": {
       "schema": {
@@ -209,6 +211,32 @@
         }
       },
       "exposure": "public"
+    },
+    "image_agent": {
+      "exposure": "legacy_internal",
+      "core": false,
+      "catalog_groups": []
+    },
+    "generate_video": {
+      "schema": {
+        "type": "function",
+        "function": {
+          "name": "generate_video",
+          "description": "根据文字描述生成短视频。调用后异步生成，返回 task_id，视频完成后自动推送给用户。生成通常需要 1-3 分钟。\n\n返回：task_id + 预计等待时间。视频完成后自动展示。\n\n不要用于：图片生成 → generate_image；视频编辑/剪辑 → 不支持。",
+          "parameters": {
+            "type": "object",
+            "required": [
+              "prompt"
+            ],
+            "properties": {
+              "prompt": {
+                "type": "string",
+                "description": "视频内容描述，包含场景、动作、风格等。e.g. '一只橘猫在阳光下的窗台上伸懒腰，慢动作，温暖色调'"
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

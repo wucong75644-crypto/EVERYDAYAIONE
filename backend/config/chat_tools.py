@@ -42,7 +42,6 @@ from config.erp_tools import build_erp_tools  # 已含 build_local_tools
 from config.crawler_tools import build_crawler_tools
 from config.code_tools import build_code_tools
 from config.file_tools import build_file_tools
-from config.image_agent_prompt import IMAGE_AGENT_PROMPT
 
 # ============================================================
 # 工具并发安全标记
@@ -232,13 +231,14 @@ code_execute 直接 pd.read_parquet('staging/x.parquet') 即可。
 企业内部数据用 erp_agent，社交平台帖子用 social_crawler。
 
 ### generate_image — 通用图片生成
-非电商场景的图片生成：插画、概念图、logo、创意图、头像等。
-每次接受一张独立异步图片任务；明确传 mode=text_to_image 或 image_to_image。
+聊天中的图片生成统一使用 generate_image，包括插画、创意图和商品图。
+有匹配的可用图片 Skill 时先激活，按其方法打磨提示词和拆分图片；Skill 不改变工具权限。
+每次接受一张独立异步图片任务；两张调用两次，明确传 mode=text_to_image 或 image_to_image。
 生成参考图按本次用户选择传 references，用于分析的图片不自动成为生成参考图。
 模型由服务器使用平台默认模型及其图生图配对，不传 model/model_name，不询问模型偏好。
 比例用 aspect_ratio，分辨率用 resolution，格式用小写 output_format；不传 size/format。
 严格按当前 tools schema 调用，不从历史回复猜参数；取得真实 task_id 后才能说已提交。
-电商商品图（白底主图、场景图）→ 用 image_agent，效果更专业。
+工具不可用时说明当前限制；不要根据历史对话调用未展示的旧工具。
 
 ### generate_video — 视频生成
 根据文字描述异步生成短视频，返回 task_id，完成后自动推送。
@@ -295,7 +295,7 @@ conversation_context 是专家了解上文的唯一通道。
 
 单次 IN 匹配最多 5000 个值。超过时分别导出到 staging，用 code_execute JOIN。
 
-""".replace("__SCHEDULED_TASK_INSTRUCTIONS__", definition_registry().require("manage_scheduled_task").to_schema()["function"]["description"]) + IMAGE_AGENT_PROMPT
+""".replace("__SCHEDULED_TASK_INSTRUCTIONS__", definition_registry().require("manage_scheduled_task").to_schema()["function"]["description"])
 
 
 def get_tool_system_prompt() -> str:

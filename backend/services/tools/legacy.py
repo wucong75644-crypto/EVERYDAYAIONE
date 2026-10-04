@@ -26,8 +26,11 @@ def __getattr__(name: str):
         selected = {"code_execute", "file_analyze", "restore_file", "manage_scheduled_task",
                     "fetch_all_pages", "get_conversation_context"}
         return {s.name: s.effects for s in specs if s.name in selected}
-    return {s.name: ("config.erp_tools.build_fetch_all_pages_tool" if s.name == "fetch_all_pages"
-                     else "services.agent.conversation_tool_mixin.ConversationToolMixin")
+    original_sources = {
+        "fetch_all_pages": "config.erp_tools.build_fetch_all_pages_tool",
+        "get_conversation_context": "services.agent.conversation_tool_mixin.ConversationToolMixin",
+    }
+    return {s.name: original_sources.get(s.name, s.source)
             for s in specs if s.exposure is Exposure.LEGACY_INTERNAL}
 
 

@@ -59,7 +59,7 @@ def test_catalog_matches_actual_full_directory_and_handler_bindings(registry):
     # 07 completes ownership for all 36 runtime definitions.
     assert all(s.definition_kind == "explicit" for s in registry.specs())
     assert {s.name for s in registry.specs() if s.exposure is Exposure.LEGACY_INTERNAL} == {
-        "fetch_all_pages", "get_conversation_context",
+        "fetch_all_pages", "get_conversation_context", "image_agent",
     }
     assert all(callable(executor._handlers[s.handler_key]) for s in registry.specs())
 
@@ -366,13 +366,16 @@ def test_sequential_requests_do_not_reuse_user_org_workspace_or_mode(registry):
 
 
 @pytest.mark.parametrize("mode", ["ask", "auto", "plan"])
-def test_advertisement_reuses_current_core_rules(registry, mode):
-    result = resolve(registry, context(permission_mode=mode))
+@pytest.mark.parametrize("image_enabled", [False, True])
+def test_advertisement_reuses_current_core_rules(registry, mode, image_enabled):
+    ctx = context(permission_mode=mode)
+    ctx = replace(ctx, feature_flags={**ctx.feature_flags, "chat_image_async_enabled": image_enabled})
+    result = resolve(registry, ctx)
     expected = [schema for schema in get_tools_for_mode(mode, "org-a")
                 if schema["function"]["name"] not in {
                     "list_personal_skills_for_edit", "prepare_skill_draft",
                     "get_personal_skill_for_edit",
-                }]
+                } and (image_enabled or schema["function"]["name"] != "generate_image")]
     assert result.advertised_schemas() == expected
     assert set(result.advertised) <= set(result.allowed)
     # Block 01 retains old plan display facts; Block 02 will decide permission.
