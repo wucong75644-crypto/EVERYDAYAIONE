@@ -30,7 +30,7 @@ def isolated_db():
     assert info.get("host") == "/private/tmp" and info.get("port") == "55439"
     name = "chat_image_test_" + uuid4().hex
     admin = psycopg.connect(dsn, autocommit=True)
-    for role in ("everydayai", "everydayai_worker", "image_untrusted"):
+    for role in ("everydayai", "everydayai_worker", "everydayai_owner", "image_untrusted"):
         if not admin.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",(role,)).fetchone():
             admin.execute(sql.SQL("CREATE ROLE {} LOGIN").format(sql.Identifier(role)))
     admin.execute(sql.SQL("CREATE DATABASE {} TEMPLATE template0 ENCODING 'UTF8'").format(sql.Identifier(name)))
@@ -48,15 +48,38 @@ def isolated_db():
         connection.execute((ROOT/"migrations/256_skill_catalog.sql").read_text())
         connection.execute((ROOT/"migrations/257_skill_catalog_metadata.sql").read_text())
         connection.execute("ALTER TABLE skill_packages ADD COLUMN owner_user_id UUID")
-        connection.execute((ROOT/"migrations/273_chat_image_lifecycle.sql").read_text())
-        connection.execute((ROOT/"migrations/274_chat_image_settlement.sql").read_text())
+        # Both roles already have these schema permissions in production.
+        connection.execute("GRANT USAGE, CREATE ON SCHEMA public TO everydayai, everydayai_owner")
+        # Reproduce production table ownership and the controlled release role;
+        # the privileged test session creates no application-role membership.
+        connection.execute("ALTER TABLE tasks OWNER TO everydayai")
+        for migration in ("273_chat_image_lifecycle.sql", "274_chat_image_settlement.sql"):
+            connection.execute("SET LOCAL ROLE everydayai_owner")
+            connection.execute((ROOT/"migrations"/migration).read_text())
+            assert connection.execute("SELECT current_user=session_user").fetchone()[0] is True
         trial_schema=(ROOT/"migrations/266_skill_chat_creation_receipts.sql").read_text().split("CREATE TABLE public.skill_draft_trial_runs",1)[1].split("-- A user edit",1)[0]
         connection.execute("CREATE TABLE public.skill_draft_trial_runs"+trial_schema)
-        connection.execute((ROOT/"migrations/275_chat_image_trials.sql").read_text())
-        connection.execute((ROOT/"migrations/276_chat_image_snapshot_replay.sql").read_text())
+        connection.execute("ALTER TABLE skill_draft_trial_runs OWNER TO everydayai")
+        for migration in ("275_chat_image_trials.sql", "276_chat_image_snapshot_replay.sql"):
+            connection.execute("SET LOCAL ROLE everydayai_owner")
+            connection.execute((ROOT/"migrations"/migration).read_text())
+            assert connection.execute("SELECT current_user=session_user").fetchone()[0] is True
     yield test_dsn
     admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
     admin.close()
+
+
+def test_controlled_migrations_preserve_table_owners_rls_and_invoker_roles(isolated_db):
+    with psycopg.connect(isolated_db) as db:
+        tables = db.execute("SELECT relname,pg_get_userbyid(relowner),relrowsecurity,relforcerowsecurity FROM pg_class WHERE oid IN ('tasks'::regclass,'skill_draft_trial_runs'::regclass)").fetchall()
+        assert len(tables) == 2
+        assert all(row[1:] == ('everydayai', True, True) for row in tables)
+        functions = db.execute("SELECT proname,pg_get_userbyid(proowner),prosecdef,has_function_privilege('image_untrusted',oid,'EXECUTE') FROM pg_proc WHERE proname IN ('accept_chat_image_request','claim_chat_image_submission','publish_chat_image_result','accept_chat_image_trial','replay_chat_image_snapshot','feedback_chat_image')").fetchall()
+        assert len(functions) == 6
+        assert all(row[1:] == ('everydayai_owner', False, False) for row in functions)
+        roles = db.execute("SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname IN ('everydayai','everydayai_worker','everydayai_owner')").fetchall()
+        assert len(roles) == 3 and all(row == (False, False) for row in roles)
+        assert db.execute("SELECT current_user=session_user").fetchone()[0] is True
 
 
 @pytest.fixture

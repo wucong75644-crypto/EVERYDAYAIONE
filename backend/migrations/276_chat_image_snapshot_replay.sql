@@ -1,8 +1,12 @@
 -- Explicit user retries/regenerations keep the old version and use frozen input.
+SET LOCAL ROLE everydayai;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_image_replay
 ON public.tasks ((request_params->'_media_request_v1'->'origin'->>'retry_of_task_id'),
     (request_params->'_media_request_v1'->'origin'->>'retry_request_id'))
 WHERE type='image' AND request_params->'_media_request_v1'->'origin' ? 'retry_request_id';
+
+RESET ROLE;
+SET LOCAL ROLE everydayai_owner;
 
 CREATE OR REPLACE FUNCTION public.replay_chat_image_snapshot(
     p_source_task_id UUID,p_request_id UUID,p_snapshot JSONB,p_org_id UUID DEFAULT NULL,p_allow_new BOOLEAN DEFAULT FALSE
@@ -112,3 +116,4 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.feedback_chat_image(UUID,TEXT,UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.feedback_chat_image(UUID,TEXT,UUID) TO everydayai;
+RESET ROLE;

@@ -1,4 +1,5 @@
 -- Image previews share the image lifecycle, with a trial destination and no chat message.
+SET LOCAL ROLE everydayai;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_image_trial
 ON public.tasks ((request_params->'_media_request_v1'->'origin'->>'trial_id'))
 WHERE type='image' AND request_params->'_media_request_v1'->'origin'->>'destination'='skill_trial';
@@ -22,6 +23,9 @@ WITH CHECK (current_setting('app.access_kind',TRUE)='worker'
     AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.user_id=actor_user_id AND t.org_id=skill_draft_trial_runs.org_id
         AND t.type='image' AND t.request_params->'_media_request_v1'->'origin'->>'destination'='skill_trial'
         AND t.request_params->'_media_request_v1'->'origin'->>'trial_id'=skill_draft_trial_runs.id::TEXT));
+
+RESET ROLE;
+SET LOCAL ROLE everydayai_owner;
 
 CREATE OR REPLACE FUNCTION public.accept_chat_image_trial(
     p_trial_id UUID,p_snapshot JSONB,p_result JSONB,p_org_id UUID
@@ -92,3 +96,4 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.accept_chat_image_trial(UUID,JSONB,JSONB,UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.accept_chat_image_trial(UUID,JSONB,JSONB,UUID) TO everydayai;
+RESET ROLE;

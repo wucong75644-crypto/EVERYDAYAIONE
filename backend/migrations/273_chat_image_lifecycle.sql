@@ -2,6 +2,10 @@
 -- SECURITY INVOKER deliberately preserves the caller's existing table RLS.
 -- Lock order: parent task -> child task -> user -> credit transaction.
 
+-- Legacy application tables belong to everydayai in production. Keep their
+-- owner/RLS intact; only the migration session switches role for table DDL.
+SET LOCAL ROLE everydayai;
+
 CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_image_call
 ON public.tasks ((request_params->'_media_request_v1'->'origin'->>'parent_task_id'),
                  (request_params->'_media_request_v1'->'origin'->>'tool_call_id'))
@@ -10,6 +14,9 @@ WHERE type = 'image' AND request_params ? '_media_request_v1';
 CREATE INDEX IF NOT EXISTS idx_chat_image_submission
 ON public.tasks ((request_params->'_media_lifecycle_v1'->>'phase'), created_at, id)
 WHERE type = 'image' AND request_params ? '_media_request_v1';
+
+RESET ROLE;
+SET LOCAL ROLE everydayai_owner;
 
 CREATE OR REPLACE FUNCTION public.accept_chat_image_request(
     p_parent_task_id UUID, p_execution_token UUID, p_snapshot JSONB,
@@ -196,3 +203,4 @@ REVOKE ALL ON FUNCTION public.accept_chat_image_request(UUID,UUID,JSONB,UUID) FR
 REVOKE ALL ON FUNCTION public.claim_chat_image_submission(UUID,UUID,INTEGER,UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.accept_chat_image_request(UUID,UUID,JSONB,UUID) TO everydayai;
 GRANT EXECUTE ON FUNCTION public.claim_chat_image_submission(UUID,UUID,INTEGER,UUID) TO everydayai, everydayai_worker;
+RESET ROLE;

@@ -10,7 +10,7 @@
 - 最新代码已有 `create_task_once`、适配器、资产 RPC 和 Skill Runtime。复用这些能力，不另建图片任务表、通用 Runtime、资源编号或价格副本。
 - `_RepeatedToolCallGuard` 已按完整参数计算 fingerprint：稳定 `variant_id` 即可区分同提示词变体，无须改造通用循环保护；随机变体受数据库硬预算约束。
 - 原设计中的同步 `_run_image_generation`、内部历史工具、同步图片 trial、聊天孤儿恢复和父流式槽位断点仍存在；本任务已迁移或修复。复检旧同步图片符号已无消费者及实现。
-- 仅开发、测试与文档；没有提交、推送、部署、合并、清理工作树、生产写入、生产 Skill 发布/分配或付费供应商调用。
+- 最初仅开发、测试与文档；后续用户明确授权提交部署及首轮最多2张/24积分的生产验证。未合并main、清理工作树或发布/分配生产Skill。
 
 ## 执行顺序和阶段状态
 
@@ -110,5 +110,7 @@ PG使用最小生产字段合同、明确测试RLS及实际040/145/256/257/273�
 本轮生产只读preflight：受保护数据库身份一致，所需列全部存在，everydayai/worker/owner均无superuser或bypassrls，现有register_user_asset可由everydayai执行；tasks/消息/账本采用当前生产既有无RLS合同，trial与change_sets保持FORCE RLS。没有关闭RLS、扩大表授权、读取密钥或故障注入。账号门对应新增3项及相关645项定向测试通过；原1500项作为首轮证据，不冒充新增门后的全量复验。
 
 受控发布准备完成，拟限管理员账号、每轮2张/24用户积分、透明关闭。此前自动审批拒绝上传生产开关配置，命令未执行。用户随后明确授权“提交部署，并允许上述范围的生产生图验证”；按受控入口执行，首轮真实验证总计最多2张/24用户积分，不合并main或清理任务。发布与生产验证结果另行按实际证据记录。
+
+首次候选 `ea59610a` 已受控提交/推送；前后端构建、文件同步完成，273在事务内创建tasks索引时因owner不符失败，273–276均未记入迁移账本、接受RPC不存在，服务尚未重启，完整发布候选失效，锁保留。只读核验确认发布/迁移均已停止且原锁owner不变。兼容修复沿用271模式：索引与trial policy DDL局部使用既有表owner `everydayai`，函数部分恢复 `everydayai_owner`，保持INVOKER及原ACL；不转移表owner、不关闭RLS、不扩大生产授权。生产两角色已有public USAGE/CREATE。原PG测试说明中的16为记录错误，临时cluster实际为已安装PG17；修正启动参数后本机仅Unix socket。按真实表owner与发布role wrapper复验 **46项通过/0跳过**（1.90秒，`/private/tmp/chat-image-migration-owner-test.log`），包含角色恢复、函数owner/INVOKER/PUBLIC拒绝及Worker/账本/RLS回归。独立只读审查无新的高置信阻塞；下一步按原所有者恢复锁并受控重新发布修复候选。
 
 API/状态见[接口文档](API_聊天Skill图片异步任务.md)，迁移顺序与保留型回滚见[发布文档](RELEASE_聊天Skill图片异步任务.md)。生产实测结果按实际阶段继续记录。

@@ -42,7 +42,7 @@
 
 ## 无付费隔离测试复现
 
-现有测试使用本机已安装的PostgreSQL16、Redis、backend venv及frontend依赖。临时PG cluster位于 `/private/tmp/everydayai-chat-image-pg`，仅Unix socket `/private/tmp`/55439；Redis仅 `/private/tmp/everydayai-chat-image-redis.sock`，port0，无持久化。不要复用项目配置或替换为生产DSN。本轮测试后已停止这两个专用测试进程，保留目录和日志；复测需先启动。
+现有测试使用本机已安装的PostgreSQL17、Redis、backend venv及frontend依赖。临时PG cluster位于 `/private/tmp/everydayai-chat-image-pg`，仅Unix socket `/private/tmp`/55439；Redis仅 `/private/tmp/everydayai-chat-image-redis.sock`，port0，无持久化。不要复用项目配置或替换为生产DSN。本轮测试后已停止这两个专用测试进程，保留目录和日志；复测需先启动。
 
 专用cluster不存在时，可在新临时目录运行已有 `initdb --auth=trust --locale=C --encoding=UTF8`，再以 `listen_addresses=''`、`unix_socket_directories='/private/tmp'`、port55439启动。目录已存在先识别该测试cluster，不覆盖；Unix socket权限按隔离本机测试设置。Redis以 `--port 0 --unixsocket <上述专用路径> --save '' --appendonly no`启动。测试fixture创建随机专用DB并销毁，不读应用DATABASE_URL。
 

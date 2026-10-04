@@ -1,6 +1,10 @@
 -- Single-image lifecycle and platform-paid uncertain submissions. Existing tables/ledger only.
+SET LOCAL ROLE everydayai;
 CREATE INDEX IF NOT EXISTS idx_chat_image_platform_cost
 ON public.tasks (completed_at, id) WHERE request_params ? '_media_platform_cost_v1';
+
+RESET ROLE;
+SET LOCAL ROLE everydayai_owner;
 
 CREATE OR REPLACE FUNCTION public.assert_chat_image_worker(p_org_id UUID)
 RETURNS VOID LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog,public AS $$
@@ -360,3 +364,4 @@ GRANT EXECUTE ON FUNCTION public.assert_chat_image_worker(UUID),
  public.scan_chat_image_work(UUID,TIMESTAMPTZ,UUID,INTEGER) TO everydayai,everydayai_worker;
 GRANT EXECUTE ON FUNCTION public.stop_queued_chat_image(UUID,UUID) TO everydayai;
 GRANT EXECUTE ON FUNCTION public.chat_image_platform_cost_report(TIMESTAMPTZ,TIMESTAMPTZ,INTEGER,INTEGER) TO everydayai;
+RESET ROLE;
