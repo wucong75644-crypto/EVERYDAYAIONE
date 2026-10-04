@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -491,3 +492,59 @@ async def test_mcp_setup_rejects_non_admin_before_generating_credentials(
     assert captured.value.status_code == 403
     control.for_mcp_actor.assert_not_called()
     resolver.mcp_test_readonly.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mcp_setup_logs_only_redacted_failure_stage_and_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.tools.mcp_boundary import MCPError
+
+    secret = "synthetic-token-never-log"
+
+    class FailingClient:
+        async def health(self):
+            raise MCPError("MCP_REMOTE_ERROR")
+
+        async def discover(self):
+            raise AssertionError("discovery should not run after failed health")
+
+    class ClientFactory:
+        def __init__(self, connector_id, *, bearer_token):
+            assert connector_id == "test-readonly"
+            assert bearer_token == secret
+
+        @asynccontextmanager
+        async def session(self):
+            yield FailingClient()
+
+    monkeypatch.setattr("services.tools.mcp_client.MCPClient", ClientFactory)
+    monkeypatch.setattr(
+        "services.tools.mcp_org.scoped_mcp_database", lambda db, **_: db,
+    )
+    monkeypatch.setattr(
+        "services.tools.mcp_org.record_connector_health", lambda *args, **kwargs: True,
+    )
+    org_service = MagicMock()
+    control = MagicMock()
+    scoped_control = control.for_mcp_actor.return_value
+    scoped_control.mcp_credential_status.return_value = {"configured": True, "version": 1}
+    resolver = MagicMock()
+    resolver.mcp_test_readonly.return_value = SimpleNamespace(values={
+        "mcp.test_readonly.bearer_token": {"token": secret},
+    })
+    db = MagicMock()
+    db.org_id = ORG_ID
+    logger = MagicMock()
+    monkeypatch.setattr("api.routes.org.logger", logger)
+
+    result = await setup_mcp_test_connector(
+        ORG_ID, USER_ID, db, org_service, control, resolver,
+    )
+
+    assert result["success"] is False
+    assert result["data"]["last_error_code"] == "MCP_REMOTE_ERROR"
+    logger.warning.assert_called_once()
+    log_args = logger.warning.call_args.args
+    assert log_args[1:] == ("health_and_discovery", "MCP_REMOTE_ERROR", "MCPError")
+    assert secret not in str(log_args)
