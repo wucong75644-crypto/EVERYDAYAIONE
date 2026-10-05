@@ -23,7 +23,10 @@ def _schema_generate_image_async():
                 "历史图片按上下文给出的 message_id/content_index 原样复制；缺少真实定位先调用 get_conversation_context，不能编造 file_id。"
                 "先看样张时只提交样张。variant_id 是稳定变体身份，不能扩大服务器预算。"
                 "遇到素材或提示词版本歧义先询问；失败不自动无限重试。"
-                f"本轮上限 {limits.chat_image_max_requests} 张、{limits.chat_image_max_credits} 积分。"
+                f"每用户跨对话共享最多15个活跃任务（聊天本身也占槽位），满额时图片排队，完成或失败后释放；不是累计生成张数上限。本轮图片累计预算{limits.chat_image_max_credits}积分。"
+                "原图画布与产品形状不同，使用服务器canvas事实；参考图未指定尺寸时沿用画布比例。"
+                "用户指定尺寸优先；只改比例保留分辨率，只改分辨率保留比例。"
+                "计划、prompt和参数使用同一目标规格。不支持的精确像素、不明确尺寸或冲突先询问，不自动近似。"
                 "服务器默认模型的实际能力与单张积分（model为服务器事实，不是可填写参数）：" + json.dumps(image_capabilities(),ensure_ascii=False,separators=(',',':'))
             ),
             "parameters": {
@@ -44,7 +47,13 @@ def _schema_generate_image_async():
                         "oneOf":[{"required":[key]} for key in ("resource_ref","file_id","asset_id","message_id")],
                         "dependentRequired":{"message_id":["content_index"]},
                     }},
-                    "aspect_ratio":{"type":"string","description":"画面比例，如1:1；不是像素尺寸或分辨率"},
+                    "size_requirement":{"type":"object","additionalProperties":False,
+                        "properties":{
+                            "mode":{"type":"string","enum":["explicit","inherit_reference","auto"]},
+                            "reference_index":{"type":"integer","minimum":0,"description":"沿用画布的参考图在references中的索引；多图比例不同需用户选定"},
+                            "width":{"type":"integer","minimum":1}, "height":{"type":"integer","minimum":1},
+                        }, "description":"独立目标尺寸要求；精确像素必须同时提供宽高，接口不支持时在受理前解释并等待用户选择"},
+                    "aspect_ratio":{"type":"string","description":"目标画布比例，如1:1；产品形状不能决定它，非精确像素"},
                     "resolution":{"type":"string","enum":["1K","2K","4K"],"description":"仅填写默认模型实际支持的分辨率"},
                     "output_format":{"type":"string","enum":["png","jpeg","jpg","webp"],"description":"小写输出格式，必须为默认模型实际支持"},
                     **({"background":{"type":"string","enum":["opaque","transparent"],"description":"仅 Flare 支持；透明输出需保存后验证真实alpha"}} if limits.chat_image_transparent_enabled else {}),

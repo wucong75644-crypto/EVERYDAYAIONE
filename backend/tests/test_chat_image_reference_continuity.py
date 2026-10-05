@@ -176,7 +176,7 @@ async def test_unreadable_original_is_rejected_before_acceptance(source, tmp_pat
             "references": [{"message_id": "source-message", "content_index": 3, "role": "product"}]})
     finally:
         _dispatch_call_id.reset(token)
-    assert result.is_failure and result.error_message == "IMAGE_INPUT_UNAVAILABLE"
+    assert result.is_failure and result.error_message == "IMAGE_DIMENSIONS_UNAVAILABLE"
     assert result.metadata["accepted"] is False and "参考图" in result.summary
     owner.db.rpc.assert_not_called()
 

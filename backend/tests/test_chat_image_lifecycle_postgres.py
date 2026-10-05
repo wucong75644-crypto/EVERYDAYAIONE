@@ -60,7 +60,7 @@ def isolated_db():
         trial_schema=(ROOT/"migrations/266_skill_chat_creation_receipts.sql").read_text().split("CREATE TABLE public.skill_draft_trial_runs",1)[1].split("-- A user edit",1)[0]
         connection.execute("CREATE TABLE public.skill_draft_trial_runs"+trial_schema)
         connection.execute("ALTER TABLE skill_draft_trial_runs OWNER TO everydayai")
-        for migration in ("275_chat_image_trials.sql", "276_chat_image_snapshot_replay.sql"):
+        for migration in ("275_chat_image_trials.sql", "276_chat_image_snapshot_replay.sql", "278_chat_image_size_budget.sql"):
             connection.execute("SET LOCAL ROLE everydayai_owner")
             connection.execute((ROOT/"migrations"/migration).read_text())
             assert connection.execute("SELECT current_user=session_user").fetchone()[0] is True
@@ -601,7 +601,10 @@ def test_snapshot_retry_is_atomic_new_version_and_bounded(facts):
         results=list(pool.map(lambda _:replay_sql(facts,source,request_id),range(4)))
     assert sum(r["outcome"]=="accepted" for r in results)==1
     assert len({r["task_id"] for r in results})==1
-    for _ in range(3): replay_sql(facts,source,str(uuid4()))
+    # The cumulative number may exceed the old four-request cap. Credits from
+    # the original and retries share the same parent budget (100 / 6).
+    for _ in range(100 // facts["snapshot"]["estimated_credits"] - 2):
+        replay_sql(facts,source,str(uuid4()))
     with pytest.raises(psycopg.Error,match="REPLAY_BUDGET_EXCEEDED"):
         replay_sql(facts,source,str(uuid4()))
     with psycopg.connect(facts["dsn"]) as db:
@@ -677,7 +680,7 @@ def test_random_variants_cannot_bypass_concurrent_budget(facts):
             return "limited"
     with ThreadPoolExecutor(8) as pool:
         results=list(pool.map(attempt,range(8)))
-    assert results.count("accepted")==4 and results.count("limited")==4
+    assert results.count("accepted")==8 and results.count("limited")==0
 
 
 def test_two_workers_only_one_ledger_and_debit(facts):
@@ -782,6 +785,9 @@ async def test_image_handler_accepts_without_native_prepare_or_provider(facts,mo
         org_id=None,task_id=facts["parent"],conversation_id=facts["snapshot"]["origin"]["conversation_id"],
         image_execution_token=facts["token"],context_scope="user",execution_mode="interactive",
         resource_manifest=None,cancellation_event=None)
+    with psycopg.connect(facts["dsn"]) as db:
+        db.execute("INSERT INTO messages(id,conversation_id,role,content,status,context_revision) VALUES (%s,%s,'user','[{\"type\":\"text\",\"text\":\"生成图片\"}]','completed',0)",
+            (facts["snapshot"]["origin"]["input_message_id"],owner.conversation_id))
     token=_dispatch_call_id.set("handler-call")
     try:
         with patch("services.skills.media.prepare_media_prompt") as prepare, patch("services.adapters.factory.create_image_adapter") as provider:
@@ -896,7 +902,8 @@ async def test_new_service_instance_recovers_expired_submission_without_resend(f
     provider.assert_not_called()
 
 
-async def test_isolated_tool_to_http_completion_and_snapshot_replay(facts,lifecycle,monkeypatch):
+@pytest.mark.parametrize("output_size", [(4,4),(3,4)])
+async def test_isolated_tool_to_http_completion_and_snapshot_replay(facts,lifecycle,monkeypatch,output_size):
     """Real task/ledger/RLS, KIE HTTP codec, and application routes; no network.
 
     Auth identity is overridden. Storage writes a real isolated PNG and the
@@ -926,11 +933,12 @@ async def test_isolated_tool_to_http_completion_and_snapshot_replay(facts,lifecy
     conversation=facts["snapshot"]["origin"]["conversation_id"]
     executor=ToolExecutor(db=runtime_db,user_id=facts["user"],conversation_id=conversation,org_id=None,
         workspace_user_id=facts["user"],task_id=facts["parent"],image_execution_token=facts["token"])
+    external_id="isolated-external-"+uuid4().hex
     requests=[]
     def provider_http(request):
         assert request.url.path=="/api/v1/jobs/createTask"
         requests.append(json.loads(request.content))
-        return httpx.Response(200,json={"code":200,"msg":"success","data":{"taskId":"isolated-external"}})
+        return httpx.Response(200,json={"code":200,"msg":"success","data":{"taskId":external_id}})
     client=KieClient("isolated-unused-key")
     client._client=httpx.AsyncClient(base_url="https://isolated.invalid",transport=httpx.MockTransport(provider_http),trust_env=False)
     monkeypatch.setattr(client,"_schedule_shadow_upload",Mock())
@@ -941,12 +949,15 @@ async def test_isolated_tool_to_http_completion_and_snapshot_replay(facts,lifecy
     monkeypatch.setattr("services.assets.asset_identity.configured_asset_hosts",lambda:frozenset({"isolated.invalid"}))
     async def save(urls,*args,**kwargs):
         assert urls==["https://isolated.invalid/provider.png"]
-        Image.new("RGB",(4,4)).save(files.resolve_safe_path("result.png"))
+        Image.new("RGB",output_size).save(files.resolve_safe_path("result.png"))
         return [{"url":saved_url,"workspace_path":"result.png"}]
     monkeypatch.setattr("services.file_upload.persist_media_urls_to_workspace",save)
     app=FastAPI();app.include_router(router)
     app.dependency_overrides[get_org_context]=lambda:SimpleNamespace(user_id=facts["user"],org_id=None)
     app.dependency_overrides[get_scoped_db]=lambda:runtime_db
+    with psycopg.connect(facts["dsn"]) as db:
+        db.execute("INSERT INTO messages(id,conversation_id,role,content,status,context_revision) VALUES (%s,%s,'user','[{\"type\":\"text\",\"text\":\"生成图片\"}]','completed',0)",
+                   (facts["snapshot"]["origin"]["input_message_id"],conversation))
     token=_dispatch_call_id.set("end-to-end-single-call")
     try:
         receipt=(await executor._generate_image({"mode":"text_to_image","prompt":"  exact end-to-end prompt  "})).metadata
@@ -958,11 +969,21 @@ async def test_isolated_tool_to_http_completion_and_snapshot_replay(facts,lifecy
             assert detail.json()["input"]["prompt"]=="  exact end-to-end prompt  "
             await lifecycle.submit(await lifecycle.refresh({"id":task_id,"user_id":facts["user"],"org_id":None}))
             assert len(requests)==1 and requests[0]["input"]["prompt"]=="  exact end-to-end prompt  "
-            callback=ImageGenerateResult(task_id="isolated-external",status=TaskStatus.SUCCESS,image_urls=["https://isolated.invalid/provider.png"])
+            callback=ImageGenerateResult(task_id=external_id,status=TaskStatus.SUCCESS,image_urls=["https://isolated.invalid/provider.png"])
             completion=TaskCompletionService(lifecycle.db)
-            assert await completion.process_result("isolated-external",callback)
-            assert await completion.process_result("isolated-external",callback)
+            assert await completion.process_result(external_id,callback)
+            assert await completion.process_result(external_id,callback)
             detail=(await browser.get(f"/tasks/{task_id}/image")).json()
+            if output_size != (4,4):
+                assert detail["status"]=="failed" and detail["result"][0]["failed"]
+                assert detail["result"][0]["quality_checks"]["size_matches"] is False
+                assert detail["result"][0]["quality_checks"]["actual"]["aspect_ratio"]=="3:4"
+                assert detail["credits_used"]==0 and detail["platform_cost"]["reason"]=="image_output_contract_failure"
+                assert len(requests)==1  # duplicate callback does not generate again
+                with psycopg.connect(facts["dsn"]) as db:
+                    assert db.execute("SELECT credits FROM users WHERE id=%s",(facts["user"],)).fetchone()[0]==100
+                    assert db.execute("SELECT status FROM credit_transactions WHERE task_id=%s",(task_id,)).fetchone()[0]=="refunded"
+                return
             assert detail["status"]=="completed" and detail["result"][0]["task_id"]==task_id
             asset_id=detail["result"][0]["asset_id"]
             assert asset_id and detail["result"][0]["url"]==saved_url
@@ -987,3 +1008,95 @@ async def test_isolated_tool_to_http_completion_and_snapshot_replay(facts,lifecy
     finally:
         _dispatch_call_id.reset(token)
         await client.close()
+
+
+
+def test_three_hundred_credits_are_atomic_not_a_lifetime_count_limit(facts):
+    snapshot=freeze_image_request({"mode":"text_to_image","prompt":"exact","resolution":"4K"},[],
+        origin=facts["snapshot"]["origin"],max_requests=15,max_credits=300)
+    def attempt(index):
+        candidate=deepcopy(snapshot)
+        candidate["origin"]["tool_call_id"]=f"budget-{index}"
+        try:
+            return accept(facts,candidate)["outcome"]
+        except psycopg.Error as error:
+            assert "BUDGET_EXCEEDED" in str(error)
+            return "limited"
+    with ThreadPoolExecutor(8) as pool:
+        outcomes=list(pool.map(attempt,range(40)))
+    maximum=300 // snapshot["estimated_credits"]
+    assert maximum>15 and outcomes.count("accepted")==maximum
+    with psycopg.connect(facts["dsn"]) as db:
+        budget=db.execute("SELECT request_params->'_media_budget_v1' FROM tasks WHERE id=%s",(facts["parent"],)).fetchone()[0]
+        assert budget["reserved_credits"]==maximum*snapshot["estimated_credits"]<=300
+        assert budget["requests"]==maximum
+        assert db.execute("SELECT credits FROM users WHERE id=%s",(facts["user"],)).fetchone()[0]==100
+        assert db.execute("SELECT count(*) FROM credit_transactions WHERE user_id=%s",(facts["user"],)).fetchone()[0]==0
+
+
+def test_size_budget_migration_rollback_and_forward_restore(facts):
+    with psycopg.connect(facts["dsn"]) as db:
+        db.execute((ROOT/"migrations/rollback/278_chat_image_size_budget_rollback.sql").read_text())
+    try:
+        for index in range(4):
+            snapshot=deepcopy(facts["snapshot"])
+            snapshot["origin"]["tool_call_id"]=f"old-limit-{index}"
+            accept(facts,snapshot)
+        snapshot["origin"]["tool_call_id"]="fifth"
+        with pytest.raises(psycopg.Error,match="BUDGET_EXCEEDED"):
+            accept(facts,snapshot)
+    finally:
+        with psycopg.connect(facts["dsn"]) as db:
+            db.execute((ROOT/"migrations/278_chat_image_size_budget.sql").read_text())
+    assert accept(facts,snapshot)["outcome"]=="accepted"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("user_text,expected", [("参考原图生成图片","1:1"),("改成3:4、2K","3:4"),("生成1920×1080",None)])
+async def test_actual_acceptance_uses_square_bytes_or_user_override_before_debit(facts,monkeypatch,tmp_path,user_text,expected):
+    from types import SimpleNamespace
+    from PIL import Image
+    import json
+    from core.config import Settings
+    from core.local_db import LocalDBClient
+    from core.db_scope import ScopedDatabaseClient, DatabaseScope, DatabaseAccessKind
+    from services.file_executor import FileExecutor
+    from services.handlers.image_handler import ImageHandler
+    from services.handlers.chat_image_request import ChatImageNotAcceptedError,verify_frozen_request
+    from services.tools.dispatcher import _dispatch_call_id
+    settings=Settings(_env_file=None,database_url="postgresql://invalid/test",jwt_secret_key="isolated-test-key",file_workspace_root=str(tmp_path),chat_image_async_enabled=True)
+    monkeypatch.setattr("core.config.get_settings",lambda:settings)
+    raw=LocalDBClient(psycopg.conninfo.make_conninfo(facts["dsn"],user="everydayai"),min_size=1,max_size=3)
+    scoped=ScopedDatabaseClient(raw,DatabaseScope(facts["user"],None,DatabaseAccessKind.RUNTIME))
+    conv=facts["snapshot"]["origin"]["conversation_id"]
+    message=facts["snapshot"]["origin"]["input_message_id"]
+    files=FileExecutor(str(tmp_path),facts["user"],None)
+    Image.new("RGB",(1080,1080)).save(files.resolve_safe_path("original.png"))
+    with psycopg.connect(facts["dsn"]) as db:
+        content=json.dumps([{"type":"text","text":user_text},{"type":"image","workspace_path":"original.png","width":600,"height":800}])
+        db.execute("INSERT INTO messages(id,conversation_id,role,content,status,context_revision) VALUES (%s,%s,'user',%s,'completed',0)",(message,conv,content))
+        db.execute("INSERT INTO messages(id,conversation_id,role,content,status,context_revision) VALUES (%s,%s,'user','[{\"type\":\"text\",\"text\":\"改成16:9、4K\"}]','completed',1)",(str(uuid4()),conv))
+    owner=SimpleNamespace(db=scoped,user_id=facts["user"],workspace_user_id=facts["user"],org_id=None,
+        task_id=facts["parent"],conversation_id=conv,image_execution_token=facts["token"],context_scope="user",execution_mode="interactive",resource_manifest=None,cancellation_event=None)
+    token=_dispatch_call_id.set("actual-square-reference")
+    try:
+        args={"mode":"image_to_image","prompt":"竖向笔记本摄影","aspect_ratio":"3:4","references":[{"message_id":message,"content_index":1,"role":"产品"}]}
+        if expected is None:
+            with pytest.raises(ChatImageNotAcceptedError,match="EXACT_SIZE_UNSUPPORTED"):
+                await ImageHandler(scoped).accept_chat_image(owner,args)
+        else:
+            receipt=await ImageHandler(scoped).accept_chat_image(owner,args)
+            with psycopg.connect(facts["dsn"]) as db:
+                snapshot=db.execute("SELECT request_params->'_media_request_v1' FROM tasks WHERE id=%s",(receipt["task_id"],)).fetchone()[0]
+                verify_frozen_request(snapshot)
+                assert snapshot["aspect_ratio"]==expected
+                assert snapshot["references"][0]["width"]==snapshot["references"][0]["height"]==1080
+                assert snapshot["resolution"]==("2K" if expected=="3:4" else "1K")
+        with psycopg.connect(facts["dsn"]) as db:
+            assert db.execute("SELECT credits FROM users WHERE id=%s",(facts["user"],)).fetchone()[0]==100
+            assert db.execute("SELECT count(*) FROM credit_transactions WHERE user_id=%s",(facts["user"],)).fetchone()[0]==0
+            if expected is None:
+                assert db.execute("SELECT count(*) FROM tasks WHERE user_id=%s AND type='image'",(facts["user"],)).fetchone()[0]==0
+    finally:
+        _dispatch_call_id.reset(token)
+        raw.close()

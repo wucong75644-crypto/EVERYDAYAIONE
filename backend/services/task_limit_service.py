@@ -3,7 +3,7 @@
 
 基于 Redis SET 的任务并发限制：
 - 全局任务限制（默认15个）
-- 单对话任务限制（默认5个）
+- 单对话任务限制（默认15个，与全局共享）
 
 使用 SET 存储活跃 slot_id，替代 INCR/DECR 计数器：
 - 幂等：重复 release 不会变负数
@@ -55,7 +55,7 @@ class TaskLimitService:
         """Atomic, fail-closed media acquisition; never borrow a chat slot.
 
         The persistent local image task ID is the independent slot identity.
-        Existing chat/video acquisition and its availability behavior are intact.
+        All task types use this atomic acquisition; Redis errors fail closed.
         """
         script = """
         if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 1 and
@@ -102,60 +102,8 @@ class TaskLimitService:
         Raises:
             TaskQueueFullError: 超过限制时抛出
         """
-        try:
-            global_key = self._global_key(user_id, org_id)
-            conv_key = self._conversation_key(user_id, conversation_id, org_id)
-
-            # 批量读取两个 SET 的大小
-            async with self.redis.pipeline(transaction=False) as pipe:
-                await pipe.scard(global_key)
-                await pipe.scard(conv_key)
-                global_count, conv_count = await pipe.execute()
-
-            # 检查全局限制
-            if global_count >= self.global_limit:
-                logger.warning(
-                    f"任务队列已满（全局） | user_id={user_id} | "
-                    f"current={global_count} | limit={self.global_limit}"
-                )
-                raise TaskQueueFullError(
-                    current_count=global_count,
-                    max_count=self.global_limit,
-                    scope="global",
-                )
-
-            # 检查单对话限制
-            if conv_count >= self.conversation_limit:
-                logger.warning(
-                    f"任务队列已满（单对话） | user_id={user_id} | "
-                    f"conversation_id={conversation_id} | "
-                    f"current={conv_count} | limit={self.conversation_limit}"
-                )
-                raise TaskQueueFullError(
-                    current_count=conv_count,
-                    max_count=self.conversation_limit,
-                    scope="conversation",
-                )
-
-            # 生成唯一槽位 ID 并加入 SET
-            slot_id = str(uuid.uuid4())
-            async with self.redis.pipeline() as pipe:
-                await pipe.sadd(global_key, slot_id)
-                await pipe.expire(global_key, _SET_TTL)
-                await pipe.sadd(conv_key, slot_id)
-                await pipe.expire(conv_key, _SET_TTL)
-                await pipe.execute()
-
-            logger.debug(
-                f"获取任务槽位成功 | user_id={user_id} | "
-                f"conversation_id={conversation_id} | slot_id={slot_id}"
-            )
-            return slot_id
-        except TaskQueueFullError:
-            raise
-        except Exception as e:
-            logger.warning(f"任务限制检查失败，降级允许执行 | error={e}")
-            return str(uuid.uuid4())
+        slot_id = str(uuid.uuid4())
+        return await self.acquire_image_slot(user_id, conversation_id, slot_id, org_id)
 
     async def release(
         self,

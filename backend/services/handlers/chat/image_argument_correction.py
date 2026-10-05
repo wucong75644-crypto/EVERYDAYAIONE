@@ -35,7 +35,7 @@ def _protected(args):
     if not isinstance(args.get("prompt"), str) or not args["prompt"].strip():
         return None
     fields = ("prompt", "mode", "references", "aspect_ratio", "resolution", "output_format",
-              "background", "source_prompt", "source_task_id", "plan_item_id", "variant_id")
+              "background", "size_requirement", "source_prompt", "source_task_id", "plan_item_id", "variant_id")
     # Unknown fields may carry generation intent (mask, weight, batches or old
     # reference URLs). Removing them could silently change the requested image.
     if set(args) - set(fields) - {"model", "model_name", "format", "size"}:

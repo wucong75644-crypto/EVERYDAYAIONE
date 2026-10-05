@@ -55,7 +55,7 @@ def _append_image_locators(messages, row, *, org_id=None, visible_indices=()):
     if not row.get("id"):
         return  # Legacy non-persisted caller fixtures have no selectable source.
     from .image_sources import image_sources, format_image_sources
-    text = format_image_sources(image_sources(row, org_id, visible_indices))
+    text = format_image_sources(row.get("_trusted_image_sources") or image_sources(row, org_id, visible_indices))
     if not text:
         return
     target = next((message for message in reversed(messages)
@@ -248,6 +248,10 @@ async def build_context_messages(
         context: List[Dict[str, Any]] = []
         total_tokens = 0
         total_images = 0
+        from .image_sources import content_parts
+        # The query is already scoped to the authorized conversation. Client
+        # image metadata cannot select an owner or filesystem root.
+        owner_id, owner_scope, owner_loaded = None, "user", False
         first_assistant_seen = False
         latest_marker: Optional[Dict[str, Any]] = None
 
@@ -269,6 +273,16 @@ async def build_context_messages(
             for row in rows:
                 if row.get("status")=="failed" and (row.get("generation_params") or {}).get("origin")!="chat_image":
                     continue
+                if any(isinstance(part, dict) and part.get("type") == "image" for part in content_parts(row.get("content"))):
+                    if not owner_loaded:
+                        conversation = db.table("conversations").select("user_id,scope_type").eq("id", conversation_id).maybe_single().execute().data
+                        owner_id = conversation.get("user_id") if isinstance(conversation, dict) else None
+                        owner_scope = conversation.get("scope_type", "user") if isinstance(conversation, dict) else "user"
+                        owner_loaded = True
+                    if owner_id:
+                        from .image_sources import discovered_image_sources
+                        row["_trusted_image_sources"] = discovered_image_sources(
+                            row, db, org_id=org_id, owner_id=owner_id, scope=owner_scope)
                 preserve_tool_protocol = False
                 if (row["role"] == "assistant" and not first_assistant_seen
                         and (row.get("generation_params") or {}).get("origin") != "chat_image"):

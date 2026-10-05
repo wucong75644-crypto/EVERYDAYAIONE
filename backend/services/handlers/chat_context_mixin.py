@@ -148,6 +148,15 @@ class ChatContextMixin:
             org_id=getattr(self, "org_id", None), owner_id=workspace_user_id,
             visible_indices=visible_indices)
 
+        for source in current_image_sources:
+            facts = source.get("canvas")
+            if facts:
+                for file in workspace_files:
+                    if file.get("workspace_path") and source.get("file_id"):
+                        from services.agent.file_id import compute_fid
+                        if compute_fid(getattr(self, "org_id", None), file["workspace_path"]) == source["file_id"]:
+                            file.update(width=facts["width"], height=facts["height"])
+
         inp = BuildInput(
             user_id=user_id,
             conversation_id=conversation_id,

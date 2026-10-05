@@ -2,11 +2,11 @@
 task_limit_service 单元测试
 
 测试 TaskLimitService 的核心功能（基于 Redis SET）：
-- check_and_acquire: SCARD 检查 + SADD 获取，返回 slot_id
+- check_and_acquire: Redis Lua 原子占位，返回 slot_id
 - release: SREM 释放指定 slot_id
 - get_active_count: SCARD 获取计数
 - can_start_task: 无异常检查
-- Redis 故障降级
+- Redis 故障拒绝占位
 - 幂等性：重复 release 不报错
 """
 
@@ -78,6 +78,7 @@ def mock_redis():
     """Mock Redis 客户端（支持 pipeline context manager + SET 操作）"""
     redis = AsyncMock()
     redis.scard = AsyncMock(return_value=0)
+    redis.eval = AsyncMock(return_value=0)
 
     # pipeline 返回 async context manager
     pipe = AsyncMock()
@@ -110,7 +111,7 @@ def service(mock_redis):
 
 
 class TestCheckAndAcquire:
-    """check_and_acquire: SCARD 检查 + SADD 获取"""
+    """check_and_acquire: Redis Lua 原子占位"""
 
     @pytest.mark.asyncio
     async def test_success_returns_slot_id(self, service, mock_redis):
@@ -123,13 +124,13 @@ class TestCheckAndAcquire:
         assert isinstance(slot_id, str)
         assert len(slot_id) == 36  # UUID 格式
         # 应调用 sadd 两次（全局 + 对话 SET）
-        assert pipe.sadd.await_count == 2
+        assert mock_redis[0].eval.await_count == 1
 
     @pytest.mark.asyncio
     async def test_global_limit_exceeded(self, service, mock_redis):
         """全局任务数达到上限时抛出 TaskQueueFullError"""
         _, pipe = mock_redis
-        pipe.execute.return_value = [15, 0]
+        mock_redis[0].eval.return_value = 1
 
         from services.task_limit_service import TaskQueueFullError
 
@@ -143,7 +144,7 @@ class TestCheckAndAcquire:
     async def test_conversation_limit_exceeded(self, service, mock_redis):
         """单对话任务数达到上限时抛出 TaskQueueFullError"""
         _, pipe = mock_redis
-        pipe.execute.return_value = [3, 5]
+        mock_redis[0].eval.return_value = 2
 
         from services.task_limit_service import TaskQueueFullError
 
@@ -154,18 +155,11 @@ class TestCheckAndAcquire:
         assert exc_info.value.details["current_count"] == 5
 
     @pytest.mark.asyncio
-    async def test_redis_error_degrades_to_allow(self, service, mock_redis):
-        """Redis 异常时降级允许执行，仍返回 slot_id"""
+    async def test_redis_error_does_not_admit_an_untracked_task(self, service, mock_redis):
         redis_client, _ = mock_redis
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(side_effect=ConnectionError("Redis down"))
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        redis_client.pipeline = MagicMock(return_value=ctx)
-
-        slot_id = await service.check_and_acquire("user1", "conv1")
-
-        assert isinstance(slot_id, str)
-        assert len(slot_id) == 36
+        redis_client.eval.side_effect = ConnectionError("Redis down")
+        with pytest.raises(ConnectionError):
+            await service.check_and_acquire("user1", "conv1")
 
 
 # ============ release 测试 ============

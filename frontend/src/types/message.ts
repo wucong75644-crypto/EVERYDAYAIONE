@@ -55,7 +55,9 @@ export interface ImagePart {
   source_message_id?: string;
   source_content_index?: number;
   has_transparency?: boolean;
-  quality_checks?: { file_integrity?: boolean; alpha_min?: number; alpha_max?: number };
+  quality_checks?: { file_integrity?: boolean; alpha_min?: number; alpha_max?: number;
+    size_matches?: boolean; actual?: { width: number; height: number; aspect_ratio: string };
+    target?: { mode?: string; aspect_ratio: string; resolution?: string | null }; error?: string };
   width?: number;
   height?: number;
   alt?: string;

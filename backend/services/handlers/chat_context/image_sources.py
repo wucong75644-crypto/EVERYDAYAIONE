@@ -55,9 +55,10 @@ def image_sources(row, org_id=None, visible_indices=()):
 def format_image_sources(sources):
     if not sources:
         return ""
+    from services.handlers.image_size_requirements import SIZE_GUIDANCE
     return ("对话图片定位（不是自动选定的生图参考；按用户本次用途复制 reference 中的唯一定位并补充 role，"
             "或复制服务器 file_id；visually_present=false 仅为来源元数据，不能声称本轮看过图；"
-            "定位缺失先读取 get_conversation_context/file_search，不要编造 ID）：\n"
+            "定位缺失先读取 get_conversation_context/file_search，不要编造 ID）。" + SIZE_GUIDANCE + "：\n"
             + json.dumps(sources, ensure_ascii=False))
 
 
@@ -136,16 +137,19 @@ def registered_original(db, part, *, org_id, owner_id, scope="user"):
 def discovered_image_sources(row, db, *, org_id, owner_id, scope="user", visible_indices=()):
     """Shared display of registered originals; no untrusted upstream assertions."""
     sources = image_sources(row, org_id, visible_indices)
+    if not sources:
+        return sources
     parts = content_parts(row.get("content"))
-    for item in sources:
-        index = item.get("content_index")
-        if index is None:
-            continue
+    indices = [index for index, part in enumerate(parts) if isinstance(part, dict) and part.get("type") == "image"]
+    paths = {}
+    for index, item in zip(indices, sources):
         part = parts[index]
         path, asset = registered_original(db, part, org_id=org_id, owner_id=owner_id, scope=scope)
         if path and not part.get("failed"):
-            item.update(available=True, file_id=compute_fid(org_id, path),
-                        reference={"message_id": str(row["id"]), "content_index": index})
+            file_id = compute_fid(org_id, path)
+            item.update(available=True, file_id=file_id,
+                        reference={"message_id": str(row["id"]), "content_index": index} if row.get("id") else {"file_id": file_id})
+            paths[index] = path
             item.pop("unavailable_reason", None)
         if asset:
             item["asset_id"] = str(asset["id"])
@@ -160,6 +164,19 @@ def discovered_image_sources(row, db, *, org_id, owner_id, scope="user", visible
                 item.pop("reference", None)
             else:
                 item.update({key: value for key, value in origin.items() if key != "source_content_sha256"})
+    from services.handlers.image_dimensions import read_image_dimensions
+    from services.file_executor import FileExecutor
+    from core.config import get_settings
+    files = FileExecutor(get_settings().file_workspace_root, owner_id, org_id, create_root=False)
+    for index, item in zip(indices, sources):
+        if not item.get("available") or index not in paths:
+            continue
+        path = paths[index]
+        try:
+            facts = read_image_dimensions(files.resolve_safe_path(path))
+            item["canvas"] = facts
+        except (OSError, ValueError, PermissionError):
+            item["canvas_unavailable_reason"] = "IMAGE_DIMENSIONS_UNAVAILABLE"
     return sources
 
 

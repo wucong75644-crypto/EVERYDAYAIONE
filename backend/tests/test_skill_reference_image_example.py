@@ -89,3 +89,14 @@ async def test_real_example_activates_before_model_without_losing_image_or_grant
     ordinary = await execute_chat(handler=handler(), request=_request(), runtime=actor())
     assert all(block["type"] != "skill_step" for block in ordinary.content_blocks)
     source.load.assert_awaited_once()
+
+
+
+def test_v2_canvas_rules_validate_as_a_new_immutable_revision(tmp_path):
+    root = Path(__file__).resolve().parents[2] / "examples/skills/catalog"
+    raw = (root / "platform/reference-image-prompts/v2/SKILL.md").read_bytes()
+    body = raw.split(b"---\n", 2)[2]
+    publication = PublishRevision(revision="v2",content_sha256=hashlib.sha256(raw).hexdigest(),body_sha256=hashlib.sha256(body).hexdigest())
+    package = PackageCreate(skill_key="reference-image-prompts",source="user-example",scope_kind="platform")
+    validated = SkillStorage(str(root),workspace_root=str(tmp_path / "workspace")).validate(package,publication)
+    assert validated.revision=="v2" and validated.skill_key=="reference-image-prompts"

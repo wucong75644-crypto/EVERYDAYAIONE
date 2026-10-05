@@ -14,7 +14,7 @@ from core.redis import get_redis
 
 _CACHE_TTL = 1800
 _MAX_VALUE_BYTES = 250 * 1024
-_KEY_PREFIX = "conv:msgs:outcomes-v3"  # Image locator projection; the v2 envelope stays unchanged.
+_KEY_PREFIX = "conv:msgs:canvas-v4"  # Image locator projection; the v2 envelope stays unchanged.
 _SCHEMA_VERSION = 2
 
 

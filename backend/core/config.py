@@ -96,7 +96,7 @@ class Settings(BaseSettings):
 
     # 限流配置
     rate_limit_global_tasks: int = 15
-    rate_limit_conversation_tasks: int = 5
+    rate_limit_conversation_tasks: int = 15
 
     # DashScope（阿里云灵积）配置
     dashscope_api_key: Optional[str] = None
@@ -302,8 +302,8 @@ class Settings(BaseSettings):
     chat_image_async_enabled: bool = False
     chat_image_allowed_user_ids: str = ""  # CSV; empty means all users when enabled.
     chat_image_transparent_enabled: bool = False
-    chat_image_max_requests: int = Field(default=4, ge=1, le=8)
-    chat_image_max_credits: int = Field(default=100, ge=1, le=200)
+    chat_image_max_requests: int = Field(default=15, ge=1, le=15)
+    chat_image_max_credits: int = Field(default=300, ge=1, le=300)
     chat_image_submission_lease_seconds: int = Field(default=60, ge=10, le=300)
     chat_image_queue_timeout_seconds: int = Field(default=600, ge=60, le=3600)
     chat_image_uncertain_timeout_seconds: int = Field(default=900, ge=60, le=86400)
