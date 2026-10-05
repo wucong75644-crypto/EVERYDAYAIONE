@@ -15,6 +15,7 @@ import { usePreview } from '../../../preview/usePreview';
 import PreviewHost from '../../../preview/PreviewHost';
 import { fromImageAsset } from '../../../preview/toPreviewItem';
 import MessageMedia from './MessageMedia';
+import ChatImageControls from '../media/ChatImageControls';
 import MessageActions from './MessageActions';
 import { getSavedSettings } from '../../../utils/settingsStorage';
 import { logger } from '../../../utils/logger';
@@ -409,6 +410,9 @@ export default memo(function MessageItem({
             设计文档：TECH_内容块混排渲染架构.md §7.1 */}
         {!isUser && isMediaMessage && (
           <div ref={mediaCellRef} className="w-full min-w-0">
+          {chatImage && typeof genParams.task_id === 'string' && genParams.task_id && (
+            <div className="mb-3"><ChatImageControls taskId={genParams.task_id} /></div>
+          )}
           <MessageMedia
             imageMaxWidth={imageGridCell ? mediaCellWidth : undefined}
             imageAssets={imageAssets}

@@ -587,12 +587,13 @@ describe('MessageItem failed ImagePart', () => {
   });
 });
 
-it('chat images show media without completion prose or task details', () => {
+it.each(['pending', 'completed'] as const)('chat images keep task details above media without completion prose (%s)', (status) => {
   render(<MessageItem message={makeMessage({
-    role: 'assistant', status: 'completed',
-    content: [{ type: 'image', url: 'https://example.com/image.png' }],
+    role: 'assistant', status,
+    content: [{ type: 'image', url: status === 'completed' ? 'https://example.com/image.png' : null }],
     generation_params: { type: 'image', origin: 'chat_image', task_id: 'child-1' },
   })} imageGridCell />);
   expect(screen.queryByText(/来看看生成的图片/)).not.toBeInTheDocument();
-  expect(screen.queryByText('图片任务详情')).not.toBeInTheDocument();
+  const details = screen.getByRole('button', { name: '图片任务详情' });
+  expect(details.compareDocumentPosition(screen.getByTestId('message-media')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
