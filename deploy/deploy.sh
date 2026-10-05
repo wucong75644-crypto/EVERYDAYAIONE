@@ -5,9 +5,28 @@
 # 用途：将前后端代码部署到阿里云ECS服务器
 # 使用方法：./deploy/deploy.sh [选项]
 # TASK_DEPLOY_PROTOCOL=2
+# TASK_DEPLOY_RESULT_PROTOCOL=1
 ###############################################################################
 
 set -e  # 遇到错误立即退出
+
+# No remote writer has started during preflight. After mutation starts,
+# all failures remain uncertain and the parent keeps the production lock.
+deploy_phase=preflight
+report_deploy_exit() {
+    local exit_code=$?
+    local result=uncertain
+    if [[ "$exit_code" -eq 0 && "$deploy_phase" == completed ]]; then
+        result=completed
+    elif [[ "$exit_code" -ne 0 && "$deploy_phase" == preflight ]]; then
+        result=preflight_failed
+    fi
+    if [[ -n "${EVERYDAYAI_DEPLOY_STATUS_FILE:-}" ]]; then
+        printf '%s\n' "$result" > "$EVERYDAYAI_DEPLOY_STATUS_FILE" || true
+    fi
+}
+trap report_deploy_exit EXIT
+
 
 # 颜色输出
 RED='\033[0;31m'
@@ -702,20 +721,22 @@ EOF
             < deploy/verify_migration_executor.py
     fi
 
-    # 首次部署模式
+    # Complete all selected local tests/builds before any production mutation.
+    if [ "$BACKEND_ONLY" != true ]; then
+        build_frontend
+    fi
+    if [ "$FRONTEND_ONLY" != true ]; then
+        build_backend
+    fi
+    deploy_phase=remote_mutation
     if [ "$SETUP_MODE" = true ]; then
         setup_server
     fi
-
-    # 部署流程
     if [ "$BACKEND_ONLY" != true ]; then
-        build_frontend
         sync_frontend
         deploy_frontend
     fi
-
     if [ "$FRONTEND_ONLY" != true ]; then
-        build_backend
         prepare_scheduled_task_cutover
         prepare_skill_personal_mount
         sync_backend
@@ -729,6 +750,7 @@ EOF
     # The parent release.sh establishes provenance only after this entire
     # executor has completed successfully, while retaining the production lock.
 
+    deploy_phase=completed
     # 完成提示
     echo ""
     log_success "========== 部署完成 =========="

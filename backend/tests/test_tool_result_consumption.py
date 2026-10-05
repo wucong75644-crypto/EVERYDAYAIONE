@@ -208,6 +208,10 @@ async def test_tool_loop_result_projection_and_artifact_collection(setup,case):
     from services.handlers.emit_payloads import collect_agent_result_payloads
     _,root=setup
     call,raw=sample(case,root)
+    # Generic image payload projection uses an allowed loop tool; actual image
+    # submission is chat-only and has dedicated receipt/denial tests below.
+    if case in {'media_image', 'media_failure'}:
+        call = tc('web_search', {'query': 'fixture'})
     executor=MockHandlerExecutor(agent_domain='general')
     executor.handler.return_value=raw
     loop,ctx=loop_for(executor)
@@ -388,14 +392,14 @@ async def test_full_tool_loop_uncertain_wraps_up_without_retry(setup,monkeypatch
     executor=MockHandlerExecutor(agent_domain='general')
     executor.handler.side_effect=RuntimeError('external response lost')
     loop,ctx=loop_for(executor)
-    loop._stream_one_turn=AsyncMock(return_value=({0:tc('generate_image',{'prompt':'fixture'})},'',5,3,2))
+    loop._stream_one_turn=AsyncMock(return_value=({0:tc('generate_video',{'prompt':'fixture'})},'',5,3,2))
     synthesis=AsyncMock(return_value='请核验外部执行结果')
     monkeypatch.setattr('services.agent.stop_policy.synthesize_wrap_up',synthesis)
     result=await loop.run([],[],[],ctx)
     loop._stream_one_turn.assert_awaited_once();executor.handler.assert_awaited_once();synthesis.assert_awaited_once()
     assert result.stop_reason=='wrap_up_failure' and result.failure_message=='external response lost'
     assert result.total_tokens==5
-    assert result.tool_outcomes==[{'tool_name':'generate_image','status':'error'}]
+    assert result.tool_outcomes==[{'tool_name':'generate_video','status':'error'}]
 
 
 async def test_steer_keeps_completed_artifacts_and_audits(setup,monkeypatch):
@@ -465,28 +469,27 @@ async def test_current_actor_uncertain_never_reexecutes_or_counts_success(setup)
 
 
 @pytest.mark.parametrize('consumer',['chat','tool_loop'])
-@pytest.mark.parametrize('media',['image','image_failure','video','video_failure'])
+@pytest.mark.parametrize('media',['video','video_failure'])
 async def test_real_media_handler_with_existing_offline_provider_samples(setup,consumer,media,monkeypatch):
-    """Reuse the provider result classes/URLs from test_media_tool_executor; no paid calls."""
-    from tests.test_media_tool_executor import MockImageResult,MockVideoResult
+    """Video remains synchronous; chat images have receipt-only tests below."""
+    from tests.test_media_tool_executor import MockVideoResult
     executor=MockHandlerExecutor(agent_domain='general')
-    is_image=media.startswith('image');name='generate_image' if is_image else 'generate_video'
-    executor._handlers[name]=getattr(executor,'_'+name)
+    executor._handlers['generate_video']=executor._generate_video
     executor._lock_credits=Mock(return_value='offline-transaction')
     executor._confirm_deduct=Mock();executor._refund_credits=Mock()
     provider=AsyncMock()
-    url='https://cdn.example.com/cat.png' if is_image else 'https://cdn.example.com/demo.mp4'
-    if is_image: provider.generate.return_value=MockImageResult(image_urls=[] if 'failure' in media else [url],fail_msg='内容审核不通过')
-    else: provider.generate.return_value=MockVideoResult(video_url=None if 'failure' in media else url,fail_msg='内容审核不通过')
-    monkeypatch.setattr('services.adapters.factory.create_image_adapter' if is_image else 'services.adapters.factory.create_video_adapter',lambda *a,**kw:provider)
-    monkeypatch.setattr('config.kie_models.calculate_image_cost' if is_image else 'config.kie_models.calculate_video_cost',lambda **kw:{'user_credits':18})
+    url='https://cdn.example.com/demo.mp4'
+    provider.generate.return_value=MockVideoResult(video_url=None if 'failure' in media else url,fail_msg='内容审核不通过')
+    monkeypatch.setattr('services.adapters.factory.create_video_adapter',lambda *a,**kw:provider)
+    monkeypatch.setattr('config.kie_models.calculate_video_cost',lambda **kw:{'user_credits':18})
     monkeypatch.setattr('services.file_upload.download_url_to_workspace',AsyncMock(return_value=None))
+    call=tc('generate_video',{'prompt':'a sunset scene'})
     if consumer=='chat':
         host=ChatHarness(executor.db)
-        result=(await host._execute_single_tool(tc(name,{'prompt':'a cute cat' if is_image else 'a sunset scene'}),executor,'task1','c1','m1','u1',1))[1]
+        result=(await host._execute_single_tool(call,executor,'task1','c1','m1','u1',1))[1]
     else:
         loop,ctx=loop_for(executor)
-        await loop._execute_tools([tc(name,{'prompt':'a cute cat' if is_image else 'a sunset scene'})],[],'',ctx)
+        await loop._execute_tools([call],[],'',ctx)
         result=loop._turn_tool_outcomes[0][1]
     assert isinstance(result,ToolResult) and result.kind=='agent'
     raw=result.raw
@@ -500,10 +503,31 @@ async def test_real_media_handler_with_existing_offline_provider_samples(setup,c
     else:
         executor._confirm_deduct.assert_called_once();executor._refund_credits.assert_not_called()
         assert url in raw.summary
-    if media=='image_failure':
-        from services.handlers.emit_payloads import build_content_blocks_from_payloads
-        block=build_content_blocks_from_payloads(result.collect_payloads(consumer))[0]
-        assert block['failed'] is True and block['error']=='内容审核不通过'
-        assert block['retry_context']==raw.emit_payloads[0]['retry_context']
-        assert block['retry_context']['prompt']=='a cute cat'
-    if media=='video': assert result.collect_payloads(consumer)==[]  # existing handler returns a summary URL
+        assert result.collect_payloads(consumer)==[]
+
+
+async def test_tool_loop_rejects_chat_only_image_acceptance(setup):
+    executor=MockHandlerExecutor(agent_domain='general')
+    loop,ctx=loop_for(executor)
+    await loop._execute_tools([tc('generate_image', {'mode':'text_to_image','prompt':'fixture'})],[],'',ctx)
+    executor.handler.assert_not_awaited()
+    assert not loop._turn_tool_outcomes
+    assert any(message['role']=='tool' for message in ctx.messages)
+
+
+async def test_real_chat_image_handler_returns_receipt_without_provider_io(setup,monkeypatch):
+    from services.handlers.image_handler import ImageHandler
+    executor=MockHandlerExecutor(agent_domain='general',task_id='task1')
+    executor._handlers['generate_image']=executor._generate_image
+    accepted=AsyncMock(return_value={'task_id':'child','message_id':'child-message','submission_state':'queued'})
+    monkeypatch.setattr(ImageHandler,'accept_chat_image',accepted)
+    provider=Mock()
+    monkeypatch.setattr('services.adapters.factory.create_image_adapter',provider)
+    host=ChatHarness(executor.db)
+    result=(await host._execute_single_tool(tc('generate_image', {'mode':'text_to_image','prompt':'fixture'}),executor,'task1','c1','m1','u1',1))[1]
+    assert isinstance(result,ToolResult) and result.kind=='agent' and not result.is_failure
+    assert result.metadata['accepted'] is True and result.metadata['completed'] is False
+    assert result.metadata['task_id']=='child'
+    assert result.collect_payloads('chat')==[]
+    accepted.assert_awaited_once()
+    provider.assert_not_called()

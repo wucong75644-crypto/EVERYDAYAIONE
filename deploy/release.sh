@@ -507,6 +507,7 @@ else
 fi
 
 release_log="${TMPDIR:-/tmp}/everydayai-release-${commit_sha}.log"
+deploy_status_file="$release_worktree/.deploy-execution-status"
 pushd "$release_worktree" >/dev/null
 chmod +x deploy/deploy.sh
 deploy_args=()
@@ -565,11 +566,17 @@ if ! EVERYDAYAI_RELEASE_CONTEXT="$executor_context" \
     EVERYDAYAI_RELEASE_LOCK_TOKEN="$release_lock_token" \
     EVERYDAYAI_RELEASE_COMMIT="$commit_sha" \
     EVERYDAYAI_RELEASE_MODE="$release_mode" \
+    EVERYDAYAI_DEPLOY_STATUS_FILE="$deploy_status_file" \
     "${deploy_command[@]}" >"$release_log" 2>&1; then
     release_executor_state=unconfirmed
+    if grep -q '^# TASK_DEPLOY_RESULT_PROTOCOL=1$' deploy/deploy.sh \
+        && [[ -f "$deploy_status_file" ]] \
+        && [[ "$(cat "$deploy_status_file")" == preflight_failed ]]; then
+        release_executor_state=failed_safe
+    fi
     release_remote_state invalidate \
         || echo 'RELEASE_CANDIDATE_RESULT status=unknown; 无法确认失败部署后的候选已清除，禁止验收' >&2
-    echo "RELEASE_RESULT status=failed executor_state=unconfirmed commit=$commit_sha log=$release_log" >&2
+    echo "RELEASE_RESULT status=failed executor_state=$release_executor_state commit=$commit_sha log=$release_log" >&2
     tail -n 160 "$release_log" >&2
     exit 1
 fi
