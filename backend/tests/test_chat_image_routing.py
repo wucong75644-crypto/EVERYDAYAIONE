@@ -164,7 +164,8 @@ async def test_actor_auto_activates_skill_then_accepts_two_single_calls(monkeypa
     blocks, totals = [], StreamTotals()
     await _run_loop(handler=Handler(), request=_request(), prepared=p, cancellation_event=runtime.cancellation_event,
         sink=CollectingExecutionSink(), totals=totals, blocks=blocks, runtime=runtime)
-    assert not rounds and len(received) == 3
+    assert rounds == [[]] and len(received) == 2
+    assert totals.text == ""  # Child placeholders replace the redundant synthesis round.
     source.load.assert_awaited_once()
     assert exe.handler.await_count == 2
     assert [call.args for call in exe.handler.await_args_list] == [("generate_image", args) for args in inputs]
