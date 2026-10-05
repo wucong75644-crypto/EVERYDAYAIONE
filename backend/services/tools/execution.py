@@ -48,6 +48,13 @@ class ToolExecutionService:
             from .mcp_audit import decorate_result
             return decorate_result(result, self.registry.get(call.name))
         self._check_cancelled(context)
+        if call.name == "generate_image" and context.entrypoint == "model":
+            from .argument_validation import validate_model_image_arguments
+            try:
+                validate_model_image_arguments(self.registry.get(call.name), call.arguments)
+            except ValueError as error:
+                return ToolResult.from_exception(error, call=call, context=context,
+                                                 decision=decision, handler_started=False)
         key = (context.actor_user_id, context.workspace_owner_id, context.org_id,
                context.conversation_id, context.task_id, call.call_id)
         if key in self._consumed:

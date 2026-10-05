@@ -7,7 +7,7 @@
 from functools import lru_cache
 from typing import Literal, Optional
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -298,6 +298,21 @@ class Settings(BaseSettings):
     chat_stream_timeout: float = 60.0         # 普通模型
     chat_thinking_timeout: float = 120.0      # 专用推理模型
     image_generation_timeout: float = 180.0   # 图片生成轮询超时
+    # Only gates acceptance. Readers, settlement and recovery must remain active.
+    chat_image_async_enabled: bool = False
+    chat_image_allowed_user_ids: str = ""  # CSV; empty means all users when enabled.
+    chat_image_transparent_enabled: bool = False
+    chat_image_max_requests: int = Field(default=4, ge=1, le=8)
+    chat_image_max_credits: int = Field(default=100, ge=1, le=200)
+    chat_image_submission_lease_seconds: int = Field(default=60, ge=10, le=300)
+    chat_image_queue_timeout_seconds: int = Field(default=600, ge=60, le=3600)
+    chat_image_uncertain_timeout_seconds: int = Field(default=900, ge=60, le=86400)
+
+    @field_validator("chat_image_allowed_user_ids")
+    @classmethod
+    def validate_chat_image_allowed_users(cls, value: str) -> str:
+        from uuid import UUID
+        return ",".join(sorted({str(UUID(item.strip())) for item in value.split(",") if item.strip()}))
     video_generation_timeout: float = 600.0   # 视频生成轮询超时（Sora 等，合理长时间）
 
     # 电商图模式配置（设计文档：docs/document/TECH_电商图片Agent.md）

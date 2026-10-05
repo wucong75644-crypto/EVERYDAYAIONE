@@ -16,6 +16,8 @@ import { toast } from 'react-hot-toast';
 
 // Mock sendMessage
 const mockSendMessage = vi.fn();
+const mockImageReplay = vi.fn();
+vi.mock('../../services/chatImage', () => ({ chatImageService: { replay: (...args: unknown[]) => mockImageReplay(...args) } }));
 vi.mock('../../services/messageSender', async () => {
   const actual = await vi.importActual('../../services/messageSender');
   return {
@@ -78,7 +80,37 @@ function createUserMessage(overrides: Partial<Message> = {}): Message {
 describe('useRegenerateHandlers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionStorage.clear();
     mockSendMessage.mockResolvedValue('task-123');
+  });
+
+  it('uses server snapshot and a separate child for chat images, ignoring a later user message', async () => {
+    const setMessages = vi.fn();
+    mockImageReplay.mockResolvedValue({ task_id: 'new-child', message_id: 'new-image', submission_state: 'queued' });
+    const { result } = renderHook(() => useRegenerateHandlers({ conversationId: 'conv-1', setMessages }));
+    const target = createTestMessage({ generation_params: { origin: 'chat_image', task_id: 'original-child' } });
+    await act(async () => result.current.handleRegenerateSingle(target, 0, createUserMessage({ content: toContent('unrelated newest prompt') })));
+    expect(mockSendMessage).not.toHaveBeenCalled();
+    expect(mockImageReplay).toHaveBeenCalledWith('original-child', expect.any(String));
+    expect(mockSubscribeTaskWithMapping).toHaveBeenCalledWith('new-child', 'conv-1');
+    const old = createTestMessage();
+    expect(setMessages.mock.calls[0][0]([old])).toEqual([old, expect.objectContaining({
+      id: 'new-image', status: 'pending', generation_params: expect.objectContaining({ origin: 'chat_image' }),
+    })]);
+  });
+
+  it('retains replay request identity across a lost response and remount', async () => {
+    mockImageReplay.mockRejectedValueOnce(new Error('response lost'));
+    const first = renderHook(() => useRegenerateHandlers({ conversationId: 'conv-1', setMessages: vi.fn() }));
+    const target = createTestMessage({ generation_params: { origin: 'chat_image', task_id: 'original-child' } });
+    await act(async () => first.result.current.handleRegenerate(target, createUserMessage()));
+    const requestId = mockImageReplay.mock.calls[0][1];
+    first.unmount();
+    mockImageReplay.mockResolvedValue({ task_id: 'accepted-child', message_id: 'accepted-image', submission_state: 'queued' });
+    const second = renderHook(() => useRegenerateHandlers({ conversationId: 'conv-1', setMessages: vi.fn() }));
+    await act(async () => second.result.current.handleRegenerate(target, createUserMessage()));
+    expect(mockImageReplay.mock.calls[1]).toEqual(['original-child', requestId]);
+    expect(sessionStorage.length).toBe(0);
   });
 
   afterEach(() => {

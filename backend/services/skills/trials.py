@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
 import json
 from datetime import datetime, timezone
 from typing import Any
@@ -98,6 +99,10 @@ class SkillTrialRepository:
     def list(self, *, actor_id: str, org_id: str, change_set_id: str,
              limit: int = 10) -> list[dict[str, Any]]:
         with self._repository._cursor() as cursor:
+            cursor.execute("""UPDATE public.skill_draft_trial_runs SET status='failed',completed_at=now(),
+                result=result || '{"error":"SKILL_TRIAL_PREPARATION_INTERRUPTED","status":"failed"}'::jsonb
+                WHERE org_id=%s AND change_set_id=%s AND actor_user_id=%s AND mode='image' AND status='running'
+                AND result->>'image_task_id' IS NULL AND created_at<now()-interval '15 minutes'""", (org_id,change_set_id,actor_id))
             cursor.execute("""SELECT id,mode,model_id,status,result,candidate_revision,content_sha256,feedback_rating,
                     feedback_text,created_at,completed_at
                 FROM public.skill_draft_trial_runs WHERE org_id=%s AND change_set_id=%s
@@ -165,7 +170,7 @@ def list_conversation_images(db, *, conversation_id: str, actor_id: str, org_id:
         parts = _parse_json(message.get("content"))
         if not isinstance(parts, list):
             continue
-        for part in parts:
+        for index, part in enumerate(parts):
             if not isinstance(part, dict) or part.get("type") != "image" or part.get("failed"):
                 continue
             url = part.get("url") or part.get("original_url")
@@ -176,6 +181,7 @@ def list_conversation_images(db, *, conversation_id: str, actor_id: str, org_id:
                 "preview_url": part.get("thumbnail_url") or part.get("preview_url") or url,
                 "name": str(part.get("name") or "参考图片"),
                 "message_id": str(message.get("id") or ""),
+                "content_index": index,
             }
     return list(found.values())
 
@@ -302,6 +308,7 @@ async def run_trial(db, settings, *, actor_id: str, org_id: str, change_set: dic
                     expected_revision: int, content_sha256: str, mode: str,
                     user_input: str, idempotency_key: UUID, aspect_ratio: str = "1:1",
                     reference_images: list[str] | None = None,
+                    reference_sources: list[dict] | None = None,
                     trial_repository: SkillTrialRepository | None = None) -> dict[str, Any]:
     if (settings.skill_catalog_enabled is not True
             or settings.skill_chat_creation_enabled is not True
@@ -322,6 +329,9 @@ async def run_trial(db, settings, *, actor_id: str, org_id: str, change_set: dic
         raise TrialConflict("SKILL_TRIAL_CANDIDATE_HASH_MISMATCH")
     if mode not in {"text", "image"}:
         raise ValueError("SKILL_TRIAL_MODE_INVALID")
+    from services.handlers.chat_image_request import chat_image_acceptance_allowed
+    if mode=="image" and not chat_image_acceptance_allowed(settings, actor_id):
+        raise PermissionError("CHAT_IMAGE_ASYNC_DISABLED")
     user_input = user_input.strip()
     if not user_input or len(user_input) > 8000:
         raise ValueError("SKILL_TRIAL_INPUT_INVALID")
@@ -353,9 +363,13 @@ async def run_trial(db, settings, *, actor_id: str, org_id: str, change_set: dic
                     "content_sha256": content_sha256,
                     **(run.get("result") or {}), "replayed": True}
         if run.get("status") == "running":
+            if mode=="image":
+                return {"trial_id":trial_id,"candidate_revision":expected_revision,"content_sha256":content_sha256,
+                    "mode":"image","output":"","model_id":model_id,**(run.get("result") or {}),"status":"running","replayed":True}
             raise TrialInProgress("SKILL_TRIAL_ALREADY_RUNNING")
         raise TrialConflict("SKILL_TRIAL_FAILED_USE_NEW_REQUEST")
 
+    image_accept_attempted=False
     try:
         text_model_id, generated, usage = await _run_text_model(
             settings=settings, db=db, org_id=org_id, trial_id=trial_id,
@@ -368,41 +382,29 @@ async def run_trial(db, settings, *, actor_id: str, org_id: str, change_set: dic
                 "model_id": text_model_id, **usage,
             }
         else:
-            from services.agent.tool_executor import ToolExecutor
-            media_executor = ToolExecutor(
-                db=db, user_id=actor_id, conversation_id="skill-trial", org_id=org_id,
-                workspace_user_id=actor_id,
-            )
-            media_result = await media_executor._generate_image({
-                "prompt": generated, "aspect_ratio": aspect_ratio,
-                "image_urls": selected_images,
-            }, task_id_override=trial_id, trial_metadata={
-                "skill_trial": True,
-                "skill_trial_id": trial_id,
-                "change_set_id": str(change_set["id"]),
-                "candidate_revision": expected_revision,
-                "content_sha256": content_sha256,
-            })
-            if media_result.status != "success":
-                raise RuntimeError("SKILL_TRIAL_IMAGE_GENERATION_FAILED")
-            images = []
-            for item in media_result.emit_payloads:
-                if isinstance(item, dict) and isinstance(item.get("url"), str):
-                    images.append({
-                        "url": item["url"],
-                        "thumbnail_url": item.get("thumbnail_url"),
-                        "name": item.get("name", "Skill 试用图片"),
-                    })
-            if not images:
-                raise RuntimeError("SKILL_TRIAL_IMAGE_RESULT_UNAVAILABLE")
             result = {
-                "mode": "image", "output": generated[:12000], "images": images,
+                "mode": "image", "output": generated, "images": [],
                 "model_id": model_id,
                 "prompt_model_id": text_model_id,
                 **usage,
-                "credits_charged": media_result.metadata.get("credits_charged"),
                 "estimated_credits": estimate_image_trial(selected_images)["estimated_credits"],
             }
+            from services.handlers.image_handler import ImageHandler
+            references=[]
+            for url in selected_images:
+                matches=[source for source in reference_sources or [] if source["url"]==url]
+                if len(matches)!=1 or "content_index" not in matches[0]:
+                    raise PermissionError("SKILL_TRIAL_REFERENCE_IMAGE_UNAVAILABLE")
+                references.append({"message_id":matches[0]["message_id"],"content_index":matches[0]["content_index"],"role":"reference"})
+            result["output_sha256"]=_digest(result["output"])
+            image_accept_attempted=True
+            result=await ImageHandler(db).accept_image_trial(actor_id=actor_id,org_id=org_id,trial_id=trial_id,
+                conversation_id=str((change_set.get("audit_subject") or {}).get("conversation_id") or ""),
+                args={"prompt":generated,"mode":"image_to_image" if references else "text_to_image",
+                    "model":model_id,"aspect_ratio":aspect_ratio,"references":references},
+                trial_facts={"change_set_id":str(change_set["id"]),"candidate_revision":expected_revision,"content_sha256":content_sha256},result=result)
+            return {"trial_id":trial_id,"candidate_revision":expected_revision,"content_sha256":content_sha256,
+                **result,"replayed":False}
         result["output_sha256"] = _digest(result["output"])
         _update_run(db, trial_id, org_id=org_id, actor_id=actor_id,
                     status="completed", result=result, trial_repository=trial_repository)
@@ -410,6 +412,10 @@ async def run_trial(db, settings, *, actor_id: str, org_id: str, change_set: dic
                 "content_sha256": content_sha256,
                 **result, "replayed": False}
     except Exception:
+        if image_accept_attempted:
+            # RPC commit may have succeeded. Keep the same trial/key and recover
+            # with GET instead of marking failed and inviting another paid send.
+            raise TrialInProgress("SKILL_TRIAL_ACCEPTANCE_UNCONFIRMED_CHECK_HISTORY") from None
         _update_run(db, trial_id, org_id=org_id, actor_id=actor_id,
                     status="failed", result={"error": "SKILL_TRIAL_FAILED"},
                     trial_repository=trial_repository)

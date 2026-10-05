@@ -199,9 +199,11 @@ class TestExecuteSingleTool:
 
     @pytest.mark.asyncio
     @patch("services.handlers.chat_tool_mixin.ws_manager")
-    async def test_confirm_tool_executes_with_log(self, mock_ws):
+    async def test_confirm_tool_executes_with_log(self, mock_ws, monkeypatch):
         """confirm 工具→正常执行（通知但不阻塞）"""
         from services.handlers.chat_tool_mixin import ChatToolMixin
+        from core.config import get_settings
+        monkeypatch.setattr(get_settings(), "chat_image_async_enabled", True)
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
@@ -254,8 +256,10 @@ class TestActorInvocationRecovery:
         assert [name for name, _ in calls] == ["mark_stale", "begin"]
 
     @pytest.mark.asyncio
-    async def test_uncertain_invocation_never_executes_external_tool(self):
+    async def test_uncertain_invocation_never_executes_external_tool(self, monkeypatch):
         from services.handlers.chat_tool_mixin import ChatToolMixin
+        from core.config import get_settings
+        monkeypatch.setattr(get_settings(), "chat_image_async_enabled", True)
 
         mixin = _make_mixin()
         mixin._actor_enabled = True

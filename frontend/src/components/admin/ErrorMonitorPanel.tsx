@@ -13,6 +13,10 @@ import { AlertTriangle, Loader2, Sparkles, Trash2, ChevronDown, CheckCircle2, X 
 import {
   listErrors,
   getErrorStats,
+  getImagePlatformCosts,
+  getImageArgumentStats,
+  type ImageArgumentStats,
+  type ImagePlatformCostReport,
   summarizeErrors,
   resolveError,
   clearErrors,
@@ -43,6 +47,12 @@ export default function ErrorMonitorPanel() {
   const [filterResolved, setFilterResolved] = useState<string>('false');
   const [filterDays, setFilterDays] = useState(7);
   const [search, setSearch] = useState('');
+  const [costRefresh, setCostRefresh] = useState(0);
+  const [imageCosts, setImageCosts] = useState<ImagePlatformCostReport | null>(null);
+  const [costError, setCostError] = useState('');
+  const [costPage, setCostPage] = useState(1);
+  const [argumentStats, setArgumentStats] = useState<ImageArgumentStats | null>(null);
+  const [argumentError, setArgumentError] = useState('');
 
   // 清除确认弹窗
   const [clearModalOpen, setClearModalOpen] = useState(false);
@@ -83,6 +93,30 @@ export default function ErrorMonitorPanel() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => { setCostPage(1); }, [filterDays]);
+  useEffect(() => {
+    let active = true;
+    setCostError('');
+    getImagePlatformCosts(filterDays, costPage).then((result) => {
+      if (active) setImageCosts(result);
+    }).catch(() => {
+      if (active) { setImageCosts(null); setCostError('平台承担统计暂时不可用'); }
+    });
+    return () => { active = false; };
+  }, [filterDays, costPage, costRefresh]);
+
+  useEffect(() => {
+    let active = true;
+    setArgumentStats(null);
+    setArgumentError('');
+    getImageArgumentStats(filterDays).then(result => {
+      if (active) setArgumentStats(result);
+    }).catch(() => {
+      if (active) setArgumentError('参数纠错统计暂时不可用');
+    });
+    return () => { active = false; };
+  }, [filterDays, costRefresh]);
 
   // ── 操作 ──────────────────────────────────────────────
   const handleResolve = async (id: number) => {
@@ -132,6 +166,59 @@ export default function ErrorMonitorPanel() {
   // ── 渲染 ──────────────────────────────────────────────
   return (
     <div className="space-y-4">
+      <Card className="p-4 space-y-3">
+        <div className="font-medium">聊天图片 · 参数纠错（近 {filterDays} 天）</div>
+        <p className="text-sm text-[var(--s-text-secondary)]">统计已完成聊天中的新记录。纠错积分按实际额外 Token 估算，属于聊天费用组成；不是新增生图扣费或供应商账单。</p>
+        {argumentError && <p className="text-sm text-[var(--s-text-secondary)]">{argumentError}</p>}
+        {argumentStats && <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <StatCard label="首次参数错误" value={argumentStats.summary.invalid_initial_calls} />
+            <StatCard label="自动纠正成功" value={argumentStats.summary.corrected_calls} />
+            <StatCard label="未纠正请求" value={argumentStats.summary.unresolved_calls} />
+            <StatCard label="纠错额外 Token" value={argumentStats.summary.prompt_tokens + argumentStats.summary.completion_tokens} />
+          </div>
+          <p className="text-sm text-[var(--s-text-secondary)]">
+            首次错误率：{argumentStats.summary.initial_error_rate === null ? '暂无样本' : `${(argumentStats.summary.initial_error_rate * 100).toFixed(1)}%`}；
+            纠正成功率：{argumentStats.summary.correction_success_rate === null ? '暂无样本' : `${(argumentStats.summary.correction_success_rate * 100).toFixed(1)}%`}；
+            估算纠错积分：{argumentStats.summary.estimated_chat_credits.toFixed(2)}
+            {argumentStats.summary.cost_unknown_rounds > 0 && `（另有 ${argumentStats.summary.cost_unknown_rounds} 轮成本未取得）`}。
+            {argumentStats.truncated && ' 当前显示最近5000条已完成聊天的样本，未覆盖完整时间范围。'}
+          </p>
+        </>}
+      </Card>
+      <Card className="p-4 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="font-medium">图片生成 · 平台承担（近 {filterDays} 天）</div>
+          <Button size="sm" variant="secondary" onClick={() => setCostRefresh(value => value + 1)}>刷新承担统计</Button>
+        </div>
+        <p className="text-sm text-[var(--s-text-secondary)]">
+          受理结果无法确认或输出合同不合格的任务已退还用户积分。供应商成本按接受时价格估算，实际支出待账单核实。
+        </p>
+        {costError && <p className="text-sm text-[var(--s-text-secondary)]">{costError}</p>}
+        {imageCosts && <>
+          <div className="grid grid-cols-3 gap-3">
+            <StatCard label="承担任务数" value={imageCosts.summary.count} />
+            <StatCard label="已退用户积分" value={imageCosts.summary.refunded_user_credits} />
+            <StatCard label="估算供应商积分" value={imageCosts.summary.estimated_provider_credits} />
+          </div>
+          {imageCosts.items.length > 0 && <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead><tr><th className="py-2">任务 / 时间</th><th>模型 / 分辨率</th><th>承担原因</th><th>退款</th><th>估算成本</th></tr></thead>
+              <tbody>{imageCosts.items.map((item) => <tr key={item.task_id} className="border-t border-[var(--s-border-default)]">
+                <td className="py-2"><div className="break-all">{item.task_id}</div><div>{new Date(item.completed_at).toLocaleString()}</div></td>
+                <td>{item.cost.model} / {item.cost.resolution || '默认'}</td>
+                <td>{item.cost.reason === 'image_output_contract_failure' ? '供应商结果不合格' : '受理未确认'}</td>
+                <td>{item.cost.refunded_user_credits}</td><td>{item.cost.estimated_provider_credits}</td>
+              </tr>)}</tbody>
+            </table>
+            <div className="flex items-center gap-3 mt-3">
+              <Button variant="secondary" disabled={costPage === 1} onClick={() => setCostPage(costPage - 1)}>上一页</Button>
+              <span>第 {costPage} 页</span>
+              <Button variant="secondary" disabled={costPage * imageCosts.page_size >= imageCosts.summary.count} onClick={() => setCostPage(costPage + 1)}>下一页</Button>
+            </div>
+          </div>}
+        </>}
+      </Card>
       {/* 统计卡片 */}
       {stats && (
         <m.div

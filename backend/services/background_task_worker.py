@@ -11,6 +11,7 @@
 """
 
 import asyncio
+from contextlib import suppress
 import random
 from datetime import datetime, timezone
 
@@ -61,6 +62,26 @@ class BackgroundTaskWorker:
         # 设计文档: docs/document/TECH_定时任务心跳系统.md §4.2
         from services.scheduler.scanner import ScheduledTaskScanner
         self._scheduled_scanner = ScheduledTaskScanner(db)
+        from services.handlers.chat_image_lifecycle import ChatImageLifecycle
+        self._chat_images = ChatImageLifecycle(db, self.settings)
+        self._chat_image_loop_task = None
+
+    async def _chat_image_loop(self):
+        """Short bounded recovery runs even when new acceptance is disabled."""
+        last_error = None
+        while self.is_running:
+            try:
+                await self._chat_images.scan()
+                last_error = None
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                # Compatible reader-first rollout may precede migrations.
+                kind = type(error).__name__
+                if kind != last_error:
+                    logger.warning("Chat image recovery unavailable | error_type={}", kind)
+                last_error = kind
+            await asyncio.sleep(2)
 
     async def _get_active_org_ids(self) -> list[str]:
         """获取所有活跃企业的 org_id 列表（用于后台任务按 org 迭代）"""
@@ -79,6 +100,7 @@ class BackgroundTaskWorker:
     async def start(self):
         """启动后台工作器"""
         self.is_running = True
+        self._chat_image_loop_task = asyncio.create_task(self._chat_image_loop(), name="chat-image-recovery")
         mode = "fallback" if self.settings.callback_base_url else "primary"
         logger.info(
             f"BackgroundTaskWorker started | mode={mode} | "
@@ -109,6 +131,11 @@ class BackgroundTaskWorker:
     async def stop(self):
         """停止后台工作器"""
         self.is_running = False
+        if self._chat_image_loop_task is not None:
+            self._chat_image_loop_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._chat_image_loop_task
+            self._chat_image_loop_task = None
         logger.info("BackgroundTaskWorker stopped")
 
     async def poll_pending_tasks(self):
@@ -134,7 +161,10 @@ class BackgroundTaskWorker:
         # Provider 提交前的本地任务没有 external_task_id，不能拿本地 ID 去查询 Provider。
         pollable_tasks = [
             task for task in response.data
-            if task.get("external_task_id")
+            if task.get("external_task_id") and (
+                not (task.get("request_params") or {}).get("_media_request_v1")
+                or (task.get("request_params") or {}).get("_media_lifecycle_v1", {}).get("phase") in {"accepted", "uncertain"}
+            )
         ]
         if not pollable_tasks:
             return
@@ -275,6 +305,9 @@ class BackgroundTaskWorker:
         cleaned_count = 0
 
         for task in response.data:
+            from services.handlers.chat_image_lifecycle import is_chat_image
+            if is_chat_image(task):
+                continue
             from services.conversation_task import is_actor_task
             if is_actor_task(task):
                 continue

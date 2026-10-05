@@ -23,6 +23,7 @@ class FakeMedia(MediaToolMixin):
     """模拟宿主类属性"""
 
     def __init__(self):
+        self.db = MagicMock()
         self.user_id = "u1"
         self.org_id = "org1"
 
@@ -44,84 +45,25 @@ def media():
 # ── _generate_image ──
 
 
-class TestGenerateImageValidation:
+class TestGenerateImageAcceptance:
+    @pytest.mark.asyncio
+    async def test_receipt_is_pending_and_has_no_local_credit_or_provider_io(self, media):
+        media._lock_credits = MagicMock()
+        receipt={"task_id":"child","status":"submitted","submission_state":"queued"}
+        args={"mode":"text_to_image","prompt":"  exact  "}
+        with patch("services.handlers.image_handler.ImageHandler.accept_chat_image",new=AsyncMock(return_value=receipt)) as accept, \
+             patch("services.adapters.factory.create_image_adapter") as provider:
+            result=await media._generate_image(args)
+        accept.assert_awaited_once_with(media,args)
+        assert result.metadata["accepted"] is True and result.metadata["completed"] is False
+        media._lock_credits.assert_not_called(); provider.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_empty_prompt(self, media):
-        result = await media._generate_image({"prompt": ""})
-        assert isinstance(result, AgentResult)
-        assert result.is_failure
-        assert result.metadata.get("retryable") is True
-
-    @pytest.mark.asyncio
-    async def test_whitespace_prompt(self, media):
-        result = await media._generate_image({"prompt": "   "})
-        assert isinstance(result, AgentResult)
-        assert result.is_failure
-
-
-class TestGenerateImageCredits:
-
-    @pytest.mark.asyncio
-    async def test_insufficient_credits(self, media):
-        from core.exceptions import InsufficientCreditsError
-        media._lock_credits = MagicMock(
-            side_effect=InsufficientCreditsError(required=10, current=3)
-        )
-        with patch("config.kie_models.calculate_image_cost",
-                   return_value={"user_credits": 10}):
-            result = await media._generate_image({"prompt": "cat"})
-        assert result.is_failure
-        assert "积分不足" in result.summary
-        assert result.metadata.get("retryable") is False
-
-    @pytest.mark.asyncio
-    async def test_cost_error(self, media):
-        with patch("config.kie_models.calculate_image_cost",
-                   side_effect=ValueError("model not found")):
-            result = await media._generate_image({"prompt": "cat"})
-        assert result.is_failure
-        assert "积分计算失败" in result.summary
-
-
-class TestGenerateImageExecution:
-
-    @pytest.mark.asyncio
-    async def test_success(self, media):
-        mock_adapter = MagicMock()
-        mock_result = MagicMock()
-        mock_result.image_urls = ["https://cdn/img.png"]
-        mock_adapter.generate = AsyncMock(return_value=mock_result)
-        mock_adapter.close = AsyncMock()
-
-        with patch("config.kie_models.calculate_image_cost",
-                   return_value={"user_credits": 5}), \
-             patch("services.adapters.factory.create_image_adapter",
-                   return_value=mock_adapter):
-            result = await media._generate_image({"prompt": "cat"})
-
-        assert result.status == "success"
-        assert "https://cdn/img.png" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_failure_refunds(self, media):
-        mock_adapter = MagicMock()
-        mock_result = MagicMock()
-        mock_result.image_urls = []
-        mock_result.fail_msg = "policy violation"
-        mock_adapter.generate = AsyncMock(return_value=mock_result)
-        mock_adapter.close = AsyncMock()
-        media._refund_credits = MagicMock()
-
-        with patch("config.kie_models.calculate_image_cost",
-                   return_value={"user_credits": 5}), \
-             patch("services.adapters.factory.create_image_adapter",
-                   return_value=mock_adapter):
-            result = await media._generate_image({"prompt": "cat"})
-
-        assert result.is_failure
-        assert "policy violation" in result.summary
-        media._refund_credits.assert_called_once()
+    async def test_invalid_input_or_closed_gate_does_not_fallback(self, media):
+        with patch("services.handlers.image_handler.ImageHandler.accept_chat_image",new=AsyncMock(side_effect=PermissionError("disabled"))), \
+             patch("services.adapters.factory.create_image_adapter") as provider:
+            with pytest.raises(PermissionError): await media._generate_image({"prompt":"cat"})
+        provider.assert_not_called()
 
 
 # ── _generate_video ──

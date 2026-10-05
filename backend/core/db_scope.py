@@ -105,11 +105,16 @@ def _rpc_sql(name: str, params: dict[str, Any]) -> tuple[str, list[Any]]:
         "p_fencing_token": "bigint",
         "p_executor_revision": "integer",
         "p_lease_seconds": "integer",
+        "p_timeout_seconds": "integer",
+        "p_page": "integer", "p_page_size": "integer",
+        "p_limit": "integer",
     }
     uuid_keys = {
         "p_org_id",
         "p_action_id", "p_attempt_id", "p_dispatch_intent_id", "p_job_id",
         "p_claim_token", "p_receipt_id", "p_policy_receipt_id",
+        "p_after_id",
+        "p_source_task_id", "p_request_id",
     }
     text_keys = {
         "p_external_idempotency_key", "p_request_hash", "p_executor_type",

@@ -402,6 +402,10 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
                     "url": part.original_url or part.download_url or part.preview_url or part.url or "",
                     "width": part.width,
                     "height": part.height,
+                    "asset_id": part.asset_id,
+                    "source_message_id": part.source_message_id,
+                    "source_content_index": part.source_content_index,
+                    "source_task_id": part.source_task_id,
                 }
             elif isinstance(part, dict):
                 ptype = part.get("type")
@@ -429,6 +433,7 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
                         ),
                         "width": part.get("width"),
                         "height": part.get("height"),
+                        **{key: part.get(key) for key in ("asset_id", "source_message_id", "source_content_index", "source_task_id")},
                     }
             if wp:
                 files.append(wp)

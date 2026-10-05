@@ -50,6 +50,32 @@ export default function SkillDraftCard({ changeSetId, fallbackTitle }: Props) {
   const [trialError, setTrialError] = useState('');
   const [trialKey, setTrialKey] = useState<string | null>(null);
   const [trialFeedback, setTrialFeedback] = useState<'helpful' | 'not_helpful' | null>(null);
+  const [trialPollingStopped, setTrialPollingStopped] = useState(false);
+  const [trialRefresh, setTrialRefresh] = useState(0);
+
+  useEffect(() => {
+    if (trialResult?.status !== 'running') return;
+    let active = true;
+    let attempts = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    setTrialPollingStopped(false);
+    const poll = async () => {
+      try {
+        const history = await skillCreationService.listTrials(changeSetId);
+        const updated = history.runs.find((run) => run.trial_id === trialResult.trial_id);
+        if (!active) return;
+        if (updated) {
+          setTrialResult(updated);
+          if (updated.status !== 'running') { setTrialKey(null); return; }
+        }
+      } catch { /* next bounded read retries; never resubmit generation */ }
+      if (!active) return;
+      if (++attempts >= 120) { setTrialPollingStopped(true); return; }
+      timer = setTimeout(() => void poll(), 5000);
+    };
+    timer = setTimeout(() => void poll(), 3000);
+    return () => { active = false; clearTimeout(timer); };
+  }, [changeSetId, trialResult?.trial_id, trialResult?.status, trialRefresh]);
 
   const refresh = useCallback(async () => {
     try {
@@ -123,7 +149,7 @@ export default function SkillDraftCard({ changeSetId, fallbackTitle }: Props) {
   };
 
   const runTrial = async () => {
-    if (!changeSet || !trialKind || !trialInput.trim()) return;
+    if (!changeSet || !trialKind || !trialInput.trim() || (trialKind === 'image' && trialEstimate?.image_trial_enabled === false)) return;
     const key = trialKey || crypto.randomUUID();
     setTrialKey(key);
     setTrialPending(true);
@@ -141,7 +167,7 @@ export default function SkillDraftCard({ changeSetId, fallbackTitle }: Props) {
         } : {}),
       });
       setTrialResult(result);
-      setTrialKey(null);
+      if (result.status !== 'running') setTrialKey(null);
     } catch (reason) {
       setTrialError(reason instanceof Error ? reason.message : '试用失败，请检查后重试。');
     } finally {
@@ -276,18 +302,22 @@ export default function SkillDraftCard({ changeSetId, fallbackTitle }: Props) {
                 <span className="truncate">{image.name}</span>
               </label>)}
             </div>}
+            {trialEstimate?.image_trial_enabled === false && <p className="text-xs text-text-secondary">图片试用暂未开放；已接受的任务仍会完成。</p>}
             <p className="text-xs text-text-tertiary">点击试用会调用图片模型并按上方预估积分计费；每次生成 1 张。</p>
           </>}
           {trialError && <p role="alert" className="text-xs text-error">{trialError}</p>}
-          <Button size="sm" variant="accent" onClick={() => void runTrial()} loading={trialPending} disabled={trialPending || !trialInput.trim() || (trialKind === 'image' && !trialEstimate)} icon={<Play className="h-3.5 w-3.5" />}>开始试用</Button>
+          <Button size="sm" variant="accent" onClick={() => void runTrial()} loading={trialPending} disabled={trialPending || trialResult?.status === 'running' || !trialInput.trim() || (trialKind === 'image' && (!trialEstimate || trialEstimate.image_trial_enabled === false))} icon={<Play className="h-3.5 w-3.5" />}>开始试用</Button>
           {trialResult && <div className="space-y-2 rounded-lg border border-border-default bg-surface p-3">
             {trialIsForOlderCandidate && <p className="text-xs text-warning">这是旧候选版本的试用结果，当前内容已变化。</p>}
+            {trialResult.status === 'running' && <p className="text-xs text-text-secondary">图片试用已接受，正在排队或生成。刷新后可继续查看，尚未完成。</p>}
+            {trialResult.status === 'failed' && <p role="alert" className="text-xs text-error">{trialResult.error || '图片试用失败，未完成的图片积分已退还。'}</p>}
+            {trialPollingStopped && <Button size="sm" variant="secondary" onClick={() => setTrialRefresh((value) => value + 1)}>刷新试用状态</Button>}
             <div className="whitespace-pre-wrap break-words text-sm leading-6 text-text-primary">{trialResult.output}</div>
             {trialResult.images?.map((image) => <img key={image.url} src={image.url} alt={image.name} className="max-h-96 max-w-full rounded-lg object-contain" />)}
             <div className="flex items-center gap-2 border-t border-border-default pt-2 text-xs text-text-secondary">
               <span>这次结果有帮助吗？</span>
-              <button type="button" onClick={() => void sendTrialFeedback('helpful')} aria-label="试用结果有帮助" className={cn('rounded-md p-1.5 hover:bg-active', trialFeedback === 'helpful' && 'text-accent')}><ThumbsUp className="h-4 w-4" /></button>
-              <button type="button" onClick={() => void sendTrialFeedback('not_helpful')} aria-label="试用结果没有帮助" className={cn('rounded-md p-1.5 hover:bg-active', trialFeedback === 'not_helpful' && 'text-accent')}><ThumbsDown className="h-4 w-4" /></button>
+              <button type="button" disabled={trialResult.status === 'running'} onClick={() => void sendTrialFeedback('helpful')} aria-label="试用结果有帮助" className={cn('rounded-md p-1.5 hover:bg-active', trialFeedback === 'helpful' && 'text-accent')}><ThumbsUp className="h-4 w-4" /></button>
+              <button type="button" disabled={trialResult.status === 'running'} onClick={() => void sendTrialFeedback('not_helpful')} aria-label="试用结果没有帮助" className={cn('rounded-md p-1.5 hover:bg-active', trialFeedback === 'not_helpful' && 'text-accent')}><ThumbsDown className="h-4 w-4" /></button>
               {trialFeedback && <span>已记录</span>}
             </div>
           </div>}

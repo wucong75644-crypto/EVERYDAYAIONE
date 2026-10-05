@@ -102,6 +102,53 @@ async def test_provider_gets_current_task_binding_and_real_tools_preserving_cach
     assert p.messages == original  # Per-request facts do not accumulate in checkpoints.
 
 
+async def test_confirm_without_activation_projects_current_directory_next_to_user_before_provider():
+    from services.skills.runtime import ACTIVATE_SKILL_SCHEMA
+    source = Source(body='Never use historical tool aliases.')
+    runtime = actor()
+    runtime.skill_runtime = state(source)
+    await runtime.skill_runtime.initialize()
+    p = prepared()
+    p.messages = [
+        {'role': 'system', 'content': 'Host policy'},
+        {'role': 'user', 'content': 'Prepare a sample'},
+        {'role': 'assistant', 'content': '已启用 Skill；旧参数 format=PNG'},
+        {'role': 'user', 'content': '确认，继续准备，不提交'},
+    ]
+    runtime.skill_runtime.ensure_messages(p.messages)
+    original = copy.deepcopy(p.messages)
+    p.stream_kwargs = {}
+    captured = []
+    async def stream_chat(**kwargs):
+        captured.append(kwargs)
+        yield SimpleNamespace(content='Done', thinking_content=None, tool_calls=None,
+                              prompt_tokens=1, completion_tokens=1, credits_consumed=None, finish_reason='stop')
+    p.adapter.stream_chat = stream_chat
+    await _read_turn(p, [ACTIVATE_SKILL_SCHEMA], runtime.cancellation_event,
+                     CollectingExecutionSink(), StreamTotals(), [], runtime)
+    sent = captured[0]['messages']
+    assert sent[-1] == original[-1] and sent[-3] == original[-2]
+    assert '[Current Skill selection]' in sent[-2]['content']
+    assert '当前轮尚未激活' in sent[-2]['content'] and '先从下面当前目录' in sent[-2]['content']
+    assert '"available_tools":["activate_skill"]' in sent[-2]['content']
+    assert '"skill_id":"report"' in sent[-2]['content']
+    assert 'Never use historical tool aliases.' not in str(sent)  # Body is still lazy.
+    source.load.assert_not_awaited()
+    assert not runtime.skill_runtime.active and p.messages == original
+    assert captured[0]['tools'] == [ACTIVATE_SKILL_SCHEMA]
+
+
+@pytest.mark.parametrize('legacy,allowed', [(True, True), (False, False)])
+async def test_unactivated_catalog_projection_preserves_legacy_and_missing_control_tool(legacy, allowed):
+    from services.skills.runtime import ACTIVATE_SKILL_SCHEMA
+    runtime = state()
+    await runtime.initialize()
+    if legacy:
+        runtime.context_version = 1
+    messages = [{'role': 'user', 'content': '确认'}]
+    assert runtime.model_messages(messages, [ACTIVATE_SKILL_SCHEMA] if allowed else []) == messages
+
+
 @pytest.mark.parametrize("valid", [True, False])
 @pytest.mark.parametrize("reverse", [True, False])
 async def test_activation_barrier_blocks_every_business_call_even_when_activation_fails(valid, reverse):
@@ -334,3 +381,26 @@ async def test_chat_mixin_propagates_skill_ceiling_to_new_and_cached_executor():
         await h._execute_tool_calls([call("file_search", "{}")], "task-1", "conv-1", "msg", "user", 1,
                                     authorized_tool_names=ceiling)
     assert observed == [{"file_search"}, set(), None]
+
+
+@pytest.mark.parametrize('enabled,personal',[(True,True),(False,True),(True,False)])
+async def test_image_skill_adds_only_currently_allowed_schemas(monkeypatch,enabled,personal):
+    from core.config import Settings
+    from services.handlers.chat.execution_engine import _apply_skill_context
+    from services.handlers.chat.tool_loop import prepare_tool_turn
+    from tests.test_skill_runtime import item
+    settings=Settings(_env_file=None,database_url='postgresql://invalid/test',jwt_secret_key='isolated-test-key',chat_image_async_enabled=True)
+    monkeypatch.setattr('core.config.get_settings',lambda:settings)
+    skills=state(Source([item(tools=('generate_image','get_conversation_context','file_search'))]),
+        platform_tool_names={'generate_image','get_conversation_context','file_search'})
+    await skills.initialize();assert (await skills.activate(activate()))['ok']
+    p=prepared()
+    p.execution_context=replace(p.execution_context,personal_context_allowed=personal,
+        feature_flags={**p.execution_context.feature_flags,'chat_image_async_enabled':enabled})
+    _apply_skill_context(p,skills)
+    tools=prepare_tool_turn(core_tools=p.core_tools,discovered_names=p.tool_context.discovered_tools,org_id='org-1',turn=0,
+        messages=p.messages,tool_context=p.tool_context,permission=p.permission,execution_context=p.execution_context)
+    names={tool['function']['name'] for tool in tools}
+    assert ('generate_image' in names) is (enabled and personal)
+    assert 'web_search' not in names
+    assert p.execution_context.authorized_tool_names=={'generate_image','get_conversation_context','file_search'}

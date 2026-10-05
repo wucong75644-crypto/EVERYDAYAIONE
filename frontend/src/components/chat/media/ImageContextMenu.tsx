@@ -23,6 +23,7 @@ interface ImageContextMenuProps {
   imageUrl: string;
   thumbnailUrl?: string;
   sourcePart?: ImagePart;
+  sourceContentIndex?: number;
   messageId: string;
   closing?: boolean;
   onClose: () => void;
@@ -34,6 +35,7 @@ export default function ImageContextMenu({
   imageUrl,
   thumbnailUrl,
   sourcePart,
+  sourceContentIndex,
   messageId,
   closing = false,
   onClose,
@@ -51,6 +53,9 @@ export default function ImageContextMenu({
       url: originalUrl,
       thumbnailUrl,
       assetId: sourcePart?.asset_id,
+      sourceMessageId: messageId,
+      sourceContentIndex,
+      sourceTaskId: sourcePart?.task_id,
       workspacePath: sourcePart?.workspace_path,
       name: sourcePart?.name,
       mimeType: sourcePart?.mime_type,

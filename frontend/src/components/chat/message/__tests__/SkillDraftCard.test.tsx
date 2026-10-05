@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChangeSet } from '../../../../types/changeset';
 import { changeSetService } from '../../../../services/changeSet';
@@ -53,8 +53,26 @@ describe('SkillDraftCard', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it('recovers an accepted image trial and polls its result without resubmitting', async () => {
+    vi.useFakeTimers();
+    const running = { trial_id: 'image-trial', candidate_revision: 5, content_sha256: 'a'.repeat(64),
+      mode: 'image' as const, output: 'exact final prompt', model_id: 'actual', replayed: true,
+      status: 'running' as const, image_task_id: 'child-image' };
+    vi.mocked(skillCreationService.listTrials)
+      .mockResolvedValueOnce({ enabled: true, runs: [running] })
+      .mockResolvedValueOnce({ enabled: true, runs: [{ ...running, status: 'completed', images: [{ url: 'saved-original', name: 'trial result' }] }] });
+    await act(async () => { render(<SkillDraftCard changeSetId="change-1" />); });
+    expect(screen.getByText('图片试用已接受，正在排队或生成。刷新后可继续查看，尚未完成。')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '试用结果有帮助' })).toBeDisabled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(screen.getByRole('img', { name: 'trial result' })).toHaveAttribute('src', 'saved-original');
+    expect(screen.queryByText(/尚未完成/)).not.toBeInTheDocument();
+    expect(skillCreationService.runTrial).not.toHaveBeenCalled();
   });
 
   it('confirms the exact preview revision and content hash to create only a draft', async () => {

@@ -65,6 +65,20 @@ class _ReplayCheckpointStore:
         return self.read_result
 
 
+@pytest.mark.asyncio
+async def test_executor_before_tool_checkpoint_reaches_existing_store():
+    from services.conversation_commands import SafePoint
+    from services.replay_checkpoint_store import ReplayCheckpointBoundary
+    store = _ReplayCheckpointStore()
+    store.write = AsyncMock(return_value={"outcome": "saved"})
+    executor = ChatGenerationExecutor(_DB({}), lambda _: SimpleNamespace(org_id=None), replay_checkpoint_store=store)
+    payload = {"content_blocks": [{"image_argument_validation": {"repair": {"dispatch_reserved": True}}}]}
+    result = await executor._build_replay_checkpoint_callback(_claim())(SafePoint.BEFORE_TOOL, payload)
+    assert result["outcome"] == "saved"
+    assert store.write.await_args.kwargs["boundary"] == ReplayCheckpointBoundary.BEFORE_TOOL
+    assert store.write.await_args.kwargs["payload"] == payload
+
+
 def _claim() -> GenerationClaim:
     return GenerationClaim(
         task_id="task-1",

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -68,6 +69,43 @@ class ErrorStatsResponse(BaseModel):
 
 class SummarizeResponse(BaseModel):
     summary: str
+
+
+@router.get("/image-platform-costs", summary="图片平台承担的退款与供应商估算")
+async def image_platform_costs(
+    user_id: CurrentUserId, db: Database,
+    days: int = Query(7, ge=1, le=366),
+    page: int = Query(1, ge=1, le=100000),
+    page_size: int = Query(20, ge=1, le=100),
+) -> dict:
+    _require_super_admin(user_id, db)
+    from core.db_scope import DatabaseAccessKind, DatabaseScope, ScopedDatabaseClient
+    until = datetime.now(ZoneInfo("Asia/Shanghai"))
+    scoped = ScopedDatabaseClient(db, DatabaseScope(user_id, None, DatabaseAccessKind.RUNTIME_ADMIN))
+    return await asyncio.to_thread(lambda: scoped.rpc("chat_image_platform_cost_report", {
+        "p_since": until - timedelta(days=days), "p_until": until,
+        "p_page": page, "p_page_size": page_size,
+    }).execute().data)
+
+
+@router.get("/image-argument-stats", summary="聊天图片参数校验与纠错统计")
+async def image_argument_stats(
+    user_id: CurrentUserId, db: Database,
+    days: int = Query(7, ge=1, le=30),
+) -> dict:
+    _require_super_admin(user_id, db)
+    from services.handlers.chat.image_argument_correction import summarize_metrics
+    until = datetime.now(ZoneInfo("Asia/Shanghai"))
+    since = until - timedelta(days=days)
+    # Follow this panel's existing authenticated admin read path. This is a
+    # bounded recent sample, explicitly labelled if the window exceeds it.
+    rows = await asyncio.to_thread(lambda: db.table("tasks").select("result->'usage'->'image_argument_metrics' AS metrics")
+        .eq("type", "chat").eq("status", "completed")
+        .gte("completed_at", since.isoformat()).lt("completed_at", until.isoformat())
+        .order("completed_at", desc=True).limit(5001).execute().data or [])
+    return {"summary": summarize_metrics(rows[:5000]), "sample_size": min(len(rows), 5000),
+            "truncated": len(rows) > 5000, "since": since.isoformat(), "until": until.isoformat(),
+            "evidence": "completed_chat_usage", "cost_evidence": "token_estimate"}
 
 
 # ── API 端点 ─────────────────────────────────────────────

@@ -15,6 +15,7 @@ import { usePreview } from '../../../preview/usePreview';
 import PreviewHost from '../../../preview/PreviewHost';
 import { fromImageAsset } from '../../../preview/toPreviewItem';
 import MessageMedia from './MessageMedia';
+import ChatImageControls from '../media/ChatImageControls';
 import MessageActions from './MessageActions';
 import { getSavedSettings } from '../../../utils/settingsStorage';
 import { logger } from '../../../utils/logger';
@@ -392,6 +393,8 @@ export default memo(function MessageItem({
             onRegenerateSingle={onRegenerateSingle ? handleRegenerateSingle : undefined}
           />
         </div>
+
+        {!isUser && genParams.origin === 'chat_image' && typeof genParams.task_id === 'string' && <ChatImageControls taskId={genParams.task_id} />}
 
         {/* AI 媒体生成消息（generate_image / generate_video）：保留 MessageMedia 全部功能
             聊天消息的 image/file 已在多块模式内联渲染，不走此通道

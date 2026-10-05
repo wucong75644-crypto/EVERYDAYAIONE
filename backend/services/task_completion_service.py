@@ -111,6 +111,18 @@ class TaskCompletionService:
         if not existing_task:
             logger.warning(f"Task not found | task_id={external_task_id}")
             return False
+        from services.handlers.chat_image_lifecycle import ChatImageLifecycle, is_chat_image
+        if is_chat_image(existing_task):
+            from core.config import get_settings
+            lifecycle = ChatImageLifecycle(self.db, get_settings())
+            if result.status == TaskStatus.FAILED and result.fail_code == "TIMEOUT":
+                state = existing_task["request_params"]["_media_lifecycle_v1"]
+                await lifecycle.rpc(existing_task, "mark_chat_image_uncertain",
+                    p_claim_token=state["claim_token"],
+                    p_timeout_seconds=lifecycle.settings.chat_image_uncertain_timeout_seconds)
+            else:
+                await lifecycle.record_provider_result(existing_task, result)
+            return True
         if existing_task["status"] in ("completed", "failed", "cancelled"):
             logger.info(
                 f"Task already {existing_task['status']}, skipping | "

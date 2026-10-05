@@ -15,6 +15,7 @@ export interface SkillCandidateEdit {
 }
 
 export interface SkillTrialEstimate {
+  image_trial_enabled?: boolean;
   text_to_image: { model_id: string; image_count: number; estimated_credits: number };
   image_to_image: { model_id: string; image_count: number; estimated_credits: number };
   reference_images: Array<{ url: string; preview_url: string; name: string; message_id: string }>;
@@ -41,6 +42,10 @@ export interface SkillTrialResult {
   estimated_credits?: number;
   replayed: boolean;
   feedback_rating?: 'helpful' | 'not_helpful' | null;
+  status?: 'running' | 'completed' | 'failed' | 'cancelled';
+  image_task_id?: string;
+  submission_state?: string;
+  error?: string;
 }
 
 export interface SkillTrialHistory {
@@ -118,13 +123,16 @@ export const skillCreationService = {
     );
     return {
       enabled: response.data.trial_enabled === true,
-      runs: response.data.data.filter((row) => row.status === 'completed').map((row) => ({
+      runs: response.data.data.filter((row) => row.status === 'completed' || row.mode === 'image').map((row) => ({
         ...(row.result as Omit<SkillTrialResult, 'trial_id' | 'replayed'>),
+        output: (row.result as Partial<SkillTrialResult>).output || '',
+        mode: row.mode as SkillTrialResult['mode'], model_id: String(row.model_id),
         trial_id: String(row.id),
         candidate_revision: Number(row.candidate_revision),
         content_sha256: String(row.content_sha256),
         replayed: true,
         feedback_rating: row.feedback_rating as SkillTrialResult['feedback_rating'],
+        status: row.status as SkillTrialResult['status'],
       })),
     };
   },

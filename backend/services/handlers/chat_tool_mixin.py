@@ -67,6 +67,7 @@ class ChatToolMixin(ChatToolResultMixin):
         permission_mode: str = "auto",
         agent_domain: str = "general",
         authorized_tool_names: frozenset[str] | None = None,
+        image_skill_snapshot: tuple = (),
     ) -> List[tuple]:
         """执行工具调用：安全检查 → 并行/串行分批 → 返回结果
 
@@ -108,6 +109,8 @@ class ChatToolMixin(ChatToolResultMixin):
             execution_scope=scope, channel_scope_id=getattr(scope, "channel_scope_id", None),
             tool_entrypoint="model",
             allowed_tool_names=authorized_tool_names,
+            image_execution_token=getattr(self, "_actor_execution_token", None),
+            image_skill_snapshot=image_skill_snapshot,
             tool_confirmer=lambda call, ctx, decision: ChatToolMixin._confirm_tool_call(
                 self, call, ctx, decision, message_id,
             ),
@@ -222,10 +225,15 @@ class ChatToolMixin(ChatToolResultMixin):
             turn=turn, args=args, elapsed_ms=0,
         )
         try:
-            try:
-                args = json.loads(tc["arguments"]) if tc.get("arguments") else {}
-            except (ValueError, TypeError) as exc:
-                raise ValueError("参数解析失败") from exc
+            runtime = executor.tool_runtime
+            if tc["name"] == "generate_image" and runtime.context(tc["id"]).entrypoint == "model":
+                from services.tools.argument_validation import parse_model_image_arguments
+                args = parse_model_image_arguments(runtime.registry.require(tc["name"]), tc.get("arguments"))
+            else:
+                try:
+                    args = json.loads(tc["arguments"]) if tc.get("arguments") else {}
+                except (ValueError, TypeError) as exc:
+                    raise ValueError("参数解析失败") from exc
             if not isinstance(args, dict):
                 raise ValueError("工具参数必须是 JSON 对象")
             result_ctx = replace(result_ctx, args=args)
@@ -244,6 +252,15 @@ class ChatToolMixin(ChatToolResultMixin):
             raise
         except Exception as error:
             result_ctx = replace(result_ctx, elapsed_ms=int((time.monotonic() - started_at) * 1000))
+            from services.tools.argument_validation import ToolArgumentValidationError
+            if isinstance(error, ToolArgumentValidationError):
+                from services.tools import ToolCall
+                from services.tools.result import ToolResult
+                context = runtime.context(tc["id"])
+                call = ToolCall(tc["id"], tc["name"], args)
+                result = ToolResult.from_exception(error, call=call, context=context,
+                    decision=runtime.policy.decide(tc["name"], context, args), handler_started=False)
+                return await ChatToolResultMixin._process_tool_result(self, tc, result, result_ctx)
             return await ChatToolResultMixin._process_tool_exception(self, tc, error, result_ctx)
         result_ctx = replace(result_ctx, elapsed_ms=int((time.monotonic() - started_at) * 1000))
         # Delivery errors are outside the business/ledger completion boundary.

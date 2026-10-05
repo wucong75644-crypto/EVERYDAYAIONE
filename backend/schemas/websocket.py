@@ -33,6 +33,7 @@ from schemas.websocket_builders import (  # noqa: F401
     build_thinking_chunk,
     build_stream_end,
     build_message_done,
+    build_media_pending,
     build_message_error,
     build_control_result,
     build_message_retry,

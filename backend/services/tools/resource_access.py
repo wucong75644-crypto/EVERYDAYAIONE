@@ -121,10 +121,12 @@ def resource_boundary(owner):
 class ResourceSelections:
     def __init__(self):
         self.browses = set()
+        self.image_references = {}
 
     def snapshot(self):
         value = ResourceSelections()
         value.browses = set(self.browses)
+        value.image_references = {key: set(refs) for key, refs in self.image_references.items()}
         return value
 
     def scope(self, owner, name, args, files):
@@ -182,6 +184,20 @@ class ResourceSelections:
         if operation.browse_directory is not None:
             self.browses.add((operation.resolver.scope, operation.browse_directory))
 
+    def record_image_result(self, owner, text):
+        import re
+        from services.file_resources import FileReferenceCodec
+        from services.agent.file_id import compute_fid
+        codec = FileReferenceCodec(org_id=owner.org_id, owner_id=owner.workspace_user_id, scope=owner.context_scope)
+        if not isinstance(text, str):
+            return
+        for reference in re.findall(r"(?m)^\s*resource_ref:\s*(fref1_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\s*$", text)[:200]:
+            try:
+                path, _ = codec.decode(reference)
+            except (ValueError, PermissionError):
+                continue
+            self.image_references.setdefault(compute_fid(owner.org_id, path), set()).add(reference)
+
     def restore(self, owner, records):
         """Only the authenticated caller's checkpoint blocks, never chat text."""
         import json
@@ -190,6 +206,7 @@ class ResourceSelections:
         for block in records:
             if block.get("type") != "tool_step" or block.get("tool_name") != "file_search" or block.get("status") != "completed":
                 continue
+            self.record_image_result(owner, block.get("output") or "")
             try:
                 args = json.loads(block["input"])
                 # Only explicit original browsing scopes are recoverable from

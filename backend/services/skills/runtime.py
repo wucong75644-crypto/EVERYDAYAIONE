@@ -250,8 +250,28 @@ class SkillRuntime:
                     "[Skill suggestions — metadata only]\n这些是可忽略的候选，不代表已加载或获得工具权限。"
                     "需要使用时仍须调用 activate_skill；不合适时继续普通流程。\n" + encoded(suggestions))})
         # Rebuild from current filtered schemas; do not persist stale capabilities.
-        if self.context_version == 1 or not self.has_active_skills:
+        if self.context_version == 1:
             return messages
+        if not self.has_active_skills:
+            names = [tool['function']['name'] for tool in tools]
+            advertised = [c for c in self.directory.values() if c.catalog_metadata.model_selectable]
+            if not self.allows_dynamic_activation or ACTIVATE_SKILL not in names or not advertised:
+                return messages
+            catalog = self._directory_text(advertised)
+            # The leading catalog can be overshadowed by history on "confirm".
+            # Project current facts next to this request; never inherit a binding.
+            content = ('[Current Skill selection]\n'
+                       + encoded({'active_skills': [], 'available_tools': names})
+                       + '\n当前轮尚未激活 Skill。历史“已启用”不是当前轮的激活状态。'
+                       '用户确认或继续上一轮 Skill 任务时，先从下面当前目录选择匹配方法并调用 activate_skill，'
+                       '读取正文后在下一轮按实际提供的 tools schema 处理当前请求。'
+                       '准备或列出工具参数也应先加载该方法，不能从历史代码块猜参数。'
+                       '新请求与旧方法无关时不继续旧任务；目录不授予工具权限。\n' + catalog)
+            view = [message for message in messages
+                    if message != {'role': 'system', 'content': catalog}]
+            boundary = next((i for i in range(len(view) - 1, -1, -1)
+                             if view[i].get('role') == 'user'), len(view))
+            return [*view[:boundary], {'role': 'system', 'content': content}, *view[boundary:]]
         return model_messages(messages, tools, [
             {'skill_id': a.skill_key, 'revision': a.revision,
              'selection': ('scheduled' if self.scheduled_snapshot is not None else 'session' if a.skill_key in self.session_skill_ids

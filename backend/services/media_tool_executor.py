@@ -17,172 +17,41 @@ from loguru import logger
 class MediaToolMixin:
     """图片/视频生成工具 Mixin"""
 
-    async def _generate_image(
-        self, args: Dict[str, Any], *, task_id_override: str | None = None,
-        trial_metadata: Dict[str, Any] | None = None,
-    ) -> "AgentResult":
-        """生成图片：锁积分 → adapter 同步等待 → confirm/refund"""
-        from config.kie_models import calculate_image_cost
-        from core.exceptions import InsufficientCreditsError
-        from services.adapters.factory import create_image_adapter
+    async def _generate_image(self, args: Dict[str, Any]) -> "AgentResult":
+        """One persistent child acceptance; completion belongs to its worker."""
+        from services.handlers.image_handler import ImageHandler
+        from services.handlers.chat_image_request import ChatImageNotAcceptedError
         from services.agent.agent_result import AgentResult
-
-        prompt = args.get("prompt", "").strip()
-        if not prompt:
-            return AgentResult(
-                summary="提示词不能为空",
-                status="error",
-                error_message="Validation: prompt is required",
-                metadata={"retryable": True},
-            )
-
-        aspect_ratio = args.get("aspect_ratio", "1:1")
-        image_urls = args.get("image_urls") or []
-
-        # 根据有无参考图片选择模型：图生图 vs 文生图
-        if image_urls:
-            model_id = "gpt-image-2-5-flare-image-to-image"
-        else:
-            from config.smart_model_config import DEFAULT_IMAGE_MODEL
-            model_id = DEFAULT_IMAGE_MODEL
-
-        # 1. 计算积分
+        import json
         try:
-            cost_result = calculate_image_cost(model_name=model_id, image_count=1)
-            credits_needed = cost_result["user_credits"]
-        except Exception as e:
+            accepted = await ImageHandler(self.db).accept_chat_image(self, args)
+        except ChatImageNotAcceptedError as error:
+            code = str(error)
+            if code.startswith("RESOURCE_") or code in {
+                "IMAGE_INPUT_UNAVAILABLE", "IMAGE_ORIGINAL_UNAVAILABLE", "IMAGE_REFERENCE_CHANGED",
+                "IMAGE_REFERENCE_LOCATOR_INVALID", "IMAGE_CONTENT_INDEX_INVALID", "IMAGE_ASSET_DENIED",
+                "IMAGE_SOURCE_MESSAGE_DENIED", "IMAGE_SOURCE_REVISION_DENIED",
+                "IMAGE_SOURCE_MESSAGE_CHANGED", "IMAGE_REFERENCE_AMBIGUOUS", "IMAGE_QUOTED_SOURCE_DENIED",
+                "IMAGE_QUOTED_SOURCE_CHANGED", "IMAGE_SOURCE_CATALOG_INVALID",
+            }:
+                guidance = ("指定参考图无法定位、读取或通过权限/版本校验。"
+                            "请用 get_conversation_context 读取用户选定原图的真实 message_id/content_index，"
+                            "或使用获准搜索返回的 resource_ref；不要编造 file_id、自动换图或重复提交。")
+            elif code in {"IMAGE_REQUEST_FIELDS_INVALID", "IMAGE_MODEL_SELECTION_DISABLED"}:
+                guidance = ("此入口仅使用服务器默认模型，不传 model/model_name；"
+                            "请使用实际工具参数 mode、prompt、aspect_ratio、resolution、output_format，不能用 size/format。")
+            else:
+                guidance = "请核对具体错误及当前工具合同，补充必要信息后继续；不要自动改写提示词或重复提交。"
             return AgentResult(
-                summary=f"积分计算失败：{e}",
-                status="error",
-                error_message=str(e),
-                metadata={"retryable": False},
+                summary=(f"图片请求未接受：{error}。未创建图片任务，未预扣图片积分。"
+                         + guidance),
+                status="error", error_message=code,
+                metadata={"accepted": False, "completed": False, "retryable": False,
+                          "submission_state": "not_accepted"},
             )
-
-        # 2. 锁定积分（原子预扣）
-        task_id = task_id_override or str(uuid4())
-        try:
-            tx_id = self._lock_credits(
-                task_id=task_id, user_id=self.user_id,
-                amount=credits_needed, reason=f"Image: {prompt[:30]}",
-                org_id=self.org_id,
-            )
-        except InsufficientCreditsError as e:
-            return AgentResult(
-                summary=str(e),
-                status="error",
-                error_message=str(e),
-                metadata={"retryable": False},
-            )
-
-        adapter = None
-        try:
-            adapter = create_image_adapter(
-                model_id, shadow_user_id=getattr(self, "workspace_user_id", self.user_id),
-                shadow_org_id=self.org_id,
-            )
-            result = await self._run_image_generation(
-                adapter=adapter,
-                tx_id=tx_id,
-                task_id=task_id,
-                prompt=prompt,
-                image_urls=image_urls,
-                aspect_ratio=aspect_ratio,
-                model_id=model_id,
-                trial_metadata=trial_metadata,
-            )
-            if trial_metadata and result.status == "success":
-                result.metadata.update({
-                    **trial_metadata,
-                    "credits_charged": credits_needed,
-                })
-            return result
-        except Exception as e:
-            self._refund_credits(tx_id)
-            logger.error(f"Image generation error | error={e}")
-            return self._image_failure_result(
-                str(e), prompt, aspect_ratio, model_id,
-            )
-        finally:
-            if adapter is not None:
-                await adapter.close()
-
-    async def _run_image_generation(
-        self,
-        adapter: Any,
-        tx_id: str,
-        task_id: str,
-        prompt: str,
-        image_urls: list[str],
-        aspect_ratio: str,
-        model_id: str,
-        trial_metadata: Dict[str, Any] | None = None,
-    ) -> "AgentResult":
-        from services.agent.agent_result import AgentResult
-        from services.file_upload import persist_media_urls_to_workspace
-
-        result = await adapter.generate(
-            prompt=prompt,
-            image_urls=image_urls or None,
-            size=aspect_ratio,
-            wait_for_result=True,
-            max_wait_time=90.0,
-            poll_interval=2.0,
-        )
-        if not result.image_urls:
-            self._refund_credits(tx_id)
-            return self._image_failure_result(
-                result.fail_msg or "未知错误",
-                prompt,
-                aspect_ratio,
-                model_id,
-            )
-        self._confirm_deduct(tx_id)
-        emit_payloads = await persist_media_urls_to_workspace(
-            urls=result.image_urls,
-            user_id=getattr(self, "workspace_user_id", self.user_id),
-            org_id=self.org_id,
-            media_type="image",
-            meta={
-                "prompt": prompt,
-                "model": model_id,
-                "aspect_ratio": aspect_ratio,
-                "task_id": task_id,
-                "reference_images": image_urls,
-                **(trial_metadata or {}),
-            },
-        )
-        urls = "\n".join(result.image_urls)
         return AgentResult(
-            summary=f"图片已生成：\n{urls}",
-            status="success",
-            emit_payloads=emit_payloads,
-        )
-
-    @staticmethod
-    def _image_failure_result(
-        error: str,
-        prompt: str,
-        aspect_ratio: str,
-        model_id: str,
-    ) -> "AgentResult":
-        from services.agent.agent_result import AgentResult
-
-        return AgentResult(
-            summary=f"图片生成失败：{error}",
-            status="error",
-            error_message=error,
-            metadata={"retryable": True},
-            emit_payloads=[{
-                "kind": "image",
-                "url": None,
-                "failed": True,
-                "error": error,
-                "retry_context": {
-                    "prompt": prompt,
-                    "aspect_ratio": aspect_ratio,
-                    "model_id": model_id,
-                },
-            }],
+            summary="图片任务已接受，尚未完成；结果随后在独立图片消息展示。" + json.dumps(accepted,ensure_ascii=False),
+            status="success", metadata={**accepted, "accepted": True, "completed": False},
         )
 
     async def _generate_video(self, args: Dict[str, Any]) -> "AgentResult":

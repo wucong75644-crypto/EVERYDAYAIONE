@@ -41,9 +41,124 @@ class ImageHandler(BaseHandler):
     def __init__(self, db):
         super().__init__(db)
 
+    async def accept_chat_image(self, owner: Any, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Persist one frozen child. No prepare, provider IO or credit debit.
+
+        `owner` is the Policy-approved executor, never a model argument. Actor
+        fencing comes from the active handler and is checked again by the RPC.
+        """
+        from core.config import get_settings
+        from core.db_scope import DatabaseScope, DatabaseAccessKind, ScopedDatabaseClient
+        from services.tools.dispatcher import current_dispatch_call_id
+        from services.handlers.chat_image_request import (
+            ChatImageInputResolver, ChatImageNotAcceptedError, freeze_image_request,
+            chat_image_acceptance_allowed, validate_chat_image_tool_fields,
+        )
+
+        settings=get_settings()
+        if not chat_image_acceptance_allowed(settings, getattr(owner, "user_id", None)):
+            raise PermissionError("CHAT_IMAGE_ASYNC_DISABLED")
+        validate_chat_image_tool_fields(args)
+        call_id=current_dispatch_call_id()
+        token=getattr(owner,"image_execution_token",None)
+        if (not call_id or not token or not owner.task_id or owner.context_scope != "user"
+                or owner.execution_mode != "interactive" or owner.workspace_user_id != owner.user_id):
+            raise PermissionError("CHAT_IMAGE_TRUSTED_CONTEXT_REQUIRED")
+        parent = await asyncio.to_thread(lambda: owner.db.table("tasks").select(
+            "id,user_id,org_id,conversation_id,turn_id,input_message_id,base_context_revision,request_params"
+        ).eq("id",owner.task_id).single().execute().data)
+        if (not parent or parent.get("user_id") != owner.user_id or parent.get("org_id") != owner.org_id
+                or parent.get("conversation_id") != owner.conversation_id
+                or parent.get("base_context_revision") is None):
+            raise PermissionError("CHAT_IMAGE_PARENT_DENIED")
+        from services.handlers.chat_context.image_sources import legacy_catalog
+        try:
+            resolver=ChatImageInputResolver(owner,base_revision=parent["base_context_revision"],
+                input_message_id=str(parent["input_message_id"]), legacy_sources=legacy_catalog(parent), require_known_sources=True)
+            normalized=await asyncio.to_thread(resolver.normalize_legacy,args)
+            if normalized.get("background")=="transparent" and not settings.chat_image_transparent_enabled:
+                raise PermissionError("CHAT_IMAGE_TRANSPARENT_DISABLED")
+            refs=await asyncio.to_thread(resolver.resolve,normalized.get("references",[]))
+            if "source_prompt" in normalized:
+                normalized["source_prompt"] = await asyncio.to_thread(resolver.source_prompt,normalized["source_prompt"],normalized["prompt"])
+            if "source_task_id" in normalized:
+                await asyncio.to_thread(resolver.validate_source_task,normalized["source_task_id"])
+            origin={"parent_task_id":owner.task_id,"tool_call_id":call_id,
+                "actor_user_id":owner.user_id,"workspace_owner_id":owner.workspace_user_id,
+                "org_id":owner.org_id,"context_scope":owner.context_scope,
+                "conversation_id":owner.conversation_id,"turn_id":str(parent["turn_id"]),
+                "input_message_id":str(parent["input_message_id"]),
+                "base_context_revision":parent["base_context_revision"]}
+            origin["skills"] = list(getattr(owner, "image_skill_snapshot", ()))
+            snapshot=freeze_image_request(normalized,refs,origin=origin,
+                max_requests=settings.chat_image_max_requests,max_credits=settings.chat_image_max_credits)
+            await asyncio.to_thread(resolver.verify,refs)
+        except (ValueError, OSError) as error:
+            # Only this input/read boundary precedes acceptance. RPC exceptions
+            # below may mean a committed task; never classify those as rejected.
+            code = getattr(error, "code", None) or str(error)
+            if not code.startswith(("IMAGE_", "CHAT_IMAGE_", "RESOURCE_")) or not code.replace("_", "").isalnum():
+                code = "IMAGE_INPUT_UNAVAILABLE"
+            raise ChatImageNotAcceptedError(code) from error
+        if owner.cancellation_event is not None and owner.cancellation_event.is_set():
+            raise asyncio.CancelledError()
+        scoped=ScopedDatabaseClient(self.db,DatabaseScope(owner.user_id,owner.org_id,DatabaseAccessKind.RUNTIME))
+        result=await asyncio.to_thread(lambda:scoped.rpc("accept_chat_image_request",{
+            "p_parent_task_id":owner.task_id,"p_execution_token":token,
+            "p_snapshot":snapshot,"p_org_id":owner.org_id,
+        }).execute().data)
+        if not isinstance(result,dict) or result.get("outcome") not in {"accepted","replay"}:
+            raise RuntimeError("CHAT_IMAGE_ACCEPTANCE_NOT_CONFIRMED")
+        try:
+            from schemas.websocket import build_media_pending
+            from services.websocket_manager import ws_manager
+            import json
+            message=await asyncio.to_thread(lambda:scoped.table("messages").select("*").eq("id",result["message_id"]).single().execute().data)
+            if isinstance(message.get("content"),str):
+                message["content"]=json.loads(message["content"])
+            await ws_manager.send_to_task_or_user(result["task_id"],owner.user_id,
+                build_media_pending(result["task_id"],owner.conversation_id,message,result["submission_state"]),org_id=owner.org_id)
+        except Exception as error:
+            logger.warning("Chat image accepted; pending snapshot delivery deferred | task={} | error_type={}",result["task_id"],type(error).__name__)
+        return {"status":"submitted",**result,"mode":snapshot["mode"],
+            "model":snapshot["model"],"aspect_ratio":snapshot["aspect_ratio"],
+            "resolution":snapshot["resolution"],"estimated_credits":snapshot["estimated_credits"]}
+
     @property
     def handler_type(self) -> GenerationType:
         return GenerationType.IMAGE
+
+    async def accept_image_trial(self, *, actor_id, org_id, trial_id, conversation_id,
+                                 args, trial_facts, result):
+        """Same snapshot/worker path, isolated trial destination, no chat stub."""
+        from types import SimpleNamespace
+        from core.config import get_settings
+        from core.db_scope import DatabaseScope, DatabaseAccessKind, ScopedDatabaseClient
+        from services.handlers.chat_image_request import ChatImageInputResolver, freeze_image_request, chat_image_acceptance_allowed
+        settings=get_settings()
+        if not chat_image_acceptance_allowed(settings, actor_id):
+            raise PermissionError("CHAT_IMAGE_ASYNC_DISABLED")
+        if args.get("background")=="transparent" and not settings.chat_image_transparent_enabled:
+            raise PermissionError("CHAT_IMAGE_TRANSPARENT_DISABLED")
+        scoped=ScopedDatabaseClient(self.db,DatabaseScope(actor_id,org_id,DatabaseAccessKind.RUNTIME_ADMIN))
+        conv=await asyncio.to_thread(lambda:scoped.table("conversations").select("user_id,org_id,scope_type,context_revision").eq("id",conversation_id).single().execute().data)
+        if conv.get("user_id")!=actor_id or conv.get("org_id")!=org_id or conv.get("scope_type","user")!="user":
+            raise PermissionError("CHAT_IMAGE_TRIAL_CONVERSATION_DENIED")
+        owner=SimpleNamespace(db=scoped,user_id=actor_id,workspace_user_id=actor_id,org_id=org_id,
+            conversation_id=conversation_id,context_scope="user",resource_manifest=None,execution_mode="interactive")
+        resolver=ChatImageInputResolver(owner,base_revision=conv["context_revision"],input_message_id="")
+        refs=await asyncio.to_thread(resolver.resolve,args.get("references",[]))
+        origin={"destination":"skill_trial","trial_id":trial_id,"actor_user_id":actor_id,
+            "workspace_owner_id":actor_id,"org_id":org_id,"context_scope":"user",
+            "conversation_id":conversation_id,"base_context_revision":conv["context_revision"],"input_message_id":"",
+            **{key:trial_facts[key] for key in ("change_set_id","candidate_revision","content_sha256","audit_subject_sha256") if key in trial_facts}}
+        frozen=freeze_image_request(args,refs,origin=origin,max_requests=1,max_credits=settings.chat_image_max_credits)
+        await asyncio.to_thread(resolver.verify,refs)
+        accepted=await asyncio.to_thread(lambda:scoped.rpc("accept_chat_image_trial",{
+            "p_trial_id":trial_id,"p_snapshot":frozen,"p_result":result,"p_org_id":org_id,
+        }).execute().data)
+        return {**result,"image_task_id":accepted["task_id"],"status":"running",
+            "submission_state":accepted["submission_state"]}
 
     def preflight(
         self,

@@ -62,6 +62,7 @@ class BuildInput:
     text_content: str = ""                                      # user 原话
     workspace_files: List[Dict[str, Any]] = field(default_factory=list)
     image_urls: List[str] = field(default_factory=list)
+    image_sources: List[Dict[str, Any]] = field(default_factory=list)
     file_urls: List[str] = field(default_factory=list)
 
     # 运行时配置
@@ -191,6 +192,7 @@ class PromptBuilder:
             attachments_xml=attachments_xml,
             workspace_prompt=workspace_prompt,
             image_urls=inp.image_urls,
+            image_sources=inp.image_sources,
             file_urls=inp.file_urls,
             attachments_as_system=inp.attachments_as_system,
         )
@@ -346,7 +348,7 @@ class PromptBuilder:
                 return copy.deepcopy(inp.context_snapshot.history_messages)
             try:
                 msgs = await build_context_messages(
-                    inp.db, inp.conversation_id, inp.text_content,
+                    inp.db, inp.conversation_id, inp.text_content, org_id=inp.org_id,
                 )
                 if not msgs:
                     return msgs

@@ -165,7 +165,7 @@ class ChatGenerationExecutor:
                     task_id=claim.task_id,
                     message_id=str(task["assistant_message_id"]),
                     model_id=_normalize_model_id(task.get("model_id")),
-                    context_anchor=_build_anchor(claim, task.get("org_id")),
+                    context_anchor=_build_anchor(claim, task.get("org_id"), task),
                     params=params,
                     selected_skill=selected_skill,
                     permission_mode=str(params.get("permission_mode") or "auto"),
@@ -231,6 +231,7 @@ class ChatGenerationExecutor:
             return {"outcome": "disabled"}
         boundary = {
             SafePoint.BEFORE_MODEL: ReplayCheckpointBoundary.BEFORE_MODEL,
+            SafePoint.BEFORE_TOOL: ReplayCheckpointBoundary.BEFORE_TOOL,
             SafePoint.AFTER_TOOL: ReplayCheckpointBoundary.AFTER_TOOL,
             SafePoint.AFTER_SKILL_ACTIVATION: ReplayCheckpointBoundary.AFTER_SKILL_ACTIVATION,
             SafePoint.BEFORE_COMMIT: ReplayCheckpointBoundary.BEFORE_COMMIT,
@@ -355,7 +356,9 @@ def _normalize_model_id(raw: Any) -> str:
 def _build_anchor(
     claim: GenerationClaim,
     org_id: Any,
+    task: dict | None = None,
 ) -> ContextAnchor:
+    from services.handlers.chat_context.image_sources import legacy_catalog
     return ContextAnchor(
         task_id=claim.task_id,
         conversation_id=claim.conversation_id,
@@ -364,6 +367,11 @@ def _build_anchor(
         base_revision=claim.base_context_revision,
         through_message_id=claim.context_through_message_id,
         org_id=str(org_id) if org_id else None,
+        legacy_image_sources=tuple(legacy_catalog(task)) if task else (),
+        image_source_owner_id=str(task["user_id"]) if task else None,
+        image_sources_unavailable_reason=(
+            ((task.get("request_params") or {}).get("_image_sources_v1") or {}).get("unavailable_reason")
+            if task else None),
     )
 
 

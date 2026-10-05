@@ -63,19 +63,33 @@ def test_25_pricing_matches_preflight_and_adapter(model, resolution, credits):
     assert cost["kie_cost"] == credits * 3
 
 
-@pytest.mark.parametrize("references,model", [([], TEXT_MODEL), ([REFERENCE], EDIT_MODEL)])
-async def test_media_tool_selects_25_for_text_and_reference_images(references, model):
+@pytest.mark.parametrize("mode,references,model", [("text_to_image", [], TEXT_MODEL), ("image_to_image", [REFERENCE], EDIT_MODEL)])
+async def test_media_tool_uses_single_async_acceptance(mode, references, model):
     tool = MediaToolMixin()
-    tool.user_id = "user"
-    tool.org_id = "org"
-    tool._lock_credits = MagicMock(return_value="transaction")
-    tool._run_image_generation = AsyncMock(return_value="result")
-    adapter = AsyncMock()
-    with patch("services.adapters.factory.create_image_adapter", return_value=adapter) as create:
-        assert await tool._generate_image({"prompt": "product", "image_urls": references}) == "result"
-    assert create.call_args.args[0] == model
-    assert tool._lock_credits.call_args.kwargs["amount"] == 6
-    adapter.close.assert_awaited_once()
+    tool.db = MagicMock()
+    args = {"mode":mode,"prompt":"  product  ","image_urls":references,"model":model}
+    receipt = {"task_id":"child","status":"submitted","submission_state":"queued"}
+    with patch("services.handlers.image_handler.ImageHandler.accept_chat_image",new=AsyncMock(return_value=receipt)) as accept, \
+         patch("services.adapters.factory.create_image_adapter") as provider:
+        result = await tool._generate_image(args)
+    accept.assert_awaited_once_with(tool,args)
+    assert result.metadata["accepted"] is True and result.metadata["completed"] is False
+    provider.assert_not_called()
+    tool.db.rpc.assert_not_called()
+
+
+@pytest.mark.parametrize("model,refs", [(TEXT_MODEL,None),(EDIT_MODEL,[REFERENCE])])
+async def test_transparent_async_payload_uses_one_create_without_retry(model,refs):
+    client = MagicMock()
+    client.create_task_once = AsyncMock(return_value=SimpleNamespace(is_success=True,task_id="accepted-alpha"))
+    client.create_task = AsyncMock()
+    result = await KieImageAdapter(client,model).generate(prompt="product",image_urls=refs,
+        background="transparent",wait_for_result=False,_chat_image_single_submit=True)
+    request=client.create_task_once.await_args.args[0].model_dump(mode="json",exclude_none=True)
+    assert request["input"]["background"]=="transparent" and result.task_id=="accepted-alpha"
+    client.create_task_once.assert_awaited_once()
+    client.create_task.assert_not_called()
+    client._schedule_shadow_upload.assert_called_once()
 
 
 def test_ecom_defaults_and_old_model_routing():

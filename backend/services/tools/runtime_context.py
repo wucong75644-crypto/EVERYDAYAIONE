@@ -11,17 +11,18 @@ from services.skills.creation_policy import from_features
 def catalog_context(org_id, permission_mode="auto", personal_context_allowed=True):
     """Metadata-only compatibility helpers; never used as an execution grant."""
     from core.config import get_settings
+    from services.handlers.chat_image_request import chat_image_acceptance_allowed
     settings = get_settings()
     return ToolContext(
         actor_user_id="catalog", workspace_owner_id="catalog" if personal_context_allowed else "channel",
         org_id=org_id, context_scope="user" if personal_context_allowed else "channel",
         personal_context_allowed=personal_context_allowed, agent_domain="general",
         permission_mode=permission_mode, execution_mode="interactive",
-        feature_flags={key: getattr(settings, key, False) is True for key in (
+        feature_flags={**{key: getattr(settings, key, False) is True for key in (
             "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled",
             "mcp_connectors_enabled", "skill_catalog_enabled", "skill_chat_creation_enabled",
             "skill_org_admin",
-        )},
+        )}, "chat_image_async_enabled": chat_image_acceptance_allowed(settings, None)},
     )
 
 
@@ -45,14 +46,16 @@ def chat_context(handler, *, user_id, conversation_id, task_id, permission_mode,
 
 def executor_context(executor, *, call_id=None) -> ToolContext:
     from core.config import get_settings
+    from services.handlers.chat_image_request import chat_image_acceptance_allowed
     settings = get_settings()
     from .resource_access import resource_boundary
     manifest = executor.resource_manifest
     feature_flags = {name: getattr(settings, name, False) is True for name in (
         "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled",
-        "mcp_connectors_enabled", "skill_catalog_enabled", "skill_chat_creation_enabled",
+        "mcp_connectors_enabled", "skill_catalog_enabled", "skill_chat_creation_enabled", "chat_image_async_enabled",
     )}
     feature_flags["skill_org_admin"] = False
+    feature_flags["chat_image_async_enabled"] = chat_image_acceptance_allowed(settings, executor.user_id)
     # Connector access is separately organization-scoped. A missing row,
     # mismatched database scope, or failed status read always disables it.
     from .mcp_org import connector_is_enabled

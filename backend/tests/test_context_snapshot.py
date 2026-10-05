@@ -196,6 +196,27 @@ async def test_snapshot_cache_hit_does_not_query_history_database():
 
 
 @pytest.mark.asyncio
+async def test_legacy_sources_are_task_private_and_not_written_to_shared_revision_cache():
+    from dataclasses import replace
+    cached=[{"role":"user","content":"共享闭合历史"}]
+    source={"id":"legacy-image","content":[{"type":"image","workspace_path":"A.png"}]}
+    anchor=replace(_anchor(),legacy_image_sources=(source,),image_source_owner_id="user-1")
+    db=MagicMock()
+    db.table.side_effect=[_query({"id":"input-1","conversation_id":"conv-1","role":"user","turn_id":"turn-1"}),
+        _query({"context_summary":None,"summary_revision":0,"source":"web"})]
+    with (
+        patch("services.handlers.conversation_cache.get_closed_messages",new=AsyncMock(return_value=cached)),
+        patch("services.handlers.conversation_cache.set_closed_messages",new=AsyncMock()) as set_cached,
+        patch("services.handlers.chat_context.image_sources.legacy_source_notice",return_value="私有来源A") as notice,
+    ):
+        snapshot=await build_context_snapshot(db,anchor,"确认")
+    assert snapshot.history_messages==[*cached,{"role":"system","content":"私有来源A"}]
+    assert cached==[{"role":"user","content":"共享闭合历史"}]
+    set_cached.assert_not_awaited()
+    notice.assert_called_once_with(db,anchor.legacy_image_sources,"conv-1","org-1",owner_id="user-1")
+
+
+@pytest.mark.asyncio
 async def test_prompt_builder_snapshot_bypasses_mutable_history_cache():
     from services.prompt_builder.builder import BuildInput, PromptBuilder
 

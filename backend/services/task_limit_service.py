@@ -48,6 +48,45 @@ class TaskLimitService:
         """单对话活跃任务 SET 键"""
         return f"task:conv_active:{self._org_prefix(org_id)}:{user_id}:{conversation_id}"
 
+    async def acquire_image_slot(
+        self, user_id: str, conversation_id: str, task_id: str,
+        org_id: str | None = None,
+    ) -> str:
+        """Atomic, fail-closed media acquisition; never borrow a chat slot.
+
+        The persistent local image task ID is the independent slot identity.
+        Existing chat/video acquisition and its availability behavior are intact.
+        """
+        script = """
+        if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 1 and
+           redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 1 then
+            redis.call('EXPIRE', KEYS[1], ARGV[4])
+            redis.call('EXPIRE', KEYS[2], ARGV[4])
+            return 0
+        end
+        local global_count = redis.call('SCARD', KEYS[1])
+        local conv_count = redis.call('SCARD', KEYS[2])
+        local adds_global = 1 - redis.call('SISMEMBER', KEYS[1], ARGV[1])
+        local adds_conv = 1 - redis.call('SISMEMBER', KEYS[2], ARGV[1])
+        if global_count + adds_global > tonumber(ARGV[2]) then return 1 end
+        if conv_count + adds_conv > tonumber(ARGV[3]) then return 2 end
+        redis.call('SADD', KEYS[1], ARGV[1])
+        redis.call('SADD', KEYS[2], ARGV[1])
+        redis.call('EXPIRE', KEYS[1], ARGV[4])
+        redis.call('EXPIRE', KEYS[2], ARGV[4])
+        return 0
+        """
+        result = await self.redis.eval(script, 2,
+            self._global_key(user_id, org_id),
+            self._conversation_key(user_id, conversation_id, org_id),
+            task_id, self.global_limit, self.conversation_limit, _SET_TTL)
+        if result:
+            global_scope = result == 1
+            limit = self.global_limit if global_scope else self.conversation_limit
+            raise TaskQueueFullError(current_count=limit, max_count=limit,
+                scope="global" if global_scope else "conversation")
+        return task_id
+
     async def check_and_acquire(
         self,
         user_id: str,

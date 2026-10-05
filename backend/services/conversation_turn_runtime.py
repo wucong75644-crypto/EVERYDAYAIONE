@@ -152,11 +152,15 @@ class ConversationTurnRuntime:
             self.state = ConversationState.OWNERSHIP_LOST
             raise ConversationStopRequested("ownership_lost")
 
+        if point == SafePoint.BEFORE_TOOL and replay_payload is not None and self._replay_checkpoint_callback is None:
+            raise RuntimeError("ACTOR_TOOL_DISPATCH_CHECKPOINT_UNAVAILABLE")
+
         if (
             replay_payload is not None
             and self._replay_checkpoint_callback is not None
             and point in {
                 SafePoint.BEFORE_MODEL,
+                SafePoint.BEFORE_TOOL,
                 SafePoint.AFTER_TOOL,
                 SafePoint.AFTER_SKILL_ACTIVATION,
                 SafePoint.BEFORE_COMMIT,
@@ -173,6 +177,8 @@ class ConversationTurnRuntime:
             }:
                 self.state = ConversationState.OWNERSHIP_LOST
                 raise ConversationStopRequested("ownership_lost")
+            if point == SafePoint.BEFORE_TOOL and result.get("outcome") != "saved":
+                raise RuntimeError("ACTOR_TOOL_DISPATCH_CHECKPOINT_NOT_SAVED")
 
         # MODEL_CHUNK 每个 token 都会经过，不能在这里访问数据库。
         if (

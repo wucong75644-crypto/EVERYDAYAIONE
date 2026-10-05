@@ -178,6 +178,7 @@ def register_task_media_best_effort(
         return []
 
     request_params = task.get("request_params") or {}
+    image_snapshot = request_params.get("_media_request_v1") or {}
     registered: list[dict[str, Any]] = []
     for index, part in enumerate(content_parts):
         url = part.get("url")
@@ -214,8 +215,13 @@ def register_task_media_best_effort(
             source_task_id=task_id,
             content_index=index,
             model_id=task.get("model_id"),
-            prompt=request_params.get("prompt"),
-            metadata=_task_asset_metadata(request_params, part),
+            prompt=image_snapshot.get("prompt") or request_params.get("prompt"),
+            metadata={**_task_asset_metadata({**request_params, **image_snapshot}, part), **({
+                "parent_task_id": image_snapshot.get("origin", {}).get("parent_task_id"),
+                "source_task_id": image_snapshot.get("source_task_id"),
+                "source_references": [{key: ref[key] for key in ("asset_id", "message_id", "content_index", "role", "content_sha256") if key in ref} for ref in image_snapshot.get("references", [])],
+                "request_hash": image_snapshot.get("request_hash"),
+            } if image_snapshot else {})},
         )
         try:
             registered.append(

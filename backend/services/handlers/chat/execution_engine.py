@@ -393,7 +393,17 @@ async def _run_loop(
     thinking_mode = request.thinking_mode
     empty_output_retried = False
     repeated_tool_call_guard = repeated_tool_call_guard or _RepeatedToolCallGuard()
+    from services.handlers.chat.image_argument_correction import ImageArgumentCorrection
+    image_arguments = ImageArgumentCorrection(blocks)
+    prepared.image_arguments = image_arguments
     while not prepared.budget.stop_reason:
+        correcting = image_arguments.start_round(model_round)
+        if image_arguments.stop_message:
+            totals.usage["image_argument_metrics"] = image_arguments.summary()
+            blocks.append({"type": "text", "text": image_arguments.stop_message})
+            totals.text += image_arguments.stop_message
+            await sink.on_block(blocks[-1])
+            return None
         if runtime:
             if runtime.skill_runtime is not None:
                 _apply_skill_context(prepared, runtime.skill_runtime)
@@ -437,19 +447,19 @@ async def _run_loop(
         ):
             tools.append(ACTIVATE_SKILL_SCHEMA)
         current_model_round = model_round
-        turn_text, turn_thinking, calls, previewed_call_ids = await _read_turn(
-            prepared,
-            tools,
-            cancellation_event,
-            sink,
-            totals,
-            blocks,
-            runtime,
-            request.thinking_effort,
-            thinking_mode,
-            request,
-            model_round=current_model_round,
-        )
+        before_usage = dict(totals.usage) if correcting else {}
+        try:
+            turn_text, turn_thinking, calls, previewed_call_ids = await _read_turn(
+                prepared, tools, cancellation_event, sink, totals, blocks, runtime,
+                request.thinking_effort, thinking_mode, request,
+                model_round=current_model_round,
+            )
+        finally:
+            if correcting:
+                image_arguments.record_usage(before_usage, totals.usage, _get_model_gateway(prepared))
+            image_metrics = image_arguments.summary()
+            if image_metrics is not None:
+                totals.usage["image_argument_metrics"] = image_metrics
         model_round += 1
         if runtime:
             await runtime.safe_point(SafePoint.AFTER_MODEL)
@@ -512,6 +522,9 @@ async def _run_loop(
             ),
         )
         executor = getattr(handler, "_tool_executor", None)
+        image_metrics = image_arguments.summary()
+        if image_metrics is not None:
+            totals.usage["image_argument_metrics"] = image_metrics
         resource_stop = getattr(getattr(executor, "_tool_runtime", None), "resource_stop_reason", "")
         result_stop = getattr(handler, "_tool_result_stop_reason", "")
         stop_message = resource_stop or result_stop
@@ -811,9 +824,23 @@ async def _execute_tools(
         else:
             blocks.append(block)
             await sink.on_block(block)
+    guard = getattr(prepared, "image_arguments", None)
+    ready_calls, rejected = guard.filter_calls(calls) if guard else (calls, [])
+    if guard:
+        guard.reserve_dispatch(ready_calls)
+        if guard.repair and guard.repair.get("dispatch_reserved") and runtime is None:
+            raise RuntimeError("IMAGE_ARGUMENT_CORRECTION_CHECKPOINT_REQUIRED")
     if runtime:
         runtime.set_state(ConversationState.WAITING_TOOL)
-        await runtime.safe_point(SafePoint.BEFORE_TOOL)
+        if guard and guard.repair and guard.repair.get("dispatch_reserved"):
+            # Commit the paid correction boundary before any business IO. A
+            # restart stops here; it cannot change the batch index/call ID.
+            await runtime.safe_point(SafePoint.BEFORE_TOOL, replay_payload=_build_replay_context(
+                prepared.messages, blocks, turn, next_model_round=next_model_round,
+                repeated_tool_call_guard=repeated_tool_call_guard,
+            ))
+        else:
+            await runtime.safe_point(SafePoint.BEFORE_TOOL)
     await _check_cancelled(
         cancellation_event, request, prepared.messages, blocks,
         totals, "before_tool",
@@ -824,6 +851,10 @@ async def _execute_tools(
             sink=sink, start_times=start_times, turn=turn,
             next_model_round=next_model_round, repeated_tool_call_guard=repeated_tool_call_guard,
         )
+        guard = getattr(prepared, "image_arguments", None)
+        if guard and guard.repair and guard.repair.get("used"):
+            guard.observe([])
+            handler._tool_result_stop_reason = guard.stop_message
         return None
     # Only this task's authenticated replay blocks supply browse provenance.
     # No new checkpoint fields and no parsing of model prose/tool output.
@@ -834,7 +865,7 @@ async def _execute_tools(
         and block.get("status") == "completed"
     )
     results = await handler._execute_tool_calls(
-        calls,
+        ready_calls,
         request.task_id,
         request.conversation_id,
         request.message_id,
@@ -845,10 +876,20 @@ async def _execute_tools(
         cancellation_event=cancellation_event,
         permission_mode=prepared.permission.mode.value,
         agent_domain=prepared.execution_context.agent_domain,
-        **({"authorized_tool_names": prepared.execution_context.authorized_tool_names}
+        **({"authorized_tool_names": prepared.execution_context.authorized_tool_names,
+            "image_skill_snapshot": tuple({"skill_key": active.skill_key, "revision": active.revision,
+                "body_sha256": active.body_sha256, "rendered_sha256": active.rendered_sha256}
+                for active in runtime.skill_runtime.active.values())}
            if runtime and runtime.skill_runtime is not None and runtime.skill_runtime.has_active_skills
            else {}),
-    )
+    ) if ready_calls else []
+    if rejected:
+        by_call = {item[0]["id"]: item for item in [*results, *rejected]}
+        results = [by_call[call["id"]] for call in calls]
+    if guard:
+        guard.observe(results)
+        if guard.stop_message:
+            handler._tool_result_stop_reason = getattr(handler, "_tool_result_stop_reason", "") or guard.stop_message
     if runtime:
         tool_call_ids = [call["id"] for call in calls]
         command_id = _actor_tool_completion_command_id(
@@ -944,6 +985,9 @@ def _apply_skill_context(prepared: Any, skills: Any) -> None:
             authorized_tool_names=skills.effective_allowed_tool_names,
             authorization_snapshot=snapshot,
         )
+        if prepared.execution_context.execution_mode == "interactive":
+            # Registry/Policy still filter this already authorized ceiling.
+            prepared.tool_context.discovered_tools.update(skills.effective_allowed_tool_names)
 
 
 async def _execute_skill_batch(

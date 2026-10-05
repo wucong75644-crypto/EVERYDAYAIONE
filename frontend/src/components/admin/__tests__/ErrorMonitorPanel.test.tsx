@@ -31,6 +31,8 @@ vi.mock('framer-motion', async () => {
 import {
   listErrors,
   getErrorStats,
+  getImagePlatformCosts,
+  getImageArgumentStats,
   summarizeErrors,
   resolveError,
   clearErrors,
@@ -80,6 +82,17 @@ function makeErrorItem(overrides: Partial<ErrorLogItem> = {}): ErrorLogItem {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(getImageArgumentStats).mockResolvedValue({
+    summary: { recorded_chats: 0, initial_calls: 0, invalid_initial_calls: 0, corrected_calls: 0,
+      unresolved_calls: 0, correction_rounds: 0, prompt_tokens: 0, completion_tokens: 0,
+      estimated_chat_credits: 0, cost_unknown_rounds: 0, initial_error_rate: null, correction_success_rate: null },
+    sample_size: 0, truncated: false, since: '', until: '', evidence: 'completed_chat_usage', cost_evidence: 'token_estimate',
+  });
+  vi.mocked(getImagePlatformCosts).mockResolvedValue({
+    summary: { count: 0, refunded_user_credits: 0, estimated_provider_credits: 0,
+      evidence: 'unconfirmed', since: '', until: '' },
+    items: [], page: 1, page_size: 20,
+  });
 });
 
 function setupDefaultMocks(items: ErrorLogItem[] = [makeErrorItem()], total?: number) {
@@ -95,6 +108,43 @@ function setupDefaultMocks(items: ErrorLogItem[] = [makeErrorItem()], total?: nu
 // ── 测试 ──────────────────────────────────────────────
 
 describe('ErrorMonitorPanel', () => {
+  it('显示纠错效果、额外Token及估算口径，故障不影响错误日志', async () => {
+    setupDefaultMocks();
+    vi.mocked(getImageArgumentStats).mockResolvedValueOnce({
+      summary: { recorded_chats: 2, initial_calls: 4, invalid_initial_calls: 2, corrected_calls: 1,
+        unresolved_calls: 1, correction_rounds: 2, prompt_tokens: 100, completion_tokens: 20,
+        estimated_chat_credits: 0.5, cost_unknown_rounds: 1, initial_error_rate: 0.5, correction_success_rate: 0.5 },
+      sample_size: 5000, truncated: true, since: '', until: '', evidence: 'completed_chat_usage', cost_evidence: 'token_estimate',
+    });
+    const view = render(<ErrorMonitorPanel />);
+    await waitFor(() => expect(screen.getByText('120')).toBeInTheDocument());
+    expect(screen.getByText(/50.0%/)).toBeInTheDocument();
+    expect(screen.getByText(/0.50/)).toBeInTheDocument();
+    expect(screen.getByText(/未覆盖完整时间范围/)).toBeInTheDocument();
+    view.unmount();
+    vi.mocked(getImageArgumentStats).mockRejectedValueOnce(new Error('unavailable'));
+    render(<ErrorMonitorPanel />);
+    await waitFor(() => expect(screen.getByText('参数纠错统计暂时不可用')).toBeInTheDocument());
+    expect(screen.getByText('Connection timeout')).toBeInTheDocument();
+  });
+  it('分别展示退款和供应商估算，统计故障不影响错误日志', async () => {
+    setupDefaultMocks();
+    vi.mocked(getImagePlatformCosts).mockResolvedValueOnce({
+      summary: { count: 3, refunded_user_credits: 18, estimated_provider_credits: 15,
+        evidence: 'unconfirmed', since: '', until: '' },
+      items: [], page: 1, page_size: 20,
+    });
+    const view = render(<ErrorMonitorPanel />);
+    await waitFor(() => expect(screen.getByText('已退用户积分')).toBeInTheDocument());
+    expect(screen.getByText('18')).toBeInTheDocument();
+    expect(screen.getByText('15')).toBeInTheDocument();
+    expect(screen.getByText(/待账单核实/)).toBeInTheDocument();
+    view.unmount();
+    vi.mocked(getImagePlatformCosts).mockRejectedValueOnce(new Error('unavailable'));
+    render(<ErrorMonitorPanel />);
+    await waitFor(() => expect(screen.getByText('平台承担统计暂时不可用')).toBeInTheDocument());
+    expect(screen.getByText('Connection timeout')).toBeInTheDocument();
+  });
   // ── 初始加载 ──────────────────────────────────────────
 
   it('加载中显示 spinner', () => {

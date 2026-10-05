@@ -76,7 +76,9 @@ async def test_actor_factory_restores_checkpoint_instead_of_new_task_configurati
     await original.initialize_scheduled(pins)
     saved = original.checkpoint()
     latest = snapshot(Source([item(revision='v2')]))
-    monkeypatch.setattr('core.config.get_settings', lambda: SimpleNamespace(skill_runtime_enabled=True, skill_catalog_enabled=True))
+    from core.config import Settings
+    configured=Settings(_env_file=None,database_url='postgresql://invalid/test',jwt_secret_key='isolated-test-key',skill_runtime_enabled=True,skill_catalog_enabled=True)
+    monkeypatch.setattr('core.config.get_settings',lambda:configured)
     monkeypatch.setattr('services.skills.runtime_source.ActorSkillSource', lambda *args: source)
     constructed = []
     def build_source(handler, ctx, settings, snapshot):

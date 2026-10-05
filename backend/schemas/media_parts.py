@@ -22,6 +22,12 @@ class ImagePart(BaseModel):
     preview_url: Optional[str] = None
     download_url: Optional[str] = None
     asset_id: Optional[str] = None
+    task_id: Optional[str] = None
+    source_task_id: Optional[str] = None
+    source_message_id: Optional[str] = None
+    source_content_index: Optional[int] = None
+    has_transparency: Optional[bool] = None
+    quality_checks: Optional[dict] = None
     width: Optional[int] = None
     height: Optional[int] = None
     alt: Optional[str] = None

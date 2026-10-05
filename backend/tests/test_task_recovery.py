@@ -40,7 +40,7 @@ def _mock_db(tasks: list):
     # tasks.select().in_().execute()
     select_response = MagicMock()
     select_response.data = tasks
-    db.table.return_value.select.return_value.in_.return_value.execute.return_value = select_response
+    db.table.return_value.select.return_value.eq.return_value.in_.return_value.execute.return_value = select_response
 
     # messages.upsert().execute() 和 tasks.update().eq().execute()
     upsert_response = MagicMock()
@@ -87,8 +87,8 @@ async def test_recover_task_with_accumulated_content():
 
 
 @pytest.mark.asyncio
-async def test_recover_task_preserves_task_type():
-    """恢复时 generation_params.type 应使用任务的实际类型，而非硬编码 chat"""
+async def test_stream_recovery_never_finalizes_a_media_task():
+    """图片供应商任务不属于流式恢复，不能写成聊天内容或提前退款。"""
     tasks = [{
         "id": "task-img",
         "type": "image",
@@ -102,11 +102,21 @@ async def test_recover_task_preserves_task_type():
     }]
     db = _mock_db(tasks)
     result = await recover_orphan_tasks(db)
-    assert result == 1
+    assert result == 0
+    db.table.return_value.upsert.assert_not_called()
+    db.table.return_value.update.assert_not_called()
+    db.rpc.assert_not_called()
 
-    upsert_data = db.table.return_value.upsert.call_args[0][0]
-    assert upsert_data["generation_params"]["type"] == "image"
-    assert upsert_data["generation_params"]["model"] == "flux-pro"
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task_type", ["image", "video"])
+async def test_restart_does_not_fail_or_refund_provider_media_without_text(task_type):
+    db=_mock_db([{"id":"media","type":task_type,"external_task_id":"provider",
+        "credit_transaction_id":"locked","accumulated_content":""}])
+    assert await recover_orphan_tasks(db)==0
+    db.table.return_value.update.assert_not_called()
+    db.rpc.assert_not_called()
+    assert db.table.return_value.select.return_value.eq.call_args.args == ("type","chat")
 
 
 @pytest.mark.asyncio

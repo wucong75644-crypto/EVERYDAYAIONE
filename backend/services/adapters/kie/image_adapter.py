@@ -199,6 +199,12 @@ class KieImageAdapter(BaseImageAdapter):
                 resolution=resolution,
             )
 
+            if "background" in kwargs:
+                background=kwargs["background"]
+                if background not in self.config.get("supported_backgrounds",()):
+                    raise ValueError("Image background is not supported by this model")
+                input_params["background"]=background
+
             # 创建任务请求
             request = CreateTaskRequest(
                 model=self.model_id,
@@ -221,8 +227,11 @@ class KieImageAdapter(BaseImageAdapter):
                 return self._format_result(result, resolution)
             else:
                 # 仅创建任务
-                if kwargs.get("_image_fetch_fallback"):
-                    return await self.submit_prepared_fallback(request)
+                if kwargs.get("_image_fetch_fallback") or kwargs.get("_chat_image_single_submit"):
+                    submitted = await self.submit_prepared_fallback(request)
+                    if kwargs.get("_chat_image_single_submit"):
+                        self.client._schedule_shadow_upload(request, task_id=submitted.task_id)
+                    return submitted
                 create_response = await self.client.create_task(request)
                 return ImageGenerateResult(
                     task_id=create_response.task_id,
@@ -234,7 +243,7 @@ class KieImageAdapter(BaseImageAdapter):
         except (KieAPIError, KieTaskFailedError, KieTaskTimeoutError, ValueError):
             raise
         except Exception as e:
-            if kwargs.get("_image_fetch_fallback"):
+            if kwargs.get("_image_fetch_fallback") or kwargs.get("_chat_image_single_submit"):
                 # 保留网络错误类型供专用模块区分“明确拒绝”和“受理不确定”。
                 raise
             logger.error(
