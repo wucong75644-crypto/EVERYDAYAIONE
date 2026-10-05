@@ -2,6 +2,7 @@ import type { ImageAsset, Message } from '../../../stores/useMessageStore';
 
 export interface MessageItemProps {
   message: Message;
+  imageGridCell?: boolean;
   /** 是否正在流式输出 */
   isStreaming?: boolean;
   /** 是否正在重新生成 */

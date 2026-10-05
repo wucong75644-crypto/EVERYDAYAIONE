@@ -15,7 +15,6 @@ import { usePreview } from '../../../preview/usePreview';
 import PreviewHost from '../../../preview/PreviewHost';
 import { fromImageAsset } from '../../../preview/toPreviewItem';
 import MessageMedia from './MessageMedia';
-import ChatImageControls from '../media/ChatImageControls';
 import MessageActions from './MessageActions';
 import { getSavedSettings } from '../../../utils/settingsStorage';
 import { logger } from '../../../utils/logger';
@@ -27,10 +26,12 @@ import { RENDER_CONFIG, getCompletedBubbleText, type MessageType } from '../../.
 import type { RenderInstruction } from '../../../types/render';
 import type { AspectRatio, VideoAspectRatio } from '../../../constants/models';
 import type { MessageItemProps } from './MessageItem.types';
+import { isChatImage } from './chatImageDisplay';
 import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 
 export default memo(function MessageItem({
   message,
+  imageGridCell = false,
   isStreaming = false,
   isRegenerating = false,
   onRegenerate,
@@ -48,6 +49,15 @@ export default memo(function MessageItem({
   suggestions,
 }: MessageItemProps) {
   const isUser = message.role === 'user';
+  const chatImage = isChatImage(message);
+  const mediaCellRef = useRef<HTMLDivElement>(null);
+  const [mediaCellWidth, setMediaCellWidth] = useState<number>();
+  useEffect(() => {
+    if (!imageGridCell || !mediaCellRef.current) return;
+    const observer = new ResizeObserver(([entry]) => setMediaCellWidth(entry.contentRect.width));
+    observer.observe(mediaCellRef.current);
+    return () => observer.disconnect();
+  }, [imageGridCell]);
 
   // 消息动画管理
   const {
@@ -360,7 +370,7 @@ export default memo(function MessageItem({
         {/* 消息气泡：用户消息有气泡框，AI 消息无框直接铺开（对齐千问/豆包风格）
             V3：用户气泡加内高光 (inset 0 1px 0 rgba(255,255,255,0.2))，
             制造"半透明玻璃"的光感效果 */}
-        <div
+        {!chatImage && <div
           ref={isUser ? userBubbleRef : undefined}
           onContextMenu={isUser ? handleUserBubbleContextMenu : undefined}
           className={`${
@@ -392,15 +402,15 @@ export default memo(function MessageItem({
             onImageClick={handleImageClick}
             onRegenerateSingle={onRegenerateSingle ? handleRegenerateSingle : undefined}
           />
-        </div>
-
-        {!isUser && genParams.origin === 'chat_image' && typeof genParams.task_id === 'string' && <ChatImageControls taskId={genParams.task_id} />}
+        </div>}
 
         {/* AI 媒体生成消息（generate_image / generate_video）：保留 MessageMedia 全部功能
             聊天消息的 image/file 已在多块模式内联渲染，不走此通道
             设计文档：TECH_内容块混排渲染架构.md §7.1 */}
         {!isUser && isMediaMessage && (
+          <div ref={mediaCellRef} className="w-full min-w-0">
           <MessageMedia
+            imageMaxWidth={imageGridCell ? mediaCellWidth : undefined}
             imageAssets={imageAssets}
             videoUrls={videoUrls}
             files={files}
@@ -418,6 +428,7 @@ export default memo(function MessageItem({
             failedMediaType={failedMediaType}
             onRegenerate={onRegenerate ? handleRegenerate : undefined}
           />
+          </div>
         )}
         {/* AI 聊天消息：失败的媒体占位符（仅非 isMediaMessage 时需要） */}
         {!isUser && !isMediaMessage && failedMediaType && (

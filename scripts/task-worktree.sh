@@ -62,9 +62,6 @@ set_stable_base() {
 
     git -C "$root" config extensions.worktreeConfig true
     git -C "$task_path" config --worktree codex.taskStableBase "$commit"
-    if git -C "$root" cat-file -e "${commit}:aoci.txt" 2>/dev/null; then
-        git -C "$task_path" config --worktree codex.aociStableCommit "$commit"
-    fi
 }
 
 start_task() {
@@ -126,11 +123,6 @@ start_task() {
     fi
 
     set_stable_base "$root" "$path" "$base_commit"
-
-    if [[ -f "$path/aoci.txt" ]]; then
-        python3 "$path/scripts/aoci-task.py" prepare --repo "$path" \
-            || fail "任务已创建但 AOCI 配置未就绪；工作树保留：$path"
-    fi
 
     info "TASK_STARTED status=success path=$path branch=$branch base=$base_commit"
     info "请在该路径对应的对话中开发；不要回到主工作树继续发布本任务。"

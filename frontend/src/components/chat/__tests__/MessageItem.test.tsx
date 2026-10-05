@@ -586,3 +586,13 @@ describe('MessageItem failed ImagePart', () => {
     expect(capturedFailedPlaceholderProps?.onRetry).toBeUndefined();
   });
 });
+
+it('chat images show media without completion prose or task details', () => {
+  render(<MessageItem message={makeMessage({
+    role: 'assistant', status: 'completed',
+    content: [{ type: 'image', url: 'https://example.com/image.png' }],
+    generation_params: { type: 'image', origin: 'chat_image', task_id: 'child-1' },
+  })} imageGridCell />);
+  expect(screen.queryByText(/来看看生成的图片/)).not.toBeInTheDocument();
+  expect(screen.queryByText('图片任务详情')).not.toBeInTheDocument();
+});
