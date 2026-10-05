@@ -106,6 +106,11 @@ class ImageHandler(BaseHandler):
             raise ChatImageNotAcceptedError(code, getattr(error, "guidance", "")) from error
         if owner.cancellation_event is not None and owner.cancellation_event.is_set():
             raise asyncio.CancelledError()
+        predecessor = getattr(owner, "_image_acceptance_order", {}).get(call_id)
+        if predecessor and predecessor[0] is not None:
+            await predecessor[0].wait()
+        if owner.cancellation_event is not None and owner.cancellation_event.is_set():
+            raise asyncio.CancelledError()
         scoped=ScopedDatabaseClient(self.db,DatabaseScope(owner.user_id,owner.org_id,DatabaseAccessKind.RUNTIME))
         result=await asyncio.to_thread(lambda:scoped.rpc("accept_chat_image_request",{
             "p_parent_task_id":owner.task_id,"p_execution_token":token,

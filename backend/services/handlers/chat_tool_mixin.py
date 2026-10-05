@@ -151,15 +151,32 @@ class ChatToolMixin(ChatToolResultMixin):
                     [by_id[item.call.call_id] for item in batch])
                    for batch in executor.tool_runtime.batches(normalized)]
 
+        # Prepare independent image requests concurrently, but publish their
+        # durable placeholders in model call order. Always release a failed
+        # predecessor so a rejected image cannot strand the rest of the batch.
+        image_predecessors = {}
+        previous = None
+        for tc in tool_calls:
+            if tc["name"] == "generate_image":
+                finished = asyncio.Event()
+                image_predecessors[tc["id"]] = (previous, finished)
+                previous = finished
+        executor._image_acceptance_order = image_predecessors
+
+        async def execute_call(tc):
+            try:
+                return await self._execute_single_tool(
+                    tc, executor, task_id, conversation_id, message_id, user_id, turn,
+                )
+            finally:
+                if tc["id"] in image_predecessors:
+                    image_predecessors[tc["id"]][1].set()
+
         for is_safe, batch in batches:
             if is_safe:
                 # 只读工具：并行执行
                 tasks = [
-                    self._execute_single_tool(
-                        tc, executor, task_id, conversation_id,
-                        message_id, user_id, turn,
-                    )
-                    for tc in batch
+                    execute_call(tc) for tc in batch
                 ]
                 from services.tools.runtime import run_parallel
                 batch_results = await run_parallel(tasks)
@@ -167,10 +184,7 @@ class ChatToolMixin(ChatToolResultMixin):
             else:
                 # 写操作：逐个执行（含安全检查）
                 for tc in batch:
-                    result = await self._execute_single_tool(
-                        tc, executor, task_id, conversation_id,
-                        message_id, user_id, turn,
-                    )
+                    result = await execute_call(tc)
                     results.append(result)
 
         # ── AgentResult 处理:聚合 emit_payloads (沙盒 IO 统一协议) ──

@@ -84,6 +84,7 @@ export default function MessageContentBlocks({
         }
         if (part.type === 'tool_step') {
           const ts = part as { tool_name: string; tool_call_id: string; status: 'running' | 'completed' | 'error' | 'cancelled'; code?: string; output?: string; input?: string; elapsed_ms?: number };
+          if (ts.tool_name === 'generate_image' && ts.status !== 'error') return null;
           return (
             <div key={ts.tool_call_id || idx} className={MESSAGE_CONTENT_LAYOUT.compact}>
               <ToolStepCard

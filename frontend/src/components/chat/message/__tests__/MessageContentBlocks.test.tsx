@@ -196,3 +196,18 @@ describe('MessageContentBlocks structured diagrams', () => {
     expect(screen.queryByText(/配置表单已生成/)).not.toBeInTheDocument();
   });
 });
+
+
+it.each(['running', 'completed', 'cancelled'])('hides image tool details while status=%s', (status) => {
+  const message = normalizeMessage({
+    id: 'image-tools', conversation_id: 'c1', role: 'assistant', status: 'completed',
+    content: [{ type: 'text', text: '方案1 · 星空音乐家' },
+      { type: 'tool_step', tool_name: 'generate_image', tool_call_id: 'call1', status,
+        output: 'private-task-id' }],
+  });
+  render(<MessageContentBlocks message={message} imageAssets={[]} fileBlocks={[]}
+    isStreaming={false} isRegenerating={false} textContent="" onImageClick={vi.fn()} />);
+  expect(screen.getByText('方案1 · 星空音乐家')).toBeInTheDocument();
+  expect(screen.queryByText('生成图片')).not.toBeInTheDocument();
+  expect(screen.queryByText('private-task-id')).not.toBeInTheDocument();
+});
