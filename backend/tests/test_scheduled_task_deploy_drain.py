@@ -67,7 +67,10 @@ def test_service_stop_failure_propagates_and_does_not_report_success():
 
 def test_executor_cuts_over_after_local_checks_and_before_backend_sync():
     script = (PATH.parent / "deploy.sh").read_text()
-    assert "build_backend\n        prepare_scheduled_task_cutover\n        prepare_skill_personal_mount\n        sync_backend\n        apply_migrations\n        deploy_backend" in script
+    main = script[script.rindex("main() {"):]
+    assert main.index("build_backend\n") < main.index("deploy_phase=remote_mutation")
+    assert main.index("deploy_phase=remote_mutation") < main.index("prepare_scheduled_task_cutover\n")
+    assert "prepare_scheduled_task_cutover\n        prepare_skill_personal_mount\n        sync_backend\n        apply_migrations\n        deploy_backend" in main
     assert "< deploy/scheduled-task-drain.py" in script
     assert "backend/migrations/264_scheduled_skill_snapshots.sql" in script
 

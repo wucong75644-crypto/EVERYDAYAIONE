@@ -125,9 +125,11 @@ def test_verified_database_matches_and_stale_name_or_oid_is_rejected(postgres_so
 
 def test_database_guard_runs_before_any_frontend_or_backend_sync():
     script = (ROOT / 'deploy/deploy.sh').read_text()
-    main = script[script.index('# 部署流程'):]
+    main = script[script.rindex('main() {'):]
     assert '< deploy/verify-production-database.py' in script
-    assert script.index('< deploy/verify-production-database.py') < script.index('# 部署流程')
+    assert main.index('< deploy/verify-production-database.py') < main.index('deploy_phase=remote_mutation')
+    assert main.index('deploy_phase=remote_mutation') < main.index('sync_frontend\n')
+    assert main.index('deploy_phase=remote_mutation') < main.index('sync_backend\n')
     assert 'sync_frontend' in main and 'sync_backend' in main
 
 
