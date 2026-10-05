@@ -93,12 +93,16 @@ export default function ChatImageControls({ taskId }: { taskId: string }) {
 
   return <div className="mt-2 text-xs text-text-secondary">
     <button type="button" onClick={() => setOpen(value => !value)} className="hover:text-text-primary underline">图片任务详情</button>
-    <Modal isOpen={open} onClose={() => setOpen(false)} title="图片任务详情" maxWidth="max-w-[960px]">
-    <div className="max-h-[min(calc(90dvh-120px),680px)] overflow-y-auto space-y-4 text-sm text-text-secondary break-words">
+    <Modal isOpen={open} onClose={() => setOpen(false)} title="图片任务详情" maxWidth="max-w-[1040px]">
+    <div className="grid gap-6 max-h-[min(calc(90dvh-120px),640px)] overflow-y-auto md:overflow-hidden md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+      <div className="min-w-0">
+        {details?.result?.[0]?.url ? <img src={details.result[0].url} alt="当前任务图片" className="w-full max-h-80 rounded-lg object-contain" />
+          : <div className="aspect-square rounded-lg bg-background-secondary flex items-center justify-center text-sm text-text-secondary">{details ? '暂无生成结果' : '正在读取图片…'}</div>}
+      </div>
+      <div className="min-w-0 space-y-4 text-sm text-text-secondary break-words md:max-h-[min(calc(90dvh-120px),640px)] md:overflow-y-auto md:pr-2">
       {error && <p role="alert">{error}</p>}
       {!details && !error && <p>正在读取实际输入…</p>}
       {details && <>
-        {details.result?.[0]?.url && <img src={details.result[0].url} alt="当前任务图片" className="max-h-40 max-w-full rounded-lg object-contain" />}
         <p>{phaseLabels[details.submission_state] || details.submission_state} · 预估 {details.input.estimated_credits} 积分 · 已结算 {details.credits_used} 积分</p>
         <p>{details.input.mode === 'image_to_image' ? '图生图' : '文生图'} · {details.input.model} · {details.input.aspect_ratio} · {details.input.resolution || '模型默认分辨率'} · {details.input.output_format}</p>
         {details.input.size_requirement?.mode === 'inherit_reference' && details.input.size_requirement.original_width && details.input.size_requirement.original_height && <p>画布比例沿用所选原图：{details.input.size_requirement.original_width} × {details.input.size_requirement.original_height}</p>}
@@ -146,6 +150,7 @@ export default function ChatImageControls({ taskId }: { taskId: string }) {
           </div>)}
         </div>}
       </>}
+      </div>
     </div>
     </Modal>
   </div>;
