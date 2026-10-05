@@ -4,6 +4,8 @@
 
 此前生产版本：`0e162515`，DEPLOYED_PENDING_ACCEPTANCE；配置仍仅管理员账号、每轮最多2张/24用户积分、透明关闭。自然语言两张生产测试误选旧image_agent并失败，没有出图，12积分误扣尚未补回。用户随后确认聊天固定generate_image，并授权本批“提交部署”；本次路由候选经1562项定向回归后进入受控发布，最终SHA/技术状态以本次RELEASE_RESULT为准，不能把此前版本验收结果当成本次验证。
 
+当前生产已受控完整发布`95a18e188a34198cb76051a32b5a10a93c8906c4`，`DEPLOYED_PENDING_ACCEPTANCE`；普通聊天真实双图已完成、各6积分且刷新恢复。随后用户参考图跨轮确认暴露定位缺失，本地2026-10-05修复尚未提交/发布；不能据此前文生图通过宣称图生图跨轮验证通过。旧ImageAgent误扣退款尚未处理。
+
 本批发布前只读核对：正式数据库身份匹配，没有pending/running父聊天或在途图片，历史paused聊天43条；scheduled_tasks的execution_policy/plan_snapshot/skill_revision_snapshot与scheduled_task_drafts的execution_policy/plan均无image_agent依赖。最新origin/main仍32e8ba0d且已包含；没有迁移、生产Skill/配置/积分写入，本次自动验证不发起付费生图。
 
 ### 聊天单一图片入口增补
@@ -11,6 +13,38 @@
 此增补无SQL、依赖、Skill正文/控制面或配置变化。发布时完整更新后端并重启聊天Actor，使初始核心目录、两套提示词和调用时Registry使用一致版本；先排空/暂停在途父聊天，避免旧进程仍展示旧目录。既有图片Worker、完成/结算/恢复和已冻结快照继续工作。部署后先无付费核对普通聊天与自动Skill展示仅generate_image、旧调用not_started、关闭/权限拒绝不回退，再在明确额度内验证两次单图接受及实际双图结算。
 
 回滚应用会恢复旧image_agent公共路由，可能再次触发已知误扣；关闭CHAT_IMAGE_ASYNC_ENABLED无法关闭旧image_agent。若需回滚，保留本批image_agent内部可见性及聊天提示词收口的兼容补丁，或停止相关新聊天生成；不得重新开放有已知账本缺陷的旧公共工具。原生电商内部账本缺陷与测试误扣退款须分别处理，不通过回滚或手改任务状态掩盖。
+
+### 历史图片定位第一批（2026-10-05，历史验证记录，已纳入下述来源修复）
+
+本批不需要SQL、依赖、Skill正文/发布、权限或生产配置变更。获准后按既有受控入口发布后端并重启聊天Actor，使历史投影、工具说明和接受端错误合同一致。闭合历史缓存使用`conv:msgs:outcomes-v2`新投影命名空间，信封schema仍为2，旧outcomes-v1不复用且由原TTL自然到期；无Redis批量删除或数据回填。已经启动的父chat与图片输入快照不重写，已有Worker任务继续完成。
+
+上线先无付费核对：确认新轮上下文提供原消息id与正确content_index，错误fid仍在接受前拒绝、没有新任务/账本，字段错误与资源错误提示分别准确。再在用户明确的额度内复验上传→分析打磨→确认图生图、A分析/B执行、继续编辑；不能自动重发本次失败请求或一次执行截图中六个方案。生产灰度仍每轮最多2张/24积分，没有扩预算。回退不撤销273–276、账本、资产或图片收尾；若退回旧历史投影，参考图定位故障会再现，需保留本修复或明确停止相关新请求，不把旧缓存恢复当作验证通过。本轮未做生产发布/回滚演练。
+
+### 图片来源与已有文件ID复用（2026-10-05，本地完成，未提交部署）
+
+本批取代上述v2候选，实际使用缓存前缀`conv:msgs:outcomes-v3`；schema信封仍为2，旧缓存按TTL自然失效。增加迁移`277_chat_image_sources.sql`及对应rollback，复用tasks私有JSON，在原串行/分支claim事务内冻结旧来源并防止改写；无新表、文件ID算法变化、账单算法变化、依赖或Skill发布。正常版本化历史、旧接受快照及全部完成/恢复路径保持兼容。
+
+获准提交部署后按以下顺序执行受控入口的完整发布，不单独开启新写端：
+
+1. 关闭新图片接受；排空或暂停在途父Actor，保留全部图片Worker/回调/结算/恢复。核对真实迁移账本、tasks owner、现有claim owner/ACL、runtime/worker scope和实际RLS状态；277只支持现有claim owner为everydayai/everydayai_owner，不通过扩大权限解决owner冲突。隔离fixture不能代替生产完整schema预检。
+2. 事务执行277，再部署所有兼容的Actor、历史/精确读取、接受解析器、Worker及详情/replay读端和前端。277保持claim owner/ACL，触发器由everydayai创建，预检其既有tasks TRIGGER权限，不复制fixture的GRANT到生产。旧Actor已启动且没有目录的任务维持旧严格边界；不要重写其输入。
+3. 无付费核对新父claim目录不可变、跨组织/会话拒绝、错误fid未创建图片任务/账本、来源与原content_index一致。既有任务能够完成、结算和恢复后，再恢复原管理员接受范围；不扩大每轮2张/24积分预算，不自动重发历史失败请求。
+4. 在既有授权与剩余额度内验证自然聊天自动Skill激活→A分析/打磨→B明确选用→确认生成两张→详情核对B字节/完整prompt→刷新恢复；另验旧原生结果继续编辑。脚本化离线测试不能代替真实模型的选图和自动Skill行为。
+
+回滚先停新接受并排空采用新旧历史证明的父/子任务，保留兼容解析器、Worker和详情/replay直到全部settling/published投递完成。然后才可事务执行`backend/migrations/rollback/277_chat_image_sources.sql`，它恢复迁移121的两项claim函数、保留owner/ACL，删除保护触发器/helper，**保留所有任务私有目录及子任务快照数据**。不直接降级到不能核验新来源证明的旧Worker，不删除证据，不全库回填NULL revision。真实隔离PG已验证回滚owner/ACL与数据保留；生产发布/回滚尚未演练。
+
+本批真实隔离DB/Redis复测（fixture创建并销毁随机测试DB，绝不读取应用DATABASE_URL）：
+
+```sh
+PYTHONPATH=.:/private/tmp/mcp-task-test-deps \
+DATABASE_URL=postgresql://invalid/test JWT_SECRET_KEY=isolated-tests \
+CHAT_IMAGE_TEST_ADMIN_DSN='host=/private/tmp port=55439 user=wucong dbname=postgres' \
+CHAT_IMAGE_TEST_REDIS_SOCKET=/private/tmp/everydayai-chat-image-redis.sock \
+/Users/wucong/EVERYDAYAIONE/.venv/bin/python -m pytest -q \
+  tests/test_chat_image_sources_postgres.py tests/test_chat_image_lifecycle_postgres.py
+```
+
+本批最初58 passed / 0 skipped；发布前新增模拟生产基础表无RLS配置的来源/身份拒绝用例，最终59 passed / 0 skipped。生产基础表沿用可信服务边界而未启用RLS，资产表RLS非FORCE；保持现有配置，依靠显式scope/归属/fencing校验，不将FORCE作为本批新增前置条件。缺显式隔离DSN/socket会skip，不能当作通过。`/private/tmp/mcp-task-test-deps`仅复用本机已存在的测试包路径，不是产品新增依赖；不在其它机器自动安装或用生产连接替代。后端654 passed/3既有skip；额外scheduled Skill HTTP 7项因本机缺少既有supabase包阻塞。前端/构建及具体日志见本批实施记录。
 
 ## 配置与依赖
 

@@ -169,25 +169,138 @@ def verify_frozen_request(snapshot: dict) -> None:
 class ChatImageInputResolver:
     """Reuse FileTargetResolver and its scope, signatures and version checks."""
 
-    def __init__(self, owner, *, base_revision: int, input_message_id: str, files=None):
+    def __init__(self, owner, *, base_revision: int, input_message_id: str, files=None, legacy_sources=(), require_known_sources=False):
         from services.file_resources import FileTargetResolver
         self.owner = owner
         self.files = FileTargetResolver(owner, files)
         self.base_revision = base_revision
         self.input_message_id = input_message_id
+        self.legacy_sources = {str(row["id"]): deepcopy(row) for row in legacy_sources}
+        self.require_known_sources = require_known_sources
+        self._candidates = None
 
     def _message(self, message_id):
         row = self.owner.db.table("messages").select(
-            "id,conversation_id,org_id,context_revision,content,status"
-        ).eq("id", message_id).single().execute().data
+            "id,conversation_id,org_id,context_revision,content,status,role,message_kind"
+        ).eq("id", message_id).maybe_single().execute().data
         if (not isinstance(row, dict) or row.get("conversation_id") != self.owner.conversation_id
                 or row.get("org_id") != self.owner.org_id):
             raise PermissionError("IMAGE_SOURCE_MESSAGE_DENIED")
-        if message_id != self.input_message_id and (
-            row.get("context_revision") is None or row["context_revision"] > self.base_revision
-        ):
-            raise PermissionError("IMAGE_SOURCE_REVISION_DENIED")
+        if message_id != self.input_message_id:
+            if row.get("context_revision") is None:
+                from services.handlers.chat_context.image_sources import same_legacy_message
+                frozen = self.legacy_sources.get(str(message_id))
+                if not frozen:
+                    raise PermissionError("IMAGE_SOURCE_REVISION_DENIED")
+                if not same_legacy_message(row, frozen):
+                    raise ValueError("IMAGE_SOURCE_MESSAGE_CHANGED")
+            elif row["context_revision"] > self.base_revision:
+                raise PermissionError("IMAGE_SOURCE_REVISION_DENIED")
+            if (row.get("status") not in {"completed", "interrupted", "failed"}
+                    or row.get("message_kind", "conversation") != "conversation"):
+                raise PermissionError("IMAGE_SOURCE_MESSAGE_DENIED")
         return row
+
+    def known_sources(self):
+        """Current input and bounded closed history, never a workspace-wide scan."""
+        if self._candidates is None:
+            from services.handlers.chat_context.image_sources import content_parts
+            rows = self.owner.db.table("messages").select(
+                "id,conversation_id,org_id,context_revision,content,status,role,message_kind"
+            ).eq("conversation_id", self.owner.conversation_id).lte(
+                "context_revision", self.base_revision).eq("message_kind", "conversation").in_(
+                "status", ["completed", "interrupted"]).order("context_revision", desc=True).limit(100).execute().data or []
+            rows = [row for row in rows if row.get("conversation_id") == self.owner.conversation_id
+                    and row.get("org_id") == self.owner.org_id and row.get("context_revision") is not None
+                    and row["context_revision"] <= self.base_revision]
+            rows += list(self.legacy_sources.values())
+            if self.input_message_id:
+                rows.append(self._message(self.input_message_id))
+            candidates = []
+            seen = set()
+            for row in rows:
+                for index, part in enumerate(content_parts(row.get("content"))):
+                    identity = (str(row["id"]), index)
+                    if identity in seen or not isinstance(part, dict) or part.get("type") != "image" or part.get("failed"):
+                        continue
+                    from services.handlers.chat_context.image_sources import registered_original
+                    path, _ = registered_original(self.owner.db, part, org_id=self.owner.org_id,
+                        owner_id=self.owner.workspace_user_id, scope=self.owner.context_scope)
+                    if path:
+                        candidates.append((row, index, {**part, "workspace_path": path}))
+                        seen.add(identity)
+            self._candidates = candidates
+        return self._candidates
+
+    def _bind_file_id(self, value):
+        from services.agent.file_id import compute_fid
+        from services.handlers.chat_context.image_sources import content_parts, registered_original
+        matches = [(row, index, part) for row, index, part in self.known_sources()
+                   if compute_fid(self.owner.org_id, part["workspace_path"]) == value]
+        paths = {part["workspace_path"] for _, _, part in matches}
+        if not matches:
+            selections = getattr(getattr(self.owner, "_tool_runtime", None), "resource_selections", None)
+            discoveries = selections.image_references.get(value, ()) if selections else ()
+            targets = [(ref, self.files.resolve(ref)) for ref in discoveries]
+            if len({str(target.path) for _, target in targets}) > 1:
+                raise ValueError("IMAGE_REFERENCE_AMBIGUOUS")
+            if targets:
+                ref, target = targets[0]
+                return ref, {"resource_ref": ref, "selected_file_id": value, "source": "file_search", "name": target.path.name}
+            from services.file_resources import FileTargetError
+            raise FileTargetError("RESOURCE_NOT_FOUND", "请先读取真实图片来源或 file_search")
+        if len(paths) != 1:
+            raise ValueError("IMAGE_REFERENCE_AMBIGUOUS")
+        # Same original in several messages is one byte identity; retain every
+        # occurrence rather than claiming the latest message was user-selected.
+        validated = []
+        for row, index, part in matches:
+            # An unrelated unavailable image never poisons the whole catalog.
+            # An explicitly selected changed message still fails at this point.
+            try:
+                actual = self._message(str(row["id"]))
+                actual_part = content_parts(actual.get("content"))[index]
+                from services.handlers.chat_context.image_sources import registered_original
+                actual_path, _ = registered_original(self.owner.db, actual_part, org_id=self.owner.org_id,
+                    owner_id=self.owner.workspace_user_id, scope=self.owner.context_scope)
+                if actual_path != part["workspace_path"] or actual_part.get("failed"):
+                    raise ValueError("IMAGE_SOURCE_MESSAGE_CHANGED")
+                # A bad client quote of the same physical original must not
+                # hide another verified occurrence of that original.
+                self._message_source(actual, index, actual_part)
+                validated.append((actual, index, {**actual_part, "workspace_path": actual_path}))
+            except (ValueError, PermissionError, IndexError) as error:
+                last_error = error
+        if not validated:
+            raise last_error
+        row, index, part = validated[0]
+        source = self._message_source(row, index, part)
+        _, asset = registered_original(self.owner.db, content_parts(row["content"])[index], org_id=self.owner.org_id,
+            owner_id=self.owner.workspace_user_id, scope=self.owner.context_scope)
+        if asset:
+            source.update(source_asset_id=str(asset["id"]), source_content_sha256=asset.get("content_sha256"))
+        source.update(file_id=value, source_message_id=source.pop("message_id"),
+                      source_content_index=source.pop("content_index"),
+                      occurrences=[{"message_id": str(m[0]["id"]), "content_index": m[1]} for m in validated])
+        return part["workspace_path"], source
+
+    def _message_source(self, row, index, part):
+        source = {"message_id": str(row["id"]), "content_index": index,
+                  "name": str(part.get("name") or "图片"),
+                  "source": "generated" if row.get("role") == "assistant" else "uploaded"}
+        if row.get("context_revision") is None and str(row["id"]) != self.input_message_id:
+            source["legacy_source"] = deepcopy(self.legacy_sources[str(row["id"])])
+        if row.get("role") == "assistant":
+            source.update({key: part[key] for key in ("task_id",) if part.get(key)})
+        if row.get("role") == "user":
+            self._validate_quote(part, source)
+        return source
+
+    def _validate_quote(self, part, source):
+        from services.handlers.chat_context.image_sources import validate_quoted_source
+        validate_quoted_source(self.owner.db, part, source, org_id=self.owner.org_id,
+            owner_id=self.owner.workspace_user_id, scope=self.owner.context_scope,
+            conversation_id=self.owner.conversation_id)
 
     def _locator(self, reference):
         selectors = [key for key in ("resource_ref", "file_id", "asset_id", "message_id") if key in reference]
@@ -199,6 +312,8 @@ class ChatImageInputResolver:
             prefix = "fref1_" if key == "resource_ref" else "fid_"
             if not isinstance(value, str) or not value.startswith(prefix):
                 raise ValueError("IMAGE_REFERENCE_LOCATOR_INVALID")
+            if key == "file_id" and self.require_known_sources:
+                return self._bind_file_id(value)
             return value, {key: value}
         if key == "asset_id":
             row = self.owner.db.table("user_assets").select("*").eq("id", reference[key]).single().execute().data
@@ -218,9 +333,17 @@ class ChatImageInputResolver:
                 or index >= len(content) or not isinstance(content[index], dict)):
             raise ValueError("IMAGE_CONTENT_INDEX_INVALID")
         part = content[index]
-        if (part.get("type") != "image" or part.get("failed") or not part.get("workspace_path")):
+        if part.get("type") != "image" or part.get("failed"):
             raise ValueError("IMAGE_ORIGINAL_UNAVAILABLE")
-        return part["workspace_path"], {"message_id": row["id"], "content_index": index}
+        from services.handlers.chat_context.image_sources import registered_original
+        path, asset = registered_original(self.owner.db, part, org_id=self.owner.org_id,
+            owner_id=self.owner.workspace_user_id, scope=self.owner.context_scope)
+        if not path:
+            raise ValueError("IMAGE_ORIGINAL_UNAVAILABLE")
+        source = self._message_source(row, index, part)
+        if asset:
+            source.update(source_asset_id=str(asset["id"]), source_content_sha256=asset.get("content_sha256"))
+        return path, source
 
     def resolve(self, references: list[dict]) -> list[dict]:
         from services.file_resources import content_digest, file_version
@@ -249,14 +372,27 @@ class ChatImageInputResolver:
 
     def _target(self, locator: str, source: dict):
         from services.file_resources import FileTarget
-        if "asset_id" in source or "message_id" in source:
+        if "asset_id" in source or "message_id" in source or "source_message_id" in source:
             # A database path is an exact identity, never a basename search.
             return FileTarget(self.files.guarded(locator))
         return self.files.resolve(locator)
 
     def _verify_reference(self, reference, *, digest=True):
         from services.file_resources import content_digest
+        # New sources carry immutable evidence. Older accepted file-id snapshots
+        # remain compatible with their original resolver, without new acceptance.
+        proof = reference.get("legacy_source")
+        if proof:
+            existing = self.legacy_sources.get(str(proof["id"]))
+            if existing is not None and existing != proof:
+                raise ValueError("IMAGE_SOURCE_MESSAGE_CHANGED")
+            self.legacy_sources[str(proof["id"])] = deepcopy(proof)
         locator = {key: reference[key] for key in ("resource_ref", "file_id", "asset_id", "message_id", "content_index", "role") if key in reference}
+        if reference.get("source_message_id"):
+            from services.agent.file_id import compute_fid
+            if reference.get("file_id") != compute_fid(self.owner.org_id, reference["workspace_path"]):
+                raise ValueError("IMAGE_REFERENCE_CHANGED")
+            locator = {"message_id": reference["source_message_id"], "content_index": reference["source_content_index"], "role": reference["role"]}
         value, source = self._locator(locator)
         target = self._target(value, source)
         if (str(target.path.relative_to(self.files.root)) != reference["workspace_path"]

@@ -137,6 +137,17 @@ class ChatContextMixin:
             )
             self._resource_manifest = context_snapshot.resource_manifest
 
+        from services.handlers.chat_context.image_sources import discovered_image_sources
+        input_parts = [p.model_dump(mode="json") if hasattr(p, "model_dump") else p for p in content]
+        visible_indices = [i for i, p in enumerate(input_parts)
+                           if isinstance(p, dict) and p.get("type") == "image"
+                           and (p.get("original_url") or p.get("download_url") or p.get("preview_url") or p.get("url")) in image_urls]
+        current_image_sources = discovered_image_sources(
+            {"id": context_anchor.input_message_id if context_anchor else None,
+             "conversation_id": conversation_id, "role": "user", "content": input_parts}, self.db,
+            org_id=getattr(self, "org_id", None), owner_id=workspace_user_id,
+            visible_indices=visible_indices)
+
         inp = BuildInput(
             user_id=user_id,
             conversation_id=conversation_id,
@@ -144,6 +155,7 @@ class ChatContextMixin:
             text_content=text_content,
             workspace_files=workspace_files,
             image_urls=image_urls,
+            image_sources=current_image_sources,
             file_urls=file_urls,
             permission_mode=permission_mode,
             user_location=user_location,
@@ -225,7 +237,7 @@ class ChatContextMixin:
         from services.handlers.context_compressor import compress_messages_if_needed
 
         messages = await build_context_messages(
-            self.db, conversation_id, current_text,
+            self.db, conversation_id, current_text, org_id=getattr(self, "org_id", None),
         )
         if not messages:
             return messages

@@ -38,6 +38,14 @@
 | `source_task_id` | 可选，当前用户/组织内已完成图片来源；不授予控制其它任务的权限 |
 | `background` | 仅透明开关开放时schema展示，且实际Flare模型支持；`opaque` / `transparent`，透明必须PNG并校验实际alpha；默认不开启 |
 
+2026-10-05来源与文件ID复用修复（本地，未部署）：当前附件、闭合历史、旧历史私有目录及精确读取共用来源投影，提供服务器计算的`file_id`、真实`message_id/content_index/name`、上传/生成/已核验引用来源及`visually_present`。content_index按原数据库content数组编号；视觉预算截断不丢来源，也不能用元数据冒充看过图。引用客户端来源、真实资产与原图路径须服务器核验。URL-only图片仅在现有 canonical 资产登记能定位当前授权工作区原图时提供定位，否则明确不可用；不下载任意URL。图片来源不自动选作生成参考，不授予权限。
+
+父Actor首次串行/分支claim在同一事务保存`tasks.request_params._image_sources_v1`：只包含同个人会话/组织、当时已终态且不属于在途Actor的旧NULL revision图片消息及完整原始content；重领保持同一base_revision和目录。目录受数据库不可变触发器保护；旧已启动任务无目录则冻结空目录。正常历史仍严格`revision<=base_revision`，不全局放开NULL。最多100条/120000 JSON字节，超限保留明确不可用原因并继续聊天，让用户通过已有引用入口选图。目录在任务私有投影中展示，不混入共享revision缓存；缓存前缀为`conv:msgs:outcomes-v3`。
+
+新接受的裸`file_id`只能绑定当前输入、固定历史来源或获准`file_search`实际返回的签名引用；不会扫描整个工作区后自动匹配未知编号。短ID碰撞且路径不同返回`IMAGE_REFERENCE_AMBIGUOUS`，应复制消息位置或精确resource_ref；同一原文件多处出现保留occurrences。接受端核验所选消息、原图字节、版本、digest及当前资源权限，保存服务器来源证明；Worker/详情/replay复用同一解析器，旧已接受快照仍兼容。
+
+接受RPC之前的资源错误保留`RESOURCE_NOT_FOUND`、`RESOURCE_ACTION_DENIED`、`RESOURCE_CHANGED`等明确代码；无法识别的输入读取错误为`IMAGE_INPUT_UNAVAILABLE`，返回`accepted=false/submission_state=not_accepted`，没有任务或积分预扣。资源/权限/版本错误使用对应提示，不包装成schema纠错；不自动替换参考图或打开新的纠错额度。字段/model错误保留原字段说明。RPC及其后的丢响应仍为受理不确定，不能根据错误文案重新创建任务。
+
 禁止 `model` / `model_name`、`size` / `format`、`prompts[]`、`num_images`、数值weight、mask、伪透明参数和内部可信字段。模型选择字段在接受前明确拒绝，不静默替换。适配器允许的参考数量可能小于schema通用上限16。工具说明只投影默认模型配对的实际模式、规格、参考数和价格，无静态价格副本。原生生图入口仍保留原模型选择。
 
 兼容旧参数只归一到同一异步出口：prompt-only成为文生图；旧 `image_urls` 必须唯一映射本次当前可信manifest的原图，再转为references。任意URL或旧内部 `task_id_override` 等不再可用；没有第二条同步执行链。
@@ -64,6 +72,8 @@
 
 `get_conversation_context` 在新接受开启时提供公共schema，沿用当前会话和基线revision权限。`limit`有界，`message_ids`最多8项，`text_exact`最多20000字符；可读取实际文本、任务原prompt、source_prompt/hash、可定位的图片来源。结果总量有界，缺原文不猜测；text_exact仅唯一匹配原文时给出区段与sha256。
 
+旧NULL revision消息只能读取本父任务已冻结的目录成员，原始content被修改时返回`IMAGE_SOURCE_MESSAGE_CHANGED`；后来上传/完成的旧消息不因重启加入。结果图片字段与上下文相同，包含真实file_id/唯一reference/来源和不可用原因。目录超限时返回`image_sources_unavailable_reason`。完整提示词保留空白及sha256，不依赖摘要重建。
+
 历史图片失败/取消只纳入新链路已发布事实，普通失败聊天仍按原筛选。晚到图片发布新revision，不改过去的聊天基线。
 
 ## HTTP 控制与详情
@@ -79,6 +89,8 @@
 | `PUT /api/tasks/{task_id}/image/feedback` | `{rating: "helpful"\|"not_helpful"}` | 当前用户已发布版本的反馈，原子保存，不发外部消息 |
 
 详情中的input是服务器实际冻结输入，包含schema_version、prompt/prompt_sha256、request_hash、mode/model/spec、完整参考图身份/路径/版本/digest/role/顺序、origin与Skill版本/hash、source_prompt/plan/variant/source_task、budget、estimated_credits及estimated_provider_credits。短消息generation_params仅携带渲染/任务/来源定位，完整内容不塞消息字段。
+
+本批加性来源字段包括`source`、`name`、`source_message_id/source_content_index`、`quoted_message_id/quoted_content_index`、真实`source_asset_id`和`occurrences`；所选旧来源的`legacy_source`证明由服务器生成并纳入request_hash，禁止模型提交。详情按实际快照展示来源和用途。复制配方不含model选择或私有证明，并优先使用精确消息定位；继续按当前服务器默认模型及资源权限接受，原任务重试仍按原快照。
 
 新工具输入取消模型选择，冻结快照中的实际 `model` 仍保留。Worker、历史详情、原快照重试/新版本及其成本预览继续使用原模型，不因平台默认变更而替换。HTTP estimate 的 model 是旧快照预览所需字段，不是聊天AI选择模型的入口；图片trial的模型来自服务器既有规则。
 

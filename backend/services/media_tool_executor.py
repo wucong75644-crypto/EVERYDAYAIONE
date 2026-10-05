@@ -26,11 +26,26 @@ class MediaToolMixin:
         try:
             accepted = await ImageHandler(self.db).accept_chat_image(self, args)
         except ChatImageNotAcceptedError as error:
+            code = str(error)
+            if code.startswith("RESOURCE_") or code in {
+                "IMAGE_INPUT_UNAVAILABLE", "IMAGE_ORIGINAL_UNAVAILABLE", "IMAGE_REFERENCE_CHANGED",
+                "IMAGE_REFERENCE_LOCATOR_INVALID", "IMAGE_CONTENT_INDEX_INVALID", "IMAGE_ASSET_DENIED",
+                "IMAGE_SOURCE_MESSAGE_DENIED", "IMAGE_SOURCE_REVISION_DENIED",
+                "IMAGE_SOURCE_MESSAGE_CHANGED", "IMAGE_REFERENCE_AMBIGUOUS", "IMAGE_QUOTED_SOURCE_DENIED",
+                "IMAGE_QUOTED_SOURCE_CHANGED", "IMAGE_SOURCE_CATALOG_INVALID",
+            }:
+                guidance = ("指定参考图无法定位、读取或通过权限/版本校验。"
+                            "请用 get_conversation_context 读取用户选定原图的真实 message_id/content_index，"
+                            "或使用获准搜索返回的 resource_ref；不要编造 file_id、自动换图或重复提交。")
+            elif code in {"IMAGE_REQUEST_FIELDS_INVALID", "IMAGE_MODEL_SELECTION_DISABLED"}:
+                guidance = ("此入口仅使用服务器默认模型，不传 model/model_name；"
+                            "请使用实际工具参数 mode、prompt、aspect_ratio、resolution、output_format，不能用 size/format。")
+            else:
+                guidance = "请核对具体错误及当前工具合同，补充必要信息后继续；不要自动改写提示词或重复提交。"
             return AgentResult(
                 summary=(f"图片请求未接受：{error}。未创建图片任务，未预扣图片积分。"
-                         "此入口仅使用服务器默认模型，不传 model/model_name；"
-                         "请使用实际工具参数 mode、prompt、aspect_ratio、resolution、output_format，不能用 size/format。"),
-                status="error", error_message=str(error),
+                         + guidance),
+                status="error", error_message=code,
                 metadata={"accepted": False, "completed": False, "retryable": False,
                           "submission_state": "not_accepted"},
             )

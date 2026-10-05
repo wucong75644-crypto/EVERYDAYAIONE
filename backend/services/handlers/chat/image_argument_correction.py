@@ -15,6 +15,7 @@ from services.tools.result import ToolResult
 
 KEY = "image_argument_validation"
 _STOP = "图片参数自动纠正已停止；未接受的请求没有创建图片任务或预扣图片积分。已接受的任务保持原状态。请检查参数或补充必要信息后继续。"
+_INPUT_STOP = "图片请求未接受；本次请求未创建图片任务或预扣图片积分。已接受的其他任务保持原状态。请按具体错误补充必要信息后继续。"
 _RECOVERY_STOP = "图片纠错调用已进入提交边界，恢复后不会自动重新提交。请查看已有图片任务核实受理状态；已接受的任务继续处理。"
 
 
@@ -165,7 +166,7 @@ class ImageArgumentCorrection:
             elif invalid or metadata.get("accepted") is False:
                 detail = ("参数校验未通过：" + "；".join(f"{i['path']}：{i['reason']}" for i in result.exception.issues[:3])
                           if invalid else str(display))
-                self.stop_message = _STOP + "\n" + detail
+                self.stop_message = (_STOP if invalid else _INPUT_STOP) + "\n" + detail
         if repairing:
             self.repair["done"] = True
             # Deliver the real tool acknowledgements without another model

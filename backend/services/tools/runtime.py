@@ -231,6 +231,9 @@ class ToolRuntime:
                                                     before_dispatch=before_dispatch, on_result=on_result)
                 if file_call is not None and result.exception is None and result.status in {"success", "empty"}:
                     self.resource_selections.record(file_call)
+                    if name == "file_search":
+                        text = getattr(result.raw, "summary", None) or getattr(result.raw, "text", "")
+                        self.resource_selections.record_image_result(self.executor, text)
                 return self._observe_resource_result(result, context)
         except asyncio.CancelledError:
             raise

@@ -20,6 +20,34 @@ describe('ChatImageControls', () => {
         origin: { parent_task_id: 'parent' }, budget: { max_requests: 4, max_credits: 100 } } });
   });
 
+  it('shows frozen source message and original block together with purpose', async () => {
+    const base = await chatImageService.details('task');
+    vi.mocked(chatImageService.details).mockResolvedValue({ ...base, input: { ...base.input,
+      references: [{ ...base.input.references[0], source: 'quoted', source_message_id: 'selected-message',
+        source_content_index: 3, quoted_message_id: 'original-message', quoted_content_index: 1 }] } });
+    const view = render(<ChatImageControls taskId="task" />);
+    fireEvent.click(screen.getByRole('button', { name: '图片任务详情' }));
+    await screen.findByText(/来源消息：selected-message · 原始图片块 3 · 用户引用/);
+    expect(screen.getByText(/引用原消息：original-message · 图片块 1/)).toBeInTheDocument();
+    view.unmount();
+  });
+
+  it('copies an exact source recipe using public parameters without model selection', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    const base = await chatImageService.details('task');
+    vi.mocked(chatImageService.details).mockResolvedValue({ ...base, input: { ...base.input,
+      references: [{ ...base.input.references[0], file_id: 'fid_12345678', source_message_id: 'selected-message', source_content_index: 3 }] } });
+    const view = render(<ChatImageControls taskId="task" />);
+    fireEvent.click(screen.getByRole('button', { name: '图片任务详情' }));
+    fireEvent.click(await screen.findByRole('button', { name: '复制配方' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(writeText.mock.calls[0][0])).toEqual({ mode: 'image_to_image', prompt: '  exact server prompt\n',
+      aspect_ratio: '1:1', resolution: '1K', output_format: 'png',
+      references: [{ role: '产品结构', message_id: 'selected-message', content_index: 3 }] });
+    view.unmount();
+  });
+
   it('downloads both saved versions using the existing workspace ZIP endpoint', async () => {
     const base=await chatImageService.details('task');
     vi.mocked(chatImageService.details).mockResolvedValueOnce({ ...base, task_id: 'new', submission_state: 'published',

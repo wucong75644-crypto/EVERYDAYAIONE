@@ -79,11 +79,13 @@ export default function ChatImageControls({ taskId }: { taskId: string }) {
   const copyRecipe = async () => {
     if (!details) return;
     const input = details.input;
-    const recipe = { mode: input.mode, prompt: input.prompt, model: input.model,
+    const recipe = { mode: input.mode, prompt: input.prompt,
       aspect_ratio: input.aspect_ratio, resolution: input.resolution, output_format: input.output_format,
       ...(input.background ? { background: input.background } : {}),
-      references: input.references.map(({ role, asset_id, message_id, content_index, resource_ref, file_id }) =>
-        ({ role, ...(asset_id ? { asset_id } : message_id ? { message_id, content_index } : file_id ? { file_id } : { resource_ref }) })) };
+      references: input.references.map(({ role, asset_id, message_id, content_index, source_message_id, source_content_index, resource_ref, file_id }) =>
+        ({ role, ...(asset_id ? { asset_id } : message_id ? { message_id, content_index }
+          : source_message_id ? { message_id: source_message_id, content_index: source_content_index }
+          : file_id ? { file_id } : { resource_ref }) })) };
     try { await navigator.clipboard.writeText(JSON.stringify(recipe, null, 2)); toast.success('已复制配方；原图引用仍需当前用户权限'); }
     catch { toast.error('复制失败，可直接选择下方提示词'); }
   };
@@ -102,6 +104,11 @@ export default function ChatImageControls({ taskId }: { taskId: string }) {
         {details.input.references.length > 0 && <ol className="list-decimal pl-5 space-y-1">
           {details.input.references.map((reference, index) => <li key={index} className="break-all">
             {reference.role} · {reference.workspace_path} · 原图 {reference.size} 字节
+            {(reference.message_id || reference.source_message_id) && <p className="text-text-tertiary">
+              来源消息：{reference.message_id || reference.source_message_id} · 原始图片块 {reference.content_index ?? reference.source_content_index}
+              {reference.source && ` · ${({ uploaded: '用户上传', generated: '生成结果', quoted: '用户引用', file_search: '文件搜索' })[reference.source]}`}
+            </p>}
+            {reference.quoted_message_id && <p>引用原消息：{reference.quoted_message_id} · 图片块 {reference.quoted_content_index}</p>}
             {details.reference_previews?.[index]?.url && <img src={details.reference_previews[index].url!} alt={`参考图 ${index + 1}：${reference.role}`} className="mt-1 max-h-24 rounded object-contain" />}
           </li>)}
         </ol>}

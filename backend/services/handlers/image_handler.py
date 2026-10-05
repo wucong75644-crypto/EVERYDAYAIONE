@@ -65,15 +65,16 @@ class ImageHandler(BaseHandler):
                 or owner.execution_mode != "interactive" or owner.workspace_user_id != owner.user_id):
             raise PermissionError("CHAT_IMAGE_TRUSTED_CONTEXT_REQUIRED")
         parent = await asyncio.to_thread(lambda: owner.db.table("tasks").select(
-            "id,user_id,org_id,conversation_id,turn_id,input_message_id,base_context_revision"
+            "id,user_id,org_id,conversation_id,turn_id,input_message_id,base_context_revision,request_params"
         ).eq("id",owner.task_id).single().execute().data)
         if (not parent or parent.get("user_id") != owner.user_id or parent.get("org_id") != owner.org_id
                 or parent.get("conversation_id") != owner.conversation_id
                 or parent.get("base_context_revision") is None):
             raise PermissionError("CHAT_IMAGE_PARENT_DENIED")
-        resolver=ChatImageInputResolver(owner,base_revision=parent["base_context_revision"],
-            input_message_id=str(parent["input_message_id"]))
+        from services.handlers.chat_context.image_sources import legacy_catalog
         try:
+            resolver=ChatImageInputResolver(owner,base_revision=parent["base_context_revision"],
+                input_message_id=str(parent["input_message_id"]), legacy_sources=legacy_catalog(parent), require_known_sources=True)
             normalized=await asyncio.to_thread(resolver.normalize_legacy,args)
             if normalized.get("background")=="transparent" and not settings.chat_image_transparent_enabled:
                 raise PermissionError("CHAT_IMAGE_TRANSPARENT_DISABLED")
@@ -92,11 +93,11 @@ class ImageHandler(BaseHandler):
             snapshot=freeze_image_request(normalized,refs,origin=origin,
                 max_requests=settings.chat_image_max_requests,max_credits=settings.chat_image_max_credits)
             await asyncio.to_thread(resolver.verify,refs)
-        except (ValueError, PermissionError, FileNotFoundError) as error:
+        except (ValueError, OSError) as error:
             # Only this input/read boundary precedes acceptance. RPC exceptions
             # below may mean a committed task; never classify those as rejected.
-            code = str(error)
-            if not code.startswith(("IMAGE_", "CHAT_IMAGE_")) or not code.replace("_", "").isalnum():
+            code = getattr(error, "code", None) or str(error)
+            if not code.startswith(("IMAGE_", "CHAT_IMAGE_", "RESOURCE_")) or not code.replace("_", "").isalnum():
                 code = "IMAGE_INPUT_UNAVAILABLE"
             raise ChatImageNotAcceptedError(code) from error
         if owner.cancellation_event is not None and owner.cancellation_event.is_set():

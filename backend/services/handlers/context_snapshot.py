@@ -26,6 +26,9 @@ class ContextAnchor:
     base_revision: int
     through_message_id: Optional[str]
     org_id: Optional[str]
+    legacy_image_sources: tuple[dict, ...] = ()
+    image_source_owner_id: Optional[str] = None
+    image_sources_unavailable_reason: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -99,6 +102,7 @@ async def build_context_snapshot(
                 current_text,
                 base_revision=anchor.base_revision,
                 strict=True,
+                org_id=anchor.org_id,
             )
             await conversation_cache.set_closed_messages(
                 anchor.conversation_id,
@@ -118,6 +122,14 @@ async def build_context_snapshot(
             f"base_revision={anchor.base_revision} | error={error}"
         )
         raise
+    if anchor.legacy_image_sources:
+        from services.handlers.chat_context.image_sources import legacy_source_notice
+        history = [*history, {"role": "system", "content": legacy_source_notice(
+            db, anchor.legacy_image_sources, anchor.conversation_id, anchor.org_id,
+            owner_id=anchor.image_source_owner_id)}]
+    if anchor.image_sources_unavailable_reason:
+        history = [*history, {"role": "system", "content":
+            "旧图片来源超出安全读取预算；不能猜测历史 ID。请用户用已有图片引用入口明确选定原图，或缩小范围。"}]
     summary_prompt, summary_revision, conversation_source = (
         _load_snapshot_metadata(db, anchor)
     )

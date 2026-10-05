@@ -25,6 +25,7 @@ class UserMessageInput:
     attachments_xml: str = ""                       # 由 PromptBuilder 用 format_attachments 渲染好
     workspace_prompt: str = ""                      # 由 PromptBuilder 用 build_workspace_prompt 渲染好
     image_urls: List[str] = field(default_factory=list)
+    image_sources: List[Dict[str, Any]] = field(default_factory=list)
     file_urls: List[str] = field(default_factory=list)
     attachments_as_system: bool = True              # True=独立 system block, False=附加到 user text
     org_id: Optional[str] = None
@@ -56,6 +57,11 @@ class UserLayer:
         if inp.attachments_as_system and inp.workspace_files:
             from services.handlers.chat_context.attachments import format_current_attachment_refs
             attachment_refs = format_current_attachment_refs(inp.workspace_files, inp.org_id)
+
+        from services.handlers.chat_context.image_sources import format_image_sources
+        sources = format_image_sources(inp.image_sources)
+        if sources:
+            attachment_refs = "\n\n".join(filter(None, (attachment_refs, sources)))
 
         # 构造 user message (多模态判断)
         if attachment_refs or inp.image_urls or inp.file_urls:

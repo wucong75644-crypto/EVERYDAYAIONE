@@ -58,6 +58,7 @@ run git -C "$seed" config user.email lifecycle-test@example.invalid
 mkdir -p "$seed/deploy" "$seed/scripts/testing"
 cp "$source_root/deploy/release.sh" "$seed/deploy/release.sh"
 cp "$source_root/deploy/release-coordination.sh" "$seed/deploy/release-coordination.sh"
+cp "$source_root/deploy/verify-production-database.py" "$seed/deploy/verify-production-database.py"
 cp "$source_root/scripts/task-worktree.sh" "$seed/scripts/task-worktree.sh"
 printf '%s\n' \
     '#!/usr/bin/env bash' \
@@ -66,7 +67,7 @@ chmod +x "$seed/deploy/release.sh" "$seed/deploy/deploy.sh" "$seed/scripts/task-
 printf 'base\n' > "$seed/product.txt"
 printf 'other-base\n' > "$seed/other-product.txt"
 printf 'deploy/config.env\n' > "$seed/.gitignore"
-run git -C "$seed" add deploy/release.sh deploy/release-coordination.sh deploy/deploy.sh scripts/task-worktree.sh product.txt other-product.txt .gitignore
+run git -C "$seed" add deploy/verify-production-database.py deploy/release.sh deploy/release-coordination.sh deploy/deploy.sh scripts/task-worktree.sh product.txt other-product.txt .gitignore
 run git -C "$seed" commit -m base
 run git -C "$seed" branch -M main
 run git -C "$seed" remote add origin "$remote"
@@ -136,6 +137,14 @@ import shlex
 import subprocess
 import sys
 
+# The newer release entry validates DB identity before calling the executor.
+# Only accept this exact mocked host + interpreter + exact checked-in guard.
+if sys.argv[-3:] == ["test@example.invalid", "/var/www/everydayai/backend/venv/bin/python", "-"]:
+    from pathlib import Path
+    expected = Path(os.environ["TEST_DATABASE_GUARD"]).read_text()
+    if sys.stdin.read() != expected:
+        raise SystemExit("数据库核验 fixture 不匹配")
+    raise SystemExit(0)
 command = shlex.split(sys.argv[-1])
 if (sys.argv[-2] != "test@example.invalid"
         or command[:3] != ["bash", "-s", "--"]
@@ -146,6 +155,7 @@ FAKE_SSH
 chmod +x "$fake_bin/ssh"
 export PATH="$fake_bin:$PATH"
 export FAKE_PRODUCTION="$fake_production"
+export TEST_DATABASE_GUARD="$source_root/deploy/verify-production-database.py"
 
 migration_deploy_args="$tmp_root/migration-deploy-args.txt"
 (

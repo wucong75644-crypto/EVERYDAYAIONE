@@ -7,6 +7,7 @@ Phase 1 重写：替代旧的固定 10 条滑窗，改为 token 预算驱动。
 设计文档：docs/document/TECH_上下文工程重构.md §四
 """
 
+import json
 import re
 from typing import Any, Dict, List, Optional
 
@@ -34,7 +35,7 @@ def _build_history_query(
     query = (
         db.table("messages")
         .select(
-            "role, content, status, created_at, generation_params, "
+            "id, role, content, status, created_at, generation_params, "
             "context_revision, message_kind"
         )
         .eq("conversation_id", conversation_id)
@@ -50,10 +51,28 @@ def _build_history_query(
     return query
 
 
+def _append_image_locators(messages, row, *, org_id=None, visible_indices=()):
+    if not row.get("id"):
+        return  # Legacy non-persisted caller fixtures have no selectable source.
+    from .image_sources import image_sources, format_image_sources
+    text = format_image_sources(image_sources(row, org_id, visible_indices))
+    if not text:
+        return
+    target = next((message for message in reversed(messages)
+                   if message.get("role") == row["role"] and message.get("content") is not None), None)
+    if target is None:
+        messages.append({"role": row["role"], "content": text})
+    elif isinstance(target["content"], list):
+        target["content"].append({"type": "text", "text": text})
+    else:
+        target["content"] += "\n\n" + text
+
+
 def _row_to_oai_messages(
     row: Dict[str, Any],
     remaining_images: int,
     preserve_tool_protocol: bool = False,
+    org_id: Optional[str] = None,
 ) -> tuple[List[Dict[str, Any]], int]:
     """把数据库消息投影为闭合历史，并限制历史图片数量。
 
@@ -66,6 +85,7 @@ def _row_to_oai_messages(
         text = project_completed_assistant(raw_content)
         messages = [{"role": "assistant", "content": text}] if text else []
         images = extract_image_urls_from_content(raw_content)[:remaining_images]
+        _append_image_locators(messages, row, org_id=org_id)
         return messages, len(images)  # Image delivery is already in the outcome view.
     else:
         messages = extract_oai_messages_from_content(
@@ -73,6 +93,7 @@ def _row_to_oai_messages(
         )
     images = extract_image_urls_from_content(raw_content)[:remaining_images]
     if not images:
+        _append_image_locators(messages, row, org_id=org_id)
         return messages, 0
 
     if role == "user":
@@ -114,6 +135,11 @@ def _row_to_oai_messages(
             })
         else:
             messages[target_index]["content"] += image_hint
+    from .image_sources import content_parts
+    visible = [index for index, part in enumerate(content_parts(raw_content))
+               if isinstance(part, dict) and part.get("type") == "image" and part.get("url")
+               and not part.get("failed")][:len(images)] if role == "user" else []
+    _append_image_locators(messages, row, org_id=org_id, visible_indices=visible)
     return messages, len(images)
 
 
@@ -211,6 +237,7 @@ async def build_context_messages(
     current_text: str,
     base_revision: Optional[int] = None,
     strict: bool = False,
+    org_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """加载 legacy 时间线或固定 revision 的闭合历史。"""
     try:
@@ -252,6 +279,7 @@ async def build_context_messages(
                     row,
                     max(0, max_images - total_images),
                     preserve_tool_protocol=preserve_tool_protocol,
+                    org_id=org_id,
                 )
                 if row["role"] == "assistant":
                     _append_tool_digest(messages, row)

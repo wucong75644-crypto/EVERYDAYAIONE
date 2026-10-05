@@ -9,7 +9,11 @@ export interface ChatImageInput {
   estimated_credits: number; estimated_provider_credits: number;
   background?: 'opaque' | 'transparent';
   references: Array<{ role: string; workspace_path: string; content_sha256: string; size: number;
-    asset_id?: string; message_id?: string; content_index?: number; resource_ref?: string; file_id?: string }>;
+    asset_id?: string; message_id?: string; content_index?: number; resource_ref?: string; file_id?: string;
+    name?: string; source?: 'uploaded' | 'generated' | 'quoted' | 'file_search';
+    source_message_id?: string; source_content_index?: number;
+    quoted_message_id?: string; quoted_content_index?: number; source_asset_id?: string;
+    occurrences?: Array<{ message_id: string; content_index: number }> }>;
   origin: { retry_of_task_id?: string; parent_task_id: string; [key: string]: unknown };
   budget: { max_requests: number; max_credits: number };
   source_prompt?: Record<string, unknown>;

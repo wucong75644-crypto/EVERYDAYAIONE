@@ -20,6 +20,7 @@ def _schema_generate_image_async():
                 "仅使用本次 parameters 定义的字段。比例用 aspect_ratio、分辨率用 resolution、格式用小写 output_format；不传 size 或 format。"
                 '无参考图的调用示例：{"mode":"text_to_image","prompt":"完整原文","aspect_ratio":"1:1","resolution":"1K","output_format":"png"}。'
                 "prompt 是完整最终原文，不再二次改写。只选本次用户指定的原图引用，按用途和顺序传 references。"
+                "历史图片按上下文给出的 message_id/content_index 原样复制；缺少真实定位先调用 get_conversation_context，不能编造 file_id。"
                 "先看样张时只提交样张。variant_id 是稳定变体身份，不能扩大服务器预算。"
                 "遇到素材或提示词版本歧义先询问；失败不自动无限重试。"
                 f"本轮上限 {limits.chat_image_max_requests} 张、{limits.chat_image_max_credits} 积分。"
@@ -31,7 +32,8 @@ def _schema_generate_image_async():
                 "properties": {
                     "mode": {"type":"string", "enum":["text_to_image","image_to_image"]},
                     "prompt": {"type":"string", "minLength":1, "description":"一张图的完整最终提示词原文"},
-                    "references": {"type":"array", "maxItems":16, "items": {
+                    "references": {"type":"array", "maxItems":16,
+                        "description":"仅用户明确选定的原图；引用身份从附件/历史/搜索结果原样复制，禁止猜测编号", "items": {
                         "type":"object", "additionalProperties":False, "required":["role"],
                         "properties": {
                             "resource_ref":{"type":"string"}, "file_id":{"type":"string"},

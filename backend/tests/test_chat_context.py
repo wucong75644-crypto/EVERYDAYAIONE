@@ -622,7 +622,7 @@ class TestBuildContextMessages:
 
         chat_handler.db.table.assert_called_once_with("messages")
         mock_table.select.assert_called_once_with(
-            "role, content, status, created_at, generation_params, "
+            "id, role, content, status, created_at, generation_params, "
             "context_revision, message_kind"
         )
         eq_calls = mock_table.eq.call_args_list

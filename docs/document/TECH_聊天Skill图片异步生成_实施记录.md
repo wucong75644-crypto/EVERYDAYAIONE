@@ -1,6 +1,6 @@
 # 聊天 Skill 图片异步生成实施记录
 
-更新：2026-10-04。此文档记录实际实现与证据；[原设计](TECH_聊天Skill生图编排与系统兼容实施方案.md)中的编号继续用于追溯，旧任务第十一章不适用。
+更新：2026-10-05。此文档记录实际实现与证据；[原设计](TECH_聊天Skill生图编排与系统兼容实施方案.md)中的编号继续用于追溯，旧任务第十一章不适用。最新来源与文件ID修复见文末；本地候选未提交部署，生产仍为95a18e18。
 
 ## 任务与最新基座核对
 
@@ -205,3 +205,89 @@ API/状态见[接口文档](API_聊天Skill图片异步任务.md)，迁移顺序
 剩余：本批尚未部署，生产普通聊天仍为0e162515；真实自然语言自动Skill、确认续轮、两次任务最终图片与唯一扣款尚未复验。保留内部电商账本缺陷及12积分误扣待处理；未做生产故障注入、历史计划快照/图片trial的生产回归。新的模型入口会拒绝历史image_agent调用，不将旧工具授权转为generate_image权限；如有旧计划快照依赖该公共工具，发布前需识别并迁移，不能自动切换成另一付费调用。没有宣称整个系统无回归，T17没有本批新验证。
 
 用户随后明确授权本批“提交部署”。本次发布前只读检查正式数据库身份匹配，pending/running聊天和在途图片均0，paused历史43；实际scheduled_tasks与scheduled_task_drafts的计划/权限/Skill快照没有image_agent依赖，无需生产计划迁移。最新origin/main仍32e8ba0d，候选已包含。按release.sh显式16个任务文件提交推送并完整发布前后端，复用1562项回归、不跳过构建/迁移账本/健康检查。自动验证仅无业务副作用的目录与拒绝边界，不补扣/退款、不发起付费供应商或生产Skill发布；最终发布SHA和DEPLOYED_PENDING_ACCEPTANCE状态以受控入口回执为准。工作树保留，main不合并。
+
+### 普通聊天双图生产复验（2026-10-04）
+
+当前阶段3/4，关联M01/M03/M05/M08/M13/M30、F04/F05/F08/F10、T01/T04/T05/T09/T11/T14–T16。本批受控发布实际成功：`95a18e188a34198cb76051a32b5a10a93c8906c4`，`mode=preview`、`DEPLOYED_PENDING_ACCEPTANCE`、`acceptance_candidate=true`；前后端构建、273–276迁移账本核验、服务与readiness通过。用户随后要求“现在重新帮我测试。还是生成两张图”，本轮只执行获准真实UI验证和只读取证，不再部署或更改生产配置、Skill、账本。
+
+- 新管理员普通聊天 `52c764f0-772e-44f1-9dc9-c2a4c99f856f`，智能模型/自动模式，未点击Skill选择器。第一轮打磨站立挥手、坐姿读书两条提示词；第二轮统一宝蓝、磨砂、大头小身体、黑色圆眼/无嘴、空白书页；两轮都明确暂不生图。服务器只有两条completed chat，图片任务和积分账本为0，余额1248。
+- 第三轮自然语言确认原文、默认模型、1K/1:1/PNG、无参考图、最多12积分、只两张且失败不自动重试。真实父chat `5791650c-2016-502b-a94b-3363aac808c7` 在23:37:50完成，checkpoint恰有两次`generate_image`（round0、round1）；工具输入没有model/model_name、旧size/format或prompts数组，无image_agent调用或参数错误。
+- 两次接受创建独立子任务、消息和资产；前端工具回执616ms/63ms后显示pending，父聊天先完成。第一张 `9456f659-83de-491f-9b7a-bea6a2e6cc5a` 于23:38:44完成，第二张 `15c2f4df-51f1-4548-b6fb-a7931f24901a` 于23:38:53完成；均`completed/published`、`delivery_pending=false`、各一张结果。冻结模型均为`gpt-image-2-5-flare-text-to-image`、模式`text_to_image`、references=[]；快照prompt与UI最后展示的原文分别逐字一致，没有prepare重复改写。
+- 图片消息分别为 `ec043dc0-9b8d-487f-b463-79c8f52a5b7f`、`d1d2258b-f051-456b-97c7-54530015edf3`，均completed/credits_cost=6，context_revision分别4/5，content.task_id正确。资产分别 `31639c7f-5e36-476f-a0a3-64bd1d3242c3`、`e98dbbc9-4fa0-4126-82fc-ca23299dd158`，均ready且各有一条本对话任务/消息引用。
+- 各任务恰一条confirmed的lock账本，分别 `5efbd47e-4492-45fe-9e77-52d5c83cbec9`、`c870d92e-124d-47c0-a90e-270e6ec2a8fa`，各6积分；三条chat credits_used=0，余额1248→1236，总12。刷新页面，两张完成图片、历史和余额仍在；只读复扫仍只有2个图片任务，没有重复扣费。此前另一次测试的12积分误扣没有退款，不能将本轮正常账本解释为旧问题已解决。
+- 使用受保护数据库身份、只读事务/10秒statement timeout取证；经现有FileTargetResolver权限/路径检查读取已保存原图，无新供应商调用。两张文件都能由Pillow完整verify，实际均 **1254×1254 PNG/RGB**，大小分别1054950/1219061字节。1K请求参数已验证，但不宣称精确1024像素输出或透明背景；UI360×360为缩略图。实际画面动作、白背景、无嘴、空白书页符合基本请求，机器人的头型和天线有差异，尚不能保证严格角色一致。
+- **自动Skill仍未通过本轮**：conversation_skill_bindings=0，三条chat均manual_selection=null；checkpoint.manual_skill_id=null、session_skill_ids=[]、active_skills=[]，快照Skill来源亦为空。此次通过的是普通聊天→两次单图异步任务→预扣结算→独立发布→刷新恢复的真实路径，不能计为T01自动激活及完整Skill编排通过。
+
+证据：`/private/tmp/chat-two-image-retest-before-submit.json`、`/private/tmp/chat-two-image-retest-prompts.json`、`/private/tmp/chat-two-image-retest-accepted.json`、`/private/tmp/chat-two-image-retest-final.json`；UI截图 `/private/tmp/chat-two-image-retest-success.jpg`。本轮补足T04/T09基本路径、T11完成后刷新；T05仅参数/文件格式与实测尺寸，未完成精确尺寸合同验证；T01自动激活、生产trial、图生图/多参考图、并发故障注入、T17和全部系统回归仍未验证。没有新增代码或测试用例；上述1562项为部署前回归，不冒充本轮新运行的全量测试。main未合并、工作树保留，新增测试记录尚未提交。
+
+### 历史参考图跨轮定位失败（2026-10-05）
+
+阶段3/4，关联M01/M05/M06/M08/M30/M31，F06/F13相关跨轮来源风险，T03/T12/T14/T15。本次是新增真实触发证据，不以原F编号替代具体根因。继续同一任务工作树；生产候选仍95a18e18。本轮开发、只读取证及本地测试，没有提交、推送、部署、Skill发布、账本写入或额外供应商调用。
+
+**生产证据**：用户截图对应对话`ea51b1d2-da12-428e-9471-6d703ad32561`，23:53:40创建父chat `3b3feeb8-6fd8-52df-9a77-b2021af0ba0a`，用户输入消息`a44d7fa3-2cb2-4e2d-9dc4-269c5701c9d0`仅为“没问题 帮我生成图片”。此前上传/引用原图所在消息`d91e017f-a990-4716-aad8-1a8b22ea0aef`已闭合revision1；本次父任务base_context_revision=1，mode=image_to_image、resolution=1K、aspect_ratio=1:1、output_format=png均合法。唯一generate_image调用引用fid_2a8b9c3d，接受前失败。失败后该对话仍仅3个既有原生图片任务/各一条历史confirmed账本，没有本次新增图片任务或账本，管理员余额1236未变。
+
+**根因链**：只读身份保护事务及现有FileTargetResolver核验原JPEG真实存在、1080×1080且Pillow.verify通过，SHA256=`5d344989e500919e83613757b231b04e559ff6bceddd07f5a3d895d32b5e389f`。真实org/path确定性编号为fid_1bcc70bb，旧None-org编号也为fid_6f31e111，均不是调用中的fid_2a8b9c3d。生产checkpoint.messages在工具调用前没有任何fid；历史投影只把上传图片转成image_url，没有附带消息/资源定位。模型看到图和上轮完整方案，却不能复制原图身份，编造了编号。FileTargetResolver按原有唯一性/权限规则拒绝不存在的编号；ImageHandler将含说明的FileTargetError字符串归一为IMAGE_INPUT_UNAVAILABLE，MediaToolMixin对所有拒绝附字段提示，ImageArgumentCorrection又对所有accepted=false使用“参数自动纠正”停止文案。故障既有定位连续性缺口，也有错误分类/传播误导；供应商并未收到本次请求。
+
+**最小修复**：
+
+- M31历史query加id，历史投影为持久化的user/assistant图片附真实message_id/content_index/name，按原content数组索引保留多图顺序，兼容JSON字符串。视觉图片预算耗尽仍保留定位提示；失败/无workspace_path图片不广告生成定位。元数据不是自动选图或权限授予，不新建编号体系、不传历史路径/签署URL、不改变闭合revision。
+- 闭合缓存仅切换到outcomes-v2投影命名空间，原schema2/revision/through_message_id严格合同保持；不使用缺定位的旧缓存，不删除生产缓存、回填历史或重写进行中任务。
+- M08接受前保留FileTargetError/ResourceAccessError的安全代码；ValueError/OSError输入读取拒绝明确not_accepted，RPC异常仍在该catch外并保留受理不确定。M05按资源/字段错误分别给出恢复说明；非schema拒绝不声称自动参数纠错，不开启新纠错额度或自动替换参考图/模式/提示词。
+- M01工具说明明确复制已有定位，缺定位时先通过获准历史工具读取，不编造file_id。Skill正文及生产版本未改。冻结07基线仍保留，仅更新已授权异步schema升级fixture的说明文字，参数类型/权限/工具合同断言未弱化。
+
+**验证**：新增连续性回归初版8项在修复前7失败/1通过，分别暴露定位缺失、资源代码被抹、错误纠错文案和旧缓存复用（`/private/tmp/chat-image-reference-before.log`）。最终13项覆盖上传A/B→打磨→下一轮只选B原图、原content索引/顺序与digest、JSON输入、user/assistant及视觉额度耗尽、失败/无原图、未来revision/跨对话/跨org拒绝、当前read权限拒绝、未知fid/损坏原图在接受RPC前停止、资源错误不启纠错、旧缓存不复用。测试使用真实临时图片/FileExecutor/Resolver，DB与provider入口为隔离double，仅证明行为边界，不宣称生产事务/RLS验收。
+
+16个相关测试文件最终 **774 passed / 3 skipped / 0 failed**，11.29秒（`/private/tmp/chat-image-reference-regression-final.log`）。3项skip是既有已由PromptBuilder替代的V1 gather编排测试；没有新skip。覆盖历史/cache/snapshot/当前附件、图像接受/一次纠错、工具合同/路由、频道及企微、资源权限/版本执行。第一次扩回归的失败来自旧SELECT断言及异步schema说明fixture/JSON字段顺序，已显式同步新增id与文字，保留原权限、字段和错误合同断言。前端/SQL/账本/Worker未改，不重复原构建/PG并发测试，也不将774项称为全系统无回归。
+
+证据：`/private/tmp/chat-image-reference-failure.json`、`/private/tmp/chat-image-reference-identity.json`。此前普通聊天文生图双图成功只覆盖无参考图路径，未覆盖本次图生图跨轮原图定位；这一真实缺口已记录并补回归。剩余：修复未部署、真实模型读取新定位并接受/完成图生图未复验，Skill自动激活稳定性、精确输出尺寸和旧电商账本/误扣退款仍未处理；生产每轮2张/24积分限制未扩大，截图六个方案需遵守分批限制。发布/回滚顺序见RELEASE增补；任务工作树保留，等待用户后续提交部署指令。
+
+**多轮全量编号复核（用户指出不能仅核对一张原图，2026-10-05）**：前一轮“编号不存在”的表述应限定为当前资源范围可解析性，不能由它不等于一张原图的fid直接推断整个对话/所有历史缓存都从未存在该编号。新增只读完整审计对话10条消息、7个图片块（用户4/assistant3，因重引用实际4张不同图片）；逐项核对当前org、旧None-org、消息org与相对/绝对路径、basename、记录name的确定性fid，没有匹配fid_2a8b9c3d。7个图片块的文件均存在，图片并未丢失；该对话没有user_asset_refs登记记录，未使用资产表缺行推断文件不存在。当前授权workspace完整枚举1609个文件也没有匹配；按原对话各精确路径/名称重建临时查找提示后，实际FileTargetResolver仍返回RESOURCE_NOT_FOUND。未读取或修改运行中Actor的内存缓存，不能证明所有过去的临时别名从未存在。
+
+失败checkpoint在第一个generate_image前没有fid；只有1个视觉image_url，匹配原上传JPEG在两条user消息中的重复引用（最初消息与revision1再次引用消息），并非已经提供7张图的可执行定位后选错一项。fid_2a8b9c3d第一次出现在模型工具参数。结论：当前输入没有可复制的资源身份，模型填了无法解析的编号；根因是跨轮来源定位信息丢失，尚无证据证明它是另一张有效图片的编号。修复必须保持逐消息/原content_index身份及来源，不能以“最近图/第一张图”代替用户指定素材。
+
+另一个明确兼容限制：该对话以前3条原生生成图片及较早用户引用消息的context_revision均为NULL，现有固定revision历史没有纳入它们；本轮只有revision1的用户上传图进入视觉上下文。这是旧图片历史边界/发现能力的后续验证缺口，本次未回填revision、扩大消息权限或声明旧原生生成图跨轮定位已经全部通过。完整证据`/private/tmp/chat-image-conversation-id-audit.json`；没有新增付费请求、扣款、代码变更或重复测试。
+
+
+### 图片来源与文件ID复用实施（2026-10-05，本地完成未部署）
+
+当前阶段：阶段1安全基础、阶段3/4跨轮来源、阶段5输入详情的增补D01–D06均本地完成。关联M01/M06/M08/M14/M20/M25/M27/M31、F06/F11/F13及T03/T05/T06/T07/T08/T09/T11/T12/T14/T15/T16；原账本原子性及不确定提交约束继续沿F07/F08，未重写。生产仍为`95a18e188a34198cb76051a32b5a10a93c8906c4`，同一任务工作树继续，没有提交、推送、部署、合并main、工作树清理、生产Skill/配置写入或付费调用。
+
+**实现**：
+
+- D01：新增`handlers/chat_context/image_sources.py`，当前/历史/精确读取共同投影现有fid、原消息/图片块位置、来源、可用性与视觉对应；当前附件保留来源字段并服务端核验。正常历史全部调用传实际org，图片视觉预算耗尽仍保留定位，不将分析图自动选作生成参考。缓存升级`conv:msgs:outcomes-v3`，无批量清理。
+- D02：迁移277在原串行/分支Actor claim同一事务冻结`_image_sources_v1`，包括原始content及固定base/through；首次覆盖伪造私有字段，之后目录受触发器保护不可改写。只兼容本个人会话的终态旧NULL revision图，支持终态非Actor原生任务已有Turn的旧结果，排除在途Actor用户输入/结果及跨组织/会话。旧已有attempt无目录则冻结空目录，不扩大过去的上下文。超过100条/120000字节冻空目录及明确原因，让正常聊天继续；展示上限20个来源仅限制展示，不截断权威目录。
+- D03/D04：裸fid绑定固定历史/当前输入或真正获准file_search返回的签名ref，不能扫描工作区猜匹配。碰撞不同原图拒绝；同一原图多处出现保留occurrences，并剔除错误的客户端引用声明。精确读取保留完整提示词空白/hash；所选旧消息变动拒绝，重启不扩大目录。既有file_search checkpoint恢复只恢复已验证签名身份，不授予权限。资源错误与字段错误分离，受理不确定仍禁止重新付费提交。
+- D05：新快照包含服务器所选来源及旧来源证明，request_hash绑定；已有Worker/详情/replay调用同一解析器，重新核验真实原图版本/digest与权限。旧已接受快照继续兼容，没有第二条同步链。来源变化或原图删除时真实Worker确定失败收尾，无供应商调用/账本预扣。
+- D06：复用前端现有引用原图和来源链；详情展示冻结消息位置、用途和引用原来源。配方移除模型选择，并优先复制精确消息位置，只包含公共工具输入。URL-only图片仅通过现有canonical资产登记找到同owner/org/scope的工作区原图；验证URL签名变化不影响身份，找不到时明确不可用，不新增任意下载恢复。
+
+独立只读数据库/恢复审查发现并修复：超限目录导致队首claim反复失败、无关变化图片阻断有效选择、运行中Actor输入被误纳旧历史、有Turn的旧原生结果被误排除、URL-only来源展示/解析不一致，以及URL-only带真实资产时引用校验错误。最终复审无剩余高置信阻断项；复审未执行生产验证或代替本地测试。最后同文件错误引用的可用性和配方修正通过专项回归。
+
+**本批实际验证（不复用上一批774项冒充本次证据）**：
+
+| 检查 | 最终结果 | 证据及限制 |
+| --- | --- | --- |
+| 23个后端相关测试文件 | **654 passed / 3 skipped / 0 failed**，5.66秒 | `/private/tmp/image-source-backend-regression-final.log`；3项为既有已废弃V1编排测试。含19项新来源测试、精确原文/目录边界、当前/历史/cache、真Actor/ToolRuntime、Skill/工具合同、原生图片/电商/视频重试、文件权限及scheduled快照。模型/一般DB使用double，不代表模型理解质量或真实账本。 |
+| 真实隔离PostgreSQL17/Redis、实际121/273–277及rollback | **58 passed / 0 skipped / 0 failed**，2.37秒 | `/private/tmp/image-source-postgres-final.log`；12项新来源/claim/回滚、46项既有图片闭环。真实角色无SUPERUSER/BYPASS_RLS，验证串行/分支原子目录、2线程并发claim、作用域RLS、私有目录保护、重领原边界、超限聊天继续、真实双子任务各一预扣账本、来源改变/删除无供应商或积分IO、rollback owner/ACL及目录数据保留。最小隔离schema和测试RLS，不等同生产完整schema/ACL。供应商替身，无付费调用。 |
+| 前端来源详情、配方、原图引用、附件提交与messageSender | **70 passed / 0 failed** | `/private/tmp/image-source-frontend-tests-final.log`，4个实际文件；DOM/API替身验证，非真实浏览器/供应商端到端。 |
+| TypeScript + Vite生产构建 | **通过**，Vite12.69秒 | `/private/tmp/image-source-frontend-build-final.log`；`npm run build`含tsc -b，保留既有大chunk提示。 |
+| 改动Python编译及diff空白 | **23个文件通过**；`git diff --check`通过 | 无安装新依赖、产品环境配置或生产密钥读取。 |
+| 额外scheduled Skill HTTP回归 | **7项环境阻塞** | `/private/tmp/image-source-extra-regression.log`；导入既有org_service时缺少`supabase`包，尚未进入HTTP断言。该次另外171项通过，已包含在最终定向证据中，不重复累计。未装新依赖/伪造模块，也不把该HTTP边界称为已验收。 |
+
+V01/V02以真实原图字节、两份逐字prompt和两个独立任务验证选B及积分账本；模型为脚本替身，不宣称自然语言“确认”一定选对图。V03/V04覆盖上传/生成/引用投影、旧native Turn兼容、顺序、同文件多来源及模拟短ID碰撞。V05/V06通过私有cache隔离、检查点搜索恢复、重新构造Worker、DB重领及后到消息排除验证固定边界；没有杀真实生产进程。V07/V08覆盖所选消息变动、文件删除/损坏、权限/客户端伪造、原图与缩略图合同。V09重跑真实DB/Redis闭环故障：丢接受回执、提交前崩溃、发送丢响应/外部ID绑定失败、保存与投递故障、关接受后的恢复等，不重复生成。V10定向回归及构建完成，但上述7项HTTP环境阻塞及所有真实模型/生产组合未完成；T17本批未增加能力或验证。
+
+发布候选已具备本地代码、迁移/rollback、独立审查、定向验证与文档证据。后续须按受控release入口核验生产完整schema/owner/ACL，停新接受并更新全部兼容读端/Actor/Worker后才恢复原灰度；不能只发布接受端。真实模型自动Skill/选图、A分析B两图、旧生成结果继续编辑、刷新恢复与实际供应商/账本验收仍待发布后完成，不能以95a18e18此前文生图样本代替。未支持无登记OSS-only原图自动恢复；旧内部电商误扣12积分及账本缺陷保持另项未处理。
+
+本轮临时PostgreSQL/Redis服务结束后停止，保留专用测试目录和日志；不清理任务工作树。完整API及发布/回滚顺序已同步。用户后续“提交部署”执行当前任务候选发布，不合并main；本轮只开发测试。
+
+
+### 来源修复提交部署前预检（2026-10-05）
+
+用户明确授权提交部署。生产只读身份匹配，现有串行/分支claim的prosrc与迁移121一致，owner均everydayai、SECURITY INVOKER，runtime有EXECUTE、worker无；tasks/messages/conversations现有RLS均关闭、user_assets启用RLS但非FORCE，保持原样。本次没有为发布改变这些权限；初始预检误要求全部基础表FORCE而停止，随后按实际可信服务边界复核。独立只读审查未发现本批新增依赖基础表RLS的权限防线；公共工具不得开放任意SQL/RPC。
+
+已新增真实隔离PG生产配置用例：临时事务关闭三个基础表RLS，277仍排除跨conv/org，私有目录更新/不匹配user拒绝；273错误actor/org/token全部拒绝，任务/账本/余额不变，事务回滚恢复测试配置。最终数据库/Redis **59 passed / 0 skipped**，2.45秒（`/private/tmp/image-source-release-schema-tests.log`）。第一次重新启动专用cluster遗漏端口参数，测试因专用socket不存在未连接任何数据库；已恢复55439/private/tmp、禁TCP并实际重跑通过，不将连接错误计作通过。
+
+生产预检无pending/running父chat、在途image为0、277尚未应用。保留原灰度与预算，不新增生产Skill或付费生图；受控入口后续核验最新main、锁、正式数据库、迁移账本、完整前后端构建与四服务readiness。实际最终提交、发布与验收候选状态以本次RELEASE_RESULT为准。
+
+远端稳定基座已前进到0065b47cb88ccd4a58bb3a516c05e8d631ec6f26，新增AOCI索引维护/发布核验；业务代码没有在这次main更新中变化。本旧工作树release入口按最新main的16行兼容补丁补齐提交前、main合入后、隔离候选和验收核验，不能从旧入口绕过新门禁。当前会话没有暴露AOCI MCP工具；若合入后Verify/Check未aligned，应保留已提交任务和生产现状，通过本工作树session准备独立配置并重新打开会话接入MCP，按live Guide维护后继续受控发布。不得使用CLI或手写语义/基线冒充MCP维护。
+
+发布入口兼容验证：`bash -n deploy/release.sh`通过；`scripts/testing/test_release_coordination.py`的10项测试通过。生命周期测试旧fixture缺少既有生产数据库身份guard而停止；将最新main的12行fixture修正同步到本任务后，`scripts/testing/test_release_acceptance_lifecycle.sh`通过（`/private/tmp/image-sources-release-lifecycle.log`）。两处补丁与最新main逐字一致，未更改生产控制规则；所有fixture使用临时Git仓库及假SSH，不连接生产。
