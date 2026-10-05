@@ -93,8 +93,8 @@ export default function ChatImageControls({ taskId }: { taskId: string }) {
 
   return <div className="mt-2 text-xs text-text-secondary">
     <button type="button" onClick={() => setOpen(value => !value)} className="hover:text-text-primary underline">图片任务详情</button>
-    <Modal isOpen={open} onClose={() => setOpen(false)} title="图片任务详情" maxWidth="max-w-[960px]">
-    <div className="max-h-[min(calc(90dvh-120px),680px)] overflow-y-auto space-y-4 text-sm text-text-secondary break-words">
+    <Modal isOpen={open} onClose={() => setOpen(false)} title="图片任务详情" maxWidth="max-w-[1100px] h-[min(90dvh,600px)]">
+    <div className="h-[min(calc(90dvh-120px),480px)] overflow-y-auto space-y-4 text-sm text-text-secondary break-words">
       {error && <p role="alert">{error}</p>}
       {!details && !error && <p>正在读取实际输入…</p>}
       {details && <>
