@@ -160,3 +160,9 @@ DATABASE_URL=postgresql://invalid/test JWT_SECRET_KEY=isolated-test-key \
 - settling保留provider_result与结果地址；保存失败继续保存同一结果，资产登记按稳定ref_key重放。published而delivery_pending只重投递与释放子slot，不再生成/扣款/推进revision。
 - 发布与退款在同事务，失败整体回滚；修复权限/存储后推进原task。不要手工改task.status或用最新一条用户消息补输入。
 - 有完整reader兼容候选并完成开关/在途恢复/错峰演练后，才称具备回滚条件；本轮未做真实部署演练。生产Skill撤销/重新分配仅在相应授权内进行。
+
+### 来源修复本次发布状态（2026-10-05）
+
+修复提交`86554a0ada5e99cd309916429ca646f31e10aafc`已推送任务分支。受控入口合入最新main后，本地候选为`f320d007faf3fa89c3723f188e1a5b4d4dccb801`；AOCI未aligned，合并未推送，发布在执行器启动前停止，277尚未应用。停止后只读确认生产仍为另一任务候选`9e454496a24bf0e537c31720867dc9bfd90f4db7`、发布锁已释放；本修复不是生产已测试版本。
+
+本任务已准备忽略的`.codex/config.toml`，当前会话未暴露AOCI MCP。重新打开实际任务根`/Users/wucong/EVERYDAYAIONE/.worktrees/chat-skill-image-async`，按项目AGENTS取得Rules/live Guide/完整Overview并增量维护，Verify/Check aligned后将正式资产及本次结果文档通过受控入口提交部署。不要用旧release入口、CLI代写或baseline删除绕过。此前定向测试与真实隔离DB证据保留，后续构建/迁移/readiness及真实模型选图验收仍待执行。生产未做本修复的生成测试、生产Skill发布或配置改动。

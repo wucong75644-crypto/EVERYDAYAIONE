@@ -291,3 +291,13 @@ V01/V02以真实原图字节、两份逐字prompt和两个独立任务验证选B
 远端稳定基座已前进到0065b47cb88ccd4a58bb3a516c05e8d631ec6f26，新增AOCI索引维护/发布核验；业务代码没有在这次main更新中变化。本旧工作树release入口按最新main的16行兼容补丁补齐提交前、main合入后、隔离候选和验收核验，不能从旧入口绕过新门禁。当前会话没有暴露AOCI MCP工具；若合入后Verify/Check未aligned，应保留已提交任务和生产现状，通过本工作树session准备独立配置并重新打开会话接入MCP，按live Guide维护后继续受控发布。不得使用CLI或手写语义/基线冒充MCP维护。
 
 发布入口兼容验证：`bash -n deploy/release.sh`通过；`scripts/testing/test_release_coordination.py`的10项测试通过。生命周期测试旧fixture缺少既有生产数据库身份guard而停止；将最新main的12行fixture修正同步到本任务后，`scripts/testing/test_release_acceptance_lifecycle.sh`通过（`/private/tmp/image-sources-release-lifecycle.log`）。两处补丁与最新main逐字一致，未更改生产控制规则；所有fixture使用临时Git仓库及假SSH，不连接生产。
+
+### 本次受控发布结果与续接（2026-10-05）
+
+受控入口已提交、推送37个任务文件：`86554a0ada5e99cd309916429ca646f31e10aafc`。随后无冲突合入`origin/main`的`0065b47cb88ccd4a58bb3a516c05e8d631ec6f26`，本地HEAD为`f320d007faf3fa89c3723f188e1a5b4d4dccb801`；该合并尚未推送。业务backend/frontend与86554a0a逐字相同。本次在合入后AOCI核验返回未aligned而停止，未进入生产部署执行器、未应用277、未使生产候选失效，也未执行付费生图。
+
+停止后只读核对生产候选：当前是另一已发布任务的`9e454496a24bf0e537c31720867dc9bfd90f4db7`，不是本修复；生产发布锁已释放。历史95a18e18记录只代表此前本图片任务的测试版本，不代表当前生产。任务工作树、提交及本轮结果记录保留，不合并任务到main、不清理任务。
+
+已在实际任务根运行`python3 scripts/aoci-task.py session --repo "$PWD"`，退出2、`stable_update_pending=false`、`maintenance_required`，生成仅本机使用且忽略的`.codex/config.toml`，绑定`/Users/wucong/EVERYDAYAIONE/.worktrees/chat-skill-image-async`及AOCI 0.1.0-rc17。当前工具清单没有AOCI MCP；按AGENTS第132–135行，需要重新打开此工作树会话接入MCP，核对root、Rules/live Guide和完整Overview，再增量维护受影响索引及本轮Observe证据。Verify/Check aligned后，将正式资产及这些结果文档列入受控release提交，并推送包含最新基座的最终候选；不能用CLI、手写索引或删除baseline绕过。
+
+后续无需重复请求用户发布授权。最终候选必要验证以变更范围决定；受控发布仍保留完整前后端构建、迁移及readiness。临时PG55439/Redis专用socket已停止，测试数据目录及日志保留。
