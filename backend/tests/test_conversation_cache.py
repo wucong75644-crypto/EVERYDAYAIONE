@@ -117,7 +117,7 @@ async def test_write_uses_versioned_closed_history_envelope():
 
     assert written is True
     key, ttl, raw = redis.setex.await_args.args
-    assert key == "conv:msgs:canvas-v4:org-1:conv-1"
+    assert key == "conv:msgs:canvas-v5:org-1:conv-1"
     assert ttl == 1800
     assert json.loads(raw) == {
         "schema_version": 2,

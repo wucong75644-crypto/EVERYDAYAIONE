@@ -213,3 +213,77 @@ def test_exact_reader_never_expands_frozen_legacy_catalog(context):
     row['content'][1]['workspace_path']='replaced.png'
     with pytest.raises(ValueError,match='IMAGE_SOURCE_MESSAGE_CHANGED'):
         read({'message_ids':[row['id']]})
+
+
+@pytest.fixture
+def cross_conversation_quote(context):
+    row, owner, files, current = context
+    row['conversation_id'] = 'previous-conversation'
+    current['content'] = [{'type':'image', 'workspace_path':'B.png',
+        'source_message_id':row['id'], 'source_content_index':3}]
+    owner.db.set_table_data('messages', [row, current])
+    owner.db.set_table_data('conversations', [{'id':row['conversation_id'],
+        'user_id':owner.user_id, 'org_id':owner.org_id, 'scope_type':'user'}])
+    return context
+
+
+def test_existing_cross_conversation_quote_keeps_current_locator_and_original_canvas(
+    cross_conversation_quote, monkeypatch,
+):
+    from PIL import Image
+    from services.handlers.image_size_requirements import resolve_size_requirement, user_size_intent, size_preflight_notice
+    row, owner, files, current = cross_conversation_quote
+    Image.new('RGB', (1080,1080), 'red').save(files.resolve_safe_path('B.png'))
+    monkeypatch.setattr('core.config.get_settings', lambda:SimpleNamespace(file_workspace_root=str(files._workspace_base)))
+    displayed = discovered_image_sources(current,owner.db,org_id=owner.org_id,owner_id=owner.user_id)
+    assert displayed[0]['available']
+    assert displayed[0]['reference']=={'message_id':current['id'],'content_index':0}
+    assert displayed[0]['quoted_message_id']==row['id']
+    assert displayed[0]['canvas']['aspect_ratio']=='1:1'
+    assert '\"aspect_ratio\": \"1:1\"' in size_preflight_notice('参考图片写提示词',displayed)
+    selected = resolver(cross_conversation_quote).resolve([displayed[0]['reference']|{'role':'product'}])
+    args,target = resolve_size_requirement({'mode':'image_to_image','prompt':'笔记本产品比例3:4，保留原图画布',
+        'aspect_ratio':'3:4','resolution':'1K'},selected,intent=user_size_intent('随机选三个提示词生成图片'))
+    assert args['aspect_ratio']=='1:1' and target['original_width']==target['original_height']==1080
+    frozen=freeze_image_request(args,selected,origin={'parent_task_id':'parent'},max_credits=300,max_requests=15,size_requirement=target)
+    verify_frozen_request(frozen)
+    ChatImageInputResolver(owner,base_revision=1,input_message_id=current['id'],files=files).verify(selected)
+    args, target=resolve_size_requirement({'mode':'image_to_image','prompt':'产品比例3:4','aspect_ratio':'1:1'},
+        selected,intent=user_size_intent('输出改成3:4'))
+    assert args['aspect_ratio']=='3:4' and target['mode']=='explicit'
+
+
+@pytest.mark.parametrize('changes',[
+    {'user_id':'another-user'}, {'org_id':'another-org'}, {'scope_type':'channel'},
+])
+def test_existing_quote_cannot_cross_owner_org_or_channel(cross_conversation_quote, changes):
+    row,owner,files,current=cross_conversation_quote
+    owner.db.set_table_data('conversations',[{'id':row['conversation_id'],'user_id':owner.user_id,
+        'org_id':owner.org_id,'scope_type':'user',**changes}])
+    with pytest.raises(PermissionError,match='IMAGE_QUOTED_SOURCE_DENIED'):
+        resolver(cross_conversation_quote).resolve([{'message_id':current['id'],'content_index':0,'role':'product'}])
+
+
+def test_cross_conversation_quote_still_rejects_changed_origin_and_unquoted_selector(cross_conversation_quote):
+    row,owner,files,current=cross_conversation_quote
+    with pytest.raises(PermissionError,match='IMAGE_SOURCE_MESSAGE_DENIED'):
+        resolver(cross_conversation_quote).resolve([{'message_id':row['id'],'content_index':3,'role':'product'}])
+    current['content'][0]['workspace_path']='A.png'
+    with pytest.raises(ValueError,match='IMAGE_QUOTED_SOURCE_CHANGED'):
+        resolver(cross_conversation_quote).resolve([{'message_id':current['id'],'content_index':0,'role':'product'}])
+
+
+@pytest.mark.parametrize('changed_task',[False,True])
+def test_cross_conversation_generated_quote_checks_origin_task_conversation(cross_conversation_quote,changed_task):
+    row,owner,files,current=cross_conversation_quote
+    row['role']='assistant'
+    current['content'][0]['source_task_id']='origin-image-task'
+    owner.db.set_table_data('tasks',[{'id':'origin-image-task','user_id':owner.user_id,'org_id':owner.org_id,
+        'conversation_id':'unrelated-conversation' if changed_task else row['conversation_id'],
+        'type':'image','status':'completed','assistant_message_id':row['id']}])
+    if changed_task:
+        with pytest.raises(ValueError,match='IMAGE_QUOTED_SOURCE_CHANGED'):
+            resolver(cross_conversation_quote).resolve([{'message_id':current['id'],'content_index':0,'role':'product'}])
+    else:
+        selected=resolver(cross_conversation_quote).resolve([{'message_id':current['id'],'content_index':0,'role':'product'}])
+        assert selected[0]['quoted_task_id']=='origin-image-task'

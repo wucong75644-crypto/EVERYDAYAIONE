@@ -189,12 +189,25 @@ def validate_quoted_source(db, part, source, *, org_id, owner_id, scope, convers
         ).eq("id", part["source_message_id"]).maybe_single().execute().data
         index = part.get("source_content_index")
         parts = content_parts(origin.get("content")) if isinstance(origin, dict) else []
-        if (not origin or origin.get("conversation_id") != conversation_id
+        if (not origin or not origin.get("conversation_id")
                 or origin.get("org_id") != org_id
                 or origin.get("status") not in {"completed", "interrupted"}
                 or origin.get("message_kind", "conversation") != "conversation"
                 or type(index) is not int or not 0 <= index < len(parts)):
             raise PermissionError("IMAGE_QUOTED_SOURCE_DENIED")
+        if origin["conversation_id"] != conversation_id:
+            # Existing quote attachments select the current message's file;
+            # their origin can be another private chat in this same workspace.
+            # Match the ordinary conversation owner's scope, never widen a
+            # model selector to arbitrary messages in that other chat.
+            origin_conversation = db.table("conversations").select(
+                "id,user_id,org_id,scope_type"
+            ).eq("id", origin["conversation_id"]).eq("user_id", owner_id).maybe_single().execute().data
+            if (scope != "user" or not origin_conversation
+                    or origin_conversation.get("user_id") != owner_id
+                    or origin_conversation.get("org_id") != org_id
+                    or origin_conversation.get("scope_type") != "user"):
+                raise PermissionError("IMAGE_QUOTED_SOURCE_DENIED")
         original = parts[index]
         if not isinstance(original, dict) or original.get("type") != "image" or original.get("failed"):
             raise ValueError("IMAGE_QUOTED_SOURCE_CHANGED")
@@ -205,7 +218,7 @@ def validate_quoted_source(db, part, source, *, org_id, owner_id, scope, convers
         if part.get("source_task_id"):
             task = db.table("tasks").select("id,user_id,org_id,conversation_id,type,status,assistant_message_id").eq("id", part["source_task_id"]).maybe_single().execute().data
             if (not task or task.get("user_id") != owner_id or task.get("org_id") != org_id
-                    or task.get("conversation_id") != conversation_id or task.get("type") != "image"
+                    or task.get("conversation_id") != origin["conversation_id"] or task.get("type") != "image"
                     or task.get("status") != "completed" or str(task.get("assistant_message_id")) != str(origin["id"])):
                 raise ValueError("IMAGE_QUOTED_SOURCE_CHANGED")
             source["quoted_task_id"] = str(task["id"])
