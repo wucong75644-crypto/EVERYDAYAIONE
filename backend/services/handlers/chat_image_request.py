@@ -30,12 +30,16 @@ INPUT_FIELDS = {
     "mode", "prompt", "references", "image_urls", "model", "aspect_ratio",
     "resolution", "output_format", "source_prompt", "plan_item_id", "variant_id",
     "source_task_id",
-    "background",
+    "background", "size_requirement",
 }
 
 
 class ChatImageNotAcceptedError(ValueError):
     """Known input rejection before the image acceptance RPC is called."""
+
+    def __init__(self, code, guidance=""):
+        super().__init__(code)
+        self.guidance = guidance
 
 
 def validate_chat_image_tool_fields(args: dict) -> None:
@@ -87,6 +91,8 @@ def validate_single_image_request(args: dict, reference_count: int) -> dict:
     """
     if not isinstance(args, dict) or set(args) - INPUT_FIELDS:
         raise ValueError("IMAGE_REQUEST_FIELDS_INVALID")
+    if "size_requirement" in args:
+        raise ValueError("IMAGE_SIZE_NOT_RESOLVED")
     mode = args.get("mode")
     if mode not in MODES:
         raise ValueError("IMAGE_MODE_REQUIRED")
@@ -135,10 +141,10 @@ def validate_single_image_request(args: dict, reference_count: int) -> dict:
 
 
 def freeze_image_request(args: dict, references: list[dict], *, origin: dict,
-                         max_requests: int, max_credits: int) -> dict:
+                         max_requests: int, max_credits: int, size_requirement: dict | None = None) -> dict:
     """Copy trusted facts; model input cannot inject parent, scope or slot state."""
     settings = validate_single_image_request(args, len(references))
-    if not 1 <= max_requests <= 8 or not 1 <= max_credits <= 200:
+    if not 1 <= max_requests <= 15 or not 1 <= max_credits <= 300:
         raise ValueError("IMAGE_BUDGET_INVALID")
     if settings["estimated_credits"] > max_credits:
         raise ValueError("IMAGE_BUDGET_EXCEEDED")
@@ -151,6 +157,7 @@ def freeze_image_request(args: dict, references: list[dict], *, origin: dict,
         "prompt_sha256": hashlib.sha256(settings["prompt"].encode()).hexdigest(),
         "references": references, "origin": origin,
         "budget": {"max_requests": max_requests, "max_credits": max_credits},
+        **({"size_requirement": {**size_requirement, "resolution": settings["resolution"]}} if size_requirement is not None else {}),
         **{key: args[key] for key in ("source_prompt", "plan_item_id", "variant_id", "source_task_id") if key in args},
     })
     frozen["request_hash"] = canonical_hash(frozen)
@@ -164,6 +171,11 @@ def verify_frozen_request(snapshot: dict) -> None:
     body = {key: value for key, value in snapshot.items() if key != "request_hash"}
     if canonical_hash(body) != expected:
         raise ValueError("IMAGE_SNAPSHOT_CHANGED")
+    target = snapshot.get("size_requirement")
+    if target is not None and (not isinstance(target, dict)
+            or target.get("aspect_ratio") != snapshot.get("aspect_ratio")
+            or target.get("resolution") != snapshot.get("resolution")):
+        raise ValueError("IMAGE_SIZE_SNAPSHOT_CONFLICT")
 
 
 class ChatImageInputResolver:
@@ -346,8 +358,7 @@ class ChatImageInputResolver:
         return path, source
 
     def resolve(self, references: list[dict]) -> list[dict]:
-        from services.file_resources import content_digest, file_version
-        from PIL import Image
+        from services.file_resources import file_version
         if not isinstance(references, list) or len(references) > 16:
             raise ValueError("IMAGE_REFERENCES_INVALID")
         resolved = []
@@ -358,17 +369,78 @@ class ChatImageInputResolver:
             target = self._target(locator, source)
             before = target.validate()
             # Verify bytes, not an extension or model-controlled MIME label.
-            with Image.open(target.path) as image:
-                image.verify()
-            digest = content_digest(target.path, self.files.check)
+            from services.handlers.image_dimensions import read_image_dimensions
+            dimensions = read_image_dimensions(target.path)
+            digest = dimensions["content_sha256"]
             if source.get("source_content_sha256") and source["source_content_sha256"] != digest:
                 raise ValueError("IMAGE_REFERENCE_CHANGED")
             if file_version(target.path) != before:
                 raise ValueError("IMAGE_REFERENCE_CHANGED")
             resolved.append({**source, "role": reference["role"],
                 "workspace_path": str(target.path.relative_to(self.files.root)),
-                "file_version": list(before), "content_sha256": digest, "size": before[1]})
+                "file_version": list(before), "content_sha256": digest, "size": before[1],
+                **{key: dimensions[key] for key in ("width", "height", "aspect_ratio")}})
         return resolved
+
+    def size_context(self):
+        from services.handlers.chat_context.image_sources import content_parts
+        from services.handlers.image_size_requirements import user_size_intent
+        def text(row):
+            return "\n".join(part.get("text", "") for part in content_parts(row.get("content"))
+                              if isinstance(part, dict) and part.get("type") == "text")
+        current = self._message(self.input_message_id)
+        if current.get("role") != "user":
+            raise PermissionError("IMAGE_SOURCE_MESSAGE_DENIED")
+        intent = user_size_intent(text(current))
+        if (any(isinstance(part, dict) and part.get("type") == "image" for part in content_parts(current.get("content")))
+                and not any(key in intent for key in ("aspect_ratio", "mode", "width", "orientation"))):
+            intent["mode"] = "inherit_reference"
+        # Prior requirements come only from user text within the closed anchor,
+        # never an assistant's visual estimate or a concurrent newer message.
+        rows = self.owner.db.table("messages").select(
+            "id,role,content,context_revision,generation_params,conversation_id,org_id"
+        ).eq("conversation_id", self.owner.conversation_id).lte(
+            "context_revision", self.base_revision).eq("message_kind", "conversation").in_(
+            "status", ["completed", "interrupted"]).order("context_revision", desc=True).limit(50).execute().data or []
+        previous = {}
+        siblings = self.owner.db.table("tasks").select("id,request_params,user_id,org_id,conversation_id").eq(
+            "request_params->'_media_request_v1'->'origin'->>'parent_task_id'", self.owner.task_id).eq(
+            "type", "image").order("created_at", desc=True).limit(1).execute().data or []
+        for sibling in siblings:
+            if (sibling.get("user_id") == self.owner.user_id and sibling.get("org_id") == self.owner.org_id
+                    and sibling.get("conversation_id") == self.owner.conversation_id):
+                target = ((sibling.get("request_params") or {}).get(REQUEST_KEY) or {}).get("size_requirement")
+                if isinstance(target, dict):
+                    previous = {**target, "source_task_id": str(sibling["id"])}
+        previous = deepcopy(previous)
+        for row in rows:
+            if (row.get("conversation_id") != self.owner.conversation_id or row.get("org_id") != self.owner.org_id
+                    or row.get("context_revision") is None or row["context_revision"] > self.base_revision):
+                continue
+            if row.get("role") == "user":
+                from services.handlers.image_size_requirements import is_size_instruction
+                if not is_size_instruction(text(row)):
+                    continue
+                try:
+                    prior = user_size_intent(text(row))
+                except ValueError:
+                    break  # An unresolved old requirement cannot become a default.
+                if prior:
+                    prior = {**prior, "source_message_id": str(row["id"])}
+                    previous.update({key: value for key, value in prior.items() if key not in previous})
+            elif row.get("role") == "assistant":
+                prior = (row.get("generation_params") or {}).get("size_requirement") or {}
+                if isinstance(prior, dict) and prior:
+                    prior = {**prior, "source_task_id": (row.get("generation_params") or {}).get("task_id")}
+                    previous.update({key: value for key, value in prior.items() if key not in previous})
+            if previous.get("aspect_ratio") and previous.get("resolution"):
+                break
+        # Literal pixel requirements remain exact until the user replaces them.
+        if not any(key in intent for key in ("aspect_ratio", "mode", "width")):
+            for key in ("width", "height"):
+                if key in previous:
+                    intent[key] = previous[key]
+        return intent, previous
 
     def _target(self, locator: str, source: dict):
         from services.file_resources import FileTarget

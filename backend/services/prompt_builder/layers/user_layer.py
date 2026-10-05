@@ -60,8 +60,10 @@ class UserLayer:
 
         from services.handlers.chat_context.image_sources import format_image_sources
         sources = format_image_sources(inp.image_sources)
-        if sources:
-            attachment_refs = "\n\n".join(filter(None, (attachment_refs, sources)))
+        from services.handlers.image_size_requirements import size_preflight_notice
+        size_notice = size_preflight_notice(inp.text, inp.image_sources)
+        if sources or size_notice:
+            attachment_refs = "\n\n".join(filter(None, (attachment_refs, size_notice, sources)))
 
         # 构造 user message (多模态判断)
         if attachment_refs or inp.image_urls or inp.file_urls:

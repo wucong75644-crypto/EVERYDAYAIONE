@@ -55,3 +55,8 @@
 回退此示例优先禁用其组织 assignment，保留不可变版本文件和数据库记录。若需关闭整个入口，关闭 UI 并重新构建；暂停 Skill 执行则关闭 runtime。不要删除仍被 checkpoint 引用的版本。代码基座为 `aa9510edd4ca3026f047190ac76e51af4edb6c89`。
 
 恢复原后端开关时须同时处理 `.env` 与四服务 drop-in 中的 Environment 覆盖，不能只恢复 `.env`。经受控发布重启验证，保留只读保护及版本文件；不要为回退示例删除 NAS 或 Skill 表。
+
+
+## 尺寸事实版本 v2
+
+`catalog/platform/reference-image-prompts/v2/SKILL.md` 增加服务器canvas事实、产品形状与画布分离、用户尺寸覆盖和非法尺寸处理。v1保留原字节；v2仍通过现有SkillStorage、SkillCatalog及assignment发布，不覆盖生产v1或自动修改分配。运行时通用尺寸规则与实际文件校验同时生效。

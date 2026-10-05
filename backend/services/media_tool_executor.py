@@ -27,8 +27,10 @@ class MediaToolMixin:
             accepted = await ImageHandler(self.db).accept_chat_image(self, args)
         except ChatImageNotAcceptedError as error:
             code = str(error)
-            if code.startswith("RESOURCE_") or code in {
-                "IMAGE_INPUT_UNAVAILABLE", "IMAGE_ORIGINAL_UNAVAILABLE", "IMAGE_REFERENCE_CHANGED",
+            if getattr(error, "guidance", ""):
+                guidance = error.guidance
+            elif code.startswith("RESOURCE_") or code in {
+                "IMAGE_INPUT_UNAVAILABLE", "IMAGE_ORIGINAL_UNAVAILABLE", "IMAGE_REFERENCE_CHANGED", "IMAGE_DIMENSIONS_UNAVAILABLE",
                 "IMAGE_REFERENCE_LOCATOR_INVALID", "IMAGE_CONTENT_INDEX_INVALID", "IMAGE_ASSET_DENIED",
                 "IMAGE_SOURCE_MESSAGE_DENIED", "IMAGE_SOURCE_REVISION_DENIED",
                 "IMAGE_SOURCE_MESSAGE_CHANGED", "IMAGE_REFERENCE_AMBIGUOUS", "IMAGE_QUOTED_SOURCE_DENIED",

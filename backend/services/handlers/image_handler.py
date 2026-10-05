@@ -79,6 +79,9 @@ class ImageHandler(BaseHandler):
             if normalized.get("background")=="transparent" and not settings.chat_image_transparent_enabled:
                 raise PermissionError("CHAT_IMAGE_TRANSPARENT_DISABLED")
             refs=await asyncio.to_thread(resolver.resolve,normalized.get("references",[]))
+            from services.handlers.image_size_requirements import resolve_size_requirement
+            intent, previous = await asyncio.to_thread(resolver.size_context)
+            normalized, target_size = resolve_size_requirement(normalized, refs, intent=intent, previous=previous)
             if "source_prompt" in normalized:
                 normalized["source_prompt"] = await asyncio.to_thread(resolver.source_prompt,normalized["source_prompt"],normalized["prompt"])
             if "source_task_id" in normalized:
@@ -91,7 +94,8 @@ class ImageHandler(BaseHandler):
                 "base_context_revision":parent["base_context_revision"]}
             origin["skills"] = list(getattr(owner, "image_skill_snapshot", ()))
             snapshot=freeze_image_request(normalized,refs,origin=origin,
-                max_requests=settings.chat_image_max_requests,max_credits=settings.chat_image_max_credits)
+                max_requests=settings.chat_image_max_requests,max_credits=settings.chat_image_max_credits,
+                size_requirement=target_size)
             await asyncio.to_thread(resolver.verify,refs)
         except (ValueError, OSError) as error:
             # Only this input/read boundary precedes acceptance. RPC exceptions
@@ -99,7 +103,7 @@ class ImageHandler(BaseHandler):
             code = getattr(error, "code", None) or str(error)
             if not code.startswith(("IMAGE_", "CHAT_IMAGE_", "RESOURCE_")) or not code.replace("_", "").isalnum():
                 code = "IMAGE_INPUT_UNAVAILABLE"
-            raise ChatImageNotAcceptedError(code) from error
+            raise ChatImageNotAcceptedError(code, getattr(error, "guidance", "")) from error
         if owner.cancellation_event is not None and owner.cancellation_event.is_set():
             raise asyncio.CancelledError()
         scoped=ScopedDatabaseClient(self.db,DatabaseScope(owner.user_id,owner.org_id,DatabaseAccessKind.RUNTIME))

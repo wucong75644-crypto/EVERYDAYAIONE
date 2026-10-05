@@ -54,7 +54,7 @@ class ImageEstimateRequest(BaseModel):
     output_format: str = "png"
     background: Literal["opaque", "transparent"] | None = None
     reference_count: int = Field(default=0, ge=0, le=16)
-    image_count: int = Field(default=1, ge=1, le=8)
+    image_count: int = Field(default=1, ge=1, le=100)
     model_config = {"extra": "forbid"}
 
 
@@ -72,7 +72,8 @@ async def estimate_image(body: ImageEstimateRequest, ctx: OrgCtx):
         "image_count":body.image_count,
         "background":result.get("background"),
         "acceptance_enabled":chat_image_acceptance_allowed(settings, ctx.user_id) and (body.background!="transparent" or settings.chat_image_transparent_enabled),
-        "within_budget":body.image_count<=settings.chat_image_max_requests and total<=settings.chat_image_max_credits,
+        "within_budget":total<=settings.chat_image_max_credits,
+        "max_concurrent_requests":settings.chat_image_max_requests,
         "max_requests":settings.chat_image_max_requests,"max_credits":settings.chat_image_max_credits}
 
 

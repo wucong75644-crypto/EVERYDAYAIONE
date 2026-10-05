@@ -8,8 +8,12 @@ export interface ChatImageInput {
   aspect_ratio: string; resolution: string | null; output_format: string;
   estimated_credits: number; estimated_provider_credits: number;
   background?: 'opaque' | 'transparent';
+  size_requirement?: { mode: 'explicit' | 'inherit_reference' | 'auto'; aspect_ratio: string;
+    resolution: string | null; source: string; reference_index?: number;
+    original_width?: number; original_height?: number };
   references: Array<{ role: string; workspace_path: string; content_sha256: string; size: number;
     asset_id?: string; message_id?: string; content_index?: number; resource_ref?: string; file_id?: string;
+    width?: number; height?: number; aspect_ratio?: string;
     name?: string; source?: 'uploaded' | 'generated' | 'quoted' | 'file_search';
     source_message_id?: string; source_content_index?: number;
     quoted_message_id?: string; quoted_content_index?: number; source_asset_id?: string;
@@ -30,6 +34,7 @@ export interface ChatImageDetails {
 export interface ChatImageEstimate {
   per_image_credits: number; total_credits: number; image_count: number;
   acceptance_enabled: boolean; within_budget: boolean; max_requests: number; max_credits: number;
+  max_concurrent_requests?: number;
 }
 export interface ChatImageReceipt {
   task_id: string; message_id: string; conversation_id: string;

@@ -293,6 +293,25 @@ class ChatImageLifecycle:
                     "error":"供应商结果没有真实透明像素，积分已退还；平台记录本次成本"}],"failed","透明背景输出合同未满足")
                 return
             content.update(checks)
+        if snapshot.get("size_requirement"):
+            from services.handlers.image_dimensions import read_image_dimensions, output_size_check
+            path = FileTargetResolver(owner).guarded(content["workspace_path"])
+            facts = None
+            try:
+                facts = await asyncio.to_thread(read_image_dimensions, path)
+                checks = output_size_check(facts, snapshot["size_requirement"])
+            except ValueError:
+                checks = {"target": snapshot["size_requirement"], "size_matches": False,
+                          "error": "IMAGE_DIMENSIONS_UNAVAILABLE"}
+            content.update({key: facts[key] for key in ("width", "height")} if facts else {})
+            content["quality_checks"] = {**content.get("quality_checks", {}), **checks}
+            if not checks["size_matches"]:
+                error = "生成结果未满足尺寸要求"
+                content.update(failed=True, error=error)
+                # Existing output-contract failure settlement, no new refund
+                # policy, paid retry, stretching or cropping.
+                await self.publish(task, [content], "failed", error)
+                return
         registered=await asyncio.to_thread(register_task_media_best_effort,self.scoped(task),task=task,content_parts=[content])
         if not registered:
             raise RuntimeError("CHAT_IMAGE_ASSET_REGISTRATION_PENDING")

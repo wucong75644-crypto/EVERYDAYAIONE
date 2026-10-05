@@ -98,7 +98,8 @@ export default function ChatImageControls({ taskId }: { taskId: string }) {
       {details && <>
         <p>{phaseLabels[details.submission_state] || details.submission_state} · 预估 {details.input.estimated_credits} 积分 · 已结算 {details.credits_used} 积分</p>
         <p>{details.input.mode === 'image_to_image' ? '图生图' : '文生图'} · {details.input.model} · {details.input.aspect_ratio} · {details.input.resolution || '模型默认分辨率'} · {details.input.output_format}</p>
-        <p>本轮上限 {details.input.budget.max_requests} 张 / {details.input.budget.max_credits} 积分</p>
+        <p>本轮图片累计预算 {details.input.budget.max_credits} 积分；跨对话共享最多15个活跃任务，满额排队。</p>
+        {details.input.size_requirement?.mode === 'inherit_reference' && details.input.size_requirement.original_width && details.input.size_requirement.original_height && <p>画布比例沿用所选原图：{details.input.size_requirement.original_width} × {details.input.size_requirement.original_height}</p>}
         <p className="font-medium">服务器实际执行提示词</p>
         <pre className="whitespace-pre-wrap break-words select-text max-h-64 overflow-auto">{details.input.prompt}</pre>
         {details.input.references.length > 0 && <ol className="list-decimal pl-5 space-y-1">
@@ -129,6 +130,7 @@ export default function ChatImageControls({ taskId }: { taskId: string }) {
           </>}
         </div>
         {estimate && <p>服务器当前估算：每张 {estimate.per_image_credits} 积分。{estimate.acceptance_enabled ? '' : '暂未开放新任务。'}{estimate.within_budget ? '' : '超出本轮预算。'}新版本仍会重新校验原图权限和价格。</p>}
+        {details.result?.[0]?.quality_checks?.actual && <p>实际画布：{details.result[0].quality_checks.actual.width} × {details.result[0].quality_checks.actual.height}（{details.result[0].quality_checks.actual.aspect_ratio}）{details.result[0].quality_checks.size_matches === false ? '，未满足尺寸要求' : ''}</p>}
         {details.result?.[0]?.has_transparency && <p>已校验保存结果含真实透明像素。</p>}
         {previous && <div className="grid grid-cols-2 gap-2">
           {[previous, details].map((version, index) => <div key={version.task_id}>

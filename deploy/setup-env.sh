@@ -164,7 +164,7 @@ EOF
     # 限流配置
     log_info "=== 限流配置 ==="
     RATE_LIMIT_GLOBAL=$(prompt_input "全局任务限制（每用户）" "15")
-    RATE_LIMIT_CONVERSATION=$(prompt_input "会话任务限制（每会话）" "5")
+    RATE_LIMIT_CONVERSATION=$(prompt_input "会话任务限制（与跨对话共享15个额度）" "15")
     echo ""
 
     # 写入.env文件
