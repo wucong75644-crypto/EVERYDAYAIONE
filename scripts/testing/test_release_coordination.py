@@ -82,8 +82,12 @@ class ReleaseCoordinationTests(unittest.TestCase):
             shutil.copy2(SOURCE / name, target)
         executor = self.repository / "deploy/deploy.sh"
         executor.write_text(
-            "#!/usr/bin/env bash\nset -euo pipefail\n"
+            "#!/usr/bin/env bash\n# TASK_DEPLOY_RESULT_PROTOCOL=1\nset -euo pipefail\n"
             "source deploy/config.env\n"
+            'if [[ "${FAIL_PREFLIGHT:-}" == true ]]; then\n'
+            '  printf "preflight_failed\\n" > "$EVERYDAYAI_DEPLOY_STATUS_FILE"\n'
+            '  exit 42\n'
+            'fi\n'
             '[[ ! -e "$REMOTE_APP_DIR/.release-provenance" ]] || exit 93\n'
             'if [[ -n "${FAKE_REMOTE_WRITER_LAUNCHER:-}" ]]; then\n'
             '  "$FAKE_PYTHON" "$FAKE_REMOTE_WRITER_LAUNCHER"\n'
@@ -325,6 +329,17 @@ class ReleaseCoordinationTests(unittest.TestCase):
         self.assertIn("生产发布/验收锁", result.stdout)
         self.assertEqual((self.production / "written").read_text().strip(),
                          self.git("rev-parse", "HEAD", cwd=a).stdout.strip())
+
+    def test_confirmed_preflight_failure_releases_lock_without_production_write(self) -> None:
+        a = self.task("preflight")
+        result = self.deploy(a, "failed", extra_env={"FAIL_PREFLIGHT": "true"}, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("executor_state=failed_safe", result.stdout)
+        self.assertFalse(self.lock.exists())
+        self.assertFalse((self.production / "written").exists())
+        self.assertFalse(self.marker.exists())
+        self.deploy(a, "retry")
+        self.assertTrue(self.marker.exists())
 
     def test_current_executor_rejects_uncontrolled_execution(self) -> None:
         result = self.run_command(["bash", str(SOURCE / "deploy/deploy.sh"), "--frontend-only"], check=False)

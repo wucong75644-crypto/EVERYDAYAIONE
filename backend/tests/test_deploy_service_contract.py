@@ -46,7 +46,8 @@ def test_skill_catalog_release_prepares_the_personal_submount_on_existing_nas() 
     assert 'systemctl daemon-reload' in SCRIPT
     main_body = SCRIPT[SCRIPT.rindex('main() {'):SCRIPT.rindex('# 执行主函数')]
     assert main_body.index('remote_exec /var/www/everydayai/backend/venv/bin/python -') < main_body.index('prepare_skill_personal_mount')
-    assert main_body.index('build_backend\n        prepare_scheduled_task_cutover\n        prepare_skill_personal_mount') < main_body.index('sync_backend\n')
+    assert main_body.index('build_backend\n') < main_body.index('deploy_phase=remote_mutation')
+    assert main_body.index('deploy_phase=remote_mutation') < main_body.index('prepare_scheduled_task_cutover\n        prepare_skill_personal_mount\n        sync_backend\n')
 
 
 def test_rsync_preserves_runtime_and_sensitive_files() -> None:

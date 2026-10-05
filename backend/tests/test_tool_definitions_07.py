@@ -136,7 +136,7 @@ def test_risk_concurrency_cache_and_partial_validator_helpers(catalog, name):
     from services.agent.tool_result_cache import ToolResultCache
     expected = BASELINE['specs'][name]
     assert get_safety_level(name).value == expected['risk_level']
-    assert is_concurrency_safe(name) == expected['parallelizable']
+    assert is_concurrency_safe(name) == CHAT_IMAGE_UPGRADE['spec_changes'].get(name, {}).get('parallelizable', expected['parallelizable'])
     expected_cacheable = False if name == 'web_search' else expected['cacheable']
     assert ToolResultCache.is_cacheable(name) == expected_cacheable
     assert TOOL_SCHEMAS.get(name) == expected['legacy_validation_schema']
@@ -184,6 +184,9 @@ def test_old_imports_signatures_and_constant_values(module):
         if module == 'chat_tools' and name in {'_CORE_TOOLS', '_PLAN_MODE_BLOCKED'}:
             assert 'generate_image' in value and 'image_agent' not in value
             value = sorted((set(value) - {'generate_image'}) | {'image_agent'})
+        if module == 'chat_tools' and name == '_CONCURRENT_SAFE_TOOLS':
+            assert 'generate_image' in value and 'generate_video' not in value
+            value = sorted(set(value) - {'generate_image'})
         if module == 'code_tools' and name == '_DESCRIPTION':
             assert value == PRESENTATION_UPGRADE['function']['description']
             value = BASELINE['specs']['code_execute']['schema']['function']['description']

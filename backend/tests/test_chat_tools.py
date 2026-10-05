@@ -85,9 +85,9 @@ class TestIsConcurrencySafe:
         assert not is_concurrency_safe("erp_execute")
         assert not is_concurrency_safe("trigger_erp_sync")
 
-    def test_generate_tools_are_not_safe(self):
+    def test_only_independent_image_acceptance_is_concurrency_safe(self):
         from config.chat_tools import is_concurrency_safe
-        assert not is_concurrency_safe("generate_image")
+        assert is_concurrency_safe("generate_image")
         assert not is_concurrency_safe("generate_video")
 
     def test_unknown_tool_not_safe(self):

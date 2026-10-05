@@ -339,7 +339,6 @@ def test_nonparallel_pending_denied_unknown_and_generation_are_barriers(registry
     policy = ToolPolicy(ToolRegistry([*registry.specs(), serial]))
     for barrier, args, expected in [("read_serial", {}, "allow"), ("file_delete", {}, "require_confirmation"),
                                     ("unknown", {}, "deny"), ("image_agent", {}, "deny"),
-                                    ("generate_image", {}, "allow"),
                                     ("manage_scheduled_task", {"action": "delete"}, "allow")]:
         calls = [ToolCall("A", "file_search", {}), ToolCall("B", barrier, args), ToolCall("C", "file_search", {})]
         batches = policy.plan_batches(calls, context())
@@ -469,3 +468,15 @@ def test_unknown_action_in_custom_dangerous_enum_is_denied(registry):
     policy = ToolPolicy(ToolRegistry([replace(spec, schema=schema)]))
     assert policy.decide(spec.name, context(), {"action": "write"}).outcome == "require_confirmation"
     assert policy.decide(spec.name, context(), {"action": "purge"}).reason == "unknown_action"
+
+
+def test_independent_images_share_parallel_batch_without_granting_other_writes(registry):
+    policy = ToolPolicy(registry)
+    calls = [ToolCall(str(i), "generate_image", {}) for i in range(3)]
+    batches = policy.plan_batches(calls, context())
+    assert [[item.call.call_id for item in batch] for batch in batches] == [["0", "1", "2"]]
+    assert all(item.decision.parallelizable for item in batches[0])
+    for mode in ("plan",):
+        denied = policy.plan_batches(calls, context(permission_mode=mode))
+        assert len(denied) == 3
+        assert all(not item.decision.parallelizable for batch in denied for item in batch)

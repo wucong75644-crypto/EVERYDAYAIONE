@@ -13,6 +13,7 @@ backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
+from core.config import Settings
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from types import SimpleNamespace
@@ -214,9 +215,10 @@ class TestExecutionOutcome:
         with patch.object(agent, "_prepare_template", new_callable=AsyncMock), \
              patch.object(agent, "_build_tool_loop", return_value=(loop, MagicMock())), \
              patch("services.adapters.factory.create_chat_adapter", return_value=adapter), \
-             patch("core.config.get_settings", return_value=SimpleNamespace(
-                 agent_loop_model=None, file_workspace_root="/tmp",
+             patch("core.config.get_settings", return_value=Settings(_env_file=None, database_url="postgresql://test", jwt_secret_key="test",
+                 agent_loop_model="qwen3.5-plus", file_workspace_root="/tmp",
                  file_workspace_enabled=True, sandbox_enabled=True, crawler_enabled=False,
+                 chat_image_max_credits=100, chat_image_transparent_enabled=False,
              )), \
              patch("core.workspace.resolve_staging_dir", return_value="/tmp/staging"):
             result = await agent.execute()
@@ -245,9 +247,10 @@ class TestExecutionOutcome:
         with patch.object(agent, "_prepare_template", new_callable=AsyncMock), \
              patch.object(agent, "_build_tool_loop", return_value=(loop, MagicMock())), \
              patch("services.adapters.factory.create_chat_adapter", return_value=adapter), \
-             patch("core.config.get_settings", return_value=SimpleNamespace(
-                 agent_loop_model=None, file_workspace_root="/tmp",
+             patch("core.config.get_settings", return_value=Settings(_env_file=None, database_url="postgresql://test", jwt_secret_key="test",
+                 agent_loop_model="qwen3.5-plus", file_workspace_root="/tmp",
                  file_workspace_enabled=True, sandbox_enabled=True, crawler_enabled=False,
+                 chat_image_max_credits=100, chat_image_transparent_enabled=False,
              )), \
              patch("core.workspace.resolve_staging_dir", return_value="/tmp/staging"):
             result = await agent.execute()

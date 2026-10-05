@@ -13,6 +13,7 @@ import { AiGeneratedImage, UserImage, UserImageGallery } from './MessageImageBlo
 import { resolveImageOriginalUrl } from '../../../utils/messageUtils';
 
 interface MessageMediaProps {
+  imageMaxWidth?: number;
   /** 图片资产列表（原图/缩略图分离） */
   imageAssets?: ImageAsset[];
   /** 视频 URL 列表 */
@@ -133,7 +134,7 @@ function OrderedUserMedia({
               key={`visuals-${runIndex}`}
               data-attachment-run="visuals"
               className="mt-4 grid w-full justify-end gap-2"
-              style={{ gridTemplateColumns: `repeat(auto-fit, ${tileWidth}px)` }}
+              style={{ gridTemplateColumns: `repeat(auto-fit, min(100%, ${tileWidth}px))` }}
             >
               {run.items.map((item, itemIndex) => item.kind === 'image' ? (
                 <UserImage
@@ -174,6 +175,7 @@ function OrderedUserMedia({
 
 export default memo(function MessageMedia({
   imageAssets = [],
+  imageMaxWidth,
   videoUrls = [],
   files = [],
   messageId,
@@ -197,8 +199,12 @@ export default memo(function MessageMedia({
   }, [content]);
 
   const imagePlaceholderSize = useMemo(
-    () => getImagePlaceholderSize(imageAspectRatio),
-    [imageAspectRatio]
+    () => {
+      const size = getImagePlaceholderSize(imageAspectRatio);
+      const width = imageMaxWidth && imageMaxWidth > 0 ? Math.min(size.width, imageMaxWidth) : size.width;
+      return { width, height: width * size.height / size.width };
+    },
+    [imageAspectRatio, imageMaxWidth]
   );
   const videoPlaceholderSize = useMemo(
     () => getVideoPlaceholderSize(videoAspectRatio),

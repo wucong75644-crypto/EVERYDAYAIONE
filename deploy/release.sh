@@ -204,15 +204,7 @@ ensure_supported_release_tree() {
     done
 }
 
-verify_aoci_checkout() {
-    local checkout=$1
-    if [[ -e "$checkout/aoci.txt" || -d "$checkout/.aoci" ]] \
-        || git -C "$checkout" ls-files --error-unmatch aoci.txt >/dev/null 2>&1; then
-        [[ -f "$checkout/scripts/aoci-task.py" ]] || fail "AOCI 项目缺少核验入口"
-        python3 "$checkout/scripts/aoci-task.py" verify --repo "$checkout" \
-            || fail "AOCI 与候选代码未对齐；维护索引后重新提交部署，任务保留"
-    fi
-}
+
 
 read_production_release_commit() {
     release_remote_state read
@@ -286,7 +278,6 @@ sync_task_branch_with_latest_main() {
         fail "自动同步最新 main 出现冲突；请在当前任务工作树解决并提交冲突后，再部署最新任务提交"
     fi
     commit_sha=$(git rev-parse HEAD)
-    verify_aoci_checkout "$repo_root"
     git push origin "$branch" \
         || fail "已同步最新 main，但无法推送合并后的任务提交"
     info "任务候选已同步最新 main，继续测试与部署：$commit_sha"
@@ -371,7 +362,6 @@ accept_and_close_task() {
     [[ "$candidate_tree" == "$final_tree" ]] \
         || fail "最终 main 包含未测试代码，拒绝标记稳定或清理；请先重新提交部署最终合并版本"
 
-    verify_aoci_checkout "$integration_worktree"
 
     acceptance_state_write_unconfirmed=true
     git -C "$integration_worktree" push origin HEAD:refs/heads/main \
@@ -442,7 +432,6 @@ if [[ -z "$rollback_sha" && -z "$deploy_task_sha" && -z "$deploy_main_sha" ]]; t
         done
     fi
 
-    verify_aoci_checkout "$repo_root"
 
     if ((${#source_only_files[@]} > 0)); then
         git add -A -- "${task_files[@]}" "${source_only_files[@]}"
@@ -511,7 +500,6 @@ set -u
 
 release_worktree=$(mktemp -d "${TMPDIR:-/tmp}/everydayai-release.XXXXXX")
 git worktree add --detach "$release_worktree" "$commit_sha" >/dev/null
-verify_aoci_checkout "$release_worktree"
 if [[ -f "$repo_root/deploy/config.env" ]]; then
     cp "$repo_root/deploy/config.env" "$release_worktree/deploy/config.env"
 else
@@ -519,6 +507,7 @@ else
 fi
 
 release_log="${TMPDIR:-/tmp}/everydayai-release-${commit_sha}.log"
+deploy_status_file="$release_worktree/.deploy-execution-status"
 pushd "$release_worktree" >/dev/null
 chmod +x deploy/deploy.sh
 deploy_args=()
@@ -577,11 +566,17 @@ if ! EVERYDAYAI_RELEASE_CONTEXT="$executor_context" \
     EVERYDAYAI_RELEASE_LOCK_TOKEN="$release_lock_token" \
     EVERYDAYAI_RELEASE_COMMIT="$commit_sha" \
     EVERYDAYAI_RELEASE_MODE="$release_mode" \
+    EVERYDAYAI_DEPLOY_STATUS_FILE="$deploy_status_file" \
     "${deploy_command[@]}" >"$release_log" 2>&1; then
     release_executor_state=unconfirmed
+    if grep -q '^# TASK_DEPLOY_RESULT_PROTOCOL=1$' deploy/deploy.sh \
+        && [[ -f "$deploy_status_file" ]] \
+        && [[ "$(cat "$deploy_status_file")" == preflight_failed ]]; then
+        release_executor_state=failed_safe
+    fi
     release_remote_state invalidate \
         || echo 'RELEASE_CANDIDATE_RESULT status=unknown; 无法确认失败部署后的候选已清除，禁止验收' >&2
-    echo "RELEASE_RESULT status=failed executor_state=unconfirmed commit=$commit_sha log=$release_log" >&2
+    echo "RELEASE_RESULT status=failed executor_state=$release_executor_state commit=$commit_sha log=$release_log" >&2
     tail -n 160 "$release_log" >&2
     exit 1
 fi

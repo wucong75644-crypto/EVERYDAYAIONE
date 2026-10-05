@@ -21,6 +21,7 @@ import {
 } from '../../../services/message';
 import { useMessageStore, type Message, type ImageAsset, getTextContent, getImageAssets } from '../../../stores/useMessageStore';
 import MessageItem from './MessageItem';
+import { groupChatImages, isChatImage } from './chatImageDisplay';
 import EmptyState from '../layout/EmptyState';
 import LoadingSkeleton from './LoadingSkeleton';
 import { toast } from 'react-hot-toast';
@@ -463,7 +464,7 @@ export default function MessageArea({
             {(() => {
               const enableLayoutAnimation = mergedMessages.length <= 50;
 
-              return mergedMessages.map((message) => {
+              const renderMessage = (message: Message, imageGridCell = false) => {
                 const isMessageStreaming = message.status === 'streaming';
                 const isPausedMessage = message.status === 'interrupted'
                   && message.content.some(
@@ -477,6 +478,7 @@ export default function MessageArea({
                   <MessageItem
                     key={message.id}
                     message={message}
+                    imageGridCell={imageGridCell}
                     isStreaming={isMessageStreaming}
                     agentStepHint={isMessageStreaming ? agentStepHint : undefined}
                     streamingThinking={isMessageStreaming ? streamingThinking : undefined}
@@ -492,7 +494,13 @@ export default function MessageArea({
                     suggestions={isLastAi ? suggestions : undefined}
                   />
                 );
-              });
+              };
+              return groupChatImages(mergedMessages).map((group) => isChatImage(group[0]) ? (
+                <div key={`images-${group[0].id}`} data-chat-image-grid
+                  className="grid grid-cols-2 md:grid-cols-4 gap-3 items-start">
+                  {group.map(message => renderMessage(message, true))}
+                </div>
+              ) : renderMessage(group[0]));
             })()}
           </div>
         </StickToBottom.Content>

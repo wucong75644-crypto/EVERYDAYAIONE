@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'react-hot-toast';
+import Modal from '../../common/Modal';
 import { downloadWorkspaceZip } from '../../../services/workspace';
 import { chatImageService, type ChatImageDetails, type ChatImageEstimate } from '../../../services/chatImage';
 
@@ -92,16 +93,17 @@ export default function ChatImageControls({ taskId }: { taskId: string }) {
 
   return <div className="mt-2 text-xs text-text-secondary">
     <button type="button" onClick={() => setOpen(value => !value)} className="hover:text-text-primary underline">图片任务详情</button>
-    {open && <div className="mt-2 rounded-lg border border-border p-3 space-y-3 max-w-xl">
+    <Modal isOpen={open} onClose={() => setOpen(false)} title="图片任务详情" maxWidth="max-w-[1100px] h-[min(90dvh,600px)]">
+    <div className="h-[min(calc(90dvh-120px),480px)] overflow-y-auto space-y-4 text-sm text-text-secondary break-words">
       {error && <p role="alert">{error}</p>}
       {!details && !error && <p>正在读取实际输入…</p>}
       {details && <>
+        {details.result?.[0]?.url && <img src={details.result[0].url} alt="当前任务图片" className="max-h-40 max-w-full rounded-lg object-contain" />}
         <p>{phaseLabels[details.submission_state] || details.submission_state} · 预估 {details.input.estimated_credits} 积分 · 已结算 {details.credits_used} 积分</p>
         <p>{details.input.mode === 'image_to_image' ? '图生图' : '文生图'} · {details.input.model} · {details.input.aspect_ratio} · {details.input.resolution || '模型默认分辨率'} · {details.input.output_format}</p>
-        <p>本轮图片累计预算 {details.input.budget.max_credits} 积分；跨对话共享最多15个活跃任务，满额排队。</p>
         {details.input.size_requirement?.mode === 'inherit_reference' && details.input.size_requirement.original_width && details.input.size_requirement.original_height && <p>画布比例沿用所选原图：{details.input.size_requirement.original_width} × {details.input.size_requirement.original_height}</p>}
         <p className="font-medium">服务器实际执行提示词</p>
-        <pre className="whitespace-pre-wrap break-words select-text max-h-64 overflow-auto">{details.input.prompt}</pre>
+        <pre className="whitespace-pre-wrap break-words select-text font-sans">{details.input.prompt}</pre>
         {details.input.references.length > 0 && <ol className="list-decimal pl-5 space-y-1">
           {details.input.references.map((reference, index) => <li key={index} className="break-all">
             {reference.role} · {reference.workspace_path} · 原图 {reference.size} 字节
@@ -113,8 +115,13 @@ export default function ChatImageControls({ taskId }: { taskId: string }) {
             {details.reference_previews?.[index]?.url && <img src={details.reference_previews[index].url!} alt={`参考图 ${index + 1}：${reference.role}`} className="mt-1 max-h-24 rounded object-contain" />}
           </li>)}
         </ol>}
+        <details className="rounded-lg border border-border p-3 space-y-2">
+          <summary className="cursor-pointer">更多信息</summary>
+          <p className="break-all">任务 ID：{details.task_id}</p>
+          <p>本轮图片累计预算 {details.input.budget.max_credits} 积分；跨对话共享最多15个活跃任务，满额排队。</p>
         {details.input.source_prompt && <p className="break-all">提示词来源：{JSON.stringify(details.input.source_prompt)}</p>}
         {(details.input.plan_item_id || details.input.variant_id) && <p>计划项：{details.input.plan_item_id || '—'} · 变体：{details.input.variant_id || '—'}</p>}
+        </details>
         <p>{details.cancel_explanation}</p>
         {details.input.background && <p>背景要求：{details.input.background === 'transparent' ? '真实透明背景' : '不透明背景'}</p>}
         {details.platform_cost && <p>{details.platform_cost.reason === 'submission_uncertain_expired' ? '该任务受理未确认' : '供应商结果未满足图片合同'}，已退还 {details.platform_cost.refunded_user_credits} 积分；供应商费用由平台承担并记录估算。</p>}
@@ -139,6 +146,7 @@ export default function ChatImageControls({ taskId }: { taskId: string }) {
           </div>)}
         </div>}
       </>}
-    </div>}
+    </div>
+    </Modal>
   </div>;
 }

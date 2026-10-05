@@ -761,3 +761,31 @@ async def test_cache_write_failure_preserves_completed_business_and_single_use(s
     assert duplicate.execution.status == "not_started"
     executor.handler.assert_awaited_once()
     cache.put.assert_called_once()
+
+
+@pytest.mark.parametrize("fail_first", [False, True])
+async def test_chat_images_prepare_concurrently_and_publish_in_plan_order(setup, monkeypatch, fail_first):
+    harness = ChatHarness()
+    prepared, published = [], []
+    all_started = asyncio.Event()
+
+    async def execute(call, executor, *unused):
+        prepared.append(call["id"])
+        if len(prepared) == 3:
+            all_started.set()
+        # A serial dispatcher cannot pass this barrier.
+        await asyncio.wait_for(all_started.wait(), timeout=1)
+        if fail_first and call["id"] == "0":
+            return call, "rejected", True, "error"
+        previous, _ = executor._image_acceptance_order[call["id"]]
+        if previous is not None:
+            await asyncio.wait_for(previous.wait(), timeout=1)
+        published.append(call["id"])
+        return call, "accepted", False, ""
+
+    monkeypatch.setattr(harness, "_execute_single_tool", execute)
+    calls = [tc("generate_image", {"mode": "text_to_image", "prompt": str(i)}, str(i)) for i in range(3)]
+    results = await harness._execute_tool_calls(calls, "task1", "c1", "m1", "u1", 1)
+    assert prepared == ["0", "1", "2"]
+    assert published == (["1", "2"] if fail_first else ["0", "1", "2"])
+    assert [result[0]["id"] for result in results] == ["0", "1", "2"]

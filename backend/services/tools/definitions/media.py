@@ -14,7 +14,7 @@ def _schema_generate_image_async():
             "name": "generate_image",
             "description": (
                 "持久化接受一个独立图片任务，立即返回 submitted、task_id、message_id、排队阶段和服务器预估积分。"
-                "接受不表示图片完成；结果随后由独立图片消息展示。每次只生成一张，多张通过多次调用。"
+                "接受不表示图片完成；结果随后由独立图片消息展示。每次只生成一张；多张独立图片按方案顺序在同一轮并行调用，不等待上一张提交结果。只展示选中的方案名称，图片占位符由系统显示；不输出任务ID、提交汇总、排队解释或技术细节。"
                 "模型由服务器使用平台默认模型及其图生图配对，不能由你选择或切换；不要询问模型偏好，不传 model 或 model_name。"
                 "明确指定 text_to_image 或 image_to_image；用于分析的图片不自动成为生成参考图。"
                 "仅使用本次 parameters 定义的字段。比例用 aspect_ratio、分辨率用 resolution、格式用小写 output_format；不传 size 或 format。"
@@ -148,7 +148,7 @@ def build_specs():
         ToolSpec(
             name='generate_image', capability='platform.generate_image', schema=_schema_generate_image_async(),
             domain='general', availability=ToolAvailability(requires_personal_context=True, feature_flags=('chat_image_async_enabled',)),
-            risk_level='confirm', parallelizable=False, cacheable=False,
+            risk_level='confirm', parallelizable=True, cacheable=False,
             effects=('unknown',), executor_type="legacy", handler_key='generate_image',
             exposure=Exposure.PUBLIC,
             source="services.tools.definitions.media.build_specs", definition_kind="explicit",

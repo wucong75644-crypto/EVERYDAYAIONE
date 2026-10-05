@@ -20,6 +20,7 @@ import ToolStepCard from './ToolStepCard';
 import ChangeSetCard from './ChangeSetCard';
 import SkillDraftCard from './SkillDraftCard';
 import SkillChatProposalCard from './SkillChatProposalCard';
+import { imagePlanText } from './chatImageDisplay';
 import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 import { isSkillUiEnabled } from '../../../config/featureFlags';
 import { skillVersion } from '../../../services/skills';
@@ -53,6 +54,7 @@ export default function MessageContentBlocks({
   onImageClick,
   onRegenerateSingle,
 }: MessageContentBlocksProps) {
+  const hasImageTool = message.content.some(part => part.type === 'tool_step' && part.tool_name === 'generate_image');
   const firstScheduledTaskFormIndex = message.content.findIndex((part) => (
     part.type === 'form'
     && (part as import('../../../types/message').FormPart)
@@ -84,6 +86,7 @@ export default function MessageContentBlocks({
         }
         if (part.type === 'tool_step') {
           const ts = part as { tool_name: string; tool_call_id: string; status: 'running' | 'completed' | 'error' | 'cancelled'; code?: string; output?: string; input?: string; elapsed_ms?: number };
+          if (ts.tool_name === 'generate_image' && ts.status !== 'error') return null;
           return (
             <div key={ts.tool_call_id || idx} className={MESSAGE_CONTENT_LAYOUT.compact}>
               <ToolStepCard
@@ -100,7 +103,9 @@ export default function MessageContentBlocks({
         }
         if (part.type === 'interrupt_marker') return null;
         if (part.type === 'text' && (part as { text: string }).text) {
-          const text = (part as { text: string }).text;
+          const rawText = (part as { text: string }).text;
+          const text = hasImageTool ? imagePlanText(rawText) : rawText;
+          if (!text) return null;
           // 已持久化的旧消息可能包含表单之后由模型生成的重复确认话术。
           // 新执行流不会再写入它；这里仅清理该已知历史格式，保留表单前的说明。
           const isLegacyScheduledTaskFormCopy = idx > firstScheduledTaskFormIndex

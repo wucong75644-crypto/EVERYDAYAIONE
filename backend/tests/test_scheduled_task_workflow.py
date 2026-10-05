@@ -2,6 +2,7 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+from core.config import Settings
 import pytest
 
 from services.scheduler.scheduled_task_workflow import (
@@ -94,7 +95,7 @@ async def test_create_plan_uses_gateway_stream_and_closes_session() -> None:
 
     session = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
     gateway = Mock(open_chat=Mock(return_value=session))
-    settings = SimpleNamespace(agent_loop_model="qwen3.5-plus")
+    settings = Settings(_env_file=None, database_url="postgresql://test", jwt_secret_key="test", agent_loop_model="qwen3.5-plus")
     definition = {
         "name": "日报",
         "prompt": "查询日报",

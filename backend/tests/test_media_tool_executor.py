@@ -140,8 +140,9 @@ async def test_real_acceptance_preparation_uses_default_and_preserves_uncertain_
     scoped.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data={"content":[]}
     monkeypatch.setattr("core.db_scope.ScopedDatabaseClient",lambda *_:scoped)
     resolver=MagicMock()
+    resolver.size_context.return_value=(None, {})
     resolver.normalize_legacy.side_effect=deepcopy
-    resolver.resolve.return_value=([{"workspace_path":"original.png","content_sha256":"a"*64,"role":"subject"}] if mode=="image_to_image" else [])
+    resolver.resolve.return_value=([{"workspace_path":"original.png","content_sha256":"a"*64,"role":"subject","width":1024,"height":1024,"aspect_ratio":"1:1"}] if mode=="image_to_image" else [])
     monkeypatch.setattr("services.handlers.chat_image_request.ChatImageInputResolver",lambda *_,**__:resolver)
     if outcome=="invalid_input":
         resolver.verify.side_effect=ValueError("IMAGE_RESOURCE_CHANGED")

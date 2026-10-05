@@ -586,3 +586,23 @@ describe('MessageItem failed ImagePart', () => {
     expect(capturedFailedPlaceholderProps?.onRetry).toBeUndefined();
   });
 });
+
+it.each(['pending', 'completed'] as const)('chat images keep task details above media without completion prose (%s)', (status) => {
+  render(<MessageItem message={makeMessage({
+    role: 'assistant', status,
+    content: [{ type: 'image', url: status === 'completed' ? 'https://example.com/image.png' : null }],
+    generation_params: { type: 'image', origin: 'chat_image', task_id: 'child-1' },
+  })} imageGridCell />);
+  expect(screen.queryByText(/来看看生成的图片/)).not.toBeInTheDocument();
+  const details = screen.getByRole('button', { name: '图片任务详情' });
+  expect(details.compareDocumentPosition(screen.getByTestId('message-media')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+it('does not render an empty user bubble when only an attachment is sent', () => {
+  const { container } = render(<MessageItem message={makeMessage({
+    role: 'user', status: 'completed',
+    content: [{ type: 'image', url: 'https://example.com/upload.png' }],
+  })} />);
+  expect(screen.getByTestId('message-media')).toBeInTheDocument();
+  expect(container.querySelector('[class*="bg-gradient-to-r"]')).toBeNull();
+});

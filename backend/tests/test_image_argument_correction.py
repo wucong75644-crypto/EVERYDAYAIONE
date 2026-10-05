@@ -221,7 +221,9 @@ async def test_actual_actor_automatically_activates_corrects_once_and_accepts_on
     metrics = totals.usage["image_argument_metrics"]
     assert metrics["invalid_initial_calls"] == metrics["corrected_calls"] == metrics["correction_rounds"] == 1
     assert metrics["prompt_tokens"] == 10 and metrics["completion_tokens"] == 4
-    assert metrics["estimated_chat_credits"] == 0.25 and "child" in totals.text
+    assert metrics["estimated_chat_credits"] == 0.25
+    assert totals.text == ""
+    assert "child" in json.dumps(blocks)  # Keep the accepted receipt, without extra prose.
 
 
 @pytest.mark.parametrize("args", [

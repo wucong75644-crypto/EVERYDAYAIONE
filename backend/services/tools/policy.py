@@ -188,7 +188,9 @@ class ToolPolicy:
         def result(outcome: str, reason: str, binding: ConfirmationBinding | None = None) -> ToolDecision:
             parallel = bool(
                 spec and outcome == "allow" and spec.parallelizable
-                and operation in {"read", "analysis"} and risk != "dangerous"
+                and (operation in {"read", "analysis"}
+                     or (name == "generate_image" and operation == "generation"))
+                and risk != "dangerous"
             )
             return ToolDecision(
                 outcome, reason, risk, operation, parallel,
