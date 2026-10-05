@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ChatImageControls from '../media/ChatImageControls';
 import { downloadWorkspaceZip } from '../../../services/workspace';
@@ -18,6 +18,18 @@ describe('ChatImageControls', () => {
         mode: 'image_to_image', model: 'actual-model', aspect_ratio: '1:1', resolution: '1K', output_format: 'png',
         estimated_credits: 7, estimated_provider_credits: 6, references: [{ role: '产品结构', workspace_path: '原图/B.png', content_sha256: 'hash', size: 123 }],
         origin: { parent_task_id: 'parent' }, budget: { max_requests: 4, max_credits: 100 } } });
+  });
+
+  it('opens details outside the image cell and closes with Escape', async () => {
+    const view = render(<ChatImageControls taskId="task" />);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '图片任务详情' }));
+    const dialog = await screen.findByRole('dialog', { name: '图片任务详情' });
+    expect(view.container.contains(dialog)).toBe(false);
+    await within(dialog).findByText('服务器实际执行提示词');
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    view.unmount();
   });
 
   it('shows frozen source message and original block together with purpose', async () => {
@@ -79,7 +91,7 @@ describe('ChatImageControls', () => {
     fireEvent.click(screen.getByRole('button', { name: '图片任务详情' }));
     await waitFor(() => expect(chatImageService.details).toHaveBeenCalledWith('task'));
     await screen.findByText('服务器实际执行提示词');
-    expect(view.container.querySelector('pre')?.textContent).toBe('  exact server prompt\n');
+    expect(screen.getByRole('dialog').querySelector('pre')?.textContent).toBe('  exact server prompt\n');
     expect(screen.getByText(/产品结构 · 原图\/B.png/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '停止排队' })).not.toBeInTheDocument();
     expect(screen.getByText(/任务已提交，无法撤回/)).toBeInTheDocument();

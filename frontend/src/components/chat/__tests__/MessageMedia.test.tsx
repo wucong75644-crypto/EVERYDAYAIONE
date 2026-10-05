@@ -252,7 +252,7 @@ describe('MessageMedia', () => {
 
     const visualRun = container.querySelector('[data-attachment-run="visuals"]');
     expect(visualRun?.getAttribute('style')).toContain(
-      'grid-template-columns: repeat(auto-fit, 180px)',
+      'grid-template-columns: repeat(auto-fit, min(100%, 180px))',
     );
     expect([...container.querySelectorAll('[aria-label^="查看图片"]')].map((element) => {
       const style = (element as HTMLElement).style;

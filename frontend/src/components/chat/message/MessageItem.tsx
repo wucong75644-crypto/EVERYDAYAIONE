@@ -350,7 +350,7 @@ export default memo(function MessageItem({
       >
         {/* 用户消息：图片在上，文字在下（因为上传时已获取 CDN URL，图片先准备好） */}
         {isUser && (hasImage || hasVideo || hasFiles) && (
-          <div className="mb-3 w-full">
+          <div className="mb-3 flex w-full min-w-0 justify-end">
             <MessageMedia
               imageAssets={imageAssets}
               videoUrls={videoUrls}
@@ -371,7 +371,7 @@ export default memo(function MessageItem({
         {/* 消息气泡：用户消息有气泡框，AI 消息无框直接铺开（对齐千问/豆包风格）
             V3：用户气泡加内高光 (inset 0 1px 0 rgba(255,255,255,0.2))，
             制造"半透明玻璃"的光感效果 */}
-        {!chatImage && <div
+        {!chatImage && (!isUser || textContent.trim() || !hasMedia) && <div
           ref={isUser ? userBubbleRef : undefined}
           onContextMenu={isUser ? handleUserBubbleContextMenu : undefined}
           className={`${

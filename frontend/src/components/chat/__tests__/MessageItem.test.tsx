@@ -597,3 +597,12 @@ it.each(['pending', 'completed'] as const)('chat images keep task details above 
   const details = screen.getByRole('button', { name: '图片任务详情' });
   expect(details.compareDocumentPosition(screen.getByTestId('message-media')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
+
+it('does not render an empty user bubble when only an attachment is sent', () => {
+  const { container } = render(<MessageItem message={makeMessage({
+    role: 'user', status: 'completed',
+    content: [{ type: 'image', url: 'https://example.com/upload.png' }],
+  })} />);
+  expect(screen.getByTestId('message-media')).toBeInTheDocument();
+  expect(container.querySelector('[class*="bg-gradient-to-r"]')).toBeNull();
+});

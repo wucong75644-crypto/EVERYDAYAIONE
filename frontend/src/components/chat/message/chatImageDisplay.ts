@@ -17,7 +17,7 @@ export function groupChatImages(messages: Message[]): Message[][] {
 
 /** Remove the known submission receipt section from old image-tool replies. */
 export function imagePlanText(text: string): string {
-  const receipt = /(?:^|\n)[ \t]*(?:#{1,6}\s*)?(?:\*\*)?(?:现在[^\n]*提交[^\n]*图片|✅[^\n]*图片任务|(?:本次|已)提交的任务|说明[：:]|至此[，,])/m;
+  const receipt = /(?:^|\n)[ \t]*(?:#{1,6}\s*)?(?:\*\*)?(?:这(?:两|几|\d+|[一二三四五六七八九十]+)个方案风格|现在[^\n]*(?:提交|生成)[^\n]*图片|已成功提交[^\n]*图片|✅[^\n]*图片任务|(?:本次|已)提交的任务|说明[：:]|至此[，,])/m;
   const match = receipt.exec(text);
   return (match ? text.slice(0, match.index) : text).trim();
 }

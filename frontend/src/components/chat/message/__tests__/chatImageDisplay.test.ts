@@ -26,3 +26,9 @@ it('keeps plans and removes old task receipt sections', () => {
   expect(imagePlanText('✅ 3张图片任务已全部提交成功！\n本次提交的任务：')).toBe('');
   expect(imagePlanText('请检查参考图后重试。')).toBe('请检查参考图后重试。');
 });
+
+it('removes the comparison and receipt tail seen in older generated replies', () => {
+  const plans = '方案1 | 星际探索\n方案4 | 甜品乐园';
+  expect(imagePlanText(`${plans}\n\n这两个方案风格差异明显，一个偏向科技梦幻。\n现在开始生成这两张图片。\n已成功提交两张图片生成任务：`)).toBe(plans);
+  expect(imagePlanText(`${plans}\n现在开始生成这两张图片，画布1:1。`)).toBe(plans);
+});

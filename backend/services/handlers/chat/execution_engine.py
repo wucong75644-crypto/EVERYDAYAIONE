@@ -203,6 +203,7 @@ async def execute_chat(
     handler._pending_emit_payloads = []
     handler._pending_form_block = None
     handler._terminal_form_pending = False
+    handler._terminal_image_pending = False
     handler._pending_change_set_blocks = []
     handler._terminal_change_set_pending = False
     handler._tool_result_stop_reason = ""
@@ -527,6 +528,8 @@ async def _run_loop(
             totals.usage["image_argument_metrics"] = image_metrics
         resource_stop = getattr(getattr(executor, "_tool_runtime", None), "resource_stop_reason", "")
         result_stop = getattr(handler, "_tool_result_stop_reason", "")
+        if getattr(handler, "_terminal_image_pending", False) and not resource_stop:
+            return None
         stop_message = resource_stop or result_stop
         if isinstance(stop_message, str) and stop_message:
             blocks.append({"type": "text", "text": stop_message})
@@ -886,6 +889,13 @@ async def _execute_tools(
     if rejected:
         by_call = {item[0]["id"]: item for item in [*results, *rejected]}
         results = [by_call[call["id"]] for call in calls]
+    # Confirmed child placeholders are the final delivery; never synthesize
+    # another acknowledgement. Errors and mixed tool batches keep their flow.
+    handler._terminal_image_pending = bool(results) and all(
+        call["name"] == "generate_image" and not is_error
+        and getattr(result, "metadata", {}).get("accepted") is True
+        for call, result, is_error, _display in results
+    )
     if guard:
         guard.observe(results)
         if guard.stop_message:

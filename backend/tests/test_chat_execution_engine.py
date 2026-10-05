@@ -430,7 +430,13 @@ async def test_repeated_tool_call_stop_finalizes_actor_preview():
 
 
 @pytest.mark.asyncio
-async def test_actor_tool_preview_is_updated_before_tool_execution(monkeypatch):
+@pytest.mark.parametrize("tool_name, accepted, is_error, terminal", [
+    ("erp_agent", True, False, False),
+    ("generate_image", True, False, True),
+    ("generate_image", False, False, False),
+    ("generate_image", True, True, False),
+])
+async def test_actor_tool_preview_is_updated_before_tool_execution(monkeypatch, tool_name, accepted, is_error, terminal):
     order = []
 
     class Sink:
@@ -448,7 +454,10 @@ async def test_actor_tool_preview_is_updated_before_tool_execution(monkeypatch):
     async def execute_tool_calls(*_args, **_kwargs):
         order.append("execute")
         call = _args[0][0]
-        return [(call, "查询完成", False, "查询完成")]
+        from services.agent.agent_result import AgentResult
+        result = AgentResult(summary="工具结果", status="error" if is_error else "success",
+                             metadata={"accepted": accepted})
+        return [(call, result, is_error, "工具结果")]
 
     monkeypatch.setattr(
         "services.handlers.chat.execution_engine.compact_tool_context",
@@ -461,12 +470,12 @@ async def test_actor_tool_preview_is_updated_before_tool_execution(monkeypatch):
     )
     call = {
         "id": "actor-call:turn-1:round:0:index:0",
-        "name": "erp_agent",
+        "name": tool_name,
         "arguments": '{"query":"近三天订单"}',
     }
     blocks = [{
         "type": "tool_step",
-        "tool_name": "erp_agent",
+        "tool_name": tool_name,
         "tool_call_id": call["id"],
         "status": "running",
     }]
@@ -501,6 +510,7 @@ async def test_actor_tool_preview_is_updated_before_tool_execution(monkeypatch):
         repeated_tool_call_nudge=_REPEATED_TOOL_CALL_NUDGE,
     )
 
+    assert handler._terminal_image_pending is terminal
     assert order == ["update", "execute"]
     assert len(blocks) == 1
     assert prepared.messages[-2]["role"] == "tool"
@@ -830,7 +840,7 @@ async def test_execute_chat_preserves_thinking_as_structured_part(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("terminal_attr", ["_terminal_form_pending", "_terminal_change_set_pending"])
+@pytest.mark.parametrize("terminal_attr", ["_terminal_form_pending", "_terminal_change_set_pending", "_terminal_image_pending"])
 async def test_form_result_stops_tool_loop_before_a_second_model_turn(monkeypatch, terminal_attr):
     """结构化操作结果发出后，不让模型再自行描述提交状态。"""
     read_turns = 0

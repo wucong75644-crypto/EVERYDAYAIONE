@@ -134,7 +134,7 @@ function OrderedUserMedia({
               key={`visuals-${runIndex}`}
               data-attachment-run="visuals"
               className="mt-4 grid w-full justify-end gap-2"
-              style={{ gridTemplateColumns: `repeat(auto-fit, ${tileWidth}px)` }}
+              style={{ gridTemplateColumns: `repeat(auto-fit, min(100%, ${tileWidth}px))` }}
             >
               {run.items.map((item, itemIndex) => item.kind === 'image' ? (
                 <UserImage
