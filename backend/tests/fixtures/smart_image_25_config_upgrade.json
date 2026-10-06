@@ -60,8 +60,8 @@
         "priority": 2
       },
       {
-        "id": "gpt-image-2-5-flare-text-to-image",
-        "description": "GPT Image 2.5 Flare，默认文生图模型，真实感/文字渲染/复杂场景表现出色(6积分)。用户没有特殊要求或要求GPT画图时选择",
+        "id": "gpt-image-2-5-sunburst-text-to-image",
+        "description": "GPT Image 2.5 Sunburst，默认文生图模型，真实感/文字渲染/复杂场景表现出色(6积分)。用户没有特殊要求或要求GPT画图时选择",
         "keywords": [
           "gpt",
           "openai",
@@ -70,8 +70,8 @@
         "priority": 3
       },
       {
-        "id": "gpt-image-2-5-flare-image-to-image",
-        "description": "GPT Image 2.5 Flare图生图，以参考图为基础生成新图片(6积分)。用户上传了图片并要求修改/优化/重新生成时选择",
+        "id": "gpt-image-2-5-sunburst-image-to-image",
+        "description": "GPT Image 2.5 Sunburst图生图，以参考图为基础生成新图片(6积分)。用户上传了图片并要求修改/优化/重新生成时选择",
         "keywords": [
           "gpt",
           "openai",
@@ -103,6 +103,6 @@
         "requires_image": true
       }
     ],
-    "default": "gpt-image-2-5-flare-text-to-image"
+    "default": "gpt-image-2-5-sunburst-text-to-image"
   }
 }

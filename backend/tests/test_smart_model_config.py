@@ -115,7 +115,7 @@ class TestDefaults:
         assert DEFAULT_CHAT_MODEL == "qwen3.5-plus"
 
     def test_default_image_model(self):
-        assert DEFAULT_IMAGE_MODEL == "gpt-image-2-5-flare-text-to-image"
+        assert DEFAULT_IMAGE_MODEL == "gpt-image-2-5-sunburst-text-to-image"
 
     def test_default_video_model(self):
         assert DEFAULT_VIDEO_MODEL == "sora-2-text-to-video"

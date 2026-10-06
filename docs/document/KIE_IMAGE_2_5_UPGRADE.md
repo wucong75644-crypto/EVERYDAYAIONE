@@ -15,3 +15,9 @@ KIE 仍使用 `POST /api/v1/jobs/createTask`、原有任务查询和回调协议
 验证使用模拟 KIE 的请求边界，检查实际模型 ID、参考图字段、4K 参数、积分与旧任务兼容；不调用收费生图 API。生产生图效果需要部署后验证。
 
 本地验证：198 项后端定向测试、36 项前端测试通过；TypeScript 编译检查、变更文件 ESLint 和 `git diff --check` 通过。
+
+## 2026-10-06 默认图生图切换
+
+默认图生图改为 `gpt-image-2-5-sunburst-image-to-image`，文生图仍为 Flare。同步聊天、普通图片请求、电商图、图片 Agent、Skill 试运行与前端选项；保留旧 Flare 注册兼容历史任务。协议依据 https://docs.kie.ai/43286923e0 。沿用现有用户积分 6/10/16；供应商成本暂沿用已有估算，Sunburst 实际报价待核实。未调用收费 API。
+
+文生图默认同步切换为 `gpt-image-2-5-sunburst-text-to-image`，聊天与 Image Agent 默认使用 Sunburst 文/图配对。旧 Flare 文/图配对仍保留。文生图协议依据 https://docs.kie.ai/43287106e0 。用户积分和供应商成本估算暂沿用现有值，实际供应商报价待核实。
