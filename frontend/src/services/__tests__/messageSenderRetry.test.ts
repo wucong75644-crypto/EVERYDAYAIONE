@@ -54,6 +54,15 @@ describe('sendMessage idempotent retry', () => {
     vi.useRealTimers();
   });
 
+  it('reconciles the optimistic user ID with the persisted message', async () => {
+    const userMessage = { id: 'persisted-user', conversation_id: 'conv-1', role: 'user',
+      content: [{ type: 'image', url: 'https://example.com/original.png', workspace_path: '上传/original.png' }],
+      status: 'completed', created_at: '2026-07-16T00:00:00.000Z' };
+    requestMock.mockResolvedValue({ ...response, user_message: userMessage });
+    await sendMessage({ conversationId: 'conv-1', content: [{ type: 'text', text: 'hello' }], identifiers });
+    expect(store.updateMessage).toHaveBeenCalledWith('user-1', userMessage);
+  });
+
   it('sends only explicit Skill intent and omits it on ordinary chat', async () => {
     requestMock.mockResolvedValue(response);
     await sendMessage({ conversationId: 'conv-1', content: [{ type: 'text', text: 'hello' }],

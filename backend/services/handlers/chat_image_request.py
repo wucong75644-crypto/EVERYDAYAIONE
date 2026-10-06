@@ -312,7 +312,7 @@ class ChatImageInputResolver:
         from services.handlers.chat_context.image_sources import validate_quoted_source
         validate_quoted_source(self.owner.db, part, source, org_id=self.owner.org_id,
             owner_id=self.owner.workspace_user_id, scope=self.owner.context_scope,
-            conversation_id=self.owner.conversation_id)
+            conversation_id=self.owner.conversation_id, files=self.files)
 
     def _locator(self, reference):
         selectors = [key for key in ("resource_ref", "file_id", "asset_id", "message_id") if key in reference]
