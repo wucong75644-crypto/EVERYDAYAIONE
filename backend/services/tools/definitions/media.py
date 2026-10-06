@@ -56,7 +56,7 @@ def _schema_generate_image_async():
                     "aspect_ratio":{"type":"string","description":"目标画布比例，如1:1；产品形状不能决定它，非精确像素"},
                     "resolution":{"type":"string","enum":["1K","2K","4K"],"description":"仅填写默认模型实际支持的分辨率"},
                     "output_format":{"type":"string","enum":["png","jpeg","jpg","webp"],"description":"小写输出格式，必须为默认模型实际支持"},
-                    **({"background":{"type":"string","enum":["opaque","transparent"],"description":"仅 Flare 支持；透明输出需保存后验证真实alpha"}} if limits.chat_image_transparent_enabled else {}),
+                    **({"background":{"type":"string","enum":["opaque","transparent"],"description":"默认图片模型支持；透明输出需保存后验证真实alpha"}} if limits.chat_image_transparent_enabled else {}),
                     "plan_item_id":{"type":"string","minLength":1,"maxLength":200},
                     "variant_id":{"type":"string","minLength":1,"maxLength":200},
                     "source_task_id":{"type":"string"},

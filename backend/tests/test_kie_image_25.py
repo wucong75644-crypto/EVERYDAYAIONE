@@ -16,8 +16,8 @@ from services.handlers.image_request_settings import resolve_image_generation_se
 from services.media_tool_executor import MediaToolMixin
 
 
-TEXT_MODEL = "gpt-image-2-5-flare-text-to-image"
-EDIT_MODEL = "gpt-image-2-5-flare-image-to-image"
+TEXT_MODEL = "gpt-image-2-5-sunburst-text-to-image"
+EDIT_MODEL = "gpt-image-2-5-sunburst-image-to-image"
 REFERENCE = "https://cdn.example.com/product.png"
 
 
