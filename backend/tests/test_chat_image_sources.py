@@ -287,3 +287,57 @@ def test_cross_conversation_generated_quote_checks_origin_task_conversation(cros
     else:
         selected=resolver(cross_conversation_quote).resolve([{'message_id':current['id'],'content_index':0,'role':'product'}])
         assert selected[0]['quoted_task_id']=='origin-image-task'
+
+
+@pytest.mark.parametrize('selector', ['message', 'file_id'])
+def test_deleted_quote_origin_uses_the_selected_workspace_original(context, monkeypatch, selector):
+    row, owner, files, current = context
+    monkeypatch.setattr('core.config.get_settings', lambda: SimpleNamespace(file_workspace_root=str(files._workspace_base)))
+    current['content'] = [
+        {'type': 'image', 'workspace_path': name, 'source_message_id': 'deleted-origin',
+         'source_content_index': index, 'source_task_id': 'deleted-task'}
+        for name, index in [('B.png', 3), ('A.png', 1)]
+    ]
+    owner.db.set_table_data('messages', [current])
+    displayed = discovered_image_sources(current, owner.db, org_id=owner.org_id, owner_id=owner.user_id)
+    assert all(item['available'] for item in displayed)
+    assert [item['file_id'] for item in displayed] == [compute_fid(owner.org_id, name) for name in ['B.png', 'A.png']]
+    refs = [({'message_id': current['id'], 'content_index': i} if selector == 'message'
+             else {'file_id': item['file_id']}) | {'role': 'product'} for i, item in enumerate(displayed)]
+    selected = resolver(context).resolve(refs)
+    assert [item['workspace_path'] for item in selected] == ['B.png', 'A.png']
+    assert all('quoted_message_id' not in item and 'quoted_task_id' not in item for item in selected)
+    assert selected[0]['content_sha256'] == hashlib.sha256(files.resolve_safe_path('B.png').read_bytes()).hexdigest()
+    resolver(context).verify(selected)
+    current['content'] = [{'type': 'image', 'workspace_path': name} for name in ['B.png', 'A.png']]
+    clean = resolver(context).resolve(refs)
+    assert [(item['workspace_path'], item['content_sha256']) for item in selected] == [(item['workspace_path'], item['content_sha256']) for item in clean]
+
+
+@pytest.mark.parametrize('path', ['missing.png', '../outside.png'])
+def test_deleted_origin_does_not_authorize_missing_or_outside_workspace_files(context, path):
+    _, owner, _, current = context
+    current['content'] = [{'type': 'image', 'workspace_path': path, 'source_message_id': 'deleted-origin', 'source_content_index': 0}]
+    owner.db.set_table_data('messages', [current])
+    with pytest.raises((PermissionError, ValueError, OSError)):
+        resolver(context).resolve([{'message_id': current['id'], 'content_index': 0, 'role': 'product'}])
+
+
+@pytest.mark.parametrize('failure', ['permission', 'asset', 'corrupt'])
+def test_deleted_origin_preserves_workspace_permission_asset_and_image_checks(context, failure):
+    from services.tools.resource_access import ResourceAccessBoundary
+    _, owner, files, current = context
+    current['content'] = [{'type': 'image', 'workspace_path': 'B.png',
+                           'source_message_id': 'deleted-origin', 'source_content_index': 0}]
+    owner.db.set_table_data('messages', [current])
+    if failure == 'permission':
+        owner.resource_access_boundary = ResourceAccessBoundary((), 'denied', False)
+    elif failure == 'asset':
+        current['content'][0]['asset_id'] = 'foreign-asset'
+        owner.db.set_table_data('user_assets', [{'id': 'foreign-asset', 'org_id': owner.org_id,
+            'storage_owner_key': 'other-user', 'storage_scope': 'user', 'workspace_path': 'B.png',
+            'status': 'ready', 'media_type': 'image'}])
+    else:
+        files.resolve_safe_path('B.png').write_bytes(b'not an image')
+    with pytest.raises((PermissionError, ValueError, OSError)):
+        resolver(context).resolve([{'message_id': current['id'], 'content_index': 0, 'role': 'product'}])

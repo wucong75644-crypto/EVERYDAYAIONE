@@ -180,48 +180,65 @@ def discovered_image_sources(row, db, *, org_id, owner_id, scope="user", visible
     return sources
 
 
-def validate_quoted_source(db, part, source, *, org_id, owner_id, scope, conversation_id):
+def validate_quoted_source(db, part, source, *, org_id, owner_id, scope, conversation_id, files=None):
     """Verify client origin hints against real same-scope source rows."""
     selected_path, _ = registered_original(db, part, org_id=org_id, owner_id=owner_id, scope=scope)
     if part.get("source_message_id"):
         origin = db.table("messages").select(
             "id,conversation_id,org_id,content,status,role,message_kind"
         ).eq("id", part["source_message_id"]).maybe_single().execute().data
-        index = part.get("source_content_index")
-        parts = content_parts(origin.get("content")) if isinstance(origin, dict) else []
-        if (not origin or not origin.get("conversation_id")
-                or origin.get("org_id") != org_id
-                or origin.get("status") not in {"completed", "interrupted"}
-                or origin.get("message_kind", "conversation") != "conversation"
-                or type(index) is not int or not 0 <= index < len(parts)):
-            raise PermissionError("IMAGE_QUOTED_SOURCE_DENIED")
-        if origin["conversation_id"] != conversation_id:
-            # Existing quote attachments select the current message's file;
-            # their origin can be another private chat in this same workspace.
-            # Match the ordinary conversation owner's scope, never widen a
-            # model selector to arbitrary messages in that other chat.
-            origin_conversation = db.table("conversations").select(
-                "id,user_id,org_id,scope_type"
-            ).eq("id", origin["conversation_id"]).eq("user_id", owner_id).maybe_single().execute().data
-            if (scope != "user" or not origin_conversation
-                    or origin_conversation.get("user_id") != owner_id
-                    or origin_conversation.get("org_id") != org_id
-                    or origin_conversation.get("scope_type") != "user"):
+        if origin is None:
+            # A selected attachment is a workspace resource; its old message
+            # is optional provenance, never a grant to another workspace.
+            if scope != "user" or not owner_id or not selected_path:
                 raise PermissionError("IMAGE_QUOTED_SOURCE_DENIED")
-        original = parts[index]
-        if not isinstance(original, dict) or original.get("type") != "image" or original.get("failed"):
-            raise ValueError("IMAGE_QUOTED_SOURCE_CHANGED")
-        original_path, _ = registered_original(db, original, org_id=org_id, owner_id=owner_id, scope=scope)
-        if not selected_path or original_path != selected_path:
-            raise ValueError("IMAGE_QUOTED_SOURCE_CHANGED")
-        source.update(source="quoted", quoted_message_id=str(origin["id"]), quoted_content_index=index)
-        if part.get("source_task_id"):
-            task = db.table("tasks").select("id,user_id,org_id,conversation_id,type,status,assistant_message_id").eq("id", part["source_task_id"]).maybe_single().execute().data
-            if (not task or task.get("user_id") != owner_id or task.get("org_id") != org_id
-                    or task.get("conversation_id") != origin["conversation_id"] or task.get("type") != "image"
-                    or task.get("status") != "completed" or str(task.get("assistant_message_id")) != str(origin["id"])):
+            if files is None:
+                from services.file_executor import FileExecutor
+                from core.config import get_settings
+                files = FileExecutor(get_settings().file_workspace_root, owner_id, org_id, create_root=False)
+            path = files.guarded(selected_path) if hasattr(files, "guarded") else files.resolve_safe_path(selected_path)
+            from PIL import Image
+            try:
+                with Image.open(path) as image:
+                    image.verify()
+            except (OSError, ValueError) as error:
+                raise ValueError("IMAGE_ORIGINAL_UNAVAILABLE") from error
+        else:
+            index = part.get("source_content_index")
+            parts = content_parts(origin.get("content")) if isinstance(origin, dict) else []
+            if (not origin or not origin.get("conversation_id")
+                    or origin.get("org_id") != org_id
+                    or origin.get("status") not in {"completed", "interrupted"}
+                    or origin.get("message_kind", "conversation") != "conversation"
+                    or type(index) is not int or not 0 <= index < len(parts)):
+                raise PermissionError("IMAGE_QUOTED_SOURCE_DENIED")
+            if origin["conversation_id"] != conversation_id:
+                # Existing quote attachments select the current message's file;
+                # their origin can be another private chat in this same workspace.
+                # Match the ordinary conversation owner's scope, never widen a
+                # model selector to arbitrary messages in that other chat.
+                origin_conversation = db.table("conversations").select(
+                    "id,user_id,org_id,scope_type"
+                ).eq("id", origin["conversation_id"]).eq("user_id", owner_id).maybe_single().execute().data
+                if (scope != "user" or not origin_conversation
+                        or origin_conversation.get("user_id") != owner_id
+                        or origin_conversation.get("org_id") != org_id
+                        or origin_conversation.get("scope_type") != "user"):
+                    raise PermissionError("IMAGE_QUOTED_SOURCE_DENIED")
+            original = parts[index]
+            if not isinstance(original, dict) or original.get("type") != "image" or original.get("failed"):
                 raise ValueError("IMAGE_QUOTED_SOURCE_CHANGED")
-            source["quoted_task_id"] = str(task["id"])
+            original_path, _ = registered_original(db, original, org_id=org_id, owner_id=owner_id, scope=scope)
+            if not selected_path or original_path != selected_path:
+                raise ValueError("IMAGE_QUOTED_SOURCE_CHANGED")
+            source.update(source="quoted", quoted_message_id=str(origin["id"]), quoted_content_index=index)
+            if part.get("source_task_id"):
+                task = db.table("tasks").select("id,user_id,org_id,conversation_id,type,status,assistant_message_id").eq("id", part["source_task_id"]).maybe_single().execute().data
+                if (not task or task.get("user_id") != owner_id or task.get("org_id") != org_id
+                        or task.get("conversation_id") != origin["conversation_id"] or task.get("type") != "image"
+                        or task.get("status") != "completed" or str(task.get("assistant_message_id")) != str(origin["id"])):
+                    raise ValueError("IMAGE_QUOTED_SOURCE_CHANGED")
+                source["quoted_task_id"] = str(task["id"])
     if part.get("asset_id"):
         asset = db.table("user_assets").select("*").eq("id", part["asset_id"]).maybe_single().execute().data
         if (not asset or asset.get("org_id") != org_id
