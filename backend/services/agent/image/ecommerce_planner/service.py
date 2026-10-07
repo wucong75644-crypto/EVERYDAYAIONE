@@ -9,7 +9,6 @@ import asyncio
 import hashlib
 import json
 import math
-from decimal import Decimal
 from uuid import uuid4
 
 from core.db_scope import DatabaseAccessKind, DatabaseScope, ScopedDatabaseClient
@@ -17,6 +16,8 @@ from services.agent.agent_result import AgentResult
 from services.model_gateway import ModelCallRequest, get_model_gateway
 
 from .contracts import parse_json, source_id, text_hash, validate_images, validate_product
+from .recovery import attach_receipt, error_facts, failure_summary, PlannerRecoveryError
+from .workflow import binding, store_binding, WorkflowBinding, KEY
 from .prompt_resources import HASHES, INTEGRATION_RULES_SHA256, SCHEMA_SHA256, resources, wrapper
 
 
@@ -49,6 +50,25 @@ class EcommerceImagePlanner:
             request_id=f"ecom-plan:{owner.task_id}"[:128]))
 
     async def run(self, args):
+        try:
+            result = await self._run(args)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            code, category, _retry = error_facts(error)
+            result = AgentResult(failure_summary(code, category), status="error", error_message=code)
+            return attach_receipt(result, category=category)
+        if "retry_context" not in result.metadata:
+            attach_receipt(result, action=result.metadata.pop("recovery_action", None))
+        return result
+
+    async def _bind_plan(self, plan_id):
+        value = self.workflow or WorkflowBinding(kind="main_images", root_task_id=self.owner.task_id,
+            window_task_id=self.owner.task_id, generation_run_id=str(uuid4()))
+        value.plan_id = plan_id
+        self.workflow = await store_binding(self.scope, self.owner.task_id, self.owner.image_execution_token, value)
+
+    async def _run(self, args):
         if not any(entry.get("skill_key") == "ecommerce-main-images"
                 for entry in getattr(self.owner, "image_skill_snapshot", ())):
             return AgentResult("请先调用 activate_skill，skill_id 使用 ecommerce-main-images，读取正文后再调用主图策划工具。",
@@ -100,18 +120,39 @@ class EcommerceImagePlanner:
         if self.owner.execution_mode != "interactive":
             return AgentResult("主图策划仅可从当前交互聊天发起。", status="error", error_message="ECOM_PLAN_MODE_DENIED")
 
+        self.workflow = binding((parent.get("request_params") or {}).get(KEY))
+        if self.workflow and self.workflow.plan_id and not continue_plan_id:
+            return AgentResult("当前主图任务已有方案，请使用返回的 continue_plan_id 续接，不能重新传图绕过已有阶段。",
+                status="error", error_message="ECOM_PLAN_CONTINUATION_REQUIRED",
+                metadata={"plan_id": self.workflow.plan_id, "recovery_action": "resume_plan"})
+        if self.workflow and self.workflow.plan_id and continue_plan_id and self.workflow.plan_id != continue_plan_id:
+            return AgentResult("续接编号与当前主图任务不一致。", status="error", error_message="ECOM_PLAN_CONTINUATION_DENIED")
         previous_plan = None
         if continue_plan_id:
             previous_plan = await asyncio.to_thread(lambda: self.scope.table("ecom_image_plans").select(
                 "id,user_id,org_id,conversation_id,parent_task_id,input_message_id,base_context_revision,"
-                "plan_revision,status,current_stage,image_count,input_snapshot,stage_outputs,target_size"
+                "plan_revision,status,current_stage,image_count,input_snapshot,stage_outputs,target_size,root_plan_id,recovery_state,prompt_versions,model_settings"
             ).eq("id", continue_plan_id).maybe_single().execute().data)
             if (not previous_plan or previous_plan.get("user_id") != self.owner.user_id
                     or previous_plan.get("org_id") != self.owner.org_id
                     or previous_plan.get("conversation_id") != self.owner.conversation_id
-                    or previous_plan.get("status") not in {"needs_input", "insufficient"}):
+                    or previous_plan.get("status") not in {"needs_input", "insufficient", "failed", "ready"}):
                 return AgentResult("没有找到可续接的本会话方案；请重新发起主图策划。", status="error",
                     error_message="ECOM_PLAN_CONTINUATION_DENIED")
+            if (self.workflow and self.workflow.mode == "new" and not self.workflow.plan_id
+                    and previous_plan["parent_task_id"] != self.owner.task_id):
+                return AgentResult("当前用户请求尚未与该历史主图任务关联，请先明确继续原任务。", status="error",
+                    error_message="ECOM_PLAN_CONTINUATION_DENIED")
+            if previous_plan["parent_task_id"] == self.owner.task_id and count is not None and count != previous_plan["image_count"]:
+                return AgentResult("同一回合恢复不能改变已保存的主图张数，请等待用户提出新的修改要求。", status="error",
+                    error_message="ECOM_PLAN_CONTINUATION_INPUT_CONFLICT")
+        if previous_plan and previous_plan["status"] in {"failed", "ready"}:
+            mode = self.workflow.mode if self.workflow else None
+            category = (previous_plan.get("recovery_state") or {}).get("last_error", {}).get("category")
+            if previous_plan["status"] == "ready" and mode not in {"retry", "regenerate", "revise"}:
+                return AgentResult("已完成方案需要明确继续或重新生成的用户指令。", status="error", error_message="ECOM_PLAN_CONTINUATION_DENIED")
+            if previous_plan["status"] == "failed" and not (self.workflow and self.workflow.reset_window) and category not in {"transient_rejection", "output_validation"}:
+                return AgentResult("此方案无法自动重发，请先处理错误并明确重试。", status="error", error_message="ECOM_PLAN_EXECUTION_UNCERTAIN")
         count = count if count is not None else previous_plan["image_count"] if previous_plan else 10
 
         from services.handlers.chat_context.image_sources import content_parts, legacy_catalog
@@ -128,8 +169,14 @@ class EcommerceImagePlanner:
                 return AgentResult("已保存方案的原始消息记录不可用，请重新发起策划。", status="error",
                     error_message="ECOM_PLAN_CONTINUATION_SNAPSHOT_INVALID")
             messages = list(previous_messages)
-            messages.append({"message_id": current_message_id, "context_revision": input_row.get("context_revision"), "parts": [
-                {"content_index": i, "text": value} for i, value in _raw_parts(input_row)]})
+            if (previous_plan["status"] in {"needs_input", "insufficient"}
+                    and any(row.get("message_id") == current_message_id for row in messages)):
+                await self._bind_plan(previous_plan["id"])
+                return await self._result(previous_plan["id"], previous_plan["plan_revision"], previous_plan["status"])
+            if (not (self.workflow and self.workflow.mode in {"retry", "regenerate"})
+                    and not any(row.get("message_id") == current_message_id for row in messages)):
+                messages.append({"message_id": current_message_id, "context_revision": input_row.get("context_revision"), "parts": [
+                    {"content_index": i, "text": value} for i, value in _raw_parts(input_row)]})
             references_in = [{key: value for key, value in ref.items() if key != "source_id"}
                 for ref in previous_plan.get("input_snapshot", {}).get("references", [])]
         else:
@@ -200,12 +247,25 @@ class EcommerceImagePlanner:
             "image_count": count, "task_type": "main_images", "target_size": target_size,
             **({"supersedes_plan_id": previous_plan["id"]} if previous_plan else {})}
         prompt_bodies, schema = resources()
+        versions = {"resources_sha256": list(HASHES), "schema_sha256": SCHEMA_SHA256,
+            "integration_reference_sha256": INTEGRATION_RULES_SHA256}
+        model_settings = {"provider": "kie", "model": model, "reasoning_effort": self.settings.ecom_image_planning_reasoning}
+        reusable = (previous_plan and previous_plan.get("prompt_versions") == versions
+            and previous_plan.get("model_settings") == model_settings)
+        same_canvas = previous_plan and all(previous_plan["target_size"].get(key) == target_size.get(key)
+            for key in ("aspect_ratio", "resolution"))
+        if (previous_plan and previous_plan["status"] == "ready" and self.workflow
+                and self.workflow.mode in {"retry", "regenerate"} and count == previous_plan["image_count"]
+                and reusable and same_canvas):
+            await self._bind_plan(previous_plan["id"])
+            return await self._result(previous_plan["id"], previous_plan["plan_revision"], "ready")
         invocation_key = _digest(input_snapshot)
         prior = await asyncio.to_thread(lambda: self.scope.table("ecom_image_plans").select(
-            "id,plan_revision,status,current_stage,stage_outputs,stage_attempts,items,review_records")
+            "id,plan_revision,status,current_stage,stage_outputs,stage_attempts,items,review_records,root_plan_id,recovery_state")
             .eq("parent_task_id", self.owner.task_id).eq("invocation_key", invocation_key).maybe_single().execute().data)
         if prior:
             if prior["status"] == "ready":
+                await self._bind_plan(prior["id"])
                 return await self._result(prior["id"], prior["plan_revision"], prior["status"])
             if prior["status"] in {"needs_input","insufficient"}:
                 return await self._result(prior["id"], prior["plan_revision"], prior["status"])
@@ -216,43 +276,53 @@ class EcommerceImagePlanner:
         else:
             resume_outputs = {}
             resume_stage = 1
-            if previous_plan:
+            if reusable:
                 old_outputs = previous_plan.get("stage_outputs") or {}
-                if (previous_plan.get("current_stage") == 3
-                        and old_outputs.get("1", {}).get("status") == "ready"
-                        and isinstance(old_outputs.get("2"), str)):
-                    resume_outputs = {"1": old_outputs["1"], "2": old_outputs["2"]}
-                    resume_stage = 3
+                reuse = self.workflow.reuse_through_stage if self.workflow else 0
+                if previous_plan["parent_task_id"] == self.owner.task_id:
+                    reuse = 2
+                if not self.workflow and previous_plan["status"] in {"needs_input", "insufficient"} and previous_plan.get("current_stage") == 3:
+                    reuse = 2
+                if reuse and old_outputs.get("1", {}).get("status") == "ready":
+                    validate_product(old_outputs["1"], schema, input_snapshot)
+                    resume_outputs["1"] = old_outputs["1"]
+                    resume_stage = 2
+                    if reuse == 2 and same_canvas and isinstance(old_outputs.get("2"), str):
+                        self._validate_visual(old_outputs["2"], __import__("services.agent.image.ecommerce_planner.contracts", fromlist=["VISUAL_SECTIONS"]).VISUAL_SECTIONS)
+                        resume_outputs["2"] = old_outputs["2"]
+                        resume_stage = 3
             row = {"id": str(uuid4()), "user_id": self.owner.user_id, "org_id": self.owner.org_id,
                 "conversation_id": self.owner.conversation_id, "parent_task_id": self.owner.task_id,
                 "input_message_id": str(parent["input_message_id"]), "base_context_revision": parent["base_context_revision"],
                 "invocation_key": invocation_key, "input_digest": invocation_key,
                 "plan_revision": previous_plan["plan_revision"] + 1 if previous_plan else 1,
                 "supersedes_plan_id": previous_plan["id"] if previous_plan else None,
+                "root_plan_id": (previous_plan.get("root_plan_id") or previous_plan["id"]) if previous_plan else None,
                 "status": "planning", "current_stage": resume_stage,
                 "image_count": count, "input_snapshot": input_snapshot,
                 "stage_outputs": resume_outputs,
-                "prompt_versions": {"resources_sha256": list(HASHES), "schema_sha256": SCHEMA_SHA256,
-                    "integration_reference_sha256": INTEGRATION_RULES_SHA256},
-                "model_settings": {"provider": "kie", "model": model, "reasoning_effort": self.settings.ecom_image_planning_reasoning},
+                "prompt_versions": versions,
+                "model_settings": model_settings,
                 "target_size": target_size}
             try:
                 await asyncio.to_thread(lambda: self.scope.table("ecom_image_plans").insert(row).execute())
             except Exception:
                 raced = await asyncio.to_thread(lambda: self.scope.table("ecom_image_plans").select(
-                    "id,plan_revision,status,current_stage,stage_outputs,stage_attempts,items,review_records")
+                    "id,plan_revision,status,current_stage,stage_outputs,stage_attempts,items,review_records,root_plan_id,recovery_state")
                     .eq("parent_task_id", self.owner.task_id).eq("invocation_key", invocation_key).maybe_single().execute().data)
                 if raced:
                     return await self._result(raced["id"], raced["plan_revision"], raced["status"])
                 raise
-        active_stage = 1
+        await self._bind_plan(row["id"])
+        active_stage = int(row.get("current_stage", 1))
         lease = str(uuid4())
         claimed = await asyncio.to_thread(lambda: self.scope.rpc("claim_ecom_image_plan", {
             "p_plan_id": row["id"], "p_parent_task_id": self.owner.task_id, "p_lease_token": lease,
             "p_lease_seconds": min(600, max(10, math.ceil(self.settings.ecom_image_planning_stage_timeout * 3 + 20))),
         }).execute().data)
         if not claimed.get("claimed"):
-            return AgentResult("主图方案正在由另一个请求处理。", status="error", error_message="ECOM_PLAN_LEASE_BUSY")
+            return AgentResult("主图方案正在由另一个请求处理。", status="error", error_message="ECOM_PLAN_LEASE_BUSY",
+                metadata={"plan_id": row["id"]})
         stage_outputs = claimed.get("stage_outputs") or {}
         current_stage = int(claimed.get("current_stage", 1))
         evidence = {"input_snapshot": input_snapshot, "product_schema": schema}
@@ -287,7 +357,10 @@ class EcommerceImagePlanner:
                 final, usage = await self._stage_images(row, lease, prompt_bodies[2], wrapper(3), evidence, messages, refs, image_urls,
                     validator=lambda value: validate_images(value, input_snapshot))
             else:
-                usage = None
+                # Stage output and ready/needs_input state commit together. A
+                # planning row with a final output is inconsistent, not a new
+                # billable attempt or permission to invent a settlement.
+                raise PlannerRecoveryError("ECOM_PLAN_EXECUTION_UNCERTAIN")
             if final["status"] != "ready":
                 await self._save(row, lease, 3, final, final["status"], None, usage)
                 return await self._result(row["id"], row["plan_revision"], final["status"])
@@ -297,13 +370,16 @@ class EcommerceImagePlanner:
             await self._fail(row["id"], lease, active_stage, "cancelled")
             raise
         except Exception as error:
+            saved = await asyncio.to_thread(lambda: self.scope.table("ecom_image_plans").select("stage_outputs,status")
+                .eq("id", row["id"]).single().execute().data)
+            if saved.get("status") == "ready":
+                return await self._result(row["id"], row["plan_revision"], "ready")
             await self._fail(row["id"], lease, active_stage, "failed", error)
-            from services.adapters.kie.client import KieAuthenticationError
-            summary = ("主图策划模型鉴权失败，需要修复 KIE 配置后重试。"
-                if isinstance(error, KieAuthenticationError) else "主图策划服务调用失败，已保留阶段记录，请稍后重试。")
-            return AgentResult(summary + "当前未完成策划，未按方案提交生图。", status="error",
-                error_message=getattr(error, "code", None) or type(error).__name__,
-                metadata={"plan_id": row["id"], "stage": "failed", "stop_workflow": True})
+            code, category, _retry = error_facts(error)
+            preserved = [i for i in (1, 2) if str(i) in saved.get("stage_outputs", {})]
+            result = AgentResult(failure_summary(code, category, active_stage, preserved), status="error", error_message=code,
+                metadata={"plan_id": row["id"], "stage": "failed"})
+            return attach_receipt(result, failed_stage=active_stage, preserved=preserved, category=category)
 
     async def _stage(self, row, lease, stage, original, integration, evidence, messages, refs, image_urls, validator=None):
         last_error = None
@@ -365,82 +441,114 @@ class EcommerceImagePlanner:
         raise ValueError("PLANNER_IMAGE_JSON_INVALID")
 
     async def _call(self, row, lease, stage, prompt, messages):
-        await self._save_attempt(row,lease,stage,{"started":True},"started",None,charge=False)
-        timeout = min(self.settings.ecom_image_planning_stage_timeout,
-            max(1.0, self.owner.execution_budget.remaining) if self.owner.execution_budget else self.settings.ecom_image_planning_stage_timeout)
-        if timeout <= 1:
-            raise TimeoutError("ECOM_PLAN_PARENT_BUDGET_EXHAUSTED")
-        session = get_model_gateway().open_chat(ModelCallRequest(
-            # This platform Agent uses the platform KIE credential. Data access
-            # and credit accounting continue to use self.scope/owner.org_id.
-            model_id=self.settings.ecom_image_planning_model, org_id=None,
-            task_id=self.owner.task_id, timeout=timeout, cancel_token=self.owner.cancellation_event,
-            budget=self.owner.execution_budget))
-        content = ""
-        tokens = {"input_tokens":0,"output_tokens":0,"provider_credits":None}
-        try:
-            async for chunk in session.stream_chat(messages, reasoning_effort=self.settings.ecom_image_planning_reasoning):
-                if chunk.content:
-                    content += chunk.content
-                tokens["input_tokens"] += chunk.prompt_tokens or 0
-                tokens["output_tokens"] += chunk.completion_tokens or 0
-                if chunk.credits_consumed is not None:
-                    tokens["provider_credits"] = chunk.credits_consumed
-            if session.last_result and session.last_result.status != "completed":
-                raise RuntimeError("ECOM_PLAN_MODEL_ATTEMPT_INCOMPLETE")
-            if session.last_result:
-                usage=session.last_result.usage
-                tokens["input_tokens"] = max(tokens["input_tokens"],int(usage.get("prompt_tokens",0)))
-                tokens["output_tokens"] = max(tokens["output_tokens"],int(usage.get("completion_tokens",0)))
-                tokens["provider_credits"] = usage.get("api_credits",tokens["provider_credits"])
-            # A completed empty response is invalid stage output. Preserve its
-            # measured usage so the bounded stage validator can repair it.
-            user_credits = max(1,math.ceil(tokens["input_tokens"]*float(self.settings.ecom_image_planning_input_credits_per_million)/1_000_000
-                + tokens["output_tokens"]*float(self.settings.ecom_image_planning_output_credits_per_million)/1_000_000))
-            usage={**tokens,"user_credits":user_credits,"provider":"kie","model":self.settings.ecom_image_planning_model}
-            return content, usage
-        except asyncio.CancelledError:
-            await self._save_attempt(row,lease,stage,{"outcome":"cancelled_or_uncertain"},"uncertain",None,charge=False)
-            raise
-        except Exception as error:
-            await self._save_attempt(row,lease,stage,{"error_type":type(error).__name__,
-                "http_status":getattr(error,"status_code",None),
-                "provider_error_code":getattr(error,"error_code",None)},"uncertain",None,charge=False)
-            raise
-        finally:
-            await session.close()
+        while True:
+            remaining = self.owner.execution_budget.remaining if self.owner.execution_budget else 600
+            timeout = min(self.settings.ecom_image_planning_stage_timeout, remaining)
+            if timeout <= 1:
+                raise PlannerRecoveryError("ECOM_PLAN_PARENT_BUDGET_EXHAUSTED")
+            attempt_id = str(uuid4())
+            reservation = await self._reserve(row, lease, stage, attempt_id, remaining)
+            if reservation.get("outcome") != "execute":
+                raise PlannerRecoveryError("ECOM_PLAN_EXECUTION_UNCERTAIN")
+            from datetime import datetime, timezone
+            deadline = datetime.fromisoformat(reservation["deadline"].replace("Z", "+00:00"))
+            timeout = min(timeout, (deadline - datetime.now(timezone.utc)).total_seconds())
+            if timeout <= 1:
+                await self._finish(row, lease, stage, attempt_id, {}, "rejected")
+                raise PlannerRecoveryError("ECOM_PLAN_PARENT_BUDGET_EXHAUSTED")
+            session = None
+            content = ""
+            tokens = {"input_tokens": 0, "output_tokens": 0, "provider_credits": None}
+            try:
+                session = get_model_gateway().open_chat(ModelCallRequest(
+                    model_id=self.settings.ecom_image_planning_model, org_id=None,
+                    task_id=self.owner.task_id, timeout=timeout, cancel_token=self.owner.cancellation_event,
+                    budget=self.owner.execution_budget))
+                async for chunk in session.stream_chat(messages, reasoning_effort=self.settings.ecom_image_planning_reasoning):
+                    content += chunk.content or ""
+                    tokens["input_tokens"] += chunk.prompt_tokens or 0
+                    tokens["output_tokens"] += chunk.completion_tokens or 0
+                    if chunk.credits_consumed is not None:
+                        tokens["provider_credits"] = chunk.credits_consumed
+                if session.last_result and session.last_result.status != "completed":
+                    raise PlannerRecoveryError("ECOM_PLAN_EXECUTION_UNCERTAIN")
+                if session.last_result:
+                    usage = session.last_result.usage
+                    tokens["input_tokens"] = max(tokens["input_tokens"], int(usage.get("prompt_tokens", 0)))
+                    tokens["output_tokens"] = max(tokens["output_tokens"], int(usage.get("completion_tokens", 0)))
+                    tokens["provider_credits"] = usage.get("api_credits", tokens["provider_credits"])
+                credits = max(1, math.ceil(tokens["input_tokens"] * float(self.settings.ecom_image_planning_input_credits_per_million) / 1_000_000
+                    + tokens["output_tokens"] * float(self.settings.ecom_image_planning_output_credits_per_million) / 1_000_000))
+                return content, {**tokens, "user_credits": credits, "provider": "kie", "model": self.settings.ecom_image_planning_model,
+                    "attempt_id": attempt_id}
+            except asyncio.CancelledError:
+                await self._finish(row, lease, stage, attempt_id, tokens, "uncertain")
+                raise
+            except Exception as error:
+                code, category, safe = error_facts(error)
+                diagnostics = {**tokens, "error_type": type(error).__name__, "error_code": code,
+                    "http_status": getattr(error, "status_code", None), "provider_error_code": getattr(error, "error_code", None)}
+                no_response = not content and not tokens["input_tokens"] and not tokens["output_tokens"] and tokens["provider_credits"] is None
+                definite = no_response and (safe or category in {"authentication", "balance"})
+                await self._finish(row, lease, stage, attempt_id, diagnostics, "rejected" if definite else "uncertain")
+                if safe and definite and reservation["remaining_attempts"] > 0:
+                    delay = min(2 ** (reservation["ordinal"] - 1), timeout / 4)
+                    if self.owner.cancellation_event is not None:
+                        try:
+                            await asyncio.wait_for(self.owner.cancellation_event.wait(), delay)
+                        except asyncio.TimeoutError:
+                            pass
+                        else:
+                            raise asyncio.CancelledError()
+                    else:
+                        await asyncio.sleep(delay)
+                    continue
+                if not definite and category != "uncertain":
+                    raise PlannerRecoveryError("ECOM_PLAN_EXECUTION_UNCERTAIN") from error
+                raise
+            finally:
+                if session is not None:
+                    await session.close()
+
+    async def _reserve(self, row, lease, stage, attempt_id, remaining):
+        return await asyncio.to_thread(lambda: self.scope.rpc("reserve_ecom_plan_attempt", {
+            "p_plan_id": row["id"], "p_lease_token": lease, "p_attempt_id": attempt_id, "p_stage": stage,
+            "p_wall_seconds": max(1, min(600, math.floor(remaining))),
+        }).execute().data)
+
+    async def _finish(self, row, lease, stage, attempt_id, usage, outcome, output=None, status="planning", final=None):
+        from psycopg.types.json import Jsonb
+        params = {"p_plan_id": row["id"], "p_lease_token": lease, "p_stage": stage, "p_attempt_id": attempt_id,
+            "p_usage": usage, "p_outcome": outcome, "p_output": Jsonb(output) if isinstance(output, str) else output,
+            "p_status": status, "p_items": final.get("images") if final else None,
+            "p_reviews": final.get("review_records") if final else None,
+            "p_credits": usage.get("user_credits", 0) if outcome in {"completed", "validation_failed"} else 0}
+        return await asyncio.to_thread(lambda: self.scope.rpc("finish_ecom_plan_attempt", params).execute().data)
 
     async def _save_attempt(self,row,lease,stage,usage,status,repair,charge=False):
-        attempt={"stage":stage,"status":status,"usage":usage,"repair_round":repair}
-        params={"p_plan_id":row["id"],"p_lease_token":lease,"p_stage":stage,
-            "p_output":None,"p_attempt":attempt,"p_status":"planning",
-            "p_credits":usage.get("user_credits",0) if charge else 0}
-        await asyncio.to_thread(lambda:self.scope.rpc("save_ecom_image_plan_stage",params).execute())
+        if not usage.get("attempt_id"):
+            raise PlannerRecoveryError("ECOM_PLAN_ATTEMPT_CONFLICT")
+        return await self._finish(row, lease, stage, usage["attempt_id"], usage, "validation_failed")
 
     async def _call_store(self, row, lease, stage, output, status, final, usage=None):
-        from psycopg.types.json import Jsonb
-        amount=(usage or {}).get("user_credits",0)
-        attempt={"stage":stage,"status":"completed","usage":usage,"repair_round":None} if usage else None
-        params={"p_plan_id":row["id"],"p_lease_token":lease,"p_stage":stage,
-            # Stage two is a JSON string, not raw Markdown parsed as JSONB.
-            "p_output":Jsonb(output) if isinstance(output, str) else output,
-            "p_attempt":attempt,"p_status":status,
-            "p_items":final.get("images") if final else None,
-            "p_reviews":final.get("review_records") if final else None,"p_credits":amount}
-        await asyncio.to_thread(lambda:self.scope.rpc("save_ecom_image_plan_stage",params).execute())
+        if usage is None:
+            raise PlannerRecoveryError("ECOM_PLAN_ATTEMPT_CONFLICT")
+        return await self._finish(row, lease, stage, usage["attempt_id"], usage, "completed", output, status, final)
 
     async def _save(self,row,lease,stage,output,status,final,usage=None):
         return await self._call_store(row,lease,stage,output,status,final,usage)
 
     async def _fail(self,plan_id,lease,stage,status,error=None):
+        code, category, _retry = error_facts(error) if error is not None else ("MODEL_CANCELLED", "cancelled", False)
         try:
-            await asyncio.to_thread(lambda:self.scope.rpc("save_ecom_image_plan_stage",{
-                "p_plan_id":plan_id,"p_lease_token":lease,"p_stage":stage,"p_output":None,
-                "p_attempt":{"stage":stage,"status":status,
-                    **({"error_type":type(error).__name__} if error is not None else {})},
-                "p_status":status}).execute())
+            await asyncio.to_thread(lambda: self.scope.rpc("fail_ecom_plan", {
+                "p_plan_id": plan_id, "p_lease_token": lease, "p_stage": stage, "p_status": status,
+                "p_error": {"code": code, "category": category},
+            }).execute())
         except Exception:
-            pass
+            # An uncertain DB result cannot authorize another model call.
+            from loguru import logger
+            logger.warning("ecom_failure_record_uncertain | plan_id={} stage={}", plan_id, stage)
 
     async def _result(self,plan_id,revision,status):
         row=await asyncio.to_thread(lambda:self.scope.table("ecom_image_plans").select("id,plan_revision,status,current_stage,items,stage_outputs")
@@ -450,9 +558,17 @@ class EcommerceImagePlanner:
             payload={"kind":"ecom_plan","plan_id":plan_id,"revision":row["plan_revision"],
                 "product_insight":row["stage_outputs"]["1"]["product"].get("name") or "商品分析已完成",
                 "visual_strategy":row["stage_outputs"]["2"],"images":images,"status":"ready"}
+            if getattr(self, "workflow", None):
+                receipts = await asyncio.to_thread(lambda: self.scope.table("ecom_image_plan_acceptances").select("item_id,receipt")
+                    .eq("generation_run_id", self.workflow.generation_run_id).eq("plan_id", plan_id)
+                    .eq("plan_revision", row["plan_revision"]).execute().data)
+                submitted = {str(entry["item_id"]): entry["receipt"] for entry in receipts or [] if entry.get("receipt")}
+                images = [{**image, **({"submission_state": "submitted", "task_id": submitted[image["item_id"]]["task_id"],
+                    "message_id": submitted[image["item_id"]]["message_id"]} if image["item_id"] in submitted else
+                    {"submission_state": "not_submitted"})} for image in images]
             tool_result={"status":"ready","plan_id":plan_id,"revision":row["plan_revision"],
                 "image_count":len(images),"images":images,
-                "instruction":"按position顺序逐项调用generate_image，只传对应plan_source。"}
+                "instruction":"按position顺序，仅为尚未submitted的项调用generate_image，只传对应plan_source；已有项使用原任务回执，不重发。"}
             return AgentResult(json.dumps(tool_result,ensure_ascii=False),
                 status="success",emit_payloads=[payload],metadata={"plan_id":plan_id,"revision":row["plan_revision"],
                     "status":"ready","images":images})

@@ -517,6 +517,10 @@ async def create_skill_runtime(*, handler, context, runtime, replay_context=None
         if intent.task_mode != task_mode or intent.selected_skill != selection:
             raise SkillBindingError('原任务 Skill 的模式或版本记录不一致。')
         source = PinnedIntentSource(source, intent, retry=retry)
+    workflow_pin = getattr(handler, "_ecom_workflow_pin", None)
+    if workflow_pin and not scheduled and checkpoint is None:
+        from services.agent.image.ecommerce_planner.workflow import WorkflowSkillSource
+        source = WorkflowSkillSource(source, workflow_pin)
     capability_registry = build_capability_catalog()
     currently_authorized = policy_available_tool_names(capability_registry, context)
     state = SkillRuntime(

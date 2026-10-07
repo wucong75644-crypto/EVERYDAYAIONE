@@ -219,6 +219,16 @@ async def execute_chat(
     try:
         skills = None
         selection_error = None
+        from services.agent.image.ecommerce_planner.workflow import EcommerceWorkflow
+        prepared.ecom_workflow = None
+        if (runtime is not None and hasattr(handler, "db")
+                and prepared.execution_context.feature_flags.get("ecom_image_planning_enabled") is True
+                and prepared.execution_context.context_scope == "user"
+                and prepared.execution_context.execution_mode == "interactive"):
+            prepared.ecom_workflow = EcommerceWorkflow(handler, request, runtime, prepared)
+            await prepared.ecom_workflow.initialize()
+            handler._ecom_workflow_pin = (prepared.ecom_workflow.value.skill
+                if prepared.ecom_workflow.value else None)
         if runtime is None and '_skill_intent' in request.params:
             from services.skills.retry import parse_intent
             from services.skills.runtime import SkillBindingError
@@ -242,6 +252,14 @@ async def execute_chat(
             if skills is not None:
                 _apply_skill_context(prepared, skills)
         await output.start()
+        workflow = getattr(prepared, "ecom_workflow", None)
+        if workflow and not (skills and (skills.manual_skill_id == "ecommerce-main-images"
+                or "ecommerce-main-images" in skills.session_skill_ids)):
+            question = workflow.entry_question()
+            if question and not any(b.get("ecom_entry_question") is True for b in blocks):
+                block = {"type": "text", "text": question, "ecom_entry_question": True}
+                blocks.append(block)
+                await output.on_block(block)
         if skills is not None and not request.replay_context:
             # Freeze session configuration before the first pause/cancel
             # boundary, including the empty binding set. Resume never rereads it.
@@ -308,6 +326,27 @@ async def execute_chat(
                     ),
                 )
             await output.on_block(block)
+        workflow = getattr(prepared, "ecom_workflow", None)
+        if workflow and workflow.value and workflow.value.kind == "main_images":
+            if skills is None:
+                raise SkillBindingError("原主图工作流的 Skill 当前不可用，已停止执行。")
+            if "ecommerce-main-images" not in skills.active:
+                await runtime.safe_point(SafePoint.BEFORE_TOOL)
+                await _check_cancelled(event, request, prepared.messages, blocks, totals, "before_workflow_skill")
+                result = await skills.activate(json.dumps({"skill_id": "ecommerce-main-images"}))
+                if not result.get("ok"):
+                    raise SkillBindingError("主图入口 Skill 无法启用，已停止执行：" + result.get("code", "SKILL_UNAVAILABLE"))
+                block = skill_step(result, skills, step_id="workflow-skill")
+                blocks.append(block)
+                await output.on_block(block)
+                _apply_skill_context(prepared, skills)
+                await runtime.safe_point(SafePoint.AFTER_SKILL_ACTIVATION, replay_payload=_build_replay_context(
+                    prepared.messages, blocks, prepared.budget.turns_used,
+                    next_model_round=_initial_model_round(request.replay_context),
+                    repeated_tool_call_guard=repeated_tool_call_guard,
+                ))
+        if workflow:
+            await workflow.activated()
         form_hint = await _run_loop(
             handler=handler,
             request=request,
@@ -392,13 +431,35 @@ async def _run_loop(
     repeated_tool_call_guard: _RepeatedToolCallGuard | None = None,
 ) -> str | None:
     thinking_mode = request.thinking_mode
+    entry_question = next((b for b in blocks if b.get("ecom_entry_question") is True), None)
+    if entry_question:
+        totals.text += entry_question["text"]
+        return None
     empty_output_retried = False
     repeated_tool_call_guard = repeated_tool_call_guard or _RepeatedToolCallGuard()
     from services.handlers.chat.image_argument_correction import ImageArgumentCorrection
     image_arguments = ImageArgumentCorrection(blocks)
     prepared.image_arguments = image_arguments
+    from services.agent.image.ecommerce_planner.arguments import PlannerArgumentCorrection
+    prepared.ecom_arguments = PlannerArgumentCorrection(blocks)
     while not prepared.budget.stop_reason:
         correcting = image_arguments.start_round(model_round)
+        prepared.ecom_arguments.before_model()
+        if prepared.ecom_arguments.stop_message:
+            blocks.append({"type": "text", "text": prepared.ecom_arguments.stop_message})
+            totals.text += prepared.ecom_arguments.stop_message
+            await sink.on_block(blocks[-1])
+            return None
+        workflow = getattr(prepared, "ecom_workflow", None)
+        prepared.defer_ecom_narrative = False
+        if workflow:
+            prepared.defer_ecom_narrative = await workflow.needs_planner(blocks)
+            message = workflow.context_message()
+            prepared.messages[:] = [m for m in prepared.messages if not (
+                m.get("role") == "system" and isinstance(m.get("content"), str)
+                and m["content"].startswith("[Server main-image workflow]"))]
+            if message:
+                prepared.messages.append(message)
         if image_arguments.stop_message:
             totals.usage["image_argument_metrics"] = image_arguments.summary()
             blocks.append({"type": "text", "text": image_arguments.stop_message})
@@ -464,6 +525,14 @@ async def _run_loop(
         model_round += 1
         if runtime:
             await runtime.safe_point(SafePoint.AFTER_MODEL)
+        if prepared.defer_ecom_narrative:
+            if not calls:
+                message = "主图入口已启用，但主模型没有调用策划子 Agent，已停止执行。未生成替代方案或提交图片，请重试当前主图请求。"
+                totals.text += message
+                blocks.append({"type": "text", "text": message})
+                await sink.on_block(blocks[-1])
+                return None
+            turn_text, turn_thinking = "", ""
         await _append_turn_blocks(
             blocks,
             sink,
@@ -654,12 +723,14 @@ async def _read_turn(
         )
         if chunk.thinking_content:
             turn_thinking += chunk.thinking_content
-            totals.thinking += chunk.thinking_content
-            await sink.on_thinking(chunk.thinking_content)
+            if not getattr(prepared, "defer_ecom_narrative", False):
+                totals.thinking += chunk.thinking_content
+                await sink.on_thinking(chunk.thinking_content)
         if chunk.content:
             turn_text += chunk.content
-            totals.text += chunk.content
-            await sink.on_text(chunk.content)
+            if not getattr(prepared, "defer_ecom_narrative", False):
+                totals.text += chunk.content
+                await sink.on_text(chunk.content)
         if chunk.tool_calls:
             accumulate_tool_call_delta(calls, chunk.tool_calls)
             if runtime is not None:
@@ -829,13 +900,32 @@ async def _execute_tools(
             await sink.on_block(block)
     guard = getattr(prepared, "image_arguments", None)
     ready_calls, rejected = guard.filter_calls(calls) if guard else (calls, [])
+    ecom_arguments = getattr(prepared, "ecom_arguments", None)
+    if ecom_arguments:
+        ready_calls, ecom_rejected = ecom_arguments.filter_calls(ready_calls)
+        rejected.extend(ecom_rejected)
+        ecom_arguments.reserve(ready_calls)
+        if ecom_arguments.state and ecom_arguments.state.get("dispatch_reserved") and runtime is None:
+            raise RuntimeError("ECOM_ARGUMENT_CORRECTION_CHECKPOINT_REQUIRED")
+    workflow = getattr(prepared, "ecom_workflow", None)
+    if workflow and not any(c["name"] == ACTIVATE_SKILL for c in calls):
+        barrier = await workflow.barrier(ready_calls)
+        if barrier:
+            from services.agent.agent_result import AgentResult
+            message, terminal = barrier
+            rejected.extend((call, AgentResult(message, status="error", error_message="ECOM_WORKFLOW_ENTRY_REQUIRED",
+                metadata={"stop_workflow": terminal}), True, message) for call in ready_calls)
+            ready_calls = []
+            if terminal:
+                handler._tool_result_stop_reason = message
     if guard:
         guard.reserve_dispatch(ready_calls)
         if guard.repair and guard.repair.get("dispatch_reserved") and runtime is None:
             raise RuntimeError("IMAGE_ARGUMENT_CORRECTION_CHECKPOINT_REQUIRED")
     if runtime:
         runtime.set_state(ConversationState.WAITING_TOOL)
-        if guard and guard.repair and guard.repair.get("dispatch_reserved"):
+        if ((guard and guard.repair and guard.repair.get("dispatch_reserved"))
+                or (ecom_arguments and ecom_arguments.state and ecom_arguments.state.get("dispatch_reserved"))):
             # Commit the paid correction boundary before any business IO. A
             # restart stops here; it cannot change the batch index/call ID.
             await runtime.safe_point(SafePoint.BEFORE_TOOL, replay_payload=_build_replay_context(
@@ -889,6 +979,10 @@ async def _execute_tools(
     if rejected:
         by_call = {item[0]["id"]: item for item in [*results, *rejected]}
         results = [by_call[call["id"]] for call in calls]
+    if ecom_arguments:
+        ecom_arguments.observe(results)
+        if ecom_arguments.stop_message:
+            handler._tool_result_stop_reason = ecom_arguments.stop_message
     for call, result, is_error, _display in results:
         if (call["name"] == "plan_ecommerce_images" and is_error
                 and getattr(result, "metadata", {}).get("stop_workflow") is True):

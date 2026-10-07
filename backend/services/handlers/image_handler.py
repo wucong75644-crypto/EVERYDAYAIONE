@@ -73,6 +73,8 @@ class ImageHandler(BaseHandler):
                 or parent.get("base_context_revision") is None):
             raise PermissionError("CHAT_IMAGE_PARENT_DENIED")
         scoped=ScopedDatabaseClient(self.db,DatabaseScope(owner.user_id,owner.org_id,DatabaseAccessKind.RUNTIME))
+        from services.agent.image.ecommerce_planner.workflow import binding, KEY
+        workflow = binding((parent.get("request_params") or {}).get(KEY))
         plan_source=args.get("plan_source")
         if plan_source is None:
             active_ecom = any(entry.get("skill_key") == "ecommerce-main-images"
@@ -80,7 +82,7 @@ class ImageHandler(BaseHandler):
             attempted_plan = (await asyncio.to_thread(lambda: scoped.table("ecom_image_plans")
                 .select("id").eq("parent_task_id", owner.task_id).limit(1).execute().data)
                 if getattr(settings, "ecom_image_planning_enabled", False) else [])
-            if active_ecom or attempted_plan:
+            if active_ecom or attempted_plan or (workflow and workflow.kind == "main_images"):
                 raise ChatImageNotAcceptedError("ECOM_PLAN_SOURCE_REQUIRED",
                     "本轮电商主图必须先完成策划，再用 ready 方案返回的 plan_source 提交；不能自行编写提示词绕过策划。")
         plan_proof=None
@@ -90,6 +92,8 @@ class ImageHandler(BaseHandler):
                 raise ChatImageNotAcceptedError("ECOM_PLAN_SOURCE_ARGUMENTS_INVALID")
             try:
                 plan_id=str(uuid.UUID(plan_source["plan_id"]))
+                if workflow and workflow.kind == "main_images" and workflow.plan_id != plan_id:
+                    raise PermissionError("ECOM_PLAN_WORKFLOW_MISMATCH")
                 item_id=str(uuid.UUID(plan_source["item_id"]))
                 revision=plan_source["revision"]
                 if type(revision) is not int or revision < 1:

@@ -15,8 +15,8 @@ import sys
 
 APP = Path('/var/www/everydayai')
 KEY = 'ecommerce-main-images'
-REVISION = 'v2'
-CONTENT_HASH = 'cfd5239fb93bb2fe7d47ba1a6b9c849a33538fdb7b69effdccc5ca9d8ba89142'
+REVISION = 'v3'
+CONTENT_HASH = '38f0c363c1c4b93470f5c704763ce5d7a9922f044c01ba6038b0f25f7f294593'
 
 
 def install(raw, root, alias, relative):

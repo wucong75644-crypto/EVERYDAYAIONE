@@ -66,6 +66,10 @@ def planner():
         ecom_image_planning_input_credits_per_million=11.2,
         ecom_image_planning_output_credits_per_million=67.2)
     service._save_attempt = AsyncMock()
+    from datetime import datetime, timedelta, timezone
+    service._reserve = AsyncMock(return_value={"outcome": "execute", "ordinal": 1, "remaining_attempts": 2,
+        "deadline": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()})
+    service._finish = AsyncMock()
     return service
 
 
@@ -101,8 +105,11 @@ async def test_planner_provider_error_records_safe_diagnostics(monkeypatch):
         lambda: SimpleNamespace(open_chat=lambda request: session))
     with pytest.raises(KieAuthenticationError):
         await service._call({'id': str(uuid4())}, 'lease', 1, 'rules', [])
-    facts = service._save_attempt.await_args.args[3]
-    assert facts == {'error_type': 'KieAuthenticationError', 'http_status': 401, 'provider_error_code': '401'}
+    facts = service._finish.await_args.args[4]
+    assert facts['error_type'] == 'KieAuthenticationError' and facts['http_status'] == 401
+    assert facts['provider_error_code'] == '401' and facts['error_code'] == 'KIE_AUTHENTICATION_FAILED'
+    assert service._finish.await_args.args[5] == 'rejected'
+    service._reserve.assert_awaited_once()
     session.close.assert_awaited_once()
 
 

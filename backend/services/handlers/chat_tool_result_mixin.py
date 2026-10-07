@@ -62,6 +62,19 @@ class ChatToolResultMixin:
             result.model_content("chat")
         if result.execution.status == "uncertain":
             self._tool_result_stop_reason = result.model_content("chat")
+        if context.tool_name == "plan_ecommerce_images":
+            from services.agent.image.ecommerce_planner.recovery import model_projection
+            projection = model_projection(result.metadata)
+            from services.agent.image.ecommerce_planner.arguments import PlannerArgumentValidationError
+            if isinstance(result.exception, PlannerArgumentValidationError):
+                projection = None  # The typed pre-dispatch exception already projects its full receipt.
+            if projection:
+                original = result.model_content("chat")
+                if isinstance(original, list):
+                    content = [*original, {"type": "text", "text": projection}]
+                else:
+                    content = str(original) + "\n" + projection
+                result = result.with_model_content("chat", content)
         display = result.display["text"]
         ChatToolResultMixin._stage_change_set(self, result.metadata)
         fields = result.audit_fields()
