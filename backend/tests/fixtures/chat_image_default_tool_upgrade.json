@@ -11,6 +11,19 @@
           "parameters": {
             "type": "object",
             "additionalProperties": false,
+            "oneOf": [
+              {
+                "required": [
+                  "mode",
+                  "prompt"
+                ]
+              },
+              {
+                "required": [
+                  "plan_source"
+                ]
+              }
+            ],
             "properties": {
               "mode": {
                 "type": "string",
@@ -211,20 +224,7 @@
                   }
                 }
               }
-            },
-            "oneOf": [
-              {
-                "required": [
-                  "mode",
-                  "prompt"
-                ]
-              },
-              {
-                "required": [
-                  "plan_source"
-                ]
-              }
-            ]
+            }
           }
         }
       },

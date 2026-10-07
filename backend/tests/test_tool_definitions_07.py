@@ -238,8 +238,11 @@ def test_all_json_parameters_and_existing_coercions(catalog, name):
     required = {k: full[k] for k in required_names}
     coerced = {k: json.dumps(v) if isinstance(v, (bool, int, dict)) else v for k, v in full.items()}
     for args in (full, required, coerced):
-        assert validate_tool_args(name, deepcopy(args), [catalog.require(name).to_schema()]) == \
-            validate_tool_args(name, deepcopy(args), [original])
+        actual_args, actual_error = validate_tool_args(name, deepcopy(args), [catalog.require(name).to_schema()])
+        expected_args, expected_error = validate_tool_args(name, deepcopy(args), [original])
+        assert actual_args == expected_args
+        assert (json.loads(actual_error) if actual_error else None) == \
+            (json.loads(expected_error) if expected_error else None)
 
 
 @pytest.fixture(scope='module')
