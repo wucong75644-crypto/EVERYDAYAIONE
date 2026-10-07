@@ -297,7 +297,7 @@ class EcommerceImagePlanner:
             await self._fail(row["id"], lease, active_stage, "cancelled")
             raise
         except Exception as error:
-            await self._fail(row["id"], lease, active_stage, "failed")
+            await self._fail(row["id"], lease, active_stage, "failed", error)
             from services.adapters.kie.client import KieAuthenticationError
             summary = ("主图策划模型鉴权失败，需要修复 KIE 配置后重试。"
                 if isinstance(error, KieAuthenticationError) else "主图策划服务调用失败，已保留阶段记录，请稍后重试。")
@@ -408,10 +408,13 @@ class EcommerceImagePlanner:
         await asyncio.to_thread(lambda:self.scope.rpc("save_ecom_image_plan_stage",params).execute())
 
     async def _call_store(self, row, lease, stage, output, status, final, usage=None):
+        from psycopg.types.json import Jsonb
         amount=(usage or {}).get("user_credits",0)
         attempt={"stage":stage,"status":"completed","usage":usage,"repair_round":None} if usage else None
         params={"p_plan_id":row["id"],"p_lease_token":lease,"p_stage":stage,
-            "p_output":output,"p_attempt":attempt,"p_status":status,
+            # Stage two is a JSON string, not raw Markdown parsed as JSONB.
+            "p_output":Jsonb(output) if isinstance(output, str) else output,
+            "p_attempt":attempt,"p_status":status,
             "p_items":final.get("images") if final else None,
             "p_reviews":final.get("review_records") if final else None,"p_credits":amount}
         await asyncio.to_thread(lambda:self.scope.rpc("save_ecom_image_plan_stage",params).execute())
@@ -419,11 +422,13 @@ class EcommerceImagePlanner:
     async def _save(self,row,lease,stage,output,status,final,usage=None):
         return await self._call_store(row,lease,stage,output,status,final,usage)
 
-    async def _fail(self,plan_id,lease,stage,status):
+    async def _fail(self,plan_id,lease,stage,status,error=None):
         try:
             await asyncio.to_thread(lambda:self.scope.rpc("save_ecom_image_plan_stage",{
                 "p_plan_id":plan_id,"p_lease_token":lease,"p_stage":stage,"p_output":None,
-                "p_attempt":{"stage":stage,"status":status},"p_status":status}).execute())
+                "p_attempt":{"stage":stage,"status":status,
+                    **({"error_type":type(error).__name__} if error is not None else {})},
+                "p_status":status}).execute())
         except Exception:
             pass
 

@@ -11,12 +11,12 @@ import pytest
 
 from services.adapters.base import StreamChunk
 from services.adapters.kie.chat_adapter import KieChatAdapter
-from services.adapters.kie.client import KieClient, KieAuthenticationError
+from services.adapters.kie.client import KieClient, KieAuthenticationError, KieRateLimitError
 from services.agent.agent_result import AgentResult
 from services.agent.image.ecommerce_planner.service import EcommerceImagePlanner
 
 
-@pytest.mark.parametrize('code,error', [(401, KieAuthenticationError), (429, Exception)])
+@pytest.mark.parametrize('code,error', [(401, KieAuthenticationError), (429, KieRateLimitError)])
 async def test_kie_http_200_business_failure_keeps_provider_error(code, error):
     client = KieClient('test-credential')
     client._client = httpx.AsyncClient(base_url=client.BASE_URL, transport=httpx.MockTransport(
@@ -129,7 +129,8 @@ async def test_main_model_gets_planner_only_after_skill_activation():
     assert 'plan_ecommerce_images' in {t['function']['name'] for t in advertised}
 
 
-async def test_planner_failure_stops_main_loop_without_diy_fallback(monkeypatch):
+@pytest.mark.parametrize('envelope', [False, True])
+async def test_planner_failure_stops_main_loop_without_diy_fallback(monkeypatch, envelope):
     from tests.test_skill_runtime_actor import actor, prepared, handler, call
     from tests.test_chat_execution_engine import _request
     from services.handlers.chat.execution_engine import _run_loop
@@ -138,7 +139,15 @@ async def test_planner_failure_stops_main_loop_without_diy_fallback(monkeypatch)
     runtime, p, h = actor(), prepared(), handler()
     result = AgentResult('主图策划模型鉴权失败。', status='error', metadata={'stop_workflow': True})
     tc = call('plan_ecommerce_images', '{}', 'planner')
-    h._execute_tool_calls.return_value = [(tc, result, True, result.summary)]
+    summary = result.summary
+    if envelope:
+        from services.tools import ToolCall, ToolPolicy, build_legacy_catalog
+        from services.tools.result import ToolResult
+        from tests.test_tool_execution import context
+        ctx = context(feature_flags={'ecom_image_planning_enabled': True, 'chat_image_async_enabled': True})
+        result = ToolResult.wrap(result, call=ToolCall('planner','plan_ecommerce_images',{}), context=ctx,
+            decision=ToolPolicy(build_legacy_catalog()).decide('plan_ecommerce_images',ctx,{}))
+    h._execute_tool_calls.return_value = [(tc, result, True, summary)]
     reader = AsyncMock(return_value=('', '', [tc], set()))
     monkeypatch.setattr('services.handlers.chat.execution_engine._read_turn', reader)
     monkeypatch.setattr('services.handlers.chat.execution_engine.compact_tool_context', AsyncMock())
@@ -146,7 +155,7 @@ async def test_planner_failure_stops_main_loop_without_diy_fallback(monkeypatch)
     await _run_loop(handler=h, request=_request(), prepared=p, cancellation_event=runtime.cancellation_event,
         sink=CollectingExecutionSink(), totals=totals, blocks=blocks, runtime=runtime)
     reader.assert_awaited_once()
-    assert totals.text == result.summary
+    assert totals.text == summary
     assert h._execute_tool_calls.await_count == 1
 
 

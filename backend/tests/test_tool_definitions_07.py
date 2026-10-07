@@ -187,8 +187,8 @@ def test_old_imports_signatures_and_constant_values(module):
             value += IMAGE_AGENT_PROMPT
         if module == 'chat_tools' and name in {'_CORE_TOOLS', '_PLAN_MODE_BLOCKED'}:
             assert 'generate_image' in value and 'image_agent' not in value
-            assert 'plan_ecommerce_images' in value
-            value = sorted(set(value) - {'plan_ecommerce_images'})
+            # Main-image planning is revealed by the activated entry Skill.
+            assert 'plan_ecommerce_images' not in value
             value = sorted((set(value) - {'generate_image'}) | {'image_agent'})
         if module == 'chat_tools' and name == '_CONCURRENT_SAFE_TOOLS':
             assert 'generate_image' in value and 'generate_video' not in value

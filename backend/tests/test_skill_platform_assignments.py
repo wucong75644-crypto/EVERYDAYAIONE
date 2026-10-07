@@ -19,6 +19,25 @@ from tests.test_skill_runtime import state, activate
 from tests.test_skill_personal_postgres import environment, postgres_socket, MIGRATIONS  # noqa: F401
 
 
+async def test_planner_stage_two_markdown_roundtrips_through_actual_jsonb_binding(environment):
+    from services.agent.image.ecommerce_planner.service import EcommerceImagePlanner
+    from core.db_scope import _rpc_sql
+    from tests.test_ecommerce_workflow import planner
+    from psycopg.types.json import Jsonb
+    text = '## 1. 风格定位\n发财风格，保留原文 "存钱本"。\n\n## 2. 视觉方向\n内容'
+    parameters = []
+    service = planner()
+    service.scope = SimpleNamespace(rpc=lambda name, args: parameters.append(args) or
+        SimpleNamespace(execute=lambda: None))
+    await service._call_store({'id': 'plan'}, 'lease', 2, text, 'planning', None,
+        {'user_credits': 1})
+    _, values = _rpc_sql('save_ecom_image_plan_stage', {'p_output': parameters[0]['p_output']})
+    assert isinstance(values[0], Jsonb)
+    with environment.pool.connection(privileged=True) as connection:
+        assert connection.execute('SELECT %s::jsonb AS output', values).fetchone()[0] == text
+    assert parameters[0]['p_attempt']['status'] == 'completed'
+
+
 @pytest.mark.parametrize('revision', ['v1', 'v2'])
 def test_actual_main_image_entry_passes_publication_and_runtime_template_validation(revision):
     raw = (Path(__file__).parents[2] / f'examples/skills/catalog/platform/ecommerce-main-images/{revision}/SKILL.md').read_bytes()

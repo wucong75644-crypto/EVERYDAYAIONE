@@ -72,7 +72,9 @@ def test_ecom_planner_requires_both_rollout_flags(registry):
     flags["ecom_image_planning_enabled"] = True
     enabled = resolve(registry, context(feature_flags=flags))
     assert "plan_ecommerce_images" in enabled.allowed
-    assert "plan_ecommerce_images" in enabled.advertised
+    assert "plan_ecommerce_images" not in enabled.advertised
+    activated = resolve(registry, context(feature_flags=flags), discovered={"plan_ecommerce_images"})
+    assert "plan_ecommerce_images" in activated.advertised
 
 
 @pytest.mark.parametrize("org", [None, "org-a"])
