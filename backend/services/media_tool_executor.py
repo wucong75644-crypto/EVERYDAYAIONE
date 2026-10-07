@@ -17,6 +17,10 @@ from loguru import logger
 class MediaToolMixin:
     """图片/视频生成工具 Mixin"""
 
+    async def _plan_ecommerce_images(self, args: Dict[str, Any]) -> "AgentResult":
+        from services.agent.image.ecommerce_planner.service import EcommerceImagePlanner
+        return await EcommerceImagePlanner(self).run(args)
+
     async def _generate_image(self, args: Dict[str, Any]) -> "AgentResult":
         """One persistent child acceptance; completion belongs to its worker."""
         from services.handlers.image_handler import ImageHandler

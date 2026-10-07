@@ -112,6 +112,7 @@ class ToolExecutor(
             "code_execute": self._code_execute,
             "web_search": self._web_search,
             "generate_image": self._generate_image,
+            "plan_ecommerce_images": self._plan_ecommerce_images,
             "generate_video": self._generate_video,
             # 数据查询：file_analyze → code_execute + duckdb（沿用沙盒查询能力）
             "erp_agent": self._erp_agent,

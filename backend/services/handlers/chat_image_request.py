@@ -31,6 +31,7 @@ INPUT_FIELDS = {
     "resolution", "output_format", "source_prompt", "plan_item_id", "variant_id",
     "source_task_id",
     "background", "size_requirement",
+    "plan_source",
 }
 
 

@@ -303,6 +303,12 @@ class Settings(BaseSettings):
     chat_image_allowed_user_ids: str = ""  # CSV; empty means all users when enabled.
     chat_image_transparent_enabled: bool = False
     chat_image_max_requests: int = Field(default=15, ge=1, le=15)
+    ecom_image_planning_enabled: bool = False
+    ecom_image_planning_model: str = "gpt-5-6-luna"
+    ecom_image_planning_reasoning: str = "medium"
+    ecom_image_planning_stage_timeout: float = Field(default=180, ge=10, le=600)
+    ecom_image_planning_input_credits_per_million: float | None = Field(default=None, gt=0)
+    ecom_image_planning_output_credits_per_million: float | None = Field(default=None, gt=0)
     chat_image_max_credits: int = Field(default=300, ge=1, le=300)
     chat_image_submission_lease_seconds: int = Field(default=60, ge=10, le=300)
     chat_image_queue_timeout_seconds: int = Field(default=600, ge=60, le=3600)

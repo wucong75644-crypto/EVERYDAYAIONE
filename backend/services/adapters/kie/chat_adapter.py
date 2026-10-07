@@ -428,6 +428,13 @@ class KieChatAdapter(BaseChatAdapter):
 
         将现有 chat() 方法的输出转换为统一的 StreamChunk 格式
         """
+        # Luna is served by KIE's Responses endpoint; it still uses this
+        # existing KIE adapter/client/auth/Gateway path.
+        if self.model == "gpt-5-6-luna":
+            async for chunk in self._stream_responses(messages, reasoning_effort, **kwargs):
+                yield chunk
+            return
+
         # 转换消息格式
         formatted_messages = self.format_messages_from_history(messages)
 
@@ -480,6 +487,8 @@ class KieChatAdapter(BaseChatAdapter):
         **kwargs,
     ) -> ChatResponse:
         """非流式聊天（统一接口，避免与现有 chat 方法冲突）"""
+        if self.model == "gpt-5-6-luna":
+            return await self._responses_sync(messages, reasoning_effort, **kwargs)
         formatted_messages = self.format_messages_from_history(messages)
         effort = ReasoningEffort(reasoning_effort) if reasoning_effort else ReasoningEffort.HIGH
         mode = ThinkingMode(thinking_mode) if thinking_mode else None
@@ -517,3 +526,114 @@ class KieChatAdapter(BaseChatAdapter):
     async def close(self) -> None:
         """关闭客户端连接"""
         await self.client.close()
+
+    @staticmethod
+    def _responses_content(messages):
+        inputs = []
+        for message in messages:
+            role = message.get("role")
+            if role not in {"system", "developer", "user", "assistant"}:
+                raise ValueError("KIE_RESPONSES_ROLE_UNSUPPORTED")
+            content = message.get("content")
+            parts = []
+            for part in ([{"type": "text", "text": content}] if isinstance(content, str) else (content or [])):
+                if part.get("type") in {"text", "input_text", "output_text"}:
+                    parts.append({"type": "output_text" if role == "assistant" else "input_text", "text": part["text"]})
+                elif part.get("type") in {"image_url", "input_image"}:
+                    image = part["image_url"]
+                    parts.append({"type": "input_image", "image_url": image["url"] if isinstance(image, dict) else image})
+                else:
+                    raise ValueError("KIE_RESPONSES_CONTENT_UNSUPPORTED")
+            inputs.append({"role": role, "content": parts})
+        return inputs
+
+    def _responses_body(self, messages, reasoning_effort, stream):
+        from core.config import get_settings
+        effort = reasoning_effort or get_settings().ecom_image_planning_reasoning
+        if effort not in {"low", "medium", "high", "xhigh"}:
+            raise ValueError("KIE_RESPONSES_REASONING_INVALID")
+        return {"model": self.model, "input": self._responses_content(messages),
+                "stream": stream, "reasoning": {"effort": effort}}
+
+    @staticmethod
+    def _responses_usage(response):
+        if response.get("status") != "completed":
+            raise KieAPIError("KIE_RESPONSES_INCOMPLETE")
+        usage = response.get("usage") or {}
+        return usage, response.get("credits_consumed")
+
+    async def _stream_responses(self, messages, reasoning_effort, **kwargs):
+        import json
+        import httpx
+        if kwargs.get("tools") or kwargs.get("response_format"):
+            raise ValueError("KIE_RESPONSES_PLANNER_OPTIONS_UNSUPPORTED")
+        client = await self.client._get_client()
+        body = self._responses_body(messages, reasoning_effort, True)
+        completed = False
+        async with client.stream("POST", "/codex/v1/responses", json=body,
+                timeout=httpx.Timeout(connect=5, read=self.client._stream_timeout, write=30, pool=5)) as response:
+            if response.status_code != 200:
+                raw = await response.aread()
+                try:
+                    error_body = json.loads(raw)
+                except ValueError:
+                    error_body = {"msg": "Invalid provider error body"}
+                self.client._handle_error_response(response.status_code, error_body, self.model)
+            event_data = []
+            async for line in response.aiter_lines():
+                if line.startswith("data:"):
+                    event_data.append(line[5:].lstrip())
+                    continue
+                if line or not event_data:
+                    continue
+                raw = "\n".join(event_data)
+                event_data = []
+                if raw == "[DONE]":
+                    break
+                try:
+                    event = json.loads(raw)
+                except ValueError as error:
+                    raise KieAPIError("KIE_RESPONSES_INVALID_EVENT") from error
+                kind = event.get("type")
+                if kind in {"error", "response.failed", "response.incomplete"} or event.get("error"):
+                    raise KieAPIError("KIE_RESPONSES_FAILED")
+                if kind == "response.output_text.delta":
+                    yield StreamChunk(content=event.get("delta", ""))
+                elif kind == "response.completed":
+                    usage, credits = self._responses_usage(event["response"])
+                    yield StreamChunk(finish_reason="stop", prompt_tokens=usage.get("input_tokens", 0),
+                        completion_tokens=usage.get("output_tokens", 0), credits_consumed=credits)
+                    completed = True
+            # SSE permits the final event to end at EOF without a blank line.
+            if event_data:
+                raw = "\n".join(event_data)
+                if raw != "[DONE]":
+                    try:
+                        event = json.loads(raw)
+                    except ValueError as error:
+                        raise KieAPIError("KIE_RESPONSES_INVALID_EVENT") from error
+                    kind = event.get("type")
+                    if kind in {"error", "response.failed", "response.incomplete"} or event.get("error"):
+                        raise KieAPIError("KIE_RESPONSES_FAILED")
+                    if kind == "response.output_text.delta":
+                        yield StreamChunk(content=event.get("delta", ""))
+                    elif kind == "response.completed":
+                        usage, credits = self._responses_usage(event["response"])
+                        yield StreamChunk(finish_reason="stop", prompt_tokens=usage.get("input_tokens", 0),
+                            completion_tokens=usage.get("output_tokens", 0), credits_consumed=credits)
+                        completed = True
+            if not completed:
+                raise KieAPIError("KIE_RESPONSES_TERMINAL_EVENT_MISSING")
+
+    async def _responses_sync(self, messages, reasoning_effort, **kwargs):
+        if kwargs.get("tools") or kwargs.get("response_format"):
+            raise ValueError("KIE_RESPONSES_PLANNER_OPTIONS_UNSUPPORTED")
+        client = await self.client._get_client()
+        response = await client.post("/codex/v1/responses", json=self._responses_body(messages, reasoning_effort, False))
+        data = response.json()
+        if response.status_code != 200:
+            self.client._handle_error_response(response.status_code, data, self.model)
+        usage, _credits = self._responses_usage(data)
+        text = "".join(part["text"] for output in data.get("output", []) if output.get("type") == "message"
+            for part in output.get("content", []) if part.get("type") == "output_text")
+        return ChatResponse(text, "stop", usage.get("input_tokens", 0), usage.get("output_tokens", 0))

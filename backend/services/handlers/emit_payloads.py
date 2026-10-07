@@ -38,6 +38,9 @@ def _extract_chart_type(option: Dict[str, Any]) -> str:
 def build_block_from_payload(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """把可信 emit payload 转为可持久化 content block。"""
     kind = payload.get("kind")
+    if kind == "ecom_plan":
+        return {"type":"ecom_plan", **{key:payload[key] for key in (
+            "plan_id","revision","status","product_insight","visual_strategy","images") if key in payload}}
     if kind == "chart":
         option = payload.get("option") or {}
         return {

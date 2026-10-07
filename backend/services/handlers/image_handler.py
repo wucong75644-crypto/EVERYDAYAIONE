@@ -54,6 +54,7 @@ class ImageHandler(BaseHandler):
             ChatImageInputResolver, ChatImageNotAcceptedError, freeze_image_request,
             chat_image_acceptance_allowed, validate_chat_image_tool_fields,
         )
+        import hashlib
 
         settings=get_settings()
         if not chat_image_acceptance_allowed(settings, getattr(owner, "user_id", None)):
@@ -71,6 +72,47 @@ class ImageHandler(BaseHandler):
                 or parent.get("conversation_id") != owner.conversation_id
                 or parent.get("base_context_revision") is None):
             raise PermissionError("CHAT_IMAGE_PARENT_DENIED")
+        scoped=ScopedDatabaseClient(self.db,DatabaseScope(owner.user_id,owner.org_id,DatabaseAccessKind.RUNTIME))
+        plan_source=args.get("plan_source")
+        plan_proof=None
+        if plan_source is not None:
+            if (set(args)!={"plan_source"} or not isinstance(plan_source,dict)
+                    or set(plan_source)!={"plan_id","revision","item_id"}):
+                raise ChatImageNotAcceptedError("ECOM_PLAN_SOURCE_ARGUMENTS_INVALID")
+            try:
+                plan_id=str(uuid.UUID(plan_source["plan_id"]))
+                item_id=str(uuid.UUID(plan_source["item_id"]))
+                revision=plan_source["revision"]
+                if type(revision) is not int or revision < 1:
+                    raise ValueError("ECOM_PLAN_REVISION_INVALID")
+                plan=await asyncio.to_thread(lambda:scoped.table("ecom_image_plans").select(
+                    "id,user_id,org_id,conversation_id,plan_revision,status,items,input_snapshot,target_size"
+                ).eq("id",plan_id).maybe_single().execute().data)
+                if not isinstance(plan,dict):
+                    raise ValueError("ECOM_PLAN_SOURCE_UNAVAILABLE")
+                if (plan.get("user_id")!=owner.user_id or plan.get("org_id")!=owner.org_id
+                        or plan.get("conversation_id")!=owner.conversation_id or plan.get("plan_revision")!=revision
+                        or plan.get("status")!="ready"):
+                    raise PermissionError("ECOM_PLAN_SOURCE_DENIED")
+                item=next((entry for entry in plan.get("items",[]) if entry.get("item_id")==item_id),None)
+                if not item or not item.get("request_text") or not item.get("request_text_sha256"):
+                    raise ValueError("ECOM_PLAN_ITEM_UNAVAILABLE")
+                if (not isinstance(plan.get("target_size"),dict)
+                        or item.get("aspect_ratio") != plan["target_size"].get("aspect_ratio")):
+                    raise ValueError("ECOM_PLAN_SIZE_SNAPSHOT_INVALID")
+                if hashlib.sha256(item["request_text"].encode("utf-8")).hexdigest()!=item["request_text_sha256"]:
+                    raise ValueError("ECOM_PLAN_PROMPT_HASH_MISMATCH")
+                selected_refs=[{key:value for key,value in ref.items() if key!="source_id"} for ref in item["references"]]
+                plan_proof={"plan_id":plan_id,"revision":revision,"item_id":item_id,
+                    "request_text_sha256":item["request_text_sha256"]}
+                args={"mode":"image_to_image","prompt":item["request_text"],"references":selected_refs,
+                    "aspect_ratio":item["aspect_ratio"],"output_format":"png",
+                    "size_requirement":{"mode":"explicit"}}
+                if plan["target_size"].get("resolution"):
+                    args["resolution"]=plan["target_size"]["resolution"]
+            except (KeyError,TypeError,ValueError,StopIteration,PermissionError) as error:
+                code=getattr(error,"code",None) or str(error) or "ECOM_PLAN_SOURCE_INVALID"
+                raise ChatImageNotAcceptedError(code) from error
         from services.handlers.chat_context.image_sources import legacy_catalog
         try:
             resolver=ChatImageInputResolver(owner,base_revision=parent["base_context_revision"],
@@ -79,9 +121,37 @@ class ImageHandler(BaseHandler):
             if normalized.get("background")=="transparent" and not settings.chat_image_transparent_enabled:
                 raise PermissionError("CHAT_IMAGE_TRANSPARENT_DISABLED")
             refs=await asyncio.to_thread(resolver.resolve,normalized.get("references",[]))
+            if plan_proof:
+                frozen_sources={entry["source_id"]:entry for entry in plan["input_snapshot"]["resolved_references"]}
+                from services.agent.image.ecommerce_planner.contracts import source_id
+                for reference in refs:
+                    reference["source_id"] = source_id(reference)
+                    expected=frozen_sources.get(reference["source_id"])
+                    if (not expected or expected["content_sha256"]!=reference["content_sha256"]
+                            or expected["file_version"]!=reference["file_version"]
+                            or expected["workspace_path"]!=reference["workspace_path"]):
+                        raise ValueError("ECOM_PLAN_REFERENCE_CHANGED")
             from services.handlers.image_size_requirements import resolve_size_requirement
             intent, previous = await asyncio.to_thread(resolver.size_context)
-            normalized, target_size = resolve_size_requirement(normalized, refs, intent=intent, previous=previous)
+            if plan_proof:
+                locked_size = plan["target_size"]
+                ratio = locked_size["aspect_ratio"]
+                ratio_width, ratio_height = map(int, ratio.split(":"))
+                if (any(key in intent for key in ("width", "height"))
+                        or (intent.get("aspect_ratio") and intent["aspect_ratio"] != ratio)
+                        or (intent.get("resolution") and intent["resolution"] != locked_size.get("resolution"))
+                        or intent.get("mode") == "auto"
+                        or (intent.get("mode") == "inherit_reference"
+                            and locked_size.get("mode") != "inherit_reference")
+                        or (intent.get("orientation") == "portrait" and ratio_width >= ratio_height)
+                        or (intent.get("orientation") == "landscape" and ratio_width <= ratio_height)):
+                    raise ChatImageNotAcceptedError("ECOM_PLAN_SIZE_CHANGED",
+                        "当前尺寸要求与已保存方案不同，请先按新尺寸重新策划后再生成。")
+                normalized, _resolved_size = resolve_size_requirement(
+                    normalized, refs, intent={}, previous=locked_size)
+                target_size = locked_size
+            else:
+                normalized, target_size = resolve_size_requirement(normalized, refs, intent=intent, previous=previous)
             if "source_prompt" in normalized:
                 normalized["source_prompt"] = await asyncio.to_thread(resolver.source_prompt,normalized["source_prompt"],normalized["prompt"])
             if "source_task_id" in normalized:
@@ -93,11 +163,13 @@ class ImageHandler(BaseHandler):
                 "input_message_id":str(parent["input_message_id"]),
                 "base_context_revision":parent["base_context_revision"]}
             origin["skills"] = list(getattr(owner, "image_skill_snapshot", ()))
+            if plan_proof:
+                origin["plan_source"] = plan_proof
             snapshot=freeze_image_request(normalized,refs,origin=origin,
                 max_requests=settings.chat_image_max_requests,max_credits=settings.chat_image_max_credits,
                 size_requirement=target_size)
             await asyncio.to_thread(resolver.verify,refs)
-        except (ValueError, OSError) as error:
+        except (ValueError, OSError, PermissionError) as error:
             # Only this input/read boundary precedes acceptance. RPC exceptions
             # below may mean a committed task; never classify those as rejected.
             code = getattr(error, "code", None) or str(error)
@@ -111,11 +183,17 @@ class ImageHandler(BaseHandler):
             await predecessor[0].wait()
         if owner.cancellation_event is not None and owner.cancellation_event.is_set():
             raise asyncio.CancelledError()
-        scoped=ScopedDatabaseClient(self.db,DatabaseScope(owner.user_id,owner.org_id,DatabaseAccessKind.RUNTIME))
-        result=await asyncio.to_thread(lambda:scoped.rpc("accept_chat_image_request",{
-            "p_parent_task_id":owner.task_id,"p_execution_token":token,
-            "p_snapshot":snapshot,"p_org_id":owner.org_id,
-        }).execute().data)
+        if plan_proof:
+            result=await asyncio.to_thread(lambda:scoped.rpc("accept_chat_ecom_plan_image",{
+                "p_parent_task_id":owner.task_id,"p_execution_token":token,"p_snapshot":snapshot,
+                "p_org_id":owner.org_id,"p_plan_id":plan_proof["plan_id"],
+                "p_plan_revision":plan_proof["revision"],"p_item_id":plan_proof["item_id"],
+            }).execute().data)
+        else:
+            result=await asyncio.to_thread(lambda:scoped.rpc("accept_chat_image_request",{
+                "p_parent_task_id":owner.task_id,"p_execution_token":token,
+                "p_snapshot":snapshot,"p_org_id":owner.org_id,
+            }).execute().data)
         if not isinstance(result,dict) or result.get("outcome") not in {"accepted","replay"}:
             raise RuntimeError("CHAT_IMAGE_ACCEPTANCE_NOT_CONFIRMED")
         try:
