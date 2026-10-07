@@ -323,6 +323,8 @@ class EcommerceImagePlanner:
             result, usage = await self._call(row, lease, stage, prompt,
                 [{"role":"developer","content":prompt},{"role":"user","content":user_content}])
             try:
+                if not result.strip():
+                    raise ValueError("ECOM_PLAN_EMPTY_OUTPUT")
                 parsed = result if stage == 2 else parse_json(result)
                 return (validator(parsed) if validator else parsed), usage
             except (ValueError, json.JSONDecodeError) as error:
@@ -347,6 +349,8 @@ class EcommerceImagePlanner:
                     {"type":"input_image","image_url":url}])
             output, usage = await self._call(row,lease,3,prompt,[{"role":"developer","content":prompt},{"role":"user","content":user_content}])
             try:
+                if not output.strip():
+                    raise ValueError("ECOM_PLAN_EMPTY_OUTPUT")
                 parsed = parse_json(output)
                 return (validator(parsed) if validator else parsed), usage
             except (ValueError,json.JSONDecodeError) as error:
@@ -383,8 +387,8 @@ class EcommerceImagePlanner:
                 tokens["input_tokens"] = max(tokens["input_tokens"],int(usage.get("prompt_tokens",0)))
                 tokens["output_tokens"] = max(tokens["output_tokens"],int(usage.get("completion_tokens",0)))
                 tokens["provider_credits"] = usage.get("api_credits",tokens["provider_credits"])
-            if not content:
-                raise ValueError("ECOM_PLAN_EMPTY_OUTPUT")
+            # A completed empty response is invalid stage output. Preserve its
+            # measured usage so the bounded stage validator can repair it.
             user_credits = max(1,math.ceil(tokens["input_tokens"]*float(self.settings.ecom_image_planning_input_credits_per_million)/1_000_000
                 + tokens["output_tokens"]*float(self.settings.ecom_image_planning_output_credits_per_million)/1_000_000))
             usage={**tokens,"user_credits":user_credits,"provider":"kie","model":self.settings.ecom_image_planning_model}

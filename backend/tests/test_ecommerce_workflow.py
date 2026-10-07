@@ -106,6 +106,61 @@ async def test_planner_provider_error_records_safe_diagnostics(monkeypatch):
     session.close.assert_awaited_once()
 
 
+@pytest.mark.parametrize('stage', [1, 2, 3])
+async def test_completed_empty_planner_output_enters_bounded_validation_repair(monkeypatch, stage):
+    service = planner()
+    seen = []
+    sessions = []
+    replies = iter(['', '完整执行稿' if stage == 2 else '{"status":"ready"}'])
+    def open_chat(request):
+        reply = next(replies)
+        async def stream(messages, **kwargs):
+            seen.append(messages)
+            yield StreamChunk(content=reply, prompt_tokens=16026,
+                completion_tokens=0 if not reply else 10)
+        session = SimpleNamespace(stream_chat=stream,
+            last_result=SimpleNamespace(status='completed', usage={}), close=AsyncMock())
+        sessions.append(session)
+        return session
+    monkeypatch.setattr('services.agent.image.ecommerce_planner.service.get_model_gateway',
+        lambda: SimpleNamespace(open_chat=open_chat))
+    evidence = {'input_snapshot': {'image_count': 5}, 'product_selling_points': {'status': 'ready'},
+        'visual_direction': '已保存的风格规范'}
+    raw = [{'parts': [{'text': '帮我生成5张主图，要求带那种发财风格的，这个是存钱本'}]}]
+    refs = [{'source_id': 'source-first', 'role': 'product'},
+        {'source_id': 'source-second', 'role': 'style_reference'}]
+    urls = ['https://example.invalid/first.png', 'https://example.invalid/second.png']
+    args = ({'id': str(uuid4())}, 'lease')
+    if stage == 3:
+        output, usage = await service._stage_images(*args, 'original', 'integration', evidence, raw, refs, urls)
+    else:
+        output, usage = await service._stage(*args, stage, 'original', 'integration', evidence, raw, refs, urls)
+    assert output == ('完整执行稿' if stage == 2 else {'status': 'ready'})
+    assert usage['output_tokens'] == 10 and len(sessions) == 2
+    repair = [a for a in service._save_attempt.await_args_list if a.kwargs.get('charge')]
+    assert len(repair) == 1 and repair[0].args[3]['validation_error'] == 'ECOM_PLAN_EMPTY_OUTPUT'
+    assert repair[0].args[3]['input_tokens'] == 16026 and repair[0].args[3]['output_tokens'] == 0
+    assert 'ECOM_PLAN_EMPTY_OUTPUT' in seen[1][0]['content']
+    assert seen[0][1] == seen[1][1]  # Raw text, references, image order remain identical.
+    for session in sessions:
+        session.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize('stage', [1, 2, 3])
+async def test_empty_planner_output_stops_after_three_attempts(stage):
+    service = planner()
+    service._call = AsyncMock(return_value=('', {'user_credits': 1}))
+    evidence = {'input_snapshot': {}, 'product_selling_points': {}, 'visual_direction': ''}
+    args = ({'id': str(uuid4())}, 'lease')
+    with pytest.raises(ValueError, match='PLANNER_IMAGE_JSON_INVALID' if stage == 3 else 'PLANNER_JSON_VALIDATION_FAILED'):
+        if stage == 3:
+            await service._stage_images(*args, 'original', 'integration', evidence, [], [], [])
+        else:
+            await service._stage(*args, stage, 'original', 'integration', evidence, [], [], [])
+    assert service._call.await_count == 3
+    assert service._save_attempt.await_count == 3
+
+
 async def test_main_model_gets_planner_only_after_skill_activation():
     from config.chat_tools import get_core_tools
     from services.handlers.chat.execution_engine import _apply_skill_context
