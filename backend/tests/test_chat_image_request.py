@@ -122,9 +122,28 @@ def test_deleted_exact_asset_path_cannot_select_other_basename(resolver):
 
 def test_async_schema_single_output_and_exact_source():
     from services.tools.definitions.media import _schema_generate_image_async
+    from services.agent.tool_args_validator import validate_tool_args
     schema=_schema_generate_image_async()["function"]
     assert schema["name"] == "generate_image"
-    assert schema["parameters"]["required"] == ["mode","prompt"]
+    assert schema["parameters"]["oneOf"] == [
+        {"required": ["mode", "prompt"]}, {"required": ["plan_source"]},
+    ]
+    plan_source = schema["parameters"]["properties"]["plan_source"]
+    assert plan_source["required"] == ["plan_id", "revision", "item_id"]
+    assert plan_source["additionalProperties"] is False
+    selected = [_schema_generate_image_async()]
+    planned_args = {"plan_source": {
+        "plan_id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1,
+        "item_id": "00000000-0000-4000-8000-000000000002",
+    }}
+    cleaned, error = validate_tool_args("generate_image", planned_args, selected)
+    assert error is None
+    assert cleaned == planned_args
+    _, error = validate_tool_args("generate_image", {
+        **planned_args, "mode": "text_to_image", "prompt": "cannot override saved plan",
+    }, selected)
+    assert error is not None
     assert "num_images" not in schema["parameters"]["properties"]
     assert "prompts" not in schema["parameters"]["properties"]
     assert "model" not in schema["parameters"]["properties"]
