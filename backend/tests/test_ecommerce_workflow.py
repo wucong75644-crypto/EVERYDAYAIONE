@@ -161,6 +161,44 @@ async def test_empty_planner_output_stops_after_three_attempts(stage):
     assert service._save_attempt.await_count == 3
 
 
+async def test_stage_three_final_contract_follows_original_and_exposes_complete_schema():
+    from services.agent.image.ecommerce_planner.prompt_resources import resources, wrapper
+    from services.agent.image.ecommerce_planner.contracts import ImagesOutput, SCHEME_HEADINGS
+    service = planner()
+    service._call = AsyncMock(return_value=('{"status":"ready"}', {}))
+    bodies, _schema = resources()
+    ref = {'source_id': 'message-uuid:1', 'role': 'product'}
+    evidence = {'input_snapshot': {}, 'product_selling_points': {}, 'visual_direction': ''}
+    await service._stage_images({'id': str(uuid4())}, 'lease', bodies[2], wrapper(3), evidence, [], [ref], ['image-url'])
+    prompt, messages = service._call.await_args.args[3:5]
+    assert prompt.startswith(bodies[2]) and prompt.endswith(wrapper(3))
+    payload = json.loads(messages[1]['content'][0]['text'])
+    schema = payload['output_json_schema']
+    assert schema == ImagesOutput.model_json_schema()
+    assert schema['additionalProperties'] is False
+    assert schema['$defs']['PlannedImage']['additionalProperties'] is False
+    assert set(schema['$defs']['PlannedImage']['required']) == {
+        'position','name','purpose','scheme_markdown','references','positive_prompt','negative_prompt','aspect_ratio'}
+    assert payload['reference_identity_examples'] == [{'source_id': 'message-uuid:1',
+        'first_input_literal': '输入图片1—message-uuid:1'}]
+    assert all(f'## {title}' in wrapper(3) for title in SCHEME_HEADINGS)
+
+
+def test_reference_order_repair_identifies_exact_missing_literal():
+    from services.agent.image.ecommerce_planner.contracts import validate_images, LABELS
+    reference = {'message_id': str(uuid4()), 'content_index': 1, 'source_id': '', 'role': 'product'}
+    reference['source_id'] = f"{reference['message_id']}:1"
+    image = {'position': 1, 'name': '主图', 'purpose': '展示', 'scheme_markdown': '完整稿',
+        'references': [reference], 'positive_prompt': '\n'.join(f'【{label}】内容' for label in LABELS),
+        'negative_prompt': '排除变形', 'aspect_ratio': '1:1'}
+    with pytest.raises(ValueError) as raised:
+        validate_images({'status': 'ready','questions': [], 'images': [image], 'review_records': []},
+            {'image_count': 1, 'references': [reference], 'target_size': {'aspect_ratio': '1:1'}})
+    assert 'PLANNER_REFERENCE_ORDER_TEXT_MISMATCH' in str(raised.value)
+    assert f"输入图片1—{reference['source_id']}" in str(raised.value)
+    assert '第1张' in str(raised.value)
+
+
 async def test_main_model_gets_planner_only_after_skill_activation():
     from config.chat_tools import get_core_tools
     from services.handlers.chat.execution_engine import _apply_skill_context

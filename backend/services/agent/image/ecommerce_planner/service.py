@@ -333,15 +333,21 @@ class EcommerceImagePlanner:
         raise ValueError("PLANNER_JSON_VALIDATION_FAILED")
 
     async def _stage_images(self, row, lease, original, integration, evidence, messages, refs, image_urls, validator=None):
+        from .contracts import ImagesOutput
         last_error = None
         for repair in range(3):
-            prompt = integration + "\n\n【以下为随版本发布的完整专业阶段规则】\n" + original
+            # Keep the immutable professional rules, then give the final wire
+            # contract so the source's Markdown UI does not replace JSON keys.
+            prompt = original + "\n\n【最终平台交付协议，优先于上述展示格式】\n" + integration
             if repair:
                 prompt += f"\n\n上一稿未通过服务端校验（{last_error}）。请保留首稿有效设计，修正问题后重新输出完整JSON。"
             body = {"stage":3,"input_snapshot":evidence["input_snapshot"],
                 "product_selling_points":evidence["product_selling_points"],"visual_direction":evidence["visual_direction"],
                 "raw_user_messages":messages,"references_in_generation_order":[
                     {"ordinal": n,"source_id":r["source_id"],"role":r["role"]} for n,r in enumerate(refs,1)],
+                "output_json_schema": ImagesOutput.model_json_schema(),
+                "reference_identity_examples": [{"source_id": r["source_id"],
+                    "first_input_literal": f"输入图片1—{r['source_id']}"} for r in refs],
                 **({"previous_plan": evidence["previous_plan"]} if evidence.get("previous_plan") else {})}
             user_content = [{"type":"input_text","text":json.dumps(body,ensure_ascii=False)}]
             for i,(reference,url) in enumerate(zip(refs,image_urls),1):

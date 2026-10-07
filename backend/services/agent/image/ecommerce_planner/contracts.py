@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -168,6 +169,14 @@ class ReviewRecord(StrictModel):
     recheck_scope: str = Field(min_length=1)
 
 
+class ImagesOutput(StrictModel):
+    """Model-facing JSON Schema for the existing stage-three wire contract."""
+    status: Literal["ready", "needs_input"]
+    questions: list[str]
+    images: list[PlannedImage]
+    review_records: list[ReviewRecord]
+
+
 def validate_images(value, snapshot):
     if set(value) != {"status", "questions", "images", "review_records"}:
         raise ValueError("PLANNER_OUTPUT_FIELDS_INVALID")
@@ -201,8 +210,9 @@ def validate_images(value, snapshot):
             key = source_id(ref)
             if key not in allowed or ref != allowed[key]:
                 raise ValueError("PLANNER_REFERENCE_CHANGED")
-            if f"输入图片{ordinal}—{key}" not in image["positive_prompt"]:
-                raise ValueError("PLANNER_REFERENCE_ORDER_TEXT_MISMATCH")
+            required = f"输入图片{ordinal}—{key}"
+            if required not in image["positive_prompt"]:
+                raise ValueError(f"PLANNER_REFERENCE_ORDER_TEXT_MISMATCH: 第{position}张参考图栏目须逐字包含“{required}”，编号按本张references顺序。")
         headings = re.findall(r"(?m)^##\s+(.+?)\s*$", image["scheme_markdown"])
         if headings != list(SCHEME_HEADINGS):
             raise ValueError("PLANNER_SCHEME_INCOMPLETE")

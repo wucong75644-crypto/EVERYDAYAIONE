@@ -2,7 +2,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from .contracts import LABELS, VISUAL_SECTIONS
+from .contracts import LABELS, VISUAL_SECTIONS, SCHEME_HEADINGS
 
 ROOT = Path(__file__).resolve().parents[4] / "config" / "ecommerce_planner_prompts"
 FILES = ("01-product-selling-points.md", "02-visual-direction.md", "03-image-planner.md")
@@ -53,12 +53,15 @@ def wrapper(stage):
 若提供previous_plan，先读取其中已完成阶段的原始输出；用户本轮补充内容用于修正或补全仍有效的旧方案，不得无故丢弃已确认信息。
 ready时questions为空，images数量精确等于image_count，按position从1连续排列。
 每项精确为position,name,purpose,scheme_markdown,references,positive_prompt,negative_prompt,aspect_ratio。
-scheme_markdown保留原固定格式的方案内容、视觉设定、参考图使用方式（完整生图稿另存positive_prompt）。
+JSON键名使用上述英文，不得以“完整生图提示词”“负面提示词”“参考图使用方式”等中文栏目替代JSON键。
+scheme_markdown是一个完整Markdown字符串，按原固定格式保留全部五节：""" + "、".join(f"## {title}" for title in SCHEME_HEADINGS) + """。
+其中“完整生图提示词”节的正文必须与positive_prompt逐字相同，“负面提示词”节的正文必须与negative_prompt逐字相同；两份字段是同一执行文本的完整呈现，不能省略任何一处。
 references从input_snapshot.references中逐项原样复制，只选本张需要的图并按实际生成顺序排列，role不改。
 positive_prompt保持原九个栏目：""" + "、".join(f"【{label}】" for label in LABELS) + """。
 商品比例栏目必须包含原规则：“商品按参考图真实比例等比例缩放，排版围绕实际商品形状安排，不拉伸、压扁、增厚或改变部件比例。”
 负面提示词必须明确排除商品拉伸、压扁、增厚、部件比例改变及透视失真。
 在参考图栏目逐项明确“输入图片1—真实来源ID—角色—使用内容”；第二张为输入图片2，序号按本项references，不是全局附件序号。
+请原样使用reference_identity_examples给出的每个真实ID，重新选择本张输入序号；输入图片N后紧接字符“—”及source_id，不得插入空格、来源ID=或展示别名。
 positive_prompt、negative_prompt分别保持完整原文，不夹带方案说明或审核记录。
 review_records是实际自检记录的数组，每项精确字段：object(对象),method(只能self_check),checks(检查项字符串数组),
 conclusion(pass/blocked/repaired),evidence(具体依据),impact(影响),attribution(归因),repair(无修复填无),recheck_scope(复查范围)。
