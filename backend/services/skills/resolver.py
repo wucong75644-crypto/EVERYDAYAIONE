@@ -63,6 +63,13 @@ class SkillCandidate(Contract):
     scope_kind: Literal["platform", "org", "personal"]
     catalog_metadata: SkillCatalogMetadata
 
+    @model_serializer(mode='wrap')
+    def preserve_legacy_snapshots(self, handler):
+        result = handler(self)
+        if not self.global_assignment:
+            result.pop('global_assignment', None)
+        return result
+
 
 class SkillResolver:
     def resolve(

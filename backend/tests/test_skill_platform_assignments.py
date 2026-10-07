@@ -1,20 +1,45 @@
 """Opt-in global platform grants, personal discovery and real RLS boundaries."""
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+import hashlib
+from pathlib import Path
 import psycopg
 import pytest
 
 from core.db_scope import DatabaseAccessKind, DatabaseScope, SET_DATABASE_SCOPE_SQL
 from services.skills.authoring_contracts import CreateSkill, DraftContent, TransitionDraft
-from services.skills.contracts import SkillError
+from services.skills.contracts import SkillError, PackageCreate, PublishRevision
+from services.skills.storage import SkillStorage
+from services.skills.renderer import render, validate_resource_templates
 from services.skills.repository import SkillRepository
 from services.skills.binding_repository import SkillBindingRepository
 from services.skills.resolver import SkillResolutionContext, SkillResolver
+from services.skills.runtime_source import ActorSkillSource
+from tests.test_skill_runtime import state, activate
 from tests.test_skill_personal_postgres import environment, postgres_socket, MIGRATIONS  # noqa: F401
+
+
+def test_actual_main_image_entry_passes_publication_and_runtime_template_validation():
+    raw = (Path(__file__).parents[2] / 'examples/skills/catalog/platform/ecommerce-main-images/v1/SKILL.md').read_bytes()
+    body = raw.split(b'---\n', 2)[2]
+    package = PackageCreate(skill_key='ecommerce-main-images', source='test', scope_kind='platform')
+    publication = PublishRevision(revision='v1', content_sha256=hashlib.sha256(raw).hexdigest(),
+        body_sha256=hashlib.sha256(body).hexdigest())
+    skill = SkillStorage.validate_bytes(package, publication, raw)
+    validate_resource_templates(skill, {})
+    assert render(skill.body, {}) == body.decode()
+    assert skill.catalog_metadata.model_selectable
+    assert set(skill.catalog_metadata.allowed_tool_names) == {'get_conversation_context', 'plan_ecommerce_images', 'generate_image'}
+    assert not skill.resources.assets
 
 
 @pytest.fixture
 def global_skill(environment):
     env = environment
     with env.pool.connection(privileged=True) as c:
+        c.execute('GRANT CREATE ON SCHEMA public TO everydayai')
+        c.execute('ALTER TABLE skill_assignments OWNER TO everydayai')
+        c.execute('ALTER FUNCTION skill_binding_guard() OWNER TO everydayai')
         c.execute((MIGRATIONS / '280_skill_platform_assignments.sql').read_text())
     author = env.service(user=env.super_admin, owner_scope='platform')
     pid = author.create(CreateSkill(skill_key='main-images', content=DraftContent(
@@ -129,3 +154,24 @@ def test_global_requires_platform_package_and_audits_operator(global_skill):
     operator.set_platform_assignment(env.pid, env.rid, enabled=True)
     with env.pool.connection(privileged=True) as c:
         assert c.execute("SELECT count(*) FROM skill_change_audits WHERE package_id=%s AND request_id='operator' AND actor_user_id IS NULL AND action='platform_assign'", (env.pid,)).fetchone()[0] == 1
+
+
+async def test_global_activation_and_checkpoint_restore_keep_exact_body_and_tool_ceiling(global_skill):
+    env = global_skill
+    env.author.repository.set_platform_assignment(env.pid, env.rid, enabled=True)
+    context = SkillResolutionContext(actor_user_id=env.actor, org_id=None, conversation_scope='user',
+        agent_domain='general', execution_mode='interactive', enabled_feature_flags={'skill_catalog_enabled'})
+    source = ActorSkillSource(SimpleNamespace(db=SimpleNamespace(pool=env.pool)), SimpleNamespace(
+        actor_user_id=str(env.actor), org_id=None), env.config)
+    source.session_bindings = AsyncMock(return_value=[])
+    source._resolution_context = AsyncMock(return_value=context)
+    runtime = state(source, platform_tool_names={'plan_ecommerce_images', 'generate_image', 'file_delete'})
+    await runtime.initialize()
+    assert (await runtime.activate(activate('main-images')))['ok']
+    saved = runtime.checkpoint()
+    assert saved['directory'][0]['global_assignment']
+    assert runtime.effective_allowed_tool_names == {'plan_ecommerce_images', 'generate_image'}
+    restored = state(source, platform_tool_names={'plan_ecommerce_images', 'generate_image', 'file_delete'})
+    await restored.initialize(saved)
+    assert restored.messages() == runtime.messages()
+    assert restored.effective_allowed_tool_names == runtime.effective_allowed_tool_names

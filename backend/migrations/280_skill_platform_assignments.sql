@@ -1,5 +1,8 @@
 -- Platform-wide availability is explicit and opt-in. Existing assignments stay
 -- organization-scoped; an explicit organization row (including disabled) wins.
+-- These legacy Skill tables/functions are owned by the existing application
+-- role, not everydayai_owner. Keep their ownership and FORCE RLS unchanged.
+SET LOCAL ROLE everydayai;
 ALTER TABLE public.skill_assignments DROP CONSTRAINT skill_assignments_pkey;
 ALTER TABLE public.skill_assignments ALTER COLUMN org_id DROP NOT NULL;
 ALTER TABLE public.skill_assignments ADD CONSTRAINT skill_assignments_org_package_key UNIQUE (org_id, package_id);
@@ -75,3 +78,4 @@ BEGIN
     END IF;
     RETURN NEW;
 END $$;
+RESET ROLE;
