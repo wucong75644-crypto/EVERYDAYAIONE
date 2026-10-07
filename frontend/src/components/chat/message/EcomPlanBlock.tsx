@@ -102,7 +102,9 @@ export default function EcomPlanBlock({ plan, onConfirm }: EcomPlanBlockProps) {
 
       {/* 图片方案列表 */}
       <div className="divide-y divide-border-primary">
-        {images.map((img, i) => (
+        {images.map((img, i) => {
+          const savedImage = saved?.images?.[i];
+          return (
           <div key={img.item_id || `${img.image_type}-${i}`} className="px-4 py-3">
             <div className="flex items-center gap-2 mb-1.5">
               <span className="text-xs font-medium text-accent bg-accent/10 px-2 py-0.5 rounded-full">
@@ -115,15 +117,15 @@ export default function EcomPlanBlock({ plan, onConfirm }: EcomPlanBlockProps) {
             </div>
             <p className="text-xs text-text-tertiary mb-2">{img.purpose}</p>
 
-            {plan.plan_id && saved?.images?.[i] && (
+            {plan.plan_id && savedImage && (
               <details className="mt-2 text-xs text-text-secondary">
                 <summary className="cursor-pointer">查看本张完整方案与执行稿</summary>
                 <div className="space-y-2 pt-2">
-                  <pre className="whitespace-pre-wrap">{saved.images[i].scheme_markdown}</pre>
-                  <details><summary className="cursor-pointer">完整正向提示词</summary><pre className="whitespace-pre-wrap pt-1">{saved.images[i].positive_prompt}</pre></details>
-                  <details><summary className="cursor-pointer">负面提示词</summary><pre className="whitespace-pre-wrap pt-1">{saved.images[i].negative_prompt}</pre></details>
+                  <pre className="whitespace-pre-wrap">{savedImage.scheme_markdown}</pre>
+                  <details><summary className="cursor-pointer">完整正向提示词</summary><pre className="whitespace-pre-wrap pt-1">{savedImage.positive_prompt}</pre></details>
+                  <details><summary className="cursor-pointer">负面提示词</summary><pre className="whitespace-pre-wrap pt-1">{savedImage.negative_prompt}</pre></details>
                   <button type="button" className="inline-flex items-center gap-1 rounded border border-border-primary px-2 py-1"
-                    onClick={() => navigator.clipboard.writeText(saved.images[i].request_text)}><Copy className="h-3 w-3"/>复制完整执行稿</button>
+                    onClick={() => navigator.clipboard.writeText(savedImage.request_text)}><Copy className="h-3 w-3"/>复制完整执行稿</button>
                 </div>
               </details>
             )}
@@ -156,7 +158,8 @@ export default function EcomPlanBlock({ plan, onConfirm }: EcomPlanBlockProps) {
               </p>
             )}
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* 底部：积分预估 + 确认按钮 */}
