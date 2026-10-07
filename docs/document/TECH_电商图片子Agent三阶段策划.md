@@ -12,7 +12,7 @@
 
 279 迁移已应用，生产主图策划开关已按用户授权向所有用户开启。确认费率为输入 11.2、输出 67.2 积分/百万 token；当前 KIE 没有缓存 usage 分项时全部输入按 11.2 结算。模型为 `gpt-5-6-luna`，复用 KIE 适配。该配置是平台用户收费规则，供应商额度和上限仍以实际账户为准。
 
-只发布一个平台入口 Skill：`examples/skills/catalog/platform/ecommerce-main-images/v1/SKILL.md`。三份原始提示词是子 Agent 内部的版本化代码资源，不注册到 Skill 目录，也不要求主 AI 分别激活。入口 Skill 自动选择后调用 `plan_ecommerce_images`；执行稿由程序按 `plan_source` 交给 `generate_image`。
+只发布一个平台入口 Skill：`examples/skills/catalog/platform/ecommerce-main-images/v2/SKILL.md`（保留不可变 v1）。三份原始提示词是子 Agent 内部的版本化代码资源，不注册到 Skill 目录，也不要求主 AI 分别激活。入口 Skill 自动选择后调用 `plan_ecommerce_images`；执行稿由程序按 `plan_source` 交给 `generate_image`。
 
 既有平台 Skill 仅支持组织 assignment，不能覆盖无组织个人账号。280 迁移增加显式平台全局 assignment（`org_id=NULL`），只允许平台包；默认不自动启用任何已有 Skill。可信平台管理员或带审计 request_id 的服务器发布者可写全局分配，普通组织管理员不能写。目录、正文读取和会话绑定沿用同一有效分配；明确的组织分配优先，包括组织停用。功能开关、用户身份、工具权限、固定版本及哈希检查仍生效。
 
@@ -23,6 +23,16 @@
 补齐验证：Skill 目录、控制面、RLS、个人/组织发现、正文激活、会话绑定、重试及旧快照兼容的定向测试通过；实际入口文件通过发布模板与渲染预算检查。完整发布回归为 11,431 通过、113 跳过、4 预期失败。首轮补齐发布停在 280 的对象所有者不匹配，迁移事务回滚，未产生全局入口；确认旧发布及数据库迁移已退出后恢复原持有锁。修正迁移全程使用既有 `everydayai` 所有者角色，保留对象归属和 FORCE RLS；按真实归属模拟的 10 项验证通过。后续可验收候选以最终受控发布成功回执为准。
 
 生产目录核验：`ecommerce-main-images · v1` 已经 SkillCatalog 发布并全局启用，完整文件 SHA-256 为 `8689f60335ab9152e7c6e2032adb107e3ddb551bd05886a13a13496ed913ae3e`。所有活跃用户实际组织及个人上下文均可发现与读取；没有注册三份内部提示词。已有平台管理员真实聊天上下文中，ActorSkillSource 通过完整身份校验，SkillRuntime 实际激活、读取正文及 checkpoint 恢复通过；工具上限精确为 `get_conversation_context`、`plan_ecommerce_images`、`generate_image`。验证不发送用户聊天、不调用 KIE 或生图。浏览器自动化因当前站点的工具权限限制未继续，用户页面到最终图片的真实整链与质量验收尚未代做。发布后保留当前任务工作树，未合并 main。
+
+## 0.2 生产失败修复（2026-10-07）
+
+用户生产请求“帮我生成5张主图，要求带那种发财风格的，这个是存钱本”暴露了两个问题。checkpoint 中入口 Skill 在目录但 active 为空；planner 作为 core 工具被主模型直接调用。实际子 Agent 已创建方案并进入阶段一，但组织自有 KIE 密钥返回 HTTP 200 / 业务 code 401，Responses 适配器误报为缺少 SSE 终止事件；主模型把调用失败解释为资料不足并自行生成提示词，随后以普通图片参数提交了五张图，没有使用保存方案。
+
+经用户明确确认，本平台主图子 Agent 改用平台默认 KIE 密钥；现有数据访问 scope、用户和组织积分账本不改变，其他组织 BYOK 调用不改变。planner 从 core 展示移除，激活入口 Skill 后按现有工具发现机制开放；服务端校验本轮可信 Skill 快照。模型调用失败标记 stop_workflow，由 Actor 终止本轮，不再追加主模型回合。生图入口对已激活主图 Skill 或本轮已有策划记录的任务要求 plan_source，禁止失败后绕过方案。
+
+Responses 适配器识别 HTTP 200 包含业务 401/402/429 等错误，沿用既有 KIE 异常分类；方案阶段记录只保存安全错误类型、状态和错误码，不保存凭证或供应商原始报错。入口正文升级 v2，明确 error 与 needs_input 的区别；发布固定文件 SHA-256 为 cfd5239fb93bb2fe7d47ba1a6b9c849a33538fdb7b69effdccc5ca9d8ba89142，v1 不覆盖。
+
+定向回归 231 项通过，包括真实 HTTP 响应解析、图片顺序、平台凭证选择与数据 scope 保持、Skill 激活后工具展示、失败终止模型循环、阻止普通 prompt 绕过方案、实际 v1/v2 模板发布与隔离 PostgreSQL 权限验证。真实付费三阶段和生图验证结果另行记录，测试通过不代表供应商实链已完成。
 
 ## 1. 已确认决定与范围
 
@@ -55,7 +65,7 @@
 | `core/config.py`、`migrations/278_chat_image_size_budget.sql`、`task_limit_service.py` | 15 个每用户共享活跃任务额度；满额排队；图片首次生成与显式重试共享父任务累计 300 积分预算。累计张数不作为完成后不能继续生成的上限。 | 直接复用；并发额度不等于供应商允许同时处理的请求数，聊天本身也占槽位。 |
 | `services/tools/execution.py`、`dispatcher.py` | ToolSpec → Policy → 受控执行；有当前用户、组织、会话、任务、取消与预算上下文。 | 新工具注册到同一机制；方案引用不能绕过图片工具的 Policy 和接受边界。 |
 | `services/model_gateway.py` | 统一模型请求、并发、超时、取消和 usage 采集。 | 三个阶段均走 Gateway，不从业务服务直接发送裸 HTTP 请求。 |
-| `services/adapters/kie/client.py`、`chat_adapter.py` | 当前 KIE 文本实现处理 Gemini Chat Completions 格式。 | 在既有 `KieChatAdapter` 内按 Luna 模型分流到 Responses 协议，继续使用原 KIE 凭证/BYOK、客户端和 Gateway。 |
+| `services/adapters/kie/client.py`、`chat_adapter.py` | 当前 KIE 文本实现处理 Gemini Chat Completions 格式。 | 在既有 `KieChatAdapter` 内按 Luna 模型分流到 Responses 协议，继续使用原 KIE 客户端和 Gateway；本平台子 Agent 经用户确认使用平台默认 KIE 密钥，数据权限和积分结算仍保持实际组织身份。 |
 
 普通 Skill 正文上限 16,384 UTF-8 字节、渲染上限 24,576 字节。原包第二阶段约 26 KB，第三阶段约 55 KB。因此入口 Skill 保持短小，三阶段提示词作为版本化服务资源分别读取，不截断、不为了导入而提高全局 Skill 限额。
 

@@ -889,6 +889,10 @@ async def _execute_tools(
     if rejected:
         by_call = {item[0]["id"]: item for item in [*results, *rejected]}
         results = [by_call[call["id"]] for call in calls]
+    for call, result, is_error, _display in results:
+        if (call["name"] == "plan_ecommerce_images" and is_error
+                and getattr(result, "metadata", {}).get("stop_workflow") is True):
+            handler._tool_result_stop_reason = getattr(result, "summary", None) or _display
     # Confirmed child placeholders are the final delivery; never synthesize
     # another acknowledgement. Errors and mixed tool batches keep their flow.
     handler._terminal_image_pending = bool(results) and all(

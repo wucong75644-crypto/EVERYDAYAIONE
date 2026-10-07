@@ -579,6 +579,18 @@ class KieChatAdapter(BaseChatAdapter):
                 except ValueError:
                     error_body = {"msg": "Invalid provider error body"}
                 self.client._handle_error_response(response.status_code, error_body, self.model)
+            if "text/event-stream" not in response.headers.get("content-type", ""):
+                raw = await response.aread()
+                try:
+                    error_body = json.loads(raw)
+                    code = int(error_body.get("code", 0))
+                except (ValueError, TypeError, AttributeError):
+                    raise KieAPIError("KIE_RESPONSES_STREAM_BODY_INVALID") from None
+                # KIE can return HTTP 200 with a business-level 401/402/429.
+                # Preserve that classification instead of reporting missing SSE.
+                if 400 <= code <= 599:
+                    self.client._handle_error_response(code, error_body, self.model)
+                raise KieAPIError("KIE_RESPONSES_STREAM_BODY_INVALID")
             event_data = []
             async for line in response.aiter_lines():
                 if line.startswith("data:"):

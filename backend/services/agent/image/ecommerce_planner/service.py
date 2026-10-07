@@ -49,6 +49,10 @@ class EcommerceImagePlanner:
             request_id=f"ecom-plan:{owner.task_id}"[:128]))
 
     async def run(self, args):
+        if not any(entry.get("skill_key") == "ecommerce-main-images"
+                for entry in getattr(self.owner, "image_skill_snapshot", ())):
+            return AgentResult("请先调用 activate_skill，skill_id 使用 ecommerce-main-images，读取正文后再调用主图策划工具。",
+                status="error", error_message="ECOM_PLAN_SKILL_REQUIRED")
         if self.settings.ecom_image_planning_enabled is not True:
             return AgentResult("主图策划服务尚未启用。", status="error", error_message="ECOM_IMAGE_PLANNING_DISABLED")
         rates = (self.settings.ecom_image_planning_input_credits_per_million,
@@ -294,9 +298,12 @@ class EcommerceImagePlanner:
             raise
         except Exception as error:
             await self._fail(row["id"], lease, active_stage, "failed")
-            return AgentResult("主图方案生成遇到问题，已保留阶段记录；请在补充信息后重新发起。", status="error",
+            from services.adapters.kie.client import KieAuthenticationError
+            summary = ("主图策划模型鉴权失败，需要修复 KIE 配置后重试。"
+                if isinstance(error, KieAuthenticationError) else "主图策划服务调用失败，已保留阶段记录，请稍后重试。")
+            return AgentResult(summary + "当前未完成策划，未按方案提交生图。", status="error",
                 error_message=getattr(error, "code", None) or type(error).__name__,
-                metadata={"plan_id": row["id"], "stage": "failed"})
+                metadata={"plan_id": row["id"], "stage": "failed", "stop_workflow": True})
 
     async def _stage(self, row, lease, stage, original, integration, evidence, messages, refs, image_urls, validator=None):
         last_error = None
@@ -354,7 +361,9 @@ class EcommerceImagePlanner:
         if timeout <= 1:
             raise TimeoutError("ECOM_PLAN_PARENT_BUDGET_EXHAUSTED")
         session = get_model_gateway().open_chat(ModelCallRequest(
-            model_id=self.settings.ecom_image_planning_model, org_id=self.owner.org_id, db=self.owner.db,
+            # This platform Agent uses the platform KIE credential. Data access
+            # and credit accounting continue to use self.scope/owner.org_id.
+            model_id=self.settings.ecom_image_planning_model, org_id=None,
             task_id=self.owner.task_id, timeout=timeout, cancel_token=self.owner.cancellation_event,
             budget=self.owner.execution_budget))
         content = ""
@@ -384,7 +393,9 @@ class EcommerceImagePlanner:
             await self._save_attempt(row,lease,stage,{"outcome":"cancelled_or_uncertain"},"uncertain",None,charge=False)
             raise
         except Exception as error:
-            await self._save_attempt(row,lease,stage,{"error_type":type(error).__name__},"uncertain",None,charge=False)
+            await self._save_attempt(row,lease,stage,{"error_type":type(error).__name__,
+                "http_status":getattr(error,"status_code",None),
+                "provider_error_code":getattr(error,"error_code",None)},"uncertain",None,charge=False)
             raise
         finally:
             await session.close()

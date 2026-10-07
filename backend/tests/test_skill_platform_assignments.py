@@ -19,11 +19,12 @@ from tests.test_skill_runtime import state, activate
 from tests.test_skill_personal_postgres import environment, postgres_socket, MIGRATIONS  # noqa: F401
 
 
-def test_actual_main_image_entry_passes_publication_and_runtime_template_validation():
-    raw = (Path(__file__).parents[2] / 'examples/skills/catalog/platform/ecommerce-main-images/v1/SKILL.md').read_bytes()
+@pytest.mark.parametrize('revision', ['v1', 'v2'])
+def test_actual_main_image_entry_passes_publication_and_runtime_template_validation(revision):
+    raw = (Path(__file__).parents[2] / f'examples/skills/catalog/platform/ecommerce-main-images/{revision}/SKILL.md').read_bytes()
     body = raw.split(b'---\n', 2)[2]
     package = PackageCreate(skill_key='ecommerce-main-images', source='test', scope_kind='platform')
-    publication = PublishRevision(revision='v1', content_sha256=hashlib.sha256(raw).hexdigest(),
+    publication = PublishRevision(revision=revision, content_sha256=hashlib.sha256(raw).hexdigest(),
         body_sha256=hashlib.sha256(body).hexdigest())
     skill = SkillStorage.validate_bytes(package, publication, raw)
     validate_resource_templates(skill, {})

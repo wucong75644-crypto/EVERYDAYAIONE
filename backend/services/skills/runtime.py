@@ -263,6 +263,7 @@ class SkillRuntime:
             content = ('[Current Skill selection]\n'
                        + encoded({'active_skills': [], 'available_tools': names})
                        + '\n当前轮尚未激活 Skill。历史“已启用”不是当前轮的激活状态。'
+                       '当前新请求匹配目录中某个方法的用途时，先调用 activate_skill 读取正文，再执行业务工具。'
                        '用户确认或继续上一轮 Skill 任务时，先从下面当前目录选择匹配方法并调用 activate_skill，'
                        '读取正文后在下一轮按实际提供的 tools schema 处理当前请求。'
                        '准备或列出工具参数也应先加载该方法，不能从历史代码块猜参数。'
