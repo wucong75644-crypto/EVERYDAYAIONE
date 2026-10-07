@@ -56,6 +56,7 @@ class SkillCandidate(Contract):
     package_org_id: UUID | None
     package_user_id: UUID | None = None
     assignment_org_id: UUID | None
+    global_assignment: bool = False
     priority: int
     revision: RevisionKey
     description: str
@@ -97,6 +98,9 @@ class SkillResolver:
             metadata = candidate.catalog_metadata
             if candidate.scope_kind == "personal":
                 if candidate.package_user_id != context.actor_user_id:
+                    continue
+            elif candidate.scope_kind == "platform" and candidate.global_assignment:
+                if candidate.package_org_id is not None or candidate.assignment_org_id is not None:
                     continue
             else:
                 if context.org_id is None or candidate.assignment_org_id != context.org_id:

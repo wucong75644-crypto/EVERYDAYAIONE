@@ -57,6 +57,11 @@ class SkillCatalog:
         self._require_enabled()
         return self._repository.retire_revision(package_id, revision_id)
 
+    def set_platform_assignment(self, package_id: UUID, revision_id: UUID, *, enabled: bool = False,
+                                priority: int = 0) -> SkillAssignment:
+        self._require_enabled()
+        return self._repository.set_platform_assignment(package_id, revision_id, enabled=enabled, priority=priority)
+
     def enabled_revisions(self) -> list[SkillRevision]:
         self._require_enabled()
         return self._repository.enabled_revisions()
