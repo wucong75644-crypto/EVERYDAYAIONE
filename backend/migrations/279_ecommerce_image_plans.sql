@@ -1,3 +1,11 @@
+-- The least-privilege schema owner does not retain REFERENCES on application
+-- identity tables. Grant it only for this transaction's foreign-key creation,
+-- then revoke before committing the new tables.
+RESET ROLE;
+SET LOCAL ROLE everydayai;
+GRANT REFERENCES (id) ON TABLE public.users, public.organizations,
+    public.conversations, public.tasks, public.messages TO everydayai_owner;
+RESET ROLE;
 SET LOCAL ROLE everydayai_owner;
 
 CREATE TABLE public.ecom_image_plans (
@@ -154,6 +162,14 @@ CREATE TABLE public.ecom_image_plan_acceptances (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY(parent_task_id,plan_id,plan_revision,item_id)
 );
+
+RESET ROLE;
+SET LOCAL ROLE everydayai;
+REVOKE REFERENCES (id) ON TABLE public.users, public.organizations,
+    public.conversations, public.tasks, public.messages FROM everydayai_owner;
+RESET ROLE;
+SET LOCAL ROLE everydayai_owner;
+
 ALTER TABLE public.ecom_image_plan_acceptances ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.ecom_image_plan_acceptances FORCE ROW LEVEL SECURITY;
 CREATE POLICY ecom_image_plan_acceptances_actor ON public.ecom_image_plan_acceptances FOR ALL TO everydayai
