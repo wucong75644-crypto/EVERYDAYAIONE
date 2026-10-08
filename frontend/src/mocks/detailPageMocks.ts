@@ -14,13 +14,13 @@ export function createMockResultUrl(index: number, version = 1) {
 }
 
 export const DEFAULT_DETAIL_FORM: DetailGenerationForm = {
-  contentType: 'main_image',
+  contentType: 'default',
   platform: 'auto',
   requirement: '',
   language: 'zh-CN',
   aspectRatio: '1:1',
   quality: '1k',
-  count: 1,
+  count: 14,
 };
 
 export const MOCK_DETAIL_PLAN: DetailPlanItem[] = [

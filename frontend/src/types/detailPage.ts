@@ -1,5 +1,5 @@
 export type DetailPageStep = 1 | 2 | 3 | 4 | 5;
-export type DetailContentType = 'main_image' | 'detail_page';
+export type DetailContentType = 'default' | 'main_image' | 'detail_page';
 export type DetailImageCategory = 'product' | 'reference';
 export type DetailItemStatus = 'waiting' | 'generating' | 'completed' | 'failed';
 export type DetailImageStatus = 'local' | 'uploading' | 'attaching' | 'ready' | 'failed' | 'missing';

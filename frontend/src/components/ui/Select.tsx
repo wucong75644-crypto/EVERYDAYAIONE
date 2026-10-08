@@ -9,14 +9,16 @@ interface SelectProps<T extends string> {
   onChange: (value: T) => void;
   disabled?: boolean;
   ariaLabel: string;
+  size?: 'default' | 'compact';
 }
 
-export function Select<T extends string>({ value, options, onChange, disabled = false, ariaLabel }: SelectProps<T>) {
+export function Select<T extends string>({ value, options, onChange, disabled = false, ariaLabel, size = 'default' }: SelectProps<T>) {
   const selected = options.find((option) => option.value === value);
   return <DropdownMenu
     minWidth="var(--radix-dropdown-menu-trigger-width)"
     trigger={<button type="button" disabled={disabled} aria-label={ariaLabel} className={cn(
-      'flex w-full items-center justify-between gap-2 px-3 py-2 text-sm',
+      'flex w-full items-center justify-between gap-2 text-sm',
+      size === 'compact' ? 'h-8 px-2 py-1' : 'px-3 py-2',
       'rounded-[var(--c-input-radius)] bg-[var(--c-input-bg)] text-[var(--c-input-fg)]',
       'border border-[var(--c-input-border)] outline-none',
       'data-[state=open]:border-[var(--c-input-border-focus)] data-[state=open]:shadow-[var(--c-input-ring-focus)]',

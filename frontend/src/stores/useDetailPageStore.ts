@@ -81,10 +81,13 @@ function clearSettingsTimer() {
   settingsTimer = null;
 }
 
-function createPlan(count: number) {
+function createPlan(form: DetailGenerationForm) {
+  const count = form.contentType === 'default' ? 14 : form.count;
   return Array.from({ length: count }, (_, index) => ({
     ...MOCK_DETAIL_PLAN[index % MOCK_DETAIL_PLAN.length],
     id: `mock-plan-${Date.now()}-${index}`,
+    role: `${form.contentType === 'detail_page' || (form.contentType === 'default' && index >= 7) ? '详情图' : '主图'} ${(form.contentType === 'default' ? index % 7 : index) + 1}`,
+    aspectRatio: form.aspectRatio,
   }));
 }
 
@@ -132,12 +135,13 @@ export const useDetailPageStore = create<DetailPageState>((set, get) => ({
     for (const path of paths) {
       try {
         const project = await attachDetailImage(path, category);
-        set({ ...applyDraft(project), formError: null });
+        set((state) => ({ ...applyDraft(project), form: state.form, formError: null }));
       } catch (error) {
         set({ formError: toApiRequestError(error).message });
         break;
       }
     }
+    get().updateForm({});
   },
   addImages: async (category, files) => {
     const currentImages = get().images;
@@ -175,7 +179,7 @@ export const useDetailPageStore = create<DetailPageState>((set, get) => ({
             ? { ...item, previewUrl: image.previewUrl }
             : item);
           const pending = state.images.filter((item) => item.id !== image.id && ['local', 'uploading', 'attaching', 'failed'].includes(item.status));
-          return { ...draft, images: [...images, ...pending], formError: null };
+          return { ...draft, form: state.form, images: [...images, ...pending], formError: null };
         });
         if (remotePreview) {
           const remoteImage = new Image();
@@ -192,6 +196,7 @@ export const useDetailPageStore = create<DetailPageState>((set, get) => ({
         set((state) => ({ images: state.images.map((item) => item.id === image.id ? { ...item, status: 'failed', error: toApiRequestError(error).message } : item), formError: toApiRequestError(error).message }));
       }
     }
+    get().updateForm({});
   },
   removeImage: async (id) => {
     const image = get().images.find((item) => item.id === id);
@@ -203,7 +208,7 @@ export const useDetailPageStore = create<DetailPageState>((set, get) => ({
     }
     try {
       const project = await removeDetailImage(get().projectId!, id, get().projectVersion!);
-      set({ ...applyDraft(project), formError: null });
+      set((state) => ({ ...applyDraft(project), form: state.form, formError: null }));
     } catch (error) {
       set({ formError: toApiRequestError(error).message });
     }
@@ -211,6 +216,7 @@ export const useDetailPageStore = create<DetailPageState>((set, get) => ({
   updateForm: (patch) => {
     set((state) => {
       const nextPatch = { ...patch };
+      if (patch.contentType) nextPatch.count = patch.contentType === 'default' ? 14 : patch.count ?? (state.form.contentType === 'default' ? 7 : state.form.count);
       if (patch.contentType && !patch.aspectRatio) {
         nextPatch.aspectRatio = patch.contentType === 'detail_page' ? '3:4' : '1:1';
       }
@@ -219,9 +225,9 @@ export const useDetailPageStore = create<DetailPageState>((set, get) => ({
     clearSettingsTimer();
     settingsTimer = setTimeout(() => {
       const { projectId, projectVersion, form } = get();
-      if (!projectId || projectVersion === null) return;
+      if (!projectId || projectVersion === null || get().images.some((image) => ['local', 'uploading', 'attaching'].includes(image.status))) return;
       void saveDetailSettings(projectId, projectVersion, form).then((project) => {
-        if (project) set({ ...applyDraft(project), formError: null });
+        if (project) set((state) => ({ ...applyDraft(project), form: state.form, formError: null }));
       }).catch((error) => {
         const apiError = toApiRequestError(error);
         set({ formError: apiError.message });
@@ -231,7 +237,7 @@ export const useDetailPageStore = create<DetailPageState>((set, get) => ({
   },
   startAnalysis: () => {
     if (get().isTransitioning) return;
-    if (!get().images.some((image) => image.category === 'product')) {
+    if (!get().images.some((image) => image.category === 'product' && image.status === 'ready') || get().images.some((image) => ['local', 'uploading', 'attaching'].includes(image.status))) {
       set({ formError: '请至少上传一张产品图' });
       return;
     }
@@ -241,7 +247,7 @@ export const useDetailPageStore = create<DetailPageState>((set, get) => ({
       const nextStage = get().analysisStage + 1;
       if (nextStage >= 4) {
         clearAnalysisTimer();
-        set({ step: 3, analysisStage: 3, plan: createPlan(get().form.count), isTransitioning: false });
+        set({ step: 3, analysisStage: 3, plan: createPlan(get().form), isTransitioning: false });
         return;
       }
       set({ analysisStage: nextStage });
@@ -257,7 +263,7 @@ export const useDetailPageStore = create<DetailPageState>((set, get) => ({
   removePlanItem: (id) => set((state) => state.plan.length <= 1
     ? { formError: '规划至少保留 1 张图片' }
     : { plan: state.plan.filter((item) => item.id !== id), formError: null }),
-  replan: () => set((state) => ({ plan: createPlan(state.form.count), formError: null })),
+  replan: () => set((state) => ({ plan: createPlan(state.form), formError: null })),
   startGeneration: () => {
     if (get().isTransitioning) return;
     if (get().mockScenario === 'insufficient_credits') {

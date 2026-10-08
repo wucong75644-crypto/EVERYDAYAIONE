@@ -2,8 +2,6 @@ import { useEffect } from 'react';
 import { Sparkles } from 'lucide-react';
 import { DetailPageHeader } from '../components/detail-page/DetailPageHeader';
 import { GenerationSettings } from '../components/detail-page/GenerationSettings';
-import { ProductImageSection } from '../components/detail-page/ProductImageSection';
-import { StepBar } from '../components/detail-page/StepBar';
 import { AnalyzingPanel } from '../components/detail-page/AnalyzingPanel';
 import { PlanReviewPanel } from '../components/detail-page/PlanReviewPanel';
 import { GenerationProgress } from '../components/detail-page/GenerationProgress';
@@ -16,7 +14,7 @@ import { DETAIL_STEP_LABELS } from '../mocks/detailPageMocks';
 import { useDetailPageStore } from '../stores/useDetailPageStore';
 
 const STEP_PLACEHOLDERS = {
-  1: '上传产品图并填写要求后，点击“分析产品”开始',
+  1: '上传产品图并填写要求后，点击“开始生成”开始',
   2: 'AI 正在分析产品并提取核心卖点',
   3: '检查并编辑即将生成的图片规划',
   4: '图片将按规划逐张生成',
@@ -49,7 +47,6 @@ export default function DetailPage() {
   const restart = useDetailPageStore((state) => state.restart);
   const reset = useDetailPageStore((state) => state.reset);
   const hydrateDraft = useDetailPageStore((state) => state.hydrateDraft);
-  const hasProductImage = images.some((image) => image.category === 'product');
   const hasReadyProductImage = images.some((image) => image.category === 'product' && image.status === 'ready');
   const hasPendingImage = images.some((image) => ['local', 'uploading', 'attaching'].includes(image.status));
   const requirementAssist = useDetailRequirementAssist();
@@ -71,17 +68,15 @@ export default function DetailPage() {
   }, [hydrateDraft, reset]);
 
   return (
-    <PageTransition className="min-h-screen bg-[var(--s-surface-base)] text-[var(--s-text-primary)]">
-      <DetailPageHeader />
-      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 py-5 sm:py-6">
-        <StepBar step={step} />
-        <section className="mt-4 grid lg:grid-cols-[440px_minmax(0,1fr)] gap-5">
-          <Card variant="elevated" padding="md" className="min-h-[520px]">
-            <ProductImageSection images={images} error={formError} disabled={step !== 1} onAdd={addImages} onWorkspaceAdd={attachWorkspaceImages} onRemove={removeImage} />
-            <GenerationSettings form={form} hasProductImage={hasProductImage} disabled={step !== 1} requirementAssistDisabled={requirementAssistDisabled} onChange={updateForm} onRequirementAssist={openRequirementAssist} onAnalyze={startAnalysis} />
+    <PageTransition className="h-dvh overflow-hidden flex flex-col bg-[var(--s-surface-base)] text-[var(--s-text-primary)]">
+      <div className="shrink-0"><DetailPageHeader /></div>
+      <main className="min-h-0 flex-1 w-full max-w-[1600px] mx-auto p-3 sm:p-5">
+        <section className="h-full min-h-0 grid grid-cols-[360px_minmax(0,1fr)] gap-4">
+          <Card variant="elevated" padding="sm" className="h-full min-h-0 overflow-hidden">
+            <GenerationSettings form={form} images={images} error={formError} hasProductImage={hasReadyProductImage && !hasPendingImage} disabled={step !== 1 || isHydrating} requirementAssistDisabled={requirementAssistDisabled} onChange={updateForm} onRequirementAssist={openRequirementAssist} onAnalyze={startAnalysis} onAdd={(files) => void addImages('product', files)} onWorkspaceAdd={(paths) => void attachWorkspaceImages('product', paths)} onRemove={(id) => void removeImage(id)} />
           </Card>
-          <Card variant="elevated" padding="lg" className="min-h-[520px] flex items-center justify-center text-center">
-            {step === 2 ? <AnalyzingPanel stage={analysisStage} onCancel={cancelAnalysis} /> : step === 3 ? <PlanReviewPanel plan={plan} error={formError} onChange={updatePlanItem} onRemove={removePlanItem} onBack={() => setStep(1)} onReplan={replan} onConfirm={startGeneration} /> : step === 4 ? <GenerationProgress items={generationItems} onRetry={retryGeneration} /> : step === 5 ? <ResultGallery items={generationItems} onRetry={retryGeneration} onRestart={restart} onBack={backToPlan} /> : <div>
+          <Card variant="elevated" padding="lg" className="h-full min-h-0 overflow-y-auto overscroll-contain text-left" aria-label="规划与生成结果" tabIndex={0}>
+            {step === 2 ? <AnalyzingPanel stage={analysisStage} onCancel={cancelAnalysis} /> : step === 3 ? <PlanReviewPanel plan={plan} error={formError} onChange={updatePlanItem} onRemove={removePlanItem} onBack={() => setStep(1)} onReplan={replan} onConfirm={startGeneration} /> : step === 4 ? <GenerationProgress items={generationItems} onRetry={retryGeneration} /> : step === 5 ? <ResultGallery items={generationItems} onRetry={retryGeneration} onRestart={restart} onBack={backToPlan} /> : <div className="flex min-h-full flex-col items-center justify-center text-center">
               <div className="w-16 h-16 mx-auto rounded-full bg-[var(--s-surface-secondary)] flex items-center justify-center">
                 <Sparkles className="w-7 h-7 text-[var(--s-text-secondary)]" aria-hidden="true" />
               </div>
