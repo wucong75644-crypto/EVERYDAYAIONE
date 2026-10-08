@@ -19,13 +19,13 @@ class DetailProjectEnvelope(BaseModel):
 
 class DetailProjectSettingsPatch(BaseModel):
     version: int = Field(gt=0)
-    content_type: Literal["main_image", "detail_page"] | None = None
+    content_type: Literal["default", "main_image", "detail_page"] | None = None
     platform: Literal["auto", "taobao", "tmall", "jd", "pdd"] | None = None
     requirement: str | None = Field(default=None, max_length=2000)
     language: Literal["zh-CN", "none"] | None = None
     aspect_ratio: str | None = Field(default=None, min_length=1, max_length=20)
     quality: Literal["1k", "2k", "4k"] | None = None
-    image_count: int | None = Field(default=None, ge=1, le=9)
+    image_count: int | None = Field(default=None, ge=1, le=14)
 
 
 class DetailProjectVersionRequest(BaseModel):

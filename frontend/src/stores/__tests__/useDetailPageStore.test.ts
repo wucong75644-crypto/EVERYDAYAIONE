@@ -27,7 +27,7 @@ describe('useDetailPageStore', () => {
   it('使用已确认的默认设置', () => {
     const state = useDetailPageStore.getState();
     expect(state.step).toBe(1);
-    expect(state.form).toMatchObject({ contentType: 'main_image', language: 'zh-CN', aspectRatio: '1:1', count: 1 });
+    expect(state.form).toMatchObject({ contentType: 'default', language: 'zh-CN', aspectRatio: '1:1', count: 14 });
   });
 
   it('页面卸载后忽略迟到的草稿恢复结果', async () => {
@@ -119,7 +119,8 @@ describe('useDetailPageStore', () => {
   it('分析按阶段推进并生成指定数量的规划', () => {
     vi.useFakeTimers();
     useDetailPageStore.getState().addImages('product', [new File(['x'], 'product.png', { type: 'image/png' })]);
-    useDetailPageStore.getState().updateForm({ count: 3 });
+    useDetailPageStore.getState().updateForm({ contentType: 'main_image', count: 3 });
+    useDetailPageStore.setState((state) => ({ images: state.images.map((image) => ({ ...image, status: 'ready' as const })) }));
     useDetailPageStore.getState().startAnalysis();
     expect(useDetailPageStore.getState()).toMatchObject({ step: 2, isTransitioning: true });
     vi.advanceTimersByTime(2400);
@@ -128,9 +129,30 @@ describe('useDetailPageStore', () => {
     vi.useRealTimers();
   });
 
+  it('默认模式分析和重新规划均包含7张主图和7张详情图', () => {
+    vi.useFakeTimers();
+    useDetailPageStore.setState({ images: [{ id: 'ready', category: 'product', previewUrl: '', error: null, status: 'ready', name: '产品' }] });
+    useDetailPageStore.getState().startAnalysis();
+    vi.advanceTimersByTime(2400);
+    const plan = useDetailPageStore.getState().plan;
+    expect(plan).toHaveLength(14);
+    expect(plan.filter((item) => item.role.startsWith('主图'))).toHaveLength(7);
+    expect(plan.filter((item) => item.role.startsWith('详情图'))).toHaveLength(7);
+    useDetailPageStore.getState().replan();
+    expect(useDetailPageStore.getState().plan).toHaveLength(14);
+    vi.useRealTimers();
+  });
+
+  it('上传未完成时不能开始分析', () => {
+    useDetailPageStore.setState({ images: [{ id: 'pending', category: 'product', previewUrl: '', error: null, status: 'uploading', name: '产品' }] });
+    useDetailPageStore.getState().startAnalysis();
+    expect(useDetailPageStore.getState().step).toBe(1);
+  });
+
   it('取消分析后保留输入并停止推进', () => {
     vi.useFakeTimers();
     useDetailPageStore.getState().addImages('product', [new File(['x'], 'product.png', { type: 'image/png' })]);
+    useDetailPageStore.setState((state) => ({ images: state.images.map((image) => ({ ...image, status: 'ready' as const })) }));
     useDetailPageStore.getState().startAnalysis();
     useDetailPageStore.getState().cancelAnalysis();
     vi.advanceTimersByTime(3000);
@@ -140,6 +162,7 @@ describe('useDetailPageStore', () => {
   });
 
   it('未上传产品图时拒绝分析', () => {
+    useDetailPageStore.setState((state) => ({ images: state.images.map((image) => ({ ...image, status: 'ready' as const })) }));
     useDetailPageStore.getState().startAnalysis();
     expect(useDetailPageStore.getState().step).toBe(1);
     expect(useDetailPageStore.getState().formError).toContain('产品图');
@@ -155,7 +178,7 @@ describe('useDetailPageStore', () => {
     useDetailPageStore.getState().removePlanItem(useDetailPageStore.getState().plan[0].id);
     expect(useDetailPageStore.getState().formError).toContain('至少保留');
     useDetailPageStore.getState().replan();
-    expect(useDetailPageStore.getState().plan).toHaveLength(1);
+    expect(useDetailPageStore.getState().plan).toHaveLength(14);
   });
 
   it('逐张生成并在全部结束后进入完成页', () => {

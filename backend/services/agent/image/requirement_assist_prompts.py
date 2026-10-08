@@ -32,7 +32,7 @@ def build_context_prompt(data: RequirementAssistInput) -> str:
     ] or ["- 未提供参考图"]
     return "\n".join([
         "## 任务设置",
-        f"内容类型：{data.content_type}",
+        f"内容类型：{'7张主图 + 7张详情图，统一视觉风格并区分主图卖点与详情叙事' if data.content_type == 'default' else data.content_type}",
         f"目标平台：{data.platform}",
         f"目标语言：{data.language}",
         f"尺寸比例：{data.aspect_ratio}",

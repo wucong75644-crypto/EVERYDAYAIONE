@@ -37,15 +37,17 @@ describe('DetailPage 页面骨架', () => {
     vi.mocked(generateRequirementSuggestions).mockReset();
   });
 
-  it('显示标题、五步进度和双栏骨架', async () => {
+  it('显示固定输入区和独立结果区', async () => {
     renderPage();
     await waitFor(() => expect(useDetailPageStore.getState().isHydrating).toBe(false));
     expect(screen.queryByText('AI 帮写需求，一键生成详情图组')).not.toBeInTheDocument();
     expect(screen.queryByText('上传产品图，AI 智能分析并规划多角度、多场景的电商图片')).not.toBeInTheDocument();
-    expect(screen.getAllByRole('listitem')).toHaveLength(5);
-    expect(screen.getByText('产品图片')).toBeInTheDocument();
+    expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+    expect(screen.getByRole('button', { name: '默认' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: '开始生成' })).toBeDisabled();
+    expect(screen.getByLabelText('产品信息与创作要求')).toBeInTheDocument();
     expect(screen.getByText('目标平台')).toBeInTheDocument();
-    expect(screen.getByText('上传产品图并填写要求后，点击“分析产品”开始')).toBeInTheDocument();
+    expect(screen.getByText('上传产品图并填写要求后，点击“开始生成”开始')).toBeInTheDocument();
     expect(screen.queryByText('AI 记忆')).not.toBeInTheDocument();
   });
 

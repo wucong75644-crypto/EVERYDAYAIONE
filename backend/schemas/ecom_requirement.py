@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 
-ContentType = Literal["main_image", "detail_page"]
+ContentType = Literal["default", "main_image", "detail_page"]
 Platform = Literal["auto", "taobao", "tmall", "jd", "pdd"]
 Language = Literal["zh-CN", "none"]
 SourceType = Literal["detail_project"]
@@ -23,8 +23,16 @@ class RequirementSettings(BaseModel):
     language: Language = "zh-CN"
     aspect_ratio: str = Field(default="1:1", min_length=1, max_length=20)
     quality: Literal["1k", "2k", "4k"] = "1k"
-    image_count: int = Field(default=5, ge=1, le=9)
+    image_count: int = Field(default=5, ge=1, le=14)
     requirement: str = Field(default="", max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_generation_count(self) -> "RequirementSettings":
+        if self.content_type == "default" and self.image_count != 14:
+            raise ValueError("默认模式固定生成7张主图和7张详情图")
+        if self.content_type != "default" and self.image_count > 9:
+            raise ValueError("单类图片最多生成9张")
+        return self
 
 
 class RequirementSuggestionsRequest(BaseModel):
@@ -50,12 +58,16 @@ class RequirementAssistInput(BaseModel):
     language: Language
     aspect_ratio: str
     quality: Literal["1k", "2k", "4k"]
-    image_count: int = Field(ge=1, le=9)
+    image_count: int = Field(ge=1, le=14)
     user_requirement: str = Field(max_length=2000)
     project_version: int = Field(gt=0)
 
     @model_validator(mode="after")
     def validate_total_images(self) -> "RequirementAssistInput":
+        if self.content_type == "default" and self.image_count != 14:
+            raise ValueError("默认模式固定生成7张主图和7张详情图")
+        if self.content_type != "default" and self.image_count > 9:
+            raise ValueError("单类图片最多生成9张")
         if len(self.product_images) + len(self.reference_images) > 9:
             raise ValueError("产品图和参考图合计不能超过9张")
         return self

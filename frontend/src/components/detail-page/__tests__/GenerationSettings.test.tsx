@@ -4,14 +4,16 @@ import { DEFAULT_DETAIL_FORM } from '../../../mocks/detailPageMocks';
 import { GenerationSettings } from '../GenerationSettings';
 
 describe('GenerationSettings', () => {
+  const singleForm = { ...DEFAULT_DETAIL_FORM, contentType: 'main_image' as const, count: 1 };
   const defaultActions = { onChange: vi.fn(), onRequirementAssist: vi.fn(), onAnalyze: vi.fn() };
 
-  it('使用中文、1K和1张默认值', () => {
+  it('使用中文、1K和默认14张套图', () => {
     render(<GenerationSettings form={DEFAULT_DETAIL_FORM} hasProductImage={false} {...defaultActions} />);
     expect(screen.getByRole('button', { name: '目标语言' })).toHaveTextContent('中文（简体）');
     expect(screen.getByRole('button', { name: '清晰度' })).toHaveTextContent('1K 标准');
-    expect(screen.getByRole('button', { name: '生成数量' })).toHaveTextContent('1 张');
-    expect(screen.getByRole('button', { name: '分析产品' })).toBeDisabled();
+    expect(screen.getByText('7 张主图 + 7 张详情图，共 14 张')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '生成数量' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '开始生成' })).toBeDisabled();
   });
 
   it('切换详情图并打开 AI 帮写', () => {
@@ -27,13 +29,13 @@ describe('GenerationSettings', () => {
   it('有产品图时允许分析', () => {
     const onAnalyze = vi.fn();
     render(<GenerationSettings form={DEFAULT_DETAIL_FORM} hasProductImage onChange={vi.fn()} onRequirementAssist={vi.fn()} onAnalyze={onAnalyze} />);
-    fireEvent.click(screen.getByRole('button', { name: '分析产品' }));
+    fireEvent.click(screen.getByRole('button', { name: '开始生成' }));
     expect(onAnalyze).toHaveBeenCalledOnce();
   });
 
   it('所有下拉设置均提交对应字段', () => {
     const onChange = vi.fn();
-    render(<GenerationSettings form={DEFAULT_DETAIL_FORM} hasProductImage onChange={onChange} onRequirementAssist={vi.fn()} onAnalyze={vi.fn()} />);
+    render(<GenerationSettings form={singleForm} hasProductImage onChange={onChange} onRequirementAssist={vi.fn()} onAnalyze={vi.fn()} />);
 
     for (const [field, option] of [['目标平台', '京东'], ['目标语言', '无文字'], ['尺寸比例', '4:5'], ['清晰度', '2K 高清'], ['生成数量', '9 张']]) {
       fireEvent.keyDown(screen.getByRole('button', { name: field }), { key: 'ArrowDown' });
@@ -52,12 +54,12 @@ describe('GenerationSettings', () => {
     render(<GenerationSettings form={detailForm} hasProductImage disabled onChange={vi.fn()} onRequirementAssist={vi.fn()} onAnalyze={vi.fn()} />);
     expect(screen.getByLabelText('详情图要求')).toBeDisabled();
     expect(screen.getByRole('button', { name: '尺寸比例' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '分析产品' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '开始生成' })).toBeDisabled();
   });
 
   it('产品图尚未就绪时单独禁用 AI 帮写', () => {
     render(<GenerationSettings form={DEFAULT_DETAIL_FORM} hasProductImage requirementAssistDisabled {...defaultActions} />);
     expect(screen.getByRole('button', { name: 'AI 帮写' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '分析产品' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '开始生成' })).toBeEnabled();
   });
 });
