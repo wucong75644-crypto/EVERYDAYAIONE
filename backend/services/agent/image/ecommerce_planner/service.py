@@ -9,13 +9,16 @@ import asyncio
 import hashlib
 import json
 import math
+import time
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from core.db_scope import DatabaseAccessKind, DatabaseScope, ScopedDatabaseClient
 from services.agent.agent_result import AgentResult
 from services.model_gateway import ModelCallRequest, get_model_gateway
 
-from .contracts import parse_json, source_id, text_hash, validate_images, validate_product
+from .contracts import ImageValidationError, parse_json, source_id, text_hash, validate_images, validate_product
+from .delivery import DELIVERY_VERSION, decode_delivery
 from .recovery import attach_receipt, error_facts, failure_summary, PlannerRecoveryError
 from .workflow import binding, store_binding, WorkflowBinding, KEY
 from .prompt_resources import HASHES, INTEGRATION_RULES_SHA256, SCHEMA_SHA256, resources, wrapper
@@ -39,6 +42,18 @@ def _raw_parts(row):
 def _digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
         separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+class PlannerStreamBudget:
+    """A stream cannot outlive its parent or persisted reservation (minus save time)."""
+    def __init__(self, parent, seconds):
+        self._parent = parent
+        self._deadline = time.monotonic() + max(0, seconds - 5)
+
+    @property
+    def remaining(self):
+        remaining = max(0, self._deadline - time.monotonic())
+        return min(remaining, self._parent.remaining) if self._parent is not None else remaining
 
 
 class EcommerceImagePlanner:
@@ -247,10 +262,12 @@ class EcommerceImagePlanner:
             "image_count": count, "task_type": "main_images", "target_size": target_size,
             **({"supersedes_plan_id": previous_plan["id"]} if previous_plan else {})}
         prompt_bodies, schema = resources()
-        versions = {"resources_sha256": list(HASHES), "schema_sha256": SCHEMA_SHA256,
+        resource_versions = {"resources_sha256": list(HASHES), "schema_sha256": SCHEMA_SHA256,
             "integration_reference_sha256": INTEGRATION_RULES_SHA256}
+        versions = {**resource_versions, "stage_three_delivery_version": DELIVERY_VERSION}
         model_settings = {"provider": "kie", "model": model, "reasoning_effort": self.settings.ecom_image_planning_reasoning}
-        reusable = (previous_plan and previous_plan.get("prompt_versions") == versions
+        reusable = (previous_plan and all((previous_plan.get("prompt_versions") or {}).get(key) == value
+            for key, value in resource_versions.items())
             and previous_plan.get("model_settings") == model_settings)
         same_canvas = previous_plan and all(previous_plan["target_size"].get(key) == target_size.get(key)
             for key in ("aspect_ratio", "resolution"))
@@ -318,7 +335,7 @@ class EcommerceImagePlanner:
         lease = str(uuid4())
         claimed = await asyncio.to_thread(lambda: self.scope.rpc("claim_ecom_image_plan", {
             "p_plan_id": row["id"], "p_parent_task_id": self.owner.task_id, "p_lease_token": lease,
-            "p_lease_seconds": min(600, max(10, math.ceil(self.settings.ecom_image_planning_stage_timeout * 3 + 20))),
+            "p_lease_seconds": 600,
         }).execute().data)
         if not claimed.get("claimed"):
             return AgentResult("主图方案正在由另一个请求处理。", status="error", error_message="ECOM_PLAN_LEASE_BUSY",
@@ -355,7 +372,7 @@ class EcommerceImagePlanner:
             final = stage_outputs.get("3")
             if final is None:
                 final, usage = await self._stage_images(row, lease, prompt_bodies[2], wrapper(3), evidence, messages, refs, image_urls,
-                    validator=lambda value: validate_images(value, input_snapshot))
+                    validator=lambda value: validate_images(value, input_snapshot, assemble_display=True))
             else:
                 # Stage output and ready/needs_input state commit together. A
                 # planning row with a final output is inconsistent, not a new
@@ -409,34 +426,64 @@ class EcommerceImagePlanner:
         raise ValueError("PLANNER_JSON_VALIDATION_FAILED")
 
     async def _stage_images(self, row, lease, original, integration, evidence, messages, refs, image_urls, validator=None):
-        from .contracts import ImagesOutput
+        from .contracts import ImagesOutput, ImagesRepairOutput
         last_error = None
+        previous = None
+        repair_position = None
         for repair in range(3):
-            # Keep the immutable professional rules, then give the final wire
-            # contract so the source's Markdown UI does not replace JSON keys.
             prompt = original + "\n\n【最终平台交付协议，优先于上述展示格式】\n" + integration
+            patch_mode = repair_position is not None and isinstance(previous, dict)
             if repair:
-                prompt += f"\n\n上一稿未通过服务端校验（{last_error}）。请保留首稿有效设计，修正问题后重新输出完整JSON。"
+                prompt += f"\n\n上一稿未通过服务端校验（{last_error}）。原稿在数据区，保留已满足要求的设计，仅修复明确问题。"
+                if patch_mode:
+                    prompt += (f"仅返回第{repair_position}张的完整替换项及复查后的review_records，"
+                        "外层只能是images和review_records。不得重写其他图片；程序合并后再校验整组。")
+                else:
+                    prompt += "修正原稿的交付格式或整组问题，重新返回完整JSON，不重新策划有效内容。"
             body = {"stage":3,"input_snapshot":evidence["input_snapshot"],
                 "product_selling_points":evidence["product_selling_points"],"visual_direction":evidence["visual_direction"],
                 "raw_user_messages":messages,"references_in_generation_order":[
                     {"ordinal": n,"source_id":r["source_id"],"role":r["role"]} for n,r in enumerate(refs,1)],
-                "output_json_schema": ImagesOutput.model_json_schema(),
+                "output_json_schema": (ImagesRepairOutput if patch_mode else ImagesOutput).model_json_schema(),
                 "reference_identity_examples": [{"source_id": r["source_id"],
                     "first_input_literal": f"输入图片1—{r['source_id']}"} for r in refs],
                 **({"previous_plan": evidence["previous_plan"]} if evidence.get("previous_plan") else {})}
+            if previous is not None:
+                body["previous_stage_three_output"] = previous
+                body["validation_error"] = last_error
+                body["repair_positions"] = [repair_position] if patch_mode else []
             user_content = [{"type":"input_text","text":json.dumps(body,ensure_ascii=False)}]
             for i,(reference,url) in enumerate(zip(refs,image_urls),1):
                 user_content.extend([{"type":"input_text","text":f"参考图片{i} | 来源ID={reference['source_id']} | 角色={reference['role']}"},
                     {"type":"input_image","image_url":url}])
             output, usage = await self._call(row,lease,3,prompt,[{"role":"developer","content":prompt},{"role":"user","content":user_content}])
+            usage = {**usage, "delivery_version": DELIVERY_VERSION, "response_sha256": text_hash(output)}
+            candidate = None
+            merged_patch = False
             try:
                 if not output.strip():
                     raise ValueError("ECOM_PLAN_EMPTY_OUTPUT")
-                parsed = parse_json(output)
-                return (validator(parsed) if validator else parsed), usage
+                candidate, audit = decode_delivery(output)
+                usage = {**usage, **audit, "repair_positions": [repair_position] if patch_mode else []}
+                if patch_mode:
+                    patch = ImagesRepairOutput.model_validate(candidate).model_dump()
+                    if len(patch["images"]) != 1 or patch["images"][0]["position"] != repair_position:
+                        candidate = None
+                        raise ValueError("PLANNER_REPAIR_SCOPE_CHANGED")
+                    candidate = {**previous, "images": [patch["images"][0] if index == repair_position
+                        else image for index, image in enumerate(previous["images"], 1)], "review_records": patch["review_records"]}
+                    merged_patch = True
+                return (validator(candidate) if validator else candidate), usage
             except (ValueError,json.JSONDecodeError) as error:
-                last_error=str(error)
+                last_error = str(error)
+                # Retain the merged draft for the next local repair, or the raw
+                # completed reply when no valid JSON object could be decoded.
+                if candidate is not None and (not patch_mode or merged_patch):
+                    previous = candidate
+                elif previous is None and output.strip():
+                    previous = output
+                repair_position = error.position if (isinstance(error, ImageValidationError)
+                    and isinstance(previous, dict)) else repair_position if patch_mode else None
                 await self._save_attempt(row,lease,3,{**usage,"validation_error":last_error},"json_repair",repair,charge=True)
         raise ValueError("PLANNER_IMAGE_JSON_INVALID")
 
@@ -450,27 +497,39 @@ class EcommerceImagePlanner:
             reservation = await self._reserve(row, lease, stage, attempt_id, remaining)
             if reservation.get("outcome") != "execute":
                 raise PlannerRecoveryError("ECOM_PLAN_EXECUTION_UNCERTAIN")
-            from datetime import datetime, timezone
             deadline = datetime.fromisoformat(reservation["deadline"].replace("Z", "+00:00"))
-            timeout = min(timeout, (deadline - datetime.now(timezone.utc)).total_seconds())
+            deadline_remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
+            timeout = min(timeout, deadline_remaining)
+            stream_budget = PlannerStreamBudget(self.owner.execution_budget, deadline_remaining) if stage == 3 else None
+            if stream_budget is not None:
+                timeout = min(timeout, stream_budget.remaining)
             if timeout <= 1:
                 await self._finish(row, lease, stage, attempt_id, {}, "rejected")
                 raise PlannerRecoveryError("ECOM_PLAN_PARENT_BUDGET_EXHAUSTED")
             session = None
             content = ""
+            call_started = time.monotonic()
+            first_output_at = None
             tokens = {"input_tokens": 0, "output_tokens": 0, "provider_credits": None}
+            def timing():
+                return {"elapsed_ms": round((time.monotonic() - call_started) * 1000),
+                    "first_output_ms": round((first_output_at - call_started) * 1000) if first_output_at is not None else None,
+                    "output_characters": len(content)}
             try:
                 session = get_model_gateway().open_chat(ModelCallRequest(
                     model_id=self.settings.ecom_image_planning_model, org_id=None,
-                    task_id=self.owner.task_id, timeout=timeout, cancel_token=self.owner.cancellation_event,
-                    budget=self.owner.execution_budget))
+                    task_id=self.owner.task_id, timeout=None if stage == 3 else timeout,
+                    idle_timeout=self.settings.ecom_image_planning_stage_timeout if stage == 3 else None,
+                    cancel_token=self.owner.cancellation_event, budget=stream_budget or self.owner.execution_budget))
                 async for chunk in session.stream_chat(messages, reasoning_effort=self.settings.ecom_image_planning_reasoning):
+                    if chunk.content and first_output_at is None:
+                        first_output_at = time.monotonic()
                     content += chunk.content or ""
                     tokens["input_tokens"] += chunk.prompt_tokens or 0
                     tokens["output_tokens"] += chunk.completion_tokens or 0
                     if chunk.credits_consumed is not None:
                         tokens["provider_credits"] = chunk.credits_consumed
-                if session.last_result and session.last_result.status != "completed":
+                if session.last_result is None or session.last_result.status != "completed":
                     raise PlannerRecoveryError("ECOM_PLAN_EXECUTION_UNCERTAIN")
                 if session.last_result:
                     usage = session.last_result.usage
@@ -480,13 +539,13 @@ class EcommerceImagePlanner:
                 credits = max(1, math.ceil(tokens["input_tokens"] * float(self.settings.ecom_image_planning_input_credits_per_million) / 1_000_000
                     + tokens["output_tokens"] * float(self.settings.ecom_image_planning_output_credits_per_million) / 1_000_000))
                 return content, {**tokens, "user_credits": credits, "provider": "kie", "model": self.settings.ecom_image_planning_model,
-                    "attempt_id": attempt_id}
+                    "attempt_id": attempt_id, **timing()}
             except asyncio.CancelledError:
-                await self._finish(row, lease, stage, attempt_id, tokens, "uncertain")
+                await self._finish(row, lease, stage, attempt_id, {**tokens, **timing()}, "uncertain")
                 raise
             except Exception as error:
                 code, category, safe = error_facts(error)
-                diagnostics = {**tokens, "error_type": type(error).__name__, "error_code": code,
+                diagnostics = {**tokens, **timing(), "error_type": type(error).__name__, "error_code": code,
                     "http_status": getattr(error, "status_code", None), "provider_error_code": getattr(error, "error_code", None)}
                 no_response = not content and not tokens["input_tokens"] and not tokens["output_tokens"] and tokens["provider_credits"] is None
                 definite = no_response and (safe or category in {"authentication", "balance"})

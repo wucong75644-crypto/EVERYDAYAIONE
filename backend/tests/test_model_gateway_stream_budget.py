@@ -80,3 +80,47 @@ async def test_continuous_chunks_cannot_extend_turn_budget(monkeypatch):
         [c async for c in session.stream_chat(messages=[])]
     assert budget.remaining == 0
     adapter.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_request_idle_override_allows_active_stream_beyond_default_and_idle_limit(monkeypatch):
+    monkeypatch.setattr("services.timeout_resolver.resolve_stream_timeout", lambda _: 0.005)
+    async def stream_chat(**kwargs):
+        for _ in range(6):
+            await asyncio.sleep(0.01)
+            yield chunk()
+    adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
+    session = ModelGatewaySession(adapter, ModelCallRequest(model_id="planner-model", idle_timeout=0.04,
+        budget=ExecutionBudget(max_wall_time=1)))
+    try:
+        assert len([c async for c in session.stream_chat(messages=[])]) == 6
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["first", "stalled", "heartbeat", "budget"])
+async def test_explicit_idle_override_never_extends_stall_or_total_budget(mode):
+    async def stream_chat(**kwargs):
+        if mode == "first":
+            await asyncio.Event().wait()
+        yield chunk()
+        if mode == "stalled":
+            await asyncio.Event().wait()
+        while True:
+            await asyncio.sleep(0.005)
+            yield SimpleNamespace(content=None, thinking_content=None, tool_calls=None) if mode == "heartbeat" else chunk()
+    adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
+    session = ModelGatewaySession(adapter, ModelCallRequest(model_id="planner-model", idle_timeout=0.03,
+        budget=ExecutionBudget(max_wall_time=0.06 if mode == "budget" else 1)))
+    with pytest.raises(ModelGatewayTimeoutError):
+        [c async for c in session.stream_chat(messages=[])]
+    adapter.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize("idle,timeout,budget", [(0, None, True), (float('inf'), None, True),
+    (1, 1, True), (1, None, False)])
+def test_idle_override_requires_finite_timeout_and_total_budget(idle, timeout, budget):
+    with pytest.raises(ValueError, match="MODEL_GATEWAY_IDLE_TIMEOUT_REQUIRES_BUDGET"):
+        ModelCallRequest(model_id="planner-model", timeout=timeout, idle_timeout=idle,
+            budget=ExecutionBudget() if budget else None)

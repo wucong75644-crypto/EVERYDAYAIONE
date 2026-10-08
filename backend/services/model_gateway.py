@@ -8,6 +8,7 @@ Gateway 是主 Chat、Actor Chat 和企微兼容入口共享的模型边界。�
 from __future__ import annotations
 
 import asyncio
+import math
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from types import SimpleNamespace
@@ -77,6 +78,7 @@ class ModelCallRequest:
     前生成。显式 timeout 和 cancel_token 由 Gateway 落实为请求 deadline 与取消边界；
     有执行预算且未指定 timeout 时，默认超时限制排队/首包与后续分块空闲，
     总耗时由不可续期的 budget.remaining 限制；辅助调用保留总 deadline。
+    idle_timeout 可在有预算的请求中覆盖默认空闲时间，只有有效输出刷新此时间。
     retry_policy 注入既有 RetryContext/IntentRouter，Gateway 负责执行 attempt。
     未注入策略的辅助模型链路保持单次调用和原始异常兼容。
     """
@@ -91,6 +93,14 @@ class ModelCallRequest:
     cancel_token: Any = None
     retry_policy: Any = None
     budget: Any = None
+    idle_timeout: float | None = None
+
+    def __post_init__(self):
+        if self.idle_timeout is not None:
+            if (not math.isfinite(self.idle_timeout) or self.idle_timeout <= 0
+                    or self.timeout is not None
+                    or not isinstance(getattr(self.budget, "remaining", None), (int, float))):
+                raise ValueError("MODEL_GATEWAY_IDLE_TIMEOUT_REQUIRES_BUDGET")
 
 
 class ModelGatewaySession:
@@ -129,7 +139,7 @@ class ModelGatewaySession:
         # 延迟解析默认 timeout：open_chat 本身不能发起 Provider 请求，且
         # headless/测试注入器可能只构造会话而不消费模型流。
         self._stream_timeout = (
-            float(request.timeout) if request.timeout is not None else None
+            float(request.timeout) if request.timeout is not None else request.idle_timeout
         )
 
     @property
@@ -503,7 +513,9 @@ class ModelGatewaySession:
                 if not first_chunk_emitted:
                     first_chunk_emitted = True
                     emit(SamplingEventType.FIRST_CHUNK)
-                if use_idle_timeout:
+                if use_idle_timeout and (self.request.idle_timeout is None or any(
+                    getattr(chunk, key, None) for key in ("content", "thinking_content", "tool_calls")
+                )):
                     # 活跃流不能被普通模型的 60s 总时限截断；整轮预算仍由
                     # _remaining_timeout 约束。排队与首包仍共享初始 deadline。
                     deadline = loop.time() + stream_timeout
@@ -986,6 +998,8 @@ def _accumulate_usage(usage: dict[str, int | float], chunk: Any) -> None:
 def _resolve_request_timeout(request: ModelCallRequest) -> float:
     if request.timeout is not None:
         return float(request.timeout)
+    if request.idle_timeout is not None:
+        return float(request.idle_timeout)
     from services.timeout_resolver import resolve_stream_timeout
 
     return float(resolve_stream_timeout(request.model_id))

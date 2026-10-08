@@ -157,6 +157,10 @@ class PlannedImage(StrictModel):
     aspect_ratio: str
 
 
+class ImageDraft(PlannedImage):
+    scheme_markdown: str = Field(min_length=1, description="完整填写方案内容、视觉设定、参考图使用方式三节；正向与负面提示词仅在独立字段中各输出一次，程序补齐展示稿。")
+
+
 class ReviewRecord(StrictModel):
     object: str = Field(min_length=1)
     method: str = Field(pattern="^self_check$")
@@ -173,11 +177,22 @@ class ImagesOutput(StrictModel):
     """Model-facing JSON Schema for the existing stage-three wire contract."""
     status: Literal["ready", "needs_input"]
     questions: list[str]
-    images: list[PlannedImage]
+    images: list[ImageDraft]
     review_records: list[ReviewRecord]
 
 
-def validate_images(value, snapshot):
+class ImagesRepairOutput(StrictModel):
+    images: list[ImageDraft]
+    review_records: list[ReviewRecord]
+
+
+class ImageValidationError(ValueError):
+    def __init__(self, position, error):
+        self.position = position
+        super().__init__(f"{error}（第{position}张）")
+
+
+def validate_images(value, snapshot, *, assemble_display=False):
     if set(value) != {"status", "questions", "images", "review_records"}:
         raise ValueError("PLANNER_OUTPUT_FIELDS_INVALID")
     if (not isinstance(value["questions"], list) or not isinstance(value["images"], list)
@@ -196,51 +211,62 @@ def validate_images(value, snapshot):
         raise ValueError("PLANNER_DUPLICATE_REFERENCE_SOURCE")
     images = []
     for position, raw in enumerate(value["images"], 1):
-        image = PlannedImage.model_validate(raw).model_dump()
-        if image["position"] != position:
-            raise ValueError("PLANNER_IMAGE_ORDER_INVALID")
-        if image["aspect_ratio"] != snapshot["target_size"]["aspect_ratio"]:
-            raise ValueError("PLANNER_TARGET_SIZE_CONFLICT")
-        offsets = [image["positive_prompt"].find(f"【{label}】") for label in LABELS]
-        if (any(offset < 0 for offset in offsets) or offsets != sorted(offsets)
-                or not image["positive_prompt"].lstrip().startswith(f"【{LABELS[0]}】")
-                or any(image["positive_prompt"].count(f"【{label}】") != 1 for label in LABELS)):
-            raise ValueError("PLANNER_PROMPT_COLUMNS_INVALID")
-        for ordinal, ref in enumerate(image["references"], 1):
-            key = source_id(ref)
-            if key not in allowed or ref != allowed[key]:
-                raise ValueError("PLANNER_REFERENCE_CHANGED")
-            required = f"输入图片{ordinal}—{key}"
-            if required not in image["positive_prompt"]:
-                raise ValueError(f"PLANNER_REFERENCE_ORDER_TEXT_MISMATCH: 第{position}张参考图栏目须逐字包含“{required}”，编号按本张references顺序。")
-        headings = re.findall(r"(?m)^##\s+(.+?)\s*$", image["scheme_markdown"])
-        if headings != list(SCHEME_HEADINGS):
-            raise ValueError("PLANNER_SCHEME_INCOMPLETE")
-        bodies = {}
-        for index, title in enumerate(headings):
-            start = image["scheme_markdown"].find(f"## {title}") + len(f"## {title}")
-            end = image["scheme_markdown"].find(f"## {headings[index + 1]}", start) if index + 1 < len(headings) else len(image["scheme_markdown"])
-            bodies[title] = image["scheme_markdown"][start:end].strip()
-        for section, fields in SCHEME_SECTIONS.items():
-            if not bodies[section] or any(f"**{field}**" not in bodies[section] for field in fields):
-                raise ValueError("PLANNER_SCHEME_FIELDS_INCOMPLETE")
-        positive_prompt = image["positive_prompt"].strip()
-        negative_prompt = image["negative_prompt"].strip()
-        if bodies["完整生图提示词"] != positive_prompt or bodies["负面提示词"] != negative_prompt:
-            raise ValueError("PLANNER_SCHEME_PROMPT_MISMATCH")
-        required_ratio = "商品按参考图真实比例等比例缩放，排版围绕实际商品形状安排，不拉伸、压扁、增厚或改变部件比例。"
-        if required_ratio not in positive_prompt:
-            raise ValueError("PLANNER_PRODUCT_RATIO_RULE_MISSING")
-        if any(term not in negative_prompt for term in ("拉伸", "压扁", "增厚", "部件比例", "透视失真")):
-            raise ValueError("PLANNER_NEGATIVE_PRODUCT_FIDELITY_RULE_MISSING")
-        image["positive_prompt"] = positive_prompt
-        image["negative_prompt"] = negative_prompt
-        request = positive_prompt + "\n\n负面提示词：" + negative_prompt
-        from services.handlers.chat_image_request import validate_single_image_request
-        validate_single_image_request({"mode": "image_to_image", "prompt": request,
-            "aspect_ratio": image["aspect_ratio"], "resolution": snapshot["target_size"]["resolution"]}, len(image["references"]))
-        images.append({**image, "item_id": str(uuid4()), "request_text": request, "request_text_sha256": text_hash(request)})
+        try:
+            images.append(_validate_image(raw, position, allowed, snapshot, assemble_display))
+        except ValueError as error:
+            raise ImageValidationError(position, error) from error
     records = [ReviewRecord.model_validate(record).model_dump() for record in value["review_records"]]
     if not records or any(record["conclusion"] == "blocked" for record in records):
         raise ValueError("PLANNER_REVIEW_BLOCKED")
     return {**value, "images": images, "review_records": records}
+
+
+def _validate_image(raw, position, allowed, snapshot, assemble_display):
+    image = PlannedImage.model_validate(raw).model_dump()
+    if image["position"] != position:
+        raise ValueError("PLANNER_IMAGE_ORDER_INVALID")
+    if image["aspect_ratio"] != snapshot["target_size"]["aspect_ratio"]:
+        raise ValueError("PLANNER_TARGET_SIZE_CONFLICT")
+    offsets = [image["positive_prompt"].find(f"【{label}】") for label in LABELS]
+    if (any(offset < 0 for offset in offsets) or offsets != sorted(offsets)
+            or not image["positive_prompt"].lstrip().startswith(f"【{LABELS[0]}】")
+            or any(image["positive_prompt"].count(f"【{label}】") != 1 for label in LABELS)):
+        raise ValueError("PLANNER_PROMPT_COLUMNS_INVALID")
+    for ordinal, ref in enumerate(image["references"], 1):
+        key = source_id(ref)
+        if key not in allowed or ref != allowed[key]:
+            raise ValueError("PLANNER_REFERENCE_CHANGED")
+        required = f"输入图片{ordinal}—{key}"
+        if required not in image["positive_prompt"]:
+            raise ValueError(f"PLANNER_REFERENCE_ORDER_TEXT_MISMATCH: 第{position}张参考图栏目须逐字包含“{required}”，编号按本张references顺序。")
+    headings = re.findall(r"(?m)^##\s+(.+?)\s*$", image["scheme_markdown"])
+    if headings != list(SCHEME_HEADINGS) and not (assemble_display and headings == list(SCHEME_SECTIONS)):
+        raise ValueError("PLANNER_SCHEME_INCOMPLETE")
+    bodies = {}
+    for index, title in enumerate(headings):
+        start = image["scheme_markdown"].find(f"## {title}") + len(f"## {title}")
+        end = image["scheme_markdown"].find(f"## {headings[index + 1]}", start) if index + 1 < len(headings) else len(image["scheme_markdown"])
+        bodies[title] = image["scheme_markdown"][start:end].strip()
+    for section, fields in SCHEME_SECTIONS.items():
+        if not bodies[section] or any(f"**{field}**" not in bodies[section] for field in fields):
+            raise ValueError("PLANNER_SCHEME_FIELDS_INCOMPLETE")
+    positive_prompt = image["positive_prompt"].strip()
+    negative_prompt = image["negative_prompt"].strip()
+    if headings == list(SCHEME_SECTIONS):
+        image["scheme_markdown"] = (image["scheme_markdown"].rstrip()
+            + "\n\n## 完整生图提示词\n\n" + positive_prompt
+            + "\n\n## 负面提示词\n\n" + negative_prompt)
+    elif bodies["完整生图提示词"] != positive_prompt or bodies["负面提示词"] != negative_prompt:
+        raise ValueError("PLANNER_SCHEME_PROMPT_MISMATCH")
+    required_ratio = "商品按参考图真实比例等比例缩放，排版围绕实际商品形状安排，不拉伸、压扁、增厚或改变部件比例。"
+    if required_ratio not in positive_prompt:
+        raise ValueError("PLANNER_PRODUCT_RATIO_RULE_MISSING")
+    if any(term not in negative_prompt for term in ("拉伸", "压扁", "增厚", "部件比例", "透视失真")):
+        raise ValueError("PLANNER_NEGATIVE_PRODUCT_FIDELITY_RULE_MISSING")
+    image["positive_prompt"] = positive_prompt
+    image["negative_prompt"] = negative_prompt
+    request = positive_prompt + "\n\n负面提示词：" + negative_prompt
+    from services.handlers.chat_image_request import validate_single_image_request
+    validate_single_image_request({"mode": "image_to_image", "prompt": request,
+        "aspect_ratio": image["aspect_ratio"], "resolution": snapshot["target_size"]["resolution"]}, len(image["references"]))
+    return {**image, "item_id": str(uuid4()), "request_text": request, "request_text_sha256": text_hash(request)}

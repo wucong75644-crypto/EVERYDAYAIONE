@@ -54,8 +54,10 @@ def wrapper(stage):
 ready时questions为空，images数量精确等于image_count，按position从1连续排列。
 每项精确为position,name,purpose,scheme_markdown,references,positive_prompt,negative_prompt,aspect_ratio。
 JSON键名使用上述英文，不得以“完整生图提示词”“负面提示词”“参考图使用方式”等中文栏目替代JSON键。
-scheme_markdown是一个完整Markdown字符串，按原固定格式保留全部五节：""" + "、".join(f"## {title}" for title in SCHEME_HEADINGS) + """。
-其中“完整生图提示词”节的正文必须与positive_prompt逐字相同，“负面提示词”节的正文必须与negative_prompt逐字相同；两份字段是同一执行文本的完整呈现，不能省略任何一处。
+最终展示稿按原固定格式保留全部五节（由程序组装）：""" + "、".join(f"## {title}" for title in SCHEME_HEADINGS) + """。
+模型交付时scheme_markdown仅完整填写前三节：方案内容、视觉设定、参考图使用方式。
+完整生图提示词与负面提示词分别只在positive_prompt、negative_prompt中输出一次，不在scheme_markdown重复。
+程序将两段原文补入展示稿的第四、第五节，保证最终五节完整，展示、保存和生图共用同一份执行文本；不得省略任何专业设计内容。
 references从input_snapshot.references中逐项原样复制，只选本张需要的图并按实际生成顺序排列，role不改。
 positive_prompt保持原九个栏目：""" + "、".join(f"【{label}】" for label in LABELS) + """。
 商品比例栏目必须包含原规则：“商品按参考图真实比例等比例缩放，排版围绕实际商品形状安排，不拉伸、压扁、增厚或改变部件比例。”
@@ -66,4 +68,5 @@ positive_prompt、negative_prompt分别保持完整原文，不夹带方案说�
 review_records是实际自检记录的数组，每项精确字段：object(对象),method(只能self_check),checks(检查项字符串数组),
 conclusion(pass/blocked/repaired),evidence(具体依据),impact(影响),attribution(归因),repair(无修复填无),recheck_scope(复查范围)。
 至少一条有依据的整组检查；不得冒充独立审查或已生成图片检查。无法解决时status=needs_input，questions为最多3个字符串，images为空。
+本调用只负责策划并交付执行稿，生图与已有授权的执行由平台负责。JSON对象闭合后立即结束回复，不添加后续建议、解释、总结或邀请继续。
 """

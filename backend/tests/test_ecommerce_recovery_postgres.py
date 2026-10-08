@@ -309,8 +309,9 @@ def professional_outputs(ref):
     (3,'retry',2,[3]), (2,'retry',2,[2,3]), (3,'revise',1,[2,3]), (3,'revise',0,[1,2,3]),
     (3,'automatic',0,[]),
 ])
+@pytest.mark.parametrize('delivery', ['legacy', 'single', 'single_tail', 'single_repair'])
 async def test_real_planner_resume_reuses_only_valid_stages_and_preserves_raw_inputs(
-        ecom_db,monkeypatch,failed_stage,mode,reuse,expected):
+        ecom_db,monkeypatch,failed_stage,mode,reuse,expected,delivery):
     import asyncio
     import json
     from core.local_db import LocalDBClient
@@ -339,6 +340,13 @@ async def test_real_planner_resume_reuses_only_valid_stages_and_preserves_raw_in
         'resolved_references':[{k:resolved[k] for k in ('source_id','content_sha256','file_version','workspace_path')}],
         'target_size':target}
     product,visual,final=professional_outputs(public)
+    positive = final['images'][0]['positive_prompt']
+    negative = final['images'][0]['negative_prompt']
+    if delivery != 'legacy':
+        final['images'][0]['scheme_markdown'] = final['images'][0]['scheme_markdown'].split('\n## 完整生图提示词')[0]
+    from copy import deepcopy
+    broken = deepcopy(final)
+    broken['images'][0]['negative_prompt'] = '缺少商品保真限制'
     outputs={'1':product,**({'2':visual} if failed_stage==3 else {})}
     versions={'resources_sha256':list(HASHES),'schema_sha256':SCHEMA_SHA256,
         'integration_reference_sha256':INTEGRATION_RULES_SHA256}
@@ -383,6 +391,15 @@ async def test_real_planner_resume_reuses_only_valid_stages_and_preserves_raw_in
             body=json.loads(sent[1]['content'][0]['text']);stage=body['stage'];seen.append(body)
             assert sent[1]['content'][2]['image_url']=='https://example.invalid/original.png'
             reply={1:json.dumps(product,ensure_ascii=False),2:visual,3:json.dumps(final,ensure_ascii=False)}[stage]
+            if stage == 3 and delivery == 'single_tail':
+                reply += '\n\n继续完善这组商品主图\n- 优化方案差异化\n- 挑选适合做首图的方案'
+            if stage == 3 and delivery == 'single_repair':
+                if len([entry for entry in seen if entry['stage'] == 3]) == 1:
+                    reply = json.dumps(broken, ensure_ascii=False)
+                else:
+                    assert body['previous_stage_three_output'] == broken
+                    assert body['repair_positions'] == [1]
+                    reply = json.dumps({'images': final['images'], 'review_records': final['review_records']}, ensure_ascii=False)
             yield StreamChunk(content=reply,prompt_tokens=100,completion_tokens=10)
         return SimpleNamespace(stream_chat=stream,last_result=SimpleNamespace(status='completed',usage={}),close=AsyncMock())
     monkeypatch.setattr('services.agent.image.ecommerce_planner.service.get_model_gateway',lambda:SimpleNamespace(open_chat=open_chat))
@@ -398,7 +415,8 @@ async def test_real_planner_resume_reuses_only_valid_stages_and_preserves_raw_in
             return
         assert result.status=='success', result.summary
         assert result.metadata['retry_context']['generation_allowed'] is True
-        assert [body['stage'] for body in seen]==expected
+        expected_calls = [*expected, *([3] if delivery == 'single_repair' else [])]
+        assert [body['stage'] for body in seen]==expected_calls
         assert all(body['raw_user_messages'][0]==messages[0] for body in seen)
         assert all(body['references_in_generation_order']==[{'ordinal':1,'source_id':public['source_id'],'role':'product'}] for body in seen)
         if mode=='retry':
@@ -410,7 +428,9 @@ async def test_real_planner_resume_reuses_only_valid_stages_and_preserves_raw_in
             saved=c.execute('SELECT stage_outputs,items FROM ecom_image_plans WHERE id=%s',(plan_id,)).fetchone()
             assert saved[0]['1']==product
             assert saved[1][0]['references']==[public]
-            assert c.execute('SELECT count(*) FROM credits_history WHERE user_id=%s',(f['user'],)).fetchone()[0]==len(expected)
+            assert saved[1][0]['request_text'] == positive + '\n\n负面提示词：' + negative
+            assert positive in saved[1][0]['scheme_markdown'] and negative in saved[1][0]['scheme_markdown']
+            assert c.execute('SELECT count(*) FROM credits_history WHERE user_id=%s',(f['user'],)).fetchone()[0]==len(expected_calls)
     finally:
         db.close()
 

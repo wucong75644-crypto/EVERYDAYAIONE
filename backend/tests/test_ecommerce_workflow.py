@@ -183,8 +183,8 @@ async def test_stage_three_final_contract_follows_original_and_exposes_complete_
     schema = payload['output_json_schema']
     assert schema == ImagesOutput.model_json_schema()
     assert schema['additionalProperties'] is False
-    assert schema['$defs']['PlannedImage']['additionalProperties'] is False
-    assert set(schema['$defs']['PlannedImage']['required']) == {
+    assert schema['$defs']['ImageDraft']['additionalProperties'] is False
+    assert set(schema['$defs']['ImageDraft']['required']) == {
         'position','name','purpose','scheme_markdown','references','positive_prompt','negative_prompt','aspect_ratio'}
     assert payload['reference_identity_examples'] == [{'source_id': 'message-uuid:1',
         'first_input_literal': '输入图片1—message-uuid:1'}]
