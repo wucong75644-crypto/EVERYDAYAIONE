@@ -71,7 +71,7 @@ export default function DetailPage() {
     <PageTransition className="h-dvh overflow-hidden flex flex-col bg-[var(--s-surface-base)] text-[var(--s-text-primary)]">
       <div className="shrink-0"><DetailPageHeader /></div>
       <main className="min-h-0 flex-1 w-full max-w-[1600px] mx-auto p-3 sm:p-5">
-        <section className="h-full min-h-0 grid grid-cols-[minmax(300px,38%)_minmax(0,1fr)] gap-4">
+        <section className="h-full min-h-0 grid grid-cols-[360px_minmax(0,1fr)] gap-4">
           <Card variant="elevated" padding="md" className="h-full min-h-0 overflow-hidden">
             <GenerationSettings form={form} images={images} error={formError} hasProductImage={hasReadyProductImage && !hasPendingImage} disabled={step !== 1 || isHydrating} requirementAssistDisabled={requirementAssistDisabled} onChange={updateForm} onRequirementAssist={openRequirementAssist} onAnalyze={startAnalysis} onAdd={(files) => void addImages('product', files)} onWorkspaceAdd={(paths) => void attachWorkspaceImages('product', paths)} onRemove={(id) => void removeImage(id)} />
           </Card>
