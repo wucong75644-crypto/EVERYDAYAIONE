@@ -55,4 +55,12 @@ describe('真实页面任务状态',()=>{
   await useDetailPageStore.getState().addImages('reference',[new File(['x'],'a.txt',{type:'text/plain'})]);
   expect(useDetailPageStore.getState().formError).toContain('格式');
  });
+ it('工作区图片关联后保存当前编辑，避免上传覆盖输入',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  useDetailPageStore.getState().updateForm({contentType:'main_image',count:15,requirement:'人工编辑要求'});
+  vi.mocked(api.attachDetailImage).mockResolvedValue({...draft,version:2});
+  await useDetailPageStore.getState().attachWorkspaceImages('product',['second.png']);
+  await vi.advanceTimersByTimeAsync(500);
+  expect(api.saveDetailSettings).toHaveBeenCalledWith('project',2,expect.objectContaining({contentType:'main_image',count:15,requirement:'人工编辑要求'}));
+ });
 });

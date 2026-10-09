@@ -22,6 +22,12 @@ class RequirementSettings(BaseModel):
     image_count: int = Field(default=5, ge=1, le=15)
     requirement: str = Field(default="", max_length=REQUIREMENT_MAX_LENGTH)
 
+    @model_validator(mode="after")
+    def validate_generation_count(self) -> "RequirementSettings":
+        if self.content_type == "default" and self.image_count != 14:
+            raise ValueError("默认模式固定生成7张主图和7张详情图")
+        return self
+
 
 class DraftField(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)

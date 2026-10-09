@@ -90,6 +90,12 @@ class DetailProjectService:
         updates = {key: value for key, value in settings.items() if key in allowed and value is not None}
         if not updates:
             return self._require_project(project_id)
+        if "content_type" in updates or "image_count" in updates:
+            project = self._require_project(project_id)
+            content_type = updates.get("content_type", project["content_type"])
+            image_count = updates.get("image_count", project["image_count"])
+            if (content_type == "default" and image_count != 14) or (content_type != "default" and image_count > 15):
+                raise AppException("DETAIL_IMAGE_COUNT_INVALID", "默认模式固定14张，单类图片最多15张", 400)
         assignments = ", ".join(f'"{key}" = %s' for key in updates)
         params = [*updates.values(), project_id, self.user_id, self.org_id, version]
         sql = f"""

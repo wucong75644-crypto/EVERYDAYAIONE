@@ -17,8 +17,20 @@ def page_db(ecom_db):
         db.execute((ROOT/'migrations/118_detail_projects.sql').read_text())
         db.execute('ALTER TABLE detail_projects OWNER TO everydayai')
         db.execute('ALTER TABLE detail_project_images OWNER TO everydayai')
+        db.execute((ROOT/'migrations/279_detail_default_generation_mode.sql').read_text())
         db.execute((ROOT/'migrations/283_detail_page_generation.sql').read_text())
     return ecom_db
+
+@pytest.mark.parametrize('kind,count,valid', [('default',7,False),('main_image',16,False),('detail_page',15,True)])
+def test_project_count_constraint_after_main_migration(page_db,kind,count,valid):
+    user=str(uuid4())
+    with psycopg.connect(page_db) as db:
+        db.execute('INSERT INTO users(id,credits) VALUES(%s,100)',(user,))
+        if valid:
+            db.execute('INSERT INTO detail_projects(user_id,content_type,image_count) VALUES(%s,%s,%s)',(user,kind,count))
+        else:
+            with pytest.raises(psycopg.errors.CheckViolation):
+                db.execute('INSERT INTO detail_projects(user_id,content_type,image_count) VALUES(%s,%s,%s)',(user,kind,count))
 
 
 def scoped(dsn,user,worker=False):

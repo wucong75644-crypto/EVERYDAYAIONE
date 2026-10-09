@@ -17,27 +17,27 @@ const languages=[{value:'zh-CN',label:'中文（简体）'},{value:'none',label:
 const qualities=[{value:'1k',label:'1K 标准'},{value:'2k',label:'2K 高清'},{value:'4k',label:'4K 超清'}] as const;
 const counts=Array.from({length:15},(_,index)=>({value:String(index+1),label:`${index+1}张`}));
 const defaultModels=[{value:'kimi-k3',label:'Kimi K3'},{value:'gemini-3.8-flash',label:'Gemini 3.8 Flash'}] as const;
-export function GenerationSettings({form,hasProductImage,disabled=false,requirementAssistDisabled=false,models,ratios=['1:1','3:4','16:9'],images=[],onAdd,onWorkspaceAdd,onRemove,onChange,onRequirementAssist,onAnalyze}:Props){
+export function GenerationSettings({form,hasProductImage,disabled=false,requirementAssistDisabled=false,models,ratios=['1:1','3:4','4:5','16:9'],images=[],onAdd,onWorkspaceAdd,onRemove,onChange,onRequirementAssist,onAnalyze}:Props){
   const inputRef = useRef<HTMLInputElement>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const requirementLabel = form.contentType === 'default' ? '产品信息与创作要求' : form.contentType === 'main_image' ? '主图要求' : '详情图要求';
-  return <section className="flex h-full min-h-0 flex-col gap-3">
+  return <section className="flex h-full min-h-0 flex-col gap-2">
     <div className="grid shrink-0 grid-cols-3 gap-1 rounded-[var(--s-radius-control)] bg-[var(--s-surface-secondary)] p-1" aria-label="生成类型">
       {([['default','默认'],['main_image','主图'],['detail_page','详情图']] as const).map(([value,label])=>
         <button type="button" key={value} disabled={disabled} aria-pressed={form.contentType===value} onClick={()=>onChange({contentType:value})}
-          className={cn('h-10 rounded-[var(--s-radius-control)] text-sm font-medium disabled:opacity-50',form.contentType===value?'bg-[var(--s-surface-card)] text-[var(--s-accent)] shadow-sm':'text-[var(--s-text-secondary)]')}>{label}</button>)}
+          className={cn('rounded-[var(--s-radius-control)] px-3 py-1.5 text-sm font-medium disabled:opacity-50',form.contentType===value?'bg-[var(--s-surface-card)] text-[var(--s-accent)] shadow-sm':'text-[var(--s-text-secondary)]')}>{label}</button>)}
     </div>
-    <div className="grid shrink-0 grid-cols-2 gap-x-3 gap-y-2">
-      <label className="min-w-0 text-sm text-[var(--s-text-secondary)]">目标平台<Select ariaLabel="目标平台" value={form.platform} options={platforms} disabled={disabled} onChange={platform=>onChange({platform})}/></label>
-      <label className="min-w-0 text-sm text-[var(--s-text-secondary)]">目标语言<Select ariaLabel="目标语言" value={form.language} options={languages} disabled={disabled} onChange={language=>onChange({language})}/></label>
-      <label className="min-w-0 text-sm text-[var(--s-text-secondary)]">尺寸比例<Select ariaLabel="尺寸比例" value={form.aspectRatio} options={ratios.map(value=>({value,label:value}))} disabled={disabled} onChange={aspectRatio=>onChange({aspectRatio})}/></label>
-      <label className="min-w-0 text-sm text-[var(--s-text-secondary)]">清晰度<Select ariaLabel="清晰度" value={form.quality} options={qualities} disabled={disabled} onChange={quality=>onChange({quality})}/></label>
-      <label className="min-w-0 text-sm text-[var(--s-text-secondary)]">
+    <div className="grid shrink-0 grid-cols-2 gap-x-2 gap-y-1">
+      <label className="min-w-0 text-xs text-[var(--s-text-secondary)]">目标平台<Select size="compact" ariaLabel="目标平台" value={form.platform} options={platforms} disabled={disabled} onChange={platform=>onChange({platform})}/></label>
+      <label className="min-w-0 text-xs text-[var(--s-text-secondary)]">目标语言<Select size="compact" ariaLabel="目标语言" value={form.language} options={languages} disabled={disabled} onChange={language=>onChange({language})}/></label>
+      <label className="min-w-0 text-xs text-[var(--s-text-secondary)]">尺寸比例<Select size="compact" ariaLabel="尺寸比例" value={form.aspectRatio} options={ratios.map(value=>({value,label:value}))} disabled={disabled} onChange={aspectRatio=>onChange({aspectRatio})}/></label>
+      <label className="min-w-0 text-xs text-[var(--s-text-secondary)]">清晰度<Select size="compact" ariaLabel="清晰度" value={form.quality} options={qualities} disabled={disabled} onChange={quality=>onChange({quality})}/></label>
+      <label className="min-w-0 text-xs text-[var(--s-text-secondary)]">
         <span className="flex h-5 items-center justify-between"><span>生成数量</span><span className="whitespace-nowrap text-[10px]">{form.contentType==='default'?'7张主图＋7张详情':'\u00a0'}</span></span>
-        <Select ariaLabel="生成数量" value={String(form.contentType==='default'?14:form.count)} options={form.contentType==='default'?[{value:'14',label:'14张'}]:counts} disabled={disabled} onChange={count=>onChange({count:Number(count)})}/>
+        <Select size="compact" ariaLabel="生成数量" value={String(form.contentType==='default'?14:form.count)} options={form.contentType==='default'?[{value:'14',label:'14张'}]:counts} disabled={disabled} onChange={count=>onChange({count:Number(count)})}/>
       </label>
-      <label className="min-w-0 text-sm text-[var(--s-text-secondary)]">提示词模型
-        <Select ariaLabel="提示词模型" value={form.promptModel??'kimi-k3'} options={models?.length?models.map(model=>({value:model.id,label:model.name+(model.available?'':'（暂不可用）')})):defaultModels}
+      <label className="min-w-0 text-xs text-[var(--s-text-secondary)]">提示词模型
+        <Select size="compact" ariaLabel="提示词模型" value={form.promptModel??'kimi-k3'} options={models?.length?models.map(model=>({value:model.id,label:model.name+(model.available?'':'（暂不可用）')})):defaultModels}
           disabled={disabled} onChange={promptModel=>onChange({promptModel})}/>
       </label>
     </div>

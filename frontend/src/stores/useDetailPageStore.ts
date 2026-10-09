@@ -19,7 +19,7 @@ interface DetailPageState {
   startAnalysis: () => Promise<void>; restart: () => Promise<void>; reset: () => void;
 }
 const initialState = {images: [] as DetailLocalImage[], form: {...DEFAULT_FORM},groups: [] as DetailGroup[],
-  status:'draft',models: [] as PromptModelOption[],ratios:['1:1','3:4','16:9'],enabled:false,
+  status:'draft',models: [] as PromptModelOption[],ratios:['1:1','3:4','4:5','16:9'],enabled:false,
   isTransitioning:false,isUploading:false,formError:null as string|null,projectId:null as string|null,projectVersion:null as number|null,isHydrating:false};
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg','image/png','image/webp']);
 const MAX_IMAGES=9;
@@ -94,7 +94,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
         break;
       }
     }
-    } finally { if(epoch===lifecycleVersion)set({isUploading:false}); }
+    } finally { if(epoch===lifecycleVersion){set({isUploading:false});get().updateForm({});} }
   },
   addImages: async (category, files) => {
     if(get().isUploading||get().status!=='draft')return;
@@ -156,7 +156,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
         set((state) => ({ images: state.images.map((item) => item.id === image.id ? { ...item, status: 'failed', error: toApiRequestError(error).message } : item), formError: toApiRequestError(error).message }));
       }
     }
-    } finally { if(epoch===lifecycleVersion)set({isUploading:false}); }
+    } finally { if(epoch===lifecycleVersion){set({isUploading:false});get().updateForm({});} }
   },
   removeImage: async (id) => {
     const image = get().images.find((item) => item.id === id);
@@ -175,7 +175,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
   },
   updateForm:(patch)=>{
     set(state=>{const next={...state.form,...patch};
-      if(patch.contentType){next.count=patch.contentType==='default'?14:(state.form.contentType==='default'?7:state.form.count);
+      if(patch.contentType){next.count=patch.contentType==='default'?14:patch.count??(state.form.contentType==='default'?7:state.form.count);
         if(!patch.aspectRatio)next.aspectRatio=patch.contentType==='detail_page'?'3:4':'1:1';}
       return {form:next};});
     clearSettingsTimer();settingsTimer=setTimeout(()=>{void persistSettings().catch(error=>set({formError:toApiRequestError(error).message}));},500);

@@ -227,3 +227,25 @@ def test_reorder_reinserts_images_in_requested_order(tmp_path) -> None:
     inserts = [call for call in cursor.execute.call_args_list if "INSERT INTO detail_project_images" in call.args[0]]
     assert len(inserts) == 2
     assert inserts[0].args[1][0] == "b"
+
+
+@pytest.mark.parametrize("content_type,count", [("default", 7), ("main_image", 16), ("detail_page", 16)])
+def test_update_settings_rejects_invalid_generation_count(tmp_path, content_type, count):
+    service = _service(tmp_path)
+    project = {"id": "project-1", "content_type": "main_image", "image_count": 1}
+    with patch.object(service, "_require_project", return_value=project):
+        with pytest.raises(AppException) as exc:
+            service.update_settings("project-1", 1, {"content_type": content_type, "image_count": count})
+    assert exc.value.code == "DETAIL_IMAGE_COUNT_INVALID"
+    service.db.pool.connection.assert_not_called()
+
+
+@pytest.mark.parametrize("content_type,count", [("default", 14), ("main_image", 15), ("detail_page", 15)])
+def test_update_settings_saves_supported_generation_count(tmp_path, content_type, count):
+    service = _service(tmp_path)
+    _, cursor = _db_cursor(service)
+    cursor.fetchone.return_value = {"id": "project-1"}
+    project = {"id": "project-1", "content_type": "main_image", "image_count": 1}
+    with patch.object(service, "_require_project", return_value=project), patch.object(service, "get_current", return_value=project):
+        service.update_settings("project-1", 1, {"content_type": content_type, "image_count": count})
+    assert cursor.execute.call_args.args[1][:2] == [content_type, count]

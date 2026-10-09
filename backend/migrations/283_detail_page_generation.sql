@@ -3,7 +3,9 @@ SET LOCAL ROLE everydayai;
 ALTER TABLE public.detail_projects DROP CONSTRAINT detail_projects_content_type_check;
 ALTER TABLE public.detail_projects ADD CONSTRAINT detail_projects_content_type_check CHECK(content_type IN ('default','main_image','detail_page'));
 ALTER TABLE public.detail_projects DROP CONSTRAINT detail_projects_image_count_check;
-ALTER TABLE public.detail_projects ADD CONSTRAINT detail_projects_image_count_check CHECK(image_count BETWEEN 1 AND 15);
+ALTER TABLE public.detail_projects ADD CONSTRAINT detail_projects_image_count_check CHECK(
+ (content_type='default' AND image_count=14)
+ OR (content_type IN ('main_image','detail_page') AND image_count BETWEEN 1 AND 15));
 ALTER TABLE public.detail_projects ALTER COLUMN content_type SET DEFAULT 'default';
 ALTER TABLE public.detail_projects ALTER COLUMN image_count SET DEFAULT 14;
 ALTER TABLE public.detail_projects ADD COLUMN prompt_model TEXT NOT NULL DEFAULT 'kimi-k3'

@@ -40,6 +40,8 @@ def build_context_prompt(data: RequirementAssistInput) -> str:
             for index, (image, role) in enumerate(ordered_images(data), 1)
         ],
     }
+    if data.content_type == "default":
+        context["任务设置"]["生成分组"] = {"主图": 7, "详情图": 7}
     if data.revision:
         context["当前人工编辑草稿"] = data.revision.draft.model_dump()
         context["用户补充（按时间排序，最后的更正优先）"] = data.revision.supplement
