@@ -92,3 +92,22 @@ async def test_legacy_plain_body_checkpoint_remains_restorable():
     resumed = state(source)
     await resumed.initialize(checkpoint)
     assert resumed.messages() == runtime.messages()
+
+
+async def test_configured_budget_renders_large_template_asset_and_restores(storage):
+    from services.skills.assets import TemplateVariable
+    from services.skills.runtime import skill_budget_options
+    content = '{{args.org}}' * 3000
+    skill = publish(storage, document(attachment(kind='template', content=content),
+        body=('背景字体灯光规则。' * 5000) + '\n[[asset:guide]]',
+        variables={'org': TemplateVariable(source='org_id', type='string')}))
+    source = source_for(storage, skill)
+    options = skill_budget_options(SimpleNamespace())
+    runtime = state(source, template_context={'org_id': 'o' * 36}, **options)
+    await runtime.initialize()
+    assert (await runtime.activate(activate('skill0')))['ok']
+    rendered = runtime.active['skill0'].rendered
+    assert skill.body in rendered and 'o' * (36 * 3000) in rendered
+    restored = state(source, **options)
+    await restored.initialize(runtime.checkpoint())
+    assert restored.active['skill0'].rendered == rendered

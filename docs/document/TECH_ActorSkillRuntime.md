@@ -24,16 +24,16 @@ P2-1 已增加组织管理员草稿、审核、受控 NAS 发布、废弃与禁�
 
 模板只支持 `{{args.<名称>}}`，名称以小写字母开头，最多 32 个小写字母/数字/下划线。参数限字符串、有限数值和布尔值，必须与模板名称集合一致。不匹配时结构化返回 `required_args` 供下一次显式调用使用，不返回正文或参数值。没有属性访问、表达式求值、include、路径解析、环境变量或 Token 注入；替换值按字面处理，不递归展开。
 
-固定预算按 UTF-8 字节计量，作为与模型供应商无关的保守文本 token 上限：
+运行预算按 UTF-8 字节计量。生产交互与计划任务入口统一读取配置，激活、附件渲染及历史恢复均使用该配置；字节预算不替代所选模型的上下文 token 限制：
 
 | 项目 | 上限 |
 | --- | --- |
 | 模型目录 | 32 条、12 KiB，按解析器优先级依次纳入可容纳条目 |
 | checkpoint 目录元数据 | 64 KiB，不含路径或正文 |
-| 单 Skill 原始正文 | 16 KiB |
+| 单 Skill 原始正文 | 默认 256 KiB；`SKILL_MAX_BODY_BYTES` |
 | 单次 args | 16 个标量变量、规范化 JSON 4 KiB；完整控制参数 4 KiB + 256 B |
-| 单 Skill 渲染正文 | 24 KiB |
-| Turn 所有渲染正文 | 总计 48 KiB、最多 4 个 Skill；另有每项固定身份/权限提示头 |
+| 单 Skill 渲染正文 | 默认 384 KiB（含附件及清单）；`SKILL_MAX_RENDERED_BYTES` |
+| Turn 所有渲染正文 | 默认总计 1 MiB；`SKILL_MAX_TURN_RENDERED_BYTES`；最多 4 个 Skill，另有每项固定身份/权限提示头 |
 
 超限拒绝激活，不截断正文；P1-1 的 1 MiB 文件读取上限仍先生效。渲染成功才更新状态，失败返回 `{ok:false, code:...}`，不回显底层异常的文件路径、SQL 或凭证。
 
@@ -118,3 +118,5 @@ DATABASE_URL=postgresql://unused JWT_SECRET_KEY=skill-tests-only python -m pytes
 首选关闭 `SKILL_RUNTIME_ENABLED`，新 Turn 回到既有行为，已激活的暂停/重试 checkpoint 安全停止。保留 revision、NAS 原文件和 checkpoint，可在重新开启后恢复原版本。
 
 回退代码到基座前，必须完成或通过现有取消入口终止含已激活 Skill checkpoint 的未终结任务；旧代码不认识 Skill 上限，不能恢复这些任务。无需数据库回滚/删除数据。本任务不自动部署、合并 main、清理工作树或修改生产开关。
+
+配置值必须为正整数，单位为字节；三个预算独立约束，任一超限即拒绝，不截断或摘要正文。缩小预算后，已保存的超限历史恢复会停止，不回退到其他版本。存储文件 1 MiB、附件单项 64 KiB / 合计 256 KiB 的限制保持不变。底层 renderer 与直接构造 SkillRuntime 保留旧默认预算供兼容调用；生产入口始终显式传入上述配置。
