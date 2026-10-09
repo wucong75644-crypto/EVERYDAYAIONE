@@ -99,6 +99,7 @@ class KieClient:
 
     # Chat 模型端点映射
     CHAT_ENDPOINTS = {
+        "gemini-3.8-flash": "/gemini-3-8-flash-openai/v1/chat/completions",
         "gemini-3-pro": "/gemini-3-pro/v1/chat/completions",
         "gemini-3-flash": "/gemini-3-flash/v1/chat/completions",
     }

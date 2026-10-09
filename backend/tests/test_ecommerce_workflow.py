@@ -56,6 +56,85 @@ async def test_kie_responses_preserves_images_and_terminal_usage():
         await adapter.close()
 
 
+@pytest.mark.parametrize('mode', ['completed', 'missing_done', 'length', 'missing_usage', 'missing_cost'])
+async def test_openrouter_planner_uses_real_factory_images_receipt_and_fails_closed(monkeypatch, mode):
+    from services.adapters.openrouter.chat_adapter import OpenRouterChatAdapter
+    from services.agent.execution_budget import ExecutionBudget
+    from services.agent.image.ecommerce_planner.recovery import PlannerRecoveryError
+    from services.model_gateway import ModelGateway
+    service = planner()
+    service.settings.ecom_image_planning_model = 'openai/gpt-6.1-sol'
+    service.settings.ecom_image_planning_input_credits_per_million = None
+    service.settings.ecom_image_planning_output_credits_per_million = None
+    service.owner.execution_budget = ExecutionBudget(max_wall_time=600)
+    seen = []
+
+    def response(request):
+        seen.append((json.loads(request.content), request.headers['authorization'],
+            request.extensions['timeout']['read']))
+        frames = [{'choices': [{'delta': {'content': 'OK'},
+            'finish_reason': 'length' if mode == 'length' else 'stop'}]}]
+        if mode != 'missing_usage':
+            usage = {'prompt_tokens': 100, 'completion_tokens': 10, 'cost': 0.12}
+            if mode == 'missing_cost':
+                usage.pop('cost')
+            frames.append({'choices': [], 'usage': usage})
+        body = ''.join('data: ' + json.dumps(frame) + '\n\n' for frame in frames)
+        if mode != 'missing_done':
+            body += 'data: [DONE]\n\n'
+        return httpx.Response(200, headers={'content-type': 'text/event-stream'}, content=body)
+
+    async def client(adapter):
+        if adapter._client is None:
+            adapter._client = httpx.AsyncClient(base_url=adapter._base_url,
+                headers={'Authorization': f'Bearer {adapter._api_key}'},
+                timeout=adapter._stream_timeout, transport=httpx.MockTransport(response))
+        return adapter._client
+
+    monkeypatch.setattr('services.adapters.factory.get_settings', lambda: SimpleNamespace(
+        openrouter_api_key='platform-test-key', openrouter_base_url='https://example.invalid/api/v1',
+        openrouter_app_title='Test'))
+    monkeypatch.setattr('services.circuit_breaker.is_provider_available', lambda _: True)
+    monkeypatch.setattr(OpenRouterChatAdapter, '_get_client', client)
+    gateway = ModelGateway(event_publisher=SimpleNamespace(publish=lambda event: None))
+    monkeypatch.setattr('services.agent.image.ecommerce_planner.service.get_model_gateway', lambda: gateway)
+    messages = [{'role': 'developer', 'content': 'rules'}, {'role': 'user', 'content': [
+        {'type': 'input_text', 'text': '要有发财的感觉'},
+        {'type': 'input_image', 'image_url': 'https://example.invalid/first.png'},
+        {'type': 'input_image', 'image_url': 'https://example.invalid/second.png'}]}]
+    try:
+        call = service._call({'id': str(uuid4())}, 'lease', 3, 'rules', messages)
+        if mode == 'completed':
+            content, usage = await call
+            assert content == 'OK' and usage['provider'] == 'openrouter'
+            assert usage['user_credits'] == 25  # Actual $0.12 at the existing platform rate.
+        else:
+            with pytest.raises(PlannerRecoveryError, match='ECOM_PLAN_EXECUTION_UNCERTAIN'):
+                await call
+            assert service._finish.await_args.args[5] == 'uncertain'
+        body, authorization, read_timeout = seen[0]
+        assert len(seen) == 1 and authorization == 'Bearer platform-test-key'
+        assert body['model'] == 'openai/gpt-6.1-sol' and body['reasoning'] == {'effort': 'medium'}
+        assert body['messages'][1]['content'] == [{'type': 'text', 'text': '要有发财的感觉'},
+            {'type': 'image_url', 'image_url': {'url': 'https://example.invalid/first.png'}},
+            {'type': 'image_url', 'image_url': {'url': 'https://example.invalid/second.png'}}]
+        assert messages[1]['content'][0]['type'] == 'input_text'  # Input stays unchanged.
+        assert read_timeout == 30
+        service._reserve.assert_awaited_once()
+    finally:
+        await gateway.close()
+
+
+async def test_unregistered_planner_model_rejected_before_database():
+    service = planner()
+    service.owner.image_skill_snapshot = ({'skill_key': 'ecommerce-main-images'},)
+    service.settings.ecom_image_planning_enabled = True
+    service.settings.ecom_image_planning_model = 'openai/not-a-registered-model'
+    result = await service.run({'references': [], 'image_count': 5})
+    assert result.error_message == 'ECOM_IMAGE_PLANNING_MODEL_MISMATCH'
+    service._reserve.assert_not_awaited()
+
+
 def planner():
     owner = SimpleNamespace(db=SimpleNamespace(), user_id=str(uuid4()), org_id=str(uuid4()),
         task_id=str(uuid4()), cancellation_event=asyncio.Event(), execution_budget=None,
@@ -148,7 +227,7 @@ async def test_completed_empty_planner_output_enters_bounded_validation_repair(m
     assert len(repair) == 1 and repair[0].args[3]['validation_error'] == 'ECOM_PLAN_EMPTY_OUTPUT'
     assert repair[0].args[3]['input_tokens'] == 16026 and repair[0].args[3]['output_tokens'] == 0
     assert 'ECOM_PLAN_EMPTY_OUTPUT' in seen[1][0]['content']
-    assert seen[0][1] == seen[1][1]  # Raw text, references, image order remain identical.
+    assert seen[0][1] == seen[1][1]  # Empty reply repair keeps raw text and image order intact.
     for session in sessions:
         session.close.assert_awaited_once()
 
@@ -170,7 +249,7 @@ async def test_empty_planner_output_stops_after_three_attempts(stage):
 
 async def test_stage_three_final_contract_follows_original_and_exposes_complete_schema():
     from services.agent.image.ecommerce_planner.prompt_resources import resources, wrapper
-    from services.agent.image.ecommerce_planner.contracts import ImagesOutput, SCHEME_HEADINGS
+    from services.agent.image.ecommerce_planner.designs import DesignsOutput
     service = planner()
     service._call = AsyncMock(return_value=('{"status":"ready"}', {}))
     bodies, _schema = resources()
@@ -181,14 +260,12 @@ async def test_stage_three_final_contract_follows_original_and_exposes_complete_
     assert prompt.startswith(bodies[2]) and prompt.endswith(wrapper(3))
     payload = json.loads(messages[1]['content'][0]['text'])
     schema = payload['output_json_schema']
-    assert schema == ImagesOutput.model_json_schema()
+    assert schema == DesignsOutput.model_json_schema()
     assert schema['additionalProperties'] is False
-    assert schema['$defs']['ImageDraft']['additionalProperties'] is False
-    assert set(schema['$defs']['ImageDraft']['required']) == {
-        'position','name','purpose','scheme_markdown','references','positive_prompt','negative_prompt','aspect_ratio'}
-    assert payload['reference_identity_examples'] == [{'source_id': 'message-uuid:1',
-        'first_input_literal': '输入图片1—message-uuid:1'}]
-    assert all(f'## {title}' in wrapper(3) for title in SCHEME_HEADINGS)
+    assert schema['$defs']['ImageDesign']['additionalProperties'] is False
+    assert not {'scheme_markdown', 'references', 'positive_prompt', 'negative_prompt', 'aspect_ratio'} & set(schema['$defs']['ImageDesign']['properties'])
+    assert payload['reference_inventory'] == [{'number': 1, 'source_ref': 'image_1', 'role': 'product'}]
+    assert 'message-uuid' not in messages[1]['content'][0]['text']
 
 
 def test_reference_order_repair_identifies_exact_missing_literal():

@@ -12,6 +12,7 @@ from decimal import Decimal
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
+from ..chat_protocol import chat_messages
 from loguru import logger
 
 from ..base import (
@@ -117,7 +118,7 @@ class DashScopeChatAdapter(BaseChatAdapter):
         # 构建请求体（OpenAI 兼容格式）
         request_body: Dict[str, Any] = {
             "model": self._model_id,
-            "messages": messages,
+            "messages": chat_messages(messages),
             "stream": True,
             "stream_options": {"include_usage": True},
         }
@@ -133,10 +134,14 @@ class DashScopeChatAdapter(BaseChatAdapter):
             request_body["temperature"] = temperature
 
         # 思考模式：用户开了深度思考才启用，否则显式关闭（qwen3.5 默认开，必须显式关）
-        if thinking_mode in ("enabled", "deep_think"):
+        if self._model_id == "kimi-k3" or thinking_mode in ("enabled", "deep_think"):
             request_body["enable_thinking"] = True
         else:
             request_body["enable_thinking"] = False
+
+        # Kimi K3 默认 max；仅透传该模型支持的显式值，避免旧调用的 medium 被接口拒绝。
+        if self._model_id == "kimi-k3" and reasoning_effort in {"low", "high", "max"}:
+            request_body["reasoning_effort"] = reasoning_effort
 
         client = await self._get_client()
 

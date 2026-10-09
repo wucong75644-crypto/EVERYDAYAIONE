@@ -93,8 +93,8 @@ def model_projection(metadata):
 
 def failure_summary(code, category, stage=None, preserved=()):
     reason = {
-        "authentication": "策划模型鉴权失败，需要修复平台 KIE 配置后重试。",
-        "balance": "平台策划模型额度不足，需要补充 KIE 额度后重试。",
+        "authentication": "策划模型鉴权失败，需要修复平台模型配置后重试。",
+        "balance": "平台策划模型额度不足，需要补充供应商额度后重试。",
         "output_validation": "策划结果未通过格式或引用校验，已停止自动处理。",
         "budget": "主图策划已达到本次自动执行次数或时间上限。",
         "uncertain": "策划调用结果尚未确定，已停止自动重发，请核验已有执行记录。",

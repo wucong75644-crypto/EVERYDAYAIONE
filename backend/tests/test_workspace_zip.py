@@ -19,6 +19,7 @@ import pytest
 from urllib.parse import quote
 
 from api.routes.file_download import (
+    WorkspaceDownloadZipRequest,
     _ZIP_MAX_FILES,
     _ZIP_MAX_TOTAL_BYTES,
     _ascii_fallback,
@@ -329,3 +330,50 @@ class TestHttpEndpoint:
         assert "filename*=UTF-8''" in cd
         # latin-1 自检（TestClient 已经走过，能拿到 resp 就说明没崩）
         cd.encode("latin-1")
+
+    def test_grouped_images_download_originals_in_position_order(self, workspace, monkeypatch):
+        from fastapi.testclient import TestClient
+        from api.routes import file_download
+        executor = FileExecutor(workspace_root=str(workspace))
+        monkeypatch.setattr(file_download, "get_executor", lambda ctx: executor)
+        with TestClient(self._build_app(workspace)) as client:
+            response = client.post("/files/workspace/download_zip", json={
+                "paths": ["下载/图片.png", "下载/report.xlsx", "下载/不存在.png"],
+                "archive_paths": ["主图/01-商品首图.png", "详情页/01-产品说明.xlsx", "详情页/02-缺失.png"],
+                "archive_name": "主图详情.zip",
+            })
+        assert response.status_code == 200
+        assert quote("主图详情.zip") in response.headers["content-disposition"]
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            assert archive.namelist() == ["主图/01-商品首图.png", "详情页/01-产品说明.xlsx", "_errors.txt"]
+            assert archive.read("主图/01-商品首图.png") == b"\x89PNG fake"
+            assert archive.read("详情页/01-产品说明.xlsx") == b"PK fake xlsx"
+            assert "不存在.png" in archive.read("_errors.txt").decode("utf-8")
+        assert (workspace / "下载/图片.png").exists()
+        assert not (workspace / "主图").exists()
+
+
+class TestArchiveMappingSafety:
+    @pytest.mark.parametrize("name", ["../outside.png", "/tmp/a.png", "主图/../../a.png",
+        "C:/a.png", "主图\\a.png", "主图/.. /a.png", "主图//a.png", "_errors.txt", "主图/a\x00.png"])
+    def test_unsafe_archive_path_rejected(self, name):
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            WorkspaceDownloadZipRequest(paths=["a.png"], archive_paths=[name])
+
+    @pytest.mark.parametrize("values", [
+        {"archive_paths": ["主图/01.png"]},
+        {"archive_paths": ["主图/A.png", "主图/a.png"]},
+        {"archive_name": "../主图.zip"},
+        {"archive_name": "主图.png"},
+        {"archive_name": "主图\r\nheader.zip"},
+    ])
+    def test_invalid_mapping_or_archive_name_rejected(self, values):
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            WorkspaceDownloadZipRequest(paths=["a.png", "b.png"], **values)
+
+    def test_archive_alias_does_not_bypass_workspace_guard(self, executor):
+        targets, errors = _collect_zip_targets(executor, ["../../../etc/passwd"], ["主图/01.png"])
+        assert not targets
+        assert errors

@@ -94,13 +94,15 @@ def test_single_copy_delivery_preserves_identity_completeness_and_review_gates(d
 
 
 async def run_stage(service, evidence, refs):
+    from services.agent.image.ecommerce_planner.assembly import assemble_designs
     return await service._stage_images({'id': str(uuid4())}, 'lease', 'professional rules', wrapper(3),
-        evidence, [{'text': '原始要求，发财风格'}], refs, ['https://example.invalid/product.png'],
-        validator=lambda value: validate_images(value, evidence['input_snapshot'], assemble_display=True))
+        evidence, evidence['input_snapshot']['messages'], refs, ['https://example.invalid/product.png'],
+        validator=lambda value: assemble_designs(value, evidence['input_snapshot'], evidence['product_selling_points']))
 
 
 async def test_advisory_tail_passes_once_without_paid_repair():
-    value, evidence, refs = draft(5)
+    from tests.ecommerce_design_fixtures import design_fixture
+    value, evidence, refs = design_fixture(5)
     service = planner()
     service._call = AsyncMock(return_value=(json.dumps(value, ensure_ascii=False) + TAIL, {'user_credits': 2}))
     final, usage = await run_stage(service, evidence, refs)
@@ -110,84 +112,65 @@ async def test_advisory_tail_passes_once_without_paid_repair():
     service._save_attempt.assert_not_awaited()
 
 
-@pytest.mark.parametrize('defect', ['negative', 'wrong_position', 'missing_position'])
-async def test_single_image_repair_keeps_other_images_and_receives_full_draft(defect):
-    original, evidence, refs = draft(5)
+@pytest.mark.parametrize('defect', ['missing_field', 'wrong_position', 'missing_position'])
+async def test_single_field_repair_keeps_other_images_and_receives_only_affected_draft(defect):
+    from tests.ecommerce_design_fixtures import design_fixture
+    original, evidence, refs = design_fixture(5)
     broken = deepcopy(original)
-    if defect == 'negative':
-        broken['images'][2]['negative_prompt'] = '错误负面稿'
-    elif defect == 'wrong_position':
+    field = 'lighting' if defect == 'missing_field' else 'position'
+    if defect == 'wrong_position':
         broken['images'][2]['position'] = 15
     else:
-        del broken['images'][2]['position']
-    patch = {'images': [original['images'][2]], 'review_records': original['review_records']}
+        del broken['images'][2][field]
+    path = ['images', 2, field]
+    patch = {'patches': [{'path': path, 'value': original['images'][2][field]}], 'review_records': original['review_records']}
     service = planner()
-    service._call = AsyncMock(side_effect=[(json.dumps(broken), {'user_credits': 1}),
-        (json.dumps(patch), {'user_credits': 1})])
+    service._call = AsyncMock(side_effect=[(json.dumps(broken), {}), (json.dumps(patch), {})])
     saved, usage = await run_stage(service, evidence, refs)
-    repair_messages = service._call.await_args_list[1].args[4]
-    body = json.loads(repair_messages[1]['content'][0]['text'])
-    assert body['previous_stage_three_output'] == broken
-    assert body['repair_positions'] == [3]
-    assert set(body['output_json_schema']['properties']) == {'images', 'review_records'}
-    assert usage['repair_positions'] == [3]
-    assert [image['positive_prompt'] for image in saved['images']] == [image['positive_prompt'] for image in original['images']]
-    assert repair_messages[1]['content'][2]['image_url'] == 'https://example.invalid/product.png'
+    body = json.loads(service._call.await_args_list[1].args[4][1]['content'][0]['text'])
+    assert 'previous_stage_three_output' not in body
+    assert [target['path'] for target in body['repair_targets']] == [path]
+    assert set(body['output_json_schema']['properties']) == {'patches', 'review_records'}
+    assert usage['repair_paths'] == [path]
+    assert [image['design'] for image in saved['images']] == original['images']
     assert service._save_attempt.await_count == 1
 
 
-@pytest.mark.parametrize('invalid_patch', ['multiple_images', 'full_output', 'wrong_position', 'missing_field'])
+@pytest.mark.parametrize('invalid_patch', ['multiple_fields', 'full_output', 'wrong_position', 'missing_field'])
 async def test_patch_cannot_modify_unaffected_images_or_reset_retry_count(invalid_patch):
-    original, evidence, refs = draft(5)
+    from tests.ecommerce_design_fixtures import design_fixture
+    original, evidence, refs = design_fixture(5)
     broken = deepcopy(original)
-    broken['images'][1]['negative_prompt'] = '错误负面稿'
-    wrong_scope = {'images': [original['images'][1], original['images'][0]], 'review_records': original['review_records']}
-    if invalid_patch == 'full_output':
+    del broken['images'][1]['lighting']
+    correct = {'patches': [{'path': ['images', 1, 'lighting'], 'value': original['images'][1]['lighting']}], 'review_records': original['review_records']}
+    wrong_scope = deepcopy(correct)
+    if invalid_patch == 'multiple_fields':
+        wrong_scope['patches'].append({'path': ['images', 0, 'lighting'], 'value': 'unauthorized'})
+    elif invalid_patch == 'full_output':
         wrong_scope = deepcopy(original)
-        wrong_scope['images'][0]['positive_prompt'] += '\n不允许改写的其他图片'
     elif invalid_patch == 'wrong_position':
-        wrong_scope['images'] = [original['images'][0]]
-    elif invalid_patch == 'missing_field':
-        wrong_scope['images'] = [deepcopy(original['images'][1])]
-        del wrong_scope['images'][0]['negative_prompt']
-    correct = {'images': [original['images'][1]], 'review_records': original['review_records']}
+        wrong_scope['patches'][0]['path'] = ['images', 0, 'lighting']
+    else:
+        del wrong_scope['patches'][0]['value']
     service = planner()
-    service._call = AsyncMock(side_effect=[(json.dumps(broken), {}), (json.dumps(wrong_scope), {}), (json.dumps(correct), {})])
+    service._call = AsyncMock(side_effect=[(json.dumps(value), {}) for value in [broken, wrong_scope, correct]])
     saved, _ = await run_stage(service, evidence, refs)
-    assert len(saved['images']) == 5 and service._call.await_count == 3
+    assert service._call.await_count == 3 and [image['design'] for image in saved['images']] == original['images']
     body = json.loads(service._call.await_args_list[2].args[4][1]['content'][0]['text'])
-    assert body['repair_positions'] == [2] and body['previous_stage_three_output'] == broken
-    assert [image['positive_prompt'] for image in saved['images']] == [image['positive_prompt'] for image in original['images']]
-    if invalid_patch in {'multiple_images', 'wrong_position'}:
-        assert 'PLANNER_REPAIR_SCOPE_CHANGED' in body['validation_error']
+    assert body['repair_targets'][0]['path'] == ['images', 1, 'lighting']
+    assert body['repair_targets'][0]['affected_image'] == broken['images'][1]
 
 
 async def test_syntax_repair_has_raw_first_draft_instead_of_starting_over():
-    value, evidence, refs = draft()
+    from tests.ecommerce_design_fixtures import design_fixture
+    value, evidence, refs = design_fixture()
     text = json.dumps(value)
     service = planner()
     service._call = AsyncMock(side_effect=[(text[:-1], {}), (text, {})])
     await run_stage(service, evidence, refs)
     body = json.loads(service._call.await_args_list[1].args[4][1]['content'][0]['text'])
     assert body['previous_stage_three_output'] == text[:-1]
-    assert body['repair_positions'] == []
-
-
-async def test_sequential_scoped_repairs_keep_previously_fixed_and_unaffected_images():
-    original, evidence, refs = draft(5)
-    broken = deepcopy(original)
-    for position in (2, 4):
-        broken['images'][position - 1]['negative_prompt'] = '缺少保真限制'
-    replacements = [{'images': [original['images'][position - 1]], 'review_records': original['review_records']}
-        for position in (2, 4)]
-    service = planner()
-    service._call = AsyncMock(side_effect=[(json.dumps(value), {}) for value in [broken, *replacements]])
-    saved, _ = await run_stage(service, evidence, refs)
-    last_body = json.loads(service._call.await_args_list[2].args[4][1]['content'][0]['text'])
-    assert last_body['repair_positions'] == [4]
-    assert last_body['previous_stage_three_output']['images'][1] == original['images'][1]
-    assert [image['negative_prompt'] for image in saved['images']] == [image['negative_prompt'] for image in original['images']]
-    assert service._call.await_count == 3 and service._save_attempt.await_count == 2
+    assert 'repair_targets' not in body
 
 
 @pytest.mark.parametrize('stage', [1, 2, 3])

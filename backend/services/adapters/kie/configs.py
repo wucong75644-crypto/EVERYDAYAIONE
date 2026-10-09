@@ -12,6 +12,12 @@ from decimal import Decimal
 # ============================================================
 
 CHAT_MODEL_CONFIGS = {
+    "gemini-3.8-flash": {
+        "supports_vision": True, "supports_google_search": False,
+        "supports_function_calling": False, "supports_response_format": False,
+        "cost_per_1k_input": Decimal("0"), "cost_per_1k_output": Decimal("0"),
+        "credits_per_1k_input": Decimal("0"), "credits_per_1k_output": Decimal("0"),
+    },
     # KIE exposes Luna on its Responses route. Prices and account limits are
     # intentionally configured per deployment, not copied from OpenAI pricing.
     "gpt-5-6-luna": {

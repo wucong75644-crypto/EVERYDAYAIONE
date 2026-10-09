@@ -17,6 +17,7 @@ from schemas.detail_project import (
 def test_current_returns_empty_project() -> None:
     service = MagicMock()
     service.get_current.return_value = None
+    service.db.table.return_value.select.return_value.eq.return_value.neq.return_value.order.return_value.limit.return_value.execute.return_value.data = []
     response = get_current_detail_project(service)
     assert response.success is True
     assert response.data == {"project": None}

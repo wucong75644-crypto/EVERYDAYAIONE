@@ -24,7 +24,7 @@ def _planner_schema():
             "source_message_ids":{"type":"array","maxItems":8,"items":{"type":"string"},
                 "description":"仅选定确需沿用的历史用户文字消息ID；当前消息由服务端读取。"},
             "image_count":{"type":"integer","minimum":1,"maximum":15},
-            "task_type":{"type":"string","enum":["main_images"]}},
+            "task_type":{"type":"string","enum":["main_images","detail_page"]}},
         }}}
 
 

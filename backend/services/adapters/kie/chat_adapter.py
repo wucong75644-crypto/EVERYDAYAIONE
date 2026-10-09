@@ -165,7 +165,8 @@ class KieChatAdapter(BaseChatAdapter):
             )
 
         # 转换历史消息
-        for msg in history:
+        from ..chat_protocol import chat_messages
+        for msg in chat_messages(history):
             role = MessageRole(msg["role"])
             # 注意: dict.get("k", default) 在 key 存在但值为 None 时仍返回 None,需 or 兜底
             content = msg.get("content") or ""
@@ -174,11 +175,8 @@ class KieChatAdapter(BaseChatAdapter):
             if isinstance(content, list):
                 # 结构化 content block（AgentResult.to_message_content()）
                 # 所有 block 已统一为 type="text"，直接转 ChatContentPart
-                parts = [
-                    ChatContentPart(type="text", text=block.get("text", ""))
-                    for block in content
-                    if isinstance(block, dict) and block.get("type") == "text"
-                ]
+                parts = [ChatContentPart(**block) for block in content
+                    if isinstance(block, dict) and block.get("type") in {"text", "image_url"}]
                 messages.append(ChatMessage(
                     role=role,
                     content=parts if parts else "",

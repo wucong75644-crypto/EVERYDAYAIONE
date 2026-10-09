@@ -117,6 +117,7 @@ def _rpc_sql(name: str, params: dict[str, Any]) -> tuple[str, list[Any]]:
         "p_after_id",
         "p_source_task_id", "p_request_id",
         "p_parent_task_id", "p_plan_id", "p_item_id", "p_lease_token", "p_execution_token",
+        "p_project_id",
     }
     text_keys = {
         "p_external_idempotency_key", "p_request_hash", "p_executor_type",

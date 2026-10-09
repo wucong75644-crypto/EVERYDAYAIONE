@@ -65,6 +65,8 @@ class BackgroundTaskWorker:
         from services.handlers.chat_image_lifecycle import ChatImageLifecycle
         self._chat_images = ChatImageLifecycle(db, self.settings)
         self._chat_image_loop_task = None
+        from services.detail_page_generation import DetailPageWorker
+        self._detail_pages = DetailPageWorker(db)
 
     async def _chat_image_loop(self):
         """Short bounded recovery runs even when new acceptance is disabled."""
@@ -72,6 +74,7 @@ class BackgroundTaskWorker:
         while self.is_running:
             try:
                 await self._chat_images.scan()
+                await self._detail_pages.scan()
                 last_error = None
             except asyncio.CancelledError:
                 raise
@@ -136,6 +139,7 @@ class BackgroundTaskWorker:
             with suppress(asyncio.CancelledError):
                 await self._chat_image_loop_task
             self._chat_image_loop_task = None
+        await self._detail_pages.close()
         logger.info("BackgroundTaskWorker stopped")
 
     async def poll_pending_tasks(self):

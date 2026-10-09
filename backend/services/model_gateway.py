@@ -838,6 +838,9 @@ class ModelGateway:
         }
         if request.timeout is not None:
             factory_kwargs["stream_timeout"] = request.timeout
+        elif request.idle_timeout is not None:
+            # Provider socket reads must honor the request's stream inactivity limit.
+            factory_kwargs["stream_timeout"] = request.idle_timeout
         try:
             adapter = adapter_factory(request.model_id, **factory_kwargs)
         except Exception as error:

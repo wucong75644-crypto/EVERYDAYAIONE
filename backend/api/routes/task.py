@@ -148,7 +148,7 @@ async def get_pending_tasks(
         ).order("started_at", desc=False).execute()
 
         all_tasks = [task for task in pending_response.data + recent_completed_response.data
-            if (task.get("request_params") or {}).get("_media_request_v1", {}).get("origin", {}).get("destination") != "skill_trial"]
+            if (task.get("request_params") or {}).get("_media_request_v1", {}).get("origin", {}).get("destination") not in {"skill_trial", "detail_project"}]
 
         return {
             "tasks": all_tasks,

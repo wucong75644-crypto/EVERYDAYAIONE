@@ -1,5 +1,5 @@
 export type DetailPageStep = 1 | 2 | 3 | 4 | 5;
-export type DetailContentType = 'main_image' | 'detail_page';
+export type DetailContentType = 'default' | 'main_image' | 'detail_page';
 export type DetailImageCategory = 'product' | 'reference';
 export type DetailItemStatus = 'waiting' | 'generating' | 'completed' | 'failed';
 export type DetailImageStatus = 'local' | 'uploading' | 'attaching' | 'ready' | 'failed' | 'missing';
@@ -27,6 +27,10 @@ export interface DetailProjectDraft {
   aspect_ratio: string;
   quality: DetailGenerationForm['quality'];
   image_count: number;
+  status?: string;
+  prompt_model?: PromptModel;
+  groups?: DetailGroup[];
+  run_state?: {run_id?: string; request_id?: string};
   images: Array<{
     id: string; category: DetailImageCategory; workspace_path: string; sort_order: number;
     status: 'ready' | 'missing'; original_url: string | null; thumbnail_url: string | null;
@@ -35,6 +39,7 @@ export interface DetailProjectDraft {
 
 export interface DetailGenerationForm {
   contentType: DetailContentType;
+  promptModel?: PromptModel;
   platform: 'auto' | 'taobao' | 'tmall' | 'jd' | 'pdd';
   requirement: string;
   language: 'zh-CN' | 'none';
@@ -64,3 +69,18 @@ export interface DetailGenerationItem extends DetailPlanItem {
 }
 
 export type DetailMockScenario = 'success' | 'insufficient_credits' | 'partial_failure';
+
+export type PromptModel = 'kimi-k3' | 'gemini-3.8-flash';
+export interface PromptModelOption { id: PromptModel; name: string; available: boolean; reason: string | null }
+export interface DetailImageTask {
+  id: string; item_id: string; status: string; submission_state: string; created_at: string;
+  result_data?: {url?: string; original_url?: string; thumbnail_url?: string; asset_id?: string; workspace_path?: string};
+  error_message?: string; credits_used?: number; retry_of_task_id?: string;
+}
+export interface DetailGroup {
+  plan_id: string; kind: 'main_images' | 'detail_page'; status: string; stage: number; count: number;
+  error?: {code?: string}; questions?: unknown[];
+  acceptance_error?: {code?: string}; can_resume?: boolean;
+  items: Array<{item_id: string; position: number; name: string; purpose: string; request_text: string; aspect_ratio: string}>;
+  tasks: DetailImageTask[];
+}

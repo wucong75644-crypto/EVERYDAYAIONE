@@ -1,168 +1,104 @@
-"""AI 帮写共享核心服务测试。"""
-
+"""Kimi单份草稿：真实网关边界、失败关闭与合理推断保留。"""
 import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
-
 import pytest
-
 from core.exceptions import AppException
 from schemas.ecom_requirement import RequirementAssistInput, RequirementImage
 from services.agent.image.requirement_assist_service import (
-    _PRIMARY_TIMEOUT_SECONDS, _TOTAL_TIMEOUT_SECONDS,
-    InvalidRequirementOutput, RequirementAssistService, apply_conflict_gate,
-    parse_requirement_result, validate_no_output_urls, validate_reference_ids,
+    InvalidRequirementOutput, RequirementAssistService, parse_requirement_result, validate_no_output_urls,
 )
 
-
-def test_timeout_budget_allows_normal_multimodal_latency() -> None:
-    assert _PRIMARY_TIMEOUT_SECONDS == 60.0
-    assert _TOTAL_TIMEOUT_SECONDS == 100.0
-    assert _TOTAL_TIMEOUT_SECONDS - _PRIMARY_TIMEOUT_SECONDS == 40.0
-
-
-def _input(with_reference: bool = True) -> RequirementAssistInput:
-    references = [RequirementImage(id="r1", original_url="https://cdn/r1.png", display_name="r1.png")] if with_reference else []
+def _input():
     return RequirementAssistInput(
-        user_id="user-1", org_id=None, source_type="detail_project", source_id="project-1",
-        product_images=[RequirementImage(id="p1", original_url="https://cdn/p1.png", display_name="p1.png")],
-        reference_images=references, content_type="main_image", platform="taobao",
-        language="zh-CN", aspect_ratio="1:1", quality="1k", image_count=5,
-        user_requirement="突出400页", project_version=2,
+        user_id="u",org_id=None,source_type="detail_project",source_id="p",
+        product_images=[RequirementImage(id="p1",original_url="https://cdn/product.png",display_name="产品")],
+        reference_images=[RequirementImage(id="r1",original_url="https://cdn/ref.png",display_name="参考",position=2)],
+        content_type="default",platform="taobao",language="zh-CN",aspect_ratio="1:1",quality="1k",
+        image_count=14,user_requirement="红金发财感觉，不要键盘",project_version=1,
     )
 
+def _payload():
+    return {"product_description":"红色存钱本，侧面搭扣",
+            "selling_points":[{"feature":"搭扣","benefit":"方便收纳携带","benefit_basis":"inferred"}],
+            "creative_requirements":[{"topic":"风格","text":"红金发财感觉","basis":"explicit"}],
+            "supplement_questions":[{"question":"尺寸是多少？","why":"完善规格","can_skip":True}]}
 
-def _payload(*, conflict: bool = False) -> dict:
-    conflicts = []
-    if conflict:
-        conflicts = [{
-            "field": "页数", "user_value": "400页", "confirmed_value": "200页",
-            "message": "页数待用户确认，当前不可作为卖点", "blocked_claims": ["400页"],
-        }]
-    return {
-        "product_facts": {
-            "product_name": "笔记本", "confirmed_attributes": ["200页"], "unclear_items": [],
-        },
-        "reference_analyses": [{
-            "image_id": "r1", "primary_uses": ["background"], "summary": "浅色背景",
-            "excluded_elements": ["参考商品"],
-        }],
-        "conflicts": conflicts,
-        "suggestions": [
-            {"id": item, "name": item, "style_name": "清新风", "brief_markdown": "## 产品信息\n200页笔记本"}
-            for item in ("selling_point", "scene", "creative")
-        ],
-    }
+@pytest.mark.parametrize("wrapper",["{}","结果如下：{}。","\u0060\u0060\u0060json\n{}\n\u0060\u0060\u0060"])
+def test_parse_accepts_single_draft_and_preserves_inferences(wrapper):
+    result=parse_requirement_result(wrapper.format(json.dumps(_payload(),ensure_ascii=False)))
+    assert result.selling_points[0].benefit=="方便收纳携带"
+    assert result.selling_points[0].benefit_basis=="inferred"
 
+@pytest.mark.parametrize("content",['invalid','{"product_description":""}','{"suggestions":[{}, {}, {}]}'])
+def test_rejects_invalid_or_old_three_scheme_protocol(content):
+    with pytest.raises(InvalidRequirementOutput):
+        parse_requirement_result(content)
 
-def _stream_adapter(content: str):
-    adapter = AsyncMock()
+def test_no_urls_validates_all_generated_fields():
+    payload=_payload()
+    payload["creative_requirements"][0]["text"]="参考 https://untrusted.test"
+    with pytest.raises(InvalidRequirementOutput,match="未授权 URL"):
+        validate_no_output_urls(parse_requirement_result(json.dumps(payload)))
 
-    async def stream_chat(**_kwargs):
-        yield SimpleNamespace(
-            content=content,
-            prompt_tokens=3,
-            completion_tokens=5,
-            finish_reason="stop",
-        )
-
-    adapter.stream_chat = stream_chat
-    return adapter
-
-
-def test_parse_requirement_result_accepts_fenced_json() -> None:
-    content = f"```json\n{json.dumps(_payload(), ensure_ascii=False)}\n```"
-    assert parse_requirement_result(content).product_facts.product_name == "笔记本"
-
-
-def test_parse_requirement_result_rejects_invalid_schema() -> None:
-    with pytest.raises(InvalidRequirementOutput, match="三方案协议"):
-        parse_requirement_result('{"suggestions": []}')
-
-
-def test_validate_reference_ids_rejects_unknown_id() -> None:
-    result = parse_requirement_result(json.dumps(_payload(), ensure_ascii=False))
-    with pytest.raises(InvalidRequirementOutput, match="未知参考图"):
-        validate_reference_ids(result, _input(with_reference=False))
-
-
-def test_validate_no_output_urls_rejects_generated_link() -> None:
-    payload = _payload()
-    payload["suggestions"][0]["brief_markdown"] = "访问 https://malicious.example"
-    result = parse_requirement_result(json.dumps(payload, ensure_ascii=False))
-    with pytest.raises(InvalidRequirementOutput, match="未授权 URL"):
-        validate_no_output_urls(result)
-
-
-def test_conflict_gate_removes_claim_and_evasive_marketing_but_keeps_original() -> None:
-    payload = _payload(conflict=True)
-    for suggestion in payload["suggestions"]:
-        suggestion["brief_markdown"] = (
-            "## 产品信息\n突出400页大容量\n暗示容量加倍\n"
-            "## 用户需求原文\n突出400页大容量"
-        )
-    result = apply_conflict_gate(parse_requirement_result(json.dumps(payload, ensure_ascii=False)))
-    brief = result.suggestions[0].brief_markdown
-    assert "暗示容量加倍" not in brief
-    assert "待确认：页数待用户确认" in brief
-    assert brief.endswith("突出400页大容量")
-
+def _session(content=None, error=None):
+    captured = {}
+    async def stream_chat(**kwargs):
+        captured.update(kwargs)
+        if error:
+            raise error
+        yield SimpleNamespace(content=content,prompt_tokens=3,completion_tokens=5,finish_reason="stop")
+    return SimpleNamespace(stream_chat=stream_chat,close=AsyncMock(),captured=captured)
 
 @pytest.mark.asyncio
-async def test_generate_returns_primary_model_result_and_closes_adapter() -> None:
-    adapter = _stream_adapter(json.dumps(_payload(), ensure_ascii=False))
-    settings = SimpleNamespace(
-        image_enhance_vl_model="primary", image_enhance_fallback_model="fallback",
-        dashscope_api_key="key", dashscope_base_url="https://example.com",
-    )
-    with (
-        patch("services.agent.image.requirement_assist_service.get_settings", return_value=settings),
-        patch("services.model_gateway.get_model_gateway", return_value=Mock(
-            open_chat=Mock(return_value=SimpleNamespace(
-                stream_chat=adapter.stream_chat,
-                close=adapter.close,
-            )),
-        )),
-    ):
-        outcome = await RequirementAssistService().generate(_input())
-    assert outcome.model == "primary"
-    assert outcome.fallback_used is False
-    adapter.close.assert_awaited_once()
-
+async def test_gateway_fixed_kimi_closes_and_receives_images_and_original_text():
+    session=_session(json.dumps(_payload()))
+    gateway=Mock(open_chat=Mock(return_value=session))
+    with patch("services.model_gateway.get_model_gateway",return_value=gateway):
+        outcome=await RequirementAssistService().generate(_input())
+    request=gateway.open_chat.call_args.args[0]
+    assert request.model_id=="kimi-k3"
+    assert request.timeout==120
+    assert session.captured["reasoning_effort"]=="low"
+    user_content=session.captured["messages"][1]["content"]
+    assert [part["image_url"]["url"] for part in user_content if part["type"]=="image_url"]==[
+        "https://cdn/product.png", "https://cdn/ref.png",
+    ]
+    assert _input().user_requirement in user_content[0]["text"]
+    assert outcome.model=="kimi-k3" and not outcome.fallback_used
+    session.close.assert_awaited_once()
 
 @pytest.mark.asyncio
-async def test_generate_falls_back_after_invalid_primary_output() -> None:
-    primary = _stream_adapter("invalid")
-    fallback = _stream_adapter(json.dumps(_payload(), ensure_ascii=False))
-    settings = SimpleNamespace(
-        image_enhance_vl_model="primary", image_enhance_fallback_model="fallback",
-        dashscope_api_key="key", dashscope_base_url="https://example.com",
-    )
-    with (
-        patch("services.agent.image.requirement_assist_service.get_settings", return_value=settings),
-        patch("services.model_gateway.get_model_gateway", return_value=Mock(
-            open_chat=Mock(side_effect=[
-                SimpleNamespace(stream_chat=primary.stream_chat, close=primary.close),
-                SimpleNamespace(stream_chat=fallback.stream_chat, close=fallback.close),
-            ]),
-        )),
-    ):
-        outcome = await RequirementAssistService().generate(_input())
-    assert outcome.model == "fallback"
-    assert outcome.fallback_used is True
-    primary.close.assert_awaited_once()
-    fallback.close.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_generate_maps_double_timeout_to_app_exception() -> None:
-    service = RequirementAssistService()
-    settings = SimpleNamespace(image_enhance_vl_model="primary", image_enhance_fallback_model="fallback")
-    with (
-        patch("services.agent.image.requirement_assist_service.get_settings", return_value=settings),
-        patch.object(service, "_run_model", AsyncMock(side_effect=asyncio.TimeoutError)),
-    ):
+@pytest.mark.parametrize("error,code",[
+    (asyncio.TimeoutError(),"REQUIREMENT_ASSIST_TIMEOUT"),
+    (RuntimeError("provider failed"),"REQUIREMENT_ASSIST_UNAVAILABLE"),
+])
+async def test_model_failure_does_not_retry_or_switch_model(error,code):
+    session=_session(error=error)
+    gateway=Mock(open_chat=Mock(return_value=session))
+    with patch("services.model_gateway.get_model_gateway",return_value=gateway):
         with pytest.raises(AppException) as exc:
-            await service.generate(_input())
-    assert exc.value.code == "REQUIREMENT_ASSIST_TIMEOUT"
+            await RequirementAssistService().generate(_input())
+    assert exc.value.code==code
+    gateway.open_chat.assert_called_once()
+    session.close.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_invalid_output_returns_error_without_rewriting():
+    session=_session('{"suggestions":[]}')
+    gateway=Mock(open_chat=Mock(return_value=session))
+    with patch("services.model_gateway.get_model_gateway",return_value=gateway):
+        with pytest.raises(AppException) as exc:
+            await RequirementAssistService().generate(_input())
+    assert exc.value.code=="REQUIREMENT_ASSIST_INVALID_OUTPUT"
+    gateway.open_chat.assert_called_once()
+    session.close.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_cancellation_propagates_and_releases_model_session():
+    session=_session(error=asyncio.CancelledError())
+    with patch("services.model_gateway.get_model_gateway",return_value=Mock(open_chat=Mock(return_value=session))):
+        with pytest.raises(asyncio.CancelledError):
+            await RequirementAssistService().generate(_input())
+    session.close.assert_awaited_once()

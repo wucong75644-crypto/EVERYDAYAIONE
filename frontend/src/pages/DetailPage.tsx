@@ -1,109 +1,59 @@
 import { useEffect } from 'react';
-import { Sparkles } from 'lucide-react';
 import { DetailPageHeader } from '../components/detail-page/DetailPageHeader';
 import { GenerationSettings } from '../components/detail-page/GenerationSettings';
-import { ProductImageSection } from '../components/detail-page/ProductImageSection';
-import { StepBar } from '../components/detail-page/StepBar';
-import { AnalyzingPanel } from '../components/detail-page/AnalyzingPanel';
-import { PlanReviewPanel } from '../components/detail-page/PlanReviewPanel';
-import { GenerationProgress } from '../components/detail-page/GenerationProgress';
-import { ResultGallery } from '../components/detail-page/ResultGallery';
+import { DetailWorkspace } from '../components/detail-page/DetailWorkspace';
 import { RequirementAssistModal } from '../components/detail-page/RequirementAssistModal';
 import { Card } from '../components/ui/Card';
+import { Button } from '../components/ui/Button';
 import { PageTransition } from '../components/motion/PageTransition';
 import { useDetailRequirementAssist } from '../hooks/useDetailRequirementAssist';
-import { DETAIL_STEP_LABELS } from '../mocks/detailPageMocks';
 import { useDetailPageStore } from '../stores/useDetailPageStore';
 
-const STEP_PLACEHOLDERS = {
-  1: '上传产品图并填写要求后，点击“分析产品”开始',
-  2: 'AI 正在分析产品并提取核心卖点',
-  3: '检查并编辑即将生成的图片规划',
-  4: '图片将按规划逐张生成',
-  5: '查看和下载本次生成结果',
-} as const;
-
-export default function DetailPage() {
-  const step = useDetailPageStore((state) => state.step);
-  const images = useDetailPageStore((state) => state.images);
-  const form = useDetailPageStore((state) => state.form);
-  const projectId = useDetailPageStore((state) => state.projectId);
-  const isHydrating = useDetailPageStore((state) => state.isHydrating);
-  const formError = useDetailPageStore((state) => state.formError);
-  const analysisStage = useDetailPageStore((state) => state.analysisStage);
-  const plan = useDetailPageStore((state) => state.plan);
-  const generationItems = useDetailPageStore((state) => state.generationItems);
-  const addImages = useDetailPageStore((state) => state.addImages);
-  const attachWorkspaceImages = useDetailPageStore((state) => state.attachWorkspaceImages);
-  const removeImage = useDetailPageStore((state) => state.removeImage);
-  const updateForm = useDetailPageStore((state) => state.updateForm);
-  const setStep = useDetailPageStore((state) => state.setStep);
-  const startAnalysis = useDetailPageStore((state) => state.startAnalysis);
-  const cancelAnalysis = useDetailPageStore((state) => state.cancelAnalysis);
-  const updatePlanItem = useDetailPageStore((state) => state.updatePlanItem);
-  const removePlanItem = useDetailPageStore((state) => state.removePlanItem);
-  const replan = useDetailPageStore((state) => state.replan);
-  const startGeneration = useDetailPageStore((state) => state.startGeneration);
-  const retryGeneration = useDetailPageStore((state) => state.retryGeneration);
-  const backToPlan = useDetailPageStore((state) => state.backToPlan);
-  const restart = useDetailPageStore((state) => state.restart);
-  const reset = useDetailPageStore((state) => state.reset);
-  const hydrateDraft = useDetailPageStore((state) => state.hydrateDraft);
-  const hasProductImage = images.some((image) => image.category === 'product');
-  const hasReadyProductImage = images.some((image) => image.category === 'product' && image.status === 'ready');
-  const hasPendingImage = images.some((image) => ['local', 'uploading', 'attaching'].includes(image.status));
-  const requirementAssist = useDetailRequirementAssist();
-  const requirementAssistDisabled = isHydrating || !projectId || !hasReadyProductImage || hasPendingImage;
-
-  const openRequirementAssist = () => {
-    if (!projectId || requirementAssistDisabled) return;
-    void requirementAssist.open(projectId, form);
-  };
-
-  const confirmRequirementAssist = (brief: string) => {
-    updateForm({ requirement: brief });
-    requirementAssist.close();
-  };
-
-  useEffect(() => {
-    void hydrateDraft();
-    return reset;
-  }, [hydrateDraft, reset]);
-
-  return (
-    <PageTransition className="min-h-screen bg-[var(--s-surface-base)] text-[var(--s-text-primary)]">
-      <DetailPageHeader />
-      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 py-5 sm:py-6">
-        <StepBar step={step} />
-        <section className="mt-4 grid lg:grid-cols-[440px_minmax(0,1fr)] gap-5">
-          <Card variant="elevated" padding="md" className="min-h-[520px]">
-            <ProductImageSection images={images} error={formError} disabled={step !== 1} onAdd={addImages} onWorkspaceAdd={attachWorkspaceImages} onRemove={removeImage} />
-            <GenerationSettings form={form} hasProductImage={hasProductImage} disabled={step !== 1} requirementAssistDisabled={requirementAssistDisabled} onChange={updateForm} onRequirementAssist={openRequirementAssist} onAnalyze={startAnalysis} />
-          </Card>
-          <Card variant="elevated" padding="lg" className="min-h-[520px] flex items-center justify-center text-center">
-            {step === 2 ? <AnalyzingPanel stage={analysisStage} onCancel={cancelAnalysis} /> : step === 3 ? <PlanReviewPanel plan={plan} error={formError} onChange={updatePlanItem} onRemove={removePlanItem} onBack={() => setStep(1)} onReplan={replan} onConfirm={startGeneration} /> : step === 4 ? <GenerationProgress items={generationItems} onRetry={retryGeneration} /> : step === 5 ? <ResultGallery items={generationItems} onRetry={retryGeneration} onRestart={restart} onBack={backToPlan} /> : <div>
-              <div className="w-16 h-16 mx-auto rounded-full bg-[var(--s-surface-secondary)] flex items-center justify-center">
-                <Sparkles className="w-7 h-7 text-[var(--s-text-secondary)]" aria-hidden="true" />
-              </div>
-              <h2 className="mt-4 font-semibold">{DETAIL_STEP_LABELS[step - 1]}</h2>
-              <p className="mt-2 text-sm text-[var(--s-text-tertiary)]">{STEP_PLACEHOLDERS[step]}</p>
-            </div>}
-          </Card>
-        </section>
-      </main>
+export default function DetailPage(){
+  const state=useDetailPageStore();
+  const {images,form,projectId,isHydrating,formError,groups,status,models,ratios,isTransitioning,
+    addImages,attachWorkspaceImages,removeImage,updateForm,startAnalysis,restart,refresh,hydrateDraft,reset}=state;
+  const ready=images.some(image=>image.category==='product'&&image.status==='ready');
+  const pending=images.some(image=>image.status!=='ready');
+  const disabled=isHydrating||isTransitioning||state.isUploading||status!=='draft';
+  const requirementAssist=useDetailRequirementAssist();
+  const requirementAssistDisabled=disabled||!projectId||!ready||pending;
+  const openRequirementAssist=()=>{if(projectId&&!requirementAssistDisabled)void requirementAssist.open(projectId,form);};
+  const confirmRequirementAssist=(brief:string)=>{updateForm({requirement:brief});requirementAssist.close();};
+  useEffect(()=>{void hydrateDraft();return reset;},[hydrateDraft,reset]);
+  return <PageTransition className="min-h-screen bg-[var(--s-surface-base)] text-[var(--s-text-primary)]">
+    <DetailPageHeader/>
+    <main className="mx-auto max-w-[1800px] px-4 py-5 sm:px-6">
+      <section className="grid items-start gap-5 lg:grid-cols-[400px_minmax(0,1fr)]">
+        <Card variant="elevated" padding="md" aria-label="创作设置" className="relative h-[calc(100dvh-104px)] min-h-[560px]">
+          <GenerationSettings form={form} images={images} models={models} ratios={ratios} hasProductImage={ready&&!pending} disabled={disabled}
+            requirementAssistDisabled={requirementAssistDisabled} onChange={updateForm} onRequirementAssist={openRequirementAssist} onAnalyze={()=>void startAnalysis()} onAdd={files=>void addImages('product',files)}
+            onWorkspaceAdd={paths=>void attachWorkspaceImages('product',paths)} onRemove={id=>void removeImage(id)}/>
+          {formError&&<p role="alert" className="absolute inset-x-4 bottom-16 rounded-lg bg-[var(--s-surface-card)] p-2 text-xs text-[var(--s-error)] shadow-sm">{formError}</p>}
+        </Card>
+        <Card variant="elevated" padding="lg" aria-label="规划与生成结果" className="h-[calc(100dvh-104px)] min-h-[560px] min-w-0 overflow-y-auto overscroll-contain">
+          <DetailWorkspace groups={groups} projectId={projectId} onRefresh={()=>void refresh()}/>
+          {['completed','failed'].includes(status)&&<div className="mt-5 flex justify-end"><Button onClick={()=>void restart()}>开始新任务</Button></div>}
+        </Card>
+      </section>
+    </main>
       <RequirementAssistModal
         isOpen={requirementAssist.isOpen}
         isLoading={requirementAssist.isLoading}
-        result={requirementAssist.result}
-        selectedId={requirementAssist.selectedId}
-        selectedBrief={requirementAssist.selectedBrief}
+        draft={requirementAssist.draft}
+        brief={requirementAssist.brief}
         error={requirementAssist.error}
+        validationError={requirementAssist.validationError}
+        supplement={requirementAssist.supplement}
+        answers={requirementAssist.answers}
+        skippedQuestions={requirementAssist.skippedQuestions}
         onClose={requirementAssist.close}
-        onSelect={requirementAssist.selectSuggestion}
         onDraftChange={requirementAssist.updateDraft}
-        onRegenerate={() => void requirementAssist.regenerate()}
+        onSupplementChange={requirementAssist.setSupplement}
+        onAnswer={requirementAssist.answerQuestion}
+        onToggleSkip={requirementAssist.toggleSkip}
+        onUpdate={() => void requirementAssist.update()}
         onConfirm={confirmRequirementAssist}
       />
-    </PageTransition>
-  );
+  </PageTransition>;
 }

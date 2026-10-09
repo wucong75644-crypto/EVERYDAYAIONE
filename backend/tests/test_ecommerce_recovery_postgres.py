@@ -22,6 +22,8 @@ def ecom_db(isolated_db):
         c.execute("SET LOCAL ROLE everydayai_owner")
         c.execute((ROOT / "migrations/279_ecommerce_image_plans.sql").read_text())
         c.execute((ROOT / "migrations/281_ecommerce_recovery.sql").read_text())
+        c.execute("SET LOCAL ROLE everydayai_owner")
+        c.execute((ROOT / "migrations/282_ecommerce_design_drafts.sql").read_text())
     return isolated_db
 
 
@@ -123,7 +125,7 @@ def test_fresh_parent_inherits_exhausted_root_until_trusted_user_retry(ecom_db):
     with psycopg.connect(ecom_db) as c:
         c.execute("INSERT INTO tasks(id,user_id,conversation_id,type,status,input_message_id,execution_token,request_params) VALUES(%s,%s,%s,'chat','running',%s,%s,'{}')",(task,f['user'],f['conv'],f['message'],token))
         scope(c,f['user'])
-        c.execute("INSERT INTO ecom_image_plans SELECT %s,user_id,org_id,conversation_id,%s,input_message_id,base_context_revision,'child',plan_revision+1,id,input_digest,'planning',3,image_count,input_snapshot,prompt_versions,model_settings,stage_outputs,'[]',items,review_records,target_size,%s,now()+interval '10 minutes',1,now(),now(),id,'{}' FROM ecom_image_plans WHERE id=%s",(child,task,lease,f['plan']))
+        c.execute("INSERT INTO ecom_image_plans(id,user_id,org_id,conversation_id,parent_task_id,input_message_id,base_context_revision,invocation_key,plan_revision,supersedes_plan_id,input_digest,status,current_stage,image_count,input_snapshot,prompt_versions,model_settings,stage_outputs,stage_attempts,items,review_records,target_size,lease_token,lease_expires_at,row_version,created_at,updated_at,root_plan_id,recovery_state) SELECT %s,user_id,org_id,conversation_id,%s,input_message_id,base_context_revision,'child',plan_revision+1,id,input_digest,'planning',3,image_count,input_snapshot,prompt_versions,model_settings,stage_outputs,'[]',items,review_records,target_size,%s,now()+interval '10 minutes',1,now(),now(),id,'{}' FROM ecom_image_plans WHERE id=%s",(child,task,lease,f['plan']))
     cf={**f,'plan':child,'task':task,'lease':lease}
     with psycopg.connect(ecom_db) as c:
         scope(c,f['user'])
@@ -309,7 +311,7 @@ def professional_outputs(ref):
     (3,'retry',2,[3]), (2,'retry',2,[2,3]), (3,'revise',1,[2,3]), (3,'revise',0,[1,2,3]),
     (3,'automatic',0,[]),
 ])
-@pytest.mark.parametrize('delivery', ['legacy', 'single', 'single_tail', 'single_repair'])
+@pytest.mark.parametrize('delivery', ['single', 'single_tail', 'single_repair'])
 async def test_real_planner_resume_reuses_only_valid_stages_and_preserves_raw_inputs(
         ecom_db,monkeypatch,failed_stage,mode,reuse,expected,delivery):
     import asyncio
@@ -339,17 +341,20 @@ async def test_real_planner_resume_reuses_only_valid_stages_and_preserves_raw_in
     snapshot={'references':[public],'messages':messages,'image_count':1,'task_type':'main_images',
         'resolved_references':[{k:resolved[k] for k in ('source_id','content_sha256','file_version','workspace_path')}],
         'target_size':target}
-    product,visual,final=professional_outputs(public)
-    positive = final['images'][0]['positive_prompt']
-    negative = final['images'][0]['negative_prompt']
-    if delivery != 'legacy':
-        final['images'][0]['scheme_markdown'] = final['images'][0]['scheme_markdown'].split('\n## 完整生图提示词')[0]
+    from tests.ecommerce_design_fixtures import design_fixture
+    from services.agent.image.ecommerce_planner.assembly import assemble_designs
+    final, design_evidence, _ = design_fixture()
+    product, visual = design_evidence['product_selling_points'], design_evidence['visual_direction']
+    snapshot.update(platform=None, language=None)
+    positive = assemble_designs(final, snapshot, product, visual)['images'][0]['positive_prompt']
+    negative = assemble_designs(final, snapshot, product, visual)['images'][0]['negative_prompt']
     from copy import deepcopy
     broken = deepcopy(final)
-    broken['images'][0]['negative_prompt'] = '缺少商品保真限制'
+    del broken['images'][0]['lighting']
     outputs={'1':product,**({'2':visual} if failed_stage==3 else {})}
     versions={'resources_sha256':list(HASHES),'schema_sha256':SCHEMA_SHA256,
-        'integration_reference_sha256':INTEGRATION_RULES_SHA256}
+        'integration_reference_sha256':INTEGRATION_RULES_SHA256,
+        'stage_three_delivery_version':'ecom-design.v3','assembly_version':'fixed-frame.v3'}
     wf=WorkflowBinding(kind='main_images',mode='new' if automatic else mode,root_task_id=f['task'],window_task_id=new_task,
         generation_run_id=f['run'],plan_id=f['plan'],source_task_id=f['task'],reset_window=not automatic,
         reuse_through_stage=reuse)
@@ -397,9 +402,9 @@ async def test_real_planner_resume_reuses_only_valid_stages_and_preserves_raw_in
                 if len([entry for entry in seen if entry['stage'] == 3]) == 1:
                     reply = json.dumps(broken, ensure_ascii=False)
                 else:
-                    assert body['previous_stage_three_output'] == broken
-                    assert body['repair_positions'] == [1]
-                    reply = json.dumps({'images': final['images'], 'review_records': final['review_records']}, ensure_ascii=False)
+                    assert body['repair_targets'][0]['affected_image'] == broken['images'][0]
+                    assert body['repair_targets'][0]['path'] == ['images',0,'lighting']
+                    reply = json.dumps({'patches': [{'path':['images',0,'lighting'],'value':final['images'][0]['lighting']}], 'review_records': final['review_records']}, ensure_ascii=False)
             yield StreamChunk(content=reply,prompt_tokens=100,completion_tokens=10)
         return SimpleNamespace(stream_chat=stream,last_result=SimpleNamespace(status='completed',usage={}),close=AsyncMock())
     monkeypatch.setattr('services.agent.image.ecommerce_planner.service.get_model_gateway',lambda:SimpleNamespace(open_chat=open_chat))
@@ -417,12 +422,12 @@ async def test_real_planner_resume_reuses_only_valid_stages_and_preserves_raw_in
         assert result.metadata['retry_context']['generation_allowed'] is True
         expected_calls = [*expected, *([3] if delivery == 'single_repair' else [])]
         assert [body['stage'] for body in seen]==expected_calls
-        assert all(body['raw_user_messages'][0]==messages[0] for body in seen)
-        assert all(body['references_in_generation_order']==[{'ordinal':1,'source_id':public['source_id'],'role':'product'}] for body in seen)
+        assert all(body['raw_user_texts'][0]=={'source_ref':'text_1','text':raw} for body in seen)
+        assert all(body['reference_inventory']==[{'number':1,'source_ref':'image_1','role':'product'}] for body in seen)
         if mode=='retry':
-            assert all(body['raw_user_messages']==messages for body in seen)
+            assert all(body['raw_user_texts']==[{'source_ref':'text_1','text':raw}] for body in seen)
         else:
-            assert all(body['raw_user_messages'][-1]['parts']==[{'content_index':0,'text':current_text}] for body in seen)
+            assert all(body['raw_user_texts'][-1]=={'source_ref':'text_2','text':current_text} for body in seen)
         plan_id=result.metadata['plan_id']
         with psycopg.connect(ecom_db) as c:
             saved=c.execute('SELECT stage_outputs,items FROM ecom_image_plans WHERE id=%s',(plan_id,)).fetchone()

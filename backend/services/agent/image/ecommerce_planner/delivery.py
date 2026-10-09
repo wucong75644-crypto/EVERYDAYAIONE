@@ -6,7 +6,7 @@ import re
 
 from .contracts import text_hash
 
-DELIVERY_VERSION = "single-prompt.v1"
+DELIVERY_VERSION = "ecom-design.v3"
 
 
 def _unique_object(pairs):

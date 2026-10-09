@@ -1,37 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-
 import { generateRequirementSuggestions } from '../services/ecomRequirement';
 import { toApiRequestError } from '../services/api';
 import type { DetailGenerationForm } from '../types/detailPage';
-import type {
-  RequirementAssistResult,
-  RequirementSuggestionId,
-} from '../types/ecomRequirement';
-
+import type { RequirementAssistResult, RequirementRevision } from '../types/ecomRequirement';
+import { buildSupplementText, draftValidationError, formatRequirementDraft, REQUIREMENT_MAX_LENGTH } from '../utils/requirementAssist';
 
 type AssistStatus = 'idle' | 'loading' | 'success' | 'error';
-type SuggestionDrafts = Record<RequirementSuggestionId, string>;
-
-const emptyDrafts = (): SuggestionDrafts => ({ selling_point: '', scene: '', creative: '' });
-
-interface RequestSource {
-  projectId: string;
-  form: DetailGenerationForm;
-}
-
+interface RequestSource { projectId: string; form: DetailGenerationForm }
 
 export function useDetailRequirementAssist() {
   const [isOpen, setIsOpen] = useState(false);
   const [status, setStatus] = useState<AssistStatus>('idle');
-  const [result, setResult] = useState<RequirementAssistResult | null>(null);
-  const [selectedId, setSelectedId] = useState<RequirementSuggestionId>('selling_point');
-  const [drafts, setDrafts] = useState<SuggestionDrafts>(emptyDrafts);
+  const [draft, setDraft] = useState<RequirementAssistResult | null>(null);
+  const [supplement, setSupplement] = useState('');
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [skippedQuestions, setSkippedQuestions] = useState<string[]>([]);
+  const [history, setHistory] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const sourceRef = useRef<RequestSource | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
   const requestVersionRef = useRef(0);
 
-  const requestSuggestions = useCallback(async (resetResult: boolean) => {
+  const requestDraft = useCallback(async (revision?: RequirementRevision, nextHistory?: string[]) => {
     const source = sourceRef.current;
     if (!source) return;
     controllerRef.current?.abort();
@@ -40,25 +30,13 @@ export function useDetailRequirementAssist() {
     const requestVersion = ++requestVersionRef.current;
     setStatus('loading');
     setError(null);
-    if (resetResult) {
-      setResult(null);
-      setDrafts(emptyDrafts());
-      setSelectedId('selling_point');
-    }
     try {
-      const response = await generateRequirementSuggestions(
-        source.projectId,
-        source.form,
-        controller.signal,
-      );
+      const response = await generateRequirementSuggestions(source.projectId, source.form, controller.signal, revision);
       if (controller.signal.aborted || requestVersion !== requestVersionRef.current) return;
-      const nextDrafts = emptyDrafts();
-      for (const suggestion of response.data.suggestions) {
-        nextDrafts[suggestion.id] = suggestion.brief_markdown;
-      }
-      setResult(response.data);
-      setDrafts(nextDrafts);
-      setSelectedId(response.data.suggestions[0]?.id ?? 'selling_point');
+      setDraft(response.data);
+      if (nextHistory) setHistory(nextHistory);
+      setAnswers({});
+      setSupplement('');
       setStatus('success');
     } catch (requestError) {
       if (controller.signal.aborted || requestVersion !== requestVersionRef.current) return;
@@ -72,12 +50,24 @@ export function useDetailRequirementAssist() {
   const open = useCallback(async (projectId: string, form: DetailGenerationForm) => {
     sourceRef.current = { projectId, form: { ...form } };
     setIsOpen(true);
-    await requestSuggestions(true);
-  }, [requestSuggestions]);
+    setDraft(null);
+    setHistory([]);
+    setAnswers({});
+    setSkippedQuestions([]);
+    setSupplement('');
+    await requestDraft();
+  }, [requestDraft]);
 
-  const regenerate = useCallback(async () => {
-    await requestSuggestions(false);
-  }, [requestSuggestions]);
+  const update = useCallback(async () => {
+    if (!draft) return requestDraft();
+    const issue = draftValidationError(draft);
+    if (issue) { setError(issue); return; }
+    const text = buildSupplementText(draft, answers, skippedQuestions, supplement);
+    const nextHistory = text ? [...history, text] : history;
+    const allSupplement = nextHistory.join('\n\n');
+    if (allSupplement.length > 4000) { setError('补充内容超过4000字，请精简后再更新'); return; }
+    await requestDraft({ draft, supplement: allSupplement, skipped_questions: skippedQuestions }, nextHistory);
+  }, [draft, answers, skippedQuestions, supplement, history, requestDraft]);
 
   const close = useCallback(() => {
     requestVersionRef.current += 1;
@@ -86,8 +76,14 @@ export function useDetailRequirementAssist() {
     setIsOpen(false);
   }, []);
 
-  const updateDraft = useCallback((id: RequirementSuggestionId, value: string) => {
-    setDrafts((current) => ({ ...current, [id]: value }));
+  const updateDraft = useCallback((patch: Partial<RequirementAssistResult>) => {
+    setDraft(current => current ? { ...current, ...patch } : current);
+  }, []);
+  const answerQuestion = useCallback((question: string, value: string) => {
+    setAnswers(current => ({ ...current, [question]: value }));
+  }, []);
+  const toggleSkip = useCallback((question: string) => {
+    setSkippedQuestions(current => current.includes(question) ? current.filter(item => item !== question) : [...current, question].slice(-30));
   }, []);
 
   useEffect(() => () => {
@@ -95,21 +91,17 @@ export function useDetailRequirementAssist() {
     controllerRef.current?.abort();
   }, []);
 
-  const selectedBrief = useMemo(() => drafts[selectedId], [drafts, selectedId]);
+  const brief = useMemo(() => {
+    if (!draft) return '';
+    const text = buildSupplementText(draft, answers, skippedQuestions, supplement);
+    return formatRequirementDraft(draft, sourceRef.current?.form.requirement ?? '', history, skippedQuestions, text);
+  }, [draft, answers, skippedQuestions, supplement, history]);
+  const validationError = draft ? draftValidationError(draft)
+    ?? (brief.length > REQUIREMENT_MAX_LENGTH ? '内容超过10000字，请精简后再采用' : null) : null;
 
   return {
-    isOpen,
-    status,
-    isLoading: status === 'loading',
-    result,
-    selectedId,
-    selectedBrief,
-    drafts,
-    error,
-    open,
-    close,
-    regenerate,
-    selectSuggestion: setSelectedId,
-    updateDraft,
+    isOpen, status, isLoading: status === 'loading', draft, brief, error, validationError,
+    supplement, answers, skippedQuestions,
+    open, close, update, updateDraft, setSupplement, answerQuestion, toggleSkip,
   };
 }

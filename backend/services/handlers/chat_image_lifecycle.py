@@ -133,7 +133,8 @@ class ChatImageLifecycle:
                 workspace_user_id=origin["workspace_owner_id"],org_id=task.get("org_id"),
                 context_scope=origin["context_scope"],conversation_id=task["conversation_id"],
                 resource_manifest=None,execution_mode="interactive")
-            resolver=ChatImageInputResolver(owner,base_revision=origin["base_context_revision"],input_message_id=origin["input_message_id"])
+            from services.detail_page_generation import image_resolver
+            resolver=image_resolver(owner,origin)
             await asyncio.to_thread(resolver.verify,snapshot["references"])
             fields={key:snapshot[key] for key in ("mode","prompt","model","aspect_ratio","resolution","output_format")}
             if "background" in snapshot: fields["background"]=snapshot["background"]
@@ -329,7 +330,7 @@ class ChatImageLifecycle:
         from schemas.websocket import build_message_done
         from services.websocket_manager import ws_manager
         from api.deps import get_task_limit_service
-        if task["request_params"][REQUEST_KEY]["origin"].get("destination")=="skill_trial":
+        if task["request_params"][REQUEST_KEY]["origin"].get("destination") in {"skill_trial", "detail_project"}:
             limiter=await get_task_limit_service()
             await limiter.release(task["user_id"],task["conversation_id"],org_id=task.get("org_id"),slot_id=task["id"])
             await self.rpc(task,"ack_chat_image_delivery")

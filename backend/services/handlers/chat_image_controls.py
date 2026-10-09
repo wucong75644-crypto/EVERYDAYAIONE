@@ -36,7 +36,8 @@ class ChatImageControls:
             origin=snapshot["origin"]
             owner=SimpleNamespace(db=self.db,user_id=self.user_id,workspace_user_id=origin["workspace_owner_id"],
                 org_id=self.org_id,context_scope=origin["context_scope"],conversation_id=row["conversation_id"],resource_manifest=None)
-            resolver=ChatImageInputResolver(owner,base_revision=origin["base_context_revision"],input_message_id=origin["input_message_id"])
+            from services.detail_page_generation import image_resolver
+            resolver=image_resolver(owner,origin)
             for index,reference in enumerate(snapshot["references"]):
                 try: url=await asyncio.to_thread(resolver.preview,reference)
                 except (ValueError,PermissionError,OSError): url=None
@@ -79,8 +80,8 @@ class ChatImageControls:
         owner = SimpleNamespace(db=self.db, user_id=self.user_id, workspace_user_id=self.user_id,
             org_id=self.org_id, conversation_id=row["conversation_id"], context_scope="user",
             execution_mode="interactive", resource_manifest=None)
-        resolver = ChatImageInputResolver(owner, base_revision=origin["base_context_revision"],
-            input_message_id=origin["input_message_id"])
+        from services.detail_page_generation import image_resolver
+        resolver = image_resolver(owner,origin)
         try:
             await asyncio.to_thread(resolver.verify, original["references"])
             args={key:original[key] for key in ("mode", "prompt", "model", "aspect_ratio", "resolution", "output_format")}

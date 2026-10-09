@@ -121,12 +121,27 @@ def validate_product(value, schema, snapshot):
         ids[group] = {item["id"] for item in value[group]}
         if len(ids[group]) != len(value[group]):
             raise ValueError("PLANNER_DUPLICATE_FACT_ID")
-    allowed_sources = {source_id(ref) for ref in snapshot["references"]}
-    allowed_sources.update(f'{message["message_id"]}:{part["content_index"]}'
-        for message in snapshot["messages"] for part in message["parts"])
+    alias_mode = value.get("schema_version") == "product-selling-points.v3"
+    if alias_mode:
+        from .inputs import source_bindings, is_product
+        bindings = source_bindings(snapshot)
+        allowed_sources = set(bindings)
+    else:
+        allowed_sources = {source_id(ref) for ref in snapshot["references"]}
+        allowed_sources.update(f'{message.get("source_id", message.get("message_id"))}:{part["content_index"]}'
+            for message in snapshot["messages"] for part in message["parts"])
     for fact in value["facts"]:
-        if any(source["source_id"] not in allowed_sources for source in fact["sources"]):
-            raise ValueError("PLANNER_UNKNOWN_FACT_SOURCE")
+        for source in fact["sources"]:
+            key = source["source_ref" if alias_mode else "source_id"]
+            if key not in allowed_sources:
+                raise ValueError("PLANNER_UNKNOWN_FACT_SOURCE")
+            if alias_mode:
+                evidence = bindings[key]
+                image_kind = source["kind"] in {"image_observation", "image_text"}
+                if image_kind != (evidence["kind"] == "image"):
+                    raise ValueError("PLANNER_FACT_SOURCE_KIND_MISMATCH")
+                if image_kind and not is_product(evidence["role"]):
+                    raise ValueError("PLANNER_STYLE_REFERENCE_AS_FACT")
     usable = {item["id"] for item in value["facts"] if item["status"] == "usable"}
     if not set(value["product"]["fact_ids"]) <= ids["facts"]:
         raise ValueError("PLANNER_UNKNOWN_FACT_ID")

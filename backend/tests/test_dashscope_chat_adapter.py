@@ -397,6 +397,40 @@ class TestStreamChat:
                 pass
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("model_id,effort,expected", [
+        ("kimi-k3", "low", "low"),
+        ("kimi-k3", "high", "high"),
+        ("kimi-k3", "max", "max"),
+        ("kimi-k3", "medium", None),
+        ("kimi-k3", None, None),
+        ("qwen3.5-plus", "low", None),
+    ])
+    async def test_kimi_reasoning_effort_request_body(self, model_id, effort, expected):
+        adapter = _make_adapter()
+        adapter._model_id = model_id
+        captured_body = {}
+
+        @asynccontextmanager
+        async def mock_stream(method, url, json=None):
+            captured_body.update(json or {})
+            yield MockStreamResponse(["data: [DONE]"])
+
+        adapter._client = MagicMock()
+        adapter._client.is_closed = False
+        adapter._client.stream = mock_stream
+        async for _ in adapter.stream_chat(
+            messages=[{"role": "user", "content": "hi"}], reasoning_effort=effort,
+            thinking_mode="disabled",
+        ):
+            pass
+
+        if expected is None:
+            assert "reasoning_effort" not in captured_body
+        else:
+            assert captured_body["reasoning_effort"] == expected
+        assert captured_body["enable_thinking"] is (model_id == "kimi-k3")
+
+    @pytest.mark.asyncio
     async def test_thinking_mode_enabled(self):
         """thinking_mode=enabled 时 request_body 包含 enable_thinking=True"""
         adapter = _make_adapter()

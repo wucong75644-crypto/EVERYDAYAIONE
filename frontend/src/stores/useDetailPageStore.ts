@@ -1,145 +1,104 @@
 import { create } from 'zustand';
-import { createMockResultUrl, DEFAULT_DETAIL_FORM, MOCK_DETAIL_PLAN } from '../mocks/detailPageMocks';
-import { attachDetailImage, getCurrentDetailProject, removeDetailImage, saveDetailSettings } from '../services/detailProject';
+import { attachDetailImage, getCurrentDetailProject, removeDetailImage, saveDetailSettings,
+  getDetailProject, startDetailProject, getDetailCapabilities, archiveDetailProject } from '../services/detailProject';
 import { uploadImageFile } from '../services/upload';
 import { toApiRequestError } from '../services/api';
-import type {
-  DetailGenerationForm,
-  DetailGenerationItem,
-  DetailLocalImage,
-  DetailMockScenario,
-  DetailPageStep,
-  DetailPlanItem,
-} from '../types/detailPage';
+import type { DetailGenerationForm, DetailLocalImage, DetailProjectDraft, DetailGroup, PromptModelOption } from '../types/detailPage';
 
+export const DEFAULT_FORM: DetailGenerationForm = {contentType:'default',platform:'taobao',requirement:'',language:'zh-CN',aspectRatio:'1:1',quality:'1k',count:14,promptModel:'kimi-k3'};
 interface DetailPageState {
-  step: DetailPageStep;
-  images: DetailLocalImage[];
-  form: DetailGenerationForm;
-  analysisStage: number;
-  plan: DetailPlanItem[];
-  generationItems: DetailGenerationItem[];
-  isTransitioning: boolean;
-  formError: string | null;
-  projectId: string | null;
-  projectVersion: number | null;
-  isHydrating: boolean;
-  mockScenario: DetailMockScenario;
-  setStep: (step: DetailPageStep) => void;
-  hydrateDraft: () => Promise<void>;
-  attachWorkspaceImages: (category: DetailLocalImage['category'], paths: string[]) => Promise<void>;
-  addImages: (category: DetailLocalImage['category'], files: File[]) => Promise<void>;
-  removeImage: (id: string) => Promise<void>;
-  updateForm: (patch: Partial<DetailGenerationForm>) => void;
-  startAnalysis: () => void;
-  cancelAnalysis: () => void;
-  updatePlanItem: (id: string, patch: Partial<DetailPlanItem>) => void;
-  removePlanItem: (id: string) => void;
-  replan: () => void;
-  startGeneration: () => void;
-  retryGeneration: (id: string) => void;
-  backToPlan: () => void;
-  restart: () => void;
-  setMockScenario: (scenario: DetailMockScenario) => void;
-  reset: () => void;
+  images: DetailLocalImage[]; form: DetailGenerationForm; groups: DetailGroup[];
+  status: string; models: PromptModelOption[]; ratios: string[]; enabled: boolean;
+  isTransitioning: boolean; isUploading: boolean; formError: string | null; projectId: string | null;
+  projectVersion: number | null; isHydrating: boolean;
+  hydrateDraft: () => Promise<void>; refresh: () => Promise<void>;
+  attachWorkspaceImages: (category: DetailLocalImage['category'],paths:string[]) => Promise<void>;
+  addImages: (category: DetailLocalImage['category'],files:File[]) => Promise<void>;
+  removeImage: (id:string) => Promise<void>;
+  updateForm: (patch:Partial<DetailGenerationForm>) => void;
+  startAnalysis: () => Promise<void>; restart: () => Promise<void>; reset: () => void;
 }
-
-const initialState = {
-  step: 1 as DetailPageStep,
-  images: [] as DetailLocalImage[],
-  form: { ...DEFAULT_DETAIL_FORM },
-  analysisStage: 0,
-  plan: MOCK_DETAIL_PLAN.map((item) => ({ ...item })),
-  generationItems: [] as DetailGenerationItem[],
-  isTransitioning: false,
-  formError: null as string | null,
-  mockScenario: 'success' as DetailMockScenario,
-  projectId: null as string | null,
-  projectVersion: null as number | null,
-  isHydrating: false,
-};
-
-const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
-const MAX_IMAGES = 9;
-let analysisTimer: ReturnType<typeof setInterval> | null = null;
-let generationTimer: ReturnType<typeof setInterval> | null = null;
-let settingsTimer: ReturnType<typeof setTimeout> | null = null;
-let lifecycleVersion = 0;
-
-function clearAnalysisTimer() {
-  if (analysisTimer) clearInterval(analysisTimer);
-  analysisTimer = null;
+const initialState = {images: [] as DetailLocalImage[], form: {...DEFAULT_FORM},groups: [] as DetailGroup[],
+  status:'draft',models: [] as PromptModelOption[],ratios:['1:1','3:4','16:9'],enabled:false,
+  isTransitioning:false,isUploading:false,formError:null as string|null,projectId:null as string|null,projectVersion:null as number|null,isHydrating:false};
+const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg','image/png','image/webp']);
+const MAX_IMAGES=9;
+let settingsTimer: ReturnType<typeof setTimeout> | null=null;
+let pollTimer: ReturnType<typeof setTimeout> | null=null;
+let saving: Promise<void>=Promise.resolve();
+let lifecycleVersion=0;
+let requestId: string|null=null;
+function clearSettingsTimer(){if(settingsTimer)clearTimeout(settingsTimer);settingsTimer=null;}
+function releasePreview(image:DetailLocalImage){if(image.previewUrl.startsWith('blob:'))URL.revokeObjectURL(image.previewUrl);}
+function applyDraft(project:DetailProjectDraft|null){
+  if(!project)return {...initialState,form:{...DEFAULT_FORM}};
+  return {projectId:project.id,projectVersion:project.version,status:project.status??'draft',groups:project.groups??[],
+    form:{contentType:project.content_type,platform:project.platform,requirement:project.requirement,
+      language:project.language,aspectRatio:project.aspect_ratio,quality:project.quality,
+      count:project.content_type==='default'?14:project.image_count,promptModel:project.prompt_model??'kimi-k3'},
+    images:project.images.map((image):DetailLocalImage=>({id:image.id,category:image.category,workspacePath:image.workspace_path,
+      previewUrl:image.thumbnail_url||image.original_url||'',originalUrl:image.original_url||undefined,error:null,
+      status:image.status,sortOrder:image.sort_order,name:image.workspace_path.split('/').pop()||'图片'}))};
 }
-
-function clearGenerationTimer() {
-  if (generationTimer) clearInterval(generationTimer);
-  generationTimer = null;
+function persistSettings(){
+  const epoch=lifecycleVersion;
+  saving=saving.catch(()=>{}).then(async()=>{
+    const {projectId,projectVersion,form,status,isUploading}=useDetailPageStore.getState();
+    if(!projectId||projectVersion===null||status!=='draft'||isUploading||epoch!==lifecycleVersion)return;
+    const saved=await saveDetailSettings(projectId,projectVersion,form);
+    if(saved&&epoch===lifecycleVersion)useDetailPageStore.setState({projectVersion:saved.version});
+  });
+  return saving;
 }
-
-function clearSettingsTimer() {
-  if (settingsTimer) clearTimeout(settingsTimer);
-  settingsTimer = null;
+function schedulePoll(){
+  if(pollTimer)clearTimeout(pollTimer);
+  if(['analyzing','plan_ready','generating'].includes(useDetailPageStore.getState().status))
+    pollTimer=setTimeout(()=>{void useDetailPageStore.getState().refresh();},1500);
 }
-
-function createPlan(count: number) {
-  return Array.from({ length: count }, (_, index) => ({
-    ...MOCK_DETAIL_PLAN[index % MOCK_DETAIL_PLAN.length],
-    id: `mock-plan-${Date.now()}-${index}`,
-  }));
-}
-
-function releasePreview(image: DetailLocalImage) {
-  if (image.previewUrl.startsWith('blob:')) URL.revokeObjectURL(image.previewUrl);
-}
-
-function applyDraft(project: import('../types/detailPage').DetailProjectDraft | null) {
-  if (!project) return { projectId: null, projectVersion: null, images: [] as DetailLocalImage[] };
-  return {
-    projectId: project.id,
-    projectVersion: project.version,
-    form: {
-      contentType: project.content_type, platform: project.platform, requirement: project.requirement,
-      language: project.language, aspectRatio: project.aspect_ratio, quality: project.quality, count: project.image_count,
-    },
-    images: project.images.map((image) => ({
-      id: image.id, category: image.category, workspacePath: image.workspace_path,
-      previewUrl: image.thumbnail_url || image.original_url || '', originalUrl: image.original_url || undefined, error: null,
-      status: image.status, sortOrder: image.sort_order, name: image.workspace_path.split('/').pop() || '图片',
-    })),
-  };
-}
-
-export const useDetailPageStore = create<DetailPageState>((set, get) => ({
+export const useDetailPageStore=create<DetailPageState>((set,get)=>({
   ...initialState,
-  setStep: (step) => set({ step }),
-  hydrateDraft: async () => {
-    const requestVersion = lifecycleVersion;
-    set({ isHydrating: true, formError: null });
-    try {
-      const project = await getCurrentDetailProject();
-      if (requestVersion !== lifecycleVersion) return;
-      set({ ...applyDraft(project), isHydrating: false });
-    } catch (error) {
-      if (requestVersion !== lifecycleVersion) return;
-      set({ isHydrating: false, formError: toApiRequestError(error).message });
-    }
+  hydrateDraft:async()=>{
+    const epoch=lifecycleVersion;set({isHydrating:true,formError:null});
+    try{
+      const [project,capabilities]=await Promise.all([getCurrentDetailProject(),getDetailCapabilities()]);
+      if(epoch!==lifecycleVersion)return;
+      set({...applyDraft(project),models:capabilities.prompt_models,enabled:capabilities.enabled,
+        ratios:capabilities.image_models[0]?.aspect_ratios??initialState.ratios,isHydrating:false});
+      schedulePoll();
+    }catch(error){if(epoch===lifecycleVersion)set({isHydrating:false,formError:toApiRequestError(error).message});}
+  },
+  refresh:async()=>{
+    const {projectId}=get();const epoch=lifecycleVersion;if(!projectId)return;
+    try{const project=await getDetailProject(projectId);
+      if(epoch!==lifecycleVersion)return;
+      if(project)set({status:project.status??'draft',groups:project.groups??[],formError:null});
+    }catch(error){if(epoch!==lifecycleVersion)return;set({formError:toApiRequestError(error).message});}
+    schedulePoll();
   },
   attachWorkspaceImages: async (category, paths) => {
+    if(get().isUploading||get().status!=='draft')return;
+    const epoch=lifecycleVersion;
     if (get().images.length + paths.length > MAX_IMAGES) {
       set({ formError: `产品图和参考图合计最多上传 ${MAX_IMAGES} 张` });
       return;
     }
-    for (const path of paths) {
+    set({isUploading:true});
+    try { for (const path of paths) {
       try {
         const project = await attachDetailImage(path, category);
-        set({ ...applyDraft(project), formError: null });
+        if(epoch!==lifecycleVersion)return;
+        set((state) => ({ ...applyDraft(project), form: state.form, formError: null }));
       } catch (error) {
+        if(epoch!==lifecycleVersion)return;
         set({ formError: toApiRequestError(error).message });
         break;
       }
     }
+    } finally { if(epoch===lifecycleVersion)set({isUploading:false}); }
   },
   addImages: async (category, files) => {
+    if(get().isUploading||get().status!=='draft')return;
+    const epoch=lifecycleVersion;
     const currentImages = get().images;
     if (currentImages.length + files.length > MAX_IMAGES) {
       set({ formError: `产品图和参考图合计最多上传 ${MAX_IMAGES} 张` });
@@ -160,17 +119,21 @@ export const useDetailPageStore = create<DetailPageState>((set, get) => ({
       name: file.name,
     }));
     set((state) => ({ images: [...state.images, ...newImages], formError: null }));
-    for (const image of newImages) {
+    set({isUploading:true});
+    try { for (const image of newImages) {
       try {
         set((state) => ({ images: state.images.map((item) => item.id === image.id ? { ...item, status: 'uploading' } : item) }));
         const uploaded = await uploadImageFile(image.file!);
+        if(epoch!==lifecycleVersion)return;
         if (!uploaded.workspace_path) throw new Error('上传结果缺少工作区路径');
         set((state) => ({ images: state.images.map((item) => item.id === image.id ? { ...item, status: 'attaching', workspacePath: uploaded.workspace_path } : item) }));
         const project = await attachDetailImage(uploaded.workspace_path, category);
+        if(epoch!==lifecycleVersion)return;
         const remotePreview = uploaded.thumbnail_url || uploaded.preview_url || uploaded.url;
         const requestVersion = lifecycleVersion;
         set((state) => {
           const draft = applyDraft(project);
+          draft.form = state.form;
           const images = draft.images.map((item) => item.workspacePath === uploaded.workspace_path
             ? { ...item, previewUrl: image.previewUrl }
             : item);
@@ -189,9 +152,11 @@ export const useDetailPageStore = create<DetailPageState>((set, get) => ({
           remoteImage.src = remotePreview;
         }
       } catch (error) {
+        if(epoch!==lifecycleVersion)return;
         set((state) => ({ images: state.images.map((item) => item.id === image.id ? { ...item, status: 'failed', error: toApiRequestError(error).message } : item), formError: toApiRequestError(error).message }));
       }
     }
+    } finally { if(epoch===lifecycleVersion)set({isUploading:false}); }
   },
   removeImage: async (id) => {
     const image = get().images.find((item) => item.id === id);
@@ -203,116 +168,49 @@ export const useDetailPageStore = create<DetailPageState>((set, get) => ({
     }
     try {
       const project = await removeDetailImage(get().projectId!, id, get().projectVersion!);
-      set({ ...applyDraft(project), formError: null });
+      set((state) => ({ ...applyDraft(project), form: state.form, formError: null }));
     } catch (error) {
       set({ formError: toApiRequestError(error).message });
     }
   },
-  updateForm: (patch) => {
-    set((state) => {
-      const nextPatch = { ...patch };
-      if (patch.contentType && !patch.aspectRatio) {
-        nextPatch.aspectRatio = patch.contentType === 'detail_page' ? '3:4' : '1:1';
-      }
-      return { form: { ...state.form, ...nextPatch } };
-    });
-    clearSettingsTimer();
-    settingsTimer = setTimeout(() => {
-      const { projectId, projectVersion, form } = get();
-      if (!projectId || projectVersion === null) return;
-      void saveDetailSettings(projectId, projectVersion, form).then((project) => {
-        if (project) set({ ...applyDraft(project), formError: null });
-      }).catch((error) => {
-        const apiError = toApiRequestError(error);
-        set({ formError: apiError.message });
-        if (apiError.code === 'DETAIL_PROJECT_VERSION_CONFLICT') void get().hydrateDraft();
-      });
-    }, 500);
+  updateForm:(patch)=>{
+    set(state=>{const next={...state.form,...patch};
+      if(patch.contentType){next.count=patch.contentType==='default'?14:(state.form.contentType==='default'?7:state.form.count);
+        if(!patch.aspectRatio)next.aspectRatio=patch.contentType==='detail_page'?'3:4':'1:1';}
+      return {form:next};});
+    clearSettingsTimer();settingsTimer=setTimeout(()=>{void persistSettings().catch(error=>set({formError:toApiRequestError(error).message}));},500);
   },
-  startAnalysis: () => {
-    if (get().isTransitioning) return;
-    if (!get().images.some((image) => image.category === 'product')) {
-      set({ formError: '请至少上传一张产品图' });
-      return;
+  startAnalysis:async()=>{
+    if(get().isTransitioning||get().isUploading||get().status!=='draft')return;
+    if(!get().images.some(image=>image.category==='product'&&image.status==='ready')||get().images.some(image=>image.status!=='ready')){
+      set({formError:'请先完成产品图片上传'});return;
     }
-    clearAnalysisTimer();
-    set({ step: 2, analysisStage: 0, isTransitioning: true, formError: null });
-    analysisTimer = setInterval(() => {
-      const nextStage = get().analysisStage + 1;
-      if (nextStage >= 4) {
-        clearAnalysisTimer();
-        set({ step: 3, analysisStage: 3, plan: createPlan(get().form.count), isTransitioning: false });
-        return;
+    const selected=get().models.find(model=>model.id===get().form.promptModel);
+    if(!get().enabled||!selected?.available){set({formError:selected?.reason||'主图详情生成尚未开放'});return;}
+    set({isTransitioning:true,formError:null});clearSettingsTimer();
+    try{
+      if(requestId&&get().projectId){
+        const existing=await getDetailProject(get().projectId!);
+        if(existing?.run_state?.request_id===requestId){set({...applyDraft(existing),isTransitioning:false});schedulePoll();return;}
       }
-      set({ analysisStage: nextStage });
-    }, 600);
-  },
-  cancelAnalysis: () => {
-    clearAnalysisTimer();
-    set({ step: 1, analysisStage: 0, isTransitioning: false });
-  },
-  updatePlanItem: (id, patch) => set((state) => ({
-    plan: state.plan.map((item) => item.id === id ? { ...item, ...patch } : item),
-  })),
-  removePlanItem: (id) => set((state) => state.plan.length <= 1
-    ? { formError: '规划至少保留 1 张图片' }
-    : { plan: state.plan.filter((item) => item.id !== id), formError: null }),
-  replan: () => set((state) => ({ plan: createPlan(state.form.count), formError: null })),
-  startGeneration: () => {
-    if (get().isTransitioning) return;
-    if (get().mockScenario === 'insufficient_credits') {
-      set({ formError: '积分不足，请减少生成数量后重试' });
-      return;
+      await persistSettings();
+      const {projectId,projectVersion}=get();if(!projectId||projectVersion===null)throw new Error('项目尚未保存');
+      requestId??=crypto.randomUUID();
+      const project=await startDetailProject(projectId,projectVersion,requestId);
+      if(project)set({...applyDraft(project),isTransitioning:false});
+      schedulePoll();
+    }catch(error){const failure=toApiRequestError(error);
+      if(failure.status&&failure.status>=400&&failure.status<500)requestId=null;
+      set({isTransitioning:false,formError:failure.message});
+      // An unknown HTTP outcome retains the same request key for a safe retry.
     }
-    const items = get().plan.map((item) => ({ ...item, status: 'waiting' as const, previewUrl: null, error: null, refundedCredits: 0, versions: [] }));
-    clearGenerationTimer();
-    set({ step: 4, generationItems: items, isTransitioning: true, formError: null });
-    let currentIndex = 0;
-    set((state) => ({ generationItems: state.generationItems.map((item, index) => index === 0 ? { ...item, status: 'generating' } : item) }));
-    generationTimer = setInterval(() => {
-      const shouldFail = get().mockScenario === 'partial_failure' && currentIndex === 1;
-      set((state) => ({ generationItems: state.generationItems.map((item, index) => {
-        if (index === currentIndex) return shouldFail
-          ? { ...item, status: 'failed', error: 'Mock 生成服务暂时不可用', refundedCredits: 10 }
-          : { ...item, status: 'completed', previewUrl: createMockResultUrl(index), versions: [createMockResultUrl(index)] };
-        if (index === currentIndex + 1) return { ...item, status: 'generating' };
-        return item;
-      }) }));
-      currentIndex += 1;
-      if (currentIndex >= get().generationItems.length) {
-        clearGenerationTimer();
-        set({ step: 5, isTransitioning: false });
-      }
-    }, 700);
   },
-  retryGeneration: (id) => set((state) => ({ generationItems: state.generationItems.map((item, index) => {
-    if (item.id !== id) return item;
-    const nextUrl = createMockResultUrl(index, item.versions.length + 1);
-    return { ...item, status: 'completed', previewUrl: nextUrl, error: null, refundedCredits: 0, versions: [...item.versions, nextUrl] };
-  }) })),
-  backToPlan: () => {
-    clearGenerationTimer();
-    set({ step: 3, generationItems: [], isTransitioning: false });
+  restart:async()=>{
+    if(get().projectId)await archiveDetailProject(get().projectId!);
+    get().reset();await get().hydrateDraft();
   },
-  restart: () => {
-    clearGenerationTimer();
-    set({ step: 1, analysisStage: 0, generationItems: [], isTransitioning: false, formError: null });
-  },
-  setMockScenario: (mockScenario) => set({ mockScenario }),
-  reset: () => {
-    lifecycleVersion += 1;
-    clearAnalysisTimer();
-    clearGenerationTimer();
-    clearSettingsTimer();
-    get().images.forEach(releasePreview);
-    set({
-      ...initialState,
-      images: [],
-      projectId: null,
-      projectVersion: null,
-      isHydrating: false,
-      form: { ...DEFAULT_DETAIL_FORM },
-      plan: MOCK_DETAIL_PLAN.map((item) => ({ ...item })),
-    });
+  reset:()=>{
+    lifecycleVersion++;clearSettingsTimer();if(pollTimer)clearTimeout(pollTimer);pollTimer=null;
+    get().images.forEach(releasePreview);requestId=null;set({...initialState,form:{...DEFAULT_FORM}});
   },
 }));

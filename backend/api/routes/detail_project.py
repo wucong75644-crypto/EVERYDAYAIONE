@@ -1,13 +1,14 @@
 """主图详情页草稿接口。"""
 
 from fastapi import APIRouter, Depends
+from uuid import UUID
 from loguru import logger
 
 from api.deps import OrgCtx, ScopedDB
 from core.exceptions import AppException
 from schemas.detail_project import (
     DetailImageAttachRequest, DetailImageCategoryPatch, DetailImageOrderRequest,
-    DetailProjectEnvelope, DetailProjectSettingsPatch, DetailProjectVersionRequest,
+    DetailProjectEnvelope, DetailProjectSettingsPatch, DetailProjectVersionRequest, DetailRunRequest, DetailResumeRequest,
 )
 from services.detail_project_service import DetailProjectService
 
@@ -23,7 +24,50 @@ def get_detail_project_service(ctx: OrgCtx, db: ScopedDB) -> DetailProjectServic
 def get_current_detail_project(
     service: DetailProjectService = Depends(get_detail_project_service),
 ) -> DetailProjectEnvelope:
-    return DetailProjectEnvelope(data={"project": service.get_current()})
+    row = service.db.table("detail_projects").select("id").eq("user_id", service.user_id).neq("status", "archived").order("updated_at", desc=True).limit(1).execute().data
+    if not row:
+        return DetailProjectEnvelope(data={"project": None})
+    from services.detail_page_generation import DetailPageGeneration
+    return DetailProjectEnvelope(data={"project": DetailPageGeneration(service.db,service.user_id,service.org_id).read(str(row[0]["id"]))})
+
+
+@router.get("/capabilities", response_model=DetailProjectEnvelope)
+def get_detail_capabilities(service: DetailProjectService = Depends(get_detail_project_service)):
+    from core.config import get_settings
+    from services.agent.image.ecommerce_planner.page_profile import capabilities
+    from services.handlers.chat_image_request import image_capabilities
+    settings = get_settings()
+    return DetailProjectEnvelope(data={"enabled": settings.detail_page_generation_enabled,
+        "prompt_models": capabilities(settings), "image_models": image_capabilities()})
+
+
+@router.get("/{project_id}", response_model=DetailProjectEnvelope)
+def get_detail_project(project_id: UUID,service: DetailProjectService = Depends(get_detail_project_service)):
+    from services.detail_page_generation import DetailPageGeneration
+    return DetailProjectEnvelope(data={"project": DetailPageGeneration(service.db,service.user_id,service.org_id).read(str(project_id))})
+
+
+@router.post("/{project_id}/analyze", response_model=DetailProjectEnvelope)
+def start_detail_project(project_id: UUID,body: DetailRunRequest,service: DetailProjectService = Depends(get_detail_project_service)):
+    from services.detail_page_generation import DetailPageGeneration
+    return DetailProjectEnvelope(data={"project": DetailPageGeneration(service.db,service.user_id,service.org_id).start(
+        str(project_id),body.version,str(body.request_id))})
+
+
+@router.post("/{project_id}/archive", response_model=DetailProjectEnvelope)
+def archive_detail_project(project_id: UUID,service: DetailProjectService = Depends(get_detail_project_service)):
+    project = service.get_by_id(str(project_id))
+    if project["status"] not in {"draft","completed","failed"}:
+        raise AppException("DETAIL_RUN_ACTIVE", "请等待当前任务完成", 409)
+    service.db.table("detail_projects").update({"status":"archived"}).eq("id",str(project_id)).eq("user_id",service.user_id).execute()
+    return DetailProjectEnvelope(data={"project": None})
+
+
+@router.post("/{project_id}/resume", response_model=DetailProjectEnvelope)
+def resume_detail_project(project_id: UUID,body: DetailResumeRequest,service: DetailProjectService = Depends(get_detail_project_service)):
+    from services.detail_page_generation import DetailPageGeneration
+    generation=DetailPageGeneration(service.db,service.user_id,service.org_id)
+    return DetailProjectEnvelope(data={"project":generation.resume(str(project_id),str(body.plan_id),str(body.request_id))})
 
 
 @router.post("/current/images", response_model=DetailProjectEnvelope)

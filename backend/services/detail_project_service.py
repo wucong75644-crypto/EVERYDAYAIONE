@@ -85,7 +85,7 @@ class DetailProjectService:
     def update_settings(self, project_id: str, version: int, settings: dict) -> dict:
         allowed = {
             "content_type", "platform", "requirement", "language",
-            "aspect_ratio", "quality", "image_count",
+            "aspect_ratio", "quality", "image_count", "prompt_model",
         }
         updates = {key: value for key, value in settings.items() if key in allowed and value is not None}
         if not updates:
@@ -181,6 +181,13 @@ class DetailProjectService:
         if not project or str(project["id"]) != project_id:
             raise AppException("DETAIL_PROJECT_NOT_FOUND", "草稿项目不存在", 404)
         return project
+
+    def get_by_id(self, project_id: str) -> dict:
+        row = self.db.table("detail_projects").select("*").eq("id", project_id).eq("user_id", self.user_id).maybe_single().execute().data
+        if not row or row.get("org_id") != self.org_id:
+            raise AppException("DETAIL_PROJECT_NOT_FOUND", "项目不存在", 404)
+        images = self.db.table("detail_project_images").select("*").eq("project_id", project_id).eq("user_id", self.user_id).order("sort_order").execute().data or []
+        return {**row, "images": [self._serialize_image(dict(image)) for image in images]}
 
     def _execute_versioned(self, sql: str, params: list) -> None:
         with self.db.pool.connection() as conn:

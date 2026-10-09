@@ -34,6 +34,8 @@ def test_detail_project_adapter_separates_product_and_reference_images() -> None
     assert result.product_images[0].display_name == "产品.png"
     assert result.user_requirement == "清新自然"
     assert result.project_version == 3
+    assert result.product_images[0].position == 1
+    assert result.reference_images[0].position == 2
     service.get_ai_input_project.assert_called_once_with("project-1")
 
 

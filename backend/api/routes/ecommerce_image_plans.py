@@ -23,7 +23,7 @@ async def get_ecommerce_image_plan(
     org_id = str(org_ctx.org_id) if org_ctx.org_id else None
     scoped = ScopedDatabaseClient(scoped_db, DatabaseScope(actor, org_id, DatabaseAccessKind.RUNTIME_ADMIN))
     row = scoped.table("ecom_image_plans").select(
-        "id,user_id,org_id,conversation_id,plan_revision,status,image_count,target_size,stage_outputs,items,review_records,created_at"
+        "id,user_id,org_id,conversation_id,plan_revision,status,image_count,input_snapshot,target_size,stage_outputs,items,review_records,created_at"
     ).eq("id", str(plan_id)).maybe_single().execute().data
     if not row or row.get("user_id") != actor or row.get("org_id") != org_id:
         raise HTTPException(404, "图片方案不存在")
@@ -38,7 +38,10 @@ async def get_ecommerce_image_plan(
     items=[]
     for item in row.get("items") or []:
         items.append({key:item[key] for key in ("item_id","position","name","purpose","scheme_markdown",
-            "references","positive_prompt","negative_prompt","request_text","request_text_sha256","aspect_ratio") if key in item})
+            "references","positive_prompt","negative_prompt","request_text","request_text_sha256","aspect_ratio","design","assembly_version") if key in item})
     return {"success":True,"data":{"id":str(plan_id),"revision":revision,"status":"ready",
         "image_count":row["image_count"],"target_size":row["target_size"],"product_selling_points":outputs.get("1"),
-        "visual_direction":outputs.get("2"),"images":items,"review_records":row.get("review_records") or []}}
+        "visual_direction":outputs.get("2"),"images":items,"review_records":row.get("review_records") or [],
+        "task_type":(row.get("input_snapshot") or {}).get("task_type","main_images"),
+        "page_plan":(outputs.get("3") or {}).get("page_plan"),
+        "page_assembly_validation":(outputs.get("3") or {}).get("page_assembly_validation","not_applicable")}}

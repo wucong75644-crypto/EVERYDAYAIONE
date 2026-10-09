@@ -126,7 +126,7 @@ export async function fetchPendingTasks(): Promise<PendingTask[] | null> {
 export function restoreMediaTask(task: PendingTask) {
   const store = useMessageStore.getState();
   const snapshot = task.request_params?._media_request_v1;
-  if (snapshot?.origin.destination === 'skill_trial') return;
+  if (snapshot?.origin.destination === 'skill_trial' || snapshot?.origin.destination === 'detail_project') return;
 
   const maxDuration = task.type === 'image' ? IMAGE_TASK_TIMEOUT : VIDEO_TASK_TIMEOUT;
   const elapsed = Date.now() - new Date(task.started_at).getTime();
@@ -289,6 +289,7 @@ export async function reconcileChatTaskStates(
   const childResults = tasks.filter(task => task.type === 'image'
     && task.request_params?._media_request_v1
     && task.request_params._media_request_v1.origin.destination !== 'skill_trial'
+    && task.request_params._media_request_v1.origin.destination !== 'detail_project'
     && RECONCILE_TASK_STATUSES.has(task.status) && task.conversation_id);
   await Promise.all(childResults.map(async task => {
     const store = useMessageStore.getState();
@@ -296,6 +297,7 @@ export async function reconcileChatTaskStates(
     try {
       const { chatImageService } = await import('../services/chatImage');
       const result = await chatImageService.details(task.id);
+      if (!result.message_id) return;
       const completedMessage = {
         id: result.message_id, conversation_id: task.conversation_id, role: 'assistant',
         content: result.result || [], status: result.status === 'completed' ? 'completed' : 'failed',

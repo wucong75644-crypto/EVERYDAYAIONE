@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from schemas.ecom_requirement import (
-    RequirementAssistInput, RequirementImage, RequirementSettings,
+    RequirementAssistInput, RequirementImage, RequirementRevision, RequirementSettings,
 )
 from services.detail_project_service import DetailProjectService
 
@@ -25,15 +25,17 @@ class DetailProjectRequirementAdapter:
         self,
         project_id: str,
         settings: RequirementSettings,
+        revision: RequirementRevision | None = None,
     ) -> RequirementAssistInput:
         project = self.service.get_ai_input_project(project_id)
         product_images: list[RequirementImage] = []
         reference_images: list[RequirementImage] = []
-        for image in project["images"]:
+        for position, image in enumerate(project["images"], start=1):
             adapted = RequirementImage(
                 id=str(image["id"]),
                 original_url=image["original_url"],
                 display_name=Path(image["workspace_path"]).name,
+                position=position,
             )
             target = product_images if image["category"] == "product" else reference_images
             target.append(adapted)
@@ -52,4 +54,5 @@ class DetailProjectRequirementAdapter:
             image_count=settings.image_count,
             user_requirement=settings.requirement,
             project_version=project["version"],
+            revision=revision,
         )
