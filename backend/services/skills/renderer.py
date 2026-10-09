@@ -8,7 +8,8 @@ import re
 from services.skills.contracts import SkillError
 from services.skills.assets import MAX_ASSET_BYTES, public_assets, verify_asset
 
-# UTF-8 byte caps are conservative token upper bounds, independent of provider.
+# Legacy low-level defaults; production entry points pass configured UTF-8 budgets.
+# Byte budgets do not replace the selected model's context/token limit.
 MAX_BODY_BYTES = 16_384
 MAX_ARGS_BYTES = 4_096
 MAX_RENDERED_BYTES = 24_576
@@ -58,7 +59,7 @@ def argument_summary(args: object) -> dict:
     return {"sha256": digest(serialized), "keys": sorted(args), "bytes": len(serialized.encode("utf-8"))}
 
 
-def render(body: str, args: dict, *, maximum_body: int = MAX_BODY_BYTES) -> str:
+def render(body: str, args: dict, *, maximum_body: int = MAX_BODY_BYTES, maximum_rendered: int = MAX_RENDERED_BYTES) -> str:
     bounded(body, maximum_body, "SKILL_BODY_BUDGET_EXCEEDED")
     argument_summary(args)
     names = set(_VARIABLE.findall(body))
@@ -74,7 +75,7 @@ def render(body: str, args: dict, *, maximum_body: int = MAX_BODY_BYTES) -> str:
         lambda match: args[match[1]] if isinstance(args[match[1]], str) else encoded(args[match[1]]),
         body,
     )
-    return bounded(rendered, MAX_RENDERED_BYTES, "SKILL_RENDER_BUDGET_EXCEEDED")
+    return bounded(rendered, maximum_rendered, "SKILL_RENDER_BUDGET_EXCEEDED")
 
 
 def referenced_assets(skill) -> tuple[str, ...]:
@@ -122,12 +123,14 @@ def asset_manifest_digest(resources) -> str | None:
     return digest(encoded(resources.model_dump(mode='json', exclude_none=True))) if resources.assets or resources.template_variables else None
 
 
-def prepare_resources(skill, context: dict, maximum: int):
+def prepare_resources(skill, context: dict, maximum: int, *, maximum_body: int = MAX_BODY_BYTES,
+                      maximum_rendered: int = MAX_RENDERED_BYTES):
     """Determine reads from the original body, before substitution or asset IO."""
     ids = referenced_assets(skill)
     values = server_arguments(skill.resources, context)
     names = _template_names(skill.body, skill.resources.template_variables)
-    base = render(skill.body, {name: values[name] for name in names})
+    base = render(skill.body, {name: values[name] for name in names},
+                  maximum_body=maximum_body, maximum_rendered=maximum_rendered)
     if skill.resources.assets:
         base += '\n\n[Skill attachments: summaries]\n' + encoded(public_assets(skill.resources))
     entries = {a.id: a for a in skill.resources.assets}
@@ -152,7 +155,7 @@ def render_resources(skill, ids, base, values, texts, maximum):
         content = verify_asset(entry, texts[asset_id].encode('utf-8'))
         if entry.kind == 'template':
             names = _template_names(content, skill.resources.template_variables)
-            content = render(content, {name: values[name] for name in names}, maximum_body=MAX_ASSET_BYTES)
+            content = render(content, {name: values[name] for name in names}, maximum_body=MAX_ASSET_BYTES, maximum_rendered=maximum)
         base += asset_header(entry) + content
         bounded(base, maximum, 'SKILL_ASSET_BUDGET_EXCEEDED')
     return base

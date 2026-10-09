@@ -278,6 +278,10 @@ class Settings(BaseSettings):
     skill_recommendations_enabled: bool = False
     skill_chat_creation_enabled: bool = False
     skill_draft_trial_enabled: bool = False
+    # UTF-8 budgets: body, one rendered Skill (including attachments), all active Skills.
+    skill_max_body_bytes: int = Field(default=262_144, gt=0)
+    skill_max_rendered_bytes: int = Field(default=393_216, gt=0)
+    skill_max_turn_rendered_bytes: int = Field(default=1_048_576, gt=0)
     skill_storage_root: Optional[str] = None  # SKILL_STORAGE_ROOT，开启后显式配置
 
     # Staging 清理配置（已废弃：NAS 替代后不再需要清理，保留字段兼容旧引用）
