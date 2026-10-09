@@ -19,3 +19,15 @@
 - 正文 SHA-256：`3709b3ddebb8089aa3de43620599ac544f858b499d5a7017e5aa75a6976960d8`
 
 发布期间沿用生产协调锁；平台 assignment 审计要求同一事务设置 `app.skill_action=platform_assign`，不关闭 RLS 或审计。以服务进程外的临时受控挂载发布 NAS 文件，服务只读根保持不变，完成后卸载。数据库目录查询已核验两个组织都可发现固定版本；实际模型输出质量仍需用户在聊天中验收。
+
+## 2026-10-09 多参考图修正版
+
+根据用户反馈补强每张目标图的参考图选择：允许同一张图同时绑定多张来源，明确逐图输入集合、来源角色和组合用途；主视图不代表唯一输入，多图证据不强制拼版或多件商品。最终格式增加逐项参考清单与多图使用关系，检查规则同步核对漏选或误收窄。
+
+只增加和补强四处规则，旧 `v1` 包及原始创建输入保留。新创建输入为 `ecommerce-image-prompts.v2.create.json`，可审阅包为 `catalog/platform/ecommerce-image-prompts/v2`，商品分析协议字节不变。通过既有 start_draft/save/submit/approve/publish 服务发布，不修改应用代码或用户权限。
+
+- revision：`v61e62ee689a24e28986a63244e03a874`
+- revision_id：`02a79af5-ec86-46ce-ba2f-1f39206f315f`
+- 正文：130,962 UTF-8 字节；正文 SHA-256：`a152fe46d277fa8b898b17cc2f728bef55ca54757d94c297e5b1f51d30e4424c`
+- 完整文件 SHA-256：`919bbf9b083cab627f4e5aff52271d38bda99cd514866b17c83978114509570c`
+- 当前全部两个活跃组织已分配新版本；旧不可变版本保留，既有会话固定的旧 revision 不自动升级。
