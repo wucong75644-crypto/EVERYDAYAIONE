@@ -216,21 +216,27 @@ class DetailPageGeneration:
         if project['version'] != version:
             raise AppException('DETAIL_PROJECT_VERSION_CONFLICT', '草稿已更新，请刷新后重试', 409)
         refs = PageImageInputResolver(page_owner(self.db,self.user_id,self.org_id,project_id)).bind(project['images'])
-        image_config=validate_single_image_request({'mode':'image_to_image','prompt':'输入配置校验',
-            'aspect_ratio':project['aspect_ratio'],'resolution':project['quality'].upper()},len(refs))
         total=14 if project['content_type']=='default' else project['image_count']
         image_budget={'max_requests':settings.chat_image_max_requests,'max_credits':settings.chat_image_max_credits}
-        if total>image_budget['max_requests'] or image_config['estimated_credits']*total>image_budget['max_credits']:
+        if total>image_budget['max_requests']:
             raise AppException('DETAIL_IMAGE_BUDGET_EXCEEDED','图片数量或积分预算超出当前限制',400)
         selectors = [{key: ref[key] for key in ('file_id','role','source_id')} for ref in refs]
         messages = [{'source_id': f'project:{project_id}:v{version}', 'parts': [{'content_index':0, 'text':project['requirement']}]}]
         kinds = ['main_images','detail_page'] if project['content_type']=='default' else [
             'main_images' if project['content_type']=='main_image' else 'detail_page']
         rows=[]
+        estimated_credits=0
         for kind in kinds:
             count = 7 if project['content_type']=='default' else project['image_count']
+            # The combined entry has two canvases; single-type runs keep the user's selection.
+            ratio = '3:4' if project['content_type']=='default' and kind=='detail_page' else project['aspect_ratio']
             fixed = FixedSettings(task_type=kind,platform=project['platform'],language=project['language'],
-                aspect_ratio=project['aspect_ratio'],resolution=project['quality'].upper(),image_count=count)
+                aspect_ratio=ratio,resolution=project['quality'].upper(),image_count=count)
+            image_config=validate_single_image_request({'mode':'image_to_image','prompt':'输入配置校验',
+                'aspect_ratio':fixed.aspect_ratio,'resolution':fixed.resolution},len(refs))
+            estimated_credits+=image_config['estimated_credits']*count
+            if estimated_credits>image_budget['max_credits']:
+                raise AppException('DETAIL_IMAGE_BUDGET_EXCEEDED','图片数量或积分预算超出当前限制',400)
             snapshot = {'messages':messages,'references':selectors,'resolved_references':refs,
                 'image_count':count,'task_type':kind,'platform':fixed.platform,'language':fixed.language,
                 'target_size':{'aspect_ratio':fixed.aspect_ratio,'resolution':fixed.resolution}}

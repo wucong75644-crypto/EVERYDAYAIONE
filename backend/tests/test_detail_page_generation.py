@@ -55,7 +55,14 @@ def test_page_schema_allows_default_14_and_single_15_but_upload_limit_stays_sepa
 
 
 @pytest.mark.parametrize('model', ['kimi-k3','gemini-3.8-flash','gpt-6-luna'])
-def test_default_entry_freezes_two_groups_and_raw_requirements(monkeypatch, model):
+@pytest.mark.parametrize('content_type,ratio,expected', [
+    ('default','1:1',['1:1','3:4']),
+    ('default','16:9',['16:9','3:4']),
+    ('main_image','3:4',['3:4']),
+    ('detail_page','3:4',['3:4']),
+    ('detail_page','1:1',['1:1']),
+])
+async def test_entry_freezes_group_ratios_through_image_acceptance(monkeypatch, model, content_type, ratio, expected):
     from unittest.mock import MagicMock
     from services import detail_page_generation as page
     configured=settings()
@@ -65,13 +72,13 @@ def test_default_entry_freezes_two_groups_and_raw_requirements(monkeypatch, mode
     monkeypatch.setattr(page,'get_settings',lambda:configured)
     monkeypatch.setenv('KIE_SHADOW_OVERSEAS_PROXY','http://127.0.0.1:7891')
     monkeypatch.setattr(page,'chat_image_acceptance_allowed',lambda *_:True)
-    monkeypatch.setattr(page,'validate_single_image_request',lambda *_:{'estimated_credits':1})
     raw='  要有发财的感觉\n不要改变商品  '
-    project={'id':'project-1','version':3,'prompt_model':model,'content_type':'default',
-        'image_count':14,'images':[],'requirement':raw,'platform':'taobao','language':'zh-CN','aspect_ratio':'1:1','quality':'1k'}
-    refs=[{'file_id':'fid_a','source_id':'image-a','role':'product','workspace_path':'a.png'},
-          {'file_id':'fid_b','source_id':'image-b','role':'product','workspace_path':'b.png'}]
-    monkeypatch.setattr(page,'PageImageInputResolver',lambda *_:SimpleNamespace(bind=lambda _:refs))
+    project={'id':'project-1','version':3,'prompt_model':model,'content_type':content_type,
+        'image_count':14 if content_type=='default' else 7,'images':[],'requirement':raw,
+        'platform':'taobao','language':'zh-CN','aspect_ratio':ratio,'quality':'1k'}
+    refs=[{'file_id':f'fid_{i}','source_id':f'image-{i}','role':'product',
+        'workspace_path':f'{i}.png','content_sha256':str(i)*64} for i in (1,2)]
+    monkeypatch.setattr(page,'PageImageInputResolver',lambda *_:SimpleNamespace(bind=lambda _:refs,verify=lambda _:None))
     generation=object.__new__(page.DetailPageGeneration)
     generation.db=MagicMock()
     generation.user_id='user-1';generation.org_id=None
@@ -79,13 +86,35 @@ def test_default_entry_freezes_two_groups_and_raw_requirements(monkeypatch, mode
     generation.read=lambda _:project
     generation.start('project-1',3,'request-1')
     rows=generation.db.rpc.call_args.args[1]['p_plans']
-    assert [row['input_snapshot']['task_type'] for row in rows]==['main_images','detail_page']
-    assert [row['image_count'] for row in rows]==[7,7]
-    for row in rows:
+    kinds=['main_images','detail_page'] if content_type=='default' else [
+        'main_images' if content_type=='main_image' else 'detail_page']
+    assert [row['input_snapshot']['task_type'] for row in rows]==kinds
+    assert [row['image_count'] for row in rows]==[7]*len(kinds)
+    assert [row['target_size']['aspect_ratio'] for row in rows]==expected
+    from services.agent.image.ecommerce_planner.assembly import assemble_prompts
+    from services.agent.image.ecommerce_planner.inputs import model_input
+    from tests.ecommerce_design_fixtures import design_fixture
+    generation.db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data=[]
+    for row, expected_ratio in zip(rows,expected):
         assert row['input_snapshot']['messages'][0]['parts'][0]['text']==raw
         assert row['input_snapshot']['resolved_references']==refs
+        assert row['input_snapshot']['target_size']==row['target_size']
+        assert model_input(row['input_snapshot'],row['input_snapshot']['messages'],refs)['settings']['aspect_ratio']==expected_ratio
         assert row['model_settings']['profile']['ecom_image_planning_model']==model
         assert row['model_settings']['profile']['ecom_image_planning_input_credits_per_million']==1
+        _,evidence,_=design_fixture(7,row['invocation_key'],2)
+        assembled=assemble_prompts({'prompts':[f'第{i}张：image_1商品放中央，image_2结构细节放右侧。' for i in range(1,8)]},
+            row['input_snapshot'],evidence['product_selling_points'],evidence['visual_direction'])
+        await generation.accept({**row,'items':assembled['images'],'plan_revision':1})
+        accepted=generation.db.rpc.call_args.args[1]['p_snapshots']
+        assert len(accepted)==7
+        for item, accepted_item in zip(assembled['images'],accepted):
+            frozen=accepted_item['snapshot']
+            assert frozen['aspect_ratio']==item['aspect_ratio']==expected_ratio
+            assert frozen['prompt']==item['request_text']
+            assert f'画布比例：{expected_ratio}' in frozen['prompt']
+            assert frozen['references']==refs
+    assert project['aspect_ratio']==ratio
 
 
 def test_database_guards_have_actionable_errors_without_sql():

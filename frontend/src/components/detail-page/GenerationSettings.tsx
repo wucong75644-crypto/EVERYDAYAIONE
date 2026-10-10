@@ -31,7 +31,7 @@ export function GenerationSettings({form,hasProductImage,disabled=false,requirem
     <div className="grid shrink-0 grid-cols-2 gap-x-2 gap-y-1">
       <label className="min-w-0 text-xs text-[var(--s-text-secondary)]">目标平台<Select size="compact" ariaLabel="目标平台" value={form.platform} options={platforms} disabled={disabled} onChange={platform=>onChange({platform})}/></label>
       <label className="min-w-0 text-xs text-[var(--s-text-secondary)]">目标语言<Select size="compact" ariaLabel="目标语言" value={form.language} options={languages} disabled={disabled} onChange={language=>onChange({language})}/></label>
-      <label className="min-w-0 text-xs text-[var(--s-text-secondary)]">尺寸比例<Select size="compact" ariaLabel="尺寸比例" value={form.aspectRatio} options={ratios.map(value=>({value,label:value}))} disabled={disabled} onChange={aspectRatio=>onChange({aspectRatio})}/></label>
+      <label className="min-w-0 text-xs text-[var(--s-text-secondary)]">{form.contentType==='default'?'主图比例 · 详情3:4':'尺寸比例'}<Select size="compact" ariaLabel="尺寸比例" value={form.aspectRatio} options={ratios.map(value=>({value,label:value}))} disabled={disabled} onChange={aspectRatio=>onChange({aspectRatio})}/></label>
       <label className="min-w-0 text-xs text-[var(--s-text-secondary)]">清晰度<Select size="compact" ariaLabel="清晰度" value={form.quality} options={qualities} disabled={disabled} onChange={quality=>onChange({quality})}/></label>
       <label className="min-w-0 text-xs text-[var(--s-text-secondary)]">
         <span className="flex h-5 items-center justify-between"><span>生成数量</span><span className="whitespace-nowrap text-[10px]">{form.contentType==='default'?'7张主图＋7张详情':'\u00a0'}</span></span>

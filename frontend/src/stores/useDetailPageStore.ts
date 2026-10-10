@@ -64,6 +64,10 @@ function applyDraft(project:DetailProjectDraft|null){
       previewUrl:image.thumbnail_url||image.original_url||'',originalUrl:image.original_url||undefined,error:null,
       status:image.status,sortOrder:image.sort_order,name:image.workspace_path.split('/').pop()||'图片'}))};
 }
+function applyImageUpdate(project:DetailProjectDraft){
+  const {images,projectVersion}=applyDraft(project);
+  return {images,projectVersion};
+}
 function persistSettings(allowBusy=false){
   const epoch=lifecycleVersion, id=useDetailPageStore.getState().projectId;
   saving=saving.catch(()=>{}).then(async()=>{
@@ -194,7 +198,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
     schedulePoll();
   },
   attachWorkspaceImages: async (category, paths) => {
-    if(get().isUploading||get().isTransitioning||get().isMutating||get().status!=='draft'||!get().projectId)return;
+    if(get().isUploading||get().isTransitioning||get().isMutating||!EDITABLE_STATUSES.includes(get().status)||!get().projectId)return;
     const epoch=lifecycleVersion, projectId=get().projectId!;
     if (get().images.length + paths.length > MAX_IMAGES) {
       set({ formError: `产品图和参考图合计最多上传 ${MAX_IMAGES} 张` });
@@ -212,7 +216,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
         const project = await attachDetailImage(path, category, projectId);
         if(epoch!==lifecycleVersion)return;
         if(!project||project.id!==projectId)throw new Error('图片关联结果无效，请重新加载任务');
-        set((state) => ({ ...applyDraft(project), form: state.form, formError: null }));
+        set({ ...applyImageUpdate(project), formError: null });
       } catch (error) {
         if(epoch!==lifecycleVersion)return;
         set({ formError: toApiRequestError(error).message });
@@ -222,7 +226,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
     } finally { if(epoch===lifecycleVersion){set({isUploading:false});get().updateForm({});} }
   },
   addImages: async (category, files) => {
-    if(get().isUploading||get().isTransitioning||get().isMutating||get().status!=='draft'||!get().projectId)return;
+    if(get().isUploading||get().isTransitioning||get().isMutating||!EDITABLE_STATUSES.includes(get().status)||!get().projectId)return;
     const epoch=lifecycleVersion, projectId=get().projectId!;
     const currentImages = get().images;
     if (currentImages.length + files.length > MAX_IMAGES) {
@@ -265,8 +269,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
         const remotePreview = uploaded.thumbnail_url || uploaded.preview_url || uploaded.url;
         const requestVersion = lifecycleVersion;
         set((state) => {
-          const draft = applyDraft(project);
-          draft.form = state.form;
+          const draft = applyImageUpdate(project);
           const images = draft.images.map((item) => item.workspacePath === uploaded.workspace_path
             ? { ...item, previewUrl: image.previewUrl }
             : item);
@@ -292,7 +295,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
     } finally { if(epoch===lifecycleVersion){set({isUploading:false});get().updateForm({});} }
   },
   removeImage: async (id) => {
-    if(get().isTransitioning||get().isMutating||get().isUploading||get().status!=='draft')return;
+    if(get().isTransitioning||get().isMutating||get().isUploading||!EDITABLE_STATUSES.includes(get().status))return;
     const image=get().images.find(item=>item.id===id);if(!image)return;
     const epoch=lifecycleVersion, projectId=get().projectId;
     if(!projectId||image.status==='failed'||!image.workspacePath){releasePreview(image);set(state=>({images:state.images.filter(item=>item.id!==id)}));return;}
@@ -300,13 +303,12 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
     try{
       await persistSettings(true);if(!valid(epoch,projectId))return;
       const project=await removeDetailImage(projectId,id,get().projectVersion!);
-      if(valid(epoch,projectId)&&project)set(state=>({...applyDraft(project),form:state.form,formError:null}));
+      if(valid(epoch,projectId)&&project)set({...applyImageUpdate(project),formError:null});
     }catch(error){if(valid(epoch,projectId))set({formError:toApiRequestError(error).message});}
     finally{if(valid(epoch,projectId)){set({isMutating:false});get().updateForm({});}}
   },
   updateForm:(patch)=>{
     if(!EDITABLE_STATUSES.includes(get().status)||get().isTransitioning||get().isHydrating)return;
-    if(get().status!=='draft'&&Object.keys(patch).some(key=>key!=='requirement'))return;
     formRevision++;
     set(state=>{const next={...state.form,...patch};
       if(patch.contentType){next.count=patch.contentType==='default'?14:patch.count??(state.form.contentType==='default'?7:state.form.count);

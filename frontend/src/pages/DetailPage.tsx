@@ -26,7 +26,7 @@ export default function DetailPage(){
   const ready=images.some(image=>image.category==='product'&&image.status==='ready');
   const pending=images.some(image=>image.status!=='ready');
   const requirementDisabled=isHydrating||isTransitioning||!['draft','completed','failed'].includes(status);
-  const disabled=isHydrating||isTransitioning||status!=='draft'||state.isUploading||state.isMutating;
+  const disabled=requirementDisabled||state.isUploading||state.isMutating;
   const analyzeDisabled=requirementDisabled||state.isUploading||state.isMutating;
   const requirementAssist=useDetailRequirementAssist();
   const closeAssist=requirementAssist.close;

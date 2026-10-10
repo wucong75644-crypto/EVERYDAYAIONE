@@ -5,12 +5,14 @@ import { chatImageService } from '../../../services/chatImage';
 import { DetailWorkspace } from '../DetailWorkspace';
 import { downloadWorkspaceZip } from '../../../services/workspace';
 import { resumeDetailPlan, stopDetailRecovery } from '../../../services/detailProject';
+import MediaPlaceholder from '../../chat/media/MediaPlaceholder';
 
 vi.mock('../../chat/media/ChatImageControls', () => ({ default: ({taskId}:{taskId:string}) => <button>任务详情 {taskId}</button> }));
-vi.mock('../../chat/message/MessageImageBlocks', () => ({ AiGeneratedImage: ({renderId,onImageClick}:{renderId:string;onImageClick:()=>void}) => <button onClick={onImageClick}>图片 {renderId}</button> }));
+vi.mock('../../chat/message/MessageImageBlocks', () => ({ AiGeneratedImage: ({renderId,onImageClick,placeholderSize,isGenerating,fitContainer}:{renderId:string;onImageClick:()=>void;placeholderSize:{width:number;height:number};isGenerating:boolean;fitContainer:boolean}) => <>
+  {isGenerating&&<MediaPlaceholder type="image" {...placeholderSize} fitContainer={fitContainer}/>}
+  <button onClick={onImageClick}>图片 {renderId}</button></> }));
 vi.mock('../../../preview/PreviewHost', () => ({default:({state,onIndexChange}:{state:{kind:string;items?:Array<{url:string}>;index?:number};onIndexChange:(i:number)=>void})=>state.kind==='open'?<div role="dialog">{state.items?.[state.index??0].url}<button onClick={()=>onIndexChange((state.index??0)+1)}>下一张</button></div>:null}));
 vi.mock('../../chat/media/ImagePreviewModal', () => ({ default: () => null }));
-vi.mock('../../chat/media/MediaPlaceholder', () => ({ FailedMediaPlaceholder: ({onRetry,errorMessage}:{onRetry?:()=>void;errorMessage?:string}) => <div>{errorMessage}{onRetry&&<button onClick={onRetry}>重新生成</button>}</div> }));
 vi.mock('../../../services/chatImage', () => ({ chatImageService: {replay:vi.fn()} }));
 vi.mock('../../../services/workspace', () => ({ downloadWorkspaceZip: vi.fn() }));
 vi.mock('../../../services/detailProject', () => ({ resumeDetailPlan: vi.fn(), stopDetailRecovery: vi.fn() }));
@@ -22,6 +24,24 @@ const group:DetailGroup = {
 const tasks:DetailGroup['tasks'] = [2,1].map(position=>({id:`task-${position}`,item_id:`item-${position}`,status:'pending',submission_state:'queued',created_at:'2026-10-09'}));
 
 describe('右侧提示词和图片工作区',()=>{
+  it('主图与详情占位符等宽，排队、生成中和失败均遵循冻结比例，历史比例保持原样',()=>{
+    const main={...group,tasks:[tasks[0],{...tasks[1],status:'running'}]};
+    const detail={...group,plan_id:'detail-plan',kind:'detail_page' as const,
+      items:group.items.map(item=>({...item,aspect_ratio:'3:4'})),tasks:main.tasks};
+    const {rerender}=render(<DetailWorkspace projectId="project-1" onRefresh={vi.fn()} groups={[main,detail]}/>);
+    const mainPlaceholders=within(screen.getByRole('region',{name:'主图工作区'})).getAllByRole('status',{name:'正在生成图片'});
+    const detailRegion=screen.getByRole('region',{name:'详情图工作区'});
+    const detailPlaceholders=within(detailRegion).getAllByRole('status',{name:'正在生成图片'});
+    for(const node of mainPlaceholders)expect(node).toHaveStyle({width:'100%',height:'auto',aspectRatio:'1'});
+    for(const node of detailPlaceholders){
+      expect(node).toHaveStyle({width:'100%',height:'auto',aspectRatio:'0.75'});
+      expect(node.style.getPropertyValue('--width')).toBe(mainPlaceholders[0].style.getPropertyValue('--width'));
+    }
+    rerender(<DetailWorkspace projectId="project-1" onRefresh={vi.fn()} groups={[main,{...detail,tasks:main.tasks.map(task=>({...task,status:'failed',error_message:'临时错误'}))}]}/>);
+    for(const error of within(detailRegion).getAllByRole('alert'))expect(error.parentElement).toHaveStyle({aspectRatio:'0.75'});
+    rerender(<DetailWorkspace projectId="project-1" onRefresh={vi.fn()} groups={[main,{...detail,items:group.items}]}/>);
+    for(const node of within(detailRegion).getAllByRole('status',{name:'正在生成图片'}))expect(node).toHaveStyle({aspectRatio:'1'});
+  });
   it('历史在上，新轮在下；仅新轮变化时定位，旧轮不能重试且统一预览可跨轮切图',()=>{
     const scroll=vi.fn();Element.prototype.scrollIntoView=scroll;
     const old={run_id:'old',created_at:'2026-10-09',requirement:'旧要求',groups:[{...group,status:'failed',can_resume:true,tasks:[

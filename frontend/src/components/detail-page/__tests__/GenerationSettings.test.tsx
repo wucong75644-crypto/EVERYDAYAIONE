@@ -8,6 +8,7 @@ describe('固定布局设置',()=>{
   render(<GenerationSettings form={DEFAULT_FORM} hasProductImage={false} {...actions}/>);
   const count=screen.getByRole('button',{name:'生成数量'});const model=screen.getByRole('button',{name:'提示词模型'});
   expect(count).toHaveTextContent('14张');expect(screen.getByText('7张主图＋7张详情')).toBeInTheDocument();
+  expect(screen.getByText('主图比例 · 详情3:4')).toBeInTheDocument();
   expect(model).toHaveTextContent('Gemini 3.8 Flash');expect(count.compareDocumentPosition(model)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(screen.getByRole('button',{name:'开始生成'})).toBeDisabled();
  });
@@ -23,6 +24,7 @@ describe('固定布局设置',()=>{
   for(const contentType of ['main_image','detail_page','default'] as const){
    rerender(<GenerationSettings form={{...DEFAULT_FORM,contentType}} hasProductImage {...actions}/>);
    expect(screen.getByRole('button',{name:'生成数量'})).toBeInTheDocument();expect(screen.getByRole('textbox')).toHaveAttribute('placeholder','上传产品图片，并描述产品名称、核心卖点、规格和设计要求…');
+   expect(screen.getByText(contentType==='default'?'主图比例 · 详情3:4':'尺寸比例')).toBeInTheDocument();
    expect(screen.getByRole('button',{name:'上传图片'})).toBeInTheDocument();
    expect(screen.getByRole('button',{name:'工作区',exact:true})).toBeInTheDocument();
    expect(screen.getByRole('button',{name:'AI 帮写'})).toBeInTheDocument();

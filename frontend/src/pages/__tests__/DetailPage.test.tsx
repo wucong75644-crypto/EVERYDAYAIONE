@@ -54,20 +54,28 @@ describe('DetailPage 页面骨架', () => {
     expect(useDetailPageStore.getState().groups).toEqual([]);
   });
 
-  it.each(['completed','failed'])('已结束状态 %s 可修改要求并再次生成，仍保留原图片和设置',async status=>{
+  it.each(['completed','failed'])('已结束状态 %s 开放全部设置、图片和帮写，保留历史后再次生成',async status=>{
     renderPage();await waitFor(()=>expect(useDetailPageStore.getState().isHydrating).toBe(false));
     act(()=>useDetailPageStore.setState({status,images:[{id:'image',category:'product',status:'ready',previewUrl:'a.png',error:null}]}));
     const input=screen.getByRole('textbox',{name:'产品信息与创作要求'});expect(input).toBeEnabled();
     fireEvent.change(input,{target:{value:'换成新的风格'}});
     expect(useDetailPageStore.getState().form.requirement).toBe('换成新的风格');
     expect(screen.getByRole('button',{name:'再次生成'})).toBeEnabled();
-    expect(screen.getByRole('button',{name:'上传图片'})).toBeDisabled();
+    for(const name of ['目标平台','目标语言','尺寸比例','清晰度','生成数量','提示词模型','上传图片','工作区','AI 帮写']){
+      expect(screen.getByRole('button',{name,exact:true})).toBeEnabled();
+    }
+    expect(screen.getByRole('button',{name:'删除 图片'})).toBeEnabled();
+    fireEvent.click(screen.getByRole('button',{name:'详情图',exact:true}));
+    expect(useDetailPageStore.getState().form).toMatchObject({contentType:'detail_page',aspectRatio:'3:4',count:7});
+    fireEvent.keyDown(screen.getByRole('button',{name:'清晰度'}),{key:'ArrowDown'});
+    fireEvent.click(screen.getByText('2K 高清'));
+    expect(useDetailPageStore.getState().form.quality).toBe('2k');
   });
 
-  it('插入时将编辑产品、增补卖点、风格和客户回答一起回填输入框，不再次调用模型', async () => {
+  it.each(['draft','completed','failed'])('%s 状态帮写可打开并将产品、卖点、风格和回答回填输入框', async status => {
     vi.mocked(listDetailProjects).mockResolvedValue({items:[{id:'project-1',title:'产品',created_at:'2026-10-10',content_type:'main_image',status:'draft',display_status:'draft',expected_count:1,completed_count:0,thumbnail_url:null,stage:null,recovery_waiting:false}],next_cursor:null});
     vi.mocked(getDetailProject).mockResolvedValue({
-      id: 'project-1', version: 1, content_type: 'main_image', platform: 'auto', requirement: '需要清楚展示商品',
+      id: 'project-1', version: 1, status, content_type: 'main_image', platform: 'auto', requirement: '需要清楚展示商品',
       language: 'zh-CN', aspect_ratio: '1:1', quality: '1k', image_count: 1,
       images: [{ id: 'image-1', category: 'product', workspace_path: 'uploads/product.png', sort_order: 0, status: 'ready', original_url: 'product.png', thumbnail_url: null }],
     });
@@ -112,6 +120,16 @@ describe('DetailPage 页面骨架', () => {
     renderPage();
     await waitFor(() => expect(useDetailPageStore.getState().isHydrating).toBe(false));
     expect(screen.getByRole('button', { name: 'AI 帮写' })).toBeDisabled();
+  });
+
+  it.each(['analyzing','plan_ready','generating','archived'])('%s 状态继续保护当前轮的设置和素材',async status=>{
+    renderPage();await waitFor(()=>expect(useDetailPageStore.getState().isHydrating).toBe(false));
+    act(()=>useDetailPageStore.setState({status,images:[{id:'image',category:'product',status:'ready',previewUrl:'a.png',name:'商品.png',error:null}]}));
+    expect(screen.getByRole('textbox')).toBeDisabled();
+    for(const name of ['目标平台','目标语言','尺寸比例','清晰度','生成数量','提示词模型','上传图片','工作区','AI 帮写','再次生成']){
+      expect(screen.getByRole('button',{name,exact:true})).toBeDisabled();
+    }
+    expect(screen.queryByRole('button',{name:'删除 商品.png'})).not.toBeInTheDocument();
   });
 
   it.each(['uploading','attaching','failed','missing'] as const)('图片状态为 %s 时可编辑要求，全部就绪后才开放生成和帮写', async (imageStatus) => {

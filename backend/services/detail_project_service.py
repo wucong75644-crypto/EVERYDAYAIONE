@@ -87,7 +87,7 @@ class DetailProjectService:
             message = str(exc)
             mapping = {
                 "DETAIL_PROJECT_AMBIGUOUS": ("DETAIL_PROJECT_AMBIGUOUS", "存在多个草稿，请选择指定任务上传", 409),
-                "DETAIL_PROJECT_NOT_DRAFT": ("DETAIL_PROJECT_NOT_DRAFT", "任务已提交，不能修改图片", 409),
+                "DETAIL_PROJECT_NOT_DRAFT": ("DETAIL_PROJECT_NOT_DRAFT", "任务正在执行或已删除，暂不能修改图片", 409),
                 "DETAIL_PROJECT_DENIED": ("DETAIL_PROJECT_NOT_FOUND", "项目不存在", 404),
                 "DETAIL_SCOPE_DENIED": ("DETAIL_PROJECT_FORBIDDEN", "无权访问该任务", 403),
                 "DETAIL_IMAGE_DUPLICATE": ("DETAIL_IMAGE_DUPLICATE", "图片已添加", 409),
@@ -239,7 +239,7 @@ class DetailProjectService:
     def _lock_project(self, cur: Any, project_id: str, version: int) -> None:
         cur.execute(
             "SELECT id FROM detail_projects WHERE id=%s AND user_id=%s "
-            "AND org_id IS NOT DISTINCT FROM %s AND version=%s AND status='draft' FOR UPDATE",
+            "AND org_id IS NOT DISTINCT FROM %s AND version=%s AND status IN ('draft','completed','failed') FOR UPDATE",
             (project_id, self.user_id, self.org_id, version),
         )
         if not cur.fetchone():
