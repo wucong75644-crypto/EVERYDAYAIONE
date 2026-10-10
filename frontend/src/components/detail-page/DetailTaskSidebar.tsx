@@ -22,7 +22,6 @@ export function DetailTaskSidebar({tasks,selectedId,disabled,loading,hasMore,err
   return <aside aria-label="主图详情任务列表" className="flex h-full min-h-0 flex-col gap-3"
     onBlur={event=>{if(!event.currentTarget.contains(event.relatedTarget))setMenu(null);}}>
     <Button className="w-full shrink-0" disabled={disabled} icon={<Plus className="h-4 w-4"/>} onClick={onCreate}>新建任务</Button>
-    {disabled&&<p className="text-xs text-[var(--s-text-tertiary)]">上传或保存完成后可新建、切换任务</p>}
     {error&&<div role="alert" className="text-xs text-[var(--s-error)]">{error}<button type="button" className="ml-2 underline" onClick={onRefresh}>重试</button></div>}
     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" tabIndex={0} aria-label="任务记录">
       {!tasks.length&&!loading&&<p className="py-6 text-center text-sm text-[var(--s-text-tertiary)]">新建任务后，记录会保存在这里</p>}
