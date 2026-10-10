@@ -446,8 +446,10 @@ class SkillAuthoring:
                 LEFT JOIN public.skill_drafts d ON d.package_id = p.id
                 LEFT JOIN LATERAL (SELECT revision, summary, status, catalog_metadata, created_at FROM public.skill_revisions
                     WHERE package_id = p.id ORDER BY created_at DESC, id DESC LIMIT 1) r ON true
-                LEFT JOIN public.skill_assignments a ON a.package_id = p.id AND a.org_id = %s::uuid AND a.enabled
-                LEFT JOIN public.skill_revisions ar ON ar.id = a.revision_id AND ar.status = 'published'
+                LEFT JOIN LATERAL (SELECT * FROM public.skill_assignments
+                    WHERE package_id=p.id AND (org_id=%s::uuid OR org_id IS NULL)
+                    ORDER BY org_id NULLS LAST LIMIT 1) a ON true
+                LEFT JOIN public.skill_revisions ar ON ar.id = a.revision_id AND a.enabled AND ar.status = 'published'
                 LEFT JOIN LATERAL (SELECT id, revision, created_at FROM public.skill_revisions personal_revision
                     WHERE personal_revision.package_id = p.id AND personal_revision.status = 'published'
                         AND p.scope_kind = 'personal'
@@ -476,9 +478,11 @@ class SkillAuthoring:
                 FROM public.skill_revisions WHERE package_id = %s ORDER BY created_at DESC, id DESC''',
                 (package_id,))
             revisions = cursor.fetchall()
-            cursor.execute('''SELECT r.revision FROM public.skill_assignments a
-                JOIN public.skill_revisions r ON r.id = a.revision_id AND r.status = 'published'
-                WHERE a.package_id = %s AND a.org_id = %s::uuid AND a.enabled''',
+            cursor.execute('''SELECT r.revision FROM (SELECT * FROM public.skill_assignments
+                WHERE package_id=%s AND (org_id=%s::uuid OR org_id IS NULL)
+                ORDER BY org_id NULLS LAST LIMIT 1) a
+                JOIN public.skill_revisions r ON r.id=a.revision_id AND r.status='published'
+                WHERE a.enabled''',
                 (package_id, self.repository.scope.org_id))
             available = cursor.fetchone()
             if package.scope_kind == 'personal':

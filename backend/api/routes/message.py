@@ -331,7 +331,12 @@ async def _do_generate_message(
     body.params["_prefetched_summary"] = conversation.get("context_summary")
     body.params["_org_id"] = ctx.org_id
     # Only the typed HTTP intent may populate this internal Actor input.
-    for private_key in ("_selected_skill", "_skill_task_mode", "_media_skills", "_skill_intent", "_skill_retry"):
+    from services.agent.image.ecommerce_planner.workflow import restore_retry_binding
+    restored_workflow = None
+    if body.operation != MessageOperation.SEND and gen_type == GenerationType.CHAT:
+        restored_workflow = await restore_retry_binding(db, user_id=user_id, org_id=ctx.org_id,
+            conversation_id=conversation_id, message_id=body.original_message_id, operation=body.operation.value)
+    for private_key in ("_selected_skill", "_skill_task_mode", "_media_skills", "_skill_intent", "_skill_retry", "_ecom_workflow"):
         body.params.pop(private_key, None)
     if gen_type != GenerationType.CHAT:
         body.params["_skill_task_mode"] = skill_task_mode
@@ -345,6 +350,8 @@ async def _do_generate_message(
         )
     body.params['_skill_intent'] = skill_intent.model_dump(mode='json')
     body.params['_skill_retry'] = body.operation != MessageOperation.SEND
+    if restored_workflow:
+        body.params['_ecom_workflow'] = restored_workflow
 
     # 5. 处理助手消息（根据操作类型）
     assistant_message_id, assistant_message = await prepare_assistant_message(

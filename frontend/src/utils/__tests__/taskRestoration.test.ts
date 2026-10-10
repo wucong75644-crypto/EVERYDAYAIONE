@@ -231,6 +231,16 @@ describe('restoreMediaTask', () => {
 });
 
 describe('chat image recovery', () => {
+  it.each(['detail_project','skill_trial'])('keeps %s image tasks out of chat recovery', async (destination) => {
+    vi.clearAllMocks();
+    const task=createPendingImageTask({status:'completed',request_params:{_media_request_v1:{model:'actual',origin:{destination}}}});
+    restoreMediaTask(task);
+    await reconcileChatTaskStates([task]);
+    expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockImageDetails).not.toHaveBeenCalled();
+    expect(mockMarkForceRefresh).not.toHaveBeenCalled();
+  });
+
   it('restores an old queued child without the native media timeout', () => {
     vi.clearAllMocks();
     restoreMediaTask(createPendingImageTask({ started_at: '2020-01-01T00:00:00Z',

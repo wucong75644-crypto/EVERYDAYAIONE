@@ -236,10 +236,11 @@ class TestModelRegistry:
 
     def test_openrouter_capabilities(self):
         """验证 OpenRouter 模型能力标记"""
-        # 所有 OpenRouter 模型都支持 tools
+        # 能力必须与当前适配器使用的端点一致。
         or_models = get_models_by_provider(ModelProvider.OPENROUTER)
         for mid, cfg in or_models.items():
-            assert cfg.supports_tools is True, f"{mid} should support tools"
+            # Sol's tool API is Responses; this adapter currently uses Chat Completions.
+            assert cfg.supports_tools is (mid != "openai/gpt-6.1-sol"), mid
 
         # vision 支持
         vision_models = {

@@ -23,7 +23,12 @@ export function AiGeneratedImage({
   onImageClick,
   onMediaLoaded,
   isGenerating,
-}: ImageBlockProps & {
+  renderId,
+  fitContainer = false,
+}: Omit<ImageBlockProps, 'messageId'> & {
+  messageId?: string;
+  renderId?: string;
+  fitContainer?: boolean;
   imageAsset: ImageAsset | null;
   placeholderSize: { width: number; height: number };
   onImageClick: () => void;
@@ -70,7 +75,7 @@ export function AiGeneratedImage({
 
     setIsDownloading(true);
     try {
-      await downloadImage(imageUrl, `image-${messageId}`);
+      await downloadImage(imageUrl, `image-${renderId ?? messageId ?? 'result'}`);
     } catch {
       toast.error('下载失败，请右键图片选择"另存为"');
     } finally {
@@ -88,7 +93,7 @@ export function AiGeneratedImage({
   return (
     <div className="mt-3 leading-none" ref={lazyRef}>
       {isGenerating && !imageUrl && (
-        <MediaPlaceholder type="image" width={placeholderSize.width} height={placeholderSize.height} />
+        <MediaPlaceholder type="image" width={placeholderSize.width} height={placeholderSize.height} fitContainer={fitContainer} />
       )}
 
       {imageUrl && shouldRender && !thumbnail.failed && (
@@ -97,15 +102,15 @@ export function AiGeneratedImage({
           style={
             {
               '--aspect-ratio': imageLoaded ? 'auto' : aspectRatio,
-              '--max-width': `${placeholderSize.width}px`,
-              ...(imageLoaded ? {} : { width: `${placeholderSize.width}px` }),
+              '--max-width': fitContainer ? '100%' : `${placeholderSize.width}px`,
+              ...(fitContainer ? { width: '100%' } : imageLoaded ? {} : { width: `${placeholderSize.width}px` }),
             } as React.CSSProperties
           }
           role="button"
           tabIndex={0}
           onClick={onImageClick}
           onKeyDown={handleKeyDown}
-          onContextMenu={(e) => { if (imageLoaded && imageUrl) { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY }); } }}
+          onContextMenu={(e) => { if (messageId && imageLoaded && imageUrl) { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY }); } }}
           aria-label="查看大图"
         >
           <img
@@ -146,7 +151,7 @@ export function AiGeneratedImage({
             </button>
           </div>
 
-          {contextMenu && imageUrl && createPortal(
+          {contextMenu && imageUrl && messageId && createPortal(
             <ImageContextMenu
               x={contextMenu.x}
               y={contextMenu.y}
@@ -165,7 +170,7 @@ export function AiGeneratedImage({
       {thumbnail.failed && imageUrl && (
         <div
           className="flex flex-col items-center justify-center rounded-xl bg-hover text-text-tertiary"
-          style={{ width: placeholderSize.width, height: placeholderSize.height }}
+          style={fitContainer ? { width: '100%', aspectRatio } : { width: placeholderSize.width, height: placeholderSize.height }}
         >
           <svg className="w-8 h-8 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />

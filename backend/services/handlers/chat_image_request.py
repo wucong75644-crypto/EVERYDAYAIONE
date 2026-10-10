@@ -31,6 +31,7 @@ INPUT_FIELDS = {
     "resolution", "output_format", "source_prompt", "plan_item_id", "variant_id",
     "source_task_id",
     "background", "size_requirement",
+    "plan_source",
 }
 
 
@@ -176,6 +177,19 @@ def verify_frozen_request(snapshot: dict) -> None:
             or target.get("aspect_ratio") != snapshot.get("aspect_ratio")
             or target.get("resolution") != snapshot.get("resolution")):
         raise ValueError("IMAGE_SIZE_SNAPSHOT_CONFLICT")
+
+
+def reference_file_size(reference: dict) -> int:
+    """Read verified file facts without rewriting older frozen page requests."""
+    version = reference.get("file_version")
+    if (not isinstance(version, (list, tuple)) or len(version) != 4
+            or any(type(value) is not int for value in version) or version[1] < 1):
+        raise ValueError("参考原图文件大小信息无效，请重新选择图片")
+    # Older page bindings already froze the byte count in file_version[1].
+    size = reference.get("size", version[1])
+    if type(size) is not int or size != version[1]:
+        raise ValueError("参考原图文件大小信息无效，请重新选择图片")
+    return size
 
 
 class ChatImageInputResolver:

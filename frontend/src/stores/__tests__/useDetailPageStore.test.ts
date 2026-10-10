@@ -1,224 +1,323 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest';
 import { useDetailPageStore } from '../useDetailPageStore';
-import { getCurrentDetailProject } from '../../services/detailProject';
-import { attachDetailImage } from '../../services/detailProject';
-import { uploadImageFile } from '../../services/upload';
-
-vi.mock('../../services/upload', () => ({ uploadImageFile: vi.fn(() => new Promise(() => undefined)) }));
-vi.mock('../../services/detailProject', () => ({
-  getCurrentDetailProject: vi.fn().mockResolvedValue(null),
-  attachDetailImage: vi.fn(), removeDetailImage: vi.fn(), saveDetailSettings: vi.fn(),
-}));
-
-const createObjectURL = vi.fn(() => 'blob:preview');
-const revokeObjectURL = vi.fn();
-
-beforeAll(() => {
-  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
-  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+import * as api from '../../services/detailProject';
+import * as uploadApi from '../../services/upload';
+import type { DetailProjectDraft } from '../../types/detailPage';
+vi.mock('../../services/detailProject',()=>({createDetailProject:vi.fn(),listDetailProjects:vi.fn(),refreshDetailTaskStatuses:vi.fn(),getDetailCapabilities:vi.fn(),getDetailProject:vi.fn(),startDetailProject:vi.fn(),archiveDetailProject:vi.fn(),attachDetailImage:vi.fn(),removeDetailImage:vi.fn(),saveDetailSettings:vi.fn()}));
+vi.mock('../../services/upload',()=>({uploadImageFile:vi.fn()}));
+const draft:DetailProjectDraft={id:'project',version:1,content_type:'default',platform:'taobao',requirement:'发财的感觉',language:'zh-CN',aspect_ratio:'1:1',quality:'1k',image_count:14,prompt_model:'kimi-k3',status:'draft',images:[{id:'image',category:'product',workspace_path:'product.png',sort_order:0,status:'ready',original_url:'product.png',thumbnail_url:null}]};
+beforeEach(()=>{
+  vi.useFakeTimers();vi.resetAllMocks();localStorage.clear();useDetailPageStore.getState().reset();
+  vi.mocked(api.getDetailProject).mockResolvedValue(draft);
+  vi.mocked(api.listDetailProjects).mockResolvedValue({items:[{id:'project',title:'产品',created_at:'2026-10-10',content_type:'default',status:'draft',display_status:'draft',expected_count:14,completed_count:0,thumbnail_url:null,stage:null,recovery_waiting:false}],next_cursor:null});
+  vi.mocked(api.createDetailProject).mockResolvedValue({...draft,id:'new-project'});
+  vi.mocked(api.refreshDetailTaskStatuses).mockResolvedValue([]);
+  vi.mocked(api.getDetailCapabilities).mockResolvedValue({enabled:true,prompt_models:[{id:'kimi-k3',name:'Kimi K3',available:true,reason:null}],image_models:[]});
+  vi.mocked(api.saveDetailSettings).mockImplementation(async(_id,version)=>({...draft,version:version+1}));
+});
+afterEach(()=>{useDetailPageStore.getState().reset();vi.unstubAllGlobals();vi.useRealTimers();});
+describe('真实页面任务状态',()=>{
+ it.each(['completed','failed'])('%s 后重新设置所有参数和素材，图片回执不清空历史',async status=>{
+  const old={run_id:'old-run',created_at:'2026-10-09',requirement:'旧要求',groups:[{
+   plan_id:'old-plan',kind:'main_images' as const,status:'ready',stage:3,count:1,items:[],tasks:[],
+  }]};
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,status,version:4,runs:[old],groups:old.groups,run_state:{run_id:'old-run'}});
+  await useDetailPageStore.getState().hydrateDraft();
+  const nextForm={contentType:'detail_page' as const,platform:'jd' as const,language:'none' as const,
+   aspectRatio:'3:4',quality:'2k' as const,count:3,promptModel:'kimi-k3' as const,requirement:'新的商品和背景'};
+  useDetailPageStore.getState().updateForm(nextForm);
+  expect(useDetailPageStore.getState().form).toEqual(nextForm);
+  vi.mocked(api.removeDetailImage).mockResolvedValue({...draft,status,version:6,images:[]});
+  await useDetailPageStore.getState().removeImage('image');
+  expect(api.saveDetailSettings).toHaveBeenCalledWith('project',4,nextForm);
+  expect(api.removeDetailImage).toHaveBeenCalledWith('project','image',5);
+  expect(useDetailPageStore.getState()).toMatchObject({status,images:[],runs:[old],groups:old.groups,currentRunId:'old-run',form:nextForm});
+  const replacement={...draft.images[0],id:'new-image',workspace_path:'new-product.png'};
+  vi.mocked(api.attachDetailImage).mockResolvedValue({...draft,status,version:8,images:[replacement]});
+  await useDetailPageStore.getState().attachWorkspaceImages('product',['new-product.png']);
+  expect(api.attachDetailImage).toHaveBeenCalledWith('new-product.png','product','project');
+  expect(useDetailPageStore.getState()).toMatchObject({status,images:[{workspacePath:'new-product.png'}],runs:[old],groups:old.groups,currentRunId:'old-run',form:nextForm});
+  vi.mocked(api.startDetailProject).mockImplementation(async(_id,_version,request)=>({...draft,status:'analyzing',runs:[old],run_state:{run_id:request},images:[replacement]}));
+  await useDetailPageStore.getState().startAnalysis();
+  expect(api.startDetailProject).toHaveBeenCalledWith('project',9,expect.any(String));
+  expect(useDetailPageStore.getState().runs).toEqual([old]);
+ });
+ it('已结束任务仍能直接上传文件，全部关联完成前不受理下一轮',async()=>{
+  const old={run_id:'old-run',created_at:'2026-10-09',requirement:'旧要求',groups:[]};
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,status:'completed',runs:[old],run_state:{run_id:'old-run'}});
+  await useDetailPageStore.getState().hydrateDraft();
+  vi.stubGlobal('URL',Object.assign(class extends URL {},{createObjectURL:vi.fn(()=> 'blob:test'),revokeObjectURL:vi.fn()}));
+  let finish!:(value:Awaited<ReturnType<typeof uploadApi.uploadImageFile>>)=>void;
+  vi.mocked(uploadApi.uploadImageFile).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  vi.mocked(api.attachDetailImage).mockResolvedValue({...draft,status:'completed',version:2,images:[...draft.images,{...draft.images[0],id:'new-image',workspace_path:'new.png',sort_order:1}]});
+  const pending=useDetailPageStore.getState().addImages('product',[new File(['x'],'new.png',{type:'image/png'})]);
+  await vi.advanceTimersByTimeAsync(0);
+  await useDetailPageStore.getState().startAnalysis();
+  expect(api.startDetailProject).not.toHaveBeenCalled();
+  useDetailPageStore.getState().updateForm({requirement:'上传中补充文字'});
+  finish({workspace_path:'new.png'} as Awaited<ReturnType<typeof uploadApi.uploadImageFile>>);await pending;
+  expect(api.attachDetailImage).toHaveBeenCalledWith('new.png','product','project');
+  expect(useDetailPageStore.getState()).toMatchObject({runs:[old],currentRunId:'old-run',form:{requirement:'上传中补充文字'},isUploading:false});
+  expect(useDetailPageStore.getState().images).toHaveLength(2);
+ });
+ it.each(['analyzing','plan_ready','generating','archived'])('%s 不能通过 store 修改参数或图片',async status=>{
+  await useDetailPageStore.getState().hydrateDraft();useDetailPageStore.setState({status});
+  useDetailPageStore.getState().updateForm({contentType:'detail_page',quality:'2k'});
+  await useDetailPageStore.getState().removeImage('image');
+  await useDetailPageStore.getState().attachWorkspaceImages('product',['new.png']);
+  await useDetailPageStore.getState().addImages('product',[new File(['x'],'new.png',{type:'image/png'})]);
+  expect(useDetailPageStore.getState().form).toMatchObject({contentType:'default',quality:'1k'});
+  expect(api.removeDetailImage).not.toHaveBeenCalled();expect(api.attachDetailImage).not.toHaveBeenCalled();
+  expect(uploadApi.uploadImageFile).not.toHaveBeenCalled();
+ });
+ it('修改已结束任务后保存原文并创建新一轮，保留历史且不复用上一轮请求号',async()=>{
+  const old={run_id:'old-run',created_at:'2026-10-09',requirement:'旧要求',groups:[]};
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,status:'completed',version:4,runs:[old],run_state:{run_id:'old-run',request_id:'old-run'}});
+  await useDetailPageStore.getState().hydrateDraft();
+  useDetailPageStore.getState().updateForm({requirement:'  新风格\n保持细节  '});
+  vi.mocked(api.startDetailProject).mockImplementation(async(_id,_version,request)=>({...draft,status:'analyzing',version:6,
+    runs:[old,{...old,run_id:request,requirement:'新要求'}],run_state:{run_id:request,request_id:request}}));
+  await useDetailPageStore.getState().startAnalysis();
+  expect(api.saveDetailSettings).toHaveBeenCalledWith('project',4,expect.objectContaining({requirement:'  新风格\n保持细节  '}));
+  expect(api.startDetailProject).toHaveBeenCalledWith('project',5,expect.not.stringMatching(/^old-run$/));
+  expect(useDetailPageStore.getState().runs[0]).toEqual(old);
+  const first=vi.mocked(api.startDetailProject).mock.calls[0][2];
+  useDetailPageStore.setState({status:'completed'});
+  await useDetailPageStore.getState().startAnalysis();
+  expect(vi.mocked(api.startDetailProject).mock.calls[1][2]).not.toBe(first);
+ });
+ it('删除选中任务后切换到已有任务，不删除图片或取消后台任务',async()=>{
+  const second={id:'second',title:'另一产品',created_at:'2026-10-09',content_type:'default' as const,status:'completed',display_status:'completed' as const,expected_count:14,completed_count:14,thumbnail_url:null,stage:null,recovery_waiting:false};
+  const first=(await api.listDetailProjects()).items[0];
+  vi.mocked(api.listDetailProjects).mockResolvedValue({items:[first,second],next_cursor:null});
+  await useDetailPageStore.getState().hydrateDraft();
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,id:'second',status:'completed',requirement:'另一产品要求'});
+  vi.mocked(api.archiveDetailProject).mockResolvedValue({} as Awaited<ReturnType<typeof api.archiveDetailProject>>);
+  vi.mocked(api.listDetailProjects).mockResolvedValue({items:[second],next_cursor:null});
+  await useDetailPageStore.getState().deleteTask('project');
+  expect(api.archiveDetailProject).toHaveBeenCalledExactlyOnceWith('project');
+  expect(useDetailPageStore.getState()).toMatchObject({projectId:'second',form:{requirement:'另一产品要求'}});
+  expect(useDetailPageStore.getState().tasks.map(task=>task.id)).toEqual(['second']);
+  expect(api.removeDetailImage).not.toHaveBeenCalled();expect(api.createDetailProject).not.toHaveBeenCalled();
+ });
+ it('删除最后一个任务后新建空白草稿；拒绝删除时保留当前内容',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  vi.mocked(api.archiveDetailProject).mockRejectedValueOnce(new Error('任务仍在后台执行，请完成后再删除'));
+  await useDetailPageStore.getState().deleteTask('project');
+  expect(useDetailPageStore.getState()).toMatchObject({projectId:'project',taskError:'任务仍在后台执行，请完成后再删除'});
+  vi.mocked(api.archiveDetailProject).mockResolvedValueOnce({} as Awaited<ReturnType<typeof api.archiveDetailProject>>);
+  vi.mocked(api.listDetailProjects).mockResolvedValue({items:[],next_cursor:null});
+  await useDetailPageStore.getState().deleteTask('project');
+  expect(useDetailPageStore.getState().projectId).toBe('new-project');
+  expect(api.createDetailProject).toHaveBeenCalledTimes(1);
+ });
+ it('删除回调迟到时不覆盖已切换账号的列表与选中项',async()=>{
+  await useDetailPageStore.getState().hydrateDraft('userA:personal');
+  let finish!:()=>void;
+  vi.mocked(api.archiveDetailProject).mockImplementationOnce(()=>new Promise(resolve=>{finish=()=>resolve({} as Awaited<ReturnType<typeof api.archiveDetailProject>>);}));
+  const pending=useDetailPageStore.getState().deleteTask('project');
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,id:'B',requirement:'B产品'});
+  await useDetailPageStore.getState().hydrateDraft('userB:personal','B');
+  finish();await pending;
+  expect(useDetailPageStore.getState()).toMatchObject({scopeKey:'userB:personal',projectId:'B',form:{requirement:'B产品'}});
+  expect(api.createDetailProject).not.toHaveBeenCalled();
+ });
+ it('编辑历史要求后刷新不覆盖文字，也不会吞掉另一窗口的版本冲突',async()=>{
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,status:'completed',version:3});
+  await useDetailPageStore.getState().hydrateDraft();
+  useDetailPageStore.getState().updateForm({requirement:'本地新要求'});
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,status:'completed',version:8,requirement:'其他窗口要求'});
+  await useDetailPageStore.getState().refresh();
+  expect(useDetailPageStore.getState()).toMatchObject({form:{requirement:'本地新要求'},projectVersion:3});
+  await vi.advanceTimersByTimeAsync(500);
+  expect(api.saveDetailSettings).toHaveBeenCalledWith('project',3,expect.objectContaining({requirement:'本地新要求'}));
+ });
+ it('默认14张且默认Gemini，没有模拟规划',()=>{
+  expect(useDetailPageStore.getState().form).toMatchObject({contentType:'default',count:14,promptModel:'gemini-3.8-flash'});
+  expect(useDetailPageStore.getState().groups).toEqual([]);
+ });
+ it('旧任务保留Kimi，新任务使用服务端Gemini默认值',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  expect(useDetailPageStore.getState().form.promptModel).toBe('kimi-k3');
+  vi.mocked(api.createDetailProject).mockResolvedValueOnce({...draft,id:'new-project',prompt_model:'gemini-3.8-flash'});
+  await useDetailPageStore.getState().createTask();
+  expect(useDetailPageStore.getState().form.promptModel).toBe('gemini-3.8-flash');
+ });
+ it('切换单类型7张，默认重新变成14张，保留显式比例',()=>{
+  const store=useDetailPageStore.getState();store.updateForm({contentType:'detail_page',aspectRatio:'16:9'});
+  expect(useDetailPageStore.getState().form).toMatchObject({count:7,aspectRatio:'16:9'});
+  store.updateForm({contentType:'default'});expect(useDetailPageStore.getState().form.count).toBe(14);
+ });
+ it('开始前等待设置保存，使用最新草稿版本和原文',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  useDetailPageStore.getState().updateForm({requirement:'  发财\n不改文字  '});
+  vi.mocked(api.startDetailProject).mockResolvedValue({...draft,version:3,status:'analyzing',groups:[]});
+  await useDetailPageStore.getState().startAnalysis();
+  expect(api.saveDetailSettings).toHaveBeenCalledWith('project',1,expect.objectContaining({requirement:'  发财\n不改文字  '}));
+  expect(api.startDetailProject).toHaveBeenCalledWith('project',2,expect.any(String));
+  expect(useDetailPageStore.getState().groups).toEqual([]);
+  expect(useDetailPageStore.getState().status).toBe('analyzing');
+ });
+ it('模型不可用时明确报错，不回退模型和伪造进度',async()=>{
+  vi.mocked(api.getDetailCapabilities).mockResolvedValue({enabled:true,prompt_models:[{id:'kimi-k3',name:'Kimi',available:false,reason:'模型积分费率未配置'}],image_models:[]});
+  await useDetailPageStore.getState().hydrateDraft();await useDetailPageStore.getState().startAnalysis();
+  expect(api.startDetailProject).not.toHaveBeenCalled();expect(useDetailPageStore.getState().formError).toBe('模型积分费率未配置');
+ });
+ it('恢复正在执行的项目并从服务器刷新进度',async()=>{
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,status:'analyzing'});
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,status:'completed'});
+  await useDetailPageStore.getState().hydrateDraft();await vi.advanceTimersByTimeAsync(1500);
+  expect(api.getDetailProject).toHaveBeenCalledWith('project');expect(useDetailPageStore.getState().status).toBe('completed');
+ });
+ it('卸载后忽略迟到的草稿结果',async()=>{
+  let resolve!:(value:DetailProjectDraft)=>void;
+  vi.mocked(api.getDetailProject).mockImplementationOnce(()=>new Promise(r=>{resolve=r;}));
+  const request=useDetailPageStore.getState().hydrateDraft();await vi.advanceTimersByTimeAsync(0);useDetailPageStore.getState().reset();resolve(draft);await request;
+  expect(useDetailPageStore.getState().projectId).toBeNull();
+ });
+ it('上传仍沿用9张共同上限和类型验证',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  await useDetailPageStore.getState().addImages('product',Array.from({length:10},()=>new File(['x'],'a.png',{type:'image/png'})));
+  expect(useDetailPageStore.getState().formError).toContain('9');
+  await useDetailPageStore.getState().addImages('reference',[new File(['x'],'a.txt',{type:'text/plain'})]);
+  expect(useDetailPageStore.getState().formError).toContain('格式');
+ });
+ it('上传期间编辑文字不会被关联响应覆盖，完成后保存最新文字',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  useDetailPageStore.getState().updateForm({contentType:'main_image',count:15,requirement:'人工编辑要求'});
+  let finishAttach!:(value:DetailProjectDraft)=>void;
+  vi.mocked(api.attachDetailImage).mockImplementationOnce(()=>new Promise(resolve=>{finishAttach=resolve;}));
+  const upload=useDetailPageStore.getState().attachWorkspaceImages('product',['second.png']);
+  expect(useDetailPageStore.getState().isUploading).toBe(true);
+  await vi.advanceTimersByTimeAsync(0);
+  useDetailPageStore.getState().updateForm({requirement:'上传期间补充的尺寸和风格'});
+  await vi.advanceTimersByTimeAsync(500);
+  expect(api.saveDetailSettings).toHaveBeenCalledTimes(1);
+  await useDetailPageStore.getState().startAnalysis();
+  expect(api.startDetailProject).not.toHaveBeenCalled();
+  finishAttach({...draft,version:2});await upload;
+  expect(useDetailPageStore.getState().form.requirement).toBe('上传期间补充的尺寸和风格');
+  await vi.advanceTimersByTimeAsync(500);
+  expect(api.saveDetailSettings).toHaveBeenCalledWith('project',2,expect.objectContaining({contentType:'main_image',count:15,requirement:'上传期间补充的尺寸和风格'}));
+ });
 });
 
-beforeEach(() => {
-  useDetailPageStore.getState().reset();
-  vi.clearAllMocks();
+describe('多任务保存和异步隔离',()=>{
+ it('上传前保存失败不发出图片请求，保留文字且本地图片可移除',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  useDetailPageStore.getState().updateForm({requirement:'尚未保存的尺寸和背景'});
+  vi.mocked(api.saveDetailSettings).mockRejectedValue(new Error('保存失败'));
+  await useDetailPageStore.getState().attachWorkspaceImages('reference',['reference.png']);
+  expect(api.attachDetailImage).not.toHaveBeenCalled();
+  expect(useDetailPageStore.getState()).toMatchObject({isUploading:false,formError:'保存失败',form:{requirement:'尚未保存的尺寸和背景'}});
+  vi.stubGlobal('URL',Object.assign(class extends URL {},{createObjectURL:vi.fn(()=> 'blob:test'),revokeObjectURL:vi.fn()}));
+  await useDetailPageStore.getState().addImages('product',[new File(['x'],'new.png',{type:'image/png'})]);
+  expect(uploadApi.uploadImageFile).not.toHaveBeenCalled();
+  const image=useDetailPageStore.getState().images.find(item=>item.name==='new.png')!;
+  expect(image.status).toBe('failed');
+  await useDetailPageStore.getState().removeImage(image.id);
+  expect(useDetailPageStore.getState().images.map(item=>item.id)).toEqual(['image']);
+  expect(useDetailPageStore.getState().form.requirement).toBe('尚未保存的尺寸和背景');
+ });
+ it('新建保留旧任务且不归档，重复点击只提交一次创建',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  useDetailPageStore.getState().updateForm({requirement:'保留的产品细节'});
+  let finish!:(p:DetailProjectDraft)=>void;
+  vi.mocked(api.createDetailProject).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const first=useDetailPageStore.getState().createTask();
+  await useDetailPageStore.getState().createTask();await vi.advanceTimersByTimeAsync(0);
+  expect(api.createDetailProject).toHaveBeenCalledTimes(1);
+  expect(api.saveDetailSettings).toHaveBeenCalledWith('project',1,expect.objectContaining({requirement:'保留的产品细节'}));
+  finish({...draft,id:'new',requirement:'',images:[]});await first;
+  expect(useDetailPageStore.getState().projectId).toBe('new');
+  expect(api.archiveDetailProject).not.toHaveBeenCalled();
+ });
+ it('保存失败保留原草稿和文字，重试成功后才切换',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  useDetailPageStore.getState().updateForm({requirement:'不能丢失的文字'});
+  vi.mocked(api.saveDetailSettings).mockRejectedValueOnce(new Error('保存失败'));
+  await useDetailPageStore.getState().selectTask('B');
+  expect(useDetailPageStore.getState()).toMatchObject({projectId:'project',formError:'保存失败',isTransitioning:false});
+  expect(useDetailPageStore.getState().form.requirement).toBe('不能丢失的文字');
+  expect(api.getDetailProject).not.toHaveBeenCalledWith('B');
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,id:'B',requirement:'B文字'});
+  await useDetailPageStore.getState().selectTask('B');
+  expect(useDetailPageStore.getState()).toMatchObject({projectId:'B',form:{requirement:'B文字'}});
+ });
+ it('上传明确绑定原项目，上传期间不允许新建或切换',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  let finish!:(p:DetailProjectDraft)=>void;
+  vi.mocked(api.attachDetailImage).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const pending=useDetailPageStore.getState().attachWorkspaceImages('product',['A.png']);
+  await vi.advanceTimersByTimeAsync(0);
+  await useDetailPageStore.getState().createTask();await useDetailPageStore.getState().selectTask('B');
+  expect(api.createDetailProject).not.toHaveBeenCalled();expect(api.getDetailProject).not.toHaveBeenCalledWith('B');
+  expect(api.attachDetailImage).toHaveBeenCalledWith('A.png','product','project');
+  useDetailPageStore.getState().updateForm({requirement:'上传中可输入'});
+  finish({...draft,version:2});await pending;
+  expect(useDetailPageStore.getState().form.requirement).toBe('上传中可输入');
+ });
+ it('账号切换后忽略旧删除结果',async()=>{
+  await useDetailPageStore.getState().hydrateDraft('userA:personal');
+  let finish!:(p:DetailProjectDraft)=>void;
+  vi.mocked(api.removeDetailImage).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const pending=useDetailPageStore.getState().removeImage('image');await vi.advanceTimersByTimeAsync(0);
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,id:'B',requirement:'B资料'});
+  await useDetailPageStore.getState().hydrateDraft('userB:personal','B');
+  finish({...draft,images:[]});await pending;
+  expect(useDetailPageStore.getState()).toMatchObject({projectId:'B',scopeKey:'userB:personal',form:{requirement:'B资料'}});
+ });
+ it('账号切换后忽略旧分析失败回调',async()=>{
+  await useDetailPageStore.getState().hydrateDraft('userA:orgA');
+  let fail!:(e:Error)=>void;
+  vi.mocked(api.startDetailProject).mockImplementationOnce(()=>new Promise((_resolve,reject)=>{fail=reject;}));
+  const pending=useDetailPageStore.getState().startAnalysis();await vi.advanceTimersByTimeAsync(0);
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,id:'B',requirement:'B资料'});
+  await useDetailPageStore.getState().hydrateDraft('userB:orgB','B');
+  fail(new Error('A调用失败'));await pending;
+  expect(useDetailPageStore.getState()).toMatchObject({projectId:'B',formError:null,isTransitioning:false});
+ });
+ it('旧自动保存的失败不能覆盖新账号错误状态',async()=>{
+  await useDetailPageStore.getState().hydrateDraft('A');
+  let fail!:(e:Error)=>void;
+  vi.mocked(api.saveDetailSettings).mockImplementationOnce(()=>new Promise((_r,reject)=>{fail=reject;}));
+  useDetailPageStore.getState().updateForm({requirement:'A文字'});await vi.advanceTimersByTimeAsync(500);
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,id:'B'});
+  await useDetailPageStore.getState().hydrateDraft('B','B');fail(new Error('A保存失败'));await vi.advanceTimersByTimeAsync(0);
+  expect(useDetailPageStore.getState()).toMatchObject({projectId:'B',formError:null});
+ });
+ it('创建回执丢失后用同一个请求编号恢复',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  vi.mocked(api.createDetailProject).mockRejectedValueOnce(new Error('网络中断'));
+  await useDetailPageStore.getState().createTask();await useDetailPageStore.getState().createTask();
+  expect(vi.mocked(api.createDetailProject).mock.calls[0][0]).toBe(vi.mocked(api.createDetailProject).mock.calls[1][0]);
+ });
+ it('选择记忆按用户和组织分别保存，URL任务优先',async()=>{
+  await useDetailPageStore.getState().hydrateDraft('A:org1','project');
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,id:'B'});
+  await useDetailPageStore.getState().hydrateDraft('A:org2','B');
+  expect(localStorage.getItem('detail-task:A:org1')).toBe('project');expect(localStorage.getItem('detail-task:A:org2')).toBe('B');
+  vi.mocked(api.getDetailProject).mockResolvedValue(draft);
+  await useDetailPageStore.getState().hydrateDraft('A:org1');
+  expect(api.getDetailProject).toHaveBeenLastCalledWith('project');
+ });
+ it('历史分页中的运行任务通过批量状态接口刷新，列表顺序不跳动',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  const first=useDetailPageStore.getState().tasks[0];
+  useDetailPageStore.setState({tasks:[first,{...first,id:'older',created_at:'2026-10-09',status:'generating',display_status:'generating'}]});
+  vi.mocked(api.refreshDetailTaskStatuses).mockResolvedValue([{...first,id:'older',created_at:'2026-10-09',status:'completed',display_status:'completed',completed_count:14}]);
+  await useDetailPageStore.getState().refreshTasks();
+  expect(api.refreshDetailTaskStatuses).toHaveBeenCalledWith(['older']);
+  expect(useDetailPageStore.getState().tasks.map(t=>[t.id,t.completed_count])).toEqual([['project',0],['older',14]]);
+ });
 });
 
-describe('useDetailPageStore', () => {
-  it('使用已确认的默认设置', () => {
-    const state = useDetailPageStore.getState();
-    expect(state.step).toBe(1);
-    expect(state.form).toMatchObject({ contentType: 'default', language: 'zh-CN', aspectRatio: '1:1', count: 14 });
-  });
-
-  it('页面卸载后忽略迟到的草稿恢复结果', async () => {
-    let resolveDraft: (value: null) => void = () => undefined;
-    vi.mocked(getCurrentDetailProject).mockImplementationOnce(() => new Promise((resolve) => { resolveDraft = resolve; }));
-    const hydration = useDetailPageStore.getState().hydrateDraft();
-    useDetailPageStore.getState().reset();
-    resolveDraft(null);
-    await hydration;
-    expect(useDetailPageStore.getState().isHydrating).toBe(false);
-  });
-
-  it('上传关联后保留本地预览直到远程图片加载完成', async () => {
-    vi.mocked(uploadImageFile).mockResolvedValueOnce({ url: 'https://cdn/result.png', workspace_path: '上传/result.png' });
-    vi.mocked(attachDetailImage).mockResolvedValueOnce({
-      id: 'project-1', version: 2, content_type: 'main_image', platform: 'auto', requirement: '',
-      language: 'zh-CN', aspect_ratio: '1:1', quality: '1k', image_count: 1,
-      images: [{ id: 'server-image', category: 'product', workspace_path: '上传/result.png', sort_order: 0, status: 'ready', original_url: 'https://cdn/result.png', thumbnail_url: null }],
-    });
-    let triggerLoad = () => undefined;
-    const OriginalImage = globalThis.Image;
-    vi.stubGlobal('Image', class {
-      onload: (() => void) | null = null;
-      set src(_value: string) { triggerLoad = () => this.onload?.(); }
-    });
-    await useDetailPageStore.getState().addImages('product', [new File(['x'], 'product.png', { type: 'image/png' })]);
-    expect(useDetailPageStore.getState().images[0].previewUrl).toBe('blob:preview');
-    triggerLoad();
-    expect(useDetailPageStore.getState().images[0].previewUrl).toBe('https://cdn/result.png');
-    vi.stubGlobal('Image', OriginalImage);
-  });
-
-  it('切换详情图时自动设置 3:4 比例', () => {
-    useDetailPageStore.getState().updateForm({ contentType: 'detail_page' });
-    expect(useDetailPageStore.getState().form.aspectRatio).toBe('3:4');
-  });
-
-  it('显式传比例时不覆盖用户选择', () => {
-    useDetailPageStore.getState().updateForm({ contentType: 'detail_page', aspectRatio: '4:5' });
-    expect(useDetailPageStore.getState().form.aspectRatio).toBe('4:5');
-  });
-
-  it('可以切换步骤和 Mock 场景', () => {
-    useDetailPageStore.getState().setStep(3);
-    useDetailPageStore.getState().setMockScenario('partial_failure');
-    expect(useDetailPageStore.getState().step).toBe(3);
-    expect(useDetailPageStore.getState().mockScenario).toBe('partial_failure');
-  });
-
-  it('reset 恢复默认状态并创建独立规划副本', () => {
-    const firstPlan = useDetailPageStore.getState().plan;
-    useDetailPageStore.getState().setStep(5);
-    useDetailPageStore.getState().reset();
-    const state = useDetailPageStore.getState();
-    expect(state.step).toBe(1);
-    expect(state.plan).toEqual(firstPlan);
-    expect(state.plan).not.toBe(firstPlan);
-  });
-
-  it('产品图和参考图共享 9 张上限', () => {
-    const files = Array.from({ length: 9 }, (_, index) => new File(['x'], `${index}.png`, { type: 'image/png' }));
-    useDetailPageStore.getState().addImages('product', files.slice(0, 5));
-    useDetailPageStore.getState().addImages('reference', files.slice(5));
-    expect(useDetailPageStore.getState().images).toHaveLength(9);
-
-    useDetailPageStore.getState().addImages('reference', [new File(['x'], 'extra.png', { type: 'image/png' })]);
-    expect(useDetailPageStore.getState().images).toHaveLength(9);
-    expect(useDetailPageStore.getState().formError).toContain('最多上传 9 张');
-  });
-
-  it('拒绝不支持的图片格式', () => {
-    useDetailPageStore.getState().addImages('product', [new File(['x'], 'bad.gif', { type: 'image/gif' })]);
-    expect(useDetailPageStore.getState().images).toEqual([]);
-    expect(useDetailPageStore.getState().formError).toContain('JPG');
-  });
-
-  it('删除和重置时释放 ObjectURL', () => {
-    const file = new File(['x'], 'product.png', { type: 'image/png' });
-    useDetailPageStore.getState().addImages('product', [file]);
-    const imageId = useDetailPageStore.getState().images[0].id;
-    useDetailPageStore.getState().removeImage(imageId);
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:preview');
-
-    useDetailPageStore.getState().addImages('reference', [file]);
-    useDetailPageStore.getState().reset();
-    expect(revokeObjectURL).toHaveBeenCalledTimes(2);
-  });
-
-  it('分析按阶段推进并生成指定数量的规划', () => {
-    vi.useFakeTimers();
-    useDetailPageStore.getState().addImages('product', [new File(['x'], 'product.png', { type: 'image/png' })]);
-    useDetailPageStore.getState().updateForm({ contentType: 'main_image', count: 3 });
-    useDetailPageStore.setState((state) => ({ images: state.images.map((image) => ({ ...image, status: 'ready' as const })) }));
-    useDetailPageStore.getState().startAnalysis();
-    expect(useDetailPageStore.getState()).toMatchObject({ step: 2, isTransitioning: true });
-    vi.advanceTimersByTime(2400);
-    expect(useDetailPageStore.getState().step).toBe(3);
-    expect(useDetailPageStore.getState().plan).toHaveLength(3);
-    vi.useRealTimers();
-  });
-
-  it('默认模式分析和重新规划均包含7张主图和7张详情图', () => {
-    vi.useFakeTimers();
-    useDetailPageStore.setState({ images: [{ id: 'ready', category: 'product', previewUrl: '', error: null, status: 'ready', name: '产品' }] });
-    useDetailPageStore.getState().startAnalysis();
-    vi.advanceTimersByTime(2400);
-    const plan = useDetailPageStore.getState().plan;
-    expect(plan).toHaveLength(14);
-    expect(plan.filter((item) => item.role.startsWith('主图'))).toHaveLength(7);
-    expect(plan.filter((item) => item.role.startsWith('详情图'))).toHaveLength(7);
-    useDetailPageStore.getState().replan();
-    expect(useDetailPageStore.getState().plan).toHaveLength(14);
-    vi.useRealTimers();
-  });
-
-  it('上传未完成时不能开始分析', () => {
-    useDetailPageStore.setState({ images: [{ id: 'pending', category: 'product', previewUrl: '', error: null, status: 'uploading', name: '产品' }] });
-    useDetailPageStore.getState().startAnalysis();
-    expect(useDetailPageStore.getState().step).toBe(1);
-  });
-
-  it('取消分析后保留输入并停止推进', () => {
-    vi.useFakeTimers();
-    useDetailPageStore.getState().addImages('product', [new File(['x'], 'product.png', { type: 'image/png' })]);
-    useDetailPageStore.setState((state) => ({ images: state.images.map((image) => ({ ...image, status: 'ready' as const })) }));
-    useDetailPageStore.getState().startAnalysis();
-    useDetailPageStore.getState().cancelAnalysis();
-    vi.advanceTimersByTime(3000);
-    expect(useDetailPageStore.getState().step).toBe(1);
-    expect(useDetailPageStore.getState().images).toHaveLength(1);
-    vi.useRealTimers();
-  });
-
-  it('未上传产品图时拒绝分析', () => {
-    useDetailPageStore.setState((state) => ({ images: state.images.map((image) => ({ ...image, status: 'ready' as const })) }));
-    useDetailPageStore.getState().startAnalysis();
-    expect(useDetailPageStore.getState().step).toBe(1);
-    expect(useDetailPageStore.getState().formError).toContain('产品图');
-  });
-
-  it('支持编辑、删除和重新规划且至少保留一张', () => {
-    const firstId = useDetailPageStore.getState().plan[0].id;
-    useDetailPageStore.getState().updatePlanItem(firstId, { title: '新标题' });
-    expect(useDetailPageStore.getState().plan[0].title).toBe('新标题');
-    useDetailPageStore.getState().removePlanItem(firstId);
-    expect(useDetailPageStore.getState().plan).toHaveLength(2);
-    useDetailPageStore.setState({ plan: [useDetailPageStore.getState().plan[0]] });
-    useDetailPageStore.getState().removePlanItem(useDetailPageStore.getState().plan[0].id);
-    expect(useDetailPageStore.getState().formError).toContain('至少保留');
-    useDetailPageStore.getState().replan();
-    expect(useDetailPageStore.getState().plan).toHaveLength(14);
-  });
-
-  it('逐张生成并在全部结束后进入完成页', () => {
-    vi.useFakeTimers();
-    useDetailPageStore.setState({ step: 3, plan: useDetailPageStore.getState().plan.slice(0, 2) });
-    useDetailPageStore.getState().startGeneration();
-    expect(useDetailPageStore.getState().generationItems[0].status).toBe('generating');
-    vi.advanceTimersByTime(1400);
-    expect(useDetailPageStore.getState().step).toBe(5);
-    expect(useDetailPageStore.getState().generationItems.every((item) => item.status === 'completed')).toBe(true);
-    vi.useRealTimers();
-  });
-
-  it('部分失败不阻塞其他图片并记录退款', () => {
-    vi.useFakeTimers();
-    useDetailPageStore.setState({ plan: useDetailPageStore.getState().plan.slice(0, 3), mockScenario: 'partial_failure' });
-    useDetailPageStore.getState().startGeneration();
-    vi.advanceTimersByTime(2100);
-    const items = useDetailPageStore.getState().generationItems;
-    expect(items.map((item) => item.status)).toEqual(['completed', 'failed', 'completed']);
-    expect(items[1].refundedCredits).toBe(10);
-    vi.useRealTimers();
-  });
-
-  it('积分不足时停留规划页', () => {
-    useDetailPageStore.setState({ step: 3, mockScenario: 'insufficient_credits' });
-    useDetailPageStore.getState().startGeneration();
-    expect(useDetailPageStore.getState().step).toBe(3);
-    expect(useDetailPageStore.getState().formError).toContain('积分不足');
-  });
-
-  it('重试追加版本，再次制作保留输入，返回方案清空结果', () => {
-    const item = { ...useDetailPageStore.getState().plan[0], status: 'failed' as const, previewUrl: null, error: '失败', refundedCredits: 10, versions: ['old'] };
-    useDetailPageStore.setState({ step: 5, generationItems: [item] });
-    useDetailPageStore.getState().retryGeneration(item.id);
-    expect(useDetailPageStore.getState().generationItems[0].versions).toHaveLength(2);
-    useDetailPageStore.getState().restart();
-    expect(useDetailPageStore.getState()).toMatchObject({ step: 1, generationItems: [] });
-    useDetailPageStore.setState({ step: 5, generationItems: [item] });
-    useDetailPageStore.getState().backToPlan();
-    expect(useDetailPageStore.getState()).toMatchObject({ step: 3, generationItems: [] });
-  });
+it('受理回执为空时保留同一请求编号，可再次核实而不会卡在提交中',async()=>{
+ await useDetailPageStore.getState().hydrateDraft();
+ vi.mocked(api.startDetailProject).mockResolvedValueOnce(null).mockResolvedValue({...draft,status:'analyzing'});
+ await useDetailPageStore.getState().startAnalysis();
+ expect(useDetailPageStore.getState().isTransitioning).toBe(false);
+ expect(useDetailPageStore.getState().formError).toContain('尚未确认');
+ await useDetailPageStore.getState().startAnalysis();
+ expect(vi.mocked(api.startDetailProject).mock.calls[0][2]).toBe(vi.mocked(api.startDetailProject).mock.calls[1][2]);
 });

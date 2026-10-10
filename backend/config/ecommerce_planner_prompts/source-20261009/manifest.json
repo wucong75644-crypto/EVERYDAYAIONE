@@ -1,0 +1,35 @@
+{
+  "export_date": "2026-10-09",
+  "files": [
+    {
+      "file": "skills/product-selling-points/SKILL.md",
+      "source": "/Users/wucong/.codex/visualizations/2026/10/04/01a104f7-6401-7f11-b8bc-7fc072da301b/three-stage-platform-handoff-20261007/01-product-selling-points.md",
+      "sha256": "bf42ff373b1422824459babf35158d64395356ed8c9fcc7e15f334583d4f8e2d",
+      "bytes": 10010
+    },
+    {
+      "file": "skills/product-selling-points/references/output.schema.json",
+      "source": "/Users/wucong/.codex/visualizations/2026/10/04/01a104f7-6401-7f11-b8bc-7fc072da301b/three-stage-platform-handoff-20261007/01-output.schema.json",
+      "sha256": "6efc8a4f9181b567358f6d139ec9fedfd1a55d32bb004cbbc0ffb7228f7b9cf9",
+      "bytes": 5650
+    },
+    {
+      "file": "skills/ecommerce-visual-direction/SKILL.md",
+      "source": "/Users/wucong/.codex/visualizations/2026/10/04/01a104f7-6401-7f11-b8bc-7fc072da301b/ecommerce-visual-direction/SKILL.md",
+      "sha256": "efe21ebeb05d70e3928dc2e3a6fcf27c50baaee32975db5c38d9dc6fe302952c",
+      "bytes": 26290
+    },
+    {
+      "file": "skills/ecommerce-main-image-planner-v2/SKILL.md",
+      "source": "/Users/wucong/.codex/visualizations/2026/10/04/01a104f7-6401-7f11-b8bc-7fc072da301b/ecommerce-main-image-planner-v2/SKILL.md",
+      "sha256": "15a802fe9bc46e5e20f11ed9a9112c50d0c9d9ed045d4c56de1c77782bf7cf3a",
+      "bytes": 60255
+    },
+    {
+      "file": "skills/ecommerce-detail-page-planner/SKILL.md",
+      "source": "/Users/wucong/.codex/visualizations/2026/10/04/01a104f7-6401-7f11-b8bc-7fc072da301b/ecommerce-detail-page-planner/SKILL.md",
+      "sha256": "c6ca9598481359e0091cf2f65fba44d3f9db75cf4fa1c84def0b55bc72170da5",
+      "bytes": 77462
+    }
+  ]
+}

@@ -108,6 +108,9 @@ def test_complete_helpers_handlers_and_schema_order(catalog, org):
     view = 'helpers/' + str(org) + '/'
     chat_skill_tools = {
         'list_personal_skills_for_edit', 'prepare_skill_draft', 'get_personal_skill_for_edit',
+        # The planner is an intentional new public tool; keep the frozen legacy
+        # catalog assertions focused on the pre-existing tool contracts.
+        'plan_ecommerce_images',
     }
     legacy_only = lambda schemas: [schema for schema in schemas
                                    if schema['function']['name'] not in chat_skill_tools]
@@ -160,6 +163,7 @@ def test_old_imports_signatures_and_constant_values(module):
             }
             expected.update({'route_to_chat': 'erp', 'prepare_skill_draft': 'general',
                              'get_personal_skill_for_edit': 'general',
+                             'plan_ecommerce_images': 'general',
                              'list_personal_skills_for_edit': 'general'})
             assert value == expected
             continue
@@ -183,6 +187,8 @@ def test_old_imports_signatures_and_constant_values(module):
             value += IMAGE_AGENT_PROMPT
         if module == 'chat_tools' and name in {'_CORE_TOOLS', '_PLAN_MODE_BLOCKED'}:
             assert 'generate_image' in value and 'image_agent' not in value
+            # Main-image planning is revealed by the activated entry Skill.
+            assert 'plan_ecommerce_images' not in value
             value = sorted((set(value) - {'generate_image'}) | {'image_agent'})
         if module == 'chat_tools' and name == '_CONCURRENT_SAFE_TOOLS':
             assert 'generate_image' in value and 'generate_video' not in value
@@ -220,13 +226,23 @@ def test_all_json_parameters_and_existing_coercions(catalog, name):
             return [sample(prop.get('items', {}))]
         return {'integer': 1, 'number': 1.0, 'boolean': True}.get(prop.get('type'), 'contract')
     original = CHAT_IMAGE_UPGRADE['spec_changes'][name]['schema'] if name == 'generate_image' else BASELINE['specs'][name]['schema']
-    params = original['function']['parameters']
+    params = deepcopy(original['function']['parameters'])
+    required_names = params.get('required', [])
+    if name == 'generate_image':
+        # Exercise the preserved legacy request branch; the plan_source branch
+        # is asserted separately by test_async_schema_single_output_and_exact_source.
+        params['properties'].pop('plan_source')
+        params['oneOf'] = [{'required': ['mode', 'prompt']}]
+        required_names = ['mode', 'prompt']
     full = {k: sample(v) for k, v in params.get('properties', {}).items()}
-    required = {k: full[k] for k in params.get('required', [])}
+    required = {k: full[k] for k in required_names}
     coerced = {k: json.dumps(v) if isinstance(v, (bool, int, dict)) else v for k, v in full.items()}
     for args in (full, required, coerced):
-        assert validate_tool_args(name, deepcopy(args), [catalog.require(name).to_schema()]) == \
-            validate_tool_args(name, deepcopy(args), [original])
+        actual_args, actual_error = validate_tool_args(name, deepcopy(args), [catalog.require(name).to_schema()])
+        expected_args, expected_error = validate_tool_args(name, deepcopy(args), [original])
+        assert actual_args == expected_args
+        assert (json.loads(actual_error) if actual_error else None) == \
+            (json.loads(expected_error) if expected_error else None)
 
 
 @pytest.fixture(scope='module')
@@ -404,9 +420,9 @@ importlib.import_module(sys.argv[1])
 from config.chat_tools import get_chat_tools
 from services.tools import build_tool_catalog
 from services.tool_executor import ToolExecutor
-assert len(get_chat_tools('org-a')) == 35
-assert len(build_tool_catalog().specs()) == 38
-assert len(ToolExecutor(None, 'actor-a', 'c1', 'org-a')._handlers) == 38
+assert len(get_chat_tools('org-a')) == 36
+assert len(build_tool_catalog().specs()) == 39
+assert len(ToolExecutor(None, 'actor-a', 'c1', 'org-a')._handlers) == 39
 '''
     run = subprocess.run([sys.executable, '-c', script, first], text=True, capture_output=True, timeout=30)
     assert run.returncode == 0, run.stderr

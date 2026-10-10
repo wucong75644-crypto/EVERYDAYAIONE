@@ -1,19 +1,15 @@
-"""电商图 AI 帮写的请求、标准输入与响应结构。"""
-
+"""电商图 AI 帮写：单份可编辑资料及补充更新协议。"""
 from typing import Literal
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pydantic import BaseModel, Field, model_validator
-
-
+REQUIREMENT_MAX_LENGTH = 10000
 ContentType = Literal["default", "main_image", "detail_page"]
 Platform = Literal["auto", "taobao", "tmall", "jd", "pdd"]
 Language = Literal["zh-CN", "none"]
-SourceType = Literal["detail_project"]
-SuggestionId = Literal["selling_point", "scene", "creative"]
 
 
 class RequirementSource(BaseModel):
-    type: SourceType
+    type: Literal["detail_project"]
     project_id: str = Field(min_length=1, max_length=100)
 
 
@@ -23,33 +19,69 @@ class RequirementSettings(BaseModel):
     language: Language = "zh-CN"
     aspect_ratio: str = Field(default="1:1", min_length=1, max_length=20)
     quality: Literal["1k", "2k", "4k"] = "1k"
-    image_count: int = Field(default=5, ge=1, le=14)
-    requirement: str = Field(default="", max_length=2000)
+    image_count: int = Field(default=5, ge=1, le=15)
+    requirement: str = Field(default="", max_length=REQUIREMENT_MAX_LENGTH)
 
     @model_validator(mode="after")
     def validate_generation_count(self) -> "RequirementSettings":
         if self.content_type == "default" and self.image_count != 14:
             raise ValueError("默认模式固定生成7张主图和7张详情图")
-        if self.content_type != "default" and self.image_count > 9:
-            raise ValueError("单类图片最多生成9张")
         return self
+
+
+class DraftField(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class RequirementSellingPoint(DraftField):
+    feature: str = Field(min_length=1, max_length=500)
+    benefit: str = Field(min_length=1, max_length=500)
+    benefit_basis: Literal["direct", "inferred"]
+
+
+class RequirementCreativeDirection(DraftField):
+    topic: str = Field(min_length=1, max_length=100)
+    text: str = Field(min_length=1, max_length=1000)
+    basis: Literal["explicit", "suggested"]
+
+
+class RequirementSupplementQuestion(DraftField):
+    question: str = Field(min_length=1, max_length=300)
+    why: str = Field(min_length=1, max_length=300)
+    can_skip: Literal[True] = True
+
+
+class RequirementAssistResult(DraftField):
+    product_description: str = Field(min_length=1, max_length=3000)
+    selling_points: list[RequirementSellingPoint] = Field(default_factory=list, max_length=12)
+    creative_requirements: list[RequirementCreativeDirection] = Field(default_factory=list, max_length=20)
+    supplement_questions: list[RequirementSupplementQuestion] = Field(default_factory=list, max_length=3)
+
+
+class RequirementRevision(BaseModel):
+    """人工编辑稿是待更新资料，不是已验证事实或系统指令。"""
+    draft: RequirementAssistResult
+    supplement: str = Field(default="", max_length=4000)
+    skipped_questions: list[str] = Field(default_factory=list, max_length=30)
 
 
 class RequirementSuggestionsRequest(BaseModel):
     source: RequirementSource
     settings: RequirementSettings
+    revision: RequirementRevision | None = None
 
 
 class RequirementImage(BaseModel):
     id: str
     original_url: str
     display_name: str
+    position: int = Field(default=0, ge=0)
 
 
 class RequirementAssistInput(BaseModel):
     user_id: str
     org_id: str | None
-    source_type: SourceType
+    source_type: Literal["detail_project"]
     source_id: str
     product_images: list[RequirementImage] = Field(min_length=1, max_length=9)
     reference_images: list[RequirementImage] = Field(default_factory=list, max_length=8)
@@ -58,62 +90,17 @@ class RequirementAssistInput(BaseModel):
     language: Language
     aspect_ratio: str
     quality: Literal["1k", "2k", "4k"]
-    image_count: int = Field(ge=1, le=14)
-    user_requirement: str = Field(max_length=2000)
+    image_count: int = Field(ge=1, le=15)
+    user_requirement: str = Field(max_length=REQUIREMENT_MAX_LENGTH)
     project_version: int = Field(gt=0)
+    revision: RequirementRevision | None = None
+    # Created only by the trusted project adapter; never accepted by the public request.
+    image_references: list[dict] = Field(default_factory=list, exclude=True)
 
     @model_validator(mode="after")
     def validate_total_images(self) -> "RequirementAssistInput":
-        if self.content_type == "default" and self.image_count != 14:
-            raise ValueError("默认模式固定生成7张主图和7张详情图")
-        if self.content_type != "default" and self.image_count > 9:
-            raise ValueError("单类图片最多生成9张")
         if len(self.product_images) + len(self.reference_images) > 9:
             raise ValueError("产品图和参考图合计不能超过9张")
-        return self
-
-
-class ProductFacts(BaseModel):
-    product_name: str = Field(min_length=1, max_length=200)
-    confirmed_attributes: list[str] = Field(default_factory=list, max_length=30)
-    unclear_items: list[str] = Field(default_factory=list, max_length=30)
-
-
-class ReferenceAnalysis(BaseModel):
-    image_id: str
-    primary_uses: list[
-        Literal["background", "composition", "color", "lighting", "texture", "typography", "rhythm"]
-    ] = Field(min_length=1, max_length=7)
-    summary: str = Field(min_length=1, max_length=500)
-    excluded_elements: list[str] = Field(default_factory=list, max_length=20)
-
-
-class RequirementConflict(BaseModel):
-    field: str = Field(min_length=1, max_length=100)
-    user_value: str = Field(min_length=1, max_length=200)
-    confirmed_value: str = Field(min_length=1, max_length=200)
-    message: str = Field(min_length=1, max_length=500)
-    blocked_claims: list[str] = Field(min_length=1, max_length=10)
-
-
-class RequirementSuggestion(BaseModel):
-    id: SuggestionId
-    name: str = Field(min_length=1, max_length=50)
-    style_name: str = Field(min_length=1, max_length=100)
-    brief_markdown: str = Field(min_length=1, max_length=4000)
-
-
-class RequirementAssistResult(BaseModel):
-    product_facts: ProductFacts
-    reference_analyses: list[ReferenceAnalysis] = Field(default_factory=list, max_length=8)
-    conflicts: list[RequirementConflict] = Field(default_factory=list, max_length=20)
-    suggestions: list[RequirementSuggestion] = Field(min_length=3, max_length=3)
-
-    @model_validator(mode="after")
-    def validate_suggestion_ids(self) -> "RequirementAssistResult":
-        expected = {"selling_point", "scene", "creative"}
-        if {item.id for item in self.suggestions} != expected:
-            raise ValueError("必须返回 selling_point、scene、creative 三套方案")
         return self
 
 

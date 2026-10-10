@@ -56,6 +56,8 @@ interface MediaPlaceholderProps {
   height: number;
   /** 自定义样式类名 */
   className?: string;
+  /** Keep the requested ratio while fitting the width of a grid cell. */
+  fitContainer?: boolean;
 }
 
 /** 失败图标映射 */
@@ -136,6 +138,7 @@ export default function MediaPlaceholder({
   width,
   height,
   className = '',
+  fitContainer = false,
 }: MediaPlaceholderProps) {
   const config = MEDIA_CONFIG[type];
   const Icon = config.icon;
@@ -156,6 +159,7 @@ export default function MediaPlaceholder({
       style={{
         '--width': `${width}px`,
         '--height': `${height}px`,
+        ...(fitContainer ? { width: '100%', height: 'auto', aspectRatio: width / height } : {}),
       } as React.CSSProperties}
       role="status"
       aria-label={config.label}

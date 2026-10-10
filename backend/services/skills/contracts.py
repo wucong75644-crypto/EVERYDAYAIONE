@@ -134,7 +134,7 @@ class SkillRevision(PublishRevision):
 
 
 class SkillAssignment(Contract):
-    org_id: UUID
+    org_id: UUID | None
     package_id: UUID
     revision_id: UUID
     enabled: bool

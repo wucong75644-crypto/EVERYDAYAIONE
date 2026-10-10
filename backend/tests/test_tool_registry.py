@@ -56,12 +56,25 @@ def test_catalog_matches_actual_full_directory_and_handler_bindings(registry):
     assert validate_legacy_coverage(
         registry, public_schemas=get_chat_tools("org-a"), handler_names=executor._handlers,
     ) == ()
-    # 07 completes ownership for all 36 runtime definitions.
+    # The planner adds one separately gated definition to the runtime catalog.
     assert all(s.definition_kind == "explicit" for s in registry.specs())
     assert {s.name for s in registry.specs() if s.exposure is Exposure.LEGACY_INTERNAL} == {
         "fetch_all_pages", "get_conversation_context", "image_agent",
     }
     assert all(callable(executor._handlers[s.handler_key]) for s in registry.specs())
+
+
+def test_ecom_planner_requires_both_rollout_flags(registry):
+    flags = {"file_workspace_enabled": True, "sandbox_enabled": True,
+             "crawler_enabled": True, "chat_image_async_enabled": True}
+    without_planner_flag = resolve(registry, context(feature_flags=flags))
+    assert "plan_ecommerce_images" not in without_planner_flag.allowed
+    flags["ecom_image_planning_enabled"] = True
+    enabled = resolve(registry, context(feature_flags=flags))
+    assert "plan_ecommerce_images" in enabled.allowed
+    assert "plan_ecommerce_images" not in enabled.advertised
+    activated = resolve(registry, context(feature_flags=flags), discovered={"plan_ecommerce_images"})
+    assert "plan_ecommerce_images" in activated.advertised
 
 
 @pytest.mark.parametrize("org", [None, "org-a"])
@@ -375,7 +388,9 @@ def test_advertisement_reuses_current_core_rules(registry, mode, image_enabled):
                 if schema["function"]["name"] not in {
                     "list_personal_skills_for_edit", "prepare_skill_draft",
                     "get_personal_skill_for_edit",
-                } and (image_enabled or schema["function"]["name"] != "generate_image")]
+                } and (image_enabled or schema["function"]["name"] != "generate_image")
+                and (schema["function"]["name"] != "plan_ecommerce_images"
+                     or schema["function"]["name"] in result.allowed)]
     assert result.advertised_schemas() == expected
     assert set(result.advertised) <= set(result.allowed)
     # Block 01 retains old plan display facts; Block 02 will decide permission.

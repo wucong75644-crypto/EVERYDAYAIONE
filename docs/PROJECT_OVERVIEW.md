@@ -80,7 +80,7 @@ EVERYDAYAIONE/
 │       ├── TECH_主图详情制作页面_UI第一阶段.md # 第一阶段 UI+Mock 技术设计
 │       ├── TECH_主图详情页真实上传与草稿恢复.md # 第二阶段真实上传与草稿恢复设计
 │       ├── TECH_工作区图片插入与聊天附件标准化.md # 工作区图片正确渲染与聊天附件提交标准化
-│       ├── TECH_AI帮写通用创作简报.md # 电商图三套通用简报与共享入口适配架构
+│       ├── TECH_AI帮写通用创作简报.md # AI帮写单份产品资料与客户补充交互（含历史设计）
 │       ├── OSS_CDN_DESIGN.md         # OSS/CDN 设计
 │       ├── KIE_INTEGRATION_DESIGN.md # KIE API 集成设计
 │       ├── SUPER_ADMIN_FEATURES.md   # 超级管理员功能
@@ -102,7 +102,7 @@ EVERYDAYAIONE/
 │   │   ├── message_idempotency_cleanup.py # 消息幂等记录 24 小时 TTL 清理循环
 │   │   └── limiter.py                # 频率限制器
 │   ├── api/                      # API 层
-│   │   └── routes/ecom_requirement.py # 电商图 AI 帮写三方案薄路由
+│   │   └── routes/ecom_requirement.py # AI帮写单份草稿与补充更新薄路由
 │   │   ├── deps.py                   # 依赖注入
 │   │   └── routes/                   # 路由模块
 │   │       ├── auth.py                   # 认证路由
@@ -251,7 +251,7 @@ EVERYDAYAIONE/
 │   │   ├── agent/                    # Agent 架构层（多Agent单一职责）
 │   │   │   ├── image/requirement_assist_prompts.py # AI 帮写事实边界与多模态 Prompt
 │   │   │   ├── image/input_adapters.py # 详情项目到共享 AI 帮写输入的安全适配器
-│   │   │   ├── image/requirement_assist_service.py # 三方案模型调用、降级、校验与事实冲突闸门
+│   │   │   ├── image/requirement_assist_service.py # 固定Kimi K3单份草稿调用、校验与失败反馈
 │   │   │   ├── image/requirement_assist_rate_limiter.py # Redis 跨进程用户级 AI 帮写限流
 │   │   │   ├── erp_agent.py              # ERP 独立 Agent（路由层）
 │   │   │   ├── tool_executor.py          # 同步工具执行器
@@ -326,7 +326,7 @@ EVERYDAYAIONE/
         │   │   ├── WecomQrLogin.tsx          # 企微二维码扫码登录组件
         │   │   └── ProtectedRoute.tsx        # 路由守卫组件
         │   ├── detail-page/              # 主图详情制作页组件
-        │   │   └── RequirementAssistModal.tsx # AI 帮写三方案选择、编辑与冲突提示弹窗
+        │   │   └── RequirementAssistModal.tsx # AI 帮写单份产品资料、卖点、风格与补充更新弹窗
         │   │   ├── DetailPageHeader.tsx      # 顶部导航
         │   │   ├── StepBar.tsx               # 五步进度条
         │   │   ├── ProductImageSection.tsx   # 产品图/参考图选择器
@@ -409,7 +409,7 @@ EVERYDAYAIONE/
         │   ├── detailProject.ts          # 主图详情页草稿读取、关联与设置 API
         │   └── audio.ts                  # 音频服务
         ├── types/                    # TypeScript 类型
-        │   └── ecomRequirement.ts        # AI 帮写事实、参考图、冲突与三方案协议
+        │   └── ecomRequirement.ts        # AI帮写单份产品资料、问题与人工补充协议
         │   ├── auth.ts                   # 认证相关类型
         │   ├── message.ts                # 消息相关类型（ContentPart、Message、Task 等）
         │   ├── task.ts                   # 任务相关类型（兼容旧格式）
@@ -423,7 +423,7 @@ EVERYDAYAIONE/
         │   └── wsTaskMessageHandlers.ts  # 任务完成/失败与图片 partial update
         │   └── wsRoutingCompleteHandler.ts # 路由完成后的媒体占位符与聊天参数更新
         ├── hooks/                    # 自定义 Hooks
-        │   └── useDetailRequirementAssist.ts # AI 帮写弹窗请求、竞态和三方案编辑状态
+        │   └── useDetailRequirementAssist.ts # AI 帮写单份草稿、补充更新、请求取消与竞态保护
         │   ├── useImageUpload.ts         # 图片上传逻辑
         │   ├── useAudioRecording.ts      # 录音逻辑
         │   ├── useDragDropUpload.ts      # 拖拽上传逻辑

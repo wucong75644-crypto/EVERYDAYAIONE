@@ -7,13 +7,7 @@ export function DetailPageHeader() {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
 
-  const handleBack = () => {
-    if (window.history.length > 1) {
-      navigate(-1);
-      return;
-    }
-    navigate('/chat');
-  };
+  const handleBack = () => navigate('/chat');
 
   return (
     <header className="h-16 px-4 sm:px-6 border-b border-[var(--s-border-default)] bg-[var(--s-surface-card)] flex items-center justify-between gap-4">

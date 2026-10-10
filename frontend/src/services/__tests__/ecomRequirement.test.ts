@@ -31,14 +31,14 @@ describe('ecomRequirement service', () => {
     });
   });
 
-  it('调用三方案接口并使用独立长请求超时', async () => {
+  it('调用单份草稿接口并使用独立长请求超时', async () => {
     const envelope = { success: true, data: { suggestions: [] }, error: null, meta: {} };
     vi.mocked(request).mockResolvedValue(envelope);
 
     await expect(generateRequirementSuggestions('project-1', form)).resolves.toBe(envelope);
 
     expect(request).toHaveBeenCalledWith(expect.objectContaining({
-      method: 'POST', url: '/ecom-image/requirement-suggestions', timeout: 105_000,
+      method: 'POST', url: '/ecom-image/requirement-suggestions', timeout: 125_000,
     }));
   });
 

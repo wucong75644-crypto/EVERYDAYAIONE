@@ -17,7 +17,7 @@ from urllib.parse import quote
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from api.deps import OrgCtx
 from core.exceptions import AppException
@@ -31,15 +31,56 @@ _ZIP_MAX_FILES = 500
 _ZIP_MAX_TOTAL_BYTES = 2 * 1024 ** 3  # 2 GB
 
 
+def _validate_archive_path(value: str) -> str:
+    # Archive names are untrusted too: reject paths that escape on extraction,
+    # including Windows separators/drive prefixes, before passing to zipstream.
+    if (not value or re.search(r'[\\:\x00-\x1f\x7f<>"|?*]', value)
+            or any(not part or part in {".", ".."} or part != part.rstrip(" .") for part in value.split("/"))
+            or value == "_errors.txt"):
+        raise ValueError("ZIP 内路径必须是安全的相对文件路径")
+    return value
+
+
 class WorkspaceDownloadZipRequest(BaseModel):
     """批量下载请求"""
     paths: List[str] = Field(..., min_length=1, max_length=_ZIP_MAX_FILES,
                              description="文件或文件夹相对路径列表")
+    archive_paths: List[str] | None = Field(None, min_length=1, max_length=_ZIP_MAX_FILES,
+                                          description="与 paths 一一对应的 ZIP 内文件路径，仅用于文件")
+    archive_name: str | None = Field(None, min_length=1, max_length=180)
+
+    @field_validator("archive_paths")
+    @classmethod
+    def validate_archive_paths(cls, values):
+        if values is not None:
+            for value in values:
+                _validate_archive_path(value)
+                if len(value) > 500:
+                    raise ValueError("ZIP 内路径过长")
+            if len({value.casefold() for value in values}) != len(values):
+                raise ValueError("ZIP 内文件路径不能重复")
+        return values
+
+    @field_validator("archive_name")
+    @classmethod
+    def validate_archive_name(cls, value):
+        if value is not None:
+            _validate_archive_path(value)
+            if "/" in value or not value.lower().endswith(".zip"):
+                raise ValueError("下载文件名必须是不含目录的 ZIP 名称")
+        return value
+
+    @model_validator(mode="after")
+    def validate_mapping(self):
+        if self.archive_paths is not None and len(self.archive_paths) != len(self.paths):
+            raise ValueError("ZIP 内路径必须与文件路径一一对应")
+        return self
 
 
 def _collect_zip_targets(
     executor,
     paths: List[str],
+    archive_paths: List[str] | None = None,
 ) -> tuple[list[tuple[Path, str]], list[str]]:
     """
     收集 ZIP 打包目标：解析 + 校验 + 递归展开 + 统计大小。
@@ -52,7 +93,7 @@ def _collect_zip_targets(
     errors: list[str] = []
     total = 0
 
-    for raw in paths:
+    for index, raw in enumerate(paths):
         try:
             abs_path = executor.resolve_safe_path(raw)
         except (PermissionError, ValueError) as exc:
@@ -65,7 +106,7 @@ def _collect_zip_targets(
 
         # 文件：直接加入，arcname 用文件名（避免 ZIP 内出现 NAS 路径前缀）
         if abs_path.is_file():
-            targets.append((abs_path, abs_path.name))
+            targets.append((abs_path, archive_paths[index] if archive_paths is not None else abs_path.name))
             total += abs_path.stat().st_size
             if len(targets) > _ZIP_MAX_FILES:
                 raise ValueError("TOO_MANY_FILES")
@@ -75,6 +116,9 @@ def _collect_zip_targets(
 
         # 目录：递归收集所有文件，保留目录结构
         if abs_path.is_dir():
+            if archive_paths is not None:
+                errors.append(f"{raw}: 自定义 ZIP 内路径仅支持文件")
+                continue
             base = abs_path.name
             for sub in abs_path.rglob("*"):
                 if not sub.is_file():
@@ -142,6 +186,7 @@ async def download_workspace_zip(
     - 路径全部经 executor.resolve_safe_path 校验
     - 上限：500 文件 / 2GB；超出返回 413
     - 不存在 / 越权的条目写入 _errors.txt 入 ZIP 末尾，不阻塞下载
+    - 可选 archive_paths 为文件指定 ZIP 内分类路径，不改变工作区原文件
     """
     from zipstream import ZIP_DEFLATED, ZipStream
 
@@ -149,7 +194,7 @@ async def download_workspace_zip(
 
     # 收集 + 校验（同步阻塞 IO 走线程池）
     try:
-        targets, errors = await asyncio.to_thread(_collect_zip_targets, executor, body.paths)
+        targets, errors = await asyncio.to_thread(_collect_zip_targets, executor, body.paths, body.archive_paths)
     except ValueError as e:
         if str(e) == "TOO_MANY_FILES":
             raise AppException(code="TOO_MANY_FILES",
@@ -180,7 +225,7 @@ async def download_workspace_zip(
     if errors:
         zs.add(("\n".join(errors)).encode("utf-8"), arcname="_errors.txt")
 
-    archive_name = _resolve_archive_name(body.paths)
+    archive_name = body.archive_name or _resolve_archive_name(body.paths)
     total_size = sum(p.stat().st_size for p, _ in targets if p.exists())
     logger.info(
         f"Workspace ZIP | user={ctx.user_id} | files={len(targets)} | "

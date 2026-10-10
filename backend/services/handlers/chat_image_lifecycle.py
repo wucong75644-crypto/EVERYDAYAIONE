@@ -16,7 +16,7 @@ from loguru import logger
 from core.db_scope import DatabaseAccessKind, DatabaseScope, ScopedDatabaseClient
 from services.handlers.chat_image_request import (
     REQUEST_KEY, LIFECYCLE_KEY, ChatImageInputResolver, validate_single_image_request,
-    verify_frozen_request,
+    verify_frozen_request, reference_file_size,
 )
 
 
@@ -92,7 +92,8 @@ class ChatImageLifecycle:
         phase=state["phase"]
         if phase == "queued":
             created=datetime.fromisoformat(task["created_at"].replace("Z","+00:00"))
-            if (datetime.now(timezone.utc)-created).total_seconds() > self.settings.chat_image_queue_timeout_seconds:
+            page_queue = task["request_params"][REQUEST_KEY].get("origin", {}).get("destination") == "detail_project"
+            if not page_queue and (datetime.now(timezone.utc)-created).total_seconds() > self.settings.chat_image_queue_timeout_seconds:
                 await self.definite_failure(task,"排队超时，未提交供应商")
             else:
                 await self.submit(task)
@@ -133,7 +134,8 @@ class ChatImageLifecycle:
                 workspace_user_id=origin["workspace_owner_id"],org_id=task.get("org_id"),
                 context_scope=origin["context_scope"],conversation_id=task["conversation_id"],
                 resource_manifest=None,execution_mode="interactive")
-            resolver=ChatImageInputResolver(owner,base_revision=origin["base_context_revision"],input_message_id=origin["input_message_id"])
+            from services.detail_page_generation import image_resolver
+            resolver=image_resolver(owner,origin)
             await asyncio.to_thread(resolver.verify,snapshot["references"])
             fields={key:snapshot[key] for key in ("mode","prompt","model","aspect_ratio","resolution","output_format")}
             if "background" in snapshot: fields["background"]=snapshot["background"]
@@ -145,7 +147,7 @@ class ChatImageLifecycle:
                 raise ValueError("参考原图地址不可用，请重新选择")
             from services.adapters.kie.configs import IMAGE_MODEL_CONFIGS
             maximum=IMAGE_MODEL_CONFIGS[snapshot["model"]].get("max_image_size_mb",30)*1024*1024
-            if any(ref["size"]>maximum for ref in snapshot["references"]):
+            if any(reference_file_size(ref)>maximum for ref in snapshot["references"]):
                 raise ValueError("参考原图超过模型允许大小")
         except (ValueError,PermissionError,FileNotFoundError) as error:
             await self.definite_failure(task,str(error))
@@ -217,7 +219,8 @@ class ChatImageLifecycle:
             await self.finish_with_lock(await self.refresh(task))
 
     async def record_provider_result(self, task, result):
-        payload={"image_urls":getattr(result,"image_urls",[]),"error":getattr(result,"fail_msg",None) or "生成失败"}
+        payload={"image_urls":getattr(result,"image_urls",[]),"error":getattr(result,"fail_msg",None) or "生成失败",
+            "fail_code":getattr(result,"fail_code",None)}
         from services.adapters.base import TaskStatus
         payload["status"]="success" if result.status==TaskStatus.SUCCESS else "failed"
         await self.rpc(task,"record_chat_image_provider_result",p_result=payload)
@@ -329,7 +332,7 @@ class ChatImageLifecycle:
         from schemas.websocket import build_message_done
         from services.websocket_manager import ws_manager
         from api.deps import get_task_limit_service
-        if task["request_params"][REQUEST_KEY]["origin"].get("destination")=="skill_trial":
+        if task["request_params"][REQUEST_KEY]["origin"].get("destination") in {"skill_trial", "detail_project"}:
             limiter=await get_task_limit_service()
             await limiter.release(task["user_id"],task["conversation_id"],org_id=task.get("org_id"),slot_id=task["id"])
             await self.rpc(task,"ack_chat_image_delivery")

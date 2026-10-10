@@ -108,6 +108,7 @@ def _rpc_sql(name: str, params: dict[str, Any]) -> tuple[str, list[Any]]:
         "p_timeout_seconds": "integer",
         "p_page": "integer", "p_page_size": "integer",
         "p_limit": "integer",
+        "p_stage": "integer", "p_plan_revision": "integer", "p_credits": "integer",
     }
     uuid_keys = {
         "p_org_id",
@@ -115,6 +116,8 @@ def _rpc_sql(name: str, params: dict[str, Any]) -> tuple[str, list[Any]]:
         "p_claim_token", "p_receipt_id", "p_policy_receipt_id",
         "p_after_id",
         "p_source_task_id", "p_request_id",
+        "p_parent_task_id", "p_plan_id", "p_item_id", "p_lease_token", "p_execution_token",
+        "p_project_id",
     }
     text_keys = {
         "p_external_idempotency_key", "p_request_hash", "p_executor_type",

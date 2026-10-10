@@ -11,11 +11,11 @@ CREATE TYPE credits_change_type AS ENUM ('refund');
 CREATE TABLE credits_history(user_id UUID,org_id UUID,change_amount INTEGER,balance_after INTEGER,change_type credits_change_type,description TEXT);
 CREATE TABLE change_sets(id UUID,org_id UUID,created_by TEXT,status TEXT,resource_type TEXT,revision BIGINT,
     proposed_snapshot JSONB,audit_subject JSONB,expires_at TIMESTAMPTZ DEFAULT NOW()+INTERVAL '1 day',PRIMARY KEY(org_id,id));
-CREATE TABLE tasks(id UUID PRIMARY KEY,user_id UUID,org_id UUID,conversation_id UUID,type TEXT,status TEXT,
+CREATE TABLE tasks(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),user_id UUID NOT NULL,org_id UUID,conversation_id UUID,type TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',
     model_id TEXT,assistant_message_id UUID,placeholder_message_id TEXT,batch_id TEXT,image_index INTEGER,
-    request_params JSONB,delivery_context JSONB,execution_token UUID,turn_id UUID,input_message_id UUID,
+    request_params JSONB,delivery_context JSONB DEFAULT '{}',execution_token UUID,turn_id UUID,input_message_id UUID,
     base_context_revision BIGINT,credit_transaction_id UUID REFERENCES credit_transactions(id),
-    credits_locked INTEGER DEFAULT 0,credits_used INTEGER DEFAULT 0,version INTEGER DEFAULT 1,created_at TIMESTAMPTZ DEFAULT NOW(),started_at TIMESTAMPTZ,
+    credits_locked INTEGER DEFAULT 0,credits_used INTEGER DEFAULT 0,version INTEGER DEFAULT 1,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,external_task_id TEXT,error_message TEXT,result JSONB,result_data JSONB);
 GRANT USAGE ON SCHEMA public TO everydayai;
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO everydayai;

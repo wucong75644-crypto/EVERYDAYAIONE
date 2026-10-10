@@ -15,7 +15,8 @@ class SkillBindingRepository(SkillRepository):
             cursor.execute("""SELECT b.id, b.created_at, b.created_by,
                     p.id AS package_id, p.skill_key, p.org_id AS package_org_id,
                     p.owner_user_id AS package_user_id,
-                    p.scope_kind, b.org_id AS assignment_org_id,
+                    p.scope_kind, a.org_id AS assignment_org_id,
+                    (p.scope_kind='platform' AND a.org_id IS NULL AND a.package_id IS NOT NULL) AS global_assignment,
                     COALESCE(a.priority, 0) AS priority, r.revision,
                     r.summary AS description, r.catalog_metadata,
                     ((p.scope_kind = 'personal' AND p.owner_user_id = %s::uuid AND r.status = 'published')
@@ -24,14 +25,16 @@ class SkillBindingRepository(SkillRepository):
                 FROM public.conversation_skill_bindings b
                 JOIN public.skill_packages p ON p.id = b.package_id
                 JOIN public.skill_revisions r ON r.id = b.revision_id AND r.package_id = b.package_id
-                LEFT JOIN public.skill_assignments a ON a.package_id = b.package_id AND a.org_id = b.org_id
+                LEFT JOIN LATERAL (SELECT * FROM public.skill_assignments
+                    WHERE package_id=b.package_id AND (org_id=b.org_id OR org_id IS NULL)
+                    ORDER BY org_id NULLS LAST LIMIT 1) a ON true
                 WHERE b.conversation_id = %s AND b.org_id IS NOT DISTINCT FROM %s::uuid
                 ORDER BY b.created_at, b.id""", (self.scope.actor_user_id, conversation_id, self.scope.org_id))
             return cursor.fetchall()
 
     @staticmethod
     def candidate(row: dict) -> SkillCandidate:
-        return SkillCandidate.model_validate({key: row[key] for key in SkillCandidate.model_fields})
+        return SkillCandidate.model_validate({key: row[key] for key in SkillCandidate.model_fields if key in row})
 
     def add_binding(self, conversation_id: UUID, candidate: SkillCandidate) -> UUID:
         self._require_admin()
@@ -44,12 +47,13 @@ class SkillBindingRepository(SkillRepository):
             existing = cursor.fetchone()
             cursor.execute("""SELECT r.id FROM public.skill_revisions r
                 JOIN public.skill_packages p ON p.id = r.package_id
-                LEFT JOIN public.skill_assignments a ON a.package_id = r.package_id AND a.revision_id = r.id
-                    AND a.org_id IS NOT DISTINCT FROM %s::uuid AND a.enabled
+                LEFT JOIN LATERAL (SELECT * FROM public.skill_assignments
+                    WHERE package_id=p.id AND (org_id=%s::uuid OR org_id IS NULL)
+                    ORDER BY org_id NULLS LAST LIMIT 1) a ON true
                 WHERE r.package_id = %s AND r.revision = %s AND r.status = 'published'
                   AND ((p.scope_kind = 'personal' AND p.owner_user_id = %s::uuid)
-                       OR (p.scope_kind = 'org' AND p.org_id = %s::uuid AND a.enabled)
-                       OR (p.scope_kind = 'platform' AND a.enabled))""",
+                       OR (p.scope_kind = 'org' AND p.org_id = %s::uuid AND a.enabled AND a.revision_id=r.id)
+                       OR (p.scope_kind = 'platform' AND a.enabled AND a.revision_id=r.id))""",
                 (self.scope.org_id, candidate.package_id, candidate.revision,
                  self.scope.actor_user_id, self.scope.org_id))
             revision = cursor.fetchone()

@@ -27,6 +27,34 @@ from .types import ProviderUnavailableError
 # ============================================================
 
 MODEL_REGISTRY: Dict[str, ModelConfig] = {
+    "kimi-k3": ModelConfig(
+        model_id="kimi-k3", provider=ModelProvider.DASHSCOPE,
+        provider_model="kimi-k3", display_name="Kimi K3",
+        input_price=0, output_price=0, credits_per_1k_input=0, credits_per_1k_output=0,
+        supports_vision=True, supports_thinking=True, max_tokens=0, context_window=0,
+    ),
+    "gemini-3.8-flash": ModelConfig(
+        model_id="gemini-3.8-flash", provider=ModelProvider.KIE,
+        provider_model="gemini-3.8-flash", display_name="Gemini 3.8 Flash",
+        input_price=0, output_price=0, credits_per_1k_input=0, credits_per_1k_output=0,
+        supports_vision=True, supports_thinking=True, max_tokens=0, context_window=0,
+    ),
+    "gpt-5-6-luna": ModelConfig(
+        model_id="gpt-5-6-luna", provider=ModelProvider.KIE,
+        provider_model="gpt-5-6-luna", display_name="GPT 5.6 Luna (KIE planner)",
+        input_price=0, output_price=0, credits_per_1k_input=0, credits_per_1k_output=0,
+        supports_vision=True, supports_thinking=True,
+        # Account-specific context/output limits and prices remain unverified.
+        max_tokens=0, context_window=0,
+    ),
+    "gpt-6-luna": ModelConfig(
+        model_id="gpt-6-luna", provider=ModelProvider.KIE,
+        provider_model="gpt-6-luna", display_name="GPT 6 Luna (KIE planner)",
+        input_price=0, output_price=0, credits_per_1k_input=0, credits_per_1k_output=0,
+        supports_vision=True, supports_thinking=True,
+        # KIE's authenticated model listing currently reports 272K.
+        max_tokens=0, context_window=272000,
+    ),
     # ==================== KIE 平台模型 ====================
     "gemini-3-pro": ModelConfig(
         model_id="gemini-3-pro",
@@ -186,6 +214,15 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
     ),
 
     # ==================== OpenRouter 模型（多家统一网关）====================
+    "openai/gpt-6.1-sol": ModelConfig(
+        model_id="openai/gpt-6.1-sol", provider=ModelProvider.OPENROUTER,
+        provider_model="openai/gpt-6.1-sol", display_name="GPT-6.1 Sol",
+        input_price=2.00, output_price=10.00,
+        credits_per_1k_input=0.4, credits_per_1k_output=2.0,
+        supports_vision=True, supports_thinking=True, supports_structured_output=True,
+        # This adapter uses Chat Completions; Sol tool calling requires Responses.
+        supports_tools=False, max_tokens=128000, context_window=1_050_000,
+    ),
     "openai/gpt-4.1": ModelConfig(
         model_id="openai/gpt-4.1",
         provider=ModelProvider.OPENROUTER,
@@ -643,14 +680,15 @@ def get_model_config(model_id: str) -> Optional[ModelConfig]:
 
 
 def get_all_models() -> Dict[str, ModelConfig]:
-    """获取所有可用模型"""
-    return MODEL_REGISTRY.copy()
+    """获取主模型可选项；内部策划专用模型不暴露为用户主模型。"""
+    return {key:value for key,value in MODEL_REGISTRY.items()
+        if key not in {"gpt-5-6-luna", "gpt-6-luna", "kimi-k3", "gemini-3.8-flash"}}
 
 
 def get_models_by_provider(provider: ModelProvider) -> Dict[str, ModelConfig]:
     """按 Provider 筛选模型"""
     return {
-        k: v for k, v in MODEL_REGISTRY.items()
+        k: v for k, v in get_all_models().items()
         if v.provider == provider
     }
 

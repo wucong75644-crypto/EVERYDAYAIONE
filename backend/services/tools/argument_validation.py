@@ -45,6 +45,10 @@ def _issues(value, schema, path="$", depth=0):
     if "enum" in schema and value not in schema["enum"]:
         add("可选值为 " + json.dumps(schema["enum"], ensure_ascii=False))
     if isinstance(value, Mapping):
+        if "oneOf" in schema:
+            count = sum(not _issues(value, branch, path, depth + 1) for branch in schema["oneOf"])
+            if count != 1:
+                add("必须且只能选择一种参数形式")
         properties = schema.get("properties", {})
         for key in schema.get("required", ()):
             if key not in value:
@@ -67,11 +71,6 @@ def _issues(value, schema, path="$", depth=0):
                     issues.append({"path": child_path, "reason": reason})
             else:
                 issues.extend(_issues(child, properties[key], child_path, depth + 1))
-        if "oneOf" in schema:
-            count = sum(not _issues(value, branch, path, depth + 1) for branch in schema["oneOf"])
-            if count != 1:
-                options = [branch.get("required", []) for branch in schema["oneOf"]]
-                add("必须且只能选择一种定位方式：" + json.dumps(options, ensure_ascii=False))
     if isinstance(value, (list, tuple)):
         for bound, op in (("maxItems", lambda n: len(value) > n), ("minItems", lambda n: len(value) < n)):
             if bound in schema and op(schema[bound]):

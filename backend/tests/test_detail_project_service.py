@@ -140,7 +140,8 @@ def test_attach_calls_atomic_function_and_returns_current(tmp_path) -> None:
     Image.new("RGB", (2, 2)).save(target, "PNG")
     conn = service.db.pool.connection.return_value.__enter__.return_value
     cursor = conn.cursor.return_value.__enter__.return_value
-    with patch.object(service, "get_current", return_value={"id": "project-1"}):
+    cursor.fetchone.return_value = {"project_id":"project-1"}
+    with patch.object(service, "get_by_id", return_value={"id": "project-1"}):
         result = service.attach_image("valid.png", "product")
     assert result == {"id": "project-1"}
     assert "attach_detail_project_image" in cursor.execute.call_args.args[0]
@@ -174,7 +175,7 @@ def test_update_settings_executes_versioned_update(tmp_path) -> None:
     service = _service(tmp_path)
     conn, cursor = _db_cursor(service)
     cursor.fetchone.return_value = {"id": "project-1"}
-    with patch.object(service, "get_current", return_value={"id": "project-1", "version": 2}):
+    with patch.object(service, "get_by_id", return_value={"id": "project-1", "version": 2}):
         result = service.update_settings("project-1", 1, {"quality": "2k"})
     assert result["version"] == 2
     assert "version = version + 1" in cursor.execute.call_args.args[0]
@@ -194,7 +195,7 @@ def test_remove_image_compacts_order_and_bumps_version(tmp_path) -> None:
     service = _service(tmp_path)
     conn, cursor = _db_cursor(service)
     cursor.fetchone.side_effect = [{"id": "project-1"}, {"sort_order": 1}]
-    with patch.object(service, "get_current", return_value={"id": "project-1"}):
+    with patch.object(service, "get_by_id", return_value={"id": "project-1"}):
         service.remove_image("project-1", "image-1", 1)
     sql_calls = [call.args[0] for call in cursor.execute.call_args_list]
     assert any("sort_order=sort_order-1" in sql for sql in sql_calls)
@@ -206,7 +207,7 @@ def test_update_category_bumps_version(tmp_path) -> None:
     service = _service(tmp_path)
     _, cursor = _db_cursor(service)
     cursor.fetchone.side_effect = [{"id": "project-1"}, {"id": "image-1"}]
-    with patch.object(service, "get_current", return_value={"id": "project-1"}):
+    with patch.object(service, "get_by_id", return_value={"id": "project-1"}):
         service.update_category("project-1", "image-1", 1, "reference")
     assert any("SET category=" in call.args[0] for call in cursor.execute.call_args_list)
 
@@ -222,14 +223,14 @@ def test_reorder_reinserts_images_in_requested_order(tmp_path) -> None:
             {"id": "b", "workspace_path": "b.png", "category": "reference", "created_at": "now"},
         ],
     ]
-    with patch.object(service, "get_current", return_value={"id": "project-1"}):
+    with patch.object(service, "get_by_id", return_value={"id": "project-1"}):
         service.reorder_images("project-1", 1, ["b", "a"])
     inserts = [call for call in cursor.execute.call_args_list if "INSERT INTO detail_project_images" in call.args[0]]
     assert len(inserts) == 2
     assert inserts[0].args[1][0] == "b"
 
 
-@pytest.mark.parametrize("content_type,count", [("default", 7), ("main_image", 14), ("detail_page", 14)])
+@pytest.mark.parametrize("content_type,count", [("default", 7), ("main_image", 16), ("detail_page", 16)])
 def test_update_settings_rejects_invalid_generation_count(tmp_path, content_type, count):
     service = _service(tmp_path)
     project = {"id": "project-1", "content_type": "main_image", "image_count": 1}
@@ -240,11 +241,12 @@ def test_update_settings_rejects_invalid_generation_count(tmp_path, content_type
     service.db.pool.connection.assert_not_called()
 
 
-def test_update_settings_saves_default_mode(tmp_path):
+@pytest.mark.parametrize("content_type,count", [("default", 14), ("main_image", 15), ("detail_page", 15)])
+def test_update_settings_saves_supported_generation_count(tmp_path, content_type, count):
     service = _service(tmp_path)
     _, cursor = _db_cursor(service)
     cursor.fetchone.return_value = {"id": "project-1"}
     project = {"id": "project-1", "content_type": "main_image", "image_count": 1}
-    with patch.object(service, "_require_project", return_value=project), patch.object(service, "get_current", return_value=project):
-        service.update_settings("project-1", 1, {"content_type": "default", "image_count": 14})
-    assert cursor.execute.call_args.args[1][:2] == ["default", 14]
+    with patch.object(service, "_require_project", return_value=project), patch.object(service, "get_by_id", return_value=project):
+        service.update_settings("project-1", 1, {"content_type": content_type, "image_count": count})
+    assert cursor.execute.call_args.args[1][:2] == [content_type, count]
