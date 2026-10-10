@@ -27,7 +27,7 @@ export function DetailPlanProgress({ group }: { group: DetailGroup }) {
   );
   const activeState: StepState = recovering ? 'running' : uncertain ? 'uncertain' : needsInput ? 'paused'
     : group.status === 'failed' ? 'failed' : group.status === 'cancelled' ? 'cancelled'
-    : group.status === 'planning' ? 'running' : 'pending';
+    : group.status === 'planning' && group.execution_state !== 'waiting' ? 'running' : 'pending';
   const latestTasks = group.items.map(item => detailTaskFor(group, item.item_id)).filter(task => !!task);
   const completed = latestTasks.filter(task => task.status === 'completed').length;
   const retryingImages = latestTasks.filter(task => group.auto_recovery?.items[task.item_id]?.status === 'waiting').length;
@@ -39,6 +39,10 @@ export function DetailPlanProgress({ group }: { group: DetailGroup }) {
   let status = activeState === 'running' ? `正在${stage.name}` : stateLabels[activeState];
   let description = activeState === 'running' ? stage.description : `${stage.name}${stateLabels[activeState]}。`;
   let tone: StepState = activeState;
+  if (group.status === 'planning' && group.execution_state === 'waiting' && !recovering) {
+    status='排队等待策划';
+    description='任务已保存，正在等待执行容量；离开页面后仍会继续处理。';
+  }
   if (ready) {
     tone = 'completed';
     status = '提示词已完成，准备生图';
@@ -60,7 +64,7 @@ export function DetailPlanProgress({ group }: { group: DetailGroup }) {
     description = uncertain ? `${stage.name}的调用结果尚待确认，已停止自动重发。${preserved}`
       : needsInput ? '请根据下方提示补充产品信息后重新开始。'
       : activeState === 'cancelled' ? `任务已停止。${preserved}`
-      : activeState === 'failed' ? `${stage.name}未完成。${preserved}` : '等待策划任务开始处理。';
+      : activeState === 'failed' ? `${stage.name}未完成。${preserved}` : '任务已保存，正在等待策划任务开始处理；离开页面后仍会继续。';
   }
   if (recovering) {
     tone = 'running';

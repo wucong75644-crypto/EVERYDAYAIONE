@@ -15,6 +15,7 @@ from services.agent.image.ecommerce_planner.page_profile import profile
 from services.agent.image.ecommerce_planner.prompt_resources import resources, HASHES, SCHEMA_SHA256, INTEGRATION_RULES_SHA256
 from services.agent.image.ecommerce_planner.service import EcommerceImagePlanner, PlannerStreamBudget, _digest
 from services.detail_project_service import DetailProjectService
+from services.detail_project_tasks import execution_state
 from services.detail_page_recovery import POLICY, DetailDeliveryRecovery, recovery_projection, latest_tasks
 from services.handlers.chat_image_request import freeze_image_request, chat_image_acceptance_allowed, validate_single_image_request
 
@@ -158,12 +159,14 @@ class DetailPageGeneration:
 
     def read(self, project_id):
         project = self.projects.get_by_id(project_id)
-        plans = self.db.table('ecom_image_plans').select('*').eq('project_id', project_id).order('created_at').execute().data or []
+        plans = self.db.table('ecom_image_plans').select('*').eq('project_id', project_id).order('created_at').order('id').execute().data or []
         plans = [row for row in plans if str(row['generation_run_id']) == project.get('run_state', {}).get('run_id')]
+        plans.sort(key=lambda row: 0 if row['input_snapshot'].get('task_type')=='main_images' else 1)
         tasks = self.db.table('tasks').select('id,status,result,result_data,error_message,credits_used,request_params,created_at').eq('user_id', self.user_id).eq(
-            "request_params->'_media_request_v1'->'origin'->>'project_id'", project_id).order('created_at').execute().data or []
+            "request_params->'_media_request_v1'->'origin'->>'project_id'", project_id).order('created_at').order('id').execute().data or []
         project['groups'] = [{
             'plan_id': row['id'], 'kind': row['input_snapshot']['task_type'], 'status': row['status'],
+            'execution_state': execution_state(row),
             'stage': row['current_stage'], 'count': row['image_count'], 'items': row['items'],
             'error': plan_error(row),
             'acceptance_error': row.get('recovery_state', {}).get('acceptance_error'),
@@ -293,6 +296,7 @@ class DetailPageWorker:
 
     async def scan(self):
         organizations=await asyncio.to_thread(lambda:self.db.table('organizations').select('id').execute().data)
+        candidates=[]
         for org in [None,*[str(row['id']) for row in organizations or []]]:
             scoped=ScopedDatabaseClient(self.db,DatabaseScope(None,org,DatabaseAccessKind.WORKER))
             projects=await asyncio.to_thread(lambda:scoped.rpc('scan_detail_page_work',{'p_org_id':org,'p_limit':20}).execute().data)
@@ -303,10 +307,8 @@ class DetailPageWorker:
                 tasks=await asyncio.to_thread(lambda:service.db.table('tasks').select('*').eq('user_id',project['user_id']).eq(
                     "request_params->'_media_request_v1'->'origin'->>'generation_run_id'",project['run_state']['run_id']).execute().data or [])
                 for plan in plans:
-                    if plan['status']=='planning' and plan['id'] not in self.jobs and len(self.jobs)<get_settings().detail_page_planning_concurrency:
-                        job=asyncio.create_task(self.run(service,plan),name=f"detail-plan:{plan['id']}")
-                        self.jobs[plan['id']]=job
-                        job.add_done_callback(lambda _job,key=plan['id']:self.jobs.pop(key,None))
+                    if plan['status']=='planning' and plan['id'] not in self.jobs:
+                        candidates.append((service,plan))
                     elif plan['status']=='ready' and not plan.get('recovery_state',{}).get('acceptance_error'):
                         try: await service.accept(plan)
                         except Exception as error:
@@ -326,11 +328,25 @@ class DetailPageWorker:
                             logger.warning('detail_delivery_recovery_pending | plan={} error_type={}',plan['id'],type(error).__name__)
                 await asyncio.to_thread(self.aggregate,service,project,plans)
 
+        # Round-robin owners as well as projects; one user's batch cannot fill every opportunity.
+        from collections import defaultdict, deque
+        owners=defaultdict(deque)
+        for service,plan in candidates:
+            owners[(service.org_id,service.user_id)].append((service,plan))
+        while owners and len(self.jobs)<get_settings().detail_page_planning_concurrency:
+            for key in list(owners):
+                if len(self.jobs)>=get_settings().detail_page_planning_concurrency: break
+                service,plan=owners[key].popleft()
+                if not owners[key]: del owners[key]
+                job=asyncio.create_task(self.run(service,plan),name=f"detail-plan:{plan['id']}")
+                self.jobs[plan['id']]=job
+                job.add_done_callback(lambda _job,key=plan['id']:self.jobs.pop(key,None))
+
     @staticmethod
     def aggregate(service, project, plans):
         if not plans: return
         tasks=service.db.table('tasks').select('id,status,result,error_message,request_params,created_at').eq('user_id',project['user_id']).eq(
-            "request_params->'_media_request_v1'->'origin'->>'generation_run_id'",project['run_state']['run_id']).order('created_at').execute().data or []
+            "request_params->'_media_request_v1'->'origin'->>'generation_run_id'",project['run_state']['run_id']).order('created_at').order('id').execute().data or []
         latest=latest_tasks(tasks)
         expected=sum(plan['image_count'] for plan in plans)
         recovering=any((recovery_projection(plan,project,[task for task in tasks if
@@ -345,8 +361,16 @@ class DetailPageWorker:
             # Already accepted image work must settle even when another group failed.
             status='generating' if any(t['status'] not in ('completed','failed','cancelled') for t in latest.values()) else 'failed'
         else: status='generating' if tasks else 'plan_ready'
+        updates={'status':status,'updated_at':datetime.now(timezone.utc).isoformat()}
+        if not project.get('title'):
+            for plan in plans:
+                stage=plan.get('stage_outputs',{}).get('1')
+                name=stage.get('product',{}).get('name') if isinstance(stage,dict) else None
+                if isinstance(name,str) and name.strip():
+                    updates['title']=name.strip()[:120]
+                    break
         # Rotate bounded scans so delayed recovery cannot starve newer projects.
-        service.db.table('detail_projects').update({'status':status,'updated_at':datetime.now(timezone.utc).isoformat()}).eq(
+        service.db.table('detail_projects').update(updates).eq(
             'id',project['id']).eq('user_id',project['user_id']).eq("run_state->>'run_id'",project['run_state']['run_id']).execute()
 
     async def run(self, service, row):

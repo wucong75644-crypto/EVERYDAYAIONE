@@ -32,10 +32,10 @@ describe('DetailPageHeader', () => {
     expect(navigate).toHaveBeenCalledWith('/chat');
   });
 
-  it('有浏览历史时点击返回执行后退', () => {
+  it('任务切换产生浏览历史后仍返回聊天', () => {
     Object.defineProperty(window.history, 'length', { configurable: true, value: 2 });
     render(<DetailPageHeader />);
     fireEvent.click(screen.getByRole('button', { name: '返回聊天' }));
-    expect(navigate).toHaveBeenCalledWith(-1);
+    expect(navigate).toHaveBeenCalledWith('/chat');
   });
 });

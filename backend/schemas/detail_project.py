@@ -31,6 +31,10 @@ class DetailProjectSettingsPatch(BaseModel):
     image_count: int | None = Field(default=None, ge=1, le=15)
 
 
+class DetailProjectCreateRequest(BaseModel):
+    request_id: UUID
+
+
 class DetailRunRequest(BaseModel):
     version: int = Field(gt=0)
     request_id: UUID

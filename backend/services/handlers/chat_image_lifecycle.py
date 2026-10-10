@@ -92,7 +92,8 @@ class ChatImageLifecycle:
         phase=state["phase"]
         if phase == "queued":
             created=datetime.fromisoformat(task["created_at"].replace("Z","+00:00"))
-            if (datetime.now(timezone.utc)-created).total_seconds() > self.settings.chat_image_queue_timeout_seconds:
+            page_queue = task["request_params"][REQUEST_KEY].get("origin", {}).get("destination") == "detail_project"
+            if not page_queue and (datetime.now(timezone.utc)-created).total_seconds() > self.settings.chat_image_queue_timeout_seconds:
                 await self.definite_failure(task,"排队超时，未提交供应商")
             else:
                 await self.submit(task)

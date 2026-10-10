@@ -7,7 +7,7 @@ import { Select } from '../ui/Select';
 import { WorkspaceImagePicker } from './WorkspaceImagePicker';
 
 interface Props {
-  form: DetailGenerationForm; hasProductImage: boolean; disabled?: boolean; requirementAssistDisabled?: boolean;
+  form: DetailGenerationForm; hasProductImage: boolean; disabled?: boolean; requirementDisabled?: boolean; requirementAssistDisabled?: boolean;
   models?: PromptModelOption[]; ratios?: string[]; images?: DetailLocalImage[];
   onAdd?: (files: File[])=>void; onWorkspaceAdd?: (paths: string[])=>void; onRemove?: (id: string)=>void;
   onChange: (patch:Partial<DetailGenerationForm>)=>void; onRequirementAssist:()=>void; onAnalyze:()=>void;
@@ -17,7 +17,7 @@ const languages=[{value:'zh-CN',label:'中文（简体）'},{value:'none',label:
 const qualities=[{value:'1k',label:'1K 标准'},{value:'2k',label:'2K 高清'},{value:'4k',label:'4K 超清'}] as const;
 const counts=Array.from({length:15},(_,index)=>({value:String(index+1),label:`${index+1}张`}));
 const defaultModels=[{value:'kimi-k3',label:'Kimi K3'},{value:'gemini-3.8-flash',label:'Gemini 3.8 Flash'}] as const;
-export function GenerationSettings({form,hasProductImage,disabled=false,requirementAssistDisabled=false,models,ratios=['1:1','3:4','4:5','16:9'],images=[],onAdd,onWorkspaceAdd,onRemove,onChange,onRequirementAssist,onAnalyze}:Props){
+export function GenerationSettings({form,hasProductImage,disabled=false,requirementDisabled=disabled,requirementAssistDisabled=false,models,ratios=['1:1','3:4','4:5','16:9'],images=[],onAdd,onWorkspaceAdd,onRemove,onChange,onRequirementAssist,onAnalyze}:Props){
   const inputRef = useRef<HTMLInputElement>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const requirementLabel = form.contentType === 'default' ? '产品信息与创作要求' : form.contentType === 'main_image' ? '主图要求' : '详情图要求';
@@ -50,7 +50,7 @@ export function GenerationSettings({form,hasProductImage,disabled=false,requirem
           </div>)}
         </div>}
         <label htmlFor="detail-requirement" className="sr-only">{requirementLabel}</label>
-        <textarea id="detail-requirement" disabled={disabled} maxLength={10000} value={form.requirement} onChange={(event) => onChange({ requirement: event.target.value })} placeholder="上传产品图片，并描述产品名称、核心卖点、规格和设计要求…" className="min-h-0 w-full flex-1 resize-none overflow-y-auto overscroll-contain border-0 bg-transparent p-3 text-sm leading-6 text-[var(--s-text-primary)] placeholder:text-[var(--s-text-tertiary)] focus:outline-none disabled:opacity-50" />
+        <textarea id="detail-requirement" disabled={requirementDisabled} maxLength={10000} value={form.requirement} onChange={(event) => onChange({ requirement: event.target.value })} placeholder="上传产品图片，并描述产品名称、核心卖点、规格和设计要求…" className="min-h-0 w-full flex-1 resize-none overflow-y-auto overscroll-contain border-0 bg-transparent p-3 text-sm leading-6 text-[var(--s-text-primary)] placeholder:text-[var(--s-text-tertiary)] focus:outline-none disabled:opacity-50" />
         <div className="flex shrink-0 items-center gap-0.5 px-1.5 pb-1.5">
           <input ref={inputRef} type="file" aria-label="上传产品图" accept="image/jpeg,image/png,image/webp" multiple disabled={disabled} className="hidden" onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) onAdd?.(files); event.target.value = ''; }} />
           <Button variant="ghost" size="sm" className="shrink-0 gap-1 px-1.5 text-xs" icon={<Paperclip className="h-4 w-4" />} disabled={disabled || images.length >= 9} onClick={() => inputRef.current?.click()}>上传图片</Button>

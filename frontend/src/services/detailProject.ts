@@ -1,13 +1,13 @@
 import { request } from './api';
-import type { DetailProjectDraft, DetailImageCategory, DetailGenerationForm, PromptModelOption } from '../types/detailPage';
+import type { DetailProjectDraft, DetailImageCategory, DetailGenerationForm, PromptModelOption, DetailTaskSummary } from '../types/detailPage';
 
 interface Envelope { success: boolean; data: { project: DetailProjectDraft | null } }
 
 export const getCurrentDetailProject = async () =>
   (await request<Envelope>({ url: '/detail-projects/current' })).data.project;
 
-export const attachDetailImage = async (workspacePath: string, category: DetailImageCategory) =>
-  (await request<Envelope>({ method: 'POST', url: '/detail-projects/current/images', data: { workspace_path: workspacePath, category } })).data.project;
+export const attachDetailImage = async (workspacePath: string, category: DetailImageCategory, projectId?: string) =>
+  (await request<Envelope>({ method: 'POST', url: projectId ? `/detail-projects/${projectId}/images` : '/detail-projects/current/images', data: { workspace_path: workspacePath, category } })).data.project;
 
 export const saveDetailSettings = async (projectId: string, version: number, form: DetailGenerationForm) =>
   (await request<Envelope>({ method: 'PATCH', url: `/detail-projects/${projectId}`, data: {
@@ -29,3 +29,10 @@ export const resumeDetailPlan = async(projectId:string,planId:string,requestId:s
 export const stopDetailRecovery = async(projectId:string)=>
   (await request<Envelope>({method:'POST',url:`/detail-projects/${projectId}/stop-recovery`})).data.project;
 export const getDetailCapabilities = async () => (await request<{data:{enabled:boolean;prompt_models:PromptModelOption[];image_models:Array<{aspect_ratios:string[]}>}}>({url:'/detail-projects/capabilities'})).data;
+
+export const createDetailProject = async (requestId: string) =>
+  (await request<Envelope>({method:'POST',url:'/detail-projects',data:{request_id:requestId}})).data.project;
+export const listDetailProjects = async (cursor?: string) =>
+  (await request<{data:{items:DetailTaskSummary[];next_cursor:string|null}}>({url:'/detail-projects',params:cursor?{cursor}:undefined})).data;
+export const refreshDetailTaskStatuses = async (ids:string[]) =>
+  (await request<{data:{items:DetailTaskSummary[]}}>({url:'/detail-projects/status',params:{ids:ids.join(',')}})).data.items;

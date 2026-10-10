@@ -8,6 +8,7 @@ from loguru import logger
 
 from core.config import get_settings
 from core.exceptions import AppException
+from core.db_scope import DatabaseAccessKind, DatabaseScope, ScopedDatabaseClient
 from services.file_upload import build_workspace_thumbnail_url
 from services.file_executor import FileExecutor
 
@@ -27,6 +28,19 @@ class DetailProjectService:
             user_id=user_id,
             org_id=org_id,
         )
+
+    def _runtime(self):
+        return ScopedDatabaseClient(getattr(self.db, "_db", self.db),
+            DatabaseScope(self.user_id, self.org_id, DatabaseAccessKind.RUNTIME))
+
+    def create(self, request_id: str) -> dict:
+        try:
+            project_id = self._runtime().rpc("create_detail_project", {"p_request_id": request_id}).execute().data
+        except Exception as exc:
+            if "DETAIL_SCOPE_DENIED" in str(exc) or "DETAIL_PROJECT_DENIED" in str(exc):
+                raise AppException("DETAIL_PROJECT_FORBIDDEN", "无权创建或读取该任务", 403) from exc
+            raise AppException("DETAIL_PROJECT_CREATE_FAILED", "新建任务失败，请重试", 500) from exc
+        return self.get_by_id(str(project_id))
 
     def get_current(self) -> dict | None:
         result = (
@@ -55,19 +69,27 @@ class DetailProjectService:
             raise AppException("DETAIL_IMAGE_NOT_READY", "项目图片仍在上传或已失效", 409)
         return project
 
-    def attach_image(self, workspace_path: str, category: str) -> dict:
+    def attach_image(self, workspace_path: str, category: str, project_id: str | None = None) -> dict:
         self._validate_workspace_image(workspace_path)
         try:
-            with self.db.pool.connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT * FROM attach_detail_project_image(%s, %s, %s, %s)",
-                        (self.user_id, self.org_id, workspace_path, category),
-                    )
-                conn.commit()
+            if project_id:
+                self._runtime().rpc("attach_detail_project_image_by_id", {"p_project_id": project_id,
+                    "p_workspace_path": workspace_path, "p_category": category}).execute()
+            else:
+                with self.db.pool.connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT * FROM attach_detail_project_image(%s, %s, %s, %s)",
+                            (self.user_id, self.org_id, workspace_path, category))
+                        row = cur.fetchone()
+                        project_id = str(row["project_id"] if isinstance(row, dict) else row[0])
+                    conn.commit()
         except Exception as exc:
             message = str(exc)
             mapping = {
+                "DETAIL_PROJECT_AMBIGUOUS": ("DETAIL_PROJECT_AMBIGUOUS", "存在多个草稿，请选择指定任务上传", 409),
+                "DETAIL_PROJECT_NOT_DRAFT": ("DETAIL_PROJECT_NOT_DRAFT", "任务已提交，不能修改图片", 409),
+                "DETAIL_PROJECT_DENIED": ("DETAIL_PROJECT_NOT_FOUND", "项目不存在", 404),
+                "DETAIL_SCOPE_DENIED": ("DETAIL_PROJECT_FORBIDDEN", "无权访问该任务", 403),
                 "DETAIL_IMAGE_DUPLICATE": ("DETAIL_IMAGE_DUPLICATE", "图片已添加", 409),
                 "DETAIL_IMAGE_LIMIT_EXCEEDED": ("DETAIL_IMAGE_LIMIT_EXCEEDED", "最多添加9张图片", 409),
                 "DETAIL_PROJECT_ORG_ACCESS_DENIED": ("DETAIL_IMAGE_FORBIDDEN", "无权访问该企业", 403),
@@ -80,7 +102,7 @@ class DetailProjectService:
                 f"org_id={self.org_id} | path={workspace_path} | error={exc}"
             )
             raise AppException("DETAIL_IMAGE_ATTACH_FAILED", "图片关联失败", 500) from exc
-        return self.get_current() or {}
+        return self.get_by_id(project_id)
 
     def update_settings(self, project_id: str, version: int, settings: dict) -> dict:
         allowed = {
@@ -105,7 +127,7 @@ class DetailProjectService:
             RETURNING id
         """
         self._execute_versioned(sql, params)
-        return self.get_current() or {}
+        return self.get_by_id(project_id)
 
     def remove_image(self, project_id: str, image_id: str, version: int) -> dict:
         with self.db.pool.connection() as conn:
@@ -126,7 +148,7 @@ class DetailProjectService:
                 )
                 self._bump_version(cur, project_id)
             conn.commit()
-        return self.get_current() or {}
+        return self.get_by_id(project_id)
 
     def update_category(self, project_id: str, image_id: str, version: int, category: str) -> dict:
         with self.db.pool.connection() as conn:
@@ -141,7 +163,7 @@ class DetailProjectService:
                     raise AppException("DETAIL_IMAGE_NOT_FOUND", "项目图片不存在", 404)
                 self._bump_version(cur, project_id)
             conn.commit()
-        return self.get_current() or {}
+        return self.get_by_id(project_id)
 
     def reorder_images(self, project_id: str, version: int, image_ids: list[str]) -> dict:
         if len(image_ids) != len(set(image_ids)):
@@ -180,12 +202,12 @@ class DetailProjectService:
                     )
                 self._bump_version(cur, project_id)
             conn.commit()
-        return self.get_current() or {}
+        return self.get_by_id(project_id)
 
     def _require_project(self, project_id: str) -> dict:
-        project = self.get_current()
-        if not project or str(project["id"]) != project_id:
-            raise AppException("DETAIL_PROJECT_NOT_FOUND", "草稿项目不存在", 404)
+        project = self.get_by_id(project_id)
+        if project["status"] != "draft":
+            raise AppException("DETAIL_PROJECT_NOT_DRAFT", "任务已提交，不能修改", 409)
         return project
 
     def get_by_id(self, project_id: str) -> dict:

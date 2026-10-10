@@ -1,13 +1,13 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import DetailPage from '../DetailPage';
 import { useDetailPageStore } from '../../stores/useDetailPageStore';
-import { getCurrentDetailProject, getDetailCapabilities } from '../../services/detailProject';
+import { getDetailProject, listDetailProjects, createDetailProject, getDetailCapabilities } from '../../services/detailProject';
 import { generateRequirementSuggestions } from '../../services/ecomRequirement';
 
 vi.mock('../../services/detailProject', () => ({
-  getCurrentDetailProject: vi.fn(), getDetailCapabilities: vi.fn(), getDetailProject: vi.fn(),startDetailProject:vi.fn(),archiveDetailProject:vi.fn(),
+  createDetailProject:vi.fn(),listDetailProjects:vi.fn(),refreshDetailTaskStatuses:vi.fn(), getDetailCapabilities: vi.fn(), getDetailProject: vi.fn(),startDetailProject:vi.fn(),archiveDetailProject:vi.fn(),
   attachDetailImage: vi.fn(), removeDetailImage: vi.fn(), saveDetailSettings: vi.fn(),
 }));
 
@@ -32,13 +32,15 @@ function renderPage() {
 
 describe('DetailPage 页面骨架', () => {
   beforeEach(() => {
-    useDetailPageStore.getState().reset();
-    vi.mocked(getCurrentDetailProject).mockResolvedValue(null);
+    useDetailPageStore.getState().reset();localStorage.clear();
+    vi.mocked(listDetailProjects).mockResolvedValue({items:[],next_cursor:null});
+    vi.mocked(createDetailProject).mockResolvedValue({id:"empty",version:1,content_type:"default",platform:"taobao",requirement:"",language:"zh-CN",aspect_ratio:"1:1",quality:"1k",image_count:14,status:"draft",images:[]});
+    vi.mocked(getDetailProject).mockResolvedValue(null);
     vi.mocked(getDetailCapabilities).mockResolvedValue({enabled:true,prompt_models:[{id:'kimi-k3',name:'Kimi K3',available:true,reason:null}],image_models:[]});
     vi.mocked(generateRequirementSuggestions).mockReset();
   });
 
-  it('显示固定双栏、默认数量和模型选择', async () => {
+  it('显示任务栏和固定创作设置、默认数量和模型选择', async () => {
     renderPage();
     await waitFor(() => expect(useDetailPageStore.getState().isHydrating).toBe(false));
     expect(screen.getByRole('button',{name:'生成数量'})).toHaveTextContent('14张');
@@ -53,7 +55,8 @@ describe('DetailPage 页面骨架', () => {
   });
 
   it('插入时将编辑产品、增补卖点、风格和客户回答一起回填输入框，不再次调用模型', async () => {
-    vi.mocked(getCurrentDetailProject).mockResolvedValue({
+    vi.mocked(listDetailProjects).mockResolvedValue({items:[{id:'project-1',title:'产品',created_at:'2026-10-10',content_type:'main_image',status:'draft',display_status:'draft',expected_count:1,completed_count:0,thumbnail_url:null,stage:null,recovery_waiting:false}],next_cursor:null});
+    vi.mocked(getDetailProject).mockResolvedValue({
       id: 'project-1', version: 1, content_type: 'main_image', platform: 'auto', requirement: '需要清楚展示商品',
       language: 'zh-CN', aspect_ratio: '1:1', quality: '1k', image_count: 1,
       images: [{ id: 'image-1', category: 'product', workspace_path: 'uploads/product.png', sort_order: 0, status: 'ready', original_url: 'product.png', thumbnail_url: null }],
@@ -99,5 +102,28 @@ describe('DetailPage 页面骨架', () => {
     renderPage();
     await waitFor(() => expect(useDetailPageStore.getState().isHydrating).toBe(false));
     expect(screen.getByRole('button', { name: 'AI 帮写' })).toBeDisabled();
+  });
+
+  it.each(['uploading','attaching','failed','missing'] as const)('图片状态为 %s 时可编辑要求，全部就绪后才开放生成和帮写', async (imageStatus) => {
+    renderPage();
+    await waitFor(() => expect(useDetailPageStore.getState().isHydrating).toBe(false));
+    const readyImage = {id:'ready',category:'product' as const,status:'ready' as const,previewUrl:'product.png',error:null};
+    act(() => useDetailPageStore.setState({projectId:'empty',images:[readyImage,
+      {...readyImage,id:'pending',status:imageStatus}],isUploading:['uploading','attaching'].includes(imageStatus)}));
+
+    const input = screen.getByRole('textbox', {name:'产品信息与创作要求'});
+    expect(input).toBeEnabled();
+    fireEvent.change(input, {target:{value:'上传期间补充的风格和产品细节'}});
+    expect(useDetailPageStore.getState().form.requirement).toBe('上传期间补充的风格和产品细节');
+    expect(screen.getByRole('button', {name:'开始生成'})).toBeDisabled();
+    expect(screen.getByRole('button', {name:'AI 帮写'})).toBeDisabled();
+
+    act(() => useDetailPageStore.setState({images:[readyImage],isUploading:false}));
+    expect(input).toHaveValue('上传期间补充的风格和产品细节');
+    expect(screen.getByRole('button', {name:'开始生成'})).toBeEnabled();
+    expect(screen.getByRole('button', {name:'AI 帮写'})).toBeEnabled();
+
+    act(() => useDetailPageStore.setState({status:'analyzing'}));
+    expect(input).toBeDisabled();
   });
 });

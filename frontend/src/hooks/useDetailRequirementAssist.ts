@@ -102,6 +102,7 @@ export function useDetailRequirementAssist() {
   return {
     isOpen, status, isLoading: status === 'loading', draft, brief, error, validationError,
     supplement, answers, skippedQuestions,
+    sourceProjectId: sourceRef.current?.projectId,
     open, close, update, updateDraft, setSupplement, answerQuestion, toggleSkip,
   };
 }
