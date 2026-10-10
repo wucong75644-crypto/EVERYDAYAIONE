@@ -48,10 +48,8 @@ def assemble_designs(value, snapshot, product, visual_direction=None):
     task = f"生成一张{kind}。目标平台：{platform}；新增文字语言：{language}；画布比例：{target['aspect_ratio']}；清晰度参数：{target.get('resolution') or '模型默认'}。"
     shared = ""
     if visual_direction is not None:
-        marker = "## 8. 统一规则与变化范围"
-        if marker not in visual_direction:
-            raise ValueError("PLANNER_VISUAL_SECTIONS_INVALID")
-        shared = ("\n整套共同边界（第二阶段原文）：\n" + visual_direction.split(marker, 1)[1].strip()
+        from .format_delivery import visual_sections
+        shared = ("\n整套共同边界（第二阶段原文）：\n" + visual_sections(visual_direction)[7]
             + "\n在这些共同原则内执行本张已确定的画面；可选建议与变化范围不表示添加全部元素或重新策划。")
     images = []
     from services.handlers.chat_image_request import validate_single_image_request
@@ -94,3 +92,51 @@ def assemble_designs(value, snapshot, product, visual_direction=None):
             "assembly_version": ASSEMBLY_VERSION})
     return {**draft, "images": images, "design_output": draft, "assembly_version": ASSEMBLY_VERSION,
         "generation_validation": "pending", "page_assembly_validation": "pending" if detail else "not_applicable"}
+
+
+def assemble_prompts(value, snapshot, product, visual_direction):
+    from .format_delivery import FormatError, PROMPTS_SCHEMA, schema_paths, prompt_positions, validate_questions, visual_sections
+    if 'questions' in value:
+        return validate_questions(value)
+    paths = schema_paths(value, PROMPTS_SCHEMA)
+    if paths:
+        raise FormatError('PLANNER_PROMPTS_FIELDS_INVALID', paths)
+    bad = prompt_positions(value, snapshot)
+    bad += [i for i, body in enumerate(value['prompts'], 1)
+        if isinstance(body, str) and fixed_canvas_conflict(body, snapshot)]
+    if bad:
+        raise FormatError('PLANNER_PROMPT_POSITIONS_INVALID', [('prompts', i - 1) for i in sorted(set(bad))])
+    refs, target = snapshot['references'], snapshot['target_size']
+    if len({source_id(ref) for ref in refs}) != len(refs):
+        raise ValueError('PLANNER_DUPLICATE_REFERENCE_SOURCE')
+    detail = snapshot.get('task_type') == 'detail_page'
+    kind = '详情页' if detail else '主图'
+    legend = '\n'.join(f"image_{i} = 输入图片{i}—{source_id(ref)}—{ref['role']}"
+        for i, ref in enumerate(refs, 1))
+    shared = visual_sections(visual_direction)[7]
+    images = []
+    from services.handlers.chat_image_request import validate_single_image_request
+    for position, body in enumerate(value['prompts'], 1):
+        name = f'{kind}第{position}张'
+        positive = (f"【生成任务与画布】\n生成一张电商{kind}；目标平台：{snapshot.get('platform') or '通用电商平台'}；"
+            f"新增文字语言：{snapshot.get('language') or '跟随用户要求'}；画布比例：{target['aspect_ratio']}；"
+            f"清晰度参数：{target.get('resolution') or '模型默认'}。\n\n【参考图绑定】\n{legend}\n"
+            '严格按上述输入顺序识别正文中的image_N；只使用正文指明的素材内容，不自动加入其余图中的商品、道具或信息。'
+            f'\n\n【本张完整设计】\n{body}\n\n【整套共同边界】\n{shared}\n'
+            '在这些原则内执行本张已确定画面，可选建议不代表加入全部元素或重新策划。'
+            f'\n\n【商品保真与执行】\n{FIDELITY}\n只按本稿执行，不额外添加文案。'
+            + ('本屏独立生成，不依赖相邻生成图，不要求精确像素接缝。' if detail else ''))
+        request = positive + '\n\n负面提示词：' + NEGATIVE
+        try:
+            validate_single_image_request({'mode': 'image_to_image', 'prompt': request,
+                'aspect_ratio': target['aspect_ratio'], 'resolution': target.get('resolution')}, len(refs))
+        except ValueError as error:
+            raise FormatError('PLANNER_PROMPT_REQUEST_INVALID', [('prompts', position - 1)]) from error
+        images.append({'item_id': str(uuid4()), 'position': position, 'name': name, 'purpose': name,
+            'design': {'prompt': body}, 'references': deepcopy(refs), 'aspect_ratio': target['aspect_ratio'],
+            'positive_prompt': positive, 'negative_prompt': NEGATIVE, 'request_text': request,
+            'request_text_sha256': text_hash(request), 'assembly_version': 'fixed-frame.v4',
+            'scheme_markdown': '## 完整生图提示词\n\n' + request})
+    return {'status': 'ready', 'questions': [], 'images': images, 'review_records': [],
+        'design_output': deepcopy(value), 'assembly_version': 'fixed-frame.v4',
+        'generation_validation': 'pending', 'page_assembly_validation': 'pending' if detail else 'not_applicable'}

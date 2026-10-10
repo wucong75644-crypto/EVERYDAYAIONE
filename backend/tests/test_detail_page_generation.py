@@ -9,8 +9,9 @@ from schemas.detail_project import DetailProjectSettingsPatch
 
 def settings(**overrides):
     return SimpleNamespace(kie_api_key='test',dashscope_api_key='test',detail_page_planning_seconds=1200,
+        detail_gpt_enabled=overrides.get('gpt_enabled', True),
         **{f'detail_{provider}_{direction}_credits_per_million':overrides.get(f'{provider}_{direction}',1)
-          for provider in ('kimi','gemini') for direction in ('input','output')})
+          for provider in ('kimi','gemini','gpt') for direction in ('input','output')})
 
 
 def test_page_model_policy_has_no_implicit_price_or_model_fallback():
@@ -22,8 +23,18 @@ def test_page_model_policy_has_no_implicit_price_or_model_fallback():
     assert profile(settings(),'kimi-k3').ecom_image_planning_model=='kimi-k3'
     assert profile(settings(),'kimi-k3').ecom_image_planning_reasoning=='high'
     assert profile(settings(),'gemini-3.8-flash').ecom_image_planning_reasoning=='medium'
-    assert not {'kimi-k3','gemini-3.8-flash'} & get_all_models().keys()
-    assert {'kimi-k3','gemini-3.8-flash'} <= MODEL_REGISTRY.keys()
+    gpt = profile(settings(),'gpt-6-luna')
+    assert gpt.ecom_image_planning_model == 'gpt-6-luna'
+    assert gpt.ecom_analysis_transport == 'kie_upload'
+    assert gpt.ecom_image_planning_reasoning == 'medium'
+    assert not {'kimi-k3','gemini-3.8-flash','gpt-6-luna'} & get_all_models().keys()
+    assert {'kimi-k3','gemini-3.8-flash','gpt-6-luna'} <= MODEL_REGISTRY.keys()
+    assert capabilities(settings(gpt_output=None))[-1]['available'] is False
+    with pytest.raises(AppException,match='费率'):
+        profile(settings(gpt_output=None),'gpt-6-luna')
+    assert capabilities(settings(gpt_enabled=False))[-1]['available'] is False
+    with pytest.raises(AppException,match='暂未开放'):
+        profile(settings(gpt_enabled=False),'gpt-6-luna')
 
 
 def test_chat_protocol_preserves_multimodal_order_and_raw_text_without_mutation():
@@ -39,10 +50,12 @@ def test_chat_protocol_preserves_multimodal_order_and_raw_text_without_mutation(
 def test_page_schema_allows_default_14_and_single_15_but_upload_limit_stays_separate():
     assert DetailProjectSettingsPatch(version=1,content_type='default',image_count=14,prompt_model='kimi-k3').image_count==14
     assert DetailProjectSettingsPatch(version=1,content_type='detail_page',image_count=15).image_count==15
+    assert DetailProjectSettingsPatch(version=1,prompt_model='gpt-6-luna').prompt_model=='gpt-6-luna'
     with pytest.raises(ValueError):DetailProjectSettingsPatch(version=1,image_count=16)
 
 
-def test_default_entry_freezes_two_groups_and_raw_requirements(monkeypatch):
+@pytest.mark.parametrize('model', ['kimi-k3','gemini-3.8-flash','gpt-6-luna'])
+def test_default_entry_freezes_two_groups_and_raw_requirements(monkeypatch, model):
     from unittest.mock import MagicMock
     from services import detail_page_generation as page
     configured=settings()
@@ -50,10 +63,11 @@ def test_default_entry_freezes_two_groups_and_raw_requirements(monkeypatch):
     configured.chat_image_max_requests=15
     configured.chat_image_max_credits=300
     monkeypatch.setattr(page,'get_settings',lambda:configured)
+    monkeypatch.setenv('KIE_SHADOW_OVERSEAS_PROXY','http://127.0.0.1:7891')
     monkeypatch.setattr(page,'chat_image_acceptance_allowed',lambda *_:True)
     monkeypatch.setattr(page,'validate_single_image_request',lambda *_:{'estimated_credits':1})
     raw='  要有发财的感觉\n不要改变商品  '
-    project={'id':'project-1','version':3,'prompt_model':'kimi-k3','content_type':'default',
+    project={'id':'project-1','version':3,'prompt_model':model,'content_type':'default',
         'image_count':14,'images':[],'requirement':raw,'platform':'taobao','language':'zh-CN','aspect_ratio':'1:1','quality':'1k'}
     refs=[{'file_id':'fid_a','source_id':'image-a','role':'product','workspace_path':'a.png'},
           {'file_id':'fid_b','source_id':'image-b','role':'product','workspace_path':'b.png'}]
@@ -70,7 +84,8 @@ def test_default_entry_freezes_two_groups_and_raw_requirements(monkeypatch):
     for row in rows:
         assert row['input_snapshot']['messages'][0]['parts'][0]['text']==raw
         assert row['input_snapshot']['resolved_references']==refs
-        assert row['model_settings']['profile']['ecom_image_planning_model']=='kimi-k3'
+        assert row['model_settings']['profile']['ecom_image_planning_model']==model
+        assert row['model_settings']['profile']['ecom_image_planning_input_credits_per_million']==1
 
 
 def test_database_guards_have_actionable_errors_without_sql():

@@ -47,6 +47,14 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
         # Account-specific context/output limits and prices remain unverified.
         max_tokens=0, context_window=0,
     ),
+    "gpt-6-luna": ModelConfig(
+        model_id="gpt-6-luna", provider=ModelProvider.KIE,
+        provider_model="gpt-6-luna", display_name="GPT 6 Luna (KIE planner)",
+        input_price=0, output_price=0, credits_per_1k_input=0, credits_per_1k_output=0,
+        supports_vision=True, supports_thinking=True,
+        # KIE's authenticated model listing currently reports 272K.
+        max_tokens=0, context_window=272000,
+    ),
     # ==================== KIE 平台模型 ====================
     "gemini-3-pro": ModelConfig(
         model_id="gemini-3-pro",
@@ -674,7 +682,7 @@ def get_model_config(model_id: str) -> Optional[ModelConfig]:
 def get_all_models() -> Dict[str, ModelConfig]:
     """获取主模型可选项；内部策划专用模型不暴露为用户主模型。"""
     return {key:value for key,value in MODEL_REGISTRY.items()
-        if key not in {"gpt-5-6-luna", "kimi-k3", "gemini-3.8-flash"}}
+        if key not in {"gpt-5-6-luna", "gpt-6-luna", "kimi-k3", "gemini-3.8-flash"}}
 
 
 def get_models_by_provider(provider: ModelProvider) -> Dict[str, ModelConfig]:

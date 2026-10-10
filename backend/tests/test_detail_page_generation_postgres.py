@@ -646,3 +646,27 @@ async def test_page_binding_acceptance_and_real_worker_submission(page_db,monkey
         await redis.delete(limiter._global_key(user),limiter._conversation_key(user,None))
         await redis.aclose()
         raw.pool.close()
+
+
+def test_prompt_model_migration_preserves_history_and_fails_closed_on_downgrade(page_db):
+    user,old,new=[str(uuid4()) for _ in range(3)]
+    with psycopg.connect(page_db) as db:
+        db.execute('INSERT INTO users(id,credits) VALUES(%s,1000)',(user,))
+        db.execute('INSERT INTO detail_projects(id,user_id,prompt_model) VALUES(%s,%s,%s)',(old,user,'kimi-k3'))
+        db.execute((ROOT/'migrations/288_detail_prompt_models.sql').read_text())
+        assert db.execute('SELECT prompt_model FROM detail_projects WHERE id=%s',(old,)).fetchone()[0]=='kimi-k3'
+        # Different users avoid the legacy one-draft constraint in this fixture.
+        other=str(uuid4())
+        db.execute('INSERT INTO users(id,credits) VALUES(%s,1000)',(other,))
+        db.execute('INSERT INTO detail_projects(id,user_id) VALUES(%s,%s)',(new,other))
+        assert db.execute('SELECT prompt_model FROM detail_projects WHERE id=%s',(new,)).fetchone()[0]=='gemini-3.8-flash'
+        db.execute("UPDATE detail_projects SET prompt_model='gpt-6-luna' WHERE id=%s",(new,))
+        with pytest.raises(psycopg.Error,match='DETAIL_PROMPT_MODEL_ROLLBACK_UNSAFE'):
+            with db.transaction():
+                db.execute((ROOT/'migrations/rollback/288_detail_prompt_models_rollback.sql').read_text())
+        assert db.execute('SELECT prompt_model FROM detail_projects WHERE id=%s',(new,)).fetchone()[0]=='gpt-6-luna'
+        db.execute("UPDATE detail_projects SET prompt_model='gemini-3.8-flash' WHERE id=%s",(new,))
+        db.execute((ROOT/'migrations/rollback/288_detail_prompt_models_rollback.sql').read_text())
+        assert db.execute('SELECT prompt_model FROM detail_projects WHERE id=%s',(new,)).fetchone()[0]=='gemini-3.8-flash'
+        db.execute((ROOT/'migrations/288_detail_prompt_models.sql').read_text())
+        db.rollback()  # Keep shared fixture/model defaults unchanged for other cases.

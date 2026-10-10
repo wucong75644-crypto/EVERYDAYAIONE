@@ -23,6 +23,7 @@ def plan_blocked(plan):
         return True
     code = plan.get("recovery_state", {}).get("last_error", {}).get("code", "")
     if code in {"ECOM_PLAN_INSUFFICIENT_CREDITS", "IMAGE_REFERENCE_CHANGED", "ANALYSIS_IMAGE_INVALID",
+            'PLANNER_DELIVERY_REPAIR_EXHAUSTED', 'PLANNER_RESOURCE_VERSION_MISMATCH',
             "ANALYSIS_IMAGE_FORMAT", "ANALYSIS_IMAGE_DIMENSIONS", "ANALYSIS_IMAGE_TOO_LARGE",
             "ANALYSIS_IMAGE_ENCODING_TOO_LARGE", "ANALYSIS_IMAGE_TOTAL_TOO_LARGE", "RESOURCE_ACCESS_DENIED"}:
         return True
@@ -63,6 +64,7 @@ def recovery_projection(plan, project, tasks):
     def state(key, blocked):
         job = jobs.get(key, {})
         message = {'IMAGE_REFERENCE_CHANGED':'原始图片已变化，请重新上传后开始。',
+            'PLANNER_DELIVERY_REPAIR_EXHAUSTED':'已保留有效方案，自动整理未完成，需要平台处理后继续。',
             'DETAIL_PRICE_CHANGED':'图片费用已变化，请确认当前费用后重新开始。',
             'DETAIL_INSUFFICIENT_CREDITS':'积分不足，请补充积分后继续。',
             'DETAIL_IDENTITY_DENIED':'当前权限已变化，请核验后继续。'}.get(job.get('reason')) if blocked else None

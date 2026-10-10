@@ -65,7 +65,8 @@ def error_facts(error):
     # forwarded or interpreted as natural-language recovery instructions.
     code = code or next((c for c in known if c in str(error)), "")
     if code:
-        category = ("uncertain" if code == "ECOM_PLAN_EXECUTION_UNCERTAIN" else
+        category = ('output_validation' if code.startswith('PLANNER_') else
+                    "uncertain" if code == "ECOM_PLAN_EXECUTION_UNCERTAIN" else
                     "budget" if code in known[:1] or "BUDGET" in code else "business")
         return code, category, False
     if isinstance(error, (ValueError, json.JSONDecodeError)):

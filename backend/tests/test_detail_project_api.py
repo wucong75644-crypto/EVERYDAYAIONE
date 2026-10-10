@@ -8,6 +8,7 @@ from api.routes.detail_project import (
     get_detail_project_service,
     reorder_detail_project_images,
     update_detail_project,
+    archive_detail_project,
 )
 from schemas.detail_project import (
     DetailImageAttachRequest, DetailImageOrderRequest, DetailProjectSettingsPatch,
@@ -21,6 +22,13 @@ def test_current_returns_empty_project() -> None:
     response = get_current_detail_project(service)
     assert response.success is True
     assert response.data == {"project": None}
+
+
+def test_archive_reuses_owner_scoped_atomic_service():
+    from uuid import uuid4
+    service=MagicMock(); project=uuid4()
+    assert archive_detail_project(project,service).data=={'project':None}
+    service.archive.assert_called_once_with(str(project))
 
 
 def test_attach_returns_latest_project() -> None:

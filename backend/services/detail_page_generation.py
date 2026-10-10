@@ -12,7 +12,8 @@ from core.exceptions import AppException
 from services.agent.image.ecommerce_planner.contracts import source_id
 from services.agent.image.ecommerce_planner.inputs import FixedSettings, source_bindings
 from services.agent.image.ecommerce_planner.page_profile import profile
-from services.agent.image.ecommerce_planner.prompt_resources import resources, HASHES, SCHEMA_SHA256, INTEGRATION_RULES_SHA256
+from services.agent.image.ecommerce_planner.prompt_resources import resources, resource_versions
+from services.agent.image.ecommerce_planner.format_delivery import PROMPTS_VERSION
 from services.agent.image.ecommerce_planner.service import EcommerceImagePlanner, PlannerStreamBudget, _digest
 from services.detail_project_service import DetailProjectService
 from services.detail_project_tasks import execution_state
@@ -160,18 +161,17 @@ class DetailPageGeneration:
     def read(self, project_id):
         project = self.projects.get_by_id(project_id)
         plans = self.db.table('ecom_image_plans').select('*').eq('project_id', project_id).order('created_at').order('id').execute().data or []
-        plans = [row for row in plans if str(row['generation_run_id']) == project.get('run_state', {}).get('run_id')]
-        plans.sort(key=lambda row: 0 if row['input_snapshot'].get('task_type')=='main_images' else 1)
+        current_run = project.get('run_state', {}).get('run_id')
         tasks = self.db.table('tasks').select('id,status,result,result_data,error_message,credits_used,request_params,created_at').eq('user_id', self.user_id).eq(
             "request_params->'_media_request_v1'->'origin'->>'project_id'", project_id).order('created_at').order('id').execute().data or []
-        project['groups'] = [{
+        groups = [{
             'plan_id': row['id'], 'kind': row['input_snapshot']['task_type'], 'status': row['status'],
             'execution_state': execution_state(row),
             'stage': row['current_stage'], 'count': row['image_count'], 'items': row['items'],
             'error': plan_error(row),
             'acceptance_error': row.get('recovery_state', {}).get('acceptance_error'),
             'resume_request_id': row.get('recovery_state', {}).get('resume_request_id'),
-            'can_resume': can_resume_plan(row),
+            'can_resume': str(row['generation_run_id']) == current_run and can_resume_plan(row),
             'auto_recovery': recovery_projection(row, project, [task for task in tasks if
                 task['request_params']['_media_request_v1']['origin']['plan_source']['plan_id'] == row['id']]),
             'retry_may_have_provider_cost': can_resume_plan(row) and any(closed_timeout(a)
@@ -184,6 +184,19 @@ class DetailPageGeneration:
                  'retry_of_task_id': task['request_params']['_media_request_v1']['origin'].get('retry_of_task_id')}
                 for task in tasks if task['request_params']['_media_request_v1']['origin']['plan_source']['plan_id'] == row['id']]
         } for row in plans]
+        runs = {}
+        for row, group in zip(plans, groups):
+            run_id = str(row['generation_run_id'])
+            if run_id != current_run:
+                group['auto_recovery'] = None
+            run = runs.setdefault(run_id, {'run_id': run_id, 'created_at': row['created_at'],
+                'requirement': '\n'.join(part.get('text', '') for message in row['input_snapshot'].get('messages', [])
+                    for part in message.get('parts', [])), 'groups': []})
+            run['groups'].append(group)
+        project['runs'] = list(runs.values())
+        for run in project['runs']:
+            run['groups'].sort(key=lambda group: group['kind'] == 'detail_page')
+        project['groups'] = runs.get(current_run, {}).get('groups', [])
         return project
 
     def start(self, project_id, version, request_id):
@@ -225,8 +238,7 @@ class DetailPageGeneration:
             rows.append({'id':str(uuid4()),'project_id':project_id,'generation_run_id':request_id,
                 'user_id':self.user_id,'org_id':self.org_id,'invocation_key':kind,'input_digest':_digest(snapshot),
                 'image_count':count,'input_snapshot':snapshot,'target_size':snapshot['target_size'],
-                'prompt_versions':{'resources_sha256':HASHES,'schema_sha256':SCHEMA_SHA256,
-                    'integration_sha256':INTEGRATION_RULES_SHA256,'assembly_version':'ecom-fixed-frame.v3'},
+                'prompt_versions':resource_versions(PROMPTS_VERSION),
                 'model_settings':{'model':project['prompt_model'],'profile':vars(selected),'image_budget':image_budget,
                     'delivery_policy':POLICY}})
         try:
@@ -388,7 +400,12 @@ class DetailPageWorker:
         resolver=PageImageInputResolver(owner)
         try:
             urls=[]
-            bodies,schema=resources(row['input_snapshot']['task_type'])
+            version=(row.get('prompt_versions') or {}).get('stage_three_delivery_version')
+            bodies,schema=resources(row['input_snapshot']['task_type'],version)
+            expected=resource_versions(version)
+            if any((version==PROMPTS_VERSION or key in row.get('prompt_versions',{})) and row.get('prompt_versions',{}).get(key)!=value
+                    for key,value in expected.items()):
+                raise ValueError('PLANNER_RESOURCE_VERSION_MISMATCH')
             # Core owns the claim. Renewal retains its exact token and never resets attempt deadlines.
             async def heartbeat():
                 while True:

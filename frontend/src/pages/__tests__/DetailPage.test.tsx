@@ -36,7 +36,7 @@ describe('DetailPage 页面骨架', () => {
     vi.mocked(listDetailProjects).mockResolvedValue({items:[],next_cursor:null});
     vi.mocked(createDetailProject).mockResolvedValue({id:"empty",version:1,content_type:"default",platform:"taobao",requirement:"",language:"zh-CN",aspect_ratio:"1:1",quality:"1k",image_count:14,status:"draft",images:[]});
     vi.mocked(getDetailProject).mockResolvedValue(null);
-    vi.mocked(getDetailCapabilities).mockResolvedValue({enabled:true,prompt_models:[{id:'kimi-k3',name:'Kimi K3',available:true,reason:null}],image_models:[]});
+    vi.mocked(getDetailCapabilities).mockResolvedValue({enabled:true,prompt_models:[{id:'gemini-3.8-flash',name:'Gemini 3.8 Flash',available:true,reason:null},{id:'kimi-k3',name:'Kimi K3',available:true,reason:null}],image_models:[]});
     vi.mocked(generateRequirementSuggestions).mockReset();
   });
 
@@ -44,7 +44,7 @@ describe('DetailPage 页面骨架', () => {
     renderPage();
     await waitFor(() => expect(useDetailPageStore.getState().isHydrating).toBe(false));
     expect(screen.getByRole('button',{name:'生成数量'})).toHaveTextContent('14张');
-    expect(screen.getByRole('button',{name:'提示词模型'})).toHaveTextContent('Kimi');
+    expect(screen.getByRole('button',{name:'提示词模型'})).toHaveTextContent('Gemini');
     expect(screen.getByText('上传产品图并填写要求后，点击“开始生成”开始')).toBeInTheDocument();
     expect(screen.queryByText('确认图片规划')).not.toBeInTheDocument();
   });
@@ -52,6 +52,16 @@ describe('DetailPage 页面骨架', () => {
   it('卸载只取消页面订阅并清理页面状态', () => {
     const {unmount}=renderPage();unmount();
     expect(useDetailPageStore.getState().groups).toEqual([]);
+  });
+
+  it.each(['completed','failed'])('已结束状态 %s 可修改要求并再次生成，仍保留原图片和设置',async status=>{
+    renderPage();await waitFor(()=>expect(useDetailPageStore.getState().isHydrating).toBe(false));
+    act(()=>useDetailPageStore.setState({status,images:[{id:'image',category:'product',status:'ready',previewUrl:'a.png',error:null}]}));
+    const input=screen.getByRole('textbox',{name:'产品信息与创作要求'});expect(input).toBeEnabled();
+    fireEvent.change(input,{target:{value:'换成新的风格'}});
+    expect(useDetailPageStore.getState().form.requirement).toBe('换成新的风格');
+    expect(screen.getByRole('button',{name:'再次生成'})).toBeEnabled();
+    expect(screen.getByRole('button',{name:'上传图片'})).toBeDisabled();
   });
 
   it('插入时将编辑产品、增补卖点、风格和客户回答一起回填输入框，不再次调用模型', async () => {

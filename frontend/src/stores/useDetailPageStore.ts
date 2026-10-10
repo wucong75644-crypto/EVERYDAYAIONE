@@ -1,19 +1,21 @@
 import { create } from 'zustand';
-import { attachDetailImage, createDetailProject, listDetailProjects, refreshDetailTaskStatuses, removeDetailImage, saveDetailSettings,
+import { archiveDetailProject, attachDetailImage, createDetailProject, listDetailProjects, refreshDetailTaskStatuses, removeDetailImage, saveDetailSettings,
   getDetailProject, startDetailProject, getDetailCapabilities } from '../services/detailProject';
 import { uploadImageFile } from '../services/upload';
 import { toApiRequestError } from '../services/api';
-import type { DetailGenerationForm, DetailLocalImage, DetailProjectDraft, DetailGroup, PromptModelOption, DetailTaskSummary } from '../types/detailPage';
+import type { DetailGenerationForm, DetailLocalImage, DetailProjectDraft, DetailGroup, DetailGenerationRun, PromptModelOption, DetailTaskSummary } from '../types/detailPage';
 
-export const DEFAULT_FORM: DetailGenerationForm = {contentType:'default',platform:'taobao',requirement:'',language:'zh-CN',aspectRatio:'1:1',quality:'1k',count:14,promptModel:'kimi-k3'};
+export const DEFAULT_FORM: DetailGenerationForm = {contentType:'default',platform:'taobao',requirement:'',language:'zh-CN',aspectRatio:'1:1',quality:'1k',count:14,promptModel:'gemini-3.8-flash'};
 interface DetailPageState {
   images: DetailLocalImage[]; form: DetailGenerationForm; groups: DetailGroup[];
+  runs: DetailGenerationRun[]; currentRunId: string|null;
   status: string; models: PromptModelOption[]; ratios: string[]; enabled: boolean;
   isTransitioning: boolean; isUploading: boolean; formError: string | null; projectId: string | null;
   projectVersion: number | null; isHydrating: boolean;
   tasks: DetailTaskSummary[]; taskCursor: string|null; isLoadingTasks: boolean; taskError: string|null; scopeKey: string|null; isMutating: boolean;
   hydrateDraft: (scopeKey?: string, preferredId?: string|null) => Promise<void>;
   selectTask: (id:string) => Promise<void>; createTask: () => Promise<void>;
+  deleteTask: (id:string) => Promise<void>;
   loadMoreTasks: () => Promise<void>; refreshTasks: () => Promise<void>;
   refresh: () => Promise<void>;
   attachWorkspaceImages: (category: DetailLocalImage['category'],paths:string[]) => Promise<void>;
@@ -24,10 +26,12 @@ interface DetailPageState {
 }
 const initialState = {tasks:[] as DetailTaskSummary[],taskCursor:null as string|null,isLoadingTasks:false,
   taskError:null as string|null,scopeKey:null as string|null,isMutating:false,images: [] as DetailLocalImage[], form: {...DEFAULT_FORM},groups: [] as DetailGroup[],
+  runs:[] as DetailGenerationRun[],currentRunId:null as string|null,
   status:'draft',models: [] as PromptModelOption[],ratios:['1:1','3:4','4:5','16:9'],enabled:false,
   isTransitioning:false,isUploading:false,formError:null as string|null,projectId:null as string|null,projectVersion:null as number|null,isHydrating:false};
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg','image/png','image/webp']);
 const MAX_IMAGES=9;
+const EDITABLE_STATUSES=['draft','completed','failed'];
 let settingsTimer: ReturnType<typeof setTimeout> | null=null;
 let pollTimer: ReturnType<typeof setTimeout> | null=null;
 let saving: Promise<void>=Promise.resolve();
@@ -52,9 +56,10 @@ function releasePreview(image:DetailLocalImage){if(image.previewUrl.startsWith('
 function applyDraft(project:DetailProjectDraft|null){
   if(!project)return {...initialState,form:{...DEFAULT_FORM}};
   return {projectId:project.id,projectVersion:project.version,status:project.status??'draft',groups:project.groups??[],
+    runs:project.runs??[],currentRunId:project.run_state?.run_id??null,
     form:{contentType:project.content_type,platform:project.platform,requirement:project.requirement,
       language:project.language,aspectRatio:project.aspect_ratio,quality:project.quality,
-      count:project.content_type==='default'?14:project.image_count,promptModel:project.prompt_model??'kimi-k3'},
+      count:project.content_type==='default'?14:project.image_count,promptModel:project.prompt_model??'gemini-3.8-flash'},
     images:project.images.map((image):DetailLocalImage=>({id:image.id,category:image.category,workspacePath:image.workspace_path,
       previewUrl:image.thumbnail_url||image.original_url||'',originalUrl:image.original_url||undefined,error:null,
       status:image.status,sortOrder:image.sort_order,name:image.workspace_path.split('/').pop()||'图片'}))};
@@ -64,7 +69,7 @@ function persistSettings(allowBusy=false){
   saving=saving.catch(()=>{}).then(async()=>{
     while(valid(epoch,id)){
       const {projectId,projectVersion,form,status,isUploading,isMutating}=useDetailPageStore.getState();
-      if(!projectId||projectVersion===null||status!=='draft'||((isUploading||isMutating)&&!allowBusy)||savedRevision===formRevision)return;
+      if(!projectId||projectVersion===null||!EDITABLE_STATUSES.includes(status)||((isUploading||isMutating)&&!allowBusy)||savedRevision===formRevision)return;
       const revision=formRevision;
       const saved=await saveDetailSettings(projectId,projectVersion,form);
       if(!valid(epoch,id))return;
@@ -128,6 +133,34 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
       createRequestId=null;adopt(project);await get().refreshTasks();
     }catch(error){if(valid(epoch)){set({isTransitioning:false,formError:toApiRequestError(error).message});schedulePoll();scheduleListPoll();}}
   },
+  deleteTask:async(id)=>{
+    if(get().isTransitioning||get().isUploading||get().isMutating||get().isHydrating)return;
+    let epoch=lifecycleVersion;set({isTransitioning:true,taskError:null});clearSettingsTimer();
+    try{
+      if(id!==get().projectId)await persistSettings();
+      if(!valid(epoch))return;
+      await archiveDetailProject(id);
+      if(!valid(epoch))return;
+      epoch=++lifecycleVersion;
+      const wasSelected=id===get().projectId;
+      set(state=>({tasks:state.tasks.filter(task=>task.id!==id),isLoadingTasks:false}));
+      runRequests.delete(id);
+      if(wasSelected){
+        get().images.forEach(releasePreview);formRevision=0;savedRevision=0;
+        set({...applyDraft(null),tasks:get().tasks,taskCursor:get().taskCursor,scopeKey:get().scopeKey,models:get().models,
+          ratios:get().ratios,enabled:get().enabled,isTransitioning:true});
+        const next=get().tasks[0];
+        let project:DetailProjectDraft|null;
+        if(next)project=await getDetailProject(next.id);
+        else{createRequestId??=crypto.randomUUID();project=await createDetailProject(createRequestId);}
+        if(!valid(epoch))return;
+        if(!project||project.status==='archived')throw new Error('任务已删除，请重新加载任务列表');
+        createRequestId=null;adopt(project);
+      }else set({isTransitioning:false});
+      void get().refreshTasks();schedulePoll();
+    }catch(error){if(valid(epoch))set({isTransitioning:false,taskError:toApiRequestError(error).message});}
+    finally{if(valid(epoch)){schedulePoll();scheduleListPoll();}}
+  },
   loadMoreTasks:async()=>{
     const {taskCursor,isLoadingTasks}=get();if(!taskCursor||isLoadingTasks)return;
     const epoch=lifecycleVersion;set({isLoadingTasks:true});
@@ -154,7 +187,9 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
     const {projectId}=get();const epoch=lifecycleVersion;if(!projectId)return;
     try{const project=await getDetailProject(projectId);
       if(epoch!==lifecycleVersion)return;
-      if(project)set({status:project.status??'draft',groups:project.groups??[],formError:null});
+      if(project&&!get().isTransitioning&&!get().isMutating)set({status:project.status??'draft',groups:project.groups??[],
+        runs:project.runs??[],currentRunId:project.run_state?.run_id??null,
+        ...(savedRevision===formRevision?{projectVersion:Math.max(get().projectVersion??0,project.version)}:{}),formError:null});
     }catch(error){if(epoch!==lifecycleVersion)return;set({formError:toApiRequestError(error).message});}
     schedulePoll();
   },
@@ -270,7 +305,8 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
     finally{if(valid(epoch,projectId)){set({isMutating:false});get().updateForm({});}}
   },
   updateForm:(patch)=>{
-    if(get().status!=='draft'||get().isTransitioning||get().isHydrating)return;
+    if(!EDITABLE_STATUSES.includes(get().status)||get().isTransitioning||get().isHydrating)return;
+    if(get().status!=='draft'&&Object.keys(patch).some(key=>key!=='requirement'))return;
     formRevision++;
     set(state=>{const next={...state.form,...patch};
       if(patch.contentType){next.count=patch.contentType==='default'?14:patch.count??(state.form.contentType==='default'?7:state.form.count);
@@ -279,7 +315,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
     clearSettingsTimer();const epoch=lifecycleVersion;settingsTimer=setTimeout(()=>{void persistSettings().catch(error=>{if(valid(epoch))set({formError:toApiRequestError(error).message});});},500);
   },
   startAnalysis:async()=>{
-    if(get().isTransitioning||get().isUploading||get().isMutating||get().status!=='draft')return;
+    if(get().isTransitioning||get().isUploading||get().isMutating||!EDITABLE_STATUSES.includes(get().status))return;
     if(!get().images.some(image=>image.category==='product'&&image.status==='ready')||get().images.some(image=>image.status!=='ready')){
       set({formError:'请先完成产品图片上传'});return;
     }
@@ -290,7 +326,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
     try{
       if(requestId&&sourceId){
         const existing=await getDetailProject(sourceId);if(!valid(epoch,sourceId))return;
-        if(existing?.run_state?.request_id===requestId){set({...applyDraft(existing),isTransitioning:false});schedulePoll();return;}
+        if(existing?.run_state?.request_id===requestId){runRequests.delete(sourceId);lifecycleVersion++;adopt(existing);return;}
       }
       await persistSettings();if(!valid(epoch,sourceId))return;
       const {projectId,projectVersion}=get();if(!projectId||projectVersion===null)throw new Error('项目尚未保存');
@@ -298,7 +334,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
       const project=await startDetailProject(projectId,projectVersion,requestId);
       if(!valid(epoch,sourceId))return;
       if(!project||project.id!==projectId)throw new Error('任务受理结果尚未确认，请重试核实');
-      adopt(project);
+      runRequests.delete(projectId);lifecycleVersion++;adopt(project);
       void get().refreshTasks();
       schedulePoll();
     }catch(error){if(!valid(epoch,sourceId))return;const failure=toApiRequestError(error);

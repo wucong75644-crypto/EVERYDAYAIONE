@@ -80,10 +80,7 @@ def start_detail_project(project_id: UUID,body: DetailRunRequest,service: Detail
 
 @router.post("/{project_id}/archive", response_model=DetailProjectEnvelope)
 def archive_detail_project(project_id: UUID,service: DetailProjectService = Depends(get_detail_project_service)):
-    project = service.get_by_id(str(project_id))
-    if project["status"] not in {"draft","completed","failed"}:
-        raise AppException("DETAIL_RUN_ACTIVE", "请等待当前任务完成", 409)
-    service.db.table("detail_projects").update({"status":"archived"}).eq("id",str(project_id)).eq("user_id",service.user_id).execute()
+    service.archive(str(project_id))
     return DetailProjectEnvelope(data={"project": None})
 
 

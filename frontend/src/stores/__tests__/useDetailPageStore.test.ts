@@ -17,9 +17,78 @@ beforeEach(()=>{
 });
 afterEach(()=>{useDetailPageStore.getState().reset();vi.unstubAllGlobals();vi.useRealTimers();});
 describe('真实页面任务状态',()=>{
- it('默认14张且默认Kimi，没有模拟规划',()=>{
-  expect(useDetailPageStore.getState().form).toMatchObject({contentType:'default',count:14,promptModel:'kimi-k3'});
+ it('修改已结束任务后保存原文并创建新一轮，保留历史且不复用上一轮请求号',async()=>{
+  const old={run_id:'old-run',created_at:'2026-10-09',requirement:'旧要求',groups:[]};
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,status:'completed',version:4,runs:[old],run_state:{run_id:'old-run',request_id:'old-run'}});
+  await useDetailPageStore.getState().hydrateDraft();
+  useDetailPageStore.getState().updateForm({requirement:'  新风格\n保持细节  '});
+  vi.mocked(api.startDetailProject).mockImplementation(async(_id,_version,request)=>({...draft,status:'analyzing',version:6,
+    runs:[old,{...old,run_id:request,requirement:'新要求'}],run_state:{run_id:request,request_id:request}}));
+  await useDetailPageStore.getState().startAnalysis();
+  expect(api.saveDetailSettings).toHaveBeenCalledWith('project',4,expect.objectContaining({requirement:'  新风格\n保持细节  '}));
+  expect(api.startDetailProject).toHaveBeenCalledWith('project',5,expect.not.stringMatching(/^old-run$/));
+  expect(useDetailPageStore.getState().runs[0]).toEqual(old);
+  const first=vi.mocked(api.startDetailProject).mock.calls[0][2];
+  useDetailPageStore.setState({status:'completed'});
+  await useDetailPageStore.getState().startAnalysis();
+  expect(vi.mocked(api.startDetailProject).mock.calls[1][2]).not.toBe(first);
+ });
+ it('删除选中任务后切换到已有任务，不删除图片或取消后台任务',async()=>{
+  const second={id:'second',title:'另一产品',created_at:'2026-10-09',content_type:'default' as const,status:'completed',display_status:'completed' as const,expected_count:14,completed_count:14,thumbnail_url:null,stage:null,recovery_waiting:false};
+  const first=(await api.listDetailProjects()).items[0];
+  vi.mocked(api.listDetailProjects).mockResolvedValue({items:[first,second],next_cursor:null});
+  await useDetailPageStore.getState().hydrateDraft();
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,id:'second',status:'completed',requirement:'另一产品要求'});
+  vi.mocked(api.archiveDetailProject).mockResolvedValue({} as Awaited<ReturnType<typeof api.archiveDetailProject>>);
+  vi.mocked(api.listDetailProjects).mockResolvedValue({items:[second],next_cursor:null});
+  await useDetailPageStore.getState().deleteTask('project');
+  expect(api.archiveDetailProject).toHaveBeenCalledExactlyOnceWith('project');
+  expect(useDetailPageStore.getState()).toMatchObject({projectId:'second',form:{requirement:'另一产品要求'}});
+  expect(useDetailPageStore.getState().tasks.map(task=>task.id)).toEqual(['second']);
+  expect(api.removeDetailImage).not.toHaveBeenCalled();expect(api.createDetailProject).not.toHaveBeenCalled();
+ });
+ it('删除最后一个任务后新建空白草稿；拒绝删除时保留当前内容',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  vi.mocked(api.archiveDetailProject).mockRejectedValueOnce(new Error('任务仍在后台执行，请完成后再删除'));
+  await useDetailPageStore.getState().deleteTask('project');
+  expect(useDetailPageStore.getState()).toMatchObject({projectId:'project',taskError:'任务仍在后台执行，请完成后再删除'});
+  vi.mocked(api.archiveDetailProject).mockResolvedValueOnce({} as Awaited<ReturnType<typeof api.archiveDetailProject>>);
+  vi.mocked(api.listDetailProjects).mockResolvedValue({items:[],next_cursor:null});
+  await useDetailPageStore.getState().deleteTask('project');
+  expect(useDetailPageStore.getState().projectId).toBe('new-project');
+  expect(api.createDetailProject).toHaveBeenCalledTimes(1);
+ });
+ it('删除回调迟到时不覆盖已切换账号的列表与选中项',async()=>{
+  await useDetailPageStore.getState().hydrateDraft('userA:personal');
+  let finish!:()=>void;
+  vi.mocked(api.archiveDetailProject).mockImplementationOnce(()=>new Promise(resolve=>{finish=()=>resolve({} as Awaited<ReturnType<typeof api.archiveDetailProject>>);}));
+  const pending=useDetailPageStore.getState().deleteTask('project');
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,id:'B',requirement:'B产品'});
+  await useDetailPageStore.getState().hydrateDraft('userB:personal','B');
+  finish();await pending;
+  expect(useDetailPageStore.getState()).toMatchObject({scopeKey:'userB:personal',projectId:'B',form:{requirement:'B产品'}});
+  expect(api.createDetailProject).not.toHaveBeenCalled();
+ });
+ it('编辑历史要求后刷新不覆盖文字，也不会吞掉另一窗口的版本冲突',async()=>{
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,status:'completed',version:3});
+  await useDetailPageStore.getState().hydrateDraft();
+  useDetailPageStore.getState().updateForm({requirement:'本地新要求'});
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,status:'completed',version:8,requirement:'其他窗口要求'});
+  await useDetailPageStore.getState().refresh();
+  expect(useDetailPageStore.getState()).toMatchObject({form:{requirement:'本地新要求'},projectVersion:3});
+  await vi.advanceTimersByTimeAsync(500);
+  expect(api.saveDetailSettings).toHaveBeenCalledWith('project',3,expect.objectContaining({requirement:'本地新要求'}));
+ });
+ it('默认14张且默认Gemini，没有模拟规划',()=>{
+  expect(useDetailPageStore.getState().form).toMatchObject({contentType:'default',count:14,promptModel:'gemini-3.8-flash'});
   expect(useDetailPageStore.getState().groups).toEqual([]);
+ });
+ it('旧任务保留Kimi，新任务使用服务端Gemini默认值',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  expect(useDetailPageStore.getState().form.promptModel).toBe('kimi-k3');
+  vi.mocked(api.createDetailProject).mockResolvedValueOnce({...draft,id:'new-project',prompt_model:'gemini-3.8-flash'});
+  await useDetailPageStore.getState().createTask();
+  expect(useDetailPageStore.getState().form.promptModel).toBe('gemini-3.8-flash');
  });
  it('切换单类型7张，默认重新变成14张，保留显式比例',()=>{
   const store=useDetailPageStore.getState();store.updateForm({contentType:'detail_page',aspectRatio:'16:9'});

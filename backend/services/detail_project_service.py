@@ -61,7 +61,7 @@ class DetailProjectService:
 
     def get_ai_input_project(self, project_id: str) -> dict:
         """读取当前用户可用于 AI 分析的草稿，并验证图片就绪状态。"""
-        project = self._require_project(project_id)
+        project = self._require_project(project_id, allow_finished=True)
         images = project.get("images") or []
         if not any(image.get("category") == "product" for image in images):
             raise AppException("DETAIL_PRODUCT_IMAGE_REQUIRED", "请至少上传1张产品图", 400)
@@ -111,9 +111,9 @@ class DetailProjectService:
         }
         updates = {key: value for key, value in settings.items() if key in allowed and value is not None}
         if not updates:
-            return self._require_project(project_id)
+            return self._require_project(project_id, allow_finished=True)
         if "content_type" in updates or "image_count" in updates:
-            project = self._require_project(project_id)
+            project = self._require_project(project_id, allow_finished=True)
             content_type = updates.get("content_type", project["content_type"])
             image_count = updates.get("image_count", project["image_count"])
             if (content_type == "default" and image_count != 14) or (content_type != "default" and image_count > 15):
@@ -123,7 +123,7 @@ class DetailProjectService:
         sql = f"""
             UPDATE detail_projects SET {assignments}, version = version + 1, updated_at = NOW()
             WHERE id = %s AND user_id = %s AND org_id IS NOT DISTINCT FROM %s
-              AND version = %s AND status = 'draft'
+              AND version = %s AND status IN ('draft','completed','failed')
             RETURNING id
         """
         self._execute_versioned(sql, params)
@@ -204,9 +204,20 @@ class DetailProjectService:
             conn.commit()
         return self.get_by_id(project_id)
 
-    def _require_project(self, project_id: str) -> dict:
+    def archive(self, project_id: str) -> None:
+        self.get_by_id(project_id)
+        with self.db.pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE detail_projects SET status='archived',version=version+1,updated_at=NOW() "
+                "WHERE id=%s AND user_id=%s AND org_id IS NOT DISTINCT FROM %s "
+                "AND status IN ('draft','completed','failed','archived') RETURNING id",
+                (project_id,self.user_id,self.org_id))
+            if not cur.fetchone():
+                raise AppException('DETAIL_RUN_ACTIVE','任务仍在后台执行，请完成后再删除',409)
+            conn.commit()
+
+    def _require_project(self, project_id: str, allow_finished: bool = False) -> dict:
         project = self.get_by_id(project_id)
-        if project["status"] != "draft":
+        if project["status"] not in ({'draft','completed','failed'} if allow_finished else {'draft'}):
             raise AppException("DETAIL_PROJECT_NOT_DRAFT", "任务已提交，不能修改", 409)
         return project
 

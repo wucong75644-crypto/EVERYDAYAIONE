@@ -16,32 +16,40 @@ interface DeleteConfirmModalProps {
   isOpen: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  title?: string;
+  description?: string;
+  isDeleting?: boolean;
 }
 
 export default function DeleteConfirmModal({
   isOpen,
   onConfirm,
   onCancel,
+  title = '确定删除对话？',
+  description = '删除后，聊天记录将不可恢复。',
+  isDeleting = false,
 }: DeleteConfirmModalProps) {
   return (
-    <Modal isOpen={isOpen} onClose={onCancel} showCloseButton={false} maxWidth="max-w-sm">
+    <Modal isOpen={isOpen} onClose={()=>{if(!isDeleting)onCancel();}} showCloseButton={false} maxWidth="max-w-sm">
       <div className="flex items-start gap-3">
         <div className="w-10 h-10 bg-warning-light rounded-full flex items-center justify-center flex-shrink-0">
           <AlertTriangle className="w-5 h-5 text-warning" />
         </div>
         <div className="flex-1">
-          <h3 className="text-lg font-medium text-text-primary">确定删除对话？</h3>
-          <p className="mt-2 text-sm text-text-tertiary">删除后，聊天记录将不可恢复。</p>
+          <h3 className="text-lg font-medium text-text-primary">{title}</h3>
+          <p className="mt-2 text-sm text-text-tertiary">{description}</p>
         </div>
       </div>
 
       <div className="mt-6 flex gap-3 justify-end">
-        <Button variant="secondary" size="md" onClick={onCancel}>
+        <Button variant="secondary" size="md" disabled={isDeleting} onClick={onCancel}>
           取消
         </Button>
         <Button
           size="md"
           onClick={onConfirm}
+          disabled={isDeleting}
+          loading={isDeleting}
           className="bg-error text-text-on-accent hover:bg-error/90"
         >
           删除

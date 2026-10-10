@@ -426,9 +426,9 @@ class KieChatAdapter(BaseChatAdapter):
 
         将现有 chat() 方法的输出转换为统一的 StreamChunk 格式
         """
-        # Luna is served by KIE's Responses endpoint; it still uses this
+        # GPT planners use KIE's Responses endpoint through this
         # existing KIE adapter/client/auth/Gateway path.
-        if self.model == "gpt-5-6-luna":
+        if self.config.get("api_protocol") == "responses":
             async for chunk in self._stream_responses(messages, reasoning_effort, **kwargs):
                 yield chunk
             return
@@ -485,7 +485,7 @@ class KieChatAdapter(BaseChatAdapter):
         **kwargs,
     ) -> ChatResponse:
         """非流式聊天（统一接口，避免与现有 chat 方法冲突）"""
-        if self.model == "gpt-5-6-luna":
+        if self.config.get("api_protocol") == "responses":
             return await self._responses_sync(messages, reasoning_effort, **kwargs)
         formatted_messages = self.format_messages_from_history(messages)
         effort = ReasoningEffort(reasoning_effort) if reasoning_effort else ReasoningEffort.HIGH
@@ -560,6 +560,23 @@ class KieChatAdapter(BaseChatAdapter):
         usage = response.get("usage") or {}
         return usage, response.get("credits_consumed")
 
+    @staticmethod
+    def _responses_failure(event):
+        import re
+        from services.kie_image_fallback_request import safe_error
+        response = event.get("response")
+        detail = event.get("error") or (response.get("error") if isinstance(response, dict) else None) or event
+        code = None
+        if isinstance(detail, dict):
+            code = detail.get("code")
+            message = detail.get("message") or detail.get("msg") or code or event.get("type")
+        else:
+            message = detail
+        # Keep provider diagnostics without treating a stream failure as a
+        # definite HTTP rejection or automatically resending a charged request.
+        code = str(code) if isinstance(code, (str, int)) and re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", str(code)) else None
+        return KieAPIError("KIE_RESPONSES_FAILED: " + safe_error(RuntimeError(str(message))), error_code=code)
+
     async def _stream_responses(self, messages, reasoning_effort, **kwargs):
         import json
         import httpx
@@ -604,9 +621,11 @@ class KieChatAdapter(BaseChatAdapter):
                     event = json.loads(raw)
                 except ValueError as error:
                     raise KieAPIError("KIE_RESPONSES_INVALID_EVENT") from error
+                if not isinstance(event, dict):
+                    raise KieAPIError("KIE_RESPONSES_INVALID_EVENT")
                 kind = event.get("type")
                 if kind in {"error", "response.failed", "response.incomplete"} or event.get("error"):
-                    raise KieAPIError("KIE_RESPONSES_FAILED")
+                    raise self._responses_failure(event)
                 if kind == "response.output_text.delta":
                     yield StreamChunk(content=event.get("delta", ""))
                 elif kind == "response.completed":
@@ -622,9 +641,11 @@ class KieChatAdapter(BaseChatAdapter):
                         event = json.loads(raw)
                     except ValueError as error:
                         raise KieAPIError("KIE_RESPONSES_INVALID_EVENT") from error
+                    if not isinstance(event, dict):
+                        raise KieAPIError("KIE_RESPONSES_INVALID_EVENT")
                     kind = event.get("type")
                     if kind in {"error", "response.failed", "response.incomplete"} or event.get("error"):
-                        raise KieAPIError("KIE_RESPONSES_FAILED")
+                        raise self._responses_failure(event)
                     if kind == "response.output_text.delta":
                         yield StreamChunk(content=event.get("delta", ""))
                     elif kind == "response.completed":

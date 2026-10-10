@@ -76,9 +76,12 @@ def validate_schema(value, schema, root=None):
                 pass
         else:
             raise ValueError("PLANNER_SCHEMA_ANYOF")
-    types = {"object": dict, "array": list, "string": str, "null": type(None)}
-    if "type" in schema and type(value) is not types[schema["type"]]:
+    types = {"object": dict, "array": list, "string": str, "null": type(None),
+        'integer': int, 'number': (int, float), 'boolean': bool}
+    if "type" in schema and type(value) not in (types[schema['type']] if isinstance(types[schema['type']], tuple) else (types[schema['type']],)):
         raise ValueError("PLANNER_SCHEMA_TYPE")
+    if type(value) in (int, float) and not schema.get('minimum', float('-inf')) <= value <= schema.get('maximum', float('inf')):
+        raise ValueError('PLANNER_SCHEMA_RANGE')
     if "const" in schema and value != schema["const"]:
         raise ValueError("PLANNER_SCHEMA_CONST")
     if "enum" in schema and value not in schema["enum"]:

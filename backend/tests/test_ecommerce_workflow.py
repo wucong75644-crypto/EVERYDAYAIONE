@@ -17,11 +17,12 @@ from services.agent.image.ecommerce_planner.service import EcommerceImagePlanner
 
 
 @pytest.mark.parametrize('code,error', [(401, KieAuthenticationError), (429, KieRateLimitError)])
-async def test_kie_http_200_business_failure_keeps_provider_error(code, error):
+@pytest.mark.parametrize('model', ['gpt-5-6-luna', 'gpt-6-luna'])
+async def test_kie_http_200_business_failure_keeps_provider_error(code, error, model):
     client = KieClient('test-credential')
     client._client = httpx.AsyncClient(base_url=client.BASE_URL, transport=httpx.MockTransport(
         lambda request: httpx.Response(200, json={'code': code, 'msg': 'rejected'})))
-    adapter = KieChatAdapter(client, 'gpt-5-6-luna')
+    adapter = KieChatAdapter(client, model)
     try:
         with pytest.raises(error) as raised:
             async for _ in adapter.stream_chat([{'role': 'user', 'content': 'test'}]):
@@ -32,9 +33,11 @@ async def test_kie_http_200_business_failure_keeps_provider_error(code, error):
         await adapter.close()
 
 
-async def test_kie_responses_preserves_images_and_terminal_usage():
+@pytest.mark.parametrize('model', ['gpt-5-6-luna', 'gpt-6-luna'])
+async def test_kie_responses_preserves_images_and_terminal_usage(model):
     seen = []
     def response(request):
+        assert request.url.path == '/codex/v1/responses'
         seen.append(json.loads(request.content))
         return httpx.Response(200, headers={'content-type': 'text/event-stream'}, content=(
             'data: {"type":"response.output_text.delta","delta":"OK"}\n\n'
@@ -42,7 +45,7 @@ async def test_kie_responses_preserves_images_and_terminal_usage():
             '"usage":{"input_tokens":13,"output_tokens":2}}}'))
     client = KieClient('test-credential')
     client._client = httpx.AsyncClient(base_url=client.BASE_URL, transport=httpx.MockTransport(response))
-    adapter = KieChatAdapter(client, 'gpt-5-6-luna')
+    adapter = KieChatAdapter(client, model)
     try:
         chunks = [chunk async for chunk in adapter.stream_chat([{'role': 'user', 'content': [
             {'type': 'input_text', 'text': '原文要求'},
@@ -50,6 +53,7 @@ async def test_kie_responses_preserves_images_and_terminal_usage():
             {'type': 'input_image', 'image_url': 'https://example.invalid/second.png'}]}])]
         assert ''.join(chunk.content or '' for chunk in chunks) == 'OK'
         assert chunks[-1].prompt_tokens == 13 and chunks[-1].completion_tokens == 2
+        assert seen[0]['model'] == model and seen[0]['reasoning'] == {'effort':'medium'}
         assert [part.get('image_url') for part in seen[0]['input'][0]['content'][1:]] == [
             'https://example.invalid/first.png', 'https://example.invalid/second.png']
     finally:
@@ -154,6 +158,7 @@ def planner():
 
 @pytest.mark.parametrize('model,json_mode,legacy', [
     ('kimi-k3', True, False), ('kimi-k3', False, True), ('gemini-3.8-flash', False, False),
+    ('gpt-6-luna', False, False),
 ])
 async def test_page_json_mode_only_applies_to_kimi_structured_stages(monkeypatch, model, json_mode, legacy):
     service = planner()
@@ -384,3 +389,38 @@ async def test_ecommerce_image_cannot_bypass_plan_source(monkeypatch, active, at
     monkeypatch.setattr('services.tools.dispatcher.current_dispatch_call_id', lambda: 'call')
     with pytest.raises(ChatImageNotAcceptedError, match='ECOM_PLAN_SOURCE_REQUIRED'):
         await ImageHandler(db).accept_chat_image(owner, {'mode': 'image_to_image', 'prompt': 'DIY'})
+
+
+@pytest.mark.parametrize('eof', [False, True])
+async def test_kie_responses_nonobject_event_is_provider_error(eof):
+    from services.adapters.kie.client import KieAPIError
+    client=KieClient('test-credential')
+    client._client=httpx.AsyncClient(base_url=client.BASE_URL,transport=httpx.MockTransport(
+        lambda request:httpx.Response(200,headers={'content-type':'text/event-stream'},
+            content='data: "provider error"'+('' if eof else '\n\n'))))
+    adapter=KieChatAdapter(client,'gpt-6-luna')
+    try:
+        with pytest.raises(KieAPIError,match='KIE_RESPONSES_INVALID_EVENT'):
+            _=[chunk async for chunk in adapter.stream_chat([{'role':'user','content':'test'}])]
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.parametrize('event', [
+    {'type':'error','code':'upstream_error','message':'provider failed'},
+    {'type':'response.failed','response':{'error':{'code':'upstream_error','message':'provider failed'}}},
+])
+async def test_kie_terminal_failure_retains_diagnostics_without_guessing_http_rejection(event):
+    from services.adapters.kie.client import KieAPIError
+    client=KieClient('test-credential')
+    client._client=httpx.AsyncClient(base_url=client.BASE_URL,transport=httpx.MockTransport(
+        lambda request:httpx.Response(200,headers={'content-type':'text/event-stream'},
+            content='data: '+json.dumps(event)+'\n\n')))
+    adapter=KieChatAdapter(client,'gpt-6-luna')
+    try:
+        with pytest.raises(KieAPIError,match='provider failed') as raised:
+            _=[chunk async for chunk in adapter.stream_chat([{'role':'user','content':'test'}])]
+        assert raised.value.error_code=='upstream_error'
+        assert raised.value.status_code is None
+    finally:
+        await adapter.close()

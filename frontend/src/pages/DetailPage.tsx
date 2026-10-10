@@ -25,8 +25,9 @@ export default function DetailPage(){
     addImages,attachWorkspaceImages,removeImage,updateForm,startAnalysis,restart,refresh,hydrateDraft,reset}=state;
   const ready=images.some(image=>image.category==='product'&&image.status==='ready');
   const pending=images.some(image=>image.status!=='ready');
-  const requirementDisabled=isHydrating||isTransitioning||status!=='draft';
-  const disabled=requirementDisabled||state.isUploading||state.isMutating;
+  const requirementDisabled=isHydrating||isTransitioning||!['draft','completed','failed'].includes(status);
+  const disabled=isHydrating||isTransitioning||status!=='draft'||state.isUploading||state.isMutating;
+  const analyzeDisabled=requirementDisabled||state.isUploading||state.isMutating;
   const requirementAssist=useDetailRequirementAssist();
   const closeAssist=requirementAssist.close;
   const requirementAssistDisabled=disabled||!projectId||!ready||pending;
@@ -65,9 +66,11 @@ export default function DetailPage(){
     const selected=useDetailPageStore.getState().projectId;
     if(selected&&useDetailPageStore.getState().scopeKey===scopeKey){setSearchParams({projectId:selected},{replace:true});setTaskDrawer(false);}
   };
-  const sidebar=<DetailTaskSidebar tasks={state.tasks} selectedId={projectId} disabled={switchDisabled}
+  const sidebar=<DetailTaskSidebar key={scopeKey} tasks={state.tasks} selectedId={projectId} disabled={switchDisabled}
     loading={state.isLoadingTasks} hasMore={!!state.taskCursor} error={state.taskError}
-    onCreate={()=>void changeTask()} onSelect={id=>void changeTask(id)} onMore={()=>void state.loadMoreTasks()} onRefresh={()=>void state.refreshTasks()}/>;
+    onCreate={()=>void changeTask()} onSelect={id=>void changeTask(id)} onMore={()=>void state.loadMoreTasks()} onRefresh={()=>void state.refreshTasks()}
+    onDelete={async id=>{await state.deleteTask(id);const current=useDetailPageStore.getState();
+      if(current.scopeKey===scopeKey)setSearchParams(current.projectId?{projectId:current.projectId}:{},{replace:true});}}/>;
   return <PageTransition className="flex h-dvh flex-col overflow-hidden bg-[var(--s-surface-base)] text-[var(--s-text-primary)]">
     <div className="shrink-0"><DetailPageHeader/></div>
     <main className="mx-auto min-h-0 w-full max-w-[2200px] flex-1 p-3 sm:p-5">
@@ -75,12 +78,13 @@ export default function DetailPage(){
       <section className="grid h-full min-h-0 grid-cols-1 gap-4 md:grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[360px_minmax(0,1fr)_256px] max-xl:h-[calc(100%-40px)] max-md:overflow-y-auto">
         <Card variant="elevated" padding="sm" aria-label="创作设置" className="relative h-full min-h-0 overflow-hidden max-md:min-h-[600px]">
           <GenerationSettings form={form} images={images} models={models} ratios={ratios} hasProductImage={ready&&!pending} disabled={disabled} requirementDisabled={requirementDisabled}
+            analyzeDisabled={analyzeDisabled} analyzeLabel={status==='draft'?'开始生成':'再次生成'}
             requirementAssistDisabled={requirementAssistDisabled} onChange={updateForm} onRequirementAssist={openRequirementAssist} onAnalyze={()=>void startAnalysis()} onAdd={files=>void addImages('product',files)}
             onWorkspaceAdd={paths=>void attachWorkspaceImages('product',paths)} onRemove={id=>void removeImage(id)}/>
           {formError&&<p role="alert" className="absolute inset-x-4 bottom-16 rounded-lg bg-[var(--s-surface-raised)] p-2 text-xs text-[var(--s-error)] shadow-sm">{formError}{!projectId&&<button type="button" className="ml-2 underline" onClick={()=>void hydrateDraft(scopeKey,preferredId)}>重新加载</button>}</p>}
         </Card>
         <Card variant="elevated" padding="lg" aria-label="规划与生成结果" className="h-full min-h-0 min-w-0 overflow-y-auto overscroll-contain" tabIndex={0}>
-          <DetailWorkspace key={projectId} groups={groups} projectId={projectId} onRefresh={()=>void refresh()}/>
+          <DetailWorkspace key={projectId} groups={groups} runs={state.runs} currentRunId={state.currentRunId} projectId={projectId} onRefresh={()=>void refresh()}/>
           {['completed','failed'].includes(status)&&<div className="mt-5 flex justify-end"><Button onClick={()=>void changeTask()} disabled={switchDisabled}>开始新任务</Button></div>}
         </Card>
         <Card variant="elevated" padding="sm" className="hidden h-full min-h-0 overflow-hidden xl:block">{sidebar}</Card>

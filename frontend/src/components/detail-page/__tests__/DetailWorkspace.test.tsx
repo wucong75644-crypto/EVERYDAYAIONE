@@ -7,7 +7,8 @@ import { downloadWorkspaceZip } from '../../../services/workspace';
 import { resumeDetailPlan, stopDetailRecovery } from '../../../services/detailProject';
 
 vi.mock('../../chat/media/ChatImageControls', () => ({ default: ({taskId}:{taskId:string}) => <button>任务详情 {taskId}</button> }));
-vi.mock('../../chat/message/MessageImageBlocks', () => ({ AiGeneratedImage: ({renderId}:{renderId:string}) => <div>图片 {renderId}</div> }));
+vi.mock('../../chat/message/MessageImageBlocks', () => ({ AiGeneratedImage: ({renderId,onImageClick}:{renderId:string;onImageClick:()=>void}) => <button onClick={onImageClick}>图片 {renderId}</button> }));
+vi.mock('../../../preview/PreviewHost', () => ({default:({state,onIndexChange}:{state:{kind:string;items?:Array<{url:string}>;index?:number};onIndexChange:(i:number)=>void})=>state.kind==='open'?<div role="dialog">{state.items?.[state.index??0].url}<button onClick={()=>onIndexChange((state.index??0)+1)}>下一张</button></div>:null}));
 vi.mock('../../chat/media/ImagePreviewModal', () => ({ default: () => null }));
 vi.mock('../../chat/media/MediaPlaceholder', () => ({ FailedMediaPlaceholder: ({onRetry,errorMessage}:{onRetry?:()=>void;errorMessage?:string}) => <div>{errorMessage}{onRetry&&<button onClick={onRetry}>重新生成</button>}</div> }));
 vi.mock('../../../services/chatImage', () => ({ chatImageService: {replay:vi.fn()} }));
@@ -21,6 +22,26 @@ const group:DetailGroup = {
 const tasks:DetailGroup['tasks'] = [2,1].map(position=>({id:`task-${position}`,item_id:`item-${position}`,status:'pending',submission_state:'queued',created_at:'2026-10-09'}));
 
 describe('右侧提示词和图片工作区',()=>{
+  it('历史在上，新轮在下；仅新轮变化时定位，旧轮不能重试且统一预览可跨轮切图',()=>{
+    const scroll=vi.fn();Element.prototype.scrollIntoView=scroll;
+    const old={run_id:'old',created_at:'2026-10-09',requirement:'旧要求',groups:[{...group,status:'failed',can_resume:true,tasks:[
+      {...tasks[0],status:'failed'}, {...tasks[1],status:'completed',result_data:{url:'old.png',workspace_path:'old.png'}}]}]};
+    const next={run_id:'new',created_at:'2026-10-10',requirement:'新要求',groups:[{...group,plan_id:'new-plan',tasks:[
+      {...tasks[1],id:'new-task',status:'completed',result_data:{url:'new.png',workspace_path:'new.png'}}]}]};
+    const props={projectId:'project',groups:next.groups,onRefresh:vi.fn(),currentRunId:'new',runs:[old,next]};
+    const {rerender}=render(<DetailWorkspace {...props}/>);
+    const oldRegion=screen.getByRole('region',{name:'第1轮生成'}),newRegion=screen.getByRole('region',{name:'第2轮生成'});
+    expect(oldRegion.compareDocumentPosition(newRegion)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(within(oldRegion).queryByRole('button',{name:'重新生成'})).not.toBeInTheDocument();
+    rerender(<DetailWorkspace {...props} runs={[old,{...next}]}/>);expect(scroll).toHaveBeenCalledTimes(1);
+    fireEvent.click(within(oldRegion).getByRole('button',{name:'图片 task-1'}));
+    expect(screen.getByRole('dialog')).toHaveTextContent('old.png');
+    fireEvent.click(screen.getByRole('button',{name:'下一张'}));expect(screen.getByRole('dialog')).toHaveTextContent('new.png');
+    fireEvent.click(screen.getByRole('button',{name:'批量下载（2张）'}));
+    expect(downloadWorkspaceZip).toHaveBeenCalledWith(['old.png','new.png'],expect.objectContaining({archivePaths:['主图/第01轮/01-主图1.png','主图/第02轮/01-主图1.png']}));
+    delete (Element.prototype as Partial<Element>).scrollIntoView;
+  });
   beforeEach(()=>vi.clearAllMocks());
   it('重试发现原图变化后显示可操作原因，暂停期间不提供重复生成',()=>{
     render(<DetailWorkspace projectId="project-1" onRefresh={vi.fn()} groups={[{...group,

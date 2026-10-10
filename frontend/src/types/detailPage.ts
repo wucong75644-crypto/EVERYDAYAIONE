@@ -32,6 +32,7 @@ export interface DetailProjectDraft {
   status?: string;
   prompt_model?: PromptModel;
   groups?: DetailGroup[];
+  runs?: DetailGenerationRun[];
   run_state?: {run_id?: string; request_id?: string; delivery_stopped?: boolean};
   images: Array<{
     id: string; category: DetailImageCategory; workspace_path: string; sort_order: number;
@@ -72,7 +73,7 @@ export interface DetailGenerationItem extends DetailPlanItem {
 
 export type DetailMockScenario = 'success' | 'insufficient_credits' | 'partial_failure';
 
-export type PromptModel = 'kimi-k3' | 'gemini-3.8-flash';
+export type PromptModel = 'kimi-k3' | 'gemini-3.8-flash' | 'gpt-6-luna';
 export interface PromptModelOption { id: PromptModel; name: string; available: boolean; reason: string | null }
 export interface DetailImageTask {
   id: string; item_id: string; status: string; submission_state: string; created_at: string;
@@ -90,6 +91,10 @@ export interface DetailGroup {
     items: Record<string, {status: 'waiting' | 'blocked'; message?: string | null; attempts: number; next_retry_at?: string | null; platform_attention?: boolean}>} | null;
   items: Array<{item_id: string; position: number; name: string; purpose: string; request_text: string; aspect_ratio: string}>;
   tasks: DetailImageTask[];
+}
+
+export interface DetailGenerationRun {
+  run_id: string; created_at: string; requirement: string; groups: DetailGroup[];
 }
 
 export interface DetailTaskSummary {

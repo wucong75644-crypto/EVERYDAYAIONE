@@ -22,7 +22,7 @@ class DetailProjectEnvelope(BaseModel):
 class DetailProjectSettingsPatch(BaseModel):
     version: int = Field(gt=0)
     content_type: Literal["default", "main_image", "detail_page"] | None = None
-    prompt_model: Literal["kimi-k3", "gemini-3.8-flash"] | None = None
+    prompt_model: Literal["kimi-k3", "gemini-3.8-flash", "gpt-6-luna"] | None = None
     platform: Literal["auto", "taobao", "tmall", "jd", "pdd"] | None = None
     requirement: str | None = Field(default=None, max_length=REQUIREMENT_MAX_LENGTH)
     language: Literal["zh-CN", "none"] | None = None

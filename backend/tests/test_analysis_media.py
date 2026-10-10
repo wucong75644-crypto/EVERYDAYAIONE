@@ -194,7 +194,8 @@ async def test_cancelled_disk_read_keeps_allowance_until_thread_finishes(images,
     assert _gate().used == 0
 
 
-async def test_gemini_reuses_multipart_upload_with_explicit_overseas_route(images, monkeypatch):
+@pytest.mark.parametrize('model', ['gemini-3.8-flash', 'gpt-6-luna'])
+async def test_kie_analysis_reuses_multipart_upload_with_explicit_overseas_route(images, monkeypatch, model):
     resolver, refs, _ = images(3)
     original = json.dumps(refs)
     monkeypatch.setenv(KieClient.SHADOW_OVERSEAS_PROXY_ENV, "http://127.0.0.1:7891")
@@ -209,7 +210,7 @@ async def test_gemini_reuses_multipart_upload_with_explicit_overseas_route(image
         kwargs.pop("proxy")
         return real_client(**kwargs, transport=httpx.MockTransport(respond))
     monkeypatch.setattr("services.agent.image.analysis_media.httpx.AsyncClient", factory)
-    async with preparation(refs, resolver, model="gemini-3.8-flash", transport="kie_upload", api_key="platform-test") as urls:
+    async with preparation(refs, resolver, model=model, transport="kie_upload", api_key="platform-test") as urls:
         assert urls == [f"https://kie.invalid/temporary/{i}.png" for i in (1, 2, 3)]
         assert options[0]["proxy"].endswith(":7891") and options[0]["trust_env"] is False
         for request, ref in zip(sent, refs):
@@ -219,7 +220,8 @@ async def test_gemini_reuses_multipart_upload_with_explicit_overseas_route(image
     assert json.dumps(refs) == original and _gate().used == 0
 
 
-async def test_upload_failure_never_yields_partial_group_or_falls_back(images, monkeypatch):
+@pytest.mark.parametrize('model', ['gemini-3.8-flash', 'gpt-6-luna'])
+async def test_upload_failure_never_yields_partial_group_or_falls_back(images, monkeypatch, model):
     resolver, refs, _ = images(3)
     monkeypatch.setenv(KieClient.SHADOW_OVERSEAS_PROXY_ENV, "http://127.0.0.1:7891")
     calls = []
@@ -230,7 +232,7 @@ async def test_upload_failure_never_yields_partial_group_or_falls_back(images, m
         return "https://kie.invalid/first.png"
     monkeypatch.setattr(KieClient, "upload_image_bytes", upload)
     with pytest.raises(AnalysisMediaError) as captured:
-        async with preparation(refs, resolver, model="gemini-3.8-flash", transport="kie_upload", api_key="test"):
+        async with preparation(refs, resolver, model=model, transport="kie_upload", api_key="test"):
             pytest.fail("a partial group cannot reach a model")
     assert captured.value.code == "ANALYSIS_IMAGE_UPLOAD_FAILED"
     assert len(calls) == 2 and _gate().used == 0

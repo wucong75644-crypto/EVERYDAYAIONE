@@ -12,7 +12,7 @@ export const attachDetailImage = async (workspacePath: string, category: DetailI
 export const saveDetailSettings = async (projectId: string, version: number, form: DetailGenerationForm) =>
   (await request<Envelope>({ method: 'PATCH', url: `/detail-projects/${projectId}`, data: {
     version, content_type: form.contentType, platform: form.platform, requirement: form.requirement,
-    language: form.language, aspect_ratio: form.aspectRatio, quality: form.quality, image_count: form.contentType === 'default' ? 14 : form.count, prompt_model: form.promptModel ?? 'kimi-k3',
+    language: form.language, aspect_ratio: form.aspectRatio, quality: form.quality, image_count: form.contentType === 'default' ? 14 : form.count, prompt_model: form.promptModel ?? 'gemini-3.8-flash',
   } })).data.project;
 
 export const removeDetailImage = async (projectId: string, imageId: string, version: number) =>

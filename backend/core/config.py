@@ -319,6 +319,10 @@ class Settings(BaseSettings):
     detail_kimi_output_credits_per_million: float | None = Field(default=None, gt=0)
     detail_gemini_input_credits_per_million: float | None = Field(default=None, gt=0)
     detail_gemini_output_credits_per_million: float | None = Field(default=None, gt=0)
+    # KIE GPT 6 Luna cost quote verified 2026-10-10; no recharge bonus assumed.
+    detail_gpt_enabled: bool = False
+    detail_gpt_input_credits_per_million: float | None = Field(default=6, gt=0)
+    detail_gpt_output_credits_per_million: float | None = Field(default=30, gt=0)
     ecom_image_planning_model: str = "openai/gpt-6.1-sol"
     ecom_image_planning_reasoning: str = "medium"
     ecom_image_planning_stage_timeout: float = Field(default=180, ge=10, le=600)

@@ -37,6 +37,8 @@ def media_policy(settings, model):
                 bool(getattr(settings, "detail_kimi_json_output", True)))
     if model == "gemini-3.8-flash":
         return ("kie_upload" if getattr(settings, "detail_gemini_overseas_images", True) else "cdn", False)
+    if model == "gpt-6-luna":
+        return "kie_upload", False
     raise AnalysisMediaError("ANALYSIS_MODEL_UNSUPPORTED", "该模型尚未接入此分析图片协议")
 
 
@@ -120,7 +122,7 @@ async def prepare_analysis_media(refs, resolver, *, model, transport, deadline, 
     if transport not in {"inline", "kie_upload", "cdn"}:
         raise AnalysisMediaError("ANALYSIS_TRANSPORT_INVALID", "分析图片传输配置无效")
     if (transport == "inline" and model != "kimi-k3"
-            or transport == "kie_upload" and model != "gemini-3.8-flash"):
+            or transport == "kie_upload" and model not in {"gemini-3.8-flash", "gpt-6-luna"}):
         raise AnalysisMediaError("ANALYSIS_TRANSPORT_INVALID", "模型与分析图片传输配置不匹配")
     started = time.monotonic()
     total = 0

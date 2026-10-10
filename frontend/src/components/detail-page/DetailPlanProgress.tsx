@@ -15,14 +15,14 @@ const stateLabels: Record<StepState, string> = {
   uncertain: '结果待确认', paused: '需要补充信息', cancelled: '已停止',
 };
 
-export function DetailPlanProgress({ group }: { group: DetailGroup }) {
+export function DetailPlanProgress({ group, readOnly=false }: { group: DetailGroup; readOnly?:boolean }) {
   const accepted = group.tasks.length > 0;
   const ready = accepted || group.status === 'ready';
   const current = Math.max(1, Math.min(3, group.stage));
   const stage = stages[current - 1];
   const needsInput = ['needs_input', 'insufficient'].includes(group.status);
   const recovering = group.auto_recovery?.status === 'waiting';
-  const uncertain = group.status === 'failed' && !group.can_resume && (
+  const uncertain = !readOnly && group.status === 'failed' && !group.can_resume && (
     group.error?.category === 'uncertain' || group.error?.code === 'ECOM_PLAN_EXECUTION_UNCERTAIN'
   );
   const activeState: StepState = recovering ? 'running' : uncertain ? 'uncertain' : needsInput ? 'paused'
@@ -51,7 +51,7 @@ export function DetailPlanProgress({ group }: { group: DetailGroup }) {
   if (accepted) {
     tone = failedImages ? 'failed' : confirmingImages ? 'uncertain' : 'completed';
     status = `已完成 ${completed}/${group.count}${failedImages ? ` · ${failedImages}张失败` : ''}`;
-    description = failedImages ? '已完成的图片已保留，可在对应图片下重新生成失败项。'
+    description = failedImages ? (readOnly?'已保留本轮结果，可查看已完成图片。':'已完成的图片已保留，可在对应图片下重新生成失败项。')
       : confirmingImages ? '部分图片的受理结果尚待确认，请查看对应图片状态。'
       : completed === group.count ? '本组图片已全部完成，可查看大图或批量下载。'
       : '图片任务已受理，下方按图片显示排队与生成状态。';

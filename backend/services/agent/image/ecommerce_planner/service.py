@@ -26,6 +26,8 @@ from .prompt_resources import HASHES, INTEGRATION_RULES_SHA256, SCHEMA_SHA256, r
 from .assembly import ASSEMBLY_VERSION, assemble_designs, fixed_canvas_conflict
 from .designs import DesignsOutput, DesignRepair, DesignValidationError, apply_repair, repair_context
 from .inputs import FixedSettings, model_input, source_bindings, user_content
+from .page_delivery import PageDelivery
+from .format_delivery import PROMPTS_VERSION, FORMAT_VERSION, normalize_visual, validate_questions
 
 
 def _content(row):
@@ -60,11 +62,12 @@ class PlannerStreamBudget:
         return min(remaining, self._parent.remaining) if self._parent is not None else remaining
 
 
-class EcommerceImagePlanner:
+class EcommerceImagePlanner(PageDelivery):
     def __init__(self, owner, *, execution_profile=None):
         self.owner = owner
         self.settings = execution_profile or __import__("core.config", fromlist=["get_settings"]).get_settings()
         self.page_execution = execution_profile is not None
+        self.delivery_version = DELIVERY_VERSION
         self.scope = ScopedDatabaseClient(owner.db, DatabaseScope(
             owner.user_id, owner.org_id, DatabaseAccessKind.RUNTIME,
             request_id=f"ecom-plan:{owner.task_id}"[:128]))
@@ -74,7 +77,8 @@ class EcommerceImagePlanner:
         model = self.settings.ecom_image_planning_model
         config = MODEL_REGISTRY.get(model)
         expected_provider = {"gpt-5-6-luna": "kie", "openai/gpt-6.1-sol": "openrouter",
-            **({"kimi-k3": "dashscope", "gemini-3.8-flash": "kie"} if self.page_execution else {})}.get(model)
+            **({"kimi-k3": "dashscope", "gemini-3.8-flash": "kie", "gpt-6-luna": "kie"}
+               if self.page_execution else {})}.get(model)
         if (not expected_provider or not config or config.provider.value != expected_provider
                 or config.provider_model != model or not config.supports_vision):
             raise PlannerRecoveryError("ECOM_IMAGE_PLANNING_MODEL_MISMATCH")
@@ -372,6 +376,9 @@ class EcommerceImagePlanner:
         """Shared three-stage executor; page snapshots are created by the trusted API."""
         input_snapshot = row["input_snapshot"]
         task_type = input_snapshot.get("task_type", "main_images")
+        self.delivery_version = (row.get('prompt_versions') or {}).get('stage_three_delivery_version', DELIVERY_VERSION)
+        minimal = self.delivery_version == PROMPTS_VERSION
+        product_schema = self._page_schema(1, {'product_schema': schema}) if minimal else schema
         active_stage = int(row.get("current_stage", 1))
         lease = str(uuid4())
         claimed = await asyncio.to_thread(lambda: self.scope.rpc("claim_ecom_image_plan", {
@@ -384,18 +391,25 @@ class EcommerceImagePlanner:
         self.active_lease = lease
         stage_outputs = claimed.get("stage_outputs") or {}
         current_stage = int(claimed.get("current_stage", 1))
+        drafts = row.get('stage_drafts') or {}
         evidence = {"input_snapshot": input_snapshot, "product_schema": schema,
-            "stage_drafts": row.get("stage_drafts") or {}}
+            "stage_drafts": drafts}
         try:
+            if self.page_execution:
+                # Read recovery flags after the claim; the worker's earlier row
+                # may predate another lease. A stale flag must not authorize IO.
+                latest = await asyncio.to_thread(lambda: self.scope.table('ecom_image_plans').select('stage_drafts')
+                    .eq('id', row['id']).eq('lease_token', lease).single().execute().data)
+                evidence['stage_drafts'] = latest['stage_drafts']
             if preflight is not None:
                 await preflight()
             first = stage_outputs.get("1")
             if first is None:
-                first, usage = await self._stage(row, lease, 1, prompt_bodies[0], wrapper(1, task_type), evidence, messages, refs, image_urls,
-                    validator=lambda value: validate_product(value, schema, input_snapshot))
+                first, usage = await self._stage(row, lease, 1, prompt_bodies[0], wrapper(1, task_type, self.delivery_version), evidence, messages, refs, image_urls,
+                    validator=lambda value: validate_product(value, product_schema, input_snapshot))
                 await self._save(row, lease, 1, first, "planning" if first["status"] == "ready" else first["status"], None, usage)
             else:
-                validate_product(first, schema, input_snapshot)
+                validate_product(first, product_schema, input_snapshot)
             if first["status"] != "ready":
                 return await self._result(row["id"], row["plan_revision"], first["status"])
             evidence["product_selling_points"] = first
@@ -403,17 +417,20 @@ class EcommerceImagePlanner:
             visual_sections = __import__("services.agent.image.ecommerce_planner.contracts", fromlist=["VISUAL_SECTIONS"]).VISUAL_SECTIONS
             second = stage_outputs.get("2")
             if second is None:
-                second, usage = await self._stage(row, lease, 2, prompt_bodies[1], wrapper(2, task_type), evidence, messages, refs, image_urls,
+                second, usage = await self._stage(row, lease, 2, prompt_bodies[1], wrapper(2, task_type, self.delivery_version), evidence, messages, refs, image_urls,
                     validator=lambda value: self._validate_visual(value, visual_sections, input_snapshot))
-                await self._save(row, lease, 2, second, "planning", None, usage)
+                await self._save(row, lease, 2, second, 'needs_input' if isinstance(second, dict) else 'planning', None, usage)
             else:
                 self._validate_visual(second, visual_sections, input_snapshot)
+            if isinstance(second, dict):
+                return await self._result(row['id'], row['plan_revision'], 'needs_input')
             evidence["visual_direction"] = second
             active_stage = 3
             final = stage_outputs.get("3")
             if final is None:
-                final, usage = await self._stage_images(row, lease, prompt_bodies[2], wrapper(3, task_type), evidence, messages, refs, image_urls,
-                    validator=lambda value: assemble_designs(value, input_snapshot, first, second))
+                from .assembly import assemble_prompts
+                final, usage = await self._stage_images(row, lease, prompt_bodies[2], wrapper(3, task_type, self.delivery_version), evidence, messages, refs, image_urls,
+                    validator=lambda value: (assemble_prompts if minimal else assemble_designs)(value, input_snapshot, first, second))
             else:
                 # Stage output and ready/needs_input state commit together. A
                 # planning row with a final output is inconsistent, not a new
@@ -444,6 +461,8 @@ class EcommerceImagePlanner:
             return attach_receipt(result, failed_stage=active_stage, preserved=preserved, category=category)
 
     async def _stage(self, row, lease, stage, original, integration, evidence, messages, refs, image_urls, validator=None):
+        if self.page_execution:
+            return await self._page_stage(row, lease, stage, original, integration, evidence, messages, refs, image_urls, validator)
         saved = (evidence.get("stage_drafts") or {}).get(str(stage)) or {}
         previous = saved.get("output")
         last_error = saved.get("validation_error")
@@ -472,6 +491,8 @@ class EcommerceImagePlanner:
         raise ValueError("PLANNER_JSON_VALIDATION_FAILED")
 
     async def _stage_images(self, row, lease, original, integration, evidence, messages, refs, image_urls, validator=None):
+        if self.page_execution:
+            return await self._page_stage(row, lease, 3, original, integration, evidence, messages, refs, image_urls, validator)
         saved = (evidence.get("stage_drafts") or {}).get("3") or {}
         previous = saved.get("output")
         issues = saved.get("issues") or []
@@ -664,6 +685,14 @@ class EcommerceImagePlanner:
     async def _call_store(self, row, lease, stage, output, status, final, usage=None):
         if usage is None:
             raise PlannerRecoveryError("ECOM_PLAN_ATTEMPT_CONFLICT")
+        if 'local_draft' in usage:
+            from psycopg.types.json import Jsonb
+            return await asyncio.to_thread(lambda: self.scope.rpc('complete_ecom_plan_local_draft', {
+                'p_plan_id': row['id'], 'p_lease_token': lease, 'p_stage': stage,
+                'p_expected_draft': usage['local_draft'], 'p_validator_version': FORMAT_VERSION,
+                'p_output': Jsonb(output) if isinstance(output, str) else output, 'p_status': status,
+                'p_items': final.get('images') if final else None,
+                'p_reviews': final.get('review_records') if final else None}).execute().data)
         return await self._finish(row, lease, stage, usage["attempt_id"], usage, "completed", output, status, final)
 
     async def _save(self,row,lease,stage,output,status,final,usage=None):
@@ -707,7 +736,7 @@ class EcommerceImagePlanner:
                     "status":"ready","images":images})
         stage1=row["stage_outputs"].get("1",{})
         current=row["stage_outputs"].get(str(row.get("current_stage",1)),{})
-        questions=stage1.get("questions",[]) if status=="needs_input" and row.get("current_stage",1)==1 else current.get("questions",[])
+        questions=stage1.get("questions",[]) if status=="needs_input" and row.get("current_stage",1)==1 else current.get("questions",[]) if isinstance(current, dict) else []
         gaps=stage1.get("gaps",[]) if status=="insufficient" else []
         return AgentResult(json.dumps({"status":status,"plan_id":plan_id,"revision":revision,"questions":questions,"gaps":gaps},ensure_ascii=False),
             status="success" if status in {"needs_input","insufficient"} else "error",
@@ -715,15 +744,11 @@ class EcommerceImagePlanner:
 
     @staticmethod
     def _validate_visual(value, sections, snapshot=None):
+        if isinstance(value, dict):
+            return validate_questions({key: val for key, val in value.items() if key != 'status'})
         if not isinstance(value, str):
             raise ValueError("PLANNER_VISUAL_SECTIONS_INVALID")
-        positions = [value.find(f"## {index}. {title}") for index, title in enumerate(sections, 1)]
-        if any(position < 0 for position in positions) or positions != sorted(positions):
-            raise ValueError("PLANNER_VISUAL_SECTIONS_INVALID")
-        for index, position in enumerate(positions):
-            end = positions[index + 1] if index + 1 < len(positions) else len(value)
-            if not value[position:end].split("\n", 1)[-1].strip():
-                raise ValueError("PLANNER_VISUAL_SECTION_EMPTY")
+        value = normalize_visual(value)
         if snapshot and fixed_canvas_conflict(value, snapshot):
             raise ValueError("PLANNER_FIXED_CANVAS_CONFLICT")
         return value
