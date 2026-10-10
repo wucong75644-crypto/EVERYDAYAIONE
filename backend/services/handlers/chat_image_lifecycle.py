@@ -16,7 +16,7 @@ from loguru import logger
 from core.db_scope import DatabaseAccessKind, DatabaseScope, ScopedDatabaseClient
 from services.handlers.chat_image_request import (
     REQUEST_KEY, LIFECYCLE_KEY, ChatImageInputResolver, validate_single_image_request,
-    verify_frozen_request,
+    verify_frozen_request, reference_file_size,
 )
 
 
@@ -146,7 +146,7 @@ class ChatImageLifecycle:
                 raise ValueError("参考原图地址不可用，请重新选择")
             from services.adapters.kie.configs import IMAGE_MODEL_CONFIGS
             maximum=IMAGE_MODEL_CONFIGS[snapshot["model"]].get("max_image_size_mb",30)*1024*1024
-            if any(ref["size"]>maximum for ref in snapshot["references"]):
+            if any(reference_file_size(ref)>maximum for ref in snapshot["references"]):
                 raise ValueError("参考原图超过模型允许大小")
         except (ValueError,PermissionError,FileNotFoundError) as error:
             await self.definite_failure(task,str(error))

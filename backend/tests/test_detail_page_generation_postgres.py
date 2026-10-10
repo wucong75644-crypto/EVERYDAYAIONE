@@ -548,3 +548,101 @@ def test_old_heartbeat_cannot_reclaim_a_failed_or_resumed_plan(page_db):
             db.execute("UPDATE detail_projects SET status='archived' WHERE id=%s",(project,))
         assert not DetailPageWorker.renew(service,plan,new)
     finally:raw.pool.close()
+
+
+@pytest.mark.parametrize('kind,case', [
+    ('main_images','new'), ('detail_page','new'),
+    ('main_images','legacy'), ('detail_page','legacy'),
+    ('main_images','invalid_size'), ('main_images','over_limit'), ('main_images','changed_original'),
+])
+async def test_page_binding_acceptance_and_real_worker_submission(page_db,monkeypatch,tmp_path,kind,case):
+    import asyncio,os
+    from unittest.mock import AsyncMock,Mock
+    from PIL import Image
+    from redis.asyncio import Redis
+    from core.config import Settings
+    from core.local_db import LocalDBClient
+    from core.redis import RedisClient
+    from services.adapters.base import ImageGenerateResult,TaskStatus
+    from services.adapters.kie.configs import IMAGE_MODEL_CONFIGS
+    from services.detail_page_generation import DetailPageGeneration,PageImageInputResolver,page_owner
+    from services.file_executor import FileExecutor
+    from services.handlers.chat_image_lifecycle import ChatImageLifecycle
+    from services.task_limit_service import TaskLimitService
+
+    socket=os.getenv('CHAT_IMAGE_TEST_REDIS_SOCKET')
+    if not socket:
+        pytest.skip('Explicit isolated Redis socket required for submission test')
+    assert socket=='/private/tmp/everydayai-chat-image-redis.sock'
+    settings=Settings(_env_file=None,database_url='postgresql://invalid/test',jwt_secret_key='isolated-test-key',
+        file_workspace_root=str(tmp_path))
+    monkeypatch.setattr('core.config.get_settings',lambda:settings)
+    redis=Redis(unix_socket_path=socket,decode_responses=True)
+    monkeypatch.setattr(RedisClient,'_instance',redis)
+    limiter=TaskLimitService(redis)
+    monkeypatch.setattr('api.deps.get_task_limit_service',AsyncMock(return_value=limiter))
+    monkeypatch.setattr(FileExecutor,'get_cdn_url',lambda self,path:f'https://cdn.invalid/{path}')
+    adapter=Mock(generate=AsyncMock(return_value=ImageGenerateResult(task_id='page-external',status=TaskStatus.PENDING)),close=AsyncMock())
+    monkeypatch.setattr('services.adapters.factory.create_image_adapter',lambda *a,**kw:adapter)
+    user,project,run,plan=seed(page_db,1)
+    raw=LocalDBClient(psycopg.conninfo.make_conninfo(page_db,user='everydayai'),min_size=1,max_size=4)
+    try:
+        generation=DetailPageGeneration(raw,user,None)
+        resolver=PageImageInputResolver(page_owner(generation.db,user,None,project))
+        root=resolver.files.root
+        root.mkdir(parents=True,exist_ok=True)
+        for name,color in [('B.png','red'),('A.png','blue')]:
+            Image.new('RGB',(32,48),color).save(root/name)
+        refs=resolver.bind([{'workspace_path':'B.png','category':'product'},
+                           {'workspace_path':'A.png','category':'reference'}])
+        assert [ref['size'] for ref in refs]==[(root/name).stat().st_size for name in ('B.png','A.png')]
+        if case=='legacy':
+            for ref in refs:ref.pop('size')
+        if case=='invalid_size':refs[0]['size']=0
+        item={'item_id':str(uuid4()),'position':1,'name':'saved','request_text':'原样保存的提示词',
+              'request_text_sha256':__import__('hashlib').sha256('原样保存的提示词'.encode()).hexdigest(),'aspect_ratio':'3:4'}
+        with psycopg.connect(page_db) as db:
+            db.execute('UPDATE detail_projects SET content_type=%s WHERE id=%s',('detail_page' if kind=='detail_page' else 'main_image',project))
+            db.execute("UPDATE ecom_image_plans SET status='ready',invocation_key=%s,items=%s,input_snapshot=%s,target_size=%s,model_settings=%s WHERE id=%s",
+                (kind,Jsonb([item]),Jsonb({'resolved_references':refs}),Jsonb({'aspect_ratio':'3:4','resolution':'1K'}),
+                 Jsonb({'image_budget':{'max_requests':15,'max_credits':300}}),plan))
+        saved=generation.db.table('ecom_image_plans').select('*').eq('id',plan).single().execute().data
+        receipt=(await generation.accept(saved))[0]
+        worker=ChatImageLifecycle(raw,settings)
+        task=await worker.refresh({'id':receipt['task_id'],'user_id':user,'org_id':None})
+        frozen=deepcopy(task['request_params']['_media_request_v1'])
+        if case=='over_limit':
+            monkeypatch.setitem(IMAGE_MODEL_CONFIGS[frozen['model']],'max_image_size_mb',
+                (refs[0]['file_version'][1]-1)/1024/1024)
+        if case=='changed_original':Image.new('RGB',(48,48),'green').save(root/'B.png')
+        if case in ('new','legacy'):
+            await asyncio.gather(worker.advance(task),worker.advance(task))
+            current=await worker.refresh(task)
+            assert current['request_params']['_media_lifecycle_v1']['phase']=='accepted'
+            assert current['external_task_id']=='page-external'
+            assert current['request_params']['_media_lifecycle_v1']['dispatch_started_at']
+            assert adapter.generate.await_count==1
+            args=adapter.generate.await_args.kwargs
+            assert args['prompt']==item['request_text'] and args['size']=='3:4' and args['resolution']=='1K'
+            assert args['image_urls']==['https://cdn.invalid/B.png','https://cdn.invalid/A.png']
+            assert args['_chat_image_single_submit'] is True and args['wait_for_result'] is False
+            await worker.advance(current)
+            assert adapter.generate.await_count==1
+        else:
+            await worker.advance(task)
+            current=await worker.refresh(task)
+            assert current['status']=='failed'
+            assert current['request_params']['_media_lifecycle_v1']['phase']=='published'
+            assert not current['request_params']['_media_lifecycle_v1'].get('dispatch_started_at')
+            assert current['external_task_id'] is None
+            expected={'invalid_size':'文件大小信息无效','over_limit':'超过模型允许大小','changed_original':'IMAGE_REFERENCE_CHANGED'}[case]
+            assert expected in current['error_message']
+            adapter.generate.assert_not_awaited()
+        assert current['request_params']['_media_request_v1']==frozen
+        with psycopg.connect(page_db) as db:
+            count=db.execute('SELECT count(*) FROM credit_transactions WHERE task_id=%s',(task['id'],)).fetchone()[0]
+            assert count==(1 if case in ('new','legacy') else 0)
+    finally:
+        await redis.delete(limiter._global_key(user),limiter._conversation_key(user,None))
+        await redis.aclose()
+        raw.pool.close()

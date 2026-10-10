@@ -136,7 +136,7 @@ class PageImageInputResolver:
                 raise AnalysisMediaError('ANALYSIS_IMAGE_INVALID',f'图片{position}已缺失、变化或无法解码，请重新选择图片') from exc
             ref = {'file_id': compute_fid(self.owner.org_id, image['workspace_path']),
                 'role': image['category'], 'workspace_path': image['workspace_path'],
-                'file_version': list(version), 'content_sha256': dimensions['content_sha256']}
+                'file_version': list(version), 'content_sha256': dimensions['content_sha256'], 'size': version[1]}
             ref['source_id'] = source_id(ref)
             bound.append(ref)
         return bound

@@ -8,7 +8,7 @@ from PIL import Image
 
 from services.handlers.chat_image_request import (
     ChatImageInputResolver, freeze_image_request, validate_single_image_request,
-    verify_frozen_request,
+    verify_frozen_request, reference_file_size,
 )
 from services.handlers.image_request_settings import resolve_image_generation_settings
 
@@ -66,6 +66,31 @@ def test_native_batch_settings_keep_existing_normalization():
     strict=validate_single_image_request({"mode":"text_to_image","prompt":"p",
         "model":"gpt-image-2-text-to-image","resolution":"4K","aspect_ratio":"1:1"},0)
     assert strict["resolution"] == "4K"
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_reference_size_uses_frozen_bytes_without_mutating_request(legacy):
+    ref = {"workspace_path":"A.png", "content_sha256":"a"*64, "role":"product",
+           "file_version":[1, 2098998, 3, 4]}
+    if not legacy:
+        ref["size"] = 2098998
+    snapshot = freeze_image_request({"mode":"image_to_image", "prompt":"原提示词"}, [ref],
+        origin={"destination":"detail_project"}, max_requests=1, max_credits=100)
+    before = deepcopy(snapshot)
+    verify_frozen_request(snapshot)
+    assert reference_file_size(snapshot["references"][0]) == 2098998
+    assert snapshot == before
+    verify_frozen_request(snapshot)
+
+
+@pytest.mark.parametrize("changes", [
+    {"size":None}, {"size":True}, {"size":"123"}, {"size":123.0}, {"size":0}, {"size":-1},
+    {"size":122}, {"file_version":None}, {"file_version":[]}, {"file_version":[1,123]},
+    {"file_version":[1,"123",3,4]}, {"file_version":[1,True,3,4]}, {"file_version":[1,0,3,4]},
+])
+def test_invalid_reference_size_is_a_known_preflight_error(changes):
+    with pytest.raises(ValueError, match="文件大小信息无效"):
+        reference_file_size({"file_version":[1,123,3,4], **changes})
 
 
 @pytest.fixture
