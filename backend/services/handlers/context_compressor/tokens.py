@@ -4,6 +4,7 @@
 本模块不依赖任何其他 context_compressor 子模块。
 """
 
+import json
 from typing import Any, Dict, List
 
 
@@ -40,6 +41,9 @@ def estimate_tokens(messages: List[Dict[str, Any]]) -> int:
                 if isinstance(part, dict):
                     total_chars += len(str(part.get("text", "")))
                     total_chars += len(str(part.get("url", "")))
+        total_chars += len(msg.get("reasoning_content") or "")
+        if msg.get("_dashscope_output"):
+            total_chars += len(json.dumps(msg["_dashscope_output"], ensure_ascii=False))
         # tool_calls 参数也计入
         for tc in msg.get("tool_calls", []):
             func = tc.get("function", {})

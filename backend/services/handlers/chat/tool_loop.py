@@ -305,6 +305,7 @@ async def compact_tool_context(
     messages: list[dict[str, Any]],
     conversation_source: str,
     turn: int,
+    context_window: int | None = None,
 ) -> None:
     """按 Web/企微既有预算压缩已完成工具轮次。"""
     from core.config import get_settings
@@ -339,7 +340,7 @@ async def compact_tool_context(
         messages,
         keep_user_turns=settings.context_web_keep_user_turns,
         capacity_trigger=settings.context_web_compact_trigger,
-        max_tokens=settings.context_web_max_tokens,
+        max_tokens=min(settings.context_web_max_tokens, context_window or settings.context_web_max_tokens),
     )
     enforce_tool_budget(messages, settings.context_web_tool_token_budget)
     enforce_history_budget_sync(
@@ -349,6 +350,6 @@ async def compact_tool_context(
     if turn >= 3:
         await compact_loop_with_summary(
             messages,
-            settings.context_web_max_tokens,
+            min(settings.context_web_max_tokens, context_window or settings.context_web_max_tokens),
             settings.context_web_compact_trigger,
         )

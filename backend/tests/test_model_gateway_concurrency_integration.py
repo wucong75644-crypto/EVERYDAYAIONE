@@ -125,7 +125,7 @@ async def test_retry_routes_without_holding_slot_and_shutdown_interrupts_routing
     async def route(_context):
         # 路由器/辅助请求需要同一 Gateway；前一失败 attempt 必须已释放槽位。
         from services.model_gateway import ModelCallRequest
-        session = gateway_module.get_model_gateway().open_chat(ModelCallRequest(model_id="qwen3.5-plus"))
+        session = gateway_module.get_model_gateway().open_chat(ModelCallRequest(model_id="qwen3.8-max"))
         await consume(session)
         routed.set()
         await asyncio.Event().wait()
@@ -146,22 +146,22 @@ async def test_migrated_benchmarks_use_real_gateway_and_close_session(script, mo
     streams = Streams()
     monkeypatch.setattr("services.model_gateway.get_model_gateway", lambda: streams.gateway)
     # 不调用付费 Provider；实际执行原脚本的模型读取循环。
-    streams.controls["qwen3.5-plus"] = asyncio.Event()
-    streams.controls["qwen3.5-plus"].set()
+    streams.controls["qwen3.8-max"] = asyncio.Event()
+    streams.controls["qwen3.8-max"].set()
     if script == "direct":
         from scripts.benchmark_direct_vs_agent import run_llm_loop
-        result = await run_llm_loop("query", [], "system", "qwen3.5-plus")
+        result = await run_llm_loop("query", [], "system", "qwen3.8-max")
     elif script == "erp":
         from scripts.test_erp_agent_benchmark import run_erp_agent_test
         monkeypatch.setattr("config.phase_tools.build_domain_tools", lambda *_a: [])
         monkeypatch.setattr("services.tool_selector.select_and_filter_tools", AsyncMock(return_value=[]))
-        result = await run_erp_agent_test("query", "qwen3.5-plus")
+        result = await run_erp_agent_test("query", "qwen3.8-max")
     else:
         from scripts.test_tool_loop_benchmark import call_llm_with_tools
-        result = await call_llm_with_tools("query", [], "qwen3.5-plus")
+        result = await call_llm_with_tools("query", [], "qwen3.8-max")
     assert result["turns"] == 1
-    assert streams.started == ["qwen3.5-plus"]
-    streams.adapters["qwen3.5-plus"].close.assert_awaited_once()
+    assert streams.started == ["qwen3.8-max"]
+    streams.adapters["qwen3.8-max"].close.assert_awaited_once()
     assert [e.event.value for e in streams.events] == ["started", "first_chunk", "completed"]
 
 

@@ -21,11 +21,11 @@ def _db(row=None, rpc_result=None):
 
 def test_reads_model_and_thinking_from_database():
     db = _db({
-        "model_id": "qwen3.5-plus",
+        "model_id": "qwen3.8-max",
         "chat_settings": {"thinking_mode": "deep"},
     })
 
-    assert get_wecom_conversation_setting(db, "conv", "user", "model") == "qwen3.5-plus"
+    assert get_wecom_conversation_setting(db, "conv", "user", "model") == "qwen3.8-max"
     assert get_wecom_conversation_setting(
         db, "conv", "user", "thinking_mode",
     ) == "deep"
@@ -44,7 +44,7 @@ def test_unknown_setting_is_rejected():
 
 def test_update_uses_atomic_rpc():
     db = _db(rpc_result={
-        "model_id": "qwen3.5-plus",
+        "model_id": "qwen3.8-max",
         "chat_settings": {"thinking_mode": "fast"},
     })
 
@@ -60,12 +60,12 @@ def test_update_uses_atomic_rpc():
 def test_read_and_update_preserve_explicit_org_scope():
     db = _db(
         row={"model_id": "auto", "chat_settings": {}},
-        rpc_result={"model_id": "qwen3.5-plus", "chat_settings": {}},
+        rpc_result={"model_id": "qwen3.8-max", "chat_settings": {}},
     )
 
     get_wecom_conversation_setting(db, "conv", "user", "model", "org")
     set_wecom_conversation_setting(
-        db, "conv", "user", "model", "qwen3.5-plus", "org",
+        db, "conv", "user", "model", "qwen3.8-max", "org",
     )
 
     query = db.table.return_value.select.return_value

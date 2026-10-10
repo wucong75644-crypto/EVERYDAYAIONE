@@ -21,7 +21,7 @@ def test_retry_success_commit_is_idempotent_for_credits_and_usage():
         with conn.cursor() as cur:
             task = _fixture(cur)
             cur.execute("UPDATE users SET credits = 100 WHERE id = %s", (task["user_id"],))
-            cur.execute("UPDATE tasks SET model_id = 'qwen3.5-plus' WHERE id = %s", (task["task_id"],))
+            cur.execute("UPDATE tasks SET model_id = 'qwen3.8-max' WHERE id = %s", (task["task_id"],))
             usage = {"prompt_tokens": 4, "completion_tokens": 2, "api_credits": 1.25}
             params = (
                 task["task_id"], task["execution_token"], task["output_message_id"],
@@ -33,9 +33,9 @@ def test_retry_success_commit_is_idempotent_for_credits_and_usage():
             cur.execute("SELECT credits FROM users WHERE id = %s", (task["user_id"],))
             assert cur.fetchone()[0] == 97
             cur.execute("SELECT change_amount, description FROM credits_history WHERE user_id = %s", (task["user_id"],))
-            assert cur.fetchall() == [(-3, "Chat: qwen3.5-plus")]
+            assert cur.fetchall() == [(-3, "Chat: qwen3.8-max")]
             cur.execute("SELECT generation_params->'usage', generation_params->>'model', credits_cost FROM messages WHERE id = %s", (task["output_message_id"],))
-            assert cur.fetchone() == (usage, "qwen3.5-plus", 3)
+            assert cur.fetchone() == (usage, "qwen3.8-max", 3)
     finally:
         conn.rollback()
         conn.close()

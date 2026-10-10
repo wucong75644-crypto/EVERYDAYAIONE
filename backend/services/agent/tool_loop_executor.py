@@ -387,7 +387,7 @@ class ToolLoopExecutor:
         action: "break" → 应中止循环；"continue" → 应继续下一轮
         """
         # strategy.force_tool_use_first=True 且未调过工具 → 强制再走一轮
-        if self.strategy.force_tool_use_first and not tools_called:
+        if self.strategy.force_tool_use_first and not tools_called and not getattr(self, "_builtin_executed", False):
             empty_turns += 1
             logger.info(
                 f"ToolLoop skip empty turn #{empty_turns} | "
@@ -473,11 +473,26 @@ class ToolLoopExecutor:
         turn_tokens = 0
         _prompt_tokens = 0
         _completion_tokens = 0
+        self._last_provider_output = None
+        self._last_reasoning_content = ""
+        self._builtin_executed = False
+        sources = {}
+        from services.adapters.dashscope.responses import CACHE_MODELS
 
         async for chunk in self.model_gateway.stream_chat(
             messages=messages, tools=selected_tools, temperature=0.1,
             thinking_mode=self.config.thinking_mode,
+            enable_builtin_tools=any(t.get("function", {}).get("name") == "web_search" for t in selected_tools),
         ):
+            event = getattr(chunk, "builtin_tool_event", None)
+            if event and event.get("status") == "completed":
+                self._builtin_executed = True
+                for source in event.get("sources", []):
+                    sources[source["url"]] = source.get("title") or source["url"]
+            if getattr(chunk, "provider_output", None) is not None:
+                self._last_provider_output = chunk.provider_output
+            if getattr(chunk, "thinking_content", None) and getattr(self.model_gateway, "model_id", "") in CACHE_MODELS:
+                self._last_reasoning_content += chunk.thinking_content
             if chunk.content:
                 turn_text += chunk.content
             if chunk.tool_calls:
@@ -499,6 +514,9 @@ class ToolLoopExecutor:
                 _completion_tokens += chunk.completion_tokens or 0
                 turn_tokens = _prompt_tokens + _completion_tokens
 
+        if sources:
+            from services.handlers.chat.builtin_tools import source_text
+            turn_text += source_text(sources)
         return tc_acc, turn_text, turn_tokens, _prompt_tokens, _completion_tokens
 
     # ========================================
@@ -608,6 +626,10 @@ class ToolLoopExecutor:
             }
             for tc in completed
         ]
+        if getattr(self, "_last_provider_output", None):
+            asst_msg["_dashscope_output"] = self._last_provider_output
+        if getattr(self, "_last_reasoning_content", ""):
+            asst_msg["reasoning_content"] = self._last_reasoning_content
         messages.append(asst_msg)
 
         # ============================================================

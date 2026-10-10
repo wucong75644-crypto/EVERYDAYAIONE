@@ -173,7 +173,7 @@ async def test_sql_fallback_uses_gateway_and_preserves_generated_sql() -> None:
     session = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
     gateway = Mock(open_chat=Mock(return_value=session))
     settings = SimpleNamespace(
-        agent_loop_model="qwen3.5-plus",
+        agent_loop_model="qwen3.8-max",
         database_url="postgresql://test/test",
     )
     with (

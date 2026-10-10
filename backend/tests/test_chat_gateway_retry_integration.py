@@ -16,7 +16,7 @@ from services.handlers.chat_handler import ChatHandler
 from services.intent_router import RoutingDecision
 from services.model_gateway import ModelGateway
 
-A, B = "gemini-3-pro", "qwen3.5-plus"
+A, B = "gemini-3-pro", "qwen3.8-max"
 
 
 def make_adapter(*steps, price=9):

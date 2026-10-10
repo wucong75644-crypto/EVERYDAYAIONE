@@ -171,7 +171,7 @@ async def test_provider_overload_retry_and_final_failure_are_linked_in_log(sampl
         stream_chat=stream, close=AsyncMock(),
     ))
     session = gateway.open_chat(ModelCallRequest(
-        model_id="qwen3.5-plus", task_id="retry-task", retry_policy=policy, timeout=1,
+        model_id="qwen3.8-max", task_id="retry-task", retry_policy=policy, timeout=1,
     ))
     try:
         with pytest.raises(ModelGatewayError):
@@ -186,7 +186,7 @@ async def test_provider_overload_retry_and_final_failure_are_linked_in_log(sampl
         failed = [e for e in events if e["event"] == "failed"]
         assert len(failed) == 2
         retry = next(e for e in events if e["event"] == "retry_started")
-        first = next(e for e in failed if e["model_id"] == "qwen3.5-plus")
+        first = next(e for e in failed if e["model_id"] == "qwen3.8-max")
         assert retry["previous_attempt_id"] == first["attempt_id"]
         assert retry["model_id"] == "gemini-3-pro"
         final = next(e for e in events if e["event"] == "request_failed")

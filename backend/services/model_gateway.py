@@ -165,6 +165,15 @@ class ModelGatewaySession:
         return policy.context if isinstance(policy, ModelRetryPolicy) else None
 
     @property
+    def supports_builtin_search(self) -> bool:
+        return bool(getattr(self._adapter, "supports_builtin_search", False))
+
+    @property
+    def effective_context_window(self) -> int | None:
+        value = getattr(self._adapter, "effective_context_window", None)
+        return value if isinstance(value, int) else None
+
+    @property
     def supports_google_search(self) -> bool:
         return bool(getattr(self._adapter, "supports_google_search", False))
 
@@ -810,6 +819,8 @@ class ModelGateway:
         # 的首个 stream 会复用该 request_id，而后续工具回合自行生成新 ID。
         if request.request_id is None:
             request = replace(request, request_id=_new_identifier("request"))
+        from config.model_aliases import canonical_model_id
+        request = replace(request, model_id=canonical_model_id(request.model_id))
         provider = _resolve_provider(request.model_id)
         if self._adapter_factory is None:
             # 运行时读取模块属性，保留现有测试和配置注入对 factory
@@ -970,6 +981,8 @@ async def _collect_stream_response(
         prompt_tokens=int(usage["prompt_tokens"]),
         completion_tokens=int(usage["completion_tokens"]),
         api_credits=usage.get("api_credits"),
+        cached_tokens=int(usage.get("cached_tokens", 0)),
+        cache_creation_input_tokens=int(usage.get("cache_creation_input_tokens", 0)),
     )
 
 
@@ -977,6 +990,13 @@ def _accumulate_usage(usage: dict[str, int | float], chunk: Any) -> None:
     """与 Chat execution_engine 一致地聚合每个 StreamChunk 的用量。"""
     usage["prompt_tokens"] += getattr(chunk, "prompt_tokens", 0) or 0
     usage["completion_tokens"] += getattr(chunk, "completion_tokens", 0) or 0
+    for key in ("cached_tokens", "cache_creation_input_tokens"):
+        value = getattr(chunk, key, 0)
+        if type(value) is int and value:
+            usage[key] = usage.get(key, 0) + value
+    for name, count in (getattr(chunk, "builtin_tool_usage", None) or {}).items():
+        key = f"{name}_calls"
+        usage[key] = usage.get(key, 0) + count
     credits = getattr(chunk, "credits_consumed", None)
     if credits is not None:
         # Provider credits 是既有最终帧语义，保留最近一次报告值而不在 Gateway 结算。
