@@ -52,9 +52,9 @@ describe('DetailPage 页面骨架', () => {
     expect(useDetailPageStore.getState().groups).toEqual([]);
   });
 
-  it('产品图就绪后打开 AI 帮写并将人工确认草稿回填要求', async () => {
+  it('插入时将编辑产品、增补卖点、风格和客户回答一起回填输入框，不再次调用模型', async () => {
     vi.mocked(getCurrentDetailProject).mockResolvedValue({
-      id: 'project-1', version: 1, content_type: 'main_image', platform: 'auto', requirement: '',
+      id: 'project-1', version: 1, content_type: 'main_image', platform: 'auto', requirement: '需要清楚展示商品',
       language: 'zh-CN', aspect_ratio: '1:1', quality: '1k', image_count: 1,
       images: [{ id: 'image-1', category: 'product', workspace_path: 'uploads/product.png', sort_order: 0, status: 'ready', original_url: 'product.png', thumbnail_url: null }],
     });
@@ -62,7 +62,8 @@ describe('DetailPage 页面骨架', () => {
       success: true,
       data: {
         product_description: '突出已确认卖点',
-        selling_points: [], creative_requirements: [],
+        selling_points: [{feature:'书本式结构',benefit:'便于整理',benefit_basis:'inferred'}],
+        creative_requirements: [{topic:'背景',text:'米白背景',basis:'suggested'}],
         supplement_questions: [{ question: '本体尺寸是多少？', why: '补充规格', can_skip: true }],
       },
       error: null,
@@ -76,12 +77,20 @@ describe('DetailPage 页面骨架', () => {
 
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
     await screen.findByDisplayValue('突出已确认卖点');
+    fireEvent.change(screen.getByLabelText('产品细节与规格'), { target: { value: 'A6活页本，可替换内芯' } });
+    fireEvent.change(screen.getByLabelText('卖点1价值'), { target: { value: '可按需整理内容' } });
+    fireEvent.click(screen.getByRole('button', { name: '补充卖点' }));
+    fireEvent.change(screen.getByLabelText('卖点2特点'), { target: { value: '空白米白内页' } });
+    fireEvent.change(screen.getByLabelText('卖点2价值'), { target: { value: '可书写和拼贴' } });
+    fireEvent.change(screen.getByLabelText('背景 · AI 建议'), { target: { value: '简洁背景，保留商品颜色' } });
     fireEvent.change(screen.getByLabelText('本体尺寸是多少？'), { target: { value: '20×14cm' } });
     fireEvent.change(screen.getByLabelText('其他补充或修改方向'), { target: { value: '背景改成深蓝色' } });
-    fireEvent.click(screen.getByRole('button', { name: '采用内容' }));
-    expect(useDetailPageStore.getState().form.requirement).toContain('突出已确认卖点');
-    expect(useDetailPageStore.getState().form.requirement).toContain('20×14cm');
-    expect(useDetailPageStore.getState().form.requirement).toContain('背景改成深蓝色');
+    fireEvent.click(screen.getByRole('button', { name: '插入到输入框' }));
+    const inserted = useDetailPageStore.getState().form.requirement;
+    for (const text of ['需要清楚展示商品','A6活页本，可替换内芯','可按需整理内容','空白米白内页','可书写和拼贴','简洁背景，保留商品颜色','20×14cm','背景改成深蓝色']) {
+      expect(inserted).toContain(text);
+    }
+    expect(screen.getByRole('textbox', { name: '主图要求' })).toHaveValue(inserted);
     expect(generateRequirementSuggestions).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });

@@ -16,10 +16,17 @@ const sectionClass = 'space-y-2 rounded-[var(--s-radius-card)] border border-[va
 
 export function RequirementAssistModal(props: Props) {
   const { draft, isLoading, onDraftChange } = props;
-  return <Modal isOpen={props.isOpen} onClose={props.onClose} title="AI 帮写 · 产品资料与创作要求" maxWidth="max-w-4xl">
-    <div className="flex max-h-[78vh] flex-col">
+  return <Modal isOpen={props.isOpen} onClose={props.onClose} title="AI 帮写 · 产品资料与创作要求" maxWidth="max-w-4xl"
+    footer={<div className="space-y-2">
+      {props.validationError && <p role="alert" className="text-sm text-[var(--s-error)]">{props.validationError}</p>}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="secondary" icon={<RefreshCw className="h-4 w-4"/>} loading={isLoading} disabled={isLoading} onClick={props.onUpdate}>{draft?'更新草稿':'重新尝试'}</Button>
+        <Button className="ml-auto" icon={<Sparkles className="h-4 w-4"/>} disabled={isLoading||!draft||!props.brief.trim()||Boolean(props.validationError)} onClick={()=>props.onConfirm(props.brief)}>插入到输入框</Button>
+      </div>
+    </div>}>
+    <div>
       <p className="mb-3 text-sm text-[var(--s-text-tertiary)]">Kimi K3 会结合图片和文字拆解产品资料，提出需要补充的问题。请核验卖点、补充细节与风格要求；暂不知道的可以跳过。</p>
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+      <div className="space-y-3">
         {props.error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{props.error}</p>}
         {!draft && isLoading && <div className="flex min-h-[280px] flex-col items-center justify-center gap-3">
           <RefreshCw className="h-6 w-6 animate-spin text-[var(--s-accent)]"/>
@@ -69,19 +76,14 @@ export function RequirementAssistModal(props: Props) {
                   <button type="button" disabled={isLoading} aria-pressed={skipped} onClick={()=>props.onToggleSkip(item.question)} className="shrink-0 text-xs text-[var(--s-accent)]">{skipped?'恢复填写':'暂不知道 / 跳过'}</button>
                 </div>
                 <p className="text-xs text-[var(--s-text-tertiary)]">{item.why}</p>
-                {!skipped && <input id={'assist-answer-'+index} maxLength={1000} disabled={isLoading} value={props.answers[item.question]??''} onChange={event=>props.onAnswer(item.question,event.target.value)} placeholder="有资料就补充，也可以直接采用草稿" className={inputClass}/>}
+                {!skipped && <input id={'assist-answer-'+index} maxLength={1000} disabled={isLoading} value={props.answers[item.question]??''} onChange={event=>props.onAnswer(item.question,event.target.value)} placeholder="有资料就补充，也可以直接插入草稿" className={inputClass}/>}
               </div>;
             })}
             <label htmlFor="assist-supplement" className="block pt-1 text-sm">其他补充或修改方向</label>
             <textarea id="assist-supplement" rows={3} maxLength={4000} disabled={isLoading} value={props.supplement} onChange={event=>props.onSupplementChange(event.target.value)} placeholder="例如补充尺寸、修正卖点，或调整背景、场景和整体风格…" className={inputClass}/>
-            <p className="text-xs text-[var(--s-text-tertiary)]">补充或修改后可直接采用；需要 AI 再整理时，点击“更新草稿”。</p>
+            <p className="text-xs text-[var(--s-text-tertiary)]">点击“插入到输入框”会一并带入产品细节、卖点、风格要求和补充回答；需要 AI 再整理时，点击“更新草稿”。</p>
           </section>
         </>}
-      </div>
-      {props.validationError && <p role="alert" className="mt-2 text-sm text-[var(--s-error)]">{props.validationError}</p>}
-      <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--s-border-subtle)] pt-4">
-        <Button variant="secondary" icon={<RefreshCw className="h-4 w-4"/>} loading={isLoading} disabled={isLoading} onClick={props.onUpdate}>{draft?'更新草稿':'重新尝试'}</Button>
-        <Button className="ml-auto" icon={<Sparkles className="h-4 w-4"/>} disabled={isLoading||!draft||!props.brief.trim()||Boolean(props.validationError)} onClick={()=>props.onConfirm(props.brief)}>采用内容</Button>
       </div>
     </div>
   </Modal>;

@@ -297,7 +297,20 @@ Kimi 的真实诊断曾将 `developer` 转换为 `system`，并将 `input_text/i
 - `DETAIL_KIMI_INPUT_CREDITS_PER_MILLION`／`DETAIL_KIMI_OUTPUT_CREDITS_PER_MILLION`
 - `DETAIL_GEMINI_INPUT_CREDITS_PER_MILLION`／`DETAIL_GEMINI_OUTPUT_CREDITS_PER_MILLION`
 
-两模型的用户积分费率尚待用户提供，不自动套用 GPT 费率。策划预算 `DETAIL_PAGE_PLANNING_SECONDS=1200`（600—1800），并发 `DETAIL_PAGE_PLANNING_CONCURRENCY=4`（1—16），图片数量／积分预算继续沿用已有 Image 限额。
+两模型的供应商报价已由用户于2026-10-10提供，用户确认直接按下表成本折算扣费，不加价；不自动套用 GPT 费率。策划预算 `DETAIL_PAGE_PLANNING_SECONDS=1200`（600—1800），并发 `DETAIL_PAGE_PLANNING_CONCURRENCY=4`（1—16），图片数量／积分预算继续沿用已有 Image 限额。
+
+### 2026-10-10 供应商报价与确认收费
+
+报价来源为用户提供的供应商文字，未将其标为当前官网验证结果。单位均为每百万 token：
+
+| 模型及提供商 | 供应商输入成本 | 供应商输出成本 | 按项目基准折算的平台积分（输入／输出） |
+| --- | --- | --- | --- |
+| Gemini 3.8 Flash／KIE | 45 KIE积分，约$0.225 | 225 KIE积分，约$1.125 | 45／225 |
+| Kimi K3／百炼 | ¥20 | ¥100 | 571.43／2857.14 |
+
+折算采用现有 `docs/API_REFERENCE.md` 的200积分/$1及固定7元/$1（1平台积分≈¥0.035），不是实时汇率；Kimi取小数点后两位。KIE所报45／225已含限时五折，不重复折半；该报价载明优惠截止2026-12-31 06:00 UTC，不把高档充值赠送当作所有账号固定折扣。
+
+用户明确确认“直接扣上述成本”，以本表折算值作为用户费率，不沿用旧Gemini或OpenRouter的加价。生产配置仅更新四个 `DETAIL_*_CREDITS_PER_MILLION` 和 `DETAIL_PAGE_GENERATION_ENABLED=true`，沿用受控环境更新和发布重启，不写入或替换供应商密钥。发布前已核对共享图片异步受理开启、没有账号白名单、15张/300积分预算，故无需改动共享图片开关。实际扣费仍按每次已完成调用的真实输入/输出usage加总后向上取整、最低1积分，图片计费独立。配置与插入按钮修复一并发布，最终状态以受控发布结果和部署后可用性核验为准。
 
 发布先按受控流程执行282、283兼容迁移并安装新 Worker／服务／页面，再配置有效费率、复验供应商并开启新受理。回滚先关闭新受理，保留 Worker 直到已受理策划及图片任务终态和结算完成；随后回退代码，保留新增持久化数据。旧 Worker 不识别页面目的地，不能在活动任务尚未排空时直接替换。
 

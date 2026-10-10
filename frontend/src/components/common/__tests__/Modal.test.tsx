@@ -48,6 +48,22 @@ describe('Modal - 基本渲染', () => {
     );
     expect(screen.getByText('no-title-body')).toBeInTheDocument();
   });
+
+  it('支持正文之外的底部操作，并保留关闭行为', () => {
+    const onInsert = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <Modal isOpen onClose={onClose} title="资料确认" footer={<button onClick={onInsert}>插入到输入框</button>}>
+        <p>待核验的产品资料</p>
+      </Modal>,
+    );
+    expect(screen.getByText('待核验的产品资料')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '插入到输入框' }));
+    expect(onInsert).toHaveBeenCalledOnce();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
 });
 
 describe('Modal - maxWidth 映射（mapMaxWidthToSize）', () => {

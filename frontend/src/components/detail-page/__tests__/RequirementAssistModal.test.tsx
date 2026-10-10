@@ -17,7 +17,7 @@ describe('单份AI帮写弹窗',()=>{
   it('首次分析提示使用图片和文字，加载期间不能采用',()=>{
     renderModal({isLoading:true,draft:null});
     expect(screen.getByText('正在分析图片和文字…')).toBeInTheDocument();
-    expect(screen.getByRole('button',{name:'采用内容'})).toBeDisabled();
+    expect(screen.getByRole('button',{name:'插入到输入框'})).toBeDisabled();
   });
   it('只显示一份草稿，标明推断，并可编辑产品、卖点和风格',()=>{
     const props=renderModal();
@@ -48,13 +48,13 @@ describe('单份AI帮写弹窗',()=>{
     expect(props.onDraftChange).toHaveBeenCalledWith({selling_points:[expect.anything(),{feature:'',benefit:'',benefit_basis:'inferred'}]});
     fireEvent.click(screen.getByRole('button',{name:'删除卖点1'}));
     expect(props.onDraftChange).toHaveBeenLastCalledWith({selling_points:[]});
-    fireEvent.click(screen.getByRole('button',{name:'采用内容'}));
+    fireEvent.click(screen.getByRole('button',{name:'插入到输入框'}));
     expect(props.onConfirm).toHaveBeenCalledWith('一份人工确认的简报');
   });
   it('失败时旧编辑稿和错误同时显示，仍可修改后采用',()=>{
     renderModal({error:'Kimi暂时不可用'});
     expect(screen.getByRole('alert')).toHaveTextContent('Kimi暂时不可用');
     expect(screen.getByDisplayValue('红色存钱本，普通印刷，侧边搭扣')).toBeInTheDocument();
-    expect(screen.getByRole('button',{name:'采用内容'})).toBeEnabled();
+    expect(screen.getByRole('button',{name:'插入到输入框'})).toBeEnabled();
   });
 });
