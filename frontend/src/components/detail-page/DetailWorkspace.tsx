@@ -12,8 +12,9 @@ import { getImagePlaceholderSize } from '../../utils/settingsStorage';
 import { detailImageDownloads, detailTaskFor as taskFor } from '../../utils/detailPageImages';
 import { downloadWorkspaceZip } from '../../services/workspace';
 import { Button } from '../ui/Button';
+import { DetailPlanProgress } from './DetailPlanProgress';
+import progressStyles from './DetailPlanProgress.module.css';
 
-const stages=['卖点分析','视觉定位','逐图提示词'];
 const previewWidth=getImagePlaceholderSize('1:1').width;
 function Group({group,onRefresh,projectId}:{group:DetailGroup;onRefresh:()=>void;projectId:string|null}){
   const accepted=group.tasks.length>0;
@@ -22,8 +23,11 @@ function Group({group,onRefresh,projectId}:{group:DetailGroup;onRefresh:()=>void
   const [retrying,setRetrying]=useState<string|null>(null);
   const requestIds=useRef(new Map<string,string>());
   useEffect(()=>{ if(accepted)setPromptOpen(false); },[accepted]);
+  useEffect(()=>{
+    if(group.resume_request_id&&requestIds.current.get(group.plan_id)===group.resume_request_id)
+      requestIds.current.delete(group.plan_id);
+  },[group.plan_id,group.resume_request_id]);
   const failed=['failed','cancelled','needs_input','insufficient'].includes(group.status)||!!group.acceptance_error;
-  const completed=group.items.filter(item=>taskFor(group,item.item_id)?.status==='completed').length;
   async function retry(task:DetailImageTask){
     if(retrying)return;setRetrying(task.id);
     if(!requestIds.current.has(task.id))requestIds.current.set(task.id,crypto.randomUUID());
@@ -32,25 +36,22 @@ function Group({group,onRefresh,projectId}:{group:DetailGroup;onRefresh:()=>void
     finally{setRetrying(null);onRefresh();}
   }
   return <section className="rounded-2xl border border-[var(--s-border-subtle)] p-4 sm:p-5" aria-label={group.kind==='main_images'?'主图工作区':'详情图工作区'}>
-    <div className="mb-4 flex items-center justify-between gap-3"><h2 className="font-semibold">{group.kind==='main_images'?'主图':'详情图'} · {group.count}张</h2>
-      <span className="text-xs text-[var(--s-text-tertiary)]" role="status">{accepted?`已完成 ${completed}/${group.count}`:failed?'需要处理':group.status==='ready'?'提示词已完成，准备生图':'正在策划'}</span></div>
-    <ol className="mb-4 grid grid-cols-3 gap-2 text-xs" aria-label="策划阶段">
-      {stages.map((label,index)=><li key={label} className={index+1<=group.stage?'text-[var(--s-accent)]':'text-[var(--s-text-tertiary)]'}>
-        {index+1<group.stage||group.status==='ready'?'✓':index+1===group.stage?'●':'○'} {label}</li>)}
-    </ol>
+    <DetailPlanProgress group={group}/>
     {failed&&<div className="mb-4 rounded-xl bg-[var(--s-surface-secondary)] p-3 text-sm" role="alert">
       {group.status==='needs_input'||group.status==='insufficient'?'需要补充产品信息，请根据提示完善要求后重新开始。':group.acceptance_error?
         `图片任务尚未受理：${group.acceptance_error.code??'提交失败'}`:`策划未完成：${group.error?.message??group.error?.code??'服务调用失败'}`}
       {!!group.questions?.length&&<pre className="mt-2 whitespace-pre-wrap text-xs">{JSON.stringify(group.questions,null,2)}</pre>}
+      {group.retry_may_have_provider_cost&&<p className="mt-2 text-xs">本地超时请求已结束，已完成的阶段会保留。重试会发起新的模型调用，旧调用的供应商费用仍待确认。</p>}
       {(group.can_resume||group.acceptance_error)&&projectId&&<button type="button" className="mt-2 text-[var(--s-accent)]" disabled={!!retrying} onClick={()=>{
-        setRetrying(group.plan_id);void resumeDetailPlan(projectId,group.plan_id,crypto.randomUUID()).then(onRefresh)
-          .catch(error=>toast.error(error instanceof Error?error.message:'恢复失败')).finally(()=>setRetrying(null));
+        if(!requestIds.current.has(group.plan_id))requestIds.current.set(group.plan_id,crypto.randomUUID());
+        setRetrying(group.plan_id);void resumeDetailPlan(projectId,group.plan_id,requestIds.current.get(group.plan_id)!).then(()=>{requestIds.current.delete(group.plan_id);})
+          .catch(error=>toast.error(error instanceof Error?error.message:'恢复失败')).finally(()=>{setRetrying(null);onRefresh();});
       }}>{group.acceptance_error?'重试提交生图':'从失败阶段继续'}</button>}
     </div>}
     {!!group.items.length&&<div className="mb-4">
       <button type="button" className="text-sm text-[var(--s-accent)]" aria-expanded={promptOpen??!accepted} onClick={()=>setPromptOpen(!(promptOpen??!accepted))}>
         {(promptOpen??!accepted)?'收起提示词':'展开提示词'} · {group.items.length}份</button>
-      {(promptOpen??!accepted)&&<div className="mt-3 max-h-[480px] space-y-3 overflow-y-auto">
+      {(promptOpen??!accepted)&&<div className={`mt-3 max-h-[480px] space-y-3 overflow-y-auto ${progressStyles.promptContent}`}>
         {[...group.items].sort((a,b)=>a.position-b.position).map(item=><article key={item.item_id} className="rounded-xl bg-[var(--s-surface-secondary)] p-3">
           <div className="flex justify-between gap-2 text-sm"><h3>{item.position}. {item.name}</h3><button type="button" onClick={()=>void navigator.clipboard.writeText(item.request_text).then(()=>toast.success('提示词已复制'))}>复制</button></div>
           <pre className="mt-2 whitespace-pre-wrap break-words text-xs leading-6">{item.request_text}</pre>
@@ -63,7 +64,7 @@ function Group({group,onRefresh,projectId}:{group:DetailGroup;onRefresh:()=>void
         const [w,h]=item.aspect_ratio.split(':').map(Number);const size={width:previewWidth,height:previewWidth*h/w};
         const result=task.result_data;const url=result?.url??result?.original_url;
         const isFailed=['failed','cancelled'].includes(task.status);
-        return <article key={item.item_id} className="min-w-0 overflow-hidden">
+        return <article key={item.item_id} className={`min-w-0 overflow-hidden ${task.submission_state==='uncertain'?progressStyles.staticPreview:''}`}>
           <h3 className="mb-1 truncate text-sm">{item.position}. {item.name}</h3>
           <ChatImageControls taskId={task.id}/>
           {isFailed?<div className="mt-3"><FailedMediaPlaceholder type="image" aspectRatio={w/h} errorMessage={task.error_message||'生成失败'} onRetry={()=>void retry(task)} retryLabel={retrying===task.id?'正在受理…':'重新生成'}/></div>:

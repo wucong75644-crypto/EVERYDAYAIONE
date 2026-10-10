@@ -530,9 +530,8 @@ class EcommerceImagePlanner:
             deadline = datetime.fromisoformat(reservation["deadline"].replace("Z", "+00:00"))
             deadline_remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
             timeout = min(timeout, deadline_remaining)
-            stream_budget = PlannerStreamBudget(self.owner.execution_budget, deadline_remaining) if stage == 3 else None
-            if stream_budget is not None:
-                timeout = min(timeout, stream_budget.remaining)
+            stream_budget = PlannerStreamBudget(self.owner.execution_budget, deadline_remaining)
+            timeout = min(timeout, stream_budget.remaining)
             if timeout <= 1:
                 await self._finish(row, lease, stage, attempt_id, {}, "rejected")
                 raise PlannerRecoveryError("ECOM_PLAN_PARENT_BUDGET_EXHAUSTED")
@@ -540,7 +539,9 @@ class EcommerceImagePlanner:
             content = ""
             call_started = time.monotonic()
             first_output_at = None
+            finish_reason = None
             response_started = False
+            session_closed = False
             tokens = {"input_tokens": 0, "output_tokens": 0, "provider_credits": None}
             def timing():
                 return {"elapsed_ms": round((time.monotonic() - call_started) * 1000),
@@ -549,9 +550,9 @@ class EcommerceImagePlanner:
             try:
                 session = get_model_gateway().open_chat(ModelCallRequest(
                     model_id=self.settings.ecom_image_planning_model, org_id=None,
-                    task_id=self.owner.task_id, timeout=None if stage == 3 else timeout,
-                    idle_timeout=self.settings.ecom_image_planning_stage_timeout if stage == 3 else None,
-                    cancel_token=self.owner.cancellation_event, budget=stream_budget or self.owner.execution_budget))
+                    task_id=self.owner.task_id, timeout=None,
+                    idle_timeout=self.settings.ecom_image_planning_stage_timeout,
+                    cancel_token=self.owner.cancellation_event, budget=stream_budget))
                 completion_options = {"require_completed": True} if provider == "openrouter" else {}
                 if (provider == "dashscope" and getattr(self.settings, "ecom_analysis_json_output", False)
                         and stage in {1, 3}):
@@ -567,11 +568,14 @@ class EcommerceImagePlanner:
                     if chunk.content and first_output_at is None:
                         first_output_at = time.monotonic()
                     content += chunk.content or ""
+                    if getattr(chunk, 'finish_reason', None):
+                        finish_reason = chunk.finish_reason
                     tokens["input_tokens"] += chunk.prompt_tokens or 0
                     tokens["output_tokens"] += chunk.completion_tokens or 0
                     if chunk.credits_consumed is not None:
                         tokens["provider_credits"] = chunk.credits_consumed
-                if session.last_result is None or session.last_result.status != "completed":
+                if (session.last_result is None or session.last_result.status != "completed"
+                        or finish_reason in {'length', 'max_tokens', 'content_filter', 'safety', 'SAFETY', 'cancelled', 'error'}):
                     raise PlannerRecoveryError("ECOM_PLAN_EXECUTION_UNCERTAIN")
                 if session.last_result:
                     usage = session.last_result.usage
@@ -593,9 +597,16 @@ class EcommerceImagePlanner:
                 raise
             except Exception as error:
                 code, category, safe = error_facts(error)
+                from services.model_gateway import ModelGatewayTimeoutError
+                local_closed = False
+                if isinstance(error, ModelGatewayTimeoutError) and session is not None:
+                    # Persist closure evidence only after the owned stream is drained.
+                    await session.close()
+                    session_closed = local_closed = True
                 diagnostics = {**tokens, **timing(), "error_type": type(error).__name__, "error_code": code,
                     "http_status": getattr(error, "status_code", None), "provider_error_code": getattr(error, "error_code", None),
-                    "provider_request_id": getattr(error, "request_id", None), "provider_reason": safe_error(error)}
+                    "provider_request_id": getattr(error, "request_id", None), "provider_reason": safe_error(error),
+                    "local_request_closed": local_closed}
                 no_response = not response_started and not content and not tokens["input_tokens"] and not tokens["output_tokens"] and tokens["provider_credits"] is None
                 definite = no_response and (safe or category in {"authentication", "balance"}
                     or getattr(error, "request_rejected", False))
@@ -616,7 +627,7 @@ class EcommerceImagePlanner:
                     raise PlannerRecoveryError("ECOM_PLAN_EXECUTION_UNCERTAIN") from error
                 raise
             finally:
-                if session is not None:
+                if session is not None and not session_closed:
                     await session.close()
 
     async def _reserve(self, row, lease, stage, attempt_id, remaining):

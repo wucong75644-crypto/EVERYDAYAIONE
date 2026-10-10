@@ -4,6 +4,7 @@ import type { DetailGroup } from '../../../types/detailPage';
 import { chatImageService } from '../../../services/chatImage';
 import { DetailWorkspace } from '../DetailWorkspace';
 import { downloadWorkspaceZip } from '../../../services/workspace';
+import { resumeDetailPlan } from '../../../services/detailProject';
 
 vi.mock('../../chat/media/ChatImageControls', () => ({ default: ({taskId}:{taskId:string}) => <button>任务详情 {taskId}</button> }));
 vi.mock('../../chat/message/MessageImageBlocks', () => ({ AiGeneratedImage: ({renderId}:{renderId:string}) => <div>图片 {renderId}</div> }));
@@ -11,6 +12,7 @@ vi.mock('../../chat/media/ImagePreviewModal', () => ({ default: () => null }));
 vi.mock('../../chat/media/MediaPlaceholder', () => ({ FailedMediaPlaceholder: ({onRetry}:{onRetry:()=>void}) => <button onClick={onRetry}>重新生成</button> }));
 vi.mock('../../../services/chatImage', () => ({ chatImageService: {replay:vi.fn()} }));
 vi.mock('../../../services/workspace', () => ({ downloadWorkspaceZip: vi.fn() }));
+vi.mock('../../../services/detailProject', () => ({ resumeDetailPlan: vi.fn() }));
 
 const group:DetailGroup = {
   plan_id:'plan-1',kind:'main_images',status:'ready',stage:3,count:2,tasks:[],
@@ -56,6 +58,40 @@ describe('右侧提示词和图片工作区',()=>{
   it('没有完成原图时不能批量下载',()=>{
     render(<DetailWorkspace projectId="project-1" onRefresh={vi.fn()} groups={[{...group,tasks}]}/>);
     expect(screen.getByRole('button',{name:'批量下载（0张）'})).toBeDisabled();
+  });
+  it('未确定的调用不提供重试，已关闭的超时允许从失败阶段继续',()=>{
+    const props={projectId:'project-1',onRefresh:vi.fn()};
+    const failed={...group,status:'failed',stage:2,items:[],error:{code:'MODEL_TIMEOUT',message:'调用超时'}};
+    const {rerender}=render(<DetailWorkspace {...props} groups={[{...failed,can_resume:false}]}/>);
+    expect(screen.queryByRole('button',{name:'从失败阶段继续'})).not.toBeInTheDocument();
+    rerender(<DetailWorkspace {...props} groups={[{...failed,can_resume:true,retry_may_have_provider_cost:true}]}/>);
+    expect(screen.getByRole('button',{name:'从失败阶段继续'})).toBeInTheDocument();
+    expect(screen.getByText(/旧调用的供应商费用仍待确认/)).toBeInTheDocument();
+  });
+  it('恢复响应丢失后复用请求编号，详情提示词仍可浏览',async()=>{
+    vi.mocked(resumeDetailPlan).mockRejectedValue(new Error('连接中断'));
+    render(<DetailWorkspace projectId="project-1" onRefresh={vi.fn()} groups={[
+      {...group,kind:'detail_page',acceptance_error:{code:'DETAIL_GENERATION_FAILED'}},
+    ]}/>);
+    expect(screen.getByText('执行正文1')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'重试提交生图'}));
+    await waitFor(()=>expect(screen.getByRole('button',{name:'重试提交生图'})).toBeEnabled());
+    fireEvent.click(screen.getByRole('button',{name:'重试提交生图'}));
+    await waitFor(()=>expect(resumeDetailPlan).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(resumeDetailPlan).mock.calls[0]).toEqual(vi.mocked(resumeDetailPlan).mock.calls[1]);
+  });
+  it('刷新确认上次恢复已受理后，再次失败可使用新的请求编号',async()=>{
+    vi.mocked(resumeDetailPlan).mockRejectedValue(new Error('响应丢失'));
+    const props={projectId:'project-1',onRefresh:vi.fn()};
+    const failed={...group,status:'failed',stage:2,items:[],can_resume:true};
+    const {rerender}=render(<DetailWorkspace {...props} groups={[failed]}/>);
+    fireEvent.click(screen.getByRole('button',{name:'从失败阶段继续'}));
+    await waitFor(()=>expect(props.onRefresh).toHaveBeenCalledTimes(1));
+    const previous=vi.mocked(resumeDetailPlan).mock.calls[0][2];
+    rerender(<DetailWorkspace {...props} groups={[{...failed,resume_request_id:previous}]}/>);
+    fireEvent.click(screen.getByRole('button',{name:'从失败阶段继续'}));
+    await waitFor(()=>expect(resumeDetailPlan).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(resumeDetailPlan).mock.calls[1][2]).not.toEqual(previous);
   });
   it('部分完成可打包，下载中防止重复点击，失败后保留结果并可重试',async()=>{
     let rejectDownload:(error:Error)=>void=()=>{};

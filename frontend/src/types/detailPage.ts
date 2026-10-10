@@ -79,8 +79,9 @@ export interface DetailImageTask {
 }
 export interface DetailGroup {
   plan_id: string; kind: 'main_images' | 'detail_page'; status: string; stage: number; count: number;
-  error?: {code?: string; message?: string}; questions?: unknown[];
-  acceptance_error?: {code?: string}; can_resume?: boolean;
+  error?: {code?: string; message?: string; category?: string}; questions?: unknown[];
+  acceptance_error?: {code?: string}; can_resume?: boolean; retry_may_have_provider_cost?: boolean;
+  resume_request_id?: string | null;
   items: Array<{item_id: string; position: number; name: string; purpose: string; request_text: string; aspect_ratio: string}>;
   tasks: DetailImageTask[];
 }

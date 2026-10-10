@@ -93,3 +93,14 @@ async def test_accepted_group_is_not_reverified_or_resubmitted(monkeypatch):
     assert await generation.accept({'id':'plan-1','items':[{'item_id':'item-1'}]})=={'outcome':'replay'}
     resolver.assert_not_called()
     generation.db.rpc.assert_not_called()
+
+
+def test_acceptance_diagnostics_excludes_private_database_details():
+    from services.detail_page_generation import acceptance_diagnostics
+    error=RuntimeError('failed row contains private prompt and https://token')
+    error.sqlstate='23502'
+    error.diag=SimpleNamespace(table_name='tasks',column_name='conversation_id',constraint_name=None,
+        message_detail='private prompt',context='private SQL')
+    assert acceptance_diagnostics(error)=={'sqlstate':'23502','table_name':'tasks','column_name':'conversation_id'}
+    error.diag.column_name='https://private-token'
+    assert 'column_name' not in acceptance_diagnostics(error)

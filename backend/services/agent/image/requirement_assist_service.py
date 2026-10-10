@@ -1,17 +1,19 @@
 """复用 ModelGateway 的 Kimi K3 单份草稿服务。"""
 import asyncio
-import json
+import hashlib
 import re
 import time
 from dataclasses import dataclass
 from loguru import logger
-from pydantic import ValidationError
 from core.exceptions import AppException
 from schemas.ecom_requirement import RequirementAssistInput, RequirementAssistResult
 from services.agent.image.requirement_assist_prompts import build_multimodal_messages
 from services.agent.image.ecommerce_planner.recovery import error_facts
 from services.kie_image_fallback_request import safe_error
 from services.agent.image.analysis_media import media_policy, prepare_analysis_media
+from services.agent.image.requirement_assist_recovery import (
+    InvalidRequirementOutput, parse_requirement_result, repair_context, repair_messages, apply_repair, diagnostic_fields,
+)
 
 _MODEL = "kimi-k3"
 _TIMEOUT_SECONDS = 120.0
@@ -67,8 +69,9 @@ class RequirementAssistService:
             return await self._call_model(build_multimodal_messages(data, urls), deadline, json_mode)
 
     async def _call_model(self, messages, deadline, json_mode):
-        from services.model_gateway import ModelCallRequest, _collect_stream_response, get_model_gateway
+        from services.model_gateway import ModelCallRequest, _collect_stream_response, get_model_gateway, get_model_attempt_context
         options = {"response_format": {"type": "json_object"}} if json_mode else {}
+        repair = None
         for attempt in range(2):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -79,45 +82,50 @@ class RequirementAssistService:
                     _collect_stream_response(session, messages=messages, reasoning_effort="low", **options),
                     timeout=remaining,
                 )
-                break
+                receipt = getattr(session, "last_result", None)
+                context = get_model_attempt_context()
+                request_id = getattr(context, "request_id", None)
+                finish = response.finish_reason
+                normal = receipt is not None and receipt.status == "completed" and finish == "stop"
+                diagnostics = {
+                    "attempt": attempt + 1, "phase": "repair" if repair else "draft",
+                    "finish_reason": finish if finish in {"stop", "length", "content_filter", "tool_calls"} else "unknown",
+                    "output_characters": len(response.content),
+                    "output_sha256": hashlib.sha256(response.content.encode()).hexdigest(),
+                    "partial_output": getattr(receipt, "partial_output", False),
+                    "request_id": request_id if isinstance(request_id, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,128}', request_id) else None,
+                    "remaining_ms": max(0, round((deadline - time.monotonic()) * 1000)),
+                }
+                logger.info("requirement_assist_response | model={} diagnostics={}", _MODEL, diagnostics)
+                if not normal or not response.content.strip():
+                    code, message = ("REQUIREMENT_ASSIST_TRUNCATED", "模型输出被截断，已保留草稿，请重试") if finish == "length" else (
+                        ("REQUIREMENT_ASSIST_REFUSED", "模型未交付可用资料，已保留草稿，请调整输入") if finish == "content_filter" else
+                        ("REQUIREMENT_ASSIST_INCOMPLETE", "模型输出未完整交付，已保留草稿，请重试"))
+                    raise AppException(code, message, 502)
+                try:
+                    result = apply_repair(response.content, repair) if repair else parse_requirement_result(response.content)
+                    validate_no_output_urls(result)
+                    return result
+                except InvalidRequirementOutput as exc:
+                    logger.info("requirement_assist_format_error | diagnostics={} json={} fields={}",
+                        diagnostics, exc.syntax, diagnostic_fields(exc.errors))
+                    next_repair = repair_context(response.content, exc) if not repair and attempt == 0 else None
+                    if next_repair is None:
+                        raise
+                    repair = next_repair
+                    messages = repair_messages(repair)
             except Exception as exc:
                 _code, _category, safe = error_facts(exc)
                 partial = getattr(getattr(session, "last_result", None), "partial_output", False)
-                if not safe or partial or attempt == 1:
+                if not safe or partial or attempt == 1 or repair:
                     raise
                 logger.info("Requirement assist retry | model={} provider_error_code={} provider_request_id={}",
                     _MODEL, getattr(exc, "error_code", None), getattr(exc, "request_id", None))
             finally:
                 await session.close()
-            await asyncio.sleep(min(1, max(0, deadline - time.monotonic())))
-        result = parse_requirement_result(response.content)
-        validate_no_output_urls(result)
-        return result
-
-
-class InvalidRequirementOutput(ValueError):
-    """模型响应不能构成单份草稿。"""
-
-
-def parse_requirement_result(content: str) -> RequirementAssistResult:
-    cleaned = content.strip()
-    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", cleaned, re.DOTALL)
-    if fenced:
-        cleaned = fenced.group(1)
-    try:
-        payload = json.loads(cleaned)
-    except json.JSONDecodeError:
-        start, end = cleaned.find("{"), cleaned.rfind("}")
-        if start < 0 or end <= start:
-            raise InvalidRequirementOutput("响应中没有 JSON 对象") from None
-        try:
-            payload = json.loads(cleaned[start:end + 1])
-        except json.JSONDecodeError as exc:
-            raise InvalidRequirementOutput("响应不是合法 JSON") from exc
-    try:
-        return RequirementAssistResult.model_validate(payload)
-    except ValidationError as exc:
-        raise InvalidRequirementOutput("响应不符合单份草稿协议") from exc
+            if repair is None:
+                await asyncio.sleep(min(1, max(0, deadline - time.monotonic())))
+        raise InvalidRequirementOutput("格式修复未完成")
 
 
 def validate_no_output_urls(result: RequirementAssistResult) -> None:

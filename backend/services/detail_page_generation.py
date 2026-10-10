@@ -55,7 +55,37 @@ def plan_error(row):
     error = row.get('recovery_state', {}).get('last_error')
     if not error:
         return None
+    if error.get('code') == 'MODEL_TIMEOUT' and can_resume_plan(row):
+        return {**error, 'message': '本地模型请求已超时结束，有效阶段已保存，可以从失败阶段重新尝试。'}
     return {**error, 'message': error.get('message') or failure_summary(error.get('code',''),error.get('category','business'))}
+
+
+def closed_timeout(attempt):
+    """Match migration 284; legacy failure is written after _call's finally closes."""
+    usage = attempt.get('usage') or {}
+    return (attempt.get('outcome') == 'uncertain' and bool(attempt.get('completed_at'))
+        and usage.get('error_type') == 'ModelGatewayTimeoutError' and usage.get('error_code') == 'MODEL_TIMEOUT'
+        and ('local_request_closed' not in usage or usage['local_request_closed'] is True))
+
+
+def can_resume_plan(row):
+    expires = row.get('lease_expires_at')
+    if isinstance(expires, str):
+        expires = datetime.fromisoformat(expires.replace('Z', '+00:00'))
+    if row['status'] != 'failed' or (expires and expires > datetime.now(timezone.utc)):
+        return False
+    return not any(a.get('outcome') == 'started' or (a.get('outcome') == 'uncertain' and not closed_timeout(a))
+        for a in (row.get('recovery_state', {}).get('attempts') or {}).values())
+
+
+def acceptance_diagnostics(error):
+    """Whitelist database identifiers, never DETAIL, failed rows or SQL text."""
+    import re
+    diag = getattr(error, 'diag', None)
+    fields = {'sqlstate': getattr(error, 'sqlstate', None)}
+    fields.update({key: getattr(diag, key, None) for key in ('table_name', 'column_name', 'constraint_name')})
+    return {key: value for key, value in fields.items()
+        if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_]{1,128}', value)}
 
 
 class PageImageInputResolver:
@@ -135,8 +165,10 @@ class DetailPageGeneration:
             'stage': row['current_stage'], 'count': row['image_count'], 'items': row['items'],
             'error': plan_error(row),
             'acceptance_error': row.get('recovery_state', {}).get('acceptance_error'),
-            'can_resume': (row['status']=='failed' and not any(a.get('outcome') in {'started','uncertain'}
-                for a in (row.get('recovery_state', {}).get('attempts') or {}).values())),
+            'resume_request_id': row.get('recovery_state', {}).get('resume_request_id'),
+            'can_resume': can_resume_plan(row),
+            'retry_may_have_provider_cost': can_resume_plan(row) and any(closed_timeout(a)
+                for a in (row.get('recovery_state', {}).get('attempts') or {}).values()),
             'questions': (row.get('stage_outputs', {}).get(str(row['current_stage'])) or {}).get('questions', [])
                 if isinstance(row.get('stage_outputs', {}).get(str(row['current_stage'])), dict) else [],
             'tasks': [{key: task.get(key) for key in ('id','status','result_data','error_message','credits_used','created_at')} |
@@ -236,6 +268,11 @@ class DetailPageWorker:
         self.db=db
         self.jobs={}
 
+    @staticmethod
+    def renew(service, plan_id, lease):
+        return service.db.rpc('renew_detail_page_plan',{
+            'p_plan_id':plan_id,'p_lease_token':lease}).execute().data
+
     async def close(self):
         jobs=list(self.jobs.values())
         for job in jobs: job.cancel()
@@ -259,7 +296,8 @@ class DetailPageWorker:
                         try: await service.accept(plan)
                         except Exception as error:
                             from loguru import logger
-                            logger.warning('detail_image_acceptance_pending | plan={} error_type={}',plan['id'],type(error).__name__)
+                            logger.warning('detail_image_acceptance_pending | plan={} error_type={} db={}',
+                                plan['id'],type(error).__name__,acceptance_diagnostics(error))
                             public_error=page_error(error)
                             await asyncio.to_thread(lambda:service.db.table('ecom_image_plans').update({'recovery_state':{
                                 **plan.get('recovery_state',{}),'acceptance_error':{'code':public_error.code}}}).eq('id',plan['id']).execute())
@@ -304,8 +342,14 @@ class DetailPageWorker:
                     await asyncio.sleep(30)
                     lease=getattr(planner,'active_lease',None)
                     if not lease: return
-                    await asyncio.to_thread(lambda:service.db.rpc('claim_ecom_image_plan',{'p_plan_id':row['id'],
-                        'p_parent_task_id':None,'p_lease_token':lease,'p_lease_seconds':600}).execute())
+                    try:
+                        renewed=await asyncio.to_thread(self.renew,service,row['id'],lease)
+                    except Exception:
+                        owner.cancellation_event.set()
+                        raise
+                    if not renewed:
+                        owner.cancellation_event.set()
+                        return
             renewal=asyncio.create_task(heartbeat())
             async with AsyncExitStack() as media_stack:
                 async def preflight():

@@ -18,7 +18,25 @@ def page_db(ecom_db):
         db.execute('ALTER TABLE detail_projects OWNER TO everydayai')
         db.execute('ALTER TABLE detail_project_images OWNER TO everydayai')
         db.execute((ROOT/'migrations/279_detail_default_generation_mode.sql').read_text())
+        # The production schema still has migration 018's mandatory conversation.
+        db.execute('''ALTER TABLE tasks ALTER COLUMN conversation_id SET NOT NULL,
+            ALTER COLUMN delivery_context SET NOT NULL,
+            ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'serial',
+            ADD COLUMN queue_sequence BIGSERIAL NOT NULL,
+            ADD COLUMN execution_attempt INTEGER NOT NULL DEFAULT 0''')
         db.execute((ROOT/'migrations/283_detail_page_generation.sql').read_text())
+    # Reproduce the real legacy INSERT before installing the forward migration.
+    user,project,run,plan=seed(ecom_db,1)
+    item=str(uuid4()); frozen=snapshot(user,project,run,plan,item)
+    with psycopg.connect(ecom_db) as db:
+        db.execute("UPDATE ecom_image_plans SET status='ready',items=%s WHERE id=%s",(Jsonb([{
+            'item_id':item,'position':1,'request_text':'exact','request_text_sha256':frozen['prompt_sha256'],'aspect_ratio':'1:1'}]),plan))
+    with scoped(ecom_db,user) as db:
+        with pytest.raises(psycopg.errors.NotNullViolation) as failure:
+            db.execute('SELECT accept_detail_page_image(%s,%s,%s,%s)',(project,plan,item,Jsonb(frozen)))
+        assert failure.value.diag.column_name=='conversation_id'
+    with psycopg.connect(ecom_db) as db:
+        db.execute((ROOT/'migrations/284_detail_page_reliability.sql').read_text())
     return ecom_db
 
 @pytest.mark.parametrize('kind,count,valid', [('default',7,False),('main_image',16,False),('detail_page',15,True)])
@@ -40,15 +58,17 @@ def scoped(dsn,user,worker=False):
     return db
 
 
-def seed(dsn,count=7):
+def seed(dsn,count=7,combined=False,model='kimi-k3'):
     user,project,run,plan=[str(uuid4()) for _ in range(4)]
     with psycopg.connect(dsn) as db:
         db.execute('INSERT INTO users(id,credits) VALUES(%s,1000)',(user,))
-        db.execute("INSERT INTO detail_projects(id,user_id,content_type,image_count) VALUES(%s,%s,'main_image',%s)",(project,user,count))
+        db.execute("INSERT INTO detail_projects(id,user_id,content_type,image_count,prompt_model) VALUES(%s,%s,%s,%s,%s)",(project,user,'default' if combined else 'main_image',14 if combined else count,model))
     rows=[{'id':plan,'project_id':project,'generation_run_id':run,'user_id':user,'org_id':None,
       'invocation_key':'main_images','input_digest':'a'*64,'image_count':count,
       'input_snapshot':{'resolved_references':[]},'target_size':{'aspect_ratio':'1:1','resolution':'1K'},
-      'prompt_versions':{},'model_settings':{'model':'kimi-k3'}}]
+      'prompt_versions':{},'model_settings':{'model':model}}]
+    if combined:
+        rows.append({**deepcopy(rows[0]),'id':str(uuid4()),'invocation_key':'detail_page'})
     with scoped(dsn,user) as db:
         result=db.execute('SELECT start_detail_page_run(%s,1,%s,%s)',(project,run,Jsonb(rows))).fetchone()[0]
         assert result['status']=='analyzing'
@@ -132,15 +152,13 @@ async def test_page_three_stages_keep_selected_model_and_exact_image_prompts(pag
     from services.agent.image.ecommerce_planner.service import EcommerceImagePlanner,PlannerStreamBudget
     from services.detail_page_generation import page_owner
     from tests.ecommerce_design_fixtures import design_fixture
-    user,project,run,plan=seed(page_db)
+    user,project,run,plan=seed(page_db,combined=True,model=model)
     db=LocalDBClient(psycopg.conninfo.make_conninfo(page_db,user='everydayai'),min_size=1,max_size=3)
     seen=[]
     for mode in ('main_images','detail_page'):
         if mode=='detail_page':
-            new_plan=str(uuid4())
             with psycopg.connect(page_db) as c:
-                c.execute("INSERT INTO ecom_image_plans SELECT (jsonb_populate_record(NULL::ecom_image_plans,to_jsonb(p)||%s)).* FROM ecom_image_plans p WHERE id=%s",(Jsonb({'id':new_plan,'invocation_key':mode,'status':'planning','current_stage':1,'stage_outputs':{},'stage_attempts':[],'recovery_state':{},'items':[],'lease_token':None,'lease_expires_at':None}),plan))
-            plan=new_plan
+                plan=str(c.execute("SELECT id FROM ecom_image_plans WHERE project_id=%s AND invocation_key='detail_page'",(project,)).fetchone()[0])
         draft,evidence,_=design_fixture(7,mode,3)
         refs=[{'file_id':compute_fid(None,f'product/{i}.png'),'role':'product' if i<2 else 'reference'} for i in range(3)]
         refs=[{**ref,'source_id':ref['file_id']} for ref in refs]
@@ -184,12 +202,13 @@ async def test_page_three_stages_keep_selected_model_and_exact_image_prompts(pag
     db.pool.close()
 
 
+@pytest.mark.parametrize('failed_stage', [2,3])
 @pytest.mark.parametrize('model,kind,count', [
     ('kimi-k3','main_images',15), ('gemini-3.8-flash','detail_page',15),
     ('kimi-k3','detail_page',7), ('gemini-3.8-flash','main_images',7),
 ])
-async def test_page_worker_prepares_nine_original_images_once_and_resumes_stage_three(
-        page_db, monkeypatch, tmp_path, model, kind, count):
+async def test_page_worker_resumes_failed_stage_and_accepts_images_with_nine_ordered_originals(
+        page_db, monkeypatch, tmp_path, model, kind, count, failed_stage):
     import base64, json
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -203,7 +222,7 @@ async def test_page_worker_prepares_nine_original_images_once_and_resumes_stage_
     from services.agent.image.ecommerce_planner.page_profile import profile
     from services.detail_page_generation import DetailPageWorker, PageImageInputResolver, page_owner, plan_error
     from tests.ecommerce_design_fixtures import design_fixture
-    user, project, run, plan = seed(page_db, count)
+    user, project, run, plan = seed(page_db, count, model=model)
     db = LocalDBClient(psycopg.conninfo.make_conninfo(page_db,user='everydayai'),min_size=1,max_size=3)
     config = get_settings()
     monkeypatch.setattr(config,'file_workspace_root',str(tmp_path))
@@ -233,7 +252,7 @@ async def test_page_worker_prepares_nine_original_images_once_and_resumes_stage_
     frozen = vars(profile(config,model))
     with psycopg.connect(page_db) as c:
         c.execute('UPDATE ecom_image_plans SET input_snapshot=%s,target_size=%s,model_settings=%s WHERE id=%s',
-            (Jsonb(snap),Jsonb(snap['target_size']),Jsonb({'model':model,'profile':frozen}),plan))
+            (Jsonb(snap),Jsonb(snap['target_size']),Jsonb({'model':model,'profile':frozen,'image_budget':{'max_requests':15,'max_credits':300}}),plan))
     # The real worker and SQL lease/resume/save paths run; only external HTTP is substituted.
     from services.detail_page_generation import page_scope
     scoped_db = page_scope(db,user,None)
@@ -259,7 +278,10 @@ async def test_page_worker_prepares_nine_original_images_once_and_resumes_stage_
                 start = len(uploads)-8
                 assert media == [f'https://kie.invalid/temporary/{i}.png' for i in range(start,start+9)]
             assert ('response_format' in kwargs) == (model=='kimi-k3' and stage in (1,3))
-            if stage==3 and fail_third:
+            if stage==failed_stage and fail_third:
+                if failed_stage==2:
+                    from services.model_gateway import ModelGatewayTimeoutError
+                    raise ModelGatewayTimeoutError(model,300,'stream')
                 if model=='kimi-k3':
                     raise DashScopeAPIError.from_http(b'{"error":{"code":"InvalidApiKey","message":"rejected"}}',401)
                 raise KieAuthenticationError('rejected',status_code=401,error_code='401')
@@ -273,8 +295,11 @@ async def test_page_worker_prepares_nine_original_images_once_and_resumes_stage_
         worker = DetailPageWorker(db)
         await worker.run(service,row())
         failed = row()
-        assert failed['status']=='failed' and set(failed['stage_outputs'])=={'1','2'}
-        assert seen == [1,2,3]
+        assert failed['status']=='failed' and set(failed['stage_outputs'])=={str(i) for i in range(1,failed_stage)}
+        assert seen == list(range(1,failed_stage+1))
+        if failed_stage==2:
+            old=next(a for a in failed['recovery_state']['attempts'].values() if a['stage']==2)
+            assert old['outcome']=='uncertain' and old['usage']['local_request_closed'] is True
         assert len(uploads) == (9 if model=='gemini-3.8-flash' else 0)
         assert plan_error(failed)['message']
         previous = deepcopy(failed['stage_outputs'])
@@ -284,7 +309,8 @@ async def test_page_worker_prepares_nine_original_images_once_and_resumes_stage_
         await worker.run(service,row())
         saved = row()
         assert saved['status']=='ready' and len(saved['items'])==count
-        assert seen == [1,2,3,3] and saved['stage_outputs']['1']==previous['1'] and saved['stage_outputs']['2']==previous['2']
+        assert seen == list(range(1,failed_stage+1))+list(range(failed_stage,4))
+        assert all(saved['stage_outputs'][key]==value for key,value in previous.items())
         assert len(uploads) == (18 if model=='gemini-3.8-flash' else 0)
         assert saved['input_snapshot']['resolved_references'] == refs
         # Analysis representation never enters the durable final image request.
@@ -298,6 +324,227 @@ async def test_page_worker_prepares_nine_original_images_once_and_resumes_stage_
             assert frozen_image['references']==refs
             assert 'data:image/' not in item['request_text'] and 'kie.invalid/temporary' not in item['request_text']
         assert [a['stage'] for a in saved['stage_attempts']].count(1)==1
-        assert [a['stage'] for a in saved['stage_attempts']].count(2)==1
+        assert [a['stage'] for a in saved['stage_attempts'] if a.get('attempt_id')].count(2)==(2 if failed_stage==2 else 1)
+        # Real page acceptance -> shared claim -> result -> publication -> one settlement.
+        from services.detail_page_generation import DetailPageGeneration
+        generation=DetailPageGeneration(db,user,None)
+        receipts=await generation.accept(saved)
+        assert len(receipts)==count
+        assert (await generation.accept(saved))['outcome']=='replay'
+        for receipt in receipts:
+            with scoped(page_db,user,True) as c:
+                claimed=c.execute('SELECT claim_chat_image_submission(%s,%s,60)',(receipt['task_id'],str(uuid4()))).fetchone()[0]
+                assert claimed['outcome']=='claimed'
+                c.execute('SELECT record_chat_image_provider_result(%s,%s)',(receipt['task_id'],Jsonb({'status':'success'})))
+                assert c.execute("SELECT publish_chat_image_result(%s,%s,'completed')",(receipt['task_id'],Jsonb([{'type':'image','url':'result'}]))).fetchone()[0]['outcome']=='published'
+        with psycopg.connect(page_db) as c:
+            assert c.execute('SELECT count(*) FROM credit_transactions WHERE user_id=%s',(user,)).fetchone()[0]==count
+            assert c.execute("SELECT count(*) FROM tasks WHERE user_id=%s AND conversation_id IS NULL AND status='completed'",(user,)).fetchone()[0]==count
     finally:
         db.pool.close()
+
+
+def ready_item(dsn, count=1):
+    user,project,run,plan=seed(dsn,count)
+    items=[]; snapshots=[]
+    for position in range(1,count+1):
+        item=str(uuid4()); frozen=snapshot(user,project,run,plan,item)
+        items.append({'item_id':item,'position':position,'request_text':'exact',
+            'request_text_sha256':frozen['prompt_sha256'],'aspect_ratio':'1:1'})
+        snapshots.append({'item_id':item,'snapshot':frozen})
+    with psycopg.connect(dsn) as db:
+        db.execute("UPDATE ecom_image_plans SET status='ready',items=%s WHERE id=%s",(Jsonb(items),plan))
+    return user,project,run,plan,snapshots
+
+
+@pytest.mark.parametrize('change', ['missing_origin','null_origin','null_destination','wrong_type','wrong_user',
+    'wrong_org','wrong_project','wrong_run','wrong_plan','wrong_item','wrong_revision','missing_hash',
+    'null_hash','prompt','refs','null_refs','ratio','resolution','fake_conversation','chat_delivery','chat_message'])
+def test_direct_task_insert_cannot_forge_page_exception(page_db,change):
+    user,project,run,plan,rows=ready_item(page_db)
+    frozen=rows[0]['snapshot']; o=frozen['origin']; conversation=None; kind='image'; task_user=user
+    org=None; delivery={}; message=None
+    if change=='missing_origin':del frozen['origin']
+    elif change=='null_origin':frozen['origin']=None
+    elif change=='null_destination':o['destination']=None
+    elif change=='wrong_type':kind='chat'
+    elif change=='wrong_user':task_user=str(uuid4())
+    elif change=='wrong_org':org=str(uuid4())
+    elif change in ('wrong_project','wrong_run'):o['project_id' if change=='wrong_project' else 'generation_run_id']=str(uuid4())
+    elif change in ('wrong_plan','wrong_item'):o['plan_source']['plan_id' if change=='wrong_plan' else 'item_id']=str(uuid4())
+    elif change=='wrong_revision':o['plan_source']['revision']=2
+    elif change=='missing_hash':del frozen['request_hash']
+    elif change=='null_hash':frozen['request_hash']=None
+    elif change=='prompt':frozen['prompt']='forged'
+    elif change=='refs':frozen['references']=[{'file_id':'forged'}]
+    elif change=='null_refs':frozen['references']=None
+    elif change=='ratio':frozen['aspect_ratio']='4:3'
+    elif change=='resolution':frozen['resolution']='4K'
+    elif change=='fake_conversation':conversation=str(uuid4())
+    elif change=='chat_delivery':delivery={'actor':True}
+    elif change=='chat_message':message=str(uuid4())
+    with scoped(page_db,user) as db:
+        with pytest.raises(psycopg.Error):
+            db.execute('INSERT INTO tasks(id,user_id,org_id,conversation_id,type,model_id,request_params,delivery_context,assistant_message_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+                (str(uuid4()),task_user,org,conversation,kind,frozen['model'],Jsonb({'_media_request_v1':frozen,'_media_lifecycle_v1':{'phase':'queued'}}),Jsonb(delivery),message))
+
+
+def test_atomic_group_rollback_then_saved_ready_acceptance_retry(page_db):
+    user,project,run,plan,rows=ready_item(page_db,7)
+    bad=deepcopy(rows);bad[-1]['snapshot']['request_hash']=None
+    with scoped(page_db,user) as db:
+        with pytest.raises(psycopg.Error):
+            db.execute('SELECT accept_detail_page_group(%s,%s,%s)',(project,plan,Jsonb(bad)))
+    with psycopg.connect(page_db) as db:
+        assert db.execute("SELECT count(*) FROM tasks WHERE request_params->'_media_request_v1'->'origin'->>'project_id'=%s",(project,)).fetchone()[0]==0
+        db.execute("UPDATE ecom_image_plans SET recovery_state=%s,stage_outputs=%s WHERE id=%s",(
+            Jsonb({'acceptance_error':{'code':'DETAIL_GENERATION_FAILED'}}),Jsonb({'1':{'saved':True},'2':'saved','3':{'saved':True}}),plan))
+    request=str(uuid4())
+    with scoped(page_db,user) as db:
+        db.execute('SELECT resume_detail_page_plan(%s,%s,%s)',(project,plan,request))
+        replay=db.execute('SELECT resume_detail_page_plan(%s,%s,%s)',(project,plan,request)).fetchone()[0]
+        assert replay['status']=='ready' and replay['stage_outputs']['2']=='saved'
+        assert 'acceptance_error' not in replay['recovery_state']
+        receipt=db.execute('SELECT accept_detail_page_group(%s,%s,%s)',(project,plan,Jsonb(rows))).fetchone()[0]
+        second=db.execute('SELECT accept_detail_page_group(%s,%s,%s)',(project,plan,Jsonb(rows))).fetchone()[0]
+        assert [r['task_id'] for r in receipt]==[r['task_id'] for r in second]
+        assert all(r['outcome']=='replay' for r in second)
+    with psycopg.connect(page_db) as db:
+        assert db.execute('SELECT count(*) FROM tasks WHERE user_id=%s',(user,)).fetchone()[0]==7
+        assert db.execute('SELECT count(*) FROM credit_transactions WHERE user_id=%s',(user,)).fetchone()[0]==0
+
+
+@pytest.mark.parametrize('closed,legacy,live,allowed',[
+    (True,False,False,True),(False,False,False,False),(True,True,False,True),(True,False,True,False),
+])
+def test_explicit_timeout_resume_preserves_unknown_history_and_respects_live_lease(page_db,closed,legacy,live,allowed):
+    from services.detail_page_generation import can_resume_plan
+    user,project,run,plan=seed(page_db)
+    attempt={'outcome':'uncertain','completed_at':'2026-10-10T04:12:42Z','usage':{
+        'error_type':'ModelGatewayTimeoutError','error_code':'MODEL_TIMEOUT','output_characters':2380}}
+    if not legacy:attempt['usage']['local_request_closed']=closed
+    state={'attempts':{'old-call':attempt},'counts':{'1':1,'2':1},'deadline':'2026-10-10T04:26:12Z',
+        'last_error':{'code':'MODEL_TIMEOUT','category':'uncertain'}}
+    with psycopg.connect(page_db) as db:
+        db.execute("UPDATE ecom_image_plans SET status='failed',current_stage=2,stage_outputs=%s,recovery_state=%s,lease_expires_at=CASE WHEN %s THEN now()+interval '10 minutes' ELSE NULL END WHERE id=%s",
+            (Jsonb({'1':{'saved':'facts'}}),Jsonb(state),live,plan))
+        from psycopg.rows import dict_row
+        row=db.cursor(row_factory=dict_row).execute('SELECT * FROM ecom_image_plans WHERE id=%s',(plan,)).fetchone()
+        assert can_resume_plan(row) is allowed
+        from services.detail_page_generation import plan_error
+        if allowed:assert '已超时结束' in plan_error(row)['message']
+    request=str(uuid4())
+    with scoped(page_db,user) as db:
+        if not allowed:
+            with pytest.raises(psycopg.Error):db.execute('SELECT resume_detail_page_plan(%s,%s,%s)',(project,plan,request))
+        else:
+            db.execute('SELECT resume_detail_page_plan(%s,%s,%s)',(project,plan,request))
+            replay=db.execute('SELECT resume_detail_page_plan(%s,%s,%s)',(project,plan,request)).fetchone()[0]
+            assert replay['stage_outputs']=={'1':{'saved':'facts'}}
+            assert replay['recovery_state']['attempts']=={}
+            assert replay['recovery_state']['previous_windows']==[state]
+
+
+def test_source_remains_immutable_and_lifecycle_publication_is_allowed(page_db):
+    user,project,run,plan,rows=ready_item(page_db)
+    with scoped(page_db,user) as db:
+        task=db.execute('SELECT accept_detail_page_image(%s,%s,%s,%s)',(project,plan,rows[0]['item_id'],Jsonb(rows[0]['snapshot']))).fetchone()[0]['task_id']
+    with scoped(page_db,user) as db:
+        with pytest.raises(psycopg.Error,match='IMMUTABLE'):
+            db.execute("UPDATE tasks SET request_params=jsonb_set(request_params,'{_media_request_v1,prompt}','\"changed\"') WHERE id=%s",(task,))
+    with scoped(page_db,user,True) as db:
+        db.execute('SELECT claim_chat_image_submission(%s,%s,60)',(task,str(uuid4())))
+        db.execute('SELECT record_chat_image_provider_result(%s,%s)',(task,Jsonb({'status':'success'})))
+    with scoped(page_db,user,True) as db:
+        result=db.execute("SELECT publish_chat_image_result(%s,%s,'completed')",(task,Jsonb([{'type':'image','url':'result'}]))).fetchone()[0]
+        assert result['outcome']=='published'
+
+
+def test_page_migration_preserves_real_chat_accept_claim_publish_and_required_conversation(page_db):
+    from tests.test_chat_image_lifecycle_postgres import facts,accept,claim,worker_rpc,publish
+    f=facts.__wrapped__(page_db)
+    task=accept(f)['task_id']
+    assert claim(f,task)['outcome']=='claimed'
+    worker_rpc(f,'record_chat_image_provider_result',task,Jsonb({'status':'success'}))
+    assert publish(f,task,status='completed')['outcome']=='published'
+    with psycopg.connect(page_db) as db:
+        assert db.execute('SELECT conversation_id FROM tasks WHERE id=%s',(task,)).fetchone()[0] is not None
+        with pytest.raises(psycopg.errors.CheckViolation):
+            db.execute("INSERT INTO tasks(id,user_id,type) VALUES(%s,%s,'chat')",(str(uuid4()),f['user']))
+
+
+def test_page_exception_checks_organization_membership_and_scope(page_db):
+    user,project,run,plan,rows=ready_item(page_db)
+    org=str(uuid4());wrong_org=str(uuid4());frozen=rows[0]['snapshot'];frozen['origin']['org_id']=org
+    with psycopg.connect(page_db) as db:
+        db.execute('INSERT INTO organizations(id) VALUES(%s)',(org,))
+        db.execute('INSERT INTO org_members(org_id,user_id) VALUES(%s,%s)',(org,user))
+        db.execute('UPDATE detail_projects SET org_id=%s WHERE id=%s',(org,project))
+        db.execute('UPDATE ecom_image_plans SET org_id=%s WHERE id=%s',(org,plan))
+    for active in (wrong_org,org):
+        with scoped(page_db,user) as db:
+            db.execute("SELECT set_config('app.org_id',%s,true)",(active,))
+            if active==wrong_org:
+                with pytest.raises(psycopg.Error):db.execute('SELECT accept_detail_page_image(%s,%s,%s,%s,%s)',(project,plan,rows[0]['item_id'],Jsonb(frozen),active))
+            else:
+                assert db.execute('SELECT accept_detail_page_image(%s,%s,%s,%s,%s)',(project,plan,rows[0]['item_id'],Jsonb(frozen),active)).fetchone()[0]['outcome']=='accepted'
+
+
+def test_direct_insert_cannot_bypass_group_deduplication_or_budget(page_db):
+    user,project,run,plan,rows=ready_item(page_db,2)
+    with psycopg.connect(page_db) as db:
+        db.execute("UPDATE ecom_image_plans SET model_settings=model_settings||%s WHERE id=%s",(
+            Jsonb({'image_budget':{'max_requests':1,'max_credits':300}}),plan))
+    with scoped(page_db,user) as db:
+        db.execute('SELECT accept_detail_page_image(%s,%s,%s,%s)',(project,plan,rows[0]['item_id'],Jsonb(rows[0]['snapshot'])))
+    for i,error in ((0,'DETAIL_IMAGE_DUPLICATE'),(1,'DETAIL_IMAGE_BUDGET_EXCEEDED')):
+        frozen=rows[i]['snapshot']
+        with scoped(page_db,user) as db:
+            with pytest.raises(psycopg.Error,match=error):
+                db.execute("INSERT INTO tasks(id,user_id,type,model_id,request_params) VALUES(%s,%s,'image',%s,%s)",
+                    (str(uuid4()),user,frozen['model'],Jsonb({'_media_request_v1':frozen,'_media_lifecycle_v1':{'phase':'queued'}})))
+
+
+def test_page_image_retry_reuses_the_frozen_source_and_request_id(page_db):
+    user,project,run,plan,rows=ready_item(page_db)
+    frozen=rows[0]['snapshot']
+    with scoped(page_db,user) as db:
+        task=db.execute('SELECT accept_detail_page_image(%s,%s,%s,%s)',(project,plan,rows[0]['item_id'],Jsonb(frozen))).fetchone()[0]['task_id']
+    with scoped(page_db,user,True) as db:
+        db.execute('SELECT claim_chat_image_submission(%s,%s,60)',(task,str(uuid4())))
+        db.execute('SELECT record_chat_image_provider_result(%s,%s)',(task,Jsonb({'status':'success'})))
+        db.execute("SELECT publish_chat_image_result(%s,%s,'completed')",(task,Jsonb([{'type':'image','url':'result'}])))
+    request=str(uuid4());retry=deepcopy(frozen)
+    retry['origin'].update(retry_request_id=request,retry_of_task_id=task)
+    with scoped(page_db,user) as db:
+        receipt=db.execute('SELECT replay_chat_image_snapshot(%s,%s,%s,NULL,true)',(task,request,Jsonb(retry))).fetchone()[0]
+        replay=db.execute('SELECT replay_chat_image_snapshot(%s,%s,%s,NULL,true)',(task,request,Jsonb(retry))).fetchone()[0]
+        assert receipt['task_id']==replay['task_id'] and replay['outcome']=='replay'
+
+
+def test_old_heartbeat_cannot_reclaim_a_failed_or_resumed_plan(page_db):
+    from types import SimpleNamespace
+    from core.local_db import LocalDBClient
+    from services.detail_page_generation import DetailPageWorker,page_scope
+    user,project,run,plan=seed(page_db)
+    raw=LocalDBClient(psycopg.conninfo.make_conninfo(page_db,user='everydayai'),min_size=1,max_size=2)
+    service=SimpleNamespace(db=page_scope(raw,user,None),user_id=user)
+    old,new=str(uuid4()),str(uuid4())
+    try:
+        with scoped(page_db,user) as db:
+            assert db.execute('SELECT claim_ecom_image_plan(%s,NULL,%s,600)',(plan,old)).fetchone()[0]['claimed']
+        assert DetailPageWorker.renew(service,plan,old)
+        with psycopg.connect(page_db) as db:
+            db.execute("UPDATE ecom_image_plans SET status='failed',lease_token=NULL,lease_expires_at=NULL WHERE id=%s",(plan,))
+        assert not DetailPageWorker.renew(service,plan,old)
+        with scoped(page_db,user) as db:
+            db.execute('SELECT resume_detail_page_plan(%s,%s,%s)',(project,plan,str(uuid4())))
+        assert not DetailPageWorker.renew(service,plan,old)
+        with scoped(page_db,user) as db:
+            assert db.execute('SELECT claim_ecom_image_plan(%s,NULL,%s,600)',(plan,new)).fetchone()[0]['claimed']
+        assert not DetailPageWorker.renew(service,plan,old)
+        assert DetailPageWorker.renew(service,plan,new)
+        with psycopg.connect(page_db) as db:
+            db.execute("UPDATE detail_projects SET status='archived' WHERE id=%s",(project,))
+        assert not DetailPageWorker.renew(service,plan,new)
+    finally:raw.pool.close()

@@ -59,7 +59,8 @@ def _session(content=None, error=None):
         if error:
             raise error
         yield SimpleNamespace(content=content,prompt_tokens=3,completion_tokens=5,finish_reason="stop")
-    return SimpleNamespace(stream_chat=stream_chat,close=AsyncMock(),captured=captured)
+    return SimpleNamespace(stream_chat=stream_chat,close=AsyncMock(),captured=captured,
+        last_result=SimpleNamespace(status="completed",partial_output=False))
 
 @pytest.mark.asyncio
 async def test_gateway_fixed_kimi_closes_and_receives_images_and_original_text():
@@ -198,3 +199,129 @@ async def test_partial_response_does_not_replay_even_if_error_claims_rejection(m
     with patch('services.model_gateway.get_model_gateway',return_value=gateway):
         with pytest.raises(AppException): await RequirementAssistService().generate(_input())
     gateway.open_chat.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('defect',['comma','newline','field'])
+async def test_completed_draft_repairs_once_without_images_or_rewriting_valid_content(defect):
+    original=_payload()
+    if defect=='comma':
+        text=json.dumps(original,ensure_ascii=False)[:-1]+',}'
+        fixed=json.dumps(original,ensure_ascii=False)
+    elif defect=='newline':
+        original['product_description']='红色存钱本\n侧面搭扣'
+        text=json.dumps(original,ensure_ascii=False).replace('\\n','\n')
+        fixed=json.dumps(original,ensure_ascii=False)
+    else:
+        broken=json.loads(json.dumps(original));broken['selling_points'][0]['benefit_basis']='推断'
+        text=json.dumps(broken,ensure_ascii=False)
+        fixed=json.dumps({'patches':[{'path':['selling_points',0,'benefit_basis'],'op':'set','value':'inferred'}]})
+    sessions=[_session(text),_session(fixed)]
+    gateway=Mock(open_chat=Mock(side_effect=sessions))
+    with patch('services.model_gateway.get_model_gateway',return_value=gateway):
+        outcome=await RequirementAssistService().generate(_input())
+    assert outcome.result.model_dump()==original
+    assert gateway.open_chat.call_count==2
+    assert all(s.close.await_count==1 for s in sessions)
+    messages=sessions[1].captured['messages']
+    assert all(isinstance(m['content'],str) for m in messages)
+    assert 'image_url' not in json.dumps(messages) and 'cdn/' not in json.dumps(messages)
+    assert '红色存钱本' in json.dumps(messages,ensure_ascii=False)
+    assert sessions[1].captured['reasoning_effort']=='low'
+    assert sessions[1].captured['response_format']=={'type':'json_object'}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('finish,status,code',[
+    ('length','completed','REQUIREMENT_ASSIST_TRUNCATED'),
+    ('content_filter','completed','REQUIREMENT_ASSIST_REFUSED'),
+    (None,'completed','REQUIREMENT_ASSIST_INCOMPLETE'),
+    ('stop','incomplete','REQUIREMENT_ASSIST_INCOMPLETE'),
+])
+async def test_even_valid_json_needs_a_normal_complete_receipt(finish,status,code):
+    session=_session(json.dumps(_payload()))
+    async def stream(**kwargs):
+        yield SimpleNamespace(content=json.dumps(_payload()),finish_reason=finish)
+    session.stream_chat=stream;session.last_result.status=status
+    gateway=Mock(open_chat=Mock(return_value=session))
+    with patch('services.model_gateway.get_model_gateway',return_value=gateway):
+        with pytest.raises(AppException) as failure:await RequirementAssistService().generate(_input())
+    assert failure.value.code==code
+    gateway.open_chat.assert_called_once()
+    session.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('wrong',['rewritten','extra_path','entire_draft','bad_again'])
+async def test_format_repair_cannot_rewrite_or_escape_the_broken_field(wrong):
+    broken=_payload();broken['selling_points'][0]['benefit_basis']='推断'
+    if wrong=='rewritten':
+        text=json.dumps(_payload(),ensure_ascii=False)[:-1]+',}'
+        fixed=_payload();fixed['selling_points'][0]['benefit']='完全不同的卖点'
+    else:
+        text=json.dumps(broken)
+        fixed=({'patches':[{'path':['product_description'],'op':'set','value':'新的商品'}]} if wrong=='extra_path' else
+            _payload() if wrong=='entire_draft' else {'patches':[{'path':['selling_points',0,'benefit_basis'],'op':'set','value':'还是错误'}]})
+    sessions=[_session(text),_session(json.dumps(fixed))]
+    gateway=Mock(open_chat=Mock(side_effect=sessions))
+    with patch('services.model_gateway.get_model_gateway',return_value=gateway):
+        with pytest.raises(AppException) as failure:await RequirementAssistService().generate(_input())
+    assert failure.value.code=='REQUIREMENT_ASSIST_INVALID_OUTPUT'
+    assert gateway.open_chat.call_count==2
+
+
+@pytest.mark.asyncio
+async def test_transient_retry_and_format_repair_share_two_calls(monkeypatch):
+    from services.adapters.dashscope.chat_adapter import DashScopeAPIError
+    rejection=DashScopeAPIError.from_http(b'{"error":{"code":"InvalidURL.Timeout"}}',400)
+    broken=json.dumps(_payload())[:-1]+',}'
+    sessions=[_session(error=rejection),_session(broken)]
+    gateway=Mock(open_chat=Mock(side_effect=sessions))
+    monkeypatch.setattr('services.agent.image.requirement_assist_service.asyncio.sleep',AsyncMock())
+    with patch('services.model_gateway.get_model_gateway',return_value=gateway):
+        with pytest.raises(AppException) as failure:await RequirementAssistService().generate(_input())
+    assert failure.value.code=='REQUIREMENT_ASSIST_INVALID_OUTPUT'
+    assert gateway.open_chat.call_count==2
+
+
+@pytest.mark.asyncio
+async def test_format_repair_cannot_reset_the_120_second_budget(monkeypatch):
+    from services.agent.image import requirement_assist_service as module
+    real_monotonic=module.time.monotonic
+    offset=[0]
+    session=_session(json.dumps(_payload())[:-1]+',}')
+    stream=session.stream_chat
+    async def slow(**kwargs):
+        async for chunk in stream(**kwargs):yield chunk
+        offset[0]=121
+    session.stream_chat=slow
+    monkeypatch.setattr(module.time,'monotonic',lambda:real_monotonic()+offset[0])
+    gateway=Mock(open_chat=Mock(return_value=session))
+    with patch('services.model_gateway.get_model_gateway',return_value=gateway):
+        with pytest.raises(AppException) as failure:await RequirementAssistService().generate(_input())
+    assert failure.value.code=='REQUIREMENT_ASSIST_TIMEOUT'
+    gateway.open_chat.assert_called_once()
+
+
+def test_ambiguous_duplicate_fields_and_non_json_numbers_are_not_accepted():
+    for content in ('{"product_description":"a","product_description":"b"}',
+            '{"product_description":"a","selling_points":NaN}'):
+        with pytest.raises(InvalidRequirementOutput):parse_requirement_result(content)
+
+
+@pytest.mark.asyncio
+async def test_format_diagnostics_do_not_log_body_images_or_unknown_field_names():
+    from loguru import logger
+    secret_marker='PRIVATE_DRAFT_MARKER'
+    payload=_payload();payload['product_description']+=secret_marker
+    extra='data:image/png;base64,PRIVATE_IMAGE_MARKER';payload[extra]='extra'
+    sessions=[_session(json.dumps(payload)),_session(json.dumps({'patches':[{'path':[extra],'op':'remove'}]}))]
+    captured=[];sink=logger.add(lambda message:captured.append(str(message)))
+    try:
+        with patch('services.model_gateway.get_model_gateway',return_value=Mock(open_chat=Mock(side_effect=sessions))):
+            outcome=await RequirementAssistService().generate(_input())
+        assert secret_marker in outcome.result.product_description
+        log=''.join(captured)
+        assert 'output_sha256' in log and '<extra>' in log
+        assert secret_marker not in log and 'PRIVATE_IMAGE_MARKER' not in log and 'cdn/product' not in log
+    finally:logger.remove(sink)

@@ -174,7 +174,7 @@ async def test_syntax_repair_has_raw_first_draft_instead_of_starting_over():
 
 
 @pytest.mark.parametrize('stage', [1, 2, 3])
-async def test_stage_three_idle_budget_is_bounded_by_parent_and_persisted_deadline(monkeypatch, stage):
+async def test_all_stages_idle_budget_is_bounded_by_parent_and_persisted_deadline(monkeypatch, stage):
     from services.adapters.base import StreamChunk
     service = planner()
     service.owner.execution_budget = SimpleNamespace(remaining=50)
@@ -188,13 +188,10 @@ async def test_stage_three_idle_budget_is_bounded_by_parent_and_persisted_deadli
         lambda: SimpleNamespace(open_chat=lambda request: requests.append(request) or session))
     _, usage = await service._call({'id': str(uuid4())}, 'lease', stage, 'rules', [])
     request = requests[0]
-    if stage == 3:
-        assert request.timeout is None and request.idle_timeout == 30
-        assert 0 < request.budget.remaining <= 15
-        service.owner.execution_budget.remaining = 2
-        assert request.budget.remaining <= 2
-    else:
-        assert request.idle_timeout is None and request.timeout <= 20
+    assert request.timeout is None and request.idle_timeout == 30
+    assert 0 < request.budget.remaining <= 15
+    service.owner.execution_budget.remaining = 2
+    assert request.budget.remaining <= 2
     assert usage['first_output_ms'] is not None and usage['output_characters'] == 9
 
 
@@ -224,4 +221,38 @@ async def test_complete_looking_json_without_completed_receipt_is_uncertain(monk
     service._reserve.assert_awaited_once()
     assert service._finish.await_args.args[5] == 'uncertain'
     assert service._finish.await_args.args[4]['output_characters'] > 0
+    session.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize('stage',[1,2,3])
+async def test_all_planner_stages_finish_when_active_stream_outlasts_idle_limit(monkeypatch,stage):
+    import asyncio
+    from services.model_gateway import ModelGateway
+    from services.adapters.base import StreamChunk
+    service=planner()
+    service.settings.ecom_image_planning_stage_timeout=1.05
+    async def stream(**kwargs):
+        for i in range(4):
+            await asyncio.sleep(0.3)
+            yield StreamChunk(content='正文' if i==3 else '',thinking_content='思考' if i<3 else None)
+    gateway=ModelGateway(adapter_factory=lambda *args,**kwargs:SimpleNamespace(stream_chat=stream,close=AsyncMock()))
+    monkeypatch.setattr('services.agent.image.ecommerce_planner.service.get_model_gateway',lambda:gateway)
+    try:
+        content,usage=await service._call({'id':str(uuid4())},'lease',stage,'rules',[])
+        assert content=='正文' and usage['elapsed_ms']>1050
+    finally:await gateway.close()
+
+
+@pytest.mark.parametrize('stage',[1,2,3])
+async def test_known_truncation_is_not_a_completed_planner_stage(monkeypatch,stage):
+    from services.adapters.base import StreamChunk
+    service=planner()
+    async def stream(*args,**kwargs):
+        yield StreamChunk(content='{"status":"ready"}',finish_reason='length')
+    session=SimpleNamespace(stream_chat=stream,last_result=SimpleNamespace(status='completed',usage={}),close=AsyncMock())
+    monkeypatch.setattr('services.agent.image.ecommerce_planner.service.get_model_gateway',
+        lambda:SimpleNamespace(open_chat=lambda request:session))
+    with pytest.raises(PlannerRecoveryError,match='ECOM_PLAN_EXECUTION_UNCERTAIN'):
+        await service._call({'id':str(uuid4())},'lease',stage,'rules',[])
+    assert service._finish.await_args.args[5]=='uncertain'
     session.close.assert_awaited_once()
