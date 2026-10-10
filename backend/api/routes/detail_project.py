@@ -70,6 +70,13 @@ def resume_detail_project(project_id: UUID,body: DetailResumeRequest,service: De
     return DetailProjectEnvelope(data={"project":generation.resume(str(project_id),str(body.plan_id),str(body.request_id))})
 
 
+@router.post("/{project_id}/stop-recovery", response_model=DetailProjectEnvelope)
+def stop_detail_recovery(project_id: UUID,service: DetailProjectService = Depends(get_detail_project_service)):
+    from services.detail_page_generation import DetailPageGeneration
+    generation=DetailPageGeneration(service.db,service.user_id,service.org_id)
+    return DetailProjectEnvelope(data={"project":generation.stop_recovery(str(project_id))})
+
+
 @router.post("/current/images", response_model=DetailProjectEnvelope)
 def attach_detail_project_image(
     body: DetailImageAttachRequest,

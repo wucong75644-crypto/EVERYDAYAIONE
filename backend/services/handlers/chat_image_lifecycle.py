@@ -218,7 +218,8 @@ class ChatImageLifecycle:
             await self.finish_with_lock(await self.refresh(task))
 
     async def record_provider_result(self, task, result):
-        payload={"image_urls":getattr(result,"image_urls",[]),"error":getattr(result,"fail_msg",None) or "生成失败"}
+        payload={"image_urls":getattr(result,"image_urls",[]),"error":getattr(result,"fail_msg",None) or "生成失败",
+            "fail_code":getattr(result,"fail_code",None)}
         from services.adapters.base import TaskStatus
         payload["status"]="success" if result.status==TaskStatus.SUCCESS else "failed"
         await self.rpc(task,"record_chat_image_provider_result",p_result=payload)

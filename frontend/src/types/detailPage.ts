@@ -30,7 +30,7 @@ export interface DetailProjectDraft {
   status?: string;
   prompt_model?: PromptModel;
   groups?: DetailGroup[];
-  run_state?: {run_id?: string; request_id?: string};
+  run_state?: {run_id?: string; request_id?: string; delivery_stopped?: boolean};
   images: Array<{
     id: string; category: DetailImageCategory; workspace_path: string; sort_order: number;
     status: 'ready' | 'missing'; original_url: string | null; thumbnail_url: string | null;
@@ -82,6 +82,9 @@ export interface DetailGroup {
   error?: {code?: string; message?: string; category?: string}; questions?: unknown[];
   acceptance_error?: {code?: string}; can_resume?: boolean; retry_may_have_provider_cost?: boolean;
   resume_request_id?: string | null;
+  auto_recovery?: {enabled: boolean; status: 'active' | 'waiting' | 'blocked'; retry_cost: 'platform';
+    attempts?: number; next_retry_at?: string | null; platform_attention?: boolean;
+    items: Record<string, {status: 'waiting' | 'blocked'; message?: string | null; attempts: number; next_retry_at?: string | null; platform_attention?: boolean}>} | null;
   items: Array<{item_id: string; position: number; name: string; purpose: string; request_text: string; aspect_ratio: string}>;
   tasks: DetailImageTask[];
 }

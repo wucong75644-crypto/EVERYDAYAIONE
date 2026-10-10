@@ -25,6 +25,17 @@ class ChatImageControls:
             raise NotFoundError("聊天图片任务", task_id)
         return row
 
+    async def automatic_failure_recovery(self, row):
+        origin=row['request_params'][REQUEST_KEY]['origin']
+        if origin.get('destination')!='detail_project' or row['status']!='failed':
+            return False
+        plan=await asyncio.to_thread(lambda:self.db.table('ecom_image_plans').select('model_settings').eq(
+            'id',origin['plan_source']['plan_id']).single().execute().data)
+        project=await asyncio.to_thread(lambda:self.db.table('detail_projects').select('run_state').eq(
+            'id',origin['project_id']).single().execute().data)
+        from services.detail_page_recovery import delivery_enabled
+        return delivery_enabled(plan,project)
+
     async def details(self, task_id):
         row = await self.task(task_id)
         params = row["request_params"]
@@ -52,12 +63,13 @@ class ChatImageControls:
             "platform_cost": params.get("_media_platform_cost_v1"),
             "feedback": params.get("_media_feedback_v1"),
             "can_stop": phase == "queued",
-            "can_replay": phase == "published" and chat_image_acceptance_allowed(get_settings(), self.user_id),
+            "can_replay": phase == "published" and not await self.automatic_failure_recovery(row)
+                and chat_image_acceptance_allowed(get_settings(), self.user_id),
             "cancel_explanation": "排队时可停止；任务一经领取或提交便无法撤回，将继续核实与结算",
             "capabilities": {"reference_weights": False, "transparent_background": transparent_supported,
                 "mask_edit": False, "quality_check": False}}
 
-    async def replay(self, task_id, request_id):
+    async def replay(self, task_id, request_id, *, delivery_token=None):
         row = await self.task(task_id)
         original = row["request_params"][REQUEST_KEY]
         verify_frozen_request(original)
@@ -67,12 +79,17 @@ class ChatImageControls:
         snapshot = deepcopy(original)
         snapshot.pop("request_hash")
         snapshot["origin"].pop("tool_call_id", None)
+        snapshot['origin'].pop('delivery_retry_token',None)
+        if delivery_token is not None:
+            snapshot['origin']['delivery_retry_token']=delivery_token
         snapshot["origin"].update(retry_of_task_id=task_id, retry_request_id=request_id)
         snapshot["source_task_id"] = task_id
         snapshot["request_hash"] = canonical_hash(snapshot)
         receipt = await self._replay_rpc(task_id, request_id, snapshot, allow_new=False)
         if receipt.get("outcome") == "replay":
             return self._receipt(row, original, receipt)
+        if delivery_token is None and await self.automatic_failure_recovery(row):
+            raise ValidationError('任务正在自动恢复，无需手动重复生成；可先停止自动重试')
         if not chat_image_acceptance_allowed(get_settings(), self.user_id):
             raise PermissionDeniedError("新的图片请求尚未开放")
         if original.get("background")=="transparent" and not get_settings().chat_image_transparent_enabled:

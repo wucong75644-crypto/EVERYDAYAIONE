@@ -4,15 +4,15 @@ import type { DetailGroup } from '../../../types/detailPage';
 import { chatImageService } from '../../../services/chatImage';
 import { DetailWorkspace } from '../DetailWorkspace';
 import { downloadWorkspaceZip } from '../../../services/workspace';
-import { resumeDetailPlan } from '../../../services/detailProject';
+import { resumeDetailPlan, stopDetailRecovery } from '../../../services/detailProject';
 
 vi.mock('../../chat/media/ChatImageControls', () => ({ default: ({taskId}:{taskId:string}) => <button>任务详情 {taskId}</button> }));
 vi.mock('../../chat/message/MessageImageBlocks', () => ({ AiGeneratedImage: ({renderId}:{renderId:string}) => <div>图片 {renderId}</div> }));
 vi.mock('../../chat/media/ImagePreviewModal', () => ({ default: () => null }));
-vi.mock('../../chat/media/MediaPlaceholder', () => ({ FailedMediaPlaceholder: ({onRetry}:{onRetry:()=>void}) => <button onClick={onRetry}>重新生成</button> }));
+vi.mock('../../chat/media/MediaPlaceholder', () => ({ FailedMediaPlaceholder: ({onRetry,errorMessage}:{onRetry?:()=>void;errorMessage?:string}) => <div>{errorMessage}{onRetry&&<button onClick={onRetry}>重新生成</button>}</div> }));
 vi.mock('../../../services/chatImage', () => ({ chatImageService: {replay:vi.fn()} }));
 vi.mock('../../../services/workspace', () => ({ downloadWorkspaceZip: vi.fn() }));
-vi.mock('../../../services/detailProject', () => ({ resumeDetailPlan: vi.fn() }));
+vi.mock('../../../services/detailProject', () => ({ resumeDetailPlan: vi.fn(), stopDetailRecovery: vi.fn() }));
 
 const group:DetailGroup = {
   plan_id:'plan-1',kind:'main_images',status:'ready',stage:3,count:2,tasks:[],
@@ -22,6 +22,44 @@ const tasks:DetailGroup['tasks'] = [2,1].map(position=>({id:`task-${position}`,i
 
 describe('右侧提示词和图片工作区',()=>{
   beforeEach(()=>vi.clearAllMocks());
+  it('重试发现原图变化后显示可操作原因，暂停期间不提供重复生成',()=>{
+    render(<DetailWorkspace projectId="project-1" onRefresh={vi.fn()} groups={[{...group,
+      tasks:tasks.map(task=>({...task,status:task.id==='task-1'?'failed':'completed'})),
+      auto_recovery:{enabled:true,status:'blocked',retry_cost:'platform',items:{
+        'item-1':{status:'blocked',attempts:1,message:'原始图片已变化，请重新上传后开始。'}}}}]}/>);
+    expect(screen.getByText('原始图片已变化，请重新上传后开始。')).toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'重新生成'})).not.toBeInTheDocument();
+    expect(screen.getByText('图片 task-2')).toBeInTheDocument();
+  });
+  it('自动恢复失败项时保留正常图片和提示词，停止只发送一次请求',async()=>{
+    vi.mocked(stopDetailRecovery).mockResolvedValue({} as Awaited<ReturnType<typeof stopDetailRecovery>>);
+    const onRefresh=vi.fn();
+    const recovery={enabled:true,status:'waiting' as const,retry_cost:'platform' as const,
+      items:{'item-1':{status:'waiting' as const,attempts:2}}};
+    const props={projectId:'project-1',onRefresh};
+    const {rerender}=render(<DetailWorkspace {...props} groups={[{...group,auto_recovery:recovery,
+      tasks:tasks.map(task=>({...task,status:task.id==='task-1'?'failed':'completed'}))}]}/>);
+    expect(screen.queryByRole('button',{name:'重新生成'})).not.toBeInTheDocument();
+    expect(screen.getByText('自动恢复中，正在补齐此图片')).toBeInTheDocument();
+    expect(screen.getByText('图片 task-2')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'展开提示词 · 2份'}));
+    expect(screen.getByText('执行正文1')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'停止自动重试'}));
+    await waitFor(()=>expect(onRefresh).toHaveBeenCalledTimes(1));
+    expect(stopDetailRecovery).toHaveBeenCalledExactlyOnceWith('project-1');
+    rerender(<DetailWorkspace {...props} groups={[{...group,auto_recovery:null,
+      tasks:tasks.map(task=>({...task,status:task.id==='task-1'?'failed':'completed'}))}]}/>);
+    expect(screen.queryByRole('button',{name:'停止自动重试'})).not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'重新生成'})).toBeInTheDocument();
+  });
+  it('策划临时失败显示恢复动画，隐藏手动重启入口',()=>{
+    render(<DetailWorkspace projectId="project-1" onRefresh={vi.fn()} groups={[{...group,status:'failed',stage:2,
+      can_resume:true,error:{code:'MODEL_TIMEOUT'},items:[],auto_recovery:{enabled:true,status:'waiting',retry_cost:'platform',items:{}}}]}/>);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'从失败阶段继续'})).not.toBeInTheDocument();
+    expect(screen.getByRole('listitem',{name:'视觉定位：正在执行'})).toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'停止自动重试'})).toBeInTheDocument();
+  });
   it('已保存提示词先可见，受理后折叠，并可在进度更新后继续展开阅读',()=>{
     const props={projectId:'project-1',onRefresh:vi.fn()};
     const {rerender}=render(<DetailWorkspace {...props} groups={[group]}/>);

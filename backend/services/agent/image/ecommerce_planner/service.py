@@ -425,7 +425,11 @@ class EcommerceImagePlanner:
             await self._save(row, lease, 3, final, "ready", final, usage)
             return await self._result(row["id"], row["plan_revision"], "ready")
         except asyncio.CancelledError:
-            await self._fail(row["id"], lease, active_stage, "cancelled")
+            from services.detail_page_recovery import delivery_enabled
+            if self.page_execution and delivery_enabled(row):
+                await self._fail(row["id"], lease, active_stage, "failed", PlannerRecoveryError("ECOM_PAGE_WORKER_INTERRUPTED"))
+            else:
+                await self._fail(row["id"], lease, active_stage, "cancelled")
             raise
         except Exception as error:
             saved = await asyncio.to_thread(lambda: self.scope.table("ecom_image_plans").select("stage_outputs,status")
@@ -604,6 +608,7 @@ class EcommerceImagePlanner:
                     await session.close()
                     session_closed = local_closed = True
                 diagnostics = {**tokens, **timing(), "error_type": type(error).__name__, "error_code": code,
+                    "finish_reason": finish_reason,
                     "http_status": getattr(error, "status_code", None), "provider_error_code": getattr(error, "error_code", None),
                     "provider_request_id": getattr(error, "request_id", None), "provider_reason": safe_error(error),
                     "local_request_closed": local_closed}

@@ -15,6 +15,7 @@ from services.agent.image.ecommerce_planner.page_profile import profile
 from services.agent.image.ecommerce_planner.prompt_resources import resources, HASHES, SCHEMA_SHA256, INTEGRATION_RULES_SHA256
 from services.agent.image.ecommerce_planner.service import EcommerceImagePlanner, PlannerStreamBudget, _digest
 from services.detail_project_service import DetailProjectService
+from services.detail_page_recovery import POLICY, DetailDeliveryRecovery, recovery_projection, latest_tasks
 from services.handlers.chat_image_request import freeze_image_request, chat_image_acceptance_allowed, validate_single_image_request
 
 
@@ -158,7 +159,8 @@ class DetailPageGeneration:
     def read(self, project_id):
         project = self.projects.get_by_id(project_id)
         plans = self.db.table('ecom_image_plans').select('*').eq('project_id', project_id).order('created_at').execute().data or []
-        tasks = self.db.table('tasks').select('id,status,result_data,error_message,credits_used,request_params,created_at').eq('user_id', self.user_id).eq(
+        plans = [row for row in plans if str(row['generation_run_id']) == project.get('run_state', {}).get('run_id')]
+        tasks = self.db.table('tasks').select('id,status,result,result_data,error_message,credits_used,request_params,created_at').eq('user_id', self.user_id).eq(
             "request_params->'_media_request_v1'->'origin'->>'project_id'", project_id).order('created_at').execute().data or []
         project['groups'] = [{
             'plan_id': row['id'], 'kind': row['input_snapshot']['task_type'], 'status': row['status'],
@@ -167,6 +169,8 @@ class DetailPageGeneration:
             'acceptance_error': row.get('recovery_state', {}).get('acceptance_error'),
             'resume_request_id': row.get('recovery_state', {}).get('resume_request_id'),
             'can_resume': can_resume_plan(row),
+            'auto_recovery': recovery_projection(row, project, [task for task in tasks if
+                task['request_params']['_media_request_v1']['origin']['plan_source']['plan_id'] == row['id']]),
             'retry_may_have_provider_cost': can_resume_plan(row) and any(closed_timeout(a)
                 for a in (row.get('recovery_state', {}).get('attempts') or {}).values()),
             'questions': (row.get('stage_outputs', {}).get(str(row['current_stage'])) or {}).get('questions', [])
@@ -220,7 +224,8 @@ class DetailPageGeneration:
                 'image_count':count,'input_snapshot':snapshot,'target_size':snapshot['target_size'],
                 'prompt_versions':{'resources_sha256':HASHES,'schema_sha256':SCHEMA_SHA256,
                     'integration_sha256':INTEGRATION_RULES_SHA256,'assembly_version':'ecom-fixed-frame.v3'},
-                'model_settings':{'model':project['prompt_model'],'profile':vars(selected),'image_budget':image_budget}})
+                'model_settings':{'model':project['prompt_model'],'profile':vars(selected),'image_budget':image_budget,
+                    'delivery_policy':POLICY}})
         try:
             self.db.rpc('start_detail_page_run', {'p_project_id':project_id,'p_version':version,
                 'p_request_id':request_id,'p_plans':rows}).execute()
@@ -232,6 +237,13 @@ class DetailPageGeneration:
         try:
             self.db.rpc('resume_detail_page_plan', {'p_project_id':project_id,
                 'p_plan_id':plan_id,'p_request_id':request_id}).execute()
+        except Exception as error:
+            raise page_error(error) from error
+        return self.read(project_id)
+
+    def stop_recovery(self, project_id):
+        try:
+            self.db.rpc('stop_detail_delivery_recovery', {'p_project_id':project_id}).execute()
         except Exception as error:
             raise page_error(error) from error
         return self.read(project_id)
@@ -287,6 +299,9 @@ class DetailPageWorker:
             for project in projects:
                 service=DetailPageGeneration(self.db,project['user_id'],org)
                 plans=await asyncio.to_thread(lambda:service.db.table('ecom_image_plans').select('*').eq('project_id',project['id']).execute().data)
+                plans=[plan for plan in plans if str(plan['generation_run_id'])==project['run_state']['run_id']]
+                tasks=await asyncio.to_thread(lambda:service.db.table('tasks').select('*').eq('user_id',project['user_id']).eq(
+                    "request_params->'_media_request_v1'->'origin'->>'generation_run_id'",project['run_state']['run_id']).execute().data or [])
                 for plan in plans:
                     if plan['status']=='planning' and plan['id'] not in self.jobs and len(self.jobs)<get_settings().detail_page_planning_concurrency:
                         job=asyncio.create_task(self.run(service,plan),name=f"detail-plan:{plan['id']}")
@@ -300,25 +315,39 @@ class DetailPageWorker:
                                 plan['id'],type(error).__name__,acceptance_diagnostics(error))
                             public_error=page_error(error)
                             await asyncio.to_thread(lambda:service.db.table('ecom_image_plans').update({'recovery_state':{
-                                **plan.get('recovery_state',{}),'acceptance_error':{'code':public_error.code}}}).eq('id',plan['id']).execute())
+                                **plan.get('recovery_state',{}),'acceptance_error':{'code':public_error.code,
+                                    'attempt_id':str(uuid4())}}}).eq('id',plan['id']).execute())
+                    if plan['id'] not in self.jobs:
+                        try:
+                            await DetailDeliveryRecovery(service).advance(plan,project,[task for task in tasks if
+                                task['request_params']['_media_request_v1']['origin']['plan_source']['plan_id']==plan['id']])
+                        except Exception as error:
+                            from loguru import logger
+                            logger.warning('detail_delivery_recovery_pending | plan={} error_type={}',plan['id'],type(error).__name__)
                 await asyncio.to_thread(self.aggregate,service,project,plans)
 
     @staticmethod
     def aggregate(service, project, plans):
         if not plans: return
-        tasks=service.db.table('tasks').select('status,request_params,created_at').eq('user_id',project['user_id']).eq(
-            "request_params->'_media_request_v1'->'origin'->>'project_id'",project['id']).order('created_at').execute().data or []
-        latest={task['request_params']['_media_request_v1']['origin']['plan_source']['item_id']:task for task in tasks}
+        tasks=service.db.table('tasks').select('id,status,result,error_message,request_params,created_at').eq('user_id',project['user_id']).eq(
+            "request_params->'_media_request_v1'->'origin'->>'generation_run_id'",project['run_state']['run_id']).order('created_at').execute().data or []
+        latest=latest_tasks(tasks)
         expected=sum(plan['image_count'] for plan in plans)
-        if len(latest)==expected and all(t['status'] in ('completed','failed','cancelled') for t in latest.values()):
+        recovering=any((recovery_projection(plan,project,[task for task in tasks if
+            task['request_params']['_media_request_v1']['origin']['plan_source']['plan_id']==plan['id']]) or {}).get('status')=='waiting'
+            for plan in plans)
+        if recovering:
+            status='analyzing' if any(plan['status']!='ready' for plan in plans) else 'generating'
+        elif len(latest)==expected and all(t['status'] in ('completed','failed','cancelled') for t in latest.values()):
             status='completed' if all(t['status']=='completed' for t in latest.values()) else 'failed'
         elif any(p['status']=='planning' for p in plans): status='analyzing'
         elif any(p['status'] in ('failed','cancelled','needs_input','insufficient') or p.get('recovery_state',{}).get('acceptance_error') for p in plans):
             # Already accepted image work must settle even when another group failed.
             status='generating' if any(t['status'] not in ('completed','failed','cancelled') for t in latest.values()) else 'failed'
         else: status='generating' if tasks else 'plan_ready'
-        if status!=project['status']:
-            service.db.table('detail_projects').update({'status':status}).eq('id',project['id']).eq('user_id',project['user_id']).execute()
+        # Rotate bounded scans so delayed recovery cannot starve newer projects.
+        service.db.table('detail_projects').update({'status':status,'updated_at':datetime.now(timezone.utc).isoformat()}).eq(
+            'id',project['id']).eq('user_id',project['user_id']).eq("run_state->>'run_id'",project['run_state']['run_id']).execute()
 
     async def run(self, service, row):
         owner=page_owner(service.db,service.user_id,service.org_id,row['project_id'])

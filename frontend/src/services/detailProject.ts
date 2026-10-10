@@ -26,4 +26,6 @@ export const archiveDetailProject = async (projectId: string) =>
   request<Envelope>({method:'POST',url:`/detail-projects/${projectId}/archive`});
 export const resumeDetailPlan = async(projectId:string,planId:string,requestId:string)=>
   (await request<Envelope>({method:'POST',url:`/detail-projects/${projectId}/resume`,data:{plan_id:planId,request_id:requestId}})).data.project;
+export const stopDetailRecovery = async(projectId:string)=>
+  (await request<Envelope>({method:'POST',url:`/detail-projects/${projectId}/stop-recovery`})).data.project;
 export const getDetailCapabilities = async () => (await request<{data:{enabled:boolean;prompt_models:PromptModelOption[];image_models:Array<{aspect_ratios:string[]}>}}>({url:'/detail-projects/capabilities'})).data;

@@ -8,6 +8,26 @@ const group: DetailGroup = {
 };
 
 describe('真实任务状态驱动的三阶段进度', () => {
+  it('自动恢复只激活未完成阶段，平台延迟恢复保留真实进度',()=>{
+    const failed:DetailGroup={...group,status:'failed',stage:2,can_resume:false,
+      auto_recovery:{enabled:true,status:'waiting',retry_cost:'platform',items:{},attempts:5,platform_attention:true}};
+    render(<DetailPlanProgress group={failed}/>);
+    expect(screen.getByRole('listitem',{name:'卖点分析：已完成'})).toBeInTheDocument();
+    expect(screen.getByRole('listitem',{name:'视觉定位：正在执行'})).toHaveAttribute('aria-current','step');
+    expect(screen.getByRole('status')).toHaveTextContent('视觉定位自动恢复中');
+    expect(screen.getByText(/任务和已完成结果已保留/)).toBeInTheDocument();
+  });
+  it('生图自动恢复只统计失败项；硬性阻断仍显示失败',()=>{
+    const accepted:DetailGroup={...group,stage:3,status:'ready',count:2,
+      items:[1,2].map(position=>({item_id:`item-${position}`,position,name:'主图',purpose:'',request_text:'',aspect_ratio:'1:1'})),
+      tasks:[1,2].map(position=>({id:`task-${position}`,item_id:`item-${position}`,status:position===1?'completed':'failed',submission_state:'published',created_at:'2026-10-10'})),
+      auto_recovery:{enabled:true,status:'waiting',retry_cost:'platform',items:{'item-2':{status:'waiting',attempts:2}}}};
+    const {rerender}=render(<DetailPlanProgress group={accepted}/>);
+    expect(screen.getByRole('status')).toHaveTextContent('已完成 1/2 · 自动补图 1张');
+    expect(screen.getAllByRole('listitem',{name:/已完成/})).toHaveLength(3);
+    rerender(<DetailPlanProgress group={{...accepted,auto_recovery:{...accepted.auto_recovery!,status:'blocked',items:{'item-2':{status:'blocked',attempts:2}}}}}/>);
+    expect(screen.getByRole('status')).toHaveTextContent('已完成 1/2 · 1张失败');
+  });
   it('只激活服务端当前步骤，轮询不会替换正在运行的节点', () => {
     const { rerender } = render(<DetailPlanProgress group={group} />);
     const first = screen.getByRole('listitem', { name: '卖点分析：正在执行' });

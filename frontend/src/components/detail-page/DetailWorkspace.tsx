@@ -7,7 +7,7 @@ import ChatImageControls from '../chat/media/ChatImageControls';
 import { FailedMediaPlaceholder } from '../chat/media/MediaPlaceholder';
 import ImagePreviewModal from '../chat/media/ImagePreviewModal';
 import { chatImageService } from '../../services/chatImage';
-import { resumeDetailPlan } from '../../services/detailProject';
+import { resumeDetailPlan, stopDetailRecovery } from '../../services/detailProject';
 import { getImagePlaceholderSize } from '../../utils/settingsStorage';
 import { detailImageDownloads, detailTaskFor as taskFor } from '../../utils/detailPageImages';
 import { downloadWorkspaceZip } from '../../services/workspace';
@@ -27,7 +27,8 @@ function Group({group,onRefresh,projectId}:{group:DetailGroup;onRefresh:()=>void
     if(group.resume_request_id&&requestIds.current.get(group.plan_id)===group.resume_request_id)
       requestIds.current.delete(group.plan_id);
   },[group.plan_id,group.resume_request_id]);
-  const failed=['failed','cancelled','needs_input','insufficient'].includes(group.status)||!!group.acceptance_error;
+  const recovering=group.auto_recovery?.status==='waiting';
+  const failed=!recovering&&(['failed','cancelled','needs_input','insufficient'].includes(group.status)||!!group.acceptance_error);
   async function retry(task:DetailImageTask){
     if(retrying)return;setRetrying(task.id);
     if(!requestIds.current.has(task.id))requestIds.current.set(task.id,crypto.randomUUID());
@@ -63,14 +64,16 @@ function Group({group,onRefresh,projectId}:{group:DetailGroup;onRefresh:()=>void
         const task=taskFor(group,item.item_id);if(!task)return null;
         const [w,h]=item.aspect_ratio.split(':').map(Number);const size={width:previewWidth,height:previewWidth*h/w};
         const result=task.result_data;const url=result?.url??result?.original_url;
-        const isFailed=['failed','cancelled'].includes(task.status);
+        const retryPending=group.auto_recovery?.items[item.item_id]?.status==='waiting';
+        const blocked=group.auto_recovery?.items[item.item_id]?.status==='blocked';
+        const isFailed=['failed','cancelled'].includes(task.status)&&!retryPending;
         return <article key={item.item_id} className={`min-w-0 overflow-hidden ${task.submission_state==='uncertain'?progressStyles.staticPreview:''}`}>
           <h3 className="mb-1 truncate text-sm">{item.position}. {item.name}</h3>
           <ChatImageControls taskId={task.id}/>
-          {isFailed?<div className="mt-3"><FailedMediaPlaceholder type="image" aspectRatio={w/h} errorMessage={task.error_message||'生成失败'} onRetry={()=>void retry(task)} retryLabel={retrying===task.id?'正在受理…':'重新生成'}/></div>:
+          {isFailed?<div className="mt-3"><FailedMediaPlaceholder type="image" aspectRatio={w/h} errorMessage={group.auto_recovery?.items[item.item_id]?.message||task.error_message||'生成失败'} onRetry={blocked?undefined:()=>void retry(task)} retryLabel={retrying===task.id?'正在受理…':'重新生成'}/></div>:
           <AiGeneratedImage fitContainer renderId={task.id} imageAsset={url?{originalUrl:url,thumbnailUrl:result?.thumbnail_url}:null}
             placeholderSize={size} isGenerating={task.status!=='completed'} onImageClick={()=>setPreview(url??null)}/>}
-          <p className="mt-2 text-xs text-[var(--s-text-tertiary)]">{isFailed?'生成失败':task.status==='completed'?'已完成':task.submission_state==='queued'?'排队中':task.submission_state==='uncertain'?'正在核实供应商受理结果':'生成中'}</p>
+          <p className="mt-2 text-xs text-[var(--s-text-tertiary)]">{retryPending?'自动恢复中，正在补齐此图片':isFailed?'生成失败':task.status==='completed'?'已完成':task.submission_state==='queued'?'排队中':task.submission_state==='uncertain'?'正在核实供应商受理结果':'生成中'}</p>
         </article>;
       })}
     </div>}
@@ -79,6 +82,7 @@ function Group({group,onRefresh,projectId}:{group:DetailGroup;onRefresh:()=>void
 }
 export function DetailWorkspace({groups,onRefresh,projectId}:{groups:DetailGroup[];onRefresh:()=>void;projectId:string|null}){
   const [downloading,setDownloading]=useState(false);
+  const [stopping,setStopping]=useState(false);
   const downloadInFlight=useRef(false);
   const downloads=detailImageDownloads(groups);
   async function downloadAll(){
@@ -96,7 +100,15 @@ export function DetailWorkspace({groups,onRefresh,projectId}:{groups:DetailGroup
     <div><Sparkles className="mx-auto mb-5 h-8 w-8 text-[var(--s-text-tertiary)]"/><h2 className="font-semibold">输入</h2>
       <p className="mt-3 text-sm text-[var(--s-text-tertiary)]">上传产品图并填写要求后，点击“开始生成”开始</p></div></div>;
   return <div className="space-y-5">
-    <div className="flex justify-end"><Button variant="secondary" size="sm" icon={<Download className="h-4 w-4"/>}
+    <div className="flex justify-end gap-3">
+    {projectId&&groups.some(group=>group.auto_recovery?.enabled&&(group.status!=='ready'||
+      group.items.some(item=>taskFor(group,item.item_id)?.status!=='completed')))&&
+      <Button variant="secondary" size="sm" loading={stopping} disabled={stopping}
+        title="不再自动补图；已提交给供应商的任务继续回收结果" onClick={()=>{
+          setStopping(true);void stopDetailRecovery(projectId).then(onRefresh)
+            .catch(error=>toast.error(error instanceof Error?error.message:'暂时无法停止，请重试')).finally(()=>setStopping(false));
+        }}>停止自动重试</Button>}
+    <Button variant="secondary" size="sm" icon={<Download className="h-4 w-4"/>}
       disabled={!downloads.length} loading={downloading} title="下载已完成的原图，按主图和详情页分类" onClick={()=>void downloadAll()}>
       {downloading?'打包中…':`批量下载（${downloads.length}张）`}
     </Button></div>

@@ -21,15 +21,18 @@ export function DetailPlanProgress({ group }: { group: DetailGroup }) {
   const current = Math.max(1, Math.min(3, group.stage));
   const stage = stages[current - 1];
   const needsInput = ['needs_input', 'insufficient'].includes(group.status);
+  const recovering = group.auto_recovery?.status === 'waiting';
   const uncertain = group.status === 'failed' && !group.can_resume && (
     group.error?.category === 'uncertain' || group.error?.code === 'ECOM_PLAN_EXECUTION_UNCERTAIN'
   );
-  const activeState: StepState = uncertain ? 'uncertain' : needsInput ? 'paused'
+  const activeState: StepState = recovering ? 'running' : uncertain ? 'uncertain' : needsInput ? 'paused'
     : group.status === 'failed' ? 'failed' : group.status === 'cancelled' ? 'cancelled'
     : group.status === 'planning' ? 'running' : 'pending';
   const latestTasks = group.items.map(item => detailTaskFor(group, item.item_id)).filter(task => !!task);
   const completed = latestTasks.filter(task => task.status === 'completed').length;
-  const failedImages = latestTasks.filter(task => ['failed', 'cancelled'].includes(task.status)).length;
+  const retryingImages = latestTasks.filter(task => group.auto_recovery?.items[task.item_id]?.status === 'waiting').length;
+  const failedImages = latestTasks.filter(task => ['failed', 'cancelled'].includes(task.status)
+    && group.auto_recovery?.items[task.item_id]?.status !== 'waiting').length;
   const confirmingImages = latestTasks.some(task => task.submission_state === 'uncertain'
     && !['completed', 'failed', 'cancelled'].includes(task.status));
 
@@ -58,6 +61,16 @@ export function DetailPlanProgress({ group }: { group: DetailGroup }) {
       : needsInput ? '请根据下方提示补充产品信息后重新开始。'
       : activeState === 'cancelled' ? `任务已停止。${preserved}`
       : activeState === 'failed' ? `${stage.name}未完成。${preserved}` : '等待策划任务开始处理。';
+  }
+  if (recovering) {
+    tone = 'running';
+    status = accepted ? `已完成 ${completed}/${group.count} · 自动补图 ${retryingImages}张`
+      : group.acceptance_error ? '正在自动提交图片任务' : `${stage.name}自动恢复中`;
+    description = group.auto_recovery?.platform_attention
+      ? '服务暂时不可用，任务和已完成结果已保留，系统会延迟继续尝试。'
+      : accepted ? '系统正在自动补齐未完成图片，已完成图片保留，无需手动重试。'
+      : group.acceptance_error ? '已有提示词已保留，系统会自动重新提交生图。'
+      : '已完成阶段保留，系统会从未完成阶段继续；失败重试的额外成本由平台承担。';
   }
 
   return <div className={styles.progress}>
