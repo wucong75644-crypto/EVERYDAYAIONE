@@ -176,7 +176,7 @@ class ModelGatewaySession:
 
     @property
     def supports_builtin_search(self) -> bool:
-        return bool(getattr(self._adapter, "supports_builtin_search", False))
+        return getattr(self._adapter, "supports_builtin_search", False) is True
 
     @property
     def effective_context_window(self) -> int | None:

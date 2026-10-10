@@ -725,10 +725,10 @@ async def _read_turn(
             totals, "stream",
         )
         provider_output = getattr(chunk, "provider_output", None)
-        if provider_output is not None:
+        if isinstance(provider_output, dict):
             prepared.last_provider_output = provider_output
         event = getattr(chunk, "builtin_tool_event", None)
-        if event:
+        if isinstance(event, dict) and event:
             from services.handlers.chat.builtin_tools import present_builtin_event
             block = present_builtin_event(event)
             existing = next((i for i, b in enumerate(blocks) if b.get("tool_call_id") == block["tool_call_id"]), None)

@@ -485,11 +485,11 @@ class ToolLoopExecutor:
             enable_builtin_tools=any(t.get("function", {}).get("name") == "web_search" for t in selected_tools),
         ):
             event = getattr(chunk, "builtin_tool_event", None)
-            if event and event.get("status") == "completed":
+            if isinstance(event, dict) and event.get("status") == "completed":
                 self._builtin_executed = True
                 for source in event.get("sources", []):
                     sources[source["url"]] = source.get("title") or source["url"]
-            if getattr(chunk, "provider_output", None) is not None:
+            if isinstance(getattr(chunk, "provider_output", None), dict):
                 self._last_provider_output = chunk.provider_output
             if getattr(chunk, "thinking_content", None) and getattr(self.model_gateway, "model_id", "") in CACHE_MODELS:
                 self._last_reasoning_content += chunk.thinking_content
