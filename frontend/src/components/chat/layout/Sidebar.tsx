@@ -187,10 +187,10 @@ export default function Sidebar({
       </div>
 
       {/* 主图详情制作入口 */}
-      <div className="px-3 pb-1">
+      <div className="px-3">
         <button
           onClick={() => navigate('/detail-page')}
-          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-secondary hover:bg-hover rounded-lg transition-base"
+          className="w-full h-8 flex items-center gap-2 px-3 text-sm text-text-secondary hover:bg-hover rounded-lg transition-base"
         >
           <Images className="w-4 h-4" />
           <span>主图&详情图</span>
@@ -199,10 +199,10 @@ export default function Sidebar({
       </div>
 
       {/* 记忆入口 */}
-      <div className="px-3 pb-1">
+      <div className="px-3">
         <button
           onClick={useMemoryStore.getState().openModal}
-          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-secondary hover:bg-hover rounded-lg transition-base"
+          className="w-full h-8 flex items-center gap-2 px-3 text-sm text-text-secondary hover:bg-hover rounded-lg transition-base"
         >
           <Brain className="w-4 h-4" />
           <span>AI 记忆</span>
@@ -210,10 +210,10 @@ export default function Sidebar({
       </div>
 
       {/* Personal Skills are available to every signed-in user. */}
-      <div className="px-3 pb-1">
+      <div className="px-3">
         <button
           onClick={() => navigate('/admin?tab=skills')}
-          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-secondary hover:bg-hover rounded-lg transition-base"
+          className="w-full h-8 flex items-center gap-2 px-3 text-sm text-text-secondary hover:bg-hover rounded-lg transition-base"
         >
           <BookOpen className="w-4 h-4" />
           <span>我的 Skill</span>
@@ -222,10 +222,10 @@ export default function Sidebar({
 
       {/* 管理后台入口（仅 super_admin / owner / admin 可见） */}
       {showAdminEntry && (
-        <div className="px-3 pb-1">
+        <div className="px-3">
           <button
             onClick={() => navigate('/admin')}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-secondary hover:bg-hover rounded-lg transition-base"
+            className="w-full h-8 flex items-center gap-2 px-3 text-sm text-text-secondary hover:bg-hover rounded-lg transition-base"
           >
             <Settings2 className="w-4 h-4" />
             <span>管理后台</span>
@@ -234,13 +234,13 @@ export default function Sidebar({
       )}
 
       {/* 底部用户区域 */}
-      <div className="p-3">
+      <div className="px-3 pt-1.5 pb-2">
         <div className="flex items-center justify-between">
           {/* 用户头像和菜单 */}
           <div ref={userMenuRef} className="relative">
             <button
               onClick={() => setShowUserMenu(!showUserMenu)}
-              className="flex items-center space-x-2 hover:bg-hover rounded-lg p-2 transition-base"
+              className="flex items-center space-x-2 hover:bg-hover rounded-lg p-1.5 transition-base"
             >
               <div className="w-8 h-8 bg-accent rounded-full flex items-center justify-center text-sm font-medium text-text-on-accent">
                 {user?.nickname?.charAt(0) || 'U'}
@@ -274,7 +274,7 @@ export default function Sidebar({
           {/* 模型广场按钮 */}
           <Link
             to="/"
-            className="px-3 py-1.5 text-sm text-text-secondary bg-hover hover:bg-active rounded-lg transition-base"
+            className="px-3 py-1 text-sm text-text-secondary bg-hover hover:bg-active rounded-lg transition-base"
           >
             模型广场
           </Link>
