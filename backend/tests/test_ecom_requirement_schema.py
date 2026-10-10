@@ -1,72 +1,54 @@
-"""电商图 AI 帮写 Schema 契约测试。"""
-
+"""单份草稿和页面默认14张/单类型15张契约。"""
 import pytest
 from pydantic import ValidationError
+from schemas.ecom_requirement import RequirementAssistInput, RequirementAssistResult, RequirementImage, RequirementSettings
+from schemas.detail_project import DetailProjectSettingsPatch
 
-from schemas.ecom_requirement import (
-    ProductFacts, RequirementAssistInput, RequirementAssistResult, RequirementConflict,
-    RequirementImage, RequirementSuggestion,
-)
+def _image(name):
+    return RequirementImage(id=name,original_url=f"https://cdn/{name}.png",display_name=name)
 
+def _input(**changes):
+    fields=dict(user_id="u",org_id=None,source_type="detail_project",source_id="p",
+        product_images=[_image("product")],reference_images=[_image(f"r{i}") for i in range(8)],
+        content_type="default",platform="taobao",language="zh-CN",aspect_ratio="1:1",quality="1k",
+        image_count=14,user_requirement="",project_version=1)
+    fields.update(changes)
+    return RequirementAssistInput(**fields)
 
-def _image(image_id: str) -> RequirementImage:
-    return RequirementImage(id=image_id, original_url=f"https://example.com/{image_id}.png", display_name=image_id)
+def test_nine_input_images_are_independent_from_fourteen_output_images():
+    data=_input()
+    assert data.image_count==14
+    assert len(data.product_images)+len(data.reference_images)==9
 
+def test_rejects_more_than_nine_input_images():
+    with pytest.raises(ValidationError,match="合计不能超过9张"):
+        _input(product_images=[_image("p1"),_image("p2")])
 
-def _suggestion(suggestion_id: str) -> dict:
-    return {
-        "id": suggestion_id, "name": suggestion_id,
-        "style_name": "清新自然风", "brief_markdown": "产品事实与视觉策略",
-    }
+@pytest.mark.parametrize("content,count",[("default",14),("main_image",15),("detail_page",15)])
+def test_page_modes_and_counts_supported(content,count):
+    assert RequirementSettings(content_type=content,image_count=count).image_count==count
+    assert _input(content_type=content,image_count=count).image_count==count
 
+def test_single_draft_accepts_inference_and_no_mandatory_questions():
+    data=RequirementAssistResult(product_description="产品信息",selling_points=[
+        {"feature":"红金配色","benefit":"送礼有仪式感","benefit_basis":"inferred"}])
+    assert data.selling_points[0].benefit_basis=="inferred"
+    assert data.supplement_questions==[]
 
-def test_assist_input_accepts_nine_images_total() -> None:
-    data = RequirementAssistInput(
-        user_id="user-1", org_id=None, source_type="detail_project", source_id="project-1",
-        product_images=[_image("product")],
-        reference_images=[_image(f"reference-{index}") for index in range(8)],
-        content_type="main_image", platform="taobao", language="zh-CN",
-        aspect_ratio="1:1", quality="1k", image_count=5,
-        user_requirement="清新自然", project_version=1,
-    )
-    assert len(data.product_images) + len(data.reference_images) == 9
-
-
-def test_assist_input_rejects_more_than_nine_images() -> None:
-    with pytest.raises(ValidationError, match="合计不能超过9张"):
-        RequirementAssistInput(
-            user_id="user-1", org_id=None, source_type="detail_project", source_id="project-1",
-            product_images=[_image("product-1"), _image("product-2")],
-            reference_images=[_image(f"reference-{index}") for index in range(8)],
-            content_type="main_image", platform="taobao", language="zh-CN",
-            aspect_ratio="1:1", quality="1k", image_count=5,
-            user_requirement="", project_version=1,
-        )
-
-
-def test_result_requires_three_fixed_suggestion_ids() -> None:
-    with pytest.raises(ValidationError, match="必须返回"):
-        RequirementAssistResult(
-            product_facts=ProductFacts(product_name="笔记本"),
-            suggestions=[_suggestion("selling_point"), _suggestion("scene"), _suggestion("scene")],
-        )
-
-
-def test_conflict_requires_blocked_claims() -> None:
+def test_old_three_scheme_output_is_rejected():
     with pytest.raises(ValidationError):
-        RequirementConflict(
-            field="页数", user_value="400页", confirmed_value="200页",
-            message="待用户确认", blocked_claims=[],
-        )
+        RequirementAssistResult(product_description="产品",suggestions=[{}, {}, {}])
 
+def test_more_than_three_or_unskippable_questions_rejected():
+    question={"question":"尺寸？","why":"补充规格","can_skip":True}
+    with pytest.raises(ValidationError):
+        RequirementAssistResult(product_description="产品",supplement_questions=[question]*4)
+    with pytest.raises(ValidationError):
+        RequirementAssistResult(product_description="产品",supplement_questions=[{**question,"can_skip":False}])
 
-def test_result_accepts_valid_three_suggestions() -> None:
-    result = RequirementAssistResult(
-        product_facts=ProductFacts(product_name="笔记本", confirmed_attributes=["200页"]),
-        suggestions=[
-            RequirementSuggestion(**_suggestion("selling_point")),
-            RequirementSuggestion(**_suggestion("scene")),
-            RequirementSuggestion(**_suggestion("creative")),
-        ],
-    )
-    assert [item.id for item in result.suggestions] == ["selling_point", "scene", "creative"]
+def test_original_and_adopted_draft_share_persistence_length_bound():
+    raw="原文"*1200
+    assert RequirementSettings(requirement=raw).requirement==raw
+    assert DetailProjectSettingsPatch(version=1,requirement=raw).requirement==raw
+    with pytest.raises(ValidationError):
+        RequirementSettings(requirement="字"*10001)

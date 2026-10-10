@@ -132,8 +132,8 @@ async def capture_intent(handler, *, user_id, conversation_id, task_mode, select
     from services.tools.context import ToolContext
     settings = get_settings()
     bindings, packages = [], {}
-    if settings.skill_catalog_enabled is True and getattr(handler, 'org_id', None) is not None:
-        context = ToolContext(actor_user_id=user_id, workspace_owner_id=user_id, org_id=handler.org_id,
+    if settings.skill_catalog_enabled is True:
+        context = ToolContext(actor_user_id=user_id, workspace_owner_id=user_id, org_id=getattr(handler, 'org_id', None),
                               context_scope='user', personal_context_allowed=True, agent_domain='general',
                               permission_mode='auto', execution_mode='interactive',
                               authorized_tool_names=frozenset(), conversation_id=conversation_id)

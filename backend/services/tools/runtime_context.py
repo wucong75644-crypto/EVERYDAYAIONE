@@ -22,7 +22,8 @@ def catalog_context(org_id, permission_mode="auto", personal_context_allowed=Tru
             "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled",
             "mcp_connectors_enabled", "skill_catalog_enabled", "skill_chat_creation_enabled",
             "skill_org_admin",
-        )}, "chat_image_async_enabled": chat_image_acceptance_allowed(settings, None)},
+        )}, "chat_image_async_enabled": chat_image_acceptance_allowed(settings, None),
+        "ecom_image_planning_enabled": settings.ecom_image_planning_enabled is True},
     )
 
 
@@ -56,6 +57,7 @@ def executor_context(executor, *, call_id=None) -> ToolContext:
     )}
     feature_flags["skill_org_admin"] = False
     feature_flags["chat_image_async_enabled"] = chat_image_acceptance_allowed(settings, executor.user_id)
+    feature_flags["ecom_image_planning_enabled"] = settings.ecom_image_planning_enabled is True
     # Connector access is separately organization-scoped. A missing row,
     # mismatched database scope, or failed status read always disables it.
     from .mcp_org import connector_is_enabled

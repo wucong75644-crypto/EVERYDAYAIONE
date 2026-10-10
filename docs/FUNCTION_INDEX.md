@@ -1430,22 +1430,23 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `parse_args` | `backend/scripts/poc_ecom_requirement_assist.py` | 解析隔离 POC 的命令行参数 |
 | `main` | `backend/scripts/poc_ecom_requirement_assist.py` | 依次运行仅文字、仅参考图和组合输入三种场景 |
 | `RequirementAssistInput.validate_total_images` | `backend/schemas/ecom_requirement.py` | 校验产品图与参考图合计不超过 9 张 |
-| `RequirementAssistResult.validate_suggestion_ids` | `backend/schemas/ecom_requirement.py` | 校验三套固定策略方案完整且不重复 |
 | `build_context_prompt` | `backend/services/agent/image/requirement_assist_prompts.py` | 构造表单快照、用户原文和图片角色上下文 |
 | `build_multimodal_messages` | `backend/services/agent/image/requirement_assist_prompts.py` | 构造明确区分产品图与参考图的多模态消息 |
 | `DetailProjectService.get_ai_input_project` | `backend/services/detail_project_service.py` | 校验项目归属、产品图必填和全部图片就绪后返回 AI 输入草稿 |
 | `DetailProjectRequirementAdapter.adapt` | `backend/services/agent/image/input_adapters.py` | 将详情项目图片和表单快照转换为共享 AI 帮写输入 |
-| `RequirementAssistService.generate` | `backend/services/agent/image/requirement_assist_service.py` | 在 100 秒总预算内调用主/备模型并返回安全三方案 |
-| `parse_requirement_result` | `backend/services/agent/image/requirement_assist_service.py` | 解析模型 JSON 并执行三方案 Schema 校验 |
-| `validate_reference_ids` | `backend/services/agent/image/requirement_assist_service.py` | 禁止模型引用输入集合之外的参考图 |
+| `RequirementAssistService.generate` | `backend/services/agent/image/requirement_assist_service.py` | 固定 Kimi K3、120 秒预算返回一份可编辑草稿；失败不自动换模型 |
+| `parse_requirement_result` | `backend/services/agent/image/requirement_assist_service.py` | 解析模型 JSON 并执行单份草稿 Schema 校验 |
 | `validate_no_output_urls` | `backend/services/agent/image/requirement_assist_service.py` | 禁止模型在通用创作简报中生成外部 URL |
-| `apply_conflict_gate` | `backend/services/agent/image/requirement_assist_service.py` | 从可执行简报移除冲突卖点和事实规避表达 |
-| `generate_requirement_suggestions` | `backend/api/routes/ecom_requirement.py` | 适配详情项目输入并返回三套安全通用创作简报 |
+| `generate_requirement_suggestions` | `backend/api/routes/ecom_requirement.py` | 适配可信项目图片、文字及人工补充，返回一份草稿 |
 | `RequirementAssistRateLimiter.check` | `backend/services/agent/image/requirement_assist_rate_limiter.py` | 使用 Redis 在多 worker 间执行每用户每分钟 5 次的原子限流 |
 | `buildRequirementSuggestionsRequest` | `frontend/src/services/ecomRequirement.ts` | 将详情页表单转换为 AI 帮写后端设置快照 |
-| `generateRequirementSuggestions` | `frontend/src/services/ecomRequirement.ts` | 调用可取消的三方案接口并使用 105 秒独立超时 |
-| `useDetailRequirementAssist` | `frontend/src/hooks/useDetailRequirementAssist.ts` | 管理 AI 帮写弹窗、请求取消、过期响应隔离和三套独立编辑状态 |
-| `RequirementAssistModal` | `frontend/src/components/detail-page/RequirementAssistModal.tsx` | 展示产品事实、参考图分析、冲突和三套可编辑 AI 帮写方案 |
+
+| `generateRequirementSuggestions` | `frontend/src/services/ecomRequirement.ts` | 调用可取消的单份草稿接口，携带可选 revision，使用125秒超时 |
+| `useDetailRequirementAssist` | `frontend/src/hooks/useDetailRequirementAssist.ts` | 管理单份草稿、补充更新、跳过问题、失败保留及旧响应隔离 |
+| `RequirementAssistModal` | `frontend/src/components/detail-page/RequirementAssistModal.tsx` | 拆解资料并向客户补问；编辑/回答后可直接采用，AI更新为可选动作 |
+| `ordered_images` | `backend/services/agent/image/requirement_assist_prompts.py` | 按程序绑定位置合并产品图与参考图并保留角色 |
+| `formatRequirementDraft` | `frontend/src/utils/requirementAssist.ts` | 程序拼接原文、补充历史、人工确认稿和最高优先级的本次客户补充 |
+| `buildSupplementText` | `frontend/src/utils/requirementAssist.ts` | 合并本轮已回答且未跳过的问题和自由补充 |
 
 
 ### 百炼 Responses 内置工具与缓存（2026-10-10）

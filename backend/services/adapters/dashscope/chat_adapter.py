@@ -144,7 +144,8 @@ class DashScopeChatAdapter(BaseChatAdapter):
         try:
             async with client.stream("POST", "/responses", json=request, headers=headers) as response:
                 if response.status_code != 200:
-                    raise DashScopeAPIError(self._parse_error(await response.aread()), status_code=response.status_code)
+                    raise DashScopeAPIError.from_http(await response.aread(), response.status_code,
+                        getattr(response, "headers", {}).get("x-request-id"))
                 async for line in response.aiter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -169,6 +170,41 @@ class DashScopeChatAdapter(BaseChatAdapter):
     # 统一接口实现
     # ============================================================
 
+    def _request_body(self, messages, *, stream, reasoning_effort, thinking_mode, **kwargs):
+        body = {"model": self._model_id, "messages": chat_messages(messages, cache=self._session_cache_enabled if self._model_id in CACHE_MODELS else None), "stream": stream,
+                "enable_thinking": self._model_id == "kimi-k3" or thinking_mode in ("enabled", "deep_think")}
+        if stream:
+            body["stream_options"] = {"include_usage": True}
+        if kwargs.get("tools"):
+            body["tools"] = stable_tools(kwargs["tools"]) if self._model_id in CACHE_MODELS else kwargs["tools"]
+        if kwargs.get("temperature") is not None:
+            body["temperature"] = kwargs["temperature"]
+        if self._model_id == "kimi-k3":
+            if reasoning_effort is not None:
+                if reasoning_effort not in {"low", "high", "max"}:
+                    raise ValueError("KIMI_REASONING_EFFORT_INVALID")
+                body["reasoning_effort"] = reasoning_effort
+            if kwargs.get("enable_search"):
+                raise ValueError("KIMI_NATIVE_SEARCH_UNSUPPORTED")
+            response_format = kwargs.get("response_format")
+            if response_format is not None:
+                if response_format != {"type": "json_object"}:
+                    raise ValueError("KIMI_RESPONSE_FORMAT_UNSUPPORTED")
+                body["response_format"] = response_format
+        return body
+
+    def _transport_options(self, body):
+        if self._model_id == "kimi-k3" and any(
+                isinstance(message.get("content"), list) and any(
+                    isinstance(part, dict) and part.get("type") == "image_url"
+                    and str((part.get("image_url") or {}).get("url", "")).startswith("data:image/")
+                    for part in message["content"]) for message in body["messages"]):
+            # The Gateway still owns the absolute deadline; allow its remaining
+            # time to upload a bounded inline body instead of an unrelated 30s cap.
+            return {"timeout": httpx.Timeout(connect=CONNECT_TIMEOUT, read=self._stream_timeout,
+                write=max(30, min(self._stream_timeout, 120)), pool=30)}
+        return {}
+
     async def stream_chat(
         self,
         messages: List[Dict[str, Any]],
@@ -178,35 +214,14 @@ class DashScopeChatAdapter(BaseChatAdapter):
     ) -> AsyncIterator[StreamChunk]:
         """流式聊天（统一接口）"""
 
-        # Only user-facing/authorized agent calls request built-ins. Auxiliary calls stay offline.
+        # Agent requests alone opt into provider-managed network tools.
         if kwargs.get("enable_builtin_tools", False) and self.supports_builtin_search:
             async for chunk in self._stream_responses(messages, thinking_mode, reasoning_effort, **kwargs):
                 yield chunk
             return
-
-        # 构建请求体（OpenAI 兼容格式）
-        request_body: Dict[str, Any] = {
-            "model": self._model_id,
-            "messages": chat_messages(messages, cache=self._session_cache_enabled if self._model_id in CACHE_MODELS else None),
-            "stream": True,
-            "stream_options": {"include_usage": True},
-        }
-
-        # 工具定义（OpenAI function calling 格式）
         tools = kwargs.get("tools")
-        if tools:
-            request_body["tools"] = stable_tools(tools) if self._model_id in CACHE_MODELS else tools
-
-        # Temperature（默认不指定，由模型决定）
-        temperature = kwargs.get("temperature")
-        if temperature is not None:
-            request_body["temperature"] = temperature
-
-        # 思考模式：用户开了深度思考才启用，否则显式关闭（千问默认开启思考，需要显式设置）
-        if thinking_mode in ("enabled", "deep_think"):
-            request_body["enable_thinking"] = True
-        else:
-            request_body["enable_thinking"] = False
+        request_body = self._request_body(messages, stream=True, reasoning_effort=reasoning_effort,
+            thinking_mode=thinking_mode, **kwargs)
 
         client = await self._get_client()
 
@@ -215,13 +230,13 @@ class DashScopeChatAdapter(BaseChatAdapter):
                 "POST",
                 "/chat/completions",
                 json=request_body,
+                **self._transport_options(request_body),
             ) as response:
                 if response.status_code != 200:
                     error_body = await response.aread()
-                    error_msg = self._parse_error(error_body)
-                    raise DashScopeAPIError(
-                        f"DashScope API error: {error_msg}",
-                        status_code=response.status_code,
+                    raise DashScopeAPIError.from_http(
+                        error_body, response.status_code,
+                        getattr(response, "headers", {}).get("x-request-id"),
                     )
 
                 async for line in response.aiter_lines():
@@ -241,7 +256,8 @@ class DashScopeChatAdapter(BaseChatAdapter):
                     if chunk.get("error"):
                         raise DashScopeAPIError(
                             f"Stream error: {chunk['error'].get('message', str(chunk['error']))}",
-                            status_code=chunk["error"].get("code", 500),
+                            status_code=chunk["error"].get("code", 0) if isinstance(chunk["error"].get("code"), int) else 0,
+                            error_code=chunk["error"].get("code"), request_id=chunk.get("request_id"),
                         )
 
                     # 提取内容
@@ -323,28 +339,17 @@ class DashScopeChatAdapter(BaseChatAdapter):
         **kwargs,
     ) -> ChatResponse:
         """非流式聊天（统一接口）"""
-        request_body: Dict[str, Any] = {
-            "model": self._model_id,
-            "messages": chat_messages(messages, cache=self._session_cache_enabled if self._model_id in CACHE_MODELS else None),
-            "stream": False,
-        }
-
-        if thinking_mode in ("enabled", "deep_think"):
-            request_body["enable_thinking"] = True
-        else:
-            request_body["enable_thinking"] = False
+        request_body = self._request_body(messages, stream=False, reasoning_effort=reasoning_effort,
+            thinking_mode=thinking_mode, **kwargs)
 
         client = await self._get_client()
 
         try:
-            response = await client.post("/chat/completions", json=request_body)
+            response = await client.post("/chat/completions", json=request_body, **self._transport_options(request_body))
 
             if response.status_code != 200:
-                error_msg = self._parse_error(response.content)
-                raise DashScopeAPIError(
-                    f"DashScope API error: {error_msg}",
-                    status_code=response.status_code,
-                )
+                raise DashScopeAPIError.from_http(response.content, response.status_code,
+                    response.headers.get("x-request-id"))
 
             data = response.json()
             choices = data.get("choices", [])
@@ -415,16 +420,74 @@ class DashScopeChatAdapter(BaseChatAdapter):
         """解析错误响应"""
         try:
             data = json.loads(body)
-            if "error" in data:
-                return data["error"].get("message", str(data["error"]))
-            return data.get("message", str(data))
+            if not isinstance(data, dict):
+                return body.decode("utf-8", errors="replace")[:500]
+            detail = data.get("error", data)
+            if isinstance(detail, dict):
+                message = detail.get("message")
+                return str(message if message is not None else detail)
+            return str(detail)
         except (json.JSONDecodeError, AttributeError):
             return body.decode("utf-8", errors="replace")[:500]
 
 
 class DashScopeAPIError(Exception):
-    """DashScope API 错误"""
+    """Keep provider evidence; a stream error never proves pre-inference rejection."""
 
-    def __init__(self, message: str, status_code: int = 0):
+    _DOWNLOAD_CODES = {"InvalidURL.Timeout", "BadRequest.InputDownloadFailed", "GatewayTimeout.InputDownload"}
+    _UNAVAILABLE_CODES = {"ServiceUnavailable", "ModelUnavailable"}
+    _QUOTA_CODES = {"Throttling.AllocationQuota", "insufficient_quota", "CommodityNotPurchased"}
+    _DOWNLOAD_MESSAGES = {
+        "Failed to download multimodal content.",
+        "Download the media resource timed out during the data inspection process.",
+        "Unable to download the media resource during the data inspection process.",
+        "download image failed", "Failed to download input files.", "oss download error.",
+    }
+
+    def __init__(self, message: str, status_code: int = 0, *, error_code=None,
+                 request_id=None, request_rejected=False, provider_message=""):
         super().__init__(message)
         self.status_code = status_code
+        self.error_code = self._identifier(error_code)
+        self.request_id = self._identifier(request_id)
+        self.request_rejected = request_rejected
+        self.provider_message = provider_message
+        self.quota_rejection = self.error_code in self._QUOTA_CODES
+
+    @staticmethod
+    def _identifier(value):
+        return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", value) else None
+
+    @classmethod
+    def from_http(cls, body, status_code, request_id=None):
+        try:
+            payload = json.loads(body)
+        except (ValueError, TypeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        detail = payload.get("error", payload)
+        if not isinstance(detail, dict):
+            detail = {}
+        code = cls._identifier(detail.get("code"))
+        message = DashScopeChatAdapter._parse_error(body)
+        rejected = (400 <= status_code < 500 and status_code != 408
+                    or code in cls._DOWNLOAD_CODES
+                    or status_code == 503 and code in cls._UNAVAILABLE_CODES)
+        return cls(f"DashScope API error: {message}", status_code, error_code=code,
+            request_id=request_id or payload.get("request_id") or detail.get("request_id"),
+            request_rejected=rejected, provider_message=message)
+
+    @property
+    def retryable_rejection(self):
+        # Official error-code table: URL/media download failures and admission
+        # throttling can be replayed. Bad parameters, safety rejection and opaque
+        # inference timeouts cannot be turned into free, definite rejections.
+        return self.request_rejected and (
+            self.status_code == 429 and self.error_code not in self._QUOTA_CODES
+            or self.error_code in self._DOWNLOAD_CODES
+            or self.status_code == 503 and self.error_code in self._UNAVAILABLE_CODES
+            or self.error_code in {"InvalidParameter", "InvalidParameter.DataInspection"}
+                and self.provider_message.strip() in self._DOWNLOAD_MESSAGES
+            or self.error_code == "invalid_parameter_error"
+                and self.provider_message.strip() == "<400> InternalError.Algo.InvalidParameter: Download multimodal file timed out")

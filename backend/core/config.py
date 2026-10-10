@@ -309,6 +309,27 @@ class Settings(BaseSettings):
     chat_image_allowed_user_ids: str = ""  # CSV; empty means all users when enabled.
     chat_image_transparent_enabled: bool = False
     chat_image_max_requests: int = Field(default=15, ge=1, le=15)
+    ecom_image_planning_enabled: bool = False
+    detail_page_generation_enabled: bool = False
+    detail_page_planning_seconds: int = Field(default=1200, ge=600, le=1800)
+    detail_page_planning_concurrency: int = Field(default=4, ge=1, le=16)
+    detail_kimi_inline_images: bool = True
+    detail_gemini_overseas_images: bool = True
+    detail_kimi_json_output: bool = True
+    ecom_analysis_memory_mb: int = Field(default=384, ge=128, le=1024)
+    detail_kimi_input_credits_per_million: float | None = Field(default=None, gt=0)
+    detail_kimi_output_credits_per_million: float | None = Field(default=None, gt=0)
+    detail_gemini_input_credits_per_million: float | None = Field(default=None, gt=0)
+    detail_gemini_output_credits_per_million: float | None = Field(default=None, gt=0)
+    # KIE GPT 6 Luna cost quote verified 2026-10-10; no recharge bonus assumed.
+    detail_gpt_enabled: bool = False
+    detail_gpt_input_credits_per_million: float | None = Field(default=6, gt=0)
+    detail_gpt_output_credits_per_million: float | None = Field(default=30, gt=0)
+    ecom_image_planning_model: str = "openai/gpt-6.1-sol"
+    ecom_image_planning_reasoning: str = "medium"
+    ecom_image_planning_stage_timeout: float = Field(default=180, ge=10, le=600)
+    ecom_image_planning_input_credits_per_million: float | None = Field(default=None, gt=0)
+    ecom_image_planning_output_credits_per_million: float | None = Field(default=None, gt=0)
     chat_image_max_credits: int = Field(default=300, ge=1, le=300)
     chat_image_submission_lease_seconds: int = Field(default=60, ge=10, le=300)
     chat_image_queue_timeout_seconds: int = Field(default=600, ge=60, le=3600)

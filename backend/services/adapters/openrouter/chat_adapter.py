@@ -86,6 +86,30 @@ class OpenRouterChatAdapter(BaseChatAdapter):
     # 统一接口实现
     # ============================================================
 
+    @staticmethod
+    def _chat_messages(messages):
+        """Translate Responses content parts without editing text or image order."""
+        result = []
+        for message in messages:
+            content = message.get("content")
+            if not isinstance(content, list):
+                result.append(message)
+                continue
+            parts = []
+            for part in content:
+                if part.get("type") == "input_text":
+                    parts.append({**part, "type": "text"})
+                elif part.get("type") == "input_image":
+                    image = part["image_url"]
+                    image = {"url": image} if isinstance(image, str) else dict(image)
+                    if part.get("detail") is not None:
+                        image["detail"] = part["detail"]
+                    parts.append({"type": "image_url", "image_url": image})
+                else:
+                    parts.append(part)
+            result.append({**message, "content": parts})
+        return result
+
     async def stream_chat(
         self,
         messages: List[Dict[str, Any]],
@@ -97,10 +121,16 @@ class OpenRouterChatAdapter(BaseChatAdapter):
 
         request_body: Dict[str, Any] = {
             "model": self._model_id,
-            "messages": messages,
+            "messages": self._chat_messages(messages),
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if reasoning_effort is not None:
+            request_body["reasoning"] = {"effort": reasoning_effort}
+        require_completed = kwargs.get("require_completed", False)
+        received_done = False
+        terminal_reason = None
+        received_usage = False
 
         client = await self._get_client()
 
@@ -124,6 +154,7 @@ class OpenRouterChatAdapter(BaseChatAdapter):
 
                     data = line[6:]  # 去掉 "data: "
                     if data == "[DONE]":
+                        received_done = True
                         break
 
                     try:
@@ -146,8 +177,9 @@ class OpenRouterChatAdapter(BaseChatAdapter):
                     if choices:
                         delta = choices[0].get("delta", {})
                         content = delta.get("content")
-                        thinking_content = delta.get("reasoning_content")
+                        thinking_content = delta.get("reasoning_content") or delta.get("reasoning")
                         finish_reason = choices[0].get("finish_reason")
+                        terminal_reason = finish_reason or terminal_reason
 
                     # 提取 usage（通常在最后一个 chunk）
                     usage = chunk.get("usage") or {}
@@ -156,6 +188,11 @@ class OpenRouterChatAdapter(BaseChatAdapter):
 
                     # OpenRouter 独有：直接返回 USD 成本
                     cost_usd = usage.get("cost")
+                    if (type(prompt_tokens) is int and prompt_tokens >= 0
+                            and type(completion_tokens) is int and completion_tokens >= 0
+                            and "prompt_tokens" in usage and "completion_tokens" in usage
+                            and cost_usd is not None and float(cost_usd) >= 0):
+                        received_usage = True
                     credits_consumed = None
                     if cost_usd is not None:
                         credits_consumed = math.ceil(float(cost_usd) * CREDITS_PER_USD) + CREDITS_MARKUP
@@ -168,6 +205,8 @@ class OpenRouterChatAdapter(BaseChatAdapter):
                         completion_tokens=completion_tokens,
                         credits_consumed=credits_consumed,
                     )
+                if require_completed and not (received_done and terminal_reason == "stop" and received_usage):
+                    raise OpenRouterAPIError("OPENROUTER_STREAM_INCOMPLETE")
 
         except OpenRouterAPIError:
             raise
@@ -187,9 +226,11 @@ class OpenRouterChatAdapter(BaseChatAdapter):
         """非流式聊天（统一接口）"""
         request_body: Dict[str, Any] = {
             "model": self._model_id,
-            "messages": messages,
+            "messages": self._chat_messages(messages),
             "stream": False,
         }
+        if reasoning_effort is not None:
+            request_body["reasoning"] = {"effort": reasoning_effort}
 
         client = await self._get_client()
 

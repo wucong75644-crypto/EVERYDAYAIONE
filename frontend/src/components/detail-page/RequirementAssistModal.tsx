@@ -1,140 +1,90 @@
-import { AlertTriangle, ImageIcon, RefreshCw, Sparkles } from 'lucide-react';
-
-import type { RequirementAssistResult, RequirementSuggestionId } from '../../types/ecomRequirement';
-import { cn } from '../../utils/cn';
+import { Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import type { RequirementAssistResult } from '../../types/ecomRequirement';
 import Modal from '../common/Modal';
 import { Button } from '../ui/Button';
 
-interface RequirementAssistModalProps {
-  isOpen: boolean;
-  isLoading: boolean;
-  result: RequirementAssistResult | null;
-  selectedId: RequirementSuggestionId;
-  selectedBrief: string;
-  error: string | null;
-  onClose: () => void;
-  onSelect: (id: RequirementSuggestionId) => void;
-  onDraftChange: (id: RequirementSuggestionId, value: string) => void;
-  onRegenerate: () => void;
-  onConfirm: (brief: string) => void;
+interface Props {
+  isOpen: boolean; isLoading: boolean; draft: RequirementAssistResult | null;
+  brief: string; error: string | null; validationError: string | null;
+  supplement: string; answers: Record<string, string>; skippedQuestions: string[];
+  onClose: () => void; onDraftChange: (patch: Partial<RequirementAssistResult>) => void;
+  onSupplementChange: (text: string) => void; onAnswer: (question: string, value: string) => void;
+  onToggleSkip: (question: string) => void; onUpdate: () => void; onConfirm: (brief: string) => void;
 }
+const inputClass = 'w-full rounded-[var(--c-input-radius)] border border-[var(--c-input-border)] bg-[var(--c-input-bg)] px-3 py-2 text-sm leading-6 text-[var(--c-input-fg)] focus:outline-none focus:border-[var(--c-input-border-focus)] disabled:opacity-60';
+const sectionClass = 'space-y-2 rounded-[var(--s-radius-card)] border border-[var(--s-border-subtle)] p-3';
 
-function LoadingState() {
-  return (
-    <div className="min-h-[360px] flex flex-col items-center justify-center text-center">
-      <span className="w-11 h-11 rounded-full bg-[var(--s-surface-subtle)] flex items-center justify-center">
-        <RefreshCw className="w-5 h-5 animate-spin text-[var(--s-text-secondary)]" />
-      </span>
-      <p className="mt-4 text-base font-medium text-[var(--s-text-primary)]">正在分析产品图片…</p>
-      <p className="mt-1 text-sm text-[var(--s-text-tertiary)]">AI 正在核对产品事实并生成三套创作方案</p>
-    </div>
-  );
-}
-
-function InsightSummary({ result }: { result: RequirementAssistResult }) {
-  return (
-    <div className="grid gap-2 lg:grid-cols-2">
-      <section className="rounded-[var(--s-radius-card)] border border-[var(--s-border-subtle)] bg-[var(--s-surface-subtle)] p-3">
-        <h3 className="text-sm font-semibold text-[var(--s-text-primary)]">产品识别</h3>
-        <p className="mt-1 text-sm text-[var(--s-text-secondary)]">{result.product_facts.product_name}</p>
-        {result.product_facts.confirmed_attributes.length > 0 && (
-          <p className="mt-1 text-xs leading-5 text-[var(--s-text-tertiary)]">{result.product_facts.confirmed_attributes.join(' · ')}</p>
-        )}
-      </section>
-      <section className="rounded-[var(--s-radius-card)] border border-[var(--s-border-subtle)] bg-[var(--s-surface-subtle)] p-3">
-        <h3 className="flex items-center gap-1.5 text-sm font-semibold text-[var(--s-text-primary)]">
-          <ImageIcon className="w-4 h-4" />参考图理解
-        </h3>
-        <p className="mt-1 text-xs leading-5 text-[var(--s-text-tertiary)]">
-          {result.reference_analyses.length > 0
-            ? result.reference_analyses.map((item) => item.summary).join(' · ')
-            : '未上传参考图，将根据产品事实和用户要求规划视觉方向。'}
-        </p>
-      </section>
-    </div>
-  );
-}
-
-function ConflictNotice({ result }: { result: RequirementAssistResult }) {
-  if (result.conflicts.length === 0 && result.product_facts.unclear_items.length === 0) return null;
-  return (
-    <div className="rounded-[var(--s-radius-card)] border border-amber-300/70 bg-amber-50 px-3 py-2.5 text-amber-900">
-      <p className="flex items-center gap-1.5 text-sm font-semibold">
-        <AlertTriangle className="w-4 h-4 shrink-0" />待确认信息
-      </p>
-      <ul className="mt-1 space-y-0.5 text-xs leading-5">
-        {result.conflicts.map((conflict) => <li key={`${conflict.field}-${conflict.user_value}`}>• {conflict.message}</li>)}
-        {result.product_facts.unclear_items.map((item) => <li key={item}>• {item}</li>)}
-      </ul>
-    </div>
-  );
-}
-
-function SchemeEditor({
-  result, selectedId, selectedBrief, disabled, onSelect, onDraftChange,
-}: Pick<RequirementAssistModalProps, 'result' | 'selectedId' | 'selectedBrief' | 'onSelect' | 'onDraftChange'> & { disabled: boolean }) {
-  if (!result) return null;
-  return (
+export function RequirementAssistModal(props: Props) {
+  const { draft, isLoading, onDraftChange } = props;
+  return <Modal isOpen={props.isOpen} onClose={props.onClose} title="AI 帮写 · 产品资料与创作要求" maxWidth="max-w-4xl"
+    footer={<div className="space-y-2">
+      {props.validationError && <p role="alert" className="text-sm text-[var(--s-error)]">{props.validationError}</p>}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="secondary" icon={<RefreshCw className="h-4 w-4"/>} loading={isLoading} disabled={isLoading} onClick={props.onUpdate}>{draft?'更新草稿':'重新尝试'}</Button>
+        <Button className="ml-auto" icon={<Sparkles className="h-4 w-4"/>} disabled={isLoading||!draft||!props.brief.trim()||Boolean(props.validationError)} onClick={()=>props.onConfirm(props.brief)}>插入到输入框</Button>
+      </div>
+    </div>}>
     <div>
-      <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="AI帮写方案">
-        <span className="mr-1 text-sm text-[var(--s-text-secondary)]">方案选择：</span>
-        {result.suggestions.map((suggestion) => (
-          <button
-            key={suggestion.id}
-            type="button"
-            role="tab"
-            aria-selected={selectedId === suggestion.id}
-            disabled={disabled}
-            onClick={() => onSelect(suggestion.id)}
-            className={cn(
-              'rounded-full border px-4 py-1.5 text-sm font-medium transition-colors disabled:opacity-50',
-              selectedId === suggestion.id
-                ? 'border-transparent bg-[var(--c-button-primary-bg)] text-[var(--c-button-primary-fg)]'
-                : 'border-[var(--s-border-default)] bg-[var(--s-surface-card)] text-[var(--s-text-secondary)] hover:bg-[var(--s-hover)]',
-            )}
-          >
-            {suggestion.name}
-          </button>
-        ))}
-      </div>
-      <label htmlFor="requirement-assist-brief" className="sr-only">当前方案创作简报</label>
-      <textarea
-        id="requirement-assist-brief"
-        value={selectedBrief}
-        disabled={disabled}
-        onChange={(event) => onDraftChange(selectedId, event.target.value)}
-        className="mt-3 min-h-[260px] w-full resize-y rounded-[var(--c-input-radius)] border border-[var(--c-input-border)] bg-[var(--c-input-bg)] px-4 py-3 text-sm leading-6 text-[var(--c-input-fg)] focus:outline-none focus:border-[var(--c-input-border-focus)] disabled:opacity-60"
-      />
-    </div>
-  );
-}
-
-export function RequirementAssistModal(props: RequirementAssistModalProps) {
-  const hasResult = Boolean(props.result);
-  return (
-    <Modal isOpen={props.isOpen} onClose={props.onClose} title="AI帮写方案选择" maxWidth="max-w-4xl">
-      <div className="flex max-h-[78vh] flex-col">
-        <p className="-mt-1 mb-4 text-sm text-[var(--s-text-tertiary)]">选择方案后可自由编辑，确认即可用于后续产品分析</p>
-        {!hasResult && props.isLoading ? <LoadingState /> : (
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-            {props.error && (
-              <div role="alert" className="rounded-[var(--s-radius-card)] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{props.error}</div>
-            )}
-            {!hasResult && !props.isLoading && (
-              <div className="min-h-[280px] flex flex-col items-center justify-center text-center">
-                <p className="text-sm text-[var(--s-text-secondary)]">暂时无法生成方案，请重新尝试。</p>
-              </div>
-            )}
-            {props.result && <InsightSummary result={props.result} />}
-            {props.result && <ConflictNotice result={props.result} />}
-            <SchemeEditor {...props} disabled={props.isLoading} />
+      <p className="mb-3 text-sm text-[var(--s-text-tertiary)]">Kimi K3 会结合图片和文字拆解产品资料，提出需要补充的问题。请核验卖点、补充细节与风格要求；暂不知道的可以跳过。</p>
+      <div className="space-y-3">
+        {props.error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{props.error}</p>}
+        {!draft && isLoading && <div className="flex min-h-[280px] flex-col items-center justify-center gap-3">
+          <RefreshCw className="h-6 w-6 animate-spin text-[var(--s-accent)]"/>
+          <p>正在分析图片和文字…</p><p className="text-sm text-[var(--s-text-tertiary)]">拆解已有资料，整理可向您补充的问题</p>
+        </div>}
+        {!draft && !isLoading && <p className="py-16 text-center text-sm text-[var(--s-text-secondary)]">暂时无法生成草稿，请重试。</p>}
+        {draft && <>
+          <section className={sectionClass}>
+            <label htmlFor="assist-product" className="block text-sm font-semibold">产品细节与规格</label>
+            <textarea id="assist-product" rows={4} maxLength={3000} disabled={isLoading} value={draft.product_description} onChange={event=>onDraftChange({product_description:event.target.value})} className={inputClass}/>
+          </section>
+          <div className="grid gap-3 md:grid-cols-2">
+            <section className={sectionClass}>
+              <h3 className="text-sm font-semibold">卖点拆分</h3>
+              {draft.selling_points.map((point,index)=><div key={index} className="space-y-1.5 rounded-lg bg-[var(--s-surface-subtle)] p-2.5">
+                <div className="flex items-center justify-between text-xs text-[var(--s-text-tertiary)]">
+                  <span>{point.benefit_basis==='inferred'?'AI 建议 · 请核验':'基于已知信息'}</span>
+                  <button type="button" aria-label={'删除卖点'+(index+1)} disabled={isLoading} onClick={()=>onDraftChange({selling_points:draft.selling_points.filter((_,i)=>i!==index)})}><Trash2 className="h-3.5 w-3.5"/></button>
+                </div>
+                <input aria-label={'卖点'+(index+1)+'特点'} maxLength={500} disabled={isLoading} value={point.feature} onChange={event=>onDraftChange({selling_points:draft.selling_points.map((item,i)=>i===index?{...item,feature:event.target.value}:item)})} className={inputClass}/>
+                <textarea aria-label={'卖点'+(index+1)+'价值'} rows={2} maxLength={500} disabled={isLoading} value={point.benefit} onChange={event=>onDraftChange({selling_points:draft.selling_points.map((item,i)=>i===index?{...item,benefit:event.target.value}:item)})} className={inputClass}/>
+              </div>)}
+              <Button variant="ghost" size="sm" icon={<Plus className="h-4 w-4"/>} disabled={isLoading||draft.selling_points.length>=12} onClick={()=>onDraftChange({selling_points:[...draft.selling_points,{feature:'',benefit:'',benefit_basis:'inferred'}]})}>补充卖点</Button>
+            </section>
+            <section className={sectionClass}>
+              <h3 className="text-sm font-semibold">背景与风格要求</h3>
+              {draft.creative_requirements.map((item,index)=><div key={index} className="space-y-1.5">
+                <div className="flex items-center gap-2 text-xs text-[var(--s-text-tertiary)]">
+                  <label htmlFor={'assist-direction-'+index} className="flex-1">{item.topic} · {item.basis==='explicit'?'用户要求':'AI 建议'}</label>
+                  <button type="button" aria-label={'删除设计要求'+(index+1)} disabled={isLoading} onClick={()=>onDraftChange({creative_requirements:draft.creative_requirements.filter((_,i)=>i!==index)})}><Trash2 className="h-3.5 w-3.5"/></button>
+                </div>
+                <textarea id={'assist-direction-'+index} rows={2} maxLength={1000} disabled={isLoading} value={item.text} onChange={event=>onDraftChange({creative_requirements:draft.creative_requirements.map((row,i)=>i===index?{...row,text:event.target.value}:row)})} className={inputClass}/>
+              </div>)}
+              <Button variant="ghost" size="sm" icon={<Plus className="h-4 w-4"/>} disabled={isLoading||draft.creative_requirements.length>=20} onClick={()=>onDraftChange({creative_requirements:[...draft.creative_requirements,{topic:'补充要求',text:'',basis:'explicit'}]})}>补充设计要求</Button>
+            </section>
           </div>
-        )}
-        <div className="mt-4 flex flex-col gap-2 border-t border-[var(--s-border-subtle)] pt-4 sm:flex-row sm:items-center">
-          <Button variant="secondary" icon={<RefreshCw className="w-4 h-4" />} loading={props.isLoading && hasResult} disabled={props.isLoading && !hasResult} onClick={props.onRegenerate}>重新帮写</Button>
-          <Button className="sm:ml-auto sm:min-w-40" icon={<Sparkles className="w-4 h-4" />} disabled={props.isLoading || !props.selectedBrief.trim()} onClick={() => props.onConfirm(props.selectedBrief)}>确认选择</Button>
-        </div>
+          <section className={sectionClass}>
+            <h3 className="text-sm font-semibold">补充信息（可选）</h3>
+            {props.skippedQuestions.filter(question=>!draft.supplement_questions.some(item=>item.question===question)).map(question=><div key={question} className="flex items-center justify-between gap-2 text-xs text-[var(--s-text-tertiary)]">
+              <span>已跳过：{question}（之后仍可在下方补充）</span>
+            </div>)}
+            {draft.supplement_questions.map((item,index)=>{
+              const skipped=props.skippedQuestions.includes(item.question);
+              return <div key={item.question} className="space-y-1">
+                <div className="flex items-start justify-between gap-2">
+                  <label htmlFor={'assist-answer-'+index} className="text-sm">{item.question}</label>
+                  <button type="button" disabled={isLoading} aria-pressed={skipped} onClick={()=>props.onToggleSkip(item.question)} className="shrink-0 text-xs text-[var(--s-accent)]">{skipped?'恢复填写':'暂不知道 / 跳过'}</button>
+                </div>
+                <p className="text-xs text-[var(--s-text-tertiary)]">{item.why}</p>
+                {!skipped && <input id={'assist-answer-'+index} maxLength={1000} disabled={isLoading} value={props.answers[item.question]??''} onChange={event=>props.onAnswer(item.question,event.target.value)} placeholder="有资料就补充，也可以直接插入草稿" className={inputClass}/>}
+              </div>;
+            })}
+            <label htmlFor="assist-supplement" className="block pt-1 text-sm">其他补充或修改方向</label>
+            <textarea id="assist-supplement" rows={3} maxLength={4000} disabled={isLoading} value={props.supplement} onChange={event=>props.onSupplementChange(event.target.value)} placeholder="例如补充尺寸、修正卖点，或调整背景、场景和整体风格…" className={inputClass}/>
+            <p className="text-xs text-[var(--s-text-tertiary)]">点击“插入到输入框”会一并带入产品细节、卖点、风格要求和补充回答；需要 AI 再整理时，点击“更新草稿”。</p>
+          </section>
+        </>}
       </div>
-    </Modal>
-  );
+    </div>
+  </Modal>;
 }

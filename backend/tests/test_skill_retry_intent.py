@@ -113,13 +113,14 @@ def test_malformed_intent_never_silently_becomes_ordinary(raw):
     assert error.value.status_code == 409
 
 
-async def test_capture_records_binding_versions_and_empty_set(monkeypatch):
+@pytest.mark.parametrize('org_id', [str(ORG), None])
+async def test_capture_records_binding_versions_and_empty_set(monkeypatch, org_id):
     from core.config import get_settings
     monkeypatch.setattr('core.config.get_settings', lambda: get_settings().model_copy(update={'skill_catalog_enabled': True}))
     source = Source()
     source.session_bindings.return_value = [item('fixed', revision='v2')]
     monkeypatch.setattr('services.skills.runtime_source.ActorSkillSource', Mock(return_value=source))
-    h = SimpleNamespace(org_id=str(ORG))
+    h = SimpleNamespace(org_id=org_id)
     result = await capture_intent(h, user_id=str(ACTOR), conversation_id='conv', task_mode='smart', selection=None)
     assert result.session_skills[0].revision == 'v2'
     source.session_bindings.return_value = []

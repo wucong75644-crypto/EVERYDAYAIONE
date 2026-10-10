@@ -1,0 +1,13 @@
+{
+  "version": "fixed-frame.v3",
+  "source_package": "最新提示词包-20261009.zip",
+  "source_package_sha256": "9f9076f3adaeeda852a4de8571c0b2f2274ef4fa1b6fbbde2f0ec1ec7e1dd539",
+  "files": {
+    "00-integration-rules.md": "0cf8e306880605e8d8be6614836ef08b5fad4e05573dee58c036c6dd0034d35f",
+    "01-output.schema.json": "dd149273d0036770d9f17497b29d8e34ee655531543c67d4308257f44581e2d2",
+    "01-product-selling-points.md": "da9f55426fe83b65468a5ce6fe5be0cd6d1e8b5334308159890ca832b24b61af",
+    "02-visual-direction.md": "b2532c3437f3036932c802a32f179a0c657d0c05be2a2ddfd5e6ab65986f6d9d",
+    "03-detail-page-planner.md": "c8ca305e3c3241ad543ae6127fe1b3544059605780f978de1d6b1465e4053124",
+    "03-main-image-planner.md": "be43e72853a438922fd657c2609bc72595d299d56b28260279627a7fb22444b6"
+  }
+}

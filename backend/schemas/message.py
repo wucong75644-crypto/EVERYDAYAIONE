@@ -180,9 +180,12 @@ class InterruptMarkerPart(BaseModel):
 class EcomPlanPart(BaseModel):
     """电商图方案卡片内容块
 
-    千问VL策划的设计方案，前端渲染为可编辑方案卡片+确认生成按钮。
+    历史方案卡片与服务器保存的三阶段方案共用该内容块。
     """
     type: Literal["ecom_plan"] = "ecom_plan"
+    plan_id: Optional[str] = None
+    revision: Optional[int] = None
+    status: Optional[str] = None
     product_insight: str = ""
     visual_strategy: str = ""
     images: List[Dict[str, Any]] = []

@@ -184,13 +184,16 @@ export function moveWorkspaceItem(
  * 后端流式打包返回 application/zip，前端用 fetch + blob 触发浏览器原生下载。
  * 超过 500 文件或 2GB 时后端返回 413。
  */
-export async function downloadWorkspaceZip(paths: string[]): Promise<void> {
+export async function downloadWorkspaceZip(
+  paths: string[],
+  options?: { archivePaths: string[]; archiveName: string },
+): Promise<void> {
   if (paths.length === 0) throw new Error('未选择任何文件');
 
   const response = await fetch(`${API_BASE_URL}/files/workspace/download_zip`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-    body: JSON.stringify({ paths }),
+    body: JSON.stringify({ paths, ...(options && { archive_paths: options.archivePaths, archive_name: options.archiveName }) }),
   });
 
   if (!response.ok) {
@@ -198,7 +201,7 @@ export async function downloadWorkspaceZip(paths: string[]): Promise<void> {
     let message = '下载失败';
     try {
       const data = await response.json();
-      message = data?.detail?.message || data?.message || message;
+      message = data?.error?.message || data?.detail?.message || data?.message || message;
     } catch { /* ignore */ }
     throw new Error(message);
   }

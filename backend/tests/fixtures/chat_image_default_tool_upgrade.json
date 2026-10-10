@@ -7,13 +7,22 @@
         "type": "function",
         "function": {
           "name": "generate_image",
-          "description": "持久化接受一个独立图片任务，立即返回 submitted、task_id、message_id、排队阶段和服务器预估积分。接受不表示图片完成；结果随后由独立图片消息展示。每次只生成一张；多张独立图片按方案顺序在同一轮并行调用，不等待上一张提交结果。只展示选中的方案名称，图片占位符由系统显示；不输出任务ID、提交汇总、排队解释或技术细节。模型由服务器使用平台默认模型及其图生图配对，不能由你选择或切换；不要询问模型偏好，不传 model 或 model_name。明确指定 text_to_image 或 image_to_image；用于分析的图片不自动成为生成参考图。仅使用本次 parameters 定义的字段。比例用 aspect_ratio、分辨率用 resolution、格式用小写 output_format；不传 size 或 format。无参考图的调用示例：{\"mode\":\"text_to_image\",\"prompt\":\"完整原文\",\"aspect_ratio\":\"1:1\",\"resolution\":\"1K\",\"output_format\":\"png\"}。prompt 是完整最终原文，不再二次改写。只选本次用户指定的原图引用，按用途和顺序传 references。历史图片按上下文给出的 message_id/content_index 原样复制；缺少真实定位先调用 get_conversation_context，不能编造 file_id。先看样张时只提交样张。variant_id 是稳定变体身份，不能扩大服务器预算。遇到素材或提示词版本歧义先询问；失败不自动无限重试。每用户跨对话共享最多15个活跃任务（聊天本身也占槽位），满额时图片排队，完成或失败后释放；不是累计生成张数上限。本轮图片累计预算100积分。原图画布与产品形状不同，使用服务器canvas事实；参考图未指定尺寸时沿用画布比例。用户指定尺寸优先；只改比例保留分辨率，只改分辨率保留比例。计划、prompt和参数使用同一目标规格。不支持的精确像素、不明确尺寸或冲突先询问，不自动近似。服务器默认模型的实际能力与单张积分（model为服务器事实，不是可填写参数）：[{\"model\":\"gpt-image-2-5-sunburst-text-to-image\",\"modes\":[\"text_to_image\"],\"max_references\":0,\"aspect_ratios\":[\"1:1\",\"9:16\",\"16:9\",\"3:4\",\"4:3\",\"3:2\",\"2:3\",\"21:9\",\"auto\"],\"output_formats\":[\"png\"],\"max_prompt_length\":20000,\"backgrounds\":[],\"costs\":[{\"resolution\":\"1K\",\"user_credits\":6},{\"resolution\":\"2K\",\"user_credits\":10},{\"resolution\":\"4K\",\"user_credits\":16}]},{\"model\":\"gpt-image-2-5-sunburst-image-to-image\",\"modes\":[\"image_to_image\"],\"max_references\":16,\"aspect_ratios\":[\"1:1\",\"9:16\",\"16:9\",\"3:4\",\"4:3\",\"3:2\",\"2:3\",\"21:9\",\"auto\"],\"output_formats\":[\"png\"],\"max_prompt_length\":20000,\"backgrounds\":[],\"costs\":[{\"resolution\":\"1K\",\"user_credits\":6},{\"resolution\":\"2K\",\"user_credits\":10},{\"resolution\":\"4K\",\"user_credits\":16}]}]",
+          "description": "持久化接受一个独立图片任务，立即返回 submitted、task_id、message_id、排队阶段和服务器预估积分。接受不表示图片完成；结果随后由独立图片消息展示。每次只生成一张；多张独立图片按方案顺序在同一轮并行调用，不等待上一张提交结果。只展示选中的方案名称，图片占位符由系统显示；不输出任务ID、提交汇总、排队解释或技术细节。模型由服务器使用平台默认模型及其图生图配对，不能由你选择或切换；不要询问模型偏好，不传 model 或 model_name。普通图片调用明确指定 text_to_image 或 image_to_image；用于分析的图片不自动成为生成参考图。主图策划完成后仅传plan_source中的plan_id/revision/item_id；正文、参考图和画幅从已保存的原稿读取，禁止修改或混传。仅使用本次 parameters 定义的字段。比例用 aspect_ratio、分辨率用 resolution、格式用小写 output_format；不传 size 或 format。无参考图的调用示例：{\"mode\":\"text_to_image\",\"prompt\":\"完整原文\",\"aspect_ratio\":\"1:1\",\"resolution\":\"1K\",\"output_format\":\"png\"}。prompt 是完整最终原文，不再二次改写。只选本次用户指定的原图引用，按用途和顺序传 references。历史图片按上下文给出的 message_id/content_index 原样复制；缺少真实定位先调用 get_conversation_context，不能编造 file_id。先看样张时只提交样张。variant_id 是稳定变体身份，不能扩大服务器预算。遇到素材或提示词版本歧义先询问；失败不自动无限重试。每用户跨对话共享最多15个活跃任务（聊天本身也占槽位），满额时图片排队，完成或失败后释放；不是累计生成张数上限。本轮图片累计预算100积分。原图画布与产品形状不同，使用服务器canvas事实；参考图未指定尺寸时沿用画布比例。用户指定尺寸优先；只改比例保留分辨率，只改分辨率保留比例。计划、prompt和参数使用同一目标规格。不支持的精确像素、不明确尺寸或冲突先询问，不自动近似。服务器默认模型的实际能力与单张积分（model为服务器事实，不是可填写参数）：[{\"model\":\"gpt-image-2-5-sunburst-text-to-image\",\"modes\":[\"text_to_image\"],\"max_references\":0,\"aspect_ratios\":[\"1:1\",\"9:16\",\"16:9\",\"3:4\",\"4:3\",\"3:2\",\"2:3\",\"21:9\",\"auto\"],\"output_formats\":[\"png\"],\"max_prompt_length\":20000,\"backgrounds\":[],\"costs\":[{\"resolution\":\"1K\",\"user_credits\":6},{\"resolution\":\"2K\",\"user_credits\":10},{\"resolution\":\"4K\",\"user_credits\":16}]},{\"model\":\"gpt-image-2-5-sunburst-image-to-image\",\"modes\":[\"image_to_image\"],\"max_references\":16,\"aspect_ratios\":[\"1:1\",\"9:16\",\"16:9\",\"3:4\",\"4:3\",\"3:2\",\"2:3\",\"21:9\",\"auto\"],\"output_formats\":[\"png\"],\"max_prompt_length\":20000,\"backgrounds\":[],\"costs\":[{\"resolution\":\"1K\",\"user_credits\":6},{\"resolution\":\"2K\",\"user_credits\":10},{\"resolution\":\"4K\",\"user_credits\":16}]}]",
           "parameters": {
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "mode",
-              "prompt"
+            "oneOf": [
+              {
+                "required": [
+                  "mode",
+                  "prompt"
+                ]
+              },
+              {
+                "required": [
+                  "plan_source"
+                ]
+              }
             ],
             "properties": {
               "mode": {
@@ -187,6 +196,31 @@
                   "sha256": {
                     "type": "string",
                     "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              },
+              "plan_source": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "plan_id",
+                  "revision",
+                  "item_id"
+                ],
+                "properties": {
+                  "plan_id": {
+                    "type": "string",
+                    "minLength": 36,
+                    "maxLength": 36
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "item_id": {
+                    "type": "string",
+                    "minLength": 36,
+                    "maxLength": 36
                   }
                 }
               }
