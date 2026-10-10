@@ -109,9 +109,14 @@ def failure_summary(code, category, stage=None, preserved=()):
         "budget": "主图策划已达到本次自动执行次数或时间上限。",
         "uncertain": "策划调用结果尚未确定，已停止自动重发，请核验已有执行记录。",
         "infra": "策划记录保存失败，请核验已有记录后重试。",
+        "transient_rejection": "上游暂时无法处理图片或请求，自动重试已结束，请稍后从失败阶段继续。",
     }.get(category, "主图策划服务调用失败，请检查服务配置或稍后重试。")
     if code == "ECOM_PLAN_INSUFFICIENT_CREDITS":
         reason = "主图策划积分不足，请充值后重试。"
+    if code.startswith("ANALYSIS_IMAGE_"):
+        reason = "分析图片准备未完成，请检查图片文件、尺寸或上传状态后重试。"
+    if code == "ANALYSIS_UPLOAD_CONFIG":
+        reason = "海外图片上传配置不可用，请联系管理员。"
     progress = f"失败阶段：{stage}。" if stage else ""
     saved = f"已保留有效阶段：{','.join(map(str, preserved))}。" if preserved else ""
     return reason + progress + saved + "当前策划未完成，未按此方案提交生图。"

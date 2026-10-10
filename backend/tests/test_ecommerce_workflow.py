@@ -152,6 +152,31 @@ def planner():
     return service
 
 
+@pytest.mark.parametrize('model,json_mode,legacy', [
+    ('kimi-k3', True, False), ('kimi-k3', False, True), ('gemini-3.8-flash', False, False),
+])
+async def test_page_json_mode_only_applies_to_kimi_structured_stages(monkeypatch, model, json_mode, legacy):
+    service = planner()
+    service.page_execution = True
+    service.settings.ecom_image_planning_model = model
+    if not legacy:
+        service.settings.ecom_analysis_transport = 'inline' if model == 'kimi-k3' else 'kie_upload'
+        service.settings.ecom_analysis_json_output = json_mode
+        service.settings.ecom_image_planning_reasoning = 'high' if model == 'kimi-k3' else 'medium'
+    seen = []
+    async def stream(messages, **kwargs):
+        seen.append(kwargs)
+        yield StreamChunk(content='output', prompt_tokens=100, completion_tokens=10)
+    monkeypatch.setattr('services.agent.image.ecommerce_planner.service.get_model_gateway',
+        lambda: SimpleNamespace(open_chat=lambda request: SimpleNamespace(stream_chat=stream,
+            last_result=SimpleNamespace(status='completed', usage={}), close=AsyncMock())))
+    for stage in (1, 2, 3):
+        await service._call({'id': str(uuid4())}, 'lease', stage, 'rules', [])
+    assert ['response_format' in options for options in seen] == [json_mode, False, json_mode]
+    assert all(options['reasoning_effort'] == (None if legacy else service.settings.ecom_image_planning_reasoning)
+        for options in seen)
+
+
 async def test_planner_rejects_unactivated_skill_before_database_or_model():
     result = await planner().run({'references': [], 'image_count': 5})
     assert result.status == 'error' and result.error_message == 'ECOM_PLAN_SKILL_REQUIRED'

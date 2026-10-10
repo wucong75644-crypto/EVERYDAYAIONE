@@ -106,6 +106,41 @@ class DashScopeChatAdapter(BaseChatAdapter):
     # 统一接口实现
     # ============================================================
 
+    def _request_body(self, messages, *, stream, reasoning_effort, thinking_mode, **kwargs):
+        body = {"model": self._model_id, "messages": chat_messages(messages), "stream": stream,
+                "enable_thinking": self._model_id == "kimi-k3" or thinking_mode in ("enabled", "deep_think")}
+        if stream:
+            body["stream_options"] = {"include_usage": True}
+        if kwargs.get("tools"):
+            body["tools"] = kwargs["tools"]
+        if kwargs.get("temperature") is not None:
+            body["temperature"] = kwargs["temperature"]
+        if self._model_id == "kimi-k3":
+            if reasoning_effort is not None:
+                if reasoning_effort not in {"low", "high", "max"}:
+                    raise ValueError("KIMI_REASONING_EFFORT_INVALID")
+                body["reasoning_effort"] = reasoning_effort
+            if kwargs.get("enable_search"):
+                raise ValueError("KIMI_NATIVE_SEARCH_UNSUPPORTED")
+            response_format = kwargs.get("response_format")
+            if response_format is not None:
+                if response_format != {"type": "json_object"}:
+                    raise ValueError("KIMI_RESPONSE_FORMAT_UNSUPPORTED")
+                body["response_format"] = response_format
+        return body
+
+    def _transport_options(self, body):
+        if self._model_id == "kimi-k3" and any(
+                isinstance(message.get("content"), list) and any(
+                    isinstance(part, dict) and part.get("type") == "image_url"
+                    and str((part.get("image_url") or {}).get("url", "")).startswith("data:image/")
+                    for part in message["content"]) for message in body["messages"]):
+            # The Gateway still owns the absolute deadline; allow its remaining
+            # time to upload a bounded inline body instead of an unrelated 30s cap.
+            return {"timeout": httpx.Timeout(connect=CONNECT_TIMEOUT, read=self._stream_timeout,
+                write=max(30, min(self._stream_timeout, 120)), pool=30)}
+        return {}
+
     async def stream_chat(
         self,
         messages: List[Dict[str, Any]],
@@ -115,33 +150,9 @@ class DashScopeChatAdapter(BaseChatAdapter):
     ) -> AsyncIterator[StreamChunk]:
         """流式聊天（统一接口）"""
 
-        # 构建请求体（OpenAI 兼容格式）
-        request_body: Dict[str, Any] = {
-            "model": self._model_id,
-            "messages": chat_messages(messages),
-            "stream": True,
-            "stream_options": {"include_usage": True},
-        }
-
-        # 工具定义（OpenAI function calling 格式）
         tools = kwargs.get("tools")
-        if tools:
-            request_body["tools"] = tools
-
-        # Temperature（默认不指定，由模型决定）
-        temperature = kwargs.get("temperature")
-        if temperature is not None:
-            request_body["temperature"] = temperature
-
-        # 思考模式：用户开了深度思考才启用，否则显式关闭（qwen3.5 默认开，必须显式关）
-        if self._model_id == "kimi-k3" or thinking_mode in ("enabled", "deep_think"):
-            request_body["enable_thinking"] = True
-        else:
-            request_body["enable_thinking"] = False
-
-        # Kimi K3 默认 max；仅透传该模型支持的显式值，避免旧调用的 medium 被接口拒绝。
-        if self._model_id == "kimi-k3" and reasoning_effort in {"low", "high", "max"}:
-            request_body["reasoning_effort"] = reasoning_effort
+        request_body = self._request_body(messages, stream=True, reasoning_effort=reasoning_effort,
+            thinking_mode=thinking_mode, **kwargs)
 
         client = await self._get_client()
 
@@ -150,6 +161,7 @@ class DashScopeChatAdapter(BaseChatAdapter):
                 "POST",
                 "/chat/completions",
                 json=request_body,
+                **self._transport_options(request_body),
             ) as response:
                 if response.status_code != 200:
                     error_body = await response.aread()
@@ -255,21 +267,13 @@ class DashScopeChatAdapter(BaseChatAdapter):
         **kwargs,
     ) -> ChatResponse:
         """非流式聊天（统一接口）"""
-        request_body: Dict[str, Any] = {
-            "model": self._model_id,
-            "messages": messages,
-            "stream": False,
-        }
-
-        if thinking_mode in ("enabled", "deep_think"):
-            request_body["enable_thinking"] = True
-        else:
-            request_body["enable_thinking"] = False
+        request_body = self._request_body(messages, stream=False, reasoning_effort=reasoning_effort,
+            thinking_mode=thinking_mode, **kwargs)
 
         client = await self._get_client()
 
         try:
-            response = await client.post("/chat/completions", json=request_body)
+            response = await client.post("/chat/completions", json=request_body, **self._transport_options(request_body))
 
             if response.status_code != 200:
                 raise DashScopeAPIError.from_http(response.content, response.status_code,
@@ -413,4 +417,6 @@ class DashScopeAPIError(Exception):
             or self.error_code in self._DOWNLOAD_CODES
             or self.status_code == 503 and self.error_code in self._UNAVAILABLE_CODES
             or self.error_code in {"InvalidParameter", "InvalidParameter.DataInspection"}
-                and self.provider_message.strip() in self._DOWNLOAD_MESSAGES)
+                and self.provider_message.strip() in self._DOWNLOAD_MESSAGES
+            or self.error_code == "invalid_parameter_error"
+                and self.provider_message.strip() == "<400> InternalError.Algo.InvalidParameter: Download multimodal file timed out")

@@ -49,11 +49,14 @@ def build_context_prompt(data: RequirementAssistInput) -> str:
     return json.dumps(context, ensure_ascii=False)
 
 
-def build_multimodal_messages(data: RequirementAssistInput) -> list[dict]:
+def build_multimodal_messages(data: RequirementAssistInput, image_urls: list[str] | None = None) -> list[dict]:
     content = [{"type": "text", "text": build_context_prompt(data)}]
-    for index, (image, role) in enumerate(ordered_images(data), 1):
+    images = ordered_images(data)
+    if image_urls is not None and len(image_urls) != len(images):
+        raise ValueError("ANALYSIS_IMAGE_BINDING_REQUIRED")
+    for index, (image, role) in enumerate(images, 1):
         content.extend([
             {"type": "text", "text": f"图片{index}：{role} id={image.id}，{image.display_name}"},
-            {"type": "image_url", "image_url": {"url": image.original_url}},
+            {"type": "image_url", "image_url": {"url": image_urls[index - 1] if image_urls is not None else image.original_url}},
         ])
     return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": content}]

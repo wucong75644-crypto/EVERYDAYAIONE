@@ -553,7 +553,15 @@ class EcommerceImagePlanner:
                     idle_timeout=self.settings.ecom_image_planning_stage_timeout if stage == 3 else None,
                     cancel_token=self.owner.cancellation_event, budget=stream_budget or self.owner.execution_budget))
                 completion_options = {"require_completed": True} if provider == "openrouter" else {}
-                async for chunk in session.stream_chat(messages, reasoning_effort=self.settings.ecom_image_planning_reasoning,
+                if (provider == "dashscope" and getattr(self.settings, "ecom_analysis_json_output", False)
+                        and stage in {1, 3}):
+                    completion_options["response_format"] = {"type": "json_object"}
+                reasoning = self.settings.ecom_image_planning_reasoning
+                if (self.page_execution and self.settings.ecom_image_planning_model == "kimi-k3"
+                        and not hasattr(self.settings, "ecom_analysis_transport") and reasoning == "medium"):
+                    # Legacy snapshots omitted medium at the provider boundary, selecting its default max.
+                    reasoning = None
+                async for chunk in session.stream_chat(messages, reasoning_effort=reasoning,
                         **completion_options):
                     response_started = True
                     if chunk.content and first_output_at is None:
@@ -646,11 +654,13 @@ class EcommerceImagePlanner:
         return await self._call_store(row,lease,stage,output,status,final,usage)
 
     async def _fail(self,plan_id,lease,stage,status,error=None):
+        from services.agent.image.analysis_media import AnalysisMediaError
         code, category, _retry = error_facts(error) if error is not None else ("MODEL_CANCELLED", "cancelled", False)
         try:
             await asyncio.to_thread(lambda: self.scope.rpc("fail_ecom_plan", {
                 "p_plan_id": plan_id, "p_lease_token": lease, "p_stage": stage, "p_status": status,
-                "p_error": {"code": code, "category": category},
+                "p_error": {"code": code, "category": category,
+                    **({"message": error.message} if isinstance(error, AnalysisMediaError) else {})},
             }).execute())
         except Exception:
             # An uncertain DB result cannot authorize another model call.

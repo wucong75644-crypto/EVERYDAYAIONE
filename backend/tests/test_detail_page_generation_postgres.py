@@ -182,3 +182,122 @@ async def test_page_three_stages_keep_selected_model_and_exact_image_prompts(pag
             assert task['conversation_id'] is None and task['assistant_message_id'] is None
     assert seen==[(mode,stage) for mode in ('main_images','detail_page') for stage in (1,2,3)]
     db.pool.close()
+
+
+@pytest.mark.parametrize('model,kind,count', [
+    ('kimi-k3','main_images',15), ('gemini-3.8-flash','detail_page',15),
+    ('kimi-k3','detail_page',7), ('gemini-3.8-flash','main_images',7),
+])
+async def test_page_worker_prepares_nine_original_images_once_and_resumes_stage_three(
+        page_db, monkeypatch, tmp_path, model, kind, count):
+    import base64, json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from PIL import Image
+    from core.config import get_settings
+    from core.local_db import LocalDBClient
+    from services.adapters.base import StreamChunk
+    from services.adapters.dashscope.chat_adapter import DashScopeAPIError
+    from services.adapters.kie.client import KieClient, KieAuthenticationError
+    from services.agent.image.ecommerce_planner.inputs import source_bindings
+    from services.agent.image.ecommerce_planner.page_profile import profile
+    from services.detail_page_generation import DetailPageWorker, PageImageInputResolver, page_owner, plan_error
+    from tests.ecommerce_design_fixtures import design_fixture
+    user, project, run, plan = seed(page_db, count)
+    db = LocalDBClient(psycopg.conninfo.make_conninfo(page_db,user='everydayai'),min_size=1,max_size=3)
+    config = get_settings()
+    monkeypatch.setattr(config,'file_workspace_root',str(tmp_path))
+    monkeypatch.setattr(config,'kie_api_key','test-key')
+    monkeypatch.setattr(config,'dashscope_api_key','test-key')
+    for prefix in ('kimi','gemini'):
+        for direction in ('input','output'):
+            monkeypatch.setattr(config,f'detail_{prefix}_{direction}_credits_per_million',1)
+    monkeypatch.setenv(KieClient.SHADOW_OVERSEAS_PROXY_ENV,'http://127.0.0.1:7891')
+    resolver = PageImageInputResolver(page_owner(db,user,None,project))
+    root = Path(resolver.files.files.workspace_root)
+    root.mkdir(parents=True,exist_ok=True)
+    images = []
+    originals = []
+    for position in range(9):
+        path = root/f'{position}.png'
+        Image.new('RGB',(32,32),(position*20,50,100)).save(path)
+        originals.append(path.read_bytes())
+        images.append({'category':'reference' if position%2 else 'product','workspace_path':path.name})
+    refs = resolver.bind(images)
+    draft, evidence, _ = design_fixture(count,kind,9)
+    snap = evidence['input_snapshot']
+    snap.update(references=[{k:r[k] for k in ('file_id','source_id','role')} for r in refs],
+        resolved_references=refs,messages=[{'source_id':f'project:{project}:v1',
+            'parts':[{'content_index':0,'text':'  保留原文和图片顺序\n粉色风格  '}]}])
+    snap['source_bindings'] = source_bindings(snap)
+    frozen = vars(profile(config,model))
+    with psycopg.connect(page_db) as c:
+        c.execute('UPDATE ecom_image_plans SET input_snapshot=%s,target_size=%s,model_settings=%s WHERE id=%s',
+            (Jsonb(snap),Jsonb(snap['target_size']),Jsonb({'model':model,'profile':frozen}),plan))
+    # The real worker and SQL lease/resume/save paths run; only external HTTP is substituted.
+    from services.detail_page_generation import page_scope
+    scoped_db = page_scope(db,user,None)
+    service = SimpleNamespace(db=scoped_db,user_id=user,org_id=None)
+    uploads, seen = [], []
+    async def upload(client, content, content_type, file_name):
+        assert content == originals[len(uploads)%9] and content_type == 'image/png'
+        uploads.append(file_name)
+        return f'https://kie.invalid/temporary/{len(uploads)}.png'
+    monkeypatch.setattr(KieClient,'upload_image_bytes',upload)
+    fail_third = True
+    def open_chat(request):
+        assert request.model_id == model
+        async def stream(sent,**kwargs):
+            body = json.loads(sent[1]['content'][0]['text'])
+            stage = body['stage']
+            seen.append(stage)
+            assert body['raw_user_texts'][0]['text'] == '  保留原文和图片顺序\n粉色风格  '
+            media = [part['image_url'] for part in sent[1]['content'] if part['type']=='input_image']
+            if model == 'kimi-k3':
+                assert [base64.b64decode(url.split(',',1)[1]) for url in media] == originals
+            else:
+                start = len(uploads)-8
+                assert media == [f'https://kie.invalid/temporary/{i}.png' for i in range(start,start+9)]
+            assert ('response_format' in kwargs) == (model=='kimi-k3' and stage in (1,3))
+            if stage==3 and fail_third:
+                if model=='kimi-k3':
+                    raise DashScopeAPIError.from_http(b'{"error":{"code":"InvalidApiKey","message":"rejected"}}',401)
+                raise KieAuthenticationError('rejected',status_code=401,error_code='401')
+            reply = {1:evidence['product_selling_points'],2:evidence['visual_direction'],3:draft}[stage]
+            yield StreamChunk(content=reply if isinstance(reply,str) else json.dumps(reply),prompt_tokens=100,completion_tokens=10)
+        return SimpleNamespace(stream_chat=stream,last_result=SimpleNamespace(status='completed',usage={}),close=AsyncMock())
+    monkeypatch.setattr('services.agent.image.ecommerce_planner.service.get_model_gateway',
+        lambda:SimpleNamespace(open_chat=open_chat))
+    def row():return scoped_db.table('ecom_image_plans').select('*').eq('id',plan).single().execute().data
+    try:
+        worker = DetailPageWorker(db)
+        await worker.run(service,row())
+        failed = row()
+        assert failed['status']=='failed' and set(failed['stage_outputs'])=={'1','2'}
+        assert seen == [1,2,3]
+        assert len(uploads) == (9 if model=='gemini-3.8-flash' else 0)
+        assert plan_error(failed)['message']
+        previous = deepcopy(failed['stage_outputs'])
+        scoped_db.rpc('resume_detail_page_plan',{'p_project_id':project,'p_plan_id':plan,
+            'p_request_id':str(uuid4())}).execute()
+        fail_third = False
+        await worker.run(service,row())
+        saved = row()
+        assert saved['status']=='ready' and len(saved['items'])==count
+        assert seen == [1,2,3,3] and saved['stage_outputs']['1']==previous['1'] and saved['stage_outputs']['2']==previous['2']
+        assert len(uploads) == (18 if model=='gemini-3.8-flash' else 0)
+        assert saved['input_snapshot']['resolved_references'] == refs
+        # Analysis representation never enters the durable final image request.
+        for item in saved['items']:
+            frozen_image = freeze_image_request({'mode':'image_to_image','prompt':item['request_text'],
+                'aspect_ratio':item['aspect_ratio'],'resolution':'2K'},refs,
+                origin={'destination':'detail_project','project_id':project,'generation_run_id':run,
+                    'actor_user_id':user,'org_id':None,'workspace_owner_id':user,'context_scope':'user',
+                    'plan_source':{'plan_id':plan,'revision':1,'item_id':item['item_id'],
+                        'request_text_sha256':item['request_text_sha256']}},max_requests=15,max_credits=300)
+            assert frozen_image['references']==refs
+            assert 'data:image/' not in item['request_text'] and 'kie.invalid/temporary' not in item['request_text']
+        assert [a['stage'] for a in saved['stage_attempts']].count(1)==1
+        assert [a['stage'] for a in saved['stage_attempts']].count(2)==1
+    finally:
+        db.pool.close()

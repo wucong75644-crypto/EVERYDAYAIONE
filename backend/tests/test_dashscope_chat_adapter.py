@@ -447,7 +447,6 @@ class TestStreamChat:
         ("kimi-k3", "low", "low"),
         ("kimi-k3", "high", "high"),
         ("kimi-k3", "max", "max"),
-        ("kimi-k3", "medium", None),
         ("kimi-k3", None, None),
         ("qwen3.5-plus", "low", None),
     ])

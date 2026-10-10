@@ -40,7 +40,7 @@ function Group({group,onRefresh,projectId}:{group:DetailGroup;onRefresh:()=>void
     </ol>
     {failed&&<div className="mb-4 rounded-xl bg-[var(--s-surface-secondary)] p-3 text-sm" role="alert">
       {group.status==='needs_input'||group.status==='insufficient'?'需要补充产品信息，请根据提示完善要求后重新开始。':group.acceptance_error?
-        `图片任务尚未受理：${group.acceptance_error.code??'提交失败'}`:`策划未完成：${group.error?.code??'服务调用失败'}`}
+        `图片任务尚未受理：${group.acceptance_error.code??'提交失败'}`:`策划未完成：${group.error?.message??group.error?.code??'服务调用失败'}`}
       {!!group.questions?.length&&<pre className="mt-2 whitespace-pre-wrap text-xs">{JSON.stringify(group.questions,null,2)}</pre>}
       {(group.can_resume||group.acceptance_error)&&projectId&&<button type="button" className="mt-2 text-[var(--s-accent)]" disabled={!!retrying} onClick={()=>{
         setRetrying(group.plan_id);void resumeDetailPlan(projectId,group.plan_id,crypto.randomUUID()).then(onRefresh)

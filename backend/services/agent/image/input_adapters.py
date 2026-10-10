@@ -20,6 +20,8 @@ class DetailProjectRequirementAdapter:
         self.service = service
         self.user_id = user_id
         self.org_id = org_id
+        from services.detail_page_generation import PageImageInputResolver, page_owner
+        self.image_resolver = PageImageInputResolver(page_owner(service.db, user_id, org_id, None))
 
     def adapt(
         self,
@@ -55,4 +57,5 @@ class DetailProjectRequirementAdapter:
             user_requirement=settings.requirement,
             project_version=project["version"],
             revision=revision,
+            image_references=self.image_resolver.bind(project["images"]),
         )

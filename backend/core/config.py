@@ -311,6 +311,10 @@ class Settings(BaseSettings):
     detail_page_generation_enabled: bool = False
     detail_page_planning_seconds: int = Field(default=1200, ge=600, le=1800)
     detail_page_planning_concurrency: int = Field(default=4, ge=1, le=16)
+    detail_kimi_inline_images: bool = True
+    detail_gemini_overseas_images: bool = True
+    detail_kimi_json_output: bool = True
+    ecom_analysis_memory_mb: int = Field(default=384, ge=128, le=1024)
     detail_kimi_input_credits_per_million: float | None = Field(default=None, gt=0)
     detail_kimi_output_credits_per_million: float | None = Field(default=None, gt=0)
     detail_gemini_input_credits_per_million: float | None = Field(default=None, gt=0)

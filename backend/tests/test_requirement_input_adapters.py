@@ -1,9 +1,16 @@
 """详情项目到 AI 帮写标准输入的适配测试。"""
 
 from unittest.mock import MagicMock
+import pytest
 
 from schemas.ecom_requirement import RequirementSettings
 from services.agent.image.input_adapters import DetailProjectRequirementAdapter
+
+@pytest.fixture(autouse=True)
+def bound_images(monkeypatch):
+    resolver = MagicMock()
+    resolver.bind.side_effect = lambda images: [{"file_id": image["id"], "role": image["category"]} for image in images]
+    monkeypatch.setattr("services.detail_page_generation.PageImageInputResolver", lambda *_: resolver)
 
 
 def test_detail_project_adapter_separates_product_and_reference_images() -> None:
@@ -36,6 +43,8 @@ def test_detail_project_adapter_separates_product_and_reference_images() -> None
     assert result.project_version == 3
     assert result.product_images[0].position == 1
     assert result.reference_images[0].position == 2
+    assert [ref["file_id"] for ref in result.image_references] == ["product-1", "reference-1"]
+    assert "image_references" not in result.model_dump()
     service.get_ai_input_project.assert_called_once_with("project-1")
 
 

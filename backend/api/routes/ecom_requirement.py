@@ -31,7 +31,7 @@ async def generate_requirement_suggestions(
     detail_service = DetailProjectService(db, ctx.user_id, ctx.org_id)
     adapter = DetailProjectRequirementAdapter(detail_service, ctx.user_id, ctx.org_id)
     assist_input = adapter.adapt(body.source.project_id, body.settings, body.revision)
-    outcome = await RequirementAssistService().generate(assist_input)
+    outcome = await RequirementAssistService(image_resolver=adapter.image_resolver).generate(assist_input)
     logger.info(
         f"Requirement assist succeeded | user_id={ctx.user_id} | org_id={ctx.org_id} | "
         f"source_id={body.source.project_id} | model={outcome.model} | "

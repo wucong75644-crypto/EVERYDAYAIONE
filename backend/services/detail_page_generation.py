@@ -1,6 +1,8 @@
 """Durable page entry and bounded worker over the shared ecommerce planner/media lifecycle."""
 import asyncio
-from contextlib import suppress
+import time
+from datetime import datetime, timezone
+from contextlib import AsyncExitStack, suppress
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -48,6 +50,14 @@ def page_owner(db, user_id, org_id, project_id):
         project_id=project_id)
 
 
+def plan_error(row):
+    from services.agent.image.ecommerce_planner.recovery import failure_summary
+    error = row.get('recovery_state', {}).get('last_error')
+    if not error:
+        return None
+    return {**error, 'message': error.get('message') or failure_summary(error.get('code',''),error.get('category','business'))}
+
+
 class PageImageInputResolver:
     """Exact project paths use the existing file guard, versions, digests and CDN client."""
     def __init__(self, owner):
@@ -76,15 +86,24 @@ class PageImageInputResolver:
 
     def bind(self, images):
         from services.agent.file_id import compute_fid
-        from services.file_resources import FileTarget, file_version
+        from services.file_resources import FileTarget, FileTargetError, file_version
         from services.handlers.image_dimensions import read_image_dimensions
+        from services.tools.resource_access import ResourceAccessError
+        from services.agent.image.analysis_media import AnalysisMediaError, MAX_FILE_BYTES
         bound = []
-        for image in images:
-            target = FileTarget(self.files.guarded(image['workspace_path']))
-            version = target.validate()
-            dimensions = read_image_dimensions(target.path)
-            if file_version(target.path) != version:
-                raise ValueError('IMAGE_REFERENCE_CHANGED')
+        for position, image in enumerate(images, 1):
+            try:
+                target = FileTarget(self.files.guarded(image['workspace_path']))
+                version = target.validate()
+                if version[1] > MAX_FILE_BYTES:
+                    raise AnalysisMediaError('ANALYSIS_IMAGE_TOO_LARGE',f'图片{position}超过10MiB，请减小文件后重试')
+                dimensions = read_image_dimensions(target.path)
+                if file_version(target.path) != version:
+                    raise ValueError('IMAGE_REFERENCE_CHANGED')
+            except ResourceAccessError as exc:
+                raise AnalysisMediaError(exc.code,'无权读取分析图片，请重新选择获准图片',status=403) from exc
+            except (FileTargetError, OSError, ValueError) as exc:
+                raise AnalysisMediaError('ANALYSIS_IMAGE_INVALID',f'图片{position}已缺失、变化或无法解码，请重新选择图片') from exc
             ref = {'file_id': compute_fid(self.owner.org_id, image['workspace_path']),
                 'role': image['category'], 'workspace_path': image['workspace_path'],
                 'file_version': list(version), 'content_sha256': dimensions['content_sha256']}
@@ -114,7 +133,7 @@ class DetailPageGeneration:
         project['groups'] = [{
             'plan_id': row['id'], 'kind': row['input_snapshot']['task_type'], 'status': row['status'],
             'stage': row['current_stage'], 'count': row['image_count'], 'items': row['items'],
-            'error': row.get('recovery_state', {}).get('last_error'),
+            'error': plan_error(row),
             'acceptance_error': row.get('recovery_state', {}).get('acceptance_error'),
             'can_resume': (row['status']=='failed' and not any(a.get('outcome') in {'started','uncertain'}
                 for a in (row.get('recovery_state', {}).get('attempts') or {}).values())),
@@ -136,6 +155,11 @@ class DetailPageGeneration:
         if not settings.detail_page_generation_enabled or not chat_image_acceptance_allowed(settings, self.user_id):
             raise AppException('DETAIL_GENERATION_DISABLED', '主图详情生成尚未开放', 409)
         selected = profile(settings, project['prompt_model'])
+        if selected.ecom_analysis_transport == 'kie_upload':
+            import os
+            from services.adapters.kie.client import KieClient
+            if not os.getenv(KieClient.SHADOW_OVERSEAS_PROXY_ENV):
+                raise AppException('ANALYSIS_UPLOAD_CONFIG','海外图片上传配置不可用，请联系管理员',503)
         project = self.projects.get_ai_input_project(project_id)
         if project['version'] != version:
             raise AppException('DETAIL_PROJECT_VERSION_CONFLICT', '草稿已更新，请刷新后重试', 409)
@@ -263,7 +287,11 @@ class DetailPageWorker:
         owner.task_id=row['id']
         owner.cancellation_event=asyncio.Event()
         frozen=SimpleNamespace(**row['model_settings']['profile'])
-        owner.execution_budget=PlannerStreamBudget(None,frozen.wall_seconds+5)
+        remaining=frozen.wall_seconds
+        saved_deadline=row.get('recovery_state',{}).get('deadline')
+        if saved_deadline:
+            remaining=min(remaining,max(0,(datetime.fromisoformat(saved_deadline.replace('Z','+00:00'))-datetime.now(timezone.utc)).total_seconds()))
+        owner.execution_budget=PlannerStreamBudget(None,remaining+5)
         planner=EcommerceImagePlanner(owner,execution_profile=frozen)
         refs=row['input_snapshot']['resolved_references']
         resolver=PageImageInputResolver(owner)
@@ -279,13 +307,20 @@ class DetailPageWorker:
                     await asyncio.to_thread(lambda:service.db.rpc('claim_ecom_image_plan',{'p_plan_id':row['id'],
                         'p_parent_task_id':None,'p_lease_token':lease,'p_lease_seconds':600}).execute())
             renewal=asyncio.create_task(heartbeat())
-            async def preflight():
-                await asyncio.to_thread(resolver.verify,refs)
-                urls.extend(await asyncio.to_thread(lambda:[resolver.files.files.get_cdn_url(ref['workspace_path']) for ref in refs]))
-            try: await planner.execute(row,refs,urls,row['input_snapshot']['messages'],schema,bodies,preflight=preflight)
-            finally:
-                renewal.cancel()
-                with suppress(asyncio.CancelledError): await renewal
+            async with AsyncExitStack() as media_stack:
+                async def preflight():
+                    from services.agent.image.analysis_media import prepare_analysis_media
+                    prepared=await media_stack.enter_async_context(prepare_analysis_media(refs,resolver,
+                        model=frozen.ecom_image_planning_model,
+                        transport=getattr(frozen,'ecom_analysis_transport','cdn'),
+                        deadline=time.monotonic()+owner.execution_budget.remaining,
+                        memory_mb=getattr(frozen,'ecom_analysis_memory_mb',384),api_key=get_settings().kie_api_key))
+                    urls.extend(prepared)
+                try: await planner.execute(row,refs,urls,row['input_snapshot']['messages'],schema,bodies,preflight=preflight)
+                finally:
+                    urls.clear()
+                    renewal.cancel()
+                    with suppress(asyncio.CancelledError): await renewal
         except asyncio.CancelledError: raise
         except Exception as error:
             from loguru import logger

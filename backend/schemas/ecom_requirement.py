@@ -94,6 +94,8 @@ class RequirementAssistInput(BaseModel):
     user_requirement: str = Field(max_length=REQUIREMENT_MAX_LENGTH)
     project_version: int = Field(gt=0)
     revision: RequirementRevision | None = None
+    # Created only by the trusted project adapter; never accepted by the public request.
+    image_references: list[dict] = Field(default_factory=list, exclude=True)
 
     @model_validator(mode="after")
     def validate_total_images(self) -> "RequirementAssistInput":

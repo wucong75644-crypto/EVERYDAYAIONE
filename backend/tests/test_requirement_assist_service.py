@@ -3,12 +3,22 @@ import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
+from contextlib import asynccontextmanager
 import pytest
 from core.exceptions import AppException
 from schemas.ecom_requirement import RequirementAssistInput, RequirementImage
 from services.agent.image.requirement_assist_service import (
     InvalidRequirementOutput, RequirementAssistService, parse_requirement_result, validate_no_output_urls,
 )
+
+@pytest.fixture(autouse=True)
+def prepared_media_boundary(monkeypatch):
+    # This suite exercises model recovery. Real guarded media preparation and
+    # raw-HTTP payloads are covered together in test_analysis_media.py.
+    @asynccontextmanager
+    async def prepared(*args, **kwargs):
+        yield ["https://cdn/product.png", "https://cdn/ref.png"]
+    monkeypatch.setattr("services.agent.image.requirement_assist_service.prepare_analysis_media", prepared)
 
 def _input():
     return RequirementAssistInput(

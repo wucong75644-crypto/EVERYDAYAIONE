@@ -623,36 +623,8 @@ class KieClient:
             file_name = self._build_shadow_file_name(source_url, content_type)
 
             stage = "upload"
-            response = await upload_client.post(
-                self.FILE_STREAM_UPLOAD_ENDPOINT,
-                files={"file": (file_name, content, content_type)},
-                data={
-                    "uploadPath": self.SHADOW_UPLOAD_PATH,
-                    "fileName": file_name,
-                },
-            )
-            response_status = response.status_code
-
-            stage = "response"
-            response_data = response.json()
-            response_code = int(response_data.get("code", response.status_code))
-            payload = response_data.get("data")
-            download_url = (
-                payload.get("downloadUrl") or payload.get("fileUrl")
-                if isinstance(payload, dict)
-                else None
-            )
-            parsed_download_url = urlsplit(download_url) if isinstance(download_url, str) else None
-
-            if (
-                response.status_code != 200
-                or response_code != 200
-                or response_data.get("success") is not True
-                or not parsed_download_url
-                or parsed_download_url.scheme not in {"http", "https"}
-                or not parsed_download_url.netloc
-            ):
-                raise ValueError("invalid upload response")
+            download_url = await self.upload_image_bytes(upload_client, content, content_type, file_name)
+            response_status = 200
 
             logger.info(
                 "KIE_SHADOW_UPLOAD_SUCCESS | task_id={} | model={} | route={} | "
@@ -662,7 +634,7 @@ class KieClient:
                 route,
                 len(content),
                 content_type,
-                response.status_code,
+                response_status,
                 int((time.monotonic() - started_at) * 1000),
             )
             return download_url
@@ -678,6 +650,22 @@ class KieClient:
                 response_status if response_status is not None else "none",
             )
             return None
+
+    @classmethod
+    async def upload_image_bytes(cls, client, content: bytes, content_type: str, file_name: str) -> str:
+        """Shared multipart transport; callers own source identity, route and budget."""
+        response = await client.post(cls.FILE_STREAM_UPLOAD_ENDPOINT,
+            files={"file": (file_name, content, content_type)},
+            data={"uploadPath": cls.SHADOW_UPLOAD_PATH, "fileName": file_name})
+        body = response.json()
+        payload = body.get("data") if isinstance(body, dict) else None
+        url = (payload.get("downloadUrl") or payload.get("fileUrl")) if isinstance(payload, dict) else None
+        parsed = urlsplit(url) if isinstance(url, str) else None
+        if (response.status_code != 200 or not isinstance(body, dict)
+                or body.get("code") not in (200, "200") or body.get("success") is not True
+                or not parsed or parsed.scheme not in {"http", "https"} or not parsed.netloc):
+            raise ValueError("invalid upload response")
+        return url
 
     async def _download_shadow_image(
         self,

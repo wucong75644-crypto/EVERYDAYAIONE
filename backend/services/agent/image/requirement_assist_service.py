@@ -11,6 +11,7 @@ from schemas.ecom_requirement import RequirementAssistInput, RequirementAssistRe
 from services.agent.image.requirement_assist_prompts import build_multimodal_messages
 from services.agent.image.ecommerce_planner.recovery import error_facts
 from services.kie_image_fallback_request import safe_error
+from services.agent.image.analysis_media import media_policy, prepare_analysis_media
 
 _MODEL = "kimi-k3"
 _TIMEOUT_SECONDS = 120.0
@@ -25,6 +26,9 @@ class RequirementAssistOutcome:
 
 
 class RequirementAssistService:
+    def __init__(self, *, image_resolver=None):
+        self.image_resolver = image_resolver
+
     async def generate(self, data: RequirementAssistInput) -> RequirementAssistOutcome:
         started = time.perf_counter()
         try:
@@ -37,17 +41,34 @@ class RequirementAssistService:
                 f"provider_error_code={getattr(exc, 'error_code', None)} | "
                 f"provider_request_id={getattr(exc, 'request_id', None)} | reason={safe_error(exc)}"
             )
+            if isinstance(exc, AppException):
+                raise
             if isinstance(exc, TimeoutError):
                 raise AppException("REQUIREMENT_ASSIST_TIMEOUT", "AI帮写超时，已保留草稿，请重试", 504) from exc
             if isinstance(exc, InvalidRequirementOutput):
                 raise AppException("REQUIREMENT_ASSIST_INVALID_OUTPUT", "AI返回内容无效，已保留草稿，请重试", 502) from exc
+            code, category, _ = error_facts(exc)
+            if category == "authentication":
+                raise AppException("REQUIREMENT_ASSIST_AUTHENTICATION", "分析模型鉴权失败，请联系管理员；已保留草稿", 503) from exc
+            if category == "balance":
+                raise AppException("REQUIREMENT_ASSIST_QUOTA", "分析模型供应商额度不足；已保留草稿", 503) from exc
+            if code == "DASHSCOPE_TRANSIENT_REJECTION":
+                raise AppException("REQUIREMENT_ASSIST_UPSTREAM_REJECTED", "上游暂时无法处理图片或请求，已保留草稿，请稍后重试", 503) from exc
             raise AppException("REQUIREMENT_ASSIST_UNAVAILABLE", "Kimi AI帮写暂时不可用，请重试", 503) from exc
         return RequirementAssistOutcome(result, _MODEL, False, round((time.perf_counter() - started) * 1000))
 
     async def _run_model(self, data: RequirementAssistInput) -> RequirementAssistResult:
-        from services.model_gateway import ModelCallRequest, _collect_stream_response, get_model_gateway
+        from core.config import get_settings
         deadline = time.monotonic() + _TIMEOUT_SECONDS
-        messages = build_multimodal_messages(data)
+        settings = get_settings()
+        transport, json_mode = media_policy(settings, _MODEL)
+        async with prepare_analysis_media(data.image_references, self.image_resolver, model=_MODEL,
+                transport=transport, deadline=deadline, memory_mb=settings.ecom_analysis_memory_mb) as urls:
+            return await self._call_model(build_multimodal_messages(data, urls), deadline, json_mode)
+
+    async def _call_model(self, messages, deadline, json_mode):
+        from services.model_gateway import ModelCallRequest, _collect_stream_response, get_model_gateway
+        options = {"response_format": {"type": "json_object"}} if json_mode else {}
         for attempt in range(2):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -55,7 +76,7 @@ class RequirementAssistService:
             session = get_model_gateway().open_chat(ModelCallRequest(model_id=_MODEL, timeout=remaining))
             try:
                 response = await asyncio.wait_for(
-                    _collect_stream_response(session, messages=messages, reasoning_effort="low"),
+                    _collect_stream_response(session, messages=messages, reasoning_effort="low", **options),
                     timeout=remaining,
                 )
                 break
