@@ -105,9 +105,15 @@ async def prepare_chat_stream(
     def prepare_attempt(session, kwargs):
         # 保留工具循环传入的工具列表；Provider 特有搜索工具按每次实际模型添加。
         tools = list(kwargs.get("tools") or [])
-        if prepared.execution_context.authorized_tool_names is None:
+        authorized = prepared.execution_context.authorized_tool_names
+        if authorized is None:
             _prepare_provider_tools(session, tools, needs_google_search, session.model_id, task_id)
-        return {**kwargs, "tools": tools} if tools else kwargs
+        # Recompute for the actual retry model and current authorization, never globally.
+        builtin = bool(session.supports_builtin_search and tools
+                       and (authorized is None or "web_search" in authorized))
+        if builtin:
+            tools = [tool for tool in tools if _tool_name(tool) != "web_search"]
+        return {**kwargs, "tools": tools, "enable_builtin_tools": builtin}
 
     retry_policy.prepare_stream = prepare_attempt
 

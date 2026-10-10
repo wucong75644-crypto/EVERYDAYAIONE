@@ -296,7 +296,7 @@
 | `apply_tool_results` | `backend/services/handlers/chat/tool_loop.py` | 将工具结果回填模型消息和 tool_step，并返回待注入图片 URL | tool_results, messages, content_blocks, start_times, tool_context | List[str] |
 | `push_emit_payloads` | `backend/services/handlers/chat/tool_loop.py` | 按显式协议推送并持久化 emit 内容块 | payloads, content_blocks, delivery, websocket, save_blocks | None |
 | `push_form_block` | `backend/services/handlers/chat/tool_loop.py` | 推送表单块及固定确认提示，返回提示文本 | form, content_blocks, delivery, websocket, save_blocks | str |
-| `compact_tool_context` | `backend/services/handlers/chat/tool_loop.py` | 按 Web/企微既有预算压缩完成的工具轮次 | messages, conversation_source, turn | None |
+| `compact_tool_context` | `backend/services/handlers/chat/tool_loop.py` | 按 Web/企微既有预算压缩完成的工具轮次 | messages, conversation_source, turn, context_window? | None |
 
 ### 滚动管理模块 (Scroll Management)
 
@@ -1440,9 +1440,28 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `generate_requirement_suggestions` | `backend/api/routes/ecom_requirement.py` | 适配可信项目图片、文字及人工补充，返回一份草稿 |
 | `RequirementAssistRateLimiter.check` | `backend/services/agent/image/requirement_assist_rate_limiter.py` | 使用 Redis 在多 worker 间执行每用户每分钟 5 次的原子限流 |
 | `buildRequirementSuggestionsRequest` | `frontend/src/services/ecomRequirement.ts` | 将详情页表单转换为 AI 帮写后端设置快照 |
+
 | `generateRequirementSuggestions` | `frontend/src/services/ecomRequirement.ts` | 调用可取消的单份草稿接口，携带可选 revision，使用125秒超时 |
 | `useDetailRequirementAssist` | `frontend/src/hooks/useDetailRequirementAssist.ts` | 管理单份草稿、补充更新、跳过问题、失败保留及旧响应隔离 |
 | `RequirementAssistModal` | `frontend/src/components/detail-page/RequirementAssistModal.tsx` | 拆解资料并向客户补问；编辑/回答后可直接采用，AI更新为可选动作 |
 | `ordered_images` | `backend/services/agent/image/requirement_assist_prompts.py` | 按程序绑定位置合并产品图与参考图并保留角色 |
 | `formatRequirementDraft` | `frontend/src/utils/requirementAssist.ts` | 程序拼接原文、补充历史、人工确认稿和最高优先级的本次客户补充 |
 | `buildSupplementText` | `frontend/src/utils/requirementAssist.ts` | 合并本轮已回答且未跳过的问题和自由补充 |
+
+
+### 百炼 Responses 内置工具与缓存（2026-10-10）
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+| --- | --- | --- | --- | --- |
+| `canonical_model_id` | `backend/config/model_aliases.py` | 在调用/读取边界映射旧千问型号，保留历史数据 | model_id | str |
+| `DashScopeChatAdapter._stream_responses` | `backend/services/adapters/dashscope/chat_adapter.py` | 在既有适配器中发起 Responses SSE，默认开启 Session 缓存 | messages, thinking_mode, reasoning_effort, kwargs | AsyncIterator[StreamChunk] |
+| `chat_messages` | `backend/services/adapters/dashscope/responses.py` | 清理协议私有状态、按千问能力设置缓存端点，不修改原消息 | messages, cache | list[dict] |
+| `response_input` | 同上 | 转换文本、图片、Provider 回放项和 Actor 函数往返 | messages, model | list[dict] |
+| `response_tools` / `stable_tools` | 同上 | 按能力装配内置工具、展开业务函数并固定工具顺序 | tools, builtins? | list[dict] |
+| `usage_fields` | 同上 | 读取输入输出、缓存命中/写入和内置工具次数 | usage, responses | dict |
+| `public_sources` | 同上 | 校验上游来源 URL，不伪造句子级引用 | item | list[dict] |
+| `ResponseStream.consume` / `item_chunks` | 同上 | 解析增量、进度、完成/失败、函数调用及最终 Provider 回放状态 | event / item, index, done | list[StreamChunk] |
+| `present_builtin_event` / `source_text` | `backend/services/handlers/chat/builtin_tools.py` | 将内置工具状态与来源投影到现有步骤块/正文通道 | event / sources | dict / str |
+| `ModelGatewaySession.supports_builtin_search` / `effective_context_window` | `backend/services/model_gateway.py` | 按本次实际适配器暴露能力与 Responses 有效容量 | 无 | bool / int? |
+| `SubscriptionService.get_user_subscriptions` / `_filter_model` | `backend/services/subscription_service.py` | 只读映射旧订阅并兼容幂等订阅/取消 | user_id / query, model_id | list[dict] / query |
+| `canonicalModelId` | `frontend/src/constants/models.ts` | 恢复旧型号会话及订阅的前端选择 | modelId | string |

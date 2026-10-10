@@ -632,6 +632,9 @@ async def _read_turn(
     turn_text = ""
     turn_thinking = ""
     calls: dict[int, dict[str, Any]] = {}
+    prepared.last_provider_output = None
+    prepared.last_reasoning_content = ""
+    builtin_sources: dict[str, str] = {}
     previewed_indices: set[int] = set()
     preview_ids: dict[int, str] = {}
     model_gateway = _get_model_gateway(prepared)
@@ -721,6 +724,22 @@ async def _read_turn(
             cancellation_event, request, prepared.messages, blocks,
             totals, "stream",
         )
+        provider_output = getattr(chunk, "provider_output", None)
+        if isinstance(provider_output, dict):
+            prepared.last_provider_output = provider_output
+        event = getattr(chunk, "builtin_tool_event", None)
+        if isinstance(event, dict) and event:
+            from services.handlers.chat.builtin_tools import present_builtin_event
+            block = present_builtin_event(event)
+            existing = next((i for i, b in enumerate(blocks) if b.get("tool_call_id") == block["tool_call_id"]), None)
+            if existing is None:
+                blocks.append(block)
+                await sink.on_block(block)
+            else:
+                blocks[existing] = block
+                await sink.on_block_update(block)
+            for source in event.get("sources", []):
+                builtin_sources[source["url"]] = source.get("title") or source["url"]
         if chunk.thinking_content:
             turn_thinking += chunk.thinking_content
             if not getattr(prepared, "defer_ecom_narrative", False):
@@ -756,6 +775,14 @@ async def _read_turn(
                         blocks.append(preview_block)
                         await sink.on_block(preview_block)
         _accumulate_usage(totals, chunk)
+    from services.adapters.dashscope.responses import CACHE_MODELS
+    prepared.last_reasoning_content = turn_thinking if getattr(model_gateway, "model_id", "") in CACHE_MODELS else ""
+    if builtin_sources:
+        from services.handlers.chat.builtin_tools import source_text
+        references = source_text(builtin_sources)
+        turn_text += references
+        totals.text += references
+        await sink.on_text(references)
     ordered_indices = sorted(calls)
     ordered_calls = [calls[index] for index in ordered_indices]
     previewed_call_ids: set[str] = set()
@@ -879,7 +906,12 @@ async def _execute_tools(
     repeated_tool_call_nudge: str | None = None,
 ) -> str | None:
     totals = totals or StreamTotals()
-    prepared.messages.append(_assistant_tool_message(turn_text, calls))
+    assistant = _assistant_tool_message(turn_text, calls)
+    if getattr(prepared, "last_provider_output", None):
+        assistant["_dashscope_output"] = prepared.last_provider_output
+    if getattr(prepared, "last_reasoning_content", ""):
+        assistant["reasoning_content"] = prepared.last_reasoning_content
+    prepared.messages.append(assistant)
     await _sink_tool_calls(sink, [c for c in calls if c["name"] != ACTIVATE_SKILL], turn + 1)
     start_times: dict[str, float] = {}
     for call in calls:
@@ -1057,6 +1089,7 @@ async def _execute_tools(
         messages=prepared.messages,
         conversation_source=handler._get_conv_source(request.conversation_id),
         turn=turn,
+        context_window=getattr(getattr(prepared, "model_gateway", None), "effective_context_window", None),
     )
     if runtime:
         await runtime.safe_point(
@@ -1345,6 +1378,13 @@ async def _apply_budget_stop(
 def _accumulate_usage(totals: StreamTotals, chunk: Any) -> None:
     totals.usage["prompt_tokens"] += chunk.prompt_tokens or 0
     totals.usage["completion_tokens"] += chunk.completion_tokens or 0
+    for key in ("cached_tokens", "cache_creation_input_tokens"):
+        value = getattr(chunk, key, 0)
+        if type(value) is int and value:
+            totals.usage[key] = totals.usage.get(key, 0) + value
+    for name, count in (getattr(chunk, "builtin_tool_usage", None) or {}).items():
+        key = f"{name}_calls"
+        totals.usage[key] = totals.usage.get(key, 0) + count
     if chunk.credits_consumed is not None:
         totals.usage["api_credits"] = chunk.credits_consumed
     if chunk.finish_reason:

@@ -117,6 +117,8 @@ def enforce_budget(
             archived_outcome_content(msg.get("content"))
             if msg.get("role") == "assistant" else None
         ) or "[已归档]"
+        msg.pop("_dashscope_output", None)
+        msg.pop("reasoning_content", None)
         compacted += 1
 
     if compacted:
@@ -236,6 +238,8 @@ def _enforce_history_budget_core(
             archived_outcome_content(msg.get("content"))
             if msg.get("role") == "assistant" else None
         ) or "[已归档]"
+        msg.pop("_dashscope_output", None)
+        msg.pop("reasoning_content", None)
         hist_tokens -= max(0, saved - _msg_tokens(msg))
         compacted += 1
 

@@ -130,7 +130,7 @@ class ScheduledTaskAgent:
             from core.config import get_settings
             settings = get_settings()
             model_id = (
-                getattr(settings, "agent_loop_model", None) or "qwen3.5-plus"
+                getattr(settings, "agent_loop_model", None) or "qwen3.8-max"
             )
             model_gateway = get_model_gateway().open_chat(
                 ModelCallRequest(

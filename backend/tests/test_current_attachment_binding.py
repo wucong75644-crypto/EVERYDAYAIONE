@@ -88,11 +88,12 @@ async def test_builder_provider_request_and_old_checkpoint_keep_current_file(mon
     def transport(request):
         captured.append(json.loads(request.content))
         return httpx.Response(200, text='data: {"choices":[{"delta":{"content":"offline"}}]}\n\ndata: [DONE]\n\n')
-    adapter = DashScopeChatAdapter(api_key="offline", model="qwen3.5-plus")
+    adapter = DashScopeChatAdapter(api_key="offline", model="qwen3.8-max")
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport), base_url="https://example.test") as client:
         adapter._client = client
         _ = [chunk async for chunk in adapter.stream_chat(result.messages)]
-    sent = captured[0]["messages"]
+    from tests.prompt_builder_test_utils import normalize_cache_transport
+    sent = normalize_cache_transport(captured[0]["messages"], result.messages)
     refs = json.loads(sent[-1]["content"][1]["text"].split("\n", 1)[1])
     assert refs[0]["file_id"] == compute_fid("o1", file["workspace_path"])
     assert refs[0]["path"] == file["workspace_path"]

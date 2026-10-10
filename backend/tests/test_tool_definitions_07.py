@@ -174,6 +174,13 @@ def test_old_imports_signatures_and_constant_values(module):
             assert value['image'] == SMART_IMAGE_UPGRADE['image']
             value = deepcopy(value)
             value['image'] = SMART_IMAGE_UPGRADE['legacy_image']
+            # Restore only the explicitly upgraded Qwen contract; retain the
+            # immutable baseline check for every unrelated model and field.
+            qwen = json.loads((Path(__file__).parent / 'fixtures/qwen38_config_upgrade.json').read_text())
+            assert value['chat']['models'][0] == qwen['model']
+            assert value['chat']['default'] == qwen['default']
+            value['chat']['models'][0] = qwen['legacy_model']
+            value['chat']['default'] = qwen['legacy_default']
         if module == 'chat_tools' and name == 'TOOL_SYSTEM_PROMPT':
             from config.image_agent_prompt import IMAGE_AGENT_PROMPT
             assert 'image_agent' not in value

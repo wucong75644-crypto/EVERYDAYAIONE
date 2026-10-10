@@ -20,6 +20,7 @@ from .base import (
     ModelConfig,
 )
 from .types import ProviderUnavailableError
+from .dashscope.responses import BUILTIN_TOOLS, CACHE_MODELS
 
 
 # ============================================================
@@ -153,20 +154,25 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
         max_tokens=16384,
         context_window=131_072,
     ),
-    "qwen3.5-plus": ModelConfig(
-        model_id="qwen3.5-plus",
-        provider=ModelProvider.DASHSCOPE,
-        provider_model="qwen3.5-plus",
-        display_name="Qwen 3.5 Plus",
-        input_price=0.11,       # 0.8元/1M ≈ $0.11
-        output_price=0.67,      # 4.8元/1M ≈ $0.67
-        credits_per_1k_input=0.012,
-        credits_per_1k_output=0.068,
-        supports_vision=True,
-        supports_tools=True,
-        supports_thinking=True,
-        max_tokens=65536,
-        context_window=1_000_000,
+    "qwen3.8-max": ModelConfig(
+        model_id="qwen3.8-max", provider=ModelProvider.DASHSCOPE,
+        provider_model="qwen3.8-max", display_name="Qwen 3.8 Max",
+        input_price=1.67, output_price=5.0,  # Beijing: CNY 12 / 36 per 1M tokens
+        credits_per_1k_input=0.17, credits_per_1k_output=0.51,
+        supports_vision=True, supports_video=True, supports_tools=True,
+        supports_search=True, supports_thinking=True,
+        builtin_tools=BUILTIN_TOOLS["qwen3.8-max"], supports_session_cache="qwen3.8-max" in CACHE_MODELS,
+        max_tokens=131072, context_window=1_000_000,
+    ),
+    "qwen3.8-flash": ModelConfig(
+        model_id="qwen3.8-flash", provider=ModelProvider.DASHSCOPE,
+        provider_model="qwen3.8-flash", display_name="Qwen 3.8 Flash",
+        input_price=0.11, output_price=0.375,  # Beijing: CNY 0.8 / 2.7 per 1M tokens
+        credits_per_1k_input=0.012, credits_per_1k_output=0.039,
+        supports_vision=True, supports_video=True, supports_tools=True,
+        supports_search=True, supports_thinking=True,
+        builtin_tools=BUILTIN_TOOLS["qwen3.8-flash"], supports_session_cache="qwen3.8-flash" in CACHE_MODELS,
+        max_tokens=131072, context_window=1_000_000,
     ),
     "qwen-vl-max": ModelConfig(
         model_id="qwen-vl-max",
@@ -595,6 +601,8 @@ def create_chat_adapter(
     settings = get_settings()
 
     # 获取模型配置
+    from config.model_aliases import canonical_model_id
+    model_id = canonical_model_id(model_id) if model_id else model_id
     actual_model_id = model_id if model_id in MODEL_REGISTRY else DEFAULT_MODEL_ID
     config = MODEL_REGISTRY[actual_model_id]
 
@@ -641,6 +649,8 @@ def create_chat_adapter(
             model=config.provider_model,
             base_url=settings.dashscope_base_url,
             stream_timeout=stream_timeout,
+            builtin_tools_enabled=settings.dashscope_builtin_tools_enabled,
+            session_cache_enabled=settings.dashscope_session_cache_enabled,
         )
 
     elif config.provider == ModelProvider.OPENROUTER:
@@ -676,7 +686,8 @@ def create_chat_adapter(
 
 def get_model_config(model_id: str) -> Optional[ModelConfig]:
     """获取模型配置信息"""
-    return MODEL_REGISTRY.get(model_id)
+    from config.model_aliases import canonical_model_id
+    return MODEL_REGISTRY.get(canonical_model_id(model_id))
 
 
 def get_all_models() -> Dict[str, ModelConfig]:

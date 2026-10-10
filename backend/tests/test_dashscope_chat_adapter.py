@@ -25,7 +25,7 @@ from services.adapters.base import ModelProvider, StreamChunk, ChatResponse
 # Fixtures
 # ============================================================
 
-def _make_adapter(model: str = "qwen3.5-plus") -> DashScopeChatAdapter:
+def _make_adapter(model: str = "qwen3.8-max") -> DashScopeChatAdapter:
     return DashScopeChatAdapter(
         api_key="sk-test-key",
         model=model,
@@ -51,7 +51,7 @@ def _make_chunk(
             "finish_reason": finish_reason,
         }],
         "usage": usage,
-        "model": "qwen3.5-plus",
+        "model": "qwen3.8-max",
     }
     return chunk
 
@@ -80,7 +80,7 @@ class TestInit:
     def test_stores_config(self):
         adapter = _make_adapter()
         assert adapter._api_key == "sk-test-key"
-        assert adapter._model_id == "qwen3.5-plus"
+        assert adapter._model_id == "qwen3.8-max"
         assert adapter._base_url == "https://dashscope.example.com/v1"
 
     def test_strips_trailing_slash(self):
@@ -193,7 +193,7 @@ class TestStreamChat:
             _sse_line({
                 "choices": [{"delta": {"content": "hello"}, "index": 0, "finish_reason": None}],
                 "usage": None,  # DashScope 中间 chunk 返回 null
-                "model": "qwen3.5-plus",
+                "model": "qwen3.8-max",
             }),
             "",
             "data: [DONE]",
@@ -229,7 +229,7 @@ class TestStreamChat:
             _sse_line({
                 "choices": [],
                 "usage": {"prompt_tokens": 100, "completion_tokens": 50},
-                "model": "qwen3.5-plus",
+                "model": "qwen3.8-max",
             }),
             "",
             "data: [DONE]",
@@ -571,7 +571,7 @@ class TestStreamChat:
     async def test_empty_choices(self):
         """choices 为空时 content=None"""
         lines = [
-            _sse_line({"choices": [], "usage": None, "model": "qwen3.5-plus"}),
+            _sse_line({"choices": [], "usage": None, "model": "qwen3.8-max"}),
             "data: [DONE]",
         ]
         adapter = _make_adapter()
@@ -713,20 +713,20 @@ class TestEstimateCost:
 
     def test_zero_tokens(self):
         """零 token 输入→零积分"""
-        adapter = _make_adapter("qwen3.5-plus")
+        adapter = _make_adapter("qwen3.8-max")
         result = adapter.estimate_cost_unified(input_tokens=0, output_tokens=0)
         assert result.estimated_credits == 0
 
     def test_small_tokens_minimum_1(self):
         """少量 token 但 total > 0 时最小为 1"""
-        adapter = _make_adapter("qwen3.5-plus")
-        # qwen3.5-plus: input=12/1M, output=68/1M
-        # 1000 tokens: int(1000 * 12 / 1M) = 0, int(1000 * 68 / 1M) = 0 → total=0
+        adapter = _make_adapter("qwen3.8-max")
+        # qwen3.8-max: input=170/1M, output=510/1M
+        # 1000 tokens: int(1000 * 170 / 1M) = 0, int(1000 * 510 / 1M) = 0 → total=0
         result = adapter.estimate_cost_unified(input_tokens=1000, output_tokens=1000)
         # total=0 → max(1,0) if total>0 else 0 → 0
         assert result.estimated_credits == 0
 
-        # 100k tokens: int(100000 * 12 / 1M) = 1, int(100000 * 68 / 1M) = 6 → total=7
+        # 100k tokens: int(100000 * 170 / 1M) = 17, int(100000 * 510 / 1M) = 51 → total=68
         result2 = adapter.estimate_cost_unified(input_tokens=100_000, output_tokens=100_000)
         assert result2.estimated_credits >= 1
 

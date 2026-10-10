@@ -164,6 +164,8 @@ async def compact_loop_with_summary(
         outcome = archived_outcome_content(msg.get("content")) if msg.get("role") == "assistant" else None
         if outcome:
             msg["content"] = outcome
+            msg.pop("_dashscope_output", None)
+            msg.pop("reasoning_content", None)
         else:
             messages.pop(idx)
             removed += 1

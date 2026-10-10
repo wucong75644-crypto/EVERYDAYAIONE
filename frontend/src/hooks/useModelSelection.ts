@@ -6,7 +6,7 @@
 
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'react-hot-toast';
-import { type UnifiedModel, ALL_MODELS, getAvailableModels } from '../constants/models';
+import { type UnifiedModel, ALL_MODELS, getAvailableModels, canonicalModelId } from '../constants/models';
 import { isSmartModel } from '../constants/smartModel';
 import { detectConflict } from '../utils/modelConflict';
 import { useAuthStore } from '../stores/useAuthStore';
@@ -115,7 +115,7 @@ export function useModelSelection({
     ) {
       prevConversationModelId.current = conversationModelId;
 
-      const savedModel = ALL_MODELS.find((m) => m.id === conversationModelId);
+      const savedModel = ALL_MODELS.find((m) => m.id === canonicalModelId(conversationModelId));
       // 使用 queueMicrotask 延迟状态更新
       queueMicrotask(() => {
         if (savedModel) {

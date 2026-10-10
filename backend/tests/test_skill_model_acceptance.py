@@ -72,7 +72,7 @@ async def test_provider_follows_selected_skill_instead_of_irrelevant_history(sto
     usage = {'prompt_tokens': 0, 'completion_tokens': 0}
 
     async def request(client):
-        payload = {'model': 'qwen3.5-plus', 'messages': runtime.model_messages(messages, schemas), 'stream': False,
+        payload = {'model': 'qwen3.8-max', 'messages': runtime.model_messages(messages, schemas), 'stream': False,
                    'enable_thinking': False, 'temperature': 0, 'max_tokens': 1200}
         if schemas:
             payload['tools'] = schemas
@@ -120,5 +120,5 @@ async def test_provider_follows_selected_skill_instead_of_irrelevant_history(sto
         elif case == 'plan':
             assert '计划' in text or '规划' in text, answer
             assert '查询到' not in text, answer
-        print(json.dumps({'case': case, 'model': 'qwen3.5-plus', 'usage': usage,
+        print(json.dumps({'case': case, 'model': 'qwen3.8-max', 'usage': usage,
                           'answer': text}, ensure_ascii=False))

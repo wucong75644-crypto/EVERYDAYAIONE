@@ -350,7 +350,8 @@ def _normalize_model_id(raw: Any) -> str:
 
     if not raw or raw == "auto":
         return DEFAULT_MODEL_ID
-    return str(raw)
+    from config.model_aliases import canonical_model_id
+    return canonical_model_id(str(raw))
 
 
 def _build_anchor(

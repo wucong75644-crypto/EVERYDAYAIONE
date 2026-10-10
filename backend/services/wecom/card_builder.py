@@ -27,7 +27,7 @@ WECOM_MODEL_OPTIONS: List[dict] = [
     {"id": "deepseek-v3.2", "text": "DeepSeek V3.2"},
     {"id": "deepseek-r1", "text": "DeepSeek R1（推理）"},
     {"id": "gemini-3-pro", "text": "Gemini 3 Pro"},
-    {"id": "qwen3.5-plus", "text": "通义千问 3.5"},
+    {"id": "qwen3.8-max", "text": "通义千问 3.8"},
     {"id": "anthropic/claude-sonnet-4.6", "text": "Claude Sonnet 4.6"},
 ]
 

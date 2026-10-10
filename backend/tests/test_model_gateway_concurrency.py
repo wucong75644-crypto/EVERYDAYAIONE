@@ -173,7 +173,7 @@ async def test_queue_timeout_is_observed_without_poisoning_provider_breaker():
     active = asyncio.create_task(streams.run("active"))
     await until(lambda: streams.active == 1)
     with pytest.raises(ModelGatewayTimeoutError) as error:
-        await streams.run("queued", model="qwen3.5-plus", timeout=0.02)
+        await streams.run("queued", model="qwen3.8-max", timeout=0.02)
     classified = classify_error(error.value, model_call=True)
     assert classified.error_code == "MODEL_TIMEOUT"
     assert not classified.is_retryable and not classified.should_record_breaker
@@ -196,7 +196,7 @@ async def test_queue_timeout_is_observed_without_poisoning_provider_breaker():
 async def test_provider_error_releases_slot_and_records_only_structured_overload(status):
     from services.adapters.dashscope.chat_adapter import DashScopeAPIError
     streams = Streams()
-    failed = streams.session("failed", model="qwen3.5-plus")
+    failed = streams.session("failed", model="qwen3.8-max")
     streams.controls["failed"].set()
     with pytest.raises(DashScopeAPIError):
         await consume(failed, error=DashScopeAPIError("secret prompt or api key", status_code=status))
@@ -301,11 +301,11 @@ async def test_preopened_session_rechecks_breaker_before_dispatch_and_while_queu
     streams = Streams()
     active = asyncio.create_task(streams.run("unrelated"))
     await until(lambda: streams.active == 1)
-    session = streams.session("qwen", model="qwen3.5-plus")
+    session = streams.session("qwen", model="qwen3.8-max")
     if queue_first:
         pending = asyncio.create_task(consume(session))
         await until(lambda: session._acquire_task is not None)
-    breaker = get_breaker(MODEL_REGISTRY["qwen3.5-plus"].provider)
+    breaker = get_breaker(MODEL_REGISTRY["qwen3.8-max"].provider)
     for _ in range(3):
         breaker.record_failure()
     if not queue_first:
@@ -318,7 +318,7 @@ async def test_preopened_session_rechecks_breaker_before_dispatch_and_while_queu
     breaker._opened_at -= 31
     streams.controls["unrelated"].set()
     await active
-    recovered = streams.session("recovered", model="qwen3.5-plus")
+    recovered = streams.session("recovered", model="qwen3.8-max")
     streams.controls["recovered"].set()
     await consume(recovered)
     assert breaker.state.value == "closed"

@@ -69,7 +69,7 @@ def test_build_delivery_uses_external_task_id():
             "assistant_message_id": "assistant",
             "user_id": "user",
             "org_id": "org",
-            "model_id": "qwen3.5-plus",
+            "model_id": "qwen3.8-max",
         },
         claim,
     )

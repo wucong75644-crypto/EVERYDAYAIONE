@@ -95,7 +95,7 @@ class TestModelMapping:
 
     def test_dashscope_models_in_mapping(self):
         """DashScope 模型也在映射中"""
-        for mid in ("deepseek-v3.2", "qwen3.5-plus"):
+        for mid in ("deepseek-v3.2", "qwen3.8-max"):
             assert mid in MODEL_TO_GEN_TYPE
 
     def test_image_video_models_in_mapping(self):
@@ -112,7 +112,7 @@ class TestModelMapping:
 class TestDefaults:
 
     def test_default_chat_model(self):
-        assert DEFAULT_CHAT_MODEL == "qwen3.5-plus"
+        assert DEFAULT_CHAT_MODEL == "qwen3.8-max"
 
     def test_default_image_model(self):
         assert DEFAULT_IMAGE_MODEL == "gpt-image-2-5-sunburst-text-to-image"
@@ -149,7 +149,7 @@ class TestRouterTools:
         """text_chat 工具的 model enum 也包含 DashScope 模型"""
         text_chat = next(t for t in ROUTER_TOOLS if t["function"]["name"] == "text_chat")
         model_enum = text_chat["function"]["parameters"]["properties"]["model"]["enum"]
-        assert "qwen3.5-plus" in model_enum
+        assert "qwen3.8-max" in model_enum
         assert "deepseek-v3.2" in model_enum
 
     def test_build_router_tools_returns_list(self):
@@ -168,13 +168,13 @@ class TestRetryTools:
 
     def test_retry_excludes_failed_model(self):
         """重试工具过滤已失败模型"""
-        retry = build_retry_tools(GenerationType.CHAT, ["qwen3.5-plus"])
+        retry = build_retry_tools(GenerationType.CHAT, ["qwen3.8-max"])
         text_chat = next(
             (t for t in retry if t["function"]["name"] == "text_chat"), None
         )
         assert text_chat is not None
         model_enum = text_chat["function"]["parameters"]["properties"]["model"]["enum"]
-        assert "qwen3.5-plus" not in model_enum
+        assert "qwen3.8-max" not in model_enum
         # OpenRouter 模型仍在
         assert "openai/gpt-4.1" in model_enum
 
@@ -187,9 +187,9 @@ class TestRetryTools:
     def test_get_remaining_models_excludes_failed(self):
         """get_remaining_models 过滤失败模型"""
         remaining = get_remaining_models(
-            GenerationType.CHAT, ["qwen3.5-plus", "deepseek-v3.2"]
+            GenerationType.CHAT, ["qwen3.8-max", "deepseek-v3.2"]
         )
-        assert "qwen3.5-plus" not in remaining
+        assert "qwen3.8-max" not in remaining
         assert "deepseek-v3.2" not in remaining
         # OpenRouter 模型仍在
         assert "openai/gpt-4.1" in remaining
@@ -198,8 +198,8 @@ class TestRetryTools:
         """get_remaining_models 保持优先级顺序"""
         remaining = get_remaining_models(GenerationType.CHAT, [])
         assert len(remaining) > 0
-        # 第一个应该是 priority=1 的模型（qwen3.5-plus）
-        assert remaining[0] == "qwen3.5-plus"
+        # 第一个应该是 priority=1 的模型（qwen3.8-max）
+        assert remaining[0] == "qwen3.8-max"
 
 
 # ============================================================
@@ -226,7 +226,7 @@ class TestHelperFunctions:
         enums = _get_model_enum("chat")
         assert isinstance(enums, list)
         assert len(enums) > 0
-        assert "qwen3.5-plus" in enums
+        assert "qwen3.8-max" in enums
 
     def test_get_model_enum_nonexistent(self):
         """_get_model_enum 不存在的分类→空列表"""
@@ -239,7 +239,7 @@ class TestHelperFunctions:
         assert isinstance(desc, str)
         assert len(desc) > 0
         # 应包含模型 ID 和描述
-        assert "qwen3.5-plus" in desc
+        assert "qwen3.8-max" in desc
 
     def test_get_model_desc_nonexistent(self):
         """_get_model_desc 不存在的分类→空字符串"""
@@ -283,21 +283,21 @@ class TestGetAvailableModelSet:
         "google/nano-banana": {"provider": "kie"},
     })
     @patch("services.adapters.factory.MODEL_REGISTRY", {
-        "qwen3.5-plus": MagicMock(provider="dashscope"),
+        "qwen3.8-max": MagicMock(provider="dashscope"),
     })
     def test_all_available_returns_all(self, mock_avail):
         """所有 Provider 正常时返回全部模型（排除 failed_models）"""
         from config.smart_model_config import _get_available_model_set
 
-        result = _get_available_model_set(["qwen3.5-plus"])
-        # qwen3.5-plus 在 failed_models 中，应被排除
-        assert "qwen3.5-plus" not in result
+        result = _get_available_model_set(["qwen3.8-max"])
+        # qwen3.8-max 在 failed_models 中，应被排除
+        assert "qwen3.8-max" not in result
 
     @patch("services.circuit_breaker.is_provider_available")
     @patch("services.adapters.factory.VIDEO_MODEL_REGISTRY", {})
     @patch("services.adapters.factory.IMAGE_MODEL_REGISTRY", {})
     @patch("services.adapters.factory.MODEL_REGISTRY", {
-        "qwen3.5-plus": MagicMock(provider="dashscope"),
+        "qwen3.8-max": MagicMock(provider="dashscope"),
         "gemini-3-pro": MagicMock(provider="kie"),
     })
     def test_broken_provider_filtered_out(self, mock_avail):
@@ -317,10 +317,10 @@ class TestGetAvailableModelSet:
         from config.smart_model_config import _get_available_model_set
 
         with patch("services.circuit_breaker.is_provider_available", side_effect=ImportError):
-            result = _get_available_model_set(["qwen3.5-plus"])
+            result = _get_available_model_set(["qwen3.8-max"])
 
         # 导入失败时降级：返回除 failed 之外的全部模型
-        assert "qwen3.5-plus" not in result
+        assert "qwen3.8-max" not in result
         # 其他模型应该在
         assert len(result) > 0
 
@@ -376,9 +376,9 @@ class TestModelValidation:
 
     def test_find_model_config_exists(self):
         """查找存在的模型"""
-        config = _find_model_config("qwen3.5-plus")
+        config = _find_model_config("qwen3.8-max")
         assert config is not None
-        assert config["id"] == "qwen3.5-plus"
+        assert config["id"] == "qwen3.8-max"
 
     def test_find_model_config_not_exists(self):
         """查找不存在的模型→None"""
@@ -388,7 +388,7 @@ class TestModelValidation:
         """获取支持图片的模型"""
         models = _get_models_with_capability("supports_image")
         assert len(models) > 0
-        assert "qwen3.5-plus" in models
+        assert "qwen3.8-max" in models
 
     def test_get_models_with_search_support(self):
         """获取支持搜索的模型"""
@@ -408,19 +408,19 @@ class TestModelValidation:
     def test_validate_model_search_mismatch(self):
         """不支持搜索的模型 + 需要搜索 → 返回警告"""
         warning = validate_model_choice(
-            "qwen3.5-plus", needs_search=True,
+            "kimi-k2.5", needs_search=True,
         )
         assert warning is not None
         assert "不支持联网搜索" in warning
 
     def test_validate_model_passes(self):
         """能力匹配 → 返回 None"""
-        assert validate_model_choice("qwen3.5-plus") is None
+        assert validate_model_choice("qwen3.8-max") is None
         assert validate_model_choice(
             "gemini-3-pro", needs_search=True,
         ) is None
         assert validate_model_choice(
-            "qwen3.5-plus", has_image=True,
+            "qwen3.8-max", has_image=True,
         ) is None
 
     def test_validate_model_unknown(self):

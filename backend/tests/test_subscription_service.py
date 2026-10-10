@@ -186,3 +186,14 @@ class TestKnownModelIds:
         assert "gemini-3-flash" in KNOWN_MODEL_IDS
         assert "openai/gpt-5.4" in KNOWN_MODEL_IDS
         assert "deepseek-v3.2" in KNOWN_MODEL_IDS
+
+
+def test_qwen_subscription_upgrade_is_read_only_and_idempotent(mock_db, service):
+    rows = [{"user_id": "u1", "model_id": "qwen3.5-plus", "subscribed_at": "2026-03-10T00:00:00Z"}]
+    mock_db.set_table_data("user_subscriptions", rows)
+    assert service.get_user_subscriptions("u1")[0]["model_id"] == "qwen3.8-max"
+    assert mock_db.table("user_subscriptions").select("*").execute().data[0]["model_id"] == "qwen3.5-plus"
+    service.subscribe("u1", "qwen3.8-max")
+    assert len(mock_db.table("user_subscriptions").select("*").execute().data) == 1
+    service.unsubscribe("u1", "qwen3.8-max")
+    assert service.get_user_subscriptions("u1") == []

@@ -2,7 +2,7 @@
 DashScope Chat 适配器
 
 通过阿里云百炼 OpenAI 兼容接口调用第三方模型。
-支持：DeepSeek V3.2/R1、Qwen3.5-Plus、Kimi-K2.5、GLM-5。
+支持：DeepSeek V3.2/R1、Qwen3.8-Max/Flash、Kimi-K2.5、GLM-5。
 """
 
 import json
@@ -12,8 +12,9 @@ from decimal import Decimal
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
-from ..chat_protocol import chat_messages
 from loguru import logger
+
+from .responses import BUILTIN_TOOLS, CACHE_MODELS, ResponseStream, chat_messages, response_input, response_tools, stable_tools, usage_fields
 
 from ..base import (
     BaseChatAdapter,
@@ -39,7 +40,8 @@ class DashScopeModelPricing:
 DASHSCOPE_PRICING: Dict[str, DashScopeModelPricing] = {
     "deepseek-v3.2": DashScopeModelPricing(credits_per_1m_input=29, credits_per_1m_output=113),
     "deepseek-r1": DashScopeModelPricing(credits_per_1m_input=57, credits_per_1m_output=225),
-    "qwen3.5-plus": DashScopeModelPricing(credits_per_1m_input=12, credits_per_1m_output=68),
+    "qwen3.8-max": DashScopeModelPricing(credits_per_1m_input=170, credits_per_1m_output=510),
+    "qwen3.8-flash": DashScopeModelPricing(credits_per_1m_input=12, credits_per_1m_output=39),
     "kimi-k2.5": DashScopeModelPricing(credits_per_1m_input=57, credits_per_1m_output=295),
     "glm-5": DashScopeModelPricing(credits_per_1m_input=57, credits_per_1m_output=253),
 }
@@ -60,7 +62,7 @@ class DashScopeChatAdapter(BaseChatAdapter):
     DashScope Chat 适配器
 
     通过 OpenAI 兼容 API 调用百炼平台上的模型。
-    API 格式与 OpenAI 完全一致，仅 base_url 和 api_key 不同。
+    复用同一客户端，支持 Chat Completions 与 Responses 内置工具协议。
     """
 
     def __init__(
@@ -69,8 +71,13 @@ class DashScopeChatAdapter(BaseChatAdapter):
         model: str,
         base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
         stream_timeout: Optional[float] = None,
+        builtin_tools_enabled: bool = True,
+        session_cache_enabled: bool = True,
     ):
-        super().__init__(model)
+        from config.model_aliases import canonical_model_id
+        super().__init__(canonical_model_id(model))
+        self._builtin_tools_enabled = builtin_tools_enabled
+        self._session_cache_enabled = session_cache_enabled
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._stream_timeout = stream_timeout or _DEFAULT_STREAM_TIMEOUT
@@ -102,17 +109,74 @@ class DashScopeChatAdapter(BaseChatAdapter):
     def supports_streaming(self) -> bool:
         return True
 
+    @property
+    def supports_builtin_search(self) -> bool:
+        return self._builtin_tools_enabled and bool(BUILTIN_TOOLS.get(self._model_id))
+
+    @property
+    def effective_context_window(self) -> int | None:
+        # Responses reserves approximately 20% for tool execution and generation.
+        return 800_000 if self.supports_builtin_search and self._model_id in CACHE_MODELS else None
+
+    async def _stream_responses(self, messages, thinking_mode, reasoning_effort, **kwargs):
+        builtins = BUILTIN_TOOLS[self._model_id]
+        # web_extractor is rejected by Bailian in non-thinking mode.
+        effort = reasoning_effort or ("medium" if thinking_mode in ("enabled", "deep_think") else "none")
+        thinking = effort != "none"
+        if not thinking:
+            builtins = tuple(name for name in builtins if name != "web_extractor")
+        request = {
+            "model": self._model_id, "input": response_input(messages, self._model_id),
+            "stream": True, "store": False,
+            "tools": response_tools(kwargs.get("tools") or [], builtins),
+        }
+        if self._model_id == "kimi-k3":
+            request["enable_thinking"] = True
+        else:
+            request["reasoning"] = {"effort": effort}
+        if kwargs.get("temperature") is not None:
+            request["temperature"] = kwargs["temperature"]
+        if kwargs.get("max_tokens") is not None:
+            request["max_output_tokens"] = kwargs["max_tokens"]
+        headers = {"x-dashscope-session-cache": "enable" if self._session_cache_enabled else "disable"}
+        parser = ResponseStream(self._model_id)
+        client = await self._get_client()
+        try:
+            async with client.stream("POST", "/responses", json=request, headers=headers) as response:
+                if response.status_code != 200:
+                    raise DashScopeAPIError.from_http(await response.aread(), response.status_code,
+                        getattr(response, "headers", {}).get("x-request-id"))
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    for chunk in parser.consume(json.loads(data)):
+                        if chunk.prompt_tokens or chunk.cache_creation_input_tokens:
+                            logger.info("LLM cache | model={} | protocol=responses | prompt={} cached={} created={}",
+                                        self._model_id, chunk.prompt_tokens, chunk.cached_tokens, chunk.cache_creation_input_tokens)
+                        yield chunk
+                if not parser.finished:
+                    raise DashScopeAPIError("Responses stream ended without a terminal response")
+        except DashScopeAPIError:
+            raise
+        except httpx.TimeoutException as error:
+            raise DashScopeAPIError(f"Request timeout: {error}") from error
+        except Exception as error:
+            raise DashScopeAPIError(f"Responses stream failed: {error}") from error
+
     # ============================================================
     # 统一接口实现
     # ============================================================
 
     def _request_body(self, messages, *, stream, reasoning_effort, thinking_mode, **kwargs):
-        body = {"model": self._model_id, "messages": chat_messages(messages), "stream": stream,
+        body = {"model": self._model_id, "messages": chat_messages(messages, cache=self._session_cache_enabled if self._model_id in CACHE_MODELS else None), "stream": stream,
                 "enable_thinking": self._model_id == "kimi-k3" or thinking_mode in ("enabled", "deep_think")}
         if stream:
             body["stream_options"] = {"include_usage": True}
         if kwargs.get("tools"):
-            body["tools"] = kwargs["tools"]
+            body["tools"] = stable_tools(kwargs["tools"]) if self._model_id in CACHE_MODELS else kwargs["tools"]
         if kwargs.get("temperature") is not None:
             body["temperature"] = kwargs["temperature"]
         if self._model_id == "kimi-k3":
@@ -150,6 +214,11 @@ class DashScopeChatAdapter(BaseChatAdapter):
     ) -> AsyncIterator[StreamChunk]:
         """流式聊天（统一接口）"""
 
+        # Agent requests alone opt into provider-managed network tools.
+        if kwargs.get("enable_builtin_tools", False) and self.supports_builtin_search:
+            async for chunk in self._stream_responses(messages, thinking_mode, reasoning_effort, **kwargs):
+                yield chunk
+            return
         tools = kwargs.get("tools")
         request_body = self._request_body(messages, stream=True, reasoning_effort=reasoning_effort,
             thinking_mode=thinking_mode, **kwargs)
@@ -233,7 +302,7 @@ class DashScopeChatAdapter(BaseChatAdapter):
                     if prompt_tokens > 0:
                         details = usage.get("prompt_tokens_details") or {}
                         cached_tokens = details.get("cached_tokens", 0)
-                        cache_creation = usage.get("cache_creation_input_tokens", 0)
+                        cache_creation = usage_fields(usage, responses=False)["cache_creation_input_tokens"]
                         if cached_tokens > 0 or cache_creation > 0:
                             hit_rate = cached_tokens / prompt_tokens if prompt_tokens else 0
                             logger.info(
@@ -242,7 +311,10 @@ class DashScopeChatAdapter(BaseChatAdapter):
                                 f"created={cache_creation} hit_rate={hit_rate:.1%}"
                             )
 
+                    cache_usage = usage_fields(usage, responses=False)
                     yield StreamChunk(
+                        cached_tokens=cache_usage["cached_tokens"],
+                        cache_creation_input_tokens=cache_usage["cache_creation_input_tokens"],
                         content=content,
                         thinking_content=thinking_content,
                         finish_reason=finish_reason,
@@ -292,8 +364,7 @@ class DashScopeChatAdapter(BaseChatAdapter):
             return ChatResponse(
                 content=content,
                 finish_reason=finish_reason,
-                prompt_tokens=usage.get("prompt_tokens", 0),
-                completion_tokens=usage.get("completion_tokens", 0),
+                **{k: v for k, v in usage_fields(usage, responses=False).items() if k != "builtin_tool_usage"},
             )
 
         except DashScopeAPIError:
