@@ -59,7 +59,7 @@ async def test_gateway_fixed_kimi_closes_and_receives_images_and_original_text()
         outcome=await RequirementAssistService().generate(_input())
     request=gateway.open_chat.call_args.args[0]
     assert request.model_id=="kimi-k3"
-    assert request.timeout==120
+    assert request.timeout==pytest.approx(120,abs=0.1)
     assert session.captured["reasoning_effort"]=="low"
     user_content=session.captured["messages"][1]["content"]
     assert [part["image_url"]["url"] for part in user_content if part["type"]=="image_url"]==[
@@ -102,3 +102,89 @@ async def test_cancellation_propagates_and_releases_model_session():
         with pytest.raises(asyncio.CancelledError):
             await RequirementAssistService().generate(_input())
     session.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_media_download_rejection_recovers_same_input_with_one_shared_deadline(monkeypatch):
+    from services.adapters.dashscope.chat_adapter import DashScopeAPIError
+    from services.agent.image import requirement_assist_service as service
+    clock = [100.0]
+    failure = DashScopeAPIError.from_http(b'{"error":{"code":"InvalidURL.Timeout","message":"download timeout"}}',400)
+    first = _session(error=failure)
+    original = first.stream_chat
+    async def rejected(**kwargs):
+        async for chunk in original(**kwargs):
+            yield chunk
+    # Advance the clock when the provider returns, rather than sleeping 61 seconds.
+    async def stream(**kwargs):
+        clock[0] += 61
+        async for chunk in rejected(**kwargs):
+            yield chunk
+    first.stream_chat = stream
+    second = _session(json.dumps(_payload()))
+    gateway = Mock(open_chat=Mock(side_effect=[first,second]))
+    async def backoff(seconds): clock[0] += seconds
+    monkeypatch.setattr(service.time,'monotonic',lambda:clock[0])
+    monkeypatch.setattr(service.asyncio,'sleep',backoff)
+    with patch('services.model_gateway.get_model_gateway',return_value=gateway):
+        outcome=await RequirementAssistService().generate(_input())
+    assert outcome.result.product_description==_payload()['product_description']
+    requests=[call.args[0] for call in gateway.open_chat.call_args_list]
+    assert [r.model_id for r in requests]==['kimi-k3','kimi-k3']
+    assert [r.timeout for r in requests]==[120,58]
+    assert first.captured['messages']==second.captured['messages']
+    first.close.assert_awaited_once();second.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_repeated_rejection_is_bounded_and_provider_reason_remains_available(monkeypatch):
+    from services.adapters.dashscope.chat_adapter import DashScopeAPIError
+    failure=DashScopeAPIError.from_http(b'{"error":{"code":"InvalidURL.Timeout"},"request_id":"req-final"}',400)
+    sessions=[_session(error=failure),_session(error=failure)]
+    gateway=Mock(open_chat=Mock(side_effect=sessions))
+    monkeypatch.setattr('services.agent.image.requirement_assist_service.asyncio.sleep',AsyncMock())
+    with patch('services.model_gateway.get_model_gateway',return_value=gateway):
+        with pytest.raises(AppException) as captured:
+            await RequirementAssistService().generate(_input())
+    assert captured.value.__cause__.request_id=='req-final'
+    assert gateway.open_chat.call_count==2
+    assert all(s.close.await_count==1 for s in sessions)
+
+
+@pytest.mark.asyncio
+async def test_real_gateway_and_http_adapter_recover_download_failure_without_changing_images(monkeypatch):
+    import httpx
+    from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
+    from services.model_gateway import ModelGateway
+    sent=[]
+    def respond(request):
+        sent.append(json.loads(request.content))
+        if len(sent)==1:
+            return httpx.Response(400,json={'error':{'code':'InvalidURL.Timeout','message':'download timeout'},'request_id':'req-download'})
+        chunk={'choices':[{'delta':{'content':json.dumps(_payload())},'finish_reason':'stop'}],
+               'usage':{'prompt_tokens':5,'completion_tokens':7}}
+        return httpx.Response(200,headers={'content-type':'text/event-stream'},
+            text='data: '+json.dumps(chunk)+'\n\ndata: [DONE]\n\n')
+    def factory(model,**kwargs):
+        adapter=DashScopeChatAdapter('test-only',model,stream_timeout=kwargs.get('stream_timeout'))
+        adapter._client=httpx.AsyncClient(base_url='https://test.invalid',transport=httpx.MockTransport(respond))
+        return adapter
+    gateway=ModelGateway(adapter_factory=factory)
+    monkeypatch.setattr('services.model_gateway.get_model_gateway',lambda:gateway)
+    monkeypatch.setattr('services.agent.image.requirement_assist_service.asyncio.sleep',AsyncMock())
+    outcome=await RequirementAssistService().generate(_input())
+    assert outcome.result.product_description==_payload()['product_description']
+    assert len(sent)==2 and sent[0]==sent[1]
+    assert sent[1]['reasoning_effort']=='low'
+
+
+@pytest.mark.asyncio
+async def test_partial_response_does_not_replay_even_if_error_claims_rejection(monkeypatch):
+    from services.adapters.dashscope.chat_adapter import DashScopeAPIError
+    error=DashScopeAPIError.from_http(b'{"error":{"code":"InvalidURL.Timeout"}}',400)
+    session=_session(error=error)
+    session.last_result=SimpleNamespace(partial_output=True)
+    gateway=Mock(open_chat=Mock(return_value=session))
+    with patch('services.model_gateway.get_model_gateway',return_value=gateway):
+        with pytest.raises(AppException): await RequirementAssistService().generate(_input())
+    gateway.open_chat.assert_called_once()

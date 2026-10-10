@@ -153,10 +153,9 @@ class DashScopeChatAdapter(BaseChatAdapter):
             ) as response:
                 if response.status_code != 200:
                     error_body = await response.aread()
-                    error_msg = self._parse_error(error_body)
-                    raise DashScopeAPIError(
-                        f"DashScope API error: {error_msg}",
-                        status_code=response.status_code,
+                    raise DashScopeAPIError.from_http(
+                        error_body, response.status_code,
+                        getattr(response, "headers", {}).get("x-request-id"),
                     )
 
                 async for line in response.aiter_lines():
@@ -176,7 +175,8 @@ class DashScopeChatAdapter(BaseChatAdapter):
                     if chunk.get("error"):
                         raise DashScopeAPIError(
                             f"Stream error: {chunk['error'].get('message', str(chunk['error']))}",
-                            status_code=chunk["error"].get("code", 500),
+                            status_code=chunk["error"].get("code", 0) if isinstance(chunk["error"].get("code"), int) else 0,
+                            error_code=chunk["error"].get("code"), request_id=chunk.get("request_id"),
                         )
 
                     # 提取内容
@@ -272,11 +272,8 @@ class DashScopeChatAdapter(BaseChatAdapter):
             response = await client.post("/chat/completions", json=request_body)
 
             if response.status_code != 200:
-                error_msg = self._parse_error(response.content)
-                raise DashScopeAPIError(
-                    f"DashScope API error: {error_msg}",
-                    status_code=response.status_code,
-                )
+                raise DashScopeAPIError.from_http(response.content, response.status_code,
+                    response.headers.get("x-request-id"))
 
             data = response.json()
             choices = data.get("choices", [])
@@ -348,16 +345,72 @@ class DashScopeChatAdapter(BaseChatAdapter):
         """解析错误响应"""
         try:
             data = json.loads(body)
-            if "error" in data:
-                return data["error"].get("message", str(data["error"]))
-            return data.get("message", str(data))
+            if not isinstance(data, dict):
+                return body.decode("utf-8", errors="replace")[:500]
+            detail = data.get("error", data)
+            if isinstance(detail, dict):
+                message = detail.get("message")
+                return str(message if message is not None else detail)
+            return str(detail)
         except (json.JSONDecodeError, AttributeError):
             return body.decode("utf-8", errors="replace")[:500]
 
 
 class DashScopeAPIError(Exception):
-    """DashScope API 错误"""
+    """Keep provider evidence; a stream error never proves pre-inference rejection."""
 
-    def __init__(self, message: str, status_code: int = 0):
+    _DOWNLOAD_CODES = {"InvalidURL.Timeout", "BadRequest.InputDownloadFailed", "GatewayTimeout.InputDownload"}
+    _UNAVAILABLE_CODES = {"ServiceUnavailable", "ModelUnavailable"}
+    _QUOTA_CODES = {"Throttling.AllocationQuota", "insufficient_quota", "CommodityNotPurchased"}
+    _DOWNLOAD_MESSAGES = {
+        "Failed to download multimodal content.",
+        "Download the media resource timed out during the data inspection process.",
+        "Unable to download the media resource during the data inspection process.",
+        "download image failed", "Failed to download input files.", "oss download error.",
+    }
+
+    def __init__(self, message: str, status_code: int = 0, *, error_code=None,
+                 request_id=None, request_rejected=False, provider_message=""):
         super().__init__(message)
         self.status_code = status_code
+        self.error_code = self._identifier(error_code)
+        self.request_id = self._identifier(request_id)
+        self.request_rejected = request_rejected
+        self.provider_message = provider_message
+        self.quota_rejection = self.error_code in self._QUOTA_CODES
+
+    @staticmethod
+    def _identifier(value):
+        return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", value) else None
+
+    @classmethod
+    def from_http(cls, body, status_code, request_id=None):
+        try:
+            payload = json.loads(body)
+        except (ValueError, TypeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        detail = payload.get("error", payload)
+        if not isinstance(detail, dict):
+            detail = {}
+        code = cls._identifier(detail.get("code"))
+        message = DashScopeChatAdapter._parse_error(body)
+        rejected = (400 <= status_code < 500 and status_code != 408
+                    or code in cls._DOWNLOAD_CODES
+                    or status_code == 503 and code in cls._UNAVAILABLE_CODES)
+        return cls(f"DashScope API error: {message}", status_code, error_code=code,
+            request_id=request_id or payload.get("request_id") or detail.get("request_id"),
+            request_rejected=rejected, provider_message=message)
+
+    @property
+    def retryable_rejection(self):
+        # Official error-code table: URL/media download failures and admission
+        # throttling can be replayed. Bad parameters, safety rejection and opaque
+        # inference timeouts cannot be turned into free, definite rejections.
+        return self.request_rejected and (
+            self.status_code == 429 and self.error_code not in self._QUOTA_CODES
+            or self.error_code in self._DOWNLOAD_CODES
+            or self.status_code == 503 and self.error_code in self._UNAVAILABLE_CODES
+            or self.error_code in {"InvalidParameter", "InvalidParameter.DataInspection"}
+                and self.provider_message.strip() in self._DOWNLOAD_MESSAGES)

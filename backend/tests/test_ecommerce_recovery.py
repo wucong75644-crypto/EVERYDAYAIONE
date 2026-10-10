@@ -178,6 +178,44 @@ async def test_cancel_records_uncertain_attempt_and_closes_session(monkeypatch):
     session.close.assert_awaited_once()
 
 
+@pytest.mark.parametrize('partial', [False, True])
+async def test_dashscope_download_failure_retries_only_before_any_stream_and_preserves_inputs(monkeypatch, partial):
+    from datetime import datetime, timedelta, timezone
+    from services.adapters.dashscope.chat_adapter import DashScopeAPIError
+    from services.agent.image.ecommerce_planner.recovery import PlannerRecoveryError
+    service=planner()
+    service._reserve.side_effect=[{'outcome':'execute','ordinal':i,'remaining_attempts':3-i,
+        'deadline':(datetime.now(timezone.utc)+timedelta(minutes=10)).isoformat()} for i in (1,2)]
+    failure=DashScopeAPIError.from_http(b'{"error":{"code":"InvalidURL.Timeout"},"request_id":"provider-1"}',400)
+    calls=[];sessions=[]
+    async def stream(messages,**kwargs):
+        calls.append(messages)
+        if len(calls)==1:
+            if partial: yield StreamChunk(thinking_content='already started')
+            raise failure
+        yield StreamChunk(content='valid stage output',prompt_tokens=5,completion_tokens=3)
+    def open_chat(_):
+        session=SimpleNamespace(stream_chat=stream,close=AsyncMock(),last_result=SimpleNamespace(
+            status='completed',usage={'prompt_tokens':5,'completion_tokens':3}))
+        sessions.append(session);return session
+    monkeypatch.setattr('services.agent.image.ecommerce_planner.service.get_model_gateway',lambda:SimpleNamespace(open_chat=open_chat))
+    monkeypatch.setattr('services.agent.image.ecommerce_planner.service.asyncio.sleep',AsyncMock())
+    raw=[{'role':'user','content':'same frozen images and user text'}]
+    if partial:
+        with pytest.raises(PlannerRecoveryError,match='UNCERTAIN'):
+            await service._call({'id':str(uuid4())},'lease',2,'rules',raw)
+        assert len(calls)==1 and service._finish.await_args.args[5]=='uncertain'
+    else:
+        content,usage=await service._call({'id':str(uuid4())},'lease',2,'rules',raw)
+        assert content=='valid stage output' and usage['input_tokens']==5
+        assert calls==[raw,raw] and service._reserve.await_count==2
+        assert service._finish.await_args.args[5]=='rejected'
+    diagnostics=service._finish.await_args.args[4]
+    assert diagnostics['provider_error_code']=='InvalidURL.Timeout'
+    assert diagnostics['provider_request_id']=='provider-1'
+    assert all(s.close.await_count==1 for s in sessions)
+
+
 @pytest.mark.parametrize('answer,expected', [
     ({'kind': 'main_images', 'mode': 'retry', 'reuse_through_stage': 2}, 'main_images'),
     ({'kind': 'ordinary_image', 'mode': 'new', 'reuse_through_stage': 0}, 'ordinary_image'),

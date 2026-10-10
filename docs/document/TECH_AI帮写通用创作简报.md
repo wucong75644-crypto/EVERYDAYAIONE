@@ -1,5 +1,122 @@
 # AI 帮写通用创作简报技术设计
 
+## 2026-10-10：分析图片传输与适配缺口补充方案（待实施）
+
+本节是用户要求的补充方案，不是完成记录；不覆盖上一轮尚未部署的恢复修改。本轮只核查生产网络配置并整理设计，没有修改应用实现、调用新付费模型、写生产业务数据或部署。
+
+### 1. 已核实的网络边界
+
+生产后端与 conversation actor 的实际进程环境均配置 HTTP_PROXY／HTTPS_PROXY 为本机7890，KIE_SHADOW_OVERSEAS_PROXY 为本机7891；DashScope、api.kie.ai和KIE上传域名没有命中这些进程的NO_PROXY。DashScope与KIE聊天HTTP客户端默认继承环境代理，因此正常API请求使用7890。这里核实的是客户端配置，不是7890各域名最终地理出口的网络追踪。
+
+当前分析发送的是image_url中的原CDN链接。供应商自行访问CDN，不会继承我们进程的7890或7891。模型API走代理不代表供应商拉图片也走代理。本次捕获的61.14秒错误就是供应商返回的Download multimodal file timed out，不能用扩大我们客户端等待时间消除该下载失败。
+
+现有KIE海外旁路在生图create_task取得task_id后启动：CDN下载继承7890，临时文件上传显式使用7891，全组成功后保存链接，供既有400单次重试使用。它没有挂在KIE聊天、Kimi聊天、AI帮写或三阶段分析入口。保持这套生图任务状态、缓存映射、受理和积分语义；不把分析任务伪装成图片task。
+
+### 2. 推荐传输：同一有序素材，按供应商选择分析表示
+
+```mermaid
+flowchart TD
+  A[页面上传图片和原文] --> B[已有权限校验及有序图片绑定]
+  B --> C[共享分析素材准备：验证版本和哈希]
+  C --> K[Kimi：原图字节转Data URL]
+  C --> G[Gemini：复用KIE上传底层能力，经7891准备临时URL]
+  K --> M[原ModelGateway和模型适配器，经正常7890 API出口]
+  G --> M
+  M --> H[AI帮写：单份草稿供客户补充]
+  M --> S[三阶段：卖点分析 → 视觉定位 → 逐图设计]
+  S --> V[原校验及限定字段修补]
+  V --> P[原固定框架拼接最终提示词]
+  P --> I[原Image工具：冻结原图ID、原链接、原顺序]
+```
+
+- Kimi使用百炼部署的kimi-k3，将实际图片字节放入data:image/...;base64,...。不再要求供应商拉取我们的CDN。同图字节的隔离对照已返回HTTP200，但应用schema、九图和整链仍须按下述计划验证。不要混用仅支持公网URL的月之暗面直供kimi/kimi-k3限制。
+- Gemini保持KIE文档的image_url URL协议。将既有KIE multipart上传及响应检查提取成可复用的底层字节上传方法，在分析调用前通过已配置7891上传已验证的图片，得到临时URL。此路径需要先做真实图片请求验证后启用；不能把KIE聊天的Base64支持当作已知事实，也不能失败后静默回退到CDN。
+- 两个入口共用一个轻量分析素材准备模块，输入只接受服务端鉴权取得的文件引用及模型策略，输出按原位置排列的分析媒体表示。图片ID、角色、位置、file_version、content_sha256保持原冻结值；Data URL或临时URL只替换此次分析消息中的媒体地址，不能写回原图绑定或进入最终生图参数。
+- 原图只读，逐图校验版本和摘要后准备。每次AI帮写／每个策划计划只准备一次，重试和三个阶段复用同一份表示；进程恢复后重新验证并准备，不持久化Base64。默认主图／详情两计划各自受原租约及预算控制，不建立跨用户的图片内容缓存。
+- Gemini上传必须全部成功才开始模型调用；中间失败不传残缺图片数组、不重新编号。临时链接失效可在尚未发送新模型请求前重新准备，保持原图哈希及顺序；已发送且结果不确定时不得借换链接盲重发模型。
+
+### 3. 同时补齐的适配及恢复缺口
+
+| 编号 | 修改 | 现有能力及边界 |
+| --- | --- | --- |
+| P1 图片限制 | 在付费请求前检查真实格式、宽高、长短边比例及传输字节量；Kimi宽高均大于10、比例不超过200:1，Base64字符串不超过官方10MB限制 | 复用FileTargetResolver、文件版本／哈希和read_image_dimensions，不信任浏览器MIME与路径；原上传10MiB上限不能直接当作编码上限。编码长度按4×ceil(原字节数/3)检查，另计Data URL前缀和整份HTTP负载 |
+| P2 超限行为 | 本批不自动裁切、去背景或有损压缩商品图；超限在模型调用前说明具体图片及限制，让客户替换或减小文件 | 现有resize_image为cover裁切，360px缩略图会丢细节，均不适合作为分析原图的静默替代。单图合规不代表九图请求内存、上传时长和token总量合规，实施时测量最坏组合并给准备过程设置有界字节／并发额度；额度不足排队或提前明确反馈，不先发半组 |
+| P3 错误分类 | 加入本次invalid_parameter_error与包装后的明确多模态下载超时组合 | 仅匹配受约束code和下载失败原因；不能把全部400／InvalidParameter视为可重试。复用现有error_facts、safe_error及状态投影 |
+| P4 参数统一 | DashScope流式与非流式共用消息规范化、Kimi思考及推理参数构建；Kimi固定enable_thinking=true，显式low／high／max | AI帮写low，新页面策划high；兼容已有其他DashScope模型规则。旧任务冻结profile不改写。非法显式档位在适配边界拒绝，不能默默丢弃为默认max；需核对旧medium调用方，不能全局改其他模型档位 |
+| P5 结构化输出 | Kimi AI帮写及阶段一／三显式请求json_object；第二阶段保持原Markdown。DesignRepair等JSON调用沿用对应JSON模式 | 在现有Gateway参数通道和DashScope适配器透传response_format，先真实验证kimi-k3端点接受此模式，再开启；保留原业务schema及限定路径修补，JSON模式不保证字段与事实正确。KIE Gemini没有核实同名参数支持，本批不盲传 |
+| P6 能力开关 | 在现有模型策略记录当前用途允许的输出格式、推理档位、媒体传输；禁止把不支持的参数原样透传或静默忽略 | Kimi无enable_search内置搜索，本批遵循用户暂缓联网的决定，搜索与工具均不开启。将来需要时通过现有工具框架另接，不另造Agent客户端或当前即引入动态工具加载 |
+| P7 恢复及时间 | 素材准备、上传、等待、退避、模型调用共用原绝对截止时间；失败保留已完成阶段及客户编辑 | AI帮写最多两次／原120秒；策划每阶段最多三次／页面总预算，不能每次重试重新计时。明确临时拒绝且无响应开始才自动重试；已流式输出或受理未知沿用uncertain。第三阶段出错只修对应字段／阶段，不重跑前两阶段 |
+| P8 可诊断性 | 每次记录模型、阶段、transport、图片数／字节数、素材准备／上传／首响应／生成耗时、HTTP状态、供应商code及request_id | 复用现有日志和回执；不记录Base64、密钥、完整原文或带签名URL。不把本地网络超时、供应商下载超时、schema失败全部显示成“模型不可用” |
+
+P2保留用户已上传的原文件及可编辑草稿，但可能让现有上传成功、编码后超限的图片在分析前得到明确提示。这是本方案公开的边界，不声称所有上传文件都能原样内联。实际内存额度和上传write timeout必须结合生产可用内存及九图测量设置，不能简单把30秒write／120秒总时间一起无限增大。
+
+### 4. 修改位置与开发批次
+
+| 批次 | 位置 | 交付和依赖 |
+| --- | --- | --- |
+| A 共享准备与两模型传输 | 新增services/agent/image/analysis_media.py；修改input_adapters.py、requirement_assist_prompts.py、requirement_assist_service.py、detail_page_generation.py及kie/client.py | 共用有序准备，复用现有FileTargetResolver和KIE上传底层方法；KIE生图旁路继续读取原CDN，不更改其调度、task_id缓存或回调。先验证Kimi内联／Gemini临时URL真实接收和九图资源边界 |
+| B 参数及输出格式 | dashscope/chat_adapter.py、ecommerce_planner/page_profile.py、service.py和现有ModelGateway参数通道调用点 | 流式／非流式消息与Kimi策略一致；能力检查限定到具体模型／用途；JSON只用于对应阶段。与A共享绝对预算，不另建HTTP客户端、模型注册或队列 |
+| C 恢复与诊断 | dashscope/chat_adapter.py、ecommerce_planner/recovery.py、service.py、requirement_assist_service.py及现有错误展示投影 | 加入真实下载错误变体；阶段／部分输出／调用次数／费用保护不变；客户能区分可补充输入、临时上游故障与结果核实中 |
+| D 联合验收 | 上述模块现有测试及必要的analysis_media定向测试；两份现有TECH文档和CURRENT_ISSUES | 故障注入及真实模型测试分开记录；验收明确按模型、图片数、输出数、模式与修补次数，不把最小请求成功当整链稳定 |
+
+不需要新增数据库表、图片ID系统、积分账本、上传路由或前端模型选择器；三阶段资源正文和最终组装契约沿用当前版本。需要向用户显示的输入超限／具体错误沿用已有弹窗与任务错误位置，不改变左侧输入、右侧分组及占位符布局。
+
+### 5. 验证与回退
+
+1. 传输契约：一图／九图、产品与参考混排、同内容不同ID、乱序准备完成，逐项核对ID、角色、位置、原图摘要；验证Kimi请求不含CDN媒体URL，Gemini上传显式7891而API仍7890，临时URL只出现在分析消息。原生图请求、图片顺序与固定拼接内容不受分析表示影响。
+2. 资源及权限：跨组织／用户、路径跳出、文件替换、坏图、10像素、200:1边界、4K以上WebP、编码边界和九图总负载，全部在模型付费调用前处理；准备取消后释放内存与上传会话，临时链接不写日志。
+3. 参数及故障：使用实际包装的400正文进行HTTP故障注入；覆盖限流、鉴权、额度、未知400、上传失败及部分流式后断开；核对次数／绝对时间／旧阶段／幂等usage与费用。流式和sync都测试Kimi合法参数；第二阶段不被JSON模式破坏，其他DashScope模型回归。
+4. 真实验收：先AI帮写及两模型单图分析，运行原schema校验；再按主图、详情分别跑完整三阶段，验证最终完整提示词。最后用当前允许的代表性上限（单类15张、默认7＋7张）及九张输入检查总耗时、内存、上传、修补和费用，避免再做无关多模型竞赛；本方案阶段尚未执行这些新实测。
+5. 发布／回退：按原受控发布流程，不改现有生图海外旁路。两模型分析传输与Kimi JSON模式使用现有环境配置体系的独立开关，任务受理时冻结选择；缺海外代理应提前明确报配置错误。回退优先停止新受理／关闭新增策略，已受理任务继续用冻结策略至终态；只有明确未发送模型的失败才能重准备。若主动回退到旧CDN分析方式，要明确它会重新暴露已定位的供应商拉图风险，不能自动静默降级。
+
+官方依据：[百炼Kimi图片限制、结构化输出及搜索支持范围](https://help.aliyun.com/zh/model-studio/kimi-api)、[KIE Gemini媒体URL协议](https://docs.kie.ai/market/gemini/gemini-3-8-flash-openai)。网络配置来自本轮生产实际进程的脱敏只读检查；未输出认证信息，也未修改代理路由。
+
+## 2026-10-10：参数与内置能力审计（诊断，应用未改）
+
+本节是对上一节“原始HTTP400原因未知”的新增证据：本轮从生产端隔离进程复现了同项目AI帮写的61秒失败并在旧适配器解析前捕获HTTP正文。原有历史请求正文仍不存在，不能据此追认所有历史失败均属同一原因。
+
+供应商返回HTTP400，`error.code=invalid_parameter_error`，`error.message=<400> InternalError.Algo.InvalidParameter: Download multimodal file timed out`，请求编号`e39b010e-d2be-92d6-8c7e-4fff23f2beae`，耗时61.14秒。这次错误的具体含义是下载多模态图片超时，不是请求字段或推理档位非法；进一步定位CDN、源站或供应商网络的哪一段仍缺对应服务日志。
+
+| 检查项 | 真实请求／代码事实 | 判断 |
+| --- | --- | --- |
+| 模型与接口 | `kimi-k3`，`dashscope.aliyuncs.com/compatible-mode/v1/chat/completions` | 使用百炼部署型号与Chat Completions，不是月之暗面直供`kimi/kimi-k3`；两者参数限制不可混用 |
+| 流式及思考 | `stream=true`，`stream_options.include_usage=true`，`enable_thinking=true` | 当前链路符合要求；无thinking_budget或错误的false开关 |
+| 推理档位 | AI帮写low；已部署页面medium在适配器被丢弃，HTTP请求未包含该参数 | 页面实际默认max是性能缺口，不等于真的发送medium引发400；本地上一轮改为high尚未部署 |
+| 消息与素材 | 规范化后system/user，text/image_url，image_url为url对象；两张原图顺序相同 | 未混用Responses的input_text/input_image；页面参数、数量及JSON Schema放在提示词数据中，并未误作供应商顶层参数或n |
+| 图片 | 两张PNG，各1254×1254，2098998／2130980字节，宽高比1 | 该样本尺寸、格式和10MB文件上限合规；路径由既有CDN函数编码 |
+| 工具、搜索、JSON格式 | 无tools／tool_choice／enable_search／response_format | 没有未知框架工具被附加到当前三阶段请求；结构化输出目前依赖提示词及应用校验 |
+| 多轮思考历史 | 每个阶段都是新的system＋user请求，前阶段正文通过输入数据传递 | 没有丢弃assistant工具轮次reasoning_content的触发条件 |
+
+传输对照：同一AI帮写提示词、low档、原图字节和顺序，只把image_url.url从CDN链接改为`data:image/png;base64,...`，HTTP200，30.50秒返回1344字符。两图编码后约2.80／2.84MB，逐图SHA256与冻结原图一致。该探针只验证接口接收及返回正文，未运行应用草稿schema校验；不是已发布功能，也不是长期稳定性证明。
+
+新增发现的框架边界：
+
+1. 现有本地恢复白名单不识别本次`invalid_parameter_error`加包装后的下载超时信息，仍归为business／不自动重试。应按受约束的错误码及具体下载失败原因补充，不能把所有InvalidParameter都改为可重试。
+2. 通用DashScope `chat_sync`默认发送`enable_thinking=false`，没有流式路径的角色／媒体规范化，也不透传Kimi推理档位；这不符合K3仅思考模型及消息格式要求。AI帮写经`_collect_stream_response`、三阶段经`session.stream_chat`均走流式，因此这是潜在适配缺口，不是本次实际失败的调用路径。
+3. 图片入口已校验10MB、可解码和JPEG／PNG／WebP，但尚未统一检查Kimi宽高均大于10、长短边不超过200:1等模型约束；Base64的10MB指编码后的字符串，不能直接复用原文件10MB限制。上述问题未在本次1254方图触发。
+4. Kimi K3支持结构化输出，但当前DashScope适配器不透传response_format；当前调用也未请求该字段，不能视为失败原因。若后续接入，应区分JSON阶段一／三与Markdown阶段二。
+
+内置功能核对：百炼Kimi系列不支持`enable_search`内置搜索，当前也未发送该参数；需要联网时应通过现有工具执行框架单独接搜索工具，不能照搬千问搜索开关。本轮继续遵循用户暂缓联网功能的决定。深度思考已实际启用；三阶段不需要Function Calling或动态工具加载，不主动添加工具。KIE Gemini使用官方OpenAI端点，真实最小请求携带`reasoning_effort=medium`、`include_thoughts=false`，4.11秒返回HTTP200及OK；该实验只验证这些参数被接收，不代表整套Gemini流程已复测。KIE文档有“chat only／Agent未适配”提示，当前三阶段是应用串行调度普通多模态聊天、不携带工具；不能仅因应用名为Agent就认定用了不支持的工具协议。
+
+建议下一修复批次：复用现有工作区权限、文件版本／哈希和有序图片绑定，在分析输入边界提供符合大小限制的直接图片数据；原图、图片ID、最终生图链接及顺序继续由原框架维护。补充下载错误分类和非流式Kimi消息／思考适配，增加模型图片边界校验。未执行生产应用修改、数据迁移、部署或搜索功能开关。
+
+官方依据：[百炼Kimi与图片限制](https://help.aliyun.com/zh/model-studio/kimi-api)、[百炼推理档位](https://help.aliyun.com/zh/model-studio/qwen-api-via-dashscope)、[月之暗面直供差异](https://help.aliyun.com/zh/model-studio/kimi-api-by-moonshot-ai)、[联网搜索模型范围](https://help.aliyun.com/zh/model-studio/web-search/)、[KIE Gemini OpenAI协议](https://docs.kie.ai/market/gemini/gemini-3-8-flash-openai)。脱敏请求与结果保存于本任务visualizations的`模型参数审计-20261010/parameter-audit.json`；阶段二／三抓包使用前阶段占位数据，仅检查协议形状，不冒充原生产完整提示词或真实模型调用。
+
+## 2026-10-10：上游拒绝恢复与Kimi推理配置（本地，待发布）
+
+生产最近两次页面策划在阶段一约61秒收到DashScope HTTP400，未进入后二阶段。AI帮写另有约61秒无输出异常后重试成功。旧适配器没有保存上游错误码及请求编号，无法从既有记录确定原始400的具体原因；本轮修复恢复和诊断缺口，不把单次成功当作根因已消失。
+
+- 复用DashScope适配器及现有恢复分类，保存HTTP状态、受约束的供应商错误码／请求编号和脱敏原因摘要。明确的图片下载暂时失败、限流和文档列明的服务不可用可在原模型内有限重试。参数、鉴权、额度或安全拒绝不自动循环；未知推理超时及已开始输出后的错误仍按结果不确定处理，避免无证据重放付费调用。
+- AI帮写最多两次同Kimi调用，共享原120秒绝对截止时间；重试前释放会话，输入文字和有序图片完全复用，前端125秒不变。客户编辑、回答与补充仍由原界面保留，无跨模型降级、整份重写或新提示词强化。
+- 页面Kimi显式使用支持的`high`，修复旧`medium`被适配器丢弃而实际采用供应商默认`max`的问题；Gemini保持`medium`，AI帮写继续`low`。已受理任务的冻结配置不回写，新受理才采用新档位。
+- 策划直接复用持久化重试、已完成阶段、每阶段最多三次、总预算及幂等结算。无输出的明确拒绝不再一律记为uncertain；流式任何输出开始后不自动重发。旧生产uncertain记录不猜测回填，未新增数据库迁移或图片任务逻辑。
+
+验证：首次104项、扩展94项通过；最新受影响110项通过（含错误正文为字符串／null／数组的兼容测试），隔离PostgreSQL38项通过，共242项不同测试。HTTP故障注入经过真实ModelGateway与DashScope适配器：首次返回`InvalidURL.Timeout`，随后同一输入恢复成功；还验证61秒拒绝后仅剩58秒预算、最多两次调用及部分响应不重发。PostgreSQL验证阶段保留、调用预算、权限隔离与结算保护；临时数据库服务已关闭。
+
+使用原失败轮次的冻结输入（两张图片、1张主图），从生产端隔离进程调用真实Kimi，载入本地修改的核心代码：三阶段均一次通过原校验，分别77.87、100.03、113.13秒，总291.03秒。阶段一对照旧默认max的156.8秒有所缩短，但供应商负载与缓存也会影响耗时，不能归因全部收益于推理档位。诊断仅内存保存阶段和调用记录，未写生产业务数据库、未结算用户积分或提交生图；不代表15张、主图详情混合及长期稳定性已验证。原始结果保存在`/private/tmp/ecom-reliability-probe-20261010.log`，生产应用未部署本次修改。
+
+错误分类依据：[百炼错误码](https://help.aliyun.com/zh/model-studio/error-code)；Kimi档位依据：[百炼兼容接口参数](https://help.aliyun.com/zh/model-studio/qwen-api-via-dashscope)。
+
 ## 2026-10-10：插入按钮可见性修复（本地，待发布）
 
 生产版本 `27a390be` 中，AI 帮写正文自身使用 `78vh`，叠加通用 Modal 标题、内边距后超出 Dialog 的 `min(90vh, 800px)` 上限，底部操作被外层 `overflow-hidden` 裁切。此前 jsdom 交互测试没有浏览器布局，未覆盖此问题。

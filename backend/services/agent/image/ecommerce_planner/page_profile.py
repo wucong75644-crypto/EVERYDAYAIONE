@@ -27,7 +27,7 @@ def profile(settings, model):
     if not available["available"]:
         raise AppException("DETAIL_MODEL_UNAVAILABLE", available["reason"], 409)
     return SimpleNamespace(
-        ecom_image_planning_model=model, ecom_image_planning_reasoning="medium",
+        ecom_image_planning_model=model, ecom_image_planning_reasoning="high" if model == "kimi-k3" else "medium",
         ecom_image_planning_stage_timeout=300,
         ecom_image_planning_input_credits_per_million=getattr(settings, f"detail_{entry[3]}_input_credits_per_million"),
         ecom_image_planning_output_credits_per_million=getattr(settings, f"detail_{entry[3]}_output_credits_per_million"),

@@ -16,6 +16,7 @@ from uuid import uuid4
 from core.db_scope import DatabaseAccessKind, DatabaseScope, ScopedDatabaseClient
 from services.agent.agent_result import AgentResult
 from services.model_gateway import ModelCallRequest, get_model_gateway
+from services.kie_image_fallback_request import safe_error
 
 from .contracts import parse_json, source_id, text_hash, validate_product
 from .delivery import DELIVERY_VERSION, decode_delivery
@@ -539,6 +540,7 @@ class EcommerceImagePlanner:
             content = ""
             call_started = time.monotonic()
             first_output_at = None
+            response_started = False
             tokens = {"input_tokens": 0, "output_tokens": 0, "provider_credits": None}
             def timing():
                 return {"elapsed_ms": round((time.monotonic() - call_started) * 1000),
@@ -553,6 +555,7 @@ class EcommerceImagePlanner:
                 completion_options = {"require_completed": True} if provider == "openrouter" else {}
                 async for chunk in session.stream_chat(messages, reasoning_effort=self.settings.ecom_image_planning_reasoning,
                         **completion_options):
+                    response_started = True
                     if chunk.content and first_output_at is None:
                         first_output_at = time.monotonic()
                     content += chunk.content or ""
@@ -583,9 +586,11 @@ class EcommerceImagePlanner:
             except Exception as error:
                 code, category, safe = error_facts(error)
                 diagnostics = {**tokens, **timing(), "error_type": type(error).__name__, "error_code": code,
-                    "http_status": getattr(error, "status_code", None), "provider_error_code": getattr(error, "error_code", None)}
-                no_response = not content and not tokens["input_tokens"] and not tokens["output_tokens"] and tokens["provider_credits"] is None
-                definite = no_response and (safe or category in {"authentication", "balance"})
+                    "http_status": getattr(error, "status_code", None), "provider_error_code": getattr(error, "error_code", None),
+                    "provider_request_id": getattr(error, "request_id", None), "provider_reason": safe_error(error)}
+                no_response = not response_started and not content and not tokens["input_tokens"] and not tokens["output_tokens"] and tokens["provider_credits"] is None
+                definite = no_response and (safe or category in {"authentication", "balance"}
+                    or getattr(error, "request_rejected", False))
                 await self._finish(row, lease, stage, attempt_id, diagnostics, "rejected" if definite else "uncertain")
                 if safe and definite and reservation["remaining_attempts"] > 0:
                     delay = min(2 ** (reservation["ordinal"] - 1), timeout / 4)

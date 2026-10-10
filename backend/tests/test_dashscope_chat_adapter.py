@@ -379,6 +379,52 @@ class TestStreamChat:
                 pass
 
     @pytest.mark.asyncio
+    async def test_http_rejection_keeps_typed_code_and_correlation(self):
+        body = json.dumps({"error": {"code": "InvalidURL.Timeout", "message": "Download timed out"},
+                           "request_id": "provider-request-1"}).encode()
+        adapter = _make_adapter()
+        @asynccontextmanager
+        async def mock_stream(*args, **kwargs):
+            yield MockStreamResponse([], status_code=400, error_body=body)
+        adapter._client = MagicMock(is_closed=False, stream=mock_stream)
+        with pytest.raises(DashScopeAPIError) as captured:
+            async for _ in adapter.stream_chat(messages=[{"role": "user", "content": "hi"}]):
+                pass
+        error = captured.value
+        assert error.status_code == 400 and error.error_code == "InvalidURL.Timeout"
+        assert error.request_id == "provider-request-1"
+        assert error.request_rejected and error.retryable_rejection
+
+    @pytest.mark.parametrize("status,code,message,retryable,rejected", [
+        (400, "InvalidParameter", "Unable to download the media resource during the data inspection process.", True, True),
+        (400, "InvalidParameter.DataInspection", "The image content does not comply with green network verification.", False, True),
+        (400, "InvalidParameter", "Missing required parameter 'messages'!", False, True),
+        (400, None, "unknown error", False, True),
+        (429, "Throttling.RateQuota", "rate limited", True, True),
+        (429, "Throttling.AllocationQuota", "no quota", False, True),
+        (503, "ServiceUnavailable", "capacity", True, True),
+        (500, "RequestTimeOut", "inference timed out", False, False),
+        (500, None, "unknown error", False, False),
+    ])
+    def test_only_documented_preflight_rejections_are_retryable(self, status, code, message, retryable, rejected):
+        error = DashScopeAPIError.from_http(json.dumps({"error": {"code": code, "message": message}}).encode(), status)
+        assert error.request_rejected is rejected
+        assert error.retryable_rejection is retryable
+
+    def test_stream_error_and_untrusted_identifiers_do_not_grant_retry(self):
+        error = DashScopeAPIError("stream error", 429, error_code="Throttling.RateQuota")
+        assert not error.request_rejected and not error.retryable_rejection
+        malformed = DashScopeAPIError.from_http(b'{"error":{"code":"https://private/secret"},"request_id":"unsafe\\nvalue"}',400)
+        assert malformed.error_code is None and malformed.request_id is None
+
+    @pytest.mark.parametrize("body", [b'null', b'[]', b'{"error":"upstream unavailable"}',
+                                     b'{"error":{"message":null}}'])
+    def test_nonstandard_http_error_body_keeps_status_without_granting_retry(self, body):
+        error = DashScopeAPIError.from_http(body, 400)
+        assert error.status_code == 400 and error.request_rejected
+        assert not error.retryable_rejection and isinstance(error.provider_message, str)
+
+    @pytest.mark.asyncio
     async def test_timeout_wrapped(self):
         """httpx.TimeoutException 被包装为 DashScopeAPIError"""
         adapter = _make_adapter()

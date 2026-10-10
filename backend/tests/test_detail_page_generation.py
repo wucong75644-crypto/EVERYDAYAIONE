@@ -20,6 +20,8 @@ def test_page_model_policy_has_no_implicit_price_or_model_fallback():
         profile(missing,'kimi-k3')
     with pytest.raises(AppException):profile(settings(),'gpt-5-6-luna')
     assert profile(settings(),'kimi-k3').ecom_image_planning_model=='kimi-k3'
+    assert profile(settings(),'kimi-k3').ecom_image_planning_reasoning=='high'
+    assert profile(settings(),'gemini-3.8-flash').ecom_image_planning_reasoning=='medium'
     assert not {'kimi-k3','gemini-3.8-flash'} & get_all_models().keys()
     assert {'kimi-k3','gemini-3.8-flash'} <= MODEL_REGISTRY.keys()
 

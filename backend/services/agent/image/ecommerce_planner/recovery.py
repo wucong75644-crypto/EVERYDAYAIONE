@@ -39,6 +39,7 @@ class PlannerRecoveryError(ValueError):
 def error_facts(error):
     """Use the existing classifier, with stricter paid-call replay evidence."""
     from core.error_classifier import classify_error
+    from services.adapters.dashscope.chat_adapter import DashScopeAPIError
     from services.adapters.kie.client import KieAuthenticationError, KieRateLimitError, KieInsufficientBalanceError
     if isinstance(error, KieAuthenticationError):
         return "KIE_AUTHENTICATION_FAILED", "authentication", False
@@ -48,6 +49,15 @@ def error_facts(error):
         return "KIE_INSUFFICIENT_BALANCE", "balance", False
     if isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)):
         return "MODEL_CONNECTION_NOT_ESTABLISHED", "transient_rejection", True
+    if isinstance(error, DashScopeAPIError):
+        if isinstance(error.__cause__, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)):
+            return "MODEL_CONNECTION_NOT_ESTABLISHED", "transient_rejection", True
+        if error.retryable_rejection:
+            return "DASHSCOPE_TRANSIENT_REJECTION", "transient_rejection", True
+        if error.request_rejected:
+            category = ("authentication" if error.status_code in {401, 403} else
+                        "balance" if error.quota_rejection else "business")
+            return "DASHSCOPE_REQUEST_REJECTED", category, False
     code = getattr(error, "code", "")
     known = ("ECOM_PLAN_RETRY_EXHAUSTED", "ECOM_PLAN_EXECUTION_UNCERTAIN", "ECOM_PLAN_PARENT_BUDGET_EXHAUSTED",
              "ECOM_PLAN_INSUFFICIENT_CREDITS", "ECOM_PLAN_LEASE_LOST", "ECOM_PLAN_ATTEMPT_CONFLICT")

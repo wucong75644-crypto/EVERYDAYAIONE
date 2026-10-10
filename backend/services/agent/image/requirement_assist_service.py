@@ -9,6 +9,8 @@ from pydantic import ValidationError
 from core.exceptions import AppException
 from schemas.ecom_requirement import RequirementAssistInput, RequirementAssistResult
 from services.agent.image.requirement_assist_prompts import build_multimodal_messages
+from services.agent.image.ecommerce_planner.recovery import error_facts
+from services.kie_image_fallback_request import safe_error
 
 _MODEL = "kimi-k3"
 _TIMEOUT_SECONDS = 120.0
@@ -30,7 +32,10 @@ class RequirementAssistService:
         except Exception as exc:
             logger.warning(
                 f"Requirement assist failed | user_id={data.user_id} | "
-                f"source_id={data.source_id} | model={_MODEL} | error_type={type(exc).__name__}"
+                f"source_id={data.source_id} | model={_MODEL} | error_type={type(exc).__name__} | "
+                f"http_status={getattr(exc, 'status_code', None)} | "
+                f"provider_error_code={getattr(exc, 'error_code', None)} | "
+                f"provider_request_id={getattr(exc, 'request_id', None)} | reason={safe_error(exc)}"
             )
             if isinstance(exc, TimeoutError):
                 raise AppException("REQUIREMENT_ASSIST_TIMEOUT", "AI帮写超时，已保留草稿，请重试", 504) from exc
@@ -41,16 +46,29 @@ class RequirementAssistService:
 
     async def _run_model(self, data: RequirementAssistInput) -> RequirementAssistResult:
         from services.model_gateway import ModelCallRequest, _collect_stream_response, get_model_gateway
-        session = get_model_gateway().open_chat(ModelCallRequest(model_id=_MODEL, timeout=_TIMEOUT_SECONDS))
-        try:
-            response = await asyncio.wait_for(
-                _collect_stream_response(
-                    session, messages=build_multimodal_messages(data), reasoning_effort="low",
-                ),
-                timeout=_TIMEOUT_SECONDS,
-            )
-        finally:
-            await session.close()
+        deadline = time.monotonic() + _TIMEOUT_SECONDS
+        messages = build_multimodal_messages(data)
+        for attempt in range(2):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError()
+            session = get_model_gateway().open_chat(ModelCallRequest(model_id=_MODEL, timeout=remaining))
+            try:
+                response = await asyncio.wait_for(
+                    _collect_stream_response(session, messages=messages, reasoning_effort="low"),
+                    timeout=remaining,
+                )
+                break
+            except Exception as exc:
+                _code, _category, safe = error_facts(exc)
+                partial = getattr(getattr(session, "last_result", None), "partial_output", False)
+                if not safe or partial or attempt == 1:
+                    raise
+                logger.info("Requirement assist retry | model={} provider_error_code={} provider_request_id={}",
+                    _MODEL, getattr(exc, "error_code", None), getattr(exc, "request_id", None))
+            finally:
+                await session.close()
+            await asyncio.sleep(min(1, max(0, deadline - time.monotonic())))
         result = parse_requirement_result(response.content)
         validate_no_output_urls(result)
         return result
