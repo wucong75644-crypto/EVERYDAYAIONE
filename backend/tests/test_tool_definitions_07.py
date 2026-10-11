@@ -110,7 +110,7 @@ def test_complete_helpers_handlers_and_schema_order(catalog, org):
         'list_personal_skills_for_edit', 'prepare_skill_draft', 'get_personal_skill_for_edit',
         # The planner is an intentional new public tool; keep the frozen legacy
         # catalog assertions focused on the pre-existing tool contracts.
-        'plan_ecommerce_images',
+        'plan_ecommerce_images', 'agent_reach',
     }
     legacy_only = lambda schemas: [schema for schema in schemas
                                    if schema['function']['name'] not in chat_skill_tools]
@@ -163,7 +163,7 @@ def test_old_imports_signatures_and_constant_values(module):
             }
             expected.update({'route_to_chat': 'erp', 'prepare_skill_draft': 'general',
                              'get_personal_skill_for_edit': 'general',
-                             'plan_ecommerce_images': 'general',
+                             'plan_ecommerce_images': 'general', 'agent_reach': 'general',
                              'list_personal_skills_for_edit': 'general'})
             assert value == expected
             continue
@@ -196,7 +196,8 @@ def test_old_imports_signatures_and_constant_values(module):
             assert 'generate_image' in value and 'image_agent' not in value
             # Main-image planning is revealed by the activated entry Skill.
             assert 'plan_ecommerce_images' not in value
-            value = sorted((set(value) - {'generate_image'}) | {'image_agent'})
+            assert 'agent_reach' in value
+            value = sorted((set(value) - {'generate_image', 'agent_reach'}) | {'image_agent'})
         if module == 'chat_tools' and name == '_CONCURRENT_SAFE_TOOLS':
             assert 'generate_image' in value and 'generate_video' not in value
             value = sorted(set(value) - {'generate_image'})
@@ -427,9 +428,9 @@ importlib.import_module(sys.argv[1])
 from config.chat_tools import get_chat_tools
 from services.tools import build_tool_catalog
 from services.tool_executor import ToolExecutor
-assert len(get_chat_tools('org-a')) == 36
-assert len(build_tool_catalog().specs()) == 39
-assert len(ToolExecutor(None, 'actor-a', 'c1', 'org-a')._handlers) == 39
+assert len(get_chat_tools('org-a')) == 37
+assert len(build_tool_catalog().specs()) == 40
+assert len(ToolExecutor(None, 'actor-a', 'c1', 'org-a')._handlers) == 40
 '''
     run = subprocess.run([sys.executable, '-c', script, first], text=True, capture_output=True, timeout=30)
     assert run.returncode == 0, run.stderr
