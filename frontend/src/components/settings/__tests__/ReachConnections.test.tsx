@@ -7,7 +7,7 @@ import * as reach from '../../../services/agentReach';
 const state = vi.hoisted(() => ({ org: { org_id: 'org', name: 'Organization', role: 'owner' } }));
 vi.mock('../../../stores/useAuthStore', () => ({ useAuthStore: (selector: (state: unknown) => unknown) => selector({ currentOrg: state.org }) }));
 vi.mock('../../../services/org', () => ({ listMembers: vi.fn().mockResolvedValue([{ user_id: 'member', nickname: '成员', status: 'active' }]) }));
-vi.mock('../../../services/agentReach', () => ({ listReachConnections: vi.fn(), listReachOperations: vi.fn(), grantReachConnection: vi.fn(), revokeReachConnection: vi.fn(), listReachLoginMethods: vi.fn(), startReachLogin: vi.fn(), pollReachLogin: vi.fn(), cancelReachLogin: vi.fn(), importReachSession: vi.fn(), checkReachConnection: vi.fn() }));
+vi.mock('../../../services/agentReach', () => ({ listReachConnections: vi.fn(), listReachOperations: vi.fn(), grantReachConnection: vi.fn(), revokeReachConnection: vi.fn(), listReachLoginMethods: vi.fn(), startReachLogin: vi.fn(), pollReachLogin: vi.fn(), cancelReachLogin: vi.fn(), importReachSession: vi.fn(), checkReachConnection: vi.fn(), getExaConfiguration: vi.fn().mockResolvedValue({ configured: true, source: 'server', verified_at: null }), saveExaConfiguration: vi.fn() }));
 vi.mock('react-hot-toast', () => ({ toast: { success: vi.fn() } }));
 const row: reach.ReachConnection = { id: 'connection', platform: 'bilibili', account_id: '123', display_name: '组织账号', status: 'active', login_state: 'connected' };
 beforeEach(() => {

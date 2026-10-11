@@ -26,7 +26,7 @@ AI使用list_connections取得获授权连接ID，查询时每次一个明确动
 
 Python执行backend/tests/test_agent_reach.py和test_agent_reach_media.py，连同test_tool_policy.py、test_web_search_provider.py、test_agent_tools.py、test_tool_executor.py。测试环境需提供虚拟DATABASE_URL与JWT_SECRET_KEY，不使用生产env。前端运行tsc及ReachConnections.test.tsx。
 
-PostgreSQL专用测试：在全新临时cluster中，用bootstrap.sql建立最小组织夹具，再分别以psql -1依次应用291和292迁移，再执行rls.sql。夹具路径backend/tests/fixtures/agent_reach。仅在该一次性实例设置REACH_TEST_DSN='host=/private/tmp port=55479 dbname=postgres'运行test_agent_reach_postgres.py；测试强制检查本机socket和端口，绝不读取DATABASE_URL。结束后停止该临时cluster。夹具覆盖新表RLS，不代表完整历史迁移链已验证。
+PostgreSQL专用测试：在全新临时cluster中，用bootstrap.sql建立最小组织夹具，临时cluster须显式使用UTF8编码，再分别以psql -1依次应用291、292和293迁移，再执行rls.sql。夹具路径backend/tests/fixtures/agent_reach。仅在该一次性实例设置REACH_TEST_DSN='host=/private/tmp port=55479 dbname=postgres'运行test_agent_reach_postgres.py；测试强制检查本机socket和端口，绝不读取DATABASE_URL。结束后停止该临时cluster。夹具覆盖新表RLS，不代表完整历史迁移链已验证。
 
 真实验收需逐项验证：登录有效/到期/账号不符、搜索/完整正文/无字幕/限流、并发账号隔离、操作者确认、一次写入回执、取消与超时的不确定状态、成员权限撤销。真实发布使用组织指定测试账号和明确测试内容，须获得用户对应操作授权。
 
@@ -119,3 +119,9 @@ Google Cloud OAuth测试应用、两项YouTube范围、Web客户端和已确认�
 本轮必要验证：后端登录33项、前端请求6项通过；修复后服务的50并发轮询Go race回归通过，候选二进制构建完成，SHA256为`5ee0477dbd0035f350e47e0e90acda02157dd3ff5d5becdd4ebac3d5b49da939`，保存在上述`login-fix-candidate`目录。当前生产原服务二进制和应用未替换，真实扫码成功仍待部署后验证。
 
 发布集成：受控deploy执行器在生产锁内调用`deploy/xhs/install-login-fix.py`，核对版本化artifact清单与补丁/候选SHA256，备份并原子替换二进制，重启配置内的专用服务并检查本机health。失败恢复备份；重复发布已安装版本跳过替换。候选仍放在服务器预构建目录，不提交二进制；重新构建若SHA变化须更新清单再发布。安装成功、错误候选拒绝、重启失败回滚三项定向验证通过。
+
+### Exa 管理员对话框（本地待发布）
+
+账号连接的 Exa 行提供“配置 API Key”对话框。管理员提交密钥后，服务端先用一次最小搜索验证，再使用既有 KEK 加密保存当前组织的覆盖值；验证失败保留旧配置。接口只返回 configured/source/verified_at，不回显密钥。迁移293新增独立组织密钥表并启用强制RLS，仅活跃组织管理员可写，活跃成员的工具执行可读取组织内加密配置。运行时优先组织密钥，未设置时继续使用服务器 AGENT_REACH_EXA_API_KEY；保存立即生效、不改服务器.env、不影响其他组织，也不需要重启。
+
+本轮验证：后端30项、前端18项、真实隔离PostgreSQL 2项（含293迁移、RLS、管理员写权限、成员读取、跨组织不可见、密文落库与替换即时读取）通过；TypeScript/前端构建、定向ESLint及diff检查通过。临时数据库已停止；未部署、未调用生产保存接口。

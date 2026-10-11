@@ -91,3 +91,45 @@ def test_scoped_secrets_grants_receipts_and_revocation():
                 db.execute('DELETE FROM reach_connections WHERE id=%s',(connection_id,))
             db.execute('DELETE FROM org_members WHERE user_id=%s',(member,))
             db.execute('DELETE FROM users WHERE id=%s',(member,))
+
+
+@pytest.mark.skipif(not os.getenv('REACH_TEST_DSN'), reason='dedicated local PostgreSQL fixture not running')
+def test_exa_encryption_isolation_and_admin_write():
+    dsn=os.environ['REACH_TEST_DSN']
+    parsed=psycopg.conninfo.conninfo_to_dict(dsn)
+    assert parsed.get('host')=='/private/tmp' and parsed.get('port')=='55479'
+    org1,org2='00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002'
+    owner,outsider='00000000-0000-0000-0000-000000000011','00000000-0000-0000-0000-000000000012'
+    member=str(uuid4())
+    secrets=SecretMaterialService(LocalKEKProvider(current_version='test',keyring={'test':b'k'*32}))
+    pool=ConnectionPool(dsn,kwargs={'options':'-c role=everydayai_runtime'})
+    scope=lambda user,org: DatabaseScope(actor_user_id=user,org_id=org,access_kind=DatabaseAccessKind.RUNTIME)
+    try:
+        with psycopg.connect(dsn,autocommit=True) as db:
+            db.execute("INSERT INTO users VALUES (%s,'active')",(member,))
+            db.execute("INSERT INTO org_members VALUES (%s,%s,'member','active')",(org1,member))
+        admin=Connections(pool,scope(owner,org1),secrets=secrets)
+        regular=Connections(pool,scope(member,org1),secrets=secrets)
+        foreign=Connections(pool,scope(outsider,org2),secrets=secrets)
+        assert admin.exa_status('server-key')['source']=='server'
+        admin.save_exa_key('dummy-org-secret')
+        assert admin.exa_status()['source']=='organization'
+        assert 'dummy-org-secret' not in str(admin.exa_status())
+        assert regular.exa_key('server-key')=='dummy-org-secret'
+        assert foreign.exa_key('server-key')=='server-key'
+        with pytest.raises(ReachError): regular.save_exa_key('forbidden')
+        with pytest.raises(ReachError): regular.exa_status()
+        with foreign.cursor() as cursor:
+            cursor.execute('SELECT secret_envelope FROM public.reach_exa_keys WHERE org_id=%s',(org1,))
+            assert cursor.fetchone() is None
+        with psycopg.connect(dsn) as db:
+            row=db.execute('SELECT secret_envelope FROM reach_exa_keys WHERE org_id=%s',(org1,)).fetchone()
+            assert 'dummy-org-secret' not in str(row)
+        admin.save_exa_key('replacement')
+        assert regular.exa_key()=='replacement'
+    finally:
+        pool.close()
+        with psycopg.connect(dsn,autocommit=True) as db:
+            db.execute('DELETE FROM reach_exa_keys')
+            db.execute('DELETE FROM org_members WHERE user_id=%s',(member,))
+            db.execute('DELETE FROM users WHERE id=%s',(member,))

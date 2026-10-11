@@ -71,6 +71,31 @@ class Connections:
         with self.cursor(admin=True):
             pass
 
+    def exa_status(self, fallback_key=None):
+        with self.cursor(admin=True) as cursor:
+            cursor.execute('SELECT updated_at FROM public.reach_exa_keys WHERE org_id=%s', (self.scope.org_id,))
+            row = cursor.fetchone()
+        return {'configured': bool(row or fallback_key), 'source': 'organization' if row else 'server' if fallback_key else 'none',
+                'verified_at': str(row['updated_at']) if row else None}
+
+    def save_exa_key(self, api_key):
+        with self.cursor(admin=True) as cursor:
+            envelope = self.secrets.encrypt_payload(scope_kind='organization', scope_id=self.scope.org_id,
+                secret_name='agent_reach.exa_api_key', payload_version=1, payload={'api_key': api_key})
+            cursor.execute('''INSERT INTO public.reach_exa_keys (org_id,secret_envelope) VALUES (%s,%s)
+                ON CONFLICT (org_id) DO UPDATE SET secret_envelope=EXCLUDED.secret_envelope,updated_at=now()''',
+                (self.scope.org_id, Jsonb(asdict(envelope))))
+
+    def exa_key(self, fallback_key=None):
+        with self.cursor() as cursor:
+            cursor.execute('SELECT secret_envelope FROM public.reach_exa_keys WHERE org_id=%s', (self.scope.org_id,))
+            row = cursor.fetchone()
+        if not row:
+            return fallback_key
+        payload = self.secrets.decrypt_payload(SecretEnvelope(**row['secret_envelope']),
+            scope_kind='organization', scope_id=self.scope.org_id, secret_name='agent_reach.exa_api_key')
+        return payload['api_key']
+
     def occupied_slots(self):
         with self.cursor(admin=True) as cursor:
             cursor.execute("SELECT id FROM public.reach_connections WHERE org_id=%s", (self.scope.org_id,))

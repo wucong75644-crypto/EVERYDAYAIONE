@@ -257,3 +257,37 @@ async def oauth_callback(db: Database, state: str = '', code: str = '', error: s
             headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer',
                 'Content-Security-Policy':"default-src 'none'; frame-ancestors 'none'"})
     return await login_run(operation())
+
+
+class SaveExaKey(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    api_key: SecretStr = Field(min_length=1, max_length=4096)
+
+
+@router.get('/exa/configuration')
+def exa_configuration(org_ctx: OrgCtx, db: Database, response: Response):
+    return run(store(org_ctx, db, response).exa_status, get_settings().agent_reach_exa_api_key)
+
+
+@router.put('/exa/configuration')
+async def save_exa_configuration(data: SaveExaKey, org_ctx: OrgCtx, db: Database, response: Response):
+    async def operation():
+        import asyncio
+        from services.agent.agent_reach.public_adapters import exa
+        from services.agent.agent_reach.network import PublicHTTP
+        from services.agent.agent_reach.contracts import ReachRequest
+        repository = store(org_ctx, db, response)
+        await asyncio.to_thread(repository.assert_admin)
+        key = data.api_key.get_secret_value().strip()
+        if not key or any(char.isspace() for char in key):
+            raise ReachError('INVALID_ARGUMENTS', '请输入有效的 Exa API Key')
+        try:
+            await exa(ReachRequest(task='验证 Exa 连接', platform='exa', action='search',
+                query='Exa official documentation', max_results=1), PublicHTTP(), key)
+        except ReachError as error:
+            if error.code == 'PLATFORM_BLOCKED':
+                raise ReachError('AUTH_REQUIRED', 'Exa 拒绝访问，请检查 API Key 是否有效及账号权限') from None
+            raise
+        await asyncio.to_thread(repository.save_exa_key, key)
+        return await asyncio.to_thread(repository.exa_status, get_settings().agent_reach_exa_api_key)
+    return await login_run(operation())

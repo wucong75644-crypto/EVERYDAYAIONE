@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'react-hot-toast';
 import ReachLoginFlow from './ReachLoginFlow';
+import ExaConfigurationRow from './ExaConfigurationRow';
 import KuaimaiConnection from './KuaimaiConnection';
 import type { Credential } from '../../services/kuaimaiExternal';
 import { useAuthStore } from '../../stores/useAuthStore';
@@ -87,7 +88,7 @@ export default function ReachConnections() {
               </tr>) : [<tr key={key}><td className="px-3 py-4">{label}</td><td className="px-3 py-4 text-[var(--s-text-secondary)]">未连接</td><td className="px-3 py-4 text-[var(--s-text-secondary)]">{available?.enabled ? '未连接' : '暂不可连接'}</td><td className="px-3 py-4">{admin && <button disabled={busy || !!flow || !available?.enabled} className="text-[var(--s-accent)] disabled:opacity-40" onClick={() => openPlatform(target)}>{available?.method === 'qr' ? '扫码连接' : available?.method === 'oauth' ? '授权连接' : '连接'}</button>}</td></tr>];
             })}
             {['GitHub 公共仓库', '网页 / RSS'].map(label => <tr key={label}><td className="px-3 py-4">{label}</td><td className="px-3 py-4">公共内容</td><td className="px-3 py-4 text-[var(--s-accent)]">无需登录</td><td className="px-3 py-4 text-[var(--s-text-secondary)]">在对话中使用</td></tr>)}
-            <tr><td className="px-3 py-4">Exa 搜索</td><td colSpan={3} className="px-3 py-4 text-[var(--s-text-secondary)]">由服务器配置 API Key，是否可用以运行配置为准</td></tr>
+            <ExaConfigurationRow key={`${org?.org_id}:${admin}`} admin={admin} />
           </tbody>
         </table></div>
         {loading && <p role="status" className="mt-4 text-sm">正在加载连接状态…</p>}

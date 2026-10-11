@@ -33,7 +33,7 @@ def resolve(request):
     return request
 
 
-async def execute(request: ReachRequest, settings, *, timeout, connection=None):
+async def execute(request: ReachRequest, settings, *, timeout, connection=None, exa_api_key=None):
     started = time.monotonic()
     request = resolve(request)
     enabled = {value.strip() for value in settings.agent_reach_platforms.split(',')}
@@ -49,7 +49,7 @@ async def execute(request: ReachRequest, settings, *, timeout, connection=None):
         if request.platform == 'github':
             return await github(request, http)
         if request.platform == 'exa':
-            return await exa(request, http, settings.agent_reach_exa_api_key)
+            return await exa(request, http, exa_api_key if exa_api_key is not None else settings.agent_reach_exa_api_key)
         if request.platform == 'youtube':
             if request.action == 'read_comments':
                 return await youtube_comments(request, http, settings.agent_reach_youtube_api_key, connection)

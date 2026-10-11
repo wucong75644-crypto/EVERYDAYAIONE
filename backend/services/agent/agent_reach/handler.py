@@ -63,7 +63,12 @@ async def execute_reach(executor, args):
                 from .login_providers import youtube_credentials
                 connection = await youtube_credentials(connection, settings)
             if not writing:
-                return await execute(request, settings, timeout=timeout, connection=connection)
+                exa_key = None
+                if request.platform == 'exa' and executor.org_id:
+                    key_store = Connections(executor.db.pool, DatabaseScope(actor_user_id=executor.user_id,
+                        org_id=executor.org_id, access_kind=DatabaseAccessKind.RUNTIME))
+                    exa_key = await asyncio.to_thread(key_store.exa_key, settings.agent_reach_exa_api_key)
+                return await execute(request, settings, timeout=timeout, connection=connection, exa_api_key=exa_key)
             call_id = current_dispatch_call_id()
             if not call_id:
                 raise ReachError('ACCESS_DENIED', '写入只能通过已授权的公共工具执行入口')
