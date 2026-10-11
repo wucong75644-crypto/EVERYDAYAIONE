@@ -26,6 +26,15 @@ def resolve_action(spec: ToolSpec, arguments: Mapping[str, Any], *, context=None
     operation, risk = spec.policy_rules.operation, spec.risk_level
     if rule is None:
         return ActionFacts(operation, risk)
+    if rule == 'agent_reach':
+        from services.agent.agent_reach.contracts import ReachRequest, WRITE_ACTIONS
+        try:
+            request = ReachRequest.model_validate(dict(arguments))
+        except Exception:
+            return ActionFacts(operation, risk, 'invalid_agent_reach_arguments')
+        if request.action in WRITE_ACTIONS:
+            return ActionFacts('business_write', 'dangerous' if request.action != 'set_like' else 'safe')
+        return ActionFacts('read', 'safe')
     action = arguments.get("action")
     if not isinstance(action, str) or not action:
         return ActionFacts(operation, risk, "unknown_action")

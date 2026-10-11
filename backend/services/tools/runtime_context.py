@@ -21,7 +21,7 @@ def catalog_context(org_id, permission_mode="auto", personal_context_allowed=Tru
         feature_flags={**{key: getattr(settings, key, False) is True for key in (
             "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled",
             "mcp_connectors_enabled", "skill_catalog_enabled", "skill_chat_creation_enabled",
-            "skill_org_admin",
+            "skill_org_admin", "agent_reach_enabled",
         )}, "chat_image_async_enabled": chat_image_acceptance_allowed(settings, None)},
     )
 
@@ -53,6 +53,7 @@ def executor_context(executor, *, call_id=None) -> ToolContext:
     feature_flags = {name: getattr(settings, name, False) is True for name in (
         "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled",
         "mcp_connectors_enabled", "skill_catalog_enabled", "skill_chat_creation_enabled", "chat_image_async_enabled",
+        "agent_reach_enabled",
     )}
     feature_flags["skill_org_admin"] = False
     feature_flags["chat_image_async_enabled"] = chat_image_acceptance_allowed(settings, executor.user_id)

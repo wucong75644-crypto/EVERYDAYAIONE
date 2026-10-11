@@ -1,0 +1,8 @@
+# Dedicated runtime only; do not install these into the web application's venv.
+agent-reach @ git+https://github.com/Panniantong/Agent-Reach.git@a19a171fa980a0785849596492e0af4db800c82f
+twitter-cli @ git+https://github.com/public-clis/twitter-cli.git@7c634e0d396b1e7af9f63315b414925fe4f29ae7
+bilibili-cli @ git+https://github.com/public-clis/bilibili-cli.git@dbe28551930df43b633baa52e9639832aeada967
+rdt-cli @ git+https://github.com/public-clis/rdt-cli.git@5e4fb3720d5c174e976cd425ccc3b879d52cac66
+yt-dlp==2026.8.19
+# Comment bridge was verified against this API library version.
+bilibili-api-python==17.4.2

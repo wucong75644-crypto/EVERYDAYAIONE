@@ -77,6 +77,7 @@ TENANT_TABLES: frozenset[str] = frozenset({
     "change_sets", "change_checks", "change_events",
     # Skill 对话创建回执与试用审计（migration 266）
     "skill_authoring_receipts", "skill_draft_trial_runs",
+    "reach_connections", "reach_connection_grants", "reach_operations",
     # 定时任务适配器幂等回执（migration 249）
     "scheduled_task_change_receipts",
     # 快麦 Web 外部数据接入（migration 114）

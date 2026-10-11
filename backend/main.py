@@ -20,7 +20,7 @@ from api.routes import (
     admin_users, audio, auth, conversation, detail_project, ecom_requirement, error_monitor, file, health, image, image_ecom,
     kuaimai_external, memory, message, models, org, org_members_assignments,
     pdd, qimen, scheduled_tasks, change_sets, subscription, task, webhook, wecom, wecom_auth,
-    wecom_chat_targets, ws, skills, skill_admin, skill_creation,
+    wecom_chat_targets, ws, skills, skill_admin, skill_creation, agent_reach,
 )
 from core.config import get_settings
 from core.exceptions import AppException
@@ -423,10 +423,14 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
         """记录请求校验失败的详细信息"""
+        errors = exc.errors()
+        if request.url.path.startswith('/api/agent-reach'):
+            # Validation inputs may contain credentials, including malformed bodies.
+            errors = [{'type': 'invalid_request', 'loc': ('body',), 'msg': '请求字段不合法'}]
         logger.warning(
             f"ValidationError | path={request.url.path} | "
             f"content_type={request.headers.get('content-type', 'N/A')} | "
-            f"detail={exc.errors()}"
+            f"detail={errors}"
         )
         return JSONResponse(
             status_code=422,
@@ -434,7 +438,7 @@ def register_exception_handlers(app: FastAPI) -> None:
                 "error": {
                     "code": "VALIDATION_ERROR",
                     "message": "请求参数校验失败",
-                    "details": exc.errors(),
+                    "details": errors,
                 }
             },
         )
@@ -504,6 +508,7 @@ def register_routers(app: FastAPI) -> None:
     # 对话
     app.include_router(conversation.router, prefix="/api")
     app.include_router(skills.router, prefix="/api")
+    app.include_router(agent_reach.router, prefix="/api")
     app.include_router(skill_admin.router, prefix="/api")
     app.include_router(skill_admin.scope_router, prefix="/api")
     app.include_router(skill_creation.router, prefix="/api")
