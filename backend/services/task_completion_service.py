@@ -305,6 +305,14 @@ class TaskCompletionService:
                 result, "NO_RESULT", "生成结果为空",
             ))
 
+        # Register outputs before either batch or legacy completion publishes them.
+        # The registry is idempotent by task ID and content index.
+        from services.assets.asset_registry import register_task_media_best_effort
+        await asyncio.to_thread(
+            register_task_media_best_effort, self.db,
+            task=task, content_parts=content_parts,
+        )
+
         # 5. 图片任务统一走批次处理（含 num_images=1）
         if task_type == "image" and task.get("batch_id"):
             from services.batch_completion_service import BatchCompletionService

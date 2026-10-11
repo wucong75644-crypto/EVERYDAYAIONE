@@ -346,3 +346,31 @@ async def test_image_completion_uses_task_output_option_and_actual_dimensions():
         parts = await service._build_content_parts(['https://provider.example/a.png'], 'image', task)
     assert persist.call_args.kwargs['taobao_main_image'] is True
     assert parts[0]['width'] == parts[0]['height'] == 1440
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task_type,batch_id", [("image", "batch"), ("image", None), ("video", None)])
+async def test_success_registers_outputs_before_publishing(task_type, batch_id):
+    service = TaskCompletionService(MockRoutingDB())
+    task = make_image_task(batch_id) if task_type == "image" else make_video_task()
+    task["id"] = "local-task"
+    parts = [{"type": task_type, "url": "https://cdn.example.com/output"}]
+    service._build_content_parts = AsyncMock(return_value=parts)
+    service._upload_urls_to_oss = AsyncMock(return_value=[parts[0]["url"]])
+    handler = MagicMock()
+    events = []
+    async def publish(*args, **kwargs):
+        events.append("published")
+        return True
+    handler.on_complete = AsyncMock(side_effect=publish)
+    service._create_handler = MagicMock(return_value=handler)
+    def register(db, **kwargs):
+        assert kwargs == {"task": task, "content_parts": parts}
+        events.append("registered")
+        return []
+    with patch("services.assets.asset_registry.register_task_media_best_effort", side_effect=register), patch(
+        "services.batch_completion_service.BatchCompletionService.handle_image_complete", side_effect=publish
+    ):
+        result = make_success_result() if task_type == "image" else make_video_success_result()
+        assert await service._handle_success(task, result)
+    assert events == ["registered", "published"]

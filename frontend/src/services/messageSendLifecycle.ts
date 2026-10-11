@@ -83,7 +83,7 @@ export function applyOptimisticUpdate(options: SendOptions, ctx: SendContext): v
   const store = useMessageStore.getState();
 
   if (operation !== 'retry' && operation !== 'regenerate_single') {
-    store.addMessage(conversationId, {
+    store.addOptimisticUserMessage(conversationId, {
       id: ctx.userMessageId,
       conversation_id: conversationId,
       role: 'user',
@@ -178,7 +178,8 @@ export function processApiResponse(
 
   // 图片引用使用服务器持久化 ID，替换前端乐观消息及附件元数据。
   if (response.user_message && operation !== 'retry' && operation !== 'regenerate_single') {
-    store.updateMessage(ctx.userMessageId, response.user_message);
+    store.addMessage(conversationId, response.user_message);
+    store.removeOptimisticMessage(conversationId, ctx.userMessageId);
   }
 
   store.updateMessage(ctx.assistantMessageId, { task_id: response.task_id });

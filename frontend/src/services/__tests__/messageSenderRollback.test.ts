@@ -4,6 +4,7 @@ import type { Message } from '../../stores/useMessageStore';
 
 const store = {
   addMessage: vi.fn(),
+  addOptimisticUserMessage: vi.fn(),
   updateMessage: vi.fn(),
   removeMessage: vi.fn(),
   startStreaming: vi.fn(),

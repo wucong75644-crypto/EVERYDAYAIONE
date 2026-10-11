@@ -4,6 +4,7 @@ import { reconcileChatTaskStates, type PendingTask } from '../taskRestoration';
 const mocks = vi.hoisted(() => ({
   getMessages: vi.fn(),
   store: {
+    streamingMessages: new Map<string, string>(),
     clearConversationStreaming: vi.fn(),
     markForceRefresh: vi.fn(),
     setMessagesForConversation: vi.fn(),
