@@ -14,7 +14,8 @@ import { Users, MessageSquare, Globe } from 'lucide-react';
 import Modal from '../common/Modal';
 import MemberList from './MemberList';
 import GroupList from './GroupList';
-import ReachConnections from './ReachConnections';
+import { useNavigate } from 'react-router-dom';
+import { useAuthStore } from '../../stores/useAuthStore';
 import { useCurrentMember } from '../../hooks/usePermission';
 import { cn } from '../../utils/cn';
 
@@ -23,9 +24,12 @@ interface Props {
   onClose: () => void;
 }
 
-type TabKey = 'members' | 'groups' | 'reach';
+type TabKey = 'members' | 'groups';
 
 export default function OrganizationModal({ isOpen, onClose }: Props) {
+  const navigate = useNavigate();
+  const orgRole = useAuthStore(state => state.currentOrg?.role);
+  const canManageAccounts = orgRole === 'owner' || orgRole === 'admin';
   const [tab, setTab] = useState<TabKey>('members');
   const member = useCurrentMember();
 
@@ -47,7 +51,7 @@ export default function OrganizationModal({ isOpen, onClose }: Props) {
           icon={<Users className="w-4 h-4" />}
           label="员工管理"
         />
-        <TabButton active={tab === 'reach'} onClick={() => setTab('reach')} icon={<Globe className="w-4 h-4" />} label="互联网账号" />
+        {canManageAccounts && <TabButton active={false} onClick={() => { onClose(); navigate('/admin?tab=accounts'); }} icon={<Globe className="w-4 h-4" />} label="账号连接 ↗" />}
         {canManageGroups && (
           <TabButton
             active={tab === 'groups'}
@@ -61,7 +65,6 @@ export default function OrganizationModal({ isOpen, onClose }: Props) {
       {/* Tab 内容 */}
       <div className="min-h-[400px]">
         {tab === 'members' && <MemberList />}
-        {tab === 'reach' && <ReachConnections />}
         {tab === 'groups' && canManageGroups && <GroupList />}
       </div>
     </Modal>

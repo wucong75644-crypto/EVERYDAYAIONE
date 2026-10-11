@@ -14,7 +14,7 @@ AGENT_REACH_WRITE_ACTIONS为显式允许的platform:action列表，如twitter:se
 
 ## 组织账号
 
-设置→组织管理→互联网账号：管理员连接组织账号、授予指定成员查询/写权限。小红书/B站扫码，YouTube官方授权，Twitter/X和Reddit会话导入；页面不要求JSON或账号ID。保存前验证账号身份，凭据加密且不回显。YouTube支持refresh_token刷新；账号失效使用重新连接，必须匹配原账号并保留成员授权。断开清除密文并使连接不可用。
+管理后台→账号连接（`/admin?tab=accounts`）：管理员连接组织账号、授予指定成员查询/写权限。小红书/B站扫码，YouTube官方授权，Twitter/X和Reddit会话导入；页面不要求JSON或账号ID。保存前验证账号身份，凭据加密且不回显。YouTube支持refresh_token刷新；账号失效使用重新连接，必须匹配原账号并保留成员授权。断开清除密文并使连接不可用。
 
 API前缀/api/agent-reach：GET connections、POST connections、PUT connections/{id}/grants、DELETE connections/{id}；GET operations只返回当前操作者最近50条回执。组织身份来自服务端OrgCtx，不接收请求中的org_id覆盖。数据库迁移291、292必须按顺序在启用前完成，生产迁移只走项目既有受控发布流程。
 
@@ -70,7 +70,7 @@ Google Cloud OAuth测试应用、两项YouTube范围、Web客户端和已确认�
 
 ### 快麦统一账号页（待真实登录验收）
 
-「互联网账号」现在包含独立的快麦 ERP 连接区，管理员输入公司名称、账号、密码即可尝试自动连接智库和销售主题报表。快麦数据仍使用原有 `kuaimai_external_credentials` 和同步任务，不纳入 Agent Reach 社交账号授权表。
+管理后台「账号连接」独立页面包含快麦 ERP 连接区，管理员输入公司名称、账号、密码即可尝试自动连接智库和销售主题报表。快麦数据仍使用原有 `kuaimai_external_credentials` 和同步任务，不纳入 Agent Reach 社交账号授权表。
 
 - 新增 `POST /api/admin/kuaimai/login/sessions`、`POST /api/admin/kuaimai/login/password`，均要求当前组织 owner/admin。
 - 登录预会话绑定组织与操作者，加密存入 Redis，10 分钟过期；每个会话只能提交一次，每成员每分钟最多准备 6 次。图片验证码挑战返回新会话；密码不保存在 Redis/数据库。
@@ -78,3 +78,5 @@ Google Cloud OAuth测试应用、两项YouTube范围、Web客户端和已确认�
 - 唯一识别公司 ID、有 `_censeid` 且已通过菜单接口登录检查后，一次批量 upsert 加密保存两个数据源，避免保存失败导致双源凭据不一致。每个报表的读取权限仍需分别点击「检查连接」或实际同步验证。
 - 登录成功响应结构、账号验证和报表权限尚需真实账号验收；无法识别公司或会话检查不通过时保留旧凭据。原「快麦接入」的 cURL 导入保留为恢复路径，已有同步功能不变。
 - 新登录接口的请求校验错误统一脱敏，避免密码出现在校验日志/响应中。
+
+账号管理使用后台左侧导航和完整页面，包含全部账号、互联网平台、快麦 ERP 和成员权限分类。组织管理弹窗中的「账号连接」仅跳转后台，不在弹窗内执行登录。后台原有企业、Skill、监控和快麦同步管理功能保留；账号连接仅组织 owner/admin 可见。公共 GitHub、网页/RSS 无需登录，Exa 仍由服务器配置，不提供虚假的已连接状态或配置入口。

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { render, fireEvent, screen, waitFor, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ReachConnections from '../ReachConnections';
@@ -25,7 +25,7 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 it('imports a session without JSON/account ID and clears credentials', async () => {
-  const user = userEvent.setup(); render(<ReachConnections />);
+  const user = userEvent.setup(); render(<ReachConnections />); fireEvent.click(screen.getByRole('button', { name: '互联网平台', exact: true }));
   await screen.findByText('尚未连接账号。');
   expect(screen.queryByLabelText('账号凭据（JSON）')).not.toBeInTheDocument();
   expect(screen.queryByLabelText('平台账号 ID')).not.toBeInTheDocument();
@@ -38,18 +38,18 @@ it('imports a session without JSON/account ID and clears credentials', async () 
 it('member sees own receipts without admin controls', async () => {
   state.org.role = 'member';
   vi.mocked(reach.listReachOperations).mockResolvedValue([{ id: 'operation', platform: 'twitter', account_id: '123', state: 'uncertain', receipt: { action: 'create_post' }, created_at: '' }]);
-  render(<ReachConnections />); await screen.findByText(/结果待核实，请勿重复提交/);
+  render(<ReachConnections />); fireEvent.click(screen.getByRole('button', { name: '互联网平台', exact: true })); await screen.findByText(/结果待核实，请勿重复提交/);
   expect(screen.queryByRole('button', { name: '连接账号' })).not.toBeInTheDocument();
 });
 it('disables unconfigured platform with explanation', async () => {
-  const user = userEvent.setup(); render(<ReachConnections />); await screen.findByText('尚未连接账号。');
+  const user = userEvent.setup(); render(<ReachConnections />); fireEvent.click(screen.getByRole('button', { name: '互联网平台', exact: true })); await screen.findByText('尚未连接账号。');
   await user.selectOptions(screen.getByLabelText('平台'), 'xiaohongshu');
   expect(screen.getByRole('button', { name: '连接账号' })).toBeDisabled();
   expect(screen.getByText('本组织扫码服务待配置')).toBeInTheDocument();
 });
 it('shows QR and cancels session on close', async () => {
   vi.mocked(reach.startReachLogin).mockResolvedValue({ id: 'session', platform: 'bilibili', state: 'waiting', expires_at: Date.now() / 1000 + 180, image: 'data:image/png;base64,aGVsbG8=' });
-  const user = userEvent.setup(); render(<ReachConnections />); await screen.findByText('尚未连接账号。');
+  const user = userEvent.setup(); render(<ReachConnections />); fireEvent.click(screen.getByRole('button', { name: '互联网平台', exact: true })); await screen.findByText('尚未连接账号。');
   await user.selectOptions(screen.getByLabelText('平台'), 'bilibili');
   await user.click(screen.getByRole('button', { name: '连接账号' }));
   await user.click(screen.getByRole('button', { name: '生成登录二维码' }));
@@ -60,7 +60,7 @@ it('shows QR and cancels session on close', async () => {
 it('reconnects with existing connection identity', async () => {
   vi.mocked(reach.listReachConnections).mockResolvedValue([row]);
   vi.mocked(reach.startReachLogin).mockResolvedValue({ id: 'session', platform: 'bilibili', state: 'connected', expires_at: Date.now() / 1000 + 180, connection: row });
-  const user = userEvent.setup(); render(<ReachConnections />); await screen.findByText('B 站 · 组织账号', { selector: 'p' });
+  const user = userEvent.setup(); render(<ReachConnections />); fireEvent.click(screen.getByRole('button', { name: '互联网平台', exact: true })); await screen.findByText('B 站 · 组织账号', { selector: 'p' });
   await user.click(screen.getByRole('button', { name: '重新连接' }));
   await user.click(screen.getByRole('button', { name: '生成登录二维码' }));
   await screen.findByText('账号连接成功');
@@ -70,9 +70,32 @@ it('reconnects with existing connection identity', async () => {
 });
 it('links to official OAuth with opener protection', async () => {
   vi.mocked(reach.startReachLogin).mockResolvedValue({ id: 'session', platform: 'youtube', state: 'waiting', expires_at: Date.now() / 1000 + 600, authorize_url: 'https://accounts.google.com/o/oauth2/v2/auth?state=test' });
-  const user = userEvent.setup(); render(<ReachConnections />); await screen.findByText('尚未连接账号。');
+  const user = userEvent.setup(); render(<ReachConnections />); fireEvent.click(screen.getByRole('button', { name: '互联网平台', exact: true })); await screen.findByText('尚未连接账号。');
   await user.selectOptions(screen.getByLabelText('平台'), 'youtube');
   await user.click(screen.getByRole('button', { name: '连接账号' }));
   await user.click(screen.getByRole('button', { name: '准备官方授权' }));
   expect(await screen.findByRole('link', { name: '打开 YouTube 官方授权页' })).toHaveAttribute('rel', 'noopener noreferrer');
+});
+
+it('keeps account grants scoped to the selected connection and member', async () => {
+  vi.mocked(reach.listReachConnections).mockResolvedValue([row]);
+  const user = userEvent.setup(); render(<ReachConnections />);
+  await screen.findByText('B 站 · 组织账号', { selector: 'p' });
+  await user.selectOptions(screen.getByLabelText('组织账号'), 'connection');
+  await user.selectOptions(screen.getByLabelText('成员'), 'member');
+  await user.click(screen.getByLabelText('发布、点赞与评论'));
+  await user.click(screen.getByRole('button', { name: '保存权限' }));
+  await waitFor(() => expect(reach.grantReachConnection).toHaveBeenCalledWith('connection', 'member', true, true));
+});
+it('switches account categories without rendering a dialog', async () => {
+  const user = userEvent.setup(); render(<ReachConnections />);
+  await screen.findByText('尚未连接账号。');
+  expect(screen.getByText('快麦账号连接')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '互联网平台', exact: true }));
+  expect(screen.queryByText('快麦账号连接')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('平台')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '成员权限', exact: true }));
+  expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('组织账号')).toBeInTheDocument();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
