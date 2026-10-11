@@ -64,8 +64,21 @@ def response_input(messages: list[dict], model: str) -> list[dict]:
     for message in messages:
         role = message.get("role")
         if role == "tool":
+            output = message.get("content") or ""
+            if isinstance(output, list):
+                converted = []
+                for part in output:
+                    kind = part.get("type")
+                    if kind in {"text", "input_text", "output_text"}:
+                        converted.append({"type": "input_text", "text": part["text"]})
+                    elif kind in {"image_url", "input_image"}:
+                        image = part["image_url"]
+                        converted.append({"type": "input_image", "image_url": image["url"] if isinstance(image, dict) else image})
+                    else:
+                        raise ValueError(f"Unsupported Responses tool output type: {kind}")
+                output = converted
             result.append({"type": "function_call_output", "call_id": message["tool_call_id"],
-                           "output": message.get("content") or ""})
+                           "output": output})
             continue
         replay = message.get("_dashscope_output") or {}
         if role == "assistant" and replay.get("model") == model:

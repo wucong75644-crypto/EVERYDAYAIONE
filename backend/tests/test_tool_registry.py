@@ -380,9 +380,11 @@ def test_sequential_requests_do_not_reuse_user_org_workspace_or_mode(registry):
 
 @pytest.mark.parametrize("mode", ["ask", "auto", "plan"])
 @pytest.mark.parametrize("image_enabled", [False, True])
-def test_advertisement_reuses_current_core_rules(registry, mode, image_enabled):
+@pytest.mark.parametrize("reach_enabled", [False, True])
+def test_advertisement_reuses_current_core_rules(registry, mode, image_enabled, reach_enabled):
     ctx = context(permission_mode=mode)
-    ctx = replace(ctx, feature_flags={**ctx.feature_flags, "chat_image_async_enabled": image_enabled})
+    ctx = replace(ctx, feature_flags={**ctx.feature_flags, "chat_image_async_enabled": image_enabled,
+        "agent_reach_enabled": reach_enabled})
     result = resolve(registry, ctx)
     expected = [schema for schema in get_tools_for_mode(mode, "org-a")
                 if schema["function"]["name"] not in {
@@ -390,9 +392,11 @@ def test_advertisement_reuses_current_core_rules(registry, mode, image_enabled):
                     "get_personal_skill_for_edit",
                 } and (image_enabled or schema["function"]["name"] != "generate_image")
                 and (schema["function"]["name"] != "plan_ecommerce_images"
-                     or schema["function"]["name"] in result.allowed)]
+                     or schema["function"]["name"] in result.allowed)
+                and (schema["function"]["name"] != "agent_reach" or reach_enabled)]
     assert result.advertised_schemas() == expected
     assert set(result.advertised) <= set(result.allowed)
+    assert ("agent_reach" in result.advertised) is (reach_enabled and mode != "plan")
     # Block 01 retains old plan display facts; Block 02 will decide permission.
     assert ("erp_agent" in result.advertised) is (mode != "plan")
 

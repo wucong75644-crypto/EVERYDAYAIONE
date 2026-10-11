@@ -1,0 +1,67 @@
+--- a/service.go
++++ b/service.go
+@@ -5,6 +5,7 @@
+ 	"encoding/json"
+ 	"fmt"
+ 	"os"
++	"sync"
+ 	"time"
+ 
+ 	"github.com/go-rod/rod"
+@@ -21,6 +22,7 @@
+ // XiaohongshuService 小红书业务服务
+ type XiaohongshuService struct {
+ 	logins loginSessions
++	loginBrowserMu sync.Mutex
+ }
+ 
+ // NewXiaohongshuService 创建小红书服务实例
+@@ -103,6 +105,12 @@
+ 
+ // CheckLoginStatus 检查登录状态
+ func (s *XiaohongshuService) CheckLoginStatus(ctx context.Context) (*LoginStatusResponse, error) {
++	s.loginBrowserMu.Lock()
++	defer s.loginBrowserMu.Unlock()
++	if err := ctx.Err(); err != nil { return nil, err }
++	// The QR browser owns login until its cookies are saved and it closes.
++	// Polling must never launch competing browsers during that session.
++	if s.logins.pending() { return &LoginStatusResponse{IsLoggedIn: false}, nil }
+ 	b := newBrowser()
+ 	defer b.Close()
+ 
+@@ -135,6 +143,10 @@
+ 
+ // GetLoginQrcode 获取登录的扫码二维码
+ func (s *XiaohongshuService) GetLoginQrcode(ctx context.Context) (*LoginQrcodeResponse, error) {
++	s.loginBrowserMu.Lock()
++	defer s.loginBrowserMu.Unlock()
++	if err := ctx.Err(); err != nil { return nil, err }
++	if s.logins.pending() { return nil, fmt.Errorf("a QR login is already pending") }
+ 	b := newBrowser()
+ 	page := b.NewPage()
+ 
+@@ -183,9 +195,9 @@
+ 	logrus.Infof("等待扫码登录，会话 #%d，超时 %s", seq, timeout)
+ 
+ 	go func() {
++		defer s.logins.finish(seq)
++		defer cancel()
+ 		defer closeBrowser()
+-		defer cancel()
+-		defer s.logins.finish(seq)
+ 
+ 		if loginAction.WaitForLogin(ctxTimeout) {
+ 			if err := saveCookies(page); err != nil {
+--- a/login_session.go
++++ b/login_session.go
+@@ -40,3 +40,10 @@
+ 		l.cancel = nil
+ 	}
+ }
++
++// pending is a cheap status check; no new browser is needed while scanning.
++func (l *loginSessions) pending() bool {
++	l.mu.Lock()
++	defer l.mu.Unlock()
++	return l.cancel != nil
++}

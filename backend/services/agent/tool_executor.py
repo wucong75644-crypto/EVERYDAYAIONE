@@ -111,6 +111,7 @@ class ToolExecutor(
             "erp_api_search": self._erp_api_search,
             "code_execute": self._code_execute,
             "web_search": self._web_search,
+            "agent_reach": self._agent_reach,
             "generate_image": self._generate_image,
             "plan_ecommerce_images": self._plan_ecommerce_images,
             "generate_video": self._generate_video,
@@ -266,6 +267,10 @@ class ToolExecutor(
             )
         summary, metadata = present_search_response(result, query=query)
         return AgentResult(summary=summary, status=result.status, source="web_search", metadata=metadata)
+
+    async def _agent_reach(self, args: Dict[str, Any]) -> "AgentResult":
+        from services.agent.agent_reach.handler import execute_reach
+        return await execute_reach(self, args)
 
     # ========================================
     # 数据查询工具

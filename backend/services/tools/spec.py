@@ -56,7 +56,7 @@ class ToolPolicyRules:
             mode not in {"interactive", "scheduled", "preflight"} for mode in self.execution_modes
         ):
             raise ValueError("Invalid policy execution_modes")
-        if self.action_rule not in {None, "erp_query", "erp_write", "erp_raw_read", "scheduled_task"}:
+        if self.action_rule not in {None, "erp_query", "erp_write", "erp_raw_read", "scheduled_task", "agent_reach"}:
             raise ValueError("Invalid policy action_rule")
         if isinstance(self.required_permissions, str) or any(
             not isinstance(code, str) or not code.strip() for code in self.required_permissions
