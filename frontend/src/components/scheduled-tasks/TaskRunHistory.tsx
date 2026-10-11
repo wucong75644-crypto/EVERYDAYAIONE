@@ -26,6 +26,11 @@ const STATUS_CONFIG = {
   skipped: { icon: Clock,        color: 'text-text-tertiary', label: '跳过' },
 } as const;
 
+const PUSH_LABELS = {
+  queued: '通知排队中', retrying: '通知重试中', pushed: '通知已投递',
+  push_failed: '通知投递失败', partial: '通知部分投递成功', skipped: '无企微投递',
+} as const;
+
 function formatRelativeTime(iso: string): string {
   try {
     const date = new Date(iso);
@@ -84,6 +89,9 @@ function RunRow({ run }: { run: TaskRun }) {
             {formatRelativeTime(run.started_at)}
           </span>
           <span className={cn('font-medium', config.color)}>{config.label}</span>
+          {run.push_status && <span className="text-[var(--s-text-tertiary)]">
+            {PUSH_LABELS[run.push_status] || '通知状态待确认'}
+          </span>}
           {run.duration_ms != null && (
             <span className="text-[var(--s-text-tertiary)]">{formatDuration(run.duration_ms)}</span>
           )}

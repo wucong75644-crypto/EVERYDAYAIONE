@@ -468,6 +468,11 @@ class ChatTaskManager:
         form["fields"].append(_build_form_field("_submission_mode", "hidden", "", default_value=self.submission_mode))
         if structured:
             form["fields"].append(_build_form_field("_structured_input", "hidden", "", default_value=True))
+            from core.config import get_settings
+            settings = get_settings()
+            if "skills" in parsed or (settings.skill_catalog_enabled and settings.skill_runtime_enabled):
+                form["fields"].append(_build_form_field(
+                    "skills", "hidden", "固定 Skill", default_value=json.dumps(parsed.get("skills", []))))
         return form
 
     async def _handle_list(self, _args: Dict[str, Any]) -> Dict[str, Any]:
@@ -585,6 +590,9 @@ class ChatTaskManager:
             form["fields"].append(_build_form_field("run_at", "datetime-local", "执行日期和时间（北京时间）", required=True, default_value=run_at))
         form["fields"].append(_build_form_field("_submission_mode", "hidden", "", default_value=self.submission_mode))
         form["fields"].append(_build_form_field("_structured_input", "hidden", "", default_value=True))
+        if "skills" in changes:
+            form["fields"].append(_build_form_field(
+                "skills", "hidden", "固定 Skill", default_value=json.dumps(changes["skills"])))
         form.update(description="补齐本次修改；未显示的原任务字段保持不变。", submit_text="保存修改")
         return form
 
@@ -802,6 +810,13 @@ async def _submit_direct_form(db, user_id, org_id, operation, data, idempotency_
         task = await ChatTaskManager(db, user_id, org_id)._find_task(task_id=str(data.get("task_id") or ""))
         if not task or task.get("_ambiguous"):
             return {"success": False, "message": "任务不存在或无权修改"}
+    if "skills" in data:
+        try:
+            from services.scheduler.task_definition_input import task_definition_input
+            skills = json.loads(data["skills"]) if isinstance(data["skills"], str) else data["skills"]
+            definition["skills"] = task_definition_input({"skills": skills}, operation="update")["changes"]["skills"]
+        except (ValueError, TypeError):
+            return {"success": False, "message": "固定 Skill 格式无效，请重新选择 Skill 及其固定版本"}
     try:
         if "push_target" in data:
             target = data["push_target"]

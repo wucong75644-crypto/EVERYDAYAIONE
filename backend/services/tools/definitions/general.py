@@ -94,7 +94,7 @@ def build_specs():
             source='services.tools.definitions.general.build_specs', definition_kind='explicit',
             catalog_order=29, catalog_groups=('common_tools',), core=True, legacy_plan_visible=False,
             policy_rules=ToolPolicyRules(operation='read', plan_allowed=False,
-                execution_modes=('interactive',), action_rule='agent_reach'),
+                execution_modes=('interactive', 'scheduled', 'preflight'), action_rule='agent_reach'),
         ),
         ToolSpec(
             name='social_crawler', capability='platform.social_crawler', schema=schemas['social_crawler'],

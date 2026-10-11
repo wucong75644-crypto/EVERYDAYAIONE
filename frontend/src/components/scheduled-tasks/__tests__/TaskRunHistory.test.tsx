@@ -66,3 +66,15 @@ it('keeps legacy file links readable', () => {
   render(<TaskRunHistory taskId="t1" />);
   expect(screen.getByRole('link', { name: 'old.csv' })).toHaveAttribute('href', '/old.csv');
 });
+
+it.each([
+  ['queued', '通知排队中'], ['retrying', '通知重试中'], ['pushed', '通知已投递'],
+  ['push_failed', '通知投递失败'], ['partial', '通知部分投递成功'], ['skipped', '无企微投递'],
+] as const)('separates successful execution from %s delivery', (push_status, label) => {
+  state.tasks[0].status = 'paused';
+  state.runs.t1 = [{ id: 'r1', task_id: 't1', org_id: 'o1', status: 'success',
+    started_at: new Date().toISOString(), credits_used: 0, tokens_used: 0, push_status }];
+  render(<TaskRunHistory taskId="t1" />);
+  expect(screen.getByText('成功')).toBeVisible();
+  expect(screen.getByText(label)).toBeVisible();
+});

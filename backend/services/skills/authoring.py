@@ -287,7 +287,7 @@ class SkillAuthoring:
                         'triggers': edited_content.catalog_metadata.triggers,
                         'task_modes': edited_content.catalog_metadata.task_modes,
                         'model_selectable': False,
-                        'execution_modes': ('interactive',),
+                        'execution_modes': edited_content.catalog_metadata.execution_modes,
                         'agent_domains': ('general',),
                         'conversation_scopes': ('user',),
                         'tool_policy': 'platform',

@@ -41,6 +41,15 @@ describe('SkillChatProposalCard', () => {
     expect(screen.getByText('核对完整内容，选择 Skill 的保存范围。确认前不会保存或发布。')).toBeInTheDocument();
   });
 
+  it('shows scheduled use before confirmation without publishing automatically', async () => {
+    const proposal = makeProposal();
+    proposal.content.catalog_metadata = { execution_modes: ['interactive', 'scheduled', 'preflight'] };
+    vi.mocked(skillCreationService.getChatProposal).mockResolvedValue(proposal);
+    render(<SkillChatProposalCard proposalId="proposal-1" />);
+    expect(await screen.findByText(/聊天与定时任务；发布后可在任务确认表单选择固定版本/)).toBeInTheDocument();
+    expect(skillCreationService.confirmChatProposal).not.toHaveBeenCalled();
+  });
+
   it('confirms an edit as a personal update without offering another publication scope', async () => {
     vi.mocked(skillCreationService.getChatProposal).mockResolvedValue({
       ...makeProposal(), operation: 'update', target_package_id: 'package-1',

@@ -131,7 +131,7 @@ export interface TaskRun {
   duration_ms?: number | null;
   result_summary?: string | null;
   result_files?: Array<{ url: string; name: string }> | null;
-  push_status?: 'pushed' | 'push_failed' | 'skipped' | null;
+  push_status?: 'queued' | 'retrying' | 'pushed' | 'push_failed' | 'partial' | 'skipped' | null;
   error_message?: string | null;
   credits_used: number;
   tokens_used: number;

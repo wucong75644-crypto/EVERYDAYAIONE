@@ -317,7 +317,7 @@ def test_planner_preflight_and_frozen_authorization_agree(catalog, monkeypatch):
     from services.planner import CapabilityRegistry, PlanCandidate, PlanStep, PlannerFramework
     from services.scheduler.scheduled_task_workflow import preflight_allowed_tool_names, validate_plan, ScheduledExecutionPolicy
     settings = get_settings()
-    for flag in ('file_workspace_enabled', 'sandbox_enabled', 'crawler_enabled'):
+    for flag in ('file_workspace_enabled', 'sandbox_enabled', 'crawler_enabled', 'agent_reach_enabled'):
         monkeypatch.setattr(settings, flag, True)
     names = preflight_allowed_tool_names('org-a')
     capabilities = CapabilityRegistry.from_specs(s for s in catalog.specs() if s.core)

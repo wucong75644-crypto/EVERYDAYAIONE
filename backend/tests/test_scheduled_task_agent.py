@@ -70,6 +70,17 @@ class TestBuildLightContext:
         assert messages[-1]["role"] == "user"
         assert "查询昨日各店铺销售数据" in messages[-1]["content"]
 
+    def test_continuity_guidance_is_task_scoped_and_does_not_change_delivery(self):
+        task = make_task(id='task_history_2', last_summary='上次发现 5 条')
+        messages = ScheduledTaskAgent(MagicMock(), task)._build_light_context()
+        system = '\n'.join(m['content'] for m in messages if m['role'] == 'system')
+        assert '下载/任务历史/task_history_2/' in system
+        assert '不完整数据覆盖有效基线' in system
+        assert '首次运行没有基线' in system
+        assert '不能承诺未配置的条件通知' in system
+        assert 'agent_reach' in system
+        assert '上次发现 5 条' in messages[-1]['content']
+
     def test_with_template_file(self):
         task = make_task(template_file={
             "path": "uploads/template.xlsx",

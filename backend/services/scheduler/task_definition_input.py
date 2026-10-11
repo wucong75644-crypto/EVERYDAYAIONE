@@ -46,7 +46,24 @@ def task_definition_input(definition: Any, *, operation: str, base: Mapping | No
                           recipient: Any = "") -> dict:
     from services.tools.catalog import build_tool_catalog
     schema = build_tool_catalog().require("manage_scheduled_task").to_schema()
-    _validate(definition, schema["function"]["parameters"]["properties"]["definition"], "任务定义")
+    definition_schema = schema["function"]["parameters"]["properties"]["definition"]
+    # Reuse the existing domain contract for nested Skill identities; the legacy
+    # field validator handles scalar task fields, not Pydantic object schemas.
+    if isinstance(definition, dict) and "skills" in definition:
+        from pydantic import TypeAdapter, ValidationError
+        from services.skills.selection import SkillSelection
+        try:
+            raw_skills = definition["skills"]
+            if not isinstance(raw_skills, list) or len(raw_skills) > 4:
+                raise ValueError()
+            selected = TypeAdapter(list[SkillSelection]).validate_python(raw_skills)
+            if len({skill.skill_id for skill in selected}) != len(selected):
+                raise ValueError()
+        except (ValueError, TypeError, ValidationError):
+            raise TaskDefinitionInputError("固定 Skill 格式不正确，请选择最多四个不同的 Skill 及其固定版本。") from None
+        _validate({k: v for k, v in definition.items() if k != "skills"}, definition_schema, "任务定义")
+    else:
+        _validate(definition, definition_schema, "任务定义")
     if not isinstance(recipient, str):
         raise TaskDefinitionInputError("请明确收件人或通知渠道。")
     changes = deepcopy(definition)

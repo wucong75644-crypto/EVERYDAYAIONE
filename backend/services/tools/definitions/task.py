@@ -4,6 +4,7 @@ from ..spec import Exposure, ToolAvailability, ToolPolicyRules, ToolSpec
 
 
 def _schema_manage_scheduled_task():
+    from services.skills.selection import SkillSelection
     return {
         "type": "function",
         "function": {
@@ -16,6 +17,8 @@ def _schema_manage_scheduled_task():
                 "只填写用户明确给出的安排；缺项就省略相应字段，由表单补齐，不能猜默认时间或频率。"
                 "不要先执行一次业务查询。聊天入口不再用 description 做第二次模型解析。\n"
                 "创建时即使字段完整也必须先展示可编辑确认表单；用户点击确认前不规划、不提交、不创建任务。\n"
+                "skills 可选，仅传已知且允许用于定时任务的 Skill 标识和固定版本，不猜标识；"
+                "不需要 Skill 时省略。修改未传 skills 保留原绑定，传空数组表示移除绑定。\n"
                 "update：用 task_id 和 definition 中的变更字段，只修改用户要求的项。"
                 "只改输出形式用 output_format，不能重写原业务范围。未传字段保持不变。\n"
                 "pause/resume/delete：只传 task_id；还不知道 ID 时用 list 或 task_name 查找，"
@@ -35,6 +38,8 @@ def _schema_manage_scheduled_task():
                         "additionalProperties": False,
                         "description": "create 必须传对象（缺项可省略）；update 仅传变更字段。禁止传权限、执行策略或用户 ID。",
                         "properties": {
+                            "skills": {"type": "array", "title": "固定 Skill", "maxItems": 4,
+                                       "items": SkillSelection.model_json_schema()},
                             "name": {"type": "string", "title": "任务名称", "minLength": 1},
                             "prompt": {"type": "string", "title": "执行内容", "minLength": 1},
                             "schedule_type": {"type": "string", "title": "执行频率", "enum": ["once", "daily", "weekly", "monthly"]},
