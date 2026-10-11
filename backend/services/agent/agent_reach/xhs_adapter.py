@@ -77,12 +77,39 @@ class XHSAdapter:
                     note.get('displayTitle') or '', 'snippet'))
             return ReachResult('xiaohongshu', 'xhs-rest', items,
                 warnings=['搜索仅返回卡片摘要，需读取帖子详情。'] if items else [])
+        comments_mode = request.action == 'read_comments'
+        end = request.page * request.max_results
         data = await self.call('POST', 'feeds/detail', {**self.target(request.url),
-            'load_all_comments': False,
-            'comment_config': {'max_comment_items': request.max_results, 'click_more_replies': False}})
-        return ReachResult('xiaohongshu', 'xhs-rest', [ReachItem('小红书帖子详情', request.url,
-            json.dumps(data, ensure_ascii=False), 'comment' if request.action == 'read_comments' else 'full_text')],
-            warnings=['仅包含本次加载的正文和评论，未覆盖全部讨论。'])
+            'load_all_comments': comments_mode,
+            'comment_config': {'max_comment_items': end + 1 if comments_mode else 1,
+                               'click_more_replies': comments_mode}})
+        detail = data.get('data', data) if isinstance(data, dict) else None
+        if not isinstance(detail, dict) or not isinstance(detail.get('note'), dict):
+            raise ReachError('UPSTREAM_CHANGED', '小红书详情格式变化')
+        note = detail['note']
+        if not comments_mode:
+            author = (note.get('user') or {}).get('nickname', '')
+            return ReachResult('xiaohongshu', 'xhs-rest', [ReachItem(
+                note.get('title') or '小红书正文', request.url,
+                '作者：' + author + '\n' + (note.get('desc') or ''), 'full_text')])
+        comments = detail.get('comments') or {}
+        rows = comments.get('list')
+        if not isinstance(rows, list):
+            raise ReachError('UPSTREAM_CHANGED', '小红书未返回评论列表')
+        start = (request.page - 1) * request.max_results
+        selected = rows[start:end]
+        more = len(rows) > end
+        warnings = ['仅包含本次加载的顶层评论及已展开回复，未保证覆盖全部楼中楼。']
+        if len(rows) <= start and comments.get('hasMore'):
+            raise ReachError('PLATFORM_BLOCKED', '平台未能加载到所请求评论页，请稍后重试；不能据此判断没有评论')
+        if not more and comments.get('hasMore'):
+            warnings.append('平台仍标记有更多评论，但本次未能加载；不能声称已读完全部评论。')
+        items = [ReachItem('小红书评论', request.url.split('#')[0] + '#comment-' + str(row['id']),
+                           json.dumps(row, ensure_ascii=False), 'comment') for row in selected]
+        return ReachResult('xiaohongshu', 'xhs-rest', items, warnings=warnings,
+            pagination={'page': request.page, 'returned_count': len(selected),
+                        'loaded_count': len(rows), 'platform_has_more': bool(comments.get('hasMore')),
+                        'next_page': request.page + 1 if more and request.page < 100 else None})
 
     async def write(self, request, *, media=None):
         await self.identity()

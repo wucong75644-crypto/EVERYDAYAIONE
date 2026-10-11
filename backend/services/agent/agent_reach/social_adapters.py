@@ -65,6 +65,18 @@ async def query_social(request, runner, connection):
         return ReachResult('twitter', 'twitter-cli', items,
             warnings=['当前返回推文正文，回复列表未完整覆盖。'] if request.action == 'read_comments' else [])
     if request.platform == 'bilibili':
+        if request.action == 'read_comments' and connection:
+            data = await runner.run('bili-bridge', [], input_json={
+                'secret': connection['secret'], 'account_id': connection['account_id'],
+                'bvid': target_id('bilibili', request.url), 'request': request.model_dump()})
+            rows = data['comments']
+            items = [ReachItem('B站评论', request.url.split('#')[0] + '#comment-' + str(row['id']),
+                               row['message'], 'comment') for row in rows]
+            return ReachResult('bilibili', 'bili-bridge', items, warnings=['仅返回顶层评论，未包含全部楼中楼。'],
+                pagination={'page': request.page, 'returned_count': len(rows), 'platform_has_more': data['has_more'],
+                            'next_page': request.page + 1 if data['has_more'] and request.page < 100 else None})
+        if request.page != 1:
+            raise ReachError('AUTH_REQUIRED', 'B站评论翻页需要已连接的组织账号')
         args = ['search', '--type', 'video', '--page', '1', '--max', str(request.max_results), '--json', '--', request.query] if request.action == 'search' else [
             'video', '--json', *(['--subtitle'] if request.action == 'transcript' else ['--comments'] if request.action == 'read_comments' else []), '--', target_id('bilibili', request.url)]
         data = unwrap(await runner.run('bili', args, **options))
@@ -91,9 +103,11 @@ async def query_social(request, runner, connection):
             items = [ReachItem('B站评论', request.url + '?comment=' + str(row['id']), row.get('message', ''), 'comment') for row in comments[:request.max_results]]
         else:
             video = data.get('video') or {}
-            items = [ReachItem(video.get('title', ''), request.url, video.get('desc') or video.get('description') or '', 'metadata')]
+            items = [ReachItem(video.get('title', ''), request.url,
+                '作者：' + str((video.get('owner') or {}).get('name') or video.get('author') or '未返回') + '\n' +
+                (video.get('desc') or video.get('description') or ''), 'metadata')]
         return ReachResult('bilibili', 'bilibili-cli', items,
-                           warnings=['仅返回当前页或视频元数据；未覆盖全部讨论。'] if request.action != 'transcript' else [])
+                           warnings=['仅返回当前页或视频元数据；未覆盖全部讨论。'] if request.action != 'transcript' else ['当前字幕仅为该视频第1分P，不代表合集全部集数。'])
     args = ['search', '--limit', str(request.max_results), '--json', '--compact', '--', request.query] if request.action == 'search' else [
         'read', '--json', '--limit', str(request.max_results), '--', target_id('reddit', request.url)]
     data = await runner.run('rdt', args, **options)

@@ -34,6 +34,8 @@ class ReachRequest(BaseModel):
     query: str = Field(default='', max_length=1000)
     url: str = Field(default='', max_length=2048)
     max_results: int = Field(default=5, ge=1, le=10)
+    cursor: str = Field(default='', max_length=160)
+    page: int = Field(default=1, ge=1, le=100)
     connection_id: str = Field(default='', pattern=r'^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})?$')
     content: str = Field(default='', max_length=10000)
     title: str = Field(default='', max_length=200)
@@ -50,6 +52,8 @@ class ReachRequest(BaseModel):
         self.task = self.task.strip()
         if not self.task:
             raise ValueError('task不能为空')
+        if (self.cursor or self.page != 1) and self.action not in {'auto', 'read', 'transcript', 'read_comments'}:
+            raise ValueError('续读参数仅用于读取操作')
         if self.action in WRITE_ACTIONS:
             if self.platform == 'auto' or not self.connection_id:
                 raise ValueError('写入必须明确platform与connection_id')
@@ -136,8 +140,12 @@ class ReachResult:
     status: str = 'success'
     warnings: list[str] = field(default_factory=list)
     receipt: dict = field(default_factory=dict)
+    pagination: dict = field(default_factory=dict)
 
-    def to_agent_result(self):
+    def to_agent_result(self, request=None):
+        if request is not None and request.action in {'read', 'transcript', 'read_comments'}:
+            from .pagination import paginate
+            return paginate(self, request).to_agent_result()
         from datetime import datetime, timezone
         from services.agent.agent_result import AgentResult
         fetched_at = datetime.now(timezone.utc).isoformat()
@@ -149,7 +157,7 @@ class ReachResult:
                 validate_url(item.url)
             except ReachError:
                 continue
-            if item.url in seen:
+            if item.url in seen and not self.pagination:
                 continue
             seen.add(item.url)
             text = item.content[:min(6000, budget)]
@@ -174,6 +182,9 @@ class ReachResult:
         summary = notice + '\n\n' + '\n\n'.join(rows)
         if self.warnings:
             summary += '\n说明：' + '；'.join(self.warnings)
+        if self.pagination:
+            import json
+            summary += '\n续读信息：' + json.dumps(self.pagination, ensure_ascii=False)
         if self.status == 'empty':
             summary += '\n查询已完成，没有返回匹配资料。'
         if self.receipt:
@@ -181,7 +192,7 @@ class ReachResult:
         return AgentResult(summary=summary, status=self.status, source='agent_reach',
                            metadata={'platform': self.platform, 'backend': self.backend,
                                      'sources': sources, 'receipt': self.receipt,
-                                     'warnings': self.warnings})
+                                     'warnings': self.warnings, 'pagination': self.pagination})
 
 
 def youtube_id(url):

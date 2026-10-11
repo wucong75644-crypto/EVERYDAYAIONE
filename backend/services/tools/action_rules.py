@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from .spec import ToolSpec
+from .spec import ToolSpec, thaw
 
 
 @dataclass(frozen=True)
@@ -29,7 +29,9 @@ def resolve_action(spec: ToolSpec, arguments: Mapping[str, Any], *, context=None
     if rule == 'agent_reach':
         from services.agent.agent_reach.contracts import ReachRequest, WRITE_ACTIONS
         try:
-            request = ReachRequest.model_validate(dict(arguments))
+            # ToolCall freezes nested JSON arrays/maps; restore their JSON types
+            # before strict domain validation, as the dispatcher does for handlers.
+            request = ReachRequest.model_validate(thaw(arguments))
         except Exception:
             return ActionFacts(operation, risk, 'invalid_agent_reach_arguments')
         if request.action in WRITE_ACTIONS:

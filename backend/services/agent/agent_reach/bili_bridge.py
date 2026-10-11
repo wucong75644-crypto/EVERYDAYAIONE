@@ -15,6 +15,25 @@ async def execute(payload):
     if str(identity.get('mid', '')) != payload['account_id']:
         raise ValueError('ACCOUNT_MISMATCH')
     request = payload['request']
+    if request['action'] == 'read_comments':
+        info = await video.Video(bvid=payload['bvid'], credential=credential).get_info()
+        # API pages contain 20 top-level replies; expose fixed slots of that page.
+        size = request['max_results']
+        slots = (20 + size - 1) // size
+        remote_page = (request['page'] - 1) // slots + 1
+        offset = ((request['page'] - 1) % slots) * size
+        data = await comment.get_comments(oid=int(info['aid']),
+            type_=comment.CommentResourceType.VIDEO, page_index=remote_page,
+            order=comment.OrderType.TIME, credential=credential)
+        if int((data.get('page') or {}).get('size', 20)) != 20:
+            raise ValueError('COMMENTS_PAGE_SIZE_CHANGED')
+        rows = data.get('replies') or []
+        selected = rows[offset:offset + size]
+        count = int((data.get('page') or {}).get('count', 0))
+        more = len(rows) > offset + size or (remote_page * 20 < count)
+        return {'comments': [{'id': str(row['rpid']),
+            'message': '作者：' + str((row.get('member') or {}).get('uname', '')) + '\n' + row['content']['message']}
+            for row in selected], 'has_more': more}
     if request['action'] == 'upload_video':
         from bilibili_api.video_uploader import VideoUploader, VideoUploaderPage
         media = payload['media']
