@@ -116,8 +116,10 @@ it('places Exa configuration in the existing right panel and refreshes the row a
     .mockResolvedValue({ configured: true, source: 'organization', verified_at: 'now' });
   const user = userEvent.setup(); render(<ReachConnections />);
   await screen.findByText('服务器默认 API Key');
-  await user.click(screen.getByRole('button', { name: '配置 API Key' }));
+  await user.click(screen.getByRole('button', { name: /配置 API Key|管理 API Key/ }));
   const panel = screen.getByRole('complementary', { name: '账号登录区域' });
+  await within(panel).findByText('已配置本组织 API Key（保存时验证有效）');
+  await user.click(within(panel).getByRole('button', { name: '更换 API Key' }));
   expect(within(panel).getByLabelText('Exa API Key')).toHaveValue('');
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(screen.queryByText('快麦账号连接')).not.toBeInTheDocument();
@@ -125,9 +127,10 @@ it('places Exa configuration in the existing right panel and refreshes the row a
   await user.click(within(panel).getByRole('button', { name: '验证并保存' }));
   await screen.findByText('本组织 API Key');
   expect(within(panel).getByRole('status')).toHaveTextContent('已验证并保存');
-  expect(within(panel).getByLabelText('Exa API Key')).toHaveValue('');
-  await user.click(within(panel).getByRole('button', { name: '取消配置' }));
+  expect(within(panel).queryByLabelText('Exa API Key')).not.toBeInTheDocument();
+  await user.click(within(panel).getByRole('button', { name: '关闭配置' }));
   expect(within(panel).getByLabelText('平台')).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: '配置 API Key' }));
-  expect(within(panel).getByLabelText('Exa API Key')).toHaveValue('');
+  await user.click(screen.getByRole('button', { name: /配置 API Key|管理 API Key/ }));
+  await within(panel).findByText('已配置本组织 API Key（保存时验证有效）');
+  expect(within(panel).queryByLabelText('Exa API Key')).not.toBeInTheDocument();
 });

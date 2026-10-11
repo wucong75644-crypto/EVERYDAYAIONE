@@ -16,7 +16,7 @@ export default function ExaConfigurationRow({ admin, onConfigure }: { admin: boo
     <td className="px-3 py-4">Exa 搜索</td>
     <td className="px-3 py-4 text-[var(--s-text-secondary)]">{configuration?.source === 'organization' ? '本组织 API Key' : configuration?.source === 'server' ? '服务器默认 API Key' : 'API Key'}</td>
     <td className="px-3 py-4">{!admin ? '由管理员配置' : !loaded ? '正在加载…' : !configuration ? '配置状态加载失败' : configuration.verified_at ? '已配置（保存时验证有效）' : configuration.configured ? '已配置（服务器默认）' : '未配置'}</td>
-    <td className="px-3 py-4">{admin && <button className="text-[var(--s-accent)]" onClick={onConfigure}>配置 API Key</button>}</td>
+    <td className="px-3 py-4">{admin && <button className="text-[var(--s-accent)]" onClick={onConfigure}>{configuration?.source === 'organization' ? '管理 API Key' : '配置 API Key'}</button>}</td>
   </tr>;
 }
 
@@ -25,16 +25,28 @@ export function ExaConfigurationForm({ onSaved, onClose }: { onSaved: () => void
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+  const [configured, setConfigured] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
+    void getExaConfiguration().then(value => { if (mounted.current) { setConfigured(value.source === 'organization'); setLoaded(true); } }).catch(() => { if (mounted.current) { setError('配置状态加载失败，请重新打开配置。'); setLoaded(true); } });
     return () => { mounted.current = false; };
   }, []);
+  if (!loaded) return <p role="status">正在加载配置…</p>;
+  if (configured && !editing) return <div className="space-y-4">
+    <h3 className="font-semibold">Exa 搜索配置</h3>
+    <p className="text-sm text-green-600">已配置本组织 API Key（保存时验证有效）</p>
+    <p className="text-sm text-[var(--s-text-secondary)]">本组织成员可在对话中使用 Exa 搜索。密钥已加密保存，不回显原密钥。</p>
+    {saved && <p role="status" className="text-sm text-green-600">Exa API Key 已验证并保存</p>}
+    <div className="flex gap-3"><button type="button" className="text-[var(--s-accent)]" onClick={() => { setEditing(true); setSaved(false); }}>更换 API Key</button><button type="button" onClick={onClose}>关闭配置</button></div>
+  </div>;
   return <form aria-label="Exa 搜索配置" className="space-y-4" onSubmit={async event => {
     event.preventDefault(); setBusy(true); setError(''); setSaved(false);
     try {
       await saveExaConfiguration(key.trim());
-      if (mounted.current) { setKey(''); setSaved(true); onSaved(); }
+      if (mounted.current) { setKey(''); setSaved(true); setConfigured(true); setEditing(false); onSaved(); }
     } catch (cause) {
       if (mounted.current) setError(cause instanceof Error ? cause.message : '密钥保存失败，请重试。');
     } finally { if (mounted.current) setBusy(false); }
