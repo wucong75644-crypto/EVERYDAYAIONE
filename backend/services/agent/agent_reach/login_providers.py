@@ -11,6 +11,8 @@ from .runner import ToolRunner
 from .social_adapters import credential_options, unwrap
 from .xhs_adapter import XHSAdapter
 
+BILIBILI_HEADERS = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.bilibili.com/'}
+
 YOUTUBE_SCOPE = 'https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/youtube.upload'
 
 
@@ -115,7 +117,7 @@ class LoginProviders:
             credential_options(platform, {'secret':secret})
             data = json.loads(await self.http.get('https://api.bilibili.com/x/web-interface/nav',
                 headers={'Cookie':'SESSDATA='+secret['sessdata']+'; bili_jct='+secret['bili_jct'],
-                    'User-Agent':'Mozilla/5.0', 'Referer':'https://www.bilibili.com/'}))
+                    **BILIBILI_HEADERS}))
             user = data.get('data') or {}
             if data.get('code') != 0 or user.get('isLogin') is not True or not user.get('mid'):
                 raise ReachError('AUTH_EXPIRED', 'B站登录已失效，请重新扫码')
@@ -129,11 +131,14 @@ class LoginProviders:
         return str(user['id']), str(user.get('name') or user.get('screen_name') or user['id'])
 
     async def bili_start(self):
-        data = json.loads(await self.http.get('https://passport.bilibili.com/x/passport-login/web/qrcode/generate?source=main-fe-header'))
+        data = json.loads(await self.http.get('https://passport.bilibili.com/x/passport-login/web/qrcode/generate?source=main-fe-header', headers=BILIBILI_HEADERS))
         if data.get('code') != 0:
             raise ReachError('PLATFORM_BLOCKED', 'B站暂时无法生成二维码')
         payload = data['data']; url = payload['url']
-        if urlsplit(url).scheme != 'https' or urlsplit(url).hostname != 'passport.bilibili.com':
+        parsed = urlsplit(url)
+        valid_host = (parsed.hostname == 'passport.bilibili.com' or
+            parsed.hostname == 'account.bilibili.com' and parsed.path == '/h5/account-h5/auth/scan-web')
+        if parsed.scheme != 'https' or not valid_host or parsed.port not in {None, 443} or parsed.username or parsed.password:
             raise ReachError('UPSTREAM_CHANGED', 'B站返回的登录地址无法验证')
         image = await self.runner.run('qr-image', [], input_json={'text':url})
         return {'qrcode_key':payload['qrcode_key']}, image['image']
@@ -141,7 +146,7 @@ class LoginProviders:
     async def bili_poll(self, payload):
         body, _, cookies = await self.http.request('GET',
             'https://passport.bilibili.com/x/passport-login/web/qrcode/poll?' + urlencode({
-                'qrcode_key':payload['qrcode_key'], 'source':'main-fe-header'}), include_cookies=True)
+                'qrcode_key':payload['qrcode_key'], 'source':'main-fe-header'}), headers=BILIBILI_HEADERS, include_cookies=True)
         data = json.loads(body)
         if data.get('code') != 0:
             raise ReachError('PLATFORM_BLOCKED', 'B站扫码检查失败')

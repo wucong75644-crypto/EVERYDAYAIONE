@@ -104,11 +104,12 @@ export default function ReachConnections() {
     </div>}
     {admin && (tab === 'all' || tab === 'permissions') && <form className={`${cardClass} space-y-4`} onSubmit={event => { event.preventDefault(); void perform(() => grantReachConnection(connection, member, read, write)); }}>
       <div><h3 className="font-semibold">成员使用权限</h3><p className="mt-1 text-sm text-[var(--s-text-secondary)]">配置成员可使用的互联网账号和操作范围。快麦沿用组织数据权限。</p></div>
+      {!loading && !rows.length && <p role="status" className="text-sm text-[var(--s-text-secondary)]">暂无可分配的组织账号。请先在上方完成平台登录或扫码，连接成功后账号会自动出现在这里。</p>}
       <div className="grid items-end gap-4 md:grid-cols-2 xl:grid-cols-[1fr_1fr_auto_auto]">
-        <label className="block text-sm">组织账号<select required className={inputClass} value={connection} onChange={e => setConnection(e.target.value)}><option value="">请选择</option>{rows.map(row => <option key={row.id} value={row.id}>{names[row.platform]} · {row.display_name || row.account_id}</option>)}</select></label>
-        <label className="block text-sm">成员<select required className={inputClass} value={member} onChange={e => setMember(e.target.value)}><option value="">请选择</option>{members.filter(m => m.status === 'active').map(m => <option key={m.user_id} value={m.user_id}>{m.nickname}</option>)}</select></label>
+        <label className="block text-sm">组织账号<select disabled={loading || !rows.length} required className={inputClass} value={connection} onChange={e => setConnection(e.target.value)}><option value="">{rows.length ? '请选择' : '请先连接平台账号'}</option>{rows.map(row => <option key={row.id} value={row.id}>{names[row.platform]} · {row.display_name || row.account_id}</option>)}</select></label>
+        <label className="block text-sm">成员<select disabled={loading || !members.some(m => m.status === 'active')} required className={inputClass} value={member} onChange={e => setMember(e.target.value)}><option value="">请选择</option>{members.filter(m => m.status === 'active').map(m => <option key={m.user_id} value={m.user_id}>{m.nickname}</option>)}</select></label>
         <div className="flex flex-wrap gap-4 py-2"><label className="text-sm"><input type="checkbox" checked={read} onChange={e => setRead(e.target.checked)} /> 查询与读取</label><label className="text-sm"><input type="checkbox" checked={write} onChange={e => setWrite(e.target.checked)} /> 发布、点赞与评论</label></div>
-        <button disabled={busy} type="submit" className="rounded bg-[var(--s-accent)] px-4 py-2 text-sm text-white">保存权限</button>
+        <button disabled={busy || loading || !connection || !member} type="submit" className="rounded bg-[var(--s-accent)] px-4 py-2 text-sm text-white">保存权限</button>
       </div>
     </form>}
     {operations.length > 0 && <section className={cardClass}><h3 className="font-medium">我的最近执行记录</h3><ul>{operations.map(op => <li key={op.id} className="py-2 text-sm">{names[op.platform]} · {op.receipt.action || '写入操作'} · {op.state === 'succeeded' ? (op.receipt.stage ? '已提交，平台状态待核验' : '已成功') : '结果待核实，请勿重复提交'}{op.receipt.remote_id && ` · ID ${op.receipt.remote_id}`}</li>)}</ul></section>}

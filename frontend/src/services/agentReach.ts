@@ -1,4 +1,4 @@
-import { request } from './api';
+import { connectionRequest as request } from './connectionRequest';
 
 export type ReachPlatform = 'twitter' | 'bilibili' | 'reddit' | 'xiaohongshu' | 'youtube';
 export interface ReachConnection {

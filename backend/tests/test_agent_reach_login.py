@@ -128,7 +128,10 @@ def test_google_requires_exact_https_callback():
 @pytest.mark.parametrize('code,state',[(86101,'waiting'),(86090,'confirming'),(86038,'expired')])
 async def test_bili_scan_states(code,state):
     class HTTP:
-        async def request(self,*args,**kwargs): return json.dumps({'code':0,'data':{'code':code}}).encode(),{},{}
+        async def request(self,*args,**kwargs):
+            assert kwargs['headers']['User-Agent'] == 'Mozilla/5.0'
+            assert kwargs['headers']['Referer'] == 'https://www.bilibili.com/'
+            return json.dumps({'code':0,'data':{'code':code}}).encode(),{},{}
     assert await LoginProviders(settings(),http=HTTP()).bili_poll({'qrcode_key':'key'})==(state,None)
 
 @pytest.mark.asyncio
@@ -282,3 +285,37 @@ async def test_transient_check_failure_is_not_reported_as_login_expiry():
     providers.identity=unavailable; store=Store()
     result=await LoginSessions(store,settings(),Redis(),providers=providers).check(CID)
     assert result['state']=='error' and store.health[-1][-1]=='error'
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('url',[
+    'https://passport.bilibili.com/h5-app/passport/login/scan?qrcode_key=test',
+    'https://account.bilibili.com/h5/account-h5/auth/scan-web?qrcode_key=test',
+])
+async def test_bili_qr_browser_headers_and_official_login_hosts(url):
+    class HTTP:
+        async def get(self, target, **kwargs):
+            assert target.startswith('https://passport.bilibili.com/x/passport-login/web/qrcode/generate?')
+            assert kwargs['headers']['User-Agent'] == 'Mozilla/5.0'
+            assert kwargs['headers']['Referer'] == 'https://www.bilibili.com/'
+            return json.dumps({'code':0,'data':{'url':url,'qrcode_key':'test-key'}}).encode()
+    class Runner:
+        async def run(self, name, arguments, **kwargs):
+            assert name == 'qr-image' and kwargs['input_json']['text'] == url
+            return {'image':'data:image/png;base64,aGVsbG8='}
+    payload,image = await LoginProviders(settings(),http=HTTP(),runner=Runner()).bili_start()
+    assert payload == {'qrcode_key':'test-key'} and image.startswith('data:image/png;base64,')
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('url',[
+    'https://account.bilibili.com.evil.example/h5/account-h5/auth/scan-web',
+    'http://account.bilibili.com/h5/account-h5/auth/scan-web',
+    'https://account.bilibili.com/other',
+    'https://user:password@account.bilibili.com/h5/account-h5/auth/scan-web',
+    'https://account.bilibili.com:8443/h5/account-h5/auth/scan-web',
+])
+async def test_bili_qr_rejects_untrusted_urls(url):
+    class HTTP:
+        async def get(self, *args, **kwargs):
+            return json.dumps({'code':0,'data':{'url':url,'qrcode_key':'test-key'}}).encode()
+    with pytest.raises(ReachError,match='登录地址无法验证'):
+        await LoginProviders(settings(),http=HTTP()).bili_start()

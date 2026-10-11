@@ -5,6 +5,7 @@
  */
 
 import { request } from './api';
+import { connectionRequest } from './connectionRequest';
 
 export type KuaimaiSource = 'thinktank' | 'viperp';
 export type SyncType = 'daily' | 'manual' | 'backfill';
@@ -177,8 +178,8 @@ export interface KuaimaiLoginResult extends Partial<KuaimaiLoginSession> {
   message: string;
 }
 export function startKuaimaiLogin(): Promise<KuaimaiLoginSession> {
-  return request({ method: 'POST', url: '/admin/kuaimai/login/sessions' });
+  return connectionRequest({ method: 'POST', url: '/admin/kuaimai/login/sessions' });
 }
 export function loginKuaimai(data: { session_id: string; company_name: string; username: string; password: string; validation_code: string }): Promise<KuaimaiLoginResult> {
-  return request({ method: 'POST', url: '/admin/kuaimai/login/password', data });
+  return connectionRequest({ method: 'POST', url: '/admin/kuaimai/login/password', data });
 }

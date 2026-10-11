@@ -1,4 +1,4 @@
-import { render, fireEvent, screen, waitFor, cleanup } from '@testing-library/react';
+import { render, fireEvent, screen, within, waitFor, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ReachConnections from '../ReachConnections';
@@ -98,4 +98,19 @@ it('switches account categories without rendering a dialog', async () => {
   expect(screen.queryByRole('table')).not.toBeInTheDocument();
   expect(screen.getByLabelText('组织账号')).toBeInTheDocument();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+it('explains empty grant options and enables them after login completes', async () => {
+  const user = userEvent.setup(); render(<ReachConnections />);
+  await screen.findByText(/暂无可分配的组织账号/);
+  expect(screen.getByLabelText('组织账号')).toBeDisabled();
+  expect(screen.getByRole('button', { name: '保存权限' })).toBeDisabled();
+  vi.mocked(reach.listReachConnections).mockResolvedValue([row]);
+  vi.mocked(reach.startReachLogin).mockResolvedValue({ id: 'session', platform: 'bilibili', state: 'connected', expires_at: Date.now() / 1000 + 180, connection: row });
+  await user.click(within(screen.getByRole('row', { name: /B 站/ })).getByRole('button', { name: '扫码连接', exact: true }));
+  await user.click(screen.getByRole('button', { name: '生成登录二维码' }));
+  await screen.findByText('B 站 · 组织账号', { selector: 'p' });
+  expect(screen.getByLabelText('组织账号')).toBeEnabled();
+  expect(screen.getByRole('option', { name: 'B 站 · 组织账号' })).toBeInTheDocument();
+  expect(screen.queryByText(/暂无可分配的组织账号/)).not.toBeInTheDocument();
 });
