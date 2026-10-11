@@ -356,7 +356,7 @@ class TestRoutingSignal:
         decision = RoutingDecision(
             generation_type=GenerationType.IMAGE,
             raw_tool_name="generate_image",
-            routed_by="qwen3.5-plus",
+            routed_by="qwen3.8-max",
             recommended_model="flux-schnell",
         )
 
@@ -369,7 +369,7 @@ class TestRoutingSignal:
                 user_id="user_1",
                 input_length=50,
                 has_image=False,
-                router_model="qwen3.5-plus",
+                router_model="qwen3.8-max",
             )
             # 等待 fire-and-forget 任务完成
             import asyncio
@@ -378,7 +378,7 @@ class TestRoutingSignal:
             mock_metric.assert_called_once()
             kw = mock_metric.call_args[1]
             assert kw["task_type"] == "routing"
-            assert kw["model_id"] == "qwen3.5-plus"
+            assert kw["model_id"] == "qwen3.8-max"
             assert kw["params"]["routing_tool"] == "generate_image"
             assert kw["params"]["recommended_model"] == "flux-schnell"
             assert kw["params"]["input_length"] == 50

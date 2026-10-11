@@ -81,6 +81,13 @@ class StreamChunk:
     # 工具调用增量（流式累积，每帧可能只有 arguments 片段）
     tool_calls: Optional[List[ToolCallDelta]] = None
 
+    # Optional provider-managed activity; never submitted to local ToolExecutor.
+    builtin_tool_event: Optional[Dict[str, Any]] = None
+    builtin_tool_usage: Dict[str, int] = field(default_factory=dict)
+    provider_output: Optional[Dict[str, Any]] = None
+    cached_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+
     @property
     def has_content(self) -> bool:
         return bool(self.content)
@@ -105,6 +112,8 @@ class ChatResponse:
     finish_reason: Optional[str] = None     # 结束原因
     prompt_tokens: int = 0                  # 输入 token 数
     completion_tokens: int = 0              # 输出 token 数
+    cached_tokens: int = 0
+    cache_creation_input_tokens: int = 0
 
 
 @dataclass
@@ -141,6 +150,8 @@ class ModelConfig:
     supports_search: bool = False
     supports_thinking: bool = False
     supports_structured_output: bool = False
+    builtin_tools: tuple[str, ...] = ()
+    supports_session_cache: bool = False
     max_tokens: int = 8192
     context_window: int = 128000
 

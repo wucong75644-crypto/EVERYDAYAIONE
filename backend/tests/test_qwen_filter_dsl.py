@@ -19,7 +19,7 @@ import httpx
 # ── 配置 ──
 API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")
 BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-MODEL = "qwen3.5-plus"
+MODEL = "qwen3.8-max"
 
 # ── Filter DSL 工具定义 ──
 TOOL_DEF = {

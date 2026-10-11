@@ -190,7 +190,7 @@ class TestFuzzyModelMatch:
 
     def test_chinese_name_match(self):
         result = CommandHandler._fuzzy_match_model("千问")
-        assert result == "qwen3.5-plus"
+        assert result == "qwen3.8-max"
 
 
 # ============================================================

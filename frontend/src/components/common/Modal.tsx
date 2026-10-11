@@ -23,12 +23,15 @@
 
 import { type ReactNode } from 'react';
 import { Dialog } from '../primitives/Dialog';
+import { cn } from '../../utils/cn';
 
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
   title?: string;
   children: ReactNode;
+  /** 固定底部操作区；提供时仅正文滚动 */
+  footer?: ReactNode;
   /** 是否允许点击遮罩层关闭 */
   closeOnOverlay?: boolean;
   /** 是否允许按 ESC 键关闭 */
@@ -66,12 +69,14 @@ export default function Modal({
   onClose,
   title,
   children,
+  footer,
   closeOnOverlay = true,
   closeOnEsc = true,
   showCloseButton = true,
   maxWidth = 'max-w-md',
 }: ModalProps) {
   const { size, className: sizeClass } = mapMaxWidthToSize(maxWidth);
+  const hasFooter = footer != null;
 
   // Radix 在 ESC / backdrop click / close button 触发 open=false 时映射到 onClose
   // 当 closeOnEsc/closeOnOverlay=false 时，primitives/Dialog 的
@@ -92,12 +97,12 @@ export default function Modal({
       showClose={showCloseButton}
       closeOnEscape={closeOnEsc}
       closeOnOutsideClick={closeOnOverlay}
-      className={sizeClass}
+      className={cn(sizeClass, hasFooter && 'flex flex-col')}
     >
       {/* 头部（含显示的 h2 标题 + 分隔线）
           a11y 的 Dialog.Title 已由 primitives/Dialog 用 sr-only 渲染，此处纯视觉 */}
       {title && (
-        <div className="px-5 pt-5 pb-3.5 border-b border-[var(--s-border-default)]">
+        <div className="shrink-0 px-5 pt-5 pb-3.5 border-b border-[var(--s-border-default)]">
           <h2
             className="text-lg font-semibold text-[var(--s-text-primary)] pr-8"
             style={{ fontFamily: 'var(--s-font-heading)' }}
@@ -109,7 +114,8 @@ export default function Modal({
       )}
 
       {/* 内容区域（保持旧 Modal 的 p-5 padding） */}
-      <div className="p-5">{children}</div>
+      <div className={cn('p-5', hasFooter && 'min-h-0 flex-1 overflow-y-auto overscroll-contain')}>{children}</div>
+      {hasFooter && <div className="shrink-0 border-t border-[var(--s-border-default)] px-5 py-4">{footer}</div>}
     </Dialog>
   );
 }

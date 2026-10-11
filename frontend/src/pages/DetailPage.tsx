@@ -1,109 +1,120 @@
-import { useEffect } from 'react';
-import { Sparkles } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import * as Dialog from '@radix-ui/react-dialog';
+import { List, X } from 'lucide-react';
+import { useAuthStore } from '../stores/useAuthStore';
+import { DetailTaskSidebar } from '../components/detail-page/DetailTaskSidebar';
 import { DetailPageHeader } from '../components/detail-page/DetailPageHeader';
 import { GenerationSettings } from '../components/detail-page/GenerationSettings';
-import { ProductImageSection } from '../components/detail-page/ProductImageSection';
-import { StepBar } from '../components/detail-page/StepBar';
-import { AnalyzingPanel } from '../components/detail-page/AnalyzingPanel';
-import { PlanReviewPanel } from '../components/detail-page/PlanReviewPanel';
-import { GenerationProgress } from '../components/detail-page/GenerationProgress';
-import { ResultGallery } from '../components/detail-page/ResultGallery';
+import { DetailWorkspace } from '../components/detail-page/DetailWorkspace';
 import { RequirementAssistModal } from '../components/detail-page/RequirementAssistModal';
 import { Card } from '../components/ui/Card';
+import { Button } from '../components/ui/Button';
 import { PageTransition } from '../components/motion/PageTransition';
 import { useDetailRequirementAssist } from '../hooks/useDetailRequirementAssist';
-import { DETAIL_STEP_LABELS } from '../mocks/detailPageMocks';
 import { useDetailPageStore } from '../stores/useDetailPageStore';
 
-const STEP_PLACEHOLDERS = {
-  1: '上传产品图并填写要求后，点击“分析产品”开始',
-  2: 'AI 正在分析产品并提取核心卖点',
-  3: '检查并编辑即将生成的图片规划',
-  4: '图片将按规划逐张生成',
-  5: '查看和下载本次生成结果',
-} as const;
-
-export default function DetailPage() {
-  const step = useDetailPageStore((state) => state.step);
-  const images = useDetailPageStore((state) => state.images);
-  const form = useDetailPageStore((state) => state.form);
-  const projectId = useDetailPageStore((state) => state.projectId);
-  const isHydrating = useDetailPageStore((state) => state.isHydrating);
-  const formError = useDetailPageStore((state) => state.formError);
-  const analysisStage = useDetailPageStore((state) => state.analysisStage);
-  const plan = useDetailPageStore((state) => state.plan);
-  const generationItems = useDetailPageStore((state) => state.generationItems);
-  const addImages = useDetailPageStore((state) => state.addImages);
-  const attachWorkspaceImages = useDetailPageStore((state) => state.attachWorkspaceImages);
-  const removeImage = useDetailPageStore((state) => state.removeImage);
-  const updateForm = useDetailPageStore((state) => state.updateForm);
-  const setStep = useDetailPageStore((state) => state.setStep);
-  const startAnalysis = useDetailPageStore((state) => state.startAnalysis);
-  const cancelAnalysis = useDetailPageStore((state) => state.cancelAnalysis);
-  const updatePlanItem = useDetailPageStore((state) => state.updatePlanItem);
-  const removePlanItem = useDetailPageStore((state) => state.removePlanItem);
-  const replan = useDetailPageStore((state) => state.replan);
-  const startGeneration = useDetailPageStore((state) => state.startGeneration);
-  const retryGeneration = useDetailPageStore((state) => state.retryGeneration);
-  const backToPlan = useDetailPageStore((state) => state.backToPlan);
-  const restart = useDetailPageStore((state) => state.restart);
-  const reset = useDetailPageStore((state) => state.reset);
-  const hydrateDraft = useDetailPageStore((state) => state.hydrateDraft);
-  const hasProductImage = images.some((image) => image.category === 'product');
-  const hasReadyProductImage = images.some((image) => image.category === 'product' && image.status === 'ready');
-  const hasPendingImage = images.some((image) => ['local', 'uploading', 'attaching'].includes(image.status));
-  const requirementAssist = useDetailRequirementAssist();
-  const requirementAssistDisabled = isHydrating || !projectId || !hasReadyProductImage || hasPendingImage;
-
-  const openRequirementAssist = () => {
-    if (!projectId || requirementAssistDisabled) return;
-    void requirementAssist.open(projectId, form);
-  };
-
-  const confirmRequirementAssist = (brief: string) => {
-    updateForm({ requirement: brief });
+export default function DetailPage(){
+  const state=useDetailPageStore();
+  const [searchParams,setSearchParams]=useSearchParams();
+  const userId=useAuthStore(s=>s.user?.id);
+  const orgId=useAuthStore(s=>s.currentOrgId);
+  const scopeKey=`${userId??''}:${orgId??'personal'}`;
+  const [taskDrawer,setTaskDrawer]=useState(false);
+  const {images,form,projectId,isHydrating,formError,groups,status,models,ratios,isTransitioning,
+    addImages,attachWorkspaceImages,removeImage,updateForm,startAnalysis,restart,refresh,hydrateDraft,reset}=state;
+  const ready=images.some(image=>image.category==='product'&&image.status==='ready');
+  const pending=images.some(image=>image.status!=='ready');
+  const requirementDisabled=isHydrating||isTransitioning||!['draft','completed','failed'].includes(status);
+  const disabled=requirementDisabled||state.isUploading||state.isMutating;
+  const analyzeDisabled=requirementDisabled||state.isUploading||state.isMutating;
+  const requirementAssist=useDetailRequirementAssist();
+  const closeAssist=requirementAssist.close;
+  const requirementAssistDisabled=disabled||!projectId||!ready||pending;
+  const openRequirementAssist=()=>{if(projectId&&!requirementAssistDisabled)void requirementAssist.open(projectId,form);};
+  const confirmRequirementAssist=(brief:string)=>{
+    if(requirementAssist.sourceProjectId===useDetailPageStore.getState().projectId&&!requirementAssistDisabled)updateForm({requirement:brief});
     requirementAssist.close();
   };
-
-  useEffect(() => {
-    void hydrateDraft();
-    return reset;
-  }, [hydrateDraft, reset]);
-
-  return (
-    <PageTransition className="min-h-screen bg-[var(--s-surface-base)] text-[var(--s-text-primary)]">
-      <DetailPageHeader />
-      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 py-5 sm:py-6">
-        <StepBar step={step} />
-        <section className="mt-4 grid lg:grid-cols-[440px_minmax(0,1fr)] gap-5">
-          <Card variant="elevated" padding="md" className="min-h-[520px]">
-            <ProductImageSection images={images} error={formError} disabled={step !== 1} onAdd={addImages} onWorkspaceAdd={attachWorkspaceImages} onRemove={removeImage} />
-            <GenerationSettings form={form} hasProductImage={hasProductImage} disabled={step !== 1} requirementAssistDisabled={requirementAssistDisabled} onChange={updateForm} onRequirementAssist={openRequirementAssist} onAnalyze={startAnalysis} />
-          </Card>
-          <Card variant="elevated" padding="lg" className="min-h-[520px] flex items-center justify-center text-center">
-            {step === 2 ? <AnalyzingPanel stage={analysisStage} onCancel={cancelAnalysis} /> : step === 3 ? <PlanReviewPanel plan={plan} error={formError} onChange={updatePlanItem} onRemove={removePlanItem} onBack={() => setStep(1)} onReplan={replan} onConfirm={startGeneration} /> : step === 4 ? <GenerationProgress items={generationItems} onRetry={retryGeneration} /> : step === 5 ? <ResultGallery items={generationItems} onRetry={retryGeneration} onRestart={restart} onBack={backToPlan} /> : <div>
-              <div className="w-16 h-16 mx-auto rounded-full bg-[var(--s-surface-secondary)] flex items-center justify-center">
-                <Sparkles className="w-7 h-7 text-[var(--s-text-secondary)]" aria-hidden="true" />
-              </div>
-              <h2 className="mt-4 font-semibold">{DETAIL_STEP_LABELS[step - 1]}</h2>
-              <p className="mt-2 text-sm text-[var(--s-text-tertiary)]">{STEP_PLACEHOLDERS[step]}</p>
-            </div>}
-          </Card>
-        </section>
-      </main>
+  const preferredId=searchParams.get('projectId');
+  useEffect(()=>{
+    let live=true;
+    void hydrateDraft(scopeKey,preferredId).then(()=>{const id=useDetailPageStore.getState().projectId;
+      if(live&&id)setSearchParams({projectId:id},{replace:true});});
+    return ()=>{live=false;reset();};
+    // Task selection has its own save/read boundary; only account changes rehydrate the page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[scopeKey,hydrateDraft,reset]);
+  useEffect(()=>{closeAssist();},[projectId,scopeKey,closeAssist]);
+  useEffect(()=>{
+    const current=useDetailPageStore.getState();
+    if(preferredId&&preferredId!==current.projectId&&!current.isHydrating&&!current.isTransitioning&&!current.isUploading&&!current.isMutating){
+      void current.selectTask(preferredId).then(()=>{const latest=useDetailPageStore.getState();
+        if(latest.scopeKey===scopeKey&&latest.projectId)setSearchParams({projectId:latest.projectId},{replace:true});});
+    }
+  },[preferredId,scopeKey,setSearchParams]);
+  useEffect(()=>{
+    const refreshVisible=()=>{if(!document.hidden){void useDetailPageStore.getState().refreshTasks();void useDetailPageStore.getState().refresh();}};
+    window.addEventListener('focus',refreshVisible);document.addEventListener('visibilitychange',refreshVisible);
+    return ()=>{window.removeEventListener('focus',refreshVisible);document.removeEventListener('visibilitychange',refreshVisible);};
+  },[]);
+  const switchDisabled=isHydrating||isTransitioning||state.isUploading||state.isMutating;
+  const changeTask=async(id?:string)=>{
+    if(switchDisabled)return;
+    requirementAssist.close();
+    if(id)await state.selectTask(id);else await restart();
+    const selected=useDetailPageStore.getState().projectId;
+    if(selected&&useDetailPageStore.getState().scopeKey===scopeKey){setSearchParams({projectId:selected},{replace:true});setTaskDrawer(false);}
+  };
+  const sidebar=<DetailTaskSidebar key={scopeKey} tasks={state.tasks} selectedId={projectId} disabled={switchDisabled}
+    loading={state.isLoadingTasks} hasMore={!!state.taskCursor} error={state.taskError}
+    onCreate={()=>void changeTask()} onSelect={id=>void changeTask(id)} onMore={()=>void state.loadMoreTasks()} onRefresh={()=>void state.refreshTasks()}
+    onDelete={async id=>{await state.deleteTask(id);const current=useDetailPageStore.getState();
+      if(current.scopeKey===scopeKey)setSearchParams(current.projectId?{projectId:current.projectId}:{},{replace:true});}}/>;
+  return <PageTransition className="flex h-dvh flex-col overflow-hidden bg-[var(--s-surface-base)] text-[var(--s-text-primary)]">
+    <div className="shrink-0"><DetailPageHeader/></div>
+    <main className="mx-auto min-h-0 w-full max-w-[2200px] flex-1 p-3 sm:p-5">
+      <div className="mb-2 flex justify-end xl:hidden"><Button variant="ghost" size="sm" icon={<List className="h-4 w-4"/>} onClick={()=>setTaskDrawer(true)}>任务列表</Button></div>
+      <section className="grid h-full min-h-0 grid-cols-1 gap-4 md:grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[360px_minmax(0,1fr)_256px] max-xl:h-[calc(100%-40px)] max-md:overflow-y-auto">
+        <Card variant="elevated" padding="sm" aria-label="创作设置" className="relative h-full min-h-0 overflow-hidden max-md:min-h-[600px]">
+          <GenerationSettings form={form} images={images} models={models} ratios={ratios} hasProductImage={ready&&!pending} disabled={disabled} requirementDisabled={requirementDisabled}
+            analyzeDisabled={analyzeDisabled} analyzeLabel={status==='draft'?'开始生成':'再次生成'}
+            requirementAssistDisabled={requirementAssistDisabled} onChange={updateForm} onRequirementAssist={openRequirementAssist} onAnalyze={()=>void startAnalysis()} onAdd={files=>void addImages('product',files)}
+            onWorkspaceAdd={paths=>void attachWorkspaceImages('product',paths)} onRemove={id=>void removeImage(id)}/>
+          {formError&&<p role="alert" className="absolute inset-x-4 bottom-16 rounded-lg bg-[var(--s-surface-raised)] p-2 text-xs text-[var(--s-error)] shadow-sm">{formError}{!projectId&&<button type="button" className="ml-2 underline" onClick={()=>void hydrateDraft(scopeKey,preferredId)}>重新加载</button>}</p>}
+        </Card>
+        <Card variant="elevated" padding="lg" aria-label="规划与生成结果" className="h-full min-h-0 min-w-0 overflow-y-auto overscroll-contain" tabIndex={0}>
+          <DetailWorkspace key={projectId} groups={groups} runs={state.runs} currentRunId={state.currentRunId} projectId={projectId} onRefresh={()=>void refresh()}/>
+        </Card>
+        <Card variant="elevated" padding="sm" className="hidden h-full min-h-0 overflow-hidden xl:block">{sidebar}</Card>
+      </section>
+    </main>
+      <Dialog.Root open={taskDrawer} onOpenChange={setTaskDrawer}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/30"/>
+          <Dialog.Content aria-describedby={undefined} className="fixed inset-y-0 right-0 z-50 flex w-[300px] max-w-[90vw] flex-col bg-[var(--s-surface-raised)] p-4 shadow-xl focus:outline-none">
+            <div className="mb-3 flex items-center justify-between"><Dialog.Title className="font-semibold">任务列表</Dialog.Title><Dialog.Close asChild><Button variant="ghost" size="sm" aria-label="关闭任务列表"><X className="h-4 w-4"/></Button></Dialog.Close></div>
+            <div className="min-h-0 flex-1">{sidebar}</div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
       <RequirementAssistModal
         isOpen={requirementAssist.isOpen}
         isLoading={requirementAssist.isLoading}
-        result={requirementAssist.result}
-        selectedId={requirementAssist.selectedId}
-        selectedBrief={requirementAssist.selectedBrief}
+        draft={requirementAssist.draft}
+        brief={requirementAssist.brief}
         error={requirementAssist.error}
+        validationError={requirementAssist.validationError}
+        supplement={requirementAssist.supplement}
+        answers={requirementAssist.answers}
+        skippedQuestions={requirementAssist.skippedQuestions}
         onClose={requirementAssist.close}
-        onSelect={requirementAssist.selectSuggestion}
         onDraftChange={requirementAssist.updateDraft}
-        onRegenerate={() => void requirementAssist.regenerate()}
+        onSupplementChange={requirementAssist.setSupplement}
+        onAnswer={requirementAssist.answerQuestion}
+        onToggleSkip={requirementAssist.toggleSkip}
+        onUpdate={() => void requirementAssist.update()}
         onConfirm={confirmRequirementAssist}
       />
-    </PageTransition>
-  );
+  </PageTransition>;
 }

@@ -2,13 +2,13 @@
   "chat": {
     "models": [
       {
-        "id": "qwen3.5-plus",
-        "description": "阿里千问3.5，百万上下文，费用极低，响应快。默认首选，适合通用对话、长文分析、写作、翻译。用户无特殊要求时优先选择此模型",
+        "id": "qwen3.8-max",
+        "description": "阿里千问3.8 Max，百万上下文，支持图片理解、内置联网搜索与网页抓取。默认千问选项，适合通用对话、长文分析、写作、翻译。网页抓取需开启思考模式",
         "keywords": ["qwen", "千问", "通义", "阿里"],
         "priority": 1,
-        "capabilities": ["chat", "analysis", "writing", "translation"],
+        "capabilities": ["chat", "analysis", "writing", "translation", "search"],
         "supports_image": true,
-        "supports_search": false,
+        "supports_search": true,
         "supports_thinking": true
       },
       {
@@ -202,7 +202,7 @@
         "supports_thinking": true
       }
     ],
-    "default": "qwen3.5-plus"
+    "default": "qwen3.8-max"
   },
   "image": {
     "models": [
@@ -219,14 +219,14 @@
         "priority": 2
       },
       {
-        "id": "gpt-image-2-5-flare-text-to-image",
-        "description": "GPT Image 2.5 Flare，默认文生图模型，真实感/文字渲染/复杂场景表现出色(6积分)。用户没有特殊要求或要求GPT画图时选择",
+        "id": "gpt-image-2-5-sunburst-text-to-image",
+        "description": "GPT Image 2.5 Sunburst，默认文生图模型，真实感/文字渲染/复杂场景表现出色(6积分)。用户没有特殊要求或要求GPT画图时选择",
         "keywords": ["gpt", "openai", "gpt image"],
         "priority": 3
       },
       {
-        "id": "gpt-image-2-5-flare-image-to-image",
-        "description": "GPT Image 2.5 Flare图生图，以参考图为基础生成新图片(6积分)。用户上传了图片并要求修改/优化/重新生成时选择",
+        "id": "gpt-image-2-5-sunburst-image-to-image",
+        "description": "GPT Image 2.5 Sunburst图生图，以参考图为基础生成新图片(6积分)。用户上传了图片并要求修改/优化/重新生成时选择",
         "keywords": ["gpt", "openai", "gpt image"],
         "priority": 4,
         "requires_image": true
@@ -252,7 +252,7 @@
         "requires_image": true
       }
     ],
-    "default": "gpt-image-2-5-flare-text-to-image"
+    "default": "gpt-image-2-5-sunburst-text-to-image"
   },
   "video": {
     "models": [

@@ -26,7 +26,7 @@ class TestIsThinkingModel:
         assert is_thinking_model("openai/gpt-5.4-pro") is True
 
     def test_regular_models_not_thinking(self):
-        assert is_thinking_model("qwen3.5-plus") is False
+        assert is_thinking_model("qwen3.8-max") is False
         assert is_thinking_model("gemini-3-flash") is False
         assert is_thinking_model("deepseek-v3.2") is False
 
@@ -57,7 +57,7 @@ class TestResolveStreamTimeout:
     @patch("core.config.get_settings")
     def test_chat_regular_model(self, mock_get):
         mock_get.return_value = _mock_settings()
-        assert resolve_stream_timeout("qwen3.5-plus") == 60.0
+        assert resolve_stream_timeout("qwen3.8-max") == 60.0
 
     @patch("core.config.get_settings")
     def test_chat_thinking_model(self, mock_get):
@@ -86,7 +86,7 @@ class TestResolveStreamTimeout:
     def test_custom_timeout_from_config(self, mock_get):
         """配置值覆盖默认值"""
         mock_get.return_value = _mock_settings(chat_stream_timeout=30.0)
-        assert resolve_stream_timeout("qwen3.5-plus") == 30.0
+        assert resolve_stream_timeout("qwen3.8-max") == 30.0
 
     @patch("core.config.get_settings")
     def test_image_ignores_model_type(self, mock_get):

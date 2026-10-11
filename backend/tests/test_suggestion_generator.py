@@ -117,20 +117,20 @@ class TestCallModel:
 
     async def test_success(self):
         """正常调用返回建议列表"""
-        result = await _call_model("qwen3.5-flash", "测试 prompt", 3)
+        result = await _call_model("qwen3.8-flash", "测试 prompt", 3)
         assert result == ["建议一", "建议二"]
         self.mock_client.post.assert_called_once()
 
     async def test_http_error(self):
         """HTTP 错误返回 None"""
         self.mock_response.raise_for_status.side_effect = Exception("500 Server Error")
-        result = await _call_model("qwen3.5-flash", "测试 prompt", 3)
+        result = await _call_model("qwen3.8-flash", "测试 prompt", 3)
         assert result is None
 
     async def test_malformed_response(self):
         """响应格式异常返回 None"""
         self.mock_response.json.return_value = {"choices": []}
-        result = await _call_model("qwen3.5-flash", "测试 prompt", 3)
+        result = await _call_model("qwen3.8-flash", "测试 prompt", 3)
         assert result is None
 
 

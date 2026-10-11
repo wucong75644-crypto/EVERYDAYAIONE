@@ -265,7 +265,7 @@ async def create_plan(*, db: Any, org_id: str, definition: Dict[str, Any]) -> tu
     settings = get_settings()
     model_gateway = get_model_gateway().open_chat(
         ModelCallRequest(
-            model_id=getattr(settings, "agent_loop_model", None) or "qwen3.5-plus",
+            model_id=getattr(settings, "agent_loop_model", None) or "qwen3.8-max",
             org_id=org_id,
             db=db,
         )

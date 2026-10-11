@@ -11,7 +11,7 @@ from pydantic import Field, ValidationError, field_serializer
 from services.skills.contracts import Contract, Sha256, SkillError, SkillKey, RevisionKey
 from services.skills.renderer import (
     MAX_ACTIVE_SKILLS, MAX_ARGS_BYTES, MAX_ARGUMENTS, MAX_DIRECTORY_BYTES,
-    MAX_DIRECTORY_ENTRIES, MAX_RENDERED_BYTES, MAX_TURN_RENDERED_BYTES,
+    MAX_DIRECTORY_ENTRIES, MAX_BODY_BYTES, MAX_RENDERED_BYTES, MAX_TURN_RENDERED_BYTES,
     SkillTemplateArgsError, argument_summary, bounded, digest, encoded,
     asset_manifest_digest, prepare_resources, referenced_assets, render_resources,
 )
@@ -94,7 +94,13 @@ def control_result(code: str, *, ok: bool = False, **details) -> dict:
 class SkillRuntime:
     def __init__(self, *, turn_id: str, source, platform_tool_names, authorized_tool_names,
                  cancellation_event: asyncio.Event, template_context: dict | None = None,
-                 execution_mode: str = "interactive", available_tool_names=None):
+                 execution_mode: str = "interactive", available_tool_names=None, maximum_body=MAX_BODY_BYTES,
+                 maximum_rendered=MAX_RENDERED_BYTES, maximum_turn_rendered=MAX_TURN_RENDERED_BYTES):
+        if min(maximum_body, maximum_rendered, maximum_turn_rendered) <= 0:
+            raise ValueError("Skill byte budgets must be positive")
+        self.maximum_body = maximum_body
+        self.maximum_rendered = maximum_rendered
+        self.maximum_turn_rendered = maximum_turn_rendered
         self.turn_id, self.source = turn_id, source
         self.execution_mode = execution_mode
         self.scheduled_snapshot = None
@@ -263,6 +269,7 @@ class SkillRuntime:
             content = ('[Current Skill selection]\n'
                        + encoded({'active_skills': [], 'available_tools': names})
                        + '\n当前轮尚未激活 Skill。历史“已启用”不是当前轮的激活状态。'
+                       '当前新请求匹配目录中某个方法的用途时，先调用 activate_skill 读取正文，再执行业务工具。'
                        '用户确认或继续上一轮 Skill 任务时，先从下面当前目录选择匹配方法并调用 activate_skill，'
                        '读取正文后在下一轮按实际提供的 tools schema 处理当前请求。'
                        '准备或列出工具参数也应先加载该方法，不能从历史代码块猜参数。'
@@ -346,15 +353,16 @@ class SkillRuntime:
             validated = await self.source.load(candidate)
             self._check_cancelled()
             self._validate_identity(candidate, validated)
-            remaining = MAX_TURN_RENDERED_BYTES - sum(len(a.rendered.encode('utf-8')) for a in self.active.values())
-            maximum = min(MAX_RENDERED_BYTES, remaining)
-            ids, base, values = prepare_resources(validated, self.template_context, maximum)
+            remaining = self.maximum_turn_rendered - sum(len(a.rendered.encode('utf-8')) for a in self.active.values())
+            maximum = min(self.maximum_rendered, remaining)
+            ids, base, values = prepare_resources(validated, self.template_context, maximum,
+                maximum_body=self.maximum_body, maximum_rendered=self.maximum_rendered)
             texts = await self.source.load_assets(candidate, validated, ids) if ids else {}
             self._check_cancelled()
             rendered = render_resources(validated, ids, base, values, texts, maximum)
             summary = ArgumentSummary.model_validate(argument_summary(values))
             bounded(rendered + "".join(a.rendered for a in self.active.values()),
-                    MAX_TURN_RENDERED_BYTES, "SKILL_TURN_BUDGET_EXCEEDED")
+                    self.maximum_turn_rendered, "SKILL_TURN_BUDGET_EXCEEDED")
             ceiling = skill_tool_ceiling(
                 validated.catalog_metadata, self.platform_tool_names, self.effective_allowed_tool_names,
                 available_tool_names=self.available_tool_names,
@@ -415,18 +423,19 @@ class SkillRuntime:
                     "SKILL_REPLAY_DIRECTORY_INVALID")
             bounded(encoded([c.model_dump(mode="json") for c in directory.values()]), 65_536,
                     "SKILL_REPLAY_DIRECTORY_INVALID")
-            bounded(''.join(a.rendered for a in checkpoint.active), MAX_TURN_RENDERED_BYTES,
+            bounded(''.join(a.rendered for a in checkpoint.active), self.maximum_turn_rendered,
                     'SKILL_REPLAY_RENDER_INVALID')
             active = {}
             ceiling = self._initial_ceiling & checkpoint.effective_allowed_tool_names
             for saved in checkpoint.active:
-                bounded(saved.rendered, MAX_RENDERED_BYTES, 'SKILL_REPLAY_RENDER_INVALID')
+                bounded(saved.rendered, self.maximum_rendered, 'SKILL_REPLAY_RENDER_INVALID')
                 candidate = directory.get(saved.skill_key)
                 if candidate is None or saved.skill_key in active or saved.revision != candidate.revision:
                     raise SkillError("SKILL_REPLAY_IDENTITY_INVALID")
                 validated = await self.source.load(candidate, restoring=True)
                 self._check_cancelled()
                 self._validate_identity(candidate, validated)
+                bounded(validated.body, self.maximum_body, "SKILL_REPLAY_RENDER_INVALID")
                 if saved.body_sha256 != validated.body_sha256:
                     raise SkillError("SKILL_REPLAY_HASH_MISMATCH")
                 if (saved.asset_manifest_sha256 != asset_manifest_digest(validated.resources)
@@ -434,9 +443,9 @@ class SkillRuntime:
                     raise SkillError('SKILL_REPLAY_ASSET_MISMATCH')
                 if saved.rendered_sha256 != digest(saved.rendered):
                     raise SkillError("SKILL_REPLAY_RENDER_MISMATCH")
-                bounded(saved.rendered, MAX_RENDERED_BYTES, "SKILL_REPLAY_RENDER_INVALID")
+                bounded(saved.rendered, self.maximum_rendered, "SKILL_REPLAY_RENDER_INVALID")
                 if saved.loaded_asset_ids:
-                    if sum(a.bytes for a in validated.resources.assets if a.id in saved.loaded_asset_ids) > MAX_RENDERED_BYTES:
+                    if sum(a.bytes for a in validated.resources.assets if a.id in saved.loaded_asset_ids) > self.maximum_rendered:
                         raise SkillError('SKILL_REPLAY_RENDER_INVALID')
                     await self.source.load_assets(candidate, validated, saved.loaded_asset_ids)
                     self._check_cancelled()
@@ -460,7 +469,7 @@ class SkillRuntime:
                 # Preserve the saved ceiling even if deployment now offers more tools.
                 ceiling &= saved.effective_allowed_tool_names
                 active[saved.skill_key] = saved
-            bounded("".join(a.rendered for a in active.values()), MAX_TURN_RENDERED_BYTES,
+            bounded("".join(a.rendered for a in active.values()), self.maximum_turn_rendered,
                     "SKILL_REPLAY_RENDER_INVALID")
             self.directory, self.active = directory, active
             self.manual_skill_id = checkpoint.manual_skill_id
@@ -473,6 +482,15 @@ class SkillRuntime:
             raise SkillReplayError("SKILL_REPLAY_CHECKPOINT_INVALID") from None
         except Exception:
             raise SkillReplayError("SKILL_REPLAY_UNAVAILABLE") from None
+
+
+def skill_budget_options(settings) -> dict:
+    """Shared production budgets for interactive and scheduled execution."""
+    return {
+        "maximum_body": getattr(settings, "skill_max_body_bytes", 262_144),
+        "maximum_rendered": getattr(settings, "skill_max_rendered_bytes", 393_216),
+        "maximum_turn_rendered": getattr(settings, "skill_max_turn_rendered_bytes", 1_048_576),
+    }
 
 
 async def create_skill_runtime(*, handler, context, runtime, replay_context=None, selection=None, task_mode='smart', recommendations=True, explicit_only=False, intent=None, retry=False):
@@ -516,10 +534,15 @@ async def create_skill_runtime(*, handler, context, runtime, replay_context=None
         if intent.task_mode != task_mode or intent.selected_skill != selection:
             raise SkillBindingError('原任务 Skill 的模式或版本记录不一致。')
         source = PinnedIntentSource(source, intent, retry=retry)
+    workflow_pin = getattr(handler, "_ecom_workflow_pin", None)
+    if workflow_pin and not scheduled and checkpoint is None:
+        from services.agent.image.ecommerce_planner.workflow import WorkflowSkillSource
+        source = WorkflowSkillSource(source, workflow_pin)
     capability_registry = build_capability_catalog()
     currently_authorized = policy_available_tool_names(capability_registry, context)
     state = SkillRuntime(
         turn_id=runtime.turn_id, source=source, execution_mode=context.execution_mode,
+        **skill_budget_options(settings),
         platform_tool_names=(s.name for s in capability_registry.specs()),
         authorized_tool_names=currently_authorized,
         available_tool_names=currently_authorized,

@@ -144,10 +144,12 @@ class SkillRepository:
     ) -> SkillAssignment:
         self._require_admin()
         org_id = self._require_org()
-        self.get_package(package_id)
+        package = self.get_package(package_id)
         if type(enabled) is not bool or type(priority) is not int or not -(2**31) <= priority < 2**31:
             raise SkillError("SKILL_ASSIGNMENT_INVALID")
         with self._cursor() as cursor:
+            cursor.execute("SELECT set_config('app.skill_action', %s, true)",
+                           ('platform_assign' if package.scope_kind == 'platform' else 'assign',))
             self.lock_package_write(cursor, package_id)
             cursor.execute("""INSERT INTO public.skill_assignments
                 (org_id, package_id, revision_id, enabled, priority) VALUES (%s, %s, %s, %s, %s)
@@ -168,6 +170,35 @@ class SkillRepository:
                     AND (%s::uuid IS NULL OR p.id = %s::uuid)
                 ORDER BY a.priority DESC, p.skill_key, p.id""", (org_id, package_id, package_id))
             return [SkillRevision.model_validate(row) for row in cursor.fetchall()]
+
+    def set_platform_assignment(self, package_id: UUID, revision_id: UUID, *, enabled: bool = False,
+                                priority: int = 0) -> SkillAssignment:
+        """Explicit platform-wide grant; ordinary organization writers cannot use it."""
+        self._require_admin()
+        if self.scope.org_id is not None or self.owner_scope != "platform":
+            raise SkillError("SKILL_PLATFORM_CONTROL_REQUIRED")
+        self.get_owned_package(package_id)
+        if type(enabled) is not bool or type(priority) is not int or not -(2**31) <= priority < 2**31:
+            raise SkillError("SKILL_ASSIGNMENT_INVALID")
+        with self._cursor() as cursor:
+            # A human actor must still be an active platform administrator. A
+            # trusted server operator uses a null actor and an audited request ID.
+            if self.scope.actor_user_id:
+                cursor.execute("SELECT 1 FROM public.users WHERE id=%s::uuid AND status='active' AND role='super_admin'",
+                               (self.scope.actor_user_id,))
+                if not cursor.fetchone():
+                    raise SkillError("SKILL_PLATFORM_CONTROL_REQUIRED")
+            elif not self.scope.request_id:
+                raise SkillError("SKILL_PLATFORM_CONTROL_REQUIRED")
+            cursor.execute("SELECT set_config('app.skill_action', 'platform_assign', true)")
+            self.lock_package_write(cursor, package_id)
+            cursor.execute("""INSERT INTO public.skill_assignments
+                (org_id,package_id,revision_id,enabled,priority) VALUES (NULL,%s,%s,%s,%s)
+                ON CONFLICT (package_id) WHERE org_id IS NULL DO UPDATE SET
+                    revision_id=EXCLUDED.revision_id,enabled=EXCLUDED.enabled,
+                    priority=EXCLUDED.priority,updated_at=now() RETURNING *""",
+                (package_id, revision_id, enabled, priority))
+            return SkillAssignment.model_validate(cursor.fetchone())
 
     def record_activation(self, audit: ActivationAuditCreate) -> UUID:
         """Reserved explicit writer; never automatically called by this phase."""
@@ -194,8 +225,9 @@ class SkillRepository:
         with self._cursor() as cursor:
             cursor.execute("""SELECT r.* FROM public.skill_revisions r
                 JOIN public.skill_packages p ON p.id = r.package_id
-                LEFT JOIN public.skill_assignments a ON a.package_id = p.id
-                    AND a.org_id IS NOT DISTINCT FROM %s::uuid
+                LEFT JOIN LATERAL (SELECT * FROM public.skill_assignments
+                    WHERE package_id=p.id AND (org_id=%s::uuid OR org_id IS NULL)
+                    ORDER BY org_id NULLS LAST LIMIT 1) a ON true
                 WHERE p.id = %s AND r.revision = %s
                     AND (r.status = 'published' OR (%s AND r.status = 'deprecated'))
                     AND ((p.scope_kind = 'personal' AND p.owner_user_id = %s::uuid)
@@ -217,17 +249,20 @@ class SkillRepository:
             org_id = self.scope.org_id
             cursor.execute("""SELECT p.id AS package_id,p.skill_key,p.org_id AS package_org_id,
                     p.owner_user_id AS package_user_id,p.scope_kind,
-                    COALESCE(a.org_id, %s::uuid) AS assignment_org_id,COALESCE(a.priority, 0) AS priority,
+                    a.org_id AS assignment_org_id,
+                    (p.scope_kind='platform' AND a.org_id IS NULL AND a.package_id IS NOT NULL) AS global_assignment,
+                    COALESCE(a.priority, 0) AS priority,
                     r.revision,r.summary AS description,r.catalog_metadata
                 FROM public.skill_packages p JOIN public.skill_revisions r ON r.package_id=p.id
-                LEFT JOIN public.skill_assignments a ON a.package_id=p.id
-                    AND a.org_id IS NOT DISTINCT FROM %s::uuid AND a.enabled
+                LEFT JOIN LATERAL (SELECT * FROM public.skill_assignments
+                    WHERE package_id=p.id AND (org_id=%s::uuid OR org_id IS NULL)
+                    ORDER BY org_id NULLS LAST LIMIT 1) a ON true
                 WHERE p.skill_key=%s AND r.revision=%s AND r.status='published'
                   AND ((p.scope_kind='personal' AND p.owner_user_id=%s::uuid)
                        OR (p.scope_kind IN ('org','platform') AND a.enabled
                            AND (p.scope_kind='platform' OR p.org_id=a.org_id)))
                 """ + (' AND r.reviewed' if require_reviewed else ''),
-                (org_id, org_id, skill_key, revision, self.scope.actor_user_id))
+                (org_id, skill_key, revision, self.scope.actor_user_id))
             return [SkillCandidate.model_validate(row) for row in cursor.fetchall()]
 
     def catalog_candidates(self) -> list[SkillCandidate]:
@@ -235,19 +270,22 @@ class SkillRepository:
         with self._cursor() as cursor:
             cursor.execute("""SELECT p.id AS package_id, p.skill_key,
                     p.org_id AS package_org_id,p.owner_user_id AS package_user_id,p.scope_kind,
-                    COALESCE(a.org_id, %s::uuid) AS assignment_org_id,COALESCE(a.priority,0) AS priority,
+                    a.org_id AS assignment_org_id,
+                    (p.scope_kind='platform' AND a.org_id IS NULL AND a.package_id IS NOT NULL) AS global_assignment,
+                    COALESCE(a.priority,0) AS priority,
                     r.revision, r.summary AS description, r.catalog_metadata
                 FROM public.skill_packages p
                 JOIN public.skill_revisions r ON r.package_id=p.id AND r.status='published'
-                LEFT JOIN public.skill_assignments a ON a.package_id=p.id
-                    AND a.org_id IS NOT DISTINCT FROM %s::uuid AND a.enabled AND a.revision_id=r.id
+                LEFT JOIN LATERAL (SELECT * FROM public.skill_assignments
+                    WHERE package_id=p.id AND (org_id=%s::uuid OR org_id IS NULL)
+                    ORDER BY org_id NULLS LAST LIMIT 1) a ON true
                 WHERE (p.scope_kind='personal' AND p.owner_user_id=%s::uuid
                        AND r.id=(SELECT latest.id FROM public.skill_revisions latest
                            WHERE latest.package_id=p.id AND latest.status='published'
                            ORDER BY latest.created_at DESC,latest.id DESC LIMIT 1))
-                   OR (p.scope_kind IN ('org','platform') AND a.enabled
+                   OR (p.scope_kind IN ('org','platform') AND a.enabled AND a.revision_id=r.id
                        AND (p.scope_kind='platform' OR p.org_id=a.org_id))""",
-                (self.scope.org_id,self.scope.org_id,self.scope.actor_user_id))
+                (self.scope.org_id,self.scope.actor_user_id))
             try:
                 return [SkillCandidate.model_validate(row) for row in cursor.fetchall()]
             except ValidationError:

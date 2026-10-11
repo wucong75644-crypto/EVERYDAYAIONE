@@ -19,7 +19,7 @@ from services.intent_router import RetryContext, RoutingDecision
 from services.model_gateway import ModelCallRequest, ModelGateway, ModelGatewayError
 from services.agent.observability.model_sampling import SamplingEventType
 
-A, B = "gemini-3-pro", "qwen3.5-plus"
+A, B = "gemini-3-pro", "qwen3.8-max"
 
 
 def wrapped(wrapper, cause):

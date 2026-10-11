@@ -500,7 +500,7 @@ class TestCalcActualCredits:
 
     def test_normal_tokens_uses_pricing(self):
         """正常 token 量走定价表计算"""
-        # qwen3.5-plus: input=12/1M, output=68/1M
+        # qwen3.8-max: input=12/1M, output=68/1M
         # 10000 tokens → 7000 input + 3000 output
         # input_credits = 7000 * 12 / 1_000_000 = 0.084 → 0
         # output_credits = 3000 * 68 / 1_000_000 = 0.204 → 0

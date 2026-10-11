@@ -110,6 +110,8 @@ def get_model_keywords(category: str = "chat") -> Dict[str, str]:
 
 def _find_model_config(model_id: str) -> Optional[Dict[str, Any]]:
     """在 chat 模型列表中查找指定模型配置"""
+    from config.model_aliases import canonical_model_id
+    model_id = canonical_model_id(model_id)
     for m in SMART_CONFIG.get("chat", {}).get("models", []):
         if m["id"] == model_id:
             return m

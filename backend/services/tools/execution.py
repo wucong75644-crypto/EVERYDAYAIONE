@@ -55,6 +55,13 @@ class ToolExecutionService:
             except ValueError as error:
                 return ToolResult.from_exception(error, call=call, context=context,
                                                  decision=decision, handler_started=False)
+        if call.name == "plan_ecommerce_images" and context.entrypoint == "model":
+            from services.agent.image.ecommerce_planner.arguments import validate_planner_arguments
+            try:
+                validate_planner_arguments(self.registry.require(call.name), call.arguments)
+            except ValueError as error:
+                return ToolResult.from_exception(error, call=call, context=context,
+                    decision=decision, handler_started=False)
         key = (context.actor_user_id, context.workspace_owner_id, context.org_id,
                context.conversation_id, context.task_id, call.call_id)
         if key in self._consumed:

@@ -2,7 +2,7 @@
 建议问题生成器
 
 AI 回复完成后，异步调用千问小模型生成 2-3 条后续建议问题。
-降级链：qwen3.5-flash(3s) → qwen3.5-plus(3s) → 放弃（不显示建议）
+降级链：qwen3.8-flash(3s) → qwen3.8-max(3s) → 放弃（不显示建议）
 
 架构对齐：ChatGPT / Open WebUI 的 follow-up questions 均为独立异步调用，
 不嵌入主 Agent 提示词，保证格式可控。
@@ -57,8 +57,8 @@ async def generate_suggestions(
 
     # 降级链：flash → plus → 放弃
     models = [
-        settings.memory_filter_model,          # qwen3.5-flash
-        settings.memory_filter_fallback_model,  # qwen3.5-plus
+        settings.memory_filter_model,          # qwen3.8-flash
+        settings.memory_filter_fallback_model,  # qwen3.8-max
     ]
 
     for model in models:

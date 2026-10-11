@@ -8,6 +8,7 @@ from loguru import logger
 
 from core.config import get_settings
 from core.exceptions import AppException
+from core.db_scope import DatabaseAccessKind, DatabaseScope, ScopedDatabaseClient
 from services.file_upload import build_workspace_thumbnail_url
 from services.file_executor import FileExecutor
 
@@ -28,6 +29,19 @@ class DetailProjectService:
             org_id=org_id,
         )
 
+    def _runtime(self):
+        return ScopedDatabaseClient(getattr(self.db, "_db", self.db),
+            DatabaseScope(self.user_id, self.org_id, DatabaseAccessKind.RUNTIME))
+
+    def create(self, request_id: str) -> dict:
+        try:
+            project_id = self._runtime().rpc("create_detail_project", {"p_request_id": request_id}).execute().data
+        except Exception as exc:
+            if "DETAIL_SCOPE_DENIED" in str(exc) or "DETAIL_PROJECT_DENIED" in str(exc):
+                raise AppException("DETAIL_PROJECT_FORBIDDEN", "无权创建或读取该任务", 403) from exc
+            raise AppException("DETAIL_PROJECT_CREATE_FAILED", "新建任务失败，请重试", 500) from exc
+        return self.get_by_id(str(project_id))
+
     def get_current(self) -> dict | None:
         result = (
             self.db.table("detail_projects").select("*")
@@ -47,7 +61,7 @@ class DetailProjectService:
 
     def get_ai_input_project(self, project_id: str) -> dict:
         """读取当前用户可用于 AI 分析的草稿，并验证图片就绪状态。"""
-        project = self._require_project(project_id)
+        project = self._require_project(project_id, allow_finished=True)
         images = project.get("images") or []
         if not any(image.get("category") == "product" for image in images):
             raise AppException("DETAIL_PRODUCT_IMAGE_REQUIRED", "请至少上传1张产品图", 400)
@@ -55,19 +69,27 @@ class DetailProjectService:
             raise AppException("DETAIL_IMAGE_NOT_READY", "项目图片仍在上传或已失效", 409)
         return project
 
-    def attach_image(self, workspace_path: str, category: str) -> dict:
+    def attach_image(self, workspace_path: str, category: str, project_id: str | None = None) -> dict:
         self._validate_workspace_image(workspace_path)
         try:
-            with self.db.pool.connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT * FROM attach_detail_project_image(%s, %s, %s, %s)",
-                        (self.user_id, self.org_id, workspace_path, category),
-                    )
-                conn.commit()
+            if project_id:
+                self._runtime().rpc("attach_detail_project_image_by_id", {"p_project_id": project_id,
+                    "p_workspace_path": workspace_path, "p_category": category}).execute()
+            else:
+                with self.db.pool.connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT * FROM attach_detail_project_image(%s, %s, %s, %s)",
+                            (self.user_id, self.org_id, workspace_path, category))
+                        row = cur.fetchone()
+                        project_id = str(row["project_id"] if isinstance(row, dict) else row[0])
+                    conn.commit()
         except Exception as exc:
             message = str(exc)
             mapping = {
+                "DETAIL_PROJECT_AMBIGUOUS": ("DETAIL_PROJECT_AMBIGUOUS", "存在多个草稿，请选择指定任务上传", 409),
+                "DETAIL_PROJECT_NOT_DRAFT": ("DETAIL_PROJECT_NOT_DRAFT", "任务正在执行或已删除，暂不能修改图片", 409),
+                "DETAIL_PROJECT_DENIED": ("DETAIL_PROJECT_NOT_FOUND", "项目不存在", 404),
+                "DETAIL_SCOPE_DENIED": ("DETAIL_PROJECT_FORBIDDEN", "无权访问该任务", 403),
                 "DETAIL_IMAGE_DUPLICATE": ("DETAIL_IMAGE_DUPLICATE", "图片已添加", 409),
                 "DETAIL_IMAGE_LIMIT_EXCEEDED": ("DETAIL_IMAGE_LIMIT_EXCEEDED", "最多添加9张图片", 409),
                 "DETAIL_PROJECT_ORG_ACCESS_DENIED": ("DETAIL_IMAGE_FORBIDDEN", "无权访问该企业", 403),
@@ -80,26 +102,32 @@ class DetailProjectService:
                 f"org_id={self.org_id} | path={workspace_path} | error={exc}"
             )
             raise AppException("DETAIL_IMAGE_ATTACH_FAILED", "图片关联失败", 500) from exc
-        return self.get_current() or {}
+        return self.get_by_id(project_id)
 
     def update_settings(self, project_id: str, version: int, settings: dict) -> dict:
         allowed = {
             "content_type", "platform", "requirement", "language",
-            "aspect_ratio", "quality", "image_count",
+            "aspect_ratio", "quality", "image_count", "prompt_model",
         }
         updates = {key: value for key, value in settings.items() if key in allowed and value is not None}
         if not updates:
-            return self._require_project(project_id)
+            return self._require_project(project_id, allow_finished=True)
+        if "content_type" in updates or "image_count" in updates:
+            project = self._require_project(project_id, allow_finished=True)
+            content_type = updates.get("content_type", project["content_type"])
+            image_count = updates.get("image_count", project["image_count"])
+            if (content_type == "default" and image_count != 14) or (content_type != "default" and image_count > 15):
+                raise AppException("DETAIL_IMAGE_COUNT_INVALID", "默认模式固定14张，单类图片最多15张", 400)
         assignments = ", ".join(f'"{key}" = %s' for key in updates)
         params = [*updates.values(), project_id, self.user_id, self.org_id, version]
         sql = f"""
             UPDATE detail_projects SET {assignments}, version = version + 1, updated_at = NOW()
             WHERE id = %s AND user_id = %s AND org_id IS NOT DISTINCT FROM %s
-              AND version = %s AND status = 'draft'
+              AND version = %s AND status IN ('draft','completed','failed')
             RETURNING id
         """
         self._execute_versioned(sql, params)
-        return self.get_current() or {}
+        return self.get_by_id(project_id)
 
     def remove_image(self, project_id: str, image_id: str, version: int) -> dict:
         with self.db.pool.connection() as conn:
@@ -120,7 +148,7 @@ class DetailProjectService:
                 )
                 self._bump_version(cur, project_id)
             conn.commit()
-        return self.get_current() or {}
+        return self.get_by_id(project_id)
 
     def update_category(self, project_id: str, image_id: str, version: int, category: str) -> dict:
         with self.db.pool.connection() as conn:
@@ -135,7 +163,7 @@ class DetailProjectService:
                     raise AppException("DETAIL_IMAGE_NOT_FOUND", "项目图片不存在", 404)
                 self._bump_version(cur, project_id)
             conn.commit()
-        return self.get_current() or {}
+        return self.get_by_id(project_id)
 
     def reorder_images(self, project_id: str, version: int, image_ids: list[str]) -> dict:
         if len(image_ids) != len(set(image_ids)):
@@ -174,13 +202,31 @@ class DetailProjectService:
                     )
                 self._bump_version(cur, project_id)
             conn.commit()
-        return self.get_current() or {}
+        return self.get_by_id(project_id)
 
-    def _require_project(self, project_id: str) -> dict:
-        project = self.get_current()
-        if not project or str(project["id"]) != project_id:
-            raise AppException("DETAIL_PROJECT_NOT_FOUND", "草稿项目不存在", 404)
+    def archive(self, project_id: str) -> None:
+        self.get_by_id(project_id)
+        with self.db.pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE detail_projects SET status='archived',version=version+1,updated_at=NOW() "
+                "WHERE id=%s AND user_id=%s AND org_id IS NOT DISTINCT FROM %s "
+                "AND status IN ('draft','completed','failed','archived') RETURNING id",
+                (project_id,self.user_id,self.org_id))
+            if not cur.fetchone():
+                raise AppException('DETAIL_RUN_ACTIVE','任务仍在后台执行，请完成后再删除',409)
+            conn.commit()
+
+    def _require_project(self, project_id: str, allow_finished: bool = False) -> dict:
+        project = self.get_by_id(project_id)
+        if project["status"] not in ({'draft','completed','failed'} if allow_finished else {'draft'}):
+            raise AppException("DETAIL_PROJECT_NOT_DRAFT", "任务已提交，不能修改", 409)
         return project
+
+    def get_by_id(self, project_id: str) -> dict:
+        row = self.db.table("detail_projects").select("*").eq("id", project_id).eq("user_id", self.user_id).maybe_single().execute().data
+        if not row or row.get("org_id") != self.org_id:
+            raise AppException("DETAIL_PROJECT_NOT_FOUND", "项目不存在", 404)
+        images = self.db.table("detail_project_images").select("*").eq("project_id", project_id).eq("user_id", self.user_id).order("sort_order").execute().data or []
+        return {**row, "images": [self._serialize_image(dict(image)) for image in images]}
 
     def _execute_versioned(self, sql: str, params: list) -> None:
         with self.db.pool.connection() as conn:
@@ -193,7 +239,7 @@ class DetailProjectService:
     def _lock_project(self, cur: Any, project_id: str, version: int) -> None:
         cur.execute(
             "SELECT id FROM detail_projects WHERE id=%s AND user_id=%s "
-            "AND org_id IS NOT DISTINCT FROM %s AND version=%s AND status='draft' FOR UPDATE",
+            "AND org_id IS NOT DISTINCT FROM %s AND version=%s AND status IN ('draft','completed','failed') FOR UPDATE",
             (project_id, self.user_id, self.org_id, version),
         )
         if not cur.fetchone():

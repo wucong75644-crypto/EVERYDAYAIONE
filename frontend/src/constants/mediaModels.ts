@@ -41,8 +41,8 @@ export const IMAGE_MODELS: UnifiedModel[] = [
     credits: 6,
   },
   {
-    id: 'gpt-image-2-5-flare-text-to-image',
-    name: 'GPT Image 2.5 Flare',
+    id: 'gpt-image-2-5-sunburst-text-to-image',
+    name: 'GPT Image 2.5 Sunburst',
     type: 'image',
     description: '默认文生图',
     capabilities: {
@@ -57,8 +57,8 @@ export const IMAGE_MODELS: UnifiedModel[] = [
     supportsResolution: true,
   },
   {
-    id: 'gpt-image-2-5-flare-image-to-image',
-    name: 'GPT Image 2.5 Flare (图生图)',
+    id: 'gpt-image-2-5-sunburst-image-to-image',
+    name: 'GPT Image 2.5 Sunburst (图生图)',
     type: 'image',
     description: '参考图基础生成',
     capabilities: {

@@ -126,7 +126,7 @@ def _digest(value: str) -> str:
 
 def _image_model(reference_images: list[str]) -> str:
     if reference_images:
-        return "gpt-image-2-5-flare-image-to-image"
+        return "gpt-image-2-5-sunburst-image-to-image"
     from config.smart_model_config import DEFAULT_IMAGE_MODEL
     return DEFAULT_IMAGE_MODEL
 

@@ -21,6 +21,7 @@ def request_params(task: dict) -> dict:
 def safe_error(exc: Exception) -> str:
     """保留诊断内容，但不记录完整 URL、凭据或任意响应正文。"""
     text = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+    text = re.sub(r"data:[^,\s]*;base64,[A-Za-z0-9+/=_-]+", "[inline-media]", text)
     text = re.sub(r"https?://\S+", "[url]", text)
     text = re.sub(r"(?i)(bearer\s+|(?:token|api[_-]?key|authorization)[=: ]+)[^\s,;]+", r"\1[redacted]", text)
     return text[:240]

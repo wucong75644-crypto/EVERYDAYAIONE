@@ -293,3 +293,54 @@ async def test_disabled_feature_never_constructs_source_or_loads_body(monkeypatc
     with pytest.raises(SkillReplayError, match="DISABLED"):
         await create_skill_runtime(handler=object(), context=object(), runtime=object(),
                                    replay_context={"skill_runtime": {"active": [{}]}})
+
+
+async def test_production_budgets_preserve_large_utf8_skill_and_replay():
+    from services.skills.runtime import skill_budget_options
+    body = '完整设计规则，背景、字体、灯光。\n' * 3000
+    assert len(body.encode('utf-8')) > 128_516
+    options = skill_budget_options(SimpleNamespace())
+    runtime = state(Source(body=body), **options)
+    await runtime.initialize()
+    assert (await runtime.activate(activate()))['ok']
+    assert runtime.active['report'].rendered == body
+    assert any(body in message["content"] for message in runtime.messages())
+    restored = state(Source(body=body), **options)
+    await restored.initialize(runtime.checkpoint())
+    assert restored.active['report'].rendered == body
+    restricted = state(Source(body=body), **(options | {'maximum_body': 1024}))
+    with pytest.raises(SkillReplayError, match='REPLAY_RENDER_INVALID'):
+        await restricted.initialize(runtime.checkpoint())
+
+
+async def test_configured_utf8_body_and_turn_limits_fail_without_partial_activation():
+    from services.skills.runtime import skill_budget_options
+    options = skill_budget_options(SimpleNamespace(skill_max_body_bytes=90,
+        skill_max_rendered_bytes=100, skill_max_turn_rendered_bytes=150))
+    runtime = state(Source([item('one'), item('two')], body='中' * 30), **options)
+    await runtime.initialize()
+    assert (await runtime.activate(activate('one')))['ok']
+    assert (await runtime.activate(activate('two')))['code'] == 'SKILL_TURN_BUDGET_EXCEEDED'
+    assert set(runtime.active) == {'one'}
+    oversized = state(Source(body='中' * 31), **options)
+    await oversized.initialize()
+    assert (await oversized.activate(activate()))['code'] == 'SKILL_BODY_BUDGET_EXCEEDED'
+    assert not oversized.active
+
+
+def test_skill_budget_environment_configuration(monkeypatch):
+    from core.config import Settings
+    from services.skills.runtime import skill_budget_options
+    from pydantic import ValidationError
+    for name, value in [('SKILL_MAX_BODY_BYTES', '200000'),
+                        ('SKILL_MAX_RENDERED_BYTES', '300000'),
+                        ('SKILL_MAX_TURN_RENDERED_BYTES', '600000')]:
+        monkeypatch.setenv(name, value)
+    settings = Settings(_env_file=None, database_url='postgresql://invalid/test',
+                        jwt_secret_key='isolated-test-key')
+    assert skill_budget_options(settings) == dict(maximum_body=200000,
+        maximum_rendered=300000, maximum_turn_rendered=600000)
+    monkeypatch.setenv('SKILL_MAX_BODY_BYTES', '0')
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, database_url='postgresql://invalid/test',
+                 jwt_secret_key='isolated-test-key')

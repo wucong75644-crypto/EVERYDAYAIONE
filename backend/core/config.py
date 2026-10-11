@@ -115,6 +115,8 @@ class Settings(BaseSettings):
     rate_limit_conversation_tasks: int = 15
 
     # DashScope（阿里云灵积）配置
+    dashscope_builtin_tools_enabled: bool = True
+    dashscope_session_cache_enabled: bool = True
     dashscope_api_key: Optional[str] = None
     dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
@@ -128,11 +130,11 @@ class Settings(BaseSettings):
     def effective_db_url(self) -> str:
         """Mem0/知识库用的 PostgreSQL URL（与主数据库相同）"""
         return self.database_url
-    memory_extraction_model: str = "qwen3.5-plus"  # 记忆提取用 LLM（DashScope）
+    memory_extraction_model: str = "qwen3.8-max"  # 记忆提取用 LLM（DashScope）
     memory_embedding_model: str = "text-embedding-v3"  # 嵌入模型（1024维，DashScope）
     memory_enabled_default: bool = True  # 新用户默认开启记忆
-    memory_filter_model: str = "qwen3.5-flash"  # 记忆精排主模型
-    memory_filter_fallback_model: str = "qwen3.5-plus"  # 记忆精排备用模型
+    memory_filter_model: str = "qwen3.8-flash"  # 记忆精排主模型
+    memory_filter_fallback_model: str = "qwen3.8-max"  # 记忆精排备用模型
     memory_filter_timeout: float = 10.0  # 记忆精排读取超时（秒），connect=5s
 
     # schema 智能过滤（data_query 上下文注入）
@@ -163,8 +165,8 @@ class Settings(BaseSettings):
 
     # 对话历史摘要压缩配置
     context_summary_enabled: bool = True  # 是否启用摘要压缩
-    context_summary_model: str = "qwen3.5-flash"  # 摘要主模型
-    context_summary_fallback_model: str = "qwen3.5-plus"  # 摘要备用模型
+    context_summary_model: str = "qwen3.8-flash"  # 摘要主模型
+    context_summary_fallback_model: str = "qwen3.8-max"  # 摘要备用模型
     context_summary_timeout: float = 30.0  # 摘要读取超时（秒），connect=5s
     context_summary_max_chars: int = 2000  # 摘要最大字符数（结构化模板需更多空间，原 1000）
     context_summary_update_interval: int = 5  # 每N条新消息更新摘要
@@ -184,8 +186,8 @@ class Settings(BaseSettings):
     context_web_history_token_budget: int = 200000  # Web 层6: 历史桶预算（= max_tokens，不抢先触发）
 
     # 智能路由配置
-    intent_router_model: str = "qwen3.5-plus"  # 主路由模型（DashScope）
-    intent_router_fallback_model: str = "qwen3.5-flash"  # 降级路由模型
+    intent_router_model: str = "qwen3.8-max"  # 主路由模型（DashScope）
+    intent_router_fallback_model: str = "qwen3.8-flash"  # 降级路由模型
     intent_router_enabled: bool = True  # 是否启用智能路由
     intent_router_timeout: float = 15.0  # 路由读取超时（秒），connect=5s
 
@@ -208,8 +210,8 @@ class Settings(BaseSettings):
 
     # Agent 知识库配置
     kb_enabled: bool = True                              # 知识库总开关
-    kb_extraction_model: str = "qwen3.5-flash"           # 知识提取模型
-    kb_extraction_fallback_model: str = "qwen3.5-plus"   # 降级模型
+    kb_extraction_model: str = "qwen3.8-flash"           # 知识提取模型
+    kb_extraction_fallback_model: str = "qwen3.8-max"   # 降级模型
     kb_extraction_timeout: float = 30.0                # 知识提取读取超时（秒），connect=5s
     kb_search_limit: int = 5                         # 路由检索最大条数
     kb_search_threshold: float = 0.5                 # 向量相似度阈值
@@ -294,6 +296,10 @@ class Settings(BaseSettings):
     skill_recommendations_enabled: bool = False
     skill_chat_creation_enabled: bool = False
     skill_draft_trial_enabled: bool = False
+    # UTF-8 budgets: body, one rendered Skill (including attachments), all active Skills.
+    skill_max_body_bytes: int = Field(default=262_144, gt=0)
+    skill_max_rendered_bytes: int = Field(default=393_216, gt=0)
+    skill_max_turn_rendered_bytes: int = Field(default=1_048_576, gt=0)
     skill_storage_root: Optional[str] = None  # SKILL_STORAGE_ROOT，开启后显式配置
 
     # Staging 清理配置（已废弃：NAS 替代后不再需要清理，保留字段兼容旧引用）
@@ -319,10 +325,43 @@ class Settings(BaseSettings):
     chat_image_allowed_user_ids: str = ""  # CSV; empty means all users when enabled.
     chat_image_transparent_enabled: bool = False
     chat_image_max_requests: int = Field(default=15, ge=1, le=15)
+    ecom_image_planning_enabled: bool = False
+    detail_page_generation_enabled: bool = False
+    detail_page_planning_seconds: int = Field(default=1200, ge=600, le=1800)
+    detail_page_planning_concurrency: int = Field(default=4, ge=1, le=16)
+    detail_kimi_inline_images: bool = True
+    detail_gemini_overseas_images: bool = True
+    detail_kimi_json_output: bool = True
+    ecom_analysis_memory_mb: int = Field(default=384, ge=128, le=1024)
+    detail_kimi_input_credits_per_million: float | None = Field(default=None, gt=0)
+    detail_kimi_output_credits_per_million: float | None = Field(default=None, gt=0)
+    detail_gemini_input_credits_per_million: float | None = Field(default=None, gt=0)
+    detail_gemini_output_credits_per_million: float | None = Field(default=None, gt=0)
+    # KIE GPT 6 Luna cost quote verified 2026-10-10; no recharge bonus assumed.
+    detail_gpt_enabled: bool = False
+    detail_gpt_input_credits_per_million: float | None = Field(default=6, gt=0)
+    detail_gpt_output_credits_per_million: float | None = Field(default=30, gt=0)
+    ecom_image_planning_model: str = "openai/gpt-6.1-sol"
+    ecom_image_planning_reasoning: str = "medium"
+    ecom_image_planning_stage_timeout: float = Field(default=180, ge=10, le=600)
+    ecom_image_planning_input_credits_per_million: float | None = Field(default=None, gt=0)
+    ecom_image_planning_output_credits_per_million: float | None = Field(default=None, gt=0)
     chat_image_max_credits: int = Field(default=300, ge=1, le=300)
     chat_image_submission_lease_seconds: int = Field(default=60, ge=10, le=300)
     chat_image_queue_timeout_seconds: int = Field(default=600, ge=60, le=3600)
     chat_image_uncertain_timeout_seconds: int = Field(default=900, ge=60, le=86400)
+
+    @field_validator(
+        "memory_extraction_model", "memory_filter_model", "memory_filter_fallback_model",
+        "context_summary_model", "context_summary_fallback_model", "intent_router_model",
+        "intent_router_fallback_model", "kb_extraction_model", "kb_extraction_fallback_model",
+        "image_enhance_model", "image_enhance_fallback_model", "agent_loop_model",
+        mode="before",
+    )
+    @classmethod
+    def upgrade_qwen_model(cls, value):
+        from config.model_aliases import canonical_model_id
+        return canonical_model_id(value) if isinstance(value, str) else value
 
     @field_validator("chat_image_allowed_user_ids")
     @classmethod
@@ -333,15 +372,15 @@ class Settings(BaseSettings):
 
     # 电商图模式配置（设计文档：docs/document/TECH_电商图片Agent.md）
     # 提示词增强（enhance API → DashScope）
-    # 文字模式用 qwen3.5-plus（主Agent同款，稳定可靠）
+    # 文字模式用 qwen3.8-max（主Agent同款，稳定可靠）
     # 图生图模式（有图片）用 VL 模型（能看图分析商品）
-    image_enhance_model: str = "qwen3.5-plus"              # 主选：文字模式，稳定可靠
+    image_enhance_model: str = "qwen3.8-max"              # 主选：文字模式，稳定可靠
     image_enhance_vl_model: str = "qwen-vl-max"            # 图生图模式：能看图，最强VL
-    image_enhance_fallback_model: str = "qwen3.5-plus"     # 降级备选（flash太弱，无法输出复杂策划格式）
+    image_enhance_fallback_model: str = "qwen3.8-max"     # 降级备选（flash太弱，无法输出复杂策划格式）
     image_enhance_timeout: float = 60.0                    # 超时秒数（v2 三层prompt 6700字 + VL图片理解需要更长时间）
     # 图片生成（ImageAgent → KIE adapter，复用现有生图基础设施）
-    image_agent_kie_model: str = "gpt-image-2-5-flare-text-to-image"       # 文生图默认模型
-    image_agent_kie_i2i_model: str = "gpt-image-2-5-flare-image-to-image"  # 图生图模型
+    image_agent_kie_model: str = "gpt-image-2-5-sunburst-text-to-image"       # 文生图默认模型
+    image_agent_kie_i2i_model: str = "gpt-image-2-5-sunburst-image-to-image"  # 图生图模型
     image_agent_timeout: float = 120.0                             # 单张生成超时（秒）
     image_agent_max_images: int = 8                                # 单次最大生成张数
 

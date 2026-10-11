@@ -19,8 +19,8 @@ from schemas.message import GenerationType
 from services.handlers.image_handler import ImageHandler
 
 
-# GPT Image 2.5 Flare 图生图模型 ID
-_I2I_MODEL = "gpt-image-2-5-flare-image-to-image"
+# GPT Image 2.5 Sunburst 图生图模型 ID
+_I2I_MODEL = "gpt-image-2-5-sunburst-image-to-image"
 
 
 class EcomImageHandler(ImageHandler):

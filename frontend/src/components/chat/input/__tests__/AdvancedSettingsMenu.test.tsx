@@ -20,7 +20,7 @@ function props(modelId: string): ComponentProps<typeof AdvancedSettingsMenu> {
 
 describe('GPT Image 2.5 settings', () => {
   it.each(['text-to-image', 'image-to-image'])('keeps 4K for square and auto in %s', (mode) => {
-    const p = props(`gpt-image-2-5-flare-${mode}`);
+    const p = props(mode === 'image-to-image' ? 'gpt-image-2-5-sunburst-image-to-image' : 'gpt-image-2-5-sunburst-text-to-image');
     const view = render(<AdvancedSettingsMenu {...p} />);
     expect(screen.getByRole('button', { name: /4K.*16积分/ })).toBeEnabled();
     fireEvent.click(screen.getByRole('button', { name: 'Auto (自动)' }));
@@ -48,7 +48,7 @@ describe('GPT Image 2.5 settings', () => {
 
 describe('淘宝主图 output option', () => {
   it.each(['1K', '2K', '4K'] as const)('is available for square %s and toggles independently of format', (resolution) => {
-    const p = { ...props('gpt-image-2-5-flare-image-to-image'), resolution,
+    const p = { ...props('gpt-image-2-5-sunburst-image-to-image'), resolution,
       taobaoMainImage: false, onTaobaoMainImageChange: vi.fn() };
     const view = render(<AdvancedSettingsMenu {...p} />);
     const button = screen.getByRole('button', { name: '淘宝主图 1440×1440' });
@@ -65,7 +65,7 @@ describe('淘宝主图 output option', () => {
   });
 
   it.each(['auto', '16:9', '3:4'] as const)('is disabled for %s', (aspectRatio) => {
-    const p = { ...props('gpt-image-2-5-flare-image-to-image'), aspectRatio,
+    const p = { ...props('gpt-image-2-5-sunburst-image-to-image'), aspectRatio,
       taobaoMainImage: true, onTaobaoMainImageChange: vi.fn() };
     render(<AdvancedSettingsMenu {...p} />);
     const button = screen.getByRole('button', { name: '淘宝主图 1440×1440' });

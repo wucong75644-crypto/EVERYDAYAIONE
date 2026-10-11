@@ -1,4 +1,4 @@
-"""电商图 AI 帮写三套通用创作简报接口。"""
+"""电商图 AI 帮写单份草稿与补充更新接口。"""
 
 from fastapi import APIRouter
 from loguru import logger
@@ -19,19 +19,19 @@ router = APIRouter(prefix="/ecom-image", tags=["ecom-image"])
 @router.post(
     "/requirement-suggestions",
     response_model=RequirementSuggestionsEnvelope,
-    summary="生成三套电商图通用创作简报",
+    summary="生成或更新一份电商图产品资料与创作要求",
 )
 async def generate_requirement_suggestions(
     body: RequirementSuggestionsRequest,
     ctx: OrgCtx,
     db: ScopedDB,
 ) -> RequirementSuggestionsEnvelope:
-    """读取可信详情项目输入，调用共享核心服务并返回三套方案。"""
+    """读取可信项目图片与用户原文，固定 Kimi K3 返回一份可编辑草稿。"""
     await RequirementAssistRateLimiter().check(ctx.user_id)
     detail_service = DetailProjectService(db, ctx.user_id, ctx.org_id)
     adapter = DetailProjectRequirementAdapter(detail_service, ctx.user_id, ctx.org_id)
-    assist_input = adapter.adapt(body.source.project_id, body.settings)
-    outcome = await RequirementAssistService().generate(assist_input)
+    assist_input = adapter.adapt(body.source.project_id, body.settings, body.revision)
+    outcome = await RequirementAssistService(image_resolver=adapter.image_resolver).generate(assist_input)
     logger.info(
         f"Requirement assist succeeded | user_id={ctx.user_id} | org_id={ctx.org_id} | "
         f"source_id={body.source.project_id} | model={outcome.model} | "

@@ -16,7 +16,8 @@ def _schema_generate_image_async():
                 "持久化接受一个独立图片任务，立即返回 submitted、task_id、message_id、排队阶段和服务器预估积分。"
                 "接受不表示图片完成；结果随后由独立图片消息展示。每次只生成一张；多张独立图片按方案顺序在同一轮并行调用，不等待上一张提交结果。只展示选中的方案名称，图片占位符由系统显示；不输出任务ID、提交汇总、排队解释或技术细节。"
                 "模型由服务器使用平台默认模型及其图生图配对，不能由你选择或切换；不要询问模型偏好，不传 model 或 model_name。"
-                "明确指定 text_to_image 或 image_to_image；用于分析的图片不自动成为生成参考图。"
+                "普通图片调用明确指定 text_to_image 或 image_to_image；用于分析的图片不自动成为生成参考图。"
+                "主图策划完成后仅传plan_source中的plan_id/revision/item_id；正文、参考图和画幅从已保存的原稿读取，禁止修改或混传。"
                 "仅使用本次 parameters 定义的字段。比例用 aspect_ratio、分辨率用 resolution、格式用小写 output_format；不传 size 或 format。"
                 '无参考图的调用示例：{"mode":"text_to_image","prompt":"完整原文","aspect_ratio":"1:1","resolution":"1K","output_format":"png"}。'
                 "prompt 是完整最终原文，不再二次改写。只选本次用户指定的原图引用，按用途和顺序传 references。"
@@ -31,7 +32,7 @@ def _schema_generate_image_async():
             ),
             "parameters": {
                 "type": "object", "additionalProperties": False,
-                "required": ["mode", "prompt"],
+                "oneOf": [{"required":["mode","prompt"]},{"required":["plan_source"]}],
                 "properties": {
                     "mode": {"type":"string", "enum":["text_to_image","image_to_image"]},
                     "prompt": {"type":"string", "minLength":1, "description":"一张图的完整最终提示词原文"},
@@ -56,7 +57,7 @@ def _schema_generate_image_async():
                     "aspect_ratio":{"type":"string","description":"目标画布比例，如1:1；产品形状不能决定它，非精确像素"},
                     "resolution":{"type":"string","enum":["1K","2K","4K"],"description":"仅填写默认模型实际支持的分辨率"},
                     "output_format":{"type":"string","enum":["png","jpeg","jpg","webp"],"description":"小写输出格式，必须为默认模型实际支持"},
-                    **({"background":{"type":"string","enum":["opaque","transparent"],"description":"仅 Flare 支持；透明输出需保存后验证真实alpha"}} if limits.chat_image_transparent_enabled else {}),
+                    **({"background":{"type":"string","enum":["opaque","transparent"],"description":"默认图片模型支持；透明输出需保存后验证真实alpha"}} if limits.chat_image_transparent_enabled else {}),
                     "plan_item_id":{"type":"string","minLength":1,"maxLength":200},
                     "variant_id":{"type":"string","minLength":1,"maxLength":200},
                     "source_task_id":{"type":"string"},
@@ -66,6 +67,11 @@ def _schema_generate_image_async():
                             "message_id":{"type":"string"},"content_index":{"type":"integer","minimum":0},
                             "sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},
                         }},
+                    "plan_source":{"type":"object","additionalProperties":False,
+                        "required":["plan_id","revision","item_id"],"properties":{
+                            "plan_id":{"type":"string","minLength":36,"maxLength":36},
+                            "revision":{"type":"integer","minimum":1},
+                            "item_id":{"type":"string","minLength":36,"maxLength":36}}},
                 },
             },
         },

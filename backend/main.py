@@ -20,7 +20,7 @@ from api.routes import (
     admin_users, audio, auth, conversation, detail_project, ecom_requirement, error_monitor, file, health, image, image_ecom,
     kuaimai_external, memory, message, models, org, org_members_assignments,
     pdd, qimen, scheduled_tasks, change_sets, subscription, task, webhook, wecom, wecom_auth,
-    wecom_chat_targets, ws, skills, skill_admin, skill_creation, agent_reach,
+    wecom_chat_targets, ws, skills, skill_admin, skill_creation, ecommerce_image_plans, agent_reach,
 )
 from core.config import get_settings
 from core.exceptions import AppException
@@ -528,6 +528,7 @@ def register_routers(app: FastAPI) -> None:
 
     # 电商图 AI 帮写（三套通用创作简报）
     app.include_router(ecom_requirement.router, prefix="/api")
+    app.include_router(ecommerce_image_plans.router, prefix="/api")
 
     # 文件上传（PDF 等文档）
     app.include_router(file.router, prefix="/api")

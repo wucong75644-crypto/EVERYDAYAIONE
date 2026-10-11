@@ -130,7 +130,7 @@ class ScheduledTaskAgent:
             from core.config import get_settings
             settings = get_settings()
             model_id = (
-                getattr(settings, "agent_loop_model", None) or "qwen3.5-plus"
+                getattr(settings, "agent_loop_model", None) or "qwen3.8-max"
             )
             model_gateway = get_model_gateway().open_chat(
                 ModelCallRequest(
@@ -172,7 +172,7 @@ class ScheduledTaskAgent:
                 return ScheduledTaskResult(text="任务权限已失效，工具未执行", status="error",
                                            error_message=str(trusted.authorization_snapshot["access_denied_reason"]))
             from services.skills.scheduled import EMPTY_SNAPSHOT, ScheduledSkillSnapshot, source_for_executor
-            from services.skills.runtime import SkillRuntime, SkillReplayError
+            from services.skills.runtime import SkillRuntime, SkillReplayError, skill_budget_options
             snapshot = self.task.get("skill_revision_snapshot", EMPTY_SNAPSHOT)
             pins = ScheduledSkillSnapshot.parse(snapshot)
             if pins.skills:
@@ -181,6 +181,7 @@ class ScheduledTaskAgent:
                 self.skill_runtime = SkillRuntime(
                     turn_id=str(self.task.get("execution_id") or self.task_id),
                     source=source_for_executor(executor, settings, snapshot),
+                    **skill_budget_options(settings),
                     platform_tool_names=(s.name for s in executor.tool_runtime.registry.specs()),
                     authorized_tool_names=policy.allowed_tools, cancellation_event=self.cancellation_event,
                     execution_mode=self.execution_mode,

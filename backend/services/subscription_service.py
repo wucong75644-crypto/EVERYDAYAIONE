@@ -6,6 +6,7 @@
 """
 
 from loguru import logger
+from config.model_aliases import MODEL_ALIASES, canonical_model_id
 
 
 from core.exceptions import NotFoundError, ValidationError
@@ -21,7 +22,7 @@ KNOWN_MODEL_IDS = frozenset([
     "deepseek-v4-flash",
     "deepseek-v3.2",
     "deepseek-r1",
-    "qwen3.5-plus",
+    "qwen3.8-max",
     "kimi-k2.5",
     "glm-5",
     "openai/gpt-4.1",
@@ -31,7 +32,9 @@ KNOWN_MODEL_IDS = frozenset([
     "openai/gpt-5.4-pro",
     "openai/gpt-5.3-codex",
     "gpt-image-2-5-flare-text-to-image",
+    "gpt-image-2-5-sunburst-text-to-image",
     "gpt-image-2-5-flare-image-to-image",
+    "gpt-image-2-5-sunburst-image-to-image",
     "gpt-image-2-text-to-image",
     "gpt-image-2-image-to-image",
     "anthropic/claude-sonnet-4",
@@ -67,7 +70,7 @@ class SubscriptionService:
         result = self.db.table("user_subscriptions").select(
             "model_id, subscribed_at"
         ).eq("user_id", user_id).execute()
-        return result.data or []
+        return [{**row, "model_id": canonical_model_id(row["model_id"])} for row in result.data or []]
 
     def subscribe(self, user_id: str, model_id: str) -> dict:
         """
@@ -76,13 +79,14 @@ class SubscriptionService:
         Raises:
             ValidationError: model_id 不在已知模型列表中
         """
+        model_id = canonical_model_id(model_id)
         if model_id not in KNOWN_MODEL_IDS:
             raise ValidationError(f"未知的模型: {model_id}")
 
         # 检查是否已订阅
-        existing = self.db.table("user_subscriptions").select("model_id").eq(
+        existing = _filter_model(self.db.table("user_subscriptions").select("model_id").eq(
             "user_id", user_id
-        ).eq("model_id", model_id).execute()
+        ), model_id).execute()
 
         if existing.data:
             logger.info(f"模型已订阅（幂等） | user_id={user_id} | model_id={model_id}")
@@ -110,18 +114,18 @@ class SubscriptionService:
             NotFoundError: 未订阅该模型
         """
         # 检查是否已订阅
-        existing = self.db.table("user_subscriptions").select("model_id").eq(
+        existing = _filter_model(self.db.table("user_subscriptions").select("model_id").eq(
             "user_id", user_id
-        ).eq("model_id", model_id).execute()
+        ), model_id).execute()
 
         if not existing.data:
             raise NotFoundError("订阅记录", model_id)
 
         # 删除订阅
         try:
-            self.db.table("user_subscriptions").delete().eq(
+            _filter_model(self.db.table("user_subscriptions").delete().eq(
                 "user_id", user_id
-            ).eq("model_id", model_id).execute()
+            ), model_id).execute()
             logger.info(f"取消订阅成功 | user_id={user_id} | model_id={model_id}")
             return {"message": "已取消订阅", "model_id": model_id}
         except Exception as e:
@@ -129,3 +133,9 @@ class SubscriptionService:
                 f"取消订阅失败 | user_id={user_id} | model_id={model_id} | error={e}"
             )
             raise ValidationError("取消订阅失败，请稍后重试")
+
+
+def _filter_model(query, model_id: str):
+    canonical = canonical_model_id(model_id)
+    aliases = [old for old, new in MODEL_ALIASES.items() if new == canonical]
+    return query.in_("model_id", [canonical, *aliases]) if aliases else query.eq("model_id", model_id)

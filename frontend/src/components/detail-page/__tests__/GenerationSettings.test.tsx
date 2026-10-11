@@ -1,63 +1,49 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_DETAIL_FORM } from '../../../mocks/detailPageMocks';
+import { fireEvent,render,screen } from '@testing-library/react';
+import { describe,expect,it,vi } from 'vitest';
+import { DEFAULT_FORM } from '../../../stores/useDetailPageStore';
 import { GenerationSettings } from '../GenerationSettings';
-
-describe('GenerationSettings', () => {
-  const defaultActions = { onChange: vi.fn(), onRequirementAssist: vi.fn(), onAnalyze: vi.fn() };
-
-  it('使用中文、1K和1张默认值', () => {
-    render(<GenerationSettings form={DEFAULT_DETAIL_FORM} hasProductImage={false} {...defaultActions} />);
-    expect(screen.getByRole('button', { name: '目标语言' })).toHaveTextContent('中文（简体）');
-    expect(screen.getByRole('button', { name: '清晰度' })).toHaveTextContent('1K 标准');
-    expect(screen.getByRole('button', { name: '生成数量' })).toHaveTextContent('1 张');
-    expect(screen.getByRole('button', { name: '分析产品' })).toBeDisabled();
-  });
-
-  it('切换详情图并打开 AI 帮写', () => {
-    const onChange = vi.fn();
-    const onRequirementAssist = vi.fn();
-    render(<GenerationSettings form={DEFAULT_DETAIL_FORM} hasProductImage onChange={onChange} onRequirementAssist={onRequirementAssist} onAnalyze={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: '详情图' }));
-    expect(onChange).toHaveBeenCalledWith({ contentType: 'detail_page' });
-    fireEvent.click(screen.getByRole('button', { name: 'AI 帮写' }));
-    expect(onRequirementAssist).toHaveBeenCalledOnce();
-  });
-
-  it('有产品图时允许分析', () => {
-    const onAnalyze = vi.fn();
-    render(<GenerationSettings form={DEFAULT_DETAIL_FORM} hasProductImage onChange={vi.fn()} onRequirementAssist={vi.fn()} onAnalyze={onAnalyze} />);
-    fireEvent.click(screen.getByRole('button', { name: '分析产品' }));
-    expect(onAnalyze).toHaveBeenCalledOnce();
-  });
-
-  it('所有下拉设置均提交对应字段', () => {
-    const onChange = vi.fn();
-    render(<GenerationSettings form={DEFAULT_DETAIL_FORM} hasProductImage onChange={onChange} onRequirementAssist={vi.fn()} onAnalyze={vi.fn()} />);
-
-    for (const [field, option] of [['目标平台', '京东'], ['目标语言', '无文字'], ['尺寸比例', '4:5'], ['清晰度', '2K 高清'], ['生成数量', '9 张']]) {
-      fireEvent.keyDown(screen.getByRole('button', { name: field }), { key: 'ArrowDown' });
-      fireEvent.click(screen.getByText(option));
-    }
-
-    expect(onChange).toHaveBeenCalledWith({ platform: 'jd' });
-    expect(onChange).toHaveBeenCalledWith({ language: 'none' });
-    expect(onChange).toHaveBeenCalledWith({ aspectRatio: '4:5' });
-    expect(onChange).toHaveBeenCalledWith({ quality: '2k' });
-    expect(onChange).toHaveBeenCalledWith({ count: 9 });
-  });
-
-  it('详情图状态显示详情图要求并可整体禁用', () => {
-    const detailForm = { ...DEFAULT_DETAIL_FORM, contentType: 'detail_page' as const, aspectRatio: '3:4' };
-    render(<GenerationSettings form={detailForm} hasProductImage disabled onChange={vi.fn()} onRequirementAssist={vi.fn()} onAnalyze={vi.fn()} />);
-    expect(screen.getByLabelText('详情图要求')).toBeDisabled();
-    expect(screen.getByRole('button', { name: '尺寸比例' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '分析产品' })).toBeDisabled();
-  });
-
-  it('产品图尚未就绪时单独禁用 AI 帮写', () => {
-    render(<GenerationSettings form={DEFAULT_DETAIL_FORM} hasProductImage requirementAssistDisabled {...defaultActions} />);
-    expect(screen.getByRole('button', { name: 'AI 帮写' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '分析产品' })).toBeEnabled();
-  });
+const actions={onChange:vi.fn(),onAnalyze:vi.fn(),onRequirementAssist:vi.fn()};
+describe('固定布局设置',()=>{
+ it('默认展示14张、拆分说明，数量后显示默认Gemini',()=>{
+  render(<GenerationSettings form={DEFAULT_FORM} hasProductImage={false} {...actions}/>);
+  const count=screen.getByRole('button',{name:'生成数量'});const model=screen.getByRole('button',{name:'提示词模型'});
+  expect(count).toHaveTextContent('14张');expect(screen.getByText('7张主图＋7张详情')).toBeInTheDocument();
+  expect(screen.getByText('主图比例 · 详情3:4')).toBeInTheDocument();
+  expect(model).toHaveTextContent('Gemini 3.8 Flash');expect(count.compareDocumentPosition(model)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getByRole('button',{name:'开始生成'})).toBeDisabled();
+ });
+ it('单类型可选15张并切换KIE的GPT',()=>{
+  const onChange=vi.fn();render(<GenerationSettings form={{...DEFAULT_FORM,contentType:'main_image',count:7}} hasProductImage {...actions} onChange={onChange}/>);
+  fireEvent.keyDown(screen.getByRole('button',{name:'生成数量'}),{key:'ArrowDown'});fireEvent.click(screen.getByText('15张'));
+  expect(onChange).toHaveBeenCalledWith({count:15});
+  fireEvent.keyDown(screen.getByRole('button',{name:'提示词模型'}),{key:'ArrowDown'});fireEvent.click(screen.getByText('GPT 6 Luna'));
+  expect(onChange).toHaveBeenCalledWith({promptModel:'gpt-6-luna'});
+ });
+ it('所有类型保留同样控件和要求区',()=>{
+  const {rerender}=render(<GenerationSettings form={DEFAULT_FORM} hasProductImage {...actions}/>);
+  for(const contentType of ['main_image','detail_page','default'] as const){
+   rerender(<GenerationSettings form={{...DEFAULT_FORM,contentType}} hasProductImage {...actions}/>);
+   expect(screen.getByRole('button',{name:'生成数量'})).toBeInTheDocument();expect(screen.getByRole('textbox')).toHaveAttribute('placeholder','上传产品图片，并描述产品名称、核心卖点、规格和设计要求…');
+   expect(screen.getByText(contentType==='default'?'主图比例 · 详情3:4':'尺寸比例')).toBeInTheDocument();
+   expect(screen.getByRole('button',{name:'上传图片'})).toBeInTheDocument();
+   expect(screen.getByRole('button',{name:'工作区',exact:true})).toBeInTheDocument();
+   expect(screen.getByRole('button',{name:'AI 帮写'})).toBeInTheDocument();
+   expect(screen.queryByRole('heading',{name:'产品图片'})).not.toBeInTheDocument();
+  }
+ });
+ it('原输入区继续上传、删除图片和回填文字',()=>{
+  const onAdd=vi.fn(),onRemove=vi.fn(),onChange=vi.fn(),onRequirementAssist=vi.fn();
+  render(<GenerationSettings form={DEFAULT_FORM} images={[{id:'image-1',category:'product',status:'ready',name:'商品.png',previewUrl:'preview.png',error:null}]} hasProductImage {...actions} onAdd={onAdd} onRemove={onRemove} onChange={onChange} onRequirementAssist={onRequirementAssist}/>);
+  expect(screen.getByAltText('商品.png')).toBeInTheDocument();
+  expect(screen.getByText('1/9')).toBeInTheDocument();
+  const file=new File(['test'],'新增.png',{type:'image/png'});
+  fireEvent.change(screen.getByLabelText('上传产品图'),{target:{files:[file]}});
+  expect(onAdd).toHaveBeenCalledWith([file]);
+  fireEvent.change(screen.getByRole('textbox'),{target:{value:'发财风格'}});
+  expect(onChange).toHaveBeenCalledWith({requirement:'发财风格'});
+  fireEvent.click(screen.getByRole('button',{name:'AI 帮写'}));
+  expect(onRequirementAssist).toHaveBeenCalledOnce();
+  fireEvent.click(screen.getByRole('button',{name:'删除 商品.png'}));
+  expect(onRemove).toHaveBeenCalledWith('image-1');
+ });
 });

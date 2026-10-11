@@ -181,6 +181,9 @@ export interface SkillProposalPart {
 /** 电商图方案卡片内容块（用户确认后触发生成） */
 export interface EcomPlanPart {
   type: 'ecom_plan';
+  plan_id?: string;
+  revision?: number;
+  status?: string;
   product_insight: string;
   visual_strategy: string;
   images: EcomPlanImage[];
@@ -188,14 +191,17 @@ export interface EcomPlanPart {
 }
 
 export interface EcomPlanImage {
-  role: string;
-  purpose: string;
-  title: string;
-  subtitle: string;
-  prompt: string;
-  aspect_ratio: string;
-  has_text: boolean;
-  image_type: string;
+  item_id?: string;
+  position?: number;
+  name?: string;
+  role?: string;
+  purpose?: string;
+  title?: string;
+  subtitle?: string;
+  prompt?: string;
+  aspect_ratio?: string;
+  has_text?: boolean;
+  image_type?: string;
 }
 
 /** 交互式图表内容块

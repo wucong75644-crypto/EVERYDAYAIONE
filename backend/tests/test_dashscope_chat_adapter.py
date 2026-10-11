@@ -25,7 +25,7 @@ from services.adapters.base import ModelProvider, StreamChunk, ChatResponse
 # Fixtures
 # ============================================================
 
-def _make_adapter(model: str = "qwen3.5-plus") -> DashScopeChatAdapter:
+def _make_adapter(model: str = "qwen3.8-max") -> DashScopeChatAdapter:
     return DashScopeChatAdapter(
         api_key="sk-test-key",
         model=model,
@@ -51,7 +51,7 @@ def _make_chunk(
             "finish_reason": finish_reason,
         }],
         "usage": usage,
-        "model": "qwen3.5-plus",
+        "model": "qwen3.8-max",
     }
     return chunk
 
@@ -80,7 +80,7 @@ class TestInit:
     def test_stores_config(self):
         adapter = _make_adapter()
         assert adapter._api_key == "sk-test-key"
-        assert adapter._model_id == "qwen3.5-plus"
+        assert adapter._model_id == "qwen3.8-max"
         assert adapter._base_url == "https://dashscope.example.com/v1"
 
     def test_strips_trailing_slash(self):
@@ -193,7 +193,7 @@ class TestStreamChat:
             _sse_line({
                 "choices": [{"delta": {"content": "hello"}, "index": 0, "finish_reason": None}],
                 "usage": None,  # DashScope 中间 chunk 返回 null
-                "model": "qwen3.5-plus",
+                "model": "qwen3.8-max",
             }),
             "",
             "data: [DONE]",
@@ -229,7 +229,7 @@ class TestStreamChat:
             _sse_line({
                 "choices": [],
                 "usage": {"prompt_tokens": 100, "completion_tokens": 50},
-                "model": "qwen3.5-plus",
+                "model": "qwen3.8-max",
             }),
             "",
             "data: [DONE]",
@@ -379,6 +379,52 @@ class TestStreamChat:
                 pass
 
     @pytest.mark.asyncio
+    async def test_http_rejection_keeps_typed_code_and_correlation(self):
+        body = json.dumps({"error": {"code": "InvalidURL.Timeout", "message": "Download timed out"},
+                           "request_id": "provider-request-1"}).encode()
+        adapter = _make_adapter()
+        @asynccontextmanager
+        async def mock_stream(*args, **kwargs):
+            yield MockStreamResponse([], status_code=400, error_body=body)
+        adapter._client = MagicMock(is_closed=False, stream=mock_stream)
+        with pytest.raises(DashScopeAPIError) as captured:
+            async for _ in adapter.stream_chat(messages=[{"role": "user", "content": "hi"}]):
+                pass
+        error = captured.value
+        assert error.status_code == 400 and error.error_code == "InvalidURL.Timeout"
+        assert error.request_id == "provider-request-1"
+        assert error.request_rejected and error.retryable_rejection
+
+    @pytest.mark.parametrize("status,code,message,retryable,rejected", [
+        (400, "InvalidParameter", "Unable to download the media resource during the data inspection process.", True, True),
+        (400, "InvalidParameter.DataInspection", "The image content does not comply with green network verification.", False, True),
+        (400, "InvalidParameter", "Missing required parameter 'messages'!", False, True),
+        (400, None, "unknown error", False, True),
+        (429, "Throttling.RateQuota", "rate limited", True, True),
+        (429, "Throttling.AllocationQuota", "no quota", False, True),
+        (503, "ServiceUnavailable", "capacity", True, True),
+        (500, "RequestTimeOut", "inference timed out", False, False),
+        (500, None, "unknown error", False, False),
+    ])
+    def test_only_documented_preflight_rejections_are_retryable(self, status, code, message, retryable, rejected):
+        error = DashScopeAPIError.from_http(json.dumps({"error": {"code": code, "message": message}}).encode(), status)
+        assert error.request_rejected is rejected
+        assert error.retryable_rejection is retryable
+
+    def test_stream_error_and_untrusted_identifiers_do_not_grant_retry(self):
+        error = DashScopeAPIError("stream error", 429, error_code="Throttling.RateQuota")
+        assert not error.request_rejected and not error.retryable_rejection
+        malformed = DashScopeAPIError.from_http(b'{"error":{"code":"https://private/secret"},"request_id":"unsafe\\nvalue"}',400)
+        assert malformed.error_code is None and malformed.request_id is None
+
+    @pytest.mark.parametrize("body", [b'null', b'[]', b'{"error":"upstream unavailable"}',
+                                     b'{"error":{"message":null}}'])
+    def test_nonstandard_http_error_body_keeps_status_without_granting_retry(self, body):
+        error = DashScopeAPIError.from_http(body, 400)
+        assert error.status_code == 400 and error.request_rejected
+        assert not error.retryable_rejection and isinstance(error.provider_message, str)
+
+    @pytest.mark.asyncio
     async def test_timeout_wrapped(self):
         """httpx.TimeoutException 被包装为 DashScopeAPIError"""
         adapter = _make_adapter()
@@ -395,6 +441,39 @@ class TestStreamChat:
         with pytest.raises(DashScopeAPIError, match="Request timeout"):
             async for _ in adapter.stream_chat(messages=[{"role": "user", "content": "hi"}]):
                 pass
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("model_id,effort,expected", [
+        ("kimi-k3", "low", "low"),
+        ("kimi-k3", "high", "high"),
+        ("kimi-k3", "max", "max"),
+        ("kimi-k3", None, None),
+        ("qwen3.5-plus", "low", None),
+    ])
+    async def test_kimi_reasoning_effort_request_body(self, model_id, effort, expected):
+        adapter = _make_adapter()
+        adapter._model_id = model_id
+        captured_body = {}
+
+        @asynccontextmanager
+        async def mock_stream(method, url, json=None):
+            captured_body.update(json or {})
+            yield MockStreamResponse(["data: [DONE]"])
+
+        adapter._client = MagicMock()
+        adapter._client.is_closed = False
+        adapter._client.stream = mock_stream
+        async for _ in adapter.stream_chat(
+            messages=[{"role": "user", "content": "hi"}], reasoning_effort=effort,
+            thinking_mode="disabled",
+        ):
+            pass
+
+        if expected is None:
+            assert "reasoning_effort" not in captured_body
+        else:
+            assert captured_body["reasoning_effort"] == expected
+        assert captured_body["enable_thinking"] is (model_id == "kimi-k3")
 
     @pytest.mark.asyncio
     async def test_thinking_mode_enabled(self):
@@ -492,7 +571,7 @@ class TestStreamChat:
     async def test_empty_choices(self):
         """choices 为空时 content=None"""
         lines = [
-            _sse_line({"choices": [], "usage": None, "model": "qwen3.5-plus"}),
+            _sse_line({"choices": [], "usage": None, "model": "qwen3.8-max"}),
             "data: [DONE]",
         ]
         adapter = _make_adapter()
@@ -634,20 +713,20 @@ class TestEstimateCost:
 
     def test_zero_tokens(self):
         """零 token 输入→零积分"""
-        adapter = _make_adapter("qwen3.5-plus")
+        adapter = _make_adapter("qwen3.8-max")
         result = adapter.estimate_cost_unified(input_tokens=0, output_tokens=0)
         assert result.estimated_credits == 0
 
     def test_small_tokens_minimum_1(self):
         """少量 token 但 total > 0 时最小为 1"""
-        adapter = _make_adapter("qwen3.5-plus")
-        # qwen3.5-plus: input=12/1M, output=68/1M
-        # 1000 tokens: int(1000 * 12 / 1M) = 0, int(1000 * 68 / 1M) = 0 → total=0
+        adapter = _make_adapter("qwen3.8-max")
+        # qwen3.8-max: input=170/1M, output=510/1M
+        # 1000 tokens: int(1000 * 170 / 1M) = 0, int(1000 * 510 / 1M) = 0 → total=0
         result = adapter.estimate_cost_unified(input_tokens=1000, output_tokens=1000)
         # total=0 → max(1,0) if total>0 else 0 → 0
         assert result.estimated_credits == 0
 
-        # 100k tokens: int(100000 * 12 / 1M) = 1, int(100000 * 68 / 1M) = 6 → total=7
+        # 100k tokens: int(100000 * 170 / 1M) = 17, int(100000 * 510 / 1M) = 51 → total=68
         result2 = adapter.estimate_cost_unified(input_tokens=100_000, output_tokens=100_000)
         assert result2.estimated_credits >= 1
 

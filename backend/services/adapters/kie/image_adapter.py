@@ -310,14 +310,14 @@ class KieImageAdapter(BaseImageAdapter):
                 output_format=ImageOutputFormat(fmt),
             ).model_dump()
 
-        elif self.model in {"gpt-image-2-text-to-image", "gpt-image-2-5-flare-text-to-image"}:
+        elif self.model in {"gpt-image-2-text-to-image", "gpt-image-2-5-flare-text-to-image", "gpt-image-2-5-sunburst-text-to-image"}:
             return GptImage2Input(
                 prompt=prompt,
                 aspect_ratio=AspectRatio(size),
                 resolution=ImageResolution(resolution or "1K"),
             ).model_dump()
 
-        elif self.model in {"gpt-image-2-image-to-image", "gpt-image-2-5-flare-image-to-image"}:
+        elif self.model in {"gpt-image-2-image-to-image", "gpt-image-2-5-flare-image-to-image", "gpt-image-2-5-sunburst-image-to-image"}:
             if not image_urls:
                 raise ValueError(f"{self.model} requires image_urls")
             return GptImage2ImageInput(

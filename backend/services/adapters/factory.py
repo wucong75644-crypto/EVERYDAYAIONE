@@ -20,6 +20,7 @@ from .base import (
     ModelConfig,
 )
 from .types import ProviderUnavailableError
+from .dashscope.responses import BUILTIN_TOOLS, CACHE_MODELS
 
 
 # ============================================================
@@ -27,6 +28,34 @@ from .types import ProviderUnavailableError
 # ============================================================
 
 MODEL_REGISTRY: Dict[str, ModelConfig] = {
+    "kimi-k3": ModelConfig(
+        model_id="kimi-k3", provider=ModelProvider.DASHSCOPE,
+        provider_model="kimi-k3", display_name="Kimi K3",
+        input_price=0, output_price=0, credits_per_1k_input=0, credits_per_1k_output=0,
+        supports_vision=True, supports_thinking=True, max_tokens=0, context_window=0,
+    ),
+    "gemini-3.8-flash": ModelConfig(
+        model_id="gemini-3.8-flash", provider=ModelProvider.KIE,
+        provider_model="gemini-3.8-flash", display_name="Gemini 3.8 Flash",
+        input_price=0, output_price=0, credits_per_1k_input=0, credits_per_1k_output=0,
+        supports_vision=True, supports_thinking=True, max_tokens=0, context_window=0,
+    ),
+    "gpt-5-6-luna": ModelConfig(
+        model_id="gpt-5-6-luna", provider=ModelProvider.KIE,
+        provider_model="gpt-5-6-luna", display_name="GPT 5.6 Luna (KIE planner)",
+        input_price=0, output_price=0, credits_per_1k_input=0, credits_per_1k_output=0,
+        supports_vision=True, supports_thinking=True,
+        # Account-specific context/output limits and prices remain unverified.
+        max_tokens=0, context_window=0,
+    ),
+    "gpt-6-luna": ModelConfig(
+        model_id="gpt-6-luna", provider=ModelProvider.KIE,
+        provider_model="gpt-6-luna", display_name="GPT 6 Luna (KIE planner)",
+        input_price=0, output_price=0, credits_per_1k_input=0, credits_per_1k_output=0,
+        supports_vision=True, supports_thinking=True,
+        # KIE's authenticated model listing currently reports 272K.
+        max_tokens=0, context_window=272000,
+    ),
     # ==================== KIE 平台模型 ====================
     "gemini-3-pro": ModelConfig(
         model_id="gemini-3-pro",
@@ -125,20 +154,25 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
         max_tokens=16384,
         context_window=131_072,
     ),
-    "qwen3.5-plus": ModelConfig(
-        model_id="qwen3.5-plus",
-        provider=ModelProvider.DASHSCOPE,
-        provider_model="qwen3.5-plus",
-        display_name="Qwen 3.5 Plus",
-        input_price=0.11,       # 0.8元/1M ≈ $0.11
-        output_price=0.67,      # 4.8元/1M ≈ $0.67
-        credits_per_1k_input=0.012,
-        credits_per_1k_output=0.068,
-        supports_vision=True,
-        supports_tools=True,
-        supports_thinking=True,
-        max_tokens=65536,
-        context_window=1_000_000,
+    "qwen3.8-max": ModelConfig(
+        model_id="qwen3.8-max", provider=ModelProvider.DASHSCOPE,
+        provider_model="qwen3.8-max", display_name="Qwen 3.8 Max",
+        input_price=1.67, output_price=5.0,  # Beijing: CNY 12 / 36 per 1M tokens
+        credits_per_1k_input=0.17, credits_per_1k_output=0.51,
+        supports_vision=True, supports_video=True, supports_tools=True,
+        supports_search=True, supports_thinking=True,
+        builtin_tools=BUILTIN_TOOLS["qwen3.8-max"], supports_session_cache="qwen3.8-max" in CACHE_MODELS,
+        max_tokens=131072, context_window=1_000_000,
+    ),
+    "qwen3.8-flash": ModelConfig(
+        model_id="qwen3.8-flash", provider=ModelProvider.DASHSCOPE,
+        provider_model="qwen3.8-flash", display_name="Qwen 3.8 Flash",
+        input_price=0.11, output_price=0.375,  # Beijing: CNY 0.8 / 2.7 per 1M tokens
+        credits_per_1k_input=0.012, credits_per_1k_output=0.039,
+        supports_vision=True, supports_video=True, supports_tools=True,
+        supports_search=True, supports_thinking=True,
+        builtin_tools=BUILTIN_TOOLS["qwen3.8-flash"], supports_session_cache="qwen3.8-flash" in CACHE_MODELS,
+        max_tokens=131072, context_window=1_000_000,
     ),
     "qwen-vl-max": ModelConfig(
         model_id="qwen-vl-max",
@@ -186,6 +220,15 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
     ),
 
     # ==================== OpenRouter 模型（多家统一网关）====================
+    "openai/gpt-6.1-sol": ModelConfig(
+        model_id="openai/gpt-6.1-sol", provider=ModelProvider.OPENROUTER,
+        provider_model="openai/gpt-6.1-sol", display_name="GPT-6.1 Sol",
+        input_price=2.00, output_price=10.00,
+        credits_per_1k_input=0.4, credits_per_1k_output=2.0,
+        supports_vision=True, supports_thinking=True, supports_structured_output=True,
+        # This adapter uses Chat Completions; Sol tool calling requires Responses.
+        supports_tools=False, max_tokens=128000, context_window=1_050_000,
+    ),
     "openai/gpt-4.1": ModelConfig(
         model_id="openai/gpt-4.1",
         provider=ModelProvider.OPENROUTER,
@@ -441,10 +484,22 @@ IMAGE_MODEL_REGISTRY: Dict[str, Dict] = {
         "display_name": "GPT Image 2.5 Flare",
         "credits_per_image": {"1K": 6, "2K": 10, "4K": 16},
     },
+    "gpt-image-2-5-sunburst-text-to-image": {
+        "provider": ModelProvider.KIE,
+        "provider_model": "gpt-image-2-5-sunburst-text-to-image",
+        "display_name": "GPT Image 2.5 Sunburst",
+        "credits_per_image": {"1K": 6, "2K": 10, "4K": 16},
+    },
     "gpt-image-2-5-flare-image-to-image": {
         "provider": ModelProvider.KIE,
         "provider_model": "gpt-image-2-5-flare-image-to-image",
         "display_name": "GPT Image 2.5 Flare (图生图)",
+        "credits_per_image": {"1K": 6, "2K": 10, "4K": 16},
+    },
+    "gpt-image-2-5-sunburst-image-to-image": {
+        "provider": ModelProvider.KIE,
+        "provider_model": "gpt-image-2-5-sunburst-image-to-image",
+        "display_name": "GPT Image 2.5 Sunburst (图生图)",
         "credits_per_image": {"1K": 6, "2K": 10, "4K": 16},
     },
     "gpt-image-2-text-to-image": {
@@ -546,6 +601,8 @@ def create_chat_adapter(
     settings = get_settings()
 
     # 获取模型配置
+    from config.model_aliases import canonical_model_id
+    model_id = canonical_model_id(model_id) if model_id else model_id
     actual_model_id = model_id if model_id in MODEL_REGISTRY else DEFAULT_MODEL_ID
     config = MODEL_REGISTRY[actual_model_id]
 
@@ -592,6 +649,8 @@ def create_chat_adapter(
             model=config.provider_model,
             base_url=settings.dashscope_base_url,
             stream_timeout=stream_timeout,
+            builtin_tools_enabled=settings.dashscope_builtin_tools_enabled,
+            session_cache_enabled=settings.dashscope_session_cache_enabled,
         )
 
     elif config.provider == ModelProvider.OPENROUTER:
@@ -627,18 +686,20 @@ def create_chat_adapter(
 
 def get_model_config(model_id: str) -> Optional[ModelConfig]:
     """获取模型配置信息"""
-    return MODEL_REGISTRY.get(model_id)
+    from config.model_aliases import canonical_model_id
+    return MODEL_REGISTRY.get(canonical_model_id(model_id))
 
 
 def get_all_models() -> Dict[str, ModelConfig]:
-    """获取所有可用模型"""
-    return MODEL_REGISTRY.copy()
+    """获取主模型可选项；内部策划专用模型不暴露为用户主模型。"""
+    return {key:value for key,value in MODEL_REGISTRY.items()
+        if key not in {"gpt-5-6-luna", "gpt-6-luna", "kimi-k3", "gemini-3.8-flash"}}
 
 
 def get_models_by_provider(provider: ModelProvider) -> Dict[str, ModelConfig]:
     """按 Provider 筛选模型"""
     return {
-        k: v for k, v in MODEL_REGISTRY.items()
+        k: v for k, v in get_all_models().items()
         if v.provider == provider
     }
 

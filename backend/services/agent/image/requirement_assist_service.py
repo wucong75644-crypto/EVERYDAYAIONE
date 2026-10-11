@@ -1,28 +1,22 @@
-"""电商图 AI 帮写共享核心服务。"""
-
-from __future__ import annotations
-
+"""复用 ModelGateway 的 Kimi K3 单份草稿服务。"""
 import asyncio
-import json
+import hashlib
 import re
 import time
 from dataclasses import dataclass
-from typing import Any
-
 from loguru import logger
-from pydantic import ValidationError
-
-from core.config import get_settings
 from core.exceptions import AppException
 from schemas.ecom_requirement import RequirementAssistInput, RequirementAssistResult
 from services.agent.image.requirement_assist_prompts import build_multimodal_messages
-
-
-_TOTAL_TIMEOUT_SECONDS = 100.0
-_PRIMARY_TIMEOUT_SECONDS = 60.0
-_CONFLICT_MARKETING_TERMS = (
-    "暗示", "模拟", "容量加倍", "超大容量", "升级版", "加厚版", "替代词", "长续航",
+from services.agent.image.ecommerce_planner.recovery import error_facts
+from services.kie_image_fallback_request import safe_error
+from services.agent.image.analysis_media import media_policy, prepare_analysis_media
+from services.agent.image.requirement_assist_recovery import (
+    InvalidRequirementOutput, parse_requirement_result, repair_context, repair_messages, apply_repair, diagnostic_fields,
 )
+
+_MODEL = "kimi-k3"
+_TIMEOUT_SECONDS = 120.0
 
 
 @dataclass(frozen=True)
@@ -34,197 +28,106 @@ class RequirementAssistOutcome:
 
 
 class RequirementAssistService:
-    """生成、校验并净化三套通用创作简报。"""
+    def __init__(self, *, image_resolver=None):
+        self.image_resolver = image_resolver
 
     async def generate(self, data: RequirementAssistInput) -> RequirementAssistOutcome:
-        settings = get_settings()
-        started_at = time.perf_counter()
-        primary_error: Exception | None = None
+        started = time.perf_counter()
         try:
-            result = await self._run_model(
-                data,
-                settings.image_enhance_vl_model,
-                _PRIMARY_TIMEOUT_SECONDS,
-            )
-            return self._outcome(result, settings.image_enhance_vl_model, False, started_at)
+            result = await self._run_model(data)
         except Exception as exc:
-            primary_error = exc
             logger.warning(
-                f"Requirement assist primary failed | user_id={data.user_id} | "
-                f"source_id={data.source_id} | model={settings.image_enhance_vl_model} | "
-                f"error_type={type(exc).__name__}"
+                f"Requirement assist failed | user_id={data.user_id} | "
+                f"source_id={data.source_id} | model={_MODEL} | error_type={type(exc).__name__} | "
+                f"http_status={getattr(exc, 'status_code', None)} | "
+                f"provider_error_code={getattr(exc, 'error_code', None)} | "
+                f"provider_request_id={getattr(exc, 'request_id', None)} | reason={safe_error(exc)}"
             )
+            if isinstance(exc, AppException):
+                raise
+            if isinstance(exc, TimeoutError):
+                raise AppException("REQUIREMENT_ASSIST_TIMEOUT", "AI帮写超时，已保留草稿，请重试", 504) from exc
+            if isinstance(exc, InvalidRequirementOutput):
+                raise AppException("REQUIREMENT_ASSIST_INVALID_OUTPUT", "AI返回内容无效，已保留草稿，请重试", 502) from exc
+            code, category, _ = error_facts(exc)
+            if category == "authentication":
+                raise AppException("REQUIREMENT_ASSIST_AUTHENTICATION", "分析模型鉴权失败，请联系管理员；已保留草稿", 503) from exc
+            if category == "balance":
+                raise AppException("REQUIREMENT_ASSIST_QUOTA", "分析模型供应商额度不足；已保留草稿", 503) from exc
+            if code == "DASHSCOPE_TRANSIENT_REJECTION":
+                raise AppException("REQUIREMENT_ASSIST_UPSTREAM_REJECTED", "上游暂时无法处理图片或请求，已保留草稿，请稍后重试", 503) from exc
+            raise AppException("REQUIREMENT_ASSIST_UNAVAILABLE", "Kimi AI帮写暂时不可用，请重试", 503) from exc
+        return RequirementAssistOutcome(result, _MODEL, False, round((time.perf_counter() - started) * 1000))
 
-        elapsed = time.perf_counter() - started_at
-        remaining = _TOTAL_TIMEOUT_SECONDS - elapsed
-        if remaining <= 0:
-            raise AppException("REQUIREMENT_ASSIST_TIMEOUT", "AI帮写超时，请重试", 504) from primary_error
-        try:
-            result = await self._run_model(
-                data,
-                settings.image_enhance_fallback_model,
-                remaining,
-            )
-            return self._outcome(result, settings.image_enhance_fallback_model, True, started_at)
-        except asyncio.TimeoutError as exc:
-            self._log_final_failure(data, settings.image_enhance_fallback_model, exc)
-            raise AppException("REQUIREMENT_ASSIST_TIMEOUT", "AI帮写超时，请重试", 504) from exc
-        except InvalidRequirementOutput as exc:
-            self._log_final_failure(data, settings.image_enhance_fallback_model, exc)
-            raise AppException("REQUIREMENT_ASSIST_INVALID_OUTPUT", "AI返回内容无效，请重试", 502) from exc
-        except Exception as exc:
-            self._log_final_failure(data, settings.image_enhance_fallback_model, exc)
-            raise AppException("REQUIREMENT_ASSIST_UNAVAILABLE", "AI帮写暂时不可用，请重试", 503) from exc
+    async def _run_model(self, data: RequirementAssistInput) -> RequirementAssistResult:
+        from core.config import get_settings
+        deadline = time.monotonic() + _TIMEOUT_SECONDS
+        settings = get_settings()
+        transport, json_mode = media_policy(settings, _MODEL)
+        async with prepare_analysis_media(data.image_references, self.image_resolver, model=_MODEL,
+                transport=transport, deadline=deadline, memory_mb=settings.ecom_analysis_memory_mb) as urls:
+            return await self._call_model(build_multimodal_messages(data, urls), deadline, json_mode)
 
-    async def _run_model(
-        self,
-        data: RequirementAssistInput,
-        model: str,
-        timeout_seconds: float,
-    ) -> RequirementAssistResult:
-        from services.model_gateway import (
-            ModelCallRequest,
-            _collect_stream_response,
-            get_model_gateway,
-        )
-
-        model_gateway = get_model_gateway().open_chat(
-            ModelCallRequest(
-                model_id=model,
-                timeout=timeout_seconds,
-            )
-        )
-        try:
-            response = await asyncio.wait_for(
-                _collect_stream_response(
-                    model_gateway,
-                    messages=build_multimodal_messages(data),
-                ),
-                timeout=timeout_seconds,
-            )
-        finally:
-            await model_gateway.close()
-        result = parse_requirement_result(response.content)
-        validate_reference_ids(result, data)
-        validate_no_output_urls(result)
-        return apply_conflict_gate(result)
-
-    @staticmethod
-    def _outcome(
-        result: RequirementAssistResult,
-        model: str,
-        fallback_used: bool,
-        started_at: float,
-    ) -> RequirementAssistOutcome:
-        return RequirementAssistOutcome(
-            result=result,
-            model=model,
-            fallback_used=fallback_used,
-            latency_ms=max(0, round((time.perf_counter() - started_at) * 1000)),
-        )
-
-    @staticmethod
-    def _log_final_failure(data: RequirementAssistInput, model: str, exc: Exception) -> None:
-        logger.error(
-            f"Requirement assist failed | user_id={data.user_id} | org_id={data.org_id} | "
-            f"source_id={data.source_id} | model={model} | error_type={type(exc).__name__}"
-        )
-
-
-class InvalidRequirementOutput(ValueError):
-    """模型输出无法满足 AI 帮写协议。"""
-
-
-def parse_requirement_result(content: str) -> RequirementAssistResult:
-    """解析直接 JSON、代码围栏或带少量前后文字的 JSON。"""
-    cleaned = content.strip()
-    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", cleaned, re.DOTALL)
-    if fenced:
-        cleaned = fenced.group(1)
-    try:
-        payload: Any = json.loads(cleaned)
-    except json.JSONDecodeError:
-        start = cleaned.find("{")
-        end = cleaned.rfind("}")
-        if start < 0 or end <= start:
-            raise InvalidRequirementOutput("响应中没有 JSON 对象") from None
-        try:
-            payload = json.loads(cleaned[start : end + 1])
-        except json.JSONDecodeError as exc:
-            raise InvalidRequirementOutput("响应不是合法 JSON") from exc
-    try:
-        return RequirementAssistResult.model_validate(payload)
-    except ValidationError as exc:
-        raise InvalidRequirementOutput("响应不符合三方案协议") from exc
-
-
-def validate_reference_ids(
-    result: RequirementAssistResult,
-    data: RequirementAssistInput,
-) -> None:
-    """禁止模型引用输入集合之外的参考图片。"""
-    allowed = {image.id for image in data.reference_images}
-    returned = {analysis.image_id for analysis in result.reference_analyses}
-    if not returned.issubset(allowed):
-        raise InvalidRequirementOutput("响应包含未知参考图 ID")
+    async def _call_model(self, messages, deadline, json_mode):
+        from services.model_gateway import ModelCallRequest, _collect_stream_response, get_model_gateway, get_model_attempt_context
+        options = {"response_format": {"type": "json_object"}} if json_mode else {}
+        repair = None
+        for attempt in range(2):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError()
+            session = get_model_gateway().open_chat(ModelCallRequest(model_id=_MODEL, timeout=remaining))
+            try:
+                response = await asyncio.wait_for(
+                    _collect_stream_response(session, messages=messages, reasoning_effort="low", **options),
+                    timeout=remaining,
+                )
+                receipt = getattr(session, "last_result", None)
+                context = get_model_attempt_context()
+                request_id = getattr(context, "request_id", None)
+                finish = response.finish_reason
+                normal = receipt is not None and receipt.status == "completed" and finish == "stop"
+                diagnostics = {
+                    "attempt": attempt + 1, "phase": "repair" if repair else "draft",
+                    "finish_reason": finish if finish in {"stop", "length", "content_filter", "tool_calls"} else "unknown",
+                    "output_characters": len(response.content),
+                    "output_sha256": hashlib.sha256(response.content.encode()).hexdigest(),
+                    "partial_output": getattr(receipt, "partial_output", False),
+                    "request_id": request_id if isinstance(request_id, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,128}', request_id) else None,
+                    "remaining_ms": max(0, round((deadline - time.monotonic()) * 1000)),
+                }
+                logger.info("requirement_assist_response | model={} diagnostics={}", _MODEL, diagnostics)
+                if not normal or not response.content.strip():
+                    code, message = ("REQUIREMENT_ASSIST_TRUNCATED", "模型输出被截断，已保留草稿，请重试") if finish == "length" else (
+                        ("REQUIREMENT_ASSIST_REFUSED", "模型未交付可用资料，已保留草稿，请调整输入") if finish == "content_filter" else
+                        ("REQUIREMENT_ASSIST_INCOMPLETE", "模型输出未完整交付，已保留草稿，请重试"))
+                    raise AppException(code, message, 502)
+                try:
+                    result = apply_repair(response.content, repair) if repair else parse_requirement_result(response.content)
+                    validate_no_output_urls(result)
+                    return result
+                except InvalidRequirementOutput as exc:
+                    logger.info("requirement_assist_format_error | diagnostics={} json={} fields={}",
+                        diagnostics, exc.syntax, diagnostic_fields(exc.errors))
+                    next_repair = repair_context(response.content, exc) if not repair and attempt == 0 else None
+                    if next_repair is None:
+                        raise
+                    repair = next_repair
+                    messages = repair_messages(repair)
+            except Exception as exc:
+                _code, _category, safe = error_facts(exc)
+                partial = getattr(getattr(session, "last_result", None), "partial_output", False)
+                if not safe or partial or attempt == 1 or repair:
+                    raise
+                logger.info("Requirement assist retry | model={} provider_error_code={} provider_request_id={}",
+                    _MODEL, getattr(exc, "error_code", None), getattr(exc, "request_id", None))
+            finally:
+                await session.close()
+            if repair is None:
+                await asyncio.sleep(min(1, max(0, deadline - time.monotonic())))
+        raise InvalidRequirementOutput("格式修复未完成")
 
 
 def validate_no_output_urls(result: RequirementAssistResult) -> None:
-    """禁止模型在创作简报中生成新的外部 URL。"""
-    if any(
-        re.search(r"https?://", suggestion.brief_markdown, re.IGNORECASE)
-        for suggestion in result.suggestions
-    ):
+    if re.search(r"https?://", result.model_dump_json(), re.IGNORECASE):
         raise InvalidRequirementOutput("响应包含未授权 URL")
-
-
-def apply_conflict_gate(result: RequirementAssistResult) -> RequirementAssistResult:
-    """从可执行简报中移除冲突卖点和规避事实的营销表达。"""
-    if not result.conflicts:
-        return result
-    blocked = {
-        claim.strip()
-        for conflict in result.conflicts
-        for claim in conflict.blocked_claims
-        if claim.strip()
-    }
-    replacements = {
-        conflict.field: f"- 待确认：{conflict.message}"
-        for conflict in result.conflicts
-    }
-    sanitized = [
-        suggestion.model_copy(
-            update={"brief_markdown": _sanitize_brief(suggestion.brief_markdown, blocked, replacements)}
-        )
-        for suggestion in result.suggestions
-    ]
-    return result.model_copy(update={"suggestions": sanitized})
-
-
-def _sanitize_brief(
-    brief: str,
-    blocked: set[str],
-    replacements: dict[str, str],
-) -> str:
-    lines: list[str] = []
-    preserving_original = False
-    replacement_added = False
-    for line in brief.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            preserving_original = "用户需求原文" in stripped
-        if stripped.startswith("用户需求原文"):
-            preserving_original = True
-        unsafe = any(claim in line for claim in blocked) or any(
-            term in line for term in _CONFLICT_MARKETING_TERMS
-        )
-        if unsafe and not preserving_original:
-            if not replacement_added:
-                lines.extend(replacements.values())
-                replacement_added = True
-            continue
-        lines.append(line)
-    sanitized = "\n".join(lines).strip()
-    if not sanitized:
-        raise InvalidRequirementOutput("事实冲突闸门移除了全部简报内容")
-    return sanitized

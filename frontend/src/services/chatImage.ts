@@ -18,13 +18,13 @@ export interface ChatImageInput {
     source_message_id?: string; source_content_index?: number;
     quoted_message_id?: string; quoted_content_index?: number; source_asset_id?: string;
     occurrences?: Array<{ message_id: string; content_index: number }> }>;
-  origin: { retry_of_task_id?: string; parent_task_id: string; [key: string]: unknown };
+  origin: { retry_of_task_id?: string; parent_task_id?: string; destination?: string; project_id?: string; [key: string]: unknown };
   budget: { max_requests: number; max_credits: number };
   source_prompt?: Record<string, unknown>;
   plan_item_id?: string; variant_id?: string;
 }
 export interface ChatImageDetails {
-  task_id: string; message_id: string; status: string; submission_state: string;
+  task_id: string; message_id: string | null; status: string; submission_state: string;
   input: ChatImageInput; result?: ImagePart[]; credits_used: number;
   reference_previews?: Array<{ index: number; url: string | null; available: boolean }>;
   can_stop: boolean; can_replay: boolean; cancel_explanation: string;

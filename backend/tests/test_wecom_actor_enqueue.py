@@ -29,7 +29,7 @@ def _handler() -> MagicMock:
     handler = MagicMock()
     conversation = handler.db.table.return_value.select.return_value.eq.return_value
     conversation.single.return_value.execute.return_value = SimpleNamespace(
-        data={"model_id": "qwen3.5-plus", "chat_settings": {"thinking_mode": "deep"}},
+        data={"model_id": "qwen3.8-max", "chat_settings": {"thinking_mode": "deep"}},
     )
     handler._build_task_data.return_value = {
         "id": "random",

@@ -236,10 +236,11 @@ class TestModelRegistry:
 
     def test_openrouter_capabilities(self):
         """验证 OpenRouter 模型能力标记"""
-        # 所有 OpenRouter 模型都支持 tools
+        # 能力必须与当前适配器使用的端点一致。
         or_models = get_models_by_provider(ModelProvider.OPENROUTER)
         for mid, cfg in or_models.items():
-            assert cfg.supports_tools is True, f"{mid} should support tools"
+            # Sol's tool API is Responses; this adapter currently uses Chat Completions.
+            assert cfg.supports_tools is (mid != "openai/gpt-6.1-sol"), mid
 
         # vision 支持
         vision_models = {
@@ -257,15 +258,15 @@ class TestModelRegistry:
     def test_supports_search(self):
         """验证 supports_search 标记（跨 provider）"""
         search_models = {
-            # KIE
-            "gemini-3-pro", "gemini-3-flash",
+            # KIE / DashScope
+            "gemini-3-pro", "gemini-3-flash", "qwen3.8-max", "qwen3.8-flash",
             # OpenRouter
             "openai/gpt-4.1", "openai/gpt-4.1-mini", "openai/o4-mini",
             "x-ai/grok-4.1-fast", "openai/gpt-5.4", "openai/gpt-5.4-pro",
             "openai/gpt-5.3-codex", "google/gemini-3.1-pro-preview",
         }
         no_search = {
-            "deepseek-v3.2", "deepseek-r1", "qwen3.5-plus",
+            "deepseek-v3.2", "deepseek-r1",
             "kimi-k2.5", "glm-5",
             "anthropic/claude-sonnet-4", "anthropic/claude-sonnet-4.6",
             "anthropic/claude-opus-4.6",
@@ -285,7 +286,7 @@ class TestModelRegistry:
             # KIE
             "gemini-3-pro", "gemini-3-flash",
             # DashScope (全部)
-            "deepseek-v3.2", "deepseek-r1", "qwen3.5-plus",
+            "deepseek-v3.2", "deepseek-r1",
             "kimi-k2.5", "glm-5",
             # OpenRouter
             "openai/o4-mini", "openai/gpt-5.4-pro",
@@ -329,7 +330,7 @@ class TestModelRegistry:
         }
         no_audio = {
             "gemini-3-pro", "gemini-3-flash",
-            "deepseek-v3.2", "qwen3.5-plus",
+            "deepseek-v3.2", "qwen3.8-max",
             "openai/gpt-4.1", "anthropic/claude-sonnet-4",
         }
         for mid in audio_models:
@@ -357,7 +358,7 @@ class TestModelRegistry:
 
     def test_all_dashscope_models_registered(self):
         """验证所有 DashScope 模型都在注册表中"""
-        expected = {"deepseek-v3.2", "deepseek-r1", "qwen3.5-plus", "kimi-k2.5", "glm-5"}
+        expected = {"deepseek-v3.2", "deepseek-r1", "qwen3.8-max", "kimi-k2.5", "glm-5"}
         ds_models = get_models_by_provider(ModelProvider.DASHSCOPE)
         assert expected.issubset(set(ds_models.keys()))
 

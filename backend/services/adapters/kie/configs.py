@@ -12,6 +12,28 @@ from decimal import Decimal
 # ============================================================
 
 CHAT_MODEL_CONFIGS = {
+    "gemini-3.8-flash": {
+        "supports_vision": True, "supports_google_search": False,
+        "supports_function_calling": False, "supports_response_format": False,
+        "cost_per_1k_input": Decimal("0"), "cost_per_1k_output": Decimal("0"),
+        "credits_per_1k_input": Decimal("0"), "credits_per_1k_output": Decimal("0"),
+    },
+    # KIE exposes Luna on its Responses route. Prices and account limits are
+    # intentionally configured per deployment, not copied from OpenAI pricing.
+    "gpt-5-6-luna": {
+        "api_protocol": "responses",
+        "supports_vision": True, "supports_google_search": False,
+        "supports_function_calling": False, "supports_response_format": False,
+        "cost_per_1k_input": Decimal("0"), "cost_per_1k_output": Decimal("0"),
+        "credits_per_1k_input": Decimal("0"), "credits_per_1k_output": Decimal("0"),
+    },
+    "gpt-6-luna": {
+        "api_protocol": "responses",
+        "supports_vision": True, "supports_google_search": False,
+        "supports_function_calling": False, "supports_response_format": False,
+        "cost_per_1k_input": Decimal("0"), "cost_per_1k_output": Decimal("0"),
+        "credits_per_1k_input": Decimal("0"), "credits_per_1k_output": Decimal("0"),
+    },
     "gemini-3-pro": {
         "context_window": 1_000_000,
         "max_output_tokens": 65536,
@@ -122,10 +144,58 @@ IMAGE_MODEL_CONFIGS = {
             "4K": 16,
         },
     },
+    "gpt-image-2-5-sunburst-text-to-image": {
+        "supported_backgrounds": ["opaque", "transparent"],
+        "model_id": "gpt-image-2-5-sunburst-text-to-image",
+        "description": "GPT Image 2.5 Sunburst 文生图（默认图片生成）",
+        "requires_image_input": False,
+        "max_prompt_length": 20000,
+        "supported_sizes": [
+            "1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "21:9", "auto"
+        ],
+        "supported_formats": ["png"],
+        "supports_resolution": True,
+        "supported_resolutions": ["1K", "2K", "4K"],
+        "cost_per_image": {
+            "1K": Decimal("0.03"),
+            "2K": Decimal("0.05"),
+            "4K": Decimal("0.08"),
+        },
+        "credits_per_image": {
+            "1K": 6,
+            "2K": 10,
+            "4K": 16,
+        },
+    },
     "gpt-image-2-5-flare-image-to-image": {
         "supported_backgrounds": ["opaque", "transparent"],
         "model_id": "gpt-image-2-5-flare-image-to-image",
         "description": "GPT Image 2.5 Flare 图生图（以参考图为基础生成）",
+        "requires_image_input": True,
+        "max_images": 16,
+        "max_image_size_mb": 30,
+        "max_prompt_length": 20000,
+        "supported_sizes": [
+            "1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "21:9", "auto"
+        ],
+        "supported_formats": ["png"],
+        "supports_resolution": True,
+        "supported_resolutions": ["1K", "2K", "4K"],
+        "cost_per_image": {
+            "1K": Decimal("0.03"),
+            "2K": Decimal("0.05"),
+            "4K": Decimal("0.08"),
+        },
+        "credits_per_image": {
+            "1K": 6,
+            "2K": 10,
+            "4K": 16,
+        },
+    },
+    "gpt-image-2-5-sunburst-image-to-image": {
+        "supported_backgrounds": ["opaque", "transparent"],
+        "model_id": "gpt-image-2-5-sunburst-image-to-image",
+        "description": "GPT Image 2.5 Sunburst 图生图（以参考图为基础生成）",
         "requires_image_input": True,
         "max_images": 16,
         "max_image_size_mb": 30,

@@ -310,11 +310,12 @@ async def test_history_cache_snapshot_provider_and_checkpoint_preserve_outcomes(
     def transport(request):
         captured.append(json.loads(request.content))
         return httpx.Response(200, text='data: {"choices":[{"delta":{"content":"离线占位回复"}}]}\n\ndata: [DONE]\n\n')
-    adapter = DashScopeChatAdapter(api_key="offline-test", model="qwen3.5-plus")
+    adapter = DashScopeChatAdapter(api_key="offline-test", model="qwen3.8-max")
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport), base_url="https://offline.test") as client:
         adapter._client = client
         _ = [chunk async for chunk in adapter.stream_chat(messages)]
-    sent = captured[0]["messages"]
+    from tests.prompt_builder_test_utils import normalize_cache_transport
+    sent = normalize_cache_transport(captured[0]["messages"], messages)
     assert sent == messages and sent[-1]["content"] == latest_text
     assert any("old-form" in str(m["content"]) for m in sent)
     assert _build_replay_context(messages, [], 0)["messages"] == sent

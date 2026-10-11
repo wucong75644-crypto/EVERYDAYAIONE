@@ -144,11 +144,11 @@
     "category": "model",
     "subcategory": "chat",
     "node_type": "model",
-    "title": "qwen3.5-plus 模型特点",
-    "content": "阿里通义千问 3.5 Plus，国内模型响应快。能力：100万（1M）上下文窗口，最大输出 65536 tokens，支持图片理解（Vision）、函数调用、流式响应、思考模式。适合：长文档分析、通用对话、中文写作、翻译、摘要。费用极低（约 12/68 积分每百万输入/输出 token），是所有模型中最便宜的，约 gemini-3-pro 的 1/10。百万级上下文适合处理超长文本。用户没有特殊要求且追求性价比时选择。",
+    "title": "qwen3.8-max 模型特点",
+    "content": "阿里通义千问 3.8 Max。能力：100万（1M）上下文窗口，最大输出 131072 tokens，支持图片理解、函数调用、流式响应、思考模式及百炼内置联网搜索；开启思考时支持网页抓取。适合长文档分析、通用对话、中文写作、翻译和资料检索。平台价格由模型注册表维护，不能沿用旧千问 3.5 的价格。缓存默认开启，实际命中取决于前缀一致性和百炼缓存约束。",
     "source": "seed",
     "confidence": 1.0,
-    "metadata": {"model_id": "qwen3.5-plus", "provider": "dashscope"}
+    "metadata": {"model_id": "qwen3.8-max", "provider": "dashscope"}
   },
   {
     "category": "model",
@@ -175,10 +175,10 @@
     "subcategory": "chat",
     "node_type": "pattern",
     "title": "国内模型与海外模型选择策略",
-    "content": "国内模型（deepseek-v3.2、deepseek-r1、qwen3.5-plus、kimi-k2.5、glm-5）通过阿里云百炼 DashScope 调用，延迟低、响应快、费用低。海外模型（gemini-3-pro、gemini-3-flash）通过 KIE 平台调用，延迟较高但能力强（支持 Google Search、结构化输出）。用户追求速度时选国内模型；需要联网搜索时必须用 gemini-3-pro；代码/数学选 deepseek-v3.2；深度推理选 deepseek-r1；性价比/长文选 qwen3.5-plus；多模态+长文选 kimi-k2.5。",
+    "content": "国内模型（deepseek-v3.2、deepseek-r1、qwen3.8-max、kimi-k2.5、glm-5）通过阿里云百炼 DashScope 调用，延迟低、响应快、费用低。海外模型（gemini-3-pro、gemini-3-flash）通过 KIE 平台调用，延迟较高但能力强（支持 Google Search、结构化输出）。用户追求速度时选国内模型；需要联网搜索时可用 qwen3.8-max 的百炼内置搜索或 gemini-3-pro 的 Google Search；代码/数学选 deepseek-v3.2；深度推理选 deepseek-r1；通用中文/长文选 qwen3.8-max；多模态+长文选 kimi-k2.5。",
     "source": "seed",
     "confidence": 1.0,
-    "metadata": {"related_models": ["deepseek-v3.2", "deepseek-r1", "qwen3.5-plus", "kimi-k2.5", "glm-5", "gemini-3-pro", "gemini-3-flash"]}
+    "metadata": {"related_models": ["deepseek-v3.2", "deepseek-r1", "qwen3.8-max", "kimi-k2.5", "glm-5", "gemini-3-pro", "gemini-3-flash"]}
   },
 
   {"category": "experience", "subcategory": "order", "node_type": "routing_pattern",

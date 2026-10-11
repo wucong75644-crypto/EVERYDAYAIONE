@@ -49,11 +49,12 @@ async def test_current_user_and_attachment_survive_provider_and_checkpoint(monke
     def transport(request):
         captured.append(json.loads(request.content))
         return httpx.Response(200, text='data: {"choices":[{"delta":{"content":"读取完成"}}]}\n\ndata: [DONE]\n\n')
-    adapter = DashScopeChatAdapter(api_key="offline-test", model="qwen3.5-plus")
+    adapter = DashScopeChatAdapter(api_key="offline-test", model="qwen3.8-max")
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport), base_url="https://offline.test") as client:
         adapter._client = client
         _ = [chunk async for chunk in adapter.stream_chat(messages)]
-    sent = captured[0]["messages"]
+    from tests.prompt_builder_test_utils import normalize_cache_transport
+    sent = normalize_cache_transport(captured[0]["messages"], messages)
     assert sent == messages  # Actual provider payload has the same sequence.
     end_of_history = sent.index(history[-1])
     assert sent.index(history[0]) < end_of_history

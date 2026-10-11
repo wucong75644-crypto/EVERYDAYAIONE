@@ -45,7 +45,13 @@ export function getAvailableModels(
 ): UnifiedModel[] {
   void hasImage;
   if (!subscribedModelIds) return ALL_MODELS;
+  const subscribed = new Set(subscribedModelIds.map(canonicalModelId));
   return ALL_MODELS.filter(
-    (m) => m.id === 'auto' || subscribedModelIds.includes(m.id),
+    (m) => m.id === 'auto' || subscribed.has(m.id),
   );
+}
+
+// Normalize saved choices at read time; historical records keep their original IDs.
+export function canonicalModelId(modelId: string): string {
+  return ({ 'qwen3.5-plus': 'qwen3.8-max', 'qwen3.5-flash': 'qwen3.8-flash' } as Record<string, string>)[modelId] ?? modelId;
 }

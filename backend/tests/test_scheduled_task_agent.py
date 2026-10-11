@@ -216,7 +216,7 @@ class TestExecutionOutcome:
              patch.object(agent, "_build_tool_loop", return_value=(loop, MagicMock())), \
              patch("services.adapters.factory.create_chat_adapter", return_value=adapter), \
              patch("core.config.get_settings", return_value=Settings(_env_file=None, database_url="postgresql://test", jwt_secret_key="test",
-                 agent_loop_model="qwen3.5-plus", file_workspace_root="/tmp",
+                 agent_loop_model="qwen3.8-max", file_workspace_root="/tmp",
                  file_workspace_enabled=True, sandbox_enabled=True, crawler_enabled=False,
                  chat_image_max_credits=100, chat_image_transparent_enabled=False,
              )), \
@@ -248,7 +248,7 @@ class TestExecutionOutcome:
              patch.object(agent, "_build_tool_loop", return_value=(loop, MagicMock())), \
              patch("services.adapters.factory.create_chat_adapter", return_value=adapter), \
              patch("core.config.get_settings", return_value=Settings(_env_file=None, database_url="postgresql://test", jwt_secret_key="test",
-                 agent_loop_model="qwen3.5-plus", file_workspace_root="/tmp",
+                 agent_loop_model="qwen3.8-max", file_workspace_root="/tmp",
                  file_workspace_enabled=True, sandbox_enabled=True, crawler_enabled=False,
                  chat_image_max_credits=100, chat_image_transparent_enabled=False,
              )), \

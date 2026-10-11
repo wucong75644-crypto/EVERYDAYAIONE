@@ -272,3 +272,12 @@ describe('媒体选项常量', () => {
     expect(values).toContain('portrait');
   });
 });
+
+
+describe('千问历史订阅读取兼容', () => {
+  it('旧订阅仍能选择升级后的模型', () => {
+    const available = getAvailableModels(false, ['qwen3.5-plus']);
+    expect(available.map((model) => model.id)).toContain('qwen3.8-max');
+    expect(available.map((model) => model.id)).not.toContain('deepseek-v4-pro');
+  });
+});
