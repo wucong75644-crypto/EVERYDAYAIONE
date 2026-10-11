@@ -73,6 +73,22 @@ class Settings(BaseSettings):
     web_search_ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
     web_search_ark_model: str = "doubao-seed-2-1-pro-260628"
 
+    # Agent Reach adapters are enabled only after their deployment checks.
+    agent_reach_enabled: bool = False
+    agent_reach_platforms: str = "web,github,rss"
+    agent_reach_write_actions: str = ""  # platform:action pairs, enabled after account validation
+    agent_reach_media_staging_dir: str = "/tmp/everydayai-reach-media"
+    agent_reach_bin_dir: str = "/opt/everydayai-agent-reach/bin"
+    agent_reach_timeout_seconds: float = Field(default=60.0, gt=0, le=180)
+    agent_reach_exa_api_key: Optional[str] = None
+    agent_reach_youtube_api_key: Optional[str] = None
+    # Operator-owned mapping: connection UUID -> dedicated XHS REST origin.
+    agent_reach_xhs_origins_json: str = "{}"
+    agent_reach_xhs_slots_json: str = "{}"  # org UUID -> dedicated login slots
+    agent_reach_google_client_id: Optional[str] = None
+    agent_reach_google_client_secret: Optional[str] = None
+    agent_reach_google_redirect_uri: Optional[str] = None
+
     # Google API 配置（统一适配器 Phase 6 使用）
     google_api_key: Optional[str] = None
 

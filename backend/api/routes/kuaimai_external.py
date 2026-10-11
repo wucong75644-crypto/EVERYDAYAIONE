@@ -21,7 +21,9 @@ from typing import Any, Literal, Optional
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+import re
+
+from fastapi import APIRouter, Depends, HTTPException, Response
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -628,3 +630,92 @@ async def unbind_operator(
     if not resp.data:
         raise HTTPException(status_code=404, detail="运营不存在")
     return {"unbound": True}
+
+
+class PasswordLoginIn(BaseModel):
+    session_id: str = Field(pattern=r'^[A-Za-z0-9_-]{43}$')
+    company_name: str = Field(min_length=1, max_length=200)
+    username: str = Field(min_length=1, max_length=200)
+    password: str = Field(min_length=1, max_length=1024, repr=False)
+    validation_code: str = Field(default='', max_length=20)
+
+
+async def _login_service(org_ctx):
+    org_id = _require_admin(org_ctx)
+    from core.redis import get_redis
+    from services.kuaimai_external.login import ERPLogin
+    redis = await get_redis()
+    if redis is None:
+        raise HTTPException(status_code=503, detail='登录会话服务暂不可用')
+    return ERPLogin(redis, org_id, org_ctx.user_id)
+
+
+@router.post('/login/sessions', summary='准备快麦账号登录')
+async def start_password_login(org_ctx: OrgCtx):
+    from services.kuaimai_external.login import LoginError
+    service = await _login_service(org_ctx)
+    try:
+        return await service.start()
+    except LoginError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    except Exception:
+        raise HTTPException(status_code=503, detail='快麦登录服务暂不可用，请稍后重试') from None
+
+
+@router.post('/login/password', summary='登录快麦并连接两个数据源')
+async def password_login(body: PasswordLoginIn, org_ctx: OrgCtx, db: AsyncDatabase):
+    from services.kuaimai_external.login import LoginError
+    service = await _login_service(org_ctx)
+    try:
+        return await service.submit(db, body.session_id, body.company_name.strip(),
+            body.username.strip(), body.password, body.validation_code.strip())
+    except LoginError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    except Exception:
+        raise HTTPException(status_code=503, detail='连接未完成，请刷新账号状态后重试') from None
+
+
+async def _wechat_login_service(org_ctx):
+    from services.kuaimai_external.wechat_login import WeChatLogin
+    service = await _login_service(org_ctx)
+    return WeChatLogin(service.redis, service.org, service.actor)
+
+
+@router.post('/login/wechat', summary='生成快麦微信登录二维码')
+async def start_wechat_login(org_ctx: OrgCtx, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    from services.kuaimai_external.login import LoginError
+    service = await _wechat_login_service(org_ctx)
+    try:
+        return await service.start()
+    except LoginError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    except Exception:
+        raise HTTPException(status_code=503, detail='快麦微信扫码服务暂不可用，请稍后重试') from None
+
+
+@router.get('/login/wechat/{session_id}', summary='查询快麦微信扫码状态并保存验证后的连接')
+async def poll_wechat_login(session_id: str, org_ctx: OrgCtx, db: AsyncDatabase, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    from services.kuaimai_external.login import LoginError
+    service = await _wechat_login_service(org_ctx)
+    if not re.fullmatch(r'[A-Za-z0-9_-]{32,64}', session_id):
+        raise HTTPException(status_code=400, detail='扫码会话格式不正确，请重新扫码')
+    try:
+        return await service.poll(db, session_id)
+    except LoginError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    except Exception:
+        raise HTTPException(status_code=503, detail='扫码处理未完成，请检查账号状态后重试') from None
+
+
+@router.delete('/login/wechat/{session_id}', summary='取消快麦微信扫码会话')
+async def cancel_wechat_login(session_id: str, org_ctx: OrgCtx, db: AsyncDatabase):
+    from services.kuaimai_external.login import LoginError
+    service = await _wechat_login_service(org_ctx)
+    if not re.fullmatch(r'[A-Za-z0-9_-]{32,64}', session_id):
+        raise HTTPException(status_code=400, detail='扫码会话格式不正确')
+    try:
+        return await service.poll(db, session_id, cancel=True)
+    except LoginError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None

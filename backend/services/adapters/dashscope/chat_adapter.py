@@ -152,7 +152,12 @@ class DashScopeChatAdapter(BaseChatAdapter):
                     data = line[5:].strip()
                     if data == "[DONE]":
                         break
-                    for chunk in parser.consume(json.loads(data)):
+                    event = json.loads(data)
+                    # Bailian can send an admission error as a data frame with HTTP 200.
+                    if isinstance(event, dict) and not event.get("type") and (event.get("error") or event.get("code")):
+                        raise DashScopeAPIError.from_http(data.encode(), response.status_code,
+                            getattr(response, "headers", {}).get("x-request-id"))
+                    for chunk in parser.consume(event):
                         if chunk.prompt_tokens or chunk.cache_creation_input_tokens:
                             logger.info("LLM cache | model={} | protocol=responses | prompt={} cached={} created={}",
                                         self._model_id, chunk.prompt_tokens, chunk.cached_tokens, chunk.cache_creation_input_tokens)

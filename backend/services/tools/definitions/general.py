@@ -2,6 +2,7 @@
 
 from ..spec import Exposure, ToolAvailability, ToolPolicyRules, ToolSpec
 from . import crawler_schemas
+from .reach_schema import build_schema as build_reach_schema
 
 def _schema_search_knowledge():
     return {
@@ -84,6 +85,17 @@ def build_specs():
     schemas = {}
     schemas.update((s["function"]["name"], s) for s in crawler_schemas.build_crawler_tools())
     return (
+        ToolSpec(
+            name='agent_reach', capability='platform.agent_reach',
+            schema=build_reach_schema(),
+            domain='general', availability=ToolAvailability(feature_flags=('agent_reach_enabled',)),
+            risk_level='safe', parallelizable=False, cacheable=False, effects=('unknown',),
+            executor_type='legacy', handler_key='agent_reach', exposure=Exposure.PUBLIC,
+            source='services.tools.definitions.general.build_specs', definition_kind='explicit',
+            catalog_order=29, catalog_groups=('common_tools',), core=True, legacy_plan_visible=False,
+            policy_rules=ToolPolicyRules(operation='read', plan_allowed=False,
+                execution_modes=('interactive',), action_rule='agent_reach'),
+        ),
         ToolSpec(
             name='social_crawler', capability='platform.social_crawler', schema=schemas['social_crawler'],
             domain='general', availability=ToolAvailability(feature_flags=('crawler_enabled',)),

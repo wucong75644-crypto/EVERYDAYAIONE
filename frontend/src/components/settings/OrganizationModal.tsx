@@ -10,10 +10,12 @@
  * P3 阶段只实现员工 tab，群聊 tab 在 P4 实现内容（占位 placeholder）
  */
 import { useState } from 'react';
-import { Users, MessageSquare } from 'lucide-react';
+import { Users, MessageSquare, Globe } from 'lucide-react';
 import Modal from '../common/Modal';
 import MemberList from './MemberList';
 import GroupList from './GroupList';
+import { useNavigate } from 'react-router-dom';
+import { useAuthStore } from '../../stores/useAuthStore';
 import { useCurrentMember } from '../../hooks/usePermission';
 import { cn } from '../../utils/cn';
 
@@ -25,6 +27,9 @@ interface Props {
 type TabKey = 'members' | 'groups';
 
 export default function OrganizationModal({ isOpen, onClose }: Props) {
+  const navigate = useNavigate();
+  const orgRole = useAuthStore(state => state.currentOrg?.role);
+  const canManageAccounts = orgRole === 'owner' || orgRole === 'admin';
   const [tab, setTab] = useState<TabKey>('members');
   const member = useCurrentMember();
 
@@ -46,6 +51,7 @@ export default function OrganizationModal({ isOpen, onClose }: Props) {
           icon={<Users className="w-4 h-4" />}
           label="员工管理"
         />
+        {canManageAccounts && <TabButton active={false} onClick={() => { onClose(); navigate('/admin?tab=accounts'); }} icon={<Globe className="w-4 h-4" />} label="账号连接 ↗" />}
         {canManageGroups && (
           <TabButton
             active={tab === 'groups'}
