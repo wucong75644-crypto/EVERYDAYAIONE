@@ -7,6 +7,7 @@ import time
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 import httpx
+from loguru import logger
 
 from . import cookie_crypto
 from .login import ERPLogin, LoginError, ORIGIN, company_id
@@ -15,6 +16,19 @@ PREFIX = 'kuaimai:wechat:'
 OPEN = 'https://open.weixin.qq.com'
 CALLBACK = ORIGIN + '/account/wxAuth'
 RELEASE = "if redis.call('get',KEYS[1]) == ARGV[1] then return redis.call('del',KEYS[1]) else return 0 end"
+
+
+class RedirectRejected(LoginError):
+    def __init__(self, message, parsed):
+        super().__init__(message)
+        # Do not retain URL queries, fragments, credentials, or opaque paths.
+        try:
+            port = parsed.port
+        except ValueError:
+            port = 'invalid'
+        self.diagnostic = {'scheme': parsed.scheme, 'host': parsed.hostname,
+            'port': port, 'path': parsed.path if parsed.path in {'/account/wxAuth', '/login.html', '/index.html', '/'} else '<other>',
+            'query_fields': sorted(set(parse_qs(parsed.query)) & {'fromWechat', 'redirectUrl', 'code', 'state'})}
 
 
 class WeChatLogin(ERPLogin):
@@ -70,9 +84,9 @@ class WeChatLogin(ERPLogin):
         target = urljoin(ORIGIN, location)
         parsed = urlsplit(target)
         if parsed.scheme != 'https' or parsed.hostname != 'erp.superboss.cc' or parsed.port not in {None, 443} or parsed.username or parsed.password:
-            raise LoginError('快麦扫码返回了不支持的跳转地址，连接已停止。')
+            raise RedirectRejected('快麦扫码返回了不支持的跳转地址，连接已停止。', parsed)
         if parsed.path not in {'/account/wxAuth', '/login.html', '/index.html', '/'}:
-            raise LoginError('快麦要求额外账号验证，请先到官网完成验证。')
+            raise RedirectRejected('快麦要求额外账号验证，请先到官网完成验证。', parsed)
         return target
 
     async def complete(self, db, payload, code):
@@ -159,6 +173,9 @@ class WeChatLogin(ERPLogin):
             await self.put_qr(sid, payload)
             return self.public(sid, payload)
         except LoginError as error:
+            if isinstance(error, RedirectRejected):
+                payload['redirect_diagnostic'] = error.diagnostic
+                logger.warning('Kuaimai WeChat redirect rejected | diagnostic={}', json.dumps(error.diagnostic, ensure_ascii=True))
             payload.update(state='failed', message=str(error))
             for key in ('cookies', 'uuid', 'image', 'last', 'poll_host'):
                 payload.pop(key, None)

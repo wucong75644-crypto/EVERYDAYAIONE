@@ -157,3 +157,18 @@ async def test_member_cannot_start_qr():
     with pytest.raises(HTTPException) as error:
         await start_wechat_login(SimpleNamespace(org_id='org', org_role='member', user_id='member'), Response())
     assert error.value.status_code == 403
+
+@pytest.mark.asyncio
+async def test_redirect_diagnostic_keeps_structure_without_auth_material(setup):
+    redis, db = setup
+    service = WeChatLogin(redis, 'org', 'admin', transport=transport(405, redirect='http://erp.superboss.cc/index.html?code=private-code&state=private-state#private-fragment'))
+    session = await service.start()
+    result = await service.poll(db, session['id'])
+    assert result['state'] == 'failed'
+    assert 'redirect_diagnostic' not in result
+    payload = await service.get_qr(session['id'])
+    assert payload['redirect_diagnostic'] == {'scheme':'http', 'host':'erp.superboss.cc', 'port':None, 'path':'/index.html', 'query_fields':['code','state']}
+    assert 'private-code' not in json.dumps(payload)
+    assert 'private-state' not in json.dumps(payload)
+    assert 'private-fragment' not in json.dumps(payload)
+    db.table.assert_not_called()
