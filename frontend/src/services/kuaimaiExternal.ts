@@ -164,3 +164,21 @@ export async function unbindOperator(operatorId: string): Promise<{ unbound: boo
     url: `/admin/kuaimai/operators/${operatorId}/unbind`,
   });
 }
+
+export interface KuaimaiLoginSession {
+  id: string;
+  expires_at: number;
+  captcha_image?: string | null;
+}
+export interface KuaimaiLoginResult extends Partial<KuaimaiLoginSession> {
+  state: 'connected' | 'captcha';
+  company_id?: number;
+  sources?: KuaimaiSource[];
+  message: string;
+}
+export function startKuaimaiLogin(): Promise<KuaimaiLoginSession> {
+  return request({ method: 'POST', url: '/admin/kuaimai/login/sessions' });
+}
+export function loginKuaimai(data: { session_id: string; company_name: string; username: string; password: string; validation_code: string }): Promise<KuaimaiLoginResult> {
+  return request({ method: 'POST', url: '/admin/kuaimai/login/password', data });
+}

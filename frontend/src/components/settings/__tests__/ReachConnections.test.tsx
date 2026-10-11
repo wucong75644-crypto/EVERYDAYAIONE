@@ -2,6 +2,7 @@ import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ReachConnections from '../ReachConnections';
+vi.mock('../KuaimaiConnection', () => ({ default: () => <div>快麦账号连接</div> }));
 import * as reach from '../../../services/agentReach';
 const state = vi.hoisted(() => ({ org: { org_id: 'org', name: 'Organization', role: 'owner' } }));
 vi.mock('../../../stores/useAuthStore', () => ({ useAuthStore: (selector: (state: unknown) => unknown) => selector({ currentOrg: state.org }) }));

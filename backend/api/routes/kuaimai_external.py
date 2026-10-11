@@ -628,3 +628,46 @@ async def unbind_operator(
     if not resp.data:
         raise HTTPException(status_code=404, detail="运营不存在")
     return {"unbound": True}
+
+
+class PasswordLoginIn(BaseModel):
+    session_id: str = Field(pattern=r'^[A-Za-z0-9_-]{43}$')
+    company_name: str = Field(min_length=1, max_length=200)
+    username: str = Field(min_length=1, max_length=200)
+    password: str = Field(min_length=1, max_length=1024, repr=False)
+    validation_code: str = Field(default='', max_length=20)
+
+
+async def _login_service(org_ctx):
+    org_id = _require_admin(org_ctx)
+    from core.redis import get_redis
+    from services.kuaimai_external.login import ERPLogin
+    redis = await get_redis()
+    if redis is None:
+        raise HTTPException(status_code=503, detail='登录会话服务暂不可用')
+    return ERPLogin(redis, org_id, org_ctx.user_id)
+
+
+@router.post('/login/sessions', summary='准备快麦账号登录')
+async def start_password_login(org_ctx: OrgCtx):
+    from services.kuaimai_external.login import LoginError
+    service = await _login_service(org_ctx)
+    try:
+        return await service.start()
+    except LoginError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    except Exception:
+        raise HTTPException(status_code=503, detail='快麦登录服务暂不可用，请稍后重试') from None
+
+
+@router.post('/login/password', summary='登录快麦并连接两个数据源')
+async def password_login(body: PasswordLoginIn, org_ctx: OrgCtx, db: AsyncDatabase):
+    from services.kuaimai_external.login import LoginError
+    service = await _login_service(org_ctx)
+    try:
+        return await service.submit(db, body.session_id, body.company_name.strip(),
+            body.username.strip(), body.password, body.validation_code.strip())
+    except LoginError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    except Exception:
+        raise HTTPException(status_code=503, detail='连接未完成，请刷新账号状态后重试') from None

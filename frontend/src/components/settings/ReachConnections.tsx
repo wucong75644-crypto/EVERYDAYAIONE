@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'react-hot-toast';
 import ReachLoginFlow from './ReachLoginFlow';
+import KuaimaiConnection from './KuaimaiConnection';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { listMembers, type OrgMember } from '../../services/org';
 import { listReachOperations, type ReachOperation, checkReachConnection, listReachLoginMethods, type ReachLoginMethod, grantReachConnection, listReachConnections, revokeReachConnection, type ReachConnection, type ReachPlatform } from '../../services/agentReach';
@@ -56,6 +57,7 @@ export default function ReachConnections() {
     </ul>
     {!rows.length && !error && <p className="text-sm">尚未连接账号。</p>}
     {operations.length > 0 && <div><h3 className="font-medium">我的最近执行记录</h3><ul>{operations.map(op => <li key={op.id} className="py-2 text-sm">{names[op.platform]} · {op.receipt.action || '写入操作'} · {op.state === 'succeeded' ? (op.receipt.stage ? '已提交，平台状态待核验' : '已成功') : '结果待核实，请勿重复提交'}{op.receipt.remote_id && ` · ID ${op.receipt.remote_id}`}</li>)}</ul></div>}
+    <KuaimaiConnection key={org?.org_id} admin={admin} />
     {admin && <>
       <div className="space-y-3">
         <h3 className="font-medium">连接组织账号</h3>

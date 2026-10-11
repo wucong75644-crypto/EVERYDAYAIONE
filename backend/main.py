@@ -424,7 +424,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
         """记录请求校验失败的详细信息"""
         errors = exc.errors()
-        if request.url.path.startswith('/api/agent-reach'):
+        if request.url.path.startswith(('/api/agent-reach', '/api/admin/kuaimai/login')):
             # Validation inputs may contain credentials, including malformed bodies.
             errors = [{'type': 'invalid_request', 'loc': ('body',), 'msg': '请求字段不合法'}]
         logger.warning(
