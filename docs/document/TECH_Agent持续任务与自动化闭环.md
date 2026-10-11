@@ -229,3 +229,8 @@ TaskRunHistory 展示已有 push_status：queued、retrying、pushed、push_fail
 后台执行提示补充 Agent Reach 查询及任务专属历史目录建议，要求首次建立基线、真实采集时间和指标口径、失败不覆盖有效基线及原子替换。这里是执行指导，不是新增硬编码采集器、跨运行事务或条件通知机制，不能据此声称完整监控已验收。
 
 待验证：真实模型是否主动整理合适的方法、用户确认后发布的 Skill 是否在任务表单可选，以及真实平台多次采集后的历史对比。条件通知和可靠业务去重仍未实现；当前通知语义保持不变。
+
+
+## 14. 线上验收发现的阻断（2026-10-11）
+
+已部署候选 b3237aa5 后，在独立聊天 76d23e2e-265a-45b9-8e89-8db472e85a11 发起个人持续任务 Skill 候选生成。模型实际调用 prepare_skill_draft，但聊天显示 MCP_CHECKPOINT_INVALID，后续绑定、调度、历史及通知尚未测试。根因是 ChatToolMixin 将所有 record_required 回执送入仅接受 mcp_test_lookup 的 MCP 检查点，Skill 候选本身有该记录要求，因而在工具返回后被误判失败。修复限定 MCP 检查点调用对象；其余工具继续原有 Actor invocation ledger。新增真实聊天执行入口回归，连同 MCP suite 54 项通过。修复尚未部署，不能称线上已恢复。

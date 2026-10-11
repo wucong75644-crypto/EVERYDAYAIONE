@@ -789,3 +789,23 @@ async def test_chat_images_prepare_concurrently_and_publish_in_plan_order(setup,
     assert prepared == ["0", "1", "2"]
     assert published == (["1", "2"] if fail_first else ["0", "1", "2"])
     assert [result[0]["id"] for result in results] == ["0", "1", "2"]
+
+
+async def test_actor_skill_candidate_result_does_not_enter_mcp_checkpoint(setup, monkeypatch):
+    from core import config
+    settings = config.get_settings().model_copy(update={
+        "skill_catalog_enabled": True, "skill_chat_creation_enabled": True})
+    monkeypatch.setattr(config, "get_settings", lambda: settings)
+    executor = MockHandlerExecutor(agent_domain="general", task_id="task1")
+    prepare = AsyncMock(return_value=AgentResult(summary="候选已生成", status="success"))
+    executor._handlers["prepare_skill_draft"] = prepare
+    from tests.test_mcp_connector import actor_harness, InvocationStore
+    harness = actor_harness(InvocationStore())
+    harness._actor_runtime = SimpleNamespace(
+        task_id='task1', conversation_id='c1', turn_id='turn', mcp_invocations={})
+    output = await invoke('chat', executor, [tc('prepare_skill_draft',
+        {'name': '持续任务方法', 'description': '只读观察', 'body': '读取真实数据'}, 'skill-id')],
+        monkeypatch, harness)
+    assert output[0].status == 'success', repr(output[0])
+    assert prepare.await_count == 1
+    assert harness._actor_runtime.mcp_invocations == {}
