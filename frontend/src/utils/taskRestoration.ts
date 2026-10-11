@@ -273,6 +273,7 @@ const RECONCILE_TASK_STATUSES = new Set(['paused', 'completed', 'failed', 'cance
 export async function reconcileChatTaskStates(
   providedTasks?: PendingTask[] | null,
 ): Promise<PendingTask[] | null> {
+  const streamingAtStart = new Map(useMessageStore.getState().streamingMessages);
   const tasks = providedTasks === undefined ? await fetchPendingTasks() : providedTasks;
   if (!tasks) return null;
 
@@ -319,6 +320,9 @@ export async function reconcileChatTaskStates(
     ) {
       continue;
     }
+    const streamingId = streamingAtStart.get(task.conversation_id);
+    const taskMessageId = task.placeholder_message_id || task.assistant_message_id;
+    if (streamingId && streamingId !== taskMessageId) continue;
     conversations.add(task.conversation_id);
   }
 
@@ -326,13 +330,18 @@ export async function reconcileChatTaskStates(
 
   const store = useMessageStore.getState();
   await Promise.all([...conversations].map(async (conversationId) => {
-    store.clearConversationStreaming(conversationId);
-    store.markForceRefresh(conversationId);
+    const expectedStreamingId = streamingAtStart.get(conversationId);
+    if (useMessageStore.getState().streamingMessages.get(conversationId) !== expectedStreamingId) return;
 
     try {
       const response = await getMessages(conversationId, 30, 0);
       if (!response?.messages) return;
 
+      // A new send can start while either task or message reads are in flight.
+      // A terminal task may reconcile only the stream it actually belongs to.
+      if (useMessageStore.getState().streamingMessages.get(conversationId) !== expectedStreamingId) return;
+      store.clearConversationStreaming(conversationId);
+      store.markForceRefresh(conversationId);
       const messagesAsc = [...response.messages].map(normalizeMessage).reverse();
       store.setMessagesForConversation(
         conversationId,

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const store = {
   addMessage: vi.fn(),
+  addOptimisticUserMessage: vi.fn(),
+  removeOptimisticMessage: vi.fn(),
   updateMessage: vi.fn(),
   removeMessage: vi.fn(),
   startStreaming: vi.fn(),
@@ -60,7 +62,8 @@ describe('sendMessage idempotent retry', () => {
       status: 'completed', created_at: '2026-07-16T00:00:00.000Z' };
     requestMock.mockResolvedValue({ ...response, user_message: userMessage });
     await sendMessage({ conversationId: 'conv-1', content: [{ type: 'text', text: 'hello' }], identifiers });
-    expect(store.updateMessage).toHaveBeenCalledWith('user-1', userMessage);
+    expect(store.addMessage).toHaveBeenCalledWith('conv-1', userMessage);
+    expect(store.removeOptimisticMessage).toHaveBeenCalledWith('conv-1', 'user-1');
   });
 
   it('sends only explicit Skill intent and omits it on ordinary chat', async () => {
@@ -96,7 +99,7 @@ describe('sendMessage idempotent retry', () => {
         assistant_message_id: 'assistant-1',
       },
     });
-    expect(store.addMessage).toHaveBeenCalledTimes(1);
+    expect(store.addOptimisticUserMessage).toHaveBeenCalledTimes(1);
     expect(store.startStreaming).toHaveBeenCalledTimes(1);
     expect(subscribeTask).toHaveBeenCalledTimes(1);
   });

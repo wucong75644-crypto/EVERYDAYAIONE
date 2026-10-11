@@ -16,6 +16,10 @@ import { IMAGE_TASK_TIMEOUT } from '../../config/task';
 // Mock 依赖
 // ============================================================
 
+const streamingMessages = new Map<string, string>();
+const mockSetMessages = vi.fn();
+const mockGetMessages = vi.fn();
+vi.mock('../../services/message', () => ({ getMessages: (...args: unknown[]) => mockGetMessages(...args) }));
 const mockAddMessage = vi.fn();
 const mockMarkForceRefresh = vi.fn();
 const mockUpdateMessage = vi.fn();
@@ -24,8 +28,11 @@ const mockImageDetails = vi.fn();
 vi.mock('../../services/chatImage', () => ({ chatImageService: { details: (...args: unknown[]) => mockImageDetails(...args) } }));
 
 vi.mock('../../stores/useMessageStore', () => ({
+  normalizeMessage: (message: unknown) => message,
   useMessageStore: {
     getState: () => ({
+      streamingMessages,
+      setMessagesForConversation: mockSetMessages,
       addMessage: mockAddMessage,
       markForceRefresh: mockMarkForceRefresh,
       updateMessage: mockUpdateMessage,
@@ -261,5 +268,36 @@ describe('chat image recovery', () => {
     expect(mockImageDetails).toHaveBeenCalledWith('task-1');
     expect(mockUpdateMessage).toHaveBeenCalledWith('image-msg', expect.objectContaining({ status: 'completed' }));
     expect(mockClearStreaming).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('chat reconciliation ownership', () => {
+  beforeEach(() => { vi.clearAllMocks(); streamingMessages.clear(); });
+  const terminal = () => createPendingImageTask({ type: 'chat', status: 'completed', placeholder_message_id: 'old-reply' });
+  it('does not clear a new send when only the previous query task is terminal', async () => {
+    streamingMessages.set('conv-1', 'new-reply');
+    await reconcileChatTaskStates([terminal()]);
+    expect(mockClearStreaming).not.toHaveBeenCalled();
+    expect(mockGetMessages).not.toHaveBeenCalled();
+  });
+  it('does not apply a history response after another send starts', async () => {
+    streamingMessages.set('conv-1', 'old-reply');
+    let resolve!: (value: { messages: unknown[] }) => void;
+    mockGetMessages.mockReturnValue(new Promise(r => { resolve = r; }));
+    const pending = reconcileChatTaskStates([terminal()]);
+    await vi.waitFor(() => expect(mockGetMessages).toHaveBeenCalled());
+    streamingMessages.set('conv-1', 'new-reply');
+    resolve({ messages: [] });
+    await pending;
+    expect(mockClearStreaming).not.toHaveBeenCalled();
+    expect(mockSetMessages).not.toHaveBeenCalled();
+  });
+  it('reconciles the terminal task that owns the current stream', async () => {
+    streamingMessages.set('conv-1', 'old-reply');
+    mockGetMessages.mockResolvedValue({ messages: [] });
+    await reconcileChatTaskStates([terminal()]);
+    expect(mockClearStreaming).toHaveBeenCalledWith('conv-1');
+    expect(mockSetMessages).toHaveBeenCalledWith('conv-1', [], false);
   });
 });
