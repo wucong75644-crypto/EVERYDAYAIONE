@@ -1,4 +1,10 @@
 -- Additive Agent Reach foundations; feature remains disabled by default.
+-- Identity tables belong to the application role in production. REFERENCES is
+-- granted only while creating these foreign keys, as in migration 279.
+RESET ROLE;
+SET LOCAL ROLE everydayai;
+GRANT REFERENCES (id) ON TABLE public.organizations,public.users TO everydayai_owner;
+RESET ROLE;
 SET LOCAL ROLE everydayai_owner;
 
 CREATE TABLE public.reach_connections (
@@ -42,6 +48,12 @@ CREATE TABLE public.reach_operations (
     UNIQUE(org_id,actor_user_id,call_id),
     FOREIGN KEY(connection_id,org_id) REFERENCES public.reach_connections(id,org_id)
 );
+
+RESET ROLE;
+SET LOCAL ROLE everydayai;
+REVOKE REFERENCES (id) ON TABLE public.organizations,public.users FROM everydayai_owner;
+RESET ROLE;
+SET LOCAL ROLE everydayai_owner;
 
 -- Scope comes only from the transaction-level server context. Personal
 -- connections remain inaccessible until their product flow is implemented.

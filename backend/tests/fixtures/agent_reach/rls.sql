@@ -1,3 +1,12 @@
+DO $$ BEGIN
+    IF has_column_privilege('everydayai_owner','public.organizations','id','REFERENCES')
+       OR has_column_privilege('everydayai_owner','public.users','id','REFERENCES') THEN
+        RAISE EXCEPTION 'temporary REFERENCES privileges retained';
+    END IF;
+    IF (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.reach_connections'::regclass) <> 'everydayai_owner' THEN
+        RAISE EXCEPTION 'incorrect Reach table owner';
+    END IF;
+END $$;
 BEGIN;
 SET LOCAL ROLE everydayai_runtime;
 SELECT set_config('app.org_id','00000000-0000-0000-0000-000000000001',true),set_config('app.actor_user_id','00000000-0000-0000-0000-000000000011',true);
