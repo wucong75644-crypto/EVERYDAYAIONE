@@ -22,13 +22,6 @@ class CreateConnection(BaseModel):
     secret_json: SecretStr = Field(max_length=64000)
 
 
-class GrantConnection(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-    user_id: UUID
-    can_read: bool = True
-    can_write: bool = False
-
-
 def store(org_ctx, db, response):
     response.headers['Cache-Control'] = 'no-store'
     if not get_settings().agent_reach_enabled:
@@ -82,12 +75,6 @@ async def create_connection(data: CreateConnection, org_ctx: OrgCtx, db: Databas
             raise ReachError('ACCOUNT_MISMATCH','平台账号ID与实际登录账号不一致')
         return await asyncio.to_thread(repository.save_verified,data.platform,account,data.display_name or name,payload)
     return await login_run(operation())
-
-
-@router.put('/connections/{connection_id}/grants')
-def grant_connection(connection_id: UUID, data: GrantConnection, org_ctx: OrgCtx, db: Database, response: Response):
-    run(store(org_ctx, db, response).grant, str(connection_id), str(data.user_id), data.can_read, data.can_write)
-    return {'success': True}
 
 
 @router.delete('/connections/{connection_id}')

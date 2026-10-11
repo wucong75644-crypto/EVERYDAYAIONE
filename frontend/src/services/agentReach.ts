@@ -13,8 +13,6 @@ export interface ReachConnection {
 export const listReachConnections = () => request<ReachConnection[]>({ method: 'GET', url: '/agent-reach/connections' });
 export const createReachConnection = (data: { platform: ReachPlatform; account_id: string; display_name: string; secret_json: string }) =>
   request<ReachConnection>({ method: 'POST', url: '/agent-reach/connections', data });
-export const grantReachConnection = (id: string, user_id: string, can_read: boolean, can_write: boolean) =>
-  request({ method: 'PUT', url: `/agent-reach/connections/${id}/grants`, data: { user_id, can_read, can_write } });
 export const revokeReachConnection = (id: string) => request({ method: 'DELETE', url: `/agent-reach/connections/${id}` });
 
 export interface ReachOperation {

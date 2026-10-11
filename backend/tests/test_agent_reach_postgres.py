@@ -18,7 +18,7 @@ from services.configuration.material_service import SecretMaterialService
 
 
 @pytest.mark.skipif(not os.getenv('REACH_TEST_DSN'), reason='dedicated local PostgreSQL fixture not running')
-def test_scoped_secrets_grants_receipts_and_revocation():
+def test_shared_org_secrets_receipts_and_revocation():
     dsn = os.environ['REACH_TEST_DSN']
     parsed = psycopg.conninfo.conninfo_to_dict(dsn)
     assert parsed.get('host') == '/private/tmp' and parsed.get('port') == '55479'
@@ -39,12 +39,11 @@ def test_scoped_secrets_grants_receipts_and_revocation():
         row = admin.save('twitter','123','Test', {'auth_token':'dummy','ct0':'dummy'})
         connection_id = str(row['id'])
         assert 'secret_envelope' not in row
-        assert regular.list() == [] and foreign.list() == []
+        assert str(regular.list()[0]['id']) == connection_id and foreign.list() == []
         with pytest.raises(ReachError):
             regular.save('twitter','123','Test', {'token':'dummy'})
         with pytest.raises(ReachError):
             foreign.load(connection_id,'twitter')
-        admin.grant(connection_id, member, True, False)
         assert regular.load(connection_id,'twitter')['secret']['ct0'] == 'dummy'
         version = row['credential_version']
         verified = admin.save_verified('twitter','123','Verified',{'auth_token':'new','ct0':'new'},
@@ -64,11 +63,6 @@ def test_scoped_secrets_grants_receipts_and_revocation():
         admin.record_health(connection_id,repeated['credential_version'],'expired')
         assert admin.list()[0]['login_state']=='expired'
         assert foreign.list()==[]
-        with pytest.raises(ReachError):
-            regular.load(connection_id,'twitter',write=True)
-        with pytest.raises(ReachError):
-            regular.reserve('denied-'+member,regular.load(connection_id,'twitter'),'a'*64)
-        admin.grant(connection_id, member, True, True)
         connection = regular.load(connection_id,'twitter',write=True)
         operation_id, previous = regular.reserve('call-'+member, connection,'a'*64)
         assert previous is None
@@ -79,6 +73,15 @@ def test_scoped_secrets_grants_receipts_and_revocation():
         regular.settle(operation_id,'succeeded',{'remote_id':'987'})
         assert regular.operations()[0]['receipt']['remote_id'] == '987'
         assert foreign.operations() == []
+        with pytest.raises(ReachError):
+            foreign.reserve('foreign-'+member,connection,'a'*64)
+        with psycopg.connect(dsn, autocommit=True) as db:
+            db.execute("UPDATE org_members SET status='inactive' WHERE user_id=%s",(member,))
+        for action in (regular.list, lambda: regular.load(connection_id,'twitter'),
+                       lambda: regular.reserve('inactive-'+member,connection,'a'*64)):
+            with pytest.raises(ReachError): action()
+        with psycopg.connect(dsn, autocommit=True) as db:
+            db.execute("UPDATE org_members SET status='active' WHERE user_id=%s",(member,))
         admin.revoke(connection_id)
         with pytest.raises(ReachError):
             regular.load(connection_id,'twitter',write=True)

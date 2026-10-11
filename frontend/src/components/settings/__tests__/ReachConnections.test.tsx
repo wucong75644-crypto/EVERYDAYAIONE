@@ -6,12 +6,13 @@ vi.mock('../KuaimaiConnection', () => ({ default: () => <div>快麦账号连接<
 import * as reach from '../../../services/agentReach';
 const state = vi.hoisted(() => ({ org: { org_id: 'org', name: 'Organization', role: 'owner' } }));
 vi.mock('../../../stores/useAuthStore', () => ({ useAuthStore: (selector: (state: unknown) => unknown) => selector({ currentOrg: state.org }) }));
-vi.mock('../../../services/org', () => ({ listMembers: vi.fn().mockResolvedValue([{ user_id: 'member', nickname: '成员', status: 'active' }]) }));
-vi.mock('../../../services/agentReach', () => ({ listReachConnections: vi.fn(), listReachOperations: vi.fn(), grantReachConnection: vi.fn(), revokeReachConnection: vi.fn(), listReachLoginMethods: vi.fn(), startReachLogin: vi.fn(), pollReachLogin: vi.fn(), cancelReachLogin: vi.fn(), importReachSession: vi.fn(), checkReachConnection: vi.fn(), getExaConfiguration: vi.fn().mockResolvedValue({ configured: true, source: 'server', verified_at: null }), saveExaConfiguration: vi.fn() }));
+vi.mock('../../../services/agentReach', () => ({ listReachConnections: vi.fn(), listReachOperations: vi.fn(), revokeReachConnection: vi.fn(), listReachLoginMethods: vi.fn(), startReachLogin: vi.fn(), pollReachLogin: vi.fn(), cancelReachLogin: vi.fn(), importReachSession: vi.fn(), checkReachConnection: vi.fn(), getExaConfiguration: vi.fn().mockResolvedValue({ configured: true, source: 'server', verified_at: null }), saveExaConfiguration: vi.fn() }));
 vi.mock('react-hot-toast', () => ({ toast: { success: vi.fn() } }));
 const row: reach.ReachConnection = { id: 'connection', platform: 'bilibili', account_id: '123', display_name: '组织账号', status: 'active', login_state: 'connected' };
 beforeEach(() => {
   vi.clearAllMocks(); state.org.role = 'owner';
+  vi.mocked(reach.getExaConfiguration).mockResolvedValue({ configured: true, source: 'server', verified_at: null });
+  vi.mocked(reach.saveExaConfiguration).mockResolvedValue({ configured: true, source: 'organization', verified_at: 'now' });
   vi.mocked(reach.listReachConnections).mockResolvedValue([]);
   vi.mocked(reach.listReachOperations).mockResolvedValue([]);
   vi.mocked(reach.listReachLoginMethods).mockResolvedValue([
@@ -37,6 +38,7 @@ it('imports a session without JSON/account ID and clears credentials', async () 
 });
 it('member sees own receipts without admin controls', async () => {
   state.org.role = 'member';
+  vi.mocked(reach.listReachConnections).mockResolvedValue([row]);
   vi.mocked(reach.listReachOperations).mockResolvedValue([{ id: 'operation', platform: 'twitter', account_id: '123', state: 'uncertain', receipt: { action: 'create_post' }, created_at: '' }]);
   render(<ReachConnections />); fireEvent.click(screen.getByRole('button', { name: '互联网平台', exact: true })); await screen.findByText(/结果待核实，请勿重复提交/);
   expect(screen.queryByRole('button', { name: '连接账号' })).not.toBeInTheDocument();
@@ -77,15 +79,13 @@ it('links to official OAuth with opener protection', async () => {
   expect(await screen.findByRole('link', { name: '打开 YouTube 官方授权页' })).toHaveAttribute('rel', 'noopener noreferrer');
 });
 
-it('keeps account grants scoped to the selected connection and member', async () => {
+it('shares organization accounts without individual grants', async () => {
   vi.mocked(reach.listReachConnections).mockResolvedValue([row]);
-  const user = userEvent.setup(); render(<ReachConnections />);
+  render(<ReachConnections />);
   await screen.findByText('B 站 · 组织账号', { selector: 'p' });
-  await user.selectOptions(screen.getByLabelText('组织账号'), 'connection');
-  await user.selectOptions(screen.getByLabelText('成员'), 'member');
-  await user.click(screen.getByLabelText('发布、点赞与评论'));
-  await user.click(screen.getByRole('button', { name: '保存权限' }));
-  await waitFor(() => expect(reach.grantReachConnection).toHaveBeenCalledWith('connection', 'member', true, true));
+  expect(screen.getByText(/本组织所有活跃成员均可在对话中使用/)).toBeInTheDocument();
+  expect(screen.queryByLabelText('组织账号')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '保存权限' })).not.toBeInTheDocument();
 });
 it('switches account categories without rendering a dialog', async () => {
   const user = userEvent.setup(); render(<ReachConnections />);
@@ -94,23 +94,40 @@ it('switches account categories without rendering a dialog', async () => {
   await user.click(screen.getByRole('button', { name: '互联网平台', exact: true }));
   expect(screen.queryByText('快麦账号连接')).not.toBeInTheDocument();
   expect(screen.getByLabelText('平台')).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: '成员权限', exact: true }));
-  expect(screen.queryByRole('table')).not.toBeInTheDocument();
-  expect(screen.getByLabelText('组织账号')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '快麦 ERP', exact: true }));
+  expect(screen.getByText('快麦账号连接')).toBeInTheDocument();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 
-it('explains empty grant options and enables them after login completes', async () => {
+it('refreshes shared accounts after login completes', async () => {
   const user = userEvent.setup(); render(<ReachConnections />);
-  await screen.findByText(/暂无可分配的组织账号/);
-  expect(screen.getByLabelText('组织账号')).toBeDisabled();
-  expect(screen.getByRole('button', { name: '保存权限' })).toBeDisabled();
+  await screen.findByText('尚未连接账号。');
   vi.mocked(reach.listReachConnections).mockResolvedValue([row]);
   vi.mocked(reach.startReachLogin).mockResolvedValue({ id: 'session', platform: 'bilibili', state: 'connected', expires_at: Date.now() / 1000 + 180, connection: row });
   await user.click(within(screen.getByRole('row', { name: /B 站/ })).getByRole('button', { name: '扫码连接', exact: true }));
   await user.click(screen.getByRole('button', { name: '生成登录二维码' }));
   await screen.findByText('B 站 · 组织账号', { selector: 'p' });
-  expect(screen.getByLabelText('组织账号')).toBeEnabled();
-  expect(screen.getByRole('option', { name: 'B 站 · 组织账号' })).toBeInTheDocument();
-  expect(screen.queryByText(/暂无可分配的组织账号/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '保存权限' })).not.toBeInTheDocument();
+});
+
+it('places Exa configuration in the existing right panel and refreshes the row after save', async () => {
+  vi.mocked(reach.getExaConfiguration)
+    .mockResolvedValueOnce({ configured: true, source: 'server', verified_at: null })
+    .mockResolvedValue({ configured: true, source: 'organization', verified_at: 'now' });
+  const user = userEvent.setup(); render(<ReachConnections />);
+  await screen.findByText('服务器默认 API Key');
+  await user.click(screen.getByRole('button', { name: '配置 API Key' }));
+  const panel = screen.getByRole('complementary', { name: '账号登录区域' });
+  expect(within(panel).getByLabelText('Exa API Key')).toHaveValue('');
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByText('快麦账号连接')).not.toBeInTheDocument();
+  await user.type(within(panel).getByLabelText('Exa API Key'), 'test-only-key');
+  await user.click(within(panel).getByRole('button', { name: '验证并保存' }));
+  await screen.findByText('本组织 API Key');
+  expect(within(panel).getByRole('status')).toHaveTextContent('已验证并保存');
+  expect(within(panel).getByLabelText('Exa API Key')).toHaveValue('');
+  await user.click(within(panel).getByRole('button', { name: '取消配置' }));
+  expect(within(panel).getByLabelText('平台')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '配置 API Key' }));
+  expect(within(panel).getByLabelText('Exa API Key')).toHaveValue('');
 });

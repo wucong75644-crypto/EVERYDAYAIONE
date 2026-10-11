@@ -46,13 +46,8 @@ class Connections:
 
     def list(self):
         with self.cursor() as cursor:
-            cursor.execute(f'''SELECT {PUBLIC_COLUMNS} FROM public.reach_connections c
-                WHERE c.org_id=%s AND c.status='active' AND (EXISTS (
-                SELECT 1 FROM public.reach_connection_grants g WHERE g.connection_id=c.id
-                AND g.org_id=c.org_id AND g.user_id=%s AND (g.can_read OR g.can_write)) OR EXISTS (
-                SELECT 1 FROM public.org_members m WHERE m.org_id=c.org_id AND m.user_id=%s
-                AND m.role IN ('owner','admin') AND m.status='active')) ORDER BY c.created_at''',
-                (self.scope.org_id, self.scope.actor_user_id, self.scope.actor_user_id))
+            cursor.execute(f'''SELECT {PUBLIC_COLUMNS} FROM public.reach_connections
+                WHERE org_id=%s AND status='active' ORDER BY created_at''', (self.scope.org_id,))
             return cursor.fetchall()
 
     def save(self, platform, account_id, display_name, payload):
@@ -154,22 +149,6 @@ class Connections:
                 WHERE id=%s AND org_id=%s AND credential_version=%s AND status='active'""",
                 (state,connection_id,self.scope.org_id,version))
 
-    def grant(self, connection_id, user_id, can_read, can_write):
-        with self.cursor(admin=True) as cursor:
-            cursor.execute('''SELECT id FROM public.reach_connections WHERE id=%s AND org_id=%s
-                AND status='active' FOR UPDATE''', (connection_id, self.scope.org_id))
-            if not cursor.fetchone():
-                raise ReachError('NOT_FOUND', '组织连接不存在')
-            cursor.execute('''SELECT user_id FROM public.org_members WHERE org_id=%s AND user_id=%s
-                AND status='active' ''', (self.scope.org_id, user_id))
-            if not cursor.fetchone():
-                raise ReachError('ACCESS_DENIED', '只能授权给本组织活跃成员')
-            cursor.execute('''INSERT INTO public.reach_connection_grants
-                (org_id,connection_id,user_id,can_read,can_write) VALUES (%s,%s,%s,%s,%s)
-                ON CONFLICT(connection_id,user_id) DO UPDATE SET can_read=excluded.can_read,
-                can_write=excluded.can_write''',
-                (self.scope.org_id, connection_id, user_id, can_read, can_write))
-
     def revoke(self, connection_id):
         with self.cursor(admin=True) as cursor:
             cursor.execute('''UPDATE public.reach_connections SET status='revoked',secret_envelope=NULL,
@@ -179,12 +158,8 @@ class Connections:
     def load(self, connection_id, platform, *, write=False):
         with self.cursor() as cursor:
             cursor.execute('''SELECT c.* FROM public.reach_connections c
-                JOIN public.org_members m ON m.org_id=c.org_id AND m.user_id=%s AND m.status='active'
-                LEFT JOIN public.reach_connection_grants g ON g.connection_id=c.id
-                    AND g.org_id=c.org_id AND g.user_id=m.user_id
-                WHERE c.id=%s AND c.org_id=%s AND c.platform=%s AND c.status='active'
-                AND (m.role IN ('owner','admin') OR CASE WHEN %s THEN g.can_write ELSE g.can_read END)''',
-                (self.scope.actor_user_id, connection_id, self.scope.org_id, platform, write))
+                WHERE c.id=%s AND c.org_id=%s AND c.platform=%s AND c.status='active' ''',
+                (connection_id, self.scope.org_id, platform))
             row = cursor.fetchone()
             if not row:
                 raise ReachError('ACCESS_DENIED', '没有该组织账号的操作权限，或账号已撤销')
@@ -197,12 +172,8 @@ class Connections:
         with self.cursor() as cursor:
             # Refresh write authorization immediately before reserving dispatch.
             cursor.execute("""SELECT c.id FROM public.reach_connections c
-                JOIN public.org_members m ON m.org_id=c.org_id AND m.user_id=%s AND m.status='active'
-                LEFT JOIN public.reach_connection_grants g ON g.connection_id=c.id
-                    AND g.org_id=c.org_id AND g.user_id=m.user_id
-                WHERE c.id=%s AND c.org_id=%s AND c.status='active' AND c.credential_version=%s
-                AND (m.role IN ('owner','admin') OR g.can_write)""",
-                (self.scope.actor_user_id, connection['id'], self.scope.org_id, connection['credential_version']))
+                WHERE c.id=%s AND c.org_id=%s AND c.status='active' AND c.credential_version=%s""",
+                (connection['id'], self.scope.org_id, connection['credential_version']))
             if not cursor.fetchone():
                 raise ReachError('ACCESS_DENIED', '写入权限或账号凭据已变化')
             # Uniqueness is durable across API workers and runtime restarts.

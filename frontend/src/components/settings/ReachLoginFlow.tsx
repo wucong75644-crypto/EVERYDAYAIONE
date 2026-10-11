@@ -64,7 +64,7 @@ export default function ReachLoginFlow({ method, connectionId, onComplete, onClo
   };
 
   return <section aria-label="连接平台账号" className="space-y-3 rounded border border-[var(--s-border-default)] p-4">
-    <p className="text-sm">{connectionId ? '重新连接时请使用原平台账号，成员权限会保留。' : '请使用组织专用账号登录，验证成功后再分配成员权限。'}</p>
+    <p className="text-sm">{connectionId ? '重新连接时请使用原平台账号，连接后继续供本组织全体活跃成员使用。' : '请使用组织专用账号登录，连接成功后本组织全体活跃成员均可使用。'}</p>
     {error && <p role="alert" className="text-sm text-red-500">{error}</p>}
     {method.method === 'import' ? <form className="space-y-3" onSubmit={async event => {
       event.preventDefault(); setBusy(true); setError('');
