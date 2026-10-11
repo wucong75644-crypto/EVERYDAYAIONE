@@ -87,7 +87,7 @@ export default function KuaimaiConnection({ admin, onCredentialsChange }: { admi
     {qr && <div className="space-y-3" aria-label="快麦微信扫码登录">
       {qr.image && <img className="h-56 w-56" src={qr.image} alt="快麦微信登录二维码" />}
       <p role="status">{qr.message || '请使用已绑定快麦账号的微信扫码，并在手机上确认登录。'}</p>
-      <p className="text-xs text-[var(--s-text-secondary)]">确认后自动验证并保存智库和销售主题报表连接。微信未绑定时，请先在快麦官网绑定。</p>
+      <p className="text-xs text-[var(--s-text-secondary)]">确认后自动验证并保存智库和销售主题报表连接。登录结果以上方提示为准。</p>
       {!['waiting', 'confirming'].includes(qr.state) && <button className={button} disabled={busy} onClick={() => void run(async () => {
         const next = await startKuaimaiWechat(); if (alive.current) setQr(next);
       })}>刷新微信二维码</button>}
