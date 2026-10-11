@@ -511,6 +511,8 @@ deploy_backend() {
                 esac
             done
         fi
+        # The pinned XHS scan fix must be installed under the release lock.
+        venv/bin/python /var/www/everydayai/deploy/xhs/install-login-fix.py
         pkill -f kernel_worker 2>/dev/null || true
         services=(
             everydayai-backend

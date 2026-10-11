@@ -98,3 +98,24 @@ Google Cloud OAuth测试应用、两项YouTube范围、Web客户端和已确认�
 扫码真实验收发现快麦回调返回的跳转地址被校验拒绝。新增拒绝时的脱敏诊断：仅记录协议、主机、端口、已知路径分类及少量固定查询字段名，不记录完整URL、查询值、授权码、Cookie或不透明路径；加密会话保留同一诊断至过期，常规客户端响应不包含诊断。此改动仅补足定位证据，尚未修复实际跳转兼容。
 
 真实扫码诊断确认：快麦成功回调跳转到 `https://erpb.superboss.cc/index.html`，旧实现只允许 `erp.superboss.cc` 导致误拦截。修复仅允许这两个明确的官方 HTTPS 主机和已有登录/首页路径，保留端口、用户信息及伪造后缀校验；相对跳转跟随当前官方主机。身份从最终官方主机 `/user/info` 读取，并选择该主机适用的 Cookie；保存前仍在现有报表使用的 `erp.superboss.cc` 验证会话，避免仅凭首页跳转就宣布报表可用。尚需修复部署后的真实扫码验收。
+
+### 2026-10-11 小红书扫码轮询修复（待发布）
+
+真实扫码现场：登录状态轮询会另开 Chromium，二维码等待浏览器同时存活。专用服务达到 MemoryMax=1G（memory.events max=372754、MemoryCurrent=1073664000），检查无响应，客户端30秒提前超时后重试，接口持续返回LOGIN_BUSY/409；没有成功保存Cookie的记录。不能以手机确认代替服务端登录成功。
+
+`deploy/xhs/login-browser.patch` 针对上述固定上游源码：扫码未结束时仅查询内存状态，不启动新浏览器；登录检查和二维码创建互斥；保存Cookie并关闭二维码浏览器后才标记会话结束。后端直接复用同一次认证状态响应中的真实user_id，拒绝缺少账号ID的响应，避免再次开浏览器验证。前端轮询超时95秒，覆盖服务端90秒总上限。
+
+构建只写候选文件，不安装、不重启。使用服务器backend venv Python（系统Python3.6不支持该脚本）执行：
+
+```sh
+/var/www/everydayai/backend/venv/bin/python deploy/xhs/build-login-fix.py \
+  --source /opt/everydayai-xhs-a5c8f779/source \
+  --go /opt/everydayai-xhs-a5c8f779/build/go/bin/go \
+  --output /opt/everydayai-xhs-a5c8f779/login-fix-candidate/xiaohongshu-mcp
+```
+
+脚本验证被修改源码的固定SHA256，在临时副本应用补丁，运行50个并发状态轮询的Go race回归后构建。下次用户授权提交部署时，需要先保留原二进制备份，原子替换上述专用服务二进制，重启这2个`everydayai-reach-xhs-<connection UUID>`单元清除卡住的浏览器，再通过受控release入口发布前后端。只发应用代码不能解决扫码服务根因。回滚恢复备份二进制并重启相同单元；不删除账号Cookie。发布后需用户重新生成二维码实扫，检查Cookie保存日志、连接记录与页面已连接状态；候选构建通过不代表真实登录已验证。
+
+本轮必要验证：后端登录33项、前端请求6项通过；修复后服务的50并发轮询Go race回归通过，候选二进制构建完成，SHA256为`5ee0477dbd0035f350e47e0e90acda02157dd3ff5d5becdd4ebac3d5b49da939`，保存在上述`login-fix-candidate`目录。当前生产原服务二进制和应用未替换，真实扫码成功仍待部署后验证。
+
+发布集成：受控deploy执行器在生产锁内调用`deploy/xhs/install-login-fix.py`，核对版本化artifact清单与补丁/候选SHA256，备份并原子替换二进制，重启配置内的专用服务并检查本机health。失败恢复备份；重复发布已安装版本跳过替换。候选仍放在服务器预构建目录，不提交二进制；重新构建若SHA变化须更新清单再发布。安装成功、错误候选拒绝、重启失败回滚三项定向验证通过。

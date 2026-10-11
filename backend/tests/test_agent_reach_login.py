@@ -319,3 +319,34 @@ async def test_bili_qr_rejects_untrusted_urls(url):
             return json.dumps({'code':0,'data':{'url':url,'qrcode_key':'test-key'}}).encode()
     with pytest.raises(ReachError,match='登录地址无法验证'):
         await LoginProviders(settings(),http=HTTP()).bili_start()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('user_id', ['xhs-real-id', None])
+async def test_xhs_poll_saves_identity_from_single_status_browser(user_id):
+    providers = Providers()
+    calls = []
+    class XHS:
+        async def call(self, method, path):
+            calls.append(path)
+            if path == 'login/qrcode':
+                return {'img':'data:image/png;base64,aGVsbG8='}
+            return {'is_logged_in':True, 'user_id':user_id, 'username':'组织账号'}
+    providers.xhs = lambda record: XHS()
+    async def no_second_identity(*args, **kwargs):
+        pytest.fail('XHS status already verified identity; must not launch another browser')
+    providers.identity = no_second_identity
+    config = settings(json.dumps({ORG:[{'connection_id':CID,'origin':'http://127.0.0.1:18060','service_token':'dummy'}]}))
+    store = Store()
+    service = LoginSessions(store,config,Redis(),providers=providers)
+    sid = (await service.begin('xiaohongshu'))['id']
+    if user_id is None:
+        with pytest.raises(ReachError, match='无法识别账号'):
+            await service.poll(sid)
+        assert not store.saved
+        return
+    result = await service.poll(sid)
+    assert result['state'] == 'connected'
+    assert store.saved[0][1:3] == ('xhs-real-id', '组织账号')
+    assert calls == ['login/qrcode','login/status']
+    assert (await service.poll(sid))['state'] == 'connected'
+    assert len(calls) == 2

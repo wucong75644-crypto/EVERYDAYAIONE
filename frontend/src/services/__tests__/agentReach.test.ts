@@ -25,3 +25,10 @@ it('does not echo an ERP password in validation errors', async () => {
   vi.spyOn(api, 'request').mockRejectedValue({ isAxiosError: true, response: { status: 422, data: { detail: [{ input: 'private-password', msg: 'bad value' }] } } });
   await expect(loginKuaimai({ session_id: 'session', company_name: 'company', username: 'user', password: 'private-password', validation_code: '' })).rejects.toThrow('连接请求格式不正确，请刷新页面后重试。');
 });
+
+it('waits for the bounded server login check instead of abandoning it after 30 seconds', async () => {
+  const { pollReachLogin } = await import('../agentReach');
+  const request = vi.spyOn(api, 'request').mockResolvedValue({ data: { state: 'waiting' } });
+  await pollReachLogin('session');
+  expect(request).toHaveBeenCalledWith(expect.objectContaining({ timeout: 95000 }));
+});

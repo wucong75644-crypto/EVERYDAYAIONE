@@ -123,9 +123,9 @@ class LoginSessions:
         await self.put(sid,payload)
         return self.public(sid,payload)
 
-    async def finish(self, sid, payload, secret):
+    async def finish(self, sid, payload, secret, *, verified_identity=None):
         platform = payload['platform']
-        account, name = await self.providers.identity(platform,secret,connection_id=payload.get('connection_id') or '')
+        account, name = verified_identity or await self.providers.identity(platform,secret,connection_id=payload.get('connection_id') or '')
         row = await asyncio.to_thread(self.store.save_verified,platform,account,name,secret,
             connection_id=payload.get('connection_id'),expected_version=payload.get('expected_version'))
         # Connection is durable. Only public metadata remains in the session.
@@ -157,7 +157,12 @@ class LoginSessions:
                 record = {'id':payload['connection_id'],'account_id':'','secret':payload['provider']['secret']}
                 data = await self.providers.xhs(record).call('GET','login/status')
                 if data.get('is_logged_in') is True:
-                    return await self.finish(sid,payload,record['secret'])
+                    if not data.get('user_id'):
+                        raise ReachError('AUTH_EXPIRED', '小红书已确认登录，但暂时无法识别账号，请稍后检查')
+                    # This authenticated response already identifies the account.
+                    # A second status call would launch another expensive browser.
+                    identity = (str(data['user_id']), str(data.get('username') or data['user_id']))
+                    return await self.finish(sid,payload,record['secret'],verified_identity=identity)
             await self.put(sid,payload)
             return self.public(sid,payload)
 

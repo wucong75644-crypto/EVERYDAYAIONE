@@ -33,7 +33,7 @@ export interface ReachLoginSession {
 }
 export const listReachLoginMethods = () => request<ReachLoginMethod[]>({ method: 'GET', url: '/agent-reach/login-methods' });
 export const startReachLogin = (platform: ReachPlatform, connection_id?: string) => request<ReachLoginSession>({ method: 'POST', url: '/agent-reach/login-sessions', data: { platform, connection_id } });
-export const pollReachLogin = (id: string) => request<ReachLoginSession>({ method: 'GET', url: `/agent-reach/login-sessions/${id}` });
+export const pollReachLogin = (id: string) => request<ReachLoginSession>({ method: 'GET', url: `/agent-reach/login-sessions/${id}`, timeout: 95000 });
 export const cancelReachLogin = (id: string) => request({ method: 'DELETE', url: `/agent-reach/login-sessions/${id}` });
 export const importReachSession = (platform: ReachPlatform, cookie_header: string, connection_id?: string) => request<ReachConnection>({ method: 'POST', url: '/agent-reach/session-import', data: { platform, cookie_header, connection_id } });
 export const checkReachConnection = (id: string) => request<{ state: string; message: string }>({ method: 'POST', url: `/agent-reach/connections/${id}/check` });
