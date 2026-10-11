@@ -85,7 +85,6 @@ export default function DetailPage(){
         </Card>
         <Card variant="elevated" padding="lg" aria-label="规划与生成结果" className="h-full min-h-0 min-w-0 overflow-y-auto overscroll-contain" tabIndex={0}>
           <DetailWorkspace key={projectId} groups={groups} runs={state.runs} currentRunId={state.currentRunId} projectId={projectId} onRefresh={()=>void refresh()}/>
-          {['completed','failed'].includes(status)&&<div className="mt-5 flex justify-end"><Button onClick={()=>void changeTask()} disabled={switchDisabled}>开始新任务</Button></div>}
         </Card>
         <Card variant="elevated" padding="sm" className="hidden h-full min-h-0 overflow-hidden xl:block">{sidebar}</Card>
       </section>
