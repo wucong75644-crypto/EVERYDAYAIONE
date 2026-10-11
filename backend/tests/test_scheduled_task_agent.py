@@ -270,3 +270,61 @@ class TestExecutionOutcome:
         assert result.error_message == "erp_agent:timeout"
         assert result.completion_gate["passed"] is False
         assert "loop_stopped:wrap_up_failure" in result.completion_gate["reasons"]
+
+class TestScheduledHistoryAuthorization:
+    def test_history_and_template_are_readable_but_other_tasks_are_not(self):
+        task = make_task(template_file={"path": "模板/report.xlsx"})
+        agent = ScheduledTaskAgent(MagicMock(), task)
+        boundary = agent._file_boundary()
+        assert boundary.permits("list", "下载/任务历史/task_001", browse=True)
+        assert boundary.permits("read", "下载/任务历史/task_001/history.csv")
+        assert boundary.permits("read", "模板/report.xlsx")
+        assert not boundary.permits("read", "下载/任务历史/task_002/history.csv")
+        assert not boundary.permits("read", "下载/private.csv")
+        assert not boundary.permits("delete", "下载/任务历史/task_001/history.csv")
+        assert not boundary.permits("restore", "下载/任务历史/task_001/history.csv")
+
+    @pytest.mark.parametrize("task_id", ["../other", "/other", "a/b", ".", ""])
+    def test_invalid_task_identity_cannot_expand_history_boundary(self, task_id):
+        with pytest.raises(ValueError):
+            ScheduledTaskAgent(MagicMock(), make_task(id=task_id))._file_boundary()
+
+    @pytest.mark.asyncio
+    async def test_first_run_directory_is_empty_and_existing_history_survives(self, tmp_path):
+        agent = ScheduledTaskAgent(MagicMock(), make_task())
+        with patch('core.config.get_settings', return_value=SimpleNamespace(file_workspace_root=str(tmp_path))):
+            await agent._prepare_history_directory()
+            from services.file_executor import FileExecutor
+            files = FileExecutor(str(tmp_path), agent.user_id, agent.org_id)
+            directory = files.resolve_safe_path(agent._history_directory())
+            assert directory.is_dir()
+            history = directory / 'history.csv'
+            history.write_text('baseline', encoding='utf-8')
+            await agent._prepare_history_directory()
+            assert history.read_text(encoding='utf-8') == 'baseline'
+
+    @pytest.mark.asyncio
+    async def test_history_file_calls_use_existing_guard_and_scope(self, tmp_path):
+        from services.file_executor import FileExecutor
+        from services.tools.file_calls import resolve_file_call
+        from services.tools.resource_access import ResourceAccessError
+        agent = ScheduledTaskAgent(MagicMock(), make_task())
+        with patch('core.config.get_settings', return_value=SimpleNamespace(file_workspace_root=str(tmp_path))):
+            await agent._prepare_history_directory()
+            files = FileExecutor(str(tmp_path), agent.user_id, agent.org_id)
+            path = agent._history_directory() + '/history.csv'
+            files.resolve_safe_path(path).write_text('baseline', encoding='utf-8')
+            owner = SimpleNamespace(user_id=agent.user_id, org_id=agent.org_id,
+                workspace_user_id=agent.user_id, context_scope='user', conversation_id='test',
+                execution_mode='scheduled', resource_manifest=None,
+                resource_access_boundary=agent._file_boundary())
+            search = resolve_file_call(owner, 'file_search',
+                {'path': agent._history_directory(), 'scope': 'workspace'}, files=files)
+            await search.prepare()
+            assert search.versions
+            read = resolve_file_call(owner, 'file_analyze',
+                {'path': path, 'scope': 'workspace'}, files=files)
+            assert read.targets[0].path == files.resolve_safe_path(path)
+            with pytest.raises(ResourceAccessError, match='RESOURCE_ACTION_DENIED'):
+                resolve_file_call(owner, 'file_analyze',
+                    {'path': '下载/任务历史/other/history.csv', 'scope': 'workspace'}, files=files)
