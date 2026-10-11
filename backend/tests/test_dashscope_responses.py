@@ -206,3 +206,35 @@ async def test_explicit_no_reasoning_wins_over_thinking_mode_for_extractor():
         assert {t["type"] for t in captured[0]["tools"]} == {"web_search"}
     finally:
         await adapter.close()
+
+
+def test_tool_output_content_blocks_are_converted_without_mutation():
+    messages = [{"role": "tool", "tool_call_id": "actor_1", "content": [
+        {"type": "text", "text": "真实搜索结果"},
+        {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}},
+    ]}]
+    original = copy.deepcopy(messages)
+    output = response_input(messages, "qwen3.8-max")[0]
+    assert output == {"type": "function_call_output", "call_id": "actor_1", "output": [
+        {"type": "input_text", "text": "真实搜索结果"},
+        {"type": "input_image", "image_url": "https://example.com/image.png"},
+    ]}
+    assert messages == original
+    with pytest.raises(ValueError, match="tool output"):
+        response_input([{"role": "tool", "tool_call_id": "x", "content": [{"type": "audio"}]}], "qwen3.8-max")
+
+
+@pytest.mark.asyncio
+async def test_http_200_error_frame_preserves_provider_error():
+    error = {"code": "InvalidParameter", "message": "Invalid output type", "request_id": "provider-123"}
+    adapter = DashScopeChatAdapter(api_key="test", model="qwen3.8-max")
+    adapter._client = httpx.AsyncClient(base_url="https://example.com", transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, text="data: " + json.dumps(error) + "\n\n")))
+    try:
+        with pytest.raises(DashScopeAPIError, match="Invalid output type") as raised:
+            _ = [c async for c in adapter.stream_chat([], enable_builtin_tools=True)]
+        assert raised.value.error_code == "InvalidParameter"
+        assert raised.value.request_id == "provider-123"
+        assert not raised.value.request_rejected
+    finally:
+        await adapter.close()
