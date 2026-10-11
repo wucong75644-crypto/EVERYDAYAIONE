@@ -59,10 +59,10 @@ SET LOCAL ROLE everydayai_owner;
 -- connections remain inaccessible until their product flow is implemented.
 CREATE FUNCTION public.reach_active_member(p_org UUID, p_admin BOOLEAN DEFAULT FALSE)
 RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $$
-    SELECT p_org=public.tenant_org_id() AND public.tenant_actor_user_id() IS NOT NULL
+    SELECT p_org=NULLIF(current_setting('app.org_id',TRUE),'')::uuid AND NULLIF(current_setting('app.actor_user_id',TRUE),'')::uuid IS NOT NULL
     AND EXISTS (SELECT 1 FROM public.org_members m
         JOIN public.organizations o ON o.id=m.org_id JOIN public.users u ON u.id=m.user_id
-        WHERE m.org_id=p_org AND m.user_id=public.tenant_actor_user_id()
+        WHERE m.org_id=p_org AND m.user_id=NULLIF(current_setting('app.actor_user_id',TRUE),'')::uuid
         AND m.status='active' AND o.status='active' AND u.status='active'
         AND (NOT p_admin OR m.role IN ('owner','admin')))
 $$;
@@ -79,7 +79,7 @@ CREATE POLICY reach_connection_select ON public.reach_connections FOR SELECT
     USING (scope='organization' AND public.reach_active_member(org_id));
 CREATE POLICY reach_connection_insert ON public.reach_connections FOR INSERT
     WITH CHECK (scope='organization' AND public.reach_active_member(org_id,TRUE)
-        AND created_by=public.tenant_actor_user_id());
+        AND created_by=NULLIF(current_setting('app.actor_user_id',TRUE),'')::uuid);
 CREATE POLICY reach_connection_update ON public.reach_connections FOR UPDATE
     USING (scope='organization' AND public.reach_active_member(org_id,TRUE))
     WITH CHECK (scope='organization' AND public.reach_active_member(org_id,TRUE));
@@ -90,18 +90,18 @@ CREATE POLICY reach_grant_insert ON public.reach_connection_grants FOR INSERT
 CREATE POLICY reach_grant_update ON public.reach_connection_grants FOR UPDATE
     USING (public.reach_active_member(org_id,TRUE)) WITH CHECK (public.reach_active_member(org_id,TRUE));
 CREATE POLICY reach_operation_select ON public.reach_operations FOR SELECT
-    USING (public.reach_active_member(org_id) AND actor_user_id=public.tenant_actor_user_id());
+    USING (public.reach_active_member(org_id) AND actor_user_id=NULLIF(current_setting('app.actor_user_id',TRUE),'')::uuid);
 CREATE POLICY reach_operation_insert ON public.reach_operations FOR INSERT
-    WITH CHECK (public.reach_active_member(org_id) AND actor_user_id=public.tenant_actor_user_id()
+    WITH CHECK (public.reach_active_member(org_id) AND actor_user_id=NULLIF(current_setting('app.actor_user_id',TRUE),'')::uuid
         AND EXISTS (SELECT 1 FROM public.reach_connections c WHERE c.id=connection_id
             AND c.org_id=reach_operations.org_id AND c.status='active'
             AND c.credential_version=reach_operations.credential_version
             AND (public.reach_active_member(c.org_id,TRUE) OR EXISTS (
                 SELECT 1 FROM public.reach_connection_grants g WHERE g.connection_id=c.id
-                AND g.org_id=c.org_id AND g.user_id=public.tenant_actor_user_id() AND g.can_write))));
+                AND g.org_id=c.org_id AND g.user_id=NULLIF(current_setting('app.actor_user_id',TRUE),'')::uuid AND g.can_write))));
 CREATE POLICY reach_operation_update ON public.reach_operations FOR UPDATE
-    USING (public.reach_active_member(org_id) AND actor_user_id=public.tenant_actor_user_id())
-    WITH CHECK (public.reach_active_member(org_id) AND actor_user_id=public.tenant_actor_user_id());
+    USING (public.reach_active_member(org_id) AND actor_user_id=NULLIF(current_setting('app.actor_user_id',TRUE),'')::uuid)
+    WITH CHECK (public.reach_active_member(org_id) AND actor_user_id=NULLIF(current_setting('app.actor_user_id',TRUE),'')::uuid);
 GRANT SELECT,INSERT,UPDATE ON public.reach_connections,public.reach_connection_grants,
     public.reach_operations TO everydayai,everydayai_runtime;
 RESET ROLE;
