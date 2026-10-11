@@ -72,6 +72,7 @@ export type WSMessageType =
   | 'unsubscribe'
   | 'subscribed'
   | 'conversation_updated'
+  | 'scheduled_task_result'
   | 'server_restarting'
   | 'error'
   // 工具确认

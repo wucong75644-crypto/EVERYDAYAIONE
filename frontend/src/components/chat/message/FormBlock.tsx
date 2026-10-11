@@ -34,7 +34,9 @@ import type { ScheduledSkillChoice } from '../../../types/scheduledTask';
 
 function isFormFieldVisible(field: FormField, values: Record<string, unknown>): boolean {
   if (!field.visible_when) return true;
-  const equal = formatFormValue(values[field.visible_when.field]) === field.visible_when.value;
+  const actual = formatFormValue(values[field.visible_when.field]);
+  const expected = field.visible_when.value;
+  const equal = Array.isArray(expected) ? expected.includes(actual) : actual === expected;
   return field.visible_when.not ? !equal : equal;
 }
 

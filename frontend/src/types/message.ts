@@ -249,7 +249,7 @@ export interface FormField {
   placeholder?: string;
   options?: Array<{ label: string; value: string }>;
   /** 条件显示：当指定字段等于指定值时才显示此字段 */
-  visible_when?: { field: string; value: string; not?: boolean };
+  visible_when?: { field: string; value: string | string[]; not?: boolean };
 }
 
 // ============================================================

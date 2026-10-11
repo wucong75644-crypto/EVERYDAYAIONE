@@ -468,7 +468,7 @@ async def propose_task_changeset(
     row = await _propose_task_change(
         db=db, scoped_db=scoped_db, user_id=user_id, org_id=org_id,
         operation=payload.operation, task_id=payload.task_id,
-        definition=payload.definition, idempotency_key=payload.idempotency_key,
+        definition={**payload.definition, **({"origin_conversation_id": payload.conversation_id} if payload.operation == "create" and all(references) else {})}, idempotency_key=payload.idempotency_key,
         submission_mode=mode,
     )
     if all(references):

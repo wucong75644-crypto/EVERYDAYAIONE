@@ -78,3 +78,16 @@ it.each([
   expect(screen.getByText('成功')).toBeVisible();
   expect(screen.getByText(label)).toBeVisible();
 });
+
+it.each([
+  ['baseline', '首次基线 · 静默'], ['duplicate', '重复命中 · 静默'],
+  ['below_threshold', '未达到条件 · 静默'], ['incomplete', '数据不完整 · 未判断'],
+])('shows %s independently from execution success', (status, label) => {
+  state.tasks[0].status = 'paused';
+  state.runs.t1 = [{ id: 'r1', task_id: 't1', org_id: 'o1', status: 'success',
+    started_at: new Date().toISOString(), credits_used: 1, tokens_used: 10,
+    notification_decision: { status }, push_status: 'skipped' }];
+  render(<TaskRunHistory taskId="t1" />);
+  expect(screen.getByText('成功')).toBeVisible();
+  expect(screen.getByText(label)).toBeVisible();
+});

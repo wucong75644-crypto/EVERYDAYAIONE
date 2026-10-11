@@ -16,7 +16,8 @@ class TaskDefinitionInputError(ValueError):
 def _validate(value: Any, schema: Mapping, label: str) -> None:
     kind = schema.get("type")
     valid_type = {"object": isinstance(value, dict), "array": isinstance(value, list),
-                  "string": isinstance(value, str), "integer": type(value) is int}
+                  "string": isinstance(value, str), "integer": type(value) is int,
+                  "number": type(value) in (int, float)}
     if not valid_type.get(kind, False):
         raise TaskDefinitionInputError(f"{label}格式不正确，请按工具字段类型填写。")
     if "enum" in schema and value not in schema["enum"]:
@@ -30,7 +31,7 @@ def _validate(value: Any, schema: Mapping, label: str) -> None:
     elif kind == "string":
         if not value.strip() or "pattern" in schema and not re.fullmatch(schema["pattern"], value):
             raise TaskDefinitionInputError(f"{label}为空或格式不正确，请补齐有效值。")
-    elif kind == "integer":
+    elif kind in {"integer", "number"}:
         if not schema["minimum"] <= value <= schema["maximum"]:
             raise TaskDefinitionInputError(f"{label}应在 {schema['minimum']}～{schema['maximum']} 之间。")
     elif kind == "array":
@@ -69,6 +70,12 @@ def task_definition_input(definition: Any, *, operation: str, base: Mapping | No
     changes = deepcopy(definition)
     has_base = base is not None
     base = base or {}
+    if "notification_policy" in changes:
+        from services.scheduler.monitoring import validate_policy
+        try:
+            changes["notification_policy"] = validate_policy(changes["notification_policy"])
+        except ValueError as exc:
+            raise TaskDefinitionInputError(str(exc)) from exc
     if "run_at" in changes:
         try:
             date = datetime.fromisoformat(changes["run_at"].replace("Z", "+00:00"))
@@ -89,6 +96,8 @@ def task_definition_input(definition: Any, *, operation: str, base: Mapping | No
             raise TaskDefinitionInputError("请先补充实际执行内容，再指定输出格式。")
     effective = {**base, **changes}
     kind = effective.get("schedule_type")
+    if kind == "cron" and effective.get("interval_minutes") and "schedule_type" not in changes:
+        kind = "interval"
     required = ["prompt", "schedule_type"] if operation == "create" else []
     # A patch may use the existing clock, but changing from once/complex cron
     # must not silently invent a new time. The adapter performs final merging.
@@ -97,15 +106,25 @@ def task_definition_input(definition: Any, *, operation: str, base: Mapping | No
         "weekly": {"run_at", "day_of_month"},
         "monthly": {"run_at", "weekdays"},
         "once": {"time_str", "weekdays", "day_of_month"},
+        "interval": {"run_at", "time_str", "weekdays", "day_of_month"},
         "cron": {"run_at", "time_str", "weekdays", "day_of_month"},
     }.get(kind, set()).intersection(changes)
     if incompatible:
         raise TaskDefinitionInputError("时间字段与执行频率不一致，请明确要修改的频率及对应时间。")
-    if operation == "create" or has_base and set(changes) & {"schedule_type", "time_str", "weekdays", "day_of_month", "run_at"}:
+    if operation == "create" or has_base and set(changes) & {"schedule_type", "time_str", "weekdays", "day_of_month", "run_at", "interval_minutes"}:
         if kind == "once":
             required.append("run_at")
             if "time_str" in changes and "run_at" not in changes:
                 raise TaskDefinitionInputError("修改单次任务时间请提供完整的 run_at 日期和时间。")
+        elif kind == "interval":
+            required.append("interval_minutes")
+            if effective.get("interval_minutes"):
+                from services.scheduler.cron_utils import compose_cron
+                from core.exceptions import ValidationError
+                try:
+                    compose_cron("interval", interval_minutes=effective["interval_minutes"])
+                except ValidationError as exc:
+                    raise TaskDefinitionInputError(str(exc)) from exc
         else:
             if not effective.get("time_str") and not simple_task_time(base):
                 required.append("time_str")

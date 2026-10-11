@@ -33,6 +33,10 @@
           "value": "once"
         },
         {
+          "label": "每隔分钟／小时（整点对齐）",
+          "value": "interval"
+        },
+        {
           "label": "每天",
           "value": "daily"
         },
@@ -54,8 +58,11 @@
       "default_value": "",
       "visible_when": {
         "field": "schedule_type",
-        "value": "once",
-        "not": true
+        "value": [
+          "daily",
+          "weekly",
+          "monthly"
+        ]
       }
     },
     {
@@ -123,6 +130,114 @@
           "value": "{\"type\":\"web\",\"user_id\":\"u1\"}"
         }
       ]
+    },
+    {
+      "type": "number",
+      "name": "interval_minutes",
+      "label": "间隔分钟（如30、120；整点对齐）",
+      "required": true,
+      "default_value": "",
+      "visible_when": {
+        "field": "schedule_type",
+        "value": "interval"
+      }
+    },
+    {
+      "type": "select",
+      "name": "notify_mode",
+      "label": "通知方式",
+      "required": false,
+      "default_value": "always",
+      "options": [
+        {
+          "label": "每次执行都通知",
+          "value": "always"
+        },
+        {
+          "label": "达到条件才通知，无变化静默",
+          "value": "conditional"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "name": "notify_metric",
+      "label": "监测指标（如 likes、comments_count、sales）",
+      "required": true,
+      "default_value": "",
+      "visible_when": {
+        "field": "notify_mode",
+        "value": "conditional"
+      }
+    },
+    {
+      "type": "select",
+      "name": "notify_comparison",
+      "label": "判断口径",
+      "required": false,
+      "default_value": "value",
+      "options": [
+        {
+          "label": "当前数值",
+          "value": "value"
+        },
+        {
+          "label": "窗口内增长量",
+          "value": "delta"
+        },
+        {
+          "label": "窗口内增长率（%）",
+          "value": "percent"
+        }
+      ],
+      "visible_when": {
+        "field": "notify_mode",
+        "value": "conditional"
+      }
+    },
+    {
+      "type": "number",
+      "name": "notify_threshold",
+      "label": "达到门槛（大于或等于）",
+      "required": true,
+      "default_value": "",
+      "visible_when": {
+        "field": "notify_mode",
+        "value": "conditional"
+      }
+    },
+    {
+      "type": "number",
+      "name": "notify_window_minutes",
+      "label": "比较窗口（分钟；增长判断必填）",
+      "required": false,
+      "default_value": "",
+      "visible_when": {
+        "field": "notify_mode",
+        "value": "conditional"
+      }
+    },
+    {
+      "type": "number",
+      "name": "notify_repeat_increment",
+      "label": "再次提醒需比上次提醒新增多少（留空仅重新达标提醒）",
+      "required": false,
+      "default_value": "",
+      "visible_when": {
+        "field": "notify_mode",
+        "value": "conditional"
+      }
+    },
+    {
+      "type": "number",
+      "name": "notify_cooldown_minutes",
+      "label": "提醒最短间隔（分钟；不能单独触发再次提醒）",
+      "required": false,
+      "default_value": "",
+      "visible_when": {
+        "field": "notify_mode",
+        "value": "conditional"
+      }
     },
     {
       "type": "datetime-local",

@@ -57,7 +57,9 @@ class TestBuildCreateForm:
         assert form["type"] == "form"
         assert form["form_type"] == "scheduled_task_create"
         assert "创建定时任务" in form["title"]
-        assert len(form["fields"]) == 7  # name, prompt, schedule_type, time_str, weekdays, day_of_month, push_target
+        fields = {field["name"]: field for field in form["fields"]}
+        assert {"name", "prompt", "schedule_type", "time_str", "weekdays", "day_of_month", "push_target", "interval_minutes", "notify_mode"} <= set(fields)
+        assert fields["notify_mode"]["default_value"] == "always"
 
     def test_default_values_from_parsed(self):
         parsed = {"name": "周报", "prompt": "推周报", "schedule_type": "weekly", "time_str": "10:00"}

@@ -26,6 +26,11 @@ const STATUS_CONFIG = {
   skipped: { icon: Clock,        color: 'text-text-tertiary', label: '跳过' },
 } as const;
 
+const NOTIFICATION_LABELS: Record<string, string> = {
+  baseline: '首次基线 · 静默', incomplete: '数据不完整 · 未判断',
+  below_threshold: '未达到条件 · 静默', duplicate: '重复命中 · 静默', matched: '达到通知条件',
+};
+
 const PUSH_LABELS = {
   queued: '通知排队中', retrying: '通知重试中', pushed: '通知已投递',
   push_failed: '通知投递失败', partial: '通知部分投递成功', skipped: '无企微投递',
@@ -89,6 +94,9 @@ function RunRow({ run }: { run: TaskRun }) {
             {formatRelativeTime(run.started_at)}
           </span>
           <span className={cn('font-medium', config.color)}>{config.label}</span>
+          {run.notification_decision && <span className="text-[var(--s-text-tertiary)]">
+            {NOTIFICATION_LABELS[run.notification_decision.status] || '通知判断待确认'}
+          </span>}
           {run.push_status && <span className="text-[var(--s-text-tertiary)]">
             {PUSH_LABELS[run.push_status] || '通知状态待确认'}
           </span>}
@@ -99,11 +107,16 @@ function RunRow({ run }: { run: TaskRun }) {
             <span className="text-[var(--s-text-tertiary)]">{run.credits_used} 积分</span>
           )}
         </div>
+        {run.notification_decision?.reason && <p className="text-xs">{run.notification_decision.reason}</p>}
         {run.result_summary && (
           <p className="text-xs text-[var(--s-text-secondary)] mt-0.5 whitespace-pre-wrap">
             {run.result_summary}
           </p>
         )}
+        {run.result_text && <details className="mt-1 text-xs">
+          <summary className="cursor-pointer">查看完整执行报告</summary>
+          <p className="mt-1 whitespace-pre-wrap">{run.result_text}</p>
+        </details>}
         {run.error_message && (
           <p className="text-xs text-[var(--s-error)] mt-0.5 line-clamp-2">
             {run.error_message}

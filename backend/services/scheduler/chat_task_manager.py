@@ -64,6 +64,7 @@ def _calc_once_run_at(time_str: str, tz: str = "Asia/Shanghai") -> datetime:
 
 _SCHEDULE_OPTIONS = [
     {"label": "仅一次", "value": "once"},
+    {"label": "每隔分钟／小时（整点对齐）", "value": "interval"},
     {"label": "每天", "value": "daily"},
     {"label": "每周", "value": "weekly"},
     {"label": "每月", "value": "monthly"},
@@ -211,6 +212,41 @@ async def _load_push_targets(db: Any, user_id: str, org_id: str) -> List[Dict[st
     return targets
 
 
+def _monitor_form_fields(value):
+    policy = value.get("notification_policy") or {"mode": "always"}
+    conditional = {"field": "notify_mode", "value": "conditional"}
+    fields = [
+        _build_form_field("interval_minutes", "number", "间隔分钟（如30、120；整点对齐）", required=True,
+                          default_value=value.get("interval_minutes") or "",
+                          visible_when={"field": "schedule_type", "value": "interval"}),
+        _build_form_field("notify_mode", "select", "通知方式", default_value=policy["mode"],
+                          options=[{"label": "每次执行都通知", "value": "always"}, {"label": "达到条件才通知，无变化静默", "value": "conditional"}]),
+        _build_form_field("notify_metric", "text", "监测指标（如 likes、comments_count、sales）", required=True,
+                          default_value=policy.get("metric", ""), visible_when=conditional),
+        _build_form_field("notify_comparison", "select", "判断口径", default_value=policy.get("comparison", "value"),
+                          options=[{"label": "当前数值", "value": "value"}, {"label": "窗口内增长量", "value": "delta"}, {"label": "窗口内增长率（%）", "value": "percent"}], visible_when=conditional),
+    ]
+    for key, label in [("threshold", "达到门槛（大于或等于）"), ("window_minutes", "比较窗口（分钟；增长判断必填）"),
+                       ("repeat_increment", "再次提醒需比上次提醒新增多少（留空仅重新达标提醒）"),
+                       ("cooldown_minutes", "提醒最短间隔（分钟；不能单独触发再次提醒）")]:
+        fields.append(_build_form_field("notify_" + key, "number", label,
+                      required=key == "threshold", default_value=policy.get(key, ""), visible_when=conditional))
+    return fields
+
+
+def _notification_form_policy(data):
+    from services.scheduler.monitoring import validate_policy
+    if "notify_mode" not in data:
+        return None
+    policy = {"mode": data["notify_mode"]}
+    if policy["mode"] == "conditional":
+        for key in ("metric", "comparison", "threshold", "window_minutes", "repeat_increment", "cooldown_minutes"):
+            value = data.get("notify_" + key)
+            if value not in (None, ""):
+                policy[key] = int(value) if key in {"window_minutes", "cooldown_minutes"} else float(value) if key in {"threshold", "repeat_increment"} else value
+    return validate_policy(policy)
+
+
 def _build_create_form(
     parsed: Dict[str, Any],
     push_targets: List[Dict[str, str]],
@@ -266,6 +302,7 @@ def _build_create_form(
         ),
     ]
 
+    fields.extend(_monitor_form_fields(parsed))
     return {
         "type": "form",
         "form_type": "scheduled_task_create",
@@ -290,6 +327,8 @@ def _build_update_form(
     # 推送目标当前值
     current_push = json.dumps(task.get("push_target", {}))
 
+    if merged.get("interval_minutes"):
+        merged["schedule_type"] = "interval"
     # 解析当前 cron 的 time_str
     cron_expr = merged.get("cron_expr", "")
     time_str = "09:00"
@@ -347,6 +386,7 @@ def _build_update_form(
         ),
     ]
 
+    fields.extend(_monitor_form_fields(merged))
     return {
         "type": "form",
         "form_type": "scheduled_task_update",
@@ -450,10 +490,10 @@ class ChatTaskManager:
                 # prefill an unparsed management request as executable work.
                 field["default_value"] = ""
                 field["placeholder"] = "请根据上方原始要求，补充每次需要执行的业务内容"
-            else:
+            elif not key.startswith("notify_") and key != "interval_minutes":
                 field["default_value"] = [] if key == "weekdays" else ""
             if key == "time_str":
-                field["visible_when"] = {"field": "schedule_type", "value": "once", "not": True}
+                field["visible_when"] = {"field": "schedule_type", "value": ["daily", "weekly", "monthly"]}
             if key in {"weekdays", "day_of_month"}:
                 field["required"] = True
         # A one-shot date must not be silently replaced with today/tomorrow.
@@ -574,10 +614,11 @@ class ChatTaskManager:
         changes = request["changes"]
         fields = set(changes) | set(request["missing_fields"]) | {"task_id"}
         form = _build_update_form(task, changes, targets)
-        form["fields"] = [field for field in form["fields"] if field["name"] in fields]
+        form["fields"] = [field for field in form["fields"] if field["name"] in fields or ("notification_policy" in fields and field["name"].startswith("notify_"))]
         for field in form["fields"]:
             key = field["name"]
-            field.pop("visible_when", None)
+            if not key.startswith("notify_"):
+                field.pop("visible_when", None)
             if key in request["missing_fields"] and key != "prompt":
                 field["default_value"] = [] if key == "weekdays" else ""
                 field["required"] = True
@@ -770,7 +811,7 @@ async def handle_form_submit(
     if form_type == "scheduled_task_create":
         if not await check_permission(db, user_id, org_id, "task.create"):
             return {"success": False, "message": "无权创建定时任务"}
-        if form_data.get("_structured_input") is True:
+        if form_data.get("_structured_input") is True or "notify_mode" in form_data:
             return await _submit_direct_form(db, user_id, org_id, "create", form_data, idempotency_key,
                                              submission_mode="apply_if_allowed" if _direct_form(form_data) else "proposal")
         if _direct_form(form_data):
@@ -788,7 +829,7 @@ async def handle_form_submit(
     if form_type == "scheduled_task_update":
         if not await check_permission(db, user_id, org_id, "task.edit"):
             return {"success": False, "message": "无权修改定时任务"}
-        if form_data.get("_structured_input") is True:
+        if form_data.get("_structured_input") is True or "notify_mode" in form_data:
             return await _submit_direct_form(db, user_id, org_id, "update", form_data, idempotency_key,
                                              submission_mode="apply_if_allowed" if _direct_form(form_data) else "proposal")
         if _direct_form(form_data):
@@ -804,7 +845,29 @@ def _direct_form(data):
 
 
 async def _submit_direct_form(db, user_id, org_id, operation, data, idempotency_key, *, submission_mode="apply_if_allowed"):
-    definition = {k: data[k] for k in ("name", "prompt", "schedule_type", "time_str", "weekdays", "day_of_month", "run_at") if k in data}
+    definition = {k: data[k] for k in ("name", "prompt", "schedule_type", "time_str", "weekdays", "day_of_month", "run_at", "interval_minutes") if k in data}
+    try:
+        policy = _notification_form_policy(data)
+        if policy is not None:
+            definition["notification_policy"] = policy
+    except (ValueError, TypeError):
+        return {"success": False, "message": "请补齐有效的通知条件与时间窗口"}
+    if "notification_policy" in data:
+        from services.scheduler.monitoring import validate_policy
+        try:
+            policy = data["notification_policy"]
+            definition["notification_policy"] = validate_policy(json.loads(policy) if isinstance(policy, str) else policy)
+        except (ValueError, TypeError):
+            return {"success": False, "message": "通知规则无效，请在聊天中明确指标、门槛与时间窗口"}
+    if data.get("_origin_conversation_id") and operation == "create":
+        definition["origin_conversation_id"] = data["_origin_conversation_id"]
+    if definition.get("schedule_type") != "interval" and not definition.get("interval_minutes"):
+        definition.pop("interval_minutes", None)
+    if "interval_minutes" in definition:
+        try:
+            definition["interval_minutes"] = int(definition["interval_minutes"])
+        except (ValueError, TypeError):
+            return {"success": False, "message": "请填写有效的间隔分钟"}
     task = None
     if operation == "update":
         task = await ChatTaskManager(db, user_id, org_id)._find_task(task_id=str(data.get("task_id") or ""))

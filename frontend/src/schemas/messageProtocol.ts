@@ -77,7 +77,7 @@ const formFieldSchema = z.object({
   ]).optional(),
   placeholder: optionalString,
   options: z.array(z.object({ label: z.string(), value: z.string() })).optional(),
-  visible_when: z.object({ field: z.string(), value: z.string(), not: z.boolean().optional() }).optional(),
+  visible_when: z.object({ field: z.string(), value: z.union([z.string(), z.array(z.string())]), not: z.boolean().optional() }).optional(),
 }).passthrough();
 
 const contentPartSchema = z.preprocess(normalizeNullEquivalentFields, z.discriminatedUnion('type', [

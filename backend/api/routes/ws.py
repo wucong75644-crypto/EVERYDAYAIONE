@@ -639,7 +639,7 @@ async def _handle_form_submit(
 
         idempotency_key = f"chat-form:{conversation_id}:{message_id}:{form_id}"
         result = await handle_form_submit(
-            db, user_id, org_id, form_type, form_data,
+            db, user_id, org_id, form_type, {**form_data, "_origin_conversation_id": conversation_id},
             idempotency_key=idempotency_key,
         )
         if result.get("success"):
