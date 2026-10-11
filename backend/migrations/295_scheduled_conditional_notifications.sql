@@ -1,3 +1,10 @@
+-- Use the existing scheduler table owner; production scheduler objects predate
+-- everydayai_owner. Do not change ownership or broaden application grants.
+DO $$ DECLARE scheduler_owner TEXT; BEGIN
+ SELECT pg_get_userbyid(relowner) INTO STRICT scheduler_owner
+ FROM pg_class WHERE oid='public.scheduled_tasks'::regclass;
+ EXECUTE format('SET LOCAL ROLE %I', scheduler_owner);
+END $$;
 -- Additive upgrade. Existing tasks default to every-run delivery.
 -- Apply with scheduled workers drained, as for immutable config snapshot upgrades.
 DO $$ BEGIN
@@ -382,3 +389,5 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.save_scheduled_web_delivery(UUID,UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.save_scheduled_web_delivery(UUID,UUID) TO everydayai;
+
+RESET ROLE;

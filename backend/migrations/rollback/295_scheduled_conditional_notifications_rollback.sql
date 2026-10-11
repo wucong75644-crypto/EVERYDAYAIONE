@@ -1,3 +1,10 @@
+-- Use the existing scheduler table owner; production scheduler objects predate
+-- everydayai_owner. Do not change ownership or broaden application grants.
+DO $$ DECLARE scheduler_owner TEXT; BEGIN
+ SELECT pg_get_userbyid(relowner) INTO STRICT scheduler_owner
+ FROM pg_class WHERE oid='public.scheduled_tasks'::regclass;
+ EXECUTE format('SET LOCAL ROLE %I', scheduler_owner);
+END $$;
 -- Roll back application code first only after draining new-style task execution.
 DO $$ BEGIN
  IF EXISTS (SELECT 1 FROM scheduled_task_deliveries WHERE target_context->>'type'='web' AND status IN ('pending','delivering')) THEN
@@ -113,3 +120,4 @@ BEGIN
     );
 END;
 $$;
+RESET ROLE;
