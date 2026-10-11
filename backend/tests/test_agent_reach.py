@@ -218,3 +218,40 @@ async def test_youtube_comments_key_never_in_url_and_empty_is_empty():
     request = ReachRequest(task='comments', platform='youtube', action='read_comments', url='https://youtu.be/abcdefghijk')
     result = await youtube_comments(request, HTTP(), 'private-key')
     assert result.to_agent_result().status == 'empty'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('payload', [[{'bvid':'BV1234567890','title':'<em>电商</em>运营','author':'作者'}], {'items':[{'bvid':'BV1234567890','title':'<em>电商</em>运营','author':'作者'}]}])
+async def test_bili_search_list_contract(payload):
+    result = await query_social(ReachRequest(task='search', platform='bilibili', action='search', query='电商运营'), Runner({'ok':True,'data':payload}), None)
+    assert result.items[0].title == '电商运营'
+    assert '作者' in result.items[0].content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('platform,count,explicit,expected', [('xiaohongshu',1,False,'success'),('bilibili',1,False,'success'),('xiaohongshu',0,False,'AUTH_REQUIRED'),('xiaohongshu',2,False,'ACCOUNT_REQUIRED'),('bilibili',0,False,'success'),('xiaohongshu',2,True,'success')])
+async def test_read_selects_unique_org_account(monkeypatch,platform,count,explicit,expected):
+    from core import config
+    from services.agent.agent_reach import handler
+    from services.agent.agent_result import AgentResult
+    selected=[]
+    identity='00000000-0000-0000-0000-000000000021'
+    monkeypatch.setattr(config,'get_settings',lambda: SimpleNamespace(agent_reach_enabled=True,agent_reach_timeout_seconds=10,agent_reach_platforms='bilibili,xiaohongshu'))
+    class Store:
+        def __init__(self,pool,scope): assert scope.org_id=='00000000-0000-0000-0000-000000000001'
+        def list(self): return [{'platform':platform,'id':identity} for _ in range(count)]
+        def load(self,connection_id,target,**kwargs):
+            assert connection_id==identity and target==platform
+            return {'id':identity,'account_id':'account','secret':{}}
+    monkeypatch.setattr(handler,'Connections',Store)
+    async def execute(request,settings,**kwargs):
+        selected.append(kwargs['connection'])
+        return AgentResult(summary='ok',status='success')
+    monkeypatch.setattr(handler,'execute',execute)
+    executor=SimpleNamespace(execution_budget=None,db=SimpleNamespace(pool=None),org_id='00000000-0000-0000-0000-000000000001',user_id='00000000-0000-0000-0000-000000000011')
+    args={'task':'搜索','platform':platform,'action':'search','query':'电商运营'}
+    if explicit: args['connection_id']=identity
+    result=await handler.execute_reach(executor,args)
+    assert (result.status if result.status=='success' else result.error_message)==expected
+    if expected=='success': assert bool(selected[0]) == bool(count)
+    else: assert not selected

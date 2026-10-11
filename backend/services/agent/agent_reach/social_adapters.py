@@ -1,5 +1,6 @@
 """Read adapters using documented JSON CLI contracts and isolated credentials."""
 import json
+import html
 import re
 import time
 from urllib.parse import urlsplit
@@ -68,12 +69,16 @@ async def query_social(request, runner, connection):
             'video', '--json', *(['--subtitle'] if request.action == 'transcript' else ['--comments'] if request.action == 'read_comments' else []), '--', target_id('bilibili', request.url)]
         data = unwrap(await runner.run('bili', args, **options))
         if request.action == 'search':
-            rows = data.get('items')
-            if not isinstance(rows, list):
+            rows = data if isinstance(data, list) else data.get('items') if isinstance(data, dict) else None
+            if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
                 raise ReachError('UPSTREAM_CHANGED', 'B站搜索资料结构变化')
-            items = [ReachItem(row.get('title', ''), 'https://www.bilibili.com/video/' + row['bvid'],
-                row.get('description') or row.get('desc') or '', 'metadata')
+            items = [ReachItem(html.unescape(re.sub(r'<[^>]+>', '', row.get('title', ''))), 'https://www.bilibili.com/video/' + row['bvid'],
+                '\n'.join(value for value in [
+                    '作者：' + str(row['author']) if row.get('author') else '',
+                    row.get('description') or row.get('desc') or ''] if value), 'metadata')
                 for row in rows[:request.max_results] if re.fullmatch(r'BV[\w]{10}', row.get('bvid', ''))]
+        elif not isinstance(data, dict):
+            raise ReachError('UPSTREAM_CHANGED', 'B站视频资料结构变化')
         elif request.action == 'transcript':
             subtitle = data.get('subtitle')
             if not isinstance(subtitle, dict) or subtitle.get('available') is not True or not subtitle.get('text'):

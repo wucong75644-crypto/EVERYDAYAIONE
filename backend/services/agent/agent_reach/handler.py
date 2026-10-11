@@ -36,7 +36,7 @@ async def execute_reach(executor, args):
                 org_id=executor.org_id, access_kind=DatabaseAccessKind.RUNTIME))
             rows = await asyncio.to_thread(store.list)
             safe = [{key: str(row[key]) for key in ('id','platform','account_id','display_name')} for row in rows]
-            return AgentResult(summary='当前获授权的组织账号：' + json.dumps(safe, ensure_ascii=False),
+            return AgentResult(summary='当前组织可用账号：' + json.dumps(safe, ensure_ascii=False),
                                source='agent_reach', status='success' if safe else 'empty')
         writing = request.action in WRITE_ACTIONS
         request = request if writing else resolve(request)
@@ -48,11 +48,23 @@ async def execute_reach(executor, args):
         if request.platform not in {p.strip() for p in settings.agent_reach_platforms.split(',')}:
             raise ReachError('CONFIG_REQUIRED', '渠道尚未启用')
         connection, store = None, None
+        if not request.connection_id and not writing and executor.org_id and request.platform in {
+                'twitter', 'reddit', 'xiaohongshu', 'bilibili', 'youtube'}:
+            store = Connections(executor.db.pool, DatabaseScope(actor_user_id=executor.user_id,
+                org_id=executor.org_id, access_kind=DatabaseAccessKind.RUNTIME))
+            rows = await asyncio.to_thread(store.list)
+            matches = [row for row in rows if row['platform'] == request.platform]
+            if len(matches) > 1:
+                raise ReachError('ACCOUNT_REQUIRED', '本组织连接了多个该平台账号，请先用 list_connections 获取账号并选择 connection_id')
+            if matches:
+                request = request.model_copy(update={'connection_id': str(matches[0]['id'])})
+            else:
+                store = None
         if request.connection_id:
             store = Connections(executor.db.pool, DatabaseScope(actor_user_id=executor.user_id,
                 org_id=executor.org_id, access_kind=DatabaseAccessKind.RUNTIME))
         elif request.platform in {'twitter', 'reddit', 'xiaohongshu'} or writing:
-            raise ReachError('AUTH_REQUIRED', '请先在组织设置中连接账号，并指定已授权的连接ID')
+            raise ReachError('AUTH_REQUIRED', '请先由管理员在账号连接页面连接该平台账号；写操作需指定 connection_id')
         if store:
             connection = await asyncio.to_thread(store.load, request.connection_id, request.platform, write=writing)
         lock = ('account:' + request.platform + ':' + connection['account_id']) if store else ('public:' + request.platform)
