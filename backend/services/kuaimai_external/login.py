@@ -123,15 +123,22 @@ class ERPLogin:
             if not censeid:
                 raise LoginError('快麦未返回可用登录凭据，请先到官网完成账号验证。')
             cid = company_id(result, cookies)
-            # Check the authenticated session before touching existing credentials.
-            check = await client.post('/kmzk/meal/getFunctionList',
-                json={'companyId': cid, 'version': 2}, headers={'companyid': str(cid)})
-            check.raise_for_status()
-            checked = check.json()
-            if (not isinstance(checked, dict) or checked.get('success') is False
-                or not (checked.get('result') == 1 or checked.get('success') is True)):
-                raise LoginError('登录凭据未通过快麦验证，不会覆盖原有连接。')
-            cookie = '; '.join(f'{key}={value}' for key, value in cookies.items())
+            return await self.verify_and_save(db, client, cid)
+
+    async def verify_and_save(self, db, client, cid):
+        cookies = dict(client.cookies)
+        censeid = cookies.get('_censeid')
+        if not censeid:
+            raise LoginError('快麦未返回可用登录凭据，请重新扫码。')
+        # Check the authenticated session before touching existing credentials.
+        check = await client.post('/kmzk/meal/getFunctionList',
+            json={'companyId': cid, 'version': 2}, headers={'companyid': str(cid)})
+        check.raise_for_status()
+        checked = check.json()
+        if (not isinstance(checked, dict) or checked.get('success') is False
+            or not (checked.get('result') == 1 or checked.get('success') is True)):
+            raise LoginError('登录凭据未通过快麦验证，不会覆盖原有连接。')
+        cookie = '; '.join(f'{key}={value}' for key, value in cookies.items())
         from datetime import datetime
         encrypted_censeid = await cookie_crypto.encrypt_cookie(org_id=self.org, plaintext=censeid)
         encrypted_cookie = await cookie_crypto.encrypt_cookie(org_id=self.org, plaintext=cookie)

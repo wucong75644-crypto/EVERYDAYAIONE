@@ -183,3 +183,14 @@ export function startKuaimaiLogin(): Promise<KuaimaiLoginSession> {
 export function loginKuaimai(data: { session_id: string; company_name: string; username: string; password: string; validation_code: string }): Promise<KuaimaiLoginResult> {
   return connectionRequest({ method: 'POST', url: '/admin/kuaimai/login/password', data });
 }
+
+export interface KuaimaiWechatSession {
+  id: string;
+  state: 'waiting' | 'confirming' | 'connected' | 'failed' | 'expired' | 'cancelled';
+  expires_at: number;
+  image?: string;
+  message: string;
+}
+export const startKuaimaiWechat = () => connectionRequest<KuaimaiWechatSession>({ method: 'POST', url: '/admin/kuaimai/login/wechat' });
+export const pollKuaimaiWechat = (id: string) => connectionRequest<KuaimaiWechatSession>({ method: 'GET', url: `/admin/kuaimai/login/wechat/${id}` });
+export const cancelKuaimaiWechat = (id: string) => connectionRequest<KuaimaiWechatSession>({ method: 'DELETE', url: `/admin/kuaimai/login/wechat/${id}` });

@@ -21,7 +21,9 @@ from typing import Any, Literal, Optional
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+import re
+
+from fastapi import APIRouter, Depends, HTTPException, Response
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -671,3 +673,49 @@ async def password_login(body: PasswordLoginIn, org_ctx: OrgCtx, db: AsyncDataba
         raise HTTPException(status_code=400, detail=str(error)) from None
     except Exception:
         raise HTTPException(status_code=503, detail='连接未完成，请刷新账号状态后重试') from None
+
+
+async def _wechat_login_service(org_ctx):
+    from services.kuaimai_external.wechat_login import WeChatLogin
+    service = await _login_service(org_ctx)
+    return WeChatLogin(service.redis, service.org, service.actor)
+
+
+@router.post('/login/wechat', summary='生成快麦微信登录二维码')
+async def start_wechat_login(org_ctx: OrgCtx, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    from services.kuaimai_external.login import LoginError
+    service = await _wechat_login_service(org_ctx)
+    try:
+        return await service.start()
+    except LoginError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    except Exception:
+        raise HTTPException(status_code=503, detail='快麦微信扫码服务暂不可用，请稍后重试') from None
+
+
+@router.get('/login/wechat/{session_id}', summary='查询快麦微信扫码状态并保存验证后的连接')
+async def poll_wechat_login(session_id: str, org_ctx: OrgCtx, db: AsyncDatabase, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    from services.kuaimai_external.login import LoginError
+    service = await _wechat_login_service(org_ctx)
+    if not re.fullmatch(r'[A-Za-z0-9_-]{32,64}', session_id):
+        raise HTTPException(status_code=400, detail='扫码会话格式不正确，请重新扫码')
+    try:
+        return await service.poll(db, session_id)
+    except LoginError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    except Exception:
+        raise HTTPException(status_code=503, detail='扫码处理未完成，请检查账号状态后重试') from None
+
+
+@router.delete('/login/wechat/{session_id}', summary='取消快麦微信扫码会话')
+async def cancel_wechat_login(session_id: str, org_ctx: OrgCtx, db: AsyncDatabase):
+    from services.kuaimai_external.login import LoginError
+    service = await _wechat_login_service(org_ctx)
+    if not re.fullmatch(r'[A-Za-z0-9_-]{32,64}', session_id):
+        raise HTTPException(status_code=400, detail='扫码会话格式不正确')
+    try:
+        return await service.poll(db, session_id, cancel=True)
+    except LoginError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
