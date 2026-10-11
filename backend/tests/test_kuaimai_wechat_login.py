@@ -36,7 +36,7 @@ def setup(monkeypatch):
     db.table.return_value.upsert.return_value.execute = AsyncMock(return_value=SimpleNamespace(data=[{}, {}]))
     return Redis(), db
 
-def transport(status=408, redirect='/index.html', identity=None, check=None, calls=None):
+def transport(status=408, redirect='/index.html', identity=None, check=None, calls=None, cookie_domain=None):
     def handle(req):
         path = req.url.path
         if path == '/login.html': return httpx.Response(200, text='login')
@@ -50,7 +50,7 @@ def transport(status=408, redirect='/index.html', identity=None, check=None, cal
             return httpx.Response(200, text=f'window.wx_errcode={status};window.wx_code="one-use-code";')
         if path == '/account/wxAuth':
             if calls is not None: calls.append(True)
-            return httpx.Response(302, headers={'location': redirect, 'set-cookie': '_censeid=private-session; Secure; Path=/'})
+            return httpx.Response(302, headers={'location': redirect, 'set-cookie': '_censeid=private-session; Secure; Path=/' + ('; Domain=' + cookie_domain if cookie_domain else '')})
         if path == '/index.html': return httpx.Response(200, text='ERP')
         if path == '/user/info':
             assert '_censeid=private-session' in req.headers['cookie']
@@ -172,3 +172,28 @@ async def test_redirect_diagnostic_keeps_structure_without_auth_material(setup):
     assert 'private-state' not in json.dumps(payload)
     assert 'private-fragment' not in json.dumps(payload)
     db.table.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_official_erpb_redirect_reads_identity_there_and_verifies_report_host(setup):
+    redis, db = setup; requests = []
+    base = transport(405, redirect='https://erpb.superboss.cc/index.html', cookie_domain='.superboss.cc')
+    async def handle(request):
+        requests.append(request)
+        return await base.handle_async_request(request)
+    service = WeChatLogin(redis, 'org', 'admin', transport=httpx.MockTransport(handle))
+    session = await service.start()
+    assert (await service.poll(db, session['id']))['state'] == 'connected'
+    info = next(r for r in requests if r.url.path == '/user/info')
+    assert info.url.host == 'erpb.superboss.cc'
+    assert info.headers['origin'] == 'https://erpb.superboss.cc'
+    check = next(r for r in requests if r.url.path == '/kmzk/meal/getFunctionList')
+    assert check.url.host == 'erp.superboss.cc'
+    assert '_censeid=private-session' in check.headers['cookie']
+    assert db.table.return_value.upsert.call_count == 1
+
+@pytest.mark.parametrize('target', ['https://erpb.superboss.cc.evil.example/index.html', 'https://erp3.superboss.cc/index.html', 'https://erpb.superboss.cc:444/index.html', 'https://evil@erpb.superboss.cc/index.html', 'http://erpb.superboss.cc/index.html'])
+def test_official_host_exception_does_not_expand_redirect_trust(target):
+    with pytest.raises(LoginError): WeChatLogin.safe_redirect(target)
+
+def test_relative_redirect_preserves_official_erpb_host():
+    assert WeChatLogin.safe_redirect('/index.html', 'https://erpb.superboss.cc/login.html') == 'https://erpb.superboss.cc/index.html'

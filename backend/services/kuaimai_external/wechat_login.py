@@ -5,6 +5,7 @@ import re
 import secrets
 import time
 from urllib.parse import parse_qs, urljoin, urlsplit
+from http.cookies import SimpleCookie
 
 import httpx
 from loguru import logger
@@ -15,6 +16,7 @@ from .login import ERPLogin, LoginError, ORIGIN, company_id
 PREFIX = 'kuaimai:wechat:'
 OPEN = 'https://open.weixin.qq.com'
 CALLBACK = ORIGIN + '/account/wxAuth'
+ERP_LOGIN_HOSTS = {'erp.superboss.cc', 'erpb.superboss.cc'}
 RELEASE = "if redis.call('get',KEYS[1]) == ARGV[1] then return redis.call('del',KEYS[1]) else return 0 end"
 
 
@@ -80,10 +82,10 @@ class WeChatLogin(ERPLogin):
         return self.public(sid, payload)
 
     @staticmethod
-    def safe_redirect(location):
-        target = urljoin(ORIGIN, location)
+    def safe_redirect(location, base=ORIGIN):
+        target = urljoin(base, location)
         parsed = urlsplit(target)
-        if parsed.scheme != 'https' or parsed.hostname != 'erp.superboss.cc' or parsed.port not in {None, 443} or parsed.username or parsed.password:
+        if parsed.scheme != 'https' or parsed.hostname not in ERP_LOGIN_HOSTS or parsed.port not in {None, 443} or parsed.username or parsed.password:
             raise RedirectRejected('快麦扫码返回了不支持的跳转地址，连接已停止。', parsed)
         if parsed.path not in {'/account/wxAuth', '/login.html', '/index.html', '/'}:
             raise RedirectRejected('快麦要求额外账号验证，请先到官网完成验证。', parsed)
@@ -92,11 +94,11 @@ class WeChatLogin(ERPLogin):
     async def complete(self, db, payload, code):
         async with self.client(payload['cookies']) as client:
             response = await client.get(CALLBACK, params={'code': code, 'state': ''})
-            # Explicit bounded, same-origin redirects only; no token to arbitrary hosts.
+            # Explicit bounded redirects to the two verified official ERP hosts only.
             for _ in range(5):
                 if response.status_code not in {301, 302, 303, 307, 308}:
                     break
-                target = self.safe_redirect(response.headers.get('location', ''))
+                target = self.safe_redirect(response.headers.get('location', ''), str(response.url))
                 query = parse_qs(urlsplit(target).query)
                 outcome = query.get('fromWechat', [''])[0]
                 if outcome == 'bind':
@@ -104,15 +106,16 @@ class WeChatLogin(ERPLogin):
                 if outcome == 'fail':
                     raise LoginError('快麦微信登录未成功，请先到快麦官网检查绑定或账号验证。')
                 if outcome == 'success' and query.get('redirectUrl'):
-                    target = self.safe_redirect(query['redirectUrl'][0])
+                    target = self.safe_redirect(query['redirectUrl'][0], target)
                 response = await client.get(target)
             if response.is_redirect:
                 raise LoginError('快麦登录跳转次数异常，请重新连接。')
             response.raise_for_status()
-            if not client.cookies.get('_censeid'):
-                raise LoginError('快麦未返回登录凭据，请检查微信绑定或到官网完成验证。')
-            # The official launcher obtains its current company from /user/info.
-            info = await client.get('/user/info', params={'api_name': 'user_info'})
+            # Resolve identity on the official host selected by ERP's own redirect.
+            landed = urlsplit(str(response.url))
+            identity_origin = 'https://' + landed.hostname
+            info = await client.get(identity_origin + '/user/info', params={'api_name': 'user_info'},
+                headers={'Origin': identity_origin, 'Referer': identity_origin + '/index.html'})
             info.raise_for_status()
             try:
                 identity = info.json()
@@ -123,7 +126,17 @@ class WeChatLogin(ERPLogin):
                 cid = company_id({'companyId': current.get('companyId')}, {})
             except (ValueError, TypeError, AttributeError):
                 raise LoginError('快麦账号身份响应异常，未保存连接。') from None
-            return await self.verify_and_save(db, client, cid)
+            # Select only cookies scoped to the verified identity request. This also
+            # avoids ambiguous names when the two ERP hosts set host-only cookies.
+            selected = SimpleCookie()
+            selected.load(client.build_request('GET', identity_origin + '/user/info').headers.get('cookie', ''))
+            cookies = {key: value.value for key, value in selected.items()}
+            if not cookies.get('_censeid'):
+                raise LoginError('快麦未返回登录凭据，请检查微信绑定或到官网完成验证。')
+            # Existing reports use the original ERP API host; verify there before
+            # saving, instead of declaring a landing-page login sufficient.
+            async with self.client(cookies) as report_client:
+                return await self.verify_and_save(db, report_client, cid)
 
     async def poll(self, db, sid, *, cancel=False):
         payload = await self.get_qr(sid)
