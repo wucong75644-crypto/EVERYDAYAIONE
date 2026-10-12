@@ -1,8 +1,9 @@
 """Evidence and readiness checks are deterministic, never publishing approval."""
 
+import re
 from typing import Literal
 from datetime import date
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from uuid import UUID
 
 
@@ -92,3 +93,26 @@ def check_draft(data, sources):
         "unknowns": ["未进行平台审核", "引用不等于事实真实性或素材授权已核验"],
         "scope": "仅文字草稿检查；本阶段不创建发布授权",
     }
+
+
+def validate_model_output(schema, text):
+    """Keep strict validation while exposing only safe error categories."""
+    from services.agent.agent_reach.contracts import ReachError
+
+    cleaned = text.strip()
+    # Accept only an entire JSON code fence, never extract a convenient object
+    # from surrounding prose or repair values/claims supplied by the model.
+    fenced = re.fullmatch(r"```(?:json)?\s*\n(.*?)\n```", cleaned, flags=re.S)
+    if fenced:
+        cleaned = fenced.group(1).strip()
+    try:
+        return schema.model_validate_json(cleaned).model_dump(mode="json")
+    except ValidationError as error:
+        # Never persist input values, arbitrary extra keys, URLs or parser context.
+        kinds = sorted({item["type"] for item in error.errors(
+            include_url=False, include_context=False, include_input=False
+        )})[:8]
+        raise ReachError(
+            "MODEL_OUTPUT_INVALID",
+            "模型输出不符合约定：" + ",".join(kinds) + "；未生成成果，请勿重复提交。",
+        ) from None

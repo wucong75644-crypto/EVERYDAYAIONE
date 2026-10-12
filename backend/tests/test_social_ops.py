@@ -147,7 +147,8 @@ def test_scheduled_reach_reads_allowed_but_all_writes_denied(action):
     assert policy.decide("agent_reach", ctx, args).outcome == "deny"
 
 
-async def test_production_uses_pinned_runtime_and_gateway_without_tools(monkeypatch):
+@pytest.mark.parametrize("response_style", ["json", "fenced", "truncated", "invalid"])
+async def test_production_uses_pinned_runtime_and_gateway_without_tools(monkeypatch, response_style):
     from contextlib import asynccontextmanager
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -193,7 +194,11 @@ async def test_production_uses_pinned_runtime_and_gateway_without_tools(monkeypa
         async def stream_chat(self, messages, **kwargs):
             observed.append((messages, kwargs))
             yield StreamChunk(
-                content=json.dumps(output), prompt_tokens=50, completion_tokens=20
+                content=("not-json" if response_style == "invalid" else
+                         "```json\n" + json.dumps(output) + "\n```" if response_style == "fenced"
+                         else json.dumps(output)),
+                finish_reason="length" if response_style == "truncated" else "stop",
+                prompt_tokens=50, completion_tokens=20
             )
 
         close = AsyncMock()
@@ -228,6 +233,14 @@ async def test_production_uses_pinned_runtime_and_gateway_without_tools(monkeypa
         "outputs": [],
         "input": {"sources": [{"id": sid, "body": "这是真实原文"}]},
     }
+    if response_style in {"truncated", "invalid"}:
+        from services.agent.agent_reach.contracts import ReachError
+        with pytest.raises(ReachError) as error:
+            await worker.execute_stage(run)
+        assert error.value.code == ("MODEL_OUTPUT_TRUNCATED" if response_style == "truncated" else "MODEL_OUTPUT_INVALID")
+        assert len(observed) == 1
+        session.close.assert_awaited_once()
+        return
     result, manifest = await worker.execute_stage(run)
     assert result == output and manifest["skill_snapshot"] == pins
     assert "Only use the pinned method." in str(observed[0][0])
@@ -236,3 +249,35 @@ async def test_production_uses_pinned_runtime_and_gateway_without_tools(monkeypa
     source.session_bindings.assert_not_awaited()
     assert source.load.await_count == 1
     session.close.assert_awaited_once()
+
+
+def test_model_output_validation_rejects_invalid_json_without_leaking_values():
+    from services.social_ops.validation import PlanOutput, validate_model_output
+    from services.agent.agent_reach.contracts import ReachError
+
+    secret = "test-sensitive-value-do-not-persist"
+    for value in [secret, json.dumps({"topics": secret, secret: secret})]:
+        with pytest.raises(ReachError) as error:
+            validate_model_output(PlanOutput, value)
+        assert error.value.code == "MODEL_OUTPUT_INVALID"
+        assert secret not in str(error.value)
+    valid = {"topics": [], "analysis": "", "missing_inputs": []}
+    with pytest.raises(ReachError):
+        validate_model_output(PlanOutput, json.dumps(valid))
+
+
+def test_model_output_does_not_extract_or_repair_prose_or_bad_evidence():
+    from services.social_ops.validation import DraftOutput, validate_model_output
+    from services.agent.agent_reach.contracts import ReachError
+
+    sid = str(uuid4())
+    valid = {"title": "标题", "body": "正文", "tags": [],
+             "evidence": [{"snapshot_id": sid, "quote": "未出现的引文"}],
+             "claims": [], "assumptions": [], "required_materials": [], "missing_inputs": []}
+    encoded = json.dumps(valid)
+    for text in ["说明" + encoded, encoded + "解释", "```json\n" + encoded + "\n```\n其他内容"]:
+        with pytest.raises(ReachError):
+            validate_model_output(DraftOutput, text)
+    output = validate_model_output(DraftOutput, "```json\n" + encoded + "\n```")
+    with pytest.raises(ValueError, match="EVIDENCE_QUOTE_NOT_SUPPORTED"):
+        verify_evidence(output, [{"id": sid, "body": "实际原文"}])
