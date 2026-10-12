@@ -32,6 +32,8 @@ class XHSAdapter:
                                      headers={'Authorization': 'Bearer ' + self.token}) as response:
                 if response.status_code in {401, 403}:
                     raise ReachError('AUTH_EXPIRED', '小红书执行服务认证失效')
+                if response.status_code == 429:
+                    raise ReachError('RATE_LIMITED', '执行服务明确返回限频，已暂停账号访问')
                 if response.status_code != 200:
                     raise ReachError('PLATFORM_BLOCKED', '小红书操作未完成，请检查登录态或平台限制')
                 data = bytearray()

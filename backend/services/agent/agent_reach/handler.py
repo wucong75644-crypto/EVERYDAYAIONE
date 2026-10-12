@@ -80,6 +80,22 @@ async def execute_reach(executor, args):
                     key_store = Connections(executor.db.pool, DatabaseScope(actor_user_id=executor.user_id,
                         org_id=executor.org_id, access_kind=DatabaseAccessKind.RUNTIME))
                     exa_key = await asyncio.to_thread(key_store.exa_key, settings.agent_reach_exa_api_key)
+                if connection and getattr(settings, "social_ops_enabled", False):
+                    from .access_budget import AccessBudgetService
+                    budget = AccessBudgetService(executor.db.pool, store.scope)
+                    attempt = await asyncio.to_thread(budget.reserve, connection, request)
+                    try:
+                        result = await execute(request, settings, timeout=timeout, connection=connection, exa_api_key=exa_key)
+                    except BaseException as error:
+                        if request.platform == 'xiaohongshu' and getattr(error, 'code', '') == 'CONFIG_REQUIRED':
+                            await asyncio.shield(asyncio.to_thread(budget.release_not_sent, attempt))
+                        else:
+                            await asyncio.shield(asyncio.to_thread(budget.settle, connection, attempt,
+                                getattr(error, 'code', 'dispatched_or_unknown')))
+                        raise
+                    await asyncio.to_thread(budget.settle, connection, attempt)
+                    result.metadata['access_cost'] = {'estimated_units': (2 + (request.page if request.action == 'read_comments' else 0)) if request.platform == 'xiaohongshu' else 1, 'basis': '保守估计，浏览器内部请求不可观测'}
+                    return result
                 return await execute(request, settings, timeout=timeout, connection=connection, exa_api_key=exa_key)
             call_id = current_dispatch_call_id()
             if not call_id:
@@ -93,12 +109,32 @@ async def execute_reach(executor, args):
                 if previous:
                     if previous['state'] == 'succeeded':
                         return ReachResult(request.platform, 'receipt-replay', receipt=previous['receipt']).to_agent_result()
+                    if previous['state'] == 'failed' and previous['receipt'].get('stage') == 'not_dispatched':
+                        raise ReachError(previous['receipt']['code'], '此调用因账号预算被拒绝，未派发平台写入')
                     raise ReachError('WRITE_UNCERTAIN', '同一操作已执行或结果不确定，不能自动再次提交')
+                write_budget = None
+                access_attempt = None
+                if getattr(settings, "social_ops_enabled", False):
+                    from .access_budget import AccessBudgetService
+                    write_budget = AccessBudgetService(executor.db.pool, store.scope)
                 try:
+                    access_attempt = await asyncio.to_thread(write_budget.reserve, connection, request) if write_budget else None
                     result = await write(request, connection, ToolRunner(settings.agent_reach_bin_dir), PublicHTTP(), settings, media=media)
+                    if write_budget:
+                        await asyncio.to_thread(write_budget.settle, connection, access_attempt)
                     await asyncio.to_thread(store.settle, operation_id, 'succeeded', result.receipt)
                     return result.to_agent_result()
-                except BaseException:
+                except BaseException as error:
+                    if write_budget and access_attempt and request.platform == 'xiaohongshu' and getattr(error, 'code', '') == 'CONFIG_REQUIRED':
+                        await asyncio.shield(asyncio.to_thread(write_budget.release_not_sent, access_attempt))
+                        await asyncio.shield(asyncio.to_thread(store.settle, operation_id, 'failed', {'stage': 'not_dispatched', 'code': error.code}))
+                        raise
+                    if write_budget and access_attempt:
+                        await asyncio.shield(asyncio.to_thread(write_budget.settle, connection, access_attempt, getattr(error, 'code', 'dispatched_or_unknown')))
+                    if write_budget and access_attempt is None and isinstance(error, ReachError):
+                        await asyncio.shield(asyncio.to_thread(store.settle, operation_id, 'failed',
+                            {'stage': 'not_dispatched', 'code': error.code}))
+                        raise
                     # Keep a durable uncertain state even when cancellation arrives.
                     # An executing row also prevents replay if this update fails.
                     try:
@@ -117,7 +153,7 @@ async def execute_reach(executor, args):
                            error_message='INVALID_ARGUMENTS', metadata={'retryable': False})
     except ReachError as error:
         return AgentResult(summary=f'操作未完成：{error}。不能据此判断资料不存在。',
-                           status='error', error_message=error.code, metadata={'retryable': error.retryable})
+                           status='error', error_message=error.code, metadata={'retryable': error.retryable, 'next_eligible_at': getattr(error, 'next_eligible_at', None)})
 
     except (httpx.HTTPError, OSError):
         return AgentResult(summary='平台网络或执行环境不可用；已开始的写入请先核对回执，不要重复发送。',

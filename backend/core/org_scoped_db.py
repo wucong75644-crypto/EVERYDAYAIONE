@@ -37,6 +37,10 @@ _COMPOSITE_ORG_ID_TABLES: frozenset[str] = frozenset()
 TENANT_TABLES: frozenset[str] = frozenset({
     # 对话/消息
     "conversations", "messages", "tasks",
+    # 社媒研究与文字生产
+    "social_profiles", "social_profile_revisions", "social_research_jobs",
+    "social_research_items", "social_source_snapshots", "social_topic_candidates",
+    "social_contents", "social_content_revisions", "social_production_runs", "reach_access_attempts",
     # 积分/账单
     "credits_history", "credit_transactions",
     # 媒体

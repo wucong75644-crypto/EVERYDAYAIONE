@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     web_search_ark_model: str = "doubao-seed-2-1-pro-260628"
 
     # Agent Reach adapters are enabled only after their deployment checks.
+    social_ops_enabled: bool = False
     agent_reach_enabled: bool = False
     agent_reach_platforms: str = "web,github,rss"
     agent_reach_write_actions: str = ""  # platform:action pairs, enabled after account validation

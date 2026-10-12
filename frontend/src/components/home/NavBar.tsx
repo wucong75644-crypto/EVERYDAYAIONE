@@ -5,6 +5,7 @@
  */
 
 import { useState, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { Search, LogOut, Home, Boxes, Sparkles } from 'lucide-react';
 import { m, LayoutGroup } from 'framer-motion';
 import { useAuthStore } from '../../stores/useAuthStore';
@@ -99,6 +100,7 @@ export default function NavBar({ searchQuery, onSearchChange, activeSection, onS
           <div className="flex items-center space-x-3 shrink-0">
             {isAuthenticated ? (
               <>
+                <Link to="/social-ops" className="text-sm text-accent">社媒运营</Link>
                 <span className="text-sm text-text-tertiary">
                   {user?.credits ?? 0} 积分
                 </span>
