@@ -164,6 +164,58 @@ describe("SocialOps", () => {
     expect(screen.getByText("待补图片素材")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "发布" })).toBeNull();
   });
+  it("allows pausing a finished round with a future collection schedule", async () => {
+    const original = api.socialApi.getMockImplementation()!;
+    api.socialApi.mockImplementation(async (...args) => {
+      const value = await original(...args);
+      if (args[0] === "/research-jobs/job1")
+        return {
+          ...job,
+          plan: { ...job.plan, interval_hours: 1 },
+          next_occurrence_at: "2026-10-13T00:00:00Z",
+        };
+      return value;
+    });
+    mount();
+    await screen.findByRole("option", { name: /测试研究/ });
+    fireEvent.change(screen.getByLabelText("选择研究任务"), {
+      target: { value: "job1" },
+    });
+    await screen.findByText(/来源标题/);
+    expect(screen.getByRole("button", { name: "暂停" })).toBeEnabled();
+    expect(screen.queryByText("单次采集已结束，无后续采集计划。")).toBeNull();
+  });
+  it("explains a stale save conflict and retains unsaved text", async () => {
+    const original = api.socialApi.getMockImplementation()!;
+    api.socialApi.mockImplementation(async (...args) => {
+      if (args[0] === "/contents/d1/revisions")
+        throw new ApiRequestError(
+          "VERSION_CONFLICT",
+          "Request failed with status code 409",
+          409,
+        );
+      return original(...args);
+    });
+    mount();
+    await screen.findByRole("option", { name: /测试研究/ });
+    fireEvent.click(screen.getByRole("button", { name: "文案编辑" }));
+    fireEvent.change(screen.getByLabelText("研究任务"), {
+      target: { value: "job1" },
+    });
+    await screen.findByRole("option", { name: /草稿标题/ });
+    fireEvent.change(screen.getByLabelText("选择草稿"), {
+      target: { value: "d1" },
+    });
+    fireEvent.change(screen.getByLabelText("标题"), {
+      target: { value: "验收测试未保存" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存新版本" }));
+    await screen.findByText(/数据版本或任务状态已变化/);
+    expect(screen.getByLabelText("标题")).toHaveValue("验收测试未保存");
+    expect(
+      screen.getByRole("button", { name: "检查已保存版本" }),
+    ).toBeDisabled();
+  });
   it("shows the saved decision and saves a complete date only after editing ends", async () => {
     mount();
     await screen.findByRole("option", { name: /测试研究/ });

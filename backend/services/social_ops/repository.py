@@ -259,7 +259,9 @@ class Repository(Connections):
                 )
                 status = "queued"
             elif action == "pause":
-                if job["status"] in TERMINAL:
+                if job["status"] == "cancelled" or (
+                    job["status"] in TERMINAL and not job["next_occurrence_at"]
+                ):
                     raise ReachError("VERSION_CONFLICT", "任务已结束")
                 status = "needs_input"
             elif action == "cancel":

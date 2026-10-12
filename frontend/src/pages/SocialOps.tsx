@@ -120,7 +120,11 @@ export default function SocialOps() {
     } catch (e) {
       const failure = toApiRequestError(e);
       setUnavailable(failure.status === 503);
-      setError(failure.message);
+      setError(
+        failure.status === 409
+          ? "数据版本或任务状态已变化，本次操作未保存。请先保留未保存文字，再查看最新版本或刷新任务后重试。"
+          : failure.message,
+      );
     } finally {
       setBusy(false);
     }
@@ -848,12 +852,11 @@ export default function SocialOps() {
                         disabled={
                           busy ||
                           (a === "pause" &&
-                            [
-                              "completed",
-                              "partial",
-                              "failed",
-                              "cancelled",
-                            ].includes(job.status)) ||
+                            (job.status === "cancelled" ||
+                              (["completed", "partial", "failed"].includes(
+                                job.status,
+                              ) &&
+                                !job.next_occurrence_at))) ||
                           (a === "resume" &&
                             ![
                               "paused_auth",

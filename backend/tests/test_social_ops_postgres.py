@@ -104,6 +104,92 @@ def worker(s):
     return w
 
 
+async def test_isolated_host_recovers_after_real_worker_process_is_killed(stores, monkeypatch):
+    """Actual local process interruption; only the platform result is substituted."""
+    import asyncio
+    import sys
+    from services.social_ops.worker import SocialOpsWorker
+
+    s = stores
+    program = """
+import sys,time
+from types import SimpleNamespace
+from psycopg_pool import ConnectionPool
+from core.db_scope import DatabaseScope,DatabaseAccessKind
+from services.social_ops.research import ResearchWorker
+pool=ConnectionPool(sys.argv[1], kwargs={'options':'-c role=everydayai_runtime'},min_size=1,max_size=2)
+scope=DatabaseScope(actor_user_id=sys.argv[2],org_id=sys.argv[3],access_kind=DatabaseAccessKind.RUNTIME)
+assert ResearchWorker(SimpleNamespace(pool=pool),scope).claim(sys.argv[4])
+print('claimed',flush=True)
+time.sleep(60)
+"""
+    process = await asyncio.create_subprocess_exec(
+        sys.executable, "-c", program, s.dsn, OWNER, ORG1, str(s.job["id"]),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        assert await asyncio.wait_for(process.stdout.readline(), 10) == b"claimed\n"
+    finally:
+        if process.returncode is None:
+            process.kill()
+        await process.wait()
+    assert s.repo.job(str(s.job["id"]))["status"] == "running"
+    # Only this disposable test lease is shortened; no production restart/config.
+    with s.repo.cursor() as c:
+        c.execute("UPDATE social_research_items SET lease_expires_at=now()+interval '1 second' WHERE job_id=%s", (s.job["id"],))
+        c.execute("UPDATE social_research_jobs SET next_eligible_at=now()+interval '1 second' WHERE id=%s", (s.job["id"],))
+    calls = []
+
+    class IsolatedExecutor:
+        def __init__(self, **kwargs):
+            assert kwargs["execution_mode"] == "scheduled"
+            assert kwargs["allowed_tool_names"] == {"agent_reach"}
+
+        async def execute(self, name, request, **kwargs):
+            assert name == "agent_reach" and request["action"] == "search"
+            calls.append(request)
+            return ReachResult("xiaohongshu", "isolated-empty-search", []).to_agent_result()
+
+    monkeypatch.setattr("services.agent.tool_executor.ToolExecutor", IsolatedExecutor)
+    monkeypatch.setattr("services.social_ops.worker.get_settings", lambda: SimpleNamespace(social_ops_enabled=True))
+    host_pool = ConnectionPool(s.dsn, kwargs={"options": "-c role=everydayai"}, min_size=1, max_size=2)
+    host = SocialOpsWorker(SimpleNamespace(pool=host_pool))
+    try:
+        await host.poll()
+        assert not host.pending
+        await asyncio.sleep(1.1)
+        await host.poll()
+        await asyncio.gather(*host.pending)
+        assert len(calls) == 1
+        assert s.repo.job(str(s.job["id"]))["status"] == "completed"
+        await host.poll()
+        assert len(calls) == 1 and not host.pending
+        with s.repo.cursor() as c:
+            c.execute("UPDATE social_research_jobs SET plan=plan || '{\"interval_hours\":1}'::jsonb,next_occurrence_at=now()+interval '1 second' WHERE id=%s", (s.job["id"],))
+        s.repo.transition(str(s.job["id"]), "pause")
+        await asyncio.sleep(1.1)
+        await host.poll()
+        assert len(calls) == 1 and not host.pending
+        s.repo.transition(str(s.job["id"]), "resume")
+        await host.poll()
+        await asyncio.gather(*host.pending)
+        # Resume retains completed queue; next scheduled round is re-armed.
+        assert len(calls) == 1
+        with s.repo.cursor() as c:
+            c.execute("UPDATE social_research_jobs SET next_occurrence_at=now()+interval '1 second' WHERE id=%s", (s.job["id"],))
+        await asyncio.sleep(1.1)
+        await host.poll()
+        await asyncio.gather(*host.pending)
+        assert len(calls) == 2
+        assert s.repo.job(str(s.job["id"]))["generation"] == 2
+        s.repo.transition(str(s.job["id"]), "pause")
+        await host.poll()
+        assert len(calls) == 2 and not host.pending
+    finally:
+        await host.stop()
+        host_pool.close()
+
+
 @pytest.mark.parametrize("code,state", [
     ("AUTH_EXPIRED", "paused_auth"),
     ("ACCOUNT_MISMATCH", "paused_auth"),
