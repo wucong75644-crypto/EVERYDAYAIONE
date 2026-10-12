@@ -375,7 +375,7 @@ class ProductionWorker:
             reason="社媒文字阶段",
             org_id=self.repo.scope.org_id,
         ) as handle:
-            gateway = get_model_gateway().open_chat(
+            session = get_model_gateway().open_chat(
                 ModelCallRequest(
                     model_id=model,
                     org_id=self.repo.scope.org_id,
@@ -385,7 +385,7 @@ class ProductionWorker:
                 )
             )
             try:
-                async for chunk in gateway.stream_chat(messages, max_tokens=4096):
+                async for chunk in session.stream_chat(messages, max_tokens=4096):
                     if chunk.tool_calls:
                         raise ReachError("TOOL_DENIED", "文字阶段不得调用工具")
                     text += chunk.content or ""
@@ -398,7 +398,7 @@ class ProductionWorker:
                     )
                 )
             finally:
-                await gateway.close()
+                await session.close()
         output = schema.model_validate_json(text).model_dump(mode="json")
         verify_evidence(output, run["input"]["sources"])
         return output, {
