@@ -55,7 +55,7 @@ def readonly_tool_scope(policy: Mapping[str, Any]) -> bool:
 def plan_inputs_unchanged(base: Mapping, proposed: Mapping) -> bool:
     return all(base.get(key) == proposed.get(key) for key in (
         "prompt", "data_scope", "template_file", "push_target",
-    )) and base.get("skill_revision_snapshot", {"version": 1, "skills": []}) == proposed.get("skill_revision_snapshot", {"version": 1, "skills": []}) and valid_execution_policy(base.get("execution_policy")) and bool(base.get("plan_snapshot"))
+    )) and (base.get("notification_policy") or {"mode": "always"}) == (proposed.get("notification_policy") or {"mode": "always"}) and base.get("skill_revision_snapshot", {"version": 1, "skills": []}) == proposed.get("skill_revision_snapshot", {"version": 1, "skills": []}) and valid_execution_policy(base.get("execution_policy")) and bool(base.get("plan_snapshot"))
 
 
 def _frequency(snapshot: Mapping) -> float:
@@ -64,6 +64,13 @@ def _frequency(snapshot: Mapping) -> float:
     if kind == "once":
         return 0
     cron = str(snapshot.get("cron_expr") or "").split()
+    if snapshot.get("interval_minutes"):
+        from services.scheduler.cron_utils import compose_cron
+        try:
+            if snapshot.get("cron_expr") == compose_cron("interval", interval_minutes=snapshot["interval_minutes"]):
+                return 1440 / snapshot["interval_minutes"]
+        except Exception:
+            pass
     if cron:
         # Stored cron is the actual trigger, regardless of the UI frequency label.
         if len(cron) != 5 or not cron[0].isdigit() or not cron[1].isdigit():

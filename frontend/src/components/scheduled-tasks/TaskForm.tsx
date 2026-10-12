@@ -19,6 +19,7 @@ import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Sparkles, Loader2, User, Users, MessageSquare } from 'lucide-react';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
+import { NotificationPolicyFields } from './NotificationPolicyFields';
 import { ScheduledSkillPicker } from './ScheduledSkillPicker';
 import { isSkillUiEnabled } from '../../config/featureFlags';
 import { scheduledTaskService } from '../../services/scheduledTask';
@@ -34,6 +35,7 @@ import type {
   CreateTaskDto,
   ScheduleType,
   PushTarget,
+  NotificationPolicy,
 } from '../../types/scheduledTask';
 import type { WecomCollectedMember } from '../../types/orgMembers';
 import type { WecomGroup } from '../../types/wecomChatTargets';
@@ -105,8 +107,11 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
 
   // 频率
   const [scheduleType, setScheduleType] = useState<ScheduleType | ''>(
-    task?.schedule_type || 'daily',
+    task?.interval_minutes ? 'interval' : task?.schedule_type || 'daily',
   );
+  const [intervalMinutes, setIntervalMinutes] = useState(task?.interval_minutes || 30);
+  const [notificationPolicy, setNotificationPolicy] = useState<NotificationPolicy>(task?.notification_policy || { mode: 'always' });
+  const [policyChanged, setPolicyChanged] = useState(false);
   const [timeStr, setTimeStr] = useState<string>(() => {
     if (task?.cron_expr) {
       // 从 cron 还原 HH:MM
@@ -208,8 +213,12 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
     setParsing(true);
     try {
       const result = await scheduledTaskService.parseNL(nlText, isEdit ? 'update' : 'create');
+      if (result.interval_minutes) setIntervalMinutes(result.interval_minutes);
+      if (result.notification_policy) { setNotificationPolicy(result.notification_policy); setPolicyChanged(true); }
       // A new request replaces the draft; only editing an existing task is a patch.
       if (!isEdit) {
+        setNotificationPolicy(result.notification_policy || { mode: 'always' });
+        setPolicyChanged(true);
         setName(result.name || '');
         setPrompt(result.prompt || '');
         setScheduleType(result.schedule_type || '');
@@ -346,7 +355,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
       setError('请选择未来的执行日期和时间');
       return;
     }
-    if (scheduleType !== 'once' && scheduleType !== 'cron' && !timeStr) {
+    if (scheduleType !== 'once' && scheduleType !== 'cron' && scheduleType !== 'interval' && !timeStr) {
       setError('请填写执行时间');
       return;
     }
@@ -358,9 +367,13 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
       push_target: target,
     };
 
+    if (policyChanged || !isEdit) dto.notification_policy = notificationPolicy;
+    if (scheduleType === 'interval') dto.interval_minutes = intervalMinutes;
     if (skillsChanged) dto.skills = skills.map(({ skill_id, revision }) => ({ skill_id, revision }));
     if (scheduleType === 'once') {
       dto.run_at = localDatetimeToIso(runAtLocal);
+    } else if (scheduleType === 'interval') {
+      dto.interval_minutes = intervalMinutes;
     } else if (scheduleType === 'cron') {
       dto.cron_expr = customCron.trim();
     } else {
@@ -498,7 +511,7 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
             执行频率 *
           </label>
           <div className="grid grid-cols-5 gap-2 mb-3">
-            {(['once', 'daily', 'weekly', 'monthly', 'cron'] as ScheduleType[]).map((type) => (
+            {(['once', 'daily', 'weekly', 'monthly', 'interval', 'cron'] as ScheduleType[]).map((type) => (
               <button
                 key={type}
                 type="button"
@@ -515,12 +528,19 @@ export function TaskForm({ task, onClose, onProposed }: Props) {
                   daily: '每天',
                   weekly: '每周',
                   monthly: '每月',
+                  interval: '间隔',
                   cron: '高级',
                 }[type]}
               </button>
             ))}
           </div>
 
+          {scheduleType === 'interval' && <label className="block text-sm">
+            间隔分钟（如30、120；按时区整点对齐）
+            <Input type="number" min={1} max={1440} value={intervalMinutes} onChange={(e) => setIntervalMinutes(Number(e.target.value))} />
+          </label>}
+          <NotificationPolicyFields value={notificationPolicy} onChange={(value) => { setNotificationPolicy(value); setPolicyChanged(true); }} />
+          {task?.origin_conversation_id && <p className="text-xs">任务结果将保存到发起任务的原聊天。</p>}
           {/* 单次：日期+时间 */}
           {scheduleType === 'once' && (
             <input

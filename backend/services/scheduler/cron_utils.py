@@ -55,6 +55,9 @@ def parse_cron_readable(cron_expr: str) -> str:
 
     minute, hour, dom, month, dow = parts
 
+    if hour.startswith("*/") and minute.isdigit():
+        return f"每 {hour[2:]} 小时（{minute.zfill(2)} 分）"
+
     # 时间字符串
     if minute.startswith("*/"):
         return f"每 {minute[2:]} 分钟"
@@ -93,9 +96,10 @@ def validate_cron(cron_expr: str) -> bool:
 
 def compose_cron(
     schedule_type: str,
-    time_str: str,
+    time_str: str = "",
     weekdays: Optional[list[int]] = None,
     day_of_month: Optional[int] = None,
+    interval_minutes: Optional[int] = None,
 ) -> Optional[str]:
     """
     把结构化频率配置组装成 cron 表达式。
@@ -119,6 +123,15 @@ def compose_cron(
         compose_cron('monthly', '09:00', day_of_month=15) → '0 9 15 * *'
         compose_cron('once', ...) → None
     """
+    if schedule_type == "interval":
+        if type(interval_minutes) is not int or not 1 <= interval_minutes <= 1440:
+            raise ValidationError("请提供有效的间隔分钟数")
+        if interval_minutes <= 60 and 60 % interval_minutes == 0:
+            return f"*/{interval_minutes} * * * *" if interval_minutes < 60 else "0 * * * *"
+        if interval_minutes % 60 == 0 and 24 % (interval_minutes // 60) == 0:
+            return f"0 */{interval_minutes // 60} * * *"
+        raise ValidationError("当前调度器支持整除60的分钟间隔或整除24的小时间隔，请调整频率")
+
     if schedule_type == "once":
         return None
 

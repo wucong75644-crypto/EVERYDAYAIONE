@@ -70,7 +70,9 @@ async def test_xhs_body_excludes_comment_noise():
     adapter, calls = await adapter_with_detail({'note': {'title':'标题', 'desc':'正文'*5000, 'user':{'nickname':'作者'}},
                                                'comments': {'list': [{'content':'comment noise'}]}})
     result = await adapter.read(ReachRequest(task='读', platform='xiaohongshu', action='read', url=URL))
-    assert result.items[0].content == '作者：作者\n' + '正文'*5000
+    assert result.items[0].content.endswith('作者：作者\n' + '正文'*5000)
+    assert '"likes": null' in result.items[0].content
+    assert '"comments_count": null' in result.items[0].content
     assert 'comment noise' not in result.items[0].content
     assert calls[0]['load_all_comments'] is False
 
@@ -160,3 +162,32 @@ async def test_execute_exposes_continuation_in_tool_summary(monkeypatch):
     second = await execute(request.model_copy(update={'cursor':cursor}),settings,timeout=1)
     assert second.metadata['pagination']['has_more_text'] is False
     assert second.status == 'success'
+
+@pytest.mark.asyncio
+async def test_xhs_details_preserve_real_metrics_and_units():
+    adapter, _ = await adapter_with_detail({'note': {'noteId': 'abc', 'desc': '正文',
+        'interactInfo': {'likedCount': '1.2万', 'commentCount': '291', 'collectedCount': '0'}}})
+    result = await adapter.read(ReachRequest(task='读', platform='xiaohongshu', action='read', url=URL))
+    text = result.items[0].content
+    assert '"note_id": "abc"' in text
+    assert '"likes": "1.2万"' in text
+    assert '"comments_count": "291"' in text
+    assert '"collected_count": "0"' in text
+    assert '"shared_count": null' in text
+
+@pytest.mark.asyncio
+async def test_xhs_search_result_link_can_be_passed_unchanged_to_details():
+    adapter, calls = await adapter_with_detail({'note': {'desc': '真实正文'}})
+    original_call = adapter.call
+    async def call(method, path, body):
+        if path == 'feeds/search':
+            return {'feeds': [{'id': 'abc', 'xsecToken': 'read-token', 'noteCard': {'displayTitle': '标题'}}]}
+        return await original_call(method, path, body)
+    adapter.call = call
+    search = await adapter.read(ReachRequest(task='搜', platform='xiaohongshu', action='search', query='文具'))
+    assert 'note_id：abc' in search.items[0].content
+    assert 'xsec_token' in search.warnings[0]
+    await adapter.read(ReachRequest(task='读', platform='xiaohongshu', action='read', url=search.items[0].url))
+    assert calls[0]['feed_id'] == 'abc'
+    assert calls[0]['xsec_token'] == 'read-token'
+    assert calls[0]['load_all_comments'] is False

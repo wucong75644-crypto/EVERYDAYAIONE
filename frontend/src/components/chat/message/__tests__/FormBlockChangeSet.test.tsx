@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { FormPart } from '../../../../types/message';
 import FormBlock from '../FormBlock';
+import { scheduledTaskService } from '../../../../services/scheduledTask';
 
 // The app provides LazyMotion; these field-contract tests render without animation.
 vi.mock('framer-motion', () => ({
@@ -15,6 +16,28 @@ vi.mock('../ChangeSetCard', () => ({
 }));
 
 describe('FormBlock ChangeSet association', () => {
+  it('reuses the scheduled Skill picker and submits fixed identities only after confirmation', async () => {
+    const options = vi.spyOn(scheduledTaskService, 'skillOptions').mockResolvedValue([
+      { skill_id: 'report', revision: 'v1', name: '日报方法', description: '已审核的方法' },
+    ]);
+    const listener = vi.fn();
+    window.addEventListener('chat:form-submit', listener);
+    try {
+      render(<FormBlock form={{ type: 'form', form_type: 'scheduled_task_create', form_id: 'skills-form',
+        title: '配置任务', fields: [{ type: 'hidden', name: 'skills', label: '固定 Skill', default_value: '[]' }],
+      }} messageId="ms" conversationId="cs" />);
+      fireEvent.click(screen.getByRole('button', { name: '选择固定 Skill' }));
+      fireEvent.click(await screen.findByRole('button', { name: '选择', exact: true }));
+      expect(listener).not.toHaveBeenCalled();
+      expect(screen.getByText('日报方法 · v1')).toBeVisible();
+      fireEvent.click(screen.getByRole('button', { name: '确认', exact: true }));
+      const event = listener.mock.calls[0][0] as CustomEvent;
+      expect(JSON.parse(event.detail.formData.skills)).toEqual([{ skill_id: 'report', revision: 'v1' }]);
+    } finally {
+      options.mockRestore();
+      window.removeEventListener('chat:form-submit', listener);
+    }
+  });
   it('keeps form input separate from the server-owned ChangeSet reference', () => {
     const form: FormPart = {
       type: 'form', form_type: 'scheduled_task_create', form_id: 'form-1',

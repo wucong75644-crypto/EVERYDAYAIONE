@@ -256,7 +256,8 @@ class ChatToolMixin(ChatToolResultMixin):
                 tc["name"], args, call_id=tc["id"],
                 lifecycle=ActorToolLifecycle(self, runtime.context(tc["id"])),
             )
-            if envelope.decision.replay_requirement == "record_required":
+            from services.tools.mcp_allowlist import TOOL_NAME as MCP_TOOL_NAME
+            if tc["name"] == MCP_TOOL_NAME and envelope.decision.replay_requirement == "record_required":
                 actor_runtime = getattr(self, "_actor_runtime", None)
                 if actor_runtime is not None:
                     from services.tools.mcp_checkpoint import remember_invocation

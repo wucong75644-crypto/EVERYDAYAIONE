@@ -16,7 +16,8 @@ class TaskDefinitionInputError(ValueError):
 def _validate(value: Any, schema: Mapping, label: str) -> None:
     kind = schema.get("type")
     valid_type = {"object": isinstance(value, dict), "array": isinstance(value, list),
-                  "string": isinstance(value, str), "integer": type(value) is int}
+                  "string": isinstance(value, str), "integer": type(value) is int,
+                  "number": type(value) in (int, float)}
     if not valid_type.get(kind, False):
         raise TaskDefinitionInputError(f"{label}格式不正确，请按工具字段类型填写。")
     if "enum" in schema and value not in schema["enum"]:
@@ -30,7 +31,7 @@ def _validate(value: Any, schema: Mapping, label: str) -> None:
     elif kind == "string":
         if not value.strip() or "pattern" in schema and not re.fullmatch(schema["pattern"], value):
             raise TaskDefinitionInputError(f"{label}为空或格式不正确，请补齐有效值。")
-    elif kind == "integer":
+    elif kind in {"integer", "number"}:
         if not schema["minimum"] <= value <= schema["maximum"]:
             raise TaskDefinitionInputError(f"{label}应在 {schema['minimum']}～{schema['maximum']} 之间。")
     elif kind == "array":
@@ -42,16 +43,63 @@ def _validate(value: Any, schema: Mapping, label: str) -> None:
             raise TaskDefinitionInputError(f"{label}不能重复。")
 
 
+
+def validate_task_tool_arguments(arguments: Any) -> None:
+    """Reject misplaced arguments before forms, parsing or database access."""
+    from services.tools.catalog import build_tool_catalog
+    parameters = build_tool_catalog().require("manage_scheduled_task").to_schema()["function"]["parameters"]
+    if not isinstance(arguments, dict):
+        raise TaskDefinitionInputError("工具参数必须为对象。")
+    for key, value in arguments.items():
+        schema = parameters["properties"].get(key)
+        if schema is None:
+            location = "definition." + key if key in parameters["properties"]["definition"]["properties"] else None
+            hint = f"请使用 {location}" if location else "请按工具定义移除未知字段"
+            if key == "notification_policy":
+                hint += "，值必须为对象，不能是JSON字符串"
+            raise TaskDefinitionInputError(f"$.{key} 是未知字段；{hint}。尚未创建或修改任务，请保留原需求修正参数后重试。")
+        if key != "definition":
+            if not isinstance(value, str):
+                raise TaskDefinitionInputError(f"$.{key} 必须为字符串。")
+            if "enum" in schema and value not in schema["enum"]:
+                raise TaskDefinitionInputError(f"$.{key} 请选择：{'、'.join(schema['enum'])}。")
+    if "definition" in arguments and not isinstance(arguments["definition"], dict):
+        raise TaskDefinitionInputError("$.definition 必须为对象。")
+
+
 def task_definition_input(definition: Any, *, operation: str, base: Mapping | None = None,
                           recipient: Any = "") -> dict:
     from services.tools.catalog import build_tool_catalog
     schema = build_tool_catalog().require("manage_scheduled_task").to_schema()
-    _validate(definition, schema["function"]["parameters"]["properties"]["definition"], "任务定义")
+    definition_schema = schema["function"]["parameters"]["properties"]["definition"]
+    # Reuse the existing domain contract for nested Skill identities; the legacy
+    # field validator handles scalar task fields, not Pydantic object schemas.
+    if isinstance(definition, dict) and "skills" in definition:
+        from pydantic import TypeAdapter, ValidationError
+        from services.skills.selection import SkillSelection
+        try:
+            raw_skills = definition["skills"]
+            if not isinstance(raw_skills, list) or len(raw_skills) > 4:
+                raise ValueError()
+            selected = TypeAdapter(list[SkillSelection]).validate_python(raw_skills)
+            if len({skill.skill_id for skill in selected}) != len(selected):
+                raise ValueError()
+        except (ValueError, TypeError, ValidationError):
+            raise TaskDefinitionInputError("固定 Skill 格式不正确，请选择最多四个不同的 Skill 及其固定版本。") from None
+        _validate({k: v for k, v in definition.items() if k != "skills"}, definition_schema, "任务定义")
+    else:
+        _validate(definition, definition_schema, "任务定义")
     if not isinstance(recipient, str):
         raise TaskDefinitionInputError("请明确收件人或通知渠道。")
     changes = deepcopy(definition)
     has_base = base is not None
     base = base or {}
+    if "notification_policy" in changes:
+        from services.scheduler.monitoring import validate_policy
+        try:
+            changes["notification_policy"] = validate_policy(changes["notification_policy"])
+        except ValueError as exc:
+            raise TaskDefinitionInputError(str(exc)) from exc
     if "run_at" in changes:
         try:
             date = datetime.fromisoformat(changes["run_at"].replace("Z", "+00:00"))
@@ -72,6 +120,8 @@ def task_definition_input(definition: Any, *, operation: str, base: Mapping | No
             raise TaskDefinitionInputError("请先补充实际执行内容，再指定输出格式。")
     effective = {**base, **changes}
     kind = effective.get("schedule_type")
+    if kind == "cron" and effective.get("interval_minutes") and "schedule_type" not in changes:
+        kind = "interval"
     required = ["prompt", "schedule_type"] if operation == "create" else []
     # A patch may use the existing clock, but changing from once/complex cron
     # must not silently invent a new time. The adapter performs final merging.
@@ -80,15 +130,25 @@ def task_definition_input(definition: Any, *, operation: str, base: Mapping | No
         "weekly": {"run_at", "day_of_month"},
         "monthly": {"run_at", "weekdays"},
         "once": {"time_str", "weekdays", "day_of_month"},
+        "interval": {"run_at", "time_str", "weekdays", "day_of_month"},
         "cron": {"run_at", "time_str", "weekdays", "day_of_month"},
     }.get(kind, set()).intersection(changes)
     if incompatible:
         raise TaskDefinitionInputError("时间字段与执行频率不一致，请明确要修改的频率及对应时间。")
-    if operation == "create" or has_base and set(changes) & {"schedule_type", "time_str", "weekdays", "day_of_month", "run_at"}:
+    if operation == "create" or has_base and set(changes) & {"schedule_type", "time_str", "weekdays", "day_of_month", "run_at", "interval_minutes"}:
         if kind == "once":
             required.append("run_at")
             if "time_str" in changes and "run_at" not in changes:
                 raise TaskDefinitionInputError("修改单次任务时间请提供完整的 run_at 日期和时间。")
+        elif kind == "interval":
+            required.append("interval_minutes")
+            if effective.get("interval_minutes"):
+                from services.scheduler.cron_utils import compose_cron
+                from core.exceptions import ValidationError
+                try:
+                    compose_cron("interval", interval_minutes=effective["interval_minutes"])
+                except ValidationError as exc:
+                    raise TaskDefinitionInputError(str(exc)) from exc
         else:
             if not effective.get("time_str") and not simple_task_time(base):
                 required.append("time_str")

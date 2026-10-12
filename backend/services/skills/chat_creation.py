@@ -40,6 +40,8 @@ class ChatSkillCandidate(DraftContent):
     expected_target_revision: str | None = Field(default=None, min_length=1, max_length=100)
     expected_target_draft_version: int | None = Field(default=None, ge=0)
 
+    intended_use: Literal['chat', 'scheduled_task'] | None = None
+
     def draft_content(self, base_content: DraftContent | None = None) -> DraftContent:
         if not self.description.strip():
             raise ValueError('SKILL_CANDIDATE_DESCRIPTION_REQUIRED')
@@ -53,7 +55,10 @@ class ChatSkillCandidate(DraftContent):
             'task_modes': (self.task_modes if 'task_modes' in self.model_fields_set and self.task_modes else
                            (base_metadata.task_modes if base_content else ('smart',))),
             'model_selectable': False,
-            'execution_modes': ('interactive',),
+            'execution_modes': (('interactive', 'scheduled', 'preflight')
+                                if self.intended_use == 'scheduled_task' else
+                                ('interactive',) if self.intended_use == 'chat' or not base_content
+                                else base_metadata.execution_modes),
             'agent_domains': ('general',),
             'conversation_scopes': ('user',),
             'tool_policy': 'platform',
@@ -317,7 +322,8 @@ def replace_candidate(db, settings, *, actor_id: str, org_id: str,
             or change_set.get('status') != 'awaiting_approval'):
         raise PermissionError('SKILL_PROPOSAL_UNAVAILABLE')
     candidate = ChatSkillCandidate.model_validate(arguments)
-    content = candidate.draft_content()
+    previous = DraftContent.model_validate(change_set['proposed_snapshot']['content'])
+    content = candidate.draft_content(base_content=previous)
     digest = content_digest(content)
     proposal = {
         'skill_key': (change_set.get('proposed_snapshot') or {}).get('skill_key'),

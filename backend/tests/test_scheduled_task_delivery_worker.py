@@ -116,3 +116,40 @@ async def test_worker_uses_shared_wecom_structured_fallback_for_content_blocks()
 
     sender.build_items.assert_called_once()
     assert sender.send.call_args.args[1].content.startswith("### 数据表格")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('outcome', ['saved', 'existing'])
+async def test_web_outbox_saves_before_ack_and_never_calls_wecom_sender(monkeypatch, outcome):
+    claim = _claim()
+    claim['target_context'] = {'type': 'web', 'user_id': 'user', 'conversation_id': 'original'}
+    db = _DB({
+        'claim_scheduled_task_delivery': [claim],
+        'save_scheduled_web_delivery': [{'outcome': outcome, 'message_id': 'message'}],
+        'complete_scheduled_task_delivery': [{'outcome': 'delivered'}],
+    })
+    from services.websocket_manager import ws_manager
+    send = AsyncMock()
+    monkeypatch.setattr(ws_manager, 'send_to_user', send)
+    sender = MagicMock()
+    await ScheduledTaskDeliveryWorker(db, sender).run_once()
+    assert [name for name, _ in db.calls] == ['claim_scheduled_task_delivery', 'save_scheduled_web_delivery', 'complete_scheduled_task_delivery']
+    sender.send.assert_not_called()
+    assert send.call_args_list[0].args[1]['conversation_id'] == 'original'
+    assert send.await_count == (2 if outcome == 'saved' else 1)
+
+
+@pytest.mark.asyncio
+async def test_inaccessible_web_conversation_retries_without_ack_or_fallback(monkeypatch):
+    claim = _claim()
+    claim['target_context'] = {'type': 'web', 'user_id': 'user', 'conversation_id': 'deleted'}
+    db = _DB({
+        'claim_scheduled_task_delivery': [claim],
+        'save_scheduled_web_delivery': [{'outcome': 'conversation_unavailable'}],
+        'fail_scheduled_task_delivery': [{'outcome': 'retry_scheduled'}],
+    })
+    sender = MagicMock()
+    await ScheduledTaskDeliveryWorker(db, sender).run_once()
+    assert db.calls[-1][0] == 'fail_scheduled_task_delivery'
+    assert not any(name == 'complete_scheduled_task_delivery' for name, _ in db.calls)
+    sender.send.assert_not_called()

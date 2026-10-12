@@ -699,7 +699,9 @@ def test_candidate_revision_uses_actor_scoped_runtime_admin_rpc(monkeypatch):
         change_set={
             "id": str(uuid4()), "created_by": "00000000-0000-0000-0000-000000000001",
             "resource_type": "skill_draft", "status": "awaiting_approval",
-            "proposed_snapshot": {"skill_key": "chat-skill-1"},
+            "proposed_snapshot": {"skill_key": "chat-skill-1", "content": ChatSkillCandidate(
+                name="原方案", description="持续采集", body="原规则", intended_use="scheduled_task",
+            ).draft_content().model_dump(mode="json")},
         },
         arguments={"name": "方案", "description": "可复用的处理规则。", "body": "规则"}, expected_revision=2,
     )
@@ -709,6 +711,7 @@ def test_candidate_revision_uses_actor_scoped_runtime_admin_rpc(monkeypatch):
     assert calls["scope"].org_id == "00000000-0000-0000-0000-000000000002"
     assert calls["scope"].access_kind.value == "runtime_admin"
     assert calls["kwargs"]["expected_revision"] == 2
+    assert "scheduled" in calls["kwargs"]["proposal"]["content"]["catalog_metadata"]["execution_modes"]
 
 
 def test_trial_rejects_stale_candidate_before_claiming_run():
@@ -994,3 +997,22 @@ def test_expired_trial_candidate_remains_readable_but_cannot_accept_new_trial(mo
     assert route._get_trial_candidate(uuid4(),"actor","org",None,allow_expired=True)==row
     with pytest.raises(HTTPException) as error: route._get_trial_candidate(uuid4(),"actor","org",None)
     assert error.value.status_code==409
+
+
+def test_scheduled_candidate_opt_in_preserves_authority_boundary_and_edit_use():
+    candidate = ChatSkillCandidate(name='持续采集', description='对比增量', body='读取真实数据',
+                                   intended_use='scheduled_task')
+    content = candidate.draft_content()
+    assert content.catalog_metadata.execution_modes == ('interactive', 'scheduled', 'preflight')
+    assert content.catalog_metadata.model_selectable is False
+    assert content.catalog_metadata.allowed_tool_names == ()
+    assert content.catalog_metadata.tool_policy == 'platform'
+    edited = ChatSkillCandidate(name='持续采集', description='更新', body='保留基线')
+    assert edited.draft_content(base_content=content).catalog_metadata.execution_modes == content.catalog_metadata.execution_modes
+    chat_only = ChatSkillCandidate(name='持续采集', description='更新', body='聊天', intended_use='chat')
+    assert chat_only.draft_content(base_content=content).catalog_metadata.execution_modes == ('interactive',)
+
+
+def test_candidate_rejects_arbitrary_execution_purpose():
+    with pytest.raises(ValidationError):
+        ChatSkillCandidate(name='任务', description='说明', body='方法', intended_use='unrestricted')
