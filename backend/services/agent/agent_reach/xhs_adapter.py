@@ -27,7 +27,7 @@ class XHSAdapter:
             raise ReachError('CONFIG_REQUIRED', '小红书执行服务需要配置认证Token')
 
     async def call(self, method, path, body=None):
-        async with httpx.AsyncClient(trust_env=False, follow_redirects=False, timeout=60) as client:
+        async with httpx.AsyncClient(trust_env=False, follow_redirects=False, timeout=getattr(self, 'timeout', 60)) as client:
             async with client.stream(method, self.origin + '/api/v1/' + path, json=body,
                                      headers={'Authorization': 'Bearer ' + self.token}) as response:
                 if response.status_code in {401, 403}:

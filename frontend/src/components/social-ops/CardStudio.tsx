@@ -157,10 +157,11 @@ export default function CardStudio({
     ]);
     return requests.current[k] ?? (requests.current[k] = crypto.randomUUID());
   };
-  const refreshIntents = async () =>
-    setIntents(
-      await socialApi<Intent[]>(`/contents/${draft.id}/publish-intents`),
-    );
+  const refreshIntents = async () => {
+    const rows = await socialApi<Intent[]>(`/contents/${draft.id}/publish-intents`);
+    setIntents(rows);
+    setIntent((current) => current ? (rows.find((row) => row.id === current.id) ?? current) : null);
+  };
   useEffect(() => {
     updateCards(
       draft.data.cards?.length

@@ -151,7 +151,7 @@ PYTHONPATH=backend SOCIAL_OPS_TEST_DSN='host=/private/tmp port=55479 dbname=soci
 - 剩余：新周期暂停/冲突提示修复尚未部署；真实平台跨页及重复采集去重仍未进行（不能用模拟分页抵充）。来源证据与版本历史技术JSON仍有可读性问题。
 - 证据：`/tmp/social-ops-production-unsaved-protected.png`、`/tmp/social-ops-local-conflict-message.png`；数据库集成日志`/tmp/social-ops-host-acceptance.log`。
 
-## 第三阶段：图文制作与确认后立即发布（开发版本，未部署）
+## 第三阶段：图文制作与确认后立即发布
 
 ### 使用路径
 
@@ -170,7 +170,7 @@ PYTHONPATH=backend SOCIAL_OPS_TEST_DSN='host=/private/tmp port=55479 dbname=soci
 - 发布意图唯一键为组织/内容/版本/账号；改可见范围不创建第二个意图。仅尚未派发的意图可以通过重新创建更新检查/摘要；旧hash失效。
 - 内容或凭据变化、确认过期时，旧意图标为invalidated；素材变化阻止确认，文件签名与SHA在确认及媒体快照期间再次复核。取消仅允许awaiting_confirmation。
 - 先持久化dispatching再进入公共工具。重复点击、并发确认或异常恢复不能重新消费。已提交/不确定的旧版本未核验前，拒绝通过新版本创建新意图重发。
-- dispatching超过180秒在状态读取时保守标为uncertain；没有发布后台轮询/自动重发。即使请求超时、进程崩溃，也只能先核验回执和平台。不能把“失败”都视为可安全重试；此阶段不提供自动重发按钮。
+- dispatching超过210秒在状态读取时保守标为uncertain；没有发布后台轮询/自动重发。即使请求超时、进程崩溃，也只能先核验回执和平台。不能把“失败”都视为可安全重试；此阶段不提供自动重发按钮。
 - 核验记录使用可信平台格式ID和对应链接，加人工依据与操作者时间，明确manual；结果不确定不会自动变成已核验。
 
 ### 部署与启用
@@ -190,3 +190,15 @@ PYTHONPATH=backend SOCIAL_OPS_TEST_DSN='host=/private/tmp port=55479 dbname=soci
 - 不包含定时发布、未来内容全自动发布、复盘指标采集或第五阶段。
 - 最终验证：受影响后端730项通过；收尾的第三阶段15项独立PostgreSQL/公共工具/RLS集成再次通过（包括策略拒绝未派发与发送后未知区分）；前端15项通过；TypeScript、Vite生产构建和diff检查通过。没有重复运行全量项目测试。构建保留既有大chunk提醒，无阻断。
 - 本地浏览器证据：`/tmp/social-phase3-studio.png`、`/tmp/social-phase3-card-preview.png`、`/tmp/social-phase3-submitted-local.png`。最后一张明确是模拟账号、模拟提交，不是真实发布证据。临时服务和测试入口收尾停止/移除，任务工作树保留；未提交推送、部署或合并。
+
+
+### 345dc8c1 生产真实制图与首次发布尝试（修复未部署）
+
+- 受控提交345dc8c1907e5bebc24c20c30852422c68a32bf6已部署，迁移296、构建和四服务readiness通过；未合入main，工作树保留。两个新制图Skill通过管理员页面正式提交审核、通过并发布组织第1版，均无工具权限。
+- Chrome生产页面复用标识为验收测试的草稿75babd47-e491-454d-aaea-aa779b01c2b1，v8保存明确的功能测试说明。真实卡片模型运行一次，两阶段完成，积分上限10，生成6张1080×1440 PNG并保存v9；实际费用未逐笔核算。模型含扩大样本和“功能测试通过”表述，人工改成保守说明后手工渲染v10，无再次制图模型调用。
+- v10真实语义检查一次，两阶段完成，总上限20；整包结构通过，留白等警告保留。实际打开封面大图，编辑新版本和图片持久化可见。不以这些结果代表平台审核或发布通过。
+- 对“小红薯66E77A9D”确认v10、仅自己可见，点击一次立即发布。页面30秒请求超时；后台60秒Agent Reach工具时限到期。平台服务日志显示6图上传完成，填写第一个标签时context canceled，未返回发布完成或平台ID。发布意图69614058-3706-430a-9f10-6165607a17ab、公共操作de7a56ce-af98-4b29-b47b-a70f1e8a5a7b均持久为uncertain，错误BUDGET_EXHAUSTED（时间预算，不是积分耗尽）。没有重发、取消记录或修改生产状态。
+- 工作树修复：小红书create_post采用独立agent_reach_xhs_publish_timeout_seconds（默认180秒、最大180秒），HTTP适配器同步；公共调用仍不得超过操作者执行预算。前端仅确认请求等待210秒，不重试；dispatching恢复阈值210秒避免正常长调用提前误判。刷新发布状态同时更新当前确认区，解决记录已不确定但顶部仍正在提交的问题。未修改生产配置，未提交部署，不能声称超时已在真实平台解决。
+- 平台核验阻塞：本机Chrome小红书未登录，已停在扫码页，需要操作者以同一测试账号登录后继续核验。没有平台成功依据，不记录人工verified，不通过清除uncertain或创建新版本重发绕过幂等保护。
+- 保留v8/v9/v10和素材、运行、意图及不确定回执；无新增周期任务或持续模型运行。证据目录/Users/wucong/.codex/task-evidence/social-ops-phase3/：production-card-v10.png、production-publish-uncertain.png、platform-login-required.png。
+- 修复定向验证：Agent Reach后端55项、第三阶段独立PostgreSQL集成15项、CardStudio前端5项通过，TypeScript项目构建检查及diff检查通过。这些是本地替代响应/代码验证，不替代修复后真实发布复测。

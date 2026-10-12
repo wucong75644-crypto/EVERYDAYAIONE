@@ -19,15 +19,22 @@ from .service import execute, resolve
 from .write_adapters import check_write, write
 
 
+def execution_timeout(settings, executor, args):
+    timeout = settings.agent_reach_timeout_seconds
+    if args.get('platform') == 'xiaohongshu' and args.get('action') == 'create_post':
+        timeout = getattr(settings, 'agent_reach_xhs_publish_timeout_seconds', timeout)
+    if executor.execution_budget is not None:
+        timeout = min(timeout, executor.execution_budget.remaining)
+    return timeout
+
+
 async def execute_reach(executor, args):
     from core.config import get_settings
     settings = get_settings()
     if not settings.agent_reach_enabled:
         return AgentResult(summary='Agent Reach尚未启用', status='error',
                            error_message='CONFIG_REQUIRED', metadata={'retryable': False})
-    timeout = settings.agent_reach_timeout_seconds
-    if executor.execution_budget is not None:
-        timeout = min(timeout, executor.execution_budget.remaining)
+    timeout = execution_timeout(settings, executor, args)
 
     async def operation():
         request = ReachRequest.model_validate(args)

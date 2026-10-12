@@ -66,7 +66,7 @@ def get_intent(repo, id):
             (id, repo.scope.org_id),
         )
         c.execute(
-            "UPDATE social_publish_intents SET state='uncertain',error='DISPATCH_INTERRUPTED',updated_at=now() WHERE id=%s AND org_id=%s AND state='dispatching' AND updated_at<now()-interval '180 seconds'",
+            "UPDATE social_publish_intents SET state='uncertain',error='DISPATCH_INTERRUPTED',updated_at=now() WHERE id=%s AND org_id=%s AND state='dispatching' AND updated_at<now()-interval '210 seconds'",
             (id, repo.scope.org_id),
         )
         c.execute(

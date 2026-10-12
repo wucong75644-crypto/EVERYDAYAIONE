@@ -135,3 +135,29 @@ async def test_xhs_publish_uses_snapshot_paths_and_does_not_claim_online():
     assert calls[1][1]['images'] == ['/trusted/snapshot/image.png']
     assert calls[1][1]['visibility'] == '仅自己可见'
     assert result.status == 'partial' and result.receipt['stage'] == 'backend_submitted'
+
+
+def test_xhs_publish_budget_is_distinct_and_never_exceeds_caller_deadline():
+    from services.agent.agent_reach.handler import execution_timeout
+    settings = SimpleNamespace(agent_reach_timeout_seconds=60, agent_reach_xhs_publish_timeout_seconds=180)
+    executor = SimpleNamespace(execution_budget=None)
+    args = {'platform': 'xiaohongshu', 'action': 'create_post'}
+    assert execution_timeout(settings, executor, args) == 180
+    assert execution_timeout(settings, executor, {'platform':'xiaohongshu','action':'read'}) == 60
+    assert execution_timeout(settings, executor, {'platform':'twitter','action':'create_post'}) == 60
+    executor.execution_budget = SimpleNamespace(remaining=17)
+    assert execution_timeout(settings, executor, args) == 17
+
+
+@pytest.mark.asyncio
+async def test_xhs_write_passes_publish_budget_to_http_adapter(monkeypatch):
+    from services.agent.agent_reach import write_adapters
+    from unittest.mock import AsyncMock
+    adapter = SimpleNamespace(write=AsyncMock(return_value='submitted'))
+    monkeypatch.setattr(write_adapters, 'XHSAdapter', lambda *args: adapter)
+    monkeypatch.setattr(write_adapters, 'xhs_origins', lambda settings: '{}')
+    settings = SimpleNamespace(agent_reach_timeout_seconds=60, agent_reach_xhs_publish_timeout_seconds=180)
+    request = ReachRequest(task='验收测试', platform='xiaohongshu', action='create_post', title='测试', content='正文', visibility='private', connection_id='00000000-0000-0000-0000-000000000001', media=[{'name':'test.png','role':'image','resource_ref':'fref1_example'}])
+    assert await write_adapters.write(request, {}, None, None, settings, media=[{'path':'registered.png'}]) == 'submitted'
+    assert adapter.timeout == 180
+    assert adapter.write.await_count == 1

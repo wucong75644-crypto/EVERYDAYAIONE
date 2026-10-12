@@ -168,6 +168,9 @@ def test_intent_idempotency_concurrent_consumption_and_credential_change(package
             "UPDATE social_publish_intents SET updated_at=now()-interval '181 seconds' WHERE id=%s",
             (first["id"],),
         )
+    assert publishing.get_intent(p.s.repo, first["id"])["state"] == "dispatching"
+    with p.s.repo.cursor() as c:
+        c.execute("UPDATE social_publish_intents SET updated_at=now()-interval '211 seconds' WHERE id=%s", (first["id"],))
     assert publishing.get_intent(p.s.repo, first["id"])["state"] == "uncertain"
     with pytest.raises(ReachError):
         publishing.consume(p.s.repo, first["id"], renewed["approval_hash"])

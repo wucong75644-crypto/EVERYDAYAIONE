@@ -127,7 +127,12 @@ export const socialApi = <T>(
   path: string,
   method: "GET" | "POST" | "PATCH" | "PUT" = "GET",
   data?: unknown,
-): Promise<T> => request({ url: `/social-ops${path}`, method, data });
+): Promise<T> => request({
+  url: `/social-ops${path}`, method, data,
+  // One bounded synchronous confirmation, never a transport retry.
+  ...(method === "POST" && /^\/publish-intents\/[^/]+\/confirm$/.test(path)
+    ? { timeout: 210000 } : {}),
+});
 export const connections = (): Promise<Connection[]> =>
   request({ url: "/agent-reach/connections", method: "GET" });
 export const stageKeys: Record<string, string[]> = {

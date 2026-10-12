@@ -191,3 +191,18 @@ it("reuses the same request identity for repeated card-generation clicks", async
   );
   expect(calls[0][2].client_request_id).toBe(calls[1][2].client_request_id);
 });
+
+it("refreshes the selected confirmation as well as history after an uncertain result", async () => {
+  render(<CardStudio {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "检查当前整包" }));
+  await screen.findByText("可进入最终确认");
+  fireEvent.change(screen.getByLabelText("发布账号"), { target: { value: "c1" } });
+  fireEvent.click(screen.getByRole("button", { name: "查看最终发布确认" }));
+  await screen.findByRole("region", { name: "最终发布确认" });
+  state = "uncertain";
+  api.socialApi.mockResolvedValue([intent()]);
+  fireEvent.click(screen.getByRole("button", { name: "刷新发布状态" }));
+  await waitFor(() => expect(screen.getAllByText("结果不确定，禁止重发")).toHaveLength(2));
+  expect(screen.getByRole("button", { name: "确认最终版本并立即发布" })).toBeDisabled();
+  expect(api.socialApi.mock.calls.some(([path]) => String(path).endsWith("/confirm"))).toBe(false);
+});

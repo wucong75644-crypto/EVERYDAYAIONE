@@ -22,7 +22,10 @@ async def write(request, connection, runner, http, settings, *, media=None):
     check_write(request)
     platform = request.platform
     if platform == 'xiaohongshu':
-        return await XHSAdapter(xhs_origins(settings), connection).write(request, media=media)
+        adapter = XHSAdapter(xhs_origins(settings), connection)
+        if request.action == 'create_post':
+            adapter.timeout = getattr(settings, 'agent_reach_xhs_publish_timeout_seconds', getattr(settings, 'agent_reach_timeout_seconds', 60))
+        return await adapter.write(request, media=media)
     if platform == 'youtube' and request.action == 'upload_video':
         from .video_upload import youtube_upload
         return await youtube_upload(request, connection, http, media)
