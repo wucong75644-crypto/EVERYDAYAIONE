@@ -1,6 +1,7 @@
 """Contract, routing and isolation regressions without live accounts."""
 import asyncio
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -100,15 +101,21 @@ async def test_runner_isolates_home_environment_and_limits_output(tmp_path):
 async def test_runner_cancellation_cleans_home(tmp_path):
     marker = tmp_path / 'marker'
     executable = tmp_path / 'twitter'
-    executable.write_text('#!/usr/bin/python3\nimport os,time\nfrom pathlib import Path\nPath(' + repr(str(marker)) + ').write_text(os.environ["HOME"])\ntime.sleep(60)\n')
+    executable.write_text('#!' + sys.executable + '\nimport os,time\nfrom pathlib import Path\nPath(' + repr(str(marker)) + ').write_text(os.environ["HOME"])\ntime.sleep(60)\n')
     executable.chmod(0o700)
     task = asyncio.create_task(ToolRunner(str(tmp_path)).run('twitter', []))
-    for _ in range(100):
-        if marker.exists():
-            break
-        await asyncio.sleep(.01)
-    assert marker.exists()
-    task.cancel()
+    try:
+        # Wait for actual child readiness, allowing loaded release hosts time to
+        # start Python. Preserve the cleanup assertion rather than racing a 1s cap.
+        async with asyncio.timeout(5):
+            while not marker.exists():
+                if task.done():
+                    await task
+                    pytest.fail('tool exited before writing its startup marker')
+                await asyncio.sleep(.01)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
     with pytest.raises(asyncio.CancelledError):
         await task
     assert not Path(marker.read_text()).exists()

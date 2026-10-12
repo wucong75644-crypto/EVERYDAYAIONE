@@ -138,3 +138,4 @@ PYTHONPATH=backend SOCIAL_OPS_TEST_DSN='host=/private/tmp port=55479 dbname=soci
 - 本轮无生产周期任务，单次任务已结束，检查已完成，无持续采集/模型调用。测试结果保留；新增测试与本记录未提交部署。
 - 尚未验证：真实多页来源、重复平台采集去重、完整后台宿主短周期端到端和实际本地进程中断续跑；后台新版本自动同步/脏编辑保护目前仍只有针对性测试，尚未重新进行浏览器并发复测。证据/历史技术JSON可读性问题仍在。
 - 页面证据：`/tmp/social-ops-production-v4-check.png`、`/tmp/social-ops-production-topic-persisted.png`。
+- 后续提交部署候选3dcac8dc在全量后端测试阶段被既有取消清理用例阻断（启动标记在固定1秒内未出现），生产更新尚未开始，旧验收候选已按发布门禁失效。该测试改用当前Python解释器、最多5秒等待实际子进程就绪，并在就绪等待失败时也保证取消/回收；保留CancelledError及临时HOME清理断言，不修改Runner实现。
