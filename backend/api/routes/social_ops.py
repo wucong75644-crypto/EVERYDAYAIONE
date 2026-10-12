@@ -263,7 +263,7 @@ def topics(job_id: UUID, ctx: OrgCtx, db: Database, response: Response):
     call(repo.job, str(job_id))
     with repo.cursor() as c:
         c.execute(
-            "SELECT id,revision,data,run_id FROM social_topic_candidates WHERE job_id=%s AND org_id=%s ORDER BY created_at DESC LIMIT 200",
+            "SELECT id,revision,data,run_id FROM social_topic_candidates WHERE job_id=%s AND org_id=%s ORDER BY created_at DESC,id DESC LIMIT 200",
             (job_id, ctx.org_id),
         )
         return c.fetchall()

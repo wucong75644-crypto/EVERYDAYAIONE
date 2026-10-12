@@ -1,4 +1,10 @@
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+  act,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { ApiRequestError } from "../../services/api";
@@ -78,7 +84,7 @@ beforeEach(() => {
             audience: "读者",
             format: "图文",
             planned_date: null,
-            decision: "adopt",
+            decision: "defer",
             evidence: [{ snapshot_id: "s1", quote: "这是原文" }],
             unknowns: ["需求量未知"],
             required_materials: ["自有图"],
@@ -105,6 +111,9 @@ describe("SocialOps", () => {
     expect(screen.getByText(/不支持完整主页同步/)).toBeTruthy();
     expect(screen.getByText("<script>alert(1)</script>这是原文")).toBeTruthy();
     expect(document.querySelector("script")).toBeNull();
+    expect(screen.getByRole("button", { name: "暂停" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "继续剩余队列" })).toBeDisabled();
+    expect(screen.getByText("单次采集已结束，无后续采集计划。")).toBeTruthy();
   });
   it("requires reviewed skill versions and never triggers a platform publish", async () => {
     mount();
@@ -154,6 +163,63 @@ describe("SocialOps", () => {
     );
     expect(screen.getByText("待补图片素材")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "发布" })).toBeNull();
+  });
+  it("shows the saved decision and saves a complete date only after editing ends", async () => {
+    mount();
+    await screen.findByRole("option", { name: /测试研究/ });
+    fireEvent.click(screen.getByRole("button", { name: "选题计划" }));
+    fireEvent.change(screen.getByLabelText("研究任务"), {
+      target: { value: "job1" },
+    });
+    await screen.findByText("有据选题");
+    expect(screen.getByLabelText("选题决定")).toHaveValue("defer");
+    const date = screen.getByLabelText("计划日期（仅编辑排期建议）");
+    fireEvent.change(date, { target: { value: "2026-10-01" } });
+    fireEvent.change(date, { target: { value: "2026-10-13" } });
+    expect(
+      api.socialApi.mock.calls.filter((call) => call[1] === "PATCH"),
+    ).toHaveLength(0);
+    fireEvent.blur(date);
+    await waitFor(() =>
+      expect(api.socialApi).toHaveBeenCalledWith("/topics/t1", "PATCH", {
+        expected_revision: 1,
+        decision: "defer",
+        planned_date: "2026-10-13",
+      }),
+    );
+    expect(
+      api.socialApi.mock.calls.filter((call) => call[1] === "PATCH"),
+    ).toHaveLength(1);
+  });
+  it("采用后先持久保存决定，再进入草稿准备", async () => {
+    const original = api.socialApi.getMockImplementation()!;
+    api.socialApi.mockImplementation(async (path: string, method?: string) => {
+      if (path === "/topics/t1" && method === "PATCH")
+        return {
+          id: "t1",
+          revision: 2,
+          data: { title: "有据选题", angle: "具体角度", decision: "adopt" },
+        };
+      return original(path, method);
+    });
+    mount();
+    await screen.findByRole("option", { name: /测试研究/ });
+    fireEvent.click(screen.getByRole("button", { name: "选题计划" }));
+    fireEvent.change(screen.getByLabelText("研究任务"), {
+      target: { value: "job1" },
+    });
+    await screen.findByText("有据选题");
+    fireEvent.click(screen.getByRole("button", { name: "采用并准备草稿" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("选题简报")).toHaveValue(
+        "有据选题：具体角度",
+      ),
+    );
+    expect(api.socialApi).toHaveBeenCalledWith("/topics/t1", "PATCH", {
+      expected_revision: 1,
+      decision: "adopt",
+      planned_date: null,
+    });
   });
 });
 
@@ -208,4 +274,60 @@ it("取消放弃未保存修改后，新建任务不清空当前草稿", async (
   expect(confirm).toHaveBeenCalled();
   expect(screen.getByLabelText("标题")).toHaveValue("保留未保存内容");
   confirm.mockRestore();
+});
+
+it("后台新版本同步到未编辑草稿，存在未保存修改时保留并提示", async () => {
+  let refresh: () => void = () => {};
+  const interval = vi
+    .spyOn(globalThis, "setInterval")
+    .mockImplementation((callback, delay) => {
+      if (delay === 5000) refresh = callback as () => void;
+      return 0 as unknown as ReturnType<typeof setInterval>;
+    });
+  try {
+    mount();
+    await screen.findByRole("option", { name: /测试研究/ });
+    fireEvent.click(screen.getByRole("button", { name: "文案编辑" }));
+    fireEvent.change(screen.getByLabelText("研究任务"), {
+      target: { value: "job1" },
+    });
+    await screen.findByRole("option", { name: /草稿标题/ });
+    fireEvent.change(screen.getByLabelText("选择草稿"), {
+      target: { value: "d1" },
+    });
+    const original = api.socialApi.getMockImplementation()!;
+    let latest = {
+      ...draft,
+      current_revision: 2,
+      data: { ...draft.data, title: "后台润色标题" },
+    };
+    api.socialApi.mockImplementation(async (path: string) =>
+      path.endsWith("/contents") ? [latest] : original(path),
+    );
+    await act(async () => {
+      refresh();
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText("标题")).toHaveValue("后台润色标题"),
+    );
+    expect(screen.getByText("已保存 · v2")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("标题"), {
+      target: { value: "保留我的编辑" },
+    });
+    latest = {
+      ...latest,
+      current_revision: 3,
+      data: { ...latest.data, title: "后台第三版" },
+    };
+    await act(async () => {
+      refresh();
+    });
+    expect(screen.getByLabelText("标题")).toHaveValue("保留我的编辑");
+    expect(screen.getByRole("status")).toHaveTextContent("服务器已有更新版本");
+    expect(
+      screen.getByRole("button", { name: "检查已保存版本" }),
+    ).toBeDisabled();
+  } finally {
+    interval.mockRestore();
+  }
 });

@@ -110,6 +110,7 @@ export default function SocialOps() {
   const [skillVersions, setSkillVersions] = useState<Record<string, string>>(
     {},
   );
+  const [topicDates, setTopicDates] = useState<Record<string, string>>({});
   const execute = async (fn: () => Promise<void>) => {
     setBusy(true);
     setError("");
@@ -199,6 +200,16 @@ export default function SocialOps() {
       .then(setBudget)
       .catch((e) => setError(String(e)));
   }, [connectionId]);
+  useEffect(() => {
+    if (dirty) return;
+    setDraft((current) => {
+      if (!current) return current;
+      const latest = drafts.find((item) => item.id === current.id);
+      return latest && latest.current_revision > current.current_revision
+        ? latest
+        : current;
+    });
+  }, [drafts, dirty]);
   useEffect(() => {
     setSourceOffset(0);
     setSelectedTopic(null);
@@ -418,7 +429,7 @@ export default function SocialOps() {
                     required
                     className={inputClass}
                     aria-label="账号"
-                      value={connectionId}
+                    value={connectionId}
                     onChange={(e) => setConnectionId(e.target.value)}
                   >
                     <option value="">选择可用账号</option>
@@ -444,7 +455,7 @@ export default function SocialOps() {
                     required
                     className={inputClass}
                     aria-label="账号画像"
-                      value={profileId}
+                    value={profileId}
                     onChange={(e) => setProfileId(e.target.value)}
                   >
                     <option value="">选择画像</option>
@@ -834,7 +845,23 @@ export default function SocialOps() {
                     {(["pause", "resume", "cancel"] as const).map((a) => (
                       <button
                         key={a}
-                        disabled={busy}
+                        disabled={
+                          busy ||
+                          (a === "pause" &&
+                            [
+                              "completed",
+                              "partial",
+                              "failed",
+                              "cancelled",
+                            ].includes(job.status)) ||
+                          (a === "resume" &&
+                            ![
+                              "paused_auth",
+                              "paused_platform",
+                              "needs_input",
+                            ].includes(job.status)) ||
+                          (a === "cancel" && job.status === "cancelled")
+                        }
                         className="border rounded px-3 py-1"
                         onClick={() =>
                           void execute(async () => {
@@ -855,6 +882,12 @@ export default function SocialOps() {
                       </button>
                     ))}
                   </div>
+                  {["completed", "partial", "failed"].includes(job.status) &&
+                    !job.plan.interval_hours && (
+                      <p className="text-sm text-text-secondary">
+                        单次采集已结束，无后续采集计划。
+                      </p>
+                    )}
                   <details>
                     <summary>逐项进度</summary>
                     {job.items?.map((i) => (
@@ -1015,8 +1048,21 @@ export default function SocialOps() {
                           计划日期（仅编辑排期建议）
                           <input
                             type="date"
-                            value={t.planned_date || ""}
+                            value={topicDates[saved.id] ?? t.planned_date ?? ""}
+                            disabled={busy}
                             onChange={(e) =>
+                              setTopicDates((dates) => ({
+                                ...dates,
+                                [saved.id]: e.target.value,
+                              }))
+                            }
+                            onBlur={(e) => {
+                              const date = e.currentTarget.value;
+                              if (
+                                !e.currentTarget.validity.valid ||
+                                date === (t.planned_date || "")
+                              )
+                                return;
                               void execute(async () => {
                                 await socialApi(
                                   `/topics/${saved.id}`,
@@ -1024,26 +1070,27 @@ export default function SocialOps() {
                                   {
                                     expected_revision: saved.revision,
                                     decision: t.decision,
-                                    planned_date: e.target.value || null,
+                                    planned_date: date || null,
                                   },
                                 );
                                 await loadDetail(jobId);
-                              })
-                            }
+                                setTopicDates((dates) => {
+                                  const next = { ...dates };
+                                  delete next[saved.id];
+                                  return next;
+                                });
+                              });
+                            }}
                           />
                         </label>
+                        <p className="text-xs text-text-secondary">
+                          离开日期框后自动保存
+                        </p>
                         <label>
                           选题决定
                           <select
-                            value={
-                              (
-                                {
-                                  adopt: "采用",
-                                  adjust: "调整",
-                                  defer: "暂缓",
-                                } as Record<string, string>
-                              )[t.decision] || t.decision
-                            }
+                            value={t.decision}
+                            disabled={busy}
                             onChange={(e) =>
                               void execute(async () => {
                                 await socialApi(
@@ -1066,11 +1113,26 @@ export default function SocialOps() {
                         </label>
                         <button
                           className={buttonClass}
-                          onClick={() => {
-                            setSelectedTopic(saved);
-                            setTopic(t.title + "：" + t.angle);
-                            setTab("editor");
-                          }}
+                          disabled={busy}
+                          onClick={() =>
+                            void execute(async () => {
+                              const adopted = await socialApi<SavedTopic>(
+                                `/topics/${saved.id}`,
+                                "PATCH",
+                                {
+                                  expected_revision: saved.revision,
+                                  decision: "adopt",
+                                  planned_date: t.planned_date,
+                                },
+                              );
+                              await loadDetail(jobId);
+                              setSelectedTopic(adopted);
+                              setTopic(
+                                adopted.data.title + "：" + adopted.data.angle,
+                              );
+                              setTab("editor");
+                            })
+                          }
                         >
                           采用并准备草稿
                         </button>
@@ -1124,6 +1186,16 @@ export default function SocialOps() {
                   </select>
                   {draft && (
                     <>
+                      {dirty &&
+                        drafts.some(
+                          (item) =>
+                            item.id === draft.id &&
+                            item.current_revision > draft.current_revision,
+                        ) && (
+                          <p role="status" className="text-sm text-amber-700">
+                            服务器已有更新版本，当前未保存修改已保留。保存前请核对版本历史。
+                          </p>
+                        )}
                       <div className="flex justify-between items-center">
                         <div className="social-segment">
                           <button
