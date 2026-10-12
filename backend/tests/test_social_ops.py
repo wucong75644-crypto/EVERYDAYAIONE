@@ -147,8 +147,9 @@ def test_scheduled_reach_reads_allowed_but_all_writes_denied(action):
     assert policy.decide("agent_reach", ctx, args).outcome == "deny"
 
 
-@pytest.mark.parametrize("response_style", ["json", "fenced", "truncated", "invalid"])
-async def test_production_uses_pinned_runtime_and_gateway_without_tools(monkeypatch, response_style):
+@pytest.mark.parametrize("response_style", ["json", "fenced", "truncated", "invalid", "unknown_reference"])
+@pytest.mark.parametrize("run_kind", ["draft", "plan"])
+async def test_production_uses_pinned_runtime_and_gateway_without_tools(monkeypatch, response_style, run_kind):
     from contextlib import asynccontextmanager
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -182,21 +183,29 @@ async def test_production_uses_pinned_runtime_and_gateway_without_tools(monkeypa
         "title": "有据标题",
         "body": "有据正文",
         "tags": [],
-        "evidence": [{"snapshot_id": sid, "quote": "原文"}],
+        "evidence": [{"snapshot_id": sid, "quote": "这是真实原文"}],
         "claims": [],
         "assumptions": [],
         "required_materials": ["自有图"],
         "missing_inputs": ["图片"],
     }
+    if run_kind == "plan":
+        output = {"topics": [{"title": "有据选题", "audience": "初学者", "angle": "入门",
+                              "evidence": output["evidence"], "decision": "defer", "format": "图文",
+                              "required_materials": ["自有图"], "unknowns": [], "planned_date": None}],
+                  "analysis": "单一样本，结论有限", "missing_inputs": ["图片"]}
     observed = []
+    model_output = json.loads(json.dumps(output))
+    evidence_parent = model_output["topics"][0] if run_kind == "plan" else model_output
+    evidence_parent["evidence"] = [{"reference_id": "E999" if response_style == "unknown_reference" else "E1"}]
 
     class Session:
         async def stream_chat(self, messages, **kwargs):
             observed.append((messages, kwargs))
             yield StreamChunk(
                 content=("not-json" if response_style == "invalid" else
-                         "```json\n" + json.dumps(output) + "\n```" if response_style == "fenced"
-                         else json.dumps(output)),
+                         "```json\n" + json.dumps(model_output) + "\n```" if response_style == "fenced"
+                         else json.dumps(model_output)),
                 finish_reason="length" if response_style == "truncated" else "stop",
                 prompt_tokens=50, completion_tokens=20
             )
@@ -227,17 +236,17 @@ async def test_production_uses_pinned_runtime_and_gateway_without_tools(monkeypa
         "id": uuid4(),
         "stage_index": 0,
         "stages": [pins],
-        "kind": "draft",
+        "kind": run_kind,
         "allowance": 5,
         "lease_token": uuid4(),
         "outputs": [],
         "input": {"sources": [{"id": sid, "body": "这是真实原文"}]},
     }
-    if response_style in {"truncated", "invalid"}:
+    if response_style in {"truncated", "invalid", "unknown_reference"}:
         from services.agent.agent_reach.contracts import ReachError
         with pytest.raises(ReachError) as error:
             await worker.execute_stage(run)
-        assert error.value.code == ("MODEL_OUTPUT_TRUNCATED" if response_style == "truncated" else "MODEL_OUTPUT_INVALID")
+        assert error.value.code == {"truncated": "MODEL_OUTPUT_TRUNCATED", "invalid": "MODEL_OUTPUT_INVALID", "unknown_reference": "EVIDENCE_REFERENCE_INVALID"}[response_style]
         assert len(observed) == 1
         session.close.assert_awaited_once()
         return
@@ -245,6 +254,9 @@ async def test_production_uses_pinned_runtime_and_gateway_without_tools(monkeypa
     assert result == output and manifest["skill_snapshot"] == pins
     assert "Only use the pinned method." in str(observed[0][0])
     assert "tools" not in observed[0][1]
+    prompt = json.loads(observed[0][0][-1]["content"])
+    assert prompt["evidence_catalog"] == [{"reference_id": "E1", "snapshot_id": sid, "quote": "这是真实原文"}]
+    assert manifest["evidence_catalog_coverage"]["references"] == 1
     source.discover.assert_not_awaited()
     source.session_bindings.assert_not_awaited()
     assert source.load.await_count == 1
@@ -281,3 +293,25 @@ def test_model_output_does_not_extract_or_repair_prose_or_bad_evidence():
     output = validate_model_output(DraftOutput, "```json\n" + encoded + "\n```")
     with pytest.raises(ValueError, match="EVIDENCE_QUOTE_NOT_SUPPORTED"):
         verify_evidence(output, [{"id": sid, "body": "实际原文"}])
+
+
+def test_evidence_handles_preserve_exact_text_and_reject_cross_run_references():
+    from services.social_ops.validation import evidence_catalog, resolve_evidence_references
+    from services.agent.agent_reach.contracts import ReachError
+
+    sources = [{"id": str(uuid4()), "body": " 🌳原文\n保留标点！ "},
+               {"id": str(uuid4()), "body": "正文" * 4000}]
+    catalog, coverage = evidence_catalog(sources)
+    assert catalog == evidence_catalog(sources)[0]
+    assert coverage["references"] == 4
+    resolved = resolve_evidence_references({"topics": [{"evidence": [{"reference_id": "E1"}, {"reference_id": "E2"}]}]}, catalog)
+    verify_evidence(resolved, sources)
+    assert resolved["topics"][0]["evidence"][0]["quote"] == "🌳原文\n保留标点！"
+    with pytest.raises(ReachError, match="证据目录之外"):
+        resolve_evidence_references({"evidence": [{"reference_id": "E999"}]}, catalog)
+    many = [{"id": str(uuid4()), "body": "文" * 8000} for _ in range(100)]
+    bounded, limits = evidence_catalog(many)
+    assert len(bounded) < 128 and limits["represented_sources"] < 100
+    assert sum(len(json.dumps(v, ensure_ascii=False).encode()) for v in bounded.values()) <= 24000
+    for entry in bounded.values():
+        assert len(entry["quote"]) <= 1000

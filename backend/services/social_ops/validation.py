@@ -1,6 +1,7 @@
 """Evidence and readiness checks are deterministic, never publishing approval."""
 
 import re
+import json
 from typing import Literal
 from datetime import date
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -51,6 +52,63 @@ class CheckOutput(BaseModel):
     suggestions: list[str] = Field(max_length=30)
     unknowns: list[str] = Field(max_length=30)
     source_risk: str = Field(max_length=4000)
+
+
+class EvidenceReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reference_id: str = Field(pattern=r"^E[1-9][0-9]*$")
+
+
+class ReferencedTopic(Topic):
+    evidence: list[EvidenceReference] = Field(min_length=1, max_length=20)
+
+
+class ReferencedPlanOutput(PlanOutput):
+    topics: list[ReferencedTopic] = Field(min_length=1, max_length=20)
+
+
+class ReferencedDraftOutput(DraftOutput):
+    evidence: list[EvidenceReference] = Field(min_length=1, max_length=30)
+
+
+def evidence_catalog(sources):
+    """Bounded, deterministic selections of exact source substrings."""
+    catalog = {}
+    size = 0
+    available = sum(bool(s.get("body", "").strip()) for s in sources)
+    covered = set()
+    for source in sources:
+        body = source.get("body", "")
+        # Contiguous slices preserve punctuation, emoji and whitespace exactly.
+        for start in range(0, min(len(body), 3000), 1000):
+            quote = body[start:start + 1000].strip()
+            if not quote:
+                continue
+            entry = {"snapshot_id": str(source["id"]), "quote": quote}
+            reference_id = "E" + str(len(catalog) + 1)
+            entry_size = len(json.dumps({"reference_id": reference_id, **entry}, ensure_ascii=False).encode()) + 2
+            if size + entry_size > 24000 or len(catalog) >= 128:
+                continue
+            catalog[reference_id] = entry
+            covered.add(str(source["id"]))
+            size += entry_size
+    return catalog, {"available_sources": available, "represented_sources": len(covered),
+                     "references": len(catalog), "max_chars_per_source": 3000,
+                     "max_catalog_bytes": 24000, "scope": "仅目录内逐字片段可引用，非全量正文覆盖"}
+
+
+def resolve_evidence_references(output, catalog):
+    """Resolve explicit handles only; never guess, repair or silently drop a cite."""
+    from services.agent.agent_reach.contracts import ReachError
+
+    groups = [t["evidence"] for t in output["topics"]] if "topics" in output else [output.get("evidence", [])]
+    for group in groups:
+        for index, reference in enumerate(group):
+            entry = catalog.get(reference.get("reference_id"))
+            if entry is None:
+                raise ReachError("EVIDENCE_REFERENCE_INVALID", "模型引用了证据目录之外的编号；未生成成果，不自动重试")
+            group[index] = dict(entry)
+    return output
 
 
 def verify_evidence(output, sources):
