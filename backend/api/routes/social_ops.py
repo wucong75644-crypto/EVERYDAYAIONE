@@ -309,6 +309,7 @@ from services.social_ops.contracts import (
     PublishCreate,
     PublishConfirm,
     PublishVerify,
+    PublishNotPublished,
     MediaLocate,
 )
 from services.social_ops import cards, publishing
@@ -573,3 +574,12 @@ def media_reference(data: MediaLocate, ctx: OrgCtx, db: Database, response: Resp
         return {"resource_ref": resolver.reference(target.path)}
     except (ValueError, PermissionError):
         raise HTTPException(422, "图片不在当前授权工作区或已变化") from None
+
+
+@router.post("/publish-intents/{id}/resolve-not-published")
+def resolve_not_published(
+    id: UUID, data: PublishNotPublished, ctx: OrgCtx, db: Database, response: Response
+):
+    return call(
+        publishing.resolve_not_published, repository(ctx, db, response), str(id), data
+    )

@@ -182,3 +182,10 @@ class PublishVerify(Input):
 
 class MediaLocate(Input):
     path: str = Field(min_length=1, max_length=1000)
+
+
+class PublishNotPublished(Input):
+    note: str = Field(min_length=30, max_length=2000)
+    account_checked: Literal[True]
+    all_statuses_checked: Literal[True]
+    acknowledge_new_confirmation: Literal[True]

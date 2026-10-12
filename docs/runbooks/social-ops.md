@@ -202,3 +202,9 @@ PYTHONPATH=backend SOCIAL_OPS_TEST_DSN='host=/private/tmp port=55479 dbname=soci
 - 平台核验阻塞：本机Chrome小红书未登录，已停在扫码页，需要操作者以同一测试账号登录后继续核验。没有平台成功依据，不记录人工verified，不通过清除uncertain或创建新版本重发绕过幂等保护。
 - 保留v8/v9/v10和素材、运行、意图及不确定回执；无新增周期任务或持续模型运行。证据目录/Users/wucong/.codex/task-evidence/social-ops-phase3/：production-card-v10.png、production-publish-uncertain.png、platform-login-required.png。
 - 修复定向验证：Agent Reach后端55项、第三阶段独立PostgreSQL集成15项、CardStudio前端5项通过，TypeScript项目构建检查及diff检查通过。这些是本地替代响应/代码验证，不替代修复后真实发布复测。
+
+### 不确定提交的人工未发布恢复
+
+迁移297增加`not_published`终态，保留原回执、错误、operation_id及人工依据；仅此状态让出同版本唯一意图槽位。原操作者须在目标账号核对全部笔记、审核中、未通过记录，结合提交日志判断未发布，不能只依赖搜索无结果。在“提交与核验记录 → 人工核验未发布，准备重新确认”勾选声明并填写至少30字依据。不确定记录稳定结束210秒后才可恢复；仍在执行、已提交、已核验或已有提交回执均拒绝。恢复本身不调用平台或模型。
+
+恢复后重新检查整包（可复用当前版本已完成的语义检查），创建新的意图和独立操作ID，再最终确认。原意图禁止再次确认，不会自动重试。生产须受控部署迁移及前后端后才可使用。

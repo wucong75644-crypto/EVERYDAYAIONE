@@ -170,7 +170,10 @@ def test_intent_idempotency_concurrent_consumption_and_credential_change(package
         )
     assert publishing.get_intent(p.s.repo, first["id"])["state"] == "dispatching"
     with p.s.repo.cursor() as c:
-        c.execute("UPDATE social_publish_intents SET updated_at=now()-interval '211 seconds' WHERE id=%s", (first["id"],))
+        c.execute(
+            "UPDATE social_publish_intents SET updated_at=now()-interval '211 seconds' WHERE id=%s",
+            (first["id"],),
+        )
     assert publishing.get_intent(p.s.repo, first["id"])["state"] == "uncertain"
     with pytest.raises(ReachError):
         publishing.consume(p.s.repo, first["id"], renewed["approval_hash"])
@@ -575,3 +578,76 @@ def test_api_import_and_reorder_are_versioned_and_authorized(package, monkeypatc
             == 403
         )
         assert cards.content(p.s.repo, p.row["id"])["current_revision"] == 4
+
+
+def test_not_published_recovery_requires_new_check_and_preserves_attempt(package):
+    from services.social_ops.contracts import PublishNotPublished
+
+    p = package
+    repo = p.s.repo
+    old = publishing.create_intent(repo, p.request)
+    data = PublishNotPublished(
+        note="已核对同一测试账号全部笔记、审核中与未通过，结合日志确认在最终提交之前中断。",
+        account_checked=True,
+        all_statuses_checked=True,
+        acknowledge_new_confirmation=True,
+    )
+    with pytest.raises(ReachError):
+        publishing.resolve_not_published(repo, old["id"], data)
+    with repo.cursor() as c:
+        c.execute(
+            "UPDATE social_publish_intents SET state='uncertain',updated_at=now()-interval '211 seconds',error='BUDGET_EXHAUSTED' WHERE id=%s",
+            (old["id"],),
+        )
+    with pytest.raises(ReachError):
+        publishing.resolve_not_published(p.s.foreign, old["id"], data)
+    settled = publishing.resolve_not_published(repo, old["id"], data)
+    assert (
+        settled["state"] == "not_published" and settled["error"] == "BUDGET_EXHAUSTED"
+    )
+    assert settled["verification"]["method"] == "manual_not_published"
+    assert publishing.resolve_not_published(repo, old["id"], data)["id"] == old["id"]
+    with pytest.raises(ReachError, match="重新检查"):
+        publishing.create_intent(repo, p.request)
+    check = publishing.check_package(
+        repo, str(p.row["id"]), PackageCheck(expected_revision=2, semantic_run_id=p.run)
+    )
+    fresh = p.request.model_copy(update={"check_id": check["id"]})
+    renewed = publishing.create_intent(repo, fresh)
+    assert renewed["id"] != old["id"] and renewed["state"] == "awaiting_confirmation"
+    assert publishing.create_intent(repo, fresh)["id"] == renewed["id"]
+    with pytest.raises(ReachError):
+        publishing.consume(repo, old["id"], old["approval_hash"])
+    publishing.consume(repo, renewed["id"], renewed["approval_hash"])
+    with pytest.raises(ReachError):
+        publishing.consume(repo, renewed["id"], renewed["approval_hash"])
+
+
+@pytest.mark.parametrize(
+    "state,receipt",
+    [
+        ("dispatching", {}),
+        ("submitted", {}),
+        ("verified", {}),
+        ("uncertain", {"remote_id": "a" * 24}),
+        ("uncertain", {"stage": "backend_submitted"}),
+    ],
+)
+def test_recovery_rejects_active_or_submitted_evidence(package, state, receipt):
+    from services.social_ops.contracts import PublishNotPublished
+
+    p = package
+    old = publishing.create_intent(p.s.repo, p.request)
+    with p.s.repo.cursor() as c:
+        c.execute(
+            "UPDATE social_publish_intents SET state=%s,receipt=%s,updated_at=now()-interval '211 seconds' WHERE id=%s",
+            (state, Jsonb(receipt), old["id"]),
+        )
+    data = PublishNotPublished(
+        note="已核对同一测试账号全部笔记、审核中与未通过，结合日志确认在最终提交之前中断。",
+        account_checked=True,
+        all_statuses_checked=True,
+        acknowledge_new_confirmation=True,
+    )
+    with pytest.raises(ReachError):
+        publishing.resolve_not_published(p.s.repo, old["id"], data)

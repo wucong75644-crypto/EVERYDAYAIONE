@@ -196,13 +196,59 @@ it("refreshes the selected confirmation as well as history after an uncertain re
   render(<CardStudio {...props} />);
   fireEvent.click(screen.getByRole("button", { name: "检查当前整包" }));
   await screen.findByText("可进入最终确认");
-  fireEvent.change(screen.getByLabelText("发布账号"), { target: { value: "c1" } });
+  fireEvent.change(screen.getByLabelText("发布账号"), {
+    target: { value: "c1" },
+  });
   fireEvent.click(screen.getByRole("button", { name: "查看最终发布确认" }));
   await screen.findByRole("region", { name: "最终发布确认" });
   state = "uncertain";
   api.socialApi.mockResolvedValue([intent()]);
   fireEvent.click(screen.getByRole("button", { name: "刷新发布状态" }));
-  await waitFor(() => expect(screen.getAllByText("结果不确定，禁止重发")).toHaveLength(2));
-  expect(screen.getByRole("button", { name: "确认最终版本并立即发布" })).toBeDisabled();
-  expect(api.socialApi.mock.calls.some(([path]) => String(path).endsWith("/confirm"))).toBe(false);
+  await waitFor(() =>
+    expect(screen.getAllByText("结果不确定，禁止重发")).toHaveLength(2),
+  );
+  expect(
+    screen.getByRole("button", { name: "确认最终版本并立即发布" }),
+  ).toBeDisabled();
+  expect(
+    api.socialApi.mock.calls.some(([path]) =>
+      String(path).endsWith("/confirm"),
+    ),
+  ).toBe(false);
+});
+
+it("records non-publication without dispatch and requires a new package check", async () => {
+  state = "uncertain";
+  api.socialApi.mockResolvedValue([intent()]);
+  render(<CardStudio {...props} />);
+  await screen.findByText("结果不确定，禁止重发");
+  const button = screen.getByRole("button", {
+    name: "保存未发布核验（不会重发）",
+  });
+  expect(button).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("未发布核验依据"), {
+    target: {
+      value:
+        "已核对同一测试账号的全部笔记、审核中与未通过记录，结合提交日志确认未发布。",
+    },
+  });
+  fireEvent.click(screen.getByLabelText(/我已核对目标账号及全部状态/));
+  api.socialApi.mockImplementation(async (path: string) => {
+    if (path.endsWith("/resolve-not-published")) {
+      state = "not_published";
+      return intent();
+    }
+    if (path.endsWith("/publish-intents")) return [intent()];
+    return {};
+  });
+  fireEvent.click(button);
+  await screen.findByText("人工核验未发布（原记录保留）");
+  expect(
+    screen.getByRole("button", { name: "查看最终发布确认" }),
+  ).toBeDisabled();
+  expect(
+    api.socialApi.mock.calls.some(
+      ([p]) => String(p).endsWith("/confirm") || p === "/production-runs",
+    ),
+  ).toBe(false);
 });

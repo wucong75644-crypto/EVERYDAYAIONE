@@ -39,6 +39,7 @@ const stateNames: Record<string, string> = {
   submitted: "已提交待核验",
   verified: "已核验发布（人工）",
   uncertain: "结果不确定，禁止重发",
+  not_published: "人工核验未发布（原记录保留）",
   failed: "失败",
   cancelled: "已取消",
   invalidated: "内容已变化，确认失效",
@@ -144,6 +145,8 @@ export default function CardStudio({
   const [remoteId, setRemoteId] = useState(""),
     [remoteUrl, setRemoteUrl] = useState(""),
     [verifyNote, setVerifyNote] = useState("");
+  const [recoveryNote, setRecoveryNote] = useState(""),
+    [recoveryAck, setRecoveryAck] = useState(false);
   const requests = useRef<Record<string, string>>({});
   const key = (kind: string) => {
     const k = JSON.stringify([
@@ -158,9 +161,13 @@ export default function CardStudio({
     return requests.current[k] ?? (requests.current[k] = crypto.randomUUID());
   };
   const refreshIntents = async () => {
-    const rows = await socialApi<Intent[]>(`/contents/${draft.id}/publish-intents`);
+    const rows = await socialApi<Intent[]>(
+      `/contents/${draft.id}/publish-intents`,
+    );
     setIntents(rows);
-    setIntent((current) => current ? (rows.find((row) => row.id === current.id) ?? current) : null);
+    setIntent((current) =>
+      current ? (rows.find((row) => row.id === current.id) ?? current) : null,
+    );
   };
   useEffect(() => {
     updateCards(
@@ -736,6 +743,56 @@ export default function CardStudio({
               >
                 取消此意图
               </button>
+            )}
+            {item.state === "uncertain" && (
+              <details>
+                <summary>人工核验未发布，准备重新确认</summary>
+                <p>
+                  仅限原操作者：确认目标账号、全部笔记、审核中及未通过记录均无本次笔记，并结合提交日志判断。仅未找到搜索结果不足以核验。仍在执行或已有提交依据时不可恢复。
+                </p>
+                <textarea
+                  aria-label="未发布核验依据"
+                  className="border p-2 w-full"
+                  value={recoveryNote}
+                  onChange={(e) => setRecoveryNote(e.target.value)}
+                />
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={recoveryAck}
+                    onChange={(e) => setRecoveryAck(e.target.checked)}
+                  />
+                  我已核对目标账号及全部状态，确认本次未发布；知悉原记录保留，必须重新检查和确认，不会自动重发。
+                </label>
+                <button
+                  disabled={!recoveryAck || recoveryNote.trim().length < 30}
+                  onClick={() =>
+                    void act(async () => {
+                      await socialApi(
+                        `/publish-intents/${item.id}/resolve-not-published`,
+                        "POST",
+                        {
+                          note: recoveryNote.trim(),
+                          account_checked: true,
+                          all_statuses_checked: true,
+                          acknowledge_new_confirmation: true,
+                        },
+                      );
+                      setIntent(null);
+                      setCheck(null);
+                      setAck(false);
+                      setRecoveryAck(false);
+                      setRecoveryNote("");
+                      setNotice(
+                        "已保留未发布核验记录。请重新检查整包，再查看最终发布确认。",
+                      );
+                      await refreshIntents();
+                    })
+                  }
+                >
+                  保存未发布核验（不会重发）
+                </button>
+              </details>
             )}
             {["submitted", "uncertain"].includes(item.state) && (
               <details>

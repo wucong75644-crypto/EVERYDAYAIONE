@@ -144,6 +144,13 @@ def create_intent(repo, request):
                 "已有未核验提交或不确定结果，请先核验，禁止创建新版本重发",
             )
         c.execute(
+            "SELECT updated_at FROM social_publish_intents WHERE org_id=%s AND content_id=%s AND connection_id=%s AND state='not_published' ORDER BY updated_at DESC LIMIT 1",
+            (repo.scope.org_id, request.content_id, request.connection_id),
+        )
+        recovered = c.fetchone()
+        if recovered and check["created_at"] <= recovered["updated_at"]:
+            raise ReachError("NEEDS_CHECK", "核验未发布后需重新检查整包，再确认新意图")
+        c.execute(
             """INSERT INTO social_publish_intents(org_id,content_id,revision,connection_id,check_id,visibility,owner_id,credential_version,approval_hash,payload)
             VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING id""",
             (
@@ -160,7 +167,7 @@ def create_intent(repo, request):
             ),
         )
         c.execute(
-            "SELECT * FROM social_publish_intents WHERE org_id=%s AND content_id=%s AND revision=%s AND connection_id=%s ",
+            "SELECT * FROM social_publish_intents WHERE org_id=%s AND content_id=%s AND revision=%s AND connection_id=%s AND state<>'not_published' ",
             (
                 repo.scope.org_id,
                 request.content_id,
@@ -433,3 +440,51 @@ def verify_intent(repo, id, data):
         if not row:
             raise ReachError("VERSION_CONFLICT", "只有待核验或不确定意图可记录核验")
         return row
+
+
+def resolve_not_published(repo, id, data):
+    """Explicit owner attestation only; never dispatch or reset the old operation."""
+    with repo.cursor() as c:
+        c.execute(
+            "SELECT * FROM social_publish_intents WHERE id=%s AND org_id=%s FOR UPDATE",
+            (id, repo.scope.org_id),
+        )
+        row = c.fetchone()
+        if not row or str(row["owner_id"]) != str(repo.scope.actor_user_id):
+            raise ReachError("ACCESS_DENIED", "需由原操作者核验未发布")
+        if row["state"] == "not_published":
+            return row
+        if row["state"] != "uncertain" or row["updated_at"] > datetime.now(
+            timezone.utc
+        ) - timedelta(seconds=210):
+            raise ReachError(
+                "VERSION_CONFLICT", "仅已结束并等待210秒的不确定提交可核验未发布"
+            )
+        receipt = row["receipt"] or {}
+        if receipt.get("remote_id") or receipt.get("stage") == "backend_submitted":
+            raise ReachError("VERSION_CONFLICT", "已有平台提交依据，不能解除发布锁")
+        if row["operation_id"]:
+            c.execute(
+                "SELECT state FROM reach_operations WHERE id=%s AND org_id=%s",
+                (row["operation_id"], repo.scope.org_id),
+            )
+            operation = c.fetchone()
+            if not operation or operation["state"] != "uncertain":
+                raise ReachError("VERSION_CONFLICT", "平台操作尚未稳定结束，禁止恢复")
+        c.execute(
+            "UPDATE social_publish_intents SET state='not_published',verification=%s,updated_at=now() WHERE id=%s RETURNING *",
+            (
+                Jsonb(
+                    {
+                        "method": "manual_not_published",
+                        "note": data.note,
+                        "account_checked": True,
+                        "all_statuses_checked": True,
+                        "verified_by": str(repo.scope.actor_user_id),
+                        "verified_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                ),
+                id,
+            ),
+        )
+        return c.fetchone()
