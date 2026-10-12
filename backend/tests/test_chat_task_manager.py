@@ -710,3 +710,45 @@ async def test_completion_form_keeps_default_notification_target_selectable():
     assert target_field['type'] == 'select'
     assert target_field['options'] == targets
     assert json.loads(target_field['default_value']) == {'type': 'web', 'user_id': 'u1'}
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('action', ['create', 'update'])
+async def test_misplaced_notification_policy_is_rejected_before_business_io(action):
+    db = _mock_db()
+    manager = ChatTaskManager(db, 'user1', 'org1', structured_input=True)
+    result = await manager.handle(action, {
+        'definition': {'name': '监测'},
+        'notification_policy': '{"mode":"conditional","metric":"likes","threshold":15}',
+    })
+    assert result['success'] is False
+    assert result['retryable'] is True
+    assert 'definition.notification_policy' in result['text']
+    assert 'JSON字符串' in result['text']
+    db.table.assert_not_called()
+
+
+def test_task_tool_contract_rejects_unknown_and_scalar_fields():
+    from services.scheduler.task_definition_input import validate_task_tool_arguments, TaskDefinitionInputError
+    for arguments in ({'action': 'create', 'surprise': True}, {'action': 'create', 'recipient': 5},
+                      {'action': 'create', 'definition': '{}'}):
+        with pytest.raises(TaskDefinitionInputError):
+            validate_task_tool_arguments(arguments)
+    validate_task_tool_arguments({'action': 'create', 'definition': {'notification_policy': {'mode': 'always'}}})
+    validate_task_tool_arguments({'action': 'create', 'description': '每天统计销量'})
+
+@pytest.mark.asyncio
+async def test_corrected_notification_arguments_preserve_condition_in_form():
+    manager = ChatTaskManager(_mock_db(), 'user1', 'org1', structured_input=True)
+    definition = {'prompt': '采集测试对象的likes', 'schedule_type': 'interval', 'interval_minutes': 60,
+                  'notification_policy': {'mode': 'conditional', 'metric': 'likes', 'comparison': 'value', 'threshold': 15}}
+    rejected = await manager.handle('create', {'definition': definition, 'notification_policy': definition['notification_policy']})
+    assert rejected['retryable'] is True
+    with patch('services.scheduler.chat_task_manager._load_push_targets', AsyncMock(return_value=[])):
+        form = await manager.handle('create', {'definition': definition})
+    assert form['type'] == 'form'
+    fields = {field['name']: field['default_value'] for field in form['fields']}
+    assert fields['interval_minutes'] == 60
+    assert fields['notify_mode'] == 'conditional'
+    assert fields['notify_metric'] == 'likes'
+    assert fields['notify_threshold'] == 15
+    assert '尚未创建' in form['description']

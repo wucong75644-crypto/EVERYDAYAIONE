@@ -16,7 +16,7 @@ def _schema_manage_scheduled_task():
                 "不要包含创建任务、触发时间或发送动作。任务将独立运行，不要依赖当前聊天中的省略指代。"
                 "只填写用户明确给出的安排；缺项就省略相应字段，由表单补齐，不能猜默认时间或频率。"
                 "不要先执行一次业务查询。聊天入口不再用 description 做第二次模型解析。\n"
-                "每N分钟/小时用interval和interval_minutes；条件提醒用notification_policy，不能只写进prompt。"
+                "每N分钟/小时用interval和interval_minutes；条件提醒必须传 definition.notification_policy 对象，不能放在顶层、不能传JSON字符串，也不能只写进prompt。"
                 "网页给自己时，系统自动把结果关联创建任务的原聊天。条件监测须在prompt保留采集对象和metric口径。\n"
                 "创建时即使字段完整也必须先展示可编辑确认表单；用户点击确认前不规划、不提交、不创建任务。\n"
                 "skills 可选，仅传已知且允许用于定时任务的 Skill 标识和固定版本，不猜标识；"
@@ -34,6 +34,7 @@ def _schema_manage_scheduled_task():
             "parameters": {
                 "type": "object",
                 "required": ["action"],
+                "additionalProperties": False,
                 "properties": {
                     "definition": {
                         "type": "object",

@@ -432,6 +432,8 @@ class ChatTaskManager:
         from services.scheduler.scheduled_task_change_adapter import ScheduledTaskChangeError
         from services.scheduler.task_definition_input import TaskDefinitionInputError
         try:
+            from services.scheduler.task_definition_input import validate_task_tool_arguments
+            validate_task_tool_arguments({**args, "action": action})
             return await handler(args)
         except TaskDefinitionInputError as exc:
             return {"type": "text", "text": str(exc), "success": False, "retryable": True}

@@ -43,6 +43,30 @@ def _validate(value: Any, schema: Mapping, label: str) -> None:
             raise TaskDefinitionInputError(f"{label}不能重复。")
 
 
+
+def validate_task_tool_arguments(arguments: Any) -> None:
+    """Reject misplaced arguments before forms, parsing or database access."""
+    from services.tools.catalog import build_tool_catalog
+    parameters = build_tool_catalog().require("manage_scheduled_task").to_schema()["function"]["parameters"]
+    if not isinstance(arguments, dict):
+        raise TaskDefinitionInputError("工具参数必须为对象。")
+    for key, value in arguments.items():
+        schema = parameters["properties"].get(key)
+        if schema is None:
+            location = "definition." + key if key in parameters["properties"]["definition"]["properties"] else None
+            hint = f"请使用 {location}" if location else "请按工具定义移除未知字段"
+            if key == "notification_policy":
+                hint += "，值必须为对象，不能是JSON字符串"
+            raise TaskDefinitionInputError(f"$.{key} 是未知字段；{hint}。尚未创建或修改任务，请保留原需求修正参数后重试。")
+        if key != "definition":
+            if not isinstance(value, str):
+                raise TaskDefinitionInputError(f"$.{key} 必须为字符串。")
+            if "enum" in schema and value not in schema["enum"]:
+                raise TaskDefinitionInputError(f"$.{key} 请选择：{'、'.join(schema['enum'])}。")
+    if "definition" in arguments and not isinstance(arguments["definition"], dict):
+        raise TaskDefinitionInputError("$.definition 必须为对象。")
+
+
 def task_definition_input(definition: Any, *, operation: str, base: Mapping | None = None,
                           recipient: Any = "") -> dict:
     from services.tools.catalog import build_tool_catalog
