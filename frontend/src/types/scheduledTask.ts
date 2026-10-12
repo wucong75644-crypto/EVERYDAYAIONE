@@ -7,7 +7,7 @@
 import type { PositionCode, DepartmentType } from './auth';
 
 export type TaskStatus = 'active' | 'paused' | 'error' | 'running';
-export type ScheduleType = 'once' | 'daily' | 'weekly' | 'monthly' | 'cron';
+export type ScheduleType = 'once' | 'daily' | 'weekly' | 'monthly' | 'cron' | 'interval';
 
 export interface PushTarget {
   type: 'wecom_group' | 'wecom_user' | 'web' | 'multi';
@@ -60,6 +60,11 @@ export interface ScheduledSkillSnapshot {
   }>;
 }
 
+export interface NotificationPolicy {
+  mode: 'always' | 'conditional'; metric?: string; comparison?: 'value' | 'delta' | 'percent';
+  threshold?: number; window_minutes?: number; repeat_increment?: number; cooldown_minutes?: number;
+}
+
 export interface ScheduledTask {
   config_revision?: string;
   skill_revision_snapshot?: ScheduledSkillSnapshot;
@@ -71,6 +76,9 @@ export interface ScheduledTask {
   name: string;
   prompt: string;
   // 频率字段（V2: 结构化）
+  notification_policy?: NotificationPolicy;
+  interval_minutes?: number | null;
+  origin_conversation_id?: string | null;
   schedule_type: ScheduleType;
   cron_expr: string | null;
   cron_readable?: string;
@@ -130,11 +138,14 @@ export interface TaskRun {
   finished_at?: string | null;
   duration_ms?: number | null;
   result_summary?: string | null;
+  result_text?: string | null;
   result_files?: Array<{ url: string; name: string }> | null;
-  push_status?: 'pushed' | 'push_failed' | 'skipped' | null;
+  push_status?: 'queued' | 'retrying' | 'pushed' | 'push_failed' | 'partial' | 'skipped' | null;
   error_message?: string | null;
   credits_used: number;
   tokens_used: number;
+  notification_decision?: { status: string; counts?: Record<string, number>; reason?: string } | null;
+  result_message_id?: string | null;
   completion_gate?: { passed: boolean; reasons: string[] } | null;
   events?: Array<{
     event_type: string;
@@ -168,8 +179,11 @@ export interface ScheduledTaskDraft {
     id: string;
     status: 'running' | 'passed' | 'failed' | 'timeout';
     result_summary?: string | null;
+  result_text?: string | null;
     error_message?: string | null;
-    completion_gate?: { passed: boolean; reasons: string[] } | null;
+    notification_decision?: { status: string; counts?: Record<string, number>; reason?: string } | null;
+  result_message_id?: string | null;
+  completion_gate?: { passed: boolean; reasons: string[] } | null;
     tool_trace?: Array<{ event_type: string; tool_name?: string | null; status: string; summary?: string | null }>;
   } | null;
 }
@@ -185,6 +199,9 @@ export interface CreateTaskDto {
   retry_count?: number;
   timeout_sec?: number;
   // 频率字段
+  notification_policy?: NotificationPolicy;
+  interval_minutes?: number | null;
+  origin_conversation_id?: string | null;
   schedule_type: ScheduleType;
   cron_expr?: string;
   time_str?: string;        // "HH:MM"
@@ -204,6 +221,9 @@ export interface UpdateTaskDto {
   retry_count?: number;
   timeout_sec?: number;
   // 频率字段
+  notification_policy?: NotificationPolicy;
+  interval_minutes?: number | null;
+  origin_conversation_id?: string | null;
   schedule_type?: ScheduleType;
   cron_expr?: string;
   time_str?: string;
@@ -218,6 +238,9 @@ export interface ParseNLResult {
   output_format?: string;
   name: string;
   prompt: string;
+  notification_policy?: NotificationPolicy;
+  interval_minutes?: number | null;
+  origin_conversation_id?: string | null;
   schedule_type: ScheduleType;
   cron_expr?: string | null;
   time_str?: string | null;

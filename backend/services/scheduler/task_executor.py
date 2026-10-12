@@ -114,8 +114,9 @@ class ScheduledTaskExecutor:
                 logger.warning(
                     f"scheduled_task_trace_record_failed | run={run_id} | error={trace_error}"
                 )
-            await self._save_result_message(task, result)
-            await self._push_web_result(task, result)
+            if not task.get("_managed_notification"):
+                await self._save_result_message(task, result)
+                await self._push_web_result(task, result)
 
         except Exception as e:
             # credit_lock 会自动 refund
@@ -330,6 +331,32 @@ class ScheduledTaskExecutor:
             })
         return deliveries
 
+    async def _build_web_deliveries(self, task, result):
+        from services.message_gateway import MessageGateway
+        deliveries = []
+        seen = set()
+        targets = list(self._iter_targets(task.get("push_target")))
+        if task.get("origin_conversation_id"):
+            # Preserve the existing owner copy, now in the originating chat,
+            # even when the configured external delivery goes to WeCom/others.
+            targets.append({"type": "web", "user_id": str(task["user_id"])})
+        for target in targets:
+            if target.get("type") != "web" or not target.get("user_id"):
+                continue
+            user_id = str(target["user_id"])
+            origin = task.get("origin_conversation_id") if user_id == str(task["user_id"]) else None
+            conversation_id = origin or await MessageGateway(self.db)._get_or_create_wecom_conversation(user_id, task["org_id"])
+            if not conversation_id:
+                raise RuntimeError("SCHEDULED_WEB_CONVERSATION_UNAVAILABLE")
+            if user_id in seen:
+                continue
+            seen.add(user_id)
+            deliveries.append({"delivery_key": f"web:{user_id}", "delivery_kind": "result",
+                "target_context": {"type": "web", "user_id": user_id, "conversation_id": str(conversation_id)},
+                "payload": {"task_name": task["name"], "text": result.text,
+                            "content": [{"type": "text", "text": result.text}, *getattr(result, "content_blocks", [])]}})
+        return deliveries
+
     async def _on_success(
         self,
         task: Dict[str, Any],
@@ -378,6 +405,40 @@ class ScheduledTaskExecutor:
             next_status = "active"
             next_run = calc_next_run(cron_expr, tz)
 
+        from services.scheduler.monitoring import evaluate, normalize_observations, notification_text
+        policy = task.get("notification_policy") or {"mode": "always"}
+        managed = policy.get("mode") == "conditional" or bool(task.get("origin_conversation_id"))
+        decision, observations = None, []
+        delivery_result = result
+        if policy.get("mode") == "conditional":
+            observations = normalize_observations(getattr(result, "observations", []), now, started_at)
+            past = self.db.table("scheduled_task_runs").select("observations").eq("task_id", task["id"]).eq("org_id", task["org_id"]).eq("status", "success").order("started_at", desc=True).limit(1000).execute()
+            history_rows = list(past.data or [])
+            if policy.get("comparison") in {"delta", "percent"}:
+                window = policy["window_minutes"]
+                tolerance = max(1, window * .2)
+                # Seek the comparison window as well as recent samples. A
+                # minute-level task must still compare a week-old baseline.
+                lower = now - timedelta(minutes=window + tolerance + task.get("timeout_sec", 180) / 60 + 1)
+                upper = now - timedelta(minutes=window - 1)
+                window_rows = self.db.table("scheduled_task_runs").select("observations").eq("task_id", task["id"]).eq("org_id", task["org_id"]).eq("status", "success").gte("started_at", lower.isoformat()).lte("started_at", upper.isoformat()).order("started_at", desc=True).limit(1000).execute()
+                history_rows.extend(window_rows.data or [])
+            history = [item for row in history_rows for item in (row.get("observations") or [])]
+            fresh_state = self.db.table("scheduled_tasks").select("notification_state").eq("id", task["id"]).eq("org_id", task["org_id"]).execute()
+            state = (fresh_state.data or [{}])[0].get("notification_state") or {}
+            decision = evaluate(policy, observations, history, state, now)
+            if decision["matches"]:
+                from copy import copy
+                delivery_result = copy(result)
+                delivery_result.text = notification_text(task, decision)
+                delivery_result.files = []
+                delivery_result.content_blocks = []
+        should_notify = decision is None or decision["status"] == "matched"
+        deliveries = self._build_wecom_deliveries(task, delivery_result) if should_notify else []
+        if managed and should_notify:
+            deliveries.extend(await self._build_web_deliveries(task, delivery_result))
+        task["_managed_notification"] = managed
+
         response = self.db.rpc("complete_scheduled_task_success", {
             "p_task_id": task["id"],
             "p_run_id": run_id,
@@ -389,11 +450,13 @@ class ScheduledTaskExecutor:
                 "turns": result.turns_used,
                 "files": result.files,
                 "content_blocks": getattr(result, "content_blocks", []),
+                **({"observations": observations, "notification_decision": decision} if decision is not None else {}),
+                **({"text": result.text} if managed else {}),
             },
             "p_credits_used": credits_used,
             "p_tokens_used": result.tokens_used,
             "p_duration_ms": duration_ms,
-            "p_deliveries": self._build_wecom_deliveries(task, result),
+            "p_deliveries": deliveries,
         }).execute()
         payload = response.data if response else None
         if not isinstance(payload, dict) or payload.get("outcome") != "completed":

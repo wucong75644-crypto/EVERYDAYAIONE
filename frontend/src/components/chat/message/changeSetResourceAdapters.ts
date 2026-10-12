@@ -83,8 +83,19 @@ const scheduledTaskLabels: Record<string, string> = {
   cron_expr: '计划表达式', run_at: '执行时间', timezone: '时区',
   push_target: '通知目标', retry_count: '重试次数', timeout_sec: '超时时间',
   status: '任务状态', next_run_at: '下次执行时间',
-  max_credits: '每次积分上限',
+  max_credits: '每次积分上限', notification_policy: '通知规则', interval_minutes: '间隔分钟', origin_conversation_id: '结果保存位置',
 };
+
+function notificationLabel(value: unknown): string {
+  const policy = (value || {}) as Record<string, unknown>;
+  if (policy.mode !== 'conditional') return '每次执行都通知';
+  const comparison = { value: '当前数值', delta: '增长量', percent: '增长率（%）' }[String(policy.comparison)] || '数值';
+  return `${policy.metric} · ${policy.window_minutes ? `${policy.window_minutes} 分钟内` : ''}${comparison} ≥ ${policy.threshold}；首次建基线，无变化静默，同素材去重${policy.repeat_increment ? `；较上次提醒新增 ${policy.repeat_increment} 才再次提醒` : '；回落后重新达标且数据变化可再提醒'}${policy.cooldown_minutes ? `；最短提醒间隔 ${policy.cooldown_minutes} 分钟` : ''}`;
+}
+
+function taskDisplay(key: string, value: unknown): string {
+  return key === 'notification_policy' ? notificationLabel(value) : key === 'origin_conversation_id' ? value ? '发起任务的原聊天' : '原通知方式' : displayValue(value);
+}
 
 function scheduledFields(snapshot: Record<string, unknown>, operation: string): ChangeSetDisplayField[] {
   const keys = operation === 'delete'
@@ -95,7 +106,7 @@ function scheduledFields(snapshot: Record<string, unknown>, operation: string): 
   return keys
     .filter((key) => isDisplayableKey(key) && scheduledTaskLabels[key])
     .filter((key) => key in snapshot)
-    .map((key) => ({ label: scheduledTaskLabels[key], value: displayValue(snapshot[key]) }));
+    .map((key) => ({ label: scheduledTaskLabels[key], value: taskDisplay(key, snapshot[key]) }));
 }
 
 function directTaskFields(snapshot: Record<string, unknown>): ChangeSetDisplayField[] {
@@ -122,11 +133,14 @@ function directTaskFields(snapshot: Record<string, unknown>): ChangeSetDisplayFi
       schedule = `每周${cron[4].split(',').map((day) => '日一二三四五六'[Number(day)]).join('、')} ${time}`;
     }
   }
+  if (snapshot.interval_minutes) schedule = `每 ${snapshot.interval_minutes} 分钟（整点对齐）`;
   const fields: ChangeSetDisplayField[] = [
     { label: '任务名称', value: displayValue(snapshot.name) },
     { label: '执行内容', value: displayValue(snapshot.prompt) },
     { label: '时间安排', value: `${schedule}（${zone}）` },
     { label: '通知目标', value: recipient(snapshot.push_target) },
+    { label: '通知规则', value: notificationLabel(snapshot.notification_policy) },
+    ...(snapshot.origin_conversation_id ? [{ label: '结果保存位置', value: '发起任务的原聊天' }] : []),
   ];
   if (snapshot.max_credits !== undefined) fields.push({ label: '每次积分上限', value: `${snapshot.max_credits} 积分` });
   if (snapshot.next_run_at && snapshot.schedule_enabled !== false && snapshot.status !== 'paused') {
@@ -148,8 +162,8 @@ function scheduledDiff(changeSet: ChangeSet): ChangeSetDiffEntry[] {
     .filter((key) => JSON.stringify(base[key]) !== JSON.stringify(proposed[key]))
     .map((key) => ({
       label: labels[key],
-      before: displayValue(base[key]),
-      after: displayValue(proposed[key]),
+      before: taskDisplay(key, base[key]),
+      after: taskDisplay(key, proposed[key]),
     }));
 }
 

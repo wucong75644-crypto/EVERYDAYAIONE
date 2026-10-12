@@ -215,7 +215,9 @@ def test_task_structured_extension_keeps_every_old_parameter_contract():
     assert set(properties) - set(original['function']['parameters']['properties']) == {'definition', 'recipient'}
     properties.pop('definition')
     properties.pop('recipient')
-    # Only guidance changes on old parameters; accepted names/types/enums remain exact.
+    # Authorized strict top-level validation rejects misplaced task fields.
+    assert current['function']['parameters'].pop('additionalProperties') is False
+    # Guidance changes on old parameters; accepted names/types/enums remain exact.
     for name in ('action', 'description'):
         properties[name]['description'] = original['function']['parameters']['properties'][name]['description']
     current['function']['description'] = original['function']['description']
@@ -317,7 +319,7 @@ def test_planner_preflight_and_frozen_authorization_agree(catalog, monkeypatch):
     from services.planner import CapabilityRegistry, PlanCandidate, PlanStep, PlannerFramework
     from services.scheduler.scheduled_task_workflow import preflight_allowed_tool_names, validate_plan, ScheduledExecutionPolicy
     settings = get_settings()
-    for flag in ('file_workspace_enabled', 'sandbox_enabled', 'crawler_enabled'):
+    for flag in ('file_workspace_enabled', 'sandbox_enabled', 'crawler_enabled', 'agent_reach_enabled'):
         monkeypatch.setattr(settings, flag, True)
     names = preflight_allowed_tool_names('org-a')
     capabilities = CapabilityRegistry.from_specs(s for s in catalog.specs() if s.core)

@@ -1418,3 +1418,23 @@ describe('wsMessageHandlers', () => {
     });
   });
 });
+
+describe('scheduled task original chat result', () => {
+  beforeEach(() => vi.clearAllMocks());
+  it('refreshes the persisted result conversation and shows one keyed online hint', async () => {
+    const { toast } = await import('react-hot-toast');
+    const store = createMockStore();
+    createWSMessageHandlers(createMockDeps(store)).scheduled_task_result({ type: 'scheduled_task_result', payload: {
+      conversation_id: 'original', message_id: 'saved-message', task_name: '素材监测',
+    }, timestamp: Date.now() });
+    expect(store.markForceRefresh).toHaveBeenCalledWith('original');
+    expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('素材监测'), expect.objectContaining({ id: 'scheduled:saved-message' }));
+  });
+  it('does not present transient legacy data as a saved result', async () => {
+    const { toast } = await import('react-hot-toast');
+    const store = createMockStore();
+    createWSMessageHandlers(createMockDeps(store)).scheduled_task_result({ type: 'scheduled_task_result', payload: { text: 'legacy' }, timestamp: Date.now() });
+    expect(store.markForceRefresh).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+});

@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from core.exceptions import ValidationError as DomainValidationError
+
 from services.changeset.contracts import (
     AuthorizationResult,
     AuthorizeRequest,
@@ -64,6 +66,7 @@ TASK_FIELDS = (
     "run_at", "timezone", "push_target", "template_file", "max_credits",
     "retry_count", "timeout_sec", "next_run_at", "status", "execution_policy",
     "plan_snapshot", "data_scope", "schedule_enabled", "skill_revision_snapshot",
+    "origin_conversation_id", "notification_policy", "interval_minutes",
 )
 
 
@@ -115,7 +118,7 @@ def _complete_task_definition(
     value = dict(base) if operation == "update" else {}
     value.update(dict(proposed))
     value.setdefault("timezone", "Asia/Shanghai")
-    schedule_fields = {"schedule_type", "time_str", "weekdays", "day_of_month"}
+    schedule_fields = {"schedule_type", "time_str", "weekdays", "day_of_month", "interval_minutes"}
     if operation == "update" and "cron_expr" not in proposed and schedule_fields.intersection(proposed):
         if any(proposed[key] != base.get(key) for key in schedule_fields.intersection(proposed)):
             from services.scheduler.task_definition_input import simple_task_time
@@ -137,6 +140,17 @@ def _complete_task_definition(
     for key, lower, upper in limits:
         if not lower <= value[key] <= upper:
             raise ScheduledTaskChangeError(f"{key} 必须在 {lower} 到 {upper} 之间")
+    value.setdefault("notification_policy", {"mode": "always"})
+    from services.scheduler.monitoring import validate_policy
+    try:
+        value["notification_policy"] = validate_policy(value["notification_policy"])
+    except ValueError as exc:
+        raise ScheduledTaskChangeError(str(exc)) from exc
+    if operation in {"create", "update"} and value.get("interval_minutes") and value.get("schedule_type") == "cron":
+        if proposed.get("cron_expr") and "interval_minutes" not in proposed:
+            value["interval_minutes"] = None  # Explicit advanced cron replaces the interval UI.
+        else:
+            value["schedule_type"] = "interval"
     value.setdefault("template_file", None)
     return value
 
@@ -216,6 +230,8 @@ def build_scheduled_task_diff(
         "tool_scope": pair("tool_scope", _tool_scope(base), _tool_scope(proposed)),
         "data_scope": pair("data_scope", base.get("data_scope", {"kind": "task_prompt"}), proposed.get("data_scope", {"kind": "task_prompt"})),
         "recipient": pair("recipient", base.get("push_target"), proposed.get("push_target")),
+        "notification_policy": pair("notification_policy", base.get("notification_policy", {"mode": "always"}), proposed.get("notification_policy")),
+        "origin_conversation_id": pair("origin_conversation_id", base.get("origin_conversation_id"), proposed.get("origin_conversation_id")),
         "next_run_at": pair("next_run_at", base.get("next_run_at"), proposed.get("next_run_at")),
     }
     return patch, diff
@@ -248,9 +264,11 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
             if not value.get("schedule_type"):
                 raise ScheduledTaskChangeError("请选择执行频率")
             schedule_type = str(value["schedule_type"]).lower().strip()
-            if schedule_type not in {"once", "daily", "weekly", "monthly", "cron"}:
+            if schedule_type not in {"once", "daily", "weekly", "monthly", "cron", "interval"}:
                 raise ScheduledTaskChangeError(f"不支持的 schedule_type: {schedule_type}")
             value["schedule_type"] = schedule_type
+            if schedule_type != "interval":
+                value["interval_minutes"] = None
             _normalize_schedule_fields(value, schedule_type)
             if schedule_type == "once":
                 raw_run_at = value.get("run_at")
@@ -270,6 +288,14 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
                 value["next_run_at"] = run_at.astimezone(timezone.utc).isoformat()
             else:
                 cron_expr = value.get("cron_expr")
+                if schedule_type == "interval":
+                    try:
+                        expected_cron = compose_cron("interval", interval_minutes=value.get("interval_minutes"))
+                    except DomainValidationError as exc:
+                        raise ScheduledTaskChangeError(str(exc)) from exc
+                    if request.proposed_snapshot.get("cron_expr") and cron_expr != expected_cron:
+                        raise ScheduledTaskChangeError("间隔分钟与实际cron安排不一致，请只保留一种时间配置")
+                    cron_expr = expected_cron
                 if not cron_expr and schedule_type != "cron":
                     try:
                         cron_expr = compose_cron(
@@ -277,12 +303,15 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
                             time_str=str(value.get("time_str") or ""),
                             weekdays=value.get("weekdays"),
                             day_of_month=value.get("day_of_month"),
+                            interval_minutes=value.get("interval_minutes"),
                         )
-                    except ValueError as exc:
+                    except (ValueError, DomainValidationError) as exc:
                         raise ScheduledTaskChangeError(str(exc)) from exc
                 if not cron_expr or not validate_cron(str(cron_expr)):
                     raise ScheduledTaskChangeError("cron_expr 无效")
                 value["cron_expr"] = str(cron_expr)
+                if schedule_type == "interval":
+                    value["schedule_type"] = "cron"
                 value["run_at"] = None
                 try:
                     value["next_run_at"] = calc_next_run(
@@ -290,12 +319,21 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
                     ).isoformat()
                 except Exception as exc:
                     raise ScheduledTaskChangeError("无法计算下次执行时间") from exc
+            policy = value["notification_policy"]
+            cadence = value.get("interval_minutes") or (1440 if schedule_type == "daily" else None)
+            if policy.get("mode") == "conditional" and policy.get("comparison") != "value" and cadence:
+                if policy["window_minutes"] < cadence or policy["window_minutes"] % cadence:
+                    raise ScheduledTaskChangeError("增长比较窗口必须是执行间隔的整数倍，且不能短于执行间隔")
             if "data_scope" not in value:
                 value["data_scope"] = request.context.base_snapshot.get(
                     "data_scope", {"kind": "task_prompt"},
                 )
             if not isinstance(value["data_scope"], Mapping):
                 raise ScheduledTaskChangeError("数据范围必须是对象")
+        origin = value.get("origin_conversation_id")
+        if origin and operation in {"create", "update"}:
+            from services.conversation_service import ConversationService
+            await ConversationService(self.db).get_conversation(str(origin), self._execution_owner(request.context), self.org_id)
         if operation == "resume" and (request.context.policy_snapshot.get("submission") or {}).get("mode") == "apply_if_allowed":
             from services.scheduler.task_submission import resume_time
             try:
@@ -430,7 +468,8 @@ class ScheduledTaskChangeAdapter(ChangeSetAdapter):
                 return PreflightResult(False, {"mode": "validated_capability_scope", "full_run": False}, reasons)
         if (direct
                 and context.policy_snapshot.get("requires_approval") is False
-                and readonly_tool_scope(execution_policy)):
+                and readonly_tool_scope(execution_policy)
+                and (context.proposed_snapshot.get("notification_policy") or {}).get("mode") != "conditional"):
             return PreflightResult(True, {
                 "mode": "validated_capability_scope", "full_run": False,
                 "allowed_tools": list(execution_policy["allowed_tools"]),

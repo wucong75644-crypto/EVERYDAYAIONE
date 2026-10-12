@@ -97,6 +97,7 @@ export default function SkillChatProposalCard({ proposalId, fallbackTitle }: {
     </header>
     <div className="space-y-3 px-4 py-4">
       <div><p className="text-xs font-medium text-text-secondary">用途</p><p className="mt-1 whitespace-pre-wrap text-sm text-text-primary">{proposal.content.description || '未填写用途说明'}</p></div>
+      <p className="text-xs text-text-secondary">适用场景：{Array.isArray(metadata.execution_modes) && metadata.execution_modes.includes('scheduled') ? '聊天与定时任务；发布后可在任务确认表单选择固定版本。' : '聊天使用。'}</p>
       {updating && <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border-default bg-surface-elevated px-3 py-2 text-xs">
         <span className="font-medium text-text-primary">修改目标：个人 Skill · 仅你本人</span>
         {proposal.target_revision && <span className="text-text-secondary">基于当前版本 {proposal.target_revision}</span>}

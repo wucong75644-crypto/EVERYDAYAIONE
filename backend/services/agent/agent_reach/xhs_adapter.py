@@ -76,9 +76,9 @@ class XHSAdapter:
                 items.append(ReachItem(note.get('displayTitle') or '小红书帖子',
                     'https://www.xiaohongshu.com/explore/' + row['id'] + '?' +
                     urlencode({'xsec_token': row.get('xsecToken', ''), 'xsec_source': 'pc_search'}),
-                    note.get('displayTitle') or '', 'snippet'))
+                    'note_id：' + str(row['id']) + '\n' + (note.get('displayTitle') or ''), 'snippet'))
             return ReachResult('xiaohongshu', 'xhs-rest', items,
-                warnings=['搜索仅返回卡片摘要，需读取帖子详情。'] if items else [])
+                warnings=['搜索仅返回卡片摘要，需读取帖子详情；读取时原样复制完整URL，必须保留xsec_token和xsec_source参数，不能只传笔记ID或删去问号后的内容。'] if items else [])
         comments_mode = request.action == 'read_comments'
         end = request.page * request.max_results
         data = await self.call('POST', 'feeds/detail', {**self.target(request.url),
@@ -91,9 +91,20 @@ class XHSAdapter:
         note = detail['note']
         if not comments_mode:
             author = (note.get('user') or {}).get('nickname', '')
+            interaction = note.get('interactInfo') or {}
+            if not isinstance(interaction, dict):
+                interaction = {}
+            # Keep upstream count strings (including abbreviated units) intact.
+            # Missing metrics remain null; never synthesize zero or a baseline.
+            metrics = {'note_id': note.get('noteId') or self.target(request.url)['feed_id'],
+                       'likes': interaction.get('likedCount'),
+                       'comments_count': interaction.get('commentCount'),
+                       'collected_count': interaction.get('collectedCount'),
+                       'shared_count': interaction.get('sharedCount')}
             return ReachResult('xiaohongshu', 'xhs-rest', [ReachItem(
                 note.get('title') or '小红书正文', request.url,
-                '作者：' + author + '\n' + (note.get('desc') or ''), 'full_text')])
+                '笔记指标（平台原始计数，空值不可当零）：' + json.dumps(metrics, ensure_ascii=False)
+                + '\n作者：' + author + '\n' + (note.get('desc') or ''), 'full_text')])
         comments = detail.get('comments') or {}
         rows = comments.get('list')
         if not isinstance(rows, list):

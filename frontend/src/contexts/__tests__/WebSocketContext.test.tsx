@@ -30,6 +30,7 @@ import { notifyChangeSetUpdated } from '../../services/changeSetEvents';
 // ============================================================
 
 vi.mock('../../hooks/useWebSocket');
+vi.mock('../../hooks/useConversationResultSync', () => ({ useConversationResultSync: vi.fn() }));
 vi.mock('../../stores/useAuthStore');
 vi.mock('../../stores/useTaskRestorationStore');
 vi.mock('../../utils/taskRestoration');

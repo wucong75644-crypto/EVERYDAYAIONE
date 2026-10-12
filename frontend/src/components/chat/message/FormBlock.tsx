@@ -25,6 +25,8 @@ import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 import ChangeSetCard from './ChangeSetCard';
 import type { ChangeSet } from '../../../types/changeset';
 import { scheduledTaskService } from '../../../services/scheduledTask';
+import { ScheduledSkillPicker } from '../../scheduled-tasks/ScheduledSkillPicker';
+import type { ScheduledSkillChoice } from '../../../types/scheduledTask';
 
 // ════════════════════════════════════════════════════════
 // 子组件
@@ -32,7 +34,9 @@ import { scheduledTaskService } from '../../../services/scheduledTask';
 
 function isFormFieldVisible(field: FormField, values: Record<string, unknown>): boolean {
   if (!field.visible_when) return true;
-  const equal = formatFormValue(values[field.visible_when.field]) === field.visible_when.value;
+  const actual = formatFormValue(values[field.visible_when.field]);
+  const expected = field.visible_when.value;
+  const equal = Array.isArray(expected) ? expected.includes(actual) : actual === expected;
   return field.visible_when.not ? !equal : equal;
 }
 
@@ -357,6 +361,17 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
   const submitted = status === 'submitted';
   const submitting = status === 'submitting';
   const cancelled = status === 'cancelled';
+  const hasScheduledSkills = form.form_type.startsWith('scheduled_task_')
+    && form.fields.some((field) => field.name === 'skills' && field.type === 'hidden');
+  const selectedSkills = useMemo<ScheduledSkillChoice[]>(() => {
+    if (!hasScheduledSkills || typeof values.skills !== 'string') return [];
+    try {
+      const selected: unknown = JSON.parse(values.skills);
+      return Array.isArray(selected) ? selected.filter((item): item is ScheduledSkillChoice =>
+        typeof item === 'object' && item !== null && typeof item.skill_id === 'string'
+        && typeof item.revision === 'string') : [];
+    } catch { return []; }
+  }, [hasScheduledSkills, values.skills]);
 
   const replanChangeSet = useCallback(async (changeSet: ChangeSet): Promise<ChangeSet> => {
     const operation = changeSet.operation === 'update' ? 'update' : 'create';
@@ -520,8 +535,13 @@ export default memo(function FormBlock({ form, messageId, conversationId }: Form
       {!localChangeSetId && values._submission_mode !== 'apply_if_allowed' && <ScheduledTaskWorkflowStage formType={form.form_type} status={status} />}
       <FormBlockContent form={form} submitting={submitting}
         onSubmit={handleSubmit} onCancel={handleCancel}
-        fields={<FormFields fields={form.fields} values={values}
-          isVisible={isFieldVisible} onChange={updateField} />} />
+        fields={<><FormFields fields={form.fields} values={values}
+          isVisible={isFieldVisible} onChange={updateField} />
+          {hasScheduledSkills && <div className="px-4 pb-3"><ScheduledSkillPicker
+            taskId={typeof values.task_id === 'string' ? values.task_id : undefined}
+            selected={selectedSkills} disabled={submitting}
+            onChange={(skills) => updateField('skills', JSON.stringify(skills.map(({ skill_id, revision }) => ({ skill_id, revision }))))}
+          /></div>}</>} />
       {formError && <p role="alert" className="mx-4 mt-2 text-xs text-red-600 dark:text-red-400">{formError}</p>}
     </>
   );

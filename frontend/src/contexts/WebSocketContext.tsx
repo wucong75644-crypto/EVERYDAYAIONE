@@ -28,6 +28,7 @@ import { applyFormSubmitResult } from '../utils/messageUtils';
 import { notifyChangeSetUpdated } from '../services/changeSetEvents';
 import { createWSMessageHandlers } from './wsMessageHandlers';
 import type { DeliveryCursor } from './wsMessageHandlerShared';
+import { useConversationResultSync } from '../hooks/useConversationResultSync';
 import ToolConfirmModal from '../components/chat/modals/ToolConfirmModal';
 
 /** 操作上下文（供完成回调使用） */
@@ -60,6 +61,7 @@ interface WebSocketProviderProps {
 export function WebSocketProvider({ children }: WebSocketProviderProps) {
   const ws = useWebSocket();
   const currentOrgId = useAuthStore((state) => state.currentOrgId);
+  useConversationResultSync(ws.isConnected, currentOrgId);
   // 注意：不订阅整个 store（会导致每次 state 变化重建 handler）
   // handler 内部通过 useMessageStore.getState() 获取最新状态和方法
 

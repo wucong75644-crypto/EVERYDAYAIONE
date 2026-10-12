@@ -189,3 +189,17 @@ describe('TaskForm structured AI fill', () => {
     })));
   });
 });
+
+it('submits minute cadence and conditional notification fields from structured chat-style fill', async () => {
+  vi.mocked(scheduledTaskService.proposeChange).mockResolvedValue({ id: 'cs-monitor' } as never);
+  render(<TaskForm task={null} onClose={vi.fn()} onProposed={vi.fn()} />);
+  await parse({ name: '素材监测', prompt: '采集文具素材的点赞数', schedule_type: 'interval', interval_minutes: 30,
+    notification_policy: { mode: 'conditional', metric: 'likes', comparison: 'delta', threshold: 500, window_minutes: 60 },
+    recipient: '我', missing_fields: [] });
+  expect(screen.getByText('达到门槛（大于或等于）')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: '创建任务' }));
+  await waitFor(() => expect(scheduledTaskService.proposeChange).toHaveBeenCalledWith(expect.objectContaining({
+    definition: expect.objectContaining({ schedule_type: 'interval', interval_minutes: 30,
+      notification_policy: expect.objectContaining({ comparison: 'delta', threshold: 500, window_minutes: 60 }) }),
+  })));
+});

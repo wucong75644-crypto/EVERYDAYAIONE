@@ -7,6 +7,7 @@
  * - 任务完成/失败辅助函数
  */
 
+import { toast } from 'react-hot-toast';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useMemoryStore } from '../stores/useMemoryStore';
 import { logger } from '../utils/logger';
@@ -547,6 +548,14 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
         useScheduledTaskStore.getState().fetchRuns(data.task_id!);
         void useScheduledTaskStore.getState().fetchTasks();
       });
+    },
+
+  scheduled_task_result: (deps, msg) => {
+      const data = (msg.data || msg.payload) as { conversation_id?: string; message_id?: string; task_name?: string };
+      if (!data?.conversation_id || !data.message_id) return;
+      deps.getStore().markForceRefresh(data.conversation_id);
+      window.dispatchEvent(new Event('conversation-list-refresh'));
+      toast.success(`任务「${data.task_name || '定时任务'}」有新结果，已保存到原聊天`, { id: `scheduled:${data.message_id}`, duration: 8000 });
     },
 
   scheduled_task_notification: (_deps, msg) => {

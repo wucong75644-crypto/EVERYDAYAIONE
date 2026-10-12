@@ -38,8 +38,9 @@ class ScheduledTaskDeliveryClaim:
             not isinstance(target, Mapping)
             or not isinstance(payload, Mapping)
             or kind not in {"result", "owner_alert"}
-            or target.get("type") not in {"wecom_user", "wecom_group"}
-            or not target.get("chatid")
+            or target.get("type") not in {"wecom_user", "wecom_group", "web"}
+            or (target.get("type") == "web" and not (target.get("user_id") and target.get("conversation_id")))
+            or (target.get("type") != "web" and not target.get("chatid"))
         ):
             raise RuntimeError("SCHEDULED_TASK_DELIVERY_CLAIM_INVALID")
         return cls(
@@ -138,6 +139,10 @@ class ScheduledTaskDeliveryWorker:
 
     async def _process(self, claim: ScheduledTaskDeliveryClaim) -> None:
         try:
+            if claim.target_context.get("type") == "web":
+                await self._deliver_web(claim)
+                await self._complete(claim)
+                return
             context = {
                 "org_id": claim.org_id,
                 "transport": "smart_robot",
@@ -169,6 +174,31 @@ class ScheduledTaskDeliveryWorker:
             raise
         except Exception as error:
             await self._fail(claim, error)
+
+    async def _deliver_web(self, claim):
+        # Atomic, idempotent message insertion: a crash before lease completion
+        # retries the same delivery ID without creating a second chat message.
+        result = await self._rpc("save_scheduled_web_delivery", {
+            "p_delivery_id": claim.delivery_id, "p_lease_token": claim.lease_token,
+        })
+        if result.get("outcome") not in {"saved", "existing"}:
+            raise RuntimeError("SCHEDULED_WEB_DELIVERY_" + str(result.get("outcome")))
+        from services.websocket_manager import ws_manager
+        target = claim.target_context
+        try:
+            await ws_manager.send_to_user(str(target["user_id"]), {
+                "type": "conversation_updated", "conversation_id": target["conversation_id"],
+            }, org_id=claim.org_id)
+            if result["outcome"] == "saved":
+                await ws_manager.send_to_user(str(target["user_id"]), {
+                    "type": "scheduled_task_result", "data": {
+                        "run_id": claim.run_id, "message_id": result["message_id"],
+                        "conversation_id": target["conversation_id"],
+                        "task_name": claim.payload.get("task_name"),
+                    },
+                }, org_id=claim.org_id)
+        except Exception as error:
+            logger.warning("scheduled_web_online_hint_failed | error={}", type(error).__name__)
 
     async def _complete(self, claim: ScheduledTaskDeliveryClaim) -> None:
         result = await self._rpc(

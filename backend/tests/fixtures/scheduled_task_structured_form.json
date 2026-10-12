@@ -24,6 +24,10 @@
           "value": "once"
         },
         {
+          "label": "每隔分钟／小时（整点对齐）",
+          "value": "interval"
+        },
+        {
           "label": "每天",
           "value": "daily"
         },
