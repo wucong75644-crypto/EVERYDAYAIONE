@@ -1,0 +1,93 @@
+{
+  "upstream": "https://github.com/ZJU-REAL/Easel",
+  "commit": "e6d5e8ebda73e1d9f9c4f7beb6e960979353ebec",
+  "adaptation_version": "phase3-v1",
+  "license": "Apache-2.0; inherited LICENSE.Easel and NOTICE",
+  "files": [
+    {
+      "path": "skills/openclaw/card-design/EASEL-META.md",
+      "sha256": "6935e57d6f70300f7acc4298cbd6682af77cf34127fe41f8b2206645530021f4",
+      "handling": "reviewed methods; scripts not shipped or executable"
+    },
+    {
+      "path": "skills/openclaw/card-design/SKILL.md",
+      "sha256": "d6a15e78dcdec135549e6985e69298e202bf9390f4aaf80bf7e6cdfd3aa5bf4d",
+      "handling": "reviewed methods; scripts not shipped or executable"
+    },
+    {
+      "path": "skills/openclaw/card-design/references/anti-ai-slop.md",
+      "sha256": "1f7812a50a87d3cf440b76d894e66eae48da6de7c6543a174a3fe5db1e1d60ba",
+      "handling": "reviewed methods; scripts not shipped or executable"
+    },
+    {
+      "path": "skills/openclaw/card-design/references/card-recipes.md",
+      "sha256": "d999552eca32f12fe7d9093bcbf94fa6a261d7b3923fcb79d783cb3708015747",
+      "handling": "reviewed methods; scripts not shipped or executable"
+    },
+    {
+      "path": "skills/openclaw/card-design/references/layout-laws.md",
+      "sha256": "3e17ce36fa072c4d67df9f784eecf2f65064f34f414f50cf4c7bb2a96ac6cec9",
+      "handling": "reviewed methods; scripts not shipped or executable"
+    },
+    {
+      "path": "skills/openclaw/card-design/references/palettes.md",
+      "sha256": "9669cb74ab5d3cb7e769dde67329bf0b6fec7505d0fb4082c7863564feb350a6",
+      "handling": "reviewed methods; scripts not shipped or executable"
+    },
+    {
+      "path": "skills/openclaw/card-design/references/styles.md",
+      "sha256": "54f5c037f4d008fe8eea95bd99bf78c0ea5b7cf33510f515a2e3385647c6469c",
+      "handling": "reviewed methods; scripts not shipped or executable"
+    },
+    {
+      "path": "skills/openclaw/card-design/references/typography.md",
+      "sha256": "b6bfa2650ee4bda18e70d43be5f1935785099b8f18721eefb7ed17717f25ba1b",
+      "handling": "reviewed methods; scripts not shipped or executable"
+    },
+    {
+      "path": "skills/openclaw/card-design/scripts/card_audit.py",
+      "sha256": "7c80025120cfce0e41e1645717d0e56a961f858981aaf6f982332b231b524ccb",
+      "handling": "reviewed methods; scripts not shipped or executable"
+    },
+    {
+      "path": "skills/openclaw/card-xiaohongshu/EASEL-META.md",
+      "sha256": "6e93969e1bb348053781a94f2f66db8cd7a512555c8d5f9300c9e4894714eeb5",
+      "handling": "reviewed methods; scripts not shipped or executable"
+    },
+    {
+      "path": "skills/openclaw/card-xiaohongshu/SKILL.md",
+      "sha256": "331d17f7f2aa0e8b2878266399b3e605938ec98d2070afcf38a246167fee27d3",
+      "handling": "reviewed methods; scripts not shipped or executable"
+    },
+    {
+      "path": "skills/openclaw/card-xiaohongshu/example.md",
+      "sha256": "cdb8a511a5f45f1804834fd9ad799513b7ff5442eea1af62a6a2fbf445381a70",
+      "handling": "reviewed methods; scripts not shipped or executable"
+    },
+    {
+      "path": "skills/openclaw/xhs-note-creator/scripts/validate_meta.py",
+      "sha256": "b9fc8d92401e9d9b7f23181470b8eb9838abb2ba22ba8aabbb26985c76868542",
+      "handling": "reviewed methods; scripts not shipped or executable"
+    },
+    {
+      "path": "skills/shared/scripts/render_card.py",
+      "sha256": "fcc5d0d7a877bded9e056a8faea2ce487d35231de07f6b0407d22eec81eb83ac",
+      "handling": "reviewed methods; scripts not shipped or executable"
+    }
+  ],
+  "dependencies": {
+    "card-design": "references reviewed; no script assets",
+    "card-xiaohongshu": "design output via host, no dynamic Skill activation",
+    "render_card.py": "replaced by independent Pillow template; no HTML renderer or remote fonts",
+    "card_audit.py": "reviewed; overflow measured by renderer, density only advisory",
+    "validate_meta.py": "mapped to strict Pydantic and structural checks",
+    "fonts": "system-installed CJK font, operator-managed; no font redistribution"
+  },
+  "excluded": [
+    "AGPL third-party implementation",
+    "OpenClaw execution",
+    "publish scheduler",
+    "arbitrary HTML/CSS/scripts",
+    "automatic image provider calls"
+  ]
+}

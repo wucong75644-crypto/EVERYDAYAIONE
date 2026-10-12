@@ -174,3 +174,15 @@ def validate_model_output(schema, text):
             "MODEL_OUTPUT_INVALID",
             "模型输出不符合约定：" + ",".join(kinds) + "；未生成成果，请勿重复提交。",
         ) from None
+
+
+from .contracts import Card
+
+class CardsOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    cards: list[Card] = Field(min_length=2, max_length=9)
+    evidence: list[Evidence] = Field(min_length=1, max_length=30)
+    notes: str = Field(max_length=2000)
+
+class ReferencedCardsOutput(CardsOutput):
+    evidence: list[EvidenceReference] = Field(min_length=1, max_length=30)

@@ -209,7 +209,31 @@ def _check_identity(executor, context):
         if member.get("status") != "active":
             raise PermissionError("organization_membership_required")
         skill_org_admin = member.get("role") in {"owner", "admin"}
-    if context.execution_mode == "interactive":
+    if context.entrypoint == "social_ops_interactive":
+        if (context.execution_mode != "interactive" or not context.org_id
+                or context.context_scope != "user" or context.conversation_id is not None
+                or context.authorized_tool_names != frozenset({"agent_reach"})):
+            raise PermissionError("social_publish_scope_invalid")
+        actor = row("users", "status", id=context.actor_user_id)
+        # Intent tables FORCE RLS; a raw fluent read has no runtime GUC scope.
+        # Use the same scoped transaction and active-member check as the API.
+        from services.social_ops.repository import Repository
+        from core.db_scope import DatabaseScope, DatabaseAccessKind
+        try:
+            scope = DatabaseScope(actor_user_id=context.actor_user_id, org_id=context.org_id,
+                                  access_kind=DatabaseAccessKind.RUNTIME)
+            with Repository(executor.db.pool, scope).cursor() as cursor:
+                cursor.execute("SELECT owner_id,org_id,state,approved_by FROM social_publish_intents WHERE id=%s AND org_id=%s",
+                               (context.task_id, context.org_id))
+                intent = cursor.fetchone() or {}
+        except Exception:
+            raise PermissionError("social_publish_identity_unavailable") from None
+        if (actor.get("status") != "active" or str(intent.get("org_id")) != context.org_id
+                or str(intent.get("owner_id")) != context.actor_user_id
+                or str(intent.get("approved_by")) != context.actor_user_id
+                or intent.get("state") != "dispatching"):
+            raise PermissionError("social_publish_confirmation_invalid")
+    elif context.execution_mode == "interactive":
         conversation = row("conversations", "user_id,org_id,scope_type,scope_id,source",
                            id=context.conversation_id)
         if conversation.get("org_id") != context.org_id:

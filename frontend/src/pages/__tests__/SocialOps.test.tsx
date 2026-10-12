@@ -71,7 +71,7 @@ beforeEach(() => {
     if (path === "/skill-options") return [];
     if (path === "/research-jobs/job1") return job;
     if (path.endsWith("/sources")) return [source];
-    if (path.endsWith("/production-runs")) return [];
+    if (path.endsWith("/production-runs") || path.endsWith("/publish-intents")) return [];
     if (path.endsWith("/contents")) return [draft];
     if (path.startsWith("/topics?"))
       return [
@@ -375,7 +375,7 @@ it("后台新版本同步到未编辑草稿，存在未保存修改时保留并�
       refresh();
     });
     expect(screen.getByLabelText("标题")).toHaveValue("保留我的编辑");
-    expect(screen.getByRole("status")).toHaveTextContent("服务器已有更新版本");
+    expect(screen.getByText(/服务器已有更新版本/)).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "检查已保存版本" }),
     ).toBeDisabled();

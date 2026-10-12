@@ -85,6 +85,10 @@ export interface Draft {
     evidence_ids?: string[];
     evidence?: { snapshot_id: string; quote: string }[];
     assumptions: string[];
+    cards?: SocialCard[];
+    visual?: VisualTemplate;
+    assets?: SocialAsset[];
+    images_text_hash?: string;
   };
   checks: unknown;
 }
@@ -123,7 +127,12 @@ export const socialApi = <T>(
   path: string,
   method: "GET" | "POST" | "PATCH" | "PUT" = "GET",
   data?: unknown,
-): Promise<T> => request({ url: `/social-ops${path}`, method, data });
+): Promise<T> => request({
+  url: `/social-ops${path}`, method, data,
+  // One bounded synchronous confirmation, never a transport retry.
+  ...(method === "POST" && /^\/publish-intents\/[^/]+\/confirm$/.test(path)
+    ? { timeout: 210000 } : {}),
+});
 export const connections = (): Promise<Connection[]> =>
   request({ url: "/agent-reach/connections", method: "GET" });
 export const stageKeys: Record<string, string[]> = {
@@ -137,3 +146,23 @@ export const stageKeys: Record<string, string[]> = {
   polish: ["easel-text-polisher"],
   check: ["easel-quality-gate", "easel-risk-scanner"],
 };
+
+export interface SocialCard {
+  role: "cover" | "body" | "closing";
+  headline: string;
+  body: string;
+}
+export interface VisualTemplate {
+  background: string;
+  foreground: string;
+  accent: string;
+  watermark: string;
+}
+export interface SocialAsset {
+  id: string;
+  sha256: string;
+  width: number;
+  height: number;
+  source: string;
+  rights: string;
+}

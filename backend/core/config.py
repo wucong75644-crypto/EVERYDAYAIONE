@@ -81,6 +81,8 @@ class Settings(BaseSettings):
     agent_reach_media_staging_dir: str = "/tmp/everydayai-reach-media"
     agent_reach_bin_dir: str = "/opt/everydayai-agent-reach/bin"
     agent_reach_timeout_seconds: float = Field(default=60.0, gt=0, le=180)
+    # Multi-image publishing includes identity, upload, editing and submission.
+    agent_reach_xhs_publish_timeout_seconds: float = Field(default=180.0, gt=0, le=180)
     agent_reach_exa_api_key: Optional[str] = None
     agent_reach_youtube_api_key: Optional[str] = None
     # Operator-owned mapping: connection UUID -> dedicated XHS REST origin.
