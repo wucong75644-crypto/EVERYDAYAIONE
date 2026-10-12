@@ -127,3 +127,14 @@ PYTHONPATH=backend SOCIAL_OPS_TEST_DSN='host=/private/tmp port=55479 dbname=soci
 - 收尾：本测试研究为interval_hours=null的单次已结束任务（partial、3/3处理完），没有周期计划；全部新文字运行completed，旧needs_input失败记录保留且不会自动重试。不存在本轮需要继续采集/扣费的活动任务。没有删除已有记录。
 - 仍未实际验收：跨页结果、同内容重复采集去重、隔离环境短周期调度/中断续跑/低日额度等待/模拟认证异常；这些不能以代码或替代响应测试抵充。来源证据与版本历史仍以技术JSON显示，可读性需要继续优化。
 - 证据：`/tmp/social-ops-production-plan-completed.png`、`/tmp/social-ops-production-draft-v2.png`、`/tmp/social-ops-production-history-v1.png`、`/tmp/social-ops-production-draft-v3.png`、`/tmp/social-ops-production-stages-completed.png`。
+
+### 89ae5256 发布后继续验收
+
+- 当前生产候选`89ae525607a98a10fc472f8de3760835257bbdbd`，受控发布前端1739、后端12080项通过，迁移295已应用，四服务readiness通过；未合入main，工作树保留。
+- 实际操作Chrome生产登录会话，仅使用既有验收画像/研究/草稿：教程选题“采用并准备草稿”成功保存决定并转入编辑；整页刷新后仍为采用，另外两个候选仍显示暂缓。日期由10月13日调整至14日，离开输入框后保存，整页刷新后仍为2026-10-14。单次结束任务的暂停/恢复禁用，明确无后续采集计划。
+- 人工整理验收草稿去掉正文内部E编号、补充样本限制和待补素材说明，保存v4；未保存时检查和润色禁用，保存后恢复。刷新重新选择确认v4正文与版本持久保存。
+- 仅新增一次质量与素材检查运行，两模型阶段完成，检查明确绑定content_id=75babd47-e491-454d-aaea-aa779b01c2b1、revision=4，hard_errors为空，但needs_media、ready_to_publish=false。语义检查仍提示来源有限、授权/平台规则未核实；不等于发布审核通过。没有新采集、润色、创作或平台写入。页头积分刷新557→555，未独立核算账单。
+- 本地独立PostgreSQL `/private/tmp:55479/social_phase12_test` 运行20项集成验证通过。新增模拟认证失效、身份不符、验证码、429：账号熔断和任务暂停，未处理账号原因禁止恢复，显式恢复后可继续；低日额度等待保留队列/已占额度；仅在专用测试库将到期缩短至1秒，真实时钟与host发现函数触发第2轮且不重复领取，最后暂停。既有集成覆盖租约过期续跑、旧结果拒绝、去重和来源分页。这些是代码/数据库模拟验证，不是生产调度、真实平台风控或进程重启验收。
+- 本轮无生产周期任务，单次任务已结束，检查已完成，无持续采集/模型调用。测试结果保留；新增测试与本记录未提交部署。
+- 尚未验证：真实多页来源、重复平台采集去重、完整后台宿主短周期端到端和实际本地进程中断续跑；后台新版本自动同步/脏编辑保护目前仍只有针对性测试，尚未重新进行浏览器并发复测。证据/历史技术JSON可读性问题仍在。
+- 页面证据：`/tmp/social-ops-production-v4-check.png`、`/tmp/social-ops-production-topic-persisted.png`。

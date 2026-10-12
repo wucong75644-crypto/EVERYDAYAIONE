@@ -104,6 +104,78 @@ def worker(s):
     return w
 
 
+@pytest.mark.parametrize("code,state", [
+    ("AUTH_EXPIRED", "paused_auth"),
+    ("ACCOUNT_MISMATCH", "paused_auth"),
+    ("CAPTCHA_REQUIRED", "paused_platform"),
+    ("RATE_LIMITED", "paused_platform"),
+])
+def test_isolated_account_failure_stops_research_until_manual_recovery(stores, code, state):
+    s = stores
+    w = worker(s)
+    job, item = w.claim(s.job["id"])
+    budget = AccessBudgetService(s.pool, s.scope, secrets=s.repo.secrets)
+    request = ReachRequest(task="验收测试", platform="xiaohongshu", action="search", query="fixture")
+    attempt = budget.reserve(s.connection, request)
+    budget.settle(s.connection, attempt, code)
+    w.settle(job, item, SimpleNamespace(status="error", error_message=code, metadata={}))
+    assert s.repo.job(str(job["id"]))["status"] == state
+    assert w.claim(job["id"]) is None
+    with pytest.raises(ReachError, match="处理账号异常"):
+        s.repo.transition(str(job["id"]), "resume")
+    budget.recover(s.connection)
+    s.repo.transition(str(job["id"]), "resume")
+    assert w.claim(job["id"]) is not None
+    s.repo.transition(str(job["id"]), "cancel")
+
+
+def test_isolated_low_daily_budget_waits_without_losing_queue(stores):
+    s = stores
+    budget = AccessBudgetService(s.pool, s.scope, secrets=s.repo.secrets)
+    budget.configure(s.connection, BudgetConfig(daily_limit=2, min_interval_seconds=1))
+    request = ReachRequest(task="验收测试", platform="xiaohongshu", action="search", query="fixture")
+    budget.reserve(s.connection, request)
+    with pytest.raises(ReachError) as caught:
+        budget.reserve(s.connection, request)
+    assert caught.value.code == "ACCESS_BUDGET_WAIT"
+    w = worker(s)
+    job, item = w.claim(s.job["id"])
+    w.settle(job, item, SimpleNamespace(status="error", error_message=caught.value.code,
+        metadata={"next_eligible_at": caught.value.next_eligible_at}))
+    assert s.repo.job(str(job["id"]))["status"] == "waiting_budget"
+    assert w.claim(job["id"]) is None
+    assert budget.status(s.connection)["consumed"] == 2
+    assert not s.repo.sources(str(job["id"]))
+    s.repo.transition(str(job["id"]), "pause")
+
+
+def test_isolated_real_clock_due_occurrence_is_discovered_once(stores):
+    """Shorten only this disposable DB deadline, never the production scheduler."""
+    import time
+    s = stores
+    w = worker(s)
+    job, item = w.claim(s.job["id"])
+    w.settle(job, item, ReachResult("xiaohongshu", "fixture", []).to_agent_result())
+    with s.repo.cursor() as c:
+        c.execute("UPDATE social_research_jobs SET next_occurrence_at=now()+interval '1 second' WHERE id=%s", (job["id"],))
+    assert w.claim(job["id"]) is None
+    deadline = time.monotonic() + 5
+    claimed = None
+    while time.monotonic() < deadline and claimed is None:
+        time.sleep(0.1)
+        with psycopg.connect(s.dsn) as conn:
+            conn.execute("SET LOCAL ROLE everydayai")
+            conn.execute(SET_DATABASE_SCOPE_SQL, DatabaseScope(actor_user_id=None, org_id=None, access_kind=DatabaseAccessKind.WORKER).settings)
+            due = conn.execute("SELECT * FROM social_ops_due()").fetchall()
+        if any(str(r[2]) == str(job["id"]) for r in due):
+            claimed = worker(s).claim(job["id"])
+    assert claimed is not None
+    assert claimed[0]["generation"] == 2
+    assert worker(s).claim(job["id"]) is None
+    s.repo.transition(str(job["id"]), "pause")
+    assert worker(s).claim(job["id"]) is None
+
+
 def test_rls_versions_idempotency_and_foreign_keys(stores):
     s = stores
     assert not s.foreign.profiles() and not s.foreign.jobs()
