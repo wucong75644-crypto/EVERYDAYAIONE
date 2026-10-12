@@ -509,6 +509,8 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(conversation.router, prefix="/api")
     app.include_router(skills.router, prefix="/api")
     app.include_router(agent_reach.router, prefix="/api")
+    from api.routes import social_ops
+    app.include_router(social_ops.router, prefix="/api")
     app.include_router(skill_admin.router, prefix="/api")
     app.include_router(skill_admin.scope_router, prefix="/api")
     app.include_router(skill_creation.router, prefix="/api")

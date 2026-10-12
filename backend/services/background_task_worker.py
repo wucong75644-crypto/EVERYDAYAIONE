@@ -62,6 +62,8 @@ class BackgroundTaskWorker:
         # 设计文档: docs/document/TECH_定时任务心跳系统.md §4.2
         from services.scheduler.scanner import ScheduledTaskScanner
         self._scheduled_scanner = ScheduledTaskScanner(db)
+        from services.social_ops.worker import SocialOpsWorker
+        self._social_ops = SocialOpsWorker(db)
         from services.handlers.chat_image_lifecycle import ChatImageLifecycle
         self._chat_images = ChatImageLifecycle(db, self.settings)
         self._chat_image_loop_task = None
@@ -122,6 +124,7 @@ class BackgroundTaskWorker:
                     await self.poll_pending_tasks()
                     await self.cleanup_stale_tasks()
                     await self._scheduled_scanner.poll()  # 定时任务扫描
+                    await self._social_ops.poll()
                     await self.check_data_consistency()
                     await self._run_model_scoring()
                     await self.check_wecom_duplicates()
@@ -134,6 +137,7 @@ class BackgroundTaskWorker:
     async def stop(self):
         """停止后台工作器"""
         self.is_running = False
+        await self._social_ops.stop()
         if self._chat_image_loop_task is not None:
             self._chat_image_loop_task.cancel()
             with suppress(asyncio.CancelledError):

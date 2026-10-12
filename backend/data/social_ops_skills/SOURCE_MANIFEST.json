@@ -1,0 +1,475 @@
+{
+  "upstream": "https://github.com/ZJU-REAL/Easel",
+  "commit": "e6d5e8ebda73e1d9f9c4f7beb6e960979353ebec",
+  "license": "Apache-2.0",
+  "adaptation_version": "phase12-v1",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-competitor-analysis/EASEL-META.md",
+      "sha256": "b17e9935219027f25d55492c5dd4371611faf5a9003f587d03659a35f14e711c",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-competitor-analysis/SKILL.md",
+      "sha256": "f7326a2f97d824fc0b25541fcb37186cdb64feac1b3227d6ea0fbd77a216bea3",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-competitor-analysis/references/analysis-templates.md",
+      "sha256": "dddbf9ee82f9c7ff7779835ed9b918a2ab568a7fed68890318c0846eab52856c",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-competitor-analysis/references/data-collection.md",
+      "sha256": "6fd9031c651819fc65e418acddab8aa7c0af9e4cd566cfa3fbe51b526ffa3929",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-competitor-analysis/references/viral-patterns.md",
+      "sha256": "316900b418eeee2128a5eb5a61b458996dedbf3c7157f01995bb3e155af5a2b8",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-content-calendar/EASEL-META.md",
+      "sha256": "a10a610b546ceefc94de26cfa19cdae20fd0d1298895f57135e6108e8ca8b0fd",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-content-calendar/SKILL.md",
+      "sha256": "a53e97724e588cffe7daf1f31122ad0ddec8250683dd31ef7b72c8fa839033bb",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-content-calendar/references/content-mix-guide.md",
+      "sha256": "7783a5e34498cf715e5188db3ae656c0a7ea9ffdc7defcaa81ea88a16097d76c",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-content-gap-analysis/EASEL-META.md",
+      "sha256": "dfd51773d2651e894d951f39457c0eacd3df11bd6dad99a727cb929bcca351b3",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-content-gap-analysis/SKILL.md",
+      "sha256": "0ff94f5bbae3274dd4f373824360ed544a60ff39653fe41d32a34d900c30dbd8",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-content-gap-analysis/references/demand-signals.md",
+      "sha256": "dc1dfda521bbae627f605feb27301c0954d9508ce48afff5775dc736802b3a8b",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-content-gap-analysis/references/scoring-model.md",
+      "sha256": "f5a56c95b9c1829e71db47ad77fa885779868e517e2c0b11c2531bec5a643b8f",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-quality-gate/EASEL-META.md",
+      "sha256": "4f7baed04fb64a85dd74870296d39fb4c91c2d0e0fd6aaa33ff329d32f562a57",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-quality-gate/SKILL.md",
+      "sha256": "1202b426093b4a59933266c408fcc0cd6ce692d8279b33f9d0f2dfa70e0168fb",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-quality-gate/references/general-rules.md",
+      "sha256": "817f97d44ab4892892961ffece856739ea9d78a45904a625634df9e3d3bd888f",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-quality-gate/references/platform-bilibili.md",
+      "sha256": "3f3e5db1dd86d998732d0add15ff7915be4747e9cc806ceb122d7aaf57010727",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-quality-gate/references/platform-douyin.md",
+      "sha256": "9c914b728911a7a6749ec7a90f1d50a1c6403527aee0c0ea4abfea272514f96f",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-quality-gate/references/platform-xiaohongshu.md",
+      "sha256": "f70953b0a9e3bb37bfb46cd0d66e867b8e3c18b7a7ddd9fbab8d372b79c29f46",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-quality-gate/references/review-dimensions.md",
+      "sha256": "17c7df2b14f84d9b1329ba575508c18d6cfa428e38aa65629486de09fa1294f9",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-quality-gate/references/review-levels.md",
+      "sha256": "f09b53c41d82da319b7b3e26f818ff4bf7a4d06777d49cb036acce24f83ab803",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-quality-gate/references/rework-rules.md",
+      "sha256": "8c6de5af03bd15751ec34e2a629b9ba7aa39d30a5f6a9e10032412e57949a891",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-risk-scanner/EASEL-META.md",
+      "sha256": "1517bd0348366a764c0ae2a97f022d932c8ed8a19911b0f24576aa8aea4aa6f0",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-risk-scanner/SKILL.md",
+      "sha256": "e30054b433f06bf74f0765dc22740036a68e9f2cadc7f4d01c42dd9b203773fb",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-risk-scanner/references/copyright-guide.md",
+      "sha256": "63b109709d7b9133147996663b1383524dfd243eb5fbfc29ba0b3bba57a50573",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-risk-scanner/references/washing-patterns.md",
+      "sha256": "486d2c228f9323371d98c9fd9deb96b9497eab5776a17af2a9e34adf13792113",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-topic-evaluator/EASEL-META.md",
+      "sha256": "085910f198cd39525852e04026e897f8f377f56dab3fdeef167800d5beab92c3",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/skill-topic-evaluator/SKILL.md",
+      "sha256": "0e1d24d42650a598842899b38cdf64b609a1a97a3435bd8398b586e1e2f82c98",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/text-polisher/EASEL-META.md",
+      "sha256": "ebadaa5816192ba6635cfbc57a3673ec674c5f5e4536431d62b05a6899cef557",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/text-polisher/SKILL.md",
+      "sha256": "6576f47f0176d6d5f86fe176138bd7b36f956b84d3799174d35abeae15b72fcb",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/text-polisher/references/checklist.md",
+      "sha256": "db143b969b45b0933fe6eb772992890d1472d036a6c887fc98665e4fb48da43c",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/text-polisher/references/content-refresh.md",
+      "sha256": "f616f60bcc55cae4770bd25a191476651d3fc7a4a3cfa0901330e846634b4adc",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/text-polisher/references/phrases-to-remove.md",
+      "sha256": "4ca1b7e97123b5c67eff3dc97e5e977332e0b24021265c1553888a93ec33fa93",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/text-polisher/references/plain-english-alternatives.md",
+      "sha256": "df4f820d4c63ae8a517c64a243c101658352cd07d002355bf3c97de0a00f3775",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/text-polisher/references/structures-to-avoid.md",
+      "sha256": "13fa980180e760e7c190a609d63ea75a1dfbdb989cf250999c65d89a67d08d22",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/text-polisher/references/zh-ai-markers.md",
+      "sha256": "be5df850e460e934e3714d3899fb4a03dca6c433861de47bd91d4deb1e5435c7",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/xhs-note-creator/EASEL-META.md",
+      "sha256": "b5d22c6fa21bf9d45e69da380c8eb837db3b9111e476a11219f68799dad54361",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/xhs-note-creator/SKILL.md",
+      "sha256": "1372ff820d2734eae58f70374b3c8bc6d36542143aca4f11868fe99284103ac8",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/xhs-note-creator/references/image-sourcing.md",
+      "sha256": "57d1c4712e57e0d2ca879899a58776d6c94a9097739a9fe153efc0cd49f1272a",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/xhs-note-creator/references/material-intake.md",
+      "sha256": "df2cd7a33b1ffe7d4da0dcd9910c6a5ee8271362d64676367333d07bba488e30",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/xhs-note-creator/references/meta-schema.md",
+      "sha256": "b4997f9f24baa1326ed2898f7b3a897417c9f2fc027b4ea2a688957818a153d4",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/xhs-note-creator/references/output-spec.md",
+      "sha256": "e144968528d988c1073048ba6add3651c30549cf35a84a081634f56c415eecdf",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/xhs-note-creator/references/reference-search.md",
+      "sha256": "9c86b4ab0d4675443b15d52e478fe266968c80b8bfb29193c314cac958ff2146",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/xhs-note-creator/references/xiaohongshu-viral-methodology.md",
+      "sha256": "efe368b3a3b4cf8406cf18b57e39aa29cb71f034c3ab7ce91c4565b02b4145a0",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/openclaw/xhs-note-creator/scripts/analyze_material.py",
+      "sha256": "7f39adebda74396a716d5a41e205b7a707877238e8339a7d3ecf41bd85f5e9ec",
+      "handling": "method reference only; scripts not imported"
+    },
+    {
+      "path": "skills/openclaw/xhs-note-creator/scripts/collage_3x4.py",
+      "sha256": "7b2b3e91f7c0b272d97864ca08e26b2c1ef867ee59ed3fd859be03f23094e6d8",
+      "handling": "method reference only; scripts not imported"
+    },
+    {
+      "path": "skills/openclaw/xhs-note-creator/scripts/crop_watermark.py",
+      "sha256": "d520cf7fc28938fe89349ceb15a9b0ee97bbb529d9f081d3f62742252ca5bd46",
+      "handling": "method reference only; scripts not imported"
+    },
+    {
+      "path": "skills/openclaw/xhs-note-creator/scripts/normalize_slug.py",
+      "sha256": "49bcd0e28f57d4c6a4d3d2c95c895b9ec76a0ec9ca54b096bd23af9dd97d20ff",
+      "handling": "method reference only; scripts not imported"
+    },
+    {
+      "path": "skills/openclaw/xhs-note-creator/scripts/text_on_image.py",
+      "sha256": "a4c561520a3e5dea880a932d21728dee16ff374e0eebd28b66e1011732972157",
+      "handling": "method reference only; scripts not imported"
+    },
+    {
+      "path": "skills/openclaw/xhs-note-creator/scripts/validate_meta.py",
+      "sha256": "b9fc8d92401e9d9b7f23181470b8eb9838abb2ba22ba8aabbb26985c76868542",
+      "handling": "method reference only; scripts not imported"
+    },
+    {
+      "path": "skills/shared/README.md",
+      "sha256": "f7e28049c93ea9b3a8252605bec81492c0eeaf221844ba94a43f1cea927e7175",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/shared/hotlist-apis.md",
+      "sha256": "468cc3292c4dc0d2365f1945d58cb355fcef82dd5b607be01be3c96ee6006b7f",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/shared/pillar-and-cadence.md",
+      "sha256": "64cc5bd57275607582a6ac611e8ef10145cc3c07e136ddc7964142bfe7855977",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/shared/references/copy-frameworks.md",
+      "sha256": "4c91441b07110e74eba1e1fd58ee04747459288dc6fbc2855a98866407c709e8",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/shared/references/hook-title-formulas.md",
+      "sha256": "2ab48324ec63cfc5bab2b6b658bdc8855552bcd21a1d73d5b82c9f6ef45c74af",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/shared/references/voice-casting.md",
+      "sha256": "8be7dce135669344e8b784301a2b39aeffe6b9dd446daecc2556d6c2752eb62d",
+      "handling": "reviewed source; adapted methods below"
+    },
+    {
+      "path": "skills/shared/scoring-dimensions.md",
+      "sha256": "cd795151aa837b754e634a6df94030a7d1b02ed96047679a77e363923b0ac94a",
+      "handling": "reviewed source; adapted methods below"
+    }
+  ],
+  "packages": [
+    {
+      "skill_key": "easel-competitor-analysis",
+      "upstream_path": "skills/openclaw/skill-competitor-analysis/SKILL.md",
+      "dependencies": [
+        {
+          "path": "skills/openclaw/skill-competitor-analysis/references/analysis-templates.md",
+          "sha256": "dddbf9ee82f9c7ff7779835ed9b918a2ab568a7fed68890318c0846eab52856c",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        },
+        {
+          "path": "skills/openclaw/skill-competitor-analysis/references/data-collection.md",
+          "sha256": "6fd9031c651819fc65e418acddab8aa7c0af9e4cd566cfa3fbe51b526ffa3929",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        },
+        {
+          "path": "skills/openclaw/skill-competitor-analysis/references/viral-patterns.md",
+          "sha256": "316900b418eeee2128a5eb5a61b458996dedbf3c7157f01995bb3e155af5a2b8",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        }
+      ],
+      "adapted_sha256": "0a53fe46f66292e726b43f2bbe46db9a2f22ef77e4a7472c4089f08478f89983"
+    },
+    {
+      "skill_key": "easel-content-gap-analysis",
+      "upstream_path": "skills/openclaw/skill-content-gap-analysis/SKILL.md",
+      "dependencies": [
+        {
+          "path": "skills/openclaw/skill-content-gap-analysis/references/demand-signals.md",
+          "sha256": "dc1dfda521bbae627f605feb27301c0954d9508ce48afff5775dc736802b3a8b",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        },
+        {
+          "path": "skills/openclaw/skill-content-gap-analysis/references/scoring-model.md",
+          "sha256": "f5a56c95b9c1829e71db47ad77fa885779868e517e2c0b11c2531bec5a643b8f",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        }
+      ],
+      "adapted_sha256": "0f415ac5130ece28a3e3850361ccf53e90f9bcb05aef03a6a97b6449f0a231e7"
+    },
+    {
+      "skill_key": "easel-topic-evaluator",
+      "upstream_path": "skills/openclaw/skill-topic-evaluator/SKILL.md",
+      "dependencies": [
+        {
+          "path": "skills/shared/scoring-dimensions.md",
+          "sha256": "cd795151aa837b754e634a6df94030a7d1b02ed96047679a77e363923b0ac94a",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        }
+      ],
+      "adapted_sha256": "5230c66834901118c975497e1e8847699a9aa82c8cd6aac6743cc8e03cefacaa"
+    },
+    {
+      "skill_key": "easel-content-calendar",
+      "upstream_path": "skills/openclaw/skill-content-calendar/SKILL.md",
+      "dependencies": [
+        {
+          "path": "skills/openclaw/skill-content-calendar/references/content-mix-guide.md",
+          "sha256": "7783a5e34498cf715e5188db3ae656c0a7ea9ffdc7defcaa81ea88a16097d76c",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        },
+        {
+          "path": "skills/shared/pillar-and-cadence.md",
+          "sha256": "64cc5bd57275607582a6ac611e8ef10145cc3c07e136ddc7964142bfe7855977",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        }
+      ],
+      "adapted_sha256": "cfd83b45cc808fc3070cd7eca1f52052af7f139d9e3ed1926148bc36894fae78"
+    },
+    {
+      "skill_key": "easel-xhs-note-creator",
+      "upstream_path": "skills/openclaw/xhs-note-creator/SKILL.md",
+      "dependencies": [
+        {
+          "path": "skills/openclaw/xhs-note-creator/references/material-intake.md",
+          "sha256": "df2cd7a33b1ffe7d4da0dcd9910c6a5ee8271362d64676367333d07bba488e30",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        },
+        {
+          "path": "skills/openclaw/xhs-note-creator/references/meta-schema.md",
+          "sha256": "b4997f9f24baa1326ed2898f7b3a897417c9f2fc027b4ea2a688957818a153d4",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        },
+        {
+          "path": "skills/openclaw/xhs-note-creator/references/xiaohongshu-viral-methodology.md",
+          "sha256": "efe368b3a3b4cf8406cf18b57e39aa29cb71f034c3ab7ce91c4565b02b4145a0",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        },
+        {
+          "path": "skills/shared/references/hook-title-formulas.md",
+          "sha256": "2ab48324ec63cfc5bab2b6b658bdc8855552bcd21a1d73d5b82c9f6ef45c74af",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        },
+        {
+          "path": "skills/openclaw/text-polisher/references/zh-ai-markers.md",
+          "sha256": "be5df850e460e934e3714d3899fb4a03dca6c433861de47bd91d4deb1e5435c7",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        }
+      ],
+      "adapted_sha256": "57fd420f7b747020fb9242adf910913aafa0695f1a1ded249d8ca375ec7a5ccd"
+    },
+    {
+      "skill_key": "easel-text-polisher",
+      "upstream_path": "skills/openclaw/text-polisher/SKILL.md",
+      "dependencies": [
+        {
+          "path": "skills/openclaw/text-polisher/references/checklist.md",
+          "sha256": "db143b969b45b0933fe6eb772992890d1472d036a6c887fc98665e4fb48da43c",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        },
+        {
+          "path": "skills/openclaw/text-polisher/references/structures-to-avoid.md",
+          "sha256": "13fa980180e760e7c190a609d63ea75a1dfbdb989cf250999c65d89a67d08d22",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        },
+        {
+          "path": "skills/openclaw/text-polisher/references/zh-ai-markers.md",
+          "sha256": "be5df850e460e934e3714d3899fb4a03dca6c433861de47bd91d4deb1e5435c7",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        }
+      ],
+      "adapted_sha256": "af6b8e8a03dd9eb01d8450cd78ce50a4f38d9eae0ccd769ffc724115b24cd6fd"
+    },
+    {
+      "skill_key": "easel-quality-gate",
+      "upstream_path": "skills/openclaw/skill-quality-gate/SKILL.md",
+      "dependencies": [
+        {
+          "path": "skills/openclaw/skill-quality-gate/references/general-rules.md",
+          "sha256": "817f97d44ab4892892961ffece856739ea9d78a45904a625634df9e3d3bd888f",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        },
+        {
+          "path": "skills/openclaw/skill-quality-gate/references/platform-xiaohongshu.md",
+          "sha256": "f70953b0a9e3bb37bfb46cd0d66e867b8e3c18b7a7ddd9fbab8d372b79c29f46",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        },
+        {
+          "path": "skills/openclaw/skill-quality-gate/references/review-dimensions.md",
+          "sha256": "17c7df2b14f84d9b1329ba575508c18d6cfa428e38aa65629486de09fa1294f9",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        },
+        {
+          "path": "skills/openclaw/skill-quality-gate/references/review-levels.md",
+          "sha256": "f09b53c41d82da319b7b3e26f818ff4bf7a4d06777d49cb036acce24f83ab803",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        },
+        {
+          "path": "skills/openclaw/skill-quality-gate/references/rework-rules.md",
+          "sha256": "8c6de5af03bd15751ec34e2a629b9ba7aa39d30a5f6a9e10032412e57949a891",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        }
+      ],
+      "adapted_sha256": "115464c2eadc9bc19bd5faf3d7a78ec195b8f5cba101aaaed50b8924c2ee9d65"
+    },
+    {
+      "skill_key": "easel-risk-scanner",
+      "upstream_path": "skills/openclaw/skill-risk-scanner/SKILL.md",
+      "dependencies": [
+        {
+          "path": "skills/openclaw/skill-risk-scanner/references/copyright-guide.md",
+          "sha256": "63b109709d7b9133147996663b1383524dfd243eb5fbfc29ba0b3bba57a50573",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        },
+        {
+          "path": "skills/openclaw/skill-risk-scanner/references/washing-patterns.md",
+          "sha256": "486d2c228f9323371d98c9fd9deb96b9497eab5776a17af2a9e34adf13792113",
+          "adaptation": "methods distilled into reference asset; network/script/global-profile instructions removed"
+        }
+      ],
+      "adapted_sha256": "7230ca383002bc9f82978e6b83de74a36ba0342fba203d2fe38d725d3a0986fe"
+    }
+  ],
+  "excluded_dependencies": {
+    "card-design/card-xiaohongshu/render_card/card_audit": "图卡属于第三阶段，文字稿仅列素材需求",
+    "calendar_ops": "以业务数据库计划代替JSON日历",
+    "hotlist-apis/web_search/web_fetch": "本阶段没有这些来源，不发起隐式采集",
+    "global USER.md/Profile/memory": "替换为组织画像固定revision",
+    "image-sourcing/collage/text_on_image/validate_meta": "图片制作不导入；文字结构使用后端契约校验",
+    "external platform compliance rules": "未完成官方有效期核验，只作未知项提醒",
+    "content-strategy/content-matrix/post-scorer": "由已有画像支柱与前阶段输出代替，不动态激活"
+  }
+}

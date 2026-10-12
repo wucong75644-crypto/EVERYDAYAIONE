@@ -165,7 +165,7 @@ class ReachResult:
             truncated = item.truncated or len(text) < len(item.content)
             ref = f'S{len(sources) + 1}'
             sources.append({'id': ref, 'title': item.title[:200], 'url': item.url,
-                            'snippet': text[:300], 'content_kind': item.kind,
+                            'snippet': text[:300], 'content': text, 'content_kind': item.kind,
                             'published_at': item.published_at, 'fetched_at': fetched_at,
                             'truncated': truncated})
             rows.append(f'[{ref}] {item.title[:200]}\n{item.url}\n'

@@ -35,6 +35,8 @@ def resolve_action(spec: ToolSpec, arguments: Mapping[str, Any], *, context=None
         except Exception:
             return ActionFacts(operation, risk, 'invalid_agent_reach_arguments')
         if request.action in WRITE_ACTIONS:
+            if context is not None and context.execution_mode != 'interactive':
+                return ActionFacts('business_write', 'dangerous', 'scheduled_reach_write_forbidden')
             return ActionFacts('business_write', 'dangerous' if request.action != 'set_like' else 'safe')
         return ActionFacts('read', 'safe')
     action = arguments.get("action")

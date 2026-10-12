@@ -1,0 +1,4 @@
+Adapted methods from Easel, ZJU-REAL contributors, Apache-2.0.
+Fixed commit: e6d5e8ebda73e1d9f9c4f7beb6e960979353ebec
+Modified for EVERYDAYAIONE: organization-scoped immutable inputs; no network or scripts; explicit evidence and unknowns; no publishing authorization.
+No third-party code, fonts, images or executable upstream assets are bundled.
