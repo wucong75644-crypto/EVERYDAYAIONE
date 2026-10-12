@@ -68,7 +68,7 @@ class ToolContext:
             raise ValueError("Invalid permission_mode")
         if self.execution_mode not in {"interactive", "scheduled", "preflight"}:
             raise ValueError("Invalid execution_mode")
-        if self.entrypoint not in {"model", "legacy_internal"}:
+        if self.entrypoint not in {"model", "legacy_internal", "social_ops_interactive"}:
             raise ValueError("Invalid entrypoint")
         if self.authorized_tool_names is not None:
             if isinstance(self.authorized_tool_names, str) or any(

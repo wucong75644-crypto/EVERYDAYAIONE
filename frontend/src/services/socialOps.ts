@@ -85,6 +85,10 @@ export interface Draft {
     evidence_ids?: string[];
     evidence?: { snapshot_id: string; quote: string }[];
     assumptions: string[];
+    cards?: SocialCard[];
+    visual?: VisualTemplate;
+    assets?: SocialAsset[];
+    images_text_hash?: string;
   };
   checks: unknown;
 }
@@ -137,3 +141,23 @@ export const stageKeys: Record<string, string[]> = {
   polish: ["easel-text-polisher"],
   check: ["easel-quality-gate", "easel-risk-scanner"],
 };
+
+export interface SocialCard {
+  role: "cover" | "body" | "closing";
+  headline: string;
+  body: string;
+}
+export interface VisualTemplate {
+  background: string;
+  foreground: string;
+  accent: string;
+  watermark: string;
+}
+export interface SocialAsset {
+  id: string;
+  sha256: string;
+  width: number;
+  height: number;
+  source: string;
+  rights: string;
+}

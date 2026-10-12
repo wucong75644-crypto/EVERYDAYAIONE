@@ -90,7 +90,9 @@ class StageSelection(Input):
 
 
 class Produce(Input):
-    kind: Literal["plan", "draft", "polish", "check"]
+    client_request_id: UUID | None = None
+    visual: dict[str, str] = Field(default_factory=dict)
+    kind: Literal["plan", "draft", "polish", "check", "cards"]
     job_id: UUID
     content_id: UUID | None = None
     expected_revision: int | None = Field(default=None, ge=1)
@@ -99,6 +101,11 @@ class Produce(Input):
     expected_topic_revision: int | None = Field(default=None, ge=1)
     stages: list[StageSelection] = Field(min_length=1, max_length=4)
     max_credits: int = Field(default=20, ge=1, le=1000)
+
+    @field_validator("visual")
+    @classmethod
+    def visual_valid(cls, value):
+        return VisualTemplate.model_validate(value).model_dump()
 
 
 class DraftData(Input):
@@ -114,3 +121,64 @@ class TopicUpdate(Input):
     expected_revision: int = Field(ge=1)
     decision: Literal["adopt", "adjust", "defer"]
     planned_date: date | None = None
+
+
+class VisualTemplate(Input):
+    background: str = Field(default="#FFF8F0", pattern=r"^#[0-9a-fA-F]{6}$")
+    foreground: str = Field(default="#30343B", pattern=r"^#[0-9a-fA-F]{6}$")
+    accent: str = Field(default="#2563EB", pattern=r"^#[0-9a-fA-F]{6}$")
+    watermark: str = Field(default="", max_length=40)
+
+
+class Card(Input):
+    role: Literal["cover", "body", "closing"]
+    headline: str = Field(min_length=1, max_length=100)
+    body: str = Field(default="", max_length=1500)
+
+
+class CardEdit(Input):
+    client_request_id: UUID
+    expected_revision: int = Field(ge=1)
+    cards: list[Card] = Field(min_length=2, max_length=9)
+    visual: VisualTemplate = Field(default_factory=VisualTemplate)
+
+
+class MediaEdit(Input):
+    expected_revision: int = Field(ge=1)
+    asset_ids: list[UUID] = Field(min_length=1, max_length=9)
+
+
+class MediaImport(Input):
+    expected_revision: int = Field(ge=1)
+    resource_ref: str = Field(min_length=8, max_length=16384, pattern=r"^fref1_")
+    source: str = Field(min_length=1, max_length=1000)
+    rights: str = Field(min_length=1, max_length=1000)
+    position: int = Field(ge=0, le=8)
+
+
+class PackageCheck(Input):
+    expected_revision: int = Field(ge=1)
+    semantic_run_id: UUID
+
+
+class PublishCreate(Input):
+    content_id: UUID
+    expected_revision: int = Field(ge=1)
+    connection_id: UUID
+    check_id: UUID
+    visibility: Literal["public", "private"]
+
+
+class PublishConfirm(Input):
+    approval_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    acknowledge_risks: Literal[True]
+
+
+class PublishVerify(Input):
+    remote_id: str = Field(pattern=r"^[a-f0-9]{24}$")
+    url: str = Field(max_length=300)
+    note: str = Field(min_length=10, max_length=2000)
+
+
+class MediaLocate(Input):
+    path: str = Field(min_length=1, max_length=1000)

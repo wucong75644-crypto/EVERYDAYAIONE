@@ -12,6 +12,10 @@ import {
 } from "lucide-react";
 import { useAuthStore } from "../stores/useAuthStore";
 import "./SocialOps.css";
+import ContentHistory from "../components/social-ops/ContentHistory";
+import CardStudio, {
+  SocialAssetPreview,
+} from "../components/social-ops/CardStudio";
 import { Link } from "react-router-dom";
 import { toApiRequestError } from "../services/api";
 import { socialApi, connections, stageKeys } from "../services/socialOps";
@@ -693,7 +697,7 @@ export default function SocialOps() {
                     })
                   }
                 >
-                  导入八个技能草稿（管理员）
+                  导入社媒技能草稿（管理员）
                 </button>
                 <Link to="/admin?tab=skills" className="text-accent ml-3">
                   技能管理
@@ -1281,9 +1285,19 @@ export default function SocialOps() {
                           hidden={editorMode !== "preview"}
                           className="mx-auto w-full max-w-sm rounded-3xl border p-5 bg-surface"
                         >
-                          <div className="aspect-[3/4] bg-gray-200 rounded-xl flex items-center justify-center">
-                            待补图片素材
-                          </div>
+                          {draft.data.assets?.length ? (
+                            <div className="flex gap-2 overflow-x-auto">
+                              {draft.data.assets.map((a) => (
+                                <div className="min-w-full" key={a.id}>
+                                  <SocialAssetPreview id={a.id} />
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="aspect-[3/4] bg-gray-200 rounded-xl flex items-center justify-center">
+                              待补图片素材
+                            </div>
+                          )}
                           <h3 className="font-semibold mt-3">
                             {draft.data.title}
                           </h3>
@@ -1332,12 +1346,23 @@ export default function SocialOps() {
                           版本历史
                         </button>
                       </div>
-                      <div className="social-materials">
-                        <strong>待补素材</strong>
-                        <p>
-                          当前仅有文字草稿，请补充自有或获授权的图片。尚不具备发布条件。
-                        </p>
-                      </div>
+                      {!draft.data.assets?.length && (
+                        <div className="social-materials">
+                          <strong>待补素材</strong>
+                          <p>
+                            当前仅有文字草稿，请补充自有或获授权的图片。尚不具备发布条件。
+                          </p>
+                        </div>
+                      )}
+                      <CardStudio
+                        draft={draft}
+                        dirty={dirty}
+                        jobId={jobId}
+                        runs={runs}
+                        accounts={accounts}
+                        skills={skills}
+                        onRefresh={() => loadDetail(jobId)}
+                      />
                       <details>
                         <summary>查看此版本检查详情</summary>
                         <JsonView value={draft.checks} />
@@ -1352,6 +1377,7 @@ export default function SocialOps() {
                   <summary>
                     {(
                       {
+                        cards: "图卡设计与制作",
                         plan: "选题分析",
                         draft: "草稿创作",
                         polish: "文案润色",
@@ -1405,7 +1431,7 @@ export default function SocialOps() {
           {history && !profileOpen && (
             <section className="bg-surface-card rounded p-5">
               <h2>版本历史</h2>
-              <JsonView value={history} />
+              <ContentHistory rows={history} />
             </section>
           )}
         </section>

@@ -68,7 +68,7 @@ def test_fabricated_evidence_rejected_missing_media_is_never_ready():
 
 def test_all_eight_bundles_fit_existing_asset_runtime_and_deny_tools():
     specs = bundle_specs()
-    assert len(specs) == 8
+    assert len(specs) == 10
     for spec in specs:
         assert spec.content.catalog_metadata.allowed_tool_names == ()
         assert spec.content.catalog_metadata.tool_policy == "restricted"
