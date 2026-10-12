@@ -1,6 +1,7 @@
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, it, expect, vi } from "vitest";
+import { ApiRequestError } from "../../services/api";
 import SocialOps from "../SocialOps";
 const api = vi.hoisted(() => ({ socialApi: vi.fn(), connections: vi.fn() }));
 vi.mock("../../services/socialOps", async (original) => ({
@@ -154,4 +155,57 @@ describe("SocialOps", () => {
     expect(screen.getByText("待补图片素材")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "发布" })).toBeNull();
   });
+});
+
+it("服务不可用时不误报暂无账号，并阻止创建", async () => {
+  api.socialApi.mockRejectedValue(
+    new ApiRequestError("DISABLED", "Request failed with status code 503", 503),
+  );
+  mount();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "社媒运营尚未启用或服务暂不可用",
+  );
+  expect(screen.queryByText(/暂无可用账号/)).toBeNull();
+  expect(screen.getByRole("button", { name: "创建并开始采集" })).toBeDisabled();
+});
+it("编辑未保存时禁用对旧版本的检查，预览可切换", async () => {
+  mount();
+  await screen.findByRole("option", { name: /测试研究/ });
+  fireEvent.click(screen.getByRole("button", { name: "文案编辑" }));
+  fireEvent.change(screen.getByLabelText("研究任务"), {
+    target: { value: "job1" },
+  });
+  await screen.findByRole("option", { name: /草稿标题/ });
+  fireEvent.change(screen.getByLabelText("选择草稿"), {
+    target: { value: "d1" },
+  });
+  fireEvent.change(screen.getByLabelText("标题"), {
+    target: { value: "未保存标题" },
+  });
+  expect(screen.getByText("有未保存修改")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "检查已保存版本" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "预览" }));
+  expect(screen.getByRole("heading", { name: "未保存标题" })).toBeVisible();
+  expect(screen.getByText("待补图片素材")).toBeVisible();
+});
+
+it("取消放弃未保存修改后，新建任务不清空当前草稿", async () => {
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  mount();
+  await screen.findByRole("option", { name: /测试研究/ });
+  fireEvent.click(screen.getByRole("button", { name: "文案编辑" }));
+  fireEvent.change(screen.getByLabelText("研究任务"), {
+    target: { value: "job1" },
+  });
+  await screen.findByRole("option", { name: /草稿标题/ });
+  fireEvent.change(screen.getByLabelText("选择草稿"), {
+    target: { value: "d1" },
+  });
+  fireEvent.change(screen.getByLabelText("标题"), {
+    target: { value: "保留未保存内容" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "新建研究任务" }));
+  expect(confirm).toHaveBeenCalled();
+  expect(screen.getByLabelText("标题")).toHaveValue("保留未保存内容");
+  confirm.mockRestore();
 });

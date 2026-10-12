@@ -49,3 +49,12 @@ describe('Sidebar 主图详情入口', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/detail-page');
   });
 });
+
+it('社媒运营位于主图之后、记忆之前并跳转独立页面', () => {
+  render(<MemoryRouter initialEntries={['/chat']}><Sidebar {...baseProps}/><LocationProbe/></MemoryRouter>);
+  const labels = screen.getAllByRole('button').map(b => b.textContent);
+  expect(labels.indexOf('社媒运营新')).toBeGreaterThan(labels.indexOf('主图&详情图新'));
+  expect(labels.indexOf('社媒运营新')).toBeLessThan(labels.indexOf('AI 记忆'));
+  fireEvent.click(screen.getByText('社媒运营'));
+  expect(screen.getByTestId('location')).toHaveTextContent('/social-ops');
+});
