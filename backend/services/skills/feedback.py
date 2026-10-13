@@ -10,7 +10,11 @@ def skill_step(result: dict, skills, *, step_id: str) -> dict:
                     "name": candidate.catalog_metadata.name or candidate.skill_key,
                     "revision": candidate.revision}
     code = result.get("code", "")
-    if code == "SKILL_RUNTIME_DISABLED":
+    if code == "SKILL_NOT_APPLICABLE":
+        reason = "当前请求不需要此策划方法，将按你的最新要求继续处理。"
+    elif code == "SKILL_ROUTING_UNAVAILABLE":
+        reason = "电商策划入口暂不可用，普通生图仍可继续。"
+    elif code == "SKILL_RUNTIME_DISABLED":
         reason = "Skill 功能暂未开放，本次按普通聊天继续。"
     elif code in {"SKILL_NOT_AVAILABLE", "SKILL_ACCESS_DENIED", "SKILL_IDENTITY_UNAVAILABLE",
                   "SKILL_ACTOR_UNAVAILABLE", "SKILL_PINNED_REVISION_UNAVAILABLE"}:

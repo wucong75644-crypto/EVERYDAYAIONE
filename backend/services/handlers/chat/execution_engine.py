@@ -34,7 +34,8 @@ from services.conversation_commands import (
 )
 from services.conversation_turn_runtime import ConversationTurnRuntime
 from services.conversation_state import ConversationState
-from services.skills.runtime import ACTIVATE_SKILL, ACTIVATE_SKILL_SCHEMA, control_result
+from services.skills.runtime import (ACTIVATE_SKILL, ACTIVATE_SKILL_SCHEMA, DEACTIVATE_SKILL,
+    DEACTIVATE_SKILL_SCHEMA, SKILL_CONTROL_TOOLS, control_result)
 from services.skills.selection import SkillSelection
 from services.skills.feedback import skill_step
 
@@ -508,6 +509,9 @@ async def _run_loop(
             c.catalog_metadata.model_selectable for c in runtime.skill_runtime.directory.values()
         ):
             tools.append(ACTIVATE_SKILL_SCHEMA)
+            if any(key != runtime.skill_runtime.manual_skill_id and key not in runtime.skill_runtime.session_skill_ids
+                   for key in runtime.skill_runtime.active):
+                tools.append(DEACTIVATE_SKILL_SCHEMA)
         current_model_round = model_round
         before_usage = dict(totals.usage) if correcting else {}
         try:
@@ -559,7 +563,7 @@ async def _run_loop(
                 await sink.on_block(blocks[-1])
             return None
         repeated_tool_call_action = (
-            "continue" if any(call["name"] == ACTIVATE_SKILL for call in calls)
+            "continue" if any(call["name"] in SKILL_CONTROL_TOOLS for call in calls)
             else repeated_tool_call_guard.observe(calls)
         )
         if repeated_tool_call_action == "stop":
@@ -754,7 +758,7 @@ async def _read_turn(
             accumulate_tool_call_delta(calls, chunk.tool_calls)
             if runtime is not None:
                 for index, call in calls.items():
-                    if index in previewed_indices or not call.get("name") or call["name"] == ACTIVATE_SKILL:
+                    if index in previewed_indices or not call.get("name") or call["name"] in SKILL_CONTROL_TOOLS:
                         continue
                     preview_id = _actor_tool_preview_id(
                         runtime.turn_id, model_round, index,
@@ -912,10 +916,10 @@ async def _execute_tools(
     if getattr(prepared, "last_reasoning_content", ""):
         assistant["reasoning_content"] = prepared.last_reasoning_content
     prepared.messages.append(assistant)
-    await _sink_tool_calls(sink, [c for c in calls if c["name"] != ACTIVATE_SKILL], turn + 1)
+    await _sink_tool_calls(sink, [c for c in calls if c["name"] not in SKILL_CONTROL_TOOLS], turn + 1)
     start_times: dict[str, float] = {}
     for call in calls:
-        if call["name"] == ACTIVATE_SKILL:
+        if call["name"] in SKILL_CONTROL_TOOLS:
             continue
         block = build_running_step(call)
         start_times[call["id"]] = time.monotonic()
@@ -940,7 +944,7 @@ async def _execute_tools(
         if ecom_arguments.state and ecom_arguments.state.get("dispatch_reserved") and runtime is None:
             raise RuntimeError("ECOM_ARGUMENT_CORRECTION_CHECKPOINT_REQUIRED")
     workflow = getattr(prepared, "ecom_workflow", None)
-    if workflow and not any(c["name"] == ACTIVATE_SKILL for c in calls):
+    if workflow and not any(c["name"] in SKILL_CONTROL_TOOLS for c in calls):
         barrier = await workflow.barrier(ready_calls)
         if barrier:
             from services.agent.agent_result import AgentResult
@@ -970,7 +974,7 @@ async def _execute_tools(
         cancellation_event, request, prepared.messages, blocks,
         totals, "before_tool",
     )
-    if any(call["name"] == ACTIVATE_SKILL for call in calls):
+    if any(call["name"] in SKILL_CONTROL_TOOLS for call in calls):
         await _execute_skill_batch(
             prepared=prepared, calls=calls, runtime=runtime, blocks=blocks,
             sink=sink, start_times=start_times, turn=turn,
@@ -1112,8 +1116,12 @@ async def _execute_tools(
 
 def _apply_skill_context(prepared: Any, skills: Any) -> None:
     skills.ensure_messages(prepared.messages)
-    if skills.has_active_skills:
-        current = prepared.execution_context.authorized_tool_names
+    if not getattr(prepared, "skill_host_scope_captured", False):
+        prepared.skill_host_scope_captured = True
+        prepared.skill_host_authorized_tool_names = prepared.execution_context.authorized_tool_names
+    if skills.has_active_skills or getattr(prepared, "skill_context_applied", False):
+        prepared.skill_context_applied = True
+        current = prepared.skill_host_authorized_tool_names
         if current is not None:
             skills.effective_allowed_tool_names &= current
         snapshot = dict(prepared.execution_context.authorization_snapshot)
@@ -1140,14 +1148,31 @@ async def _execute_skill_batch(
     results = []
     skill_blocks = []
     for call in calls:
-        if call["name"] != ACTIVATE_SKILL:
+        if call["name"] not in SKILL_CONTROL_TOOLS:
             result = control_result("SKILL_ACTIVATION_BARRIER", message="请下一轮重新请求")
         elif prepared.execution_context.execution_mode in {"scheduled", "preflight"}:
             result = control_result("SKILL_SCHEDULED_ACTIVATION_FORBIDDEN")
         elif skills is None:
             result = control_result("SKILL_RUNTIME_DISABLED")
         else:
-            result = await skills.activate(call.get("arguments", ""))
+            workflow = getattr(prepared, "ecom_workflow", None)
+            try:
+                key = json.loads(call.get("arguments", ""))["skill_id"]
+            except (ValueError, TypeError, KeyError):
+                key = None
+            if call["name"] == DEACTIVATE_SKILL:
+                if workflow and workflow.value and workflow.value.kind == "main_images" and key == "ecommerce-main-images":
+                    result = control_result("SKILL_BINDING_LOCKED")
+                else:
+                    old_messages = skills.messages()
+                    result = await skills.deactivate(call.get("arguments", ""))
+                    if result["ok"]:
+                        prepared.messages[:] = [m for m in prepared.messages if m not in old_messages]
+            elif key == "ecommerce-main-images" and workflow and not await workflow.allows_planning():
+                result = control_result("SKILL_ROUTING_UNAVAILABLE" if workflow.route and workflow.route["kind"] == "unavailable" else "SKILL_NOT_APPLICABLE",
+                    message="电商策划路由暂不可用。" if workflow.route and workflow.route["kind"] == "unavailable" else "当前任务不需要电商策划；已有提示词直接生图，必要时使用聊天图片编排方法。")
+            else:
+                result = await skills.activate(call.get("arguments", ""))
         if call["name"] == ACTIVATE_SKILL:
             skill_blocks.append(skill_step(result, skills, step_id=call["id"]))
         text = json.dumps(result, ensure_ascii=False)

@@ -196,7 +196,7 @@ async def test_next_model_round_readvertises_and_passes_narrowed_scope_to_execut
     await _run_loop(handler=h, request=_request(), prepared=p, cancellation_event=runtime.cancellation_event,
                     sink=CollectingExecutionSink(), totals=StreamTotals(), blocks=[], runtime=runtime)
     assert seen[0] == {"file_search", "web_search", "activate_skill"}
-    assert seen[1] == {"file_search", "activate_skill"}
+    assert seen[1] == {"file_search", "activate_skill", "deactivate_skill"}
     h._execute_tool_calls.assert_awaited_once()
     assert h._execute_tool_calls.await_args.kwargs["authorized_tool_names"] == {"file_search"}
 
@@ -323,7 +323,7 @@ async def test_full_actor_pause_resume_reuses_revision_messages_and_model_round(
         rounds.append(model_round)
         if model_round == 0:
             return "", "", [call()], set()
-        assert {t["function"]["name"] for t in tools} == {"file_search", "activate_skill"}
+        assert {t["function"]["name"] for t in tools} == {"file_search", "activate_skill", "deactivate_skill"}
         assert len([m for m in p.messages if "Turn Skill instructions" in (m.get("content") or "")]) == 1
         if model_round == 1:
             return "", "", [call(id="retry-with-new-provider-id")], set()

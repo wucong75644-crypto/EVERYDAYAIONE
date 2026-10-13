@@ -219,10 +219,10 @@ async def test_dashscope_download_failure_retries_only_before_any_stream_and_pre
 @pytest.mark.parametrize('answer,expected', [
     ({'kind': 'main_images', 'mode': 'retry', 'reuse_through_stage': 2}, 'main_images'),
     ({'kind': 'ordinary_image', 'mode': 'new', 'reuse_through_stage': 0}, 'ordinary_image'),
-    ({'kind': 'ordinary_image', 'mode': 'retry', 'reuse_through_stage': 2}, 'needs_input'),
-    ({'kind': 'main_images', 'mode': 'new', 'reuse_through_stage': 2}, 'needs_input'),
-    ({'kind': 'main_images', 'mode': 'retry', 'reuse_through_stage': True}, 'needs_input'),
-    ({'kind': 'main_images', 'mode': 'retry', 'reuse_through_stage': 2, 'prompt': 'injected'}, 'needs_input'),
+    ({'kind': 'ordinary_image', 'mode': 'retry', 'reuse_through_stage': 2}, 'unavailable'),
+    ({'kind': 'main_images', 'mode': 'new', 'reuse_through_stage': 2}, 'unavailable'),
+    ({'kind': 'main_images', 'mode': 'retry', 'reuse_through_stage': True}, 'unavailable'),
+    ({'kind': 'main_images', 'mode': 'retry', 'reuse_through_stage': 2, 'prompt': 'injected'}, 'unavailable'),
 ])
 async def test_semantic_route_is_one_call_and_strict(monkeypatch, answer, expected):
     settings = SimpleNamespace(intent_router_enabled=True, dashscope_api_key='test-only',
@@ -240,7 +240,7 @@ async def test_semantic_route_is_one_call_and_strict(monkeypatch, answer, expect
 
 async def test_route_unavailable_does_not_authorize_ordinary_images(monkeypatch):
     monkeypatch.setattr('core.config.get_settings', lambda: SimpleNamespace(intent_router_enabled=False))
-    assert await classify_workflow('生成5张主图') == {'kind': 'needs_input'}
+    assert await classify_workflow('生成5张主图') == {'kind': 'unavailable'}
 
 
 def test_entry_detection_uses_structured_images_and_preserves_text_without_image_payload():
@@ -284,7 +284,7 @@ async def test_continuation_requires_current_planner_receipt_and_restores_comple
 
 
 @pytest.mark.parametrize('kind,terminal,dispatched', [('main_images', False, False),
-    ('needs_input', True, False), ('ordinary_image', None, True)])
+    ('needs_input', None, True), ('ordinary_image', None, True)])
 async def test_first_image_batch_barrier_runs_before_any_business_io(kind, terminal, dispatched):
     from services.handlers.chat.execution_engine import _execute_tools
     from services.handlers.chat.execution_sink import CollectingExecutionSink

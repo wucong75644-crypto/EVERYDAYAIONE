@@ -60,3 +60,7 @@
 ## 尺寸事实版本 v2
 
 `catalog/platform/reference-image-prompts/v2/SKILL.md` 增加服务器canvas事实、产品形状与画布分离、用户尺寸覆盖和非法尺寸处理。v1保留原字节；v2仍通过现有SkillStorage、SkillCatalog及assignment发布，不覆盖生产v1或自动修改分配。运行时通用尺寸规则与实际文件校验同时生效。
+
+## 图片任务阶段路由修正版（2026-10-13，待发布）
+
+新增 `chat-image-orchestration/v2`、`reference-image-prompts/v3`、`ecommerce-main-images/v4` 和 `ecommerce-image-prompts/v3`，明确现成提示词执行、策划与阶段交接边界。历史版本文件保持原样；这些目录尚未导入生产，不会随代码部署自动发布或更新组织分配。行为、发布与回退边界见 [Skill 图片阶段路由修复](../../docs/document/TECH_Skill图片阶段路由修复.md)。
