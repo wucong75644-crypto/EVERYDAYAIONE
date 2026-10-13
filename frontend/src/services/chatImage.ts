@@ -21,12 +21,14 @@ export interface ChatImageInput {
   origin: { retry_of_task_id?: string; parent_task_id?: string; destination?: string; project_id?: string; [key: string]: unknown };
   budget: { max_requests: number; max_credits: number };
   source_prompt?: Record<string, unknown>;
+  source_task_id?: string;
   plan_item_id?: string; variant_id?: string;
 }
 export interface ChatImageDetails {
   task_id: string; message_id: string | null; status: string; submission_state: string;
   input: ChatImageInput; result?: ImagePart[]; credits_used: number;
   reference_previews?: Array<{ index: number; url: string | null; available: boolean }>;
+  current_attempt?: boolean; context_revision?: number | null;
   can_stop: boolean; can_replay: boolean; cancel_explanation: string;
   feedback?: { rating: 'helpful' | 'not_helpful' };
   platform_cost?: { reason: string; refunded_user_credits: number; estimated_provider_credits: number; evidence: string };
@@ -38,7 +40,7 @@ export interface ChatImageEstimate {
 }
 export interface ChatImageReceipt {
   task_id: string; message_id: string; conversation_id: string;
-  status: 'submitted'; submission_state: string; estimated_credits: number;
+  status: 'submitted'; submission_state: string; estimated_credits: number; context_revision?: number | null;
 }
 export const chatImageService = {
   async estimate(input: ChatImageInput): Promise<ChatImageEstimate> {

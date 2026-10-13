@@ -60,7 +60,7 @@ def isolated_db():
         trial_schema=(ROOT/"migrations/266_skill_chat_creation_receipts.sql").read_text().split("CREATE TABLE public.skill_draft_trial_runs",1)[1].split("-- A user edit",1)[0]
         connection.execute("CREATE TABLE public.skill_draft_trial_runs"+trial_schema)
         connection.execute("ALTER TABLE skill_draft_trial_runs OWNER TO everydayai")
-        for migration in ("275_chat_image_trials.sql", "276_chat_image_snapshot_replay.sql", "278_chat_image_size_budget.sql"):
+        for migration in ("275_chat_image_trials.sql", "276_chat_image_snapshot_replay.sql", "278_chat_image_size_budget.sql", "299_chat_image_retry_in_place.sql"):
             connection.execute("SET LOCAL ROLE everydayai_owner")
             connection.execute((ROOT/"migrations"/migration).read_text())
             assert connection.execute("SELECT current_user=session_user").fetchone()[0] is True
@@ -593,8 +593,11 @@ def failed_source(facts):
     return task
 
 
-def test_snapshot_retry_is_atomic_new_version_and_bounded(facts):
+def test_successful_regeneration_is_atomic_new_version_and_bounded(facts):
     source=failed_source(facts)
+    # This test isolates regeneration budgeting from the already-tested settlement.
+    with psycopg.connect(facts["dsn"]) as db:
+        db.execute("UPDATE tasks SET status='completed' WHERE id=%s", (source,))
     request_id=str(uuid4())
     assert replay_sql(facts,source,request_id,allow_new=False)["outcome"]=="new_required"
     with ThreadPoolExecutor(4) as pool:
@@ -610,7 +613,7 @@ def test_snapshot_retry_is_atomic_new_version_and_bounded(facts):
     with psycopg.connect(facts["dsn"]) as db:
         old=db.execute("SELECT status,request_params,assistant_message_id FROM tasks WHERE id=%s",(source,)).fetchone()
         new=db.execute("SELECT request_params,turn_id,assistant_message_id FROM tasks WHERE id=%s",(results[0]["task_id"],)).fetchone()
-        assert old[0]=="cancelled" and old[1]["_media_request_v1"]==facts["snapshot"]
+        assert old[0]=="completed" and old[1]["_media_request_v1"]==facts["snapshot"]
         assert new[0]["_media_request_v1"]["prompt"]==facts["snapshot"]["prompt"]
         assert new[1] is None and new[2]!=old[2]
         assert db.execute("SELECT credits FROM users WHERE id=%s",(facts["user"],)).fetchone()[0]==100
@@ -654,7 +657,8 @@ async def test_real_controls_preserve_snapshot_and_recover_receipt_when_disabled
         assert (await controls.details(source))["feedback"]["rating"]=="not_helpful"
         assert (await controls.stop(first["task_id"]))["outcome"]=="stopped"
         from core.exceptions import PermissionDeniedError
-        with pytest.raises(PermissionDeniedError): await controls.replay(source,str(uuid4()))
+        publish(facts,first["task_id"],status="cancelled")
+        with pytest.raises(PermissionDeniedError): await controls.replay(first["task_id"],str(uuid4()))
     finally: raw.pool.close()
 
 
