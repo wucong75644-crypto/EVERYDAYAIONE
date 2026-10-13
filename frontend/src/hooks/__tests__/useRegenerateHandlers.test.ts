@@ -404,3 +404,71 @@ describe('useRegenerateHandlers', () => {
   });
 
 });
+
+describe('chat image retry slot identity', () => {
+  beforeEach(() => { vi.clearAllMocks(); sessionStorage.clear(); });
+
+  it('updates a failed slot in place, clears its error and preserves its position', async () => {
+    const setMessages = vi.fn();
+    const original = createTestMessage({ id: 'slot', status: 'failed', is_error: true,
+      error: { code: 'FAILED', message: 'old error' }, content: [{ type: 'image', url: null, failed: true }],
+      generation_params: { origin: 'chat_image', task_id: 'old', model: 'original-model' } });
+    mockImageReplay.mockResolvedValue({ task_id: 'retry', message_id: 'slot', submission_state: 'queued' });
+    const { result } = renderHook(() => useRegenerateHandlers({ conversationId: 'conv-1', setMessages }));
+    await act(() => result.current.handleRegenerate(original, createUserMessage()));
+    const after = setMessages.mock.calls[0][0]([original]);
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatchObject({ id: 'slot', status: 'pending', is_error: false, created_at: original.created_at,
+      content: [{ type: 'image', url: null }], generation_params: { task_id: 'retry', model: 'original-model' } });
+    expect(after[0].error).toBeUndefined();
+    expect(mockSubscribeTaskWithMapping).toHaveBeenCalledWith('retry', 'conv-1');
+  });
+
+  it('does not duplicate a slot when HTTP replay returns the same receipt twice', async () => {
+    const setMessages = vi.fn();
+    const original = createTestMessage({ id: 'slot', status: 'failed', generation_params: { origin: 'chat_image', task_id: 'old' } });
+    mockImageReplay.mockResolvedValue({ task_id: 'retry', message_id: 'slot', submission_state: 'queued' });
+    const { result } = renderHook(() => useRegenerateHandlers({ conversationId: 'conv-1', setMessages }));
+    await act(() => result.current.handleRegenerate(original, createUserMessage()));
+    const first = setMessages.mock.calls[0][0]([original]);
+    await act(() => result.current.handleRegenerate(original, createUserMessage()));
+    expect(setMessages.mock.calls[1][0](first)).toHaveLength(1);
+  });
+
+  it('does not reset a completion that arrives before its HTTP receipt', async () => {
+    const setMessages = vi.fn();
+    const original = createTestMessage({ id: 'slot', status: 'failed', generation_params: { origin: 'chat_image', task_id: 'old' } });
+    mockImageReplay.mockResolvedValue({ task_id: 'retry', message_id: 'slot', submission_state: 'queued' });
+    const { result } = renderHook(() => useRegenerateHandlers({ conversationId: 'conv-1', setMessages }));
+    await act(() => result.current.handleRegenerate(original, createUserMessage()));
+    const completed = createTestMessage({ id: 'slot', generation_params: { origin: 'chat_image', task_id: 'retry' } });
+    const previous = [completed];
+    expect(setMessages.mock.calls[0][0](previous)).toBe(previous);
+  });
+
+  it('ignores an older HTTP receipt after a later attempt owns the slot', async () => {
+    const setMessages = vi.fn();
+    const original = createTestMessage({ id: 'slot', status: 'failed', generation_params: { origin: 'chat_image', task_id: 'old' } });
+    mockImageReplay.mockResolvedValue({ task_id: 'retry', message_id: 'slot', submission_state: 'queued' });
+    const { result } = renderHook(() => useRegenerateHandlers({ conversationId: 'conv-1', setMessages }));
+    await act(() => result.current.handleRegenerate(original, createUserMessage()));
+    const previous = [createTestMessage({ id: 'slot', status: 'pending', generation_params: { origin: 'chat_image', task_id: 'later' } })];
+    expect(setMessages.mock.calls[0][0](previous)).toBe(previous);
+  });
+
+  it('coalesces double clicks while accepting a retry', async () => {
+    const setMessages = vi.fn();
+    let resolve!: (value: unknown) => void;
+    mockImageReplay.mockReturnValue(new Promise(r => { resolve = r; }));
+    const original = createTestMessage({ id: 'slot', status: 'failed', generation_params: { origin: 'chat_image', task_id: 'old' } });
+    const { result } = renderHook(() => useRegenerateHandlers({ conversationId: 'conv-1', setMessages }));
+    await act(async () => {
+      const first = result.current.handleRegenerate(original, createUserMessage());
+      const second = result.current.handleRegenerate(original, createUserMessage());
+      expect(mockImageReplay).toHaveBeenCalledOnce();
+      resolve({ task_id: 'retry', message_id: 'slot', submission_state: 'queued' });
+      await Promise.all([first, second]);
+    });
+    expect(setMessages).toHaveBeenCalledOnce();
+  });
+});

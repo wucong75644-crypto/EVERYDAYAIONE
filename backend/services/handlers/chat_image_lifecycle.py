@@ -338,6 +338,12 @@ class ChatImageLifecycle:
             await self.rpc(task,"ack_chat_image_delivery")
             return
         message=await asyncio.to_thread(lambda:self.scoped(task).table("messages").select("*").eq("id",task["assistant_message_id"]).single().execute().data)
+        if (message.get("generation_params") or {}).get("task_id") != str(task["id"]):
+            # The slot belongs to a newer attempt; acknowledge the old delivery only.
+            limiter=await get_task_limit_service()
+            await limiter.release(task["user_id"],task["conversation_id"],org_id=task.get("org_id"),slot_id=task["id"])
+            await self.rpc(task,"ack_chat_image_delivery")
+            return
         if isinstance(message.get("content"),str):
             message["content"]=json.loads(message["content"])
         await ws_manager.send_to_task_or_user(task["id"],task["user_id"],build_message_done(task["id"],task["conversation_id"],message,task.get("credits_used",0)),org_id=task.get("org_id"))

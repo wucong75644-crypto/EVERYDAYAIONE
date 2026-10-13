@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/useAuthStore';
 import { toast } from 'react-hot-toast';
 import { logger } from '../utils/logger';
 import { tabSync } from '../utils/tabSync';
+import { staleImageAttempt } from '../utils/chatImageAttempt';
 import { parseContentPart } from '../schemas/messageProtocol';
 import {
   cleanupTaskSubscription,
@@ -14,6 +15,7 @@ import {
 } from './wsMessageHandlerShared';
 
 type NormalizeInput = Parameters<typeof normalizeMessage>[0];
+
 
 function handleTaskDoneWithMessage(
   deps: HandlerDeps,
@@ -132,6 +134,10 @@ export function handleMessageDone(deps: HandlerDeps, msg: WSIncomingMessage): vo
   const params = messageData?.generation_params as Record<string, unknown> | undefined;
   const childImage = params?.origin === 'chat_image'
     || (!!effectiveMessageId && deps.getStore().getMessage(effectiveMessageId)?.generation_params?.origin === 'chat_image');
+  if (staleImageAttempt(effectiveMessageId ? deps.getStore().getMessage(effectiveMessageId) : undefined, task_id, messageData)) {
+    if (task_id) cleanupTaskSubscription(deps, task_id);
+    return;
+  }
   if (!childImage) flushPendingChunks(deps);
 
   logger.info('ws:message', 'done received', {
@@ -216,6 +222,10 @@ export function handleMessageError(deps: HandlerDeps, msg: WSIncomingMessage): v
   const snapshot = (msg.message ?? msg.payload?.message) as Record<string, unknown> | undefined;
 
   const childImage = !!message_id && deps.getStore().getMessage(message_id)?.generation_params?.origin === 'chat_image';
+  if (staleImageAttempt(message_id ? deps.getStore().getMessage(message_id) : undefined, task_id, snapshot)) {
+    if (task_id) cleanupTaskSubscription(deps, task_id);
+    return;
+  }
   if (!childImage) flushPendingChunks(deps);
 
   logger.error('ws:message', 'error received', undefined, {
@@ -264,7 +274,7 @@ export function handleImagePartialUpdate(
 
   const store = deps.getStore();
   const existing = store.getMessage(message_id);
-  if (!existing) return;
+  if (!existing || staleImageAttempt(existing, msg.task_id)) return;
   const content = [...(existing.content || [])];
   while (content.length <= image_index) {
     content.push({ type: 'image', url: null } as Message['content'][number]);

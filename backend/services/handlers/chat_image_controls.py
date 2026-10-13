@@ -56,7 +56,13 @@ class ChatImageControls:
         from services.adapters.kie.configs import IMAGE_MODEL_CONFIGS
         transparent_supported = (get_settings().chat_image_transparent_enabled and
             "transparent" in IMAGE_MODEL_CONFIGS.get(snapshot["model"], {}).get("supported_backgrounds", ()))
+        message = None
+        if row.get("assistant_message_id"):
+            message = await asyncio.to_thread(lambda: self.db.table("messages").select("generation_params,context_revision")
+                .eq("id",row["assistant_message_id"]).single().execute().data)
+        current = not message or (message.get("generation_params") or {}).get("task_id") == str(row["id"])
         return {"task_id": row["id"], "message_id": row["assistant_message_id"],
+            "current_attempt": current, "context_revision": (message or {}).get("context_revision"),
             "status": row["status"], "submission_state": phase,
             "input": deepcopy(snapshot), "reference_previews":previews, "result": [row["result_data"]] if row.get("result_data") else [],
             "credits_used": row.get("credits_used") or 0,

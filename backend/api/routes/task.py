@@ -83,7 +83,7 @@ async def get_image_input(task_id: UUID, ctx: OrgCtx, db: ScopedDB):
     return await ChatImageControls(_image_scope(db, ctx), ctx.user_id, ctx.org_id).details(str(task_id))
 
 
-@router.post("/{task_id}/image/replay", summary="使用原始快照创建图片新版本")
+@router.post("/{task_id}/image/replay", summary="按原始快照重试图片；失败复用消息，成功创建新版本")
 @limiter.limit("15/minute")
 async def replay_image(request: Request, task_id: UUID, body: ReplayImageRequest, ctx: OrgCtx, db: ScopedDB):
     from services.handlers.chat_image_controls import ChatImageControls
@@ -105,6 +105,29 @@ class ImageFeedbackRequest(BaseModel):
 async def feedback_image(task_id: UUID, body: ImageFeedbackRequest, ctx: OrgCtx, db: ScopedDB):
     from services.handlers.chat_image_controls import ChatImageControls
     return await ChatImageControls(_image_scope(db, ctx), ctx.user_id, ctx.org_id).feedback(str(task_id), body.rating)
+
+
+def _current_image_attempts(db, tasks):
+    """Historical failed attempts must not restore a slot now owned by a retry."""
+    image_tasks = [t for t in tasks if (t.get("request_params") or {}).get("_media_request_v1")]
+    ids = list({str(t.get("assistant_message_id") or t.get("placeholder_message_id")) for t in image_tasks
+                if t.get("assistant_message_id") or t.get("placeholder_message_id")})
+    if not ids:
+        return tasks
+    rows = db.table("messages").select("id,generation_params,context_revision,created_at").in_("id", ids).execute().data
+    owners = {str(m["id"]): (m.get("generation_params") or {}).get("task_id") for m in rows}
+    revisions = {str(m["id"]): m.get("context_revision") for m in rows}
+    created = {str(m["id"]): m.get("created_at") for m in rows}
+    result = []
+    for task in tasks:
+        if not (task.get("request_params") or {}).get("_media_request_v1"):
+            result.append(task)
+            continue
+        message_id = str(task.get("assistant_message_id") or task.get("placeholder_message_id"))
+        if owners.get(message_id) == str(task["id"]):
+            result.append({**task, "message_context_revision": revisions.get(message_id),
+                           "placeholder_created_at": created.get(message_id) or task.get("placeholder_created_at")})
+    return result
 
 
 @router.get("/pending", summary="获取用户活跃任务")
@@ -150,6 +173,7 @@ async def get_pending_tasks(
         all_tasks = [task for task in pending_response.data + recent_completed_response.data
             if (task.get("request_params") or {}).get("_media_request_v1", {}).get("origin", {}).get("destination") not in {"skill_trial", "detail_project"}]
 
+        all_tasks = _current_image_attempts(db, all_tasks)
         return {
             "tasks": all_tasks,
             "count": len(all_tasks),

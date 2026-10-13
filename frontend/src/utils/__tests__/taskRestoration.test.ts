@@ -20,6 +20,7 @@ const streamingMessages = new Map<string, string>();
 const mockSetMessages = vi.fn();
 const mockGetMessages = vi.fn();
 vi.mock('../../services/message', () => ({ getMessages: (...args: unknown[]) => mockGetMessages(...args) }));
+const mockGetMessage = vi.fn();
 const mockAddMessage = vi.fn();
 const mockMarkForceRefresh = vi.fn();
 const mockUpdateMessage = vi.fn();
@@ -34,6 +35,7 @@ vi.mock('../../stores/useMessageStore', () => ({
       streamingMessages,
       setMessagesForConversation: mockSetMessages,
       addMessage: mockAddMessage,
+      getMessage: mockGetMessage,
       markForceRefresh: mockMarkForceRefresh,
       updateMessage: mockUpdateMessage,
       clearConversationStreaming: mockClearStreaming,
@@ -299,5 +301,49 @@ describe('chat reconciliation ownership', () => {
     await reconcileChatTaskStates([terminal()]);
     expect(mockClearStreaming).toHaveBeenCalledWith('conv-1');
     expect(mockSetMessages).toHaveBeenCalledWith('conv-1', [], false);
+  });
+});
+
+describe('retry slot restoration', () => {
+  beforeEach(() => { vi.clearAllMocks(); mockGetMessage.mockReturnValue(undefined); });
+  it('restores a later retry over an old failed slot without adding another message', () => {
+    mockGetMessage.mockReturnValue({ id: 'slot', status: 'failed', created_at: '2020-01-01T00:00:00Z', context_revision: 1,
+      generation_params: { origin: 'chat_image', task_id: 'old' } });
+    restoreMediaTask(createPendingImageTask({ id: 'retry', placeholder_message_id: 'slot', placeholder_created_at: null, message_context_revision: 2,
+      request_params: { _media_request_v1: { model: 'actual', origin: {}, source_task_id: 'old' } } }));
+    expect(mockUpdateMessage).toHaveBeenCalledWith('slot', expect.objectContaining({
+      status: 'pending', created_at: '2020-01-01T00:00:00Z', generation_params: expect.objectContaining({ task_id: 'retry' }),
+    }));
+    expect(mockAddMessage).not.toHaveBeenCalled();
+  });
+
+  it('ignores an old terminal task after the slot has moved to its retry', async () => {
+    mockGetMessage.mockReturnValue({ id: 'slot', status: 'pending', context_revision: 2,
+      generation_params: { origin: 'chat_image', task_id: 'retry' } });
+    mockImageDetails.mockResolvedValue({ message_id: 'slot', status: 'failed', current_attempt: false,
+      context_revision: 2, result: [{ type: 'image', url: null, failed: true }], input: { model: 'actual' }, submission_state: 'published' });
+    await reconcileChatTaskStates([createPendingImageTask({ id: 'old', status: 'failed',
+      request_params: { _media_request_v1: { model: 'actual', origin: {} } } })]);
+    expect(mockUpdateMessage).not.toHaveBeenCalled();
+    expect(mockAddMessage).not.toHaveBeenCalled();
+  });
+
+  it('accepts a newer settled attempt even if several retries were missed', async () => {
+    mockGetMessage.mockReturnValue({ id: 'slot', status: 'failed', context_revision: 1,
+      generation_params: { origin: 'chat_image', task_id: 'old' } });
+    mockImageDetails.mockResolvedValue({ message_id: 'slot', status: 'completed', current_attempt: true,
+      context_revision: 5, result: [{ type: 'image', url: 'saved' }], input: { model: 'actual', source_task_id: 'intermediate' }, submission_state: 'published' });
+    await reconcileChatTaskStates([createPendingImageTask({ id: 'latest', status: 'completed',
+      request_params: { _media_request_v1: { model: 'actual', origin: {}, source_task_id: 'intermediate' } } })]);
+    expect(mockUpdateMessage).toHaveBeenCalledWith('slot', expect.objectContaining({ status: 'completed', context_revision: 5 }));
+  });
+
+  it('does not turn a settled result back into pending during an overlapping refresh', () => {
+    mockGetMessage.mockReturnValue({ id: 'slot', status: 'completed', context_revision: 3,
+      generation_params: { origin: 'chat_image', task_id: 'retry' } });
+    restoreMediaTask(createPendingImageTask({ id: 'retry', placeholder_message_id: 'slot',
+      request_params: { _media_request_v1: { model: 'actual', origin: {}, source_task_id: 'old' } } }));
+    expect(mockUpdateMessage).not.toHaveBeenCalled();
+    expect(mockAddMessage).not.toHaveBeenCalled();
   });
 });

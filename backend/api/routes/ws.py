@@ -805,7 +805,7 @@ async def _check_and_send_completed_task(conn_id: str, task_id: str, user_id: st
                 return
             from schemas.websocket import build_media_pending
             message=await _find_message_by_id(db,task.get("assistant_message_id"))
-            if message:
+            if message and (message.get("generation_params") or {}).get("task_id")==str(task["id"]):
                 if task.get("status") in {"completed","failed","cancelled"}:
                     event=build_message_done(task["id"],task["conversation_id"],message,task.get("credits_used",0))
                 else:

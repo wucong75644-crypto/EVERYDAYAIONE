@@ -1,0 +1,29 @@
+# 聊天图片失败原位重试
+
+## 行为
+
+- 失败或取消后重试：保留原消息 ID、创建时间和位置，原占位符进入生成中。
+- 成功后重新生成：保留原图片，新增消息占位符。
+- 每次生成仍创建独立任务，保留任务快照、计费和失败退款记录。
+
+## 根因与修复
+
+异步图片 replay 路径此前统一创建新任务和新消息，前端也统一追加消息，没有区分失败重试与成功后的新版本。
+
+数据库根据源任务状态决定复用或新增消息；复用时更新消息的当前任务身份和 context_revision。并发重试合并为一次新尝试，请求 ID 继续提供丢失响应后的幂等恢复。
+
+前端按服务端返回的 message_id 更新原消息或追加新消息。WebSocket、任务恢复、详情查询和后端投递共同校验当前任务身份，防止历史尝试覆盖新结果；恢复时使用原消息时间保持顺序。
+
+主要入口：useRegenerateHandlers、wsMessageHandlers、wsTaskMessageHandlers、taskRestoration，以及后端 task 路由、chat_image_controls、chat_image_lifecycle。
+
+## 发布与回滚
+
+发布必须包含迁移 `299_chat_image_retry_in_place.sql`，同时发布前后端。迁移保留已有详情项目和 Skill 试用分支，不修改历史迁移。
+
+回滚 SQL 位于 `backend/migrations/rollback/299_chat_image_retry_in_place_rollback.sql`，恢复迁移 283 中的两个函数定义。回滚前应等待在途原位重试完成，再整体回滚前后端；历史任务记录保留。
+
+## 验证
+
+2026-10-13 本地验证：后端 88 项通过（含真实 PostgreSQL、Redis 生命周期与计费测试）；前端 184 项通过；TypeScript 编译通过；git diff --check 通过。
+
+覆盖失败原位重试、成功新建版本、并发点击、响应丢失恢复、先完成后收到 HTTP 回执、历史通知隔离、刷新恢复和失败退款后成功只扣费一次。未调用外部生图服务，尚未部署生产。

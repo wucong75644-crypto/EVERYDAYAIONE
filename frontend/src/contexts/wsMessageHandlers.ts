@@ -7,6 +7,7 @@
  * - 任务完成/失败辅助函数
  */
 
+import { staleImageAttempt } from '../utils/chatImageAttempt';
 import { toast } from 'react-hot-toast';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useMemoryStore } from '../stores/useMemoryStore';
@@ -55,13 +56,16 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
           || params?.origin !== 'chat_image'
           || params?.task_id !== msg.task_id) return;
       const existing = deps.getStore().getMessage(raw.id);
-      if (existing?.status === 'completed' || existing?.status === 'failed') return;
+      if (staleImageAttempt(existing, msg.task_id, raw as unknown as Record<string, unknown>)) return;
+      if (existing?.generation_params?.task_id === msg.task_id
+          && (existing.status === 'completed' || existing.status === 'failed')) return;
       if (raw.status === 'completed' || raw.status === 'failed') {
         handleMessageDone(deps, msg);
         return;
       }
       const message = normalizeMessage(raw);
-      deps.getStore().addMessage(raw.conversation_id, message);
+      if (existing) deps.getStore().updateMessage(raw.id, { ...message, error: undefined, is_error: false });
+      else deps.getStore().addMessage(raw.conversation_id, message);
       deps.taskConversationMapRef.current.set(msg.task_id, raw.conversation_id);
       if (!deps.subscribedTasksRef.current.has(msg.task_id)) {
         deps.subscribedTasksRef.current.add(msg.task_id);
