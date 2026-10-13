@@ -253,3 +253,20 @@ PYTHONPATH=backend SOCIAL_OPS_TEST_DSN='host=/private/tmp port=55479 dbname=soci
 - 后端定向回归693项通过（包含第四阶段隔离PostgreSQL、第三阶段发布、公共工具策略、后台宿主和Agent Reach）；随后新增独立15秒扫描测试，第四阶段23项再次全部通过。两轮有重叠，不累加为716项。
 - 前端4个测试文件21项通过，包含真实模块加载循环引用回归；`npm run build`中的TypeScript和Vite生产构建通过。现有React act测试提示和大包提示不影响结果。`git diff --check`通过。
 - 浏览器操作为隔离替代API页面验证；数据库验证为专用本地实例，工具返回为替代响应。以上均不证明真实平台定时提交、审核通过或公开发布。本轮未提交、推送、部署、合并或清理工作树。
+
+### 2026-10-13 生产页面验收与启用（05323e52）
+
+- 用户明确确认启用生产定时发布并进行一次测试账号、仅自己可见的真实验收。通过`upload-env.sh --key SOCIAL_OPS_SCHEDULED_PUBLISH_ENABLED`仅更新该键为true，再以`release.sh --deploy-task 05323e520c35c55d75f9af1c20055cf45e1dade0 --skip-test`受控重启复验，返回DEPLOYED_PENDING_ACCEPTANCE。未合并或清理。
+- 用户电脑Chrome实际操作：强制刷新后排期列表/日历空态正常；开关启用前选项禁用，启用后可选择，显示Asia/Shanghai与默认60秒窗口。现有验收草稿保存新文字v11时旧图片移除并显示待补素材；固定模板制作3张1080×1440卡片保存v12，刷新持久。v10原发布与核验记录保留；新版本不是新的content_id。
+- v12标题“验收测试｜定时发布单次授权”，标签“功能测试”，正文明确功能测试、结果待真实回执与账号核验，不声称通过。未调用选题或生图模型。语义检查运行9bf2402f-c339-485c-b02b-aa08b063aaf8仅执行第一阶段一次，模型deepseek-v4-pro，7652输入/656输出tokens，页面积分557→556，总运行额度20。返回MODEL_OUTPUT_INVALID:json_invalid，完成0阶段，未自动重试。没有保留原始失败文本，目前只能确认JSON解析失败，不能断言具体格式原因。
+- 检查失败后整包检查及最终确认不可用，未创建任何测试排期，无待执行排期，无平台提交、上传或发布。真实到期派发、取消与回执验收未完成。不得借v10旧检查、改数据库或关闭检查继续发布。
+- 证据目录`/Users/wucong/.codex/task-evidence/social-ops-phase4/`：production-schedule-disabled.png、production-v12-cover.png、production-v12-check-blocked.png。当前开关保持用户授权的启用状态；仅精确确认的排期可发送，没有创建周期任务。
+
+### 语义检查JSON输出修复（待提交部署）
+
+- 已确认调用链缺口：社媒阶段仅通过提示词约束JSON，且DashScope适配器仅转发Kimi的response_format，DeepSeek V4请求未具有接口级JSON约束。质量检查还共用卡片制作说明，加入了不属于四字段检查契约的输出要求。此次失败原文未留存，无法证明具体非法字符或断言这就是唯一原因。
+- 本地修复：社媒DeepSeek V4 Pro/Flash阶段显式请求json_object与非思考模式，适配器按显式请求转发JSON格式及4096输出上限；普通聊天保持原行为。检查独立使用hard_errors/suggestions/unknowns/source_risk契约。保留严格结构/证据/截断/工具权限校验，不提取夹杂报告中的JSON、不补造字段、不自动重试。仅记录运行ID、阶段、模型、结束类型、字节数、是否为空/代码围栏和错误码，不记录原始输出或来源正文。
+- 官方能力依据：https://help.aliyun.com/en/model-studio/qwen-structured-output （列出DeepSeek V4 JSON Object支持）。接口JSON模式不保证业务结构或语义正确，仍需本地严格校验。
+- 定向验证包括社媒质量检查/草稿/计划的合法JSON、整段围栏、空输出、非法格式、截断与非法引用，以及真实HTTP序列化和普通聊天兼容；不调用真实模型或平台。修复尚未部署，须受控部署后用原失败运行的剩余额度恢复验证，不复用旧版本检查。
+
+- 修复最终验证：社媒阶段/解析、DeepSeek HTTP传输、现有媒体与Kimi适配回归共97项通过，`git diff --check`通过。未调用付费模型或真实平台，未提交推送或部署修复。
