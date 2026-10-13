@@ -14,6 +14,9 @@ from tests.test_skill_storage import PACKAGE, publication
 @pytest.mark.parametrize('table_owner', ['everydayai', 'everydayai_owner'])
 def test_cleanup_is_narrow_idempotent_and_removes_temporary_policies(published, table_owner):
     conn, repository, a, b, _, _, storage = published
+    conn.execute('RESET ROLE')
+    conn.execute((MIGRATIONS / '259_skill_authoring.sql').read_text())
+    conn.execute('SET LOCAL ROLE everydayai')
     base = storage.validate(PACKAGE, publication())
     keys = ['asset-test-0921', 'recommendation-smoke-20260926', 'test-daily-report',
             'a001', 'easel-text-polisher', 'reference-image-prompts']
@@ -29,10 +32,13 @@ def test_cleanup_is_narrow_idempotent_and_removes_temporary_policies(published, 
     conn.execute('RESET ROLE')
     original_revisions = conn.execute('SELECT * FROM skill_revisions ORDER BY id').fetchall()
     conn.execute('CREATE ROLE everydayai_owner NOSUPERUSER NOBYPASSRLS')
-    for table in SKILL_TABLES:
+    for table in (*SKILL_TABLES, 'skill_drafts', 'skill_change_audits'):
         conn.execute(psycopg.sql.SQL('ALTER TABLE {} OWNER TO {}').format(
             psycopg.sql.Identifier(table), psycopg.sql.Identifier(table_owner)))
     conn.execute(psycopg.sql.SQL('ALTER FUNCTION skill_catalog_guard() OWNER TO {}').format(psycopg.sql.Identifier(table_owner)))
+    for function in ('skill_authoring_guard', 'skill_record_change', 'skill_catalog_org_id'):
+        conn.execute(psycopg.sql.SQL('ALTER FUNCTION {}() OWNER TO {}').format(
+            psycopg.sql.Identifier(function), psycopg.sql.Identifier(table_owner)))
     migration = (MIGRATIONS / '300_disable_retired_test_skills.sql').read_text()
     for _ in range(2):
         # Match the controlled executor: session user can change roles, initial
@@ -45,3 +51,4 @@ def test_cleanup_is_narrow_idempotent_and_removes_temporary_policies(published, 
         assert actual == expected
         assert conn.execute('SELECT * FROM skill_revisions ORDER BY id').fetchall() == original_revisions
         assert conn.execute("SELECT count(*) FROM pg_policies WHERE policyname LIKE 'skill_cleanup_300_%'").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM skill_change_audits WHERE action='migration_300_disable_test_skills' AND actor_user_id IS NULL").fetchone()[0] == 6
