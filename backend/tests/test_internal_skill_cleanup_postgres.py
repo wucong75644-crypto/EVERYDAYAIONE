@@ -2,6 +2,7 @@
 from dataclasses import replace
 
 import psycopg
+import pytest
 
 from services.skills.contracts import PackageCreate, revision_path
 from tests.test_skill_catalog_postgres import (  # noqa: F401
@@ -10,7 +11,8 @@ from tests.test_skill_catalog_postgres import (  # noqa: F401
 from tests.test_skill_storage import PACKAGE, publication
 
 
-def test_cleanup_is_narrow_idempotent_and_removes_temporary_policies(published):
+@pytest.mark.parametrize('table_owner', ['everydayai', 'everydayai_owner'])
+def test_cleanup_is_narrow_idempotent_and_removes_temporary_policies(published, table_owner):
     conn, repository, a, b, _, _, storage = published
     base = storage.validate(PACKAGE, publication())
     keys = ['asset-test-0921', 'recommendation-smoke-20260926', 'test-daily-report',
@@ -28,10 +30,14 @@ def test_cleanup_is_narrow_idempotent_and_removes_temporary_policies(published):
     original_revisions = conn.execute('SELECT * FROM skill_revisions ORDER BY id').fetchall()
     conn.execute('CREATE ROLE everydayai_owner NOSUPERUSER NOBYPASSRLS')
     for table in SKILL_TABLES:
-        conn.execute(psycopg.sql.SQL('ALTER TABLE {} OWNER TO everydayai_owner').format(psycopg.sql.Identifier(table)))
-    conn.execute('ALTER FUNCTION skill_catalog_guard() OWNER TO everydayai_owner')
+        conn.execute(psycopg.sql.SQL('ALTER TABLE {} OWNER TO {}').format(
+            psycopg.sql.Identifier(table), psycopg.sql.Identifier(table_owner)))
+    conn.execute(psycopg.sql.SQL('ALTER FUNCTION skill_catalog_guard() OWNER TO {}').format(psycopg.sql.Identifier(table_owner)))
     migration = (MIGRATIONS / '300_disable_retired_test_skills.sql').read_text()
     for _ in range(2):
+        # Match the controlled executor: session user can change roles, initial
+        # effective role is everydayai_owner even when tables have legacy owners.
+        conn.execute('SET LOCAL ROLE everydayai_owner')
         conn.execute(migration)
         conn.execute('RESET ROLE')
         actual = {(org, pid): enabled for org, pid, enabled in conn.execute(
