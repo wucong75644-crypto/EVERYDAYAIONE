@@ -35,6 +35,7 @@ class ToolContext:
     conversation_id: str | None = None
     task_id: str | None = None
     call_id: str | None = None
+    scheduled_publish_grant: Any = field(default=None, repr=False, compare=False)
     confirmation_available: bool = False
     budget: Any = field(default=None, repr=False, compare=False)
     cancellation: Any = field(default=None, repr=False, compare=False)
@@ -68,7 +69,7 @@ class ToolContext:
             raise ValueError("Invalid permission_mode")
         if self.execution_mode not in {"interactive", "scheduled", "preflight"}:
             raise ValueError("Invalid execution_mode")
-        if self.entrypoint not in {"model", "legacy_internal", "social_ops_interactive"}:
+        if self.entrypoint not in {"model", "legacy_internal", "social_ops_interactive", "social_ops_scheduled"}:
             raise ValueError("Invalid entrypoint")
         if self.authorized_tool_names is not None:
             if isinstance(self.authorized_tool_names, str) or any(

@@ -147,9 +147,10 @@ def test_scheduled_reach_reads_allowed_but_all_writes_denied(action):
     assert policy.decide("agent_reach", ctx, args).outcome == "deny"
 
 
-@pytest.mark.parametrize("response_style", ["json", "fenced", "truncated", "invalid", "unknown_reference"])
-@pytest.mark.parametrize("run_kind", ["draft", "plan"])
-async def test_production_uses_pinned_runtime_and_gateway_without_tools(monkeypatch, response_style, run_kind):
+@pytest.mark.parametrize("response_style", ["json", "fenced", "truncated", "invalid", "unknown_reference", "empty"])
+@pytest.mark.parametrize("model", ["qwen3.8-max", "deepseek-v4-pro", "deepseek-v4-flash"])
+@pytest.mark.parametrize("run_kind", ["draft", "plan", "check"])
+async def test_production_uses_pinned_runtime_and_gateway_without_tools(monkeypatch, response_style, run_kind, model):
     from contextlib import asynccontextmanager
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -173,6 +174,7 @@ async def test_production_uses_pinned_runtime_and_gateway_without_tools(monkeypa
         jwt_secret_key="test-only",
         skill_catalog_enabled=True,
         skill_runtime_enabled=True,
+        agent_loop_model=model,
     )
     monkeypatch.setattr("core.config.get_settings", lambda: settings)
     monkeypatch.setattr(
@@ -194,16 +196,21 @@ async def test_production_uses_pinned_runtime_and_gateway_without_tools(monkeypa
                               "evidence": output["evidence"], "decision": "defer", "format": "图文",
                               "required_materials": ["自有图"], "unknowns": [], "planned_date": None}],
                   "analysis": "单一样本，结论有限", "missing_inputs": ["图片"]}
+    if run_kind == "check":
+        output = {"hard_errors": [], "suggestions": ["功能测试，待核验"], "unknowns": ["平台状态未知"], "source_risk": "仅审核提供的固定资料"}
     observed = []
     model_output = json.loads(json.dumps(output))
     evidence_parent = model_output["topics"][0] if run_kind == "plan" else model_output
-    evidence_parent["evidence"] = [{"reference_id": "E999" if response_style == "unknown_reference" else "E1"}]
+    if run_kind != "check":
+        evidence_parent["evidence"] = [{"reference_id": "E999" if response_style == "unknown_reference" else "E1"}]
+    elif response_style == "unknown_reference":
+        model_output["unexpected"] = "E999"
 
     class Session:
         async def stream_chat(self, messages, **kwargs):
             observed.append((messages, kwargs))
             yield StreamChunk(
-                content=("not-json" if response_style == "invalid" else
+                content=("" if response_style == "empty" else "not-json" if response_style == "invalid" else
                          "```json\n" + json.dumps(model_output) + "\n```" if response_style == "fenced"
                          else json.dumps(model_output)),
                 finish_reason="length" if response_style == "truncated" else "stop",
@@ -242,11 +249,11 @@ async def test_production_uses_pinned_runtime_and_gateway_without_tools(monkeypa
         "outputs": [],
         "input": {"sources": [{"id": sid, "body": "这是真实原文"}]},
     }
-    if response_style in {"truncated", "invalid", "unknown_reference"}:
+    if response_style in {"truncated", "invalid", "unknown_reference", "empty"}:
         from services.agent.agent_reach.contracts import ReachError
         with pytest.raises(ReachError) as error:
             await worker.execute_stage(run)
-        assert error.value.code == {"truncated": "MODEL_OUTPUT_TRUNCATED", "invalid": "MODEL_OUTPUT_INVALID", "unknown_reference": "EVIDENCE_REFERENCE_INVALID"}[response_style]
+        assert error.value.code == {"truncated": "MODEL_OUTPUT_TRUNCATED", "invalid": "MODEL_OUTPUT_INVALID", "unknown_reference": "MODEL_OUTPUT_INVALID" if run_kind == "check" else "EVIDENCE_REFERENCE_INVALID", "empty": "MODEL_OUTPUT_INVALID"}[response_style]
         assert len(observed) == 1
         session.close.assert_awaited_once()
         return
@@ -254,6 +261,12 @@ async def test_production_uses_pinned_runtime_and_gateway_without_tools(monkeypa
     assert result == output and manifest["skill_snapshot"] == pins
     assert "Only use the pinned method." in str(observed[0][0])
     assert "tools" not in observed[0][1]
+    assert observed[0][1]["max_tokens"] == 4096
+    if model.startswith("deepseek-v4"):
+        assert observed[0][1]["response_format"] == {"type": "json_object"}
+        assert observed[0][1]["thinking_mode"] == "disabled"
+    else:
+        assert "response_format" not in observed[0][1]
     prompt = json.loads(observed[0][0][-1]["content"])
     assert prompt["evidence_catalog"] == [{"reference_id": "E1", "snapshot_id": sid, "quote": "这是真实原文"}]
     assert manifest["evidence_catalog_coverage"]["references"] == 1

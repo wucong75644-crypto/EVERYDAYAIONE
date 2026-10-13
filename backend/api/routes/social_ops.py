@@ -544,15 +544,7 @@ def verify_publish_intent(
 @router.post("/publish-intents/{id}/cancel")
 def cancel_publish_intent(id: UUID, ctx: OrgCtx, db: Database, response: Response):
     repo = repository(ctx, db, response)
-    with repo.cursor() as c:
-        c.execute(
-            "UPDATE social_publish_intents SET state='cancelled',updated_at=now() WHERE id=%s AND org_id=%s AND state='awaiting_confirmation' RETURNING id,state",
-            (id, ctx.org_id),
-        )
-        row = c.fetchone()
-        if not row:
-            raise HTTPException(409, "意图已派发或不可取消，不能保证撤回")
-        return row
+    return call(publish_worker.cancel, repo, str(id))
 
 
 @router.post("/media-reference")
@@ -583,3 +575,97 @@ def resolve_not_published(
     return call(
         publishing.resolve_not_published, repository(ctx, db, response), str(id), data
     )
+
+
+from services.social_ops.contracts import PublishSchedule
+from services.social_ops import publish_worker
+
+
+@router.get("/publish-schedules/capabilities")
+def publish_schedule_capabilities(ctx: OrgCtx, db: Database, response: Response):
+    repository(ctx, db, response)
+    return {"enabled": get_settings().social_ops_scheduled_publish_enabled}
+
+
+@router.post("/publish-schedules", status_code=201)
+def prepare_schedule(
+    data: PublishSchedule, ctx: OrgCtx, db: Database, response: Response
+):
+    return call(publish_worker.prepare, repository(ctx, db, response), data)
+
+
+@router.put("/publish-schedules/{id}")
+def edit_schedule(
+    id: UUID, data: PublishSchedule, ctx: OrgCtx, db: Database, response: Response
+):
+    return call(publish_worker.prepare, repository(ctx, db, response), data, str(id))
+
+
+@router.post("/publish-schedules/{id}/confirm")
+def approve_schedule(
+    id: UUID, data: PublishConfirm, ctx: OrgCtx, db: Database, response: Response
+):
+    return call(
+        publish_worker.approve,
+        repository(ctx, db, response),
+        str(id),
+        data.approval_hash,
+    )
+
+
+@router.get("/publish-schedules")
+def list_schedules(
+    ctx: OrgCtx,
+    db: Database,
+    response: Response,
+    offset: int = 0,
+    limit: int = 30,
+    month: str | None = None,
+):
+    repo = repository(ctx, db, response)
+    offset = max(0, offset)
+    limit = max(1, min(limit, 100))
+    if month is not None:
+        import re
+
+        if not re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", month):
+            raise HTTPException(422, "月份格式应为YYYY-MM")
+    where = "org_id=%s AND scheduled_at IS NOT NULL"
+    params = [ctx.org_id]
+    if month:
+        where += (
+            " AND to_char(scheduled_at AT TIME ZONE schedule_timezone,'YYYY-MM')=%s"
+        )
+        params.append(month)
+    with repo.cursor() as c:
+        c.execute(
+            "SELECT count(*) AS count FROM social_publish_intents WHERE " + where,
+            params,
+        )
+        total = c.fetchone()["count"]
+        c.execute(
+            "SELECT * FROM social_publish_intents WHERE "
+            + where
+            + " ORDER BY scheduled_at DESC,id LIMIT %s OFFSET %s",
+            [*params, limit, offset],
+        )
+        return {"items": c.fetchall(), "total": total, "offset": offset}
+
+
+@router.get("/publish-schedules/{id}")
+def schedule_detail(id: UUID, ctx: OrgCtx, db: Database, response: Response):
+    repo = repository(ctx, db, response)
+    row = call(publishing.get_intent, repo, str(id))
+    if not row.get("scheduled_at"):
+        raise HTTPException(404, "排期不存在")
+    with repo.cursor() as c:
+        c.execute(
+            "SELECT state,reason,actor_id,created_at,snapshot FROM social_publish_events WHERE org_id=%s AND intent_id=%s ORDER BY id",
+            (ctx.org_id, id),
+        )
+        return {**row, "events": c.fetchall(), "platform_review_status": "unknown"}
+
+
+@router.post("/publish-schedules/{id}/revise")
+def revoke_schedule_for_edit(id: UUID, ctx: OrgCtx, db: Database, response: Response):
+    return call(publish_worker.revise, repository(ctx, db, response), str(id))

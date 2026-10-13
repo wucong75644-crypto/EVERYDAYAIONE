@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useAuthStore } from "../stores/useAuthStore";
 import "./SocialOps.css";
+import PublishCalendar from "../components/social-ops/PublishCalendar";
 import ContentHistory from "../components/social-ops/ContentHistory";
 import CardStudio, {
   SocialAssetPreview,
@@ -756,7 +757,7 @@ export default function SocialOps() {
           <details className="social-boundary">
             <summary>采集与草稿范围</summary>
             <p>
-              当前采集范围：关键词与指定小红书样本，不支持完整主页同步、作品全集或运营指标。文字草稿待补图片素材，本页面不发布内容。
+              当前采集范围：关键词与指定小红书样本，不支持完整主页同步、作品全集或运营指标。缺图草稿需先补素材；完整图文检查后才能确认立即或定时发布。
             </p>
           </details>
         </aside>
@@ -775,6 +776,7 @@ export default function SocialOps() {
                 : "尚未选择任务"}
             </span>
           </div>
+          {loaded && !unavailable && <PublishCalendar accounts={accounts} />}
           <nav className="social-stages" aria-label="运营阶段">
             {(
               [
@@ -1280,6 +1282,34 @@ export default function SocialOps() {
                               }}
                             />
                           </label>
+                          <details className="rounded-xl border border-border p-3">
+                            <summary>检查依据：待核实假设</summary>
+                            <p className="my-2 text-sm text-text-secondary">
+                              这些假设会交给语义检查，不随正文自动更新。改写主题后请核对，删除不适用的旧假设；它们不会作为发布正文。
+                            </p>
+                            <label className="block">
+                              待核实假设（每行一项）
+                              <textarea
+                                rows={3}
+                                className={inputClass}
+                                value={(draft.data.assumptions ?? []).join(
+                                  "\n",
+                                )}
+                                onChange={(e) => {
+                                  setDirty(true);
+                                  setDraft({
+                                    ...draft,
+                                    data: {
+                                      ...draft.data,
+                                      assumptions: e.target.value
+                                        .split("\n")
+                                        .filter((line) => line.trim()),
+                                    },
+                                  });
+                                }}
+                              />
+                            </label>
+                          </details>
                         </div>
                         <aside
                           hidden={editorMode !== "preview"}

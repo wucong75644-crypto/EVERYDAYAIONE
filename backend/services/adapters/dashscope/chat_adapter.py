@@ -196,6 +196,16 @@ class DashScopeChatAdapter(BaseChatAdapter):
                 if response_format != {"type": "json_object"}:
                     raise ValueError("KIMI_RESPONSE_FORMAT_UNSUPPORTED")
                 body["response_format"] = response_format
+        # Explicit opt-in for the deployed DeepSeek V4 chat endpoint. Never
+        # silently drop a requested JSON contract or change ordinary chat calls.
+        if self._model_id in {"deepseek-v4-pro", "deepseek-v4-flash"}:
+            response_format = kwargs.get("response_format")
+            if response_format is not None:
+                if response_format != {"type": "json_object"}:
+                    raise ValueError("DEEPSEEK_RESPONSE_FORMAT_UNSUPPORTED")
+                body["response_format"] = response_format
+                if kwargs.get("max_tokens") is not None:
+                    body["max_tokens"] = kwargs["max_tokens"]
         return body
 
     def _transport_options(self, body):

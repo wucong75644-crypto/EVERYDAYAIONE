@@ -35,7 +35,9 @@ def resolve_action(spec: ToolSpec, arguments: Mapping[str, Any], *, context=None
         except Exception:
             return ActionFacts(operation, risk, 'invalid_agent_reach_arguments')
         if request.action in WRITE_ACTIONS:
-            if context is not None and context.execution_mode != 'interactive':
+            if context is not None and context.execution_mode != 'interactive' and not (
+                context.entrypoint == 'social_ops_scheduled' and request.platform == 'xiaohongshu'
+                and request.action == 'create_post' and context.scheduled_publish_grant is not None):
                 return ActionFacts('business_write', 'dangerous', 'agent_reach_background_write_forbidden')
             return ActionFacts('business_write', 'dangerous' if request.action != 'set_like' else 'safe')
         return ActionFacts('read', 'safe')

@@ -1,7 +1,7 @@
 """Bounded user configuration; authority always comes from OrgCtx."""
 
 from typing import Literal, Annotated
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from services.agent.agent_reach.contracts import platform_for_url
@@ -189,3 +189,9 @@ class PublishNotPublished(Input):
     account_checked: Literal[True]
     all_statuses_checked: Literal[True]
     acknowledge_new_confirmation: Literal[True]
+
+
+class PublishSchedule(PublishCreate):
+    scheduled_at: datetime
+    timezone: str = Field(default="Asia/Shanghai", min_length=1, max_length=100)
+    grace_seconds: int = Field(default=60, ge=60, le=3600)

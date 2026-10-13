@@ -66,12 +66,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   api.connections.mockResolvedValue([]);
   api.socialApi.mockImplementation(async (path: string) => {
+    if (path.startsWith("/publish-schedules?")) return { items: [], total: 0 };
     if (path === "/profiles") return [];
     if (path === "/research-jobs") return [job];
     if (path === "/skill-options") return [];
     if (path === "/research-jobs/job1") return job;
     if (path.endsWith("/sources")) return [source];
-    if (path.endsWith("/production-runs") || path.endsWith("/publish-intents")) return [];
+    if (path.endsWith("/production-runs") || path.endsWith("/publish-intents"))
+      return [];
     if (path.endsWith("/contents")) return [draft];
     if (path.startsWith("/topics?"))
       return [
@@ -163,6 +165,48 @@ describe("SocialOps", () => {
     );
     expect(screen.getByText("待补图片素材")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "发布" })).toBeNull();
+  });
+  it("lets an editor remove inherited assumptions before saving and blocks stale checks", async () => {
+    const original = api.socialApi.getMockImplementation()!;
+    api.socialApi.mockImplementation(async (...args) => {
+      if (args[0].endsWith("/contents"))
+        return [
+          {
+            ...draft,
+            data: { ...draft.data, assumptions: ["旧主题的未验证假设"] },
+          },
+        ];
+      return original(...args);
+    });
+    mount();
+    await screen.findByRole("option", { name: /测试研究/ });
+    fireEvent.click(screen.getByRole("button", { name: "文案编辑" }));
+    fireEvent.change(screen.getByLabelText("研究任务"), {
+      target: { value: "job1" },
+    });
+    await screen.findByRole("option", { name: /草稿标题/ });
+    fireEvent.change(screen.getByLabelText("选择草稿"), {
+      target: { value: "d1" },
+    });
+    fireEvent.click(screen.getByText("检查依据：待核实假设"));
+    const assumptions = screen.getByLabelText("待核实假设（每行一项）");
+    expect(assumptions).toHaveValue("旧主题的未验证假设");
+    fireEvent.change(assumptions, { target: { value: "" } });
+    expect(
+      screen.getByRole("button", { name: "检查已保存版本" }),
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "保存新版本" }));
+    await waitFor(() =>
+      expect(api.socialApi).toHaveBeenCalledWith(
+        "/contents/d1/revisions",
+        "POST",
+        expect.objectContaining({
+          expected_revision: 1,
+          assumptions: [],
+          evidence_ids: ["s1"],
+        }),
+      ),
+    );
   });
   it("allows pausing a finished round with a future collection schedule", async () => {
     const original = api.socialApi.getMockImplementation()!;

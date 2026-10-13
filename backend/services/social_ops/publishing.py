@@ -69,6 +69,17 @@ def get_intent(repo, id):
             "UPDATE social_publish_intents SET state='uncertain',error='DISPATCH_INTERRUPTED',updated_at=now() WHERE id=%s AND org_id=%s AND state='dispatching' AND updated_at<now()-interval '210 seconds'",
             (id, repo.scope.org_id),
         )
+        # Recover a durable tool receipt after the intent result transaction was
+        # interrupted. This is submission reconciliation, never platform verification.
+        c.execute(
+            """UPDATE social_publish_intents i SET operation_id=o.id,receipt=o.receipt,
+            state=CASE WHEN o.state='succeeded' AND (o.receipt->>'stage'='backend_submitted' OR NULLIF(o.receipt->>'remote_id','') IS NOT NULL) THEN 'submitted' ELSE i.state END,
+            updated_at=CASE WHEN o.state='succeeded' THEN now() ELSE i.updated_at END
+            FROM reach_operations o WHERE i.id=%s AND i.org_id=%s AND i.scheduled_at IS NOT NULL
+            AND i.state IN ('dispatching','uncertain') AND o.org_id=i.org_id AND o.actor_user_id=i.owner_id
+            AND o.call_id='social-publish:'||i.id::text AND (o.state<>'executing' OR i.operation_id IS NULL)""",
+            (id, repo.scope.org_id),
+        )
         c.execute(
             "SELECT * FROM social_publish_intents WHERE id=%s AND org_id=%s",
             (id, repo.scope.org_id),
@@ -79,7 +90,7 @@ def get_intent(repo, id):
     return row
 
 
-def create_intent(repo, request):
+def create_intent(repo, request, *, scheduled=False, intent_id=None):
     from core.config import get_settings
 
     settings = get_settings()
@@ -150,6 +161,38 @@ def create_intent(repo, request):
         recovered = c.fetchone()
         if recovered and check["created_at"] <= recovered["updated_at"]:
             raise ReachError("NEEDS_CHECK", "核验未发布后需重新检查整包，再确认新意图")
+        if intent_id is not None:
+            c.execute(
+                "SELECT * FROM social_publish_intents WHERE id=%s AND org_id=%s FOR UPDATE",
+                (intent_id, repo.scope.org_id),
+            )
+            original = c.fetchone()
+            if (
+                not original
+                or str(original["owner_id"]) != str(repo.scope.actor_user_id)
+                or original["state"] != "invalidated"
+                or original["grant_consumed_at"]
+                or str(original["content_id"]) != str(request.content_id)
+            ):
+                raise ReachError("VERSION_CONFLICT", "仅可修改本人的未发送排期")
+            c.execute(
+                "SELECT id FROM social_publish_intents WHERE org_id=%s AND content_id=%s AND revision=%s AND connection_id=%s AND state<>'not_published' AND id<>%s",
+                (
+                    repo.scope.org_id,
+                    request.content_id,
+                    request.expected_revision,
+                    request.connection_id,
+                    intent_id,
+                ),
+            )
+            if c.fetchone():
+                raise ReachError(
+                    "VERSION_CONFLICT", "目标版本与账号已有发布意图，请查看原记录"
+                )
+            c.execute(
+                "UPDATE social_publish_intents SET revision=%s,connection_id=%s WHERE id=%s",
+                (request.expected_revision, request.connection_id, intent_id),
+            )
         c.execute(
             """INSERT INTO social_publish_intents(org_id,content_id,revision,connection_id,check_id,visibility,owner_id,credential_version,approval_hash,payload)
             VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING id""",
@@ -176,7 +219,23 @@ def create_intent(repo, request):
             ),
         )
         existing = c.fetchone()
-        if existing["state"] in {"awaiting_confirmation", "invalidated"}:
+        if str(existing["owner_id"]) != str(repo.scope.actor_user_id):
+            raise ReachError("ACCESS_DENIED", "需要原操作者修改意图")
+        if existing.get("scheduled_at") and not scheduled:
+            if existing["state"] != "cancelled" or existing["grant_consumed_at"]:
+                raise ReachError(
+                    "VERSION_CONFLICT", "该版本已有定时意图，请先取消尚未发送的排期"
+                )
+            c.execute(
+                "UPDATE social_publish_intents SET state='invalidated',scheduled_at=NULL,schedule_timezone=NULL,authorized_until=NULL,grant_hash=NULL,lease_token=NULL,approved_by=NULL WHERE id=%s",
+                (existing["id"],),
+            )
+            existing["state"] = "invalidated"
+        if existing["state"] in (
+            {"awaiting_confirmation", "invalidated", "cancelled", "expired", "paused"}
+            if scheduled
+            else {"awaiting_confirmation", "invalidated"}
+        ):
             c.execute(
                 "UPDATE social_publish_intents SET state='awaiting_confirmation',error='',check_id=%s,visibility=%s,credential_version=%s,approval_hash=%s,payload=%s,created_at=now(),updated_at=now() WHERE id=%s RETURNING *",
                 (
@@ -245,7 +304,7 @@ def update_result(repo, id, state, receipt, code=""):
         )
         operation = c.fetchone()
         c.execute(
-            "UPDATE social_publish_intents SET state=%s,receipt=%s,error=%s,operation_id=%s,updated_at=now() WHERE id=%s AND org_id=%s AND state IN ('dispatching','uncertain')",
+            "UPDATE social_publish_intents SET state=%s,receipt=%s,error=%s,operation_id=%s,updated_at=now() WHERE id=%s AND org_id=%s AND (state='dispatching' OR (state='uncertain' AND scheduled_at IS NULL))",
             (
                 state,
                 Jsonb(receipt),
@@ -257,10 +316,12 @@ def update_result(repo, id, state, receipt, code=""):
         )
 
 
-async def confirm_intent(db, repo, id, approval):
+async def confirm_intent(db, repo, id, approval, *, scheduled_grant=None):
     from services.agent.tool_executor import ToolExecutor
 
     row = await asyncio.to_thread(get_intent, repo, id)
+    if row.get("scheduled_at") and scheduled_grant is None:
+        raise ReachError("ACCESS_DENIED", "定时意图只能由已确认的到期授权派发")
     if str(row["owner_id"]) != str(repo.scope.actor_user_id):
         raise ReachError("ACCESS_DENIED", "需由创建意图的操作者确认")
     try:
@@ -330,10 +391,14 @@ async def confirm_intent(db, repo, id, approval):
         conversation_id=None,
         task_id=str(id),
         allowed_tool_names={"agent_reach"},
-        execution_mode="interactive",
+        execution_mode="scheduled" if scheduled_grant else "interactive",
+        scheduled_publish_grant=scheduled_grant,
+        tool_policy_snapshot={"version": 1, "allowed_tools": ["agent_reach"]},
         permission_mode="ask",
-        tool_entrypoint="social_ops_interactive",
-        tool_confirmer=confirmer,
+        tool_entrypoint=(
+            "social_ops_scheduled" if scheduled_grant else "social_ops_interactive"
+        ),
+        tool_confirmer=None if scheduled_grant else confirmer,
         resource_access_boundary=ResourceAccessBoundary(
             (ResourceRule(("read",), paths=tuple(p for p, _ in selected)),),
             "social_publish_intent",
@@ -345,7 +410,10 @@ async def confirm_intent(db, repo, id, approval):
         {"name": p.name, "resource_ref": resolver.reference(p), "role": "image"}
         for _, p in selected
     ]
-    await asyncio.to_thread(consume, repo, id, approval)
+    if scheduled_grant:
+        scheduled_grant.media = media
+    else:
+        await asyncio.to_thread(consume, repo, id, approval)
     data = row["payload"]["data"]
     try:
         envelope = await executor.tool_runtime.execute(
@@ -364,6 +432,14 @@ async def confirm_intent(db, repo, id, approval):
             call_id="social-publish:" + str(id),
         )
         result = envelope.raw
+        if scheduled_grant and not scheduled_grant.sent:
+            scheduled_grant.last_error = scheduled_grant.last_error or (
+                getattr(result, "error_message", "") or envelope.decision.reason
+            )
+            scheduled_grant.next_eligible_at = getattr(result, "metadata", {}).get(
+                "next_eligible_at"
+            )
+            return await asyncio.to_thread(get_intent, repo, id)
         receipt = getattr(result, "metadata", {}).get("receipt", {})
         if not envelope.execution.handler_started:
             await asyncio.to_thread(
@@ -452,6 +528,10 @@ def resolve_not_published(repo, id, data):
         row = c.fetchone()
         if not row or str(row["owner_id"]) != str(repo.scope.actor_user_id):
             raise ReachError("ACCESS_DENIED", "需由原操作者核验未发布")
+        if row.get("scheduled_at"):
+            raise ReachError(
+                "ACCESS_DENIED", "定时发布结果不确定时只能核验，不提供重发入口"
+            )
         if row["state"] == "not_published":
             return row
         if row["state"] != "uncertain" or row["updated_at"] > datetime.now(

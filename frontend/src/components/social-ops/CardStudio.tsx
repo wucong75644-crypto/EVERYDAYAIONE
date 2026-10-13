@@ -10,10 +10,18 @@ import {
   type VisualTemplate,
 } from "../../services/socialOps";
 import Modal from "../common/Modal";
+import {
+  ScheduleFields,
+  zonedTime,
+  publishStates,
+} from "./PublishScheduleControls";
 import { WorkspaceImagePicker } from "../detail-page/WorkspaceImagePicker";
 
 type Intent = {
   id: string;
+  scheduled_at?: string;
+  schedule_timezone?: string;
+  authorized_until?: string;
   state: string;
   approval_hash: string;
   revision: number;
@@ -34,6 +42,7 @@ type Check = {
   };
 };
 const stateNames: Record<string, string> = {
+  ...publishStates,
   awaiting_confirmation: "等待最终确认",
   dispatching: "正在提交，请勿重复操作",
   submitted: "已提交待核验",
@@ -139,6 +148,16 @@ export default function CardStudio({
   const [account, setAccount] = useState(""),
     [visibility, setVisibility] = useState("private"),
     [ack, setAck] = useState(false);
+  const [scheduledEnabled, setScheduledEnabled] = useState(false),
+    [mode, setMode] = useState("immediate"),
+    [scheduleTime, setScheduleTime] = useState(""),
+    [scheduleZone, setScheduleZone] = useState("Asia/Shanghai"),
+    [grace, setGrace] = useState(60);
+  useEffect(() => {
+    void socialApi<{ enabled: boolean }>("/publish-schedules/capabilities")
+      .then((r) => setScheduledEnabled(r.enabled))
+      .catch(() => {});
+  }, []);
   const [picker, setPicker] = useState<number | null>(null),
     [source, setSource] = useState(""),
     [rights, setRights] = useState("");
@@ -581,9 +600,41 @@ export default function CardStudio({
             )}
           </div>
         )}
-        <h3 className="font-semibold">确认后立即发布</h3>
+        <h3 className="font-semibold">最终审核与发布</h3>
+        <label>
+          发布方式
+          <select
+            aria-label="发布方式"
+            value={mode}
+            onChange={(e) => {
+              setMode(e.target.value);
+              setIntent(null);
+              setAck(false);
+            }}
+            className="border rounded-lg p-2 w-full"
+          >
+            <option value="immediate">确认后立即发布</option>
+            <option value="scheduled" disabled={!scheduledEnabled}>
+              审核最终版本后定时发布{!scheduledEnabled ? "（尚未启用）" : ""}
+            </option>
+          </select>
+        </label>
+        {mode === "scheduled" && (
+          <ScheduleFields
+            time={scheduleTime}
+            zone={scheduleZone}
+            grace={grace}
+            onChange={(t, z, g) => {
+              setScheduleTime(t);
+              setScheduleZone(z);
+              setGrace(g);
+              setIntent(null);
+              setAck(false);
+            }}
+          />
+        )}
         <p className="text-sm">
-          不会定时或自动发布。最终确认后立即提交；结果不确定时只核验，禁止重发。
+          仅提交逐条审核的最终版本；定时发布超过授权窗口不补发，结果不确定时只核验。
         </p>
         <label>
           发布账号
@@ -633,13 +684,26 @@ export default function CardStudio({
           onClick={() =>
             void act(async () => {
               setIntent(
-                await socialApi<Intent>("/publish-intents", "POST", {
-                  content_id: draft.id,
-                  expected_revision: draft.current_revision,
-                  connection_id: account,
-                  check_id: check!.id,
-                  visibility,
-                }),
+                await socialApi<Intent>(
+                  mode === "scheduled"
+                    ? "/publish-schedules"
+                    : "/publish-intents",
+                  "POST",
+                  {
+                    content_id: draft.id,
+                    expected_revision: draft.current_revision,
+                    connection_id: account,
+                    check_id: check!.id,
+                    visibility,
+                    ...(mode === "scheduled"
+                      ? {
+                          scheduled_at: zonedTime(scheduleTime, scheduleZone),
+                          timezone: scheduleZone,
+                          grace_seconds: grace,
+                        }
+                      : {}),
+                  },
+                ),
               );
               setAck(false);
               await refreshIntents();
@@ -659,6 +723,19 @@ export default function CardStudio({
               版本 v{intent.revision} · {intent.payload.display_name} ·{" "}
               {intent.visibility === "public" ? "公开可见" : "仅自己可见"}
             </p>
+            {intent.scheduled_at && (
+              <p>
+                定时：
+                {new Date(intent.scheduled_at).toLocaleString("zh-CN", {
+                  timeZone: intent.schedule_timezone,
+                })}{" "}
+                ({intent.schedule_timezone}) · 授权截止{" "}
+                {new Date(intent.authorized_until!).toLocaleString("zh-CN", {
+                  timeZone: intent.schedule_timezone,
+                })}
+                ，过期不补发。
+              </p>
+            )}
             <h4>{intent.payload.data.title}</h4>
             <p className="whitespace-pre-wrap">{intent.payload.data.body}</p>
             <p>{intent.payload.data.tags.map((t) => "#" + t).join(" ")}</p>
@@ -690,7 +767,7 @@ export default function CardStudio({
               onClick={() =>
                 void act(async () => {
                   const saved = await socialApi<Intent>(
-                    `/publish-intents/${intent.id}/confirm`,
+                    `${intent.scheduled_at ? "/publish-schedules" : "/publish-intents"}/${intent.id}/confirm`,
                     "POST",
                     {
                       approval_hash: intent.approval_hash,
@@ -702,7 +779,9 @@ export default function CardStudio({
                 })
               }
             >
-              确认最终版本并立即发布
+              {intent.scheduled_at
+                ? "确认最终版本并定时发布"
+                : "确认最终版本并立即发布"}
             </button>
           </div>
         )}
@@ -728,7 +807,14 @@ export default function CardStudio({
                 )}
               </pre>
             </details>
-            {item.state === "awaiting_confirmation" && (
+            {[
+              "awaiting_confirmation",
+              "scheduled",
+              "waiting_budget",
+              "paused",
+              "preparing",
+              "invalidated",
+            ].includes(item.state) && (
               <button
                 onClick={() =>
                   void act(async () => {
@@ -744,7 +830,7 @@ export default function CardStudio({
                 取消此意图
               </button>
             )}
-            {item.state === "uncertain" && (
+            {item.state === "uncertain" && !item.scheduled_at && (
               <details>
                 <summary>人工核验未发布，准备重新确认</summary>
                 <p>

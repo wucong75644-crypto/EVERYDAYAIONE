@@ -7,6 +7,7 @@ from collections import Counter
 from itertools import zip_longest
 from uuid import uuid4
 from psycopg.types.json import Jsonb
+from loguru import logger
 from services.agent.agent_reach.contracts import ReachError
 from services.skills.scheduled import bind_scheduled_skills
 from .repository import Repository, digest
@@ -471,7 +472,11 @@ class ProductionWorker:
         stage_instructions = (
             "analysis是字符串，missing_inputs是字符串数组；topics中每项必须有title、audience、angle、evidence、decision、format、required_materials。证据不足时选择defer并说明缺失。每阶段最多提出3个精简选题，前阶段已提供的选题优先沿用。"
             if run["kind"] == "plan"
-            else "仅返回当前契约字段，不输出选题计划字段。卡片只输出封面/正文/收尾的文字结构，不输出HTML、CSS、脚本、网址；每组2至9张；每卡正文精简到约250字，单一核心观点。语义检查要审阅cards中的文字和素材来源说明；图片视觉、版权与平台审核未知，不得声称已核实。"
+            else (
+                "只返回hard_errors、suggestions、unknowns、source_risk四个字段。前三项为字符串数组，source_risk为字符串。审阅标题、正文、标签、cards文字及素材来源；未知事项明确列出，不输出报告或卡片制作方案。"
+                if run["kind"] == "check"
+                else "仅返回当前契约字段，不输出选题计划字段。卡片只输出封面/正文/收尾的文字结构，不输出HTML、CSS、脚本、网址；每组2至9张；每卡正文精简到约250字，单一核心观点。语义检查要审阅cards中的文字和素材来源说明；图片视觉、版权与平台审核未知，不得声称已核实。"
+            )
         )
         messages = [
             {
@@ -502,6 +507,14 @@ class ProductionWorker:
             }
         )
         model = settings.agent_loop_model or "qwen3.8-max"
+        # These existing adapters have an explicit JSON-object transport contract.
+        # DeepSeek JSON output is requested in non-thinking mode; other models
+        # retain their previous path rather than assuming provider capabilities.
+        json_options = (
+            {"response_format": {"type": "json_object"}, "thinking_mode": "disabled"}
+            if model in {"deepseek-v4-pro", "deepseek-v4-flash"}
+            else {}
+        )
         budget = ExecutionBudget(max_turns=1, max_wall_time=120)
         text = ""
         tokens = 0
@@ -525,7 +538,9 @@ class ProductionWorker:
                 )
             )
             try:
-                async for chunk in session.stream_chat(messages, max_tokens=4096):
+                async for chunk in session.stream_chat(
+                    messages, max_tokens=4096, **json_options
+                ):
                     if chunk.tool_calls:
                         raise ReachError("TOOL_DENIED", "文字阶段不得调用工具")
                     finish_reason = chunk.finish_reason or finish_reason
@@ -548,7 +563,27 @@ class ProductionWorker:
             raise ReachError(
                 "MODEL_OUTPUT_TRUNCATED", "模型输出被截断；未生成成果，不自动重试"
             )
-        output = validate_model_output(schema, text)
+        try:
+            output = validate_model_output(schema, text)
+        except ReachError as error:
+            # Do not persist model/source text, parser context or credentials.
+            logger.warning(
+                "Social output rejected | run={} stage={} model={} finish={} bytes={} empty={} fenced={} code={}",
+                run["id"],
+                run["stage_index"],
+                model,
+                (
+                    finish_reason
+                    if finish_reason
+                    in {"stop", "length", "max_tokens", "incomplete", "content_filter"}
+                    else "other"
+                ),
+                len(text.encode()),
+                not bool(text.strip()),
+                text.strip().startswith("```"),
+                error.code,
+            )
+            raise
         output = resolve_evidence_references(output, catalog)
         output = validate_model_output(
             public_schema, json.dumps(output, ensure_ascii=False)
