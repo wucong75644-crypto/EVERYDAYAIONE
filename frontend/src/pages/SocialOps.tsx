@@ -1282,6 +1282,34 @@ export default function SocialOps() {
                               }}
                             />
                           </label>
+                          <details className="rounded-xl border border-border p-3">
+                            <summary>检查依据：待核实假设</summary>
+                            <p className="my-2 text-sm text-text-secondary">
+                              这些假设会交给语义检查，不随正文自动更新。改写主题后请核对，删除不适用的旧假设；它们不会作为发布正文。
+                            </p>
+                            <label className="block">
+                              待核实假设（每行一项）
+                              <textarea
+                                rows={3}
+                                className={inputClass}
+                                value={(draft.data.assumptions ?? []).join(
+                                  "\n",
+                                )}
+                                onChange={(e) => {
+                                  setDirty(true);
+                                  setDraft({
+                                    ...draft,
+                                    data: {
+                                      ...draft.data,
+                                      assumptions: e.target.value
+                                        .split("\n")
+                                        .filter((line) => line.trim()),
+                                    },
+                                  });
+                                }}
+                              />
+                            </label>
+                          </details>
                         </div>
                         <aside
                           hidden={editorMode !== "preview"}
