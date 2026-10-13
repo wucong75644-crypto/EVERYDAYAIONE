@@ -83,6 +83,7 @@ def executor_context(executor, *, call_id=None) -> ToolContext:
         resource_manifest=None if manifest is None else tuple(asdict(a) for a in manifest.assets),
         resource_access=resource_boundary(executor).as_dict(),
         budget=executor.execution_budget, cancellation=executor.cancellation_event,
+        scheduled_publish_grant=getattr(executor, "scheduled_publish_grant", None),
         confirmation_available=executor.tool_confirmer is not None,
     )
 
@@ -209,7 +210,13 @@ def _check_identity(executor, context):
         if member.get("status") != "active":
             raise PermissionError("organization_membership_required")
         skill_org_admin = member.get("role") in {"owner", "admin"}
-    if context.entrypoint == "social_ops_interactive":
+    if context.entrypoint == "social_ops_scheduled":
+        from services.social_ops.publish_worker import ScheduledPublishGrant
+        grant = context.scheduled_publish_grant
+        if not isinstance(grant, ScheduledPublishGrant) or not grant.valid_scope(context):
+            raise PermissionError("scheduled_publish_scope_invalid")
+        grant.validate()
+    elif context.entrypoint == "social_ops_interactive":
         if (context.execution_mode != "interactive" or not context.org_id
                 or context.context_scope != "user" or context.conversation_id is not None
                 or context.authorized_tool_names != frozenset({"agent_reach"})):

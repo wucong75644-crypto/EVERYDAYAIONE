@@ -66,12 +66,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   api.connections.mockResolvedValue([]);
   api.socialApi.mockImplementation(async (path: string) => {
+    if (path.startsWith("/publish-schedules?")) return { items: [], total: 0 };
     if (path === "/profiles") return [];
     if (path === "/research-jobs") return [job];
     if (path === "/skill-options") return [];
     if (path === "/research-jobs/job1") return job;
     if (path.endsWith("/sources")) return [source];
-    if (path.endsWith("/production-runs") || path.endsWith("/publish-intents")) return [];
+    if (path.endsWith("/production-runs") || path.endsWith("/publish-intents"))
+      return [];
     if (path.endsWith("/contents")) return [draft];
     if (path.startsWith("/topics?"))
       return [

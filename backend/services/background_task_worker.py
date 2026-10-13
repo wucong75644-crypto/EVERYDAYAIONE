@@ -67,6 +67,7 @@ class BackgroundTaskWorker:
         from services.handlers.chat_image_lifecycle import ChatImageLifecycle
         self._chat_images = ChatImageLifecycle(db, self.settings)
         self._chat_image_loop_task = None
+        self._social_publish_loop_task = None
         from services.detail_page_generation import DetailPageWorker
         self._detail_pages = DetailPageWorker(db)
 
@@ -88,6 +89,22 @@ class BackgroundTaskWorker:
                 last_error = kind
             await asyncio.sleep(2)
 
+    async def _social_publish_loop(self):
+        """Bounded schedule maintenance independent of the 120s fallback poll."""
+        last_error = None
+        while self.is_running:
+            try:
+                await self._social_ops.poll_publish()
+                last_error = None
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                kind = type(error).__name__
+                if kind != last_error:
+                    logger.warning("Social publish recovery unavailable | error_type={}", kind)
+                last_error = kind
+            await asyncio.sleep(15)
+
     async def _get_active_org_ids(self) -> list[str]:
         """获取所有活跃企业的 org_id 列表（用于后台任务按 org 迭代）"""
         try:
@@ -106,6 +123,7 @@ class BackgroundTaskWorker:
         """启动后台工作器"""
         self.is_running = True
         self._chat_image_loop_task = asyncio.create_task(self._chat_image_loop(), name="chat-image-recovery")
+        self._social_publish_loop_task = asyncio.create_task(self._social_publish_loop(), name="social-publish-scan")
         mode = "fallback" if self.settings.callback_base_url else "primary"
         logger.info(
             f"BackgroundTaskWorker started | mode={mode} | "
@@ -137,6 +155,11 @@ class BackgroundTaskWorker:
     async def stop(self):
         """停止后台工作器"""
         self.is_running = False
+        if self._social_publish_loop_task is not None:
+            self._social_publish_loop_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._social_publish_loop_task
+            self._social_publish_loop_task = None
         await self._social_ops.stop()
         if self._chat_image_loop_task is not None:
             self._chat_image_loop_task.cancel()

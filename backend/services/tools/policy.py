@@ -113,7 +113,10 @@ class ToolPolicy:
             return "preflight_forbidden"
         # Existing scheduled snapshots contain names, not dangerous target grants.
         # Supporting unattended dangerous writes requires a separately reviewed contract.
-        if context.execution_mode == "scheduled" and risk == "dangerous":
+        if context.execution_mode == "scheduled" and risk == "dangerous" and not (
+            spec.name == "agent_reach" and context.entrypoint == "social_ops_scheduled"
+            and context.scheduled_publish_grant is not None
+        ):
             return "scheduled_dangerous_forbidden"
         return None
 
@@ -232,6 +235,13 @@ class ToolPolicy:
                 return result("deny", boundary.unavailable_reason)
             if not boundary.permits(FILE_ACTIONS[name]):
                 return result("deny", "RESOURCE_ACTION_DENIED")
+        if context.entrypoint == "social_ops_scheduled":
+            from services.social_ops.publish_worker import ScheduledPublishGrant
+            grant = context.scheduled_publish_grant
+            if (isinstance(grant, ScheduledPublishGrant) and grant.valid_scope(context)
+                    and grant.permits(name, arguments)):
+                return result("allow", "exact_scheduled_publish_authorization")
+            return result("deny", "scheduled_dangerous_forbidden")
         if risk != "dangerous":
             return result("allow", "resource_notice" if risk == "confirm" else "allowed")
         binding = self._binding(spec, context, arguments_digest)

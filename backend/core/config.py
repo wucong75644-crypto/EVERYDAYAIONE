@@ -75,6 +75,7 @@ class Settings(BaseSettings):
 
     # Agent Reach adapters are enabled only after their deployment checks.
     social_ops_enabled: bool = False
+    social_ops_scheduled_publish_enabled: bool = False
     agent_reach_enabled: bool = False
     agent_reach_platforms: str = "web,github,rss"
     agent_reach_write_actions: str = ""  # platform:action pairs, enabled after account validation

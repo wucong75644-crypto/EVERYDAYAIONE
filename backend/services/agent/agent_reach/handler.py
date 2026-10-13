@@ -112,6 +112,21 @@ async def execute_reach(executor, args):
                 material['media_digests'] = [item['sha256'] for item in media]
                 material['credential_version'] = connection['credential_version']
                 digest = hashlib.sha256(json.dumps(material, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+                grant = getattr(executor, 'scheduled_publish_grant', None)
+                scheduled_budget = None
+                scheduled_attempt = None
+                if grant is not None:
+                    from services.social_ops.publish_worker import ScheduledPublishGrant
+                    if not isinstance(grant, ScheduledPublishGrant):
+                        raise ReachError('ACCESS_DENIED', '定时发布授权无效')
+                    from .access_budget import AccessBudgetService
+                    scheduled_budget = AccessBudgetService(executor.db.pool, store.scope)
+                    scheduled_attempt = await asyncio.to_thread(scheduled_budget.reserve, connection, request)
+                    try:
+                        await asyncio.to_thread(grant.begin_send, connection, request, media)
+                    except BaseException:
+                        await asyncio.shield(asyncio.to_thread(scheduled_budget.release_not_sent, scheduled_attempt))
+                        raise
                 operation_id, previous = await asyncio.to_thread(store.reserve, call_id, connection, digest)
                 if previous:
                     if previous['state'] == 'succeeded':
@@ -119,13 +134,13 @@ async def execute_reach(executor, args):
                     if previous['state'] == 'failed' and previous['receipt'].get('stage') == 'not_dispatched':
                         raise ReachError(previous['receipt']['code'], '此调用因账号预算被拒绝，未派发平台写入')
                     raise ReachError('WRITE_UNCERTAIN', '同一操作已执行或结果不确定，不能自动再次提交')
-                write_budget = None
-                access_attempt = None
-                if getattr(settings, "social_ops_enabled", False):
+                write_budget = scheduled_budget
+                access_attempt = scheduled_attempt
+                if grant is None and getattr(settings, "social_ops_enabled", False):
                     from .access_budget import AccessBudgetService
                     write_budget = AccessBudgetService(executor.db.pool, store.scope)
                 try:
-                    access_attempt = await asyncio.to_thread(write_budget.reserve, connection, request) if write_budget else None
+                    access_attempt = access_attempt or (await asyncio.to_thread(write_budget.reserve, connection, request) if write_budget else None)
                     result = await write(request, connection, ToolRunner(settings.agent_reach_bin_dir), PublicHTTP(), settings, media=media)
                     if write_budget:
                         await asyncio.to_thread(write_budget.settle, connection, access_attempt)
