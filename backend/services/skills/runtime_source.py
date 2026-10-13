@@ -8,6 +8,7 @@ from services.permissions.checker import PermissionChecker
 from services.permissions.permission_points import PERMISSIONS
 from services.skills.capability_state import available_capability_names
 from services.skills.contracts import PublishRevision, SkillError
+from services.skills.discovery_policy import discoverable
 from services.skills.repository import SkillRepository
 from services.skills.binding_repository import SkillBindingRepository
 from services.skills.resolver import SkillResolutionContext, SkillResolver
@@ -76,12 +77,13 @@ class ActorSkillSource:
         rows = await asyncio.to_thread(repository.bindings, self.context.conversation_id)
         candidates = [repository.candidate(row) for row in rows]
         # Incompatible pins remain stored; applicable invalid pins still fail closed.
-        return [c for c in candidates if self.task_mode in c.catalog_metadata.task_modes]
+        return [c for c in candidates if self.task_mode in c.catalog_metadata.task_modes
+                and discoverable(c.skill_key, c.scope_kind, 'interactive')]
 
     async def load(self, candidate, *, restoring: bool = False):
         # Recheck current identity and business permissions, even on replay.
         context = await self._resolution_context([candidate])
-        if not SkillResolver().select(context, [candidate]):
+        if not SkillResolver().select(context, [candidate], restoring=restoring):
             raise SkillError("SKILL_ACCESS_DENIED")
 
         def read():

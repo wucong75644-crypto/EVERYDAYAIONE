@@ -9,6 +9,7 @@ from services.skills.contracts import (
     AgentDomain, Contract, ConversationScope, ExecutionMode, RevisionKey,
     SkillCapabilityStatus, SkillCatalogMetadata, SkillKey, SkillTaskMode,
 )
+from services.skills.discovery_policy import discoverable
 
 
 class SkillSummary(Contract):
@@ -96,6 +97,7 @@ class SkillResolver:
 
     def select(
         self, context: SkillResolutionContext, candidates: Iterable[SkillCandidate],
+        *, restoring: bool = False,
     ) -> list[SkillCandidate]:
         """Resolve identities from server-owned scope and permissions."""
         if "skill_catalog_enabled" not in context.enabled_feature_flags:
@@ -103,6 +105,8 @@ class SkillResolver:
         eligible = []
         for candidate in candidates:
             metadata = candidate.catalog_metadata
+            if not restoring and not discoverable(candidate.skill_key, candidate.scope_kind, context.execution_mode):
+                continue
             if candidate.scope_kind == "personal":
                 if candidate.package_user_id != context.actor_user_id:
                     continue
