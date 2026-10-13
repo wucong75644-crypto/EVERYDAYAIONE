@@ -314,7 +314,8 @@ export async function reconcileChatTaskStates(
       const completedMessage = {
         id: result.message_id, context_revision: result.context_revision ?? undefined, conversation_id: task.conversation_id, role: 'assistant',
         content: result.result || [], status: result.status === 'completed' ? 'completed' : 'failed',
-        created_at: task.created_at || new Date().toISOString(),
+        created_at: task.placeholder_created_at || store.getMessage(result.message_id)?.created_at
+          || task.created_at || new Date().toISOString(),
         generation_params: { origin: 'chat_image', task_id: task.id, type: 'image', num_images: 1,
           model: result.input.model, source_task_id: result.input.source_task_id, submission_state: result.submission_state },
       } as const;

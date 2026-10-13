@@ -306,6 +306,18 @@ describe('chat reconciliation ownership', () => {
 
 describe('retry slot restoration', () => {
   beforeEach(() => { vi.clearAllMocks(); mockGetMessage.mockReturnValue(undefined); });
+  it.each([true, false])('keeps the original slot time when reconciling a completed retry (cached=%s)', async cached => {
+    const originalTime = '2020-01-01T00:00:00Z';
+    mockGetMessage.mockReturnValue(cached ? { id: 'slot', status: 'pending', created_at: originalTime,
+      generation_params: { origin: 'chat_image', task_id: 'retry' } } : undefined);
+    mockImageDetails.mockResolvedValue({ message_id: 'slot', status: 'completed', current_attempt: true,
+      result: [{ type: 'image', url: 'saved' }], input: { model: 'actual' }, submission_state: 'published' });
+    await reconcileChatTaskStates([createPendingImageTask({ id: 'retry', status: 'completed',
+      created_at: '2026-10-13T00:00:00Z', placeholder_created_at: cached ? null : originalTime,
+      request_params: { _media_request_v1: { model: 'actual', origin: {} } } })]);
+    expect(mockUpdateMessage).toHaveBeenCalledWith('slot', expect.objectContaining({ created_at: originalTime }));
+    expect(mockAddMessage).toHaveBeenCalledWith('conv-1', expect.objectContaining({ created_at: originalTime }));
+  });
   it('restores a later retry over an old failed slot without adding another message', () => {
     mockGetMessage.mockReturnValue({ id: 'slot', status: 'failed', created_at: '2020-01-01T00:00:00Z', context_revision: 1,
       generation_params: { origin: 'chat_image', task_id: 'old' } });
