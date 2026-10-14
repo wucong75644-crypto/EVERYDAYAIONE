@@ -1,4 +1,9 @@
 {
-  "sha256": "5ee0477dbd0035f350e47e0e90acda02157dd3ff5d5becdd4ebac3d5b49da939",
-  "patch_sha256": "88cfb16ff2a4abf30f03c9de63c613389a8bd3ed50497ae4f5fe685cd4278b08"
+  "sha256": "8d62b140497d4398e5cecbf71fdd543a8283f2611e074c0584bdcd12fa292b06",
+  "patch_sha256": "3aaf7a7c6292ea42db987180d69cf2363385d0835832f4a528a35eac340b3914",
+  "candidate_directory": "search-fix-candidate",
+  "assets_sha256": {
+    "search_readiness.go": "7f09ee2ce377399e79f8ce7aa2b5f330add199b22f26247c5158e0187bd96ac8",
+    "search_readiness_test.go": "f005a988ea7b517167b1257be899a1d9163eb3a2cb93692560737df5b89ea341"
+  }
 }

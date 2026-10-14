@@ -26,11 +26,17 @@ def main():
     manifest = json.loads((assets/'login-fix-artifact.json').read_text())
     if digest(assets/'login-browser.patch') != manifest['patch_sha256']:
         raise RuntimeError('XHS patch does not match verified artifact')
+    for name, expected in manifest.get('assets_sha256', {}).items():
+        if name not in {'search_readiness.go', 'search_readiness_test.go'} or digest(assets/name) != expected:
+            raise RuntimeError('XHS search assets do not match verified artifact')
     target = ROOT/'xiaohongshu-mcp'
     if digest(target) == manifest['sha256']:
         print('XHS_LOGIN_FIX status=already_installed')
         return
-    candidate = ROOT/'login-fix-candidate/xiaohongshu-mcp'
+    candidate_directory = manifest.get('candidate_directory', 'login-fix-candidate')
+    if candidate_directory not in {'login-fix-candidate', 'search-fix-candidate'}:
+        raise RuntimeError('Invalid XHS candidate directory')
+    candidate = ROOT/candidate_directory/'xiaohongshu-mcp'
     if digest(candidate) != manifest['sha256']:
         raise RuntimeError('Verified XHS candidate unavailable; stop without replacing service')
     units = sorted({'everydayai-reach-xhs-'+str(UUID(slot['connection_id']))+'.service' for slot in slots})

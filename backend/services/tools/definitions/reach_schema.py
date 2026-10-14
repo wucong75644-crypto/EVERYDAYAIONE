@@ -7,6 +7,7 @@ def build_schema():
             '定时任务和预检仅允许搜索、读取、字幕、评论读取及列出连接；禁止发布、上传、评论和点赞。'
             '普通新闻/网页搜索继续用web_search。每次只执行一个明确操作。组织平台只读查询会自动选用唯一连接；多个账号时先 list_connections 再指定 connection_id。'
             '返回实际资料、来源与缺口；不能把摘要当全文、视频简介当字幕。'
+            '同一社交账号的详情读取应逐条执行；遇到ACCESS_BUDGET_WAIT或返回最早可再次尝试时间时，禁止在该时间前立即重试，先使用已有资料并说明缺口。'
             '小红书详情读取必须原样使用搜索结果完整URL，保留xsec_token与xsec_source参数，不得删参数或只传笔记ID。'
             '读取遇到next_cursor时保持其他参数不变传cursor继续，直至has_more_text=false；'
             '评论有next_page时清空cursor并传page继续。不要将单页或单集称为全部。'

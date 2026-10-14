@@ -65,3 +65,28 @@
 +	defer l.mu.Unlock()
 +	return l.cancel != nil
 +}
+--- a/xiaohongshu/search.go
++++ b/xiaohongshu/search.go
+@@ -110,14 +110,16 @@
+ 		return nil, err
+ 	}
+ 
+-	// 注意 .Context(ctx) 会替换掉 NewSearchAction 里设的 60s deadline，必须在其后重新 Timeout，
+-	// 否则搜索页不 stable 时 MustWaitStable/MustWait 会永久挂起（无 deadline 可依赖）。
+-	page := s.page.Context(ctx).Timeout(60 * time.Second)
++	// Finish inside the application's 60s budget, which also includes identity checks.
++	page := s.page.Context(ctx).Timeout(40 * time.Second)
+ 
+ 	searchURL := makeSearchURL(keyword)
+-	page.MustNavigate(searchURL)
+-	page.MustWaitStable()
+-	page.MustWait(`() => window.__INITIAL_STATE__ !== undefined`)
++	if err := page.Timeout(15 * time.Second).Navigate(searchURL); err != nil {
++		return nil, fmt.Errorf("XHS_SEARCH_TIMEOUT")
++	}
++	if err := waitSearchReady(page, 20 * time.Second); err != nil {
++		return nil, err
++	}
+ 	humanize.Delay(ctx, humanize.AfterNavigate)
+ 
+ 	if len(pending) > 0 {
