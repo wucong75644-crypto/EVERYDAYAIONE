@@ -1,7 +1,9 @@
 import type { ImageAsset, Message } from '../../../stores/useMessageStore';
 import type { FilePart } from '../../../types/message';
 import LoadingPlaceholder from './LoadingPlaceholder';
+import { useState } from 'react';
 import MarkdownRenderer from './MarkdownRenderer';
+import { streamingTextDisplayBaseline } from '../../../utils/streamingTextDisplay';
 import MessageContentBlocks from './MessageContentBlocks';
 import ThinkingBlock from './ThinkingBlock';
 import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
@@ -66,6 +68,19 @@ export default function MessageBubbleContent({
     && !hasMultiBlocks
     && (thinkingText || isThinkingNow || thinkingDurationMs != null);
   const loadingText = agentStepHint || 'AI 正在思考';
+  const showPlainMarkdown = !isUser && !hasMultiBlocks && !bubbleTextInfo && !isErrorMessage;
+  const [observed, setObserved] = useState({
+    id: message.id, streaming: isStreaming, content: message.content, animateInitialTail: false,
+  });
+  if (observed.id !== message.id || observed.content !== message.content || observed.streaming !== isStreaming) {
+    const previousTail = observed.content[message.content.length - 1];
+    // Preserve the live boundary when React batches plain text -> tool -> text.
+    setObserved({
+      id: message.id, streaming: isStreaming, content: message.content,
+      animateInitialTail: observed.id === message.id && observed.streaming && isStreaming
+        && (previousTail?.type !== 'text' || !previousTail.text),
+    });
+  }
 
   return (
     <>
@@ -108,10 +123,15 @@ export default function MessageBubbleContent({
             thinkingStartTime={thinkingStartTime}
             onImageClick={onImageClick}
             onRegenerateSingle={onRegenerateSingle}
+            animateInitialTail={observed.animateInitialTail}
           />
-        ) : (
-          <MarkdownRenderer content={textContent} isStreaming={isStreaming} />
-        )}
+        ) : null}
+        {/* Keep the presenter mounted through the empty live placeholder. */}
+        {showPlainMarkdown && <MarkdownRenderer
+          content={textContent}
+          isStreaming={isStreaming}
+          streamingBaseline={streamingTextDisplayBaseline(message.content)}
+        />}
       </div>
 
       {!isUser && (isStreaming || isRegenerating) && textContent && !hasMultiBlocks && (

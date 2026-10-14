@@ -21,3 +21,38 @@ useStreamingText 仅对新增文字进行逐帧展示，保存层和 WebSocket �
 尚未部署，未调用付费模型。后续首包延迟排查独立进行：线上已有上下文准备耗时 5.7/11.7/14.1 秒及 Embedding 打分超时证据，本轮未改变该行为。
 
 发布范围补记：用户要求将本显示层修复提交部署供测试，复用上述验证证据并保留构建、迁移核验及服务健康检查。后端延迟方案保持未实施；发布成功与否以 release.sh 返回结果为准。
+
+## 2026-10-14：3e3e1103 生产复验未通过
+
+受控发布已完成，状态为 DEPLOYED_PENDING_ACCEPTANCE；用户反馈智能模式仍分段、有延迟感，问题不能关闭。生产只读核验服务器 marker 为 `3e3e1103ba55540f535f58c9b307696547988260`，主脚本为 `/assets/index-C3zzsebr.js`；最近两条部署后智能任务为 `qwen3.8-max`。这些只证明服务器版本和实际模型，不能证明已打开的用户网页已加载新脚本。
+
+### 已复现的显示漏点
+
+真实 MessageBubbleContent 正文为空时只挂 LoadingPlaceholder，首段到达才挂 MarkdownRenderer；useStreamingText 初始 displayed=content，为保护历史而直接显示全文。400 字首段立即全部出现，requestAnimationFrame 调用为 0。工具后新 text block 也有同一挂载问题；普通文本、Markdown、代码块和表格共 7 项离线真实组件实验覆盖此现象。
+
+此前 hook 单测从空组件挂载后追加文字，验证了动画算法，但没有覆盖实际 Bubble 的条件挂载，因此 134 项通过不足以证明真实首段显示路径已经修复。此次须以真实 Bubble/Blocks 和恢复入口的测试补齐。
+
+同时，120ms 追赶只是短突发平滑：400 字实验约 7 帧完成，然后没有新内容就不再推进。它不能填补上游停顿，不能通过不断拉长动画把服务端等待伪装成连续输出。
+
+### 交付链证据及剩余未知
+
+- 当前千问适配器按 SSE delta 立即 yield，未发现等待完整句子/段落的主动规则。Gateway 和 WS/Store 链也没有秒级固定缓冲，前端后续缓冲为 16ms。
+- Actor 每个 delta 先 await durable append 再 await WS/Redis，周期性 progress/snapshot 也是串行；慢 DB/连接可传导成反压。离线人为注入 RPC 延迟可稳定复现周期性停顿，但不是生产耗时证据。
+- Redis listener 逐消息、逐 socket await，可能存在慢连接队头阻塞；没有此次真实触发证据。生产有效 Nginx/网络和浏览器收帧间隔尚未完整测量。
+- 两条部署后智能任务的 delivery next_seq 分别为 155/294，包含 start、thinking、text、block 等，不能由此反推出正文 chunk 分布。终态后事件已清理，目前无保留的逐块时间可直接量化停顿。
+
+本轮只修正已复现的显示生命周期并增加有界、无正文的耗时汇总。恢复快照与已存在历史完整显示，实时新增部分按现有窗口推进；模型原文、消息状态、协议、事件顺序、暂停/重放与计费契约保持。后端观测不将 sink 到达间隔当作纯 Provider 网络时间，也不改写落库/推送先后。
+
+### 修正版实现与验证
+
+普通 Bubble 保留空态 Markdown presenter，工具流程使用稳定尾部 presenter 和显示 segment 区分新正文。React 把工具事件与下一段文字合并渲染时也按新段显示，不依赖中间空态一定提交。恢复 action 在最终内容数组上用 WeakMap 记录 display-only 基线，live 内容复制沿用它；恢复与下一增量同一渲染时，旧文字完整显示，仅后续增量动画。这些元数据不进入消息、持久化或 WS 协议。首次已有历史挂载和终态仍直接完整显示，120ms 窗口与原始文字保持。
+
+ActorWebSink 只增加 monotonic 固定标量：正文块数量、总/最大字数、sink 创建到首文字、相邻正文到达间隔及 append/send/progress/snapshot/persist 的 count/total/max/slow。每次生成尝试最多发布一条汇总，后台最多积压 64 条，饱和丢观测而不阻塞生成；不含正文、异常内容、用户/组织资料或凭证。scope=actor_generation、outcome=generated 只表示生成阶段，不冒充数据库提交成功。persist 与子阶段重叠，不相加当独立耗时；sink_arrival_gap 包含背压和工具轮次，不当纯 Provider 网络耗时。
+
+验证结果：
+
+- 前端 8 文件 234 项定向测试通过，新增真实 Bubble/Blocks/Store 组件回归 16 项：首段纯文本/Markdown/代码/表格、工具后新段、工具与新段合批、恢复与 live 合批、快照覆盖活跃动画、首次历史、终态完整收尾。
+- 后端 33 项定向测试通过：真实 sink 的阶段顺序与 fake-clock 计时、每 20 块双持久化、原 append 重试/cause、暂停/取消/失败原异常对象、发布器失败隔离、64 条发布上界及隐私字段。
+- TypeScript、9 文件定向 ESLint、Python 编译和 diff 检查通过；未调用付费模型、未生成生产测试消息。
+
+状态：修正版候选已完成本地验证，将按同任务已有发布授权提交部署；发布结果以 release.sh 结构化结果为准。用户确认刷新后复测首版仍有问题，修正版的实际浏览器效果尚未验收，也不能宣称整轮停顿已消除。

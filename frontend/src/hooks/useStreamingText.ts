@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { StreamingTextDisplayBaseline } from '../utils/streamingTextDisplay';
 
 // Smooth only the display; the store always retains all received content.
 const CATCH_UP_MS = 120;
@@ -9,17 +10,31 @@ function prefix(text: string, length: number): string {
   return text.slice(0, end);
 }
 
-export function useStreamingText(content: string, streaming: boolean): string {
+export function useStreamingText(content: string, streaming: boolean, baseline?: StreamingTextDisplayBaseline,
+  segment?: string | number, animateInitial = false): string {
   const reducedMotion = typeof window.matchMedia === 'function'
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   // Mounts may contain a restored snapshot or an existing Markdown table.
   // Smooth subsequent deltas, never replay already received history.
-  const [displayed, setDisplayed] = useState(content);
-  const visible = useRef(displayed);
+  const initialText = streaming && animateInitial ? baseline?.text ?? '' : content;
+  const [display, setDisplay] = useState({ text: initialText, snapshot: baseline?.snapshot, segment });
+  const visible = useRef(initialText);
+  const appliedSnapshot = useRef(baseline?.snapshot);
+  const appliedSegment = useRef(segment);
+  const snapshot = baseline?.snapshot;
+  const snapshotText = baseline?.text;
 
   useEffect(() => {
     let frame = 0;
-    const publish = (text: string) => { visible.current = text; setDisplayed(text); };
+    const publish = (text: string) => {
+      visible.current = text;
+      setDisplay({ text, snapshot: appliedSnapshot.current, segment });
+    };
+    if (segment !== appliedSegment.current || (snapshot && snapshot !== appliedSnapshot.current)) {
+      appliedSegment.current = segment;
+      appliedSnapshot.current = snapshot;
+      publish(snapshot ? (snapshotText !== undefined && content.startsWith(snapshotText) ? snapshotText : content) : '');
+    }
     if (!streaming || reducedMotion || !content.startsWith(visible.current) || document.hidden) {
       publish(content);
       return;
@@ -36,8 +51,12 @@ export function useStreamingText(content: string, streaming: boolean): string {
     };
     if (visible.current.length < content.length) frame = requestAnimationFrame(advance);
     return () => cancelAnimationFrame(frame);
-  }, [content, streaming, reducedMotion]);
+  }, [content, streaming, reducedMotion, snapshot, snapshotText, segment]);
 
   // Completion, cancellation, snapshots and replacements never wait for animation.
-  return streaming && !reducedMotion && content.startsWith(displayed) ? displayed : content;
+  if (!streaming || reducedMotion) return content;
+  if (segment !== display.segment || (snapshot && snapshot !== display.snapshot)) {
+    return snapshot ? (snapshotText !== undefined && content.startsWith(snapshotText) ? snapshotText : content) : '';
+  }
+  return content.startsWith(display.text) ? display.text : content;
 }
