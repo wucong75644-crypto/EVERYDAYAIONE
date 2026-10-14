@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 from urllib.parse import urlsplit, parse_qs
 import re
+import json
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -130,6 +131,8 @@ class ReachItem:
     kind: str = 'full_text'
     published_at: str = ''
     truncated: bool = False
+    metrics: dict = field(default_factory=dict)
+    metric_metadata: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -167,9 +170,15 @@ class ReachResult:
             sources.append({'id': ref, 'title': item.title[:200], 'url': item.url,
                             'snippet': text[:300], 'content': text, 'content_kind': item.kind,
                             'published_at': item.published_at, 'fetched_at': fetched_at,
-                            'truncated': truncated})
+                            'truncated': truncated, 'metrics': item.metrics, 'metric_metadata': item.metric_metadata})
             rows.append(f'[{ref}] {item.title[:200]}\n{item.url}\n'
                         f'资料类型：{item.kind}；页面时间：{item.published_at or "未标注"}\n{text}')
+            if item.metrics:
+                rows.append('结构化指标元数据（独立于原文；null为缺失、缩写不参与统计）：' +
+                            json.dumps({'source_id':ref, 'values':item.metrics,
+                                        'raw_values':item.metric_metadata.get('raw_metrics',{}),
+                                        'source':item.metric_metadata.get('source'),
+                                        'adapter_version':item.metric_metadata.get('adapter_version')}, ensure_ascii=False))
             if truncated:
                 self.status = 'partial'
         if self.items and not sources:
@@ -183,7 +192,6 @@ class ReachResult:
         if self.warnings:
             summary += '\n说明：' + '；'.join(self.warnings)
         if self.pagination:
-            import json
             summary += '\n续读信息：' + json.dumps(self.pagination, ensure_ascii=False)
         if self.status == 'empty':
             summary += '\n查询已完成，没有返回匹配资料。'

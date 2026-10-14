@@ -1,7 +1,7 @@
 """Bounded user configuration; authority always comes from OrgCtx."""
 
 from typing import Literal, Annotated
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from services.agent.agent_reach.contracts import platform_for_url
@@ -195,3 +195,52 @@ class PublishSchedule(PublishCreate):
     scheduled_at: datetime
     timezone: str = Field(default="Asia/Shanghai", min_length=1, max_length=100)
     grace_seconds: int = Field(default=60, ge=60, le=3600)
+
+
+class MetricCollect(Input):
+    client_request_id: UUID
+    url: str = Field(min_length=1, max_length=2048)
+    comment_pages: int = Field(default=0, ge=0, le=3)
+    published_at: datetime | None = None
+    content_type: Literal["image", "video", "text"] = "image"
+
+    @field_validator("published_at")
+    @classmethod
+    def aware_publication(cls, value):
+        if value and (value.tzinfo is None or value > datetime.now(timezone.utc)):
+            raise ValueError("发布时间必须包含时区且不能在未来")
+        return value
+
+
+class ReviewCreate(Input):
+    client_request_id: UUID
+    intent_ids: list[UUID] = Field(min_length=1, max_length=30)
+    start: datetime
+    end: datetime
+    kind: Literal["postmortem", "comment_insights", "strategy"] = "postmortem"
+    stages: list[StageSelection] = Field(min_length=1, max_length=1)
+    max_credits: int = Field(default=10, ge=1, le=100)
+
+    @model_validator(mode="after")
+    def range_valid(self):
+        if not self.start.tzinfo or not self.end.tzinfo or self.start >= self.end:
+            raise ValueError("需要带时区且递增的时间范围")
+        if len(set(self.intent_ids)) != len(self.intent_ids):
+            raise ValueError("内容不能重复")
+        return self
+
+
+class SuggestionDecision(Input):
+    decision: Literal["accept", "reject"]
+    text: str | None = Field(default=None, min_length=1, max_length=2000)
+    expected_profile_revision: int | None = Field(default=None, ge=1)
+
+
+class AnalyticsSchedule(Input):
+    intent_id: UUID
+    collection: MetricCollect
+    enabled: bool = False
+    interval_hours: int = Field(default=24, ge=1, le=720)
+    review_frequency: Literal["none", "weekly", "monthly"] = "none"
+    review_stage: StageSelection | None = None
+    max_credits: int = Field(default=10, ge=1, le=100)

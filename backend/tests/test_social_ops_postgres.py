@@ -42,7 +42,9 @@ OTHER = "00000000-0000-0000-0000-000000000012"
 
 @pytest.fixture
 def stores():
-    dsn = os.environ["SOCIAL_OPS_TEST_DSN"]
+    dsn = os.environ.get("SOCIAL_OPS_TEST_DSN")
+    if not dsn:
+        pytest.skip("dedicated local social fixture not configured; never use DATABASE_URL")
     info = psycopg.conninfo.conninfo_to_dict(dsn)
     assert (
         info.get("host") == "/private/tmp"

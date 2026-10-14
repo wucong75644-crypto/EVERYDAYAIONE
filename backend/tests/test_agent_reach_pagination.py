@@ -71,8 +71,8 @@ async def test_xhs_body_excludes_comment_noise():
                                                'comments': {'list': [{'content':'comment noise'}]}})
     result = await adapter.read(ReachRequest(task='读', platform='xiaohongshu', action='read', url=URL))
     assert result.items[0].content.endswith('作者：作者\n' + '正文'*5000)
-    assert '"likes": null' in result.items[0].content
-    assert '"comments_count": null' in result.items[0].content
+    assert result.items[0].metrics['likes'] is None
+    assert result.items[0].metrics['comments'] is None
     assert 'comment noise' not in result.items[0].content
     assert calls[0]['load_all_comments'] is False
 
@@ -168,12 +168,14 @@ async def test_xhs_details_preserve_real_metrics_and_units():
     adapter, _ = await adapter_with_detail({'note': {'noteId': 'abc', 'desc': '正文',
         'interactInfo': {'likedCount': '1.2万', 'commentCount': '291', 'collectedCount': '0'}}})
     result = await adapter.read(ReachRequest(task='读', platform='xiaohongshu', action='read', url=URL))
-    text = result.items[0].content
-    assert '"note_id": "abc"' in text
-    assert '"likes": "1.2万"' in text
-    assert '"comments_count": "291"' in text
-    assert '"collected_count": "0"' in text
-    assert '"shared_count": null' in text
+    item = result.items[0]
+    assert item.metric_metadata['remote_id'] == 'abc'
+    assert item.metric_metadata['raw_metrics']['likes'] == '1.2万'
+    assert item.metrics['likes'] is None
+    assert item.metrics['comments'] == 291
+    assert item.metrics['saves'] == 0
+    assert item.metrics['shares'] is None
+    assert '笔记指标' not in item.content
 
 @pytest.mark.asyncio
 async def test_xhs_search_result_link_can_be_passed_unchanged_to_details():

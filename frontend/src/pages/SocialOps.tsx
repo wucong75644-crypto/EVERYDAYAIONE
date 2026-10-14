@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useAuthStore } from "../stores/useAuthStore";
 import "./SocialOps.css";
+import AnalyticsPanel from "../components/social-ops/AnalyticsPanel";
 import PublishCalendar from "../components/social-ops/PublishCalendar";
 import ContentHistory from "../components/social-ops/ContentHistory";
 import CardStudio, {
@@ -777,6 +778,17 @@ export default function SocialOps() {
             </span>
           </div>
           {loaded && !unavailable && <PublishCalendar accounts={accounts} />}
+          {loaded && !unavailable && (
+            <AnalyticsPanel
+              accounts={accounts}
+              profiles={profiles}
+              onJobSelected={selectJob}
+              onChanged={async () => {
+                setProfiles(await socialApi<Profile[]>("/profiles"));
+                if (jobId) await loadDetail(jobId);
+              }}
+            />
+          )}
           <nav className="social-stages" aria-label="运营阶段">
             {(
               [

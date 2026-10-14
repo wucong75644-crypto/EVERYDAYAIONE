@@ -7,6 +7,7 @@ from uuid import uuid4
 from psycopg.types.json import Jsonb
 from services.agent.agent_reach.access_budget import AUTH_ERRORS, PLATFORM_ERRORS
 from .repository import Repository, digest, display_url, source_key
+from .comment_cursor import comment_chunk
 
 
 class ResearchWorker:
@@ -42,7 +43,7 @@ class ResearchWorker:
                 """SELECT * FROM social_research_items WHERE job_id=%s AND generation=%s AND
                 ((status IN ('queued','waiting_budget') AND next_eligible_at<=now()) OR
                  (status='running' AND lease_expires_at<now()))
-                ORDER BY CASE action WHEN 'search' THEN 0 WHEN 'read' THEN 1 ELSE 2 END,id
+                ORDER BY CASE action WHEN 'search' THEN 0 WHEN 'read' THEN 1 ELSE 2 END,page,item_key,id
                 FOR UPDATE SKIP LOCKED LIMIT 1""",
                 (job_id, job["generation"]),
             )
@@ -50,6 +51,11 @@ class ResearchWorker:
             if not item:
                 self.finish(c, job)
                 return None
+            if job["plan"].get("purpose") == "metrics":
+                from core.config import get_settings
+
+                if not get_settings().social_ops_analytics_enabled:
+                    return None
             token = str(uuid4())
             c.execute(
                 "UPDATE social_research_items SET status='running',lease_token=%s,lease_expires_at=now()+interval '180 seconds',attempts=attempts+1 WHERE id=%s",
@@ -141,6 +147,9 @@ class ResearchWorker:
                 elif code == "BUDGET_CONFIGURATION_REQUIRED":
                     state = "paused"
                     jobstate = "needs_input"
+                elif code in {"CONTENT_CHANGED", "INVALID_CURSOR"}:
+                    state = "paused"
+                    jobstate = "needs_input"
                 elif code in AUTH_ERRORS:
                     state = "paused"
                     jobstate = "paused_auth"
@@ -170,6 +179,44 @@ class ResearchWorker:
                 )
                 return
             sources = result.metadata.get("sources", [])
+            cursor_state, continuation = None, ""
+            if item["action"] == "read_comments":
+                from services.agent.agent_reach.contracts import ReachError
+                try:
+                    sources, cursor_state, continuation = comment_chunk(item, result)
+                except ReachError as error:
+                    c.execute("UPDATE social_research_items SET status='paused',error=%s,lease_token=NULL WHERE id=%s", (error.code, item["id"]))
+                    c.execute("UPDATE social_research_jobs SET status='needs_input',last_error=%s WHERE id=%s", (error.code, job["id"]))
+                    return
+            if job["plan"].get("purpose") == "metrics":
+                from .metrics import collect_snapshot, verified
+                from services.agent.agent_reach.contracts import ReachError
+
+                try:
+                    if item["action"] == "read":
+                        collect_snapshot(self.repo, c, job, item, sources)
+                    elif item["action"] == "read_comments" and sources:
+                        intent = verified(self.repo, c, job["plan"]["intent_id"])
+                        if any(
+                            s.get("metric_metadata", {}).get("remote_id")
+                            != intent["verification"]["remote_id"]
+                            or s.get("metric_metadata", {}).get("author_id")
+                            != intent["account_id"]
+                            for s in sources
+                        ):
+                            raise ReachError(
+                                "ACCOUNT_MISMATCH", "评论返回的帖子或作者ID不匹配"
+                            )
+                except ReachError as error:
+                    c.execute(
+                        "UPDATE social_research_items SET status='paused',error=%s,lease_token=NULL WHERE id=%s",
+                        (error.code, item["id"]),
+                    )
+                    c.execute(
+                        "UPDATE social_research_jobs SET status='needs_input',last_error=%s WHERE id=%s",
+                        (error.code, job["id"]),
+                    )
+                    return
             for source in sources:
                 url = source["url"]
                 key = source_key(url) + (
@@ -186,12 +233,12 @@ class ResearchWorker:
                         "pagination": result.metadata.get("pagination", {}),
                         "missing": ["完整主页与作品列表", "运营指标"],
                         "scope": "搜索发现/指定样本，非全量",
-                        "status": result.status,
+                        "status": "success" if continuation else result.status,
                     }
                 )
                 c.execute(
-                    """INSERT INTO social_source_snapshots(org_id,job_id,item_id,generation,source_key,source_url,title,body,body_hash,coverage,adapter_version)
-                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
+                    """INSERT INTO social_source_snapshots(org_id,job_id,item_id,generation,source_key,source_url,title,body,body_hash,coverage,adapter_version,metrics)
+                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
                     (
                         self.repo.scope.org_id,
                         job["id"],
@@ -204,6 +251,7 @@ class ResearchWorker:
                         hashlib.sha256(body.encode()).hexdigest(),
                         Jsonb(coverage),
                         result.metadata.get("backend", "unknown") + ":phase12-v1",
+                        Jsonb(source.get("metrics", {})),
                     ),
                 )
                 if item["action"] == "search":
@@ -248,6 +296,17 @@ class ResearchWorker:
             }
             result_meta["status"] = result.status
             result_meta["returned_sources"] = len(sources)
+            if cursor_state is not None:
+                result_meta["cursor_state"] = cursor_state
+                c.execute("SELECT count(*) AS n FROM social_source_snapshots WHERE item_id=%s AND org_id=%s", (item["id"], self.repo.scope.org_id))
+                result_meta["saved_sources"] = c.fetchone()["n"]
+            if continuation:
+                # Same item/page and arguments, with the public cursor checkpointed
+                # in the same transaction as the completed comment snapshots.
+                request = {**item["request"], "cursor": continuation}
+                c.execute("UPDATE social_research_items SET status='queued',lease_token=NULL,request=%s,result_meta=%s,attempts=0,next_eligible_at=now() WHERE id=%s", (Jsonb(request), Jsonb(result_meta), item["id"]))
+                c.execute("UPDATE social_research_jobs SET next_eligible_at=now(),last_error='' WHERE id=%s", (job["id"],))
+                return
             c.execute(
                 "UPDATE social_research_items SET status='completed',lease_token=NULL,error='',result_meta=%s WHERE id=%s",
                 (Jsonb(result_meta), item["id"]),
