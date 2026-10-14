@@ -15,6 +15,7 @@ from .locks import account_lock
 from .media import media_snapshot
 from .network import PublicHTTP
 from .runner import ToolRunner
+from .read_admission import reserve_read
 from .service import execute, resolve
 from .write_adapters import check_write, write
 
@@ -36,6 +37,7 @@ async def execute_reach(executor, args):
                            error_message='CONFIG_REQUIRED', metadata={'retryable': False})
     timeout = execution_timeout(settings, executor, args)
     writing = args.get('action') in WRITE_ACTIONS
+    deadline = asyncio.get_running_loop().time() + max(0, timeout)
 
     async def operation():
         request = ReachRequest.model_validate(args)
@@ -91,7 +93,7 @@ async def execute_reach(executor, args):
                 if connection and getattr(settings, "social_ops_enabled", False):
                     from .access_budget import AccessBudgetService
                     budget = AccessBudgetService(executor.db.pool, store.scope)
-                    attempt = await asyncio.to_thread(budget.reserve, connection, request)
+                    attempt = await reserve_read(budget, connection, request, executor, deadline=deadline)
                     try:
                         result = await execute(request, settings, timeout=timeout, connection=connection, exa_api_key=exa_key)
                     except BaseException as error:
@@ -176,6 +178,17 @@ async def execute_reach(executor, args):
         return AgentResult(summary='工具参数不完整或不合法，请补齐目标和操作。', status='error',
                            error_message='INVALID_ARGUMENTS', metadata={'retryable': False})
     except ReachError as error:
+        if error.code == 'ACCESS_BUDGET_WAIT':
+            next_at = getattr(error, 'next_eligible_at', None)
+            reason = getattr(error, 'wait_reason', '')
+            label = {'interval': '账号访问间隔尚未恢复', 'daily_limit': '账号当日访问额度已用完',
+                     'access_window': '当前不在账号允许访问时段'}.get(reason, '账号访问额度或间隔尚未恢复')
+            summary = label + '；本次未向平台发送请求。'
+            if next_at:
+                summary += '最早可再次尝试时间：' + next_at + '。'
+            summary += '不要在此时间前立即重试或批量重复调用；请先使用已取得的资料并说明缺口。'
+            return AgentResult(summary=summary, status='error', error_message=error.code,
+                metadata={'retryable': True, 'next_eligible_at': next_at, 'wait_reason': reason})
         return AgentResult(summary=f'操作未完成：{error}。不能据此判断资料不存在。',
                            status='error', error_message=error.code, metadata={'retryable': error.retryable, 'next_eligible_at': getattr(error, 'next_eligible_at', None)})
 

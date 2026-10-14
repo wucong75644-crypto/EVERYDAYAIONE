@@ -87,7 +87,9 @@ class AccessBudgetService(Connections):
                 raise ReachError("COMMENT_PAGE_LIMIT", "请求超过账号评论页数上限")
             if row["breaker"]:
                 raise ReachError(row["breaker"], "账号访问已暂停，请处理原因后手动恢复")
+            wait_reason = "interval"
             if consumed + units > row["daily_limit"]:
+                wait_reason = "daily_limit"
                 next_at = datetime.combine(
                     day + timedelta(days=1), datetime.min.time(), zone
                 ).astimezone(timezone.utc)
@@ -100,6 +102,7 @@ class AccessBudgetService(Connections):
                 else local.hour >= start or local.hour < end
             )
             if not inside:
+                wait_reason = "access_window"
                 candidate = local.replace(hour=start, minute=0, second=0, microsecond=0)
                 if candidate <= local:
                     candidate += timedelta(days=1)
@@ -109,6 +112,7 @@ class AccessBudgetService(Connections):
                     "ACCESS_BUDGET_WAIT", "账号访问额度或间隔尚未恢复", retryable=True
                 )
                 error.next_eligible_at = next_at.isoformat()
+                error.wait_reason = wait_reason
                 raise error
             attempt = str(uuid4())
             c.execute(
