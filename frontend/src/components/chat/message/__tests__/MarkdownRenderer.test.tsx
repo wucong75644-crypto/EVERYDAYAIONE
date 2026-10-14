@@ -134,14 +134,20 @@ describe('MarkdownRenderer — 中文伪 LaTeX 转义集成', () => {
     expect(screen.queryByRole('img', { name: '缩略图' })).toBeNull();
   });
 
-  it('流式纯文本显示光标并移除末尾空白', () => {
+  it('流式纯文本移除末尾空白且不额外添加占位光标', () => {
     const { container } = render(
       <MarkdownRenderer content={'正在生成\n\n'} isStreaming className="custom" />,
     );
 
     expect(container.firstElementChild).toHaveClass('custom');
     expect(container.textContent).toBe('正在生成');
-    expect(container.querySelector('.animate-cursor-blink')).toBeInTheDocument();
+    expect(container.querySelector('.animate-cursor-blink')).not.toBeInTheDocument();
+  });
+
+  it('流式Markdown正文后没有额外光标行', () => {
+    const { container } = render(<MarkdownRenderer content={'## 标题\n\n正文段落。'} isStreaming />);
+    expect(container.querySelector('.markdown-body')?.lastElementChild?.tagName).toBe('P');
+    expect(container.querySelector('.animate-cursor-blink')).not.toBeInTheDocument();
   });
 
   it('行内代码保持文本节点且普通表格单元格不转图片', () => {

@@ -20,6 +20,7 @@ interface RegenerateHandlersOptions {
 export function useRegenerateHandlers(options: RegenerateHandlersOptions) {
   const { conversationId, setMessages } = options;
   const replayRequests = useRef(new Map<string, string>());
+  const replayInFlight = useRef(new Set<string>());
 
   // 获取 WebSocket 上下文
   const { subscribeTaskWithMapping } = useWebSocketContext();
@@ -28,21 +29,41 @@ export function useRegenerateHandlers(options: RegenerateHandlersOptions) {
     const sourceId = message.generation_params?.task_id;
     if (typeof sourceId !== 'string' || !conversationId) throw new Error('图片缺少原始任务身份');
     const key = `chat-image-replay:${conversationId}:${sourceId}`;
-    const requestId = replayRequests.current.get(key) || sessionStorage.getItem(key) || crypto.randomUUID();
-    replayRequests.current.set(key, requestId);
-    sessionStorage.setItem(key, requestId);
-    // Preserve this request ID after a lost HTTP response. The next click
-    // recovers its receipt instead of creating a second paid generation.
-    const accepted = await chatImageService.replay(sourceId, requestId);
-    replayRequests.current.delete(key);
-    sessionStorage.removeItem(key);
-    setMessages(previous => [...previous, {
-      id: accepted.message_id, conversation_id: conversationId, role: 'assistant',
-      status: 'pending', content: [{ type: 'image', url: null }], created_at: new Date().toISOString(),
-      generation_params: { origin: 'chat_image', task_id: accepted.task_id, type: 'image',
-        num_images: 1, source_task_id: sourceId, submission_state: accepted.submission_state },
-    }]);
-    subscribeTaskWithMapping(accepted.task_id, conversationId);
+    if (replayInFlight.current.has(key)) return;
+    replayInFlight.current.add(key);
+    try {
+      const requestId = replayRequests.current.get(key) || sessionStorage.getItem(key) || crypto.randomUUID();
+      replayRequests.current.set(key, requestId);
+      sessionStorage.setItem(key, requestId);
+      // Preserve this request ID after a lost HTTP response. The next click
+      // recovers its receipt instead of creating a second paid generation.
+      const accepted = await chatImageService.replay(sourceId, requestId);
+      replayRequests.current.delete(key);
+      sessionStorage.removeItem(key);
+      setMessages(previous => {
+        const current = previous.find(item => item.id === accepted.message_id);
+        // A completion can beat the HTTP response. Never turn that result back into pending.
+        if (current?.generation_params?.task_id === accepted.task_id
+            && (current.status === 'completed' || current.status === 'failed')) return previous;
+        // A later retry may already own this same slot before an older HTTP response arrives.
+        if (current?.generation_params?.task_id && current.generation_params.task_id !== sourceId
+            && current.generation_params.task_id !== accepted.task_id) return previous;
+        const pending: Message = {
+          ...(current || message), id: accepted.message_id, conversation_id: conversationId, role: 'assistant',
+          status: 'pending', is_error: false, error: undefined, credits_cost: 0,
+          content: [{ type: 'image', url: null }],
+          created_at: current?.created_at || (accepted.message_id === message.id ? message.created_at : new Date().toISOString()),
+          context_revision: accepted.context_revision ?? current?.context_revision,
+          generation_params: { ...(current || message).generation_params,
+            origin: 'chat_image', task_id: accepted.task_id, type: 'image', num_images: 1,
+            source_task_id: sourceId, submission_state: accepted.submission_state },
+        };
+        return current ? previous.map(item => item.id === accepted.message_id ? pending : item) : [...previous, pending];
+      });
+      subscribeTaskWithMapping(accepted.task_id, conversationId);
+    } finally {
+      replayInFlight.current.delete(key);
+    }
   }, [conversationId, setMessages, subscribeTaskWithMapping]);
 
   // 统一重新生成入口

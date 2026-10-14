@@ -14,7 +14,7 @@ from services.conversation_execution import GenerationClaim, GenerationOutcome
 from services.conversation_command_store import ConversationCommandStore
 from services.conversation_turn_runtime import ConversationTurnRuntime
 from services.conversation_subtasks import ConversationSubtaskStore
-from services.conversation_state import ConversationStopRequested
+from services.conversation_state import ConversationPauseRequested, ConversationStopRequested
 from services.conversation_commands import SafePoint
 from services.replay_checkpoint_store import (
     ReplayCheckpointBoundary,
@@ -155,57 +155,73 @@ class ChatGenerationExecutor:
             if notify is not None:
                 await notify(model_id, attempt)
 
+        diagnostic_outcome = "failed"
         try:
-            result = await execute_chat(
-                handler=handler,
-                request=ChatExecutionRequest(
-                    content=content,
-                    user_id=str(task["user_id"]),
-                    conversation_id=claim.conversation_id,
-                    task_id=claim.task_id,
-                    message_id=str(task["assistant_message_id"]),
-                    model_id=_normalize_model_id(task.get("model_id")),
-                    context_anchor=_build_anchor(claim, task.get("org_id"), task),
-                    params=params,
-                    selected_skill=selected_skill,
-                    permission_mode=str(params.get("permission_mode") or "auto"),
-                    needs_google_search=bool(params.get("_needs_google_search")),
-                    execution_scope=execution_scope,
-                    replay_context=replay_context,
-                    thinking_effort=params.get("thinking_effort"),
-                    thinking_mode=params.get("thinking_mode"),
-                    on_model_retry=on_model_retry,
-                ),
-                cancellation_event=cancellation_event,
-                sink=sink,
-                runtime=runtime,
+            try:
+                result = await execute_chat(
+                    handler=handler,
+                    request=ChatExecutionRequest(
+                        content=content,
+                        user_id=str(task["user_id"]),
+                        conversation_id=claim.conversation_id,
+                        task_id=claim.task_id,
+                        message_id=str(task["assistant_message_id"]),
+                        model_id=_normalize_model_id(task.get("model_id")),
+                        context_anchor=_build_anchor(claim, task.get("org_id"), task),
+                        params=params,
+                        selected_skill=selected_skill,
+                        permission_mode=str(params.get("permission_mode") or "auto"),
+                        needs_google_search=bool(params.get("_needs_google_search")),
+                        execution_scope=execution_scope,
+                        replay_context=replay_context,
+                        thinking_effort=params.get("thinking_effort"),
+                        thinking_mode=params.get("thinking_mode"),
+                        on_model_retry=on_model_retry,
+                    ),
+                    cancellation_event=cancellation_event,
+                    sink=sink,
+                    runtime=runtime,
+                )
+            finally:
+                await runtime.stop_command_watcher()
+            replay_payload = result.replay_context or {
+                "messages": [],
+                "content_blocks": result.content_blocks,
+                "turn_index": 0,
+                "tool_call_ids": [],
+            }
+            replay_payload = {
+                **replay_payload,
+                "checkpoint_kind": "commit_ready",
+                "result_content": serialize_content_parts(result.parts),
+                "usage": result.usage,
+                "credits_cost": result.credits_cost,
+                "tool_digest": result.tool_digest,
+            }
+            await runtime.safe_point(
+                SafePoint.BEFORE_COMMIT,
+                replay_payload=replay_payload,
             )
+            diagnostic_outcome = "generated"
+            return GenerationOutcome(
+                result_content=serialize_content_parts(result.parts),
+                usage=result.usage,
+                credits_cost=result.credits_cost,
+                tool_digest=result.tool_digest,
+            )
+        except ConversationPauseRequested:
+            diagnostic_outcome = "paused"
+            raise
+        except asyncio.CancelledError:
+            diagnostic_outcome = "cancelled"
+            raise
         finally:
-            await runtime.stop_command_watcher()
-        replay_payload = result.replay_context or {
-            "messages": [],
-            "content_blocks": result.content_blocks,
-            "turn_index": 0,
-            "tool_call_ids": [],
-        }
-        replay_payload = {
-            **replay_payload,
-            "checkpoint_kind": "commit_ready",
-            "result_content": serialize_content_parts(result.parts),
-            "usage": result.usage,
-            "credits_cost": result.credits_cost,
-            "tool_digest": result.tool_digest,
-        }
-        await runtime.safe_point(
-            SafePoint.BEFORE_COMMIT,
-            replay_payload=replay_payload,
-        )
-        return GenerationOutcome(
-            result_content=serialize_content_parts(result.parts),
-            usage=result.usage,
-            credits_cost=result.credits_cost,
-            tool_digest=result.tool_digest,
-        )
+            finish_diagnostics = getattr(sink, "finish_diagnostics", None)
+            if finish_diagnostics is not None:
+                try:
+                    finish_diagnostics(diagnostic_outcome)
+                except Exception:
+                    pass
 
     def _build_replay_checkpoint_callback(
         self,

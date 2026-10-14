@@ -18,7 +18,8 @@
  * - 图片/视频：Phase 1 创建占位符，Phase 2 订阅 WS
  */
 
-import { useMessageStore } from '../stores/useMessageStore';
+import { staleImageAttempt } from './chatImageAttempt';
+import { useMessageStore, type Message } from '../stores/useMessageStore';
 import { calcRemainingText } from './messageUtils';
 import api from '../services/api';
 import { toast } from 'react-hot-toast';
@@ -43,7 +44,7 @@ interface TaskRequestParams {
   content?: string;
   thinking_effort?: string;
   thinking_mode?: string;
-  _media_request_v1?: { model: string; origin: { destination?: string } };
+  _media_request_v1?: { model: string; source_task_id?: string; origin: { destination?: string } };
   _media_lifecycle_v1?: { phase: string };
   [key: string]: unknown;
 }
@@ -69,6 +70,7 @@ export interface PendingTask {
   model_id?: string | null;
   error_message?: string | null;
   assistant_message_id?: string | null;
+  message_context_revision?: number | null;
 }
 
 /**
@@ -152,22 +154,30 @@ export function restoreMediaTask(task: PendingTask) {
   const renderHints = task.request_params?._render as Record<string, string> | undefined;
   const loadingText = renderHints?.placeholder_text || getPlaceholderText(task.type as MessageType);
 
-  store.addMessage(task.conversation_id, {
-    id: placeholderId,
+  const existing = store.getMessage(placeholderId);
+  if (snapshot && staleImageAttempt(existing, task.id, { context_revision: task.message_context_revision, generation_params: {
+    origin: 'chat_image', task_id: task.id, source_task_id: snapshot.source_task_id,
+  } })) return;
+  if (snapshot && existing?.generation_params?.task_id === task.id
+      && (existing.status === 'completed' || existing.status === 'failed')) return;
+  const restored: Message = {
+    id: placeholderId, context_revision: task.message_context_revision ?? existing?.context_revision,
     conversation_id: task.conversation_id,
     role: 'assistant' as const,
     content: snapshot ? [{ type: 'image' as const, url: null }] : [{ type: 'text' as const, text: loadingText }],
     status: 'pending' as const,
-    created_at: task.placeholder_created_at || task.created_at || new Date().toISOString(),
+    created_at: task.placeholder_created_at || existing?.created_at || task.created_at || new Date().toISOString(),
     generation_params: {
       type: task.type,
       model: snapshot?.model || task.request_params?.model,
       ...(snapshot ? { origin: 'chat_image', task_id: task.id, num_images: 1,
-        submission_state: task.request_params._media_lifecycle_v1?.phase } : {}),
+        submission_state: task.request_params._media_lifecycle_v1?.phase, source_task_id: snapshot.source_task_id } : {}),
       ...(task.request_params?.num_images ? { num_images: task.request_params.num_images } : {}),
       ...(renderHints ? { _render: renderHints } : {}),
     },
-  });
+  };
+  if (existing && snapshot) store.updateMessage(placeholderId, { ...restored, error: undefined, is_error: false });
+  else store.addMessage(task.conversation_id, restored);
 
   logger.info('task:restore', '媒体任务已恢复，等待 WebSocket 推送', {
     taskId: task.external_task_id,
@@ -298,13 +308,16 @@ export async function reconcileChatTaskStates(
     try {
       const { chatImageService } = await import('../services/chatImage');
       const result = await chatImageService.details(task.id);
-      if (!result.message_id) return;
+      if (!result.message_id || result.current_attempt === false || staleImageAttempt(store.getMessage(result.message_id), task.id, {
+        context_revision: result.context_revision, generation_params: { origin: 'chat_image', task_id: task.id, source_task_id: result.input.source_task_id },
+      })) return;
       const completedMessage = {
-        id: result.message_id, conversation_id: task.conversation_id, role: 'assistant',
+        id: result.message_id, context_revision: result.context_revision ?? undefined, conversation_id: task.conversation_id, role: 'assistant',
         content: result.result || [], status: result.status === 'completed' ? 'completed' : 'failed',
-        created_at: task.created_at || new Date().toISOString(),
+        created_at: task.placeholder_created_at || store.getMessage(result.message_id)?.created_at
+          || task.created_at || new Date().toISOString(),
         generation_params: { origin: 'chat_image', task_id: task.id, type: 'image', num_images: 1,
-          model: result.input.model, submission_state: result.submission_state },
+          model: result.input.model, source_task_id: result.input.source_task_id, submission_state: result.submission_state },
       } as const;
       store.updateMessage(result.message_id, completedMessage);
       store.addMessage(task.conversation_id, completedMessage);

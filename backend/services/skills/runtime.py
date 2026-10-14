@@ -41,6 +41,16 @@ ACTIVATE_SKILL_SCHEMA = {
 }
 
 
+DEACTIVATE_SKILL = "deactivate_skill"
+SKILL_CONTROL_TOOLS = frozenset({ACTIVATE_SKILL, DEACTIVATE_SKILL})
+DEACTIVATE_SKILL_SCHEMA = {"type": "function", "function": {
+    "name": DEACTIVATE_SKILL,
+    "description": "退出本轮模型自动选择但不适用的 Skill。不能退出用户手动选择、会话固定或计划任务方法。批次屏障：下一轮按实际工具继续。",
+    "parameters": {"type": "object", "additionalProperties": False,
+        "properties": {"skill_id": {"type": "string"}}, "required": ["skill_id"]},
+}}
+
+
 class SkillReplayError(RuntimeError):
     """A replay must stop; callers must not fall back to a fresh/latest skill."""
 
@@ -79,12 +89,13 @@ class RuntimeCheckpoint(Contract):
     effective_allowed_tool_names: frozenset[str]
     manual_skill_id: SkillKey | None = None
     session_skill_ids: tuple[SkillKey, ...] = Field(default=(), max_length=MAX_ACTIVE_SKILLS)
+    host_allowed_tool_names: frozenset[str] | None = None
     context_version: Literal[1, 2] = 1
     scheduled_snapshot: dict | None = None
 
-    @field_serializer("effective_allowed_tool_names", when_used="json")
-    def serialize_effective_allowed_tool_names(self, value: frozenset[str]) -> list[str]:
-        return sorted(value)
+    @field_serializer("effective_allowed_tool_names", "host_allowed_tool_names", when_used="json")
+    def serialize_effective_allowed_tool_names(self, value):
+        return sorted(value) if value is not None else None
 
 
 def control_result(code: str, *, ok: bool = False, **details) -> dict:
@@ -234,6 +245,7 @@ class SkillRuntime:
             manual_skill_id=self.manual_skill_id,
             session_skill_ids=self.session_skill_ids,
             context_version=self.context_version, scheduled_snapshot=self.scheduled_snapshot,
+            host_allowed_tool_names=self._initial_ceiling,
         ).model_dump(mode="json", exclude=(
             ({'manual_skill_id'} if self.manual_skill_id is None else set())
             | ({'context_version'} if self.context_version == 1 else set())
@@ -269,7 +281,7 @@ class SkillRuntime:
             content = ('[Current Skill selection]\n'
                        + encoded({'active_skills': [], 'available_tools': names})
                        + '\n当前轮尚未激活 Skill。历史“已启用”不是当前轮的激活状态。'
-                       '当前新请求匹配目录中某个方法的用途时，先调用 activate_skill 读取正文，再执行业务工具。'
+                       '先理解用户当前动作；仅在确需某方法时调用 activate_skill，普通工具能完成时无需为命中目录而加载。未明确电商用途默认普通图片；已有提示词要求生成时使用图片编排，不调用电商策划。'
                        '用户确认或继续上一轮 Skill 任务时，先从下面当前目录选择匹配方法并调用 activate_skill，'
                        '读取正文后在下一轮按实际提供的 tools schema 处理当前请求。'
                        '准备或列出工具参数也应先加载该方法，不能从历史代码块猜参数。'
@@ -289,6 +301,35 @@ class SkillRuntime:
             context_version=self.context_version,
             session=a.skill_key in self.session_skill_ids, scheduled=self.scheduled_snapshot is not None,
         ) for a in self.active.values()])
+
+    async def deactivate(self, raw_arguments: str) -> dict:
+        self._check_cancelled()
+        try:
+            if not isinstance(raw_arguments, str):
+                return control_result("SKILL_ACTIVATION_INVALID")
+            bounded(raw_arguments, MAX_ARGS_BYTES, "SKILL_ARGS_BUDGET_EXCEEDED")
+            request = json.loads(raw_arguments)
+            if not isinstance(request, dict) or set(request) != {"skill_id"} or not isinstance(request["skill_id"], str):
+                return control_result("SKILL_ACTIVATION_INVALID")
+            key = request["skill_id"]
+            if (not self.allows_dynamic_activation or key == self.manual_skill_id
+                    or key in self.session_skill_ids or self.scheduled_snapshot is not None):
+                return control_result("SKILL_BINDING_LOCKED")
+            if key not in self.active:
+                return control_result("SKILL_NOT_ACTIVE")
+            remaining = {k: a for k, a in self.active.items() if k != key}
+            ceiling = self._initial_ceiling
+            updated = {}
+            for k, active in remaining.items():
+                declared = skill_tool_ceiling(self.directory[k].catalog_metadata, self.platform_tool_names,
+                    self._initial_ceiling, available_tool_names=self.available_tool_names)
+                updated[k] = active.model_copy(update={"effective_allowed_tool_names": declared})
+                ceiling &= declared
+            self.active = updated
+            self.effective_allowed_tool_names = ceiling
+            return control_result("SKILL_DEACTIVATED", ok=True, skill_id=key)
+        except (ValueError, TypeError, SkillError):
+            return control_result("SKILL_ACTIVATION_INVALID")
 
     async def activate_manual(self, selection: SkillSelection) -> dict:
         candidate = self.directory.get(selection.skill_id)
@@ -399,6 +440,9 @@ class SkillRuntime:
     async def _restore(self, raw):
         try:
             checkpoint = RuntimeCheckpoint.model_validate(raw)
+            # Old checkpoints have no recoverable host scope: retain their narrower ceiling.
+            self._initial_ceiling &= (checkpoint.host_allowed_tool_names
+                if checkpoint.host_allowed_tool_names is not None else checkpoint.effective_allowed_tool_names)
             if checkpoint.scheduled_snapshot != self.scheduled_snapshot:
                 raise SkillError("SKILL_SCHEDULED_CHECKPOINT_MISMATCH")
             if checkpoint.turn_id != self.turn_id:

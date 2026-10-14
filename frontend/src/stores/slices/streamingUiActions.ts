@@ -3,6 +3,7 @@
 import type { StateCreator } from 'zustand';
 import type { ToolStepPart } from '../../types/message';
 import type { StreamingSlice, StreamingSliceDeps } from './streamingSlice';
+import { inheritStreamingTextDisplaySnapshot } from '../../utils/streamingTextDisplay';
 
 type SliceState = StreamingSlice & StreamingSliceDeps;
 type SetState = Parameters<StateCreator<SliceState, [], [], StreamingSlice>>[0];
@@ -34,11 +35,11 @@ export function createStreamingUiActions(
         const existingIndex = target.content.findIndex((block) => (
           block.type === 'tool_step' && block.tool_call_id === toolCallId
         ));
-        const content = target.content.map((block) => (
+        const content = inheritStreamingTextDisplaySnapshot(target.content.map((block) => (
           block.type === 'tool_step' && block.tool_call_id === toolCallId
             ? { ...block, ...updates }
             : block
-        ));
+        )), target.content);
         // 回放可能只包含 terminal tool_step，或 terminal 事件先于 running
         // 事件到达。此时用完整 block 建立它，而不是静默丢弃更新。
         if (existingIndex === -1 && updates.type === 'tool_step'

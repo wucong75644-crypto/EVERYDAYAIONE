@@ -316,6 +316,55 @@ class TestNonNativeJsonSerialization:
         # ndarray 已转成 list
         assert r["emit_payloads"][0]["option"]["series"][0]["data"] == [1, 2, 3]
 
+    def test_zero_baseline_comparison_can_be_persisted(self, kernel_proc):
+        """昨日为零的涨跌幅经 pandas 变成 NaN，交付时必须保持为空值。"""
+        from services.tools.result_payload import validate_payload
+
+        code = (
+            "import pandas as pd\n"
+            "df = pd.DataFrame({'yesterday': [10, 0], 'today': [12, 2]})\n"
+            "df['change'] = df.apply(lambda r: (r['today'] / r['yesterday'] - 1) * 100 "
+            "if r['yesterday'] > 0 else None, axis=1).round(1)\n"
+            "emit_table(df, '同时段对比')\n"
+            "emit_chart({'series': [{'data': df['change'].to_numpy()}]})\n"
+        )
+        r = _send(kernel_proc, {"id": "zero-baseline", "code": code, "timeout": 10})
+        assert r["status"] == "ok"
+        table, chart = r["emit_payloads"]
+        assert table["rows"] == [
+            {"yesterday": 10, "today": 12, "change": 20.0},
+            {"yesterday": 0, "today": 2, "change": None},
+        ]
+        assert chart["option"]["series"][0]["data"] == [20.0, None]
+        # 同时满足工具结果持久化和 PostgreSQL JSON 输入的标准 JSON 契约。
+        assert validate_payload({"artifacts": r["emit_payloads"]})
+        json.dumps(r, allow_nan=False)
+        again = _send(kernel_proc, {"id": "still-alive", "code": "print(df.shape)", "timeout": 10})
+        assert again["status"] == "ok"
+        assert "(2, 3)" in again["stdout"]
+
+    @pytest.mark.parametrize("status", ["ok", "error", "timeout"])
+    def test_nonfinite_numbers_in_nested_response(self, capsys, status):
+        import numpy as np
+        from services.sandbox.kernel_worker import _write_response
+
+        response = {"status": status, "emit_payloads": [{
+            "kind": "chart", "option": {"series": [{"data": (
+                np.array([1.5, np.nan, np.inf, -np.inf]),
+                np.float32('nan'), float('inf'), "NaN", "Infinity",
+            )}]},
+        }]}
+        _write_response(response)
+        wire = capsys.readouterr().out
+        def reject_constant(value):
+            pytest.fail(f"非法 JSON 数值: {value}")
+        result = json.loads(wire, parse_constant=reject_constant)
+        assert result["status"] == status
+        assert result["emit_payloads"][0]["option"]["series"][0]["data"] == [
+            [1.5, None, None, None], None, None, "NaN", "Infinity",
+        ]
+        assert np.isnan(response["emit_payloads"][0]["option"]["series"][0]["data"][0][1])
+
     def test_numpy_scalar_in_emit_payload(self, kernel_proc):
         """numpy 标量 (np.int64) 必须自动转 Python int"""
         code = (

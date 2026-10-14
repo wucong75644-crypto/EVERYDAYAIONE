@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { FolderOpen, Paperclip, Sparkles, X } from 'lucide-react';
 import type { DetailGenerationForm, DetailLocalImage, PromptModelOption } from '../../types/detailPage';
+import { DEFAULT_PROMPT_MODEL } from '../../types/detailPage';
 import { cn } from '../../utils/cn';
 import { Button } from '../ui/Button';
 import { Select } from '../ui/Select';
@@ -17,7 +18,7 @@ const platforms=[{value:'auto',label:'智能匹配'},{value:'taobao',label:'淘�
 const languages=[{value:'zh-CN',label:'中文（简体）'},{value:'none',label:'无文字'}] as const;
 const qualities=[{value:'1k',label:'1K 标准'},{value:'2k',label:'2K 高清'},{value:'4k',label:'4K 超清'}] as const;
 const counts=Array.from({length:15},(_,index)=>({value:String(index+1),label:`${index+1}张`}));
-const defaultModels=[{value:'gemini-3.8-flash',label:'Gemini 3.8 Flash'},{value:'kimi-k3',label:'Kimi K3'},{value:'gpt-6-luna',label:'GPT 6 Luna'}] as const;
+const defaultModels=[{value:'kimi-k3',label:'Kimi K3'},{value:'gemini-3.8-flash',label:'Gemini 3.8 Flash（服务异常）',disabled:true},{value:'gpt-6-luna',label:'GPT 6 Luna（暂不可用）',disabled:true}] as const;
 export function GenerationSettings({form,hasProductImage,disabled=false,requirementDisabled=disabled,requirementAssistDisabled=false,analyzeDisabled=disabled,analyzeLabel='开始生成',models,ratios=['1:1','3:4','4:5','16:9'],images=[],onAdd,onWorkspaceAdd,onRemove,onChange,onRequirementAssist,onAnalyze}:Props){
   const inputRef = useRef<HTMLInputElement>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -38,7 +39,7 @@ export function GenerationSettings({form,hasProductImage,disabled=false,requirem
         <Select size="compact" ariaLabel="生成数量" value={String(form.contentType==='default'?14:form.count)} options={form.contentType==='default'?[{value:'14',label:'14张'}]:counts} disabled={disabled} onChange={count=>onChange({count:Number(count)})}/>
       </label>
       <label className="min-w-0 text-xs text-[var(--s-text-secondary)]">提示词模型
-        <Select size="compact" ariaLabel="提示词模型" value={form.promptModel??'gemini-3.8-flash'} options={models?.length?models.map(model=>({value:model.id,label:model.name+(model.available?'':'（暂不可用）')})):defaultModels}
+        <Select size="compact" ariaLabel="提示词模型" value={form.promptModel??DEFAULT_PROMPT_MODEL} options={models?.length?models.map(model=>({value:model.id,label:model.name+(model.status==='abnormal'?'（服务异常）':model.available?'':'（暂不可用）'),disabled:!model.available})):defaultModels}
           disabled={disabled} onChange={promptModel=>onChange({promptModel})}/>
       </label>
     </div>

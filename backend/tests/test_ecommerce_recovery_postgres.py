@@ -441,7 +441,7 @@ async def test_real_planner_resume_reuses_only_valid_stages_and_preserves_raw_in
 
 
 @pytest.mark.parametrize('kind,available,model_calls,skill_loads', [
-    ('main_images',True,1,1),('ordinary_image',True,1,0),('needs_input',True,0,0),
+    ('main_images',True,1,1),('ordinary_image',True,1,0),('needs_input',True,1,0),
     ('main_images',False,0,0),
 ])
 async def test_real_first_image_entry_activates_before_model_and_blocks_diy_text(
@@ -511,7 +511,7 @@ async def test_real_first_image_entry_activates_before_model_and_blocks_diy_text
                 with psycopg.connect(ecom_db) as c:
                     saved=c.execute("SELECT request_params->'_ecom_workflow' FROM tasks WHERE id=%s",(f['task'],)).fetchone()[0]
                     assert saved['kind']=='main_images' and saved['skill']['revision']=='v3'
-            elif kind=='ordinary_image':
+            elif kind in {'ordinary_image','needs_input'}:
                 assert '我自行编写' in serialized and 'ecommerce-main-images' not in skills.active
                 assert sink.text=='我自行编写五张主图方案'
             else:

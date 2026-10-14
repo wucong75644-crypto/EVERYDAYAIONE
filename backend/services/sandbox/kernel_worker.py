@@ -15,6 +15,7 @@ sandbox_globals 在进程生命周期内持续存在，变量跨调用保留。
 """
 
 import json
+import math
 import sys
 import time as _time
 import traceback
@@ -123,14 +124,31 @@ def _json_default(o: Any) -> Any:
     return str(o)
 
 
+def _json_safe(value: Any) -> Any:
+    """在 IPC 出口统一将缺失/非有限数值表示为 null，不修改 kernel 原始数据。
+
+    json.dumps 的 default 不处理 Python float（含 numpy.float64），
+    因此必须遍历容器，并在 ndarray/标量转成原生类型后再次规范化。
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    return _json_safe(_json_default(value))
+
+
 def _write_response(response: Dict[str, Any]) -> None:
     """向 stdout 写入一行 JSON 响应。
 
-    用 _json_default 兜底 numpy/datetime/Decimal 等非原生类型,
-    避免 plotly emit_payloads 含 ndarray 时 kernel 崩溃。
+    统一处理非原生类型及 NaN/Infinity，保证成功、错误和超时半成品
+    都可被工具结果存储、PostgreSQL JSONB 与前端 JSON.parse 消费。
     """
     sys.stdout.write(
-        json.dumps(response, ensure_ascii=False, default=_json_default) + "\n"
+        json.dumps(_json_safe(response), ensure_ascii=False, allow_nan=False) + "\n"
     )
     sys.stdout.flush()
 

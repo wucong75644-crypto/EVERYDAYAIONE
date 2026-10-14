@@ -1438,3 +1438,55 @@ describe('scheduled task original chat result', () => {
     expect(toast.success).not.toHaveBeenCalled();
   });
 });
+
+describe('chat image retry delivery fencing', () => {
+  beforeEach(() => vi.clearAllMocks());
+  it('ignores late completion and failure from the previous attempt', () => {
+    const store = createMockStore(); const deps = createMockDeps(store);
+    store.getMessage = vi.fn().mockReturnValue({ id: 'slot', status: 'pending',
+      generation_params: { origin: 'chat_image', task_id: 'retry' } });
+    const handlers = createWSMessageHandlers(deps);
+    handlers.message_done({ type: 'message_done', task_id: 'old', conversation_id: 'conv', message: {
+      id: 'slot', conversation_id: 'conv', role: 'assistant', status: 'failed', content: [],
+      generation_params: { origin: 'chat_image', task_id: 'old' },
+    } });
+    handlers.message_error({ type: 'message_error', task_id: 'old', message_id: 'slot', error: { message: 'late' } });
+    handlers.image_partial_update({ type: 'image_partial_update', task_id: 'old', message_id: 'slot', payload: {
+      image_index: 0, error: 'late image failure',
+    } });
+    expect(store.updateMessage).not.toHaveBeenCalled();
+    expect(store.failTask).not.toHaveBeenCalled();
+  });
+
+  it('accepts the next attempt completing before HTTP acceptance reaches the tab', () => {
+    const store = createMockStore(); const deps = createMockDeps(store);
+    store.getMessage = vi.fn().mockReturnValue({ id: 'slot', status: 'failed',
+      generation_params: { origin: 'chat_image', task_id: 'old' } });
+    createWSMessageHandlers(deps).message_done({ type: 'message_done', task_id: 'retry', conversation_id: 'conv', message: {
+      id: 'slot', conversation_id: 'conv', role: 'assistant', status: 'completed', content: [{ type: 'image', url: 'saved' }],
+      generation_params: { origin: 'chat_image', task_id: 'retry', source_task_id: 'old' },
+    } });
+    expect(store.updateMessage).toHaveBeenCalledWith('slot', expect.objectContaining({ status: 'completed' }));
+  });
+
+  it('updates a failed slot when subscription restores the next pending attempt', () => {
+    const store = createMockStore(); const deps = createMockDeps(store);
+    store.getMessage = vi.fn().mockReturnValue({ id: 'slot', status: 'failed',
+      generation_params: { origin: 'chat_image', task_id: 'old' } });
+    createWSMessageHandlers(deps).message_pending({ type: 'message_pending', task_id: 'retry', payload: { message: {
+      id: 'slot', conversation_id: 'conv', role: 'assistant', status: 'pending', content: [{ type: 'image', url: null }],
+      generation_params: { origin: 'chat_image', task_id: 'retry', source_task_id: 'old' },
+    } } });
+    expect(store.updateMessage).toHaveBeenCalledWith('slot', expect.objectContaining({ status: 'pending' }));
+    expect(store.addMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not project a newer message under an obsolete task envelope', () => {
+    const store = createMockStore(); const deps = createMockDeps(store);
+    createWSMessageHandlers(deps).message_done({ type: 'message_done', task_id: 'old', conversation_id: 'conv', message: {
+      id: 'slot', conversation_id: 'conv', role: 'assistant', status: 'completed', content: [],
+      generation_params: { origin: 'chat_image', task_id: 'retry' },
+    } });
+    expect(store.updateMessage).not.toHaveBeenCalled();
+  });
+});

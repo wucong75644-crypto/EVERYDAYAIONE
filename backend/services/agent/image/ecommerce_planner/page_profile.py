@@ -14,11 +14,13 @@ def capabilities(settings):
         configured = bool(getattr(settings, f"{provider}_api_key", None))
         priced = all(getattr(settings, f"detail_{prefix}_{direction}_credits_per_million", None)
                      for direction in ("input", "output"))
-        enabled = prefix != "gpt" or getattr(settings, "detail_gpt_enabled", False)
-        reason = ("平台模型密钥未配置" if not configured else "模型积分费率未配置" if not priced
+        abnormal = prefix == "gemini" and not getattr(settings, "detail_gemini_enabled", False)
+        enabled = not abnormal and (prefix != "gpt" or getattr(settings, "detail_gpt_enabled", False))
+        reason = ("Gemini 服务异常，暂不可用，请选择 Kimi K3" if abnormal else
+                  "平台模型密钥未配置" if not configured else "模型积分费率未配置" if not priced
                   else "GPT策划暂未开放" if not enabled else None)
         rows.append({"id": model, "name": label, "available": configured and priced and enabled,
-                     "reason": reason})
+                     "reason": reason, "status": "abnormal" if abnormal else "available" if reason is None else "unavailable"})
     return rows
 
 

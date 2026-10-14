@@ -21,6 +21,9 @@ class PreparedChatStream:
     tool_context: Any
     budget: Any
     execution_context: Any = None
+    skill_host_authorized_tool_names: Any = None
+    skill_context_applied: bool = False
+    skill_host_scope_captured: bool = False
 
     @property
     def adapter(self) -> Any:

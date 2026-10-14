@@ -2,7 +2,7 @@ import { Check, ChevronDown } from 'lucide-react';
 import { DropdownMenu, DropdownMenuItem } from '../primitives/DropdownMenu';
 import { cn } from '../../utils/cn';
 
-export interface SelectOption<T extends string> { value: T; label: string }
+export interface SelectOption<T extends string> { value: T; label: string; disabled?: boolean }
 interface SelectProps<T extends string> {
   value: T;
   options: readonly SelectOption<T>[];
@@ -26,7 +26,7 @@ export function Select<T extends string>({ value, options, onChange, disabled = 
     )}><span className="truncate">{selected?.label ?? value}</span><ChevronDown className="w-4 h-4 shrink-0" /></button>}
   >
     <div className="max-h-60 overflow-y-auto py-1">
-      {options.map((option) => <DropdownMenuItem key={option.value} onSelect={() => onChange(option.value)} className="min-h-9">
+      {options.map((option) => <DropdownMenuItem key={option.value} disabled={option.disabled} onSelect={() => { if (!option.disabled) onChange(option.value); }} className="min-h-9">
         <span className="flex w-full items-center justify-between gap-3"><span>{option.label}</span>{option.value === value && <Check className="w-4 h-4 text-[var(--s-accent)]" />}</span>
       </DropdownMenuItem>)}
     </div>

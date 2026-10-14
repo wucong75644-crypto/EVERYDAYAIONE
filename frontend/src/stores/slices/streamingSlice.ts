@@ -9,6 +9,7 @@ import type { ContentPart, Message, GenerationParams, TextPart, ToolStepPart } f
 import { createOptimisticMessageActions } from './optimisticMessageActions';
 import { createStreamingLifecycleActions } from './streamingLifecycleActions';
 import { createStreamingUiActions } from './streamingUiActions';
+import { inheritStreamingTextDisplaySnapshot, markStreamingTextDisplaySnapshot } from '../../utils/streamingTextDisplay';
 
 // ============================================================
 // 类型定义
@@ -133,7 +134,7 @@ export const createStreamingSlice: StateCreator<
       if (targetIndex === -1) return state;
 
       const target = list[targetIndex];
-      const content = [...target.content];
+      const content = inheritStreamingTextDisplaySnapshot([...target.content], target.content);
 
       // 多块模式：追加到最后一个 text block
       // 如果最后一个 block 不是 text（如 tool_result），创建新 text block
@@ -169,7 +170,7 @@ export const createStreamingSlice: StateCreator<
       if (targetIndex === -1) return state;
 
       const target = list[targetIndex];
-      const content = [...target.content];
+      const content = inheritStreamingTextDisplaySnapshot([...target.content], target.content);
       if (block.type === 'tool_step' && block.tool_call_id) {
         const existingIndex = content.findIndex((part) => (
           part.type === 'tool_step' && part.tool_call_id === block.tool_call_id
@@ -208,7 +209,7 @@ export const createStreamingSlice: StateCreator<
       if (targetIndex === -1) return state;
 
       const target = list[targetIndex];
-      const content = [...target.content];
+      const content = inheritStreamingTextDisplaySnapshot([...target.content], target.content);
 
       // 找最后一个 text block，替换为 content_block_add 的完整版。
       // 如果实时 chunk 尚未落 Store，直接补一个 text block，避免静默丢失。
@@ -242,7 +243,7 @@ export const createStreamingSlice: StateCreator<
 
       const updatedList = list.map((m) =>
         m.id === streamingId
-          ? { ...m, content: [{ type: 'text' as const, text: content }] }
+          ? { ...m, content: markStreamingTextDisplaySnapshot([{ type: 'text' as const, text: content }]) }
           : m
       );
 
@@ -265,6 +266,7 @@ export const createStreamingSlice: StateCreator<
       if (remainingText) {
         content.push({ type: 'text' as const, text: remainingText });
       }
+      markStreamingTextDisplaySnapshot(content);
 
       const updatedList = list.map((m) =>
         m.id === streamingId
