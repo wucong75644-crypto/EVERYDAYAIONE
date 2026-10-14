@@ -4,8 +4,9 @@ import { archiveDetailProject, attachDetailImage, createDetailProject, listDetai
 import { uploadImageFile } from '../services/upload';
 import { toApiRequestError } from '../services/api';
 import type { DetailGenerationForm, DetailLocalImage, DetailProjectDraft, DetailGroup, DetailGenerationRun, PromptModelOption, DetailTaskSummary } from '../types/detailPage';
+import { DEFAULT_PROMPT_MODEL } from '../types/detailPage';
 
-export const DEFAULT_FORM: DetailGenerationForm = {contentType:'default',platform:'taobao',requirement:'',language:'zh-CN',aspectRatio:'1:1',quality:'1k',count:14,promptModel:'gemini-3.8-flash'};
+export const DEFAULT_FORM: DetailGenerationForm = {contentType:'default',platform:'taobao',requirement:'',language:'zh-CN',aspectRatio:'1:1',quality:'1k',count:14,promptModel:DEFAULT_PROMPT_MODEL};
 interface DetailPageState {
   images: DetailLocalImage[]; form: DetailGenerationForm; groups: DetailGroup[];
   runs: DetailGenerationRun[]; currentRunId: string|null;
@@ -59,7 +60,7 @@ function applyDraft(project:DetailProjectDraft|null){
     runs:project.runs??[],currentRunId:project.run_state?.run_id??null,
     form:{contentType:project.content_type,platform:project.platform,requirement:project.requirement,
       language:project.language,aspectRatio:project.aspect_ratio,quality:project.quality,
-      count:project.content_type==='default'?14:project.image_count,promptModel:project.prompt_model??'gemini-3.8-flash'},
+      count:project.content_type==='default'?14:project.image_count,promptModel:project.prompt_model??DEFAULT_PROMPT_MODEL},
     images:project.images.map((image):DetailLocalImage=>({id:image.id,category:image.category,workspacePath:image.workspace_path,
       previewUrl:image.thumbnail_url||image.original_url||'',originalUrl:image.original_url||undefined,error:null,
       status:image.status,sortOrder:image.sort_order,name:image.workspace_path.split('/').pop()||'图片'}))};

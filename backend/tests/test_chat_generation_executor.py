@@ -493,3 +493,59 @@ async def test_executor_rejects_channel_delivery_scope_mismatch():
 
     with pytest.raises(RuntimeError, match="ACTOR_EXECUTION_SCOPE_MISMATCH"):
         await executor.execute(task, _claim(), asyncio.Event())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["generated", "failed", "paused", "cancelled"])
+async def test_executor_finishes_stream_diagnostics_without_changing_outcome(monkeypatch, outcome):
+    from unittest.mock import Mock
+    from services.conversation_state import ConversationPauseRequested
+
+    row = {"id": "input-1", "conversation_id": "conv-1", "turn_id": "turn-1",
+           "role": "user", "content": [{"type": "text", "text": "private input"}]}
+    failure = {"failed": RuntimeError("provider down"),
+               "paused": ConversationPauseRequested(),
+               "cancelled": asyncio.CancelledError()}.get(outcome)
+    sink = SimpleNamespace(finish_diagnostics=Mock())
+
+    async def execute(**_kwargs):
+        if failure is not None:
+            raise failure
+        return ChatExecutionResult(parts=[TextPart(text="done")], content_blocks=[],
+                                   usage={}, credits_cost=0, tool_digest=None)
+
+    monkeypatch.setattr("services.handlers.chat.executor.execute_chat", execute)
+    executor = ChatGenerationExecutor(
+        _DB(row), lambda _: SimpleNamespace(org_id=None), handler_db_factory=lambda: object(),
+        sink_factory=lambda *_: sink,
+    )
+    if failure is None:
+        assert (await executor.execute(_task(), _claim(), asyncio.Event())).result_content == [{"type": "text", "text": "done"}]
+    else:
+        with pytest.raises(type(failure)) as caught:
+            await executor.execute(_task(), _claim(), asyncio.Event())
+        assert caught.value is failure
+    sink.finish_diagnostics.assert_called_once_with(outcome)
+
+
+@pytest.mark.asyncio
+async def test_executor_diagnostics_error_preserves_original_generation_error(monkeypatch):
+    from unittest.mock import Mock
+
+    row = {"id": "input-1", "conversation_id": "conv-1", "turn_id": "turn-1",
+           "role": "user", "content": [{"type": "text", "text": "input"}]}
+    failure = RuntimeError("original provider error")
+    sink = SimpleNamespace(finish_diagnostics=Mock(side_effect=RuntimeError("diagnostic failure")))
+
+    async def execute(**_kwargs):
+        raise failure
+
+    monkeypatch.setattr("services.handlers.chat.executor.execute_chat", execute)
+    executor = ChatGenerationExecutor(
+        _DB(row), lambda _: SimpleNamespace(org_id=None), handler_db_factory=lambda: object(),
+        sink_factory=lambda *_: sink,
+    )
+    with pytest.raises(RuntimeError) as caught:
+        await executor.execute(_task(), _claim(), asyncio.Event())
+    assert caught.value is failure
+    sink.finish_diagnostics.assert_called_once_with("failed")

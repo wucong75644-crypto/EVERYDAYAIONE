@@ -23,6 +23,8 @@ import { presentationColorProps } from '../../../utils/messagePresentation';
 import './presentation.css';
 import { downloadFile } from '../../../utils/downloadFile';
 import './markdown.css';
+import { useStreamingText } from '../../../hooks/useStreamingText';
+import type { StreamingTextDisplayBaseline } from '../../../utils/streamingTextDisplay';
 
 // KaTeX 数学公式样式
 import 'katex/dist/katex.min.css';
@@ -35,6 +37,10 @@ interface MarkdownRendererProps {
   content: string;
   /** 是否正在流式输出（显示闪烁光标） */
   isStreaming?: boolean;
+  /** Restored text is immediately visible; only later live deltas are paced. */
+  streamingBaseline?: StreamingTextDisplayBaseline;
+  streamingSegment?: string | number;
+  animateInitial?: boolean;
   /** 自定义样式类名 */
   className?: string;
 }
@@ -183,10 +189,14 @@ const markdownComponents: Components = {
 };
 
 export default memo(function MarkdownRenderer({
-  content,
+  content: receivedContent,
   isStreaming = false,
+  streamingBaseline,
+  streamingSegment,
+  animateInitial = false,
   className = '',
 }: MarkdownRendererProps) {
+  const content = useStreamingText(receivedContent, isStreaming, streamingBaseline, streamingSegment, animateInitial);
   // 检测内容是否包含 Markdown 语法特征
   const hasMarkdown = useMemo(() => {
     if (!content) return false;
@@ -209,9 +219,6 @@ export default memo(function MarkdownRenderer({
     return (
       <div className={`text-[15px] leading-relaxed whitespace-pre-wrap ${className}`}>
         {trimmed}
-        {isStreaming && content && (
-          <span className="inline-block w-0.5 h-[18px] bg-text-tertiary ml-0.5 rounded-sm animate-cursor-blink" />
-        )}
       </div>
     );
   }
@@ -225,9 +232,6 @@ export default memo(function MarkdownRenderer({
       >
         {processedContent}
       </Markdown>
-      {isStreaming && content && (
-        <span className="inline-block w-0.5 h-[18px] bg-text-tertiary ml-0.5 rounded-sm animate-cursor-blink" />
-      )}
     </div>
   );
 });

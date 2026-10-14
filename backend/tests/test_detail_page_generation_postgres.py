@@ -228,6 +228,7 @@ async def test_page_worker_resumes_failed_stage_and_accepts_images_with_nine_ord
     monkeypatch.setattr(config,'file_workspace_root',str(tmp_path))
     monkeypatch.setattr(config,'kie_api_key','test-key')
     monkeypatch.setattr(config,'dashscope_api_key','test-key')
+    monkeypatch.setattr(config,'detail_gemini_enabled',True)
     for prefix in ('kimi','gemini'):
         for direction in ('input','output'):
             monkeypatch.setattr(config,f'detail_{prefix}_{direction}_credits_per_million',1)

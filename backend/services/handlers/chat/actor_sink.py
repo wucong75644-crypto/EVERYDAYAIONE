@@ -21,6 +21,7 @@ from services.conversation_delivery_store import (
     ConversationDeliveryStore,
     DeliverySession,
 )
+from services.agent.observability.chat_stream import ChatStreamDiagnostics
 
 
 _PERSIST_EVERY_CHUNKS = 20
@@ -62,6 +63,7 @@ class ActorWebSink:
         self._thinking = ""
         self._blocks: list[dict[str, Any]] = []
         self._chunks_since_persist = 0
+        self._diagnostics = ChatStreamDiagnostics()
 
     async def start(self) -> None:
         await self._ensure_session()
@@ -84,6 +86,7 @@ class ActorWebSink:
         )
 
     async def on_text(self, text: str) -> None:
+        self._diagnostics.on_text(len(text))
         self._text += text
         self._chunks_since_persist += 1
         delivery_seq = await self._append_event(
@@ -230,19 +233,24 @@ class ActorWebSink:
         ]
 
     async def _persist(self, *, required: bool = False) -> None:
+        with self._diagnostics.measure("persist"):
+            await self._persist_progress(required=required)
+
+    async def _persist_progress(self, *, required: bool = False) -> None:
         self._chunks_since_persist = 0
         attempts = 3 if required else 1
         for attempt in range(1, attempts + 1):
             try:
-                response = await self._db.rpc(
-                    "update_generation_progress",
-                    {
-                        "p_task_id": self._delivery.task_id,
-                        "p_execution_token": self._delivery.execution_token,
-                        "p_accumulated_content": self._text,
-                        "p_accumulated_blocks": Jsonb(self._blocks),
-                    },
-                ).execute()
+                with self._diagnostics.measure("progress"):
+                    response = await self._db.rpc(
+                        "update_generation_progress",
+                        {
+                            "p_task_id": self._delivery.task_id,
+                            "p_execution_token": self._delivery.execution_token,
+                            "p_accumulated_content": self._text,
+                            "p_accumulated_blocks": Jsonb(self._blocks),
+                        },
+                    ).execute()
                 result = response.data if response else None
                 if not isinstance(result, dict):
                     raise RuntimeError("ACTOR_PROGRESS_RESULT_INVALID")
@@ -254,12 +262,13 @@ class ActorWebSink:
                     self._cancellation_event.set()
                     raise asyncio.CancelledError
                 if self._delivery_store is not None and self._session is not None:
-                    snapshot = await self._delivery_store.save_snapshot(
-                        task_id=self._delivery.task_id,
-                        execution_token=self._delivery.execution_token,
-                        content=self._text,
-                        blocks=self._blocks,
-                    )
+                    with self._diagnostics.measure("snapshot"):
+                        snapshot = await self._delivery_store.save_snapshot(
+                            task_id=self._delivery.task_id,
+                            execution_token=self._delivery.execution_token,
+                            content=self._text,
+                            blocks=self._blocks,
+                        )
                     if snapshot.get("outcome") == "ownership_lost":
                         self._cancellation_event.set()
                         raise asyncio.CancelledError
@@ -298,6 +307,14 @@ class ActorWebSink:
             raise
 
     async def _append_event(
+        self,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> int | None:
+        with self._diagnostics.measure("append"):
+            return await self._append_delivery_event(event_type, payload)
+
+    async def _append_delivery_event(
         self,
         event_type: str,
         payload: dict[str, Any],
@@ -346,6 +363,10 @@ class ActorWebSink:
         raise RuntimeError("DELIVERY_EVENT_PERSISTENCE_FAILED") from last_error
 
     async def _send(self, message: dict[str, Any]) -> None:
+        with self._diagnostics.measure("send"):
+            await self._send_message(message)
+
+    async def _send_message(self, message: dict[str, Any]) -> None:
         try:
             await self._websocket.send_to_task_or_user(
                 self._delivery.push_task_id,
@@ -360,3 +381,13 @@ class ActorWebSink:
                 f"message_type={message.get('type')} | "
                 f"error={type(error).__name__}"
             )
+
+    def finish_diagnostics(self, outcome: str) -> None:
+        self._diagnostics.finish(
+            outcome=outcome,
+            task_id=self._delivery.task_id,
+            execution_attempt=(
+                self._session.execution_attempt if self._session else self._delivery.execution_attempt
+            ),
+            stream_id=self._session.stream_id if self._session else None,
+        )

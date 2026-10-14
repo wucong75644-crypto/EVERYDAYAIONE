@@ -24,6 +24,7 @@ import { imagePlanText } from './chatImageDisplay';
 import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 import { isSkillUiEnabled } from '../../../config/featureFlags';
 import { skillVersion } from '../../../services/skills';
+import { streamingTextDisplayBaseline } from '../../../utils/streamingTextDisplay';
 
 const DiagramBlock = lazy(() => import('./DiagramBlock'));
 
@@ -39,6 +40,7 @@ interface MessageContentBlocksProps {
   thinkingStartTime?: number;
   onImageClick: (index?: number) => void;
   onRegenerateSingle?: (imageIndex: number) => void;
+  animateInitialTail?: boolean;
 }
 
 export default function MessageContentBlocks({
@@ -53,6 +55,7 @@ export default function MessageContentBlocks({
   thinkingStartTime,
   onImageClick,
   onRegenerateSingle,
+  animateInitialTail = false,
 }: MessageContentBlocksProps) {
   const hasImageTool = message.content.some(part => part.type === 'tool_step' && part.tool_name === 'generate_image');
   const firstScheduledTaskFormIndex = message.content.findIndex((part) => (
@@ -60,6 +63,18 @@ export default function MessageContentBlocks({
     && (part as import('../../../types/message').FormPart)
       .form_type.startsWith('scheduled_task_')
   ));
+  const displayText = (rawText: string, index: number) => {
+    const text = hasImageTool ? imagePlanText(rawText) : rawText;
+    // Retain the existing filter for legacy text following scheduled-task forms.
+    return index > firstScheduledTaskFormIndex
+      && /配置表单已生成|任务预览|请确认是否创建此定时任务/.test(text) ? '' : text;
+  };
+  const lastIndex = message.content.length - 1;
+  const lastPart = message.content[lastIndex];
+  const liveTextIndex = isStreaming && lastPart?.type === 'text' ? lastIndex : -1;
+  const liveText = liveTextIndex >= 0 ? displayText((lastPart as { text: string }).text, liveTextIndex) : '';
+  const restored = streamingTextDisplayBaseline(message.content, liveTextIndex);
+  const liveBaseline = restored ? { ...restored, text: displayText(restored.text, liveTextIndex) } : undefined;
 
   return (
     <div className={`${MESSAGE_CONTENT_LAYOUT.fill} space-y-1`}>
@@ -104,13 +119,9 @@ export default function MessageContentBlocks({
         if (part.type === 'interrupt_marker') return null;
         if (part.type === 'text' && (part as { text: string }).text) {
           const rawText = (part as { text: string }).text;
-          const text = hasImageTool ? imagePlanText(rawText) : rawText;
+          const text = displayText(rawText, idx);
           if (!text) return null;
-          // 已持久化的旧消息可能包含表单之后由模型生成的重复确认话术。
-          // 新执行流不会再写入它；这里仅清理该已知历史格式，保留表单前的说明。
-          const isLegacyScheduledTaskFormCopy = idx > firstScheduledTaskFormIndex
-            && /配置表单已生成|任务预览|请确认是否创建此定时任务/.test(text);
-          if (isLegacyScheduledTaskFormCopy) return null;
+          if (idx === liveTextIndex) return null;
           return (
             <MarkdownRenderer
               key={idx}
@@ -280,6 +291,16 @@ export default function MessageContentBlocks({
         }
         return null;
       })}
+      {/* A stable empty presenter survives tool steps before the next text delta. */}
+      <MarkdownRenderer
+        key="streaming-tail"
+        content={liveText}
+        isStreaming={isStreaming}
+        streamingBaseline={liveBaseline}
+        streamingSegment={`${message.id}:${liveTextIndex}`}
+        animateInitial={animateInitialTail}
+        className={liveTextIndex < 0 ? 'hidden' : undefined}
+      />
       {message.status === 'interrupted' && (() => {
         const marker = message.content.find(
           (p) => p.type === 'interrupt_marker'

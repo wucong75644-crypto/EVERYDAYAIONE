@@ -26,7 +26,7 @@ describe('detailProject service', () => {
     mockedRequest.mockResolvedValue({ success: true, data: { project: { id: 'p1' } } });
     await saveDetailSettings('p1', 2, { contentType: 'main_image', platform: 'auto', requirement: '', language: 'zh-CN', aspectRatio: '1:1', quality: '1k', count: 3 });
     expect(mockedRequest).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ version: 2, image_count: 3, content_type: 'main_image' }),
+      data: expect.objectContaining({ version: 2, image_count: 3, content_type: 'main_image', prompt_model: 'kimi-k3' }),
     }));
   });
 

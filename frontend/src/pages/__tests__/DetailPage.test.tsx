@@ -44,7 +44,7 @@ describe('DetailPage 页面骨架', () => {
     renderPage();
     await waitFor(() => expect(useDetailPageStore.getState().isHydrating).toBe(false));
     expect(screen.getByRole('button',{name:'生成数量'})).toHaveTextContent('14张');
-    expect(screen.getByRole('button',{name:'提示词模型'})).toHaveTextContent('Gemini');
+    expect(screen.getByRole('button',{name:'提示词模型'})).toHaveTextContent('Kimi K3');
     expect(screen.getByText('上传产品图并填写要求后，点击“开始生成”开始')).toBeInTheDocument();
     expect(screen.queryByText('确认图片规划')).not.toBeInTheDocument();
   });

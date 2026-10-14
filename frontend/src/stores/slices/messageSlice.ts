@@ -7,6 +7,7 @@
 import type { StateCreator } from 'zustand';
 import type { Message, ContentPart, TextPart, MessageStatus } from '../../types/message';
 import { normalizeMessage } from '../../utils/messageUtils';
+import { inheritStreamingTextDisplaySnapshot } from '../../utils/streamingTextDisplay';
 
 // ============================================================
 // 类型定义
@@ -134,7 +135,7 @@ export const createMessageSlice: StateCreator<
     const message = get().getMessage(messageId);
     if (!message) return;
 
-    const content = [...(Array.isArray(message.content) ? message.content : [])];
+    const content = inheritStreamingTextDisplaySnapshot([...(Array.isArray(message.content) ? message.content : [])], message.content);
     const textIndex = content.findIndex((p) => p.type === 'text');
 
     if (textIndex >= 0) {

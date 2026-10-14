@@ -132,16 +132,17 @@ describe('真实页面任务状态',()=>{
   await vi.advanceTimersByTimeAsync(500);
   expect(api.saveDetailSettings).toHaveBeenCalledWith('project',3,expect.objectContaining({requirement:'本地新要求'}));
  });
- it('默认14张且默认Gemini，没有模拟规划',()=>{
-  expect(useDetailPageStore.getState().form).toMatchObject({contentType:'default',count:14,promptModel:'gemini-3.8-flash'});
+ it('默认14张且默认Kimi，没有模拟规划',()=>{
+  expect(useDetailPageStore.getState().form).toMatchObject({contentType:'default',count:14,promptModel:'kimi-k3'});
   expect(useDetailPageStore.getState().groups).toEqual([]);
  });
- it('旧任务保留Kimi，新任务使用服务端Gemini默认值',async()=>{
+ it('旧任务保留原模型，新任务使用服务端Kimi默认值',async()=>{
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,prompt_model:'gemini-3.8-flash'});
   await useDetailPageStore.getState().hydrateDraft();
-  expect(useDetailPageStore.getState().form.promptModel).toBe('kimi-k3');
-  vi.mocked(api.createDetailProject).mockResolvedValueOnce({...draft,id:'new-project',prompt_model:'gemini-3.8-flash'});
-  await useDetailPageStore.getState().createTask();
   expect(useDetailPageStore.getState().form.promptModel).toBe('gemini-3.8-flash');
+  vi.mocked(api.createDetailProject).mockResolvedValueOnce({...draft,id:'new-project',prompt_model:'kimi-k3'});
+  await useDetailPageStore.getState().createTask();
+  expect(useDetailPageStore.getState().form.promptModel).toBe('kimi-k3');
  });
  it('切换单类型7张，默认重新变成14张，保留显式比例',()=>{
   const store=useDetailPageStore.getState();store.updateForm({contentType:'detail_page',aspectRatio:'16:9'});
@@ -157,6 +158,16 @@ describe('真实页面任务状态',()=>{
   expect(api.startDetailProject).toHaveBeenCalledWith('project',2,expect.any(String));
   expect(useDetailPageStore.getState().groups).toEqual([]);
   expect(useDetailPageStore.getState().status).toBe('analyzing');
+ });
+ it('从旧Gemini任务选择Kimi后，先保存Kimi再按新版本开始',async()=>{
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,prompt_model:'gemini-3.8-flash'});
+  await useDetailPageStore.getState().hydrateDraft();
+  useDetailPageStore.getState().updateForm({promptModel:'kimi-k3'});
+  vi.mocked(api.startDetailProject).mockResolvedValue({...draft,version:3,status:'analyzing',groups:[]});
+  await useDetailPageStore.getState().startAnalysis();
+  expect(api.saveDetailSettings).toHaveBeenCalledWith('project',1,expect.objectContaining({promptModel:'kimi-k3'}));
+  expect(api.startDetailProject).toHaveBeenCalledWith('project',2,expect.any(String));
+  expect(vi.mocked(api.saveDetailSettings).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(api.startDetailProject).mock.invocationCallOrder[0]);
  });
  it('模型不可用时明确报错，不回退模型和伪造进度',async()=>{
   vi.mocked(api.getDetailCapabilities).mockResolvedValue({enabled:true,prompt_models:[{id:'kimi-k3',name:'Kimi',available:false,reason:'模型积分费率未配置'}],image_models:[]});
