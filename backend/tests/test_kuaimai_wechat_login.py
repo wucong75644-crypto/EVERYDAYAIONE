@@ -174,9 +174,10 @@ async def test_redirect_diagnostic_keeps_structure_without_auth_material(setup):
     db.table.assert_not_called()
 
 @pytest.mark.asyncio
-async def test_official_erpb_redirect_reads_identity_there_and_verifies_report_host(setup):
+@pytest.mark.parametrize("host", ["erpa.superboss.cc", "erpb.superboss.cc"])
+async def test_official_redirect_reads_identity_there_and_verifies_report_host(setup, host):
     redis, db = setup; requests = []
-    base = transport(405, redirect='https://erpb.superboss.cc/index.html', cookie_domain='.superboss.cc')
+    base = transport(405, redirect=f'https://{host}/index.html', cookie_domain='.superboss.cc')
     async def handle(request):
         requests.append(request)
         return await base.handle_async_request(request)
@@ -184,16 +185,17 @@ async def test_official_erpb_redirect_reads_identity_there_and_verifies_report_h
     session = await service.start()
     assert (await service.poll(db, session['id']))['state'] == 'connected'
     info = next(r for r in requests if r.url.path == '/user/info')
-    assert info.url.host == 'erpb.superboss.cc'
-    assert info.headers['origin'] == 'https://erpb.superboss.cc'
+    assert info.url.host == host
+    assert info.headers['origin'] == f'https://{host}'
     check = next(r for r in requests if r.url.path == '/kmzk/meal/getFunctionList')
     assert check.url.host == 'erp.superboss.cc'
     assert '_censeid=private-session' in check.headers['cookie']
     assert db.table.return_value.upsert.call_count == 1
 
-@pytest.mark.parametrize('target', ['https://erpb.superboss.cc.evil.example/index.html', 'https://erp3.superboss.cc/index.html', 'https://erpb.superboss.cc:444/index.html', 'https://evil@erpb.superboss.cc/index.html', 'http://erpb.superboss.cc/index.html'])
+@pytest.mark.parametrize('target', ['https://erpa.superboss.cc.evil.example/index.html', 'http://erpa.superboss.cc/index.html', 'https://erpa.superboss.cc:444/index.html', 'https://evil@erpa.superboss.cc/index.html', 'https://erpa.superboss.cc/account/extra-verification', 'https://erpb.superboss.cc.evil.example/index.html', 'https://erp3.superboss.cc/index.html', 'https://erpb.superboss.cc:444/index.html', 'https://evil@erpb.superboss.cc/index.html', 'http://erpb.superboss.cc/index.html'])
 def test_official_host_exception_does_not_expand_redirect_trust(target):
     with pytest.raises(LoginError): WeChatLogin.safe_redirect(target)
 
-def test_relative_redirect_preserves_official_erpb_host():
-    assert WeChatLogin.safe_redirect('/index.html', 'https://erpb.superboss.cc/login.html') == 'https://erpb.superboss.cc/index.html'
+@pytest.mark.parametrize('host', ['erpa.superboss.cc', 'erpb.superboss.cc'])
+def test_relative_redirect_preserves_official_host(host):
+    assert WeChatLogin.safe_redirect('/index.html', f'https://{host}/login.html') == f'https://{host}/index.html'
