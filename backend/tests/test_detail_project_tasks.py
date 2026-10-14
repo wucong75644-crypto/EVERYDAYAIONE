@@ -44,6 +44,26 @@ def create(dsn,user,request=None):
         return str(db.execute('SELECT create_detail_project(%s)',(request,)).fetchone()[0])
 
 
+def test_kimi_default_migration_preserves_saved_models_and_rolls_back(multi_db):
+    user = new_user(multi_db)
+    with scoped(multi_db, user) as db:
+        try:
+            db.execute((ROOT/'migrations/288_detail_prompt_models.sql').read_text())
+            old = db.execute('SELECT create_detail_project(%s)', (str(uuid4()),)).fetchone()[0]
+            before = db.execute('SELECT prompt_model,version,run_state FROM detail_projects WHERE id=%s', (old,)).fetchone()
+            assert before[0] == 'gemini-3.8-flash'
+            db.execute((ROOT/'migrations/301_detail_default_kimi.sql').read_text())
+            new = db.execute('SELECT create_detail_project(%s)', (str(uuid4()),)).fetchone()[0]
+            assert db.execute('SELECT prompt_model FROM detail_projects WHERE id=%s', (new,)).fetchone()[0] == 'kimi-k3'
+            assert db.execute('SELECT prompt_model,version,run_state FROM detail_projects WHERE id=%s', (old,)).fetchone() == before
+            db.execute((ROOT/'migrations/rollback/301_detail_default_kimi_rollback.sql').read_text())
+            restored = db.execute('SELECT create_detail_project(%s)', (str(uuid4()),)).fetchone()[0]
+            assert db.execute('SELECT prompt_model FROM detail_projects WHERE id=%s', (restored,)).fetchone()[0] == 'gemini-3.8-flash'
+            assert db.execute('SELECT prompt_model FROM detail_projects WHERE id=%s', (new,)).fetchone()[0] == 'kimi-k3'
+        finally:
+            db.rollback()
+
+
 def test_creation_replays_concurrently_but_allows_independent_drafts(multi_db):
     user=new_user(multi_db); request=str(uuid4())
     with ThreadPoolExecutor(2) as pool:

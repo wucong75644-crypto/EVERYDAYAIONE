@@ -10,6 +10,7 @@ from schemas.detail_project import DetailProjectSettingsPatch
 def settings(**overrides):
     return SimpleNamespace(kie_api_key='test',dashscope_api_key='test',detail_page_planning_seconds=1200,
         detail_gpt_enabled=overrides.get('gpt_enabled', True),
+        detail_gemini_enabled=overrides.get('gemini_enabled', True),
         **{f'detail_{provider}_{direction}_credits_per_million':overrides.get(f'{provider}_{direction}',1)
           for provider in ('kimi','gemini','gpt') for direction in ('input','output')})
 
@@ -35,6 +36,19 @@ def test_page_model_policy_has_no_implicit_price_or_model_fallback():
     assert capabilities(settings(gpt_enabled=False))[-1]['available'] is False
     with pytest.raises(AppException,match='暂未开放'):
         profile(settings(gpt_enabled=False),'gpt-6-luna')
+
+
+def test_abnormal_page_gemini_is_rejected_without_disabling_other_kie_models():
+    configured = settings(gemini_enabled=False)
+    options = {row['id']: row for row in capabilities(configured)}
+    assert options['gemini-3.8-flash']['status'] == 'abnormal'
+    assert options['gemini-3.8-flash']['available'] is False
+    with pytest.raises(AppException, match='Gemini 服务异常'):
+        profile(configured, 'gemini-3.8-flash')
+    assert profile(configured, 'kimi-k3').ecom_image_planning_model == 'kimi-k3'
+    assert profile(configured, 'gpt-6-luna').ecom_image_planning_model == 'gpt-6-luna'
+    del configured.detail_gemini_enabled
+    assert next(row for row in capabilities(configured) if row['id'] == 'gemini-3.8-flash')['status'] == 'abnormal'
 
 
 def test_chat_protocol_preserves_multimodal_order_and_raw_text_without_mutation():
@@ -96,6 +110,7 @@ async def test_entry_freezes_group_ratios_through_image_acceptance(monkeypatch, 
     from tests.ecommerce_design_fixtures import design_fixture
     generation.db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data=[]
     for row, expected_ratio in zip(rows,expected):
+        assert row['model_settings']['model'] == model
         assert row['input_snapshot']['messages'][0]['parts'][0]['text']==raw
         assert row['input_snapshot']['resolved_references']==refs
         assert row['input_snapshot']['target_size']==row['target_size']

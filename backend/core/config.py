@@ -335,6 +335,7 @@ class Settings(BaseSettings):
     detail_page_planning_concurrency: int = Field(default=4, ge=1, le=16)
     detail_kimi_inline_images: bool = True
     detail_gemini_overseas_images: bool = True
+    detail_gemini_enabled: bool = False  # Service incident: keep page planning on Kimi until recovery.
     detail_kimi_json_output: bool = True
     ecom_analysis_memory_mb: int = Field(default=384, ge=128, le=1024)
     detail_kimi_input_credits_per_million: float | None = Field(default=None, gt=0)

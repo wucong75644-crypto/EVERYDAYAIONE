@@ -74,7 +74,8 @@ export interface DetailGenerationItem extends DetailPlanItem {
 export type DetailMockScenario = 'success' | 'insufficient_credits' | 'partial_failure';
 
 export type PromptModel = 'kimi-k3' | 'gemini-3.8-flash' | 'gpt-6-luna';
-export interface PromptModelOption { id: PromptModel; name: string; available: boolean; reason: string | null }
+export const DEFAULT_PROMPT_MODEL: PromptModel = 'kimi-k3';
+export interface PromptModelOption { id: PromptModel; name: string; available: boolean; reason: string | null; status?: 'available' | 'unavailable' | 'abnormal' }
 export interface DetailImageTask {
   id: string; item_id: string; status: string; submission_state: string; created_at: string;
   result_data?: {url?: string; original_url?: string; thumbnail_url?: string; asset_id?: string; workspace_path?: string};
