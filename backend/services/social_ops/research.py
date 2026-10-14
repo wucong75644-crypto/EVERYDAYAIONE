@@ -7,6 +7,7 @@ from uuid import uuid4
 from psycopg.types.json import Jsonb
 from services.agent.agent_reach.access_budget import AUTH_ERRORS, PLATFORM_ERRORS
 from .repository import Repository, digest, display_url, source_key
+from .comment_cursor import comment_chunk
 
 
 class ResearchWorker:
@@ -42,7 +43,7 @@ class ResearchWorker:
                 """SELECT * FROM social_research_items WHERE job_id=%s AND generation=%s AND
                 ((status IN ('queued','waiting_budget') AND next_eligible_at<=now()) OR
                  (status='running' AND lease_expires_at<now()))
-                ORDER BY CASE action WHEN 'search' THEN 0 WHEN 'read' THEN 1 ELSE 2 END,id
+                ORDER BY CASE action WHEN 'search' THEN 0 WHEN 'read' THEN 1 ELSE 2 END,page,item_key,id
                 FOR UPDATE SKIP LOCKED LIMIT 1""",
                 (job_id, job["generation"]),
             )
@@ -146,6 +147,9 @@ class ResearchWorker:
                 elif code == "BUDGET_CONFIGURATION_REQUIRED":
                     state = "paused"
                     jobstate = "needs_input"
+                elif code in {"CONTENT_CHANGED", "INVALID_CURSOR"}:
+                    state = "paused"
+                    jobstate = "needs_input"
                 elif code in AUTH_ERRORS:
                     state = "paused"
                     jobstate = "paused_auth"
@@ -175,6 +179,15 @@ class ResearchWorker:
                 )
                 return
             sources = result.metadata.get("sources", [])
+            cursor_state, continuation = None, ""
+            if item["action"] == "read_comments":
+                from services.agent.agent_reach.contracts import ReachError
+                try:
+                    sources, cursor_state, continuation = comment_chunk(item, result)
+                except ReachError as error:
+                    c.execute("UPDATE social_research_items SET status='paused',error=%s,lease_token=NULL WHERE id=%s", (error.code, item["id"]))
+                    c.execute("UPDATE social_research_jobs SET status='needs_input',last_error=%s WHERE id=%s", (error.code, job["id"]))
+                    return
             if job["plan"].get("purpose") == "metrics":
                 from .metrics import collect_snapshot, verified
                 from services.agent.agent_reach.contracts import ReachError
@@ -220,7 +233,7 @@ class ResearchWorker:
                         "pagination": result.metadata.get("pagination", {}),
                         "missing": ["完整主页与作品列表", "运营指标"],
                         "scope": "搜索发现/指定样本，非全量",
-                        "status": result.status,
+                        "status": "success" if continuation else result.status,
                     }
                 )
                 c.execute(
@@ -283,6 +296,17 @@ class ResearchWorker:
             }
             result_meta["status"] = result.status
             result_meta["returned_sources"] = len(sources)
+            if cursor_state is not None:
+                result_meta["cursor_state"] = cursor_state
+                c.execute("SELECT count(*) AS n FROM social_source_snapshots WHERE item_id=%s AND org_id=%s", (item["id"], self.repo.scope.org_id))
+                result_meta["saved_sources"] = c.fetchone()["n"]
+            if continuation:
+                # Same item/page and arguments, with the public cursor checkpointed
+                # in the same transaction as the completed comment snapshots.
+                request = {**item["request"], "cursor": continuation}
+                c.execute("UPDATE social_research_items SET status='queued',lease_token=NULL,request=%s,result_meta=%s,attempts=0,next_eligible_at=now() WHERE id=%s", (Jsonb(request), Jsonb(result_meta), item["id"]))
+                c.execute("UPDATE social_research_jobs SET next_eligible_at=now(),last_error='' WHERE id=%s", (job["id"],))
+                return
             c.execute(
                 "UPDATE social_research_items SET status='completed',lease_token=NULL,error='',result_meta=%s WHERE id=%s",
                 (Jsonb(result_meta), item["id"]),

@@ -10,6 +10,7 @@ from typing import Literal
 from services.agent.agent_reach.contracts import ReachError
 from services.skills.scheduled import bind_scheduled_skills
 from .analytics import statistics
+from .comment_cursor import unique_comment_observations
 from .metrics import verified, snapshots
 from .repository import digest
 from .validation import Evidence, EvidenceReference
@@ -144,10 +145,7 @@ async def create_review(db, repo, data, *, pinned=None, schedule_id=None):
         )
         fetched_comments = c.fetchall()
         # Same remote comment may be observed on repeated collection dates/pages.
-        unique_comments = {}
-        for comment in fetched_comments:
-            unique_comments.setdefault(comment["source_key"], comment)
-        comments = list(unique_comments.values())
+        comments = unique_comment_observations(fetched_comments)
     rows = snapshots(repo, data.intent_ids, data.start, data.end)
     if not rows:
         raise ReachError("NEEDS_INPUT", "选定范围没有真实指标快照，请先回收或导入")

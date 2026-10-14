@@ -28,6 +28,7 @@ pytestmark = pytest.mark.skipif(
 def published(package, monkeypatch):
     p = package
     p.settings.social_ops_analytics_enabled = True
+    monkeypatch.setattr("services.social_ops.worker.get_settings", lambda: p.settings)
     intent = publishing.create_intent(p.s.repo, p.request)
     with p.s.repo.cursor() as c:
         c.execute(
