@@ -153,7 +153,7 @@ async def test_execute_exposes_continuation_in_tool_summary(monkeypatch):
     async def query(request, runner, connection):
         return ReachResult('bilibili','test',[ReachItem('字幕','https://www.bilibili.com/video/BV1234567890','a'*8000,'transcript')])
     monkeypatch.setattr(social_adapters, 'query_social', query)
-    settings = SimpleNamespace(agent_reach_platforms='bilibili', agent_reach_bin_dir='/tmp')
+    settings = SimpleNamespace(agent_reach_platforms='bilibili', agent_reach_bin_dir='/tmp', agent_reach_timeout_seconds=60)
     request = ReachRequest(task='字幕',platform='bilibili',action='transcript',url='https://www.bilibili.com/video/BV1234567890')
     first = await execute(request,settings,timeout=1)
     cursor = first.metadata['pagination']['next_cursor']

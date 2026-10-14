@@ -312,3 +312,33 @@ async def test_xhs_search_failure_preserves_safe_reason(monkeypatch, detail, exp
         await adapter.call('POST', 'feeds/search', {'keyword':'文具'})
     assert error.value.code == expected
     assert 'untrusted secret' not in str(error.value)
+
+
+@pytest.mark.parametrize('platform', ['web', 'rss', 'github', 'exa', 'bilibili', 'youtube', 'twitter', 'reddit', 'xiaohongshu'])
+def test_read_budget_reserves_query_overhead(platform):
+    from services.agent.agent_reach.handler import execution_timeout
+    settings = SimpleNamespace(agent_reach_timeout_seconds=60)
+    executor = SimpleNamespace(execution_budget=None)
+    assert execution_timeout(settings, executor, {'platform': platform, 'action': 'read'}) == 75
+    executor.execution_budget = SimpleNamespace(remaining=12)
+    assert execution_timeout(settings, executor, {'platform': platform, 'action': 'read'}) == 12
+
+
+@pytest.mark.asyncio
+async def test_public_http_query_timeout(monkeypatch):
+    import httpx
+    from services.agent.agent_reach import network
+    original = httpx.AsyncClient
+    observed = []
+    async def address(url):
+        return '8.8.8.8'
+    def respond(request):
+        observed.append(request.extensions['timeout'])
+        return httpx.Response(200, text='data')
+    monkeypatch.setattr(network, 'public_address', address)
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kwargs: original(
+        **kwargs, transport=httpx.MockTransport(respond)))
+    assert await network.PublicHTTP(timeout=60).get('https://example.com') == b'data'
+    assert observed[0]['read'] == 60
+    assert await network.PublicHTTP(timeout=7).get('https://example.com') == b'data'
+    assert observed[1]['read'] == 7

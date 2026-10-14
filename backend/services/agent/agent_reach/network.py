@@ -24,6 +24,9 @@ async def public_address(url: str) -> str:
 
 
 class PublicHTTP:
+    def __init__(self, timeout=20.0):
+        self.timeout = timeout
+
     async def request(self, method, url, *, json=None, headers=None, content=None, include_headers=False, include_cookies=False, allowed_statuses=()):
         original_host = urlsplit(url).hostname
         for _ in range(4):
@@ -35,7 +38,7 @@ class PublicHTTP:
             request_headers = dict(headers or {})
             request_headers['Host'] = target.netloc.decode('ascii')
             async with httpx.AsyncClient(trust_env=False, follow_redirects=False,
-                                         timeout=20.0) as client:
+                                         timeout=self.timeout) as client:
                 async with client.stream(method, pinned, json=json, content=content, headers=request_headers,
                                          extensions={'sni_hostname': target.host}) as response:
                     if response.status_code in {301, 302, 303, 307, 308}:

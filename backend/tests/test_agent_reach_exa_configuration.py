@@ -41,7 +41,7 @@ async def test_execution_uses_organization_override(monkeypatch, override, expec
     async def fake_exa(request,http,key):
         keys.append(key); return ReachResult('exa','exa-api',[])
     monkeypatch.setattr(service, 'exa', fake_exa)
-    config = SimpleNamespace(agent_reach_platforms='exa',agent_reach_bin_dir='/tmp',agent_reach_exa_api_key='server-key')
+    config = SimpleNamespace(agent_reach_platforms='exa',agent_reach_bin_dir='/tmp',agent_reach_exa_api_key='server-key',agent_reach_timeout_seconds=60)
     await service.execute(ReachRequest(task='test',platform='exa'),config,timeout=1,exa_api_key=override)
     assert keys == [expected]
 

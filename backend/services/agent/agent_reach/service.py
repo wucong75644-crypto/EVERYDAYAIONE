@@ -43,7 +43,7 @@ async def execute(request: ReachRequest, settings, *, timeout, connection=None, 
     enabled = {value.strip() for value in settings.agent_reach_platforms.split(',')}
     if request.platform not in enabled:
         raise ReachError('CONFIG_REQUIRED', '该渠道尚未启用或完成配置')
-    http, runner = PublicHTTP(), ToolRunner(settings.agent_reach_bin_dir)
+    http, runner = PublicHTTP(timeout=min(timeout, settings.agent_reach_timeout_seconds)), ToolRunner(settings.agent_reach_bin_dir)
 
     async def operation():
         if request.platform == 'web':
