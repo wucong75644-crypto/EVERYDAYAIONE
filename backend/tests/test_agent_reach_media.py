@@ -143,7 +143,7 @@ def test_xhs_publish_budget_is_distinct_and_never_exceeds_caller_deadline():
     executor = SimpleNamespace(execution_budget=None)
     args = {'platform': 'xiaohongshu', 'action': 'create_post'}
     assert execution_timeout(settings, executor, args) == 180
-    assert execution_timeout(settings, executor, {'platform':'xiaohongshu','action':'read'}) == 60
+    assert execution_timeout(settings, executor, {'platform':'xiaohongshu','action':'read'}) == 75
     assert execution_timeout(settings, executor, {'platform':'twitter','action':'create_post'}) == 60
     executor.execution_budget = SimpleNamespace(remaining=17)
     assert execution_timeout(settings, executor, args) == 17

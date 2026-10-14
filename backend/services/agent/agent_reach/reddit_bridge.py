@@ -12,7 +12,7 @@ def execute(payload):
     action = request['action']
     # Upstream names this max_retries but it counts total attempts. One means
     # exactly one request; zero would prevent even the first request.
-    with RedditClient(Credential.from_dict(payload['secret']), max_retries=1, timeout=20) as client:
+    with RedditClient(Credential.from_dict(payload['secret']), max_retries=1, timeout=60) as client:
         identity = client.get_me()
         if str(identity.get('id', '')) != payload['account_id']:
             raise ValueError('ACCOUNT_MISMATCH')

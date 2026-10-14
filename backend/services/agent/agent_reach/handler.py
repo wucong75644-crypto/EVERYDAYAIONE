@@ -24,6 +24,9 @@ def execution_timeout(settings, executor, args):
     timeout = settings.agent_reach_timeout_seconds
     if args.get('platform') == 'xiaohongshu' and args.get('action') == 'create_post':
         timeout = getattr(settings, 'agent_reach_xhs_publish_timeout_seconds', timeout)
+    elif args.get('action') not in WRITE_ACTIONS:
+        # Identity checks/account admission precede the platform query.
+        timeout += 15.0
     if executor.execution_budget is not None:
         timeout = min(timeout, executor.execution_budget.remaining)
     return timeout
@@ -95,7 +98,7 @@ async def execute_reach(executor, args):
                     budget = AccessBudgetService(executor.db.pool, store.scope)
                     attempt = await reserve_read(budget, connection, request, executor, deadline=deadline)
                     try:
-                        result = await execute(request, settings, timeout=timeout, connection=connection, exa_api_key=exa_key)
+                        result = await execute(request, settings, timeout=max(0, deadline - asyncio.get_running_loop().time()), connection=connection, exa_api_key=exa_key)
                     except BaseException as error:
                         if request.platform == 'xiaohongshu' and getattr(error, 'code', '') == 'CONFIG_REQUIRED':
                             await asyncio.shield(asyncio.to_thread(budget.release_not_sent, attempt))
@@ -106,7 +109,7 @@ async def execute_reach(executor, args):
                     await asyncio.to_thread(budget.settle, connection, attempt)
                     result.metadata['access_cost'] = {'estimated_units': (2 + (request.page if request.action == 'read_comments' else 0)) if request.platform == 'xiaohongshu' else 1, 'basis': '保守估计，浏览器内部请求不可观测'}
                     return result
-                return await execute(request, settings, timeout=timeout, connection=connection, exa_api_key=exa_key)
+                return await execute(request, settings, timeout=max(0, deadline - asyncio.get_running_loop().time()), connection=connection, exa_api_key=exa_key)
             call_id = current_dispatch_call_id()
             if not call_id:
                 raise ReachError('ACCESS_DENIED', '写入只能通过已授权的公共工具执行入口')
