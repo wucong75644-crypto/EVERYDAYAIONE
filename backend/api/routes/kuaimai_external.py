@@ -303,30 +303,12 @@ async def test_credential(
     )
     source = cred.data["source"]
 
-    # 用最小 payload 调一次 thinktank（即使凭证是 viperp 也能用，因为是同源探活）
-    # 仅为了快速验证 cookie 有效性
-    test_payload = {
-        "api_name": "ttps%3A__erp.superboss.cc_kmzk_profit_report_shop",
-        "sysStatus": "1",
-        "startTime": "1779552000000",
-        "endTime": "1779638399000",
-        "shopUniIds": "",
-        "formulaId": "658",
-        "ruleId": "230290901203812352",
-        "showDimension": "0",
-        "dateShowType": "0",
-        "costType": "0",
-        "isTrusted": "true",
-    }
-
     try:
         if source == "thinktank":
-            await client.post(
-                url="https://erp.superboss.cc/kmzk/profit/report/shop",
-                payload=test_payload,
-                module_path="/think_tank/profit_shop/",
-                origin="https://erp.superboss.cc",
-                referer="https://erp.superboss.cc/index.html",
+            from datetime import date, timedelta
+            today = date.today()
+            await thinktank_sync.fetch_thinktank_rows(
+                client, start_date=today - timedelta(days=1), end_date=today,
             )
         else:
             # viperp 测试用 list 接口

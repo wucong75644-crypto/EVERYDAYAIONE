@@ -16,7 +16,7 @@ from .login import ERPLogin, LoginError, ORIGIN, company_id
 PREFIX = 'kuaimai:wechat:'
 OPEN = 'https://open.weixin.qq.com'
 CALLBACK = ORIGIN + '/account/wxAuth'
-ERP_LOGIN_HOSTS = {'erp.superboss.cc', 'erpb.superboss.cc'}
+ERP_LOGIN_HOSTS = {'erp.superboss.cc', 'erpa.superboss.cc', 'erpb.superboss.cc'}
 RELEASE = "if redis.call('get',KEYS[1]) == ARGV[1] then return redis.call('del',KEYS[1]) else return 0 end"
 
 
@@ -94,7 +94,7 @@ class WeChatLogin(ERPLogin):
     async def complete(self, db, payload, code):
         async with self.client(payload['cookies']) as client:
             response = await client.get(CALLBACK, params={'code': code, 'state': ''})
-            # Explicit bounded redirects to the two verified official ERP hosts only.
+            # Explicit bounded redirects to the explicitly verified official ERP hosts only.
             for _ in range(5):
                 if response.status_code not in {301, 302, 303, 307, 308}:
                     break
@@ -127,7 +127,7 @@ class WeChatLogin(ERPLogin):
             except (ValueError, TypeError, AttributeError):
                 raise LoginError('快麦账号身份响应异常，未保存连接。') from None
             # Select only cookies scoped to the verified identity request. This also
-            # avoids ambiguous names when the two ERP hosts set host-only cookies.
+            # avoids ambiguous names when different ERP hosts set host-only cookies.
             selected = SimpleCookie()
             selected.load(client.build_request('GET', identity_origin + '/user/info').headers.get('cookie', ''))
             cookies = {key: value.value for key, value in selected.items()}
