@@ -4,3 +4,5 @@ Modified for EVERYDAYAIONE: organization-scoped immutable inputs; no network or 
 No third-party code, fonts, images or executable upstream assets are bundled.
 
 Phase3 adds card-design/card-xiaohongshu method adaptations with independent fixed Pillow rendering. Upstream executable scripts and third-party design implementations are not distributed. See SOURCE_MANIFEST_PHASE3.json.
+
+Phase 5 (2026-10-13): fixed-commit Easel methods reviewed; independently authored bounded review methods and statistics. Upstream scripts, dictionaries, unverified benchmarks and third-party implementations are not redistributed. See SOURCE_MANIFEST.phase5.json for hashes and license uncertainty.

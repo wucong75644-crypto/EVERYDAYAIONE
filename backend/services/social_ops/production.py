@@ -25,6 +25,9 @@ from .validation import (
 )
 
 STAGES = {
+    "postmortem": ["easel-content-postmortem"],
+    "comment_insights": ["easel-comment-insights"],
+    "strategy": ["easel-strategy-advisor"],
     "cards": ["easel-card-design", "easel-card-xiaohongshu"],
     "plan": [
         "easel-competitor-analysis",
@@ -104,6 +107,16 @@ async def create_run(db, repo, data):
         sources = await asyncio.to_thread(
             repo.sources, str(data.job_id), evidence_ids=evidence_ids, limit=100
         )
+    if selected_topic and selected_topic["data"].get("suggestion_id"):
+        extra_ids = [
+            e["snapshot_id"] for e in selected_topic["data"].get("evidence", [])
+        ]
+        extra = await asyncio.to_thread(
+            repo.sources, str(data.job_id), evidence_ids=extra_ids, limit=100
+        )
+        by_id = {str(s["id"]): s for s in sources}
+        by_id.update({str(s["id"]): s for s in extra})
+        sources = list(by_id.values())
     if not any(s["coverage"]["content_kind"] == "full_text" for s in sources):
         raise ReachError("NEEDS_INPUT", "尚无正文证据，请等待采集完成或补充样本")
     with repo.cursor() as c:
@@ -224,6 +237,24 @@ class ProductionWorker:
             run = c.fetchone()
             if not run:
                 return None
+            from .reviews import REVIEW_SKILLS
+
+            if run["kind"] in REVIEW_SKILLS:
+                from core.config import get_settings
+
+                if not get_settings().social_ops_analytics_enabled:
+                    return None
+                if run["input"].get("schedule_id"):
+                    c.execute(
+                        "SELECT id FROM social_analytics_schedules WHERE id=%s AND org_id=%s AND enabled FOR SHARE",
+                        (run["input"]["schedule_id"], self.repo.scope.org_id),
+                    )
+                    if not c.fetchone():
+                        c.execute(
+                            "UPDATE social_production_runs SET status='needs_input',error='SCHEDULE_DISABLED' WHERE id=%s",
+                            (id,),
+                        )
+                        return None
             if run["status"] == "running":
                 # A model request may have spent money before a crash. Save
                 # completed stages and require explicit resume of remaining work.
@@ -269,6 +300,10 @@ class ProductionWorker:
             result = None
             if done:
                 result = output
+                from .reviews import REVIEW_SKILLS, settle_review
+
+                if run["kind"] in REVIEW_SKILLS:
+                    result = settle_review(self.repo, c, run, output)
                 if run["kind"] == "plan":
                     for topic in output["topics"]:
                         c.execute(
@@ -408,6 +443,18 @@ class ProductionWorker:
                 ),
             )
 
+    def record_usage(self, run, entry):
+        with self.repo.cursor() as c:
+            c.execute(
+                "UPDATE social_production_runs SET usage=usage||%s WHERE id=%s AND org_id=%s AND lease_token=%s",
+                (
+                    Jsonb({str(run["lease_token"]): entry}),
+                    run["id"],
+                    self.repo.scope.org_id,
+                    run["lease_token"],
+                ),
+            )
+
     async def execute_stage(self, run):
         from core.config import get_settings
         from services.agent.execution_budget import ExecutionBudget
@@ -451,6 +498,14 @@ class ProductionWorker:
         await runtime.initialize_scheduled(snapshot)
         from .validation import CardsOutput, ReferencedCardsOutput
 
+        from .reviews import (
+            REVIEW_SKILLS,
+            ReviewOutput,
+            ReferencedReviewOutput,
+            REVIEW_INSTRUCTIONS,
+            validate_review,
+        )
+
         public_schema = {
             "cards": CardsOutput,
             "plan": PlanOutput,
@@ -461,6 +516,8 @@ class ProductionWorker:
             "plan": ReferencedPlanOutput,
             "check": CheckOutput,
         }.get(run["kind"], ReferencedDraftOutput)
+        if run["kind"] in REVIEW_SKILLS:
+            public_schema, schema = ReviewOutput, ReferencedReviewOutput
         catalog, catalog_coverage = evidence_catalog(run["input"]["sources"])
         if not catalog:
             raise ReachError("NEEDS_INPUT", "没有可逐字引用的来源片段；请补充正文证据")
@@ -478,6 +535,8 @@ class ProductionWorker:
                 else "仅返回当前契约字段，不输出选题计划字段。卡片只输出封面/正文/收尾的文字结构，不输出HTML、CSS、脚本、网址；每组2至9张；每卡正文精简到约250字，单一核心观点。语义检查要审阅cards中的文字和素材来源说明；图片视觉、版权与平台审核未知，不得声称已核实。"
             )
         )
+        if run["kind"] in REVIEW_SKILLS:
+            stage_instructions = REVIEW_INSTRUCTIONS + "复盘仅解释程序statistics事实。observed_fact_ids只能选择已提供facts.id。数值由程序展示，解释、建议及不足中不写阿拉伯数字、百分比或任何新指标。possible_causes必须为空；不得输出确定因果或无证据现状推断。comment_insights只引用comment类型证据并承认有限分页采样，无样本留空。suggestions.kind只能是experience或topic；经验仅补充长期经验，不改变定位、禁用表达、排期或授权。每条结论必须引用证据目录编号。"
         messages = [
             {
                 "role": "system",
@@ -519,6 +578,21 @@ class ProductionWorker:
         text = ""
         tokens = 0
         finish_reason = None
+        review_attempt = run["kind"] in REVIEW_SKILLS
+        usage = {
+            "model": model,
+            "skill_snapshot": snapshot,
+            "input_hash": run["input"].get("snapshot_hash"),
+            "reserved_credits": run["allowance"],
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "actual_credits": None,
+            "monetary_cost": None,
+            "status": "prepared_or_unknown",
+            "cost_basis": "既有积分token估算；货币成本未从供应商取得，不推断为零",
+        }
+        if review_attempt:
+            await asyncio.to_thread(self.record_usage, run, usage)
         async with CreditService(self.db, redis=None).credit_lock(
             task_id=str(run["lease_token"]),
             user_id=self.repo.scope.actor_user_id,
@@ -526,6 +600,9 @@ class ProductionWorker:
             reason="社媒文字阶段",
             org_id=self.repo.scope.org_id,
         ) as handle:
+            usage["credit_transaction_id"] = (
+                str(getattr(handle, "transaction_id", "")) or None
+            )
             session = get_model_gateway().open_chat(
                 ModelCallRequest(
                     model_id=model,
@@ -546,6 +623,12 @@ class ProductionWorker:
                     finish_reason = chunk.finish_reason or finish_reason
                     text += chunk.content or ""
                     tokens = max(tokens, chunk.prompt_tokens + chunk.completion_tokens)
+                    usage["prompt_tokens"] = max(
+                        usage["prompt_tokens"] or 0, chunk.prompt_tokens
+                    )
+                    usage["completion_tokens"] = max(
+                        usage["completion_tokens"] or 0, chunk.completion_tokens
+                    )
                     if len(text.encode()) > 65536:
                         raise ReachError("OUTPUT_LIMIT", "输出超限")
                 handle.set_actual(
@@ -559,6 +642,15 @@ class ProductionWorker:
                 ) from None
             finally:
                 await session.close()
+        usage.update(
+            status="response_received",
+            actual_credits=ScheduledTaskExecutor._calc_actual_credits(
+                tokens, {"max_credits": run["allowance"]}
+            ),
+            finish_reason=finish_reason,
+        )
+        if review_attempt:
+            await asyncio.to_thread(self.record_usage, run, usage)
         if finish_reason in {"length", "max_tokens", "incomplete"}:
             raise ReachError(
                 "MODEL_OUTPUT_TRUNCATED", "模型输出被截断；未生成成果，不自动重试"
@@ -595,6 +687,8 @@ class ProductionWorker:
                 "EVIDENCE_QUOTE_NOT_SUPPORTED",
                 "引用无法与固定来源逐字匹配；未生成成果，不自动重试",
             ) from None
+        if run["kind"] in REVIEW_SKILLS:
+            validate_review(output, run["input"])
         return output, {
             "skill_snapshot": snapshot,
             "model": model,
@@ -602,6 +696,9 @@ class ProductionWorker:
             "previous_output_hash": digest(run["outputs"]),
             "tool_policy_hash": digest([]),
             "tokens": tokens,
+            "actual_credits": usage["actual_credits"],
+            "monetary_cost": None,
+            "cost_basis": usage["cost_basis"],
             "finish_reason": finish_reason,
             "evidence_catalog_hash": digest(catalog),
             "evidence_catalog_coverage": catalog_coverage,

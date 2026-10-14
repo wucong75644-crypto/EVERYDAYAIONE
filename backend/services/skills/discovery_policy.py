@@ -3,6 +3,7 @@
 SOCIAL_WORKFLOW_SKILLS = frozenset({
     'easel-competitor-analysis', 'easel-content-gap-analysis', 'easel-topic-evaluator',
     'easel-content-calendar', 'easel-xhs-note-creator', 'easel-text-polisher',
+    'easel-content-postmortem', 'easel-comment-insights', 'easel-strategy-advisor',
     'easel-quality-gate', 'easel-risk-scanner', 'easel-card-design', 'easel-card-xiaohongshu',
 })
 TEST_ONLY_SKILLS = frozenset({

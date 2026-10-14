@@ -35,6 +35,8 @@ class SocialOpsWorker:
             return
         if self.pending:
             return
+        if getattr(get_settings(), "social_ops_analytics_enabled", False):
+            await self.poll_analytics()
         rows = await asyncio.to_thread(self.discover)
         research = [r for r in rows if not r["run_id"]]
         production = [r for r in rows if r["run_id"]]
@@ -45,6 +47,57 @@ class SocialOpsWorker:
             task = asyncio.create_task(self.tick(row))
             self.pending.add(task)
             task.add_done_callback(self.pending.discard)
+
+    async def poll_analytics(self):
+        def discover():
+            with self.db.pool.connection() as conn, conn.transaction(), conn.cursor(
+                row_factory=dict_row
+            ) as c:
+                scope = DatabaseScope(
+                    actor_user_id=None,
+                    org_id=None,
+                    access_kind=DatabaseAccessKind.WORKER,
+                )
+                c.execute(SET_DATABASE_SCOPE_SQL, scope.settings)
+                c.execute("SELECT * FROM social_analytics_due()")
+                return c.fetchall()
+
+        from services.scheduler.push_dispatcher import push_dispatcher
+
+        def notices():
+            with self.db.pool.connection() as conn, conn.transaction(), conn.cursor(
+                row_factory=dict_row
+            ) as c:
+                scope = DatabaseScope(
+                    actor_user_id=None,
+                    org_id=None,
+                    access_kind=DatabaseAccessKind.WORKER,
+                )
+                c.execute(SET_DATABASE_SCOPE_SQL, scope.settings)
+                c.execute("SELECT * FROM social_analytics_notifications()")
+                return c.fetchall()
+
+        for event in await asyncio.to_thread(notices):
+            await push_dispatcher.dispatch(
+                str(event["org_id"]),
+                {"type": "web", "user_id": str(event["owner_id"])},
+                f"社媒数据任务 {event['object_id']}：{event['state']}。请在社媒复盘查看数据与来源。",
+                [],
+            )
+        from .analytics_schedule import tick
+
+        for row in await asyncio.to_thread(discover):
+            scope = DatabaseScope(
+                actor_user_id=str(row["owner_id"]),
+                org_id=str(row["org_id"]),
+                access_kind=DatabaseAccessKind.RUNTIME,
+            )
+            try:
+                await tick(self.db, scope, str(row["schedule_id"]))
+            except Exception as error:
+                logger.warning(
+                    "Analytics schedule stopped | kind={}", type(error).__name__
+                )
 
     async def tick_publish(self, row):
         from .publish_worker import PublishWorker
@@ -104,6 +157,18 @@ class SocialOpsWorker:
                 actor_user_id=None, org_id=None, access_kind=DatabaseAccessKind.WORKER
             )
             c.execute(SET_DATABASE_SCOPE_SQL, scope.settings)
+            c.execute(
+                "SELECT set_config('app.social_analytics_enabled',%s,true)",
+                (
+                    (
+                        "true"
+                        if getattr(
+                            get_settings(), "social_ops_analytics_enabled", False
+                        )
+                        else "false"
+                    ),
+                ),
+            )
             c.execute("SELECT * FROM social_ops_due()")
             return c.fetchall()
 

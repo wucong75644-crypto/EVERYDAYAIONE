@@ -89,22 +89,29 @@ class XHSAdapter:
         if not isinstance(detail, dict) or not isinstance(detail.get('note'), dict):
             raise ReachError('UPSTREAM_CHANGED', '小红书详情格式变化')
         note = detail['note']
+        if note.get('noteId') and note['noteId'] != self.target(request.url)['feed_id']:
+            raise ReachError('UPSTREAM_CHANGED', '详情返回的帖子ID与请求不一致')
         if not comments_mode:
             author = (note.get('user') or {}).get('nickname', '')
             interaction = note.get('interactInfo') or {}
             if not isinstance(interaction, dict):
                 interaction = {}
-            # Keep upstream count strings (including abbreviated units) intact.
-            # Missing metrics remain null; never synthesize zero or a baseline.
-            metrics = {'note_id': note.get('noteId') or self.target(request.url)['feed_id'],
-                       'likes': interaction.get('likedCount'),
-                       'comments_count': interaction.get('commentCount'),
-                       'collected_count': interaction.get('collectedCount'),
-                       'shared_count': interaction.get('sharedCount')}
+            from services.social_ops.analytics import nullable_metrics
+            target = self.target(request.url)['feed_id']
+            remote_id = note.get('noteId')
+            if remote_id and remote_id != target:
+                raise ReachError('UPSTREAM_CHANGED', '详情返回的帖子ID与请求不一致')
+            raw = {'likes': interaction.get('likedCount'), 'comments': interaction.get('commentCount'),
+                   'saves': interaction.get('collectedCount'), 'shares': interaction.get('sharedCount')}
+            raw = {k:(v[:64] if isinstance(v,str) else v if isinstance(v,(int,float,bool)) or v is None else None) for k,v in raw.items()}
+            metadata = {'remote_id': remote_id or target, 'author_id': (note.get('user') or {}).get('userId'),
+                        'raw_metrics': raw, 'adapter_version': 'xhs-rest:metrics-v1',
+                        'source': 'feeds/detail.note.interactInfo', 'scope': 'public_cumulative',
+                        'published_at_raw': note.get('time')}
             return ReachResult('xiaohongshu', 'xhs-rest', [ReachItem(
                 note.get('title') or '小红书正文', request.url,
-                '笔记指标（平台原始计数，空值不可当零）：' + json.dumps(metrics, ensure_ascii=False)
-                + '\n作者：' + author + '\n' + (note.get('desc') or ''), 'full_text')])
+                '作者：' + author + '\n' + (note.get('desc') or ''), 'full_text',
+                metrics=nullable_metrics(raw), metric_metadata=metadata)])
         comments = detail.get('comments') or {}
         rows = comments.get('list')
         if not isinstance(rows, list):
@@ -118,7 +125,7 @@ class XHSAdapter:
         if not more and comments.get('hasMore'):
             warnings.append('平台仍标记有更多评论，但本次未能加载；不能声称已读完全部评论。')
         items = [ReachItem('小红书评论', request.url.split('#')[0] + '#comment-' + str(row['id']),
-                           json.dumps(row, ensure_ascii=False), 'comment') for row in selected]
+                           json.dumps(row, ensure_ascii=False), 'comment', metric_metadata={'remote_id': note.get('noteId') or self.target(request.url)['feed_id'], 'author_id': (note.get('user') or {}).get('userId')}) for row in selected]
         return ReachResult('xiaohongshu', 'xhs-rest', items, warnings=warnings,
             pagination={'page': request.page, 'returned_count': len(selected),
                         'loaded_count': len(rows), 'platform_has_more': bool(comments.get('hasMore')),
