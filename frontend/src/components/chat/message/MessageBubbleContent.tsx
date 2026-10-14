@@ -110,7 +110,7 @@ export default function MessageBubbleContent({
             onRegenerateSingle={onRegenerateSingle}
           />
         ) : (
-          <MarkdownRenderer content={textContent} />
+          <MarkdownRenderer content={textContent} isStreaming={isStreaming} />
         )}
       </div>
 

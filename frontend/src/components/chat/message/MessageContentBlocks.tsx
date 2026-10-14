@@ -115,6 +115,7 @@ export default function MessageContentBlocks({
             <MarkdownRenderer
               key={idx}
               content={text}
+              isStreaming={isStreaming && idx === message.content.length - 1}
             />
           );
         }

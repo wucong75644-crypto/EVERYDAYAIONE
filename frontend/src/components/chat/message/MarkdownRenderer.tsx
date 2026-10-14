@@ -23,6 +23,7 @@ import { presentationColorProps } from '../../../utils/messagePresentation';
 import './presentation.css';
 import { downloadFile } from '../../../utils/downloadFile';
 import './markdown.css';
+import { useStreamingText } from '../../../hooks/useStreamingText';
 
 // KaTeX 数学公式样式
 import 'katex/dist/katex.min.css';
@@ -183,10 +184,11 @@ const markdownComponents: Components = {
 };
 
 export default memo(function MarkdownRenderer({
-  content,
+  content: receivedContent,
   isStreaming = false,
   className = '',
 }: MarkdownRendererProps) {
+  const content = useStreamingText(receivedContent, isStreaming);
   // 检测内容是否包含 Markdown 语法特征
   const hasMarkdown = useMemo(() => {
     if (!content) return false;
