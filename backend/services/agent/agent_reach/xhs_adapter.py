@@ -34,14 +34,29 @@ class XHSAdapter:
                     raise ReachError('AUTH_EXPIRED', '小红书执行服务认证失效')
                 if response.status_code == 429:
                     raise ReachError('RATE_LIMITED', '执行服务明确返回限频，已暂停账号访问')
-                if response.status_code != 200:
-                    raise ReachError('PLATFORM_BLOCKED', '小红书操作未完成，请检查登录态或平台限制')
                 data = bytearray()
                 async for chunk in response.aiter_bytes():
                     data.extend(chunk)
                     if len(data) > MAX_BYTES:
                         raise ReachError('OUTPUT_LIMIT', '小红书返回资料超过上限')
-                payload = json.loads(data)
+                try:
+                    payload = json.loads(data)
+                except (ValueError, UnicodeError):
+                    if response.status_code != 200:
+                        raise ReachError('PLATFORM_BLOCKED', '小红书执行服务未完成操作') from None
+                    raise
+                if response.status_code != 200:
+                    if path == 'feeds/search' and isinstance(payload, dict) and payload.get('code') == 'SEARCH_FEEDS_FAILED':
+                        failure = payload.get('details')
+                        known = {
+                            'XHS_SEARCH_TIMEOUT': ('SEARCH_TIMEOUT', '小红书搜索页未在限定时间内加载出结果；请稍后再试'),
+                            'XHS_SEARCH_AUTH_REQUIRED': ('AUTH_EXPIRED', '小红书搜索页要求登录，请重新连接账号'),
+                            'XHS_SEARCH_CAPTCHA_REQUIRED': ('CAPTCHA_REQUIRED', '小红书搜索页要求安全验证，请先处理平台验证'),
+                        }
+                        if isinstance(failure, str) and failure in known:
+                            code, message = known[failure]
+                            raise ReachError(code, message)
+                    raise ReachError('PLATFORM_BLOCKED', '小红书操作未完成，请检查登录态或平台限制')
         if payload.get('success') is not True:
             raise ReachError('UPSTREAM_CHANGED', '小红书执行服务没有确认成功')
         return payload.get('data')

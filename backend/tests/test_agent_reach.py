@@ -262,3 +262,53 @@ async def test_read_selects_unique_org_account(monkeypatch,platform,count,explic
     assert (result.status if result.status=='success' else result.error_message)==expected
     if expected=='success': assert bool(selected[0]) == bool(count)
     else: assert not selected
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('action,exception,code', [
+    ('search', asyncio.TimeoutError(), 'BUDGET_EXHAUSTED'),
+    ('create_post', asyncio.TimeoutError(), 'BUDGET_EXHAUSTED'),
+    ('search', OSError('offline'), 'NETWORK_ERROR'),
+    ('create_post', OSError('offline'), 'NETWORK_ERROR'),
+    ('search', ValueError('bad payload'), 'UPSTREAM_CHANGED'),
+    ('create_post', ValueError('bad payload'), 'UPSTREAM_CHANGED'),
+])
+async def test_handler_failure_message_matches_read_or_write(monkeypatch, action, exception, code):
+    from core import config
+    from services.agent.agent_reach import handler
+    monkeypatch.setattr(config, 'get_settings', lambda: SimpleNamespace(
+        agent_reach_enabled=True, agent_reach_timeout_seconds=60))
+    async def fail(operation, **kwargs):
+        operation.close()
+        raise exception
+    monkeypatch.setattr(handler.asyncio, 'wait_for', fail)
+    result = await handler.execute_reach(SimpleNamespace(execution_budget=None), {'action':action})
+    assert result.error_message == code
+    if action == 'search':
+        assert '写入' not in result.summary and '发送' not in result.summary and '回执' not in result.summary
+        assert '查询' in result.summary and '不能据此判断' in result.summary
+    else:
+        assert '写入' in result.summary and ('回执' in result.summary or '账号' in result.summary)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('detail,expected', [
+    ('XHS_SEARCH_TIMEOUT', 'SEARCH_TIMEOUT'),
+    ('XHS_SEARCH_AUTH_REQUIRED', 'AUTH_EXPIRED'),
+    ('XHS_SEARCH_CAPTCHA_REQUIRED', 'CAPTCHA_REQUIRED'),
+    ('untrusted secret', 'PLATFORM_BLOCKED'),
+    ({'unexpected':'shape'}, 'PLATFORM_BLOCKED'),
+])
+async def test_xhs_search_failure_preserves_safe_reason(monkeypatch, detail, expected):
+    import httpx
+    from services.agent.agent_reach.xhs_adapter import XHSAdapter
+    original = httpx.AsyncClient
+    def respond(request):
+        return httpx.Response(500, json={'code':'SEARCH_FEEDS_FAILED','details':detail})
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: original(
+        **kw, transport=httpx.MockTransport(respond)))
+    adapter = XHSAdapter('{"id":"http://127.0.0.1:18060"}',
+                         {'id':'id','account_id':'account','secret':{'service_token':'dummy'}})
+    with pytest.raises(ReachError) as error:
+        await adapter.call('POST', 'feeds/search', {'keyword':'文具'})
+    assert error.value.code == expected
+    assert 'untrusted secret' not in str(error.value)

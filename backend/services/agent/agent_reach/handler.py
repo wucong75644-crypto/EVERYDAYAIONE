@@ -35,6 +35,7 @@ async def execute_reach(executor, args):
         return AgentResult(summary='Agent Reach尚未启用', status='error',
                            error_message='CONFIG_REQUIRED', metadata={'retryable': False})
     timeout = execution_timeout(settings, executor, args)
+    writing = args.get('action') in WRITE_ACTIONS
 
     async def operation():
         request = ReachRequest.model_validate(args)
@@ -168,7 +169,8 @@ async def execute_reach(executor, args):
     try:
         return await asyncio.wait_for(operation(), timeout=max(0, timeout))
     except asyncio.TimeoutError:
-        return AgentResult(summary='Agent Reach超过本轮预算；写入若已开始，不能重复发送，请核对账号。',
+        return AgentResult(summary=('Agent Reach写入等待超时；若已开始提交，请先核对账号回执，不要重复发送。'
+                                    if writing else 'Agent Reach查询等待超时，未取得可核验结果；不能据此判断没有相关资料。'),
                            status='timeout', error_message='BUDGET_EXHAUSTED', metadata={'retryable': False})
     except ValidationError:
         return AgentResult(summary='工具参数不完整或不合法，请补齐目标和操作。', status='error',
@@ -178,8 +180,10 @@ async def execute_reach(executor, args):
                            status='error', error_message=error.code, metadata={'retryable': error.retryable, 'next_eligible_at': getattr(error, 'next_eligible_at', None)})
 
     except (httpx.HTTPError, OSError):
-        return AgentResult(summary='平台网络或执行环境不可用；已开始的写入请先核对回执，不要重复发送。',
+        return AgentResult(summary=('平台网络或执行环境不可用；已开始的写入请先核对回执，不要重复发送。'
+                       if writing else '平台网络或执行环境不可用，未取得查询结果；不能据此判断没有相关资料。'),
             status='error', error_message='NETWORK_ERROR', metadata={'retryable': False})
     except (ValueError, KeyError, TypeError):
-        return AgentResult(summary='平台返回格式无法核验；请检查执行回执，不要重复写入。',
+        return AgentResult(summary=('平台返回格式无法核验；请检查执行回执，不要重复写入。'
+                       if writing else '平台返回格式无法核验，未取得可靠查询结果；不能据此判断没有相关资料。'),
             status='error', error_message='UPSTREAM_CHANGED', metadata={'retryable': False})
