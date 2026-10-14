@@ -306,3 +306,25 @@ def test_controlled_completion_ratio_not_synthesized(value, expected):
     from services.social_ops.analytics import exact_metric
 
     assert exact_metric("completion_rate", value) == expected
+
+@pytest.mark.parametrize('claim', [
+    '发布后笔记状态为仅自己可见，未面向公众分发，导致无公开互动指标。',
+    '账号处于验收测试阶段，缺乏活跃粉丝基础，可能降低互动起始水平。',
+    '复盘窗口较短，可能影响互动数据的积累。',
+    'This may be caused by the audience.',
+])
+def test_observational_review_rejects_causes_even_with_valid_metric_reference(claim):
+    payload = {'statistics': {'facts': []}, 'sources': [{'id': 'real', 'coverage': {'content_kind': 'metrics'}}]}
+    output = {'observed_fact_ids': [], 'possible_causes': [{'text': claim, 'evidence': [{'snapshot_id': 'real'}]}], 'comment_insights': [], 'suggestions': [], 'insufficient_evidence': []}
+    with pytest.raises(ReachError, match='当前仅有观察数据'):
+        validate_review(output, payload)
+
+@pytest.mark.parametrize('claim', ['私密状态导致没有互动', '粉丝基础造成表现偏低', '互动归因于发布时间', 'This caused low engagement'])
+def test_causal_claim_cannot_move_to_suggestion(claim):
+    output = {'observed_fact_ids': [], 'possible_causes': [], 'comment_insights': [], 'suggestions': [{'text': claim, 'evidence': []}], 'insufficient_evidence': []}
+    with pytest.raises(ReachError):
+        validate_review(output, {'statistics': {'facts': []}, 'sources': []})
+
+def test_observational_report_can_state_unknown_and_propose_experiment():
+    output = {'observed_fact_ids': [], 'possible_causes': [], 'comment_insights': [], 'suggestions': [{'text': '建议在后续计划中验证教程选题需求，补充自有步骤材料后再评估。', 'evidence': []}], 'insufficient_evidence': ['缺少因果证据，无法判断原因；粉丝活跃情况未知。']}
+    assert validate_review(output, {'statistics': {'facts': []}, 'sources': []}) == output

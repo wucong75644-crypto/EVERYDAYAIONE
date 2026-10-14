@@ -502,6 +502,7 @@ class ProductionWorker:
             REVIEW_SKILLS,
             ReviewOutput,
             ReferencedReviewOutput,
+            REVIEW_INSTRUCTIONS,
             validate_review,
         )
 
@@ -535,7 +536,7 @@ class ProductionWorker:
             )
         )
         if run["kind"] in REVIEW_SKILLS:
-            stage_instructions = "复盘仅解释程序statistics事实。observed_fact_ids只能选择已提供facts.id。数值由程序展示，解释、建议及不足中不写阿拉伯数字、百分比或任何新指标。possible_causes必须是待验证假设，不作确定因果或爆款承诺。comment_insights只引用comment类型证据并承认有限分页采样，无样本留空。suggestions.kind只能是experience或topic；经验仅补充长期经验，不改变定位、禁用表达、排期或授权。每条结论必须引用证据目录编号。"
+            stage_instructions = REVIEW_INSTRUCTIONS + "复盘仅解释程序statistics事实。observed_fact_ids只能选择已提供facts.id。数值由程序展示，解释、建议及不足中不写阿拉伯数字、百分比或任何新指标。possible_causes必须为空；不得输出确定因果或无证据现状推断。comment_insights只引用comment类型证据并承认有限分页采样，无样本留空。suggestions.kind只能是experience或topic；经验仅补充长期经验，不改变定位、禁用表达、排期或授权。每条结论必须引用证据目录编号。"
         messages = [
             {
                 "role": "system",

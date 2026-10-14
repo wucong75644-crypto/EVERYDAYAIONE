@@ -515,6 +515,12 @@ def test_profile_strategy_update_leaves_live_schedule_grant_unchanged(
             (ORG1, p.run, p.s.profile["id"]),
         )
         suggestion = c.fetchone()["id"]
+    # Old reports remain auditable/rejectable, but cannot change a profile.
+    with pytest.raises(ReachError, match="旧解释校验规则"):
+        reviews.decide(p.s.repo, str(suggestion), SuggestionDecision(decision="accept", expected_profile_revision=1))
+    with p.s.repo.cursor() as c:
+        c.execute("UPDATE social_production_runs SET input=input || %s WHERE id=%s AND org_id=%s",
+                  (Jsonb({"review_policy_version": reviews.REVIEW_POLICY_VERSION}), p.run, ORG1))
     reviews.decide(
         p.s.repo,
         str(suggestion),

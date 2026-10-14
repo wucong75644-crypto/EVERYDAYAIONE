@@ -14,6 +14,14 @@ from .metrics import verified, snapshots
 from .repository import digest
 from .validation import Evidence, EvidenceReference
 
+REVIEW_POLICY_VERSION = "observational-no-causes-v2"
+REVIEW_INSTRUCTIONS = (
+    "当前输入仅为观察数据，无实验或因果证据。possible_causes必须为空数组，"
+    "不得因为引用存在就推断原因、粉丝基础、流量分发或平台机制。"
+    "insufficient_evidence明确说明无法判断原因；不把未知写成事实。"
+    "建议只能提出待验证的后续实验，不陈述未经证据支持的现状或效果。"
+)
+
 REVIEW_SKILLS = {
     "postmortem": "easel-content-postmortem",
     "comment_insights": "easel-comment-insights",
@@ -50,19 +58,24 @@ class ReferencedCommentInsight(ReferencedConclusion):
 class ReviewOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     observed_fact_ids: list[str] = Field(max_length=30)
-    possible_causes: list[Conclusion] = Field(max_length=10)
+    possible_causes: list[Conclusion] = Field(max_length=0)
     insufficient_evidence: list[str] = Field(max_length=20)
     comment_insights: list[CommentInsight] = Field(max_length=10)
     suggestions: list[Suggestion] = Field(max_length=10)
 
 
 class ReferencedReviewOutput(ReviewOutput):
-    possible_causes: list[ReferencedConclusion] = Field(max_length=10)
+    possible_causes: list[ReferencedConclusion] = Field(max_length=0)
     comment_insights: list[ReferencedCommentInsight] = Field(max_length=10)
     suggestions: list[ReferencedSuggestion] = Field(max_length=10)
 
 
 def validate_review(output, payload):
+    if output["possible_causes"]:
+        raise ReachError(
+            "MODEL_CLAIM_INVALID",
+            "当前仅有观察数据，不能生成原因判断；请将缺少因果证据列入证据不足",
+        )
     facts = {f["id"]: f for f in payload["statistics"]["facts"]}
     if any(i not in facts for i in output["observed_fact_ids"]):
         raise ReachError("EVIDENCE_REFERENCE_INVALID", "报告引用了不存在的统计事实")
@@ -75,7 +88,7 @@ def validate_review(output, payload):
     ] + output["insufficient_evidence"]
     if any(
         re.search(
-            r"[0-9０-９%％]|[零一二三四五六七八九十百千万亿]+(?:万|亿|次|人|率|成|倍|百分)|保证爆款|必然爆款|确定导致|证明导致",
+            r"[0-9０-９%％]|[零一二三四五六七八九十百千万亿]+(?:万|亿|次|人|率|成|倍|百分)|保证爆款|必然爆款|导致|造成|归因于|因此|证明|必然|必定|caus(?:e|es|ed)|result(?:s|ed)? in",
             t,
         )
         for t in texts
@@ -232,6 +245,7 @@ async def create_review(db, repo, data, *, pinned=None, schedule_id=None):
                 "NEEDS_INPUT", "策略建议需要所选内容已完成的复盘报告，请先运行内容复盘"
             )
     payload = {
+        "review_policy_version": REVIEW_POLICY_VERSION,
         "request": {**data.model_dump(mode="json"), "max_credits": data.max_credits},
         "profile": profile["data"],
         "profile_revision_id": str(profile["id"]),
@@ -264,6 +278,7 @@ async def create_review(db, repo, data, *, pinned=None, schedule_id=None):
     # Exclude observation time from change signature; unchanged counters do not
     # trigger a new paid report. IDs selected by an existing report remain pinned.
     signature = {
+        "review_policy_version": REVIEW_POLICY_VERSION,
         "kind": data.kind,
         "profile_hash": profile["sha256"],
         "contents": payload["contents"],
@@ -406,6 +421,13 @@ def decide(repo, suggestion_id, data):
             raise ReachError("INVALID_ARGUMENTS", "建议文字不能为空")
         result = None
         if data.decision == "accept":
+            c.execute(
+                "SELECT input FROM social_production_runs WHERE id=%s AND org_id=%s",
+                (s["run_id"], repo.scope.org_id),
+            )
+            source_run = c.fetchone()
+            if not source_run or source_run["input"].get("review_policy_version") != REVIEW_POLICY_VERSION:
+                raise ReachError("VERSION_CONFLICT", "此报告使用旧解释校验规则，请重新复盘后接受建议")
             c.execute(
                 "SELECT current.*,p.current_revision FROM social_profile_revisions r JOIN social_profiles p ON p.id=r.profile_id AND p.org_id=r.org_id JOIN social_profile_revisions current ON current.profile_id=p.id AND current.org_id=p.org_id AND current.revision=p.current_revision WHERE r.id=%s AND r.org_id=%s FOR UPDATE OF p",
                 (s["profile_revision_id"], repo.scope.org_id),
