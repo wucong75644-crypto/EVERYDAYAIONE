@@ -38,7 +38,7 @@ TENANT_TABLES: frozenset[str] = frozenset({
     # 对话/消息
     "conversations", "messages", "tasks",
     # 社媒研究与文字生产
-    "social_profiles", "social_profile_revisions", "social_research_jobs",
+    "social_analytics_events", "social_metric_collections", "social_metric_snapshots", "social_metric_imports", "social_review_suggestions", "social_analytics_schedules", "social_profiles", "social_profile_revisions", "social_research_jobs",
     "social_research_items", "social_source_snapshots", "social_topic_candidates",
     "social_publish_events", "social_media_assets", "social_package_checks", "social_publish_intents", "social_contents", "social_content_revisions", "social_production_runs", "reach_access_attempts",
     # 积分/账单

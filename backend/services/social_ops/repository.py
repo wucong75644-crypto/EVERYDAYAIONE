@@ -216,7 +216,25 @@ class Repository(Connections):
         params.extend([min(limit, 2000), offset])
         with self.cursor() as c:
             c.execute(query, params)
-            return c.fetchall()
+            rows = c.fetchall()
+            if evidence_ids:
+                # Accepted review topics carry frozen metric/comment evidence from
+                # the same editorial job. Preserve that chain in later drafts.
+                c.execute(
+                    "SELECT input->'sources' AS sources FROM social_production_runs WHERE org_id=%s AND job_id=%s AND kind IN ('postmortem','comment_insights','strategy') AND status='completed' ORDER BY created_at DESC LIMIT 100",
+                    (self.scope.org_id, id),
+                )
+                wanted = {str(i) for i in evidence_ids}
+                seen = {str(r["id"]) for r in rows}
+                for run in c.fetchall():
+                    for source in run["sources"]:
+                        if (
+                            str(source["id"]) in wanted
+                            and str(source["id"]) not in seen
+                        ):
+                            rows.append({**source, "body_hash": digest(source["body"])})
+                            seen.add(str(source["id"]))
+            return rows
 
     def snapshot(self, id):
         with self.cursor() as c:

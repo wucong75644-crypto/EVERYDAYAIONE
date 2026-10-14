@@ -81,44 +81,64 @@ def evidence_catalog(sources):
         body = source.get("body", "")
         # Contiguous slices preserve punctuation, emoji and whitespace exactly.
         for start in range(0, min(len(body), 3000), 1000):
-            quote = body[start:start + 1000].strip()
+            quote = body[start : start + 1000].strip()
             if not quote:
                 continue
             entry = {"snapshot_id": str(source["id"]), "quote": quote}
             reference_id = "E" + str(len(catalog) + 1)
-            entry_size = len(json.dumps({"reference_id": reference_id, **entry}, ensure_ascii=False).encode()) + 2
+            entry_size = (
+                len(
+                    json.dumps(
+                        {"reference_id": reference_id, **entry}, ensure_ascii=False
+                    ).encode()
+                )
+                + 2
+            )
             if size + entry_size > 24000 or len(catalog) >= 128:
                 continue
             catalog[reference_id] = entry
             covered.add(str(source["id"]))
             size += entry_size
-    return catalog, {"available_sources": available, "represented_sources": len(covered),
-                     "references": len(catalog), "max_chars_per_source": 3000,
-                     "max_catalog_bytes": 24000, "scope": "仅目录内逐字片段可引用，非全量正文覆盖"}
+    return catalog, {
+        "available_sources": available,
+        "represented_sources": len(covered),
+        "references": len(catalog),
+        "max_chars_per_source": 3000,
+        "max_catalog_bytes": 24000,
+        "scope": "仅目录内逐字片段可引用，非全量正文覆盖",
+    }
+
+
+def evidence_groups(value):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key == "evidence" and isinstance(child, list):
+                yield child
+            else:
+                yield from evidence_groups(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from evidence_groups(child)
 
 
 def resolve_evidence_references(output, catalog):
-    """Resolve explicit handles only; never guess, repair or silently drop a cite."""
     from services.agent.agent_reach.contracts import ReachError
 
-    groups = [t["evidence"] for t in output["topics"]] if "topics" in output else [output.get("evidence", [])]
-    for group in groups:
+    for group in evidence_groups(output):
         for index, reference in enumerate(group):
             entry = catalog.get(reference.get("reference_id"))
             if entry is None:
-                raise ReachError("EVIDENCE_REFERENCE_INVALID", "模型引用了证据目录之外的编号；未生成成果，不自动重试")
+                raise ReachError(
+                    "EVIDENCE_REFERENCE_INVALID",
+                    "模型引用了证据目录之外的编号；未生成成果，不自动重试",
+                )
             group[index] = dict(entry)
     return output
 
 
 def verify_evidence(output, sources):
     by_id = {str(s["id"]): s for s in sources}
-    groups = (
-        [t["evidence"] for t in output["topics"]]
-        if "topics" in output
-        else [output.get("evidence", [])]
-    )
-    for group in groups:
+    for group in evidence_groups(output):
         for evidence in group:
             source = by_id.get(str(evidence["snapshot_id"]))
             if not source or evidence["quote"] not in source["body"]:
@@ -167,9 +187,14 @@ def validate_model_output(schema, text):
         return schema.model_validate_json(cleaned).model_dump(mode="json")
     except ValidationError as error:
         # Never persist input values, arbitrary extra keys, URLs or parser context.
-        kinds = sorted({item["type"] for item in error.errors(
-            include_url=False, include_context=False, include_input=False
-        )})[:8]
+        kinds = sorted(
+            {
+                item["type"]
+                for item in error.errors(
+                    include_url=False, include_context=False, include_input=False
+                )
+            }
+        )[:8]
         raise ReachError(
             "MODEL_OUTPUT_INVALID",
             "模型输出不符合约定：" + ",".join(kinds) + "；未生成成果，请勿重复提交。",
@@ -178,11 +203,13 @@ def validate_model_output(schema, text):
 
 from .contracts import Card
 
+
 class CardsOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     cards: list[Card] = Field(min_length=2, max_length=9)
     evidence: list[Evidence] = Field(min_length=1, max_length=30)
     notes: str = Field(max_length=2000)
+
 
 class ReferencedCardsOutput(CardsOutput):
     evidence: list[EvidenceReference] = Field(min_length=1, max_length=30)

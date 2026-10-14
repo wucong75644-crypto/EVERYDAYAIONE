@@ -1,0 +1,69 @@
+{
+  "upstream": "https://github.com/ZJU-REAL/Easel",
+  "commit": "e6d5e8ebda73e1d9f9c4f7beb6e960979353ebec",
+  "adaptation_version": "phase5-v1",
+  "license_review": "根LICENSE为Apache-2.0，但两个EASEL-META标记参考项目许可待核实。未复制原Skill正文、评分标尺、平台均值表、词典、第三方实现或脚本；本项目独立编写方法与统计，保留来源与限制。",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "handling": "reviewed only; not redistributed"
+    },
+    {
+      "path": "skills/openclaw/skill-comment-insights/SKILL.md",
+      "sha256": "cac062ad1ddf1a7c9286226a4296e352b1f6d2666d880f9e2a9ac7a5615fad47",
+      "handling": "reviewed only; not redistributed"
+    },
+    {
+      "path": "skills/openclaw/skill-comment-insights/scripts/comment_insights.py",
+      "sha256": "d26759c0296d47415abb5449f3ac73da405d40f68b0631c056703a7c1fada24c",
+      "handling": "reviewed only; not redistributed"
+    },
+    {
+      "path": "skills/openclaw/skill-content-postmortem/EASEL-META.md",
+      "sha256": "c01e8fcde595dc91ae51eccae02337e75df930d9f4474a46fc669696add0eeda",
+      "handling": "reviewed only; not redistributed"
+    },
+    {
+      "path": "skills/openclaw/skill-content-postmortem/SKILL.md",
+      "sha256": "12e302fde93ca328dabf61eb0343a3c4d9cb8cd374d4daf8517f1b04c3c96b28",
+      "handling": "reviewed only; not redistributed"
+    },
+    {
+      "path": "skills/openclaw/skill-content-postmortem/references/postmortem-dimensions.md",
+      "sha256": "e3414b55adc7018cad391092b90bf3dc8b50c27e1f2b1551770d723f40349cc7",
+      "handling": "reviewed only; not redistributed"
+    },
+    {
+      "path": "skills/openclaw/skill-content-postmortem/scripts/aggregate.py",
+      "sha256": "9ca0e8577d97cf4d280d6daf02fc55ae2d13eee18c4dd4066ffb749c880a6e4b",
+      "handling": "reviewed only; not redistributed"
+    },
+    {
+      "path": "skills/openclaw/skill-strategy-advisor/EASEL-META.md",
+      "sha256": "c37413e67b169b57b7c63bf3d18ec2fd5c0828c431747697fe8cc700cadfdcea",
+      "handling": "reviewed only; not redistributed"
+    },
+    {
+      "path": "skills/openclaw/skill-strategy-advisor/SKILL.md",
+      "sha256": "8a8e73323b87c2caa18bda9cd8c91b550250ea9006303e3fe5c78c30637ee7a3",
+      "handling": "reviewed only; not redistributed"
+    },
+    {
+      "path": "skills/openclaw/skill-strategy-advisor/references/platform-benchmarks.md",
+      "sha256": "9c13945761786c1fb14eb318992236636059fea35e9f9f9d63b24a1d5083156b",
+      "handling": "reviewed only; not redistributed"
+    },
+    {
+      "path": "skills/shared/scripts/social_stats.py",
+      "sha256": "2bc184bfa59ff40aaf9f5e704915662f43714c27330ad0157a2b9626fee9abda",
+      "handling": "reviewed only; not redistributed"
+    }
+  ],
+  "changes": [
+    "借鉴safe_div/None覆盖统计原则；不移植engagement_score缺失补零和固定权重",
+    "不移植aggregate的跨覆盖top百分位、爆款阈值与lift因果暗示",
+    "不引入jieba/SnowNLP依赖；评论归类为模型估计，必须引用有限样本",
+    "删除无来源平台基线、Profile全局文件、联网扫描和写操作"
+  ]
+}

@@ -50,6 +50,11 @@ class ResearchWorker:
             if not item:
                 self.finish(c, job)
                 return None
+            if job["plan"].get("purpose") == "metrics":
+                from core.config import get_settings
+
+                if not get_settings().social_ops_analytics_enabled:
+                    return None
             token = str(uuid4())
             c.execute(
                 "UPDATE social_research_items SET status='running',lease_token=%s,lease_expires_at=now()+interval '180 seconds',attempts=attempts+1 WHERE id=%s",
@@ -170,6 +175,35 @@ class ResearchWorker:
                 )
                 return
             sources = result.metadata.get("sources", [])
+            if job["plan"].get("purpose") == "metrics":
+                from .metrics import collect_snapshot, verified
+                from services.agent.agent_reach.contracts import ReachError
+
+                try:
+                    if item["action"] == "read":
+                        collect_snapshot(self.repo, c, job, item, sources)
+                    elif item["action"] == "read_comments" and sources:
+                        intent = verified(self.repo, c, job["plan"]["intent_id"])
+                        if any(
+                            s.get("metric_metadata", {}).get("remote_id")
+                            != intent["verification"]["remote_id"]
+                            or s.get("metric_metadata", {}).get("author_id")
+                            != intent["account_id"]
+                            for s in sources
+                        ):
+                            raise ReachError(
+                                "ACCOUNT_MISMATCH", "评论返回的帖子或作者ID不匹配"
+                            )
+                except ReachError as error:
+                    c.execute(
+                        "UPDATE social_research_items SET status='paused',error=%s,lease_token=NULL WHERE id=%s",
+                        (error.code, item["id"]),
+                    )
+                    c.execute(
+                        "UPDATE social_research_jobs SET status='needs_input',last_error=%s WHERE id=%s",
+                        (error.code, job["id"]),
+                    )
+                    return
             for source in sources:
                 url = source["url"]
                 key = source_key(url) + (
@@ -190,8 +224,8 @@ class ResearchWorker:
                     }
                 )
                 c.execute(
-                    """INSERT INTO social_source_snapshots(org_id,job_id,item_id,generation,source_key,source_url,title,body,body_hash,coverage,adapter_version)
-                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
+                    """INSERT INTO social_source_snapshots(org_id,job_id,item_id,generation,source_key,source_url,title,body,body_hash,coverage,adapter_version,metrics)
+                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
                     (
                         self.repo.scope.org_id,
                         job["id"],
@@ -204,6 +238,7 @@ class ResearchWorker:
                         hashlib.sha256(body.encode()).hexdigest(),
                         Jsonb(coverage),
                         result.metadata.get("backend", "unknown") + ":phase12-v1",
+                        Jsonb(source.get("metrics", {})),
                     ),
                 )
                 if item["action"] == "search":
