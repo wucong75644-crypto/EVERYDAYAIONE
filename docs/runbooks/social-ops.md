@@ -375,3 +375,10 @@ PYTHONPATH=backend SOCIAL_OPS_TEST_DSN='host=/private/tmp port=55479 dbname=soci
 - 在另一个临时空库完整应用bootstrap与迁移291–299成功，六张新增表均FORCE RLS；验证后删除该临时空库，保留原专用测试库。迁移未应用到生产。
 - 本地浏览器实际验证替代API页面的零值、缺失、固定版本禁用态、采集及周期配置入口；页面证据 `/Users/wucong/.codex/task-evidence/social-ops-phase5/local-dashboard.png`。临时预览页/服务已删除/停止。页面替代响应和本地数据库测试不能代替真实账号、模型、通知及生产恢复验收。
 - 最终通过日志在 `/Users/wucong/.codex/task-evidence/social-ops-phase5/`：backend-regression.log、frontend-interactions.log、frontend-build.log。没有调用真实平台或付费模型，没有提交、推送、部署、合并或清理任务工作树。
+
+### 2026-10-14 提交部署前主线兼容验证
+
+- 发布入口合入最新main `a1b9287ff031d8d90205b08fdc456ae218a03181` 后，首次发布在本地测试门禁停止，未上传应用或执行迁移。主线已经引入社媒内部Skill发现规则，新增三个复盘包同步改为仅scheduled、model_selectable=false，加入可信内部工作流目录及阶段清单；不重写历史审核版本。
+- 专用社媒PostgreSQL fixture现在在缺少SOCIAL_OPS_TEST_DSN时明确skip，避免其他模块导入fixture时绕过原模块skip标记而报KeyError；仍检查专用库/socket/端口，绝不回退DATABASE_URL。另行显式配置专用库的社媒103项回归全部通过，没有用跳过替代集成验证。
+- 合入主线后的前端全量173个文件/1801项通过、构建通过；兼容修复后后端全量12222通过、363跳过、4预期失败，差异检查通过。下一次受控发布复用以上测试，仍执行构建、迁移和readiness。
+- 最新main另有299号迁移；发布账本按完整路径及checksum记录，已核实能区分`299_social_analytics.sql`，不按数字编号猜测已执行。

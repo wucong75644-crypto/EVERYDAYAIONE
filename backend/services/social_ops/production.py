@@ -25,6 +25,9 @@ from .validation import (
 )
 
 STAGES = {
+    "postmortem": ["easel-content-postmortem"],
+    "comment_insights": ["easel-comment-insights"],
+    "strategy": ["easel-strategy-advisor"],
     "cards": ["easel-card-design", "easel-card-xiaohongshu"],
     "plan": [
         "easel-competitor-analysis",
