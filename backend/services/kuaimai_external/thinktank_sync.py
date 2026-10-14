@@ -264,24 +264,13 @@ async def sync_thinktank(
         f"range=[{start_date} ~ {end_date}]"
     )
 
-    # 4. 构造请求 + 调用快麦
-    payload = _build_thinktank_payload(
-        start_date=start_date,
-        end_date=end_date,
-    )
-
+    # 4. Resolve the current account's accessible shops before querying the report.
     client = http_base.KuaimaiWebClient(
         companyid=cred.kuaimai_company_id,
         cookie=cred.cookie_full or f"_censeid={cred.censeid_cookie}",
     )
     try:
-        result = await client.post(
-            url=THINKTANK_URL,
-            payload=payload,
-            module_path=THINKTANK_MODULE_PATH,
-            origin=THINKTANK_ORIGIN,
-            referer=THINKTANK_REFERER,
-        )
+        rows = await fetch_thinktank_rows(client, start_date=start_date, end_date=end_date)
     except http_base.CookieExpiredError as e:
         await credential_store.mark_expired(db, credential_id=cred.id, error_msg=str(e))
         await _finish_sync_log(
@@ -312,7 +301,6 @@ async def sync_thinktank(
     finally:
         await client.close()
 
-    rows = (result.json_body or {}).get("data", {}).get("list", [])
     if not rows:
         await _finish_sync_log(db, log_id=log_id, status="success", rows_synced=0)
         await credential_store.record_sync_success(db, credential_id=cred.id)
@@ -375,6 +363,7 @@ async def sync_thinktank(
         status="success",
         rows_synced=upsert_count,
         metadata={
+            "rows_fetched": len(rows),
             "skipped_rows": skipped,
             "sync_batch_id": sync_batch_id,
         },
@@ -383,11 +372,61 @@ async def sync_thinktank(
     return SyncResult(success=True, log_id=log_id, rows_synced=upsert_count)
 
 
+async def fetch_thinktank_rows(client, *, start_date: date, end_date: date) -> list[dict]:
+    """Read all accessible shops from ERP, then validate the profit report."""
+    context = dict(module_path=THINKTANK_MODULE_PATH, origin=THINKTANK_ORIGIN,
+                   referer=THINKTANK_REFERER)
+    shop_ids = []
+    seen = set()
+    page = 1
+    while True:
+        result = await client.get(url=THINKTANK_ORIGIN + '/shop/info/light/realtime',
+                                  params={'pageNo': page, 'pageSize': 2000}, **context)
+        data, shops = _response_rows(result)
+        for shop in shops:
+            uid = shop.get('userId')
+            if isinstance(uid, bool) or not str(uid).lstrip('-').isdigit():
+                raise http_base.KuaimaiWebHttpError('快麦店铺响应缺少有效userId')
+            sid = f'{client.companyid}_{int(uid)}'
+            if sid not in seen:
+                seen.add(sid)
+                shop_ids.append(sid)
+        total = data.get('total')
+        if isinstance(total, bool) or not isinstance(total, int) or total < 0:
+            raise http_base.KuaimaiWebHttpError('快麦店铺响应缺少有效total')
+        if len(shop_ids) >= total:
+            break
+        if not shops or page >= 100:
+            raise http_base.KuaimaiWebHttpError('快麦店铺列表分页未完整返回')
+        page += 1
+    if not shop_ids:
+        raise http_base.KuaimaiWebHttpError('快麦账号没有可查询的店铺，未执行智库同步')
+    result = await client.post(url=THINKTANK_URL,
+        payload=_build_thinktank_payload(start_date=start_date, end_date=end_date,
+                                        shop_uni_ids=shop_ids), **context)
+    return _response_rows(result)[1]
+
+
+def _response_rows(result) -> tuple[dict, list[dict]]:
+    body = result.json_body
+    if (not isinstance(body, dict) or body.get('result') != 1
+        or body.get('suc') is False or body.get('success') is False):
+        message = (body.get('message') or body.get('msg')) if isinstance(body, dict) else None
+        raise http_base.KuaimaiWebHttpError(f'快麦业务请求失败: {message or "响应未确认成功"}')
+    data = body.get('data')
+    rows = data.get('list') if isinstance(data, dict) else None
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise http_base.KuaimaiWebHttpError('快麦响应结构异常，缺少有效data.list')
+    return data, rows
+
+
 # ──────────────────────── payload 构造 ────────────────────────
 
 
-def _build_thinktank_payload(*, start_date: date, end_date: date) -> dict:
+def _build_thinktank_payload(*, start_date: date, end_date: date, shop_uni_ids: list[str]) -> dict:
     """智库 /kmzk/profit/report/shop 接口 payload。"""
+    if not shop_uni_ids:
+        raise ValueError("智库请求必须包含店铺ID")
     start_ms = int(time.mktime(start_date.timetuple()) * 1000)
     end_ms = int(time.mktime((end_date + timedelta(days=1)).timetuple()) * 1000) - 1
     return {
@@ -396,7 +435,7 @@ def _build_thinktank_payload(*, start_date: date, end_date: date) -> dict:
         "sysStatus": "1",
         "startTime": str(start_ms),
         "endTime": str(end_ms),
-        "shopUniIds": "",                     # 留空 = 全部店铺（POC 验证）
+        "shopUniIds": ",".join(shop_uni_ids),
         "sortFieldName": "insert_date",
         "sortFieldOrder": "asc",
         "appointReportRecordId": "",
