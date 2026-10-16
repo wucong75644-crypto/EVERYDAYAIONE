@@ -1,3 +1,4 @@
+import { MESSAGE_ALIGNMENT, MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 /** 消息媒体组件 - 渲染消息中的图片和视频内容 */
 
 import { memo, useEffect, useMemo, useCallback, useRef } from 'react';
@@ -122,7 +123,7 @@ function OrderedUserMedia({
   if (runs.length === 0) return null;
 
   return (
-    <div className="flex w-[min(720px,90vw)] max-w-full flex-col items-end gap-2">
+    <div className={`flex flex-col gap-2 ${MESSAGE_CONTENT_LAYOUT.fill}`}>
       {runs.map((run, runIndex) => {
         if (run.kind === 'visuals') {
           const tileWidth = run.items.length > 1 ? Math.min(imageWidth, 280) : imageWidth;
@@ -133,7 +134,7 @@ function OrderedUserMedia({
             <div
               key={`visuals-${runIndex}`}
               data-attachment-run="visuals"
-              className="mt-4 grid w-full justify-end gap-2"
+              className={`mt-4 grid w-full gap-2 ${MESSAGE_ALIGNMENT.user}`}
               style={{ gridTemplateColumns: `repeat(auto-fit, min(100%, ${tileWidth}px))` }}
             >
               {run.items.map((item, itemIndex) => item.kind === 'image' ? (
@@ -164,8 +165,8 @@ function OrderedUserMedia({
           );
         }
         return (
-          <div key={`files-${runIndex}`} data-attachment-run="files" className="w-full max-w-[590px] self-end">
-            <FileCardList files={run.files} />
+          <div key={`files-${runIndex}`} data-attachment-run="files" className={MESSAGE_CONTENT_LAYOUT.fill}>
+            <FileCardList files={run.files} role="user" />
           </div>
         );
       })}
@@ -352,7 +353,7 @@ export default memo(function MessageMedia({
       )}
 
       {/* 文件下载卡片 */}
-      {files.length > 0 && <FileCardList files={files} />}
+      {files.length > 0 && <FileCardList files={files} role={isUser ? 'user' : 'assistant'} />}
     </>
   );
 });

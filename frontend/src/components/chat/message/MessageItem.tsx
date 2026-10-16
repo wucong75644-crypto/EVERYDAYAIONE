@@ -28,7 +28,7 @@ import type { RenderInstruction } from '../../../types/render';
 import type { AspectRatio, VideoAspectRatio } from '../../../constants/models';
 import type { MessageItemProps } from './MessageItem.types';
 import { isChatImage } from './chatImageDisplay';
-import { MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
+import { MESSAGE_ALIGNMENT, MESSAGE_CONTENT_LAYOUT } from './messageContentLayout';
 
 export default memo(function MessageItem({
   message,
@@ -336,7 +336,7 @@ export default memo(function MessageItem({
   return (
     <m.div
       data-message-id={message.id}
-      className={`flex mb-4 ${isUser ? 'justify-end' : 'justify-start'} ${entryAnimationClass} ${deleteAnimationClass}`}
+      className={`flex mb-4 ${MESSAGE_ALIGNMENT[isUser ? 'user' : 'assistant']} ${entryAnimationClass} ${deleteAnimationClass}`}
       // framer layout：消息删除/插入/重排时其他消息 spring 过渡到新位置
       // - 用 "position" 只动位置不测尺寸（流式更新友好）
       // - 长对话（>50 条）时父级传 enableLayoutAnimation=false 完全禁用，避免布局抖动
@@ -344,7 +344,7 @@ export default memo(function MessageItem({
       layout={enableLayoutAnimation && !isStreaming ? 'position' : false}
     >
       <div
-        className={`relative flex flex-col ${isUser ? 'items-end' : 'items-start w-full'} ${isUser ? `w-full ${hasMedia ? 'max-w-[90%]' : 'max-w-[80%]'}` : ''}`}
+        className={`relative flex flex-col ${isUser ? 'items-end' : 'items-start w-full'} ${isUser ? `w-full ${hasMedia ? '' : 'max-w-[80%]'}` : ''}`}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >

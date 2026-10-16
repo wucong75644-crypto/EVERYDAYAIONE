@@ -1,3 +1,4 @@
+import { MESSAGE_ALIGNMENT } from '../message/messageContentLayout';
 /**
  * 文件下载卡片组件
  *
@@ -14,11 +15,11 @@ import { canPreview } from '../../../preview/registry';
 import { fromFilePart } from '../../../preview/toPreviewItem';
 
 /** 文件卡片列表（含预览弹窗状态） */
-export default function FileCardList({ files }: { files: FilePart[] }) {
+export default function FileCardList({ files, role = 'assistant' }: { files: FilePart[]; role?: keyof typeof MESSAGE_ALIGNMENT }) {
   const preview = usePreview();
 
   return (
-    <div className="mt-3 flex max-w-full flex-wrap justify-end gap-2" data-file-card-list>
+    <div className={`mt-3 flex w-full min-w-0 flex-wrap gap-2 ${MESSAGE_ALIGNMENT[role]}`} data-file-card-list>
       {files.map((file, i) => {
         const item = fromFilePart(file);
         const canShow = canPreview(item);

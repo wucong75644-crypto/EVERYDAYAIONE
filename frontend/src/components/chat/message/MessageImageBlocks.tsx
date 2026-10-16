@@ -1,3 +1,4 @@
+import { MESSAGE_ALIGNMENT } from './messageContentLayout';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useInView } from 'react-intersection-observer';
@@ -282,7 +283,7 @@ export function UserImageGallery({
 
   return (
     <div
-      className="mt-4 grid gap-2 w-full justify-end"
+      className={`mt-4 grid gap-2 w-full ${MESSAGE_ALIGNMENT.user}`}
       style={{
         gridTemplateColumns: imageAssets.length > 1
           ? `repeat(auto-fit, ${tileWidth}px)`
