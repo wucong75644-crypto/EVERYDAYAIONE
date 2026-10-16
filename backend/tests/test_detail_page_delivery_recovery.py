@@ -369,7 +369,15 @@ async def test_bounded_scanner_rotates_delayed_projects_without_starvation(deliv
     raw=LocalDBClient(psycopg.conninfo.make_conninfo(delivery_db,user='everydayai'),min_size=1,max_size=4)
     worker=DetailPageWorker(raw)
     try:
-        await worker.scan();await worker.scan()
+        # Discovery and maintenance are now independently bounded (4 jobs), so
+        # drain successive rounds rather than assuming 20 inline operations.
+        for _ in range(len(projects)):
+            await worker.scan()
+            await asyncio.gather(*list(worker._maintenance.jobs.values()))
+            with psycopg.connect(delivery_db) as db:
+                if all(db.execute("SELECT delivery_recovery ? 'plan' FROM ecom_image_plans WHERE id=%s",
+                    (plan,)).fetchone()[0] for _,plan in projects):
+                    break
         with psycopg.connect(delivery_db) as db:
             for project,plan in projects:
                 assert db.execute("SELECT delivery_recovery ? 'plan' FROM ecom_image_plans WHERE id=%s",(plan,)).fetchone()[0] is True
@@ -470,3 +478,127 @@ async def test_real_three_stage_planner_recovers_interruption_without_rewriting_
     for stage,output in first['stage_outputs'].items():assert final['stage_outputs'][stage]==output
     with psycopg.connect(delivery_db) as db:
         assert db.execute('SELECT credits FROM users WHERE id=%s',(user,)).fetchone()[0]==997
+
+
+@pytest.fixture
+def blocked_combined_delivery(delivery_db):
+    """Main images settled; detail acceptance can resume after credit recovery."""
+    user, project, run, _ = seed(delivery_db, combined=True)
+    with psycopg.connect(delivery_db) as db:
+        rows = db.execute('SELECT id,invocation_key FROM ecom_image_plans WHERE project_id=%s', (project,)).fetchall()
+    detail = None
+    for plan, kind in rows:
+        plan = str(plan)
+        entries = [(str(uuid4()), None) for _ in range(7)]
+        entries = [(item, snapshot(user, project, run, plan, item)) for item, _ in entries]
+        with psycopg.connect(delivery_db) as db:
+            db.execute("UPDATE ecom_image_plans SET status='ready',items=%s,input_snapshot=%s,model_settings=%s WHERE id=%s", (
+                Jsonb([{'item_id': item, 'position': n+1, 'request_text': 'exact',
+                    'request_text_sha256': frozen['prompt_sha256'], 'aspect_ratio': '1:1'}
+                    for n, (item, frozen) in enumerate(entries)]),
+                Jsonb({'task_type': kind, 'resolved_references': []}), Jsonb({'delivery_policy': POLICY}), plan))
+        if kind == 'main_images':
+            for item, frozen in entries:
+                with scoped(delivery_db, user) as db:
+                    task = db.execute('SELECT accept_detail_page_image(%s,%s,%s,%s)',
+                        (project, plan, item, Jsonb(frozen))).fetchone()[0]['task_id']
+                settle(delivery_db, user, task, success=True)
+        else:
+            detail = plan
+    attempt = str(uuid4())
+    with psycopg.connect(delivery_db) as db:
+        db.execute('UPDATE ecom_image_plans SET recovery_state=%s,delivery_recovery=%s WHERE id=%s', (
+            Jsonb({'acceptance_error': {'code': 'DETAIL_INSUFFICIENT_CREDITS', 'attempt_id': attempt}}),
+            Jsonb({'acceptance': {'source': attempt, 'status': 'blocked', 'reason': 'DETAIL_INSUFFICIENT_CREDITS'}}), detail))
+    raw = LocalDBClient(psycopg.conninfo.make_conninfo(delivery_db, user='everydayai'), min_size=1, max_size=4)
+    service = DetailPageGeneration(raw, user, None)
+    old_project = service.projects.get_by_id(project)
+    old_plans = service.db.table('ecom_image_plans').select('*').eq('project_id', project).execute().data
+    yield service, old_project, old_plans, detail
+    raw.pool.close()
+
+
+def test_stale_aggregation_cannot_undo_same_run_manual_resume(blocked_combined_delivery):
+    service, project, plans, detail = blocked_combined_delivery
+    service.resume(project['id'], detail, str(uuid4()))
+    DetailPageWorker.aggregate(service, project, plans)
+    current = service.projects.get_by_id(project['id'])
+    assert current['run_state']['run_id'] == project['run_state']['run_id']
+    assert current['status'] == 'generating'
+    assert 'acceptance_error' not in service.db.table('ecom_image_plans').select('*').eq('id', detail).single().execute().data['recovery_state']
+
+
+def test_resume_waits_for_atomic_aggregation_then_wins(blocked_combined_delivery, delivery_db, monkeypatch):
+    import threading
+    import time
+    service, project, plans, detail = blocked_combined_delivery
+    entered, release, resuming = threading.Event(), threading.Event(), threading.Event()
+    projection = DetailPageWorker._aggregate_updates
+    def pause(*args):
+        entered.set()
+        assert release.wait(5)
+        return projection(*args)
+    monkeypatch.setattr(DetailPageWorker, '_aggregate_updates', staticmethod(pause))
+    def resume():
+        resuming.set()
+        return service.resume(project['id'], detail, str(uuid4()))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        aggregate = pool.submit(DetailPageWorker.aggregate, service, project, plans)
+        assert entered.wait(5)
+        resumed = pool.submit(resume)
+        assert resuming.wait(5)
+        try:
+            deadline = time.monotonic() + 5
+            waiting = False
+            while time.monotonic() < deadline:
+                with psycopg.connect(delivery_db, autocommit=True) as db:
+                    waiting = db.execute("""SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+                        WHERE datname=current_database() AND pid<>pg_backend_pid()
+                        AND wait_event_type='Lock' AND query LIKE 'SELECT public.%resume_detail_page_plan%')""").fetchone()[0]
+                if waiting:
+                    break
+                time.sleep(.005)
+            assert waiting, 'Resume must wait on the aggregate project row lock'
+            assert not resumed.done()
+        finally:
+            release.set()
+        aggregate.result(timeout=5)
+        resumed.result(timeout=5)
+    assert service.projects.get_by_id(project['id'])['status'] == 'analyzing'
+
+
+@pytest.mark.parametrize('change', ['run', 'archived'])
+def test_stale_aggregation_fences_new_run_and_archive(blocked_combined_delivery, delivery_db, change):
+    service, project, plans, _ = blocked_combined_delivery
+    with psycopg.connect(delivery_db) as db:
+        if change == 'run':
+            db.execute("UPDATE detail_projects SET run_state=jsonb_set(run_state,'{run_id}',%s),status='analyzing' WHERE id=%s",
+                (Jsonb(str(uuid4())), project['id']))
+        else:
+            db.execute("UPDATE detail_projects SET status='archived' WHERE id=%s", (project['id'],))
+    before = service.projects.get_by_id(project['id'])
+    DetailPageWorker.aggregate(service, project, plans)
+    after = service.projects.get_by_id(project['id'])
+    assert after == before
+
+
+def test_late_acceptance_error_cannot_undo_manual_resume(blocked_combined_delivery, delivery_db):
+    service, project, _, detail = blocked_combined_delivery
+    with psycopg.connect(delivery_db) as db:
+        db.execute("UPDATE ecom_image_plans SET recovery_state='{}' WHERE id=%s", (detail,))
+    old_plan = service.db.table('ecom_image_plans').select('*').eq('id', detail).single().execute().data
+    service.resume(project['id'], detail, str(uuid4()))
+    DetailPageWorker._record_acceptance_error(service, project, old_plan,
+        {'code': 'DETAIL_INSUFFICIENT_CREDITS', 'attempt_id': str(uuid4())})
+    current = service.db.table('ecom_image_plans').select('*').eq('id', detail).single().execute().data
+    assert 'acceptance_error' not in current['recovery_state']
+    assert current['recovery_state']['resume_request_id']
+
+
+def test_current_acceptance_error_is_recorded(blocked_combined_delivery):
+    service, project, plans, detail = blocked_combined_delivery
+    plan = next(plan for plan in plans if plan['id'] == detail)
+    error = {'code': 'DETAIL_INSUFFICIENT_CREDITS', 'attempt_id': str(uuid4())}
+    DetailPageWorker._record_acceptance_error(service, project, plan, error)
+    current = service.db.table('ecom_image_plans').select('*').eq('id', detail).single().execute().data
+    assert current['recovery_state']['acceptance_error'] == error
