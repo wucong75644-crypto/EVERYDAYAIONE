@@ -1,9 +1,12 @@
 {
-  "sha256": "48663157a02b4e60fefb2b7c11cc48fe664e091d0aa4ef53ae6fd466bdeacad5",
+  "sha256": "1bf487dba50e2a13760684bcd87dac4c2e731a2f3931483aace0d47b4291bfc2",
   "patch_sha256": "eb800b049e6073237f6e3d6411df2033d6511e0d26a34554712b48f2fb07f274",
-  "candidate_directory": "query-timeout-candidate",
+  "candidate_directory": "commerce-fix-candidate",
   "assets_sha256": {
     "search_readiness.go": "7f09ee2ce377399e79f8ce7aa2b5f330add199b22f26247c5158e0187bd96ac8",
-    "search_readiness_test.go": "f005a988ea7b517167b1257be899a1d9163eb3a2cb93692560737df5b89ea341"
+    "search_readiness_test.go": "f005a988ea7b517167b1257be899a1d9163eb3a2cb93692560737df5b89ea341",
+    "commerce.go": "34b1cfb59d4bcde1e45d0aa25f0a503980b595569f15bc4bb3bd4b0b890d6859",
+    "commerce_test.go": "643240dea228f942c7dc0a9bcd78fa1df391620f6b1b66974e2da276f2c41709",
+    "commerce.patch": "f1d7f8bcf4cda982ebed2470fb6ba66b43161b8eeac47e6997868dc7a22ec81a"
   }
 }

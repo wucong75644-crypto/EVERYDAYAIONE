@@ -27,14 +27,14 @@ def main():
     if digest(assets/'login-browser.patch') != manifest['patch_sha256']:
         raise RuntimeError('XHS patch does not match verified artifact')
     for name, expected in manifest.get('assets_sha256', {}).items():
-        if name not in {'search_readiness.go', 'search_readiness_test.go'} or digest(assets/name) != expected:
+        if name not in {'search_readiness.go', 'search_readiness_test.go', 'commerce.go', 'commerce_test.go', 'commerce.patch'} or digest(assets/name) != expected:
             raise RuntimeError('XHS search assets do not match verified artifact')
     target = ROOT/'xiaohongshu-mcp'
     if digest(target) == manifest['sha256']:
         print('XHS_LOGIN_FIX status=already_installed')
         return
     candidate_directory = manifest.get('candidate_directory', 'login-fix-candidate')
-    if candidate_directory not in {'login-fix-candidate', 'search-fix-candidate', 'query-timeout-candidate'}:
+    if candidate_directory not in {'login-fix-candidate', 'search-fix-candidate', 'commerce-fix-candidate', 'query-timeout-candidate'}:
         raise RuntimeError('Invalid XHS candidate directory')
     candidate = ROOT/candidate_directory/'xiaohongshu-mcp'
     if digest(candidate) != manifest['sha256']:

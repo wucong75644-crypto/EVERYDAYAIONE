@@ -48,6 +48,7 @@ class ToolExecutor(
         request_ctx=None,
         workspace_user_id: str | None = None,
         resource_manifest=None,
+        web_link_refs=None,
         allowed_tool_names: Iterable[str] | None = None,
         execution_budget=None,
         cancellation_event=None,
@@ -74,6 +75,7 @@ class ToolExecutor(
         self.workspace_user_id = workspace_user_id or user_id
         self.conversation_id = conversation_id
         self.org_id = org_id
+        self.web_link_refs = dict(web_link_refs or {})
         self.resource_manifest = resource_manifest
         self.allowed_tool_names = (
             frozenset(allowed_tool_names) if allowed_tool_names is not None else None
