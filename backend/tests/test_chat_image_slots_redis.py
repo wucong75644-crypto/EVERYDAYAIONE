@@ -98,3 +98,50 @@ async def test_shared_fifteen_slots_for_chat_and_images_across_conversations():
     finally:
         await redis.delete(service._global_key(user),service._conversation_key(user,"conv-0"),service._conversation_key(user,"conv-1"))
         await redis.aclose()
+
+
+async def test_detail_150_slots_are_atomic_retryable_and_keep_legacy_admission():
+    socket = os.getenv('CHAT_IMAGE_TEST_REDIS_SOCKET')
+    if not socket: pytest.skip('Explicit isolated Redis socket required')
+    assert socket == '/private/tmp/everydayai-chat-image-redis.sock'
+    redis = Redis(unix_socket_path=socket,decode_responses=True)
+    user = 'capacity-' + uuid4().hex
+    service = TaskLimitService(redis)
+    assert service.detail_image_limit == 150
+    service.global_limit = service.conversation_limit = 15
+    async def acquire(index):
+        try: return await service.acquire_image_slot(user,None,f'image-{index}',detail_project=True)
+        except TaskQueueFullError: return None
+    try:
+        results = await asyncio.gather(*(acquire(i) for i in range(220)))
+        slots = [slot for slot in results if slot]
+        assert len(slots)==150
+        assert await redis.scard(service._global_key(user))==150
+        await asyncio.gather(*(service.acquire_image_slot(user,None,slot,detail_project=True) for slot in slots))
+        assert await redis.scard(service._global_key(user))==150
+        with pytest.raises(TaskQueueFullError) as error:
+            await service.acquire_image_slot(user,None,'queued-151',detail_project=True)
+        assert error.value.details['max_count']==150
+        await service.release(user,None,slot_id=slots[0])
+        await service.release(user,None,slot_id=slots[0])
+        assert await service.acquire_image_slot(user,None,'queued-151',detail_project=True)=='queued-151'
+        assert await redis.scard(service._global_key(user))==150
+        for slot in slots[1:]+['queued-151']:
+            await service.release(user,None,slot_id=slot)
+        assert await redis.scard(service._global_key(user))==0
+        # Keep the existing shared identities: one ordinary slot leaves 149
+        # page slots; the expanded page profile cannot inflate ordinary admission.
+        ordinary = await service.check_and_acquire(user,'legacy-conv')
+        mixed = await asyncio.gather(*(acquire(i) for i in range(180)))
+        page_slots = [slot for slot in mixed if slot]
+        assert len(page_slots)==149
+        assert await redis.scard(service._global_key(user))==150
+        with pytest.raises(TaskQueueFullError): await service.check_and_acquire(user,'legacy-conv')
+        for slot in page_slots: await service.release(user,None,slot_id=slot)
+        await service.release(user,'legacy-conv',slot_id=ordinary)
+        # Raising page capacity must not authorize 150 generic chat tasks.
+        for _ in range(15): await service.check_and_acquire(user,'legacy-conv')
+        with pytest.raises(TaskQueueFullError): await service.check_and_acquire(user,'legacy-conv')
+    finally:
+        await redis.delete(service._global_key(user),service._conversation_key(user,None),service._conversation_key(user,'legacy-conv'))
+        await redis.aclose()

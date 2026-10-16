@@ -332,3 +332,78 @@ it('受理回执为空时保留同一请求编号，可再次核实而不会卡�
  await useDetailPageStore.getState().startAnalysis();
  expect(vi.mocked(api.startDetailProject).mock.calls[0][2]).toBe(vi.mocked(api.startDetailProject).mock.calls[1][2]);
 });
+
+describe('并发刷新与异常恢复',()=>{
+ it('同一任务的旧进度晚到不能覆盖已完成状态或重新启动轮询',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();await vi.advanceTimersByTimeAsync(0);
+  let finish!:(value:DetailProjectDraft)=>void;
+  vi.mocked(api.getDetailProject).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const older=useDetailPageStore.getState().refresh();
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,version:5,status:'completed'});
+  await useDetailPageStore.getState().refresh();
+  finish({...draft,version:2,status:'generating'});await older;
+  expect(useDetailPageStore.getState()).toMatchObject({status:'completed',projectVersion:5});
+  const calls=vi.mocked(api.getDetailProject).mock.calls.length;
+  await vi.advanceTimersByTimeAsync(1600);
+  expect(api.getDetailProject).toHaveBeenCalledTimes(calls);
+ });
+ it('旧刷新失败不能覆盖较新成功的状态',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  let fail!:(error:Error)=>void;
+  vi.mocked(api.getDetailProject).mockImplementationOnce(()=>new Promise((_resolve,reject)=>{fail=reject;}));
+  const older=useDetailPageStore.getState().refresh();
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,status:'generating'});
+  await useDetailPageStore.getState().refresh();fail(new Error('旧请求失败'));await older;
+  expect(useDetailPageStore.getState()).toMatchObject({status:'generating',formError:null});
+ });
+ it('任务列表旧响应不能把已完成任务退回生成中',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();await vi.advanceTimersByTimeAsync(0);
+  const item=useDetailPageStore.getState().tasks[0];
+  let finish!:(value:Awaited<ReturnType<typeof api.listDetailProjects>>)=>void;
+  vi.mocked(api.listDetailProjects).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const older=useDetailPageStore.getState().refreshTasks();
+  vi.mocked(api.listDetailProjects).mockResolvedValueOnce({items:[{...item,status:'completed',display_status:'completed',completed_count:14}],next_cursor:null});
+  await useDetailPageStore.getState().refreshTasks();
+  finish({items:[{...item,status:'generating',display_status:'generating',completed_count:1}],next_cursor:null});await older;
+  expect(useDetailPageStore.getState().tasks[0]).toMatchObject({status:'completed',completed_count:14});
+ });
+ it('进度和列表请求失败后持续轮询，恢复网络后完成',async()=>{
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,status:'generating'});
+  await useDetailPageStore.getState().hydrateDraft();await vi.advanceTimersByTimeAsync(0);
+  vi.mocked(api.getDetailProject).mockRejectedValueOnce(new Error('网络中断')).mockResolvedValue({...draft,status:'completed'});
+  vi.mocked(api.listDetailProjects).mockRejectedValueOnce(new Error('列表网络中断'));
+  await vi.advanceTimersByTimeAsync(1500);
+  expect(useDetailPageStore.getState()).toMatchObject({status:'generating',formError:'网络中断'});
+  await vi.advanceTimersByTimeAsync(1500);
+  expect(useDetailPageStore.getState()).toMatchObject({status:'completed',formError:null});
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(useDetailPageStore.getState().taskError).toBe('列表网络中断');
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(useDetailPageStore.getState().taskError).toBeNull();
+ });
+ it('切换到另一后台任务后忽略原任务的迟到结果',async()=>{
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,status:'generating'});
+  await useDetailPageStore.getState().hydrateDraft();
+  let finish!:(value:DetailProjectDraft)=>void;
+  vi.mocked(api.getDetailProject).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const pending=useDetailPageStore.getState().refresh();
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,id:'B',status:'analyzing',requirement:'B产品'});
+  await useDetailPageStore.getState().selectTask('B');
+  finish({...draft,status:'completed'});await pending;
+  expect(useDetailPageStore.getState()).toMatchObject({projectId:'B',status:'analyzing',form:{requirement:'B产品'}});
+ });
+ it('同一任务反复点击开始只发起一次受理，回执丢失后核实原请求',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  let fail!:(error:Error)=>void;
+  vi.mocked(api.startDetailProject).mockImplementationOnce(()=>new Promise((_resolve,reject)=>{fail=reject;}));
+  const pending=useDetailPageStore.getState().startAnalysis();await vi.advanceTimersByTimeAsync(0);
+  await useDetailPageStore.getState().startAnalysis();
+  expect(api.startDetailProject).toHaveBeenCalledTimes(1);
+  const request=vi.mocked(api.startDetailProject).mock.calls[0][2];
+  fail(new Error('受理回执丢失'));await pending;
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,status:'generating',run_state:{run_id:request,request_id:request}});
+  await useDetailPageStore.getState().startAnalysis();
+  expect(api.startDetailProject).toHaveBeenCalledTimes(1);
+  expect(useDetailPageStore.getState()).toMatchObject({status:'generating',isTransitioning:false});
+ });
+});

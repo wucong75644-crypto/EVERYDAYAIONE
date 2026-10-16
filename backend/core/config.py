@@ -332,8 +332,12 @@ class Settings(BaseSettings):
     chat_image_max_requests: int = Field(default=15, ge=1, le=15)
     ecom_image_planning_enabled: bool = False
     detail_page_generation_enabled: bool = False
+    # Ten products, up to 15 images each; legacy task admission remains unchanged.
+    detail_page_image_concurrency: int = Field(default=150, ge=1, le=150)
     detail_page_planning_seconds: int = Field(default=1200, ge=600, le=1800)
-    detail_page_planning_concurrency: int = Field(default=4, ge=1, le=16)
+    detail_page_planning_concurrency: int = Field(default=20, ge=1, le=32)
+    detail_page_maintenance_concurrency: int = Field(default=20, ge=1, le=32)
+    detail_page_maintenance_timeout_seconds: int = Field(default=120, ge=30, le=600)
     detail_kimi_inline_images: bool = True
     detail_gemini_overseas_images: bool = True
     detail_gemini_enabled: bool = False  # Service incident: keep page planning on Kimi until recovery.
@@ -353,6 +357,9 @@ class Settings(BaseSettings):
     ecom_image_planning_input_credits_per_million: float | None = Field(default=None, gt=0)
     ecom_image_planning_output_credits_per_million: float | None = Field(default=None, gt=0)
     chat_image_max_credits: int = Field(default=300, ge=1, le=300)
+
+    chat_image_processing_concurrency: int = Field(default=20, ge=1, le=32)
+    chat_image_processing_timeout_seconds: int = Field(default=300, ge=60, le=900)
     chat_image_submission_lease_seconds: int = Field(default=60, ge=10, le=300)
     chat_image_queue_timeout_seconds: int = Field(default=600, ge=60, le=3600)
     chat_image_uncertain_timeout_seconds: int = Field(default=900, ge=60, le=86400)
