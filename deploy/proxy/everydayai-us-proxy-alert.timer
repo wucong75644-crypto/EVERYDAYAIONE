@@ -1,0 +1,9 @@
+[Unit]
+Description=Check proxy incident and delivery queue every 30 seconds
+[Timer]
+OnBootSec=40
+OnUnitInactiveSec=30
+AccuracySec=1
+Unit=everydayai-us-proxy-alert.service
+[Install]
+WantedBy=timers.target

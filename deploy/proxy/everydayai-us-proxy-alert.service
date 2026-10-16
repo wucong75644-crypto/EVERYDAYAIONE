@@ -1,0 +1,17 @@
+[Unit]
+Description=Persist proxy incidents and notify platform administrator in WeCom
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/var/www/everydayai/backend
+EnvironmentFile=/var/www/everydayai/backend/.env
+ExecStart=/usr/bin/flock -n /run/everydayai-us-proxy-alert.lock /var/www/everydayai/backend/venv/bin/python /usr/local/lib/everydayai-us-proxy/wecom_alert.py
+TimeoutStartSec=90
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/everydayai-us-proxy /run

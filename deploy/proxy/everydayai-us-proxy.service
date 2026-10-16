@@ -1,0 +1,15 @@
+[Unit]
+Description=US proxy health checks and safe automatic failover
+After=network-online.target sing-box.service
+Wants=network-online.target
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/flock -n /run/everydayai-us-proxy.lock /var/www/everydayai/backend/venv/bin/python /usr/local/lib/everydayai-us-proxy/us_failover.py
+TimeoutStartSec=45
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/everydayai-us-proxy /run
