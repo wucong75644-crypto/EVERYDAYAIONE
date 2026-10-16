@@ -1,3 +1,4 @@
+import { chatColumnLayout } from '../message/messageContentLayout';
 /**
  * 输入区域组件
  *
@@ -363,7 +364,7 @@ export default function InputArea({
 
   return (
     <div className="bg-surface-card">
-      <div className={compact ? "px-4 pb-4" : "max-w-4xl mx-auto px-4 pb-4"}>
+      <div className={`${chatColumnLayout(compact)} pb-4`}>
         {/* 上传错误提示条 */}
         <UploadErrorBar
           error={uploadError}
