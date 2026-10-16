@@ -38,9 +38,9 @@ def paginate(result, request):
     pagination = {**result.pagination, 'has_more_text': more,
                   'next_cursor': f'v1:{digest}:{index}:{offset}' if more else '',
                   'range_start': start, 'range_end': [index, offset],
-                  'instruction': '保持参数不变，用next_cursor继续读取当前页。' if more else '本次已加载内容已读完；评论是否还有下一页见next_page。'}
+                  'instruction': '保持参数不变，用next_cursor继续读取当前页。' if more else '本次已加载内容已读完；列表是否还有下一页见next_page。'}
     warnings = list(result.warnings)
     if request.page == 100 and pagination.get('platform_has_more'):
-        warnings.append('达到本工具100页限制，平台可能仍有更多评论；并非全部读取完成。')
+        warnings.append('达到本工具100页限制，平台可能仍有更多列表数据；并非全部读取完成。')
     return replace(result, items=items, pagination=pagination, warnings=warnings,
                    status='partial' if more else result.status)

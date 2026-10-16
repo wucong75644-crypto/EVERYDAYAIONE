@@ -28,8 +28,10 @@ def resolve(request):
                  'reddit': {'search', 'read', 'read_comments'}}
     if request.cursor and request.action not in {'read', 'transcript', 'read_comments'}:
         raise ReachError('INVALID_CURSOR', '只有读取操作可以使用cursor')
-    if request.page != 1 and not (request.action == 'read_comments' and request.platform in {'bilibili', 'xiaohongshu'}):
-        raise ReachError('UNSUPPORTED_OPERATION', '该操作不支持评论翻页，请使用cursor续读文本')
+    from .xhs_commerce import commerce_target
+    shop_page = request.platform == 'xiaohongshu' and request.action == 'read' and (commerce_target(request.url) or ('',))[0] == 'shop'
+    if request.page != 1 and not (shop_page or (request.action == 'read_comments' and request.platform in {'bilibili', 'xiaohongshu'})):
+        raise ReachError('UNSUPPORTED_OPERATION', '该链接或操作不支持列表翻页，请使用cursor续读文本')
     if request.action not in supported[request.platform]:
         raise ReachError('UNSUPPORTED_OPERATION', '该平台尚未启用此操作')
     if request.action != 'search' and not request.url:

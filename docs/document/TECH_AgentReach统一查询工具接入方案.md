@@ -288,3 +288,20 @@ B站二维码及轮询使用固定passport端点；兼容URL参数和逐条Set-C
 验证覆盖：会话加密、跨组织/管理员隔离、取消/过期、重放、原账号版本绑定、PKCE与拒绝授权、刷新、B站Set-Cookie与固定IP兼容、失败不得误报已连接、小红书槽位隔离，以及前端连接/禁用/取消/重连/官方授权链接。一次性PostgreSQL夹具验证291/292迁移、唯一账号复用、凭据轮换、权限保留及撤销阻止重连。本地证据不替代真实服务器、扫码、OAuth同意屏幕与账号发布验收；未部署。
 
 本轮结果：795项后端定向测试及6项前端交互测试通过，类型检查和定向ESLint通过；另验证独立二维码渲染桥接生成有效PNG。登录协议依据[Google官方服务端OAuth文档](https://developers.google.com/youtube/v3/guides/auth/server-side-web-apps)、固定小红书提交的REST源码及bilibili-api-python 17.4.2发布包中的login_v2/login.json；未更换原有上游版本。
+
+### 2026-10-16 小红书公开电商读取扩展
+
+沿用唯一 `agent_reach` 工具和 `read` 操作，不新增监控、定时任务或买家评价能力：
+
+- `url=https://www.xiaohongshu.com/shop/<sellerId>`：`page` 从1开始，`max_results` 为每页数量（1–10）。返回实际 `item_id`、`sku_id`、商品来源链接、价格、上架时间及销量。按 `pagination.next_page` 逐页读取；当前页存在 `next_cursor` 时先保持参数续读文本，再清空cursor翻页。调用方跨页按真实ID去重。目录变化时不保证跨页快照一致；最多100页，达到限制明确报告未读完。
+- `url=https://www.xiaohongshu.com/goods-detail/<skuId>`：返回名称、店铺、到手价/划线价、参数、图文描述及图片链接、公开累计销量。图片未OCR，不冒充已读图片文字。详情中的 `descriptionMain.itemId` 可能等于skuId，不能作为真实itemId；真实itemId由商品列表取得。
+- 销量只使用卡片sold标签及其平台原始数值，或详情 `priceH5.itemAnalysisDataText`。`itemSaleNum=0` 在有销量卡片中仍可能为占位，不作为数据。缩写保留 `sold_display`，没有精确原始值时 `sold=null`，缺失也为null，绝不补0或推算。销量属于公开累计展示值，不表示日销量或订单流水。
+- 列表使用已验证 `shop_pc` 场景；上游请求page为工具page-1。响应页码/每页数量、店铺和商品身份不匹配即失败。空终止页可能total=0，续页空页的 `reported_total=null`，调用方保留之前有效总数。
+
+浏览器后端新增鉴权REST端点 `POST /api/v1/commerce/shop` 与 `/commerce/product`，只接受固定格式ID和受限分页，所有平台请求使用现有browser factory、固定平台目标、账号会话与代理。工具层保留identity校验、账号锁、访问预算和限频；每次调用仅获取一页或一个详情，不在后端自动遍历全店。买家评价 `read_comments` 对商品/店铺链接明确拒绝。
+
+发布材料：`deploy/xhs/commerce.go`、`commerce.patch` 与定向Go测试随既有固定源码构建流程生成候选。`login-fix-artifact.json`同时校验这些资产及候选二进制；受控部署入口按清单安装，保留既有回滚机制。未执行提交部署前线上服务不具备这些新REST端点。
+
+本次验证：85项Python定向测试通过，覆盖REST认证与工具执行链、分页/游标、笔记读取回归、限频准入和候选安装回滚。固定Go源码应用补丁后，通过搜索页面就绪、待扫码状态、商品参数/错误解析及新路由鉴权测试，构建成功。新商品handler通过既有账号锁和预算实测店铺第1/2页各10件，共20个SKU无重复，reported_total=555；两个商品详情分别sold=164与sold=null，到手价均16.8。未重新遍历555件目录、未部署线上。
+
+待发布候选暂存于服务器 `/tmp/xhs-commerce-candidate/xiaohongshu-mcp`，SHA256为 `60386986a43ad86b152b22598ebc9c17a9917df8a8c8edad039e03bbadd3f24a`。用户授权提交部署时，先按清单校验并将候选放到安装器要求的 `/opt/everydayai-xhs-a5c8f779/commerce-fix-candidate/xiaohongshu-mcp`，再执行受控release流程；不能部署Python新路由而漏装浏览器后端候选。
