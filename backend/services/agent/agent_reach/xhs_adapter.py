@@ -46,6 +46,13 @@ class XHSAdapter:
                         raise ReachError('PLATFORM_BLOCKED', '小红书执行服务未完成操作') from None
                     raise
                 if response.status_code != 200:
+                    if path.startswith('commerce/'):
+                        known = {'COMMERCE_AUTH_REQUIRED': ('AUTH_EXPIRED', '小红书商品读取要求登录'),
+                                 'COMMERCE_TIMEOUT': ('BUDGET_EXHAUSTED', '小红书商品读取超过时间预算'),
+                                 'COMMERCE_CHANGED': ('UPSTREAM_CHANGED', '小红书商品接口未返回可验证结果'),
+                                 'COMMERCE_CAPTCHA': ('CAPTCHA_REQUIRED', '小红书商品读取要求平台安全验证')}
+                        code, message = known.get(payload.get('code'), ('PLATFORM_BLOCKED', '小红书商品读取未完成'))
+                        raise ReachError(code, message)
                     if path == 'feeds/search' and isinstance(payload, dict) and payload.get('code') == 'SEARCH_FEEDS_FAILED':
                         failure = payload.get('details')
                         known = {
@@ -78,7 +85,13 @@ class XHSAdapter:
             raise ReachError('ACCOUNT_MISMATCH', '小红书执行服务当前账号与组织连接不一致')
 
     async def read(self, request):
+        from .xhs_commerce import commerce_target, read_commerce
+        target = commerce_target(request.url)
+        if target and request.action != 'read':
+            raise ReachError('UNSUPPORTED_OPERATION', '商品和店铺链接只支持read，买家评价尚未启用')
         await self.identity()
+        if target:
+            return await read_commerce(self, request, target)
         if request.action == 'search':
             data = await self.call('POST', 'feeds/search', {'keyword': request.query})
             rows = data.get('feeds')

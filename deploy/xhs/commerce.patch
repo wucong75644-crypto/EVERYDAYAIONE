@@ -1,0 +1,10 @@
+--- a/routes.go
++++ b/routes.go
+@@ -55,5 +55,7 @@
+ 		api.POST("/feeds/search", appServer.searchFeedsHandler)
+ 		api.POST("/feeds/detail", appServer.getFeedDetailHandler)
++		api.POST("/commerce/shop", appServer.commerceShopHandler)
++		api.POST("/commerce/product", appServer.commerceProductHandler)
+ 		api.POST("/user/profile", appServer.userProfileHandler)
+ 		api.POST("/feeds/comment", appServer.postCommentHandler)
+ 		api.POST("/feeds/comment/reply", appServer.replyCommentHandler)

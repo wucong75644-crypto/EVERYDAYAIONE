@@ -29,6 +29,7 @@ class ToolContext:
     authorization_snapshot: Mapping[str, Any] = field(default_factory=dict)
     feature_flags: Mapping[str, bool] = field(default_factory=dict)
     resource_manifest: tuple[Mapping[str, Any], ...] | None = None
+    web_link_refs: Mapping[str, str] = field(default_factory=dict, repr=False)
     resource_versions: Mapping[str, Any] = field(default_factory=dict)
     resource_access: Mapping[str, Any] = field(default_factory=dict)
     entrypoint: str = "model"
@@ -79,5 +80,5 @@ class ToolContext:
             object.__setattr__(self, "authorized_tool_names", frozenset(self.authorized_tool_names))
         if any(type(enabled) is not bool for enabled in self.feature_flags.values()):
             raise ValueError("Feature flags must be boolean snapshots")
-        for field_name in ("authorization_snapshot", "feature_flags", "resource_manifest", "resource_versions", "resource_access"):
+        for field_name in ("authorization_snapshot", "feature_flags", "resource_manifest", "resource_versions", "resource_access", "web_link_refs"):
             object.__setattr__(self, field_name, freeze(getattr(self, field_name)))
