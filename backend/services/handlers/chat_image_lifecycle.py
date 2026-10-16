@@ -284,7 +284,17 @@ class ChatImageLifecycle:
             state=current_task["request_params"][LIFECYCLE_KEY]
             from services.adapters.kie.client import KieAPIError
             definitely_rejected=isinstance(error,KieAPIError) and error.status_code is not None and 400<=int(error.status_code)<500
-            if definitely_rejected:
+            import httpx
+            # The single-shot adapter does not retry HTTP submission. Connection
+            # setup/pool failures prove no HTTP request body reached the provider;
+            # read/write failures and response loss remain ambiguous.
+            not_sent = isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout))
+            if not_sent and state['phase'] == 'submitting':
+                await self.rpc(current_task, 'record_chat_image_provider_result', p_result={
+                    'status': 'failed', 'error': '未能连接图片服务，尚未提交，积分已退还',
+                    'fail_code': 'SUBMISSION_CONNECTION_FAILED'})
+                await self.finish_with_lock(await self.refresh(current_task))
+            elif definitely_rejected:
                 await self.rpc(current_task,"record_chat_image_provider_result",p_result={"status":"failed","error":"供应商明确拒绝生成请求"})
                 await self.finish_with_lock(await self.refresh(current_task))
             elif not state.get("dispatch_started_at"):

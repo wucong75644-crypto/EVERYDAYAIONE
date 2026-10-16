@@ -1,0 +1,9 @@
+[Unit]
+Description=Check all US proxy nodes every 30 seconds
+[Timer]
+OnBootSec=20
+OnUnitInactiveSec=30
+AccuracySec=1
+Unit=everydayai-us-proxy.service
+[Install]
+WantedBy=timers.target
