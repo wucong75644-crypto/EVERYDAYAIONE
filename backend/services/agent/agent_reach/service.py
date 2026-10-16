@@ -30,6 +30,8 @@ def resolve(request):
         raise ReachError('INVALID_CURSOR', '只有读取操作可以使用cursor')
     from .xhs_commerce import commerce_target
     shop_page = request.platform == 'xiaohongshu' and request.action == 'read' and (commerce_target(request.url) or ('',))[0] == 'shop'
+    if shop_page and 'max_results' not in request.model_fields_set:
+        request.max_results = 10
     if request.page != 1 and not (shop_page or (request.action == 'read_comments' and request.platform in {'bilibili', 'xiaohongshu'})):
         raise ReachError('UNSUPPORTED_OPERATION', '该链接或操作不支持列表翻页，请使用cursor续读文本')
     if request.action not in supported[request.platform]:

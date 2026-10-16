@@ -143,3 +143,84 @@ def test_hundred_page_cap_is_explicit():
     assert result.metadata['pagination']['next_page'] is None
     assert result.metadata['pagination']['platform_has_more'] is True
     assert any('100页' in warning for warning in result.metadata['warnings'])
+
+
+def test_shop_defaults_to_ten_without_task_or_model_hints():
+    req = resolve(ReachRequest(task='帮我查这家店的全部商品和销量', url=SHOP))
+    assert req.max_results == 10
+    assert resolve(ReachRequest(task='test', url=SHOP, max_results=5)).max_results == 5
+    note = resolve(ReachRequest(task='test', url='https://www.xiaohongshu.com/explore/abc?xsec_token=test'))
+    assert note.max_results == 5
+    assert resolve(req).max_results == 10
+
+
+def test_next_request_and_catalog_completion_are_separate():
+    req = request(page=2)
+    response = shop_result(shop_data(2), SELLER, req).to_agent_result(req)
+    page = response.metadata['pagination']
+    assert page['coverage'] == 'single_page'
+    assert page['catalog_end_reached'] is False
+    assert page['page_text_complete'] is True
+    continuation = resolve(ReachRequest(task='帮我查这家店的全部商品和销量', **page['next_page_request']))
+    assert continuation.page == 3 and continuation.max_results == 10
+    assert '无需重复确认' in page['instruction']
+    data = shop_data(2)
+    data['components'][0]['component_data']['hasMore'] = False
+    end = shop_result(data, SELLER, req).to_agent_result(req).metadata['pagination']
+    assert end['catalog_end_reached'] is True
+    assert end['coverage'] == 'single_page'
+    assert '不能仅凭最后一页' in end['instruction']
+
+
+def test_empty_page_with_more_is_not_a_completed_catalog():
+    data = shop_data()
+    data['components'][0]['component_data']['componentVOList'] = []
+    with pytest.raises(ReachError): shop_result(data, SELLER, request())
+
+
+def test_catalog_text_cursor_must_finish_before_next_page():
+    data = shop_data()
+    data['components'][0]['component_data']['componentVOList'][0]['defaultGoodsComponentVO']['baseInfo']['title'] = '长名称' * 1600
+    req = request()
+    response = shop_result(data, SELLER, req).to_agent_result(req)
+    page = response.metadata['pagination']
+    assert page['page_text_complete'] is False
+    assert page['next_cursor']
+    assert '不要提前翻页' in page['instruction']
+
+
+def test_shop_budget_resume_preserves_unread_page_and_defaults():
+    from services.agent.agent_reach.xhs_commerce import shop_resume_request
+    resume = shop_resume_request({'task':'帮我查这家店的全部商品和销量', 'url':SHOP, 'page':4})
+    assert resume['page'] == 4 and resume['max_results'] == 10
+    assert resume['url'] == SHOP and resume['action'] == 'read'
+    assert shop_resume_request({'task':'test', 'url':'https://example.com'}) is None
+    assert shop_resume_request({'task':'test', 'url':'/shop/' + SELLER}) is None
+
+
+def test_follow_tool_continuation_reaches_empty_terminal_without_page_input():
+    """Replay bounded public pages; the caller only follows tool arguments."""
+    req = resolve(ReachRequest(task='帮我查这家店的全部商品和销量', url=SHOP))
+    seen = set()
+    visited = []
+    while True:
+        visited.append(req.page)
+        data = shop_data(req.page)
+        component = data['components'][0]['component_data']
+        component['total'] = 6 if req.page <= 3 else 0
+        if req.page <= 3:
+            for index, row in enumerate(component['componentVOList']):
+                base = row['defaultGoodsComponentVO']['baseInfo']
+                base['itemId'] = f'{req.page*100+index*2:024x}'
+                base['skuId'] = f'{req.page*100+index*2+1:024x}'
+        else:
+            component.update(componentVOList=[], empty=True, hasMore=False)
+        result = shop_result(data, SELLER, req).to_agent_result(req)
+        seen.update(s['metric_metadata']['remote_id'] for s in result.metadata['sources'])
+        page = result.metadata['pagination']
+        if page['catalog_end_reached']:
+            assert req.page == 4 and page['reported_total'] is None
+            break
+        assert '不能自行改为Top N' in page['instruction']
+        req = resolve(ReachRequest(task=req.task, **page['next_page_request']))
+    assert visited == [1,2,3,4] and len(seen) == 6

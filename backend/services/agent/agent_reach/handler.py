@@ -43,7 +43,9 @@ async def execute_reach(executor, args):
     deadline = asyncio.get_running_loop().time() + max(0, timeout)
 
     async def operation():
-        request = ReachRequest.model_validate(args)
+        from .web_links import resolve_link_args
+        request = ReachRequest.model_validate(resolve_link_args(
+            args, getattr(executor, 'web_link_refs', None)))
         if request.action == 'list_connections':
             store = Connections(executor.db.pool, DatabaseScope(actor_user_id=executor.user_id,
                 org_id=executor.org_id, access_kind=DatabaseAccessKind.RUNTIME))
@@ -172,7 +174,9 @@ async def execute_reach(executor, args):
                     raise
 
     try:
-        return await asyncio.wait_for(operation(), timeout=max(0, timeout))
+        from .web_links import bind_result_reference
+        result = await asyncio.wait_for(operation(), timeout=max(0, timeout))
+        return bind_result_reference(result, args.get('url_ref'))
     except asyncio.TimeoutError:
         return AgentResult(summary=('Agent Reach写入等待超时；若已开始提交，请先核对账号回执，不要重复发送。'
                                     if writing else 'Agent Reach查询等待超时，未取得可核验结果；不能据此判断没有相关资料。'),
@@ -190,8 +194,18 @@ async def execute_reach(executor, args):
             if next_at:
                 summary += '最早可再次尝试时间：' + next_at + '。'
             summary += '不要在此时间前立即重试或批量重复调用；请先使用已取得的资料并说明缺口。'
-            return AgentResult(summary=summary, status='error', error_message=error.code,
-                metadata={'retryable': True, 'next_eligible_at': next_at, 'wait_reason': reason})
+            from .xhs_commerce import shop_resume_request
+            from .web_links import resolve_link_args
+            resume = shop_resume_request(resolve_link_args(args, getattr(executor, 'web_link_refs', None)))
+            if resume and args.get('url_ref'):
+                resume.pop('url', None)
+                resume['url_ref'] = args['url_ref']
+            metadata = {'retryable': True, 'next_eligible_at': next_at, 'wait_reason': reason}
+            if resume:
+                metadata['resume_request'] = resume
+                metadata['catalog_complete'] = False
+                summary += '全店读取尚未完成；只可报告已读取的范围，不能把目录总数当作已读数量。到可再次尝试时间后保留原task，用以下参数续读未发送的这一页：' + json.dumps(resume, ensure_ascii=False)
+            return AgentResult(summary=summary, status='error', error_message=error.code, metadata=metadata)
         return AgentResult(summary=f'操作未完成：{error}。不能据此判断资料不存在。',
                            status='error', error_message=error.code, metadata={'retryable': error.retryable, 'next_eligible_at': getattr(error, 'next_eligible_at', None)})
 

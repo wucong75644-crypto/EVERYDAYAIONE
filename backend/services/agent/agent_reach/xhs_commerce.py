@@ -3,7 +3,7 @@ import json
 import re
 from urllib.parse import urlsplit
 
-from .contracts import ReachError, ReachItem, ReachResult
+from .contracts import ReachError, ReachItem, ReachResult, ReachRequest
 
 
 def commerce_target(url):
@@ -74,7 +74,9 @@ def shop_result(data, seller, request):
         items.append(_item(product, 'shop_pc.DefaultMixCardComponent'))
     if len(rows) > request.max_results:
         raise ReachError('UPSTREAM_CHANGED', '商品列表未遵循每页数量')
-    more = bool(rows) and component['hasMore']
+    if not rows and component['hasMore']:
+        raise ReachError('UPSTREAM_CHANGED', '店铺返回空页但仍标记有更多商品，不能确认目录结束')
+    more = component['hasMore']
     total = component.get('total')
     if type(total) is not int or total < 0:
         raise ReachError('UPSTREAM_CHANGED', '商品列表未返回有效总数')
@@ -82,7 +84,13 @@ def shop_result(data, seller, request):
         'page': request.page, 'page_size': request.max_results, 'returned_count': len(items),
         'reported_total': total if rows or request.page == 1 else None,
         'platform_has_more': more, 'next_page': request.page + 1 if more and request.page < 100 else None,
-        'seller_id': seller, 'scope': 'public_shop_catalog'},
+        'seller_id': seller, 'scope': 'public_shop_catalog',
+        'catalog_end_reached': not more,
+        'coverage': 'single_page',
+        'completion_rule': '只有从第1页连续读取到目录末页、读完每页文本并核对去重商品数量，才能称为全店；reported_total不是已读数量。',
+        'next_page_request': {'platform': 'xiaohongshu', 'action': 'read', 'url': request.url,
+                              'page': request.page + 1, 'max_results': request.max_results}
+            if more and request.page < 100 else None},
         warnings=['销量为平台公开累计展示值，可能缩写或缺失；当前仅为一页商品，需按next_page继续并按item_id/sku_id去重，不能将单页称为全店。'] if more else [])
 
 
@@ -124,3 +132,15 @@ async def read_commerce(adapter, request, target):
     if not isinstance(data, dict):
         raise ReachError('UPSTREAM_CHANGED', '小红书商品详情格式变化')
     return product_result(data, identifier)
+
+
+def shop_resume_request(args):
+    """Return bounded continuation arguments without copying arbitrary input."""
+    from .service import resolve
+    try:
+        request = resolve(ReachRequest.model_validate(args))
+    except (ValueError, ReachError):
+        return None
+    if request.platform != 'xiaohongshu' or request.action != 'read' or (commerce_target(request.url) or ('',))[0] != 'shop':
+        return None
+    return {key: getattr(request, key) for key in ('platform', 'action', 'url', 'page', 'max_results', 'cursor', 'connection_id')}

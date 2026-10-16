@@ -27,11 +27,15 @@ def resolve_action(spec: ToolSpec, arguments: Mapping[str, Any], *, context=None
     if rule is None:
         return ActionFacts(operation, risk)
     if rule == 'agent_reach':
-        from services.agent.agent_reach.contracts import ReachRequest, WRITE_ACTIONS
+        from services.agent.agent_reach.contracts import ReachRequest, WRITE_ACTIONS, ReachError
         try:
             # ToolCall freezes nested JSON arrays/maps; restore their JSON types
             # before strict domain validation, as the dispatcher does for handlers.
-            request = ReachRequest.model_validate(thaw(arguments))
+            from services.agent.agent_reach.web_links import resolve_link_args
+            request = ReachRequest.model_validate(resolve_link_args(
+                thaw(arguments), getattr(context, 'web_link_refs', None)))
+        except ReachError as error:
+            return ActionFacts(operation, risk, 'invalid_web_link_reference' if error.code == 'INVALID_URL_REFERENCE' else 'invalid_agent_reach_arguments')
         except Exception:
             return ActionFacts(operation, risk, 'invalid_agent_reach_arguments')
         if request.action in WRITE_ACTIONS:

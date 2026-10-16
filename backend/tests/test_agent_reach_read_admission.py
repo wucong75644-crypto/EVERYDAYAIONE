@@ -95,8 +95,12 @@ async def test_wait_is_bounded_to_one_recheck_if_other_worker_consumes_slot(monk
     assert len(calls) == 2
 
 
+@pytest.mark.parametrize('args', [
+    {'action':'read'},
+    {'task':'帮我查这家店的全部商品和销量','url':'https://www.xiaohongshu.com/shop/65263c56796c030001e298d4','page':7},
+])
 @pytest.mark.asyncio
-async def test_wait_time_is_visible_in_model_text_not_only_metadata(monkeypatch):
+async def test_wait_time_is_visible_in_model_text_not_only_metadata(monkeypatch, args):
     from core import config
     from services.agent.agent_reach import handler
     monkeypatch.setattr(config, 'get_settings', lambda: SimpleNamespace(agent_reach_enabled=True, agent_reach_timeout_seconds=60))
@@ -105,10 +109,15 @@ async def test_wait_time_is_visible_in_model_text_not_only_metadata(monkeypatch)
         operation.close()
         raise error
     monkeypatch.setattr(handler.asyncio, 'wait_for', fail)
-    result = await handler.execute_reach(SimpleNamespace(execution_budget=None), {'action':'read'})
+    result = await handler.execute_reach(SimpleNamespace(execution_budget=None), args)
     text = result.to_tool_content()
     assert error.next_eligible_at in text and '不要' in text and '未向平台发送' in text
     assert '当日访问额度已用完' in text and result.metadata['wait_reason'] == 'daily_limit'
+    if args.get('url'):
+        assert result.metadata['catalog_complete'] is False
+        assert result.metadata['resume_request']['page'] == 7
+        assert result.metadata['resume_request']['max_results'] == 10
+        assert '全店读取尚未完成' in text and '不能把目录总数当作已读数量' in text
 
 
 @pytest.mark.parametrize('consumed,next_seconds,hours,reason', [
