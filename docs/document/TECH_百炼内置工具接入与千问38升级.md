@@ -129,6 +129,8 @@ Responses 接入必须覆盖消息历史、图片等现有输入、函数定义�
 - 工具名及 schema key 按稳定顺序发送，避免无意义顺序变化破坏缓存。原始消息不被适配器修改；DeepSeek 保持原型号、协议选择及缓存参数行为。
 - Qwen3.5+ 合并多条 system 消息；拆分 system 不能保证独立缓存端点，因此不改公共 PromptBuilder 的角色或顺序。动态 system 内容、工具集合变化、前缀不足 1024 Token 或缓存过期均可能影响命中；开启不代表每次一定命中。
 - 读取 Chat `prompt_tokens_details`、Responses `input_tokens_details` 的 `cached_tokens`；写入量兼容顶层、details 和 Responses 实测 `x_details[].prompt_tokens_details.cache_creation_input_tokens`。聚合进入现有请求 usage、采样日志及 Langfuse，同时记录内置搜索/抓取次数。
+- 2026-10-16 缓存前缀修复：主 Chat 不再每轮删除/重建末尾的工具循环 system 摘要。`apply_tool_results` 在创建本批最后一条 tool 消息时，将完整执行状态快照作为 `platform_metadata` 文本追加；原结果、图片块及前轮消息保持不变。固定规则解释这些元数据是执行事实而非指令，不改变权限；不同调用的失败不能由另一个调用成功冲销。旧 checkpoint 中的 system 摘要原样保留，不做追溯迁移。既有预算、压缩和权限提醒策略不变；本修复不保证动态工具或其他 system 变化时仍命中缓存。
+- 修复验证：相关工具结果、Actor、网关重试、多模态、历史压缩及提示词回归 262 项通过；需要隔离 PostgreSQL 的 checkpoint 集成项未运行。Qwen3.8-Max 非思考模式真实 API 合成验证 15 次通过，使用当前工具目录；其中三轮直接调用修复后的结果写入/轮次准备函数，缓存命中从首次 0 增至 14,442、14,650 Token，ERP 指代、店铺切换及最终 20/40 单差值正确。业务工具未实际执行，未验证真实数据库结果或深度思考模式。ERP 内部偶发漏店铺不在本次修改范围，未部署。
 - 沿用平台 Token 计量/积分算法，不引入工具调用额外扣费或缓存折扣结算规则；仅随新型号更新现有模型价格配置。
 - 同轮函数调用保留必要 reasoning/search/extractor 回放项；Actor 自有 call ID 用于函数往返。压缩归档时移除被归档消息的隐藏 Provider 状态，避免隐性超预算。
 

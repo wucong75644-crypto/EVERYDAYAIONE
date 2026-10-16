@@ -7,11 +7,13 @@
 - 已使用/失败的工具
 - 通过 erp_api_search 发现的新工具名
 
-每批结果通过 update_from_batch() 更新，下一轮开始前 build_context_prompt()。
+每批结果通过 update_from_batch() 更新，build_context_prompt() 随本批最后一个
+工具结果一次性追加为事实元数据，后续轮次不删除或重写旧快照。
 旧 update_from_result() 门面保留；累计失败列表只作历史记录。
 """
 
 import re
+import json
 from typing import Any, Dict, List, Optional, Set
 
 from loguru import logger
@@ -32,11 +34,20 @@ def is_tool_context_message(message: dict) -> bool:
     return bool(lines) and all(line.startswith(prefixes) for line in lines)
 
 
-def replace_context_prompt(messages: list[dict], prompt: Optional[str]) -> None:
-    """Replace only this component's message, including old checkpoint summaries."""
-    messages[:] = [m for m in messages if not is_tool_context_message(m)]
-    if prompt:
-        messages.append({"role": "system", "content": prompt})
+def append_context_metadata(content: str | list, prompt: Optional[str]) -> str | list:
+    """Retain every original result block; add batch facts without new instructions.
+
+    Only called when creating a new tool message. Existing/replayed history and
+    the underlying ToolResult (including multimodal content) remain untouched.
+    """
+    if not prompt:
+        return content
+    metadata = json.dumps({"platform_metadata": {
+        "source": "platform_tool_context", "state": prompt,
+    }}, ensure_ascii=False)
+    if isinstance(content, list):
+        return [*content, {"type": "text", "text": metadata}]
+    return content + "\n" + metadata
 
 
 class ToolLoopContext:

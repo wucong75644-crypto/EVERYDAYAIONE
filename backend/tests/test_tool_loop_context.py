@@ -14,6 +14,33 @@ if str(backend_dir) not in sys.path:
 import pytest
 
 
+def test_context_metadata_preserves_multimodal_blocks_and_input():
+    import copy
+    import json
+    from services.handlers.tool_loop_context import append_context_metadata
+    content = [{"type": "text", "text": "完整结果"},
+               {"type": "image_url", "image_url": {"url": "https://example.test/image.png"}}]
+    before = copy.deepcopy(content)
+    result = append_context_metadata(content, "调用c1成功，数据同步延迟")
+    assert content == before
+    assert result[:-1] == before
+    assert json.loads(result[-1]["text"])["platform_metadata"]["state"] == "调用c1成功，数据同步延迟"
+    assert append_context_metadata(content, None) is content
+
+
+def test_empty_batch_does_not_attach_stale_metadata_or_change_history():
+    import copy
+    from services.handlers.chat.tool_loop import apply_tool_results
+    from services.handlers.tool_loop_context import ToolLoopContext
+    ctx = ToolLoopContext()
+    ctx.update_from_result("old_tool", "旧结果", False)
+    messages = [{"role": "tool", "tool_call_id": "old", "content": "完整历史"}]
+    before = copy.deepcopy(messages)
+    assert apply_tool_results(tool_results=[], messages=messages, content_blocks=[],
+                              start_times={}, tool_context=ctx) == []
+    assert messages == before
+
+
 class TestToolLoopContextInit:
     """初始状态测试"""
 

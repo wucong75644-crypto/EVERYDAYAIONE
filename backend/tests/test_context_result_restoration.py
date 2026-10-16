@@ -18,6 +18,17 @@ from services.tools.runtime_context import catalog_context
 from services.handlers.conversation_cache import get_closed_messages as real_cache_get, set_closed_messages as real_cache_set
 
 
+def assert_original_result_with_metadata(content, original):
+    if isinstance(original, list):
+        assert content[:-1] == original
+        metadata = json.loads(content[-1]["text"])
+    else:
+        assert content.startswith(original + "\n")
+        metadata = json.loads(content[len(original) + 1:])
+    assert metadata["platform_metadata"]["source"] == "platform_tool_context"
+    return metadata["platform_metadata"]["state"]
+
+
 def history(blocks, preserve=False):
     messages, _ = _row_to_oai_messages({"role": "assistant", "content": blocks}, 5,
                                       preserve_tool_protocol=preserve)
@@ -158,7 +169,7 @@ def test_live_context_uses_actual_result_state_and_retains_original(status):
     assert "c1" in prompt
     assert ctx.recent_results[0][1] is original
     if status != "cancelled":
-        assert messages[0]["content"] == original.model_content("chat")
+        assert_original_result_with_metadata(messages[0]["content"], original.model_content("chat"))
     if status == "uncertain":
         assert "不要自动重试" in prompt and "success" not in prompt
     elif status == "cancelled":
@@ -169,30 +180,35 @@ def test_live_context_uses_actual_result_state_and_retains_original(status):
 
 
 @pytest.mark.parametrize("second_file", ["a.csv", "b.csv"])
-def test_failure_then_success_updates_one_prompt_without_erasing_failure(second_file):
+def test_failure_then_success_appends_snapshots_without_erasing_failure(second_file):
     ctx, messages = ToolLoopContext(), [{"role": "system", "content": "普通说明里提及失败工具，不得删除"}]
     failed = result("error", "failed-call")
     apply(ctx, [failed], messages)
     prepare(ctx, messages, 1)
+    frozen_prefix = copy.deepcopy(messages)
     succeeded = result("success", "success-call", second_file)
     apply(ctx, [succeeded], messages)
     prepare(ctx, messages, 2)
     prompts = [m["content"] for m in messages if m["role"] == "system"]
-    assert len(prompts) == 2  # One unrelated system message plus exactly one current summary.
-    assert "success-call" in prompts[-1] and "success" in prompts[-1]
-    assert "failed-call" not in prompts[-1] and "上轮失败工具" not in prompts[-1]
-    assert "已恢复" not in prompts[-1]  # No recovery claim based on tool name alone.
-    assert next(m for m in messages if m.get("tool_call_id") == "failed-call")["content"] == failed[1].model_content("chat")
+    assert len(prompts) == 1  # No dynamic system rewrite.
+    assert messages[:len(frozen_prefix)] == frozen_prefix
+    latest = assert_original_result_with_metadata(messages[-1]["content"], succeeded[1].model_content("chat"))
+    assert "success-call" in latest and "success" in latest
+    assert "failed-call" not in latest and "上轮失败工具" not in latest
+    assert "已恢复" not in latest
+    assert_original_result_with_metadata(next(m for m in messages if m.get("tool_call_id") == "failed-call")["content"], failed[1].model_content("chat"))
     assert ctx.failed_tools == ["file_analyze"]
 
 
-def test_parallel_batch_preserves_each_call_and_replaces_legacy_prompt():
+def test_parallel_batch_preserves_each_call_and_legacy_history():
     ctx = ToolLoopContext()
     messages = [{"role": "system", "content": "上轮失败工具: old_tool，考虑换其他工具或参数"}]
     items = [result("error", "a-call", "a.csv"), result("success", "b-call", "b.csv")]
     apply(ctx, items, messages)
     prepare(ctx, messages, 1)
-    prompt = messages[-1]["content"]
+    assert messages[0] == {"role": "system", "content": "上轮失败工具: old_tool，考虑换其他工具或参数"}
+    assert messages[1]["content"] == items[0][1].model_content("chat")
+    prompt = assert_original_result_with_metadata(messages[-1]["content"], items[1][1].model_content("chat"))
     assert "a-call" in prompt and "error" in prompt and "b-call" in prompt and "success" in prompt
     assert len([m for m in messages if m["role"] == "system"]) == 1
     assert len(ctx.recent_results) == 2
