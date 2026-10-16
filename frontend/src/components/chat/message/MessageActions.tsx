@@ -1,3 +1,4 @@
+import { MESSAGE_ALIGNMENT } from './messageContentLayout';
 /**
  * 消息操作工具栏组件
  *
@@ -148,7 +149,7 @@ export default function MessageActions({
   return (
     <div
       className={`mt-1.5 flex items-center gap-1 transition-opacity duration-300 ${
-        isUser ? 'justify-end' : 'justify-start'
+        MESSAGE_ALIGNMENT[isUser ? 'user' : 'assistant']
       } ${shouldShow ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}

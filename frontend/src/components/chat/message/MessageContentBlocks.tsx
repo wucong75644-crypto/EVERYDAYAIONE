@@ -320,7 +320,7 @@ export default function MessageContentBlocks({
         );
       })()}
       {!isStreaming && fileBlocks.length > 0 && (
-        <div className="my-2" style={{ maxWidth: '400px' }}>
+        <div className={`my-2 ${MESSAGE_CONTENT_LAYOUT.fill}`}>
           <FileCardList files={fileBlocks} />
         </div>
       )}
