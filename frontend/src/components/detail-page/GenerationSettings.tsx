@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { FolderOpen, Paperclip, Sparkles, X } from 'lucide-react';
 import type { DetailGenerationForm, DetailLocalImage, PromptModelOption } from '../../types/detailPage';
 import { DEFAULT_PROMPT_MODEL } from '../../types/detailPage';
+import { useDragDropUpload } from '../../hooks/useDragDropUpload';
 import { cn } from '../../utils/cn';
 import { Button } from '../ui/Button';
 import { Select } from '../ui/Select';
@@ -21,6 +22,12 @@ const counts=Array.from({length:15},(_,index)=>({value:String(index+1),label:`${
 const defaultModels=[{value:'kimi-k3',label:'Kimi K3'},{value:'gemini-3.8-flash',label:'Gemini 3.8 Flash（服务异常）',disabled:true},{value:'gpt-6-luna',label:'GPT 6 Luna（暂不可用）',disabled:true}] as const;
 export function GenerationSettings({form,hasProductImage,disabled=false,requirementDisabled=disabled,requirementAssistDisabled=false,analyzeDisabled=disabled,analyzeLabel='开始生成',models,ratios=['1:1','3:4','4:5','16:9'],images=[],onAdd,onWorkspaceAdd,onRemove,onChange,onRequirementAssist,onAnalyze}:Props){
   const inputRef = useRef<HTMLInputElement>(null);
+  const dropZoneRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const handleFiles = useCallback((files: File[]) => {
+    if (!disabled && images.length < 9) onAdd?.(files);
+  }, [disabled, images.length, onAdd]);
+  const { isDragging } = useDragDropUpload({ dropZoneRef, textareaRef, onFiles: handleFiles });
   const [pickerOpen, setPickerOpen] = useState(false);
   const requirementLabel = form.contentType === 'default' ? '产品信息与创作要求' : form.contentType === 'main_image' ? '主图要求' : '详情图要求';
   return <section className="flex h-full min-h-0 flex-col gap-2">
@@ -43,7 +50,8 @@ export function GenerationSettings({form,hasProductImage,disabled=false,requirem
           disabled={disabled} onChange={promptModel=>onChange({promptModel})}/>
       </label>
     </div>
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[var(--c-input-border)] bg-[var(--c-input-bg)] focus-within:border-[var(--c-input-border-focus)]">
+      <div ref={dropZoneRef} className={cn('relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[var(--c-input-border)] bg-[var(--c-input-bg)] focus-within:border-[var(--c-input-border-focus)]', isDragging && !disabled && images.length < 9 && 'border-[var(--s-accent)]')}>
+        {isDragging && !disabled && images.length < 9 && <div role="status" className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-[var(--s-surface-card)]/90 text-sm text-[var(--s-accent)]">松开即可上传产品图片</div>}
         {images.length > 0 && <div aria-label="已上传图片" className="grid shrink-0 grid-cols-5 gap-1.5 px-3 pt-3">
           {images.map((image) => <div key={image.id} className="relative aspect-square min-w-0 overflow-hidden rounded-lg border border-[var(--s-border-default)]">
             {image.previewUrl ? <img src={image.previewUrl} alt={image.name || '产品图'} className="h-full w-full object-contain" onError={(event) => { if (image.originalUrl && event.currentTarget.src !== image.originalUrl) event.currentTarget.src = image.originalUrl; }} /> : <div className="flex h-full items-center justify-center text-xs">原图缺失</div>}
@@ -52,9 +60,9 @@ export function GenerationSettings({form,hasProductImage,disabled=false,requirem
           </div>)}
         </div>}
         <label htmlFor="detail-requirement" className="sr-only">{requirementLabel}</label>
-        <textarea id="detail-requirement" disabled={requirementDisabled} maxLength={10000} value={form.requirement} onChange={(event) => onChange({ requirement: event.target.value })} placeholder="上传产品图片，并描述产品名称、核心卖点、规格和设计要求…" className="min-h-0 w-full flex-1 resize-none overflow-y-auto overscroll-contain border-0 bg-transparent p-3 text-sm leading-6 text-[var(--s-text-primary)] placeholder:text-[var(--s-text-tertiary)] focus:outline-none disabled:opacity-50" />
+        <textarea ref={textareaRef} id="detail-requirement" disabled={requirementDisabled} maxLength={10000} value={form.requirement} onChange={(event) => onChange({ requirement: event.target.value })} placeholder="上传产品图片，并描述产品名称、核心卖点、规格和设计要求…" className="min-h-0 w-full flex-1 resize-none overflow-y-auto overscroll-contain border-0 bg-transparent p-3 text-sm leading-6 text-[var(--s-text-primary)] placeholder:text-[var(--s-text-tertiary)] focus:outline-none disabled:opacity-50" />
         <div className="flex shrink-0 items-center gap-0.5 px-1.5 pb-1.5">
-          <input ref={inputRef} type="file" aria-label="上传产品图" accept="image/jpeg,image/png,image/webp" multiple disabled={disabled} className="hidden" onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) onAdd?.(files); event.target.value = ''; }} />
+          <input ref={inputRef} type="file" aria-label="上传产品图" accept="image/jpeg,image/png,image/webp" multiple disabled={disabled} className="hidden" onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) handleFiles(files); event.target.value = ''; }} />
           <Button variant="ghost" size="sm" className="shrink-0 gap-1 px-1.5 text-xs" icon={<Paperclip className="h-4 w-4" />} disabled={disabled || images.length >= 9} onClick={() => inputRef.current?.click()}>上传图片</Button>
           <Button variant="ghost" size="sm" className="shrink-0 gap-1 px-1.5 text-xs" icon={<FolderOpen className="h-4 w-4" />} disabled={disabled || images.length >= 9} onClick={() => setPickerOpen(true)}>工作区</Button>
           <Button variant="ghost" size="sm" className="shrink-0 gap-1 px-1.5 text-xs" icon={<Sparkles className="h-4 w-4" />} disabled={disabled || requirementAssistDisabled} onClick={onRequirementAssist}>AI 帮写</Button>

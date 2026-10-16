@@ -1,6 +1,7 @@
 """Project provider-managed activity into the existing tool_step/text channel."""
 
 import json
+import re
 
 
 def present_builtin_event(event: dict) -> dict:
@@ -20,5 +21,12 @@ def present_builtin_event(event: dict) -> dict:
 def source_text(sources: dict[str, str]) -> str:
     # Only URLs already validated at the provider boundary; never fabricate citation offsets.
     return "\n\n检索来源（未与正文逐句对应）：\n" + "\n".join(
-        f"- <{url}>" for url in list(sources)[:20]
+        f"- [{_source_title(title, url)}](<{url}>)"
+        for url, title in list(sources.items())[:20]
     )
+
+
+def _source_title(title: str, url: str) -> str:
+    """Keep provider titles as literal Markdown link labels."""
+    title = " ".join((title or url).split())
+    return re.sub(r"([\\`*{}\[\]<>_])", r"\\\1", title)

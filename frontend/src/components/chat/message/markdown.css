@@ -355,3 +355,7 @@
   align-items: center !important;
   justify-content: center !important;
 }
+
+.search-sources .search-sources-close { display: none; }
+.search-sources[open] .search-sources-close { display: inline; }
+.search-sources[open] .search-sources-open { display: none; }

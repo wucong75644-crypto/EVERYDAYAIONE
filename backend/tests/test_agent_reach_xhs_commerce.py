@@ -128,7 +128,7 @@ async def test_execute_through_authenticated_rest_transport(monkeypatch):
         assert json.loads(req.content) == {'seller_id':SELLER, 'page':2, 'page_size':10}
         return httpx.Response(200, json={'success':True, 'data':shop_data(2)})
     monkeypatch.setattr(xhs_adapter.httpx, 'AsyncClient', lambda **kw: real_client(transport=httpx.MockTransport(respond), **kw))
-    settings = SimpleNamespace(agent_reach_platforms='xiaohongshu', agent_reach_bin_dir='/tmp',
+    settings = SimpleNamespace(agent_reach_platforms='xiaohongshu', agent_reach_bin_dir='/tmp', agent_reach_timeout_seconds=60,
         agent_reach_xhs_origins_json='{"c":"http://127.0.0.1:18060"}', agent_reach_xhs_slots_json='{}')
     result = await execute(request(page=2), settings, timeout=10,
         connection={'id':'c','account_id':'account','secret':{'service_token':'test'}})

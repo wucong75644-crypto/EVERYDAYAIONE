@@ -1,6 +1,6 @@
 {
-  "sha256": "60386986a43ad86b152b22598ebc9c17a9917df8a8c8edad039e03bbadd3f24a",
-  "patch_sha256": "3aaf7a7c6292ea42db987180d69cf2363385d0835832f4a528a35eac340b3914",
+  "sha256": "1bf487dba50e2a13760684bcd87dac4c2e731a2f3931483aace0d47b4291bfc2",
+  "patch_sha256": "eb800b049e6073237f6e3d6411df2033d6511e0d26a34554712b48f2fb07f274",
   "candidate_directory": "commerce-fix-candidate",
   "assets_sha256": {
     "search_readiness.go": "7f09ee2ce377399e79f8ce7aa2b5f330add199b22f26247c5158e0187bd96ac8",

@@ -67,17 +67,23 @@ class BackgroundTaskWorker:
         from services.handlers.chat_image_lifecycle import ChatImageLifecycle
         self._chat_images = ChatImageLifecycle(db, self.settings)
         self._chat_image_loop_task = None
+        self._detail_page_loop_task = None
         self._social_publish_loop_task = None
         from services.detail_page_generation import DetailPageWorker
         self._detail_pages = DetailPageWorker(db)
 
     async def _chat_image_loop(self):
-        """Short bounded recovery runs even when new acceptance is disabled."""
+        await self._recovery_loop(self._chat_images, 'Chat image')
+
+    async def _detail_page_loop(self):
+        await self._recovery_loop(self._detail_pages, 'Detail page')
+
+    async def _recovery_loop(self, service, label):
+        """Independent discovery loops; one subsystem cannot stall the other."""
         last_error = None
         while self.is_running:
             try:
-                await self._chat_images.scan()
-                await self._detail_pages.scan()
+                await service.scan()
                 last_error = None
             except asyncio.CancelledError:
                 raise
@@ -85,7 +91,7 @@ class BackgroundTaskWorker:
                 # Compatible reader-first rollout may precede migrations.
                 kind = type(error).__name__
                 if kind != last_error:
-                    logger.warning("Chat image recovery unavailable | error_type={}", kind)
+                    logger.warning("{} recovery unavailable | error_type={}", label, kind)
                 last_error = kind
             await asyncio.sleep(2)
 
@@ -123,6 +129,7 @@ class BackgroundTaskWorker:
         """启动后台工作器"""
         self.is_running = True
         self._chat_image_loop_task = asyncio.create_task(self._chat_image_loop(), name="chat-image-recovery")
+        self._detail_page_loop_task = asyncio.create_task(self._detail_page_loop(), name="detail-page-recovery")
         self._social_publish_loop_task = asyncio.create_task(self._social_publish_loop(), name="social-publish-scan")
         mode = "fallback" if self.settings.callback_base_url else "primary"
         logger.info(
@@ -161,12 +168,12 @@ class BackgroundTaskWorker:
                 await self._social_publish_loop_task
             self._social_publish_loop_task = None
         await self._social_ops.stop()
-        if self._chat_image_loop_task is not None:
-            self._chat_image_loop_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._chat_image_loop_task
-            self._chat_image_loop_task = None
-        await self._detail_pages.close()
+        loops = [job for job in (self._chat_image_loop_task, self._detail_page_loop_task) if job is not None]
+        for job in loops:
+            job.cancel()
+        await asyncio.gather(*loops, return_exceptions=True)
+        self._chat_image_loop_task = self._detail_page_loop_task = None
+        await asyncio.gather(self._chat_images.close(), self._detail_pages.close())
         logger.info("BackgroundTaskWorker stopped")
 
     async def poll_pending_tasks(self):

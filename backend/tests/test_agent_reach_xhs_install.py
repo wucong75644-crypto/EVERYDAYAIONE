@@ -8,12 +8,12 @@ spec = importlib.util.spec_from_file_location('xhs_install', Path(__file__).pare
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
-@pytest.mark.parametrize('mode', ['success','search_candidate','commerce_candidate','bad_candidate','restart_failure'])
+@pytest.mark.parametrize('mode', ['success','search_candidate','commerce_candidate','timeout_candidate','bad_candidate','restart_failure'])
 def test_install_verified_candidate_and_rollback(tmp_path, monkeypatch, mode):
     root = tmp_path/'runtime'; root.mkdir()
     assets = tmp_path/'assets'; assets.mkdir()
     target = root/'xiaohongshu-mcp'; target.write_bytes(b'old')
-    directory = {'search_candidate': 'search-fix-candidate', 'commerce_candidate': 'commerce-fix-candidate'}.get(mode, 'login-fix-candidate')
+    directory = {'search_candidate': 'search-fix-candidate', 'commerce_candidate': 'commerce-fix-candidate', 'timeout_candidate': 'query-timeout-candidate'}.get(mode, 'login-fix-candidate')
     candidate = root/directory/'xiaohongshu-mcp'; candidate.parent.mkdir(); candidate.write_bytes(b'new')
     patch = assets/'login-browser.patch'; patch.write_bytes(b'patch')
     (assets/'login-fix-artifact.json').write_text(json.dumps({'sha256':module.digest(candidate),'patch_sha256':module.digest(patch),'candidate_directory':directory}))

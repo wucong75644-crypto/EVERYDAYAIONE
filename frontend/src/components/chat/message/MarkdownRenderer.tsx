@@ -17,6 +17,8 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import CodeBlock from './CodeBlock';
+import SearchSources from './SearchSources';
+import { splitSearchSources } from './parseSearchSources';
 import { escapeChineseMath } from '../../../utils/markdownPreprocess';
 import { rehypeInlinePresentation } from '../../../utils/rehypeInlinePresentation';
 import { presentationColorProps } from '../../../utils/messagePresentation';
@@ -196,7 +198,8 @@ export default memo(function MarkdownRenderer({
   animateInitial = false,
   className = '',
 }: MarkdownRendererProps) {
-  const content = useStreamingText(receivedContent, isStreaming, streamingBaseline, streamingSegment, animateInitial);
+  const displayedContent = useStreamingText(receivedContent, isStreaming, streamingBaseline, streamingSegment, animateInitial);
+  const { body: content, sources } = useMemo(() => splitSearchSources(displayedContent, isStreaming || displayedContent.length < receivedContent.length), [displayedContent, isStreaming, receivedContent.length]);
   // 检测内容是否包含 Markdown 语法特征
   const hasMarkdown = useMemo(() => {
     if (!content) return false;
@@ -219,6 +222,7 @@ export default memo(function MarkdownRenderer({
     return (
       <div className={`text-[15px] leading-relaxed whitespace-pre-wrap ${className}`}>
         {trimmed}
+        {sources.length > 0 && <SearchSources sources={sources} />}
       </div>
     );
   }
@@ -232,6 +236,7 @@ export default memo(function MarkdownRenderer({
       >
         {processedContent}
       </Markdown>
+      {sources.length > 0 && <SearchSources sources={sources} />}
     </div>
   );
 });

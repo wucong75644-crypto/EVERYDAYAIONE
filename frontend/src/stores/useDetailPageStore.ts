@@ -37,6 +37,7 @@ let settingsTimer: ReturnType<typeof setTimeout> | null=null;
 let pollTimer: ReturnType<typeof setTimeout> | null=null;
 let saving: Promise<void>=Promise.resolve();
 let lifecycleVersion=0;
+let detailRefreshVersion=0, listRefreshVersion=0;
 let createRequestId: string|null=null;
 let listTimer: ReturnType<typeof setTimeout>|null=null;
 const runRequests=new Map<string,string>();
@@ -175,28 +176,30 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
     finally{if(valid(epoch))set({isLoadingTasks:false});}
   },
   refreshTasks:async()=>{
-    const epoch=lifecycleVersion;
+    const epoch=lifecycleVersion, request=++listRefreshVersion;
+    const current=()=>valid(epoch)&&request===listRefreshVersion;
     try{
-      const first=await listDetailProjects();if(!valid(epoch))return;
+      const first=await listDetailProjects();if(!current())return;
       const loaded=get().tasks.filter(t=>!first.items.some(item=>item.id===t.id));
       const active=loaded.filter(t=>!['draft','completed','failed','archived'].includes(t.status));
       const updates:DetailTaskSummary[]=[];
-      for(let i=0;i<active.length;i+=100){updates.push(...await refreshDetailTaskStatuses(active.slice(i,i+100).map(t=>t.id)));if(!valid(epoch))return;}
+      for(let i=0;i<active.length;i+=100){updates.push(...await refreshDetailTaskStatuses(active.slice(i,i+100).map(t=>t.id)));if(!current())return;}
       set({tasks:[...first.items,...get().tasks.filter(t=>!first.items.some(item=>item.id===t.id)).map(t=>updates.find(u=>u.id===t.id)??t)]
         .sort((a,b)=>b.created_at.localeCompare(a.created_at)||b.id.localeCompare(a.id)),
         taskCursor:loaded.length?get().taskCursor:first.next_cursor,taskError:null});
-    }catch(error){if(valid(epoch))set({taskError:toApiRequestError(error).message});}
-    finally{if(valid(epoch))scheduleListPoll();}
+    }catch(error){if(current())set({taskError:toApiRequestError(error).message});}
+    finally{if(current())scheduleListPoll();}
   },
   refresh:async()=>{
-    const {projectId}=get();const epoch=lifecycleVersion;if(!projectId)return;
+    const {projectId}=get();const epoch=lifecycleVersion, request=++detailRefreshVersion;if(!projectId)return;
+    const current=()=>valid(epoch,projectId)&&request===detailRefreshVersion;
     try{const project=await getDetailProject(projectId);
-      if(epoch!==lifecycleVersion)return;
+      if(!current())return;
       if(project&&!get().isTransitioning&&!get().isMutating)set({status:project.status??'draft',groups:project.groups??[],
         runs:project.runs??[],currentRunId:project.run_state?.run_id??null,
         ...(savedRevision===formRevision?{projectVersion:Math.max(get().projectVersion??0,project.version)}:{}),formError:null});
-    }catch(error){if(epoch!==lifecycleVersion)return;set({formError:toApiRequestError(error).message});}
-    schedulePoll();
+    }catch(error){if(!current())return;set({formError:toApiRequestError(error).message});}
+    if(current())schedulePoll();
   },
   attachWorkspaceImages: async (category, paths) => {
     if(get().isUploading||get().isTransitioning||get().isMutating||!EDITABLE_STATUSES.includes(get().status)||!get().projectId)return;

@@ -304,4 +304,6 @@ B站二维码及轮询使用固定passport端点；兼容URL参数和逐条Set-C
 
 本次验证：85项Python定向测试通过，覆盖REST认证与工具执行链、分页/游标、笔记读取回归、限频准入和候选安装回滚。固定Go源码应用补丁后，通过搜索页面就绪、待扫码状态、商品参数/错误解析及新路由鉴权测试，构建成功。新商品handler通过既有账号锁和预算实测店铺第1/2页各10件，共20个SKU无重复，reported_total=555；两个商品详情分别sold=164与sold=null，到手价均16.8。未重新遍历555件目录、未部署线上。
 
-待发布候选暂存于服务器 `/tmp/xhs-commerce-candidate/xiaohongshu-mcp`，SHA256为 `60386986a43ad86b152b22598ebc9c17a9917df8a8c8edad039e03bbadd3f24a`。用户授权提交部署时，先按清单校验并将候选放到安装器要求的 `/opt/everydayai-xhs-a5c8f779/commerce-fix-candidate/xiaohongshu-mcp`，再执行受控release流程；不能部署Python新路由而漏装浏览器后端候选。
+待发布候选暂存于服务器 `/tmp/xhs-commerce-candidate/xiaohongshu-mcp`，SHA256为 `1bf487dba50e2a13760684bcd87dac4c2e731a2f3931483aace0d47b4291bfc2`。用户授权提交部署时，先按清单校验并将候选放到安装器要求的 `/opt/everydayai-xhs-a5c8f779/commerce-fix-candidate/xiaohongshu-mcp`，再执行受控release流程；不能部署Python新路由而漏装浏览器后端候选。
+
+发布前同步main的查询超时修复后，保留搜索60秒加载预算并重建商品候选；合并候选96项定向测试通过。

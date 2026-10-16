@@ -34,7 +34,7 @@ def main():
         print('XHS_LOGIN_FIX status=already_installed')
         return
     candidate_directory = manifest.get('candidate_directory', 'login-fix-candidate')
-    if candidate_directory not in {'login-fix-candidate', 'search-fix-candidate', 'commerce-fix-candidate'}:
+    if candidate_directory not in {'login-fix-candidate', 'search-fix-candidate', 'commerce-fix-candidate', 'query-timeout-candidate'}:
         raise RuntimeError('Invalid XHS candidate directory')
     candidate = ROOT/candidate_directory/'xiaohongshu-mcp'
     if digest(candidate) != manifest['sha256']:

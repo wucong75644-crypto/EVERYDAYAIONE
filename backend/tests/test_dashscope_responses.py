@@ -186,7 +186,7 @@ async def test_chat_engine_projects_builtin_progress_sources_and_cache_without_l
     totals = StreamTotals(); blocks = []
     text, thinking, calls, previews = await _read_turn(prepared, [], asyncio.Event(), sink, totals, blocks, None)
     assert calls == [] and previews == set() and thinking == ""
-    assert "https://example.com/doc" in text and "未与正文逐句对应" in text
+    assert "[doc](<https://example.com/doc>)" in text and "未与正文逐句对应" in text
     assert len(blocks) == 1 and blocks[0]["status"] == "completed"
     sink.on_block.assert_awaited_once(); sink.on_block_update.assert_awaited_once()
     assert totals.usage == {"prompt_tokens": 2000, "completion_tokens": 12, "cached_tokens": 1800, "cache_creation_input_tokens": 200, "web_search_calls": 1}
@@ -238,3 +238,10 @@ async def test_http_200_error_frame_preserves_provider_error():
         assert not raised.value.request_rejected
     finally:
         await adapter.close()
+
+
+def test_source_text_preserves_literal_titles():
+    from services.handlers.chat.builtin_tools import source_text
+    text = source_text({"https://example.com": "案例[一]\n下一行"})
+    assert "案例\\[一\\] 下一行" in text
+    assert "(<https://example.com>)" in text
