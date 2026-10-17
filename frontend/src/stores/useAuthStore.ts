@@ -9,6 +9,7 @@ import { useSubscriptionStore } from './useSubscriptionStore';
 import { useMemoryStore } from './useMemoryStore';
 import { useMessageStore } from './useMessageStore';
 import { logger } from '../utils/logger';
+import { rememberActiveOrganization, rememberOrganization } from '../utils/organizationPreference';
 
 interface AuthState {
   user: User | null;
@@ -39,6 +40,23 @@ export const useAuthStore = create<AuthState>((set) => ({
   organizations: [],
 
   setUser: (user) => {
+    const previous = localStorage.getItem('user');
+    if (user) {
+      let previousId: string | undefined;
+      try { previousId = JSON.parse(previous || 'null')?.id; } catch { /* Untrusted prior identity. */ }
+      if (previousId !== user.id) {
+        rememberActiveOrganization();
+        localStorage.removeItem('current_org_id');
+        localStorage.removeItem('current_org');
+        localStorage.removeItem('login_org_id');
+        localStorage.removeItem('everydayai_conversations_cache');
+        localStorage.removeItem('everydayai_message_cache');
+        useSubscriptionStore.getState().clearSubscriptions();
+        useMemoryStore.getState().reset();
+        useMessageStore.getState().reset();
+        set({ currentOrgId: null, currentOrg: null, organizations: [] });
+      }
+    }
     if (user) {
       localStorage.setItem('user', JSON.stringify(user));
     } else {
@@ -57,6 +75,12 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   setCurrentOrg: (org) => {
+    try {
+      const user = JSON.parse(localStorage.getItem('user') || 'null');
+      if (typeof user?.id === 'string') rememberOrganization(user.id, org?.org_id ?? null);
+    } catch { /* No trusted cached account to bind this preference to. */ }
+    if (org) localStorage.setItem('login_org_id', org.org_id);
+    else localStorage.removeItem('login_org_id');
     if (org) {
       localStorage.setItem('current_org_id', org.org_id);
       localStorage.setItem('current_org', JSON.stringify(org));
@@ -74,6 +98,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   clearAuth: () => {
+    rememberActiveOrganization();
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');

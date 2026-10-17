@@ -12,6 +12,7 @@ import axios from 'axios';
 import { API_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/useAuthStore';
 import { logger } from './logger';
+import { rememberActiveOrganization } from './organizationPreference';
 
 function isDefinitiveRefreshRejection(error: unknown): boolean {
   if (typeof axios.isAxiosError !== 'function' || !axios.isAxiosError(error)) return false;
@@ -60,65 +61,83 @@ function subscribeTokenRefresh(): Promise<string> {
  *
  * @returns 新的 access_token（或抛错触发登出）
  */
-export async function silentRefresh(): Promise<string> {
-  // 已有刷新在进行 → 排队等待
-  if (isRefreshing) {
-    return subscribeTokenRefresh();
-  }
+function accountId(): string | null {
+  try { return JSON.parse(localStorage.getItem('user') || 'null')?.id ?? null; }
+  catch { return null; }
+}
 
+function newerAccessToken(refreshToken: string, userId: string | null): string | null {
+  if (accountId() !== userId) return null;
+  const currentRefresh = localStorage.getItem('refresh_token');
+  return currentRefresh && currentRefresh !== refreshToken ? localStorage.getItem('access_token') : null;
+}
+
+async function coordinateRefresh<T>(run: () => Promise<T>): Promise<T> {
+  // Web Locks coordinate the shared localStorage credentials across tabs/windows.
+  if (typeof navigator !== 'undefined' && navigator.locks?.request) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    try {
+      return await navigator.locks.request('everydayai:token-refresh', { signal: controller.signal }, async () => {
+        clearTimeout(timeout);
+        return run();
+      });
+    } finally { clearTimeout(timeout); }
+  }
+  return run();
+}
+
+export async function silentRefresh(): Promise<string> {
+  if (isRefreshing) return subscribeTokenRefresh();
   const refreshToken = localStorage.getItem('refresh_token');
   if (!refreshToken) {
     logoutOnce();
     throw new Error('No refresh token');
   }
-
+  const userId = accountId();
   isRefreshing = true;
-
   try {
-    // 直接用 axios 发请求（绕过拦截器，避免死循环）
-    const resp = await axios.post(
-      `${API_BASE_URL}/auth/refresh`,
-      { refresh_token: refreshToken },
-      { timeout: 10000 },
-    );
-
-    const { token } = resp.data;
-    const newAccessToken: string = token.access_token;
-    const newRefreshToken: string = token.refresh_token;
-
-    // 更新存储
-    localStorage.setItem('access_token', newAccessToken);
-    localStorage.setItem('refresh_token', newRefreshToken);
-
-    // 同步 Zustand（如果 store 已初始化）
-    try {
-      useAuthStore.getState().setToken(newAccessToken);
-    } catch {
-      // store 未初始化时忽略
+    let newAccessToken = await coordinateRefresh(async () => {
+      const existing = newerAccessToken(refreshToken, userId);
+      if (existing) return existing;
+      if (accountId() !== userId || localStorage.getItem('refresh_token') !== refreshToken) {
+        throw new Error('Session changed during refresh');
+      }
+      try {
+        const resp = await axios.post(`${API_BASE_URL}/auth/refresh`,
+          { refresh_token: refreshToken }, { timeout: 10000 });
+        // Logout, another tab, or another login may have replaced this session.
+        if (accountId() !== userId || localStorage.getItem('refresh_token') !== refreshToken) {
+          const newer = newerAccessToken(refreshToken, userId);
+          if (newer) return newer;
+          throw new Error('Session changed during refresh');
+        }
+        const { token } = resp.data;
+        localStorage.setItem('access_token', token.access_token);
+        localStorage.setItem('refresh_token', token.refresh_token);
+        return token.access_token as string;
+      } catch (err) {
+        // A rejected old token must never log out a newer session in another tab.
+        const newer = newerAccessToken(refreshToken, userId);
+        if (newer) return newer;
+        if (isDefinitiveRefreshRejection(err) && accountId() === userId &&
+            localStorage.getItem('refresh_token') === refreshToken) logoutOnce();
+        throw err;
+      }
+    });
+    if (accountId() !== userId || !localStorage.getItem('access_token')) {
+      throw new Error('Session changed during refresh');
     }
-
+    newAccessToken = localStorage.getItem('access_token')!;
+    try { useAuthStore.getState().setToken(newAccessToken); } catch { /* Uninitialized store. */ }
     logger.info('auth:refresh', 'Token refreshed silently');
-
-    // 通知队列中的请求
     onRefreshed(newAccessToken);
-
     return newAccessToken;
   } catch (err) {
-    const shouldLogout = isDefinitiveRefreshRejection(err);
-    logger.warn(
-      'auth:refresh',
-      shouldLogout
-        ? 'Refresh token rejected, logging out'
-        : 'Refresh temporarily unavailable, preserving session',
-    );
+    logger.warn('auth:refresh', 'Refresh did not complete; unchanged rejected credentials require login');
     onRefreshFailed(err instanceof Error ? err : new Error('Refresh failed'));
-    if (shouldLogout) {
-      logoutOnce();
-    }
     throw err;
-  } finally {
-    isRefreshing = false;
-  }
+  } finally { isRefreshing = false; }
 }
 
 // ── 统一登出（防重复） ──────────────────────────────────
@@ -137,8 +156,10 @@ export function logoutOnce() {
   isLoggingOut = true;
 
   const loginOrgId =
-    localStorage.getItem('login_org_id') ||
-    localStorage.getItem('current_org_id');
+    localStorage.getItem('current_org_id') ||
+    localStorage.getItem('login_org_id');
+
+  rememberActiveOrganization();
 
   // 先更新 Zustand 状态（触发 UI 响应）
   try {

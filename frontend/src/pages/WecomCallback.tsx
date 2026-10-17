@@ -7,7 +7,9 @@
 
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useAuthStore } from '../stores/useAuthStore';
+import { stageLogin, resolveLoginOrganization, completeLogin } from '../utils/loginOrganization';
+import LoginOrganizationChoice from '../components/auth/LoginOrganizationChoice';
+import type { Organization } from '../types/auth';
 import type { User, TokenInfo } from '../types/auth';
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -21,7 +23,8 @@ const ERROR_MESSAGES: Record<string, string> = {
 export default function WecomCallback() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { setTokens, setUser, setCurrentOrg } = useAuthStore();
+  const [pendingUser, setPendingUser] = useState<User | null>(null);
+  const [choices, setChoices] = useState<Organization[] | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -38,34 +41,43 @@ export default function WecomCallback() {
 
     // 成功情况
     if (tokenB64 && userB64) {
-      try {
-        const tokenData: TokenInfo = JSON.parse(atob(tokenB64));
-        const userData: User = JSON.parse(atob(userB64));
+      let cancelled = false;
+      void (async () => {
+        try {
+          const tokenData: TokenInfo = JSON.parse(atob(tokenB64));
+          const userData: User = JSON.parse(atob(userB64));
 
-        setTokens(tokenData.access_token, tokenData.refresh_token);
-        setUser(userData);
+          stageLogin(tokenData);
+          setPendingUser(userData);
+          const orgB64 = searchParams.get('org');
+          const explicitOrg = orgB64 ? JSON.parse(atob(orgB64)).org_id : undefined;
+          const resolution = await resolveLoginOrganization(userData.id, explicitOrg);
+          if (cancelled) return;
+          if (resolution.needsChoice) {
+            setChoices(resolution.choices);
+            return;
+          }
+          completeLogin(userData, resolution.organization);
 
-        // 自动切入企业（如果有 org 参数）
-        const orgB64 = searchParams.get('org');
-        if (orgB64) {
-          try {
-            const orgData = JSON.parse(atob(orgB64));
-            setCurrentOrg(orgData);
-            localStorage.setItem('login_org_id', orgData.org_id);
-          } catch { /* ignore invalid org data */ }
+          // 跳转到首页（与密码/验证码登录一致，用户手动点"开始聊天"进入）
+          const loginOrgId = localStorage.getItem('login_org_id');
+          navigate(loginOrgId ? `/?org=${loginOrgId}` : '/', { replace: true });
+        } catch {
+          if (!cancelled) setError('无法完成登录或恢复原企业，请重试；未进入个人空间。');
         }
-
-        // 跳转到首页（与密码/验证码登录一致，用户手动点"开始聊天"进入）
-        const loginOrgId = localStorage.getItem('login_org_id');
-        navigate(loginOrgId ? `/?org=${loginOrgId}` : '/', { replace: true });
-      } catch {
-        setError('登录数据解析失败，请重试');
-      }
-      return;
+      })();
+      return () => { cancelled = true; };
     }
 
     setError('无效的回调参数');
-  }, [searchParams, setTokens, setUser, navigate]);
+  }, [searchParams, navigate]);
+
+  if (choices && pendingUser) {
+    return <LoginOrganizationChoice organizations={choices} onChoose={org => {
+      completeLogin(pendingUser, org);
+      navigate(org ? `/?org=${org.org_id}` : '/', { replace: true });
+    }} />;
+  }
 
   if (!error) {
     return (
@@ -75,7 +87,7 @@ export default function WecomCallback() {
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
-          <p className="text-text-tertiary">登录成功，正在跳转...</p>
+          <p className="text-text-tertiary">正在验证登录与企业信息...</p>
         </div>
       </div>
     );

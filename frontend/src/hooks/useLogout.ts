@@ -11,8 +11,8 @@ export function useLogout() {
   const { clearAuth } = useAuthStore();
 
   return () => {
-    // 优先用 login_org_id，兜底用 current_org_id
-    const orgId = localStorage.getItem('login_org_id') || localStorage.getItem('current_org_id');
+    // 优先保留当前企业，缺失时使用登录来源
+    const orgId = localStorage.getItem('current_org_id') || localStorage.getItem('login_org_id');
 
     // 通知后端吊销 refresh token（fire-and-forget，不阻塞退出）
     const refreshToken = localStorage.getItem('refresh_token');

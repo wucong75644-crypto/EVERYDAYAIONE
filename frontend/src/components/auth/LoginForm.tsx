@@ -9,7 +9,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useCountdown } from '../../hooks/useCountdown';
 import { useAuthStore } from '../../stores/useAuthStore';
-import { sendCode, loginByPhone, loginByPassword, loginByOrg, getOrgNamePublic, listMyOrganizations } from '../../services/auth';
+import { sendCode, loginByPhone, loginByPassword, loginByOrg, getOrgNamePublic } from '../../services/auth';
+import { stageLogin, resolveLoginOrganization, completeLogin } from '../../utils/loginOrganization';
+import LoginOrganizationChoice from './LoginOrganizationChoice';
+import type { Organization, User } from '../../types/auth';
 import type { ApiErrorResponse } from '../../types/auth';
 import { AxiosError } from 'axios';
 import WecomQrLogin from './WecomQrLogin';
@@ -31,6 +34,8 @@ export default function LoginForm({
   orgId,
 }: LoginFormProps) {
   const { setUser, setTokens, setCurrentOrg } = useAuthStore();
+  const [pendingUser, setPendingUser] = useState<User | null>(null);
+  const [choices, setChoices] = useState<Organization[] | null>(null);
 
   const [loginMode, setLoginMode] = useState<LoginMode>(orgId ? 'password' : 'password');
   const [phone, setPhone] = useState('');
@@ -133,6 +138,7 @@ export default function LoginForm({
     setLoading(true);
     setError('');
 
+    let restoringOrganization = false;
     try {
       if (loginMode === 'enterprise') {
         const response = await loginByOrg({
@@ -152,41 +158,39 @@ export default function LoginForm({
           loginMode === 'password'
             ? await loginByPassword({ phone, password })
             : await loginByPhone({ phone, code });
-        setTokens(response.token.access_token, response.token.refresh_token);
-        setUser(response.user);
-
-        // 企业专属链接：登录后自动切入企业
-        if (orgId) {
-          try {
-            const orgs = await listMyOrganizations();
-            const targetOrg = orgs.find((o) => o.org_id === orgId);
-            if (targetOrg) {
-              setCurrentOrg(targetOrg);
-            }
-          } catch { /* 查不到企业不影响登录 */ }
-        } else {
-          // 普通登录 — 清除可能残留的企业上下文
-          setCurrentOrg(null);
+        restoringOrganization = true;
+        stageLogin(response.token);
+        setPendingUser(response.user);
+        const resolution = await resolveLoginOrganization(response.user.id, orgId);
+        if (resolution.needsChoice) {
+          setChoices(resolution.choices);
+          return;
         }
+        completeLogin(response.user, resolution.organization);
       }
 
       // 记住手机号 + 企业来源（退出时跳回企业登录页）
       localStorage.setItem('last_login_phone', phone);
-      if (orgId) {
-        localStorage.setItem('login_org_id', orgId);
-      } else {
-        localStorage.removeItem('login_org_id');
-      }
+      const activeOrg = useAuthStore.getState().currentOrgId;
+      if (activeOrg) localStorage.setItem('login_org_id', activeOrg);
+      else localStorage.removeItem('login_org_id');
 
       // 触发成功回调
       onSuccess?.();
     } catch (err) {
       const error = err as AxiosError<ApiErrorResponse>;
-      setError(error.response?.data?.error?.message || '登录失败，请重试');
+      setError(restoringOrganization ? '账号已验证，但企业信息暂时无法加载。请重试登录，未进入个人空间。' : error.response?.data?.error?.message || '登录失败，请重试');
     } finally {
       setLoading(false);
     }
   };
+
+  if (choices && pendingUser) {
+    return <LoginOrganizationChoice organizations={choices} onChoose={org => {
+      completeLogin(pendingUser, org);
+      onSuccess?.();
+    }} />;
+  }
 
   // 企微扫码模式：显示二维码组件
   if (loginMode === 'wecom') {

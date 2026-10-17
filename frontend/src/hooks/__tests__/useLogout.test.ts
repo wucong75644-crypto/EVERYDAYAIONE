@@ -40,7 +40,7 @@ beforeEach(() => {
 });
 
 describe('useLogout', () => {
-  it('有 login_org_id 时跳转到企业登录页', () => {
+  it('当前企业优先于旧登录来源', () => {
     localStorage.setItem('login_org_id', 'org-123');
     localStorage.setItem('current_org_id', 'org-456');
 
@@ -48,7 +48,7 @@ describe('useLogout', () => {
     logout();
 
     expect(mockClearAuth).toHaveBeenCalledOnce();
-    expect(capturedHref).toBe('/?org=org-123');
+    expect(capturedHref).toBe('/?org=org-456');
   });
 
   it('无 login_org_id 但有 current_org_id 时兜底跳转企业登录页', () => {
