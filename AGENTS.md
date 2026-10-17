@@ -1,5 +1,7 @@
 # EVERYDAYAIONE 协作约束
 
+先读取仓库内的 [共同协作规则](docs/development/COLLABORATION.md)。本地和云端均以此文件为共同规则来源；技能位于 `.agents/skills/`。
+
 ## 任务边界
 
 - 每个 Codex 对话对应一个独立任务工作树，任务分支必须是 `codex/task/*`。
@@ -23,3 +25,11 @@
 ## 已撤销的集成
 
 - 本项目及所有任务工作树不再使用 AOCI，不接入 MCP，不执行索引读取、维护、启动或发布核验。历史文档中的接入要求已撤销。
+
+## 云端开发
+
+- 云端只开发和测试，生产发布、验收合并和关闭在本地执行；不要上传 `deploy/config.env`、生产 `.env`、SSH 私钥或生产数据。
+- 每个云端任务首次修改前运行 `./scripts/task-worktree.sh start <slug> --development-only`，切换到输出路径。继续任务复用原工作树；不能使用其他任务的分支。
+- 环境安装入口：`bash scripts/cloud/setup.sh`；任务工作树内配置及启动流程见 [云端开发指南](docs/development/CLOUD.md)。
+- 不自动执行数据库迁移、导入或种子数据；只连接独立开发数据库、Redis 和开发服务。
+- 云端交付记录任务分支、提交 SHA、验证结果和未完成项；推送须有用户授权。本地接续同一任务分支，沿用受控发布入口。

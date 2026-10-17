@@ -22,13 +22,14 @@ info() {
 usage() {
     cat <<'EOF'
 用法：
-  ./scripts/task-worktree.sh start <slug> [--base origin/main] [--path PATH]
+  ./scripts/task-worktree.sh start <slug> [--base origin/main] [--path PATH] [--development-only]
   ./scripts/task-worktree.sh sync-stable-base --commit <origin-main-sha> [--exclude-path PATH]
   ./scripts/task-worktree.sh close --current --confirm
   ./scripts/task-worktree.sh close --path PATH --confirm
 
 约束：
   start 从最新 origin/main 创建 codex/task/* 分支，并记录其稳定基座。
+  --development-only 不要求或复制 deploy/config.env，适用于云端纯开发任务。
   sync-stable-base 只更新活跃 codex/task/* 工作树的本地基座元数据，不改代码。
   close 只接受 codex/task/* 分支、干净工作树和明确 --confirm；
   删除本地工作树及本地分支，但保留远程分支和 Git 历史。
@@ -72,8 +73,13 @@ start_task() {
 
     local base_ref='origin/main'
     local requested_path=''
+    local development_only=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --development-only)
+                development_only=true
+                shift
+                ;;
             --base)
                 [[ $# -ge 2 ]] || fail "--base 缺少参数"
                 base_ref=$2
@@ -94,8 +100,9 @@ start_task() {
     root=$(repo_root)
     main_root=$(main_worktree_root "$root")
     config_file="$main_root/deploy/config.env"
-    [[ -f "$config_file" ]] \
-        || fail "主工作树缺少 deploy/config.env，无法创建可部署任务：$config_file"
+    if [[ "$development_only" == false && ! -f "$config_file" ]]; then
+        fail "主工作树缺少 deploy/config.env；纯开发任务请使用 --development-only"
+    fi
 
     git -C "$root" fetch --prune origin main >/dev/null \
         || fail "无法同步 origin/main，拒绝从可能过期的代码创建任务工作树"
@@ -113,13 +120,15 @@ start_task() {
     mkdir -p "$(dirname "$path")"
     git -C "$root" worktree add -b "$branch" "$path" "$base_commit" >/dev/null
 
-    if ! cp "$config_file" "$path/deploy/config.env"; then
-        git -C "$root" worktree remove --force "$path" >/dev/null 2>&1 || true
-        fail "无法复制主工作树 deploy/config.env，任务工作树未创建：$path"
-    fi
-    if ! chmod 600 "$path/deploy/config.env"; then
-        git -C "$root" worktree remove --force "$path" >/dev/null 2>&1 || true
-        fail "无法设置任务工作树 deploy/config.env 权限，任务工作树未创建：$path"
+    if [[ "$development_only" == false ]]; then
+        if ! cp "$config_file" "$path/deploy/config.env"; then
+            git -C "$root" worktree remove --force "$path" >/dev/null 2>&1 || true
+            fail "无法复制主工作树 deploy/config.env，任务工作树未创建：$path"
+        fi
+        if ! chmod 600 "$path/deploy/config.env"; then
+            git -C "$root" worktree remove --force "$path" >/dev/null 2>&1 || true
+            fail "无法设置任务工作树 deploy/config.env 权限，任务工作树未创建：$path"
+        fi
     fi
 
     set_stable_base "$root" "$path" "$base_commit"

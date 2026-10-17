@@ -78,3 +78,8 @@ frontend/coverage/
 outputs/
 tmp/
 worktrees/
+
+# Task-local cloud development configuration, workspace and logs
+.cloud-dev/
+.env.*
+**/.env.*

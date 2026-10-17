@@ -201,3 +201,23 @@ chmod +x scripts/**/*.py
 ---
 
 **最后更新**: 2026-03-08
+
+## Codex 云端开发
+
+依赖准备：`bash scripts/cloud/setup.sh`。云端创建任务使用 `task-worktree.sh start <slug> --development-only`，不要求或复制生产部署配置。完整配置、启动和本地接续见 [云端开发指南](../docs/development/CLOUD.md)。
+
+## 仅提交推送（不部署）
+
+在独立 `codex/task/*` 工作树内执行：
+
+```bash
+./git-push.sh --message "chore: describe task" --file path/to/file --file path/to/another-file
+```
+
+只暂存明确的文件（支持删除），拒绝目录、通配路径、符号链接、敏感配置及生成目录；存在已暂存内容时停止并保留现场。只推送当前任务分支，核验 origin 的分支 SHA，不合并、不部署、不清理。路径与凭据特征检查不能替代提交前的 diff 审查。
+
+若提交成功但推送失败，保留提交，核验后使用相同文件清单重试，不创建重复提交：
+
+```bash
+./git-push.sh --push-commit <当前HEAD完整SHA> --file path/to/file --file path/to/another-file
+```
