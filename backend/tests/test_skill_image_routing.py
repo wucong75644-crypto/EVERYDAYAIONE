@@ -10,6 +10,7 @@ import pytest
 
 from services.agent.image.ecommerce_planner.workflow import EcommerceWorkflow, WorkflowBinding, classify_workflow
 from tests.test_skill_runtime import Source, item, state, activate
+from tests.tool_context_test_utils import parse_json_tool_content
 
 
 async def test_exit_optional_method_recomputes_remaining_scope_and_replays():
@@ -184,6 +185,6 @@ async def test_exit_batch_defers_generation_and_keeps_explicit_host_ceiling():
     h._execute_tool_calls.assert_not_awaited()
     assert p.execution_context.authorized_tool_names == {'file_search', 'web_search'}
     assert 'file_delete' not in p.execution_context.authorized_tool_names
-    results = {m['tool_call_id']: json.loads(m['content']) for m in p.messages if m['role'] == 'tool'}
+    results = {m['tool_call_id']: parse_json_tool_content(m['content']) for m in p.messages if m['role'] == 'tool'}
     assert results['business']['code'] == 'SKILL_ACTIVATION_BARRIER'
     assert results['exit']['code'] == 'SKILL_DEACTIVATED'

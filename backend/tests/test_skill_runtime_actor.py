@@ -22,6 +22,7 @@ from services.tools import build_legacy_catalog
 from services.tools.runtime_context import catalog_context
 from tests.test_chat_execution_engine import _request
 from tests.test_skill_runtime import Source, activate, state
+from tests.tool_context_test_utils import parse_json_tool_content
 
 
 def prepared():
@@ -159,7 +160,7 @@ async def test_activation_barrier_blocks_every_business_call_even_when_activatio
     p = prepared()
     h, blocks = await batch(runtime, p, list(reversed(calls)) if reverse else calls)
     h._execute_tool_calls.assert_not_awaited()
-    results = {m["tool_call_id"]: json.loads(m["content"]) for m in p.messages if m["role"] == "tool"}
+    results = {m["tool_call_id"]: parse_json_tool_content(m["content"]) for m in p.messages if m["role"] == "tool"}
     assert results["business"] == {"ok": False, "code": "SKILL_ACTIVATION_BARRIER", "message": "请下一轮重新请求"}
     assert results["activate-1"]["ok"] is valid
     assert all(b["status"] != "running" for b in blocks)
@@ -173,7 +174,7 @@ async def test_duplicate_activate_in_same_batch_is_idempotent():
     await batch(runtime, p, [call(), call(id="activate-2")])
     runtime.skill_runtime.source.load.assert_awaited_once()
     assert len([m for m in p.messages if "Turn Skill instructions" in (m.get("content") or "")]) == 1
-    assert json.loads([m for m in p.messages if m["role"] == "tool"][1]["content"])["code"] == "SKILL_ALREADY_ACTIVE"
+    assert parse_json_tool_content([m for m in p.messages if m["role"] == "tool"][1]["content"])["code"] == "SKILL_ALREADY_ACTIVE"
 
 
 async def test_next_model_round_readvertises_and_passes_narrowed_scope_to_execution(monkeypatch):
@@ -267,7 +268,7 @@ async def test_disabled_actor_never_advertises_or_dispatches_control_calls(monke
     assert seen == ["file_search", "web_search"]
     await batch(runtime, p, [call()], h)
     h._execute_tool_calls.assert_not_awaited()
-    assert json.loads([m for m in p.messages if m["role"] == "tool"][-1]["content"])["code"] == "SKILL_RUNTIME_DISABLED"
+    assert parse_json_tool_content([m for m in p.messages if m["role"] == "tool"][-1]["content"])["code"] == "SKILL_RUNTIME_DISABLED"
 
 
 async def test_execute_chat_restores_before_model_and_closes_gateway_on_invalid_revision(monkeypatch):

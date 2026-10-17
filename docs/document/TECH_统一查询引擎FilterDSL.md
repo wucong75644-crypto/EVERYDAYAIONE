@@ -77,6 +77,7 @@
 | field 名不在列白名单中 | 返回错误提示：列出可用字段，让模型重试 | UnifiedQueryEngine._validate_filters() |
 | op 与列类型不兼容（如 text 列用 gt） | 返回错误提示：说明该列支持的 op | UnifiedQueryEngine._validate_filters() |
 | value 类型与列类型不匹配（如 integer 列传 string） | 尝试自动转换（int()/float()），失败则返回错误 | UnifiedQueryEngine._validate_filters() |
+| 数字标记筛选（如 is_scalping） | 统一入口将布尔值及字符串 true/false 转为整数 1/0；数值字符串按列类型转换，非法数值在查询前返回字段错误。数组逐项转换，is_null 保留空值判断语义 | erp_unified_filters.validate_filters() |
 | 查询结果为空 | 附加 sync_health 检查 + 提示 | 所有模式 |
 | detail 模式结果超过 limit | 严格截断 + 提示"仅显示前N条" | _detail() |
 | export 模式数据量超大（>10000行） | 硬限制 max_rows=10000 + 提示 | _export() |

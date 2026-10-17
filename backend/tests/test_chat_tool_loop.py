@@ -31,7 +31,7 @@ def _delivery() -> StreamDelivery:
     )
 
 
-def test_prepare_tool_turn_appends_context_and_permission_prompts() -> None:
+def test_prepare_tool_turn_only_appends_permission_prompts() -> None:
     messages: list[dict] = []
     context = SimpleNamespace(
         discovered_tools=set(),
@@ -57,7 +57,6 @@ def test_prepare_tool_turn_appends_context_and_permission_prompts() -> None:
 
     assert result == tools
     assert [message["content"] for message in messages] == [
-        "动态上下文",
         "退出附件",
         "权限提醒",
     ]
@@ -104,7 +103,7 @@ async def test_begin_and_apply_tool_results_preserve_protocol() -> None:
         messages=messages,
         content_blocks=blocks,
         start_times=start_times,
-        tool_context=MagicMock(),
+        tool_context=MagicMock(build_context_prompt=lambda: None),
     )
     await asyncio.sleep(0)
 
