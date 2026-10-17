@@ -12,6 +12,8 @@
 
 安装入口不安装系统运行时；Python 默认读取 python3，可通过 CLOUD_PYTHON=python3.12 指定。Node 支持 22.12+ 或 20.19+；推荐 22。依赖沿用 frontend/package-lock.json 和 backend/requirements.txt，不另建易失真的依赖清单。
 
+完整原生开发模式使用 `CLOUD_PYTHON=python3.12 bash scripts/cloud/setup.sh --with-services`。Python/Node 仍须预装；该显式选项额外校验并在工作区解包精确版本的 PostgreSQL 17、pgvector、Redis，创建任务私有 loopback 数据服务及经审计的空库 bootstrap。默认不带选项仍仅安装依赖。此路径不读取生产结构或数据，也不运行 production migration_runner。结构来源、失败/重试边界与验证见 [原生空库初始化](CLOUD_SCHEMA_BOOTSTRAP.md)。
+
 允许访问 npm/PyPI 包源及依赖下载域名；功能测试所需 API 逐项添加域名。环境变量在 Codex Environment variables 或个人 vault 中配置，HTTPS API 凭据可按云端支持情况使用 Network secrets。不要上传 deploy/config.env、生产 .env、SSH 密钥、用户数据或个人技能账号缓存。
 
 ## 每个开发任务
@@ -34,6 +36,20 @@ bash scripts/cloud/setup.sh
 完整后端需要 PostgreSQL（项目生产采用 16 + pgvector）和 Redis，必须使用独立开发实例、账号及开发数据，不连接生产。默认模板使用 loopback 地址和 Redis DB 15；更改为你的开发资源，并配置开发专用密码。Redis 逻辑 DB 不能代替实例或账号隔离。后端启动包含任务恢复及后台消费，不能用生产 Redis 或生产数据库试启动。
 
 数据库须先具备与任务代码匹配的结构和脱敏开发数据。仓库 deploy/init-database.sql 是历史合并基线，不能据此假定包含后续所有迁移；本适配不自动执行它或批量执行迁移。由维护者提供经批准、脱敏且结构匹配的开发快照，或在单独授权的开发数据库初始化任务中核验迁移链。没有数据资源仍可完成前端与 mock 单元测试。
+
+已选择完整原生环境时无需生产 dump 或快照：在任务目录执行 `setup.sh --with-services`，使用独立身份的 `scripts/cloud/bootstrap/schema.sql` 和纯仓库注册表元数据 `seed.sql` 初始化空库。每个任务目录获得独立 cluster、Redis 进程、密码和动态端口，状态在 `/workspace/.everydayaione-dev/instances/<任务路径散列>/`，配置写入本任务私有 `.env`。此开发 baseline 不声明任何历史迁移已应用；只在空库内原子提交自己的 receipt。重复执行仅核验，未知非空库或任何结构/权限漂移均拒绝。迁移账本、历史迁移 checksum 和生产门禁保持不变。
+
+发布不保留进程。完整启动顺序为：
+
+```bash
+.venv/bin/python scripts/cloud/services.py prepare "$PWD"
+.venv/bin/python scripts/cloud/dev.py check
+.venv/bin/python scripts/cloud/dev.py start
+# 在另一个终端进行真实 API 和后台观测：
+.venv/bin/python scripts/cloud/smoke.py
+```
+
+`smoke.py` 只连接本任务验证过的 loopback 库，生成合成用户、组织和对话，不调用任何外部 provider；因此其测试账号/数据仅保留在私有开发目录，不能加入补丁或 seed.sql。预检使用完整 catalog fingerprint（列、约束、函数体/签名、RLS、角色权限）而非三张表存在性。日志位于本任务 `.cloud-dev/`，应用日志也转入其私有子目录。
 
 检查及完整启动：
 

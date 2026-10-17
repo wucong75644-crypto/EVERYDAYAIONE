@@ -32,4 +32,5 @@
 - 每个云端任务首次修改前运行 `./scripts/task-worktree.sh start <slug> --development-only`，切换到输出路径。继续任务复用原工作树；不能使用其他任务的分支。
 - 环境安装入口：`bash scripts/cloud/setup.sh`；任务工作树内配置及启动流程见 [云端开发指南](docs/development/CLOUD.md)。
 - 不自动执行数据库迁移、导入或种子数据；只连接独立开发数据库、Redis 和开发服务。
+- 云环境已明确选择完整原生开发环境时，可显式使用 `CLOUD_PYTHON=python3.12 bash scripts/cloud/setup.sh --with-services`：仅对本任务 loopback 私有实例的全新空库执行经校验的开发 bootstrap。它不执行生产迁移、不导入数据、不写生产迁移账本；非空未知库或结构漂移必须拒绝，详见云端开发指南。
 - 云端交付记录任务分支、提交 SHA、验证结果和未完成项；推送须有用户授权。本地接续同一任务分支，沿用受控发布入口。

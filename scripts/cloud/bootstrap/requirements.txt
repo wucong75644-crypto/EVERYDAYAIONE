@@ -1,0 +1,2 @@
+# Only for maintaining/rebuilding the audited baseline, not application startup.
+pglast==8.6

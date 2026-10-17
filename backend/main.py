@@ -277,19 +277,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # NAS 替代后不再需要 staging 文件清理（NAS 容量充足）
 
-    # 清理过期的 pending_interaction（24h 过期）
-    try:
-        from datetime import datetime, timezone
-        expired = db.table("pending_interaction") \
-            .update({"status": "expired"}) \
-            .eq("status", "pending") \
-            .lt("expired_at", datetime.now(timezone.utc).isoformat()) \
-            .execute()
-        _expired_count = len(expired.data) if expired.data else 0
-        if _expired_count:
-            logger.info(f"Pending interaction cleanup | expired={_expired_count}")
-    except Exception as e:
-        logger.debug(f"Pending interaction cleanup skipped | error={e}")
+    # pending_interaction was retired by migration 112. Do not query its
+    # removed table during startup or recreate it in development bootstraps.
 
     worker = BackgroundTaskWorker(db)
     worker_task = asyncio.create_task(worker.start())

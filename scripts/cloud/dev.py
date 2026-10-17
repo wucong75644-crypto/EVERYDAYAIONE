@@ -63,10 +63,15 @@ assert "change-me" not in s.database_url, "Configure a development DATABASE_URL"
 from pathlib import Path
 assert Path(s.file_workspace_root).resolve().is_relative_to(Path.cwd().parent / ".cloud-dev"), "Use task-local file workspace"
 import psycopg
+from psycopg.conninfo import conninfo_to_dict
+assert conninfo_to_dict(s.database_url).get('host') in ('127.0.0.1','localhost'), "Cloud native development requires loopback PostgreSQL"
+assert s.redis_host in ('127.0.0.1','localhost'), "Cloud native development requires loopback Redis"
+assert not s.sandbox_enabled and not s.kb_enabled, "Disable sandbox and external knowledge loading"
+import sys
+sys.path.insert(0,str(Path.cwd().parent / 'scripts/cloud/bootstrap'))
+from apply import verify
 with psycopg.connect(s.database_url, connect_timeout=5) as conn:
-    with conn.cursor() as cur:
-        cur.execute("SELECT to_regclass('public.users'), to_regclass('public.tasks'), to_regclass('public.messages')")
-        assert all(cur.fetchone()), "Development schema missing; restore an approved sanitized development snapshot"
+    verify(conn)
 import redis
 assert redis.Redis.from_url(s.redis_url, socket_connect_timeout=5).ping()
 print("Development configuration, PostgreSQL schema and Redis checks passed")
@@ -118,13 +123,22 @@ def start(frontend_only: bool) -> None:
             commands.append(("backend", [sys.executable, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"], BACKEND, "http://127.0.0.1:8000/api/health", True))
         commands.append(("frontend", ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--strictPort"], ROOT / "frontend", "http://127.0.0.1:3000", False))
         for name, command, cwd, url, api in commands:
-            log = (STATE / f"{name}.log").open("a")
+            log_path = STATE / f"{name}.log"
+            offset = log_path.stat().st_size if log_path.exists() else 0
+            log = log_path.open("a")
             os.chmod(STATE / f"{name}.log", 0o600)
             streams.append(log)
             child = subprocess.Popen(command, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
             children.append(child)
             wait_http(url, child, api=api)
+            if api:
+                wait_http(url+'/db',child,api=True)
             print(f"{name} ready: {url}", flush=True)
+            if api:
+                receipt = STATE / 'readiness.json'
+                receipt.write_text(json.dumps({'supervisor_pid':os.getpid(),
+                    'backend_pid':child.pid,'backend_log_offset':offset}))
+                os.chmod(receipt,0o600)
         print("Services ready. Ctrl-C stops only this command's process groups.", flush=True)
         while all(child.poll() is None for child in children):
             time.sleep(1)

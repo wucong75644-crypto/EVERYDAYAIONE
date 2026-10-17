@@ -8,6 +8,7 @@
 """
 
 import warnings
+import os
 from pathlib import Path
 from loguru import logger
 
@@ -30,7 +31,18 @@ def setup_logging():
 
     # 创建日志目录
     log_dir = Path(__file__).parent.parent / "logs"
-    log_dir.mkdir(exist_ok=True)
+    # Cloud development logs stay inside the task's private ignored state.
+    # Production retains its existing location and permissions.
+    if os.getenv('APP_ENV') == 'development' and os.getenv('CLOUD_LOG_DIR'):
+        candidate=Path(os.environ['CLOUD_LOG_DIR']).resolve()
+        task_state=Path(__file__).resolve().parents[2]/'.cloud-dev'
+        if not candidate.is_relative_to(task_state):
+            raise RuntimeError('Cloud logs must stay in task-local .cloud-dev')
+        log_dir=candidate
+        log_dir.mkdir(parents=True,mode=0o700,exist_ok=True)
+        os.chmod(log_dir,0o700)
+    else:
+        log_dir.mkdir(exist_ok=True)
 
     # 1. 应用日志（INFO 及以上级别）
     logger.add(
