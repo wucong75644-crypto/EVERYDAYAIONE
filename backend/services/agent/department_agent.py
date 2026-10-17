@@ -412,6 +412,7 @@ class DepartmentAgent(ABC):
             limit=kwargs.get("limit", 20),
             time_type=kwargs.get("time_type"),
             include_invalid=kwargs.get("include_invalid", False),
+            order_scope=kwargs.get("order_scope"),
             # ── v2.2 新增：分析类参数 ──
             query_type=kwargs.get("query_type", "auto"),
             time_granularity=kwargs.get("time_granularity"),
@@ -453,7 +454,7 @@ class DepartmentAgent(ABC):
         }
         # 可选参数：只在存在时传，避免覆盖引擎默认值
         for key in (
-            "group_by", "include_invalid", "extra_fields",
+            "group_by", "include_invalid", "order_scope", "extra_fields",
             "sort_by", "sort_dir", "limit",
         ):
             val = params.get(key)
@@ -611,6 +612,22 @@ class DepartmentAgent(ABC):
         # 只要没有预设 filters 就调用转换（不再要求必须有 time_range）
         if "filters" not in merged:
             merged["filters"], _filter_warnings = self._params_to_filters(merged)
+            if _filter_warnings:
+                merged["_truncation_warning"] = "\n".join(_filter_warnings)
+        elif isinstance(merged["filters"], list):
+            # Direct DSL may contain only one predicate; retain semantic shop/date constraints.
+            semantic, _filter_warnings = self._params_to_filters(merged)
+            from services.kuaimai.erp_unified_schema import TIME_COLUMNS
+            present = {f.get("field") for f in merged["filters"] if isinstance(f, dict)}
+            bounds = {(f.get("field"), f.get("op")) for f in merged["filters"] if isinstance(f, dict)}
+            def missing(f):
+                if f["field"] not in present:
+                    return True
+                if f["field"] not in TIME_COLUMNS or (f["field"], "between") in bounds:
+                    return False
+                equivalents = {"gte", "gt"} if f["op"] in {"gte", "gt"} else {"lte", "lt"}
+                return not any((f["field"], op) in bounds for op in equivalents)
+            merged["filters"] = merged["filters"] + [f for f in semantic if missing(f)]
             if _filter_warnings:
                 merged["_truncation_warning"] = "\n".join(_filter_warnings)
 

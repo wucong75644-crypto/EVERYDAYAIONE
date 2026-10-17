@@ -135,6 +135,7 @@ def build_local_tools() -> List[Dict[str, Any]]:
                     "items": {"type": "string"},
                     "description": "分组字段（mode=summary时），如 [\"shop_name\"] 或 [\"platform\"]",
                 },
+                "order_scope": _enum("订单统计口径：默认有效订单；刷单按租户分类规则识别", ["valid", "all", "exclude_scalping", "only_scalping"]),
                 "sort_by": _str("排序字段（mode=detail时）"),
                 "sort_dir": _enum("排序方向", ["asc", "desc"]),
                 "fields": {

@@ -116,7 +116,7 @@ _COMPLEX_KEYS = frozenset({
     "query_type", "time_granularity", "compare_range", "metrics", "alert_type",
 })
 # list[dict] 类型的参数白名单（_sanitize_params 需特殊处理）
-_LIST_DICT_PARAMS = frozenset({"numeric_filters", "exclude_filters"})
+_LIST_DICT_PARAMS = frozenset({"numeric_filters", "exclude_filters", "filters"})
 
 
 def _sanitize_params(params: dict) -> dict:
