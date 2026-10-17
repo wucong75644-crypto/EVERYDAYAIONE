@@ -1,0 +1,99 @@
+name: Pre-release checks
+run-name: Pre-release checks · ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/task/**']
+    tags: ['preflight/**']
+    paths:
+      - '.github/workflows/pre-release-checks.yml'
+      - 'scripts/ci/**'
+      - 'scripts/testing/test_ci_checks.py'
+
+# Deliberately no environments, secrets, SSH or deployment jobs.
+permissions:
+  contents: read
+
+concurrency:
+  group: pre-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Frontend tests and build
+        run: python3 scripts/ci/run.py frontend
+      - name: Publish sanitized timing report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: frontend-check-report
+          path: .cloud-dev/ci/frontend.json
+          if-no-files-found: warn
+          retention-days: 14
+          include-hidden-files: true
+
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # Native bootstrap artifacts target Debian trixie amd64; do not run them
+    # against Ubuntu's incompatible shared libraries. initdb runs as non-root.
+    container: python:3.12-trixie
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Prepare disposable system dependencies
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            git ca-certificates postgresql-17 postgresql-17-pgvector redis-server
+          useradd --create-home --uid 1001 ci
+          mkdir -p /workspace/repository /workspace/.cache/pip
+          chown -R ci:ci /workspace
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: /workspace/.cache/pip
+          key: backend-pip-trixie-amd64-py312-${{ hashFiles('backend/requirements.txt') }}
+      - name: Copy only committed source into private test checkout
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git archive HEAD | tar -x -C /workspace/repository
+          chown -R ci:ci /workspace/repository /workspace/.cache
+      - name: Backend regression, empty database and real API smoke
+        env:
+          CHECKED_SHA: ${{ github.sha }}
+        run: |
+          runuser -u ci -- env CHECKED_SHA="$CHECKED_SHA" PIP_CACHE_DIR=/workspace/.cache/pip \
+            python3.12 /workspace/repository/scripts/ci/run.py backend
+      - name: Retrieve sanitized report only
+        if: always()
+        run: |
+          mkdir -p .cloud-dev/ci
+          if [[ -f /workspace/repository/.cloud-dev/ci/backend.json ]]; then
+            cp /workspace/repository/.cloud-dev/ci/backend.json .cloud-dev/ci/backend.json
+            cat .cloud-dev/ci/backend.json >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Publish sanitized timing report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-check-report
+          path: .cloud-dev/ci/backend.json
+          if-no-files-found: warn
+          retention-days: 14
+          include-hidden-files: true

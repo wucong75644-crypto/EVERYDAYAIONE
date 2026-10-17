@@ -15,4 +15,6 @@ description: 配置或启动 EVERYDAYAIONE 的 Codex 云端开发环境，以及
 开发 bootstrap 仅允许当前工作树散列对应的私有实例；数据目录与密码按任务隔离，Redis 使用独立进程及 DB 15，不能用逻辑 DB 号替代进程隔离。未知非空库、损坏 receipt/checksum 或结构漂移会明确拒绝，禁止覆盖数据或伪造“历史迁移已应用”。现有用户配置不属于此实例时保留并停止。详见 `docs/development/CLOUD_SCHEMA_BOOTSTRAP.md`。外部模型/短信/OSS、沙盒与外部自动化没有单独授权与开发凭据时均不启用。
 日志在忽略目录 `.cloud-dev/`，可能包含连接信息，禁止完整贴到对话或提交。
 
+日常测试和页面预览留在本任务云端环境。准备提交部署时，先在明确授权下按受控入口提交推送，再运行 `python3 scripts/ci/request-check.py` 请求 GitHub **Pre-release checks**；等待同一完整 SHA 的 frontend/backend 两个 job 成功并报告耗时。普通业务修改不必每次触发全量检查。新提交、main 合入或冲突解决后重新检查，不复用旧 SHA。此检查流水线不执行生产部署，通过也不代表已获生产发布授权。详见 `docs/development/PRE_RELEASE_CHECKS.md`。
+
 生产部署和验收关闭仅在本地进行。交付任务分支、已授权推送后的提交 SHA、变更与验证摘要、必要开发配置名称（不含值），按指南在本地接续同一任务。

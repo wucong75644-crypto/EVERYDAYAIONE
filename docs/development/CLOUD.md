@@ -2,6 +2,8 @@
 
 本仓库支持云端开发、测试，本地生产发布。共同规则在 `COLLABORATION.md`，项目约束在根目录 `AGENTS.md`；适用技能已经放在 `.agents/skills/`，无需读取 `/Users/...` 或安装个人目录技能。
 
+日常测试和页面预览在 Codex 云端执行；发布候选提交后，再请求 GitHub 的独立检查。入口、范围、超时和结果核验见 [发布前检查](PRE_RELEASE_CHECKS.md)。这条检查流水线不连接生产、不执行部署，也不改变现有生产验收顺序。
+
 ## 创建环境
 
 在 Codex 的 Work in → Cloud → Create environment 中连接 GitHub，选择 EVERYDAYAIONE。必须选择包含本次适配的代码版本；尚未推送的本地文件不会被云端读取。环境安装阶段只配置工具，不开发业务代码。
