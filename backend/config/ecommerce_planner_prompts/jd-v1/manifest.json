@@ -1,0 +1,14 @@
+{
+  "version": "ecom-prompts.v4",
+  "prompt_profile": "jd.v1",
+  "skill_key": "jd-stationery-images",
+  "base_version": "ecom-prompts.v4",
+  "files": {
+    "00-integration-rules.md": "69a7d32de4df67393fa0b16976ca6eeb08882f75f13aa0b11a2fcf2f6cc60ef0",
+    "01-output.schema.json": "7adf1c121f3d4bb3dbe764246a0fbd6fbe92ac076d1324d840ee32941d19b48f",
+    "01-product-selling-points.md": "0b47129dd1dc510317f7c94109fd7ae995f2cd7af932d64bd94b9cc42ddea9b0",
+    "02-visual-direction.md": "349fd75b07d0632f5ef3682ea4a9c34c0d3c7114faa737d1bb3826e9ed3c88c3",
+    "03-detail-page-planner.md": "cda5788afe9c171d583d9c7279b3c5719cc1f52693d001a81c4006fd2fc6d66c",
+    "03-main-image-planner.md": "19ccec0fdd60d6e56464504b393c03cec0c4f8ebbf1ff7c92c219d5e0cb9ac21"
+  }
+}

@@ -120,11 +120,37 @@ def schema_paths(value, schema, *, root=None, path=()):
     return paths or [list(path)]
 
 
-def decode_formatted(text, schema):
-    raw = strict_object(text) if isinstance(text, str) else deepcopy(text)
+def _prompt_object(text, count, audit):
+    """Recover repeated top-level prompt lists only when every requested item survives."""
+    class Pairs(list):
+        pass
+
+    body = text.strip()
+    fenced = re.fullmatch(r'```(?:json)?\s*\n?(.*?)\n?```', body, re.S)
+    if fenced:
+        body = fenced[1].strip()
+    root = json.loads(body, object_pairs_hook=Pairs, parse_constant=_invalid_constant)
+    if (isinstance(root, Pairs) and len(root) > 1
+            and all(key == 'prompts' for key, _ in root)
+            and all(type(items) is list and items
+                and all(isinstance(item, str) and item.strip() for item in items)
+                for _, items in root)):
+        prompts = [item for _, items in root for item in items]
+        if len(prompts) == count:
+            audit.append({'path': ['prompts'], 'operation': 'repeated_prompt_lists',
+                'groups': len(root), 'count': len(prompts)})
+            return {'prompts': prompts}
+    # Every other shape retains strict duplicate-key rejection, including nested objects.
+    return strict_object(text)
+
+
+def decode_formatted(text, schema, *, expected_prompt_count=None):
+    audit = []
+    raw = (_prompt_object(text, expected_prompt_count, audit)
+        if isinstance(text, str) and schema == PROMPTS_SCHEMA and expected_prompt_count is not None
+        else strict_object(text) if isinstance(text, str) else deepcopy(text))
     if not isinstance(raw, dict):
         raise FormatError('PLANNER_JSON_OBJECT_REQUIRED')
-    audit = []
     value = normalize_object(raw, schema, audit=audit)
     return value, {'format_version': FORMAT_VERSION, 'normalization': audit,
         'response_sha256': text_hash(text if isinstance(text, str) else json.dumps(text, ensure_ascii=False)),

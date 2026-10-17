@@ -16,7 +16,34 @@ SCHEMA_SHA256 = 'dd149273d0036770d9f17497b29d8e34ee655531543c67d4308257f44581e2d
 INTEGRATION_RULES_SHA256 = '0cf8e306880605e8d8be6614836ef08b5fad4e05573dee58c036c6dd0034d35f'
 
 
-def resource_versions(version=None):
+JD_PROFILE = 'jd.v1'
+
+
+def profile_for_platform(platform):
+    """Only an explicit page selection chooses JD; auto keeps existing behavior."""
+    return JD_PROFILE if platform == 'jd' else None
+
+
+def _profile_manifest(version, prompt_profile):
+    if version != 'ecom-prompts.v4' or prompt_profile != JD_PROFILE:
+        raise ValueError('PLANNER_RESOURCE_VERSION_MISMATCH')
+    root = ROOT.parent / 'jd-v1'
+    manifest = json.loads((root / 'manifest.json').read_text())
+    if manifest.get('version') != version or manifest.get('prompt_profile') != prompt_profile:
+        raise ValueError('PLANNER_RESOURCE_VERSION_MISMATCH')
+    return root, manifest
+
+
+def resource_versions(version=None, prompt_profile=None):
+    if prompt_profile is not None:
+        _root, manifest = _profile_manifest(version, prompt_profile)
+        files = manifest['files']
+        return {'resources_sha256': [files[name] for name in FILES],
+            'schema_sha256': files['01-output.schema.json'],
+            'integration_sha256': files['00-integration-rules.md'],
+            'stage_three_delivery_version': version, 'normalization_version': 'ecom-format.v1',
+            'assembly_version': 'fixed-frame.v4', 'prompt_profile': prompt_profile}
+
     if version == 'ecom-prompts.v4':
         manifest = json.loads((ROOT.parent / 'v4' / 'manifest.json').read_text())
         if manifest['version'] != version:
@@ -33,11 +60,12 @@ def resource_versions(version=None):
         'integration_sha256': INTEGRATION_RULES_SHA256, 'assembly_version': 'ecom-fixed-frame.v3'}
 
 
-def resources(task_type="main_images", version=None):
+def resources(task_type="main_images", version=None, prompt_profile=None):
     if task_type not in {"main_images", "detail_page"}:
         raise ValueError("ECOM_IMAGE_PLAN_ARGUMENTS_INVALID")
-    versions = resource_versions(version)
-    root = ROOT.parent / 'v4' if version == 'ecom-prompts.v4' else ROOT
+    versions = resource_versions(version, prompt_profile)
+    root = (_profile_manifest(version, prompt_profile)[0] if prompt_profile is not None
+        else ROOT.parent / 'v4' if version == 'ecom-prompts.v4' else ROOT)
     bodies = []
     for name, digest in zip(FILES, versions['resources_sha256']):
         raw = (root / name).read_bytes()
@@ -59,6 +87,21 @@ def resources(task_type="main_images", version=None):
     if hashlib.sha256(integration_raw).hexdigest() != versions['integration_sha256']:
         raise ValueError("PLANNER_INTEGRATION_REFERENCE_VERSION_MISMATCH")
     return [bodies[0], bodies[1], bodies[3 if task_type == "detail_page" else 2]], json.loads(schema_raw)
+
+
+def plan_resources(row):
+    """Load the pinned package, including for retry; never reinterpret old plans."""
+    saved = row.get('prompt_versions') or {}
+    version = saved.get('stage_three_delivery_version')
+    prompt_profile = saved.get('prompt_profile')
+    if prompt_profile is not None and profile_for_platform(row['input_snapshot'].get('platform')) != prompt_profile:
+        raise ValueError('PLANNER_RESOURCE_VERSION_MISMATCH')
+    bodies, schema = resources(row['input_snapshot']['task_type'], version, prompt_profile)
+    expected = resource_versions(version, prompt_profile)
+    if any((version == 'ecom-prompts.v4' or key in saved) and saved.get(key) != value
+            for key, value in expected.items()):
+        raise ValueError('PLANNER_RESOURCE_VERSION_MISMATCH')
+    return bodies, schema
 
 
 def wrapper(stage, task_type="main_images", version=None):
