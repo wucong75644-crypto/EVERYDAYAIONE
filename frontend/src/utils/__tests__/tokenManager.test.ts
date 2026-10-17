@@ -46,6 +46,7 @@ vi.mock('axios', () => ({
       },
     }),
     post: (...args: unknown[]) => mockAxiosPost(...args),
+    isAxiosError: (error: unknown) => Boolean(error && typeof error === 'object' && 'response' in error),
   },
   AxiosError: class AxiosError extends Error {},
 }));
@@ -188,5 +189,51 @@ describe('logoutOnce', () => {
     logoutOnce();
     expect(mockClearAuth).toHaveBeenCalled();
     expect(capturedHref).toBeNull();
+  });
+});
+
+
+describe('refresh session race protection', () => {
+  it('delayed old-token rejection cannot clear a newer session', async () => {
+    localStorage.setItem('refresh_token', 'old');
+    mockAxiosPost.mockImplementationOnce(async () => {
+      setTokens('new-access', 'new-refresh'); throw { response: { status: 401 } };
+    });
+    await expect(silentRefresh()).resolves.toBe('new-access');
+    expect(mockClearAuth).not.toHaveBeenCalled();
+  });
+  it('response after logout cannot resurrect credentials', async () => {
+    localStorage.setItem('refresh_token', 'old');
+    mockAxiosPost.mockImplementationOnce(async () => {
+      localStorage.removeItem('refresh_token');
+      return { data: { token: { access_token: 'late-access', refresh_token: 'late-refresh' } } };
+    });
+    await expect(silentRefresh()).rejects.toThrow('Session changed');
+    expect(localStorage.getItem('access_token')).toBeNull();
+  });
+  it('previous account response cannot overwrite a new account', async () => {
+    localStorage.setItem('user', JSON.stringify({ id: 'a' })); localStorage.setItem('refresh_token', 'a-refresh');
+    mockAxiosPost.mockImplementationOnce(async () => {
+      localStorage.setItem('user', JSON.stringify({ id: 'b' })); setTokens('b-access', 'b-refresh');
+      return { data: { token: { access_token: 'late-a', refresh_token: 'late-a-refresh' } } };
+    });
+    await expect(silentRefresh()).rejects.toThrow('Session changed');
+    expect(getAccessToken()).toBe('b-access'); expect(mockClearAuth).not.toHaveBeenCalled();
+  });
+  it('waiting for another tab reuses its credentials without rotating again', async () => {
+    localStorage.setItem('refresh_token', 'old'); const previous = navigator.locks;
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: {
+      request: vi.fn(async (_name, _options, run) => { setTokens('other-access', 'other-refresh'); return run(); }),
+    } });
+    try { await expect(silentRefresh()).resolves.toBe('other-access'); expect(mockAxiosPost).not.toHaveBeenCalled(); }
+    finally { Object.defineProperty(navigator, 'locks', { configurable: true, value: previous }); }
+  });
+  it('genuine credential rejection still logs out', async () => {
+    localStorage.setItem('refresh_token', 'rejected'); mockAxiosPost.mockRejectedValueOnce({ response: { status: 401 } });
+    await expect(silentRefresh()).rejects.toBeDefined(); expect(mockClearAuth).toHaveBeenCalledOnce();
+  });
+  it('logout keeps active enterprise rather than old login destination', () => {
+    localStorage.setItem('user', JSON.stringify({ id: 'a' })); localStorage.setItem('current_org_id', 'active');
+    localStorage.setItem('login_org_id', 'old'); logoutOnce(); expect(capturedHref).toBe('/?org=active');
   });
 });
