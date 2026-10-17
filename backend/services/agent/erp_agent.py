@@ -104,6 +104,9 @@ class ERPAgent(ERPChildFactoryMixin):
         if plan is None:
             return _error_result("无法理解您的请求，请更具体地描述您要查询的内容")
 
+        if plan.degraded and any(s.params.get("order_scope") for s in plan.steps):
+            return _error_result("查询计划提取失败，无法保证指定统计口径；未执行降级查询，请重试")
+
         for step in plan.steps:
             if step.domain not in _VALID_DOMAINS:
                 return _error_result(f"不支持的查询域 '{step.domain}'，可查询：库存/采购/订单/售后")
@@ -116,7 +119,7 @@ class ERPAgent(ERPChildFactoryMixin):
         result = self._build_multi_result(step_results, plan, query)
 
         # ── SQL 兜底：结构化查询失败时尝试 LLM 生成 SQL ──
-        if self._should_try_sql_fallback(result):
+        if not any(s.params.get("order_scope") for s in plan.steps) and self._should_try_sql_fallback(result):
             plan_params = plan.steps[0].params if plan.steps else None
             fallback = await self._sql_fallback(query, result, plan_params)
             if fallback is not None:
@@ -149,6 +152,8 @@ class ERPAgent(ERPChildFactoryMixin):
                         "erp_agent", "ERP_DOMAIN_ROUTE_CORRECTED",
                     )
                     params["doc_type"] = default
+                from services.agent.order_scope import normalize_order_scope
+                normalize_order_scope(params, query)
                 fill_platform(params, query)
                 steps.append(PlanStep(domain=domain, params=params))
             return ExecutionPlan(
@@ -165,6 +170,10 @@ class ERPAgent(ERPChildFactoryMixin):
         domain = quick_classify(query)
         if domain:
             params = _build_fallback_params(query, self.request_ctx, domain=domain)
+            if domain == "trade":
+                params.setdefault("doc_type", "order")
+            from services.agent.order_scope import normalize_order_scope
+            normalize_order_scope(params, query)
             fill_platform(params, query)
             return ExecutionPlan(steps=[PlanStep(domain=domain, params=params)], degraded=True)
 

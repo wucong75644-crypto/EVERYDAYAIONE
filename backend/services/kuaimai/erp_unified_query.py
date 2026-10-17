@@ -180,6 +180,7 @@ class UnifiedQueryEngine:
         conversation_id: str | None = None,
         request_ctx: Optional[RequestContext] = None,
         include_invalid: bool = False,
+        order_scope: str | None = None,
         push_thinking: Any = None,
         # ── v2.2 新增：分析类参数 ──
         query_type: str = "auto",
@@ -253,8 +254,32 @@ class UnifiedQueryEngine:
             time_granularity, compare_range, alert_type, metrics,
         )
 
+        from services.kuaimai.erp_order_scope import SCOPE_LABELS, query_order_scope, scope_error
+        if order_scope is not None and order_scope not in SCOPE_LABELS:
+            return scope_error("无效的 order_scope，支持 valid/all/exclude_scalping/only_scalping")
+        if order_scope and doc_type != "order":
+            return scope_error("该订单统计口径仅支持订单明细数据，请改为订单汇总或导出；日统计不能按刷单分类筛选")
+        scope = order_scope or ("all" if include_invalid and doc_type == "order" else None)
+        if doc_type == "order" and resolved_type == "compare" and scope is None:
+            scope = "valid"
+        if scope and resolved_type == "detail":
+            resolved_type = "export"  # SQL 分类筛选必须发生在 LIMIT 之前
+        if resolved_type == "trend":
+            supported = {"shop_name", "platform", "outer_id", "doc_type"}
+            if any(f.field not in TIME_COLUMNS and (f.field not in supported or f.op not in {"eq", "like"} or (f.field == "outer_id" and f.op != "eq")) for f in validated):
+                return scope_error("趋势日统计不支持这些明细筛选条件，请改用订单汇总或导出；未忽略条件执行")
+        if scope and resolved_type not in {"summary", "compare", "export", "export_large"}:
+            return scope_error(f"当前 {resolved_type} 查询不支持指定订单口径，请改用订单汇总、对比或导出；未执行查询")
+        if scope and metrics and set(metrics) - {"count", "amount", "qty", "order_count", "order_amount", "order_qty"}:
+            return scope_error("指定订单口径目前支持订单数、数量和金额，其他指标请单独查询；未忽略口径执行")
+
+        if scope and resolved_type in {"summary", "compare"}:
+            result = await query_order_scope(
+                self.db, self.org_id, validated, tr, scope, group_by=group_by,
+                query_type=resolved_type, compare_range=compare_range or "mom", metrics=metrics,
+            )
         # detail: PG ORM 直查（≤200 行明细）
-        if resolved_type == "detail":
+        elif resolved_type == "detail":
             if is_new_table:
                 result = await self._export_orm(
                     table, doc_type, validated, tr,
@@ -312,6 +337,7 @@ class UnifiedQueryEngine:
                     doc_type, validated, tr, extra_fields, limit,
                     user_id, conversation_id, request_ctx,
                     include_invalid=include_invalid,
+                    order_scope=scope,
                     push_thinking=push_thinking,
                     sort_by=sort_by, sort_dir=sort_dir,
                 )
@@ -624,6 +650,7 @@ class UnifiedQueryEngine:
         user_id: str | None, conversation_id: str | None,
         request_ctx: Optional[RequestContext],
         include_invalid: bool = False,
+        order_scope: str | None = None,
         push_thinking: Any = None,
         sort_by: str | None = None,
         sort_dir: str = "desc",
@@ -667,16 +694,25 @@ class UnifiedQueryEngine:
         # 构建 DuckDB SQL
         select_sql = build_pii_select(safe_fields, cn_header=True)
 
+        scope_condition = None
         if doc_type == "order":
             try:
                 from services.kuaimai.order_classifier import OrderClassifier
                 classifier = OrderClassifier.for_org(self.db, self.org_id)
+                if order_scope:
+                    from services.kuaimai.erp_order_scope import scope_case_condition
+                    scope_condition = scope_case_condition(classifier, order_scope)
                 case_sql = classifier.to_case_sql()
                 select_sql += f', {case_sql} AS "订单分类"'
             except Exception as e:
+                if order_scope:
+                    from services.kuaimai.erp_order_scope import scope_error
+                    return scope_error(f"无法按指定口径导出：{e}")
                 logger.warning(f"导出分类标签生成失败，跳过 | error={e}")
 
         where_sql = build_export_where(doc_type, filters, tr, self.org_id)
+        if scope_condition:
+            where_sql += f" AND ({scope_condition})"
         need_archive = _need_archive(tr)
 
         if need_archive:
@@ -731,7 +767,7 @@ class UnifiedQueryEngine:
                 summary=summary,
                 source="erp",
                 status=OutputStatus.EMPTY,
-                metadata={"doc_type": doc_type, "time_range": tr.label},
+                metadata={"doc_type": doc_type, "time_range": tr.label, **({"order_scope": order_scope} if order_scope else {})},
             )
 
         # v6: DuckDB 直接从 parquet 文件算统计（不加载到 Python 内存）
@@ -747,6 +783,9 @@ class UnifiedQueryEngine:
             file_size_kb=size_kb, elapsed=elapsed,
         )
         body = profile_text
+        if order_scope:
+            from services.kuaimai.erp_order_scope import SCOPE_LABELS
+            body = f"[统计口径] {SCOPE_LABELS[order_scope]}\n{body}"
         if row_count >= max_rows:
             body += (
                 f"\n\n⚠️ 已达导出上限 {max_rows:,} 行，实际数据可能更多。"
@@ -785,6 +824,7 @@ class UnifiedQueryEngine:
                 "time_range": tr.label,
                 "time_column": tr.time_col,
                 "stats": _export_stats,
+                **({"order_scope": order_scope} if order_scope else {}),
             },
         )
 
