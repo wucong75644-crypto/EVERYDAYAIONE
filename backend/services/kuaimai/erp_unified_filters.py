@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from math import isfinite
 from typing import Any, Optional
 
 from services.kuaimai.erp_local_helpers import CN_TZ
@@ -66,7 +67,37 @@ def validate_filters(
         if op == "in" and isinstance(value, list) and len(value) == 0:
             continue
 
-        value = coerce_value(value, meta.col_type)
+        if op in {"in", "not_in"} and not isinstance(value, list):
+            return [], f"filters[{i}]: op='{op}' 的 value 必须是数组"
+
+        if op != "is_null":
+            values = value if isinstance(value, list) else [value]
+            converted = []
+            for item in values:
+                # 上层语义参数和直接 DSL 共用同一数据库类型边界。
+                if meta.col_type == "integer" and field.startswith("is_"):
+                    if isinstance(item, bool):
+                        item = int(item)
+                    elif isinstance(item, str) and item.strip().lower() in {"true", "false"}:
+                        item = int(item.strip().lower() == "true")
+                item = coerce_value(item, meta.col_type)
+                if meta.col_type in {"integer", "numeric"}:
+                    valid = (
+                        type(item) is int if meta.col_type == "integer"
+                        else type(item) in {int, float} and isfinite(item)
+                    )
+                    if not valid:
+                        return [], (
+                            f"filters[{i}]: 字段 '{field}'(类型={meta.col_type}) "
+                            "的 value 必须是有效数值；整数标记支持 true/false 或 0/1"
+                        )
+                converted.append(item)
+            if isinstance(value, list):
+                if op not in {"in", "not_in", "between"}:
+                    return [], f"filters[{i}]: op='{op}' 的 value 必须是单值"
+                value = converted
+            else:
+                value = converted[0]
         result.append(ValidatedFilter(field=field, op=op, value=value, col_type=meta.col_type))
 
     return result, None
