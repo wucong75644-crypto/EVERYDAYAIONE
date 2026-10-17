@@ -4,6 +4,7 @@
 基于 Redis SET 的任务并发限制：
 - 全局任务限制（默认15个）
 - 单对话任务限制（默认15个，与全局共享）
+- 主图详情图片使用单独配置的150额度，沿用相同槽位身份与释放机制
 
 使用 SET 存储活跃 slot_id，替代 INCR/DECR 计数器：
 - 幂等：重复 release 不会变负数
@@ -33,6 +34,7 @@ class TaskLimitService:
         self.redis = redis_client
         self.global_limit = settings.rate_limit_global_tasks
         self.conversation_limit = settings.rate_limit_conversation_tasks
+        self.detail_image_limit = settings.detail_page_image_concurrency
 
     @staticmethod
     def _org_prefix(org_id: str | None) -> str:
@@ -51,6 +53,7 @@ class TaskLimitService:
     async def acquire_image_slot(
         self, user_id: str, conversation_id: str, task_id: str,
         org_id: str | None = None,
+        *, detail_project: bool = False,
     ) -> str:
         """Atomic, fail-closed media acquisition; never borrow a chat slot.
 
@@ -76,13 +79,15 @@ class TaskLimitService:
         redis.call('EXPIRE', KEYS[2], ARGV[4])
         return 0
         """
+        global_limit = self.detail_image_limit if detail_project else self.global_limit
+        conversation_limit = self.detail_image_limit if detail_project else self.conversation_limit
         result = await self.redis.eval(script, 2,
             self._global_key(user_id, org_id),
             self._conversation_key(user_id, conversation_id, org_id),
-            task_id, self.global_limit, self.conversation_limit, _SET_TTL)
+            task_id, global_limit, conversation_limit, _SET_TTL)
         if result:
             global_scope = result == 1
-            limit = self.global_limit if global_scope else self.conversation_limit
+            limit = global_limit if global_scope else conversation_limit
             raise TaskQueueFullError(current_count=limit, max_count=limit,
                 scope="global" if global_scope else "conversation")
         return task_id
@@ -111,6 +116,7 @@ class TaskLimitService:
         conversation_id: str,
         org_id: str | None = None,
         slot_id: str | None = None,
+        *, strict: bool = False,
     ) -> None:
         """
         释放槽位
@@ -139,6 +145,8 @@ class TaskLimitService:
                 f"conversation_id={conversation_id} | slot_id={slot_id}"
             )
         except Exception as e:
+            if strict:
+                raise
             logger.warning(f"释放任务槽位失败，忽略 | slot_id={slot_id} | error={e}")
 
     async def get_active_count(

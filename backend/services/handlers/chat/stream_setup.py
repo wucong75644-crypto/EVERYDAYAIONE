@@ -73,6 +73,10 @@ async def prepare_chat_stream(
             permission_mode=permission_mode,
             context_anchor=context_anchor,
         )
+    from services.agent.agent_reach.web_links import prepare_links
+    messages, handler._web_link_refs = prepare_links(
+        messages, org_id=handler.org_id, user_id=user_id, conversation_id=conversation_id,
+    )
     context_ready_at = time.monotonic()
     from services.handlers.context_snapshot import ContextAnchor
     if isinstance(context_anchor, ContextAnchor):

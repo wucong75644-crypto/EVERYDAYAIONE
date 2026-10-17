@@ -275,10 +275,25 @@ describe('MessageMedia', () => {
     );
 
     const fileList = container.querySelector('[data-file-card-list]');
-    expect(fileList?.className).toContain('flex-wrap');
+    expect(fileList).toHaveClass('w-full', 'flex-wrap', 'justify-end');
+    expect(fileList?.parentElement).not.toHaveClass('max-w-[590px]');
     expect(fileList?.querySelectorAll('[data-file-card]')).toHaveLength(3);
     expect([...fileList?.querySelectorAll('[data-file-card]') || []].every((card) => (
       card.className.includes('max-w-[280px]') && card.className.includes('flex-[0_1_280px]')
     ))).toBe(true);
   });
+  it('AI 文件沿用消息宽度并靠左排列', () => {
+    const { container } = render(
+      <MessageMedia
+        files={[{ type: 'file', url: 'https://cdn/report.pdf', name: 'report.pdf', mime_type: 'application/pdf' }]}
+        messageId="assistant-file"
+        isUser={false}
+        onImageClick={vi.fn()}
+      />,
+    );
+    const fileList = container.querySelector('[data-file-card-list]');
+    expect(fileList).toHaveClass('w-full', 'justify-start');
+    expect(fileList).not.toHaveClass('justify-end');
+  });
+
 });

@@ -7,7 +7,10 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from core.config import get_settings
-from core.db_scope import DatabaseAccessKind, DatabaseScope, ScopedDatabaseClient
+from core.db_scope import DatabaseAccessKind, DatabaseScope, ScopedDatabaseClient, SET_DATABASE_SCOPE_SQL
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
+from core.local_db import _serialize_row
 from core.exceptions import AppException
 from services.agent.image.ecommerce_planner.contracts import source_id
 from services.agent.image.ecommerce_planner.inputs import FixedSettings, source_bindings
@@ -299,7 +302,12 @@ class DetailPageGeneration:
 class DetailPageWorker:
     def __init__(self, db):
         self.db=db
-        self.jobs={}
+        from services.background_jobs import FairBackgroundJobs
+        settings = get_settings()
+        self._planning = FairBackgroundJobs('detail-plan', settings.detail_page_planning_concurrency)
+        self._maintenance = FairBackgroundJobs('detail-maintenance',
+            settings.detail_page_maintenance_concurrency, settings.detail_page_maintenance_timeout_seconds)
+        self.jobs = self._planning.jobs
 
     @staticmethod
     def renew(service, plan_id, lease):
@@ -307,71 +315,150 @@ class DetailPageWorker:
             'p_plan_id':plan_id,'p_lease_token':lease}).execute().data
 
     async def close(self):
-        jobs=list(self.jobs.values())
-        for job in jobs: job.cancel()
-        await asyncio.gather(*jobs,return_exceptions=True)
-        self.jobs.clear()
+        # Maintenance can change plan state; stop it before closing planners.
+        await self._maintenance.close()
+        await self._planning.close()
 
     async def scan(self):
-        organizations=await asyncio.to_thread(lambda:self.db.table('organizations').select('id').execute().data)
-        candidates=[]
-        for org in [None,*[str(row['id']) for row in organizations or []]]:
-            scoped=ScopedDatabaseClient(self.db,DatabaseScope(None,org,DatabaseAccessKind.WORKER))
-            projects=await asyncio.to_thread(lambda:scoped.rpc('scan_detail_page_work',{'p_org_id':org,'p_limit':20}).execute().data)
-            for project in projects:
-                service=DetailPageGeneration(self.db,project['user_id'],org)
-                plans=await asyncio.to_thread(lambda:service.db.table('ecom_image_plans').select('*').eq('project_id',project['id']).execute().data)
-                plans=[plan for plan in plans if str(plan['generation_run_id'])==project['run_state']['run_id']]
-                tasks=await asyncio.to_thread(lambda:service.db.table('tasks').select('*').eq('user_id',project['user_id']).eq(
-                    "request_params->'_media_request_v1'->'origin'->>'generation_run_id'",project['run_state']['run_id']).execute().data or [])
-                for plan in plans:
-                    if plan['status']=='planning' and plan['id'] not in self.jobs:
-                        candidates.append((service,plan))
-                    elif plan['status']=='ready' and not plan.get('recovery_state',{}).get('acceptance_error'):
-                        try: await service.accept(plan)
-                        except Exception as error:
-                            from loguru import logger
-                            logger.warning('detail_image_acceptance_pending | plan={} error_type={} db={}',
-                                plan['id'],type(error).__name__,acceptance_diagnostics(error))
-                            public_error=page_error(error)
-                            await asyncio.to_thread(lambda:service.db.table('ecom_image_plans').update({'recovery_state':{
-                                **plan.get('recovery_state',{}),'acceptance_error':{'code':public_error.code,
-                                    'attempt_id':str(uuid4())}}}).eq('id',plan['id']).execute())
-                    if plan['id'] not in self.jobs:
+        from loguru import logger
+        organizations = await asyncio.to_thread(lambda: self.db.table('organizations').select('id').execute().data)
+        planning, maintenance = [], []
+        for org in [None, *[str(row['id']) for row in organizations or []]]:
+            try:
+                scoped = ScopedDatabaseClient(self.db, DatabaseScope(None, org, DatabaseAccessKind.WORKER))
+                projects = await asyncio.to_thread(lambda: scoped.rpc('scan_detail_page_work',
+                    {'p_org_id': org, 'p_limit': 20}).execute().data)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logger.warning('detail_scan_pending | org={} error_type={}', org, type(error).__name__)
+                continue
+            for project in projects or []:
+                service = None
+                try:
+                    service = DetailPageGeneration(self.db, project['user_id'], org)
+                    plans = await asyncio.to_thread(lambda: service.db.table('ecom_image_plans').select('*').eq(
+                        'project_id', project['id']).execute().data or [])
+                    plans = [plan for plan in plans if str(plan['generation_run_id']) == project['run_state']['run_id']]
+                    owner = (org, project['user_id'])
+                    for plan in plans:
+                        if plan['status'] == 'planning':
+                            planning.append((plan['id'], owner, project['id'],
+                                lambda service=service, plan=plan: self.run(service, plan)))
+                        maintenance.append((plan['id'], owner, project['id'],
+                            lambda service=service, project=project, plans=plans, plan=plan:
+                                self._maintain_group(service, project, plans, plan)))
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    logger.warning('detail_project_scan_pending | project={} error_type={}',
+                        project['id'], type(error).__name__)
+                finally:
+                    if service is not None:
+                        # Rotate discovery even if maintenance fails or remains slow. Fence old runs.
                         try:
-                            await DetailDeliveryRecovery(service).advance(plan,project,[task for task in tasks if
-                                task['request_params']['_media_request_v1']['origin']['plan_source']['plan_id']==plan['id']])
+                            await asyncio.to_thread(lambda: service.db.table('detail_projects').update({
+                                'updated_at': datetime.now(timezone.utc).isoformat()}).eq('id', project['id']).eq(
+                                "run_state->>'run_id'", project['run_state']['run_id']).execute())
                         except Exception as error:
-                            from loguru import logger
-                            logger.warning('detail_delivery_recovery_pending | plan={} error_type={}',plan['id'],type(error).__name__)
-                await asyncio.to_thread(self.aggregate,service,project,plans)
+                            logger.warning('detail_scan_rotation_pending | project={} error_type={}',
+                                project['id'], type(error).__name__)
+        self._planning.dispatch(planning)
+        self._maintenance.dispatch(maintenance)
 
-        # Round-robin owners as well as projects; one user's batch cannot fill every opportunity.
-        from collections import defaultdict, deque
-        owners=defaultdict(deque)
-        for service,plan in candidates:
-            owners[(service.org_id,service.user_id)].append((service,plan))
-        while owners and len(self.jobs)<get_settings().detail_page_planning_concurrency:
-            for key in list(owners):
-                if len(self.jobs)>=get_settings().detail_page_planning_concurrency: break
-                service,plan=owners[key].popleft()
-                if not owners[key]: del owners[key]
-                job=asyncio.create_task(self.run(service,plan),name=f"detail-plan:{plan['id']}")
-                self.jobs[plan['id']]=job
-                job.add_done_callback(lambda _job,key=plan['id']:self.jobs.pop(key,None))
+    async def _maintain_group(self, service, project, plans, plan):
+        from loguru import logger
+        tasks = await asyncio.to_thread(lambda: service.db.table('tasks').select('*').eq(
+            'user_id', project['user_id']).eq("request_params->'_media_request_v1'->'origin'->>'generation_run_id'",
+            project['run_state']['run_id']).execute().data or [])
+        try:
+            if plan['status'] == 'ready' and not plan.get('recovery_state', {}).get('acceptance_error'):
+                try:
+                    await service.accept(plan)
+                except Exception as error:
+                    logger.warning('detail_image_acceptance_pending | plan={} error_type={} db={}',
+                        plan['id'], type(error).__name__, acceptance_diagnostics(error))
+                    public_error = page_error(error)
+                    await asyncio.to_thread(self._record_acceptance_error, service, project, plan,
+                        {'code': public_error.code, 'attempt_id': str(uuid4())})
+            if plan['id'] not in self.jobs:
+                await DetailDeliveryRecovery(service).advance(plan, project, [task for task in tasks if
+                    task['request_params']['_media_request_v1']['origin']['plan_source']['plan_id'] == plan['id']])
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            logger.warning('detail_delivery_recovery_pending | plan={} error_type={}', plan['id'], type(error).__name__)
+        await asyncio.to_thread(self.aggregate, service, project, plans)
+
+    @staticmethod
+    def _record_acceptance_error(service, project, plan, error):
+        # A late failed acceptance must not undo a concurrent manual resume.
+        scope = DatabaseScope(service.user_id, service.org_id, DatabaseAccessKind.WORKER)
+        with service.db.pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
+            cur.execute(SET_DATABASE_SCOPE_SQL, scope.settings)
+            cur.execute("""UPDATE public.ecom_image_plans p SET recovery_state=
+                p.recovery_state || jsonb_build_object('acceptance_error',%s::jsonb)
+                WHERE p.id=%s AND p.project_id=%s AND p.user_id=%s AND p.org_id IS NOT DISTINCT FROM %s
+                AND p.status='ready' AND p.generation_run_id=%s AND p.recovery_state=%s
+                AND EXISTS(SELECT 1 FROM public.detail_projects d WHERE d.id=p.project_id
+                    AND d.user_id=p.user_id AND d.org_id IS NOT DISTINCT FROM p.org_id
+                    AND d.run_state->>'run_id'=%s AND d.status IN ('analyzing','plan_ready','generating'))""",
+                (Jsonb(error), plan['id'], project['id'], service.user_id, service.org_id,
+                    project['run_state']['run_id'], Jsonb(plan.get('recovery_state', {})), project['run_state']['run_id']))
 
     @staticmethod
     def aggregate(service, project, plans):
-        if not plans: return
-        tasks=service.db.table('tasks').select('id,status,result,error_message,request_params,created_at').eq('user_id',project['user_id']).eq(
-            "request_params->'_media_request_v1'->'origin'->>'generation_run_id'",project['run_state']['run_id']).order('created_at').order('id').execute().data or []
+        # Serialize with resume/accept/publication. A run fence alone cannot
+        # protect manual recovery inside the same run from a stale projection.
+        run_id = project['run_state']['run_id']
+        scope = DatabaseScope(service.user_id, service.org_id, DatabaseAccessKind.WORKER)
+        with service.db.pool.connection() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(SET_DATABASE_SCOPE_SQL, scope.settings)
+            cur.execute("""SELECT * FROM public.detail_projects WHERE id=%s AND user_id=%s
+                AND org_id IS NOT DISTINCT FROM %s AND run_state->>'run_id'=%s
+                AND status IN ('analyzing','plan_ready','generating') FOR UPDATE""",
+                (project['id'], service.user_id, service.org_id, run_id))
+            current = cur.fetchone()
+            current = _serialize_row(current) if current else None
+            if not current:
+                return
+            cur.execute("""SELECT * FROM public.ecom_image_plans WHERE project_id=%s
+                AND user_id=%s AND org_id IS NOT DISTINCT FROM %s AND generation_run_id=%s""",
+                (current['id'], service.user_id, service.org_id, run_id))
+            current_plans = [_serialize_row(row) for row in cur.fetchall()]
+            if not current_plans:
+                return
+            cur.execute("""SELECT id,status,result,error_message,request_params,created_at FROM public.tasks
+                WHERE user_id=%s AND org_id IS NOT DISTINCT FROM %s
+                AND request_params->'_media_request_v1'->'origin'->>'generation_run_id'=%s
+                ORDER BY created_at,id""", (service.user_id, service.org_id, run_id))
+            updates = DetailPageWorker._aggregate_updates(current, current_plans, [_serialize_row(row) for row in cur.fetchall()])
+            if 'title' in updates:
+                cur.execute("""UPDATE public.detail_projects SET status=%s,updated_at=%s,title=%s
+                    WHERE id=%s""", (updates['status'], updates['updated_at'], updates['title'], current['id']))
+            else:
+                cur.execute("UPDATE public.detail_projects SET status=%s,updated_at=%s WHERE id=%s",
+                    (updates['status'], updates['updated_at'], current['id']))
+
+    @staticmethod
+    def _aggregate_updates(project, plans, tasks):
         latest=latest_tasks(tasks)
         expected=sum(plan['image_count'] for plan in plans)
         recovering=any((recovery_projection(plan,project,[task for task in tasks if
             task['request_params']['_media_request_v1']['origin']['plan_source']['plan_id']==plan['id']]) or {}).get('status')=='waiting'
             for plan in plans)
+        accepted_items = {(task['request_params']['_media_request_v1']['origin']['plan_source']['plan_id'],
+            task['request_params']['_media_request_v1']['origin']['plan_source']['item_id']) for task in latest.values()}
+        pending_acceptance = any(plan['status'] == 'ready'
+            and not plan.get('recovery_state', {}).get('acceptance_error')
+            and any((plan['id'], item['item_id']) not in accepted_items for item in plan['items'])
+            for plan in plans)
         if recovering:
             status='analyzing' if any(plan['status']!='ready' for plan in plans) else 'generating'
+        elif pending_acceptance:
+            # A sibling may still be waiting for a maintenance slot. Keep it
+            # discoverable until all of its items have durable image tasks.
+            status='analyzing' if any(plan['status']=='planning' for plan in plans) else 'generating' if tasks else 'plan_ready'
         elif len(latest)==expected and all(t['status'] in ('completed','failed','cancelled') for t in latest.values()):
             status='completed' if all(t['status']=='completed' for t in latest.values()) else 'failed'
         elif any(p['status']=='planning' for p in plans): status='analyzing'
@@ -387,9 +474,7 @@ class DetailPageWorker:
                 if isinstance(name,str) and name.strip():
                     updates['title']=name.strip()[:120]
                     break
-        # Rotate bounded scans so delayed recovery cannot starve newer projects.
-        service.db.table('detail_projects').update(updates).eq(
-            'id',project['id']).eq('user_id',project['user_id']).eq("run_state->>'run_id'",project['run_state']['run_id']).execute()
+        return updates
 
     async def run(self, service, row):
         owner=page_owner(service.db,service.user_id,service.org_id,row['project_id'])

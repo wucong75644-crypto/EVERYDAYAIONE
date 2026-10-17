@@ -104,6 +104,7 @@ PARAM_DEFINITIONS = (
     "\n"
     "【否定/排除过滤（可选，用户说'不是/非/除了/排除'时提取）】\n"
     "- exclude_filters: 排除条件数组，格式 [{\"field\":\"字段名\",\"value\":\"排除值\"}]\n"
+    "  整数标记字段（如 is_scalping）的排除值使用 1；排除刷单示例：exclude_filters=[{\"field\":\"is_scalping\",\"value\":1}]。不要同时设置 is_scalping=true。\n"
     "  单值: [{\"field\":\"platform\",\"value\":\"taobao\"}] → platform != taobao\n"
     "  多值: [{\"field\":\"platform\",\"value\":[\"taobao\",\"pdd\"]}] → platform NOT IN (taobao, pdd)\n"
     "\n"

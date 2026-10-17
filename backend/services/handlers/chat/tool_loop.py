@@ -31,7 +31,10 @@ def prepare_tool_turn(
     permission: Any,
     execution_context: Any = None,
 ) -> list[dict[str, Any]]:
-    """构建本轮工具列表并追加动态上下文、退出附件与权限提醒。"""
+    """构建本轮工具列表并追加退出附件与权限提醒。
+
+    工具状态随结果一次性追加；此处不能重写已发送的历史前缀。
+    """
     from dataclasses import replace
     from services.tools import ToolPolicy, LegacyAdvertisement, build_legacy_catalog
     if execution_context is None:
@@ -44,10 +47,6 @@ def prepare_tool_turn(
         advertisement=LegacyAdvertisement(t["function"]["name"] for t in core_tools),
         discovered_names=discovered_names,
     ).advertised_schemas()
-
-    if turn > 0:
-        from services.handlers.tool_loop_context import replace_context_prompt
-        replace_context_prompt(messages, tool_context.build_context_prompt())
 
     if permission.need_exit_attachment:
         messages.append(
@@ -185,6 +184,12 @@ def apply_tool_results(
             is_error,
             display_text,
             start_times.get(call["id"]),
+        )
+    if tool_results:
+        from services.handlers.tool_loop_context import append_context_metadata
+        message = messages[-1]
+        message["content"] = append_context_metadata(
+            message["content"], tool_context.build_context_prompt(),
         )
     return image_urls
 

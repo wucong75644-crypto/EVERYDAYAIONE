@@ -192,7 +192,8 @@ describe('MessageItem 用户消息气泡', () => {
     );
 
     const messageContent = container.querySelector('[data-message-id="msg-1"] > div');
-    expect(messageContent).toHaveClass('w-full', 'max-w-[90%]');
+    expect(messageContent).toHaveClass('w-full');
+    expect(messageContent).not.toHaveClass('max-w-[90%]');
     expect(capturedMediaProps.content).toEqual(message.content);
   });
 });
@@ -201,7 +202,8 @@ describe('MessageItem 助手内容宽度', () => {
   it('为表单和工具等内容提供稳定的标准宽度容器', () => {
     const { container } = render(<MessageItem message={makeMessage({ role: 'assistant' })} />);
     const assistantContent = container.querySelector('[data-message-id="msg-1"] > div > div');
-    expect(assistantContent).toHaveClass('w-full', 'min-w-0', 'max-w-[680px]');
+    expect(assistantContent).toHaveClass('w-full', 'min-w-0');
+    expect(assistantContent).not.toHaveClass('max-w-[680px]');
   });
 
   it('table-only assistant messages enter structured block rendering', () => {

@@ -4,12 +4,13 @@ The database owns leases/ledger/publication. Provider creation is single-shot;
 storage/asset/message retries only replay the recorded provider result.
 """
 import asyncio
+from collections import deque
 from contextlib import suppress
 from datetime import datetime, timezone
 import json
 from io import BytesIO
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from loguru import logger
 
@@ -55,6 +56,15 @@ class ChatImageLifecycle:
     def __init__(self, db, settings):
         self.db, self.settings = db, settings
         self._cursors = {}
+        self._slot_cursor = 0
+        self._slot_keys = deque()
+        self._slot_key = None
+        self._slot_member_cursor = 0
+        self._slot_members = deque()
+        from services.background_jobs import FairBackgroundJobs
+        self._work = FairBackgroundJobs('image-recovery',
+            getattr(settings, 'chat_image_processing_concurrency', 4),
+            getattr(settings, 'chat_image_processing_timeout_seconds', 300))
 
     def scoped(self, task):
         return ScopedDatabaseClient(self.db, DatabaseScope(task["user_id"], task.get("org_id"), DatabaseAccessKind.WORKER))
@@ -67,25 +77,96 @@ class ChatImageLifecycle:
     async def refresh(self, task):
         return await asyncio.to_thread(lambda:self.scoped(task).table("tasks").select("*").eq("id",task["id"]).single().execute().data)
 
+    async def close(self):
+        await self._work.close()
+
+    async def _process(self, task):
+        await self.advance(await self.refresh(task))
+
     async def scan(self, limit=20):
-        """Indexed, paginated short work. Separate from supplier query jitter."""
-        # Include inactive tenants: previously accepted work still settles.
-        organizations=await asyncio.to_thread(lambda:self.db.table("organizations").select("id").execute().data)
-        for org in [None,*[str(row["id"]) for row in organizations or []]]:
-            cursor=self._cursors.get(org)
-            scoped=ScopedDatabaseClient(self.db,DatabaseScope(None,org,DatabaseAccessKind.WORKER))
-            tasks=await asyncio.to_thread(lambda:scoped.rpc("scan_chat_image_work",{
-                "p_org_id":org,"p_after_created":cursor[0] if cursor else None,
-                "p_after_id":cursor[1] if cursor else None,"p_limit":limit,
-            }).execute().data)
-            self._cursors[org]=(tasks[-1]["created_at"],tasks[-1]["id"]) if tasks else None
-            for task in tasks or []:
-                try:
-                    await self.advance(await self.refresh(task))
-                except asyncio.CancelledError:
-                    raise
-                except Exception as error:
-                    logger.warning("chat_image_recovery_failed | task={} | error_type={}",task["id"],type(error).__name__)
+        """Discovery never waits for provider submission or result persistence."""
+        organizations = await asyncio.to_thread(
+            lambda: self.db.table("organizations").select("id").execute().data)
+        candidates = []
+        for org in [None, *[str(row["id"]) for row in organizations or []]]:
+            try:
+                cursor = self._cursors.get(org)
+                scoped = ScopedDatabaseClient(self.db, DatabaseScope(None, org, DatabaseAccessKind.WORKER))
+                tasks = await asyncio.to_thread(lambda: scoped.rpc("scan_chat_image_work", {
+                    "p_org_id": org, "p_after_created": cursor[0] if cursor else None,
+                    "p_after_id": cursor[1] if cursor else None, "p_limit": limit,
+                }).execute().data)
+                self._cursors[org] = (tasks[-1]["created_at"], tasks[-1]["id"]) if tasks else None
+                for task in tasks or []:
+                    origin = task.get('request_params', {}).get(REQUEST_KEY, {}).get('origin', {})
+                    project = origin.get('project_id') or task.get('conversation_id')
+                    candidates.append((task['id'], (org, task['user_id']), project,
+                        lambda task=task: self._process(task)))
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logger.warning('chat_image_scan_pending | org={} error_type={}', org, type(error).__name__)
+        self._work.dispatch(candidates)
+        try:
+            async with asyncio.timeout(5):
+                await self.reconcile_terminal_slots()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            logger.warning("chat_image_slot_reconciliation_pending | error_type={}", type(error).__name__)
+
+    async def reconcile_terminal_slots(self):
+        """Resume bounded Redis-to-DB cleanup; remove only durable terminal images.
+
+        Covers a process dying after re-acquiring an already published slot.
+        Active images and unrelated chat/video slot identities are untouched.
+        """
+        from api.deps import get_task_limit_service
+        limiter = await get_task_limit_service()
+        if self._slot_key is None:
+            if not self._slot_keys:
+                self._slot_cursor, keys = await limiter.redis.scan(
+                    cursor=self._slot_cursor, match="task:active:*", count=20)
+                self._slot_keys.extend(keys)
+            if not self._slot_keys:
+                return
+            self._slot_key = self._slot_keys.popleft()
+            self._slot_member_cursor = 0
+        key = self._slot_key.decode() if isinstance(self._slot_key, bytes) else self._slot_key
+        parts = key.split(":")
+        try:
+            if len(parts) != 4 or parts[:2] != ["task", "active"]:
+                raise ValueError("Unrecognized slot key")
+            org = None if parts[2] == "personal" else str(UUID(parts[2]))
+            user = str(UUID(parts[3]))
+        except ValueError:
+            self._slot_key = None
+            return
+        if not self._slot_members:
+            self._slot_member_cursor, members = await limiter.redis.sscan(
+                self._slot_key, cursor=self._slot_member_cursor, count=50)
+            self._slot_members.extend(members)
+        batch = list(self._slot_members)[:50]
+        ids = []
+        for member in batch:
+            try:
+                ids.append(str(UUID(member.decode() if isinstance(member, bytes) else member)))
+            except (ValueError, TypeError):
+                continue
+        if ids:
+            scoped = ScopedDatabaseClient(self.db, DatabaseScope(None, org, DatabaseAccessKind.WORKER))
+            tasks = await asyncio.to_thread(lambda: scoped.table("tasks").select("*").in_("id", ids).eq(
+                "user_id", user).eq("type", "image").eq(
+                "request_params->'_media_lifecycle_v1'->>'phase'", "published").execute().data or [])
+            for task in tasks:
+                if is_chat_image(task) and task.get("org_id") == org:
+                    await limiter.release(user, task.get("conversation_id"), org_id=org,
+                        slot_id=str(task["id"]), strict=True)
+        # Do not advance on ambiguous DB/Redis failure; replay the same batch.
+        for _ in batch:
+            self._slot_members.popleft()
+        if not self._slot_members and not self._slot_member_cursor:
+            self._slot_key = None
 
     async def advance(self, task):
         state=task["request_params"][LIFECYCLE_KEY]
@@ -154,7 +235,8 @@ class ChatImageLifecycle:
             return
         limiter=await get_task_limit_service()
         try:
-            await limiter.acquire_image_slot(task["user_id"],task["conversation_id"],task["id"],task.get("org_id"))
+            await limiter.acquire_image_slot(task["user_id"],task["conversation_id"],task["id"],task.get("org_id"),
+                detail_project=origin.get('destination') == 'detail_project')
         except TaskQueueFullError:
             return
         token=str(uuid4())
@@ -166,9 +248,13 @@ class ChatImageLifecycle:
             # error as permission to recreate a paid task.
             raise
         if claim.get("outcome") != "claimed":
+            if claim.get("outcome") == "not_queued":
+                current = await self.refresh(task)
+                if current["request_params"][LIFECYCLE_KEY]["phase"] == "published":
+                    await self.deliver(current)
             if claim.get("outcome") in {"identity_denied","insufficient_credits"}:
                 await self.definite_failure(task,"当前权限或积分不足，未提交供应商")
-                await limiter.release(task["user_id"],task["conversation_id"],org_id=task.get("org_id"),slot_id=task["id"])
+                await limiter.release(task["user_id"],task["conversation_id"],org_id=task.get("org_id"),slot_id=task["id"],strict=True)
             return
         adapter=None
         try:
@@ -198,7 +284,17 @@ class ChatImageLifecycle:
             state=current_task["request_params"][LIFECYCLE_KEY]
             from services.adapters.kie.client import KieAPIError
             definitely_rejected=isinstance(error,KieAPIError) and error.status_code is not None and 400<=int(error.status_code)<500
-            if definitely_rejected:
+            import httpx
+            # The single-shot adapter does not retry HTTP submission. Connection
+            # setup/pool failures prove no HTTP request body reached the provider;
+            # read/write failures and response loss remain ambiguous.
+            not_sent = isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout))
+            if not_sent and state['phase'] == 'submitting':
+                await self.rpc(current_task, 'record_chat_image_provider_result', p_result={
+                    'status': 'failed', 'error': '未能连接图片服务，尚未提交，积分已退还',
+                    'fail_code': 'SUBMISSION_CONNECTION_FAILED'})
+                await self.finish_with_lock(await self.refresh(current_task))
+            elif definitely_rejected:
                 await self.rpc(current_task,"record_chat_image_provider_result",p_result={"status":"failed","error":"供应商明确拒绝生成请求"})
                 await self.finish_with_lock(await self.refresh(current_task))
             elif not state.get("dispatch_started_at"):
@@ -334,20 +430,20 @@ class ChatImageLifecycle:
         from api.deps import get_task_limit_service
         if task["request_params"][REQUEST_KEY]["origin"].get("destination") in {"skill_trial", "detail_project"}:
             limiter=await get_task_limit_service()
-            await limiter.release(task["user_id"],task["conversation_id"],org_id=task.get("org_id"),slot_id=task["id"])
+            await limiter.release(task["user_id"],task["conversation_id"],org_id=task.get("org_id"),slot_id=task["id"],strict=True)
             await self.rpc(task,"ack_chat_image_delivery")
             return
         message=await asyncio.to_thread(lambda:self.scoped(task).table("messages").select("*").eq("id",task["assistant_message_id"]).single().execute().data)
         if (message.get("generation_params") or {}).get("task_id") != str(task["id"]):
             # The slot belongs to a newer attempt; acknowledge the old delivery only.
             limiter=await get_task_limit_service()
-            await limiter.release(task["user_id"],task["conversation_id"],org_id=task.get("org_id"),slot_id=task["id"])
+            await limiter.release(task["user_id"],task["conversation_id"],org_id=task.get("org_id"),slot_id=task["id"],strict=True)
             await self.rpc(task,"ack_chat_image_delivery")
             return
         if isinstance(message.get("content"),str):
             message["content"]=json.loads(message["content"])
         await ws_manager.send_to_task_or_user(task["id"],task["user_id"],build_message_done(task["id"],task["conversation_id"],message,task.get("credits_used",0)),org_id=task.get("org_id"))
         limiter=await get_task_limit_service()
-        await limiter.release(task["user_id"],task["conversation_id"],org_id=task.get("org_id"),slot_id=task["id"])
+        await limiter.release(task["user_id"],task["conversation_id"],org_id=task.get("org_id"),slot_id=task["id"],strict=True)
         # Update only our delivery fact, preserving immutable snapshot and phases.
         await self.rpc(task,"ack_chat_image_delivery")

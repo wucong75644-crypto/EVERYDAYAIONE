@@ -54,4 +54,37 @@ describe('固定布局设置',()=>{
   fireEvent.click(screen.getByRole('button',{name:'删除 商品.png'}));
   expect(onRemove).toHaveBeenCalledWith('image-1');
  });
+ it('拖拽与聚焦后的文件粘贴复用上传入口，普通文字保留默认行为',()=>{
+  const onAdd=vi.fn();
+  render(<GenerationSettings form={DEFAULT_FORM} hasProductImage {...actions} onAdd={onAdd}/>);
+  const textarea=screen.getByRole('textbox');
+  const zone=textarea.parentElement!;
+  const file=new File(['image'],'产品.png',{type:'image/png'});
+  fireEvent.dragEnter(zone,{dataTransfer:{types:['Files']}});
+  expect(screen.getByRole('status')).toHaveTextContent('松开即可上传产品图片');
+  fireEvent.drop(zone,{dataTransfer:{files:[file]}});
+  expect(onAdd).toHaveBeenCalledWith([file]);
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  onAdd.mockClear();
+  fireEvent.paste(textarea,{clipboardData:{items:[{kind:'file',getAsFile:()=>file}]}});
+  expect(onAdd).not.toHaveBeenCalled();
+  textarea.focus();
+  expect(fireEvent.paste(textarea,{clipboardData:{items:[{kind:'file',getAsFile:()=>file}]}})).toBe(false);
+  expect(onAdd).toHaveBeenCalledWith([file]);
+  expect(fireEvent.paste(textarea,{clipboardData:{items:[{kind:'string'}]}})).toBe(true);
+ });
+ it('禁用或满9张时，拖拽和粘贴不能新增图片',()=>{
+  const onAdd=vi.fn();
+  const {rerender}=render(<GenerationSettings form={DEFAULT_FORM} hasProductImage {...actions} onAdd={onAdd} disabled/>);
+  const file=new File(['image'],'产品.png',{type:'image/png'});
+  fireEvent.drop(screen.getByRole('textbox').parentElement!,{dataTransfer:{files:[file]}});
+  expect(onAdd).not.toHaveBeenCalled();
+  const images=Array.from({length:9},(_,i)=>({id:String(i),category:'product' as const,status:'ready' as const,name:`${i}.png`,previewUrl:'preview.png',error:null}));
+  rerender(<GenerationSettings form={DEFAULT_FORM} hasProductImage {...actions} onAdd={onAdd} images={images}/>);
+  const textarea=screen.getByRole('textbox');
+  fireEvent.drop(textarea.parentElement!,{dataTransfer:{files:[file]}});
+  textarea.focus();
+  fireEvent.paste(textarea,{clipboardData:{items:[{kind:'file',getAsFile:()=>file}]}});
+  expect(onAdd).not.toHaveBeenCalled();
+ });
 });

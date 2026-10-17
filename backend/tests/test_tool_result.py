@@ -133,7 +133,8 @@ def test_file_read_text_image_and_actual_chat_injection_unchanged(type, url):
     messages = []
     images = apply_tool_results(
         tool_results=[(call, result.to_legacy(), False, result.display["text"])],
-        messages=messages, content_blocks=[], start_times={}, tool_context=MagicMock(),
+        messages=messages, content_blocks=[], start_times={},
+        tool_context=MagicMock(build_context_prompt=lambda: None),
     )
     append_tool_images(messages, images)
     assert images == ([url] if type == "image" and url else [])

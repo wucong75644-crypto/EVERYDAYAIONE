@@ -121,7 +121,10 @@ async def chat_run(case, transport, root, monkeypatch):
     await sink.on_block(running)
     results = await host._execute_tool_calls([call],'task1','c1','m1','u1',1)
     messages=[]; blocks=[dict(running)]
-    images=apply_tool_results(tool_results=results,messages=messages,content_blocks=blocks,start_times={},tool_context=Mock())
+    # These goldens isolate raw ToolResult/delivery projection. Context metadata
+    # preservation and replay prefixes are exercised in test_context_result_restoration.
+    images=apply_tool_results(tool_results=results,messages=messages,content_blocks=blocks,start_times={},
+                              tool_context=Mock(build_context_prompt=lambda: None))
     append_tool_images(messages,images)
     await _consume_emit_payloads(host,blocks,sink)
     await sink.flush()
