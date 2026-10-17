@@ -12,7 +12,7 @@ from core.exceptions import AppException
 from services.agent.image.ecommerce_planner.contracts import source_id
 from services.agent.image.ecommerce_planner.inputs import FixedSettings, source_bindings
 from services.agent.image.ecommerce_planner.page_profile import profile
-from services.agent.image.ecommerce_planner.prompt_resources import resources, resource_versions
+from services.agent.image.ecommerce_planner.prompt_resources import resource_versions, profile_for_platform, plan_resources
 from services.agent.image.ecommerce_planner.format_delivery import PROMPTS_VERSION
 from services.agent.image.ecommerce_planner.service import EcommerceImagePlanner, PlannerStreamBudget, _digest
 from services.detail_project_service import DetailProjectService
@@ -244,7 +244,7 @@ class DetailPageGeneration:
             rows.append({'id':str(uuid4()),'project_id':project_id,'generation_run_id':request_id,
                 'user_id':self.user_id,'org_id':self.org_id,'invocation_key':kind,'input_digest':_digest(snapshot),
                 'image_count':count,'input_snapshot':snapshot,'target_size':snapshot['target_size'],
-                'prompt_versions':resource_versions(PROMPTS_VERSION),
+                'prompt_versions':resource_versions(PROMPTS_VERSION, profile_for_platform(fixed.platform)),
                 'model_settings':{'model':project['prompt_model'],'profile':vars(selected),'image_budget':image_budget,
                     'delivery_policy':POLICY}})
         try:
@@ -406,12 +406,7 @@ class DetailPageWorker:
         resolver=PageImageInputResolver(owner)
         try:
             urls=[]
-            version=(row.get('prompt_versions') or {}).get('stage_three_delivery_version')
-            bodies,schema=resources(row['input_snapshot']['task_type'],version)
-            expected=resource_versions(version)
-            if any((version==PROMPTS_VERSION or key in row.get('prompt_versions',{})) and row.get('prompt_versions',{}).get(key)!=value
-                    for key,value in expected.items()):
-                raise ValueError('PLANNER_RESOURCE_VERSION_MISMATCH')
+            bodies,schema=plan_resources(row)
             # Core owns the claim. Renewal retains its exact token and never resets attempt deadlines.
             async def heartbeat():
                 while True:

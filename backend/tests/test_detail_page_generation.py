@@ -68,6 +68,7 @@ def test_page_schema_allows_default_14_and_single_15_but_upload_limit_stays_sepa
     with pytest.raises(ValueError):DetailProjectSettingsPatch(version=1,image_count=16)
 
 
+@pytest.mark.parametrize('platform', ['taobao', 'jd'])
 @pytest.mark.parametrize('model', ['kimi-k3','gemini-3.8-flash','gpt-6-luna'])
 @pytest.mark.parametrize('content_type,ratio,expected', [
     ('default','1:1',['1:1','3:4']),
@@ -76,7 +77,7 @@ def test_page_schema_allows_default_14_and_single_15_but_upload_limit_stays_sepa
     ('detail_page','3:4',['3:4']),
     ('detail_page','1:1',['1:1']),
 ])
-async def test_entry_freezes_group_ratios_through_image_acceptance(monkeypatch, model, content_type, ratio, expected):
+async def test_entry_freezes_group_ratios_through_image_acceptance(monkeypatch, platform, model, content_type, ratio, expected):
     from unittest.mock import MagicMock
     from services import detail_page_generation as page
     configured=settings()
@@ -89,7 +90,7 @@ async def test_entry_freezes_group_ratios_through_image_acceptance(monkeypatch, 
     raw='  要有发财的感觉\n不要改变商品  '
     project={'id':'project-1','version':3,'prompt_model':model,'content_type':content_type,
         'image_count':14 if content_type=='default' else 7,'images':[],'requirement':raw,
-        'platform':'taobao','language':'zh-CN','aspect_ratio':ratio,'quality':'1k'}
+        'platform':platform,'language':'zh-CN','aspect_ratio':ratio,'quality':'1k'}
     refs=[{'file_id':f'fid_{i}','source_id':f'image-{i}','role':'product',
         'workspace_path':f'{i}.png','content_sha256':str(i)*64} for i in (1,2)]
     monkeypatch.setattr(page,'PageImageInputResolver',lambda *_:SimpleNamespace(bind=lambda _:refs,verify=lambda _:None))
@@ -103,6 +104,13 @@ async def test_entry_freezes_group_ratios_through_image_acceptance(monkeypatch, 
     kinds=['main_images','detail_page'] if content_type=='default' else [
         'main_images' if content_type=='main_image' else 'detail_page']
     assert [row['input_snapshot']['task_type'] for row in rows]==kinds
+    from services.agent.image.ecommerce_planner.prompt_resources import plan_resources, resources
+    for row in rows:
+        assert row['prompt_versions'].get('prompt_profile') == ('jd.v1' if platform == 'jd' else None)
+        bodies, schema = plan_resources(row)
+        baseline, baseline_schema = resources(row['input_snapshot']['task_type'], 'ecom-prompts.v4')
+        assert schema == baseline_schema
+        assert (bodies != baseline) == (platform == 'jd')
     assert [row['image_count'] for row in rows]==[7]*len(kinds)
     assert [row['target_size']['aspect_ratio'] for row in rows]==expected
     from services.agent.image.ecommerce_planner.assembly import assemble_prompts
