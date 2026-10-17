@@ -22,6 +22,7 @@ FILE_SEARCH_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/file_search_
 TASK_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/scheduled_task_structured_schema.json').read_text())
 SMART_IMAGE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/smart_image_25_config_upgrade.json').read_text())
 WEB_SEARCH_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/web_search_protocol_01_schema.json').read_text())
+ERP_SCOPE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/erp_order_scope_schema_upgrade.json').read_text())
 CHAT_IMAGE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/chat_image_default_tool_upgrade.json').read_text())
 
 
@@ -41,7 +42,7 @@ def image_upgrade_settings():
 
 
 def original_schemas(names, view):
-    return [CHAT_IMAGE_UPGRADE['spec_changes'][name]['schema'] if 'schema' in CHAT_IMAGE_UPGRADE['spec_changes'].get(name, {}) else WEB_SEARCH_UPGRADE if name == 'web_search' else PRESENTATION_UPGRADE if name == 'code_execute' else FILE_SEARCH_UPGRADE if name == 'file_search' else TASK_UPGRADE['schema'] if name == 'manage_scheduled_task' else BASELINE['schema_views'].get(view, {}).get(name) or BASELINE['specs'][name]['schema']
+    return [ERP_SCOPE_UPGRADE[name] if name in ERP_SCOPE_UPGRADE else CHAT_IMAGE_UPGRADE['spec_changes'][name]['schema'] if 'schema' in CHAT_IMAGE_UPGRADE['spec_changes'].get(name, {}) else WEB_SEARCH_UPGRADE if name == 'web_search' else PRESENTATION_UPGRADE if name == 'code_execute' else FILE_SEARCH_UPGRADE if name == 'file_search' else TASK_UPGRADE['schema'] if name == 'manage_scheduled_task' else BASELINE['schema_views'].get(view, {}).get(name) or BASELINE['specs'][name]['schema']
             for name in names]
 
 
@@ -88,6 +89,8 @@ def test_full_spec_contract_unchanged(catalog, name):
                 # Search results are time-sensitive and provider calls may bill;
                 # a cache hit must not masquerade as a fresh search.
                 value = False
+            if key == 'schema' and name in ERP_SCOPE_UPGRADE:
+                value = ERP_SCOPE_UPGRADE[name]
             assert actual[key] == value, (name, key)
 
 
@@ -443,3 +446,20 @@ def test_presentation_extension_changes_only_code_tool_description():
     original = BASELINE['specs']['code_execute']['schema']
     current['function']['description'] = original['function']['description']
     assert current == original
+
+
+def test_erp_scope_upgrade_preserves_unrelated_schema_contracts():
+    """Only the approved scope parameter and default-scope guidance change."""
+    old_local = deepcopy(BASELINE['specs']['local_data']['schema'])
+    old_local['function']['parameters']['properties']['order_scope'] = {
+        'type': 'string',
+        'enum': ['valid', 'all', 'exclude_scalping', 'only_scalping'],
+        'description': '订单统计口径：默认有效订单；刷单按租户分类规则识别',
+    }
+    assert ERP_SCOPE_UPGRADE['local_data'] == old_local
+    old_erp = deepcopy(BASELINE['specs']['erp_agent']['schema'])
+    old_erp['function']['description'] = old_erp['function']['description'].replace(
+        "- 异常数据：默认排除刷单，query 中写'包含刷单'则包含",
+        '- 统计口径：默认有效订单；指定口径优先、追问沿用；刷单按租户规则',
+    )
+    assert ERP_SCOPE_UPGRADE['erp_agent'] == old_erp

@@ -80,8 +80,8 @@ def get_capability_manifest() -> dict:
             "参数错误：返回 {status:'error', message:'具体原因'}，根据 message 修正 task 后重试",
             "数据量过大被拒绝：返回建议的缩小范围策略，按建议调整 task 后重试",
         ],
+        "order_scope_hint": "默认有效订单；指定口径优先、追问沿用；刷单按租户规则",
         "limits": [
-            "订单默认展示分类并按有效订单计算；用户明确指定全部、只排除刷单、保留关闭作废时必须保留原话并沿用该口径，刷单按租户分类规则识别。追问背景需携带原口径。",
             "编码/单号IN匹配：单次最多5000个值。超过5000个的跨域关联查询，"
             "应分别导出两份数据到staging，再用code_execute按编码JOIN",
         ],
@@ -175,7 +175,7 @@ def build_tool_description() -> str:
     lines.append(f"- 分组统计：按{'/'.join(m['group_by'])}统计")
     lines.append(f"- 过滤：自动识别{'、'.join(m['platforms'])}、商品编码、订单号")
     lines.append(f"- 时间列：{' / '.join(m['time_cols'])}（默认 doc_created_at）")
-    lines.append("- 异常数据：默认排除刷单，query 中写'包含刷单'则包含")
+    lines.append(f"- 统计口径：{m['order_scope_hint']}")
     lines.append(
         "- 跨域查询：各域数据独立时一次并行查询；"
         "超出一次执行能力时进入计划模式（status=plan），返回执行计划由调用方逐步执行"

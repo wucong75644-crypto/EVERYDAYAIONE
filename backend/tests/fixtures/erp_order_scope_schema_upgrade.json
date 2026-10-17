@@ -1,0 +1,155 @@
+{
+  "erp_agent": {
+    "type": "function",
+    "function": {
+      "name": "erp_agent",
+      "description": "ERP 数据查询专员，查询订单/库存/采购/售后/商品/SKU/日统计/平台映射/批次库存/操作日志等全量数据，口语化表达和错别字自动识别\n\n使用场景：用户问任何涉及订单/库存/采购/售后/发货/物流/商品/销量的问题；库存快照查询（库存负数/缺货/可用库存<N）、商品主数据（停售/虚拟商品/品牌）；SKU明细、日统计（本月销量Top）、平台映射（哪些平台在售）、批次效期、操作日志；含操作性词汇（对账/核对/处理/优先处理/多少钱/价格）需要先查数据；口语/错别字也要识别：'丁单'=订单，'酷存'=库存，'够不够卖'=库存查询，'到了没'=采购到货，'退了'=售后，'爆单'=销量统计，'查一下呗'=数据查询\n不要用于：写操作（创建/修改/取消）→erp_execute / 非 ERP 数据（天气/新闻）→web_search / 业务规则/操作流程→search_knowledge\n\n能力：\n- 输出模式：export / summary（>200行自动导出文件）\n- 分组统计：按platform/product/shop/status/supplier/warehouse统计\n- 过滤：自动识别京东、天猫、小红书、微店、快手、抖店、抖音、拼多多、淘宝、商品编码、订单号\n- 时间列：apply_date / consign_time / created_at / delivery_date / doc_created_at / finished_at / modified_at / operate_time / pay_time / stat_date / stock_modified_time / synced_at / updated_at（默认 doc_created_at）\n- 统计口径：默认有效订单；指定口径优先、追问沿用；刷单按租户规则\n- 跨域查询：各域数据独立时一次并行查询；超出一次执行能力时进入计划模式（status=plan），返回执行计划由调用方逐步执行\n\n分析能力（v2.2 新增）：\n- 趋势分析：每天/每周/每月的销售额、订单量、退货量等走势\n- 对比分析：环比（vs上月）、同比（vs去年）增长率\n- 占比分析：各平台/商品/店铺的销售额占比、ABC商品分类\n- 跨域指标：退货率、毛利率、客单价、库存周转天数、进销存、发货时效、复购率、供应商评估（共20个指标）\n- 预警查询：缺货预警、滞销预警、积压预警、采购超期\n- 分布分析：订单金额区间分布、客单价分布\n- 大数据导出：50万行以上数据直接导出，无行数限制\n- 可查询信息：单据基础/时间/商品/数量金额/关联方/商品规格/订单物流/买家收件人/状态标记/售后/备注\n  （query 中提到具体信息如'备注''地址''快递单号'会自动返回对应字段）\n\n并行调用：支持并行多次调用：用户请求包含多个独立子任务时，同时发起多个 erp_agent 调用，每个 task 只写一个子任务\n\n返回：\n- summary 模式：{status:'ok', summary:'统计文本', data:[{维度:值, 指标:数字}...]}，直接内联\n- export 模式：{status:'ok', file:'trade_xxx.parquet', rows:N, columns:[...], preview:[前3行]}\n- 导出工作流：erp_agent 存 staging → code_execute 中 duckdb.read_parquet 提取 → 写 Excel\n- 跨域并行：各域数据独立时一次返回多域结果 + 关联计算提示，code_execute 按提示关联\n- 计划模式：{status:'plan', steps:[...]}，调用方按计划逐步执行并传递中间结果\n\n错误处理：\n- 无数据：返回 {status:'empty', suggestion:'建议扩大时间范围或检查平台名'}，转述建议给用户\n- 超时：返回 {status:'timeout'}，建议缩小时间范围或减少数据量后重试\n- 参数错误：返回 {status:'error', message:'具体原因'}，根据 message 修正 task 后重试\n- 数据量过大被拒绝：返回建议的缩小范围策略，按建议调整 task 后重试\n\n限制：\n- 编码/单号IN匹配：单次最多5000个值。超过5000个的跨域关联查询，应分别导出两份数据到staging，再用code_execute按编码JOIN\n\nquery 示例：\n· \"昨天淘宝退货按店铺统计\" → summary + platform=taobao + group_by=shop\n· \"导出本周订单明细\" → export → staging + profile\n· \"编码 HZ001 的库存\" → product_code 过滤\n· \"上月采购到货按供应商统计\" → summary + group_by=supplier\n· \"包含刷单的订单有多少\" → include_invalid=true\n· \"今天刷单有多少\" → is_scalping=true + include_invalid=true\n· \"库存负数的商品有多少\" → doc_type=stock + available_stock<0\n· \"停售商品列表\" → doc_type=product + active_status=2\n· \"本月各商品销量Top10\" → doc_type=daily_stats + sort_by=order_qty\n· \"某商品在哪些平台售卖\" → doc_type=platform_map + product_code过滤\n· \"某订单的操作记录\" → doc_type=order_log + system_id过滤\n· \"每天的销售额趋势\" → query_type=trend + time_granularity=day\n· \"这个月比上个月各平台销售额怎么样\" → query_type=compare + compare_range=mom\n· \"各平台退货率\" → query_type=cross + metrics=[return_rate]\n· \"哪些SKU快卖断了\" → query_type=alert + alert_type=low_stock\n· \"订单金额分布\" → query_type=distribution + metrics=[amount]",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "task"
+        ],
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "用户本次查询的完整描述。写法：复述用户原话，只做两处替换——时间词→具体日期（如'今天'→'2026-05-03 00:00~15:30'），指代词→具体名称。其他一字不动，不要添加额外说明。e.g. '2026-05-02 00:00~23:59 淘宝退货按店铺统计'；'导出2026-04-28~2026-05-03的订单明细'"
+          },
+          "conversation_context": {
+            "type": "string",
+            "description": "追问时传上轮的查询条件（时间范围/平台/对象/筛选条件），让专家理解上文。不传结果数字，不传你的推测。首轮不传。e.g. '上轮查了2026-05-02淘宝退货，按店铺分组'"
+          }
+        }
+      }
+    }
+  },
+  "local_data": {
+    "type": "function",
+    "function": {
+      "name": "local_data",
+      "description": "本地数据库统一查询工具。支持查询/统计/导出 ERP 全部业务表数据。\n除单据表外还支持：库存(stock)、商品(product)、SKU(sku)、日统计(daily_stats)、平台映射(platform_map)、批次库存(batch_stock)、订单日志(order_log)、售后日志(aftersale_log)。\n用 filters 数组指定过滤条件，任意字段组合均可。\n\n常用字段：\n- order_status/doc_status: 状态(WAIT_AUDIT/WAIT_SEND_GOODS/SELLER_SEND_GOODS/FINISHED/CLOSED)\n- consign_time: 发货时间  |  pay_time: 付款时间  |  doc_created_at: 创建时间\n- shop_name: 店铺名  |  platform: 平台(tb/jd/pdd/fxg/kuaishou/xhs/1688)\n- outer_id: 商品主编码  |  sku_outer_id: SKU编码  |  item_name: 商品名称\n- order_no: 平台订单号  |  express_no: 快递单号\n- supplier_name: 供应商  |  warehouse_name: 仓库\n- amount: 金额  |  pay_amount: 实付金额  |  quantity: 数量\n- cost: 成本  |  gross_profit: 毛利润  |  price: 单价\n- post_fee: 运费  |  discount_fee: 优惠金额  |  refund_money: 退款金额\n- is_scalping: 是否刷单/空包(0=正常,1=刷单)  |  is_exception: 是否异常订单(0/1)\n- is_refund: 是否退款(0/1)  |  is_cancel: 是否取消(0/1)\n- aftersale_type: 售后类型(0~9)  |  refund_status: 退款状态  |  text_reason: 售后原因\n- buyer_nick: 买家昵称  |  status_name: 状态中文名\n\nop: eq(等于) ne(不等于) gt(大于) gte(>=) lt(<) lte(<=) in(在列表中) like(模糊) is_null(是否空) between(区间)\n\n示例1：4月14日已发货订单列表\n  doc_type=order, mode=detail, filters=[\n    {\"field\":\"order_status\",\"op\":\"eq\",\"value\":\"SELLER_SEND_GOODS\"},\n    {\"field\":\"consign_time\",\"op\":\"gte\",\"value\":\"2026-04-14 00:00:00\"},\n    {\"field\":\"consign_time\",\"op\":\"lt\",\"value\":\"2026-04-15 00:00:00\"}]\n\n示例2：淘宝金额>500订单按店铺统计\n  doc_type=order, mode=summary, filters=[\n    {\"field\":\"platform\",\"op\":\"eq\",\"value\":\"tb\"},\n    {\"field\":\"amount\",\"op\":\"gt\",\"value\":500}],\n  group_by=[\"shop_name\"]\n\n示例3：导出3月拼多多发货订单\n  doc_type=order, mode=export, filters=[...],\n  fields=[\"order_no\",\"amount\",\"consign_time\"]",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "doc_type": {
+            "type": "string",
+            "enum": [
+              "order",
+              "purchase",
+              "aftersale",
+              "receipt",
+              "shelf",
+              "purchase_return",
+              "stock",
+              "product",
+              "sku",
+              "daily_stats",
+              "platform_map",
+              "batch_stock",
+              "order_log",
+              "aftersale_log"
+            ],
+            "description": "单据类型（新增：stock=库存快照/product=商品/sku=SKU/daily_stats=日统计/platform_map=平台映射/batch_stock=批次库存/order_log=订单日志/aftersale_log=售后日志）"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "detail",
+              "export"
+            ],
+            "description": "输出模式：summary=聚合统计，detail=明细列表，export=导出文件"
+          },
+          "filters": {
+            "type": "array",
+            "description": "过滤条件数组，每个元素 {field, op, value}",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "description": "列名"
+                },
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "eq",
+                    "ne",
+                    "gt",
+                    "gte",
+                    "lt",
+                    "lte",
+                    "in",
+                    "like",
+                    "is_null",
+                    "between"
+                  ]
+                },
+                "value": {
+                  "description": "过滤值"
+                }
+              },
+              "required": [
+                "field",
+                "op",
+                "value"
+              ]
+            }
+          },
+          "group_by": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "分组字段（mode=summary时），如 [\"shop_name\"] 或 [\"platform\"]"
+          },
+          "order_scope": {
+            "type": "string",
+            "enum": [
+              "valid",
+              "all",
+              "exclude_scalping",
+              "only_scalping"
+            ],
+            "description": "订单统计口径：默认有效订单；刷单按租户分类规则识别"
+          },
+          "sort_by": {
+            "type": "string",
+            "description": "排序字段（mode=detail时）"
+          },
+          "sort_dir": {
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "description": "排序方向"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "返回/导出字段列表。mode=export 不传则返回可用字段文档"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "返回行数上限（detail默认20，export默认5000，上限10000）"
+          },
+          "time_type": {
+            "type": "string",
+            "enum": [
+              "doc_created_at",
+              "pay_time",
+              "consign_time"
+            ],
+            "description": "时间列（控制 summary 模式的统计时间维度）。含「付款」用 pay_time，含「发货」用 consign_time，默认 doc_created_at"
+          }
+        },
+        "required": [
+          "doc_type",
+          "filters"
+        ]
+      }
+    }
+  }
+}
