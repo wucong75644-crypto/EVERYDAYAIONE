@@ -61,6 +61,34 @@ def test_ambiguous_json_is_not_extracted_or_silently_overwritten(raw):
     with pytest.raises(ValueError): strict_object(raw)
 
 
+@pytest.mark.parametrize('kind,count', [('main_images', 5), ('detail_page', 7)])
+async def test_repeated_prompt_lists_deliver_without_model_repair_or_text_changes(kind, count):
+    service, evidence, bodies, output, validator = fixture(count, kind)
+    raw = '{' + ','.join('"prompts":' + json.dumps([p], ensure_ascii=False)
+        for p in output['prompts']) + '}'
+    service._call.return_value = (raw, {'attempt_id': 'original'})
+    result, usage = await run_stage(service, evidence, bodies, 3, validator)
+    assert result['design_output'] == output
+    assert service._call.await_count == 1
+    assert usage['normalization'] == [{'path': ['prompts'],
+        'operation': 'repeated_prompt_lists', 'groups': count, 'count': count}]
+    saved = service._persist_format.call_args.args[-1]
+    assert saved['original_output'] == raw
+
+
+@pytest.mark.parametrize('raw', [
+    '{"prompts":["a"],"prompts":["b","c"]}',
+    '{"prompts":[],"prompts":["a","b"]}',
+    '{"prompts":["a"],"prompts":["b"],"other":1}',
+    '{"prompts":["a"],"prompts":"b"}',
+    '{"prompts":[{"x":1,"x":2}],"prompts":["b"]}',
+    '{"prompts":["a"],"prompts":[" "]}',
+])
+def test_repeated_prompt_recovery_rejects_ambiguous_or_wrong_count_wrappers(raw):
+    service, evidence, _, _, _ = fixture(2)
+    with pytest.raises(ValueError): service._page_candidate(raw, 3, evidence)
+
+
 def test_collision_and_nonempty_unknown_are_not_silently_removed():
     service,evidence,_,_,_ = fixture()
     schema = service._page_schema(1,evidence)

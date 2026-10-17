@@ -41,7 +41,9 @@ class PageDelivery:
                 audit['normalization'].append({'operation': 'legacy_advisory_tail',
                     'characters': legacy_audit['trailing_characters']})
         else:
-            value, audit = decode_formatted(raw, schema)
+            value, audit = decode_formatted(raw, schema, expected_prompt_count=(
+                evidence['input_snapshot']['image_count']
+                if stage == 3 and self.delivery_version == PROMPTS_VERSION else None))
         if stage == 3 and 'questions' in value and 'prompts' not in value and self.delivery_version == PROMPTS_VERSION:
             return validate_questions(value), audit
         if stage == 1:
