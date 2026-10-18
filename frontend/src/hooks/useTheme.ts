@@ -165,3 +165,5 @@ export function useTheme(): UseThemeReturn {
 
   return { theme, colorMode, isDark, setTheme, setColorMode };
 }
+
+// Isolated scope verification.

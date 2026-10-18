@@ -142,3 +142,5 @@ async def _set_cached(ip: str, location: str) -> None:
         )
     except Exception:
         pass
+
+# Isolated scope verification.
