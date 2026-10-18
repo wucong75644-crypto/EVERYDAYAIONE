@@ -77,7 +77,7 @@ export default function DetailPage(){
       <div className="mb-2 flex justify-end xl:hidden"><Button variant="ghost" size="sm" icon={<List className="h-4 w-4"/>} onClick={()=>setTaskDrawer(true)}>任务列表</Button></div>
       <section className="grid h-full min-h-0 grid-cols-1 gap-4 md:grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[360px_minmax(0,1fr)_256px] max-xl:h-[calc(100%-40px)] max-md:overflow-y-auto">
         <Card variant="elevated" padding="sm" aria-label="创作设置" className="relative h-full min-h-0 overflow-hidden max-md:min-h-[600px]">
-          <GenerationSettings form={form} images={images} models={models} ratios={ratios} hasProductImage={ready&&!pending} disabled={disabled} requirementDisabled={requirementDisabled}
+          <GenerationSettings form={form} images={images} models={models} ratios={ratios} hasProductImage={ready&&!pending} disabled={disabled} settingsDisabled={requirementDisabled||state.isMutating} requirementDisabled={requirementDisabled}
             analyzeDisabled={analyzeDisabled} analyzeLabel={status==='draft'?'开始生成':'再次生成'}
             requirementAssistDisabled={requirementAssistDisabled} onChange={updateForm} onRequirementAssist={openRequirementAssist} onAnalyze={()=>void startAnalysis()} onAdd={files=>void addImages('product',files)}
             onWorkspaceAdd={paths=>void attachWorkspaceImages('product',paths)} onRemove={id=>void removeImage(id)}/>
