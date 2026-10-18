@@ -176,7 +176,11 @@ def execute():
     verify_environment(repository, 'production', os.environ['DELIVERY_APPROVER'])
     verify_checks(repository, plan['check_run'], plan['sha'])
     verify_source(plan)
-    # These are deliberately NOT provisioned during configuration/rehearsal.
+    # Dedicated SSH and administrator-reviewed policy must still match before
+    # any real release operation, including the database identity guard.
+    from verify_delivery import verify_connection
+    verify_connection()
+    # Credentials exist only inside the protected GitHub job.
     metadata = config_text(os.environ['DELIVERY_CONFIG_JSON'])
     key = os.environ['DELIVERY_SSH_KEY']
     hosts = os.environ['DELIVERY_KNOWN_HOSTS']

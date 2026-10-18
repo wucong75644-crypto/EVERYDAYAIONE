@@ -1,6 +1,6 @@
 # GitHub审批发布与隔离演练
 
-本次交付是配置和演练：生产开关`PRODUCTION_DELIVERY_ENABLED=false`，`production`环境没有发布凭据。不连接生产服务器、数据库、Redis或备份，不执行生产部署，不合并main。不能把演练成功说成生产连通性或正式发布成功。
+初始隔离演练阶段保持生产开关`PRODUCTION_DELIVERY_ENABLED=false`且不配置凭据。后续专用凭据接入阶段允许管理SSH和只读系统元数据探测，仍禁止连接生产数据库、Redis、备份，不读取应用.env、不部署或合并main。完成凭据验证及检查后可将开关设为true，表示等待人工批准正式发布；开关本身不触发发布。不能把入口验证说成正式部署或迁移成功。
 
 ## 确定提交、审批和排队
 
@@ -46,16 +46,30 @@ python3 scripts/ci/delivery.py request --mode accept --check-run <该生产SHA�
 
 演练用独立`delivery-rehearsal`审批环境，不持有生产secrets。审批后运行临时bare Git仓库、临时模拟服务器目录和fake SSH的真实受控入口测试，包括当前版本保护、待验收任务保护、main变化、并行锁、远端写入不确定保留锁及验收后下一任务集成。实际GitHub演练还核验审批等待和多请求排队，不能只靠本地测试宣称平台门禁有效。
 
-本次生产开关保持false，三个生产环境secret保持未配置：
+专用凭据只保存在GitHub受保护的production环境，三个secret为：
 
 - `DELIVERY_CONFIG_JSON`：现有受控执行器的服务器、目录、域名等发布元数据JSON；禁止数据库URL、Redis密码、应用.env或API密钥。
 - `DELIVERY_SSH_KEY`：后续单独授权接入的专用发布私钥，不读取/上传当前电脑已有私钥。
 - `DELIVERY_KNOWN_HOSTS`：经过独立核验的服务器主机公钥，严格主机校验；不用`ssh-keyscan`盲信首次连接。
 
-以后真正启用前，需单独完成凭据和最小服务器权限接入、网络可达性、当前生产版本标记可追溯性和首次候选集成检查，再由用户授权把开关改为true。若当前生产版本标记缺失，必须独立调查和人工确认，不能让流水线猜测。验收job还需确认仓库对GitHub Actions推送main的权限/分支保护允许；本轮不推main验证该权限。
+真正启用前，完成专用凭据及服务器入口权限接入、网络可达性、当前生产版本标记可追溯性和首次候选集成检查，再在用户授权的配置范围内把开关改为true。若当前生产版本标记缺失，必须独立调查和人工确认，不能让流水线猜测。验收job还需确认仓库对GitHub Actions推送main的权限/分支保护允许；本轮不推main验证该权限。
 
 部署JSON只接受这些字符串字段：SERVER_HOST、SERVER_USER、SERVER_PORT、REMOTE_APP_DIR、REMOTE_FRONTEND_DIR、REMOTE_BACKEND_DIR、DOMAIN、EMAIL、BACKEND_PORT、FRONTEND_PORT、RUN_MIGRATIONS。既有执行器含固定服务路径，因此当前仅接受`/var/www/everydayai`及其`frontend`/`backend`子目录；不假装支持任意迁移部署根目录。它在runner上以0600文件生成，SSH凭据仅在审批后的临时目录存在，不进入Codex开发环境、Git或artifact。正式执行仍沿用既有生产schema迁移规则；开发bootstrap绝不作为生产初始化。
 
 ## 验证及工具限制
 
 使用`test_delivery.py`和`test_release_coordination.py`做隔离演练，`test_ci_checks.py`验证只读检查。GitHub正式解析并运行`queue:max`作为平台支持证据。当前actionlint 1.7.12尚未识别官方新增的queue字段：对其余原文去掉唯一这一行进行兼容语法检查，测试另行断言该字段必须为max；不通过删除真实工作流队列配置来迁就旧校验器。来源：[GitHub队列官方文档](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)。
+
+## 专用SSH发布入口与无数据验证
+
+既有执行器以root安装后端依赖、执行应用代码、准备挂载并管理服务。本次不重构生产服务身份；专用密钥仍具有**高权限应用发布能力**，不能声称它是无法读生产数据的低权限账号。安全边界是GitHub受保护环境的人审与精确候选，以及服务器SSH命令限制。不要把该私钥交给Codex开发环境、普通job、个人日常SSH或第三方任务。
+
+全新ed25519密钥使用root的authorized_keys独立条目，带`restrict,command="/usr/local/sbin/everydayai-ci-ssh"`。保留原管理密钥；不修改sshd配置、不重启应用服务。网关由root拥有，位于应用同步目录之外；策略为root-only的`/etc/everydayai-ci/policy.json`，使用已存在的python3.11。禁止PTY、交互shell、转发、scp和任意命令。rsync仅接收固定frontend/backend/deploy路径、固定选项，不允许sender、可疑路径或目录symlink，并在receiver排除.env*、config.env、venv。发布stdin必须与管理员审查安装的源码hash吻合，argv还须通过操作、锁令牌、迁移路径等校验。应用代码本身仍是高信任内容，命令限制不构成对恶意已批准应用代码的沙箱。
+
+`build_ssh_policy.py`仅提取脚本并计算hash，不执行它们。策略与网关不会由发布job自动更新；以后受控远程脚本/网关有变化，必须先经管理连接审查更新，否则正式执行会失败关闭。普通业务改动可沿用相同脚本策略。正式执行还会先比对服务器网关hash、脚本策略映射和来源祖先，防止错装旧网关或不同策略。
+
+`Verify release credentials`工作流由新`delivery-verification/<SHA>/<nonce>`标签显式触发，使用同一production人工审批环境，但只运行`verify_delivery.py`固定探测，**绝不调用release.sh**。它检查专用SSH及严格known_hosts、root身份、固定路径存在性、五个服务是否active、发布标记和锁、网关/策略hash，并验证任意`id`命令被拒绝。来源checkout包含完整历史。主机公钥通过原有严格校验的管理SSH通道核验，不盲信ssh-keyscan。
+
+本轮验证不读取应用.env、不连接PostgreSQL/Redis、不查询生产业务、不执行迁移、pip安装、文件同步、重启或健康接口。不能因此证明真实部署及迁移成功；首次正式审批仍会运行既有数据库身份、迁移和readiness守卫。production标签与验收标签不会在凭据验证中创建。
+
+撤销该身份时，用原管理连接删除authorized_keys中独立的`everydayai-github-delivery-20261018`条目，并删除GitHub三个专用secret、将生产开关设为false；不删除其他管理密钥或应用文件。授权前备份仅用于对照，撤销时不直接覆盖整份authorized_keys，避免抹掉后续合法修改。

@@ -136,7 +136,7 @@ def backend(checks):
             cwd=ROOT / 'backend')
         checks.run('pipeline-guards', [python, '-m', 'unittest',
             'scripts/testing/test_ci_checks.py', 'scripts/testing/test_delivery.py',
-            'scripts/testing/test_release_coordination.py', '-v'])
+            'scripts/testing/test_release_coordination.py', 'scripts/testing/test_ssh_gateway.py', '-v'])
         # Real backend smoke without installing a second copy of frontend deps.
         # The frontend is tested/built by a parallel independent job.
         (ROOT / '.cloud-dev/readiness.json').write_text(json.dumps({'backend_log_offset': 0}))
