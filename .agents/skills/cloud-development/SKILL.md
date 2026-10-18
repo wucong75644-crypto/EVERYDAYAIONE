@@ -1,6 +1,6 @@
 ---
 name: cloud-development
-description: 配置或启动 EVERYDAYAIONE 的 Codex 云端开发环境，以及将云端开发结果交给本地部署。适用于云端安装、开发服务检查和启动，不负责生产发布。
+description: 配置或启动 EVERYDAYAIONE 的 Codex 云端开发环境，以及接续受控GitHub检查和审批发布请求。开发环境自身不持有生产凭据、不直接连接生产。
 ---
 
 先读根目录 AGENTS.md 和 [云端开发指南](../../../docs/development/CLOUD.md)。
@@ -17,4 +17,4 @@ description: 配置或启动 EVERYDAYAIONE 的 Codex 云端开发环境，以及
 
 日常测试和页面预览留在本任务云端环境。准备提交部署时，先在明确授权下按受控入口提交推送，再运行 `python3 scripts/ci/request-check.py` 请求 GitHub **Pre-release checks**；等待同一完整 SHA 的 frontend/backend 两个 job 成功并报告耗时。普通业务修改不必每次触发全量检查。新提交、main 合入或冲突解决后重新检查，不复用旧 SHA。此检查流水线不执行生产部署，通过也不代表已获生产发布授权。详见 `docs/development/PRE_RELEASE_CHECKS.md`。
 
-生产部署和验收关闭仅在本地进行。交付任务分支、已授权推送后的提交 SHA、变更与验证摘要、必要开发配置名称（不含值），按指南在本地接续同一任务。
+生产部署和验收可以交给GitHub受保护的审批流水线，详见`docs/development/APPROVED_DELIVERY.md`；Codex云端不接入生产凭据或数据。明确授权提交部署时，先同步main并检查最终SHA，再创建production请求，等待用户在GitHub审批，不能代替用户批准生产。明确验收关闭时才创建accept请求，它不重复部署，原VM工作树不自动跨机器删除。生产开关未启用或缺凭据时如实报告阻断，不尝试本地凭据或降级绕过。仅配置/演练授权时只能使用rehearsal，不能创建production/accept标签。

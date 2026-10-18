@@ -1,6 +1,6 @@
 # Codex 云端开发
 
-本仓库支持云端开发、测试，本地生产发布。共同规则在 `COLLABORATION.md`，项目约束在根目录 `AGENTS.md`；适用技能已经放在 `.agents/skills/`，无需读取 `/Users/...` 或安装个人目录技能。
+本仓库支持云端开发、测试；生产发布可使用GitHub受保护审批流水线或既有本地受控入口。配置和隔离演练见 [审批发布](APPROVED_DELIVERY.md)，本轮生产执行保持禁用。共同规则在 `COLLABORATION.md`，项目约束在根目录 `AGENTS.md`；适用技能已经放在 `.agents/skills/`，无需读取 `/Users/...` 或安装个人目录技能。
 
 日常测试和页面预览在 Codex 云端执行；发布候选提交后，再请求 GitHub 的独立检查。入口、范围、超时和结果核验见 [发布前检查](PRE_RELEASE_CHECKS.md)。这条检查流水线不连接生产、不执行部署，也不改变现有生产验收顺序。
 
@@ -77,7 +77,11 @@ npm run build
 
 测试中的 APP_ENV=testing 不能替代数据库隔离；不要带生产凭据运行测试。启动检查、mock 测试、数据库集成验证和真实外部 API 验证应如实区分。
 
-## 本地接续与部署
+## GitHub审批发布或本地接续
+
+已配置 [审批发布与演练](APPROVED_DELIVERY.md)：启用前只演练，生产开关关闭。未来单独完成凭据接入并获授权后，云端可创建production请求，检查通过且用户在GitHub审批后，由runner调用受控发布入口，无需本地电脑在线。验收通过后另建accept请求，不重复部署；不会自动清理原云端工作树。
+
+以下为保留的本地接续路径：
 
 云端开发结果在用户授权后提交、推送到对应 codex/task/* 分支，记录 SHA 及验证结果。未推送的工作不能靠本地 fetch 取回。
 
@@ -91,4 +95,4 @@ git worktree add --track -b codex/task/<任务分支后缀> ../EVERYDAYAIONE-wor
 
 部署配置由本地维护者在本地补充为 deploy/config.env，权限 0600，不通过 Git 传输。确认本地 HEAD 就是云端交付 SHA，检查本地已有修改后再继续。
 
-只有用户明确“提交部署”后，才在本地运行 `deploy/release.sh --message ... --file ...`；“清理工作树”仍经本地 `--accept-and-close`。云端不执行发布、生产验收或关闭流程；不会因为云端测试完成自动合并 main。
+只有用户明确“提交部署”后，才在本地运行 `deploy/release.sh --message ... --file ...`；“清理工作树”经本地 `--accept-and-close`，或在明确启用后走上述独立accept审批。Codex开发环境自身不直接连接生产；不会因为云端测试完成自动合并main。

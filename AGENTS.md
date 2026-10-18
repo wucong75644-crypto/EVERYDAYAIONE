@@ -19,6 +19,7 @@
 ## 受控入口
 
 - 提交部署使用 `deploy/release.sh --message ... --file ...`。
+- GitHub审批发布使用 `scripts/ci/delivery.py request --mode production --check-run ...`，绑定成功检查的完整SHA，经受保护的production环境人工审批及共享队列后，runner调用上述受控入口的`--deploy-task SHA --reviewed-sha SHA`模式。配置/演练期间生产开关必须为false，禁止接入生产数据；详见`docs/development/APPROVED_DELIVERY.md`。
 - 验收关闭使用 `deploy/release.sh --accept-and-close`；禁止直接运行 `deploy/deploy.sh`。
 - 发现旧 Runtime 平台路径出现在待发布或验收提交中，必须停止并报告。
 
@@ -28,7 +29,7 @@
 
 ## 云端开发
 
-- 云端只开发和测试，生产发布、验收合并和关闭在本地执行；不要上传 `deploy/config.env`、生产 `.env`、SSH 私钥或生产数据。
+- Codex云端只开发和测试，不持有生产凭据。生产发布和验收可由上述GitHub保护环境中的受控入口执行，或使用既有本地受控流程；禁止并发混用旧版/未受控入口。不要上传 `deploy/config.env`、生产 `.env`、SSH 私钥或生产数据到Codex。
 - 每个云端任务首次修改前运行 `./scripts/task-worktree.sh start <slug> --development-only`，切换到输出路径。继续任务复用原工作树；不能使用其他任务的分支。
 - 环境安装入口：`bash scripts/cloud/setup.sh`；任务工作树内配置及启动流程见 [云端开发指南](docs/development/CLOUD.md)。
 - 不自动执行数据库迁移、导入或种子数据；只连接独立开发数据库、Redis 和开发服务。
