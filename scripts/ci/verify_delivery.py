@@ -9,10 +9,11 @@ import shlex
 import subprocess
 import tempfile
 from build_ssh_policy import build
-from delivery import config_text, verify_environment
+from delivery import config_text, verify_environment, verify_actor
 
 
 def verify_connection():
+    verify_actor(os.environ['GITHUB_REPOSITORY'],os.environ['DELIVERY_APPROVER'])
     verify_environment(os.environ['GITHUB_REPOSITORY'],'production',os.environ['DELIVERY_APPROVER'])
     metadata={}
     for line in config_text(os.environ['DELIVERY_CONFIG_JSON']).splitlines():

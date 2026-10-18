@@ -1,75 +1,63 @@
-# GitHub审批发布与隔离演练
+# Codex指令发布与隔离演练
 
-初始隔离演练阶段保持生产开关`PRODUCTION_DELIVERY_ENABLED=false`且不配置凭据。后续专用凭据接入阶段允许管理SSH和只读系统元数据探测，仍禁止连接生产数据库、Redis、备份，不读取应用.env、不部署或合并main。完成凭据验证及检查后可将开关设为true，表示等待人工批准正式发布；开关本身不触发发布。不能把入口验证说成正式部署或迁移成功。
+用户在当前Codex任务说“提交部署”就是该任务本次发布授权；说“清理工作树”就是当前已测试生产候选的验收授权。无需再去GitHub点击Review deployments。普通开发、提交、测试通过、引用本文示例，以及“仅配置/演练”都不是生产授权。
 
-## 确定提交、审批和排队
+## 日常使用与确定候选
 
-日常在Codex任务内测试和预览。准备发布时先合入最新`origin/main`，解决冲突，通过受控入口提交推送，然后请求`Pre-release checks`。前后端两个job必须对同一完整SHA成功；取消、跳过、旧提交通过都不算。
-
-候选提交必须包含本次流水线配置。以实际通过的检查run ID请求：
+Codex先按实际diff生成精确文件清单和提交信息，然后调用：
 
 ```bash
-# 默认只有隔离演练；可以先--dry-run核验，不创建请求标签。
-python3 scripts/ci/delivery.py request --mode rehearsal --check-run <run-id>
-# 以后正式启用且明确授权发布时：
-python3 scripts/ci/delivery.py request --mode production --check-run <run-id>
+python3 scripts/ci/task_delivery.py deploy --authorization '提交部署' --message 'type: description' --file path/to/task-file
+# 已无新改动时不传message/file
+python3 scripts/ci/task_delivery.py deploy --authorization '提交部署'
 ```
 
-命令只创建指向已推送任务SHA的新`delivery-*`标签，不修改任务分支或强推。标签包含模式、完整SHA、检查run、任务名和随机请求ID，工作流源代码必须就是该SHA。无需先把本次配置合入main才能演练。普通push、检查成功本身不部署；显式请求之后还必须在GitHub **Review deployments** 审批对应环境/完整SHA。
+该入口只在独立codex/task/*工作树运行：通过git-push.sh提交任务范围，fetch最新main与任务tip，合入main，推送确定SHA，等待同SHA的frontend/backend检查均成功，再创建唯一production请求并等待结果。没有检查时才创建preflight标签；已有进行中检查不重复请求，失败/取消/超时不算成功，不自动退回旧SHA。
 
-发布/演练共享仓库级`everydayaione-production-delivery`队列，验收使用独立`everydayaione-production-acceptance`队列，避免B等待发布审批时把A的验收堵在后面。两者都为`queue: max`、`cancel-in-progress: false`；真正服务器写入仍必须取得同一服务器锁，不能并发。每个队列按进入时间FIFO，最多100个等待请求，并非按用户点击顺序作分布式绝对排序。审批等待会占住该工作流队列位置，后续同类请求不能挤掉它。队满、拒绝、超时或人工取消会产生未成功结果，不能当成已发布。若两个队列碰到共享服务器锁，锁忙任务明确失败保留现场，待持有者完成后重新请求，不抢锁或盲目重跑不确定写入。
+合并冲突保留现场并停止脚本。Codex继续在同一授权内理解双方修改、解决冲突、定向验证并提交，再重跑入口；不能用ours/theirs、reset或清理强行丢弃任何一方。无法从现有需求判断的业务冲突才向用户澄清。合并后的SHA必须重新检查。队列期间main或任务tip有变化时runner拒绝旧候选；Codex核验失败原因后重新整合、检查并请求，不盲目重跑可能已写入的生产操作。
 
-GitHub生产环境要求仓库所有者审批、禁止管理员绕过，只有特定`delivery-production/*/*/*/*`和`delivery-accept/*/*/*/*`标签可进入。当前是个人仓库，同一所有者可发起并审批自己的请求（prevent_self_review=false），否则唯一操作者无法审批；没有自动批准生产的代码。自动化若持有所有者的广泛API令牌，同样拥有该身份权限，因此Codex开发环境不应配置该广泛令牌/生产秘密。
+## Codex授权与GitHub信任边界
 
-审批后重新核验检查run、任务远端tip和最新main；不在审批后自动合并或更换候选。runner创建临时独立任务工作树，以`release.sh --deploy-task SHA --reviewed-sha SHA --skip-test`调用原受控入口。`--skip-test`仅复用已核验的GitHub检查，既有构建、生产数据库身份核验、迁移校验、健康检查和服务器锁仍保留；真正生产连接只在以后明确启用并审批的正式运行中发生。
+`delivery.py request --mode production --authorization '提交部署' --check-run ...`与accept的对应原话参数是防误触校验，不是对聊天内容的密码学证明。真正的用户指令由Codex对话遵守；GitHub无法读取并验证自然语言对话。任何人如果已拥有仓库写权限，都可能修改工作流或创建标签，因此**仓库写权限、工作流修改权限和配置的请求身份属于生产发布信任边界**。本方案适用于当前个人仓库的可信写入者；不声称取消reviewer后仍能对恶意仓库写入者提供独立人审隔离。
 
-## 防止任务相互覆盖
+production和delivery-rehearsal环境移除required_reviewers及等待计时器，保留custom tag policies和can_admins_bypass=false。production仅允许delivery-production/*/*/*/*、delivery-accept/*/*/*/*、delivery-verification/*/*；rehearsal仅允许delivery-rehearsal/*/*/*/*。plan和execute同时校验策略、GITHUB_ACTOR/GITHUB_TRIGGERING_ACTOR及GitHub run API的actor/triggering_actor必须与DELIVERY_APPROVER匹配（历史变量名，现在表示可信请求身份；当前为仓库所有者）。不同身份明确失败，不扩大令牌权限绕过。
 
-服务器共享锁取得后再次核验：
+普通push和检查成功不自动部署。只有用户明确授权后由Codex创建的delivery标签才表达操作请求。标签绑定模式、完整SHA、成功检查run ID、任务名和随机请求ID；GitHub workflow源必须为该SHA。生产总开关PRODUCTION_DELIVERY_ENABLED必须为true。production环境的专用SSH凭据仍不进入Codex环境、普通检查或rehearsal作业。
 
-- HEAD和远端任务tip必须仍为审批SHA，包含最新main。
-- 当前生产完整版本标记必须已知、可在仓库历史中验证，并且是候选的祖先。
-- 当前生产若尚未合入main，仅同一个来源任务可继续修复迭代；其他任务即使手工包含了该提交，也不能越过待验收状态。
-- 未知/损坏/部分失败的标记、锁归属不确定、代码落后均拒绝，不自动删锁、覆盖或伪造初始生产版本。
+## 排队、防覆盖与验收
 
-因此A发布待验收时，B可以并行开发和测试，但B的发布会被阻断。先验收A，再让B在自己的工作树同步最新main、重新检查和审批。队列只协调工作流执行，不替用户验收，也不会为B自动解决代码冲突。旧版发布脚本、人工SSH和绕过此入口的写入不在这套自动保证范围；正式启用后不要混用旧发布入口。
+发布/演练共享everydayaione-production-delivery队列，accept使用独立everydayaione-production-acceptance队列，均queue:max、cancel-in-progress:false。按进入队列时间FIFO、最多100个等待请求，不用新请求替换等待项。验收独立队列避免B占着发布队列时阻塞A验收；两个实际写入者仍用同一个服务器锁，锁忙明确失败并保留现场，不抢锁/删锁/自动重试不确定写入。
 
-生产测试通过后，用户明确说“清理工作树/验收关闭”才创建独立验收请求：
+执行前和锁内复核同SHA检查、远端任务tip、最新main以及生产版本标记。当前生产必须可追溯并是候选祖先；未验收候选只允许原来源任务继续修复，其他任务不能覆盖。未知标记、代码落后、失败或锁所有权不确定均拒绝。A发布待验收时B继续开发；A验收实际完成后，B自己的deploy入口整合最新main，最终版本是稳定代码加B修改。
+
+用户确认线上测试没问题并说“清理工作树”后，Codex停止本任务已核实的开发进程、保留其他任务，再调用：
 
 ```bash
-python3 scripts/ci/delivery.py request --mode accept --check-run <该生产SHA的检查run-id>
+python3 scripts/ci/task_delivery.py accept --authorization '清理工作树'
 ```
 
-它仍需单独审批、独立验收队列及同一服务器锁，调用`release.sh --accept-and-close`。核对生产标记、最终main代码树与已测试候选一致后才推main；不重复部署。仅验收job有`contents:write`。清理的是runner临时工作树；原Codex VM中的任务、修改和数据不会被跨机器自动删除，待原对话确认远端验收结果后安全关闭。稳定基座Git元数据也不会跨VM实时同步，新任务/后续发布须fetch最新main。
+accept不提交新修改、不重新整合候选、不部署。GitHub runner调用release.sh --accept-and-close，核对生产标记、候选和最终main树一致后推main，关闭runner临时工作树。原Codex进程等待该acceptance成功后，复核成功run、原任务HEAD/远端tip/干净状态、main包含候选且树一致，再同步本Git仓库其他任务的稳定基座元数据并关闭原任务。不跨VM直接改写B的工作区；B发布前fetch。
 
-## 演练与生产启用边界
+若等待中断但远端已经成功，不重复accept；在原任务用 `python3 scripts/ci/task_delivery.py finalize --run <成功acceptance-run> --authorization '清理工作树'` 安全收尾。若任务后来有新修改、main变化混入其他代码或验收作业失败，原任务保留。旧本地入口/人工SSH不在此自动保证中，勿并发混用。
 
-演练用独立`delivery-rehearsal`审批环境，不持有生产secrets。审批后运行临时bare Git仓库、临时模拟服务器目录和fake SSH的真实受控入口测试，包括当前版本保护、待验收任务保护、main变化、并行锁、远端写入不确定保留锁及验收后下一任务集成。实际GitHub演练还核验审批等待和多请求排队，不能只靠本地测试宣称平台门禁有效。
+## 本次配置演练边界
 
-专用凭据只保存在GitHub受保护的production环境，三个secret为：
+配置开始先将生产开关设false，不创建production、accept或verification标签，不连接服务器或生产数据库/Redis，不读取应用.env，不合并真实main。只创建rehearsal标签：无生产secrets、临时bare Git、合成文件、fake SSH；它自动执行，无需GitHub点批准。测试覆盖无授权拒绝、请求者与rerun身份、tag策略、A验收后B自动整合、冲突保留和解决后重测、检查失败不创建请求、失败验收不删任务、成功精确验收才关闭，以及既有服务器锁/版本保护。GitHub实跑核验无pending_deployments审批等待和多请求串行。全部通过后恢复生产入口可用，但不创建生产请求。
 
-- `DELIVERY_CONFIG_JSON`：现有受控执行器的服务器、目录、域名等发布元数据JSON；禁止数据库URL、Redis密码、应用.env或API密钥。
-- `DELIVERY_SSH_KEY`：后续单独授权接入的专用发布私钥，不读取/上传当前电脑已有私钥。
-- `DELIVERY_KNOWN_HOSTS`：经过独立核验的服务器主机公钥，严格主机校验；不用`ssh-keyscan`盲信首次连接。
+底层SSH网关、远程部署脚本、迁移与生产数据库身份守卫本次保持不变。凭据验证证据可复用，不能把本次无数据演练说成真实部署或迁移验证。真正未来部署才运行release.sh --deploy-task SHA --reviewed-sha SHA --skip-test，复用精确GitHub检查，保留构建、身份、迁移及readiness校验。
 
-真正启用前，完成专用凭据及服务器入口权限接入、网络可达性、当前生产版本标记可追溯性和首次候选集成检查，再在用户授权的配置范围内把开关改为true。若当前生产版本标记缺失，必须独立调查和人工确认，不能让流水线猜测。验收job还需确认仓库对GitHub Actions推送main的权限/分支保护允许；本轮不推main验证该权限。
-
-部署JSON只接受这些字符串字段：SERVER_HOST、SERVER_USER、SERVER_PORT、REMOTE_APP_DIR、REMOTE_FRONTEND_DIR、REMOTE_BACKEND_DIR、DOMAIN、EMAIL、BACKEND_PORT、FRONTEND_PORT、RUN_MIGRATIONS。既有执行器含固定服务路径，因此当前仅接受`/var/www/everydayai`及其`frontend`/`backend`子目录；不假装支持任意迁移部署根目录。它在runner上以0600文件生成，SSH凭据仅在审批后的临时目录存在，不进入Codex开发环境、Git或artifact。正式执行仍沿用既有生产schema迁移规则；开发bootstrap绝不作为生产初始化。
-
-## 验证及工具限制
-
-使用`test_delivery.py`和`test_release_coordination.py`做隔离演练，`test_ci_checks.py`验证只读检查。GitHub正式解析并运行`queue:max`作为平台支持证据。当前actionlint 1.7.12尚未识别官方新增的queue字段：对其余原文去掉唯一这一行进行兼容语法检查，测试另行断言该字段必须为max；不通过删除真实工作流队列配置来迁就旧校验器。来源：[GitHub队列官方文档](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)。
+GitHub queue:max由实际平台运行验证；旧actionlint不识别该新增字段时只对临时副本去掉该行检查其他语法，真实文件不得移除队列。
 
 ## 专用SSH发布入口与无数据验证
 
-既有执行器以root安装后端依赖、执行应用代码、准备挂载并管理服务。本次不重构生产服务身份；专用密钥仍具有**高权限应用发布能力**，不能声称它是无法读生产数据的低权限账号。安全边界是GitHub受保护环境的人审与精确候选，以及服务器SSH命令限制。不要把该私钥交给Codex开发环境、普通job、个人日常SSH或第三方任务。
+既有执行器以root安装后端依赖、执行应用代码、准备挂载并管理服务。本次不重构生产服务身份；专用密钥仍具有**高权限应用发布能力**，不能声称它是无法读生产数据的低权限账号。安全边界是Codex中的用户明确指令、可信仓库写入身份、精确检查候选，以及服务器SSH命令限制。不要把该私钥交给Codex开发环境、普通job、个人日常SSH或第三方任务。
 
-全新ed25519密钥使用root的authorized_keys独立条目，带`restrict,command="/usr/local/sbin/everydayai-ci-ssh"`。保留原管理密钥；不修改sshd配置、不重启应用服务。网关由root拥有，位于应用同步目录之外；策略为root-only的`/etc/everydayai-ci/policy.json`，使用已存在的python3.11。禁止PTY、交互shell、转发、scp和任意命令。rsync仅接收固定frontend/backend/deploy路径、固定选项，不允许sender、可疑路径或目录symlink，并在receiver保护.env*、config.env、venv不被删除。接收端过滤不能阻止恶意发送方覆盖这些路径；正常发布仍使用deploy.sh现有发送端exclude规则。此次只在全新临时目录用合成文件核验此边界，没有对生产配置做写入试验。发布stdin必须与管理员审查安装的源码hash吻合，argv还须通过操作、锁令牌、迁移路径等校验。应用代码本身仍是高信任内容，命令限制不构成对恶意已批准应用代码的沙箱。
+全新ed25519密钥使用root的authorized_keys独立条目，带`restrict,command="/usr/local/sbin/everydayai-ci-ssh"`。保留原管理密钥；不修改sshd配置、不重启应用服务。网关由root拥有，位于应用同步目录之外；策略为root-only的`/etc/everydayai-ci/policy.json`，使用已存在的python3.11。禁止PTY、交互shell、转发、scp和任意命令。rsync仅接收固定frontend/backend/deploy路径、固定选项，不允许sender、可疑路径或目录symlink，并在receiver保护.env*、config.env、venv不被删除。接收端过滤不能阻止恶意发送方覆盖这些路径；正常发布仍使用deploy.sh现有发送端exclude规则。此次只在全新临时目录用合成文件核验此边界，没有对生产配置做写入试验。发布stdin必须与管理员审查安装的源码hash吻合，argv还须通过操作、锁令牌、迁移路径等校验。应用代码本身仍是高信任内容，命令限制不构成对恶意已授权应用代码的沙箱。
 
 `build_ssh_policy.py`仅提取脚本并计算hash，不执行它们。策略与网关不会由发布job自动更新；以后受控远程脚本/网关有变化，必须先经管理连接审查更新，否则正式执行会失败关闭。普通业务改动可沿用相同脚本策略。正式执行还会先比对服务器网关hash、脚本策略映射和来源祖先，防止错装旧网关或不同策略。
 
-`Verify release credentials`工作流由新`delivery-verification/<SHA>/<nonce>`标签显式触发，使用同一production人工审批环境，但只运行`verify_delivery.py`固定探测，**绝不调用release.sh**。它检查专用SSH及严格known_hosts、root身份、固定路径存在性、五个服务是否active、发布标记和锁、网关/策略hash，并验证任意`id`命令被拒绝。来源checkout包含完整历史。主机公钥通过原有严格校验的管理SSH通道核验，不盲信ssh-keyscan。
+`Verify release credentials`工作流由新`delivery-verification/<SHA>/<nonce>`标签显式触发，使用同一production请求标签限制环境，但只运行`verify_delivery.py`固定探测，**绝不调用release.sh**。它检查专用SSH及严格known_hosts、root身份、固定路径存在性、五个服务是否active、发布标记和锁、网关/策略hash，并验证任意`id`命令被拒绝。来源checkout包含完整历史。主机公钥通过原有严格校验的管理SSH通道核验，不盲信ssh-keyscan。
 
-本轮验证不读取应用.env、不连接PostgreSQL/Redis、不查询生产业务、不执行迁移、pip安装、文件同步、重启或健康接口。不能因此证明真实部署及迁移成功；首次正式审批仍会运行既有数据库身份、迁移和readiness守卫。production标签与验收标签不会在凭据验证中创建。
+本轮验证不读取应用.env、不连接PostgreSQL/Redis、不查询生产业务、不执行迁移、pip安装、文件同步、重启或健康接口。不能因此证明真实部署及迁移成功；首次正式授权发布仍会运行既有数据库身份、迁移和readiness守卫。production标签与验收标签不会在凭据验证中创建。
 
 撤销该身份时，用原管理连接删除authorized_keys中独立的`everydayai-github-delivery-20261018`条目，并删除GitHub三个专用secret、将生产开关设为false；不删除其他管理密钥或应用文件。授权前备份仅用于对照，撤销时不直接覆盖整份authorized_keys，避免抹掉后续合法修改。

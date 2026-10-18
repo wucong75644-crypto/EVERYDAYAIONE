@@ -79,14 +79,30 @@ def verify_source(plan, *, require_main=True):
             raise RuntimeError('Candidate is missing latest main; integrate and recheck before approval')
 
 
-def verify_environment(repository, name, approver):
+def verify_actor(repository, authorizer):
+    if not authorizer or os.environ.get('GITHUB_ACTOR') != authorizer or os.environ.get('GITHUB_TRIGGERING_ACTOR') != authorizer:
+        raise RuntimeError('Only the configured Codex request identity may authorize this run or rerun')
+    run = api(repository, 'actions/runs/' + os.environ['GITHUB_RUN_ID'])
+    if (run.get('actor', {}).get('login') != authorizer
+            or run.get('triggering_actor', {}).get('login') != authorizer
+            or run.get('head_sha') != os.environ['GITHUB_SHA'] or run.get('event') != 'push'):
+        raise RuntimeError('GitHub run identity does not match the explicit request')
+
+
+def verify_environment(repository, name, authorizer):
     environment = api(repository, 'environments/' + name)
-    rules = environment.get('protection_rules', [])
-    reviewers = [item for rule in rules
-                 if rule['type'] == 'required_reviewers' for item in rule['reviewers']]
-    expected = len(reviewers) == 1 and reviewers[0].get('type') == 'User' and reviewers[0]['reviewer'].get('login') == approver
-    if not expected or environment.get('can_admins_bypass', True):
-        raise RuntimeError('Required human approval or administrator bypass protection is missing')
+    policy = environment.get('deployment_branch_policy') or {}
+    if (any(rule['type'] != 'branch_policy' for rule in environment.get('protection_rules', []))
+            or environment.get('can_admins_bypass', True)
+            or not policy.get('custom_branch_policies') or policy.get('protected_branches')):
+        raise RuntimeError('Codex-request environment must have no extra approval and restrict request tags')
+    allowed = api(repository, 'environments/' + name + '/deployment-branch-policies?per_page=100')
+    expected = ({'delivery-rehearsal/*/*/*/*'} if name == 'delivery-rehearsal' else
+                {'delivery-production/*/*/*/*', 'delivery-accept/*/*/*/*', 'delivery-verification/*/*'})
+    actual = {(item['type'], item['name']) for item in allowed['branch_policies']}
+    if actual != {('tag', value) for value in expected}:
+        raise RuntimeError('Environment request tag restrictions differ from the reviewed policy')
+
 
 
 def make_plan():
@@ -94,6 +110,7 @@ def make_plan():
     plan = parse_request(os.environ['GITHUB_REF'], os.environ['GITHUB_SHA'])
     if plan['mode'] != 'rehearsal' and os.environ.get('PRODUCTION_DELIVERY_ENABLED') != 'true':
         raise RuntimeError('Production delivery is disarmed; no production job may start')
+    verify_actor(repository, os.environ['DELIVERY_APPROVER'])
     plan['checks_url'] = verify_checks(repository, plan['check_run'], plan['sha'])
     verify_source(plan, require_main=plan['mode'] != 'rehearsal')
     environment = 'delivery-rehearsal' if plan['mode'] == 'rehearsal' else 'production'
@@ -103,11 +120,14 @@ def make_plan():
             stream.write(f'{key}={value}\n')
     with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
         stream.write(f"Mode: **{plan['mode']}**\n\nCommit: `{plan['sha']}`\n\nChecks: {plan['checks_url']}\n\n"
-                     'A production deployment and production acceptance are separate approvals.\n')
+                     'Authorized by the explicit Codex task request; deployment and acceptance remain separate requests.\n')
     print(json.dumps(plan))
 
 
-def request(check_run, mode, dry_run):
+def request(check_run, mode, dry_run, authorization=None):
+    expected = {'production': '提交部署', 'accept': '清理工作树'}
+    if mode in expected and authorization != expected[mode]:
+        raise RuntimeError('An explicit matching user instruction is required before a real request')
     branch = git('branch', '--show-current')
     if not re.fullmatch(r'codex/task/[A-Za-z0-9_.-]+', branch):
         raise RuntimeError('Use the original task branch')
@@ -122,6 +142,7 @@ def request(check_run, mode, dry_run):
     if not dry_run:
         subprocess.run(['git', 'push', 'origin', sha + ':refs/tags/' + tag], cwd=ROOT, check=True)
     print(f'DELIVERY_REQUEST mode={mode} sha={sha} ref={tag} dry_run={dry_run}')
+    return tag
 
 
 CONFIG_KEYS = {'SERVER_HOST', 'SERVER_USER', 'SERVER_PORT', 'REMOTE_APP_DIR',
@@ -173,6 +194,7 @@ def execute():
     if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted':
         raise RuntimeError('Real execution requires the protected GitHub-hosted job')
     repository = os.environ['GITHUB_REPOSITORY']
+    verify_actor(repository, os.environ['DELIVERY_APPROVER'])
     verify_environment(repository, 'production', os.environ['DELIVERY_APPROVER'])
     verify_checks(repository, plan['check_run'], plan['sha'])
     verify_source(plan)
@@ -238,6 +260,7 @@ def main():
     requester = commands.add_parser('request')
     requester.add_argument('--check-run', required=True)
     requester.add_argument('--mode', choices=('rehearsal', 'production', 'accept'), default='rehearsal')
+    requester.add_argument('--authorization', choices=('提交部署', '清理工作树'))
     requester.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
     if args.command == 'plan':
@@ -245,7 +268,7 @@ def main():
     elif args.command == 'execute':
         execute()
     else:
-        request(args.check_run, args.mode, args.dry_run)
+        request(args.check_run, args.mode, args.dry_run, args.authorization)
 
 
 if __name__ == '__main__':

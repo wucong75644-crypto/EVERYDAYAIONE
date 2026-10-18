@@ -70,21 +70,37 @@ class DeliveryPolicyTests(unittest.TestCase):
                 delivery.execute()
             api.assert_not_called()
 
-    def test_approval_cannot_be_removed_or_admin_bypassed(self):
-        environment = {'can_admins_bypass': False, 'protection_rules': [
-            {'type': 'required_reviewers', 'reviewers': [{'type': 'User', 'reviewer': {'login': 'owner'}}]}]}
-        with patch.object(delivery, 'api', return_value=environment):
-            delivery.verify_environment(self.repository, 'production', 'owner')
-        for value in ({**environment, 'can_admins_bypass': True}, {'protection_rules': []}):
-            with patch.object(delivery, 'api', return_value=value), self.assertRaises(RuntimeError):
-                delivery.verify_environment(self.repository, 'production', 'owner')
-        for reviewers in ([{'type': 'Team', 'reviewer': {'login': 'owner'}}],
-                          [{'type': 'User', 'reviewer': {'login': 'owner'}},
-                           {'type': 'User', 'reviewer': {'login': 'other'}}]):
-            value = {'can_admins_bypass': False, 'protection_rules': [
-                {'type': 'required_reviewers', 'reviewers': reviewers}]}
-            with patch.object(delivery, 'api', return_value=value), self.assertRaises(RuntimeError):
-                delivery.verify_environment(self.repository, 'production', 'owner')
+    def test_codex_request_policy_has_no_second_approval_and_restricts_tags(self):
+        environment={'can_admins_bypass':False,'protection_rules':[{'type':'branch_policy'}],
+                     'deployment_branch_policy':{'custom_branch_policies':True,'protected_branches':False}}
+        policies={'branch_policies':[{'type':'tag','name':name} for name in
+                  ('delivery-production/*/*/*/*','delivery-accept/*/*/*/*','delivery-verification/*/*')]}
+        with patch.object(delivery,'api',side_effect=[environment,policies]):
+            delivery.verify_environment(self.repository,'production','owner')
+        for changes in ({'can_admins_bypass':True},{'protection_rules':[{'type':'required_reviewers'}]},
+                        {'deployment_branch_policy':None}):
+            with patch.object(delivery,'api',return_value={**environment,**changes}),self.assertRaises(RuntimeError):
+                delivery.verify_environment(self.repository,'production','owner')
+        with patch.object(delivery,'api',side_effect=[environment,{'branch_policies':[{'type':'tag','name':'*'}]}]),self.assertRaises(RuntimeError):
+            delivery.verify_environment(self.repository,'production','owner')
+
+    def test_run_and_rerun_identity_must_match_configured_authorizer(self):
+        env={'GITHUB_ACTOR':'owner','GITHUB_TRIGGERING_ACTOR':'owner','GITHUB_RUN_ID':'123','GITHUB_SHA':self.sha}
+        run={'actor':{'login':'owner'},'triggering_actor':{'login':'owner'},'head_sha':self.sha,'event':'push'}
+        with patch.dict(os.environ,env),patch.object(delivery,'api',return_value=run):
+            delivery.verify_actor(self.repository,'owner')
+        for key in ('GITHUB_ACTOR','GITHUB_TRIGGERING_ACTOR'):
+            with patch.dict(os.environ,{**env,key:'other'}),patch.object(delivery,'api') as api,self.assertRaises(RuntimeError):
+                delivery.verify_actor(self.repository,'owner')
+            api.assert_not_called()
+        with patch.dict(os.environ,env),patch.object(delivery,'api',return_value={**run,'triggering_actor':{'login':'other'}}),self.assertRaises(RuntimeError):
+            delivery.verify_actor(self.repository,'owner')
+
+    def test_real_request_requires_matching_human_instruction_before_git_or_api(self):
+        for mode in ('production','accept'):
+            with patch.object(delivery,'git') as git,patch.object(delivery,'api') as api,self.assertRaises(RuntimeError):
+                delivery.request('123',mode,False,'演练')
+            git.assert_not_called();api.assert_not_called()
 
     def test_changed_task_ref_is_rejected_after_approval(self):
         with patch.object(delivery, 'git', side_effect=[self.sha, 'b' * 40 + '\trefs/heads/codex/task/a']):
