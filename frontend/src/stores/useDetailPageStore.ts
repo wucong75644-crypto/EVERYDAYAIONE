@@ -17,8 +17,8 @@ interface DetailPageState {
   hydrateDraft: (scopeKey?: string, preferredId?: string|null) => Promise<void>;
   selectTask: (id:string) => Promise<void>; createTask: () => Promise<void>;
   deleteTask: (id:string) => Promise<void>;
-  loadMoreTasks: () => Promise<void>; refreshTasks: () => Promise<void>;
-  refresh: () => Promise<void>;
+  loadMoreTasks: () => Promise<void>; refreshTasks: (background?: boolean) => Promise<void>;
+  refresh: (background?: boolean) => Promise<void>;
   attachWorkspaceImages: (category: DetailLocalImage['category'],paths:string[]) => Promise<void>;
   addImages: (category: DetailLocalImage['category'],files:File[]) => Promise<void>;
   removeImage: (id:string) => Promise<void>;
@@ -38,8 +38,10 @@ let pollTimer: ReturnType<typeof setTimeout> | null=null;
 let saving: Promise<void>=Promise.resolve();
 let lifecycleVersion=0;
 let detailRefreshVersion=0, listRefreshVersion=0;
+const pendingDetailRefreshes=new Map<number,number>(), pendingListRefreshes=new Map<number,number>();
 let createRequestId: string|null=null;
 let listTimer: ReturnType<typeof setTimeout>|null=null;
+let listFetchedAt=0;
 const runRequests=new Map<string,string>();
 let formRevision=0, savedRevision=0;
 function remembered(scope:string){try{return localStorage.getItem(`detail-task:${scope}`);}catch{return null;}}
@@ -51,7 +53,7 @@ function adopt(project:DetailProjectDraft){
 }
 function scheduleListPoll(){
   if(listTimer)clearTimeout(listTimer);
-  listTimer=setTimeout(()=>{void useDetailPageStore.getState().refreshTasks();},typeof document!=='undefined'&&document.hidden?30000:5000);
+  listTimer=setTimeout(()=>{void useDetailPageStore.getState().refreshTasks(true);},typeof document!=='undefined'&&document.hidden?30000:5000);
 }
 function clearSettingsTimer(){if(settingsTimer)clearTimeout(settingsTimer);settingsTimer=null;}
 function releasePreview(image:DetailLocalImage){if(image.previewUrl.startsWith('blob:'))URL.revokeObjectURL(image.previewUrl);}
@@ -88,7 +90,7 @@ function persistSettings(allowBusy=false){
 function schedulePoll(){
   if(pollTimer)clearTimeout(pollTimer);
   if(['analyzing','plan_ready','generating'].includes(useDetailPageStore.getState().status))
-    pollTimer=setTimeout(()=>{void useDetailPageStore.getState().refresh();},1500);
+    pollTimer=setTimeout(()=>{void useDetailPageStore.getState().refresh(true);},typeof document!=='undefined'&&document.hidden?30000:1500);
 }
 export const useDetailPageStore=create<DetailPageState>((set,get)=>({
   ...initialState,
@@ -99,6 +101,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
     try{
       const [list,capabilities]=await Promise.all([listDetailProjects(),getDetailCapabilities()]);
       if(!valid(epoch))return;
+      listFetchedAt=Date.now();
       set({tasks:list.items,taskCursor:list.next_cursor,models:capabilities.prompt_models,enabled:capabilities.enabled,
         ratios:capabilities.image_models[0]?.aspect_ratios??initialState.ratios});
       const preferred=preferredId||remembered(scopeKey);
@@ -111,7 +114,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
       if(!project){createRequestId??=crypto.randomUUID();project=await createDetailProject(createRequestId);if(valid(epoch))createRequestId=null;}
       if(!valid(epoch))return;
       if(!project)throw new Error('任务读取失败，请重试');
-      adopt(project);void get().refreshTasks();
+      adopt(project);if(!list.items.length)void get().refreshTasks();
     }catch(error){if(valid(epoch))set({isHydrating:false,formError:toApiRequestError(error).message});}
   },
   selectTask:async(id)=>{
@@ -175,23 +178,31 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
     }catch(error){if(valid(epoch))set({taskError:toApiRequestError(error).message});}
     finally{if(valid(epoch))set({isLoadingTasks:false});}
   },
-  refreshTasks:async()=>{
+  refreshTasks:async(background=false)=>{
+    if(background&&(get().isTransitioning||get().isHydrating)){scheduleListPoll();return;}
+    if(background&&[...pendingListRefreshes.values()].includes(lifecycleVersion))return;
     const epoch=lifecycleVersion, request=++listRefreshVersion;
+    pendingListRefreshes.set(request,epoch);
     const current=()=>valid(epoch)&&request===listRefreshVersion;
     try{
-      const first=await listDetailProjects();if(!current())return;
-      const loaded=get().tasks.filter(t=>!first.items.some(item=>item.id===t.id));
+      // Reuse batch statuses between periodic full reads, which discover other-tab changes.
+      const first=background&&Date.now()-listFetchedAt<30000?null:await listDetailProjects();if(!current())return;
+      if(first)listFetchedAt=Date.now();
+      const loaded=get().tasks.filter(t=>!first?.items.some(item=>item.id===t.id));
       const active=loaded.filter(t=>!['draft','completed','failed','archived'].includes(t.status));
       const updates:DetailTaskSummary[]=[];
       for(let i=0;i<active.length;i+=100){updates.push(...await refreshDetailTaskStatuses(active.slice(i,i+100).map(t=>t.id)));if(!current())return;}
-      set({tasks:[...first.items,...get().tasks.filter(t=>!first.items.some(item=>item.id===t.id)).map(t=>updates.find(u=>u.id===t.id)??t)]
+      set({tasks:[...(first?.items??[]),...get().tasks.filter(t=>!first?.items.some(item=>item.id===t.id)).map(t=>updates.find(u=>u.id===t.id)??t)]
         .sort((a,b)=>b.created_at.localeCompare(a.created_at)||b.id.localeCompare(a.id)),
-        taskCursor:loaded.length?get().taskCursor:first.next_cursor,taskError:null});
+        taskCursor:loaded.length?get().taskCursor:first?.next_cursor??null,taskError:null});
     }catch(error){if(current())set({taskError:toApiRequestError(error).message});}
-    finally{if(current())scheduleListPoll();}
+    finally{pendingListRefreshes.delete(request);if(current())scheduleListPoll();}
   },
-  refresh:async()=>{
+  refresh:async(background=false)=>{
+    if(background&&(get().isTransitioning||get().isHydrating)){schedulePoll();return;}
+    if(background&&[...pendingDetailRefreshes.values()].includes(lifecycleVersion))return;
     const {projectId}=get();const epoch=lifecycleVersion, request=++detailRefreshVersion;if(!projectId)return;
+    pendingDetailRefreshes.set(request,epoch);
     const current=()=>valid(epoch,projectId)&&request===detailRefreshVersion;
     try{const project=await getDetailProject(projectId);
       if(!current())return;
@@ -199,7 +210,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
         runs:project.runs??[],currentRunId:project.run_state?.run_id??null,
         ...(savedRevision===formRevision?{projectVersion:Math.max(get().projectVersion??0,project.version)}:{}),formError:null});
     }catch(error){if(!current())return;set({formError:toApiRequestError(error).message});}
-    if(current())schedulePoll();
+    finally{pendingDetailRefreshes.delete(request);if(current())schedulePoll();}
   },
   attachWorkspaceImages: async (category, paths) => {
     if(get().isUploading||get().isTransitioning||get().isMutating||!EDITABLE_STATUSES.includes(get().status)||!get().projectId)return;
@@ -351,8 +362,8 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
   },
   restart:async()=>get().createTask(),
   reset:()=>{
-    lifecycleVersion++;clearSettingsTimer();if(pollTimer)clearTimeout(pollTimer);pollTimer=null;
-    if(listTimer)clearTimeout(listTimer);listTimer=null;saving=Promise.resolve();formRevision=0;savedRevision=0;
+    lifecycleVersion++;pendingDetailRefreshes.clear();pendingListRefreshes.clear();clearSettingsTimer();if(pollTimer)clearTimeout(pollTimer);pollTimer=null;
+    if(listTimer)clearTimeout(listTimer);listTimer=null;listFetchedAt=0;saving=Promise.resolve();formRevision=0;savedRevision=0;
     get().images.forEach(releasePreview);createRequestId=null;runRequests.clear();set({...initialState,form:{...DEFAULT_FORM}});
   },
 }));
