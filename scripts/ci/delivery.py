@@ -193,6 +193,67 @@ def write_ssh_file(path, value):
     path.chmod(0o600)
 
 
+def run_private_release(command, *, task, env, plan):
+    """Never publish child output: release diagnostics can contain business secrets."""
+    enums = {
+        'status': {'success', 'failed', 'retained', 'unknown'},
+        'executor_state': {'not_started', 'in_flight', 'unconfirmed', 'failed_safe', 'completed'},
+        'mode': {'task', 'preview', 'main'},
+        'status_after': {'DEPLOYED_PENDING_ACCEPTANCE', 'DEPLOYED_PARTIAL'},
+        'acceptance_candidate': {'true', 'false'},
+        'reason': {'executor_unconfirmed', 'production_state_unconfirmed', 'stable_main_unconfirmed'},
+        'main_write_unconfirmed': {'true', 'false'},
+        'deployment': {'skipped'},
+    }
+    schemas = {
+        'RELEASE_RESULT': ({'status', 'commit'}, {'status', 'commit', 'source', 'mode', 'status_after', 'acceptance_candidate', 'executor_state'}),
+        'TASK_ACCEPTANCE_RESULT': ({'status', 'deployed_commit', 'stable_main'}, {'status', 'deployed_commit', 'stable_main', 'deployment'}),
+        'RELEASE_LOCK_RESULT': ({'status'}, {'status', 'reason', 'executor_state', 'main_write_unconfirmed', 'operation_exit'}),
+        'RELEASE_CANDIDATE_RESULT': ({'status'}, {'status'}),
+    }
+    stage, lock = 'release', 'unknown'
+    # TemporaryFile creates a private 0600 file and unlinks it on close, including
+    # failures. No raw output is attached to an exception, summary or artifact.
+    with tempfile.TemporaryFile(mode='w+t', encoding='utf-8', errors='replace') as output:
+        try:
+            result = subprocess.run(command, cwd=task, env=env, stdout=output,
+                                    stderr=subprocess.STDOUT, check=False)
+        except Exception:
+            raise RuntimeError('Release subprocess unavailable; stage=release lock=unknown') from None
+        output.seek(0)
+        for line in output:
+            parts = line.strip().split()
+            if not parts or parts[0] not in schemas:
+                continue
+            fields = {}
+            for part in parts[1:]:
+                name, separator, value = part.partition('=')
+                if not separator or name in fields:
+                    continue
+                if name in enums and value in enums[name]:
+                    fields[name] = value
+                elif name in {'commit', 'deployed_commit'} and value == plan['sha']:
+                    fields[name] = value
+                elif name == 'stable_main' and re.fullmatch(SHA, value):
+                    fields[name] = value
+                elif name == 'source' and value == plan['branch']:
+                    fields[name] = value
+                elif name == 'operation_exit' and re.fullmatch(r'[0-9]{1,3}', value):
+                    fields[name] = value
+            required, allowed = schemas[parts[0]]
+            fields = {k: v for k, v in fields.items() if k in allowed}
+            if not required <= fields.keys():
+                continue
+            if parts[0] == 'RELEASE_LOCK_RESULT' and fields['status'] == 'retained':
+                lock = 'retained'
+            if parts[0] == 'RELEASE_RESULT' and 'executor_state' in fields:
+                stage = fields['executor_state']
+            print(parts[0] + ' ' + ' '.join(k + '=' + v for k, v in sorted(fields.items())))
+        print(f'DELIVERY_EXECUTION_RESULT exit={result.returncode} stage={stage} lock={lock}')
+        if result.returncode:
+            raise RuntimeError(f'Release subprocess failed: exit={result.returncode} stage={stage} lock={lock}')
+
+
 def execute():
     plan = parse_request(os.environ['GITHUB_REF'], os.environ['GITHUB_SHA'])
     if plan['mode'] not in ('production', 'accept') or os.environ.get('PRODUCTION_DELIVERY_ENABLED') != 'true':
@@ -251,7 +312,7 @@ def execute():
             command = ['bash', 'deploy/release.sh', '--deploy-task', plan['sha'],
                        '--reviewed-sha', plan['sha'], '--skip-test']
         try:
-            subprocess.run(command, cwd=task, env=env, check=True)
+            run_private_release(command, task=task, env=env, plan=plan)
         finally:
             if task.exists():
                 subprocess.run(['git', 'worktree', 'remove', str(task)], cwd=ROOT, check=True)

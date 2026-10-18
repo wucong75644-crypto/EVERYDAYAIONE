@@ -191,6 +191,75 @@ class CredentialSerializationTests(unittest.TestCase):
                     self.assertEqual(released, [True])
 
 
+class PrivateReleaseOutputTests(unittest.TestCase):
+    def test_execute_never_publishes_child_output_on_success_or_failure(self):
+        import contextlib
+        real_run = subprocess.run
+        sha = 'a' * 40
+        metadata = dict(SERVER_HOST='example.invalid', SERVER_USER='deploy', SERVER_PORT='22',
+            REMOTE_APP_DIR='/var/www/everydayai', REMOTE_FRONTEND_DIR='/var/www/everydayai/frontend',
+            REMOTE_BACKEND_DIR='/var/www/everydayai/backend', DOMAIN='example.invalid', RUN_MIGRATIONS='false')
+        payload = ("https://example.invalid/?token=QUERY_SECRET&unknown=OTHER_SECRET\n"
+                   "Authorization: Bearer HEADER_SECRET\nCookie: session=COOKIE_SECRET\n"
+                   '{"message":"BUSINESS_SECRET"}\n' + '-' * 5 + 'BEGIN PRIVATE KEY' + '-' * 5 + '\nKEY_SECRET\n'
+                   + '-' * 5 + 'END PRIVATE KEY' + '-' * 5 + '\n::warning::WORKFLOW_SECRET\n'
+                   "RELEASE_RESULT status=success commit=BAD_SECRET source=BAD_SECRET\n")
+        for mode in ('production', 'accept'):
+            for exit_code in (0, 7):
+                with self.subTest(mode=mode, exit=exit_code):
+                    records = (f'RELEASE_RESULT status=success commit={sha} source=codex/task/task-a '
+                               'mode=task status_after=DEPLOYED_PENDING_ACCEPTANCE acceptance_candidate=true'
+                               if not exit_code else
+                               f'RELEASE_RESULT status=failed commit={sha} executor_state=unconfirmed log=PATH_SECRET\n'
+                               'RELEASE_LOCK_RESULT status=retained reason=executor_unconfirmed '
+                               'executor_state=unconfirmed operation_exit=7 path=PATH_SECRET')
+                    if mode == 'accept' and not exit_code:
+                        records = f'TASK_ACCEPTANCE_RESULT status=success deployed_commit={sha} stable_main={sha} deployment=skipped'
+                    captured_files = []
+                    def boundary(command, **kwargs):
+                        if command[:3] == ['git', 'worktree', 'add']:
+                            task = Path(command[-2]); (task / 'deploy').mkdir(parents=True)
+                            script = task / 'deploy/release.sh'
+                            script.write_text("cat <<'FIXTURE_STDOUT'\n" + payload + records +
+                                              "\nFIXTURE_STDOUT\ncat >&2 <<'FIXTURE_STDERR'\n" + payload + records +
+                                              f"\nFIXTURE_STDERR\nexit {exit_code}\n")
+                            return subprocess.CompletedProcess(command, 0)
+                        if command[:2] == ['bash', 'deploy/release.sh']:
+                            output = kwargs['stdout']
+                            self.assertEqual(os.fstat(output.fileno()).st_mode & 0o777, 0o600)
+                            self.assertEqual(kwargs['stderr'], subprocess.STDOUT)
+                            captured_files.append(output)
+                            return real_run(command, **kwargs)
+                        if command[:3] == ['git', 'worktree', 'remove']:
+                            return subprocess.CompletedProcess(command, 0)
+                        self.fail('Unexpected subprocess')
+                    env = dict(GITHUB_REF=f'refs/tags/delivery-{mode}/{sha}/123/task-a/012345abcdef',
+                        GITHUB_SHA=sha, GITHUB_REPOSITORY='example/repository', PRODUCTION_DELIVERY_ENABLED='true',
+                        GITHUB_ACTIONS='true', RUNNER_ENVIRONMENT='github-hosted', DELIVERY_APPROVER='fixture',
+                        DELIVERY_CONFIG_JSON=json.dumps(metadata), DELIVERY_SSH_KEY='fixture-key',
+                        DELIVERY_KNOWN_HOSTS='fixture-hosts', GH_TOKEN='fixture-token')
+                    public_out, public_err = io.StringIO(), io.StringIO()
+                    with patch.dict(os.environ, env), patch.dict(sys.modules, {'verify_delivery': type('Probe', (), {'verify_connection': staticmethod(lambda: None)})}), \
+                         patch.object(delivery, 'verify_actor'), patch.object(delivery, 'verify_environment'), \
+                         patch.object(delivery, 'verify_checks'), patch.object(delivery, 'verify_source'), \
+                         patch.object(delivery, 'git'), patch.object(delivery.subprocess, 'run', side_effect=boundary), \
+                         contextlib.redirect_stdout(public_out), contextlib.redirect_stderr(public_err):
+                        if exit_code:
+                            with self.assertRaisesRegex(RuntimeError, 'exit=7.*lock=retained') as error:
+                                delivery.execute()
+                            self.assertNotIn('SECRET', str(error.exception))
+                        else:
+                            delivery.execute()
+                    public = public_out.getvalue() + public_err.getvalue()
+                    self.assertNotIn('SECRET', public)
+                    for forbidden in ('https://', 'Authorization', 'Cookie', 'PRIVATE KEY', '::warning::', 'message', 'log=', 'path='):
+                        self.assertNotIn(forbidden, public)
+                    self.assertIn('status=' + ('failed' if exit_code else 'success'), public)
+                    self.assertIn('DELIVERY_EXECUTION_RESULT exit=' + str(exit_code), public)
+                    self.assertTrue(captured_files)
+                    self.assertTrue(all(f.closed for f in captured_files))
+
+
 class ReviewedReleaseRehearsalTests(unittest.TestCase):
     def setUp(self):
         self.fixture = fixtures.ReleaseCoordinationTests()
