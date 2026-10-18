@@ -371,7 +371,9 @@ describe('并发刷新与异常恢复',()=>{
   vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,status:'generating'});
   await useDetailPageStore.getState().hydrateDraft();await vi.advanceTimersByTimeAsync(0);
   vi.mocked(api.getDetailProject).mockRejectedValueOnce(new Error('网络中断')).mockResolvedValue({...draft,status:'completed'});
-  vi.mocked(api.listDetailProjects).mockRejectedValueOnce(new Error('列表网络中断'));
+  const item=useDetailPageStore.getState().tasks[0];
+  useDetailPageStore.setState({tasks:[{...item,status:'generating',display_status:'generating'}]});
+  vi.mocked(api.refreshDetailTaskStatuses).mockRejectedValueOnce(new Error('列表网络中断'));
   await vi.advanceTimersByTimeAsync(1500);
   expect(useDetailPageStore.getState()).toMatchObject({status:'generating',formError:'网络中断'});
   await vi.advanceTimersByTimeAsync(1500);
@@ -405,5 +407,78 @@ describe('并发刷新与异常恢复',()=>{
   await useDetailPageStore.getState().startAnalysis();
   expect(api.startDetailProject).toHaveBeenCalledTimes(1);
   expect(useDetailPageStore.getState()).toMatchObject({status:'generating',isTransitioning:false});
+ });
+});
+
+
+describe('轻量后台刷新',()=>{
+ it('首次打开只读取一次列表，定时仅批量刷新运行任务并保留分页位置',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  expect(api.listDetailProjects).toHaveBeenCalledTimes(1);
+  const first=useDetailPageStore.getState().tasks[0];
+  useDetailPageStore.setState({tasks:[first,{...first,id:'running',status:'generating',display_status:'generating'}],taskCursor:'cursor'});
+  vi.mocked(api.refreshDetailTaskStatuses).mockResolvedValue([{...first,id:'running',status:'completed',display_status:'completed',completed_count:14}]);
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(api.listDetailProjects).toHaveBeenCalledTimes(1);
+  expect(api.refreshDetailTaskStatuses).toHaveBeenCalledExactlyOnceWith(['running']);
+  expect(useDetailPageStore.getState().taskCursor).toBe('cursor');
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(api.refreshDetailTaskStatuses).toHaveBeenCalledTimes(1);
+  await useDetailPageStore.getState().refreshTasks();
+  expect(api.listDetailProjects).toHaveBeenCalledTimes(2);
+ });
+ it('定期重新读取列表以发现其他窗口的新任务，空列表创建的任务也会立即出现',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  const item=useDetailPageStore.getState().tasks[0];
+  vi.mocked(api.listDetailProjects).mockResolvedValue({items:[{...item,id:'other'},item],next_cursor:null});
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(api.listDetailProjects).toHaveBeenCalledTimes(2);
+  expect(useDetailPageStore.getState().tasks.map(t=>t.id)).toContain('other');
+  vi.mocked(api.listDetailProjects).mockResolvedValueOnce({items:[],next_cursor:null})
+   .mockResolvedValueOnce({items:[{...item,id:'new-project'}],next_cursor:null});
+  await useDetailPageStore.getState().hydrateDraft('new-user');await vi.advanceTimersByTimeAsync(0);
+  expect(useDetailPageStore.getState().tasks.map(t=>t.id)).toEqual(['new-project']);
+ });
+ it('手动详情请求未完成时定时刷新不重复请求，完成后继续轮询',async()=>{
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,status:'generating'});
+  await useDetailPageStore.getState().hydrateDraft();
+  let finish!:(p:DetailProjectDraft)=>void;
+  vi.mocked(api.getDetailProject).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const pending=useDetailPageStore.getState().refresh();
+  await vi.advanceTimersByTimeAsync(1500);
+  expect(api.getDetailProject).toHaveBeenCalledTimes(2);
+  finish({...draft,status:'generating'});await pending;
+  await vi.advanceTimersByTimeAsync(1500);
+  expect(api.getDetailProject).toHaveBeenCalledTimes(3);
+ });
+ it('列表请求未完成时定时刷新不另发批量状态请求',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  const item=useDetailPageStore.getState().tasks[0];
+  useDetailPageStore.setState({tasks:[{...item,status:'generating',display_status:'generating'}]});
+  let finish!:(p:Awaited<ReturnType<typeof api.listDetailProjects>>)=>void;
+  vi.mocked(api.listDetailProjects).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const pending=useDetailPageStore.getState().refreshTasks();
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(api.refreshDetailTaskStatuses).not.toHaveBeenCalled();
+  finish({items:[{...item,status:'completed',display_status:'completed'}],next_cursor:null});await pending;
+  expect(useDetailPageStore.getState().tasks[0].status).toBe('completed');
+ });
+ it('切换期间暂停自动请求，旧请求挂起不会阻塞新任务的后台刷新',async()=>{
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,status:'generating'});
+  await useDetailPageStore.getState().hydrateDraft();
+  let finishOld!:(p:DetailProjectDraft)=>void;
+  vi.mocked(api.getDetailProject).mockImplementationOnce(()=>new Promise(resolve=>{finishOld=resolve;}));
+  const older=useDetailPageStore.getState().refresh();
+  let finishNew!:(p:DetailProjectDraft)=>void;
+  vi.mocked(api.getDetailProject).mockImplementationOnce(()=>new Promise(resolve=>{finishNew=resolve;}));
+  const switching=useDetailPageStore.getState().selectTask('B');
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(api.getDetailProject).toHaveBeenCalledTimes(3);
+  finishNew({...draft,id:'B',status:'generating'});await switching;
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,id:'B',status:'completed'});
+  await vi.advanceTimersByTimeAsync(1500);
+  expect(useDetailPageStore.getState()).toMatchObject({projectId:'B',status:'completed'});
+  finishOld({...draft,status:'generating'});await older;
+  expect(useDetailPageStore.getState()).toMatchObject({projectId:'B',status:'completed'});
  });
 });

@@ -163,29 +163,44 @@ class DetailPageGeneration:
 
     def read(self, project_id):
         project = self.projects.get_by_id(project_id)
-        plans = self.db.table('ecom_image_plans').select('*').eq('project_id', project_id).order('created_at').order('id').execute().data or []
+        # Project only display/recovery fields; snapshots include large media references.
+        plans = self.db.table('ecom_image_plans').select(
+            "id,generation_run_id,status,current_stage,image_count,items,created_at,lease_expires_at,"
+            "model_settings,recovery_state,delivery_recovery,jsonb_array_length(stage_attempts) AS attempt_count,"
+            "input_snapshot->>'task_type' AS task_type,input_snapshot->'messages' AS messages,"
+            "stage_outputs->(current_stage::text)->'questions' AS questions").eq('project_id', project_id).order('created_at').order('id').execute().data or []
         current_run = project.get('run_state', {}).get('run_id')
-        tasks = self.db.table('tasks').select('id,status,result,result_data,error_message,credits_used,request_params,created_at').eq('user_id', self.user_id).eq(
+        tasks = self.db.table('tasks').select(
+            "id,status,result_data,error_message,credits_used,created_at,result->>'fail_code' AS fail_code,"
+            "request_params->'_media_request_v1'->'origin' AS origin,"
+            "request_params->'_media_lifecycle_v1'->>'phase' AS submission_state").eq('user_id', self.user_id).eq(
             "request_params->'_media_request_v1'->'origin'->>'project_id'", project_id).order('created_at').order('id').execute().data or []
+        # Preserve the shared recovery helpers' input contract, as task summaries do.
+        for row in plans:
+            row['stage_attempts'] = [None] * row.pop('attempt_count')
+        tasks_by_plan = {}
+        for task in tasks:
+            origin = task.pop('origin')
+            task['request_params'] = {'_media_request_v1': {'origin': origin}}
+            task['result'] = {'fail_code': task.pop('fail_code')}
+            tasks_by_plan.setdefault(origin['plan_source']['plan_id'], []).append(task)
         groups = [{
-            'plan_id': row['id'], 'kind': row['input_snapshot']['task_type'], 'status': row['status'],
+            'plan_id': row['id'], 'kind': row['task_type'], 'status': row['status'],
             'execution_state': execution_state(row),
             'stage': row['current_stage'], 'count': row['image_count'], 'items': row['items'],
             'error': plan_error(row),
             'acceptance_error': row.get('recovery_state', {}).get('acceptance_error'),
             'resume_request_id': row.get('recovery_state', {}).get('resume_request_id'),
             'can_resume': str(row['generation_run_id']) == current_run and can_resume_plan(row),
-            'auto_recovery': recovery_projection(row, project, [task for task in tasks if
-                task['request_params']['_media_request_v1']['origin']['plan_source']['plan_id'] == row['id']]),
+            'auto_recovery': recovery_projection(row, project, tasks_by_plan.get(row['id'], [])),
             'retry_may_have_provider_cost': can_resume_plan(row) and any(closed_timeout(a)
                 for a in (row.get('recovery_state', {}).get('attempts') or {}).values()),
-            'questions': (row.get('stage_outputs', {}).get(str(row['current_stage'])) or {}).get('questions', [])
-                if isinstance(row.get('stage_outputs', {}).get(str(row['current_stage'])), dict) else [],
+            'questions': row.get('questions') or [],
             'tasks': [{key: task.get(key) for key in ('id','status','result_data','error_message','credits_used','created_at')} |
                 {'item_id': task['request_params']['_media_request_v1']['origin']['plan_source']['item_id'],
-                 'submission_state': task['request_params']['_media_lifecycle_v1']['phase'],
+                 'submission_state': task['submission_state'],
                  'retry_of_task_id': task['request_params']['_media_request_v1']['origin'].get('retry_of_task_id')}
-                for task in tasks if task['request_params']['_media_request_v1']['origin']['plan_source']['plan_id'] == row['id']]
+                for task in tasks_by_plan.get(row['id'], [])]
         } for row in plans]
         runs = {}
         for row, group in zip(plans, groups):
@@ -193,7 +208,7 @@ class DetailPageGeneration:
             if run_id != current_run:
                 group['auto_recovery'] = None
             run = runs.setdefault(run_id, {'run_id': run_id, 'created_at': row['created_at'],
-                'requirement': '\n'.join(part.get('text', '') for message in row['input_snapshot'].get('messages', [])
+                'requirement': '\n'.join(part.get('text', '') for message in (row.get('messages') or [])
                     for part in message.get('parts', [])), 'groups': []})
             run['groups'].append(group)
         project['runs'] = list(runs.values())

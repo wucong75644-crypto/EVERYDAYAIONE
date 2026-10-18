@@ -171,3 +171,53 @@ def test_acceptance_diagnostics_excludes_private_database_details():
     assert acceptance_diagnostics(error)=={'sqlstate':'23502','table_name':'tasks','column_name':'conversation_id'}
     error.diag.column_name='https://private-token'
     assert 'column_name' not in acceptance_diagnostics(error)
+
+
+def test_read_projects_only_display_fields_and_preserves_history_and_recovery():
+    from copy import deepcopy
+    from unittest.mock import MagicMock
+    from services.detail_page_generation import DetailPageGeneration
+    from services.detail_page_recovery import POLICY
+
+    plans = [dict(id=f'plan-{run}', generation_run_id=run, status='ready', current_stage=3,
+        image_count=1, items=[{'item_id': 'item'}], created_at=f'2026-10-{day}',
+        lease_expires_at=None, model_settings={'delivery_policy': POLICY}, recovery_state={},
+        delivery_recovery={}, attempt_count=2, task_type='main_images',
+        messages=[{'parts': [{'text': f'  要求 {run}\n'}]}], questions=['补充材质'])
+        for run, day in [('old', '01'), ('current', '02')]]
+    tasks = [dict(id=f'task-{run}', status='failed' if run == 'current' else 'completed',
+        result_data={'original_url': f'https://example.invalid/{run}.png'}, error_message=None,
+        credits_used=1, created_at=f'2026-10-{day}', fail_code='CONTENT_POLICY_VIOLATION',
+        origin={'project_id': 'project', 'generation_run_id': run,
+            'plan_source': {'plan_id': f'plan-{run}', 'item_id': 'item'}, 'retry_of_task_id': 'previous'},
+        submission_state='published') for run, day in [('old', '01'), ('current', '02')]]
+    generation = object.__new__(DetailPageGeneration)
+    generation.user_id = 'user'
+    generation.projects = SimpleNamespace(get_by_id=lambda _: {'id': 'project', 'run_state': {'run_id': 'current'}})
+    generation.db = MagicMock()
+    queries = {}
+    def table(name):
+        query = MagicMock()
+        query.select.return_value = query
+        query.eq.return_value = query
+        query.order.return_value = query
+        query.execute.return_value.data = deepcopy(plans if name == 'ecom_image_plans' else tasks)
+        queries[name] = query
+        return query
+    generation.db.table.side_effect = table
+    project = generation.read('project')
+    assert [run['run_id'] for run in project['runs']] == ['old', 'current']
+    assert project['runs'][0]['requirement'] == '  要求 old\n'
+    assert project['runs'][0]['groups'][0]['auto_recovery'] is None
+    group = project['groups'][0]
+    assert group['questions'] == ['补充材质']
+    assert group['tasks'][0]['id'] == 'task-current'
+    assert group['tasks'][0]['submission_state'] == 'published'
+    assert group['tasks'][0]['retry_of_task_id'] == 'previous'
+    assert group['tasks'][0]['result_data']['original_url'].endswith('current.png')
+    assert group['auto_recovery']['items']['item']['status'] == 'blocked'
+    assert group['auto_recovery']['retry_cost'] == 'platform'
+    plan_fields = queries['ecom_image_plans'].select.call_args.args[0].split(',')
+    task_fields = queries['tasks'].select.call_args.args[0].split(',')
+    assert not {'*', 'input_snapshot', 'stage_outputs', 'stage_attempts'} & set(plan_fields)
+    assert not {'request_params', 'result'} & set(task_fields)
