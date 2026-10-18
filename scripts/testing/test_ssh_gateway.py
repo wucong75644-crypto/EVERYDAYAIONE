@@ -33,7 +33,7 @@ class GatewayTests(unittest.TestCase):
         with patch.object(Path,'resolve',lambda p:p):
             for path in ('frontend/','backend/','backend/../deploy/'):
                 kind,args=gateway.classify('rsync --server -vlogDtprze.iLsfxCIvu --delete . /var/www/everydayai/'+path)
-                self.assertEqual(kind,'rsync');self.assertIn('--filter=-r .env*',args)
+                self.assertEqual(kind,'rsync');self.assertIn('--filter=P .env*',args)
     def test_rsync_escape_denied(self):
         for command in ('rsync --server --sender -vlogDtprze.iLsfxCIvu . /var/www/everydayai/backend/','rsync --server -vlogDtprze.iLsfxCIvu . /root/','rsync --server -vlogDtprze.iLsfxCIvu --files-from=/etc/shadow . /var/www/everydayai/backend/'):
             with self.subTest(command=command),self.assertRaises(ValueError):gateway.classify(command)

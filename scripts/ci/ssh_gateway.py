@@ -41,7 +41,7 @@ def classify(command):
         if Path(target).is_symlink() or Path(target).resolve() != Path(target):
             raise ValueError('Receiver symlink denied')
         return 'rsync', ['/usr/bin/rsync', '--server', *options,
-                          '--filter=-r .env*', '--filter=-r config.env', '--filter=-r venv/***', '.', raw]
+                          '--filter=P .env*', '--filter=P config.env', '--filter=P venv/***', '.', raw]
     if args[:3] == ['bash', '-s', '--'] and len(args) >= 6 and args[3] == APP:
         action, token = args[4:6]
         if not re.fullmatch(r'[A-Za-z0-9-]+', token):

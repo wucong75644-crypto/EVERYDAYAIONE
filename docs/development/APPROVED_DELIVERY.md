@@ -64,7 +64,7 @@ python3 scripts/ci/delivery.py request --mode accept --check-run <该生产SHA�
 
 既有执行器以root安装后端依赖、执行应用代码、准备挂载并管理服务。本次不重构生产服务身份；专用密钥仍具有**高权限应用发布能力**，不能声称它是无法读生产数据的低权限账号。安全边界是GitHub受保护环境的人审与精确候选，以及服务器SSH命令限制。不要把该私钥交给Codex开发环境、普通job、个人日常SSH或第三方任务。
 
-全新ed25519密钥使用root的authorized_keys独立条目，带`restrict,command="/usr/local/sbin/everydayai-ci-ssh"`。保留原管理密钥；不修改sshd配置、不重启应用服务。网关由root拥有，位于应用同步目录之外；策略为root-only的`/etc/everydayai-ci/policy.json`，使用已存在的python3.11。禁止PTY、交互shell、转发、scp和任意命令。rsync仅接收固定frontend/backend/deploy路径、固定选项，不允许sender、可疑路径或目录symlink，并在receiver排除.env*、config.env、venv。发布stdin必须与管理员审查安装的源码hash吻合，argv还须通过操作、锁令牌、迁移路径等校验。应用代码本身仍是高信任内容，命令限制不构成对恶意已批准应用代码的沙箱。
+全新ed25519密钥使用root的authorized_keys独立条目，带`restrict,command="/usr/local/sbin/everydayai-ci-ssh"`。保留原管理密钥；不修改sshd配置、不重启应用服务。网关由root拥有，位于应用同步目录之外；策略为root-only的`/etc/everydayai-ci/policy.json`，使用已存在的python3.11。禁止PTY、交互shell、转发、scp和任意命令。rsync仅接收固定frontend/backend/deploy路径、固定选项，不允许sender、可疑路径或目录symlink，并在receiver保护.env*、config.env、venv不被删除。接收端过滤不能阻止恶意发送方覆盖这些路径；正常发布仍使用deploy.sh现有发送端exclude规则。此次只在全新临时目录用合成文件核验此边界，没有对生产配置做写入试验。发布stdin必须与管理员审查安装的源码hash吻合，argv还须通过操作、锁令牌、迁移路径等校验。应用代码本身仍是高信任内容，命令限制不构成对恶意已批准应用代码的沙箱。
 
 `build_ssh_policy.py`仅提取脚本并计算hash，不执行它们。策略与网关不会由发布job自动更新；以后受控远程脚本/网关有变化，必须先经管理连接审查更新，否则正式执行会失败关闭。普通业务改动可沿用相同脚本策略。正式执行还会先比对服务器网关hash、脚本策略映射和来源祖先，防止错装旧网关或不同策略。
 
