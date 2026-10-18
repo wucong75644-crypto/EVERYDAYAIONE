@@ -1,0 +1,1 @@
+Isolated scope verification only.
