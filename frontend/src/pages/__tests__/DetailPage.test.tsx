@@ -139,7 +139,15 @@ describe('DetailPage 页面骨架', () => {
     act(() => useDetailPageStore.setState({projectId:'empty',images:[readyImage,
       {...readyImage,id:'pending',status:imageStatus}],isUploading:['uploading','attaching'].includes(imageStatus)}));
 
-    const input = screen.getByRole('textbox', {name:'产品信息与创作要求'});
+    for (const name of ['默认','主图','详情图','目标平台','目标语言','尺寸比例','清晰度','生成数量','提示词模型']) {
+      expect(screen.getByRole('button', {name,exact:true})).toBeEnabled();
+    }
+    fireEvent.click(screen.getByRole('button', {name:'主图',exact:true}));
+    fireEvent.keyDown(screen.getByRole('button', {name:'清晰度'}), {key:'ArrowDown'});
+    fireEvent.click(screen.getByText('2K 高清'));
+    expect(useDetailPageStore.getState().form).toMatchObject({contentType:'main_image',quality:'2k'});
+
+    const input = screen.getByRole('textbox', {name:'主图要求'});
     expect(input).toBeEnabled();
     fireEvent.change(input, {target:{value:'上传期间补充的风格和产品细节'}});
     expect(useDetailPageStore.getState().form.requirement).toBe('上传期间补充的风格和产品细节');
@@ -148,6 +156,7 @@ describe('DetailPage 页面骨架', () => {
 
     act(() => useDetailPageStore.setState({images:[readyImage],isUploading:false}));
     expect(input).toHaveValue('上传期间补充的风格和产品细节');
+    expect(useDetailPageStore.getState().form).toMatchObject({contentType:'main_image',quality:'2k'});
     expect(screen.getByRole('button', {name:'开始生成'})).toBeEnabled();
     expect(screen.getByRole('button', {name:'AI 帮写'})).toBeEnabled();
 
