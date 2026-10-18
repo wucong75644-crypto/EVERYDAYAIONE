@@ -227,3 +227,5 @@ describe('useTheme - 容错', () => {
     Storage.prototype.setItem = originalSetItem;
   });
 });
+
+it('intentional verification failure', () => { throw new Error('EXPECTED_SCOPE_VERIFICATION_FAILURE'); });
