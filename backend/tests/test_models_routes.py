@@ -1,70 +1,67 @@
-"""
-模型列表路由单元测试
+"""模型目录的 HTTP 契约：匿名可读公开字段，用户订阅仍需认证。"""
 
-覆盖模型 API 端点：
-- GET /models（获取所有模型列表，公开接口）
-"""
-
-import sys
-from pathlib import Path
-
-backend_dir = Path(__file__).parent.parent
-if str(backend_dir) not in sys.path:
-    sys.path.insert(0, str(backend_dir))
+from unittest.mock import patch
 
 import pytest
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.testclient import TestClient
 
-from tests.conftest import MockSupabaseClient
-from services.subscription_service import SubscriptionService, KNOWN_MODEL_IDS
-
-
-# ============================================================
-# Fixtures
-# ============================================================
-
-@pytest.fixture
-def mock_db():
-    return MockSupabaseClient()
+from api.routes import models, subscription
+from core.database import get_db
+from core.exceptions import AppException
+from services.subscription_service import KNOWN_MODEL_IDS, SubscriptionService
 
 
 @pytest.fixture
-def service(mock_db):
-    return SubscriptionService(mock_db)
+def client():
+    app = FastAPI()
+    app.include_router(models.router, prefix="/api")
+    app.include_router(subscription.router, prefix="/api")
+
+    @app.exception_handler(AppException)
+    async def handle_app_exception(request: Request, exc: AppException):
+        return JSONResponse(status_code=exc.status_code, content={"code": exc.code})
+
+    def unexpected_database_access():
+        pytest.fail("公开模型目录和匿名认证拒绝不应访问数据库")
+
+    # Keep the actual auth and service dependencies: overriding those would hide
+    # the indirect ScopedDB -> get_current_user_id regression.
+    app.dependency_overrides[get_db] = unexpected_database_access
+    with TestClient(app) as test_client:
+        yield test_client
 
 
-# ============================================================
-# GET /models
-# ============================================================
+def test_anonymous_models_are_public_and_database_independent(client):
+    response = client.get("/api/models")
 
-class TestGetModels:
-    """获取模型列表路由测试"""
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {"models"}
+    assert {model["id"] for model in payload["models"]} == KNOWN_MODEL_IDS
+    for model in payload["models"]:
+        assert set(model) == {"id", "status"}
+        assert model["status"] == "active"
 
-    @pytest.mark.asyncio
-    async def test_returns_all_models(self, service):
-        from api.routes.models import get_models
 
-        result = await get_models(service=service)
+def test_model_response_filters_non_public_fields(client):
+    with patch.object(SubscriptionService, "get_all_models", return_value=[{
+        "id": "gemini-3-flash", "status": "active", "internal_config": "private",
+    }]):
+        response = client.get("/api/models")
 
-        assert "models" in result
-        assert len(result["models"]) == len(KNOWN_MODEL_IDS)
+    assert response.status_code == 200
+    assert response.json() == {"models": [{"id": "gemini-3-flash", "status": "active"}]}
 
-    @pytest.mark.asyncio
-    async def test_models_have_correct_structure(self, service):
-        from api.routes.models import get_models
 
-        result = await get_models(service=service)
+@pytest.mark.parametrize(("method", "path"), [
+    ("GET", "/api/subscriptions"),
+    ("POST", "/api/subscriptions/gemini-3-flash"),
+    ("DELETE", "/api/subscriptions/gemini-3-flash"),
+])
+def test_anonymous_subscriptions_remain_protected(client, method, path):
+    response = client.request(method, path)
 
-        for model in result["models"]:
-            assert "id" in model
-            assert "status" in model
-            assert model["status"] == "active"
-            assert "is_default" not in model
-
-    @pytest.mark.asyncio
-    async def test_no_auth_required(self, service):
-        """公开接口，无需 current_user 参数"""
-        from api.routes.models import get_models
-
-        # 路由函数签名不包含 current_user，直接调用即可
-        result = await get_models(service=service)
-        assert len(result["models"]) > 0
+    assert response.status_code == 401
+    assert response.json()["code"] == "AUTHENTICATION_ERROR"

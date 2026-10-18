@@ -58,7 +58,8 @@ class SubscriptionService:
     def __init__(self, db):
         self.db = db
 
-    def get_all_models(self) -> list[dict]:
+    @staticmethod
+    def get_all_models() -> list[dict]:
         """获取所有模型的状态信息（从代码常量生成，不查 models 表）"""
         return [
             {"id": mid, "status": "active"}
