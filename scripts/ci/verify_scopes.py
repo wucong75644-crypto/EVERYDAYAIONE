@@ -83,10 +83,11 @@ def create(push):
     save(state)
     if push:
         # Only these audit tags are written; no branch, main, delivery or server writes.
-        refs = [s['sha'] + ':refs/tags/' + s['tag'] for s in state['scenarios'].values()]
-        subprocess.run(['git', 'push', 'origin', *refs], cwd=ROOT, check=True)
-        for item in state['scenarios'].values(): item['status'] = 'requested'
-        save(state)
+        # GitHub omits push events when more than three tags are sent together.
+        for item in state['scenarios'].values():
+            subprocess.run(['git', 'push', 'origin', item['sha'] + ':refs/tags/' + item['tag']], cwd=ROOT, check=True)
+            item['status'] = 'requested'
+            save(state)
     print(json.dumps(state, indent=2))
 
 
