@@ -139,6 +139,58 @@ class DeliveryPolicyTests(unittest.TestCase):
         self.assertEqual(workflow['jobs']['acceptance']['permissions']['contents'], 'write')
 
 
+class CredentialSerializationTests(unittest.TestCase):
+    def test_execute_uses_readable_newline_terminated_private_credentials(self):
+        # Generate only a disposable fixture; never inspect configured credentials.
+        real_run = subprocess.run
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory) / 'fixture'
+            real_run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(fixture)], check=True)
+            key = fixture.read_text().rstrip()
+            fixture.write_text(key)
+            unreadable = real_run(['ssh-keygen', '-y', '-P', '', '-f', str(fixture)], capture_output=True)
+            self.assertNotEqual(unreadable.returncode, 0)
+            self.assertIn(b'error in libcrypto', unreadable.stderr)
+            sha = 'a' * 40
+            metadata = dict(SERVER_HOST='example.invalid', SERVER_USER='deploy', SERVER_PORT='22',
+                REMOTE_APP_DIR='/var/www/everydayai', REMOTE_FRONTEND_DIR='/var/www/everydayai/frontend',
+                REMOTE_BACKEND_DIR='/var/www/everydayai/backend', DOMAIN='example.invalid', RUN_MIGRATIONS='false')
+            for suffix in ('', '\n', '\n\n'):
+                with self.subTest(suffix=repr(suffix)):
+                    released = []
+                    def local_boundary(command, **kwargs):
+                        if command[:3] == ['git', 'worktree', 'add']:
+                            (Path(command[-2]) / 'deploy').mkdir(parents=True)
+                        elif command[:2] == ['bash', 'deploy/release.sh']:
+                            private = Path(kwargs['cwd']).parent
+                            identity = private / 'identity'
+                            hosts = private / 'known_hosts'
+                            self.assertEqual(identity.read_text(), key + '\n')
+                            self.assertEqual(hosts.read_text(), 'fixture-host-key\n')
+                            for path in (identity, hosts):
+                                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                            readable = real_run(['ssh-keygen', '-y', '-P', '', '-f', str(identity)], capture_output=True)
+                            self.assertEqual(readable.returncode, 0, 'execute identity must be OpenSSH-readable')
+                            self.assertNotIn('DELIVERY_SSH_KEY', kwargs['env'])
+                            self.assertEqual(command, ['bash', 'deploy/release.sh', '--deploy-task', sha,
+                                                      '--reviewed-sha', sha, '--skip-test'])
+                            released.append(True)
+                        elif command[:3] != ['git', 'worktree', 'remove']:
+                            self.fail('Unexpected subprocess boundary: ' + command[0])
+                        return subprocess.CompletedProcess(command, 0)
+                    env = dict(GITHUB_REF=f'refs/tags/delivery-production/{sha}/123/task-a/012345abcdef',
+                        GITHUB_SHA=sha, GITHUB_REPOSITORY='example/repository', PRODUCTION_DELIVERY_ENABLED='true',
+                        GITHUB_ACTIONS='true', RUNNER_ENVIRONMENT='github-hosted', DELIVERY_APPROVER='fixture',
+                        DELIVERY_CONFIG_JSON=json.dumps(metadata), DELIVERY_SSH_KEY=key + suffix,
+                        DELIVERY_KNOWN_HOSTS='fixture-host-key' + suffix)
+                    with patch.dict(os.environ, env), patch.dict(sys.modules, {'verify_delivery': type('Probe', (), {'verify_connection': staticmethod(lambda: None)})}), \
+                         patch.object(delivery, 'verify_actor'), patch.object(delivery, 'verify_environment'), \
+                         patch.object(delivery, 'verify_checks'), patch.object(delivery, 'verify_source'), \
+                         patch.object(delivery.subprocess, 'run', side_effect=local_boundary):
+                        delivery.execute()
+                    self.assertEqual(released, [True])
+
+
 class ReviewedReleaseRehearsalTests(unittest.TestCase):
     def setUp(self):
         self.fixture = fixtures.ReleaseCoordinationTests()

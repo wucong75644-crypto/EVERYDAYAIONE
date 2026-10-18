@@ -9,7 +9,7 @@ import shlex
 import subprocess
 import tempfile
 from build_ssh_policy import build
-from delivery import config_text, verify_environment, verify_actor
+from delivery import config_text, verify_environment, verify_actor, write_ssh_file
 
 
 def verify_connection():
@@ -21,7 +21,7 @@ def verify_connection():
     with tempfile.TemporaryDirectory(prefix='delivery-probe-') as directory:
         root=Path(directory)
         for filename,value in [('key',os.environ['DELIVERY_SSH_KEY']),('hosts',os.environ['DELIVERY_KNOWN_HOSTS'])]:
-            target=root/filename;target.write_text(value.rstrip()+"\n");target.chmod(0o600)
+            write_ssh_file(root/filename, value)
         command=['ssh','-F','/dev/null','-i',str(root/'key'),'-p',metadata['SERVER_PORT'],
                  '-o','UserKnownHostsFile='+str(root/'hosts'),'-o','StrictHostKeyChecking=yes',
                  '-o','IdentitiesOnly=yes','-o','IdentityAgent=none','-o','BatchMode=yes',

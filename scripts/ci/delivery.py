@@ -187,6 +187,12 @@ def config_text(raw):
     return ''.join(f'{key}={shlex.quote(value)}\n' for key, value in sorted(values.items()))
 
 
+def write_ssh_file(path, value):
+    """Use the same newline-terminated private files for probe and release."""
+    path.write_text(value.rstrip() + "\n")
+    path.chmod(0o600)
+
+
 def execute():
     plan = parse_request(os.environ['GITHUB_REF'], os.environ['GITHUB_SHA'])
     if plan['mode'] not in ('production', 'accept') or os.environ.get('PRODUCTION_DELIVERY_ENABLED') != 'true':
@@ -212,8 +218,7 @@ def execute():
         private = Path(directory)
         for name, text in [('identity', key), ('known_hosts', hosts)]:
             path = private / name
-            path.write_text(text)
-            path.chmod(0o600)
+            write_ssh_file(path, text)
         ssh_config = private / 'ssh_config'
         ssh_config.write_text(f'Host *\n  IdentityFile "{private / "identity"}"\n'
                               f'  UserKnownHostsFile "{private / "known_hosts"}"\n'
