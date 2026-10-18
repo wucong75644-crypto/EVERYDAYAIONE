@@ -8,7 +8,7 @@ import subprocess
 
 ROOT=Path(__file__).resolve().parents[2]
 
-def build():
+def build(source_sha=None):
     def digest(body):return hashlib.sha256(body).hexdigest()
     source=(ROOT/'deploy/deploy.sh').read_text()
     blocks=re.findall(r"remote_exec ([^\n]+) << 'ENDSSH'\n(.*?)^ENDSSH$",source,re.M|re.S)
@@ -21,6 +21,9 @@ def build():
     scripts['coordination']=[digest(body.encode())]
     scripts['storage']=[digest((ROOT/'deploy/ensure-skill-personal-storage.sh').read_bytes())]
     scripts['python']=[digest((ROOT/p).read_bytes()) for p in ('deploy/verify-production-database.py','deploy/verify_migration_executor.py','deploy/scheduled-task-drain.py')]
-    return {'source_sha':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),'scripts':scripts}
+    source_sha=source_sha or subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
+    if not re.fullmatch(r'[a-f0-9]{40}',source_sha):
+        raise ValueError('Full policy source SHA required')
+    return {'source_sha':source_sha,'scripts':scripts}
 
 if __name__=='__main__': print(json.dumps(build(),indent=2))

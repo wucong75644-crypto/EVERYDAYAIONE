@@ -40,7 +40,7 @@ class GatewayTests(unittest.TestCase):
         with patch.object(Path,'is_symlink',return_value=True),self.assertRaises(ValueError):
             gateway.classify('rsync --server -vlogDtprze.iLsfxCIvu . /var/www/everydayai/backend/')
     def test_real_heredoc_bytes_match_policy(self):
-        catalog=policy.build()['scripts']
+        catalog=policy.build("a"*40)['scripts']
         for filename,delimiter,kinds in [('deploy/deploy.sh','ENDSSH',('deployment','migrations')),('deploy/release-coordination.sh','REMOTE_STATE',('coordination',))]:
             source=(ROOT/filename).read_text()
             pattern=r"<< ?'"+delimiter+r"'[^\n]*\n(.*?)^"+delimiter+r"$"
@@ -54,12 +54,16 @@ class GatewayTests(unittest.TestCase):
     def test_unknown_stdin_never_runs(self):
         p=Mock()
         p.stat.return_value=SimpleNamespace(st_uid=0,st_mode=0o600)
-        p.read_text.return_value=__import__('json').dumps(policy.build())
+        p.read_text.return_value=__import__('json').dumps(policy.build("a"*40))
         with patch.object(gateway,'POLICY',p),patch.dict(gateway.os.environ,{'SSH_ORIGINAL_COMMAND':'bash'}),patch.object(gateway.sys,'stdin',SimpleNamespace(buffer=io.BytesIO(b'echo changed-script\n'))),patch.object(gateway.subprocess,'run') as run:
             with self.assertRaises(ValueError):gateway.main()
             run.assert_not_called()
+    def test_policy_fixture_needs_no_git_metadata(self):
+        with patch.object(policy.subprocess,'check_output',side_effect=AssertionError('Must not invoke Git')):
+            self.assertEqual(policy.build('a'*40)['source_sha'],'a'*40)
+            with self.assertRaises(ValueError):policy.build('invalid')
     def test_policy_contains_only_expected_scripts(self):
-        p=policy.build()
+        p=policy.build("a"*40)
         self.assertEqual({k:len(v) for k,v in p['scripts'].items()},{'deployment':3,'migrations':1,'storage':1,'python':3,'coordination':1})
         for values in p['scripts'].values():
             for value in values:self.assertRegex(value,r'^[0-9a-f]{64}$')
