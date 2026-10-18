@@ -14,6 +14,7 @@ import yaml
 from scripts.testing import test_release_coordination as fixtures
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'scripts/ci'))
 spec = importlib.util.spec_from_file_location('delivery', ROOT / 'scripts/ci/delivery.py')
 delivery = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(delivery)
@@ -27,7 +28,14 @@ class DeliveryPolicyTests(unittest.TestCase):
                     'status': 'completed', 'conclusion': 'success',
                     'path': '.github/workflows/pre-release-checks.yml', 'html_url': 'https://example.invalid/check'}
         self.jobs = {'jobs': [{'name': name, 'status': 'completed', 'conclusion': 'success'}
-                              for name in ('frontend', 'backend')]}
+                              for name in ('frontend', 'backend', 'scope')]}
+        self.plan = {'base': 'b' * 40, 'mode': 'scoped', 'fingerprint': 'c' * 64,
+                     'frontend': 'full', 'backend': 'full', 'deploy': True}
+        self.jobs['jobs'].append({'name': 'required / ' + 'b' * 40 + ' / scoped / ' + 'c' * 64,
+                                 'status': 'completed', 'conclusion': 'success'})
+        self.plan_patch = patch.object(delivery.check_scope, 'make_plan', return_value=self.plan)
+        self.plan_patch.start()
+        self.addCleanup(self.plan_patch.stop)
 
     def test_public_read_fallback_when_cloud_cli_has_no_login(self):
         result = subprocess.CompletedProcess([], 4, '', 'authentication required')
@@ -46,10 +54,36 @@ class DeliveryPolicyTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     delivery.verify_checks(self.repository, '123', self.sha)
         for state in ('skipped', 'cancelled', 'failure'):
-            jobs = {'jobs': [self.jobs['jobs'][0], {**self.jobs['jobs'][1], 'conclusion': state}]}
+            jobs = {'jobs': [self.jobs['jobs'][0], {**self.jobs['jobs'][1], 'conclusion': state}, *self.jobs['jobs'][2:]]}
             with self.subTest(state=state), patch.object(delivery, 'api', side_effect=[self.run, jobs]):
                 with self.assertRaises(RuntimeError):
                     delivery.verify_checks(self.repository, '123', self.sha)
+
+    def test_document_only_blocked_by_runner_before_source_or_ssh(self):
+        ref = f'refs/tags/delivery-production/{self.sha}/123/task-a/012345abcdef'
+        env = {'GITHUB_REF': ref, 'GITHUB_SHA': self.sha,
+               'GITHUB_REPOSITORY': self.repository, 'PRODUCTION_DELIVERY_ENABLED': 'true',
+               'DELIVERY_APPROVER': 'owner', 'GITHUB_ACTIONS': 'true', 'RUNNER_ENVIRONMENT': 'github-hosted'}
+        with patch.dict(os.environ, env), patch.object(delivery, 'verify_actor'), \
+             patch.object(delivery, 'verify_environment'), \
+             patch.object(delivery, 'verify_checks', return_value={'deploy': False}), \
+             patch.object(delivery, 'verify_source') as source:
+            with self.assertRaisesRegex(RuntimeError, 'Documentation-only'):
+                delivery.make_plan()
+            with self.assertRaisesRegex(RuntimeError, 'Documentation-only'):
+                delivery.execute()
+            source.assert_not_called()
+
+    def test_workflow_green_without_scope_proof_is_not_enough(self):
+        for jobs in (self.jobs['jobs'][:-1], self.jobs['jobs'][:2]):
+            with patch.object(delivery, 'api', side_effect=[self.run, {'jobs': jobs}]), self.assertRaises(RuntimeError):
+                delivery.verify_checks(self.repository, '123', self.sha)
+
+    def test_verification_run_cannot_authorize_production_even_when_green(self):
+        run = {**self.run, 'head_branch': 'preflight/verify/' + self.sha + '/docs/012345abcdef'}
+        with patch.object(delivery, 'api', return_value=run) as api, self.assertRaisesRegex(RuntimeError, 'Verification-only'):
+            delivery.verify_checks(self.repository, '123', self.sha)
+        self.assertEqual(api.call_count, 1)
 
     def test_workflow_source_is_the_checked_commit(self):
         ref = f'refs/tags/delivery-rehearsal/{self.sha}/123/task-a/012345abcdef'
@@ -185,7 +219,7 @@ class CredentialSerializationTests(unittest.TestCase):
                         DELIVERY_KNOWN_HOSTS='fixture-host-key' + suffix)
                     with patch.dict(os.environ, env), patch.dict(sys.modules, {'verify_delivery': type('Probe', (), {'verify_connection': staticmethod(lambda: None)})}), \
                          patch.object(delivery, 'verify_actor'), patch.object(delivery, 'verify_environment'), \
-                         patch.object(delivery, 'verify_checks'), patch.object(delivery, 'verify_source'), \
+                         patch.object(delivery, 'verify_checks', return_value={'deploy': True}), patch.object(delivery, 'verify_source'), \
                          patch.object(delivery.subprocess, 'run', side_effect=local_boundary):
                         delivery.execute()
                     self.assertEqual(released, [True])
@@ -241,7 +275,7 @@ class PrivateReleaseOutputTests(unittest.TestCase):
                     public_out, public_err = io.StringIO(), io.StringIO()
                     with patch.dict(os.environ, env), patch.dict(sys.modules, {'verify_delivery': type('Probe', (), {'verify_connection': staticmethod(lambda: None)})}), \
                          patch.object(delivery, 'verify_actor'), patch.object(delivery, 'verify_environment'), \
-                         patch.object(delivery, 'verify_checks'), patch.object(delivery, 'verify_source'), \
+                         patch.object(delivery, 'verify_checks', return_value={'deploy': True}), patch.object(delivery, 'verify_source'), \
                          patch.object(delivery, 'git'), patch.object(delivery.subprocess, 'run', side_effect=boundary), \
                          contextlib.redirect_stdout(public_out), contextlib.redirect_stderr(public_err):
                         if exit_code:

@@ -3,6 +3,12 @@ run-name: Pre-release checks · ${{ github.sha }}
 
 on:
   workflow_dispatch:
+    inputs:
+      check_mode:
+        description: Check policy (shadow reports scope but runs full checks)
+        type: choice
+        options: [scoped, shadow, full]
+        default: scoped
   push:
     branches: ['codex/task/**']
     tags: ['preflight/**']
@@ -10,6 +16,8 @@ on:
       - '.github/workflows/pre-release-checks.yml'
       - 'scripts/ci/**'
       - 'scripts/testing/test_ci_checks.py'
+      - 'scripts/testing/test_check_scope.py'
+      - 'frontend/scripts/list-related-tests.mjs'
 
 # Deliberately no environments, secrets, SSH or deployment jobs.
 permissions:
@@ -20,7 +28,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  scope:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      base: ${{ steps.scope.outputs.base }}
+      mode: ${{ steps.scope.outputs.mode }}
+      fingerprint: ${{ steps.scope.outputs.fingerprint }}
+      frontend: ${{ steps.scope.outputs.frontend }}
+      backend: ${{ steps.scope.outputs.backend }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify whole candidate against current main and check sensitive paths
+        id: scope
+        env:
+          CHECK_MODE: ${{ inputs.check_mode || 'scoped' }}
+        run: python3 scripts/ci/check_scope.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: check-scope
+          path: .cloud-dev/ci/check-scope.json
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14
+
   frontend:
+    needs: scope
+    if: needs.scope.outputs.frontend != 'none'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -32,8 +69,12 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Frontend tests and build
-        run: python3 scripts/ci/run.py frontend
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: check-scope
+          path: .cloud-dev/ci
+      - name: Frontend required tests and build
+        run: python3 scripts/ci/run.py frontend --plan .cloud-dev/ci/check-scope.json
       - name: Publish sanitized timing report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -45,6 +86,8 @@ jobs:
           include-hidden-files: true
 
   backend:
+    needs: scope
+    if: needs.scope.outputs.backend != 'none'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     # Native bootstrap artifacts target Debian trixie amd64; do not run them
@@ -55,10 +98,16 @@ jobs:
         shell: bash
     steps:
       - name: Prepare disposable system dependencies
+        env:
+          BACKEND_SCOPE: ${{ needs.scope.outputs.backend }}
         run: |
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            git ca-certificates postgresql-17 postgresql-17-pgvector redis-server
+            git ca-certificates
+          if [[ "$BACKEND_SCOPE" == full ]]; then
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              postgresql-17 postgresql-17-pgvector redis-server
+          fi
           useradd --create-home --uid 1001 ci
           mkdir -p /workspace/repository /workspace/.cache/pip
           chown -R ci:ci /workspace
@@ -69,17 +118,23 @@ jobs:
         with:
           path: /workspace/.cache/pip
           key: backend-pip-trixie-amd64-py312-${{ hashFiles('backend/requirements.txt') }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: check-scope
+          path: .cloud-dev/ci
       - name: Copy only committed source into private test checkout
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git archive HEAD | tar -x -C /workspace/repository
+          mkdir -p /workspace/repository/.cloud-dev/ci
+          cp .cloud-dev/ci/check-scope.json /workspace/repository/.cloud-dev/ci/check-scope.json
           chown -R ci:ci /workspace/repository /workspace/.cache
       - name: Backend regression, empty database and real API smoke
         env:
           CHECKED_SHA: ${{ github.sha }}
         run: |
           runuser -u ci -- env CHECKED_SHA="$CHECKED_SHA" PIP_CACHE_DIR=/workspace/.cache/pip \
-            python3.12 /workspace/repository/scripts/ci/run.py backend
+            python3.12 /workspace/repository/scripts/ci/run.py backend --plan /workspace/repository/.cloud-dev/ci/check-scope.json
       - name: Retrieve sanitized report only
         if: always()
         run: |
@@ -97,3 +152,29 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
           include-hidden-files: true
+
+  required:
+    name: required / ${{ needs.scope.outputs.base }} / ${{ needs.scope.outputs.mode }} / ${{ needs.scope.outputs.fingerprint }}
+    needs: [scope, frontend, backend]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require successful classification and every selected check
+        env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          FRONTEND_SCOPE: ${{ needs.scope.outputs.frontend }}
+          BACKEND_SCOPE: ${{ needs.scope.outputs.backend }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          BACKEND_RESULT: ${{ needs.backend.result }}
+        run: |
+          python3 - <<'PY_GATE'
+          import os
+          if os.environ['SCOPE_RESULT'] != 'success':
+              raise SystemExit('Classification failed; deployment blocked')
+          for kind in ('FRONTEND', 'BACKEND'):
+              scope = os.environ[kind + '_SCOPE']
+              result = os.environ[kind + '_RESULT']
+              if not scope or (result != 'success' if scope != 'none' else result not in ('skipped', 'success')):
+                  raise SystemExit('Required check did not pass: ' + kind)
+          PY_GATE

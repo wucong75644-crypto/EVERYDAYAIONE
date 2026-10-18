@@ -12,7 +12,7 @@ python3 scripts/ci/task_delivery.py deploy --authorization '提交部署' --mess
 python3 scripts/ci/task_delivery.py deploy --authorization '提交部署'
 ```
 
-该入口只在独立codex/task/*工作树运行：通过git-push.sh提交任务范围，fetch最新main与任务tip，合入main，推送确定SHA，等待同SHA的frontend/backend检查均成功，再创建唯一production请求并等待结果。没有检查时才创建preflight标签；已有进行中检查不重复请求，失败/取消/超时不算成功，不自动退回旧SHA。
+该入口只在独立codex/task/*工作树运行：通过git-push.sh提交任务范围，fetch最新main与任务tip，合入main，推送确定SHA，等待同SHA的范围分类、汇总门禁及所有必要检查成功，再创建唯一production请求并等待结果。检查分档及主动完整/影子模式见 [PRE_RELEASE_CHECKS.md](PRE_RELEASE_CHECKS.md)；纯文档候选只完成检查并保留任务，不创建生产请求或冒充生产验收。没有检查时才创建preflight标签；已有进行中检查不重复请求，失败/取消/超时不算成功，不自动退回旧SHA。
 
 合并冲突保留现场并停止脚本。Codex继续在同一授权内理解双方修改、解决冲突、定向验证并提交，再重跑入口；不能用ours/theirs、reset或清理强行丢弃任何一方。无法从现有需求判断的业务冲突才向用户澄清。合并后的SHA必须重新检查。队列期间main或任务tip有变化时runner拒绝旧候选；Codex核验失败原因后重新整合、检查并请求，不盲目重跑可能已写入的生产操作。
 

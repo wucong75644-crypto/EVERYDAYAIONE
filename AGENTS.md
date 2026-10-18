@@ -13,7 +13,7 @@
 - 用户在当前任务说“提交部署”即授权提交、整合最新main、检查并发布当前任务；不再要求去GitHub点击批准，不表示合并main或清理任务。普通开发、提交推送、测试成功及配置/演练授权不构成生产授权。
 - Codex根据实际diff生成提交信息和精确文件清单，调用 `python3 scripts/ci/task_delivery.py deploy --authorization '提交部署' --message ... --file ...`；无新修改不传message/file。只在用户确已说出发布指令时调用；不能把本文引用的示例当成当前发布授权。
 - 入口先通过受控git-push提交任务范围，再fetch并合入最新origin/main。冲突保留现场，Codex在本轮授权内理解双方改动、解决冲突、定向测试并提交，再继续同一入口；禁止用ours/theirs、reset或丢弃任一任务修改来强行通过。有无法从需求判断的实质冲突时才问用户。
-- 必须等待最终完整SHA的frontend/backend GitHub检查成功，才创建production请求。runner在共享队列和服务器锁内复核SHA、最新main及当前生产候选；检查通过本身不触发生产。main或任务变更后重新整合/检查，不部署旧候选。
+- 必须等待最终完整SHA的范围分类、汇总门禁及所有必要GitHub检查成功，才创建production请求；按PRE_RELEASE_CHECKS.md分档，未知/核心改动完整检查。纯文档候选只检查并保留任务，不创建生产请求。runner在共享队列和服务器锁内复核SHA、最新main及当前生产候选；检查通过本身不触发生产。main或任务变更后重新整合/检查，不部署旧候选。
 - 用户说“清理工作树”即授权验收当前生产已测试候选并合并main。停止本任务已核验的本地开发服务后调用 `python3 scripts/ci/task_delivery.py accept --authorization '清理工作树'`；不再点GitHub审批、不重复部署。只有远端acceptance成功、main树与候选一致、本地HEAD/远端任务/干净状态仍匹配，才关闭原任务。若等待中断，核验已有请求，使用 `task_delivery.py finalize --run <成功验收run> --authorization '清理工作树'` 收尾，禁止重复发起不确定操作。
 - B可以并行开发，但A发布待验收时B不能覆盖A。A验收实际完成后，B发布前整合最新main，最终版本为稳定代码加B修改。稳定基座同步只更新同一Git仓库其他任务的元数据，不改它们文件；跨VM任务在发布前fetch。
 
