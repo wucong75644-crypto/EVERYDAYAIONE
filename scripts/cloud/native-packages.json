@@ -1,0 +1,174 @@
+{
+  "provenance": "Debian trixie InRelease authenticated by /usr/share/keyrings/debian-archive-keyring.gpg; SHA256 verified against Packages metadata",
+  "architecture": "amd64",
+  "packages": [
+    {
+      "file": "e2fsprogs-l10n_1.47.2-3_all.deb",
+      "url": "https://deb.debian.org/debian/pool/main/e/e2fsprogs/e2fsprogs-l10n_1.47.2-3_all.deb",
+      "sha256": "609f1130508d54f0e3543f227426bb84856a9080b434151fc7a878ad84ca678a",
+      "package": "e2fsprogs-l10n",
+      "version": "1.47.2-3"
+    },
+    {
+      "file": "e2fsprogs_1.47.2-3+b12_amd64.deb",
+      "url": "https://deb.debian.org/debian/pool/main/e/e2fsprogs/e2fsprogs_1.47.2-3+b12_amd64.deb",
+      "sha256": "e9e638eb3e22b5f14d01ce0b28aa512a5a22fcc0e70d1c733444579b67ea236b",
+      "package": "e2fsprogs",
+      "version": "1.47.2-3+b12"
+    },
+    {
+      "file": "libcommon-sense-perl_3.75-3+b5_amd64.deb",
+      "url": "https://deb.debian.org/debian/pool/main/libc/libcommon-sense-perl/libcommon-sense-perl_3.75-3+b5_amd64.deb",
+      "sha256": "b9d01945c0370566a49ffd19beabc01e0340b09458e308da0039760a5cbbe6b2",
+      "package": "libcommon-sense-perl",
+      "version": "3.75-3+b5"
+    },
+    {
+      "file": "libext2fs2t64_1.47.2-3+b12_amd64.deb",
+      "url": "https://deb.debian.org/debian/pool/main/e/e2fsprogs/libext2fs2t64_1.47.2-3+b12_amd64.deb",
+      "sha256": "9f5783fa48239e42260d41846fbc6c8b19c233251063524456096195660eaa09",
+      "package": "libext2fs2t64",
+      "version": "1.47.2-3+b12"
+    },
+    {
+      "file": "libio-pty-perl_1%3a1.20-1+b3_amd64.deb",
+      "url": "https://deb.debian.org/debian/pool/main/libi/libio-pty-perl/libio-pty-perl_1.20-1+b3_amd64.deb",
+      "sha256": "9e705471263275ad97bfdf430b6570c68d8222c4ee5a5c2e7dcb114f54fa2d09",
+      "package": "libio-pty-perl",
+      "version": "1:1.20-1+b3"
+    },
+    {
+      "file": "libipc-run-perl_20231003.0-2_all.deb",
+      "url": "https://deb.debian.org/debian/pool/main/libi/libipc-run-perl/libipc-run-perl_20231003.0-2_all.deb",
+      "sha256": "5f12071d638763274feb77774aefbd2fa90b44427f5699578c1a485696273d75",
+      "package": "libipc-run-perl",
+      "version": "20231003.0-2"
+    },
+    {
+      "file": "libjson-perl_4.10000-1_all.deb",
+      "url": "https://deb.debian.org/debian/pool/main/libj/libjson-perl/libjson-perl_4.10000-1_all.deb",
+      "sha256": "db1c2e7465d8fe9f5e7e19ee3603446ee3310e672c2a92b6b3754281d4ef92e2",
+      "package": "libjson-perl",
+      "version": "4.10000-1"
+    },
+    {
+      "file": "libjson-xs-perl_4.040-1~deb13u1_amd64.deb",
+      "url": "https://deb.debian.org/debian/pool/main/libj/libjson-xs-perl/libjson-xs-perl_4.040-1~deb13u1_amd64.deb",
+      "sha256": "eb3162a99c70af439d03c2e1e30fd251353b8e636009eb4a832b5f750a22891f",
+      "package": "libjson-xs-perl",
+      "version": "4.040-1~deb13u1"
+    },
+    {
+      "file": "liblzf1_3.6-4+b3_amd64.deb",
+      "url": "https://deb.debian.org/debian/pool/main/libl/liblzf/liblzf1_3.6-4+b3_amd64.deb",
+      "sha256": "1f7677f1098f9f643806d64a2ed54d14bcd5954e71b63c2aa1e9bb7bcd84d783",
+      "package": "liblzf1",
+      "version": "3.6-4+b3"
+    },
+    {
+      "file": "libpopt0_1.19+dfsg-2_amd64.deb",
+      "url": "https://deb.debian.org/debian/pool/main/p/popt/libpopt0_1.19+dfsg-2_amd64.deb",
+      "sha256": "07f649b706852af937654295697dcfc7858f3295718ec18681dce1704663e4f2",
+      "package": "libpopt0",
+      "version": "1.19+dfsg-2"
+    },
+    {
+      "file": "libss2_1.47.2-3+b12_amd64.deb",
+      "url": "https://deb.debian.org/debian/pool/main/e/e2fsprogs/libss2_1.47.2-3+b12_amd64.deb",
+      "sha256": "c5d38d71984c1bf774c1254238636e605fc4e0dc24d853f709921eb740327f4a",
+      "package": "libss2",
+      "version": "1.47.2-3+b12"
+    },
+    {
+      "file": "libtypes-serialiser-perl_1.01-1_all.deb",
+      "url": "https://deb.debian.org/debian/pool/main/libt/libtypes-serialiser-perl/libtypes-serialiser-perl_1.01-1_all.deb",
+      "sha256": "9e4c14b3770b07a0eb2fe72eecf41ed88e08873b42b331bea4091371436cd859",
+      "package": "libtypes-serialiser-perl",
+      "version": "1.01-1"
+    },
+    {
+      "file": "logrotate_3.22.0-1_amd64.deb",
+      "url": "https://deb.debian.org/debian/pool/main/l/logrotate/logrotate_3.22.0-1_amd64.deb",
+      "sha256": "6acd9410fb2f2c9b439e7ee83c7095140e56e343ce7bc90d31fd95bf23f296b7",
+      "package": "logrotate",
+      "version": "3.22.0-1"
+    },
+    {
+      "file": "logsave_1.47.2-3+b12_amd64.deb",
+      "url": "https://deb.debian.org/debian/pool/main/e/e2fsprogs/logsave_1.47.2-3+b12_amd64.deb",
+      "sha256": "aa028720743b79bd054749af34c501c093f0ab5e044e4dc44273765be5e95de5",
+      "package": "logsave",
+      "version": "1.47.2-3+b12"
+    },
+    {
+      "file": "postgresql-17-pgvector_0.8.0-1_amd64.deb",
+      "url": "https://deb.debian.org/debian/pool/main/p/pgvector/postgresql-17-pgvector_0.8.0-1_amd64.deb",
+      "sha256": "6e8a457eb252617b66cf7b2908c736127eae43703fffec94492ac131ca921515",
+      "package": "postgresql-17-pgvector",
+      "version": "0.8.0-1"
+    },
+    {
+      "file": "postgresql-17_17.11-0+deb13u1_amd64.deb",
+      "url": "https://deb.debian.org/debian/pool/main/p/postgresql-17/postgresql-17_17.11-0+deb13u1_amd64.deb",
+      "sha256": "d2ce1ddffafa783f9acda4c92c86fc21e8288bff3782d739294f14fa797d7886",
+      "package": "postgresql-17",
+      "version": "17.11-0+deb13u1"
+    },
+    {
+      "file": "postgresql-client-17_17.11-0+deb13u1_amd64.deb",
+      "url": "https://deb.debian.org/debian/pool/main/p/postgresql-17/postgresql-client-17_17.11-0+deb13u1_amd64.deb",
+      "sha256": "9d8558f8dd57c8e92e218a20698383575d53742ca3f9e7c2b7fe5f246d5216ae",
+      "package": "postgresql-client-17",
+      "version": "17.11-0+deb13u1"
+    },
+    {
+      "file": "postgresql-client-common_278_all.deb",
+      "url": "https://deb.debian.org/debian/pool/main/p/postgresql-common/postgresql-client-common_278_all.deb",
+      "sha256": "023e5b37cdeecedcd32b7ea0d799c9696310c4fc659b8123c494e1ad3ca9e726",
+      "package": "postgresql-client-common",
+      "version": "278"
+    },
+    {
+      "file": "postgresql-common-dev_278_all.deb",
+      "url": "https://deb.debian.org/debian/pool/main/p/postgresql-common/postgresql-common-dev_278_all.deb",
+      "sha256": "4fdedb2786487319ee6e944e4a8bf4f65ae8bb63845213a0027bc7ca4f61c57b",
+      "package": "postgresql-common-dev",
+      "version": "278"
+    },
+    {
+      "file": "postgresql-common_278_all.deb",
+      "url": "https://deb.debian.org/debian/pool/main/p/postgresql-common/postgresql-common_278_all.deb",
+      "sha256": "6c9e44d4864ab764785d8c40fe51cc51ddc0d36ac9a46bd383db20a4fc5f1e76",
+      "package": "postgresql-common",
+      "version": "278"
+    },
+    {
+      "file": "redis-server_5%3a8.0.2-3+deb13u2_amd64.deb",
+      "url": "https://deb.debian.org/debian/pool/main/r/redis/redis-server_8.0.2-3+deb13u2_amd64.deb",
+      "sha256": "0edc72458f66c68f2d4ccd0c9959a85a81f4ec7de410a28861cde4a2059f245c",
+      "package": "redis-server",
+      "version": "5:8.0.2-3+deb13u2"
+    },
+    {
+      "file": "redis-tools_5%3a8.0.2-3+deb13u2_amd64.deb",
+      "url": "https://deb.debian.org/debian/pool/main/r/redis/redis-tools_8.0.2-3+deb13u2_amd64.deb",
+      "sha256": "9d7cbe20963c8bfc00af3e8a3a33451bb815f7501b12e55583f9e942a767859b",
+      "package": "redis-tools",
+      "version": "5:8.0.2-3+deb13u2"
+    },
+    {
+      "file": "ssl-cert_1.1.3_all.deb",
+      "url": "https://deb.debian.org/debian/pool/main/s/ssl-cert/ssl-cert_1.1.3_all.deb",
+      "sha256": "1a14ad1f12472402a305efbc8d4e9f772bdc55292e38ca7cd7f32feb835d5e60",
+      "package": "ssl-cert",
+      "version": "1.1.3"
+    },
+    {
+      "file": "sysstat_12.7.5-2_amd64.deb",
+      "url": "https://deb.debian.org/debian/pool/main/s/sysstat/sysstat_12.7.5-2_amd64.deb",
+      "sha256": "c98cffd845aa5e53ef853c9f4e5f1b82774b830f9caa14f00de06ff04b7e7752",
+      "package": "sysstat",
+      "version": "12.7.5-2"
+    }
+  ]
+}

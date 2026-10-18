@@ -70,6 +70,10 @@ case "$action" in
         [[ -r "$marker" ]] || { echo '生产当前没有可验收的完整发布候选' >&2; exit 1; }
         sed -n 's/^commit=//p' "$marker" | head -n 1
         ;;
+    read-source)
+        [[ -r "$marker" ]] || exit 1
+        sed -n 's/^source=//p' "$marker" | head -n 1
+        ;;
     record)
         commit=$4
         mode=$5
@@ -80,6 +84,7 @@ case "$action" in
         {
             printf 'commit=%s\n' "$commit"
             printf 'mode=%s\n' "$mode"
+            printf 'source=%s\n' "${6:-unknown}"
             printf 'recorded_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         } > "$temporary"
         mv -- "$temporary" "$marker"

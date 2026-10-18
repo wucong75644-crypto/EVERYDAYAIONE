@@ -38,6 +38,7 @@ usage() {
   --file-list PATH       从本地清单逐行读取发布文件
   --migration-file PATH  明确执行目标提交中已有的正向 SQL 迁移，可重复
   --deploy-task SHA      同步最新 main 后重新部署当前任务分支上的确定提交；可显式补执行该提交内的正向迁移
+  --reviewed-sha SHA     CI已检查并审批的精确任务提交；禁止自动合入main，拒绝覆盖其他待验收任务
   --accept-and-close     已验收任务：核验生产候选、合并 main、同步基座并清理；不部署
   --deploy-main SHA      从已合并到 origin/main 的确定提交部署
   --frontend-only        仅部署前端
@@ -59,6 +60,7 @@ message=''
 rollback_sha=''
 deploy_task_sha=''
 deploy_main_sha=''
+reviewed_sha=''
 accept_and_close=false
 frontend_only=false
 backend_only=false
@@ -119,6 +121,11 @@ while [[ $# -gt 0 ]]; do
             deploy_task_sha=$2
             shift 2
             ;;
+        --reviewed-sha)
+            [[ $# -ge 2 ]] || fail "--reviewed-sha 缺少提交 SHA"
+            reviewed_sha=$2
+            shift 2
+            ;;
         --deploy-main)
             [[ $# -ge 2 ]] || fail "--deploy-main 缺少提交 SHA"
             deploy_main_sha=$2
@@ -137,6 +144,13 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ -n "$reviewed_sha" ]]; then
+    [[ "$reviewed_sha" =~ ^[0-9a-f]{40}$ && -n "$deploy_task_sha" ]] \
+        || fail "--reviewed-sha 仅用于完整SHA的 --deploy-task"
+    [[ "$frontend_only" == false && "$backend_only" == false ]] \
+        || fail "已审批候选必须完整发布，不能部分覆盖"
+fi
 
 [[ "$frontend_only" == true && "$backend_only" == true ]] \
     && fail "--frontend-only 与 --backend-only 不能同时使用"
@@ -273,6 +287,9 @@ sync_task_branch_with_latest_main() {
         return
     fi
 
+    [[ -z "$reviewed_sha" ]] \
+        || fail "审批后main已更新；请在原任务合入最新main，重新检查并审批新SHA"
+
     info "部署前同步最新 main：$latest_main"
     if ! git merge --no-ff --no-edit origin/main; then
         fail "自动同步最新 main 出现冲突；请在当前任务工作树解决并提交冲突后，再部署最新任务提交"
@@ -283,6 +300,30 @@ sync_task_branch_with_latest_main() {
     info "任务候选已同步最新 main，继续测试与部署：$commit_sha"
     [[ "$skip_test" == false ]] \
         || fail "main 合入后候选已改变，请对新候选补充必要验证后再复用测试；尚未开始生产部署"
+}
+
+verify_reviewed_release() {
+    [[ -n "$reviewed_sha" ]] || return 0
+    [[ "$commit_sha" == "$reviewed_sha" && "$(git rev-parse HEAD)" == "$reviewed_sha" ]] \
+        || fail "当前代码不等于已检查和审批的精确SHA"
+    git merge-base --is-ancestor origin/main "$reviewed_sha" \
+        || fail "审批后main已更新，必须重新集成、检查与审批"
+    local remote_sha current source
+    remote_sha=$(git ls-remote origin "refs/heads/$branch" | awk '{print $1}')
+    [[ "$remote_sha" == "$reviewed_sha" ]] || fail "审批后任务分支已变化，必须重新检查与审批"
+    # Called under the existing shared server lock. Missing/uncertain metadata
+    # never means an empty production server and never authorizes an overwrite.
+    current=$(read_production_release_commit) || fail "生产版本标记未知，拒绝自动发布"
+    [[ "$current" =~ ^[0-9a-f]{40}$ ]] || fail "生产版本标记格式无效"
+    git cat-file -e "${current}^{commit}" 2>/dev/null \
+        || fail "当前生产提交不在已获取历史中，拒绝自动覆盖"
+    git merge-base --is-ancestor "$current" "$reviewed_sha" \
+        || fail "候选未包含当前生产代码；先同步原任务再重新检查"
+    if [[ "$current" != "$reviewed_sha" ]] && ! git merge-base --is-ancestor "$current" origin/main; then
+        source=$(release_remote_state read-source) || fail "待验收生产任务来源未知"
+        [[ "$source" == "$branch" ]] \
+            || fail "其他任务仍待生产验收，先验收合入main；禁止覆盖"
+    fi
 }
 
 release_worktree=''
@@ -490,6 +531,7 @@ acquire_release_lock "$repo_root/deploy/config.env" \
 sync_task_branch_with_latest_main
 collect_task_branch_migrations
 ensure_supported_release_tree "$commit_sha"
+verify_reviewed_release
 
 set +u
 for migration_file in "${migration_files[@]}"; do
@@ -587,7 +629,7 @@ popd >/dev/null
 acceptance_candidate=false
 status_after=DEPLOYED_PARTIAL
 if [[ "$frontend_only" == false && "$backend_only" == false ]]; then
-    release_remote_state record "$commit_sha" "$release_mode" \
+    release_remote_state record "$commit_sha" "$release_mode" "$release_source" \
         || fail "部署已完成，但无法建立可验收候选；任务保留，禁止验收"
     acceptance_candidate=true
     status_after=DEPLOYED_PENDING_ACCEPTANCE
