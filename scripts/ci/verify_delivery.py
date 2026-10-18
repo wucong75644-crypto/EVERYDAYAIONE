@@ -20,7 +20,7 @@ def verify_connection():
     with tempfile.TemporaryDirectory(prefix='delivery-probe-') as directory:
         root=Path(directory)
         for filename,value in [('key',os.environ['DELIVERY_SSH_KEY']),('hosts',os.environ['DELIVERY_KNOWN_HOSTS'])]:
-            target=root/filename;target.write_text(value);target.chmod(0o600)
+            target=root/filename;target.write_text(value.rstrip()+"\n");target.chmod(0o600)
         command=['ssh','-F','/dev/null','-i',str(root/'key'),'-p',metadata['SERVER_PORT'],
                  '-o','UserKnownHostsFile='+str(root/'hosts'),'-o','StrictHostKeyChecking=yes',
                  '-o','IdentitiesOnly=yes','-o','IdentityAgent=none','-o','BatchMode=yes',
@@ -29,7 +29,8 @@ def verify_connection():
         clean={k:v for k,v in os.environ.items() if not k.startswith('DELIVERY_')}
         result=subprocess.run(command+['everydayai-ci-probe-v1'],env=clean,capture_output=True,text=True,timeout=30)
         if result.returncode:
-            raise RuntimeError('Dedicated SSH probe failed; no deployment attempted')
+            reason=next((name for name,pattern in [('key-format','error in libcrypto|invalid format'),('authentication','Permission denied'),('host-identity','Host key verification failed|REMOTE HOST IDENTIFICATION'),('network','Connection refused|Connection timed out|No route'),('gateway','SSH_GATEWAY_DENIED')] if re.search(pattern,result.stderr)), 'remote-probe-or-ssh')
+            raise RuntimeError(f'Dedicated SSH probe failed: category={reason}, exit={result.returncode}; no deployment attempted')
         report=json.loads(result.stdout)
         expected=hashlib.sha256((Path(__file__).parent/'ssh_gateway.py').read_bytes()).hexdigest()
         expected_scripts=hashlib.sha256(json.dumps(build()['scripts'],sort_keys=True).encode()).hexdigest()
