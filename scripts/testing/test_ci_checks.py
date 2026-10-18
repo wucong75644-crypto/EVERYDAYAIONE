@@ -58,7 +58,7 @@ class PipelineTests(unittest.TestCase):
     def test_private_logs_do_not_enter_report(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(runner, 'STATE', Path(directory)), patch.dict(os.environ, {'CHECKED_SHA': 'a' * 40}):
             checks = runner.Checks('frontend')
-            checks.run('fake', [sys.executable, '-c', "print('synthetic-private-value'); print('242 passed')"])
+            checks.run('fake', [sys.executable, '-c', "print('synthetic-private-value'); print('\\x1b[32m242\\x1b[0m passed')"])
             report = (Path(directory) / 'frontend.json').read_text()
             self.assertNotIn('synthetic-private-value', report)
             self.assertIn('242 passed', report)

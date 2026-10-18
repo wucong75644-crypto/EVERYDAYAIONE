@@ -81,6 +81,7 @@ class Checks:
         # Only allowlisted test totals leave private logs; never publish traces,
         # connection errors, .env, synthetic identities or native data directories.
         text = Path(log.name).read_text(errors='replace')
+        text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
         totals = re.findall(r'(?<!\w)\d+ (?:passed|failed|skipped)|Ran \d+ tests', text)
         if totals:
             entry['test_totals'] = totals[-8:]
