@@ -98,4 +98,78 @@ class TaskDeliveryTests(unittest.TestCase):
         self.assertFalse(self.root.exists());self.assertTrue(self.f.repository.exists())
         self.assertTrue(self.f.git('ls-remote','origin','refs/heads/'+self.branch).stdout)
 
+
+
+class CheckReuseTests(unittest.TestCase):
+    sha = 'a' * 40
+
+    def run_info(self, number=1, **changes):
+        return {'id': number, 'path': '.github/workflows/pre-release-checks.yml',
+                'head_sha': self.sha, 'head_branch': 'codex/task/a',
+                'status': 'completed', 'conclusion': 'success', **changes}
+
+    def test_exact_success_reused_without_request(self):
+        with patch.object(task, 'runs', return_value=[self.run_info()]), \
+             patch.object(delivery, 'verify_checks', return_value={'mode': 'scoped'}) as verify, \
+             patch.object(task.subprocess, 'run') as request:
+            self.assertEqual(task.ensure_checks(self.sha), 1)
+            verify.assert_called_once_with(task.REPOSITORY, 1, self.sha, return_plan=True)
+            request.assert_not_called()
+
+    def test_inflight_waited_without_duplicate_and_invalid_proof_blocks(self):
+        with patch.object(task, 'runs', return_value=[self.run_info(status='in_progress')]), \
+             patch.object(task, 'wait_run') as wait, \
+             patch.object(delivery, 'verify_checks', side_effect=RuntimeError('scope mismatch')), \
+             patch.object(task.subprocess, 'run') as request:
+            with self.assertRaisesRegex(RuntimeError, 'scope mismatch'):
+                task.ensure_checks(self.sha)
+            wait.assert_called_once_with(1, self.sha)
+            request.assert_not_called()
+
+    def test_new_sha_cannot_reuse_old_green(self):
+        old = self.run_info(head_sha='b' * 40)
+        new = self.run_info(number=2)
+        with patch.object(task, 'runs', side_effect=[[old], [old, new]]), \
+             patch.object(task, 'wait_run') as wait, \
+             patch.object(delivery, 'verify_checks', return_value={'mode': 'scoped'}), \
+             patch.object(task.subprocess, 'run') as request:
+            self.assertEqual(task.ensure_checks(self.sha), 2)
+            wait.assert_called_once_with(2, self.sha)
+            self.assertEqual(request.call_count, 1)
+
+    def test_failed_latest_never_falls_back_to_old_success(self):
+        with patch.object(task, 'runs', return_value=[self.run_info(), self.run_info(2, conclusion='failure')]), \
+             patch.object(task, 'wait_run', side_effect=RuntimeError('failed')) as wait, \
+             patch.object(task.subprocess, 'run') as request:
+            with self.assertRaisesRegex(RuntimeError, 'failed'):
+                task.ensure_checks(self.sha)
+            wait.assert_called_once_with(2, self.sha)
+            request.assert_not_called()
+
+    def test_full_request_cannot_reuse_scoped_run(self):
+        new = self.run_info(2, head_branch='preflight/full/task')
+        with patch.object(task, 'runs', side_effect=[[self.run_info()], [new]]), \
+             patch.object(task, 'wait_run'), \
+             patch.object(delivery, 'verify_checks', side_effect=[{'frontend': 'related', 'backend': 'none'}, {'frontend': 'full', 'backend': 'full'}]), \
+             patch.object(task.subprocess, 'run') as request:
+            self.assertEqual(task.ensure_checks(self.sha, check_mode='full'), 2)
+            self.assertEqual(request.call_args.args[0][-2:], ['--mode', 'full'])
+
+    def test_full_reuses_scoped_run_that_already_executed_both_full_checks(self):
+        with patch.object(task, 'runs', return_value=[self.run_info()]), \
+             patch.object(delivery, 'verify_checks', return_value={'mode': 'scoped', 'frontend': 'full', 'backend': 'full'}), \
+             patch.object(task.subprocess, 'run') as request:
+            self.assertEqual(task.ensure_checks(self.sha, check_mode='full'), 1)
+            request.assert_not_called()
+
+    def test_document_only_never_requests_production_or_closes_task(self):
+        with patch.object(task, 'prepare', return_value=('codex/task/a', self.sha)), \
+             patch.object(task, 'ensure_checks', return_value=1), \
+             patch.object(delivery, 'verify_checks', return_value={'deploy': False, 'mode': 'scoped'}), \
+             patch.object(delivery, 'request') as request, \
+             patch.object(task, 'finalize_acceptance') as close:
+            result = task.submit('production', '提交部署')
+            self.assertEqual(result['deployment'], 'skipped')
+            request.assert_not_called(); close.assert_not_called()
+
 if __name__=='__main__':unittest.main()

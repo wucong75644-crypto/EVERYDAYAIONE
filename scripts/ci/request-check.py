@@ -15,6 +15,7 @@ def git(*args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--mode', choices=('scoped', 'shadow', 'full'), default='scoped')
     args = parser.parse_args()
     branch = git('branch', '--show-current')
     if not branch.startswith('codex/task/'):
@@ -29,11 +30,12 @@ def main():
         raise RuntimeError('Task HEAD must equal its remote branch tip')
     task = hashlib.sha256(branch.encode()).hexdigest()[:16]
     stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-    tag = f'preflight/{task}/{sha}/{stamp}-{uuid4().hex[:8]}'
+    prefix = 'preflight/' if args.mode == 'scoped' else 'preflight/' + args.mode + '/'
+    tag = f'{prefix}{task}/{sha}/{stamp}-{uuid4().hex[:8]}'
     if not args.dry_run:
         subprocess.run(['git', 'push', 'origin', sha + ':refs/tags/' + tag], check=True)
     print(f'CHECK_REQUEST status={"dry-run" if args.dry_run else "requested"} commit={sha} ref={tag}')
-    print('A successful request is not a passed check. Wait for both GitHub jobs for this exact SHA.')
+    print('A successful request is not a passed check. Wait for scope and every required GitHub check for this exact SHA.')
 
 
 if __name__ == '__main__':

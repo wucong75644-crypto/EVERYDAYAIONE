@@ -12,6 +12,7 @@ import subprocess
 import time
 
 import delivery
+import check_scope
 
 ROOT = delivery.ROOT
 REPOSITORY = os.environ.get('GITHUB_REPOSITORY', 'wucong75644-crypto/EVERYDAYAIONE')
@@ -69,19 +70,43 @@ def wait_run(run_id, sha, timeout=1800):
     raise RuntimeError('Wait timed out; preserve the task and inspect the existing run, do not blindly duplicate it')
 
 
-def ensure_checks(sha):
-    candidates=[r for r in runs(sha) if r['path']=='.github/workflows/pre-release-checks.yml']
-    if not candidates:
-        subprocess.run(['python3','scripts/ci/request-check.py'],cwd=ROOT,check=True)
-        for _ in range(15):
-            candidates=[r for r in runs(sha) if r['path']=='.github/workflows/pre-release-checks.yml']
-            if candidates:break
-            time.sleep(2)
-    if not candidates:
+def satisfies_mode(plan, mode):
+    return mode == 'scoped' or (plan['frontend'] == 'full' and plan['backend'] == 'full')
+
+
+def ensure_checks(sha, *, check_mode='scoped'):
+    if check_mode not in check_scope.MODES:
+        raise RuntimeError('Invalid check mode')
+    def candidates():
+        return sorted([r for r in runs(sha) if r['path'] == '.github/workflows/pre-release-checks.yml'
+                       and r['head_sha'] == sha
+                       and not r.get('head_branch', '').startswith('preflight/verify/')], key=lambda r: r['id'], reverse=True)
+    existing = candidates()
+    # Never silently fall back past a newer failed run. Wait for an existing
+    # in-flight run before deciding whether stronger checks are still needed.
+    if existing:
+        latest = existing[0]
+        if latest['status'] != 'completed' or latest.get('conclusion') != 'success':
+            wait_run(latest['id'], sha)
+        plan = delivery.verify_checks(REPOSITORY, latest['id'], sha, return_plan=True)
+        if satisfies_mode(plan, check_mode):
+            return latest['id']
+    previous_ids = {r['id'] for r in existing}
+    subprocess.run(['python3', 'scripts/ci/request-check.py', '--mode', check_mode], cwd=ROOT, check=True)
+    for _ in range(15):
+        fresh = [r for r in candidates() if r['id'] not in previous_ids]
+        if check_mode != 'scoped':
+            fresh = [r for r in fresh if r.get('head_branch', '').startswith('preflight/' + check_mode + '/')]
+        if fresh:
+            break
+        time.sleep(2)
+    if not fresh:
         raise RuntimeError('Requested check not visible yet; inspect before retry')
-    run=max(candidates,key=lambda r:r['id'])
-    wait_run(run['id'],sha)
-    delivery.verify_checks(REPOSITORY,run['id'],sha)
+    run = fresh[0]
+    wait_run(run['id'], sha)
+    plan = delivery.verify_checks(REPOSITORY, run['id'], sha, return_plan=True)
+    if not satisfies_mode(plan, check_mode):
+        raise RuntimeError('Completed run does not satisfy requested check mode')
     return run['id']
 
 
@@ -114,7 +139,7 @@ def finalize_acceptance(run_id, authorization=None):
     subprocess.run(['bash','scripts/task-worktree.sh','close','--current','--confirm'],cwd=ROOT,check=True)
 
 
-def submit(mode, authorization, *, check_run=None, message=None, files=()):
+def submit(mode, authorization, *, check_run=None, message=None, files=(), check_mode='scoped'):
     expected={'production':'提交部署','accept':'清理工作树'}
     if mode in expected and authorization!=expected[mode]:
         raise RuntimeError('This command requires the human instruction for this exact task')
@@ -125,7 +150,15 @@ def submit(mode, authorization, *, check_run=None, message=None, files=()):
         subprocess.run(['bash','git-push.sh','--message',message,
                         *[arg for file in files for arg in ('--file',file)]],cwd=ROOT,check=True)
     branch,sha=clean_task() if mode=='accept' else prepare()
-    if check_run is None:check_run=ensure_checks(sha)
+    if check_run is None:
+        check_run = ensure_checks(sha) if check_mode == 'scoped' else ensure_checks(sha, check_mode=check_mode)
+    scope = delivery.verify_checks(REPOSITORY, check_run, sha, return_plan=True)
+    if not satisfies_mode(scope, check_mode):
+        raise RuntimeError('Provided run does not satisfy the requested check mode')
+    if mode == 'production' and not scope['deploy']:
+        print('TASK_CHECKED documentation_only=true deployment=skipped task=retained sha=' + sha, flush=True)
+        return {'head_sha': sha, 'status': 'completed', 'conclusion': 'success',
+                'deployment': 'skipped', 'check_run': check_run}
     tag=delivery.request(str(check_run),mode,False,authorization)
     for _ in range(30):
         matched=[r for r in runs(sha) if r['path']=='.github/workflows/delivery.yml' and r['head_branch']==tag]
@@ -146,12 +179,13 @@ def main():
         cmd=sub.add_parser(name)
         cmd.add_argument('--authorization',choices=('提交部署','清理工作树'))
         cmd.add_argument('--check-run')
+        cmd.add_argument('--check-mode', choices=check_scope.MODES, default='scoped')
         cmd.add_argument('--message')
         cmd.add_argument('--file',action='append',default=[])
     args=parser.parse_args()
     if args.action=='prepare':prepare()
     elif args.action=='finalize':finalize_acceptance(args.run,args.authorization)
     else:submit({'deploy':'production','accept':'accept','rehearsal':'rehearsal'}[args.action],args.authorization,
-                check_run=args.check_run,message=args.message,files=args.file)
+                check_run=args.check_run,message=args.message,files=args.file,check_mode=args.check_mode)
 
 if __name__=='__main__':main()

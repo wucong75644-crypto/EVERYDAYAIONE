@@ -15,6 +15,8 @@ import tempfile
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
+import check_scope
+
 ROOT = Path(__file__).resolve().parents[2]
 SHA = r'[0-9a-f]{40}'
 REQUEST = re.compile(r'refs/tags/delivery-(rehearsal|production|accept)/(' + SHA + r')/([0-9]+)/([A-Za-z0-9_.-]+)/([0-9a-f]{12})')
@@ -50,7 +52,7 @@ def parse_request(ref, workflow_sha):
     return dict(mode=mode, sha=sha, check_run=run, branch='codex/task/' + slug)
 
 
-def verify_checks(repository, run_id, sha):
+def verify_checks(repository, run_id, sha, *, return_plan=False):
     if not re.fullmatch(r'[0-9]+', str(run_id)) or not re.fullmatch(SHA, sha):
         raise RuntimeError('Invalid check identity')
     run = api(repository, f'actions/runs/{run_id}')
@@ -59,12 +61,11 @@ def verify_checks(repository, run_id, sha):
             or run.get('conclusion') != 'success'
             or run.get('path') != '.github/workflows/pre-release-checks.yml'):
         raise RuntimeError('Required pre-release workflow has not passed for this exact SHA')
+    if run.get('head_branch', '').startswith('preflight/verify/'):
+        raise RuntimeError('Verification-only checks can never authorize production or acceptance')
     jobs = api(repository, f'actions/runs/{run_id}/jobs?filter=latest&per_page=100')['jobs']
-    for name in ('frontend', 'backend'):
-        matched = [job for job in jobs if job['name'] == name]
-        if len(matched) != 1 or matched[0]['status'] != 'completed' or matched[0]['conclusion'] != 'success':
-            raise RuntimeError('Both frontend and backend checks must pass; skipped/cancelled is not success')
-    return run['html_url']
+    plan = check_scope.proof_plan(jobs, sha, root=ROOT)
+    return {**plan, 'checks_url': run['html_url']} if return_plan else run['html_url']
 
 
 def verify_source(plan, *, require_main=True):
@@ -111,7 +112,10 @@ def make_plan():
     if plan['mode'] != 'rehearsal' and os.environ.get('PRODUCTION_DELIVERY_ENABLED') != 'true':
         raise RuntimeError('Production delivery is disarmed; no production job may start')
     verify_actor(repository, os.environ['DELIVERY_APPROVER'])
-    plan['checks_url'] = verify_checks(repository, plan['check_run'], plan['sha'])
+    scope = verify_checks(repository, plan['check_run'], plan['sha'], return_plan=True)
+    if plan['mode'] != 'rehearsal' and not scope['deploy']:
+        raise RuntimeError('Documentation-only candidate cannot request production execution or acceptance')
+    plan['checks_url'] = scope['checks_url']
     verify_source(plan, require_main=plan['mode'] != 'rehearsal')
     environment = 'delivery-rehearsal' if plan['mode'] == 'rehearsal' else 'production'
     verify_environment(repository, environment, os.environ['DELIVERY_APPROVER'])
@@ -137,7 +141,9 @@ def request(check_run, mode, dry_run, authorization=None):
     repository = os.environ.get('GITHUB_REPOSITORY', 'wucong75644-crypto/EVERYDAYAIONE')
     plan = dict(branch=branch, sha=sha)
     verify_source(plan, require_main=mode != 'rehearsal')
-    verify_checks(repository, check_run, sha)
+    scope = verify_checks(repository, check_run, sha, return_plan=True)
+    if mode in ('production', 'accept') and not scope['deploy']:
+        raise RuntimeError('Documentation-only candidate needs no application deployment; preserve task for documentation review')
     tag = f'delivery-{mode}/{sha}/{check_run}/{branch.removeprefix("codex/task/")}/{uuid4().hex[:12]}'
     if not dry_run:
         subprocess.run(['git', 'push', 'origin', sha + ':refs/tags/' + tag], cwd=ROOT, check=True)
@@ -263,7 +269,9 @@ def execute():
     repository = os.environ['GITHUB_REPOSITORY']
     verify_actor(repository, os.environ['DELIVERY_APPROVER'])
     verify_environment(repository, 'production', os.environ['DELIVERY_APPROVER'])
-    verify_checks(repository, plan['check_run'], plan['sha'])
+    scope = verify_checks(repository, plan['check_run'], plan['sha'], return_plan=True)
+    if not scope['deploy']:
+        raise RuntimeError('Documentation-only candidate cannot execute an application release')
     verify_source(plan)
     # Dedicated SSH and administrator-reviewed policy must still match before
     # any real release operation, including the database identity guard.

@@ -13,6 +13,8 @@ import sys
 import time
 from urllib.request import urlopen
 
+import check_scope
+
 ROOT = Path(__file__).resolve().parents[2]
 STATE = ROOT / '.cloud-dev' / 'ci'
 BACKEND_TESTS = [
@@ -55,7 +57,7 @@ class Checks:
         self.report['elapsed_seconds'] = round(time.monotonic() - self.started, 2)
         (STATE / f'{self.kind}.json').write_text(json.dumps(self.report, indent=2) + '\n')
 
-    def run(self, name, command, *, cwd=ROOT, env=None, timeout=600):
+    def run(self, name, command, *, cwd=ROOT, env=None, timeout=600, retry_network=False):
         started = time.monotonic()
         entry = {'name': name, 'status': 'running'}
         self.report['phases'].append(entry)
@@ -88,13 +90,36 @@ class Checks:
         self.save()
         print(f'CHECK_PHASE result={entry["status"]} name={name} seconds={entry["seconds"]}', flush=True)
         if result:
+            network_error = re.search(r'\b(?:EAI_AGAIN|ECONNRESET|ETIMEDOUT|ECONNREFUSED|ENETUNREACH|ENOTFOUND)\b|Temporary failure in name resolution|ReadTimeoutError|ConnectTimeoutError', text)
+            if retry_network and result != 124 and network_error:
+                entry['retry'] = 'one-transient-network-retry'
+                self.save()
+                print(f'CHECK_RETRY phase={name} reason=transient-network attempts=1', flush=True)
+                return self.run(name + '-retry', command, cwd=cwd, env=env, timeout=timeout)
             raise RuntimeError(f'{name} failed (exit {result}); raw log remains private')
 
 
 def frontend(checks):
-    checks.run('dependencies', ['npm', 'ci', '--no-audit', '--no-fund'], cwd=ROOT / 'frontend')
-    checks.run('tests', ['npm', 'run', 'test:run', '--', '--maxWorkers=4'], cwd=ROOT / 'frontend')
-    checks.run('build', ['npm', 'run', 'build'], cwd=ROOT / 'frontend')
+    directory = ROOT / 'frontend'
+    checks.run('dependencies', ['npm', 'ci', '--no-audit', '--no-fund'], cwd=directory, retry_network=True)
+    plan = checks.report.get('plan') or {'frontend': 'full'}
+    command = ['npm', 'run', 'test:run', '--', '--maxWorkers=4']
+    if plan['frontend'] == 'related':
+        inputs = plan['frontend_inputs']
+        listing = STATE / 'frontend-related.json'
+        # Discovery failures block. Any uncovered input expands to all tests.
+        checks.run('related-selection', ['node', 'scripts/list-related-tests.mjs', str(listing), *inputs], cwd=directory)
+        selected = json.loads(listing.read_text())
+        if (not isinstance(selected, dict) or not isinstance(selected.get('tests'), list)
+                or not isinstance(selected.get('uncovered'), list)):
+            raise RuntimeError('Invalid related test discovery')
+        if selected['tests'] and not selected['uncovered']:
+            # Vitest resolves transitive importers; include changed tests themselves.
+            command = ['npm', 'exec', '--', 'vitest', 'related', *inputs, '--run', '--maxWorkers=4']
+        else:
+            checks.report['fallback'] = 'no-related-tests: full-frontend-tests'
+    checks.run('tests', command, cwd=directory)
+    checks.run('build', ['npm', 'run', 'build'], cwd=directory)
 
 
 def backend(checks):
@@ -110,9 +135,17 @@ def backend(checks):
     env = dict(os.environ)
     checks.run('venv', [sys.executable, '-m', 'venv', '.venv'])
     python = str(ROOT / '.venv/bin/python')
-    checks.run('dependencies', [python, '-m', 'pip', 'install', '-r', 'backend/requirements.txt'], timeout=900)
+    checks.run('dependencies', [python, '-m', 'pip', 'install', '-r', 'backend/requirements.txt'], timeout=900, retry_network=True)
     checks.run('pip-check', [python, '-m', 'pip', 'check'])
     checks.run('configuration', [python, 'scripts/cloud/dev.py', 'init'])
+    checks.run('syntax', [python, '-m', 'compileall', '-q', 'backend'])
+    plan = checks.report.get('plan') or {'backend': 'full'}
+    if plan['backend'] == 'targeted':
+        checks.run('regression', [python, '-c',
+            "from dotenv import load_dotenv; load_dotenv('.env', override=True); "
+            "import pytest; raise SystemExit(pytest.main(" + repr(
+                plan['backend_tests'] + ['-o', 'addopts=', '-q']) + '))'], cwd=ROOT / 'backend')
+        return
     checks.run('native-tools', [python, 'scripts/cloud/native.py'])
     services = [python, 'scripts/cloud/services.py']
     managed = False
@@ -132,10 +165,10 @@ def backend(checks):
         checks.run('regression', [python, '-c',
             "from dotenv import load_dotenv; load_dotenv('.env', override=True); "
             "import pytest; raise SystemExit(pytest.main(" + repr(
-                ['tests/' + name for name in BACKEND_TESTS] + ['-o', 'addopts=', '-q']) + '))'],
+                list(dict.fromkeys(['tests/' + name for name in BACKEND_TESTS] + plan.get('backend_tests', []))) + ['-o', 'addopts=', '-q']) + '))'],
             cwd=ROOT / 'backend')
         checks.run('pipeline-guards', [python, '-m', 'unittest',
-            'scripts/testing/test_ci_checks.py', 'scripts/testing/test_delivery.py',
+            'scripts/testing/test_ci_checks.py', 'scripts/testing/test_check_scope.py', 'scripts/testing/test_delivery.py',
             'scripts/testing/test_release_coordination.py', 'scripts/testing/test_ssh_gateway.py', 'scripts/testing/test_task_delivery.py', '-v'])
         # Real backend smoke without installing a second copy of frontend deps.
         # The frontend is tested/built by a parallel independent job.
@@ -171,8 +204,14 @@ def backend(checks):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('kind', choices=('frontend', 'backend'))
+    parser.add_argument('--plan')
     args = parser.parse_args()
     checks = Checks(args.kind)
+    if args.plan:
+        plan = check_scope.load_plan(args.plan, checked_sha())
+        if plan[args.kind] == 'none':
+            raise RuntimeError('Unselected job must not run as a successful required check')
+        checks.report['plan'] = plan
     try:
         {'frontend': frontend, 'backend': backend}[args.kind](checks)
         checks.report['status'] = 'passed'
