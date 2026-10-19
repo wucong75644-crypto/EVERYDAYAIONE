@@ -2,11 +2,20 @@
   "repository": "wucong75644-crypto/EVERYDAYAIONE",
   "workflow_path": ".github/workflows/production-diagnostics.yml",
   "workflow_name": "Read-only production diagnostics",
-  "seed_run_id": 39188468715,
-  "source_sha": "ec0732862e8d61aa7a0cc3ec7afcff3a67f476d3",
+  "seed_run_id": 39190958655,
+  "source_sha": "be37107356219890f2049df8b5e4c9d0f39f15aa",
   "job_name": "diagnostics",
   "step_name": "Query bounded, projected production journals and service status",
   "result_marker": "DIAGNOSTICS_RESULT ",
   "window_minutes": 15,
-  "max_records_per_service": 100
+  "max_records_per_service": 100,
+  "scan_limit": 5000,
+  "byte_limit_per_source": 2097152,
+  "selection": "errors_then_warnings_then_latest",
+  "nginx_files": [
+    "/var/log/nginx/access.log",
+    "/var/log/nginx/error.log",
+    "/var/log/nginx/everydayai-access.log",
+    "/var/log/nginx/everydayai-error.log"
+  ]
 }

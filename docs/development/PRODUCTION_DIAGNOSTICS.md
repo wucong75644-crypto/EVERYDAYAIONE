@@ -62,7 +62,7 @@ GitHub 作业日志可能按仓库可见性公开，因此不能把原始日志�
 
 可直接给支持 GitHub 连接器的云端对话以下指令：
 
-> 使用 GitHub 连接器查询 EVERYDAYAIONE 的诊断 run 39188468715，先核对最新 job 是 diagnostics 且步骤为 Query bounded, projected production journals and service status，只重跑该诊断 job 一次。读取最新 attempt 的 DIAGNOSTICS_RESULT，报告采集时间、服务状态、日志分类/异常类型/堆栈位置，并结合对应版本代码分析。不部署、不重启、不读取凭据、不重跑发布或验收作业；无法获取新结果时明确报告，不使用旧现场冒充实时结果。
+> 使用 GitHub 连接器从仓库 .github/production-diagnostics.json 读取 EVERYDAYAIONE 的当前诊断入口，先核对最新 job 是 diagnostics 且步骤为 Query bounded, projected production journals and service status，只重跑该诊断 job 一次。读取最新 attempt 的 DIAGNOSTICS_RESULT，报告采集时间、服务状态、日志分类/异常类型/堆栈位置，并结合对应版本代码分析。不部署、不重启、不读取凭据、不重跑发布或验收作业；无法获取新结果时明确报告，不使用旧现场冒充实时结果。
 
 该路径不依赖故障的 VPN 执行器，但对话必须可使用 GitHub 连接器并有仓库访问权限。
 环境编辑对话没有 GitHub 工具时不能凭此宣称已获得诊断能力。
@@ -71,3 +71,12 @@ GitHub 作业日志可能按仓库可见性公开，因此不能把原始日志�
 ## 日志扩展验收
 
 本轮仅更新诊断网关和 GitHub 只读查询入口，不部署应用、不重启服务。合成测试覆盖带敏感参数的 HTTP/异常、上游超时、错误优先于警告洪流、非法格式、固定路径/软链拒绝、字节预算和解析完整性。真实现场用于核验限流告警代码位置及 Nginx 文件采集；没有人为制造生产故障。诊断 runner 对网关精确 SHA256 校验，网关升级后旧 run 会拒绝，必须同步切换注册表及云端启动规则到新 run，不能继续重跑旧 run。网关旧版本保留在服务器 root 所有备份中，回滚时需要同步恢复对应 runner/注册表。
+
+### 扩展入口实测（2026-10-19）
+
+- 当前 run：39190958655，诊断源码提交 be37107356219890f2049df8b5e4c9d0f39f15aa；以注册表为准。旧 39188468715/39190816174 不再匹配当前网关，不要重跑。
+- 网关 SHA256：2868c45cd9a56552891536cc1dd4ebaf29fefa3c167a9cbe1c2af856f8881131。
+- 首轮扩展预检已识别真实快麦429限流告警，定位到 client.py/request_with_retry 与调度器代码行；Nginx默认 access/error 文件可读，备用everydayai文件 absent 如实报告。
+- safe/combined 及上游超时通过带敏感占位符的合成测试；真实窗口无 Nginx error 记录时不制造故障，也不宣称线上已复现超时。
+- 30项网关定向测试通过，含10项既有发布网关回归；独立安全审查未发现阻塞。
+- 图片上传汇总包含 failed=0 时按固定计数字段解析为routine，仅failed>0为shadow_upload_failure，避免关键词误报。
