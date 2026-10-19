@@ -1,0 +1,928 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Knowledge Canvas V1",
+    "version": "1.0-development"
+  },
+  "paths": {
+    "/api/knowledge/availability": {
+      "get": {
+        "tags": [
+          "知识画布"
+        ],
+        "summary": "Availability",
+        "operationId": "availability_api_knowledge_availability_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/initialize": {
+      "post": {
+        "tags": [
+          "知识画布"
+        ],
+        "summary": "Initialize",
+        "operationId": "initialize_api_knowledge_initialize_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/canvas": {
+      "get": {
+        "tags": [
+          "知识画布"
+        ],
+        "summary": "Canvas",
+        "operationId": "canvas_api_knowledge_canvas_get",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/objects/{object_id}": {
+      "get": {
+        "tags": [
+          "知识画布"
+        ],
+        "summary": "Object Detail",
+        "operationId": "object_detail_api_knowledge_objects__object_id__get",
+        "parameters": [
+          {
+            "name": "object_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Object Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/containers/{container_id}/members": {
+      "get": {
+        "tags": [
+          "知识画布"
+        ],
+        "summary": "Members",
+        "operationId": "members_api_knowledge_containers__container_id__members_get",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Container Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/commands": {
+      "post": {
+        "tags": [
+          "知识画布"
+        ],
+        "summary": "Command",
+        "operationId": "command_api_knowledge_commands_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CreateCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ProjectCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DocumentCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/TitleCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReparentCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/MoveCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ConnectCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/MemberCommand"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "operation",
+                  "mapping": {
+                    "create_object": "#/components/schemas/CreateCommand",
+                    "create_project": "#/components/schemas/ProjectCommand",
+                    "save_document": "#/components/schemas/DocumentCommand",
+                    "update_title": "#/components/schemas/TitleCommand",
+                    "reparent": "#/components/schemas/ReparentCommand",
+                    "move_nodes": "#/components/schemas/MoveCommand",
+                    "connect": "#/components/schemas/ConnectCommand",
+                    "set_member": "#/components/schemas/MemberCommand"
+                  }
+                },
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ConnectCommand": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Command Id"
+          },
+          "operation": {
+            "type": "string",
+            "const": "connect",
+            "title": "Operation"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ConnectPayload"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "command_id",
+          "operation",
+          "payload"
+        ],
+        "title": "ConnectCommand"
+      },
+      "ConnectPayload": {
+        "properties": {
+          "source_object_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Source Object Id"
+          },
+          "target_object_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Target Object Id"
+          },
+          "relation_type": {
+            "type": "string",
+            "enum": [
+              "reference",
+              "related",
+              "dependency"
+            ],
+            "title": "Relation Type"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_object_id",
+          "target_object_id",
+          "relation_type"
+        ],
+        "title": "ConnectPayload"
+      },
+      "CreateCommand": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Command Id"
+          },
+          "operation": {
+            "type": "string",
+            "const": "create_object",
+            "title": "Operation"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/CreatePayload"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "command_id",
+          "operation",
+          "payload"
+        ],
+        "title": "CreateCommand"
+      },
+      "CreatePayload": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "position": {
+            "$ref": "#/components/schemas/Position"
+          },
+          "container_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Container Id"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "topic",
+              "document",
+              "rule"
+            ],
+            "title": "Kind"
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 200000,
+            "title": "Body",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "position",
+          "container_id",
+          "kind"
+        ],
+        "title": "CreatePayload"
+      },
+      "DocumentCommand": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Command Id"
+          },
+          "operation": {
+            "type": "string",
+            "const": "save_document",
+            "title": "Operation"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/DocumentPayload"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "command_id",
+          "operation",
+          "payload"
+        ],
+        "title": "DocumentCommand"
+      },
+      "DocumentPayload": {
+        "properties": {
+          "object_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Object Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Revision"
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 200000,
+            "title": "Body"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "object_id",
+          "expected_revision",
+          "body"
+        ],
+        "title": "DocumentPayload"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "MemberCommand": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Command Id"
+          },
+          "operation": {
+            "type": "string",
+            "const": "set_member",
+            "title": "Operation"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/MemberPayload"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "command_id",
+          "operation",
+          "payload"
+        ],
+        "title": "MemberCommand"
+      },
+      "MemberPayload": {
+        "properties": {
+          "container_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Container Id"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "editor",
+              "manager"
+            ],
+            "title": "Role"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "removed"
+            ],
+            "title": "Status",
+            "default": "active"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "container_id",
+          "user_id",
+          "role"
+        ],
+        "title": "MemberPayload"
+      },
+      "MoveCommand": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Command Id"
+          },
+          "operation": {
+            "type": "string",
+            "const": "move_nodes",
+            "title": "Operation"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/MovePayload"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "command_id",
+          "operation",
+          "payload"
+        ],
+        "title": "MoveCommand"
+      },
+      "MoveNode": {
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Node Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Revision"
+          },
+          "position": {
+            "$ref": "#/components/schemas/Position"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "node_id",
+          "expected_revision",
+          "position"
+        ],
+        "title": "MoveNode"
+      },
+      "MovePayload": {
+        "properties": {
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/MoveNode"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Nodes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "nodes"
+        ],
+        "title": "MovePayload"
+      },
+      "Position": {
+        "properties": {
+          "x": {
+            "type": "number",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0,
+            "title": "X"
+          },
+          "y": {
+            "type": "number",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0,
+            "title": "Y"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "x",
+          "y"
+        ],
+        "title": "Position"
+      },
+      "ProjectCommand": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Command Id"
+          },
+          "operation": {
+            "type": "string",
+            "const": "create_project",
+            "title": "Operation"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ProjectPayload"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "command_id",
+          "operation",
+          "payload"
+        ],
+        "title": "ProjectCommand"
+      },
+      "ProjectPayload": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "position": {
+            "$ref": "#/components/schemas/Position"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "position"
+        ],
+        "title": "ProjectPayload"
+      },
+      "ReparentCommand": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Command Id"
+          },
+          "operation": {
+            "type": "string",
+            "const": "reparent",
+            "title": "Operation"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ReparentPayload"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "command_id",
+          "operation",
+          "payload"
+        ],
+        "title": "ReparentCommand"
+      },
+      "ReparentPayload": {
+        "properties": {
+          "object_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Object Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Revision"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "object_id",
+          "expected_revision",
+          "parent_id"
+        ],
+        "title": "ReparentPayload"
+      },
+      "TitleCommand": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Command Id"
+          },
+          "operation": {
+            "type": "string",
+            "const": "update_title",
+            "title": "Operation"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/TitlePayload"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "command_id",
+          "operation",
+          "payload"
+        ],
+        "title": "TitleCommand"
+      },
+      "TitlePayload": {
+        "properties": {
+          "object_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Object Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Revision"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "object_id",
+          "expected_revision",
+          "title"
+        ],
+        "title": "TitlePayload"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

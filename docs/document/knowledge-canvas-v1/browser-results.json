@@ -1,0 +1,22 @@
+{
+  "status": "passed",
+  "browser": "154.0.8037.57",
+  "scenarios": [
+    "real page: three tabs, no chat or sidebar create",
+    "create project and persist real root",
+    "Tab creates a child in the same project",
+    "edit body, refresh page, verify persisted content",
+    "drag node and retain layout after reload",
+    "unauthorized project is hidden; viewer can read but cannot mutate",
+    "viewer browser offers read-only content without an edit action",
+    "scope filter locates saved content"
+  ],
+  "page_errors": [],
+  "external_origins": [],
+  "backend": "real FastAPI",
+  "database": "task-private loopback PostgreSQL, non-superuser app role",
+  "limitations": [
+    "No production deployment",
+    "No model, files, scheduled tasks or real-time collaboration in V1"
+  ]
+}

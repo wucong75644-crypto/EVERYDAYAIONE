@@ -25,6 +25,7 @@ const WecomCallback = lazy(() => import('./pages/WecomCallback'));
 const OrganizationSettings = lazy(() => import('./pages/OrganizationSettings'));
 const Admin = lazy(() => import('./pages/Admin'));
 const SocialOps = lazy(() => import('./pages/SocialOps'));
+const KnowledgeCanvas = lazy(() => import('./pages/KnowledgeCanvas'));
 const DetailPage = lazy(() => import('./pages/DetailPage'));
 // PromptGallery 已内嵌到首页，保留路由做重定向
 
@@ -98,6 +99,7 @@ function AnimatedRoutes() {
               </ProtectedRoute>
             }
           />
+          <Route path="/knowledge" element={<ProtectedRoute><KnowledgeCanvas /></ProtectedRoute>} />
           <Route path="/social-ops" element={<ProtectedRoute><SocialOps /></ProtectedRoute>} />
           {/* 旧路由兼容：快麦接入合并到管理后台，重定向到 /admin */}
           <Route

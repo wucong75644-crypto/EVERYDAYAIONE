@@ -47,6 +47,9 @@ TENANT_TABLES: frozenset[str] = frozenset({
     "image_generations",
     # 主图详情制作
     "detail_projects", "detail_project_images",
+    # User-authored knowledge workspace (RLS additionally enforces container ACL).
+    "kb_containers", "kb_projects", "kb_container_members", "kb_objects",
+    "kb_object_versions", "kb_canvas_nodes", "kb_relations", "kb_mutation_receipts", "kb_events",
     # 记忆/知识
     "user_memory_settings", "knowledge_nodes",
     "knowledge_metrics", "knowledge_edges", "scoring_audit_log",

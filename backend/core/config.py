@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     web_search_ark_model: str = "doubao-seed-2-1-pro-260628"
 
     # Agent Reach adapters are enabled only after their deployment checks.
+    knowledge_workspace_enabled: bool = False
+    knowledge_workspace_user_ids: str = ""
+    knowledge_workspace_org_ids: str = ""
     social_ops_enabled: bool = False
     social_ops_analytics_enabled: bool = False
     social_ops_scheduled_publish_enabled: bool = False
