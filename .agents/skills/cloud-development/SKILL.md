@@ -20,3 +20,5 @@ description: 配置或启动 EVERYDAYAIONE 的 Codex 云端开发环境，以及
 用户明确“清理工作树”时，先停止本任务已核实的开发进程，然后 `python3 scripts/ci/task_delivery.py accept --authorization '清理工作树'`。仅在远端成功验收、main树及当前任务SHA匹配后自动关闭原任务，不重复部署、不改其他任务代码。等待中断先查已有请求，成功后用finalize收尾，不盲目重复请求。跨VM不推送实时工作区修改；B自己的部署入口会fetch并整合最新main。
 
 仅配置/演练授权不允许创建production/accept/verification请求；只能使用rehearsal及临时Git/fake SSH。生产开关false时不尝试本地凭据。Codex不持有生产SSH、.env、数据库或Redis凭据，GitHub凭据仅在受限环境中供正式job使用。详见 `docs/development/APPROVED_DELIVERY.md`。
+
+用户要求“排查生产问题”、查生产日志或线上服务状态时，执行 [production-diagnostics](../production-diagnostics/SKILL.md)，从注册表发现固定只读 GitHub 诊断 job 并获取新现场。此请求只授权诊断重跑，不创建发布/验收标签，不部署、不重启；生产凭据仍只在 GitHub 受限环境中使用。GitHub 连接器不依赖本任务的 VPN 执行器，但连接器缺失时必须明确报告。

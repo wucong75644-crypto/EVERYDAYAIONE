@@ -19,6 +19,10 @@ GitHub runner 使用 production 环境的 `DIAGNOSTICS_SSH_KEY`；云端不持�
 - nginx 此入口仅查其 journal，不覆盖 nginx 独立 access/error 文件。
 - 日志为空或 query failed 必须如实报告；此投影可定位部分错误，不代替所有故障的完整现场。
 
+## 自动触发
+
+以后直接说“排查生产问题”，由仓库 AGENTS.md 和 production-diagnostics 技能自动查询。当前入口由 `.github/production-diagnostics.json` 统一登记；下文实测编号是历史证据，使用者无需记忆。更新入口必须核验仓库、工作流代码及固定诊断 job，不能选发布/验收作业。
+
 ## 发起与复用
 
 首次在已推送诊断任务提交上创建 `delivery-verification/diagnostics-<标识>/<nonce>` 标签。
