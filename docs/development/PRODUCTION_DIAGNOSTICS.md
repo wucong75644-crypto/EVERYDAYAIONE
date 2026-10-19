@@ -40,3 +40,21 @@ GitHub 作业日志可能按仓库可见性公开，因此不能把原始日志�
 如有并发新增密钥，不要用整文件旧备份覆盖，应只删除本任务标记行。
 
 本功能属于运维配置，不部署应用、不更新发布候选、不合并 main、不清理任务工作树。
+
+## 已实测入口（2026-10-19）
+
+- 固定诊断 run：https://github.com/wucong75644-crypto/EVERYDAYAIONE/actions/runs/39188468715
+- 云端主动重跑成功的 attempt 2 / job：117856204105。
+- 新采集时间：2026-10-19 10:09:19（北京时间）。云端重跑及结果读取约 66 秒。
+- 五个服务 active/running；投影日志数依次为 100、100、60、0、0。
+- collection_complete、arbitrary_commands_denied 均为 true；raw_messages_included、database_accessed、deployed 均为 false。
+- 网关安装和查询前后 PID、重启计数不变；旧发布网关与策略哈希不变。
+- 17 项定向测试通过，含敏感消息投影、任意命令拒绝、固定时间/数量、失败及超时处理。
+
+可直接给支持 GitHub 连接器的云端对话以下指令：
+
+> 使用 GitHub 连接器查询 EVERYDAYAIONE 的诊断 run 39188468715，先核对最新 job 是 diagnostics 且步骤为 Query bounded, projected production journals and service status，只重跑该诊断 job 一次。读取最新 attempt 的 DIAGNOSTICS_RESULT，报告采集时间、服务状态、日志分类/异常类型/堆栈位置，并结合对应版本代码分析。不部署、不重启、不读取凭据、不重跑发布或验收作业；无法获取新结果时明确报告，不使用旧现场冒充实时结果。
+
+该路径不依赖故障的 VPN 执行器，但对话必须可使用 GitHub 连接器并有仓库访问权限。
+环境编辑对话没有 GitHub 工具时不能凭此宣称已获得诊断能力。
+本次代码保留在独立任务分支，不因运维配置完成而自动合并 main。
