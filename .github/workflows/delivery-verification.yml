@@ -10,6 +10,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   verify:
+    if: ${{ !startsWith(github.ref, 'refs/tags/delivery-verification/diagnostics-') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment: production

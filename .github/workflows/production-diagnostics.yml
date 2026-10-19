@@ -1,0 +1,28 @@
+name: Read-only production diagnostics
+on:
+  push:
+    tags: ['delivery-verification/diagnostics-*/*']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: everydayaione-readonly-diagnostics
+  cancel-in-progress: false
+jobs:
+  diagnostics:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Query bounded, projected production journals and service status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DELIVERY_APPROVER: ${{ vars.DELIVERY_APPROVER }}
+          DELIVERY_CONFIG_JSON: ${{ secrets.DELIVERY_CONFIG_JSON }}
+          DIAGNOSTICS_SSH_KEY: ${{ secrets.DIAGNOSTICS_SSH_KEY }}
+          DELIVERY_KNOWN_HOSTS: ${{ secrets.DELIVERY_KNOWN_HOSTS }}
+        run: python3 scripts/ci/query_diagnostics.py
