@@ -73,10 +73,12 @@ class Settings(BaseSettings):
     web_search_ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
     web_search_ark_model: str = "doubao-seed-2-1-pro-260628"
 
-    # Agent Reach adapters are enabled only after their deployment checks.
-    knowledge_workspace_enabled: bool = False
+    # V1 rollout: owner explicitly authorized all signed-in accounts on 2026-10-19.
+    # An explicit false remains the operational kill switch.
+    knowledge_workspace_enabled: bool = True
     knowledge_workspace_user_ids: str = ""
     knowledge_workspace_org_ids: str = ""
+    # Agent Reach adapters are enabled only after their deployment checks.
     social_ops_enabled: bool = False
     social_ops_analytics_enabled: bool = False
     social_ops_scheduled_publish_enabled: bool = False

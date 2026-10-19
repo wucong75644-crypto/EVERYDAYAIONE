@@ -15,7 +15,10 @@ def enabled(ctx):
     settings = get_settings()
     users = {x.strip() for x in settings.knowledge_workspace_user_ids.split(',') if x.strip()}
     orgs = {x.strip() for x in settings.knowledge_workspace_org_ids.split(',') if x.strip()}
-    return settings.knowledge_workspace_enabled and (ctx.user_id in users or (ctx.org_id is not None and ctx.org_id in orgs))
+    return settings.knowledge_workspace_enabled and (
+        (not users and not orgs) or ctx.user_id in users
+        or (ctx.org_id is not None and ctx.org_id in orgs)
+    )
 
 def failure(status, code, message):
     return JSONResponse(status_code=status, content={'error': {'code': code, 'message': message, 'details': {}}},

@@ -37,6 +37,11 @@ def test_rollout_requires_switch_and_explicit_scope(monkeypatch):
     assert not knowledge.enabled(ctx)
     ctx.org_id='o'
     assert knowledge.enabled(ctx)
+    settings.knowledge_workspace_user_ids='';settings.knowledge_workspace_org_ids=''
+    ctx.org_id=None
+    assert knowledge.enabled(ctx)  # Explicit full rollout: no preview-only allowlist.
+    settings.knowledge_workspace_enabled=False
+    assert not knowledge.enabled(ctx)  # Kill switch wins even with an empty allowlist.
 
 @pytest.fixture(scope='module')
 def database():

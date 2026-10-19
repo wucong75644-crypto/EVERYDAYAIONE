@@ -59,7 +59,7 @@ npm --prefix frontend run dev -- --host 0.0.0.0 --port 3000
 
 ## 生产候选条件与后续
 
-默认 `KNOWLEDGE_WORKSPACE_ENABLED=false`。生产首轮建议仅设置指定体验账号的 `KNOWLEDGE_WORKSPACE_USER_IDS`，`KNOWLEDGE_WORKSPACE_ORG_IDS` 留空；开关开启且账号或组织在列表中才开放，所有接口同样检查，前端隐藏不是授权。当前实现支持账号/组织名单，不含项目级功能发布名单；项目内容权限仍独立检查。
+用户在本次发布中明确要求“直接开放好了没关系”，因此 V1 改为向所有已登录账号开放：`KNOWLEDGE_WORKSPACE_ENABLED` 默认 true，两个名单默认空。显式设置 false 可关闭；若未来设置非空 `KNOWLEDGE_WORKSPACE_USER_IDS` 或 `KNOWLEDGE_WORKSPACE_ORG_IDS`，则仅匹配的账号/组织开放。所有接口同样检查，前端隐藏不是授权。开放页面不扩大内容 ACL，个人、项目和团队权限仍独立检查；不包含项目级功能发布名单。
 
 生产尚未执行：迁移、名单配置、GitHub 最终 SHA 检查、部署和线上验收；没有生产已成功的结论。发布前再核对最新 main 与迁移号，按仓库完整档检查最终候选，确认备份/兼容与关闭方案，通过受控入口发布，提供实际线上访问地址及启用范围。收到用户明确“提交部署”后才提交推送和发起生产请求；不在开发 VM 直接连生产执行 SQL。
 
