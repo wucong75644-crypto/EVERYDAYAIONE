@@ -13,7 +13,7 @@ interface DetailPageState {
   status: string; models: PromptModelOption[]; ratios: string[]; enabled: boolean;
   isTransitioning: boolean; isUploading: boolean; formError: string | null; projectId: string | null;
   projectVersion: number | null; isHydrating: boolean;
-  tasks: DetailTaskSummary[]; taskCursor: string|null; isLoadingTasks: boolean; taskError: string|null; scopeKey: string|null; isMutating: boolean;
+  tasks: DetailTaskSummary[]; taskCursor: string|null; isLoadingTasks: boolean; taskError: string|null; scopeKey: string|null; isMutating: boolean; pendingDeleteIds: string[]; syncUncertain: boolean; isConfirmingSync: boolean;
   hydrateDraft: (scopeKey?: string, preferredId?: string|null) => Promise<void>;
   selectTask: (id:string) => Promise<void>; createTask: () => Promise<void>;
   deleteTask: (id:string) => Promise<void>;
@@ -22,11 +22,12 @@ interface DetailPageState {
   attachWorkspaceImages: (category: DetailLocalImage['category'],paths:string[]) => Promise<void>;
   addImages: (category: DetailLocalImage['category'],files:File[]) => Promise<void>;
   removeImage: (id:string) => Promise<void>;
+  confirmImageSync: () => Promise<void>;
   updateForm: (patch:Partial<DetailGenerationForm>) => void;
   startAnalysis: () => Promise<void>; restart: () => Promise<void>; reset: () => void;
 }
 const initialState = {tasks:[] as DetailTaskSummary[],taskCursor:null as string|null,isLoadingTasks:false,
-  taskError:null as string|null,scopeKey:null as string|null,isMutating:false,images: [] as DetailLocalImage[], form: {...DEFAULT_FORM},groups: [] as DetailGroup[],
+  taskError:null as string|null,scopeKey:null as string|null,isMutating:false,pendingDeleteIds:[] as string[],syncUncertain:false,isConfirmingSync:false,images: [] as DetailLocalImage[], form: {...DEFAULT_FORM},groups: [] as DetailGroup[],
   runs:[] as DetailGenerationRun[],currentRunId:null as string|null,
   status:'draft',models: [] as PromptModelOption[],ratios:['1:1','3:4','4:5','16:9'],enabled:false,
   isTransitioning:false,isUploading:false,formError:null as string|null,projectId:null as string|null,projectVersion:null as number|null,isHydrating:false};
@@ -36,6 +37,28 @@ const EDITABLE_STATUSES=['draft','completed','failed'];
 let settingsTimer: ReturnType<typeof setTimeout> | null=null;
 let pollTimer: ReturnType<typeof setTimeout> | null=null;
 let saving: Promise<void>=Promise.resolve();
+let projectWrites: Promise<unknown>=Promise.resolve();
+type PendingDelete = {image: DetailLocalImage; uncertain: boolean};
+const pendingDeletes = new Map<string, PendingDelete>();
+const imageOrder = new Map<string, number>();
+let nextImageOrder = 0;
+function trackOrder(images: DetailLocalImage[]) {
+  for (const image of images) if (!imageOrder.has(image.id)) imageOrder.set(image.id, nextImageOrder++);
+}
+function deleteState() {
+  const pendingDeleteIds = [...pendingDeletes.keys()];
+  return {pendingDeleteIds,isMutating:pendingDeleteIds.length>0,
+    syncUncertain:[...pendingDeletes.values()].some(item=>item.uncertain)};
+}
+function enqueueProjectWrite<T>(epoch:number, id:string|null, operation:()=>Promise<T>):Promise<T|undefined> {
+  const result = projectWrites.catch(()=>{}).then(async()=>{
+    if (!valid(epoch,id)) return;
+    if (useDetailPageStore.getState().syncUncertain) throw new Error('图片同步结果待确认，请先重新确认');
+    return operation();
+  });
+  projectWrites=result;
+  return result;
+}
 let lifecycleVersion=0;
 let detailRefreshVersion=0, listRefreshVersion=0;
 const pendingDetailRefreshes=new Map<number,number>(), pendingListRefreshes=new Map<number,number>();
@@ -49,7 +72,9 @@ function remember(id:string){const scope=useDetailPageStore.getState().scopeKey;
 function valid(epoch:number,id?:string|null){return epoch===lifecycleVersion&&(!id||useDetailPageStore.getState().projectId===id);}
 function adopt(project:DetailProjectDraft){
   useDetailPageStore.getState().images.forEach(releasePreview);formRevision=0;savedRevision=0;
-  useDetailPageStore.setState({...applyDraft(project),isTransitioning:false,isHydrating:false});remember(project.id);schedulePoll();scheduleListPoll();
+  pendingDeletes.clear();imageOrder.clear();nextImageOrder=0;
+  trackOrder(applyDraft(project).images!);
+  useDetailPageStore.setState({...applyDraft(project),...deleteState(),isTransitioning:false,isHydrating:false});remember(project.id);schedulePoll();scheduleListPoll();
 }
 function scheduleListPoll(){
   if(listTimer)clearTimeout(listTimer);
@@ -70,7 +95,66 @@ function applyDraft(project:DetailProjectDraft|null){
 }
 function applyImageUpdate(project:DetailProjectDraft){
   const {images,projectVersion}=applyDraft(project);
-  return {images,projectVersion};
+  const current = useDetailPageStore.getState().images;
+  const projected = images!.filter(image=>!pendingDeletes.has(image.id)).map(image=>{
+    const local=current.find(item=>item.id===image.id||item.workspacePath===image.workspacePath);
+    if(local && imageOrder.has(local.id)) imageOrder.set(image.id,imageOrder.get(local.id)!);
+    return local?.previewUrl.startsWith('blob:') ? {...image,previewUrl:local.previewUrl} : image;
+  });
+  const local=current.filter(image=>!pendingDeletes.has(image.id)
+    && ['local','uploading','attaching','failed'].includes(image.status)
+    && !images!.some(remote=>remote.id===image.id||remote.workspacePath===image.workspacePath));
+  trackOrder([...projected,...local]);
+  return {images:[...projected,...local].sort((a,b)=>imageOrder.get(a.id)!-imageOrder.get(b.id)!),projectVersion};
+}
+function restoreDeletion(id:string) {
+  const entry=pendingDeletes.get(id);if(!entry)return;
+  pendingDeletes.delete(id);
+  useDetailPageStore.setState(state=>({
+    images:state.images.some(image=>image.id===id)?state.images:[...state.images,entry.image]
+      .sort((a,b)=>imageOrder.get(a.id)!-imageOrder.get(b.id)!),...deleteState(),
+  }));
+}
+async function executeDeletion(id:string,epoch:number,projectId:string) {
+  if(!valid(epoch,projectId)||!pendingDeletes.has(id))return;
+  const entry=pendingDeletes.get(id)!;
+  try {
+    let project:DetailProjectDraft|null;
+    try {
+      project=await removeDetailImage(projectId,id,useDetailPageStore.getState().projectVersion!);
+    } catch(error) {
+      if(![404,409].includes(toApiRequestError(error).status??0))throw error;
+      project=await getDetailProject(projectId);
+      if(!valid(epoch,projectId))return;
+      if(!project||project.id!==projectId)throw new Error('无法确认图片删除结果');
+      if(project.images.some(image=>image.id===id)) {
+        if(!EDITABLE_STATUSES.includes(project.status??'draft'))throw error;
+        useDetailPageStore.setState({projectVersion:project.version});
+        project=await removeDetailImage(projectId,id,project.version);
+      }
+    }
+    if(!valid(epoch,projectId))return;
+    if(!project||project.id!==projectId||project.images.some(image=>image.id===id))throw new Error('图片删除结果尚未确认');
+    pendingDeletes.delete(id);releasePreview(entry.image);
+    useDetailPageStore.setState({...applyImageUpdate(project),...deleteState()});
+  } catch(error) {
+    if(!valid(epoch,projectId))return;
+    const failure=toApiRequestError(error);
+    if(failure.status && failure.status>=400 && failure.status<500 && failure.status!==408 && failure.status!==409) {
+      restoreDeletion(id);useDetailPageStore.setState({formError:failure.message});return;
+    }
+    // A timeout/5xx may have committed. Keep the tombstone until a read confirms absence.
+    entry.uncertain=true;
+    useDetailPageStore.setState({...deleteState(),formError:'删除结果待确认，请重新确认后继续'});
+    try {
+      const project=await getDetailProject(projectId);
+      if(!valid(epoch,projectId))return;
+      if(project?.id===projectId&&!project.images.some(image=>image.id===id)) {
+        pendingDeletes.delete(id);releasePreview(entry.image);
+        useDetailPageStore.setState({...applyImageUpdate(project),...deleteState(),formError:null});
+      }
+    } catch { /* Keep pending state and offer an explicit reconciliation action. */ }
+  }
 }
 function persistSettings(allowBusy=false){
   const epoch=lifecycleVersion, id=useDetailPageStore.getState().projectId;
@@ -79,13 +163,27 @@ function persistSettings(allowBusy=false){
       const {projectId,projectVersion,form,status,isUploading,isMutating}=useDetailPageStore.getState();
       if(!projectId||projectVersion===null||!EDITABLE_STATUSES.includes(status)||((isUploading||isMutating)&&!allowBusy)||savedRevision===formRevision)return;
       const revision=formRevision;
-      const saved=await saveDetailSettings(projectId,projectVersion,form);
+      const saved=await enqueueProjectWrite(epoch,projectId,()=>{
+        const latest=useDetailPageStore.getState();
+        return saveDetailSettings(projectId,latest.projectVersion??projectVersion,form);
+      });
       if(!valid(epoch,id))return;
       if(!saved||saved.id!==projectId)throw new Error('草稿保存失败，请重试');
       savedRevision=revision;useDetailPageStore.setState({projectVersion:saved.version});
     }
   });
   return saving;
+}
+function waitForImages(epoch:number,id:string|null):Promise<void> {
+  const state=useDetailPageStore.getState();
+  if(!state.isUploading&&!state.isMutating)return Promise.resolve();
+  return new Promise((resolve,reject)=>{
+    const unsubscribe=useDetailPageStore.subscribe(current=>{
+      if(!valid(epoch,id)){unsubscribe();resolve();}
+      else if(current.syncUncertain){unsubscribe();reject(new Error('图片同步结果待确认，请先重新确认'));}
+      else if(!current.isUploading&&!current.isMutating){unsubscribe();resolve();}
+    });
+  });
 }
 function schedulePoll(){
   if(pollTimer)clearTimeout(pollTimer);
@@ -213,9 +311,9 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
     finally{pendingDetailRefreshes.delete(request);if(current())schedulePoll();}
   },
   attachWorkspaceImages: async (category, paths) => {
-    if(get().isUploading||get().isTransitioning||get().isMutating||!EDITABLE_STATUSES.includes(get().status)||!get().projectId)return;
+    if(get().isUploading||get().isTransitioning||get().syncUncertain||!EDITABLE_STATUSES.includes(get().status)||!get().projectId)return;
     const epoch=lifecycleVersion, projectId=get().projectId!;
-    if (get().images.length + paths.length > MAX_IMAGES) {
+    if (get().images.length + pendingDeletes.size + paths.length > MAX_IMAGES) {
       set({ formError: `产品图和参考图合计最多上传 ${MAX_IMAGES} 张` });
       return;
     }
@@ -225,10 +323,10 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
       return;
     }
     if(!valid(epoch,projectId))return;
-    set({isUploading:true,isMutating:false});
+    set({isUploading:true});
     try { for (const path of paths) {
       try {
-        const project = await attachDetailImage(path, category, projectId);
+        const project = await enqueueProjectWrite(epoch,projectId,()=>attachDetailImage(path, category, projectId));
         if(epoch!==lifecycleVersion)return;
         if(!project||project.id!==projectId)throw new Error('图片关联结果无效，请重新加载任务');
         set({ ...applyImageUpdate(project), formError: null });
@@ -241,10 +339,10 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
     } finally { if(epoch===lifecycleVersion){set({isUploading:false});get().updateForm({});} }
   },
   addImages: async (category, files) => {
-    if(get().isUploading||get().isTransitioning||get().isMutating||!EDITABLE_STATUSES.includes(get().status)||!get().projectId)return;
+    if(get().isUploading||get().isTransitioning||get().syncUncertain||!EDITABLE_STATUSES.includes(get().status)||!get().projectId)return;
     const epoch=lifecycleVersion, projectId=get().projectId!;
     const currentImages = get().images;
-    if (currentImages.length + files.length > MAX_IMAGES) {
+    if (currentImages.length + pendingDeletes.size + files.length > MAX_IMAGES) {
       set({ formError: `产品图和参考图合计最多上传 ${MAX_IMAGES} 张` });
       return;
     }
@@ -262,6 +360,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
       status: 'local',
       name: file.name,
     }));
+    trackOrder(newImages);
     set((state) => ({ images: [...state.images, ...newImages], formError: null }));
     clearSettingsTimer();set({isUploading:true});
     try { await persistSettings(true); } catch(error){
@@ -270,7 +369,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
       return;
     }
     if(!valid(epoch,projectId))return;
-    set({isUploading:true,isMutating:false});
+    set({isUploading:true});
     try { for (const image of newImages) {
       try {
         set((state) => ({ images: state.images.map((item) => item.id === image.id ? { ...item, status: 'uploading' } : item) }));
@@ -278,7 +377,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
         if(epoch!==lifecycleVersion)return;
         if (!uploaded.workspace_path) throw new Error('上传结果缺少工作区路径');
         set((state) => ({ images: state.images.map((item) => item.id === image.id ? { ...item, status: 'attaching', workspacePath: uploaded.workspace_path } : item) }));
-        const project = await attachDetailImage(uploaded.workspace_path, category, projectId);
+        const project = await enqueueProjectWrite(epoch,projectId,()=>attachDetailImage(uploaded.workspace_path!, category, projectId));
         if(epoch!==lifecycleVersion)return;
         if(!project||project.id!==projectId)throw new Error('图片关联结果无效，请重新加载任务');
         const remotePreview = uploaded.thumbnail_url || uploaded.preview_url || uploaded.url;
@@ -289,12 +388,15 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
             ? { ...item, previewUrl: image.previewUrl }
             : item);
           const pending = state.images.filter((item) => item.id !== image.id && ['local', 'uploading', 'attaching', 'failed'].includes(item.status));
-          return { ...draft, images: [...images, ...pending], formError: null };
+          return { ...draft, images: [...images, ...pending.filter(item=>!images.some(existing=>existing.id===item.id))], formError: null };
         });
         if (remotePreview) {
           const remoteImage = new Image();
           remoteImage.onload = () => {
             if (requestVersion !== lifecycleVersion) return;
+            for(const entry of pendingDeletes.values()) {
+              if(entry.image.workspacePath===uploaded.workspace_path)entry.image={...entry.image,previewUrl:remotePreview};
+            }
             set((state) => ({ images: state.images.map((item) => item.workspacePath === uploaded.workspace_path
               ? { ...item, previewUrl: remotePreview }
               : item) }));
@@ -310,17 +412,52 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
     } finally { if(epoch===lifecycleVersion){set({isUploading:false});get().updateForm({});} }
   },
   removeImage: async (id) => {
-    if(get().isTransitioning||get().isMutating||get().isUploading||!EDITABLE_STATUSES.includes(get().status))return;
+    if(get().isTransitioning||get().isHydrating||get().syncUncertain||!EDITABLE_STATUSES.includes(get().status))return;
     const image=get().images.find(item=>item.id===id);if(!image)return;
+    if(['local','uploading','attaching'].includes(image.status))return;
     const epoch=lifecycleVersion, projectId=get().projectId;
-    if(!projectId||image.status==='failed'||!image.workspacePath){releasePreview(image);set(state=>({images:state.images.filter(item=>item.id!==id)}));return;}
-    set({isMutating:true});clearSettingsTimer();
-    try{
+    if(!projectId||!image.workspacePath){releasePreview(image);set(state=>({images:state.images.filter(item=>item.id!==id)}));return;}
+    trackOrder(get().images);
+    pendingDeletes.set(id,{image,uncertain:false});
+    set(state=>({images:state.images.filter(item=>item.id!==id),...deleteState(),formError:null}));
+    clearSettingsTimer();
+    try {
       await persistSettings(true);if(!valid(epoch,projectId))return;
-      const project=await removeDetailImage(projectId,id,get().projectVersion!);
-      if(valid(epoch,projectId)&&project)set({...applyImageUpdate(project),formError:null});
-    }catch(error){if(valid(epoch,projectId))set({formError:toApiRequestError(error).message});}
-    finally{if(valid(epoch,projectId)){set({isMutating:false});get().updateForm({});}}
+      await enqueueProjectWrite(epoch,projectId,()=>executeDeletion(id,epoch,projectId));
+    } catch(error) {
+      if(valid(epoch,projectId)) {
+        // No DELETE was sent by this operation; restore only this image.
+        restoreDeletion(id);set({formError:toApiRequestError(error).message});
+      }
+    } finally {
+      if(valid(epoch,projectId)&&!get().isMutating)get().updateForm({});
+    }
+  },
+  confirmImageSync:async()=>{
+    if(!get().syncUncertain||get().isConfirmingSync)return;
+    const epoch=lifecycleVersion,projectId=get().projectId;if(!projectId)return;
+    set({isConfirmingSync:true});
+    try {
+      await projectWrites.catch(()=>{});if(!valid(epoch,projectId))return;
+      const project=await getDetailProject(projectId);if(!valid(epoch,projectId))return;
+      if(!project||project.id!==projectId)throw new Error('无法确认当前项目');
+      set({projectVersion:project.version});
+      for(const [id,entry] of pendingDeletes) {
+        if(!entry.uncertain)continue;
+        if(!project.images.some(image=>image.id===id)) {
+          pendingDeletes.delete(id);releasePreview(entry.image);set({...applyImageUpdate(project),...deleteState()});
+        } else {
+          if(!EDITABLE_STATUSES.includes(project.status??'draft')) {
+            restoreDeletion(id);set({status:project.status??'draft',formError:'任务状态已变化，图片未移除'});continue;
+          }
+          // Versioned retry converges with a late original request: only one can mutate that version.
+          await executeDeletion(id,epoch,projectId);
+        }
+        if(!valid(epoch,projectId))return;
+      }
+      if(!get().syncUncertain){set({formError:null});get().updateForm({});}
+    } catch {if(valid(epoch,projectId))set({formError:'暂时无法确认删除结果，请稍后重新确认'});}
+    finally{if(valid(epoch,projectId))set({isConfirmingSync:false});}
   },
   updateForm:(patch)=>{
     if(!EDITABLE_STATUSES.includes(get().status)||get().isTransitioning||get().isHydrating)return;
@@ -332,15 +469,16 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
     clearSettingsTimer();const epoch=lifecycleVersion;settingsTimer=setTimeout(()=>{void persistSettings().catch(error=>{if(valid(epoch))set({formError:toApiRequestError(error).message});});},500);
   },
   startAnalysis:async()=>{
-    if(get().isTransitioning||get().isUploading||get().isMutating||!EDITABLE_STATUSES.includes(get().status))return;
-    if(!get().images.some(image=>image.category==='product'&&image.status==='ready')||get().images.some(image=>image.status!=='ready')){
-      set({formError:'请先完成产品图片上传'});return;
-    }
-    const selected=get().models.find(model=>model.id===get().form.promptModel);
-    if(!get().enabled||!selected?.available){set({formError:selected?.reason||'主图详情生成尚未开放'});return;}
+    if(get().isTransitioning||get().syncUncertain||!EDITABLE_STATUSES.includes(get().status))return;
     const epoch=lifecycleVersion,sourceId=get().projectId;let requestId=sourceId?runRequests.get(sourceId):undefined;
     set({isTransitioning:true,formError:null});clearSettingsTimer();
     try{
+      await waitForImages(epoch,sourceId);if(!valid(epoch,sourceId))return;
+      if(get().formError)throw new Error(get().formError!);
+      if(!get().images.some(image=>image.category==='product'&&image.status==='ready')||get().images.some(image=>image.status!=='ready'))
+        throw new Error('请先完成产品图片上传');
+      const selected=get().models.find(model=>model.id===get().form.promptModel);
+      if(!get().enabled||!selected?.available)throw new Error(selected?.reason||'主图详情生成尚未开放');
       if(requestId&&sourceId){
         const existing=await getDetailProject(sourceId);if(!valid(epoch,sourceId))return;
         if(existing?.run_state?.request_id===requestId){runRequests.delete(sourceId);lifecycleVersion++;adopt(existing);return;}
@@ -363,7 +501,8 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
   restart:async()=>get().createTask(),
   reset:()=>{
     lifecycleVersion++;pendingDetailRefreshes.clear();pendingListRefreshes.clear();clearSettingsTimer();if(pollTimer)clearTimeout(pollTimer);pollTimer=null;
-    if(listTimer)clearTimeout(listTimer);listTimer=null;listFetchedAt=0;saving=Promise.resolve();formRevision=0;savedRevision=0;
+    if(listTimer)clearTimeout(listTimer);listTimer=null;listFetchedAt=0;saving=Promise.resolve();projectWrites=Promise.resolve();formRevision=0;savedRevision=0;
+    pendingDeletes.forEach(entry=>releasePreview(entry.image));pendingDeletes.clear();imageOrder.clear();nextImageOrder=0;
     get().images.forEach(releasePreview);createRequestId=null;runRequests.clear();set({...initialState,form:{...DEFAULT_FORM}});
   },
 }));

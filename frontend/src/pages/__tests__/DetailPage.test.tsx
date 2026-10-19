@@ -2,8 +2,9 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import DetailPage from '../DetailPage';
+import { ApiRequestError } from '../../services/api';
 import { useDetailPageStore } from '../../stores/useDetailPageStore';
-import { getDetailProject, listDetailProjects, createDetailProject, getDetailCapabilities } from '../../services/detailProject';
+import { getDetailProject, listDetailProjects, createDetailProject, getDetailCapabilities, removeDetailImage, saveDetailSettings } from '../../services/detailProject';
 import { generateRequirementSuggestions } from '../../services/ecomRequirement';
 
 vi.mock('../../services/detailProject', () => ({
@@ -151,7 +152,8 @@ describe('DetailPage 页面骨架', () => {
     expect(input).toBeEnabled();
     fireEvent.change(input, {target:{value:'上传期间补充的风格和产品细节'}});
     expect(useDetailPageStore.getState().form.requirement).toBe('上传期间补充的风格和产品细节');
-    expect(screen.getByRole('button', {name:'开始生成'})).toBeDisabled();
+    if (['failed','missing'].includes(imageStatus)) expect(screen.getByRole('button', {name:'开始生成'})).toBeDisabled();
+    else expect(screen.getByRole('button', {name:'开始生成'})).toBeEnabled();
     expect(screen.getByRole('button', {name:'AI 帮写'})).toBeDisabled();
 
     act(() => useDetailPageStore.setState({images:[readyImage],isUploading:false}));
@@ -163,4 +165,81 @@ describe('DetailPage 页面骨架', () => {
     act(() => useDetailPageStore.setState({status:'analyzing'}));
     expect(input).toBeDisabled();
   });
+});
+
+
+describe('删除图片的等待反馈', () => {
+  it.each(['success', 'rejected'])('删除 %s 时保持参数可编辑，结束后恢复图片操作', async outcome => {
+    const draft = {id:'delete-project',version:1,content_type:'default' as const,platform:'taobao' as const,
+      requirement:'',language:'zh-CN' as const,aspect_ratio:'1:1',quality:'1k' as const,image_count:14,status:'draft',
+      images:[{id:'delete-image',category:'product' as const,workspace_path:'product.png',sort_order:0,
+        status:'ready' as const,original_url:'product.png',thumbnail_url:null}]};
+    useDetailPageStore.getState().reset();
+    vi.mocked(listDetailProjects).mockResolvedValue({items:[],next_cursor:null});
+    vi.mocked(createDetailProject).mockResolvedValue(draft);
+    vi.mocked(getDetailProject).mockResolvedValue(draft);
+    vi.mocked(getDetailCapabilities).mockResolvedValue({enabled:true,prompt_models:[{id:'kimi-k3',name:'Kimi K3',available:true,reason:null}],image_models:[]});
+    vi.mocked(saveDetailSettings).mockImplementation(async (_id, version, form) => ({...draft,version:version+1,requirement:form.requirement,quality:form.quality}));
+    let finish!: () => void;
+    vi.mocked(removeDetailImage).mockImplementationOnce(() => new Promise((resolve,reject) => {
+      finish = () => outcome === 'success' ? resolve({...draft,version:2,images:[]}) : reject(new ApiRequestError('FORBIDDEN','无权删除',403));
+    }));
+    const {unmount} = renderPage();
+    await waitFor(() => expect(useDetailPageStore.getState().isHydrating).toBe(false));
+    fireEvent.click(screen.getByRole('button',{name:'删除 product.png'}));
+    await waitFor(() => expect(removeDetailImage).toHaveBeenCalled());
+    expect(screen.queryByRole('button',{name:'删除 product.png'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('img',{name:'product.png'})).not.toBeInTheDocument();
+    for (const name of ['默认','主图','详情图','目标平台','目标语言','尺寸比例','清晰度','生成数量','提示词模型']) {
+      expect(screen.getByRole('button',{name,exact:true})).toBeEnabled();
+    }
+    for (const name of ['上传图片','工作区']) expect(screen.getByRole('button',{name,exact:true})).toBeEnabled();
+    expect(screen.getByRole('button',{name:'开始生成'})).toBeDisabled();
+    fireEvent.change(screen.getByRole('textbox'),{target:{value:'删除期间补充的要求'}});
+    fireEvent.keyDown(screen.getByRole('button',{name:'清晰度'}),{key:'ArrowDown'});
+    fireEvent.click(screen.getByText('2K 高清'));
+    await act(async () => finish());
+    await waitFor(() => expect(useDetailPageStore.getState().isMutating).toBe(false));
+    expect(useDetailPageStore.getState().pendingDeleteIds).toEqual([]);
+    expect(useDetailPageStore.getState().form).toMatchObject({requirement:'删除期间补充的要求',quality:'2k'});
+    expect(screen.queryByRole('status',{name:'正在删除图片'})).not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'上传图片'})).toBeEnabled();
+    if (outcome === 'rejected') {
+      expect(screen.getByRole('alert')).toHaveTextContent('无权删除');
+      expect(screen.getByRole('button',{name:'删除 product.png'})).toBeEnabled();
+      expect(useDetailPageStore.getState().images).toHaveLength(1);
+    } else {
+      expect(screen.queryByRole('button',{name:'删除 product.png'})).not.toBeInTheDocument();
+      expect(useDetailPageStore.getState().images).toHaveLength(0);
+    }
+    unmount();
+  });
+});
+
+
+describe('删除结果未确认的页面恢复入口',()=>{
+ it('超时后提供重新确认，文字可编辑，确认完成后恢复操作',async()=>{
+  useDetailPageStore.getState().reset();localStorage.clear();
+  const project={id:'unknown',version:1,content_type:'default' as const,platform:'taobao' as const,requirement:'',language:'zh-CN' as const,aspect_ratio:'1:1',quality:'1k' as const,image_count:14,status:'draft',
+    images:[{id:'unknown-image',category:'product' as const,workspace_path:'unknown.png',sort_order:0,status:'ready' as const,original_url:'unknown.png',thumbnail_url:null}]};
+  vi.mocked(createDetailProject).mockResolvedValue(project);
+  vi.mocked(listDetailProjects).mockResolvedValue({items:[],next_cursor:null});
+  vi.mocked(getDetailProject).mockResolvedValue(project);
+  vi.mocked(removeDetailImage).mockRejectedValueOnce(new ApiRequestError('REQUEST_TIMEOUT','请求超时',undefined,undefined,'timeout'));
+  vi.mocked(getDetailCapabilities).mockResolvedValue({enabled:true,prompt_models:[{id:'kimi-k3',name:'Kimi K3',available:true,reason:null}],image_models:[]});
+  const {unmount}=renderPage();await waitFor(()=>expect(useDetailPageStore.getState().isHydrating).toBe(false));
+  fireEvent.click(screen.getByRole('button',{name:'删除 unknown.png'}));
+  await waitFor(()=>expect(screen.getByRole('button',{name:'重新确认'})).toBeEnabled());
+  expect(screen.queryByRole('img',{name:'unknown.png'})).not.toBeInTheDocument();
+  expect(screen.getByRole('textbox')).toBeEnabled();
+  expect(screen.getByRole('button',{name:'目标平台'})).toBeEnabled();
+  expect(screen.getByRole('button',{name:'上传图片'})).toBeDisabled();
+  fireEvent.change(screen.getByRole('textbox'),{target:{value:'确认期间的编辑'}});
+  vi.mocked(getDetailProject).mockResolvedValueOnce({...project,version:2,images:[]});
+  fireEvent.click(screen.getByRole('button',{name:'重新确认'}));
+  await waitFor(()=>expect(screen.queryByRole('button',{name:'重新确认'})).not.toBeInTheDocument());
+  expect(screen.getByRole('button',{name:'上传图片'})).toBeEnabled();
+  expect(screen.getByRole('textbox')).toHaveValue('确认期间的编辑');
+  unmount();
+ });
 });

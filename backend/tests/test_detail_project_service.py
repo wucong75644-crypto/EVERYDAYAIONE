@@ -200,7 +200,10 @@ def test_remove_image_compacts_order_and_bumps_version(tmp_path) -> None:
     sql_calls = [call.args[0] for call in cursor.execute.call_args_list]
     assert any("sort_order=sort_order-1" in sql for sql in sql_calls)
     assert any("version=version+1" in sql for sql in sql_calls)
-    conn.commit.assert_called_once()
+    conn.transaction.assert_called_once()
+    conn.transaction.return_value.__enter__.assert_called_once()
+    conn.transaction.return_value.__exit__.assert_called_once()
+    conn.commit.assert_not_called()
 
 
 def test_update_category_bumps_version(tmp_path) -> None:
@@ -250,3 +253,37 @@ def test_update_settings_saves_supported_generation_count(tmp_path, content_type
     with patch.object(service, "_require_project", return_value=project), patch.object(service, "get_by_id", return_value=project):
         service.update_settings("project-1", 1, {"content_type": content_type, "image_count": count})
     assert cursor.execute.call_args.args[1][:2] == [content_type, count]
+
+
+def test_remove_image_keeps_lock_and_mutations_in_transaction_with_autocommit(tmp_path):
+    service = _service(tmp_path)
+    conn, cursor = _db_cursor(service)
+    conn.autocommit = True
+    active = False
+    events = []
+
+    def enter():
+        nonlocal active
+        active = True
+        events.append("begin")
+
+    def exit_transaction(*args):
+        nonlocal active
+        active = False
+        events.append("end")
+
+    def execute(sql, params):
+        assert active, "Project lock and every image mutation must share a transaction"
+        events.append(sql)
+
+    conn.transaction.return_value.__enter__.side_effect = enter
+    conn.transaction.return_value.__exit__.side_effect = exit_transaction
+    cursor.execute.side_effect = execute
+    cursor.fetchone.side_effect = [{"id": "project-1"}, {"sort_order": 1}]
+    with patch.object(service, "get_by_id") as read:
+        read.side_effect = lambda _: {"id": "project-1"} if not active else pytest.fail("Read before commit")
+        service.remove_image("project-1", "image-1", 1)
+    assert events[0] == "begin" and events[-1] == "end"
+    assert "FOR UPDATE" in events[1]
+    assert any("DELETE FROM detail_project_images" in event for event in events)
+    assert any("version=version+1" in event for event in events)
