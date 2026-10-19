@@ -80,3 +80,13 @@ GitHub 作业日志可能按仓库可见性公开，因此不能把原始日志�
 - safe/combined 及上游超时通过带敏感占位符的合成测试；真实窗口无 Nginx error 记录时不制造故障，也不宣称线上已复现超时。
 - 30项网关定向测试通过，含10项既有发布网关回归；独立安全审查未发现阻塞。
 - 图片上传汇总包含 failed=0 时按固定计数字段解析为routine，仅failed>0为shadow_upload_failure，避免关键词误报。
+
+### 云端接续验收结果
+
+- 云端对话 https://chatgpt.com/c/6ad57fa0-94bc-83ee-b885-bfb7997e9c41 已读取新技能/注册表，只重跑新固定job一次；attempt 2 / job 117864514006成功，云端完整查询与生产版本源码核验用时86秒。
+- 新采集时间2026-10-19 10:43:48（北京时间），生产提交043937674cf98f2f841dba84987a4ca84667b750。
+- 五服务active/running、NRestarts/ExecMainStatus均0，PID与配置前一致。原发布网关和policy哈希一致。
+- 云端将45条WARNING拆为client.py:576的30条429退避告警、erp_sync_scheduler.py:172的15条周期统计，未把周期统计当额外请求失败；backend的INFO/error关键词记录经webhook.py:177代码核对后，明确不能据此认定新任务失败。真实ERROR/CRITICAL计数0。
+- Nginx默认access/error均成功；窗口内71条access含68条200、1条400、2条404，5xx为0。error.log存在但窗口内0条；备用文件absent。未提供耗时，不推测慢请求。
+- parsing_complete=true、parse_errors=0、scan_truncated=false、important_records_omitted=0；普通上下文被优先采样省略，backend仍有12条unclassified，不能宣称所有事件均可解释或业务全正常。
+- 未制造生产故障、部署应用、重启、读取数据库、上传本机私钥或输出原始敏感日志。
