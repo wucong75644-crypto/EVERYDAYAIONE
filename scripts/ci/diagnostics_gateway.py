@@ -92,6 +92,17 @@ def project_message(message):
             http_status=[status], categories=['http_server_error' if status >= 500 else
                 'http_client_error' if status >= 400 else 'http_request'])
         return result
+    # This INFO summary always contains the word failed, including failed=0.
+    # Parse only its numeric aggregate fields instead of reporting a keyword false positive.
+    if body.startswith('KIE_SHADOW_UPLOAD_SUMMARY |'):
+        counts = {}
+        for key in ('attempted', 'succeeded', 'failed', 'duration_ms'):
+            match = re.search(r'(?:^|\|)\s*'+key+r'=([0-9]{1,7})(?:\s*\||\s*$)', body)
+            if match:
+                counts[key] = int(match[1])
+        result.update(event='shadow_upload_summary', counts=counts,
+            categories=['shadow_upload_failure'] if counts.get('failed', 0) > 0 else ['routine'])
+        return result
     categories = [k for k, pattern in CATEGORIES.items() if re.search(pattern, body)]
     if not categories:
         categories = ['routine'] if result.get('level') in ('TRACE', 'DEBUG', 'INFO', 'SUCCESS') else ['unclassified']
@@ -177,7 +188,7 @@ def summarize(records, *, scanned, truncated, parse_errors=0):
         return (record.get('level') in ('WARNING', 'ERROR', 'CRITICAL')
                 or record.get('priority', 7) <= 4
                 or any(c in ('traceback', 'database_error', 'timeout', 'connection_error', 'permission_error',
-                    'resource_error', 'rate_limit', 'pagination_limit', 'retry', 'error', 'warning',
+                    'resource_error', 'rate_limit', 'pagination_limit', 'retry', 'error', 'warning', 'shadow_upload_failure',
                     'upstream_timeout', 'upstream_connection_refused', 'upstream_closed',
                     'upstream_invalid_response', 'tls_error', 'request_limited', 'slow_request',
                     'nginx_error_unspecified') for c in record['categories'])
@@ -189,7 +200,7 @@ def summarize(records, *, scanned, truncated, parse_errors=0):
             or record.get('exception_types') or record.get('frames')
             or any(c in ('error','traceback','database_error','resource_error', 'upstream_timeout',
                          'upstream_connection_refused','upstream_closed','upstream_invalid_response',
-                         'tls_error','http_server_error') for c in record['categories'])
+                         'tls_error','http_server_error','shadow_upload_failure') for c in record['categories'])
             or any(status >= 500 for status in record.get('http_status', []))) else 1
     urgent.sort(key=error_rank)  # stable: newest errors, then newest warnings, then context
     selected = (urgent + context)[:100]

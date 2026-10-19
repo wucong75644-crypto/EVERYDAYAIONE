@@ -144,6 +144,15 @@ class DiagnosticsTests(unittest.TestCase):
             self.assertEqual(diagnostics.nginx_file('/var/log/nginx/access.log')['query'], 'failed')
         self.assertIsNone(diagnostics.nginx_line('SECRET invalid format', 'access'))
 
+    def test_upload_summary_does_not_treat_failed_zero_as_error(self):
+        base = '2026-10-19 10:00:00 | INFO | services.adapters.kie.client:upload:591 - KIE_SHADOW_UPLOAD_SUMMARY | task_id=SECRET | attempted=1 | succeeded=1 | failed=0 | duration_ms=120'
+        result = diagnostics.project_message(base)
+        self.assertEqual(result['categories'], ['routine'])
+        self.assertEqual(result['counts']['failed'], 0)
+        self.assertNotIn('SECRET', json.dumps(result))
+        result = diagnostics.project_message(base.replace('failed=0', 'failed=1'))
+        self.assertEqual(result['categories'], ['shadow_upload_failure'])
+
     def test_errors_survive_warning_flood(self):
         records = [{'time':'2026-10-19T10:00:00+00:00', 'level':'WARNING', 'categories':['warning']} for _ in range(200)]
         records.append({'time':'2026-10-19T09:59:00+00:00','level':'ERROR','categories':['error']})
