@@ -29,17 +29,17 @@ description: 用户说“排查生产问题”“查生产日志”“检查线�
 3. 获取新 attempt 对应的新 job 日志，**只读这个诊断 job**，提取 result_marker 后的 JSON。
    核对 collected_at 更新、collection_complete、arbitrary_commands_denied、raw_messages_included=false、deployed=false、database_accessed=false。
    新 job 未完成、JSON 缺失或校验不符时不能报告查询成功，不能拿旧 attempt 冒充当前现场。
-4. 根据服务 ActiveState/SubState、MainPID/NRestarts/ExecMainStatus、日志类别、异常类型、堆栈文件/行号分析。
+4. 同时检查每个 journal/nginx_files 的 query、parsing_complete、parse_errors、scan_truncated、important_records_omitted、oldest_record_at/newest_record_at。缺失备用文件 absent 可接受，但 access/error 各需至少一个实际文件成功；解析失败或采样截断必须说明影响，不能因 collection_complete=true 把有限样本称为全部日志。根据服务 ActiveState/SubState、MainPID/NRestarts/ExecMainStatus、日志级别/类别、source、异常类型、堆栈文件/行号、Nginx 状态码/固定 route_group/可得耗时分析。统计覆盖扫描范围，不等于最多100条返回样本；routine不是错误，WARNING不等于服务失败。
    有用户症状时结合相应生产版本代码验证原因；版本不明或证据不足时标明假设，不把 main 当作生产版本。
    用户没给具体现象时先完成上述查询并报告状态；仅在继续定位需要时询问复现现象/时间。
 
 输出采集时间、关键服务/日志证据、可支持的结论和下一步，附本次新 job 链接。
-不回显完整 500 条记录，不输出私钥、.env、Token、请求正文/参数或原始异常消息。
+不回显全部记录，不输出私钥、.env、Token、请求正文/参数或原始异常消息。
 
 ## 不可超出的边界
 
-采集最近 15 分钟每服务最多 100 条 journal 投影，范围是 backend、sync、wecom、conversation-actor、nginx。
-不覆盖 nginx 独立 access/error 文件。unclassified、空日志或服务 active 都不证明没有错误；
+采集最近15分钟，每服务/文件最多扫描5000条或2MiB，优先返回错误、警告及最新上下文最多100条；范围是 backend、sync、wecom、conversation-actor、nginx journal，以及注册能力内固定 Nginx access/error 文件。
+不读轮转历史或任意日志路径。safe 格式可有耗时，combined 没有时不推测。application_commit 用于查对应版本源码；没有时明确版本未知。unclassified、空日志或服务 active 都不证明没有错误；
 没有异常详情时说明投影的定位限制，不能恢复或猜测被移除的内容。
 排障完成后停止；不创建定时任务，不自动部署、重启或“清理工作树”。
 用户随后明确要求修复时再进入故障修复技能，生产操作仍需对应授权。

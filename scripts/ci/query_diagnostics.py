@@ -10,6 +10,24 @@ import tempfile
 from delivery import config_text, verify_actor, verify_environment, write_ssh_file
 
 
+def collection_complete(report):
+    units = ('everydayai-backend', 'everydayai-sync', 'everydayai-wecom', 'everydayai-conversation-actor', 'nginx')
+    services = report.get('services', {})
+    if set(services) != set(units) or not all(
+            services[unit].get('status', {}).get('query') == 'ok'
+            and services[unit].get('journal', {}).get('query') == 'ok'
+            and services[unit]['journal'].get('parsing_complete') is True for unit in units):
+        return False
+    files = report.get('nginx_files', {})
+    required = ('/var/log/nginx/access.log', '/var/log/nginx/error.log',
+                '/var/log/nginx/everydayai-access.log', '/var/log/nginx/everydayai-error.log')
+    return (set(files) == set(required)
+        and all(value.get('query') == 'absent' or (value.get('query') == 'ok'
+                and value.get('parsing_complete') is True) for value in files.values())
+        and all(any(value.get('kind') == kind and value.get('query') == 'ok' for value in files.values())
+                for kind in ('access', 'error')))
+
+
 def query():
     repository = os.environ['GITHUB_REPOSITORY']
     verify_actor(repository, os.environ['DELIVERY_APPROVER'])
@@ -44,11 +62,7 @@ def query():
             if denied.returncode == 0 or 'DIAGNOSTICS_DENIED' not in denied.stderr:
                 raise ValueError('Command restriction check failed')
         report['arbitrary_commands_denied'] = True
-        units = ('everydayai-backend', 'everydayai-sync', 'everydayai-wecom', 'everydayai-conversation-actor', 'nginx')
-        report['collection_complete'] = (set(report.get('services', {})) == set(units) and all(
-            report['services'][unit].get('status', {}).get('query') == 'ok'
-            and report['services'][unit].get('journal', {}).get('query') == 'ok'
-            for unit in units))
+    report['collection_complete'] = collection_complete(report)
     # Only the hash-verified allowlist projection is emitted, never SSH stderr or raw journals.
     encoded = json.dumps(report, separators=(',', ':'))
     print('DIAGNOSTICS_RESULT '+encoded)
