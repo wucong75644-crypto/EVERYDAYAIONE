@@ -26,11 +26,11 @@ export default function DetailPage(){
   const ready=images.some(image=>image.category==='product'&&image.status==='ready');
   const pending=images.some(image=>image.status!=='ready');
   const requirementDisabled=isHydrating||isTransitioning||!['draft','completed','failed'].includes(status);
-  const disabled=requirementDisabled||state.isUploading||state.isMutating;
-  const analyzeDisabled=requirementDisabled||state.isUploading||state.isMutating;
+  const disabled=requirementDisabled||state.syncUncertain;
+  const analyzeDisabled=requirementDisabled||state.syncUncertain||images.some(image=>['failed','missing'].includes(image.status));
   const requirementAssist=useDetailRequirementAssist();
   const closeAssist=requirementAssist.close;
-  const requirementAssistDisabled=disabled||!projectId||!ready||pending;
+  const requirementAssistDisabled=disabled||state.isUploading||state.isMutating||!projectId||!ready||pending;
   const openRequirementAssist=()=>{if(projectId&&!requirementAssistDisabled)void requirementAssist.open(projectId,form);};
   const confirmRequirementAssist=(brief:string)=>{
     if(requirementAssist.sourceProjectId===useDetailPageStore.getState().projectId&&!requirementAssistDisabled)updateForm({requirement:brief});
@@ -77,11 +77,11 @@ export default function DetailPage(){
       <div className="mb-2 flex justify-end xl:hidden"><Button variant="ghost" size="sm" icon={<List className="h-4 w-4"/>} onClick={()=>setTaskDrawer(true)}>任务列表</Button></div>
       <section className="grid h-full min-h-0 grid-cols-1 gap-4 md:grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[360px_minmax(0,1fr)_256px] max-xl:h-[calc(100%-40px)] max-md:overflow-y-auto">
         <Card variant="elevated" padding="sm" aria-label="创作设置" className="relative h-full min-h-0 overflow-hidden max-md:min-h-[600px]">
-          <GenerationSettings form={form} images={images} models={models} ratios={ratios} hasProductImage={ready&&!pending} disabled={disabled} settingsDisabled={requirementDisabled||state.isMutating} requirementDisabled={requirementDisabled}
-            analyzeDisabled={analyzeDisabled} analyzeLabel={status==='draft'?'开始生成':'再次生成'}
+          <GenerationSettings form={form} images={images} models={models} ratios={ratios} hasProductImage={images.some(image=>image.category==='product'&&!['failed','missing'].includes(image.status))} disabled={disabled} settingsDisabled={requirementDisabled} uploadDisabled={disabled||state.isUploading} requirementDisabled={requirementDisabled}
+            analyzeDisabled={analyzeDisabled} analyzeLabel={isTransitioning&&(state.isUploading||state.isMutating)?'正在保存…':status==='draft'?'开始生成':'再次生成'}
             requirementAssistDisabled={requirementAssistDisabled} onChange={updateForm} onRequirementAssist={openRequirementAssist} onAnalyze={()=>void startAnalysis()} onAdd={files=>void addImages('product',files)}
             onWorkspaceAdd={paths=>void attachWorkspaceImages('product',paths)} onRemove={id=>void removeImage(id)}/>
-          {formError&&<p role="alert" className="absolute inset-x-4 bottom-16 rounded-lg bg-[var(--s-surface-raised)] p-2 text-xs text-[var(--s-error)] shadow-sm">{formError}{!projectId&&<button type="button" className="ml-2 underline" onClick={()=>void hydrateDraft(scopeKey,preferredId)}>重新加载</button>}</p>}
+          {formError&&<p role="alert" className="absolute inset-x-4 bottom-16 rounded-lg bg-[var(--s-surface-raised)] p-2 text-xs text-[var(--s-error)] shadow-sm">{formError}{state.syncUncertain&&<button type="button" disabled={state.isConfirmingSync} className="ml-2 underline" onClick={()=>void state.confirmImageSync()}>{state.isConfirmingSync?'正在确认…':'重新确认'}</button>}{!projectId&&<button type="button" className="ml-2 underline" onClick={()=>void hydrateDraft(scopeKey,preferredId)}>重新加载</button>}</p>}
         </Card>
         <Card variant="elevated" padding="lg" aria-label="规划与生成结果" className="h-full min-h-0 min-w-0 overflow-y-auto overscroll-contain" tabIndex={0}>
           <DetailWorkspace key={projectId} groups={groups} runs={state.runs} currentRunId={state.currentRunId} projectId={projectId} onRefresh={()=>void refresh()}/>

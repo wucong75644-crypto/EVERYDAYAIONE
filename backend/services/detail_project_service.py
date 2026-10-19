@@ -131,7 +131,8 @@ class DetailProjectService:
 
     def remove_image(self, project_id: str, image_id: str, version: int) -> dict:
         with self.db.pool.connection() as conn:
-            with conn.cursor() as cur:
+            # Pool reads may leave autocommit enabled; keep the version lock until commit.
+            with conn.transaction(), conn.cursor() as cur:
                 self._lock_project(cur, project_id, version)
                 cur.execute(
                     "DELETE FROM detail_project_images WHERE id=%s AND project_id=%s AND user_id=%s RETURNING sort_order",
@@ -147,7 +148,6 @@ class DetailProjectService:
                     (project_id, deleted_order),
                 )
                 self._bump_version(cur, project_id)
-            conn.commit()
         return self.get_by_id(project_id)
 
     def update_category(self, project_id: str, image_id: str, version: int, category: str) -> dict:

@@ -1,4 +1,5 @@
 import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest';
+import { ApiRequestError } from '../../services/api';
 import { useDetailPageStore } from '../useDetailPageStore';
 import * as api from '../../services/detailProject';
 import * as uploadApi from '../../services/upload';
@@ -52,10 +53,11 @@ describe('真实页面任务状态',()=>{
   vi.mocked(api.attachDetailImage).mockResolvedValue({...draft,status:'completed',version:2,images:[...draft.images,{...draft.images[0],id:'new-image',workspace_path:'new.png',sort_order:1}]});
   const pending=useDetailPageStore.getState().addImages('product',[new File(['x'],'new.png',{type:'image/png'})]);
   await vi.advanceTimersByTimeAsync(0);
-  await useDetailPageStore.getState().startAnalysis();
-  expect(api.startDetailProject).not.toHaveBeenCalled();
   useDetailPageStore.getState().updateForm({requirement:'上传中补充文字'});
-  finish({workspace_path:'new.png'} as Awaited<ReturnType<typeof uploadApi.uploadImageFile>>);await pending;
+  vi.mocked(api.startDetailProject).mockRejectedValueOnce(new ApiRequestError('UNAVAILABLE','暂不可用',503));
+  const starting=useDetailPageStore.getState().startAnalysis();
+  expect(api.startDetailProject).not.toHaveBeenCalled();
+  finish({workspace_path:'new.png'} as Awaited<ReturnType<typeof uploadApi.uploadImageFile>>);await pending;await starting;
   expect(api.attachDetailImage).toHaveBeenCalledWith('new.png','product','project');
   expect(useDetailPageStore.getState()).toMatchObject({runs:[old],currentRunId:'old-run',form:{requirement:'上传中补充文字'},isUploading:false});
   expect(useDetailPageStore.getState().images).toHaveLength(2);
@@ -204,9 +206,10 @@ describe('真实页面任务状态',()=>{
   useDetailPageStore.getState().updateForm({requirement:'上传期间补充的尺寸和风格'});
   await vi.advanceTimersByTimeAsync(500);
   expect(api.saveDetailSettings).toHaveBeenCalledTimes(1);
-  await useDetailPageStore.getState().startAnalysis();
+  vi.mocked(api.startDetailProject).mockRejectedValueOnce(new ApiRequestError('UNAVAILABLE','暂不可用',503));
+  const starting=useDetailPageStore.getState().startAnalysis();
   expect(api.startDetailProject).not.toHaveBeenCalled();
-  finishAttach({...draft,version:2});await upload;
+  finishAttach({...draft,version:2});await upload;await starting;
   expect(useDetailPageStore.getState().form.requirement).toBe('上传期间补充的尺寸和风格');
   await vi.advanceTimersByTimeAsync(500);
   expect(api.saveDetailSettings).toHaveBeenCalledWith('project',2,expect.objectContaining({contentType:'main_image',count:15,requirement:'上传期间补充的尺寸和风格'}));
@@ -480,5 +483,159 @@ describe('轻量后台刷新',()=>{
   expect(useDetailPageStore.getState()).toMatchObject({projectId:'B',status:'completed'});
   finishOld({...draft,status:'generating'});await older;
   expect(useDetailPageStore.getState()).toMatchObject({projectId:'B',status:'completed'});
+ });
+});
+
+
+describe('乐观删除与项目写入顺序',()=>{
+ const second={...draft.images[0],id:'second',workspace_path:'second.png',sort_order:1};
+ const timeout=()=>new ApiRequestError('REQUEST_TIMEOUT','请求超时',undefined,undefined,'timeout');
+ it('连续删除立即隐藏，旧回执不复活图片，明确失败只恢复对应项和位置',async()=>{
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,images:[draft.images[0],second]});
+  await useDetailPageStore.getState().hydrateDraft();
+  let finish!:(p:DetailProjectDraft)=>void;
+  vi.mocked(api.removeDetailImage).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}))
+   .mockRejectedValueOnce(new ApiRequestError('DENIED','禁止删除',403));
+  const first=useDetailPageStore.getState().removeImage('image');
+  const next=useDetailPageStore.getState().removeImage('second');
+  expect(useDetailPageStore.getState().images).toEqual([]);
+  useDetailPageStore.getState().updateForm({requirement:'连续删除时的编辑',quality:'2k'});
+  await vi.advanceTimersByTimeAsync(0);
+  expect(api.removeDetailImage).toHaveBeenCalledTimes(1);
+  const version=vi.mocked(api.removeDetailImage).mock.calls[0][2];
+  finish({...draft,version:version+1,images:[second]});await first;await next;
+  expect(api.removeDetailImage).toHaveBeenLastCalledWith('project','second',version+1);
+  expect(useDetailPageStore.getState().images.map(i=>i.id)).toEqual(['second']);
+  expect(useDetailPageStore.getState().form).toMatchObject({requirement:'连续删除时的编辑',quality:'2k'});
+  expect(useDetailPageStore.getState()).toMatchObject({isMutating:false,pendingDeleteIds:[],formError:'禁止删除'});
+ });
+ it('删除中保存和工作区关联排队，使用删除确认后的版本',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  let finish!:(p:DetailProjectDraft)=>void;
+  vi.mocked(api.removeDetailImage).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const deletion=useDetailPageStore.getState().removeImage('image');await vi.advanceTimersByTimeAsync(0);
+  useDetailPageStore.getState().updateForm({requirement:'图片删除中的编辑'});
+  vi.mocked(api.attachDetailImage).mockResolvedValue({...draft,version:4,images:[second]});
+  const attaching=useDetailPageStore.getState().attachWorkspaceImages('product',['second.png']);
+  await vi.advanceTimersByTimeAsync(500);
+  expect(api.attachDetailImage).not.toHaveBeenCalled();expect(api.saveDetailSettings).not.toHaveBeenCalled();
+  finish({...draft,version:2,images:[]});await deletion;await attaching;
+  expect(api.saveDetailSettings).toHaveBeenCalledWith('project',2,expect.objectContaining({requirement:'图片删除中的编辑'}));
+  expect(useDetailPageStore.getState().images.map(i=>i.id)).toEqual(['second']);
+  expect(useDetailPageStore.getState().form.requirement).toBe('图片删除中的编辑');
+ });
+ it('超时后查询确认已删除，直接收敛为成功',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  vi.mocked(api.removeDetailImage).mockRejectedValueOnce(timeout());
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,version:2,images:[]});
+  await useDetailPageStore.getState().removeImage('image');
+  expect(useDetailPageStore.getState()).toMatchObject({images:[],pendingDeleteIds:[],isMutating:false,syncUncertain:false,projectVersion:2,formError:null});
+ });
+ it('超时后仍读到图片不认定失败，暂停后续写入，重新确认后恢复保存',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  vi.mocked(api.removeDetailImage).mockRejectedValueOnce(timeout());
+  await useDetailPageStore.getState().removeImage('image');
+  expect(useDetailPageStore.getState()).toMatchObject({images:[],pendingDeleteIds:['image'],isMutating:true,syncUncertain:true});
+  useDetailPageStore.getState().updateForm({requirement:'结果不确定时仍可编辑'});await vi.advanceTimersByTimeAsync(500);
+  await useDetailPageStore.getState().startAnalysis();
+  await useDetailPageStore.getState().attachWorkspaceImages('product',['new.png']);
+  expect(api.saveDetailSettings).not.toHaveBeenCalled();expect(api.startDetailProject).not.toHaveBeenCalled();expect(api.attachDetailImage).not.toHaveBeenCalled();
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,version:2,images:[]});
+  await useDetailPageStore.getState().confirmImageSync();await vi.advanceTimersByTimeAsync(500);
+  expect(useDetailPageStore.getState()).toMatchObject({syncUncertain:false,isMutating:false,isConfirmingSync:false,form:{requirement:'结果不确定时仍可编辑'}});
+  expect(api.saveDetailSettings).toHaveBeenCalledWith('project',2,expect.objectContaining({requirement:'结果不确定时仍可编辑'}));
+ });
+ it('结果不确定时重新确认按读取的新版本重试，不盲目恢复图片',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  vi.mocked(api.removeDetailImage).mockRejectedValueOnce(timeout());
+  await useDetailPageStore.getState().removeImage('image');
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,version:7});
+  vi.mocked(api.removeDetailImage).mockResolvedValueOnce({...draft,version:8,images:[]});
+  await useDetailPageStore.getState().confirmImageSync();
+  expect(api.removeDetailImage).toHaveBeenLastCalledWith('project','image',7);
+  expect(useDetailPageStore.getState()).toMatchObject({syncUncertain:false,images:[],projectVersion:8});
+ });
+ it('重新确认请求失败仍保留待确认状态和编辑内容',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  vi.mocked(api.removeDetailImage).mockRejectedValueOnce(timeout());
+  vi.mocked(api.getDetailProject).mockRejectedValue(new Error('网络不通'));
+  await useDetailPageStore.getState().removeImage('image');
+  useDetailPageStore.getState().updateForm({requirement:'不能丢失'});
+  await useDetailPageStore.getState().confirmImageSync();
+  expect(useDetailPageStore.getState()).toMatchObject({syncUncertain:true,isConfirmingSync:false,images:[],form:{requirement:'不能丢失'}});
+ });
+ it('版本冲突读取最新项目后重试，不覆盖本地表单',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  vi.mocked(api.removeDetailImage).mockRejectedValueOnce(new ApiRequestError('DETAIL_PROJECT_VERSION_CONFLICT','版本冲突',409))
+   .mockResolvedValueOnce({...draft,version:8,images:[]});
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,version:7});
+  await useDetailPageStore.getState().removeImage('image');
+  expect(api.removeDetailImage).toHaveBeenLastCalledWith('project','image',7);
+  expect(useDetailPageStore.getState()).toMatchObject({images:[],syncUncertain:false});
+ });
+ it('生成等待删除和最新表单保存完成，只发送一次生成请求',async()=>{
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,images:[draft.images[0],second]});
+  await useDetailPageStore.getState().hydrateDraft();
+  let finish!:(p:DetailProjectDraft)=>void;
+  vi.mocked(api.removeDetailImage).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const deletion=useDetailPageStore.getState().removeImage('image');await vi.advanceTimersByTimeAsync(0);
+  useDetailPageStore.getState().updateForm({requirement:'生成必须采用的新要求'});
+  vi.mocked(api.startDetailProject).mockResolvedValue({...draft,version:4,status:'analyzing',images:[second]});
+  const starting=useDetailPageStore.getState().startAnalysis();
+  await useDetailPageStore.getState().startAnalysis();
+  expect(api.startDetailProject).not.toHaveBeenCalled();
+  finish({...draft,version:2,images:[second]});await deletion;await starting;
+  expect(api.saveDetailSettings).toHaveBeenCalledWith('project',2,expect.objectContaining({requirement:'生成必须采用的新要求'}));
+  expect(api.startDetailProject).toHaveBeenCalledTimes(1);
+  expect(api.startDetailProject).toHaveBeenCalledWith('project',3,expect.any(String));
+ });
+ it('删除明确失败时取消等待中的生成，不带恢复的图片悄悄提交',async()=>{
+  vi.mocked(api.getDetailProject).mockResolvedValue({...draft,images:[draft.images[0],second]});
+  await useDetailPageStore.getState().hydrateDraft();
+  let reject!:(e:Error)=>void;
+  vi.mocked(api.removeDetailImage).mockImplementationOnce(()=>new Promise((_resolve,fail)=>{reject=fail;}));
+  const deletion=useDetailPageStore.getState().removeImage('image');await vi.advanceTimersByTimeAsync(0);
+  const starting=useDetailPageStore.getState().startAnalysis();
+  reject(new ApiRequestError('DENIED','禁止删除',403));await deletion;await starting;
+  expect(api.startDetailProject).not.toHaveBeenCalled();
+  expect(useDetailPageStore.getState()).toMatchObject({isTransitioning:false,formError:'禁止删除'});
+ });
+ it('重复点击同一图片只提交一次，确认前不释放恢复所需的预览',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  const revoke=vi.fn();vi.stubGlobal('URL',Object.assign(class extends URL {},{revokeObjectURL:revoke}));
+  useDetailPageStore.setState(state=>({images:state.images.map(image=>({...image,previewUrl:'blob:keep'}))}));
+  vi.mocked(api.removeDetailImage).mockRejectedValueOnce(new ApiRequestError('DENIED','禁止删除',403));
+  const deletion=useDetailPageStore.getState().removeImage('image');
+  await useDetailPageStore.getState().removeImage('image');await deletion;
+  expect(api.removeDetailImage).toHaveBeenCalledTimes(1);expect(revoke).not.toHaveBeenCalled();
+  expect(useDetailPageStore.getState().images[0].previewUrl).toBe('blob:keep');
+ });
+});
+
+
+describe('删除与上传的交叉操作',()=>{
+ it('删除期间新上传立即保留本地预览，旧删除响应不清掉上传项',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  vi.stubGlobal('URL',Object.assign(class extends URL {},{createObjectURL:vi.fn(()=> 'blob:new'),revokeObjectURL:vi.fn()}));
+  let finish!:(p:DetailProjectDraft)=>void;
+  vi.mocked(api.removeDetailImage).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const deletion=useDetailPageStore.getState().removeImage('image');await vi.advanceTimersByTimeAsync(0);
+  let uploadFinish!:(p:Awaited<ReturnType<typeof uploadApi.uploadImageFile>>)=>void;
+  vi.mocked(uploadApi.uploadImageFile).mockImplementationOnce(()=>new Promise(resolve=>{uploadFinish=resolve;}));
+  const uploading=useDetailPageStore.getState().addImages('product',[new File(['x'],'new.png',{type:'image/png'})]);
+  expect(useDetailPageStore.getState().images).toMatchObject([{name:'new.png',previewUrl:'blob:new',status:'local'}]);
+  finish({...draft,version:2,images:[]});await deletion;await vi.advanceTimersByTimeAsync(0);
+  expect(useDetailPageStore.getState().images).toMatchObject([{name:'new.png',previewUrl:'blob:new',status:'uploading'}]);
+  vi.mocked(api.attachDetailImage).mockResolvedValue({...draft,version:3,images:[{...draft.images[0],id:'new',workspace_path:'new.png'}]});
+  uploadFinish({workspace_path:'new.png'} as Awaited<ReturnType<typeof uploadApi.uploadImageFile>>);await uploading;
+  expect(useDetailPageStore.getState().images).toMatchObject([{id:'new',previewUrl:'blob:new',status:'ready'}]);
+  expect(useDetailPageStore.getState().images).toHaveLength(1);
+ });
+ it('其他页面已经移除同一图片时，404经读取核实视为完成',async()=>{
+  await useDetailPageStore.getState().hydrateDraft();
+  vi.mocked(api.removeDetailImage).mockRejectedValueOnce(new ApiRequestError('DETAIL_IMAGE_NOT_FOUND','图片已移除',404));
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,version:2,images:[]});
+  await useDetailPageStore.getState().removeImage('image');
+  expect(useDetailPageStore.getState()).toMatchObject({images:[],pendingDeleteIds:[],syncUncertain:false,formError:null});
  });
 });
