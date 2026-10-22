@@ -82,12 +82,16 @@ class ReleaseCoordinationTests(unittest.TestCase):
             shutil.copy2(SOURCE / name, target)
         executor = self.repository / "deploy/deploy.sh"
         executor.write_text(
-            "#!/usr/bin/env bash\n# TASK_DEPLOY_RESULT_PROTOCOL=1\nset -euo pipefail\n"
+            "#!/usr/bin/env bash\n# TASK_DEPLOY_RESULT_PROTOCOL=1\n# TASK_DEPLOY_INVALIDATION_PROTOCOL=1\nset -euo pipefail\n"
             "source deploy/config.env\n"
             'if [[ "${FAIL_PREFLIGHT:-}" == true ]]; then\n'
             '  printf "preflight_failed\\n" > "$EVERYDAYAI_DEPLOY_STATUS_FILE"\n'
             '  exit 42\n'
             'fi\n'
+            'source deploy/release-coordination.sh\n'
+            'load_release_coordination_config deploy/config.env\n'
+            'release_lock_token=$EVERYDAYAI_RELEASE_LOCK_TOKEN\n'
+            'release_remote_state invalidate\n'
             '[[ ! -e "$REMOTE_APP_DIR/.release-provenance" ]] || exit 93\n'
             'if [[ -n "${FAKE_REMOTE_WRITER_LAUNCHER:-}" ]]; then\n'
             '  "$FAKE_PYTHON" "$FAKE_REMOTE_WRITER_LAUNCHER"\n'
@@ -110,6 +114,7 @@ class ReleaseCoordinationTests(unittest.TestCase):
         self.git("remote", "add", "origin", str(self.remote))
         self.git("push", "-u", "origin", "main")
         self.base = self.git("rev-parse", "HEAD").stdout.strip()
+        self.marker.write_text(f"commit={self.base}\nsource=origin/main\n")
         # Config is shell syntax, independently quoted from the SSH command.
         import shlex
 
@@ -156,7 +161,10 @@ class ReleaseCoordinationTests(unittest.TestCase):
         candidate = self.git("rev-parse", "HEAD", cwd=a).stdout.strip()
         self.assertIn(f"commit={candidate}", self.marker.read_text())
         self.assertEqual((self.production / "executor-context").read_text().strip(), "release.sh-legacy-executor")
-        result = self.deploy(b, "b", "--frontend-only")
+        blocked = self.deploy(b, "b", "--frontend-only", check=False)
+        self.assertNotEqual(blocked.returncode, 0)
+        self.assertIn(f"commit={candidate}", self.marker.read_text())
+        result = self.deploy(a, "partial", "--frontend-only")
         self.assertIn("acceptance_candidate=false", result.stdout)
         self.assertIn("status_after=DEPLOYED_PARTIAL", result.stdout)
         self.assertFalse(self.marker.exists())
@@ -287,7 +295,7 @@ class ReleaseCoordinationTests(unittest.TestCase):
         self.assertFalse((self.production / "written").exists())
         self.assertEqual(self.marker.read_text(), f"commit={self.base}\n")
         self.assertTrue(self.lock.exists())
-        self.assertIn("reason=production_state_unconfirmed", result.stdout)
+        self.assertIn("reason=executor_unconfirmed", result.stdout)
 
     def test_candidate_record_failure_preserves_completed_deployment_and_lock(self) -> None:
         a = self.task("a")
@@ -337,9 +345,26 @@ class ReleaseCoordinationTests(unittest.TestCase):
         self.assertIn("executor_state=failed_safe", result.stdout)
         self.assertFalse(self.lock.exists())
         self.assertFalse((self.production / "written").exists())
-        self.assertFalse(self.marker.exists())
+        self.assertTrue(self.marker.exists())
         self.deploy(a, "retry")
         self.assertTrue(self.marker.exists())
+
+    def test_recovered_candidate_only_allows_original_task_and_consumes_receipt(self):
+        import json
+        a, b = self.task("recover-a"), self.task("recover-b")
+        self.marker.unlink()
+        receipt = self.production / '.release-recovery'
+        receipt.write_text(json.dumps({'failed_commit': self.base,
+            'source': self.git('branch','--show-current',cwd=a).stdout.strip(),
+            'status':'recovered_not_deployed'}))
+        blocked = self.deploy(b, 'blocked', check=False)
+        self.assertNotEqual(blocked.returncode, 0)
+        self.assertTrue(receipt.exists())
+        self.assertFalse((self.production/'written').exists())
+        self.deploy(a, 'resume')
+        self.assertTrue(self.marker.exists())
+        self.assertFalse(receipt.exists())
+        self.assertFalse(self.lock.exists())
 
     def test_current_executor_rejects_uncontrolled_execution(self) -> None:
         result = self.run_command(["bash", str(SOURCE / "deploy/deploy.sh"), "--frontend-only"], check=False)

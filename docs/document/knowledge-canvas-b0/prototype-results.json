@@ -1,0 +1,26 @@
+{
+  "status": "passed",
+  "browser": "154.0.8037.57",
+  "viewport": {
+    "width": 1440,
+    "height": 980
+  },
+  "scenarios": [
+    "UI-01: three tabs, no navigation create button",
+    "UI-05: scoped search, locate and return",
+    "UI-02: blank-canvas create and automatic categorization",
+    "UI-04: expand, edit and save document",
+    "UI-03: Tab child, Enter sibling and undo",
+    "UI-03: drag connector to blank creates linked node",
+    "UI-04: bind and read local text file",
+    "UI-06: canvas has no chat composer or conversation creation",
+    "UI-03: link existing nodes without changing hierarchy",
+    "UI-05: collapsed content can be located from search",
+    "UI-07: schedule configuration produces local task only",
+    "UI-08: empty title is recoverable; cancel leaves no node",
+    "UI-06: root rename preserves stable object identity"
+  ],
+  "page_errors": [],
+  "external_http_requests": [],
+  "limitation": "Local deterministic prototype only; no model/backend/WeCom validation."
+}

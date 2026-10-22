@@ -1,0 +1,1502 @@
+{
+  "version": "b0.1-design-not-a-migration",
+  "tables": [
+    {
+      "name": "kb_containers",
+      "columns": {
+        "id": "uuid NOT NULL",
+        "created_at": "timestamptz NOT NULL DEFAULT now()",
+        "org_id": "uuid NULL",
+        "kind": "text NOT NULL",
+        "owner_id": "uuid NOT NULL",
+        "title": "text NOT NULL",
+        "revision": "bigint NOT NULL DEFAULT 1",
+        "acl_revision": "bigint NOT NULL DEFAULT 1",
+        "deleted_at": "timestamptz NULL"
+      },
+      "primary_key": [
+        "id"
+      ],
+      "unique": [
+        [
+          "org_id",
+          "id"
+        ]
+      ],
+      "foreign_keys": [
+        {
+          "columns": [
+            "owner_id"
+          ],
+          "target_table": "users",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "org_id"
+          ],
+          "target_table": "organizations",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "kind IN ('personal','project','team')",
+        "revision > 0 AND acl_revision > 0",
+        "length(btrim(title)) BETWEEN 1 AND 200",
+        "kind = 'personal' OR org_id IS NOT NULL"
+      ],
+      "indexes": [
+        [
+          "org_id",
+          "kind"
+        ],
+        [
+          "owner_id",
+          "kind"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "kb_can(id, 'read')",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": false,
+      "implementation_phase": "KB-B1"
+    },
+    {
+      "name": "kb_projects",
+      "columns": {
+        "container_id": "uuid NOT NULL",
+        "leader_id": "uuid NOT NULL",
+        "status": "text NOT NULL DEFAULT active",
+        "summary": "text NOT NULL DEFAULT empty"
+      },
+      "primary_key": [
+        "container_id"
+      ],
+      "unique": [],
+      "foreign_keys": [
+        {
+          "columns": [
+            "container_id"
+          ],
+          "target_table": "kb_containers",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "leader_id"
+          ],
+          "target_table": "users",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "container.kind = 'project' (controlled transaction)",
+        "status IN ('active','archived')"
+      ],
+      "indexes": [
+        [
+          "leader_id",
+          "status"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "kb_can(container_id, 'read')",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": false,
+      "implementation_phase": "KB-B1"
+    },
+    {
+      "name": "kb_container_members",
+      "columns": {
+        "id": "uuid NOT NULL",
+        "created_at": "timestamptz NOT NULL DEFAULT now()",
+        "container_id": "uuid NOT NULL",
+        "user_id": "uuid NOT NULL",
+        "role": "text NOT NULL",
+        "status": "text NOT NULL DEFAULT active"
+      },
+      "primary_key": [
+        "id"
+      ],
+      "unique": [
+        [
+          "container_id",
+          "user_id"
+        ]
+      ],
+      "foreign_keys": [
+        {
+          "columns": [
+            "container_id"
+          ],
+          "target_table": "kb_containers",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "target_table": "users",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "role IN ('viewer','editor','manager')",
+        "status IN ('active','revoked')",
+        "member is an active member of container organization (transaction)"
+      ],
+      "indexes": [
+        [
+          "user_id",
+          "status",
+          "container_id"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "kb_can(container_id,'manage') OR (user_id = app.actor_user_id AND kb_can(container_id,'read'))",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": false,
+      "implementation_phase": "KB-B1"
+    },
+    {
+      "name": "kb_objects",
+      "columns": {
+        "id": "uuid NOT NULL",
+        "created_at": "timestamptz NOT NULL DEFAULT now()",
+        "container_id": "uuid NOT NULL",
+        "parent_id": "uuid NULL",
+        "kind": "text NOT NULL",
+        "title": "text NOT NULL",
+        "current_revision": "bigint NOT NULL DEFAULT 1",
+        "created_by": "uuid NOT NULL",
+        "deleted_at": "timestamptz NULL"
+      },
+      "primary_key": [
+        "id"
+      ],
+      "unique": [
+        [
+          "container_id",
+          "id"
+        ]
+      ],
+      "foreign_keys": [
+        {
+          "columns": [
+            "container_id"
+          ],
+          "target_table": "kb_containers",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "created_by"
+          ],
+          "target_table": "users",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "container_id",
+            "parent_id"
+          ],
+          "target_table": "kb_objects",
+          "target_columns": [
+            "container_id",
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "kind IN ('topic','document','file','rule','work_item','automation')",
+        "parent_id IS NULL OR parent_id <> id",
+        "current_revision > 0",
+        "length(btrim(title)) BETWEEN 1 AND 200",
+        "cycle prevention under ordered container write lock"
+      ],
+      "indexes": [
+        [
+          "container_id",
+          "parent_id",
+          "id"
+        ],
+        [
+          "container_id",
+          "deleted_at"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "kb_can(container_id, 'read')",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": false,
+      "implementation_phase": "KB-B1"
+    },
+    {
+      "name": "kb_object_versions",
+      "columns": {
+        "object_id": "uuid NOT NULL",
+        "revision": "bigint NOT NULL",
+        "container_id": "uuid NOT NULL",
+        "container_revision": "bigint NOT NULL",
+        "parent_id_at_version": "uuid NULL",
+        "title": "text NOT NULL",
+        "kind": "text NOT NULL",
+        "body_format": "text NOT NULL",
+        "body": "jsonb NOT NULL",
+        "author_id": "uuid NOT NULL",
+        "created_at": "timestamptz NOT NULL DEFAULT now()"
+      },
+      "primary_key": [
+        "object_id",
+        "revision"
+      ],
+      "unique": [],
+      "foreign_keys": [
+        {
+          "columns": [
+            "container_id",
+            "object_id"
+          ],
+          "target_table": "kb_objects",
+          "target_columns": [
+            "container_id",
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "author_id"
+          ],
+          "target_table": "users",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "revision > 0 AND container_revision > 0",
+        "body_format IN ('plain','markdown','tiptap_json','metadata')",
+        "rule object body has explicit user-authored applicability"
+      ],
+      "indexes": [
+        [
+          "container_id",
+          "container_revision"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "kb_can(container_id, 'read')",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": true,
+      "implementation_phase": "KB-B1"
+    },
+    {
+      "name": "kb_work_items",
+      "columns": {
+        "object_id": "uuid NOT NULL",
+        "container_id": "uuid NOT NULL",
+        "assignee_id": "uuid NULL",
+        "due_at": "timestamptz NULL",
+        "status": "text NOT NULL DEFAULT open"
+      },
+      "primary_key": [
+        "object_id"
+      ],
+      "unique": [],
+      "foreign_keys": [
+        {
+          "columns": [
+            "container_id",
+            "object_id"
+          ],
+          "target_table": "kb_objects",
+          "target_columns": [
+            "container_id",
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "assignee_id"
+          ],
+          "target_table": "users",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "status IN ('open','in_progress','done','cancelled')",
+        "kb_objects.kind = work_item (transaction)"
+      ],
+      "indexes": [
+        [
+          "container_id",
+          "status",
+          "due_at"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "kb_can(container_id, 'read')",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": false,
+      "implementation_phase": "KB-B2"
+    },
+    {
+      "name": "kb_canvas_nodes",
+      "columns": {
+        "id": "uuid NOT NULL",
+        "created_at": "timestamptz NOT NULL DEFAULT now()",
+        "object_id": "uuid NOT NULL",
+        "container_id": "uuid NOT NULL",
+        "placement_container_id": "uuid NOT NULL",
+        "canvas_context": "text NOT NULL",
+        "x": "double precision NOT NULL",
+        "y": "double precision NOT NULL",
+        "width": "double precision NOT NULL DEFAULT 230",
+        "height": "double precision NOT NULL DEFAULT 120",
+        "layout_revision": "bigint NOT NULL DEFAULT 1"
+      },
+      "primary_key": [
+        "id"
+      ],
+      "unique": [],
+      "foreign_keys": [
+        {
+          "columns": [
+            "container_id",
+            "object_id"
+          ],
+          "target_table": "kb_objects",
+          "target_columns": [
+            "container_id",
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "placement_container_id"
+          ],
+          "target_table": "kb_containers",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "layout_revision > 0",
+        "width > 0 AND height > 0",
+        "all coordinates finite"
+      ],
+      "indexes": [
+        [
+          "placement_container_id",
+          "canvas_context"
+        ],
+        [
+          "object_id"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "kb_can(container_id,'read') AND kb_can(placement_container_id,'read')",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": false,
+      "implementation_phase": "KB-B1"
+    },
+    {
+      "name": "kb_relations",
+      "columns": {
+        "id": "uuid NOT NULL",
+        "created_at": "timestamptz NOT NULL DEFAULT now()",
+        "source_object_id": "uuid NOT NULL",
+        "source_container_id": "uuid NOT NULL",
+        "target_object_id": "uuid NOT NULL",
+        "target_container_id": "uuid NOT NULL",
+        "relation_type": "text NOT NULL"
+      },
+      "primary_key": [
+        "id"
+      ],
+      "unique": [
+        [
+          "source_object_id",
+          "target_object_id",
+          "relation_type"
+        ]
+      ],
+      "foreign_keys": [
+        {
+          "columns": [
+            "source_container_id",
+            "source_object_id"
+          ],
+          "target_table": "kb_objects",
+          "target_columns": [
+            "container_id",
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "target_container_id",
+            "target_object_id"
+          ],
+          "target_table": "kb_objects",
+          "target_columns": [
+            "container_id",
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "relation_type IN ('reference','related','dependency')",
+        "source_object_id <> target_object_id"
+      ],
+      "indexes": [
+        [
+          "source_object_id"
+        ],
+        [
+          "target_object_id"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "kb_can(source_container_id,'read') AND kb_can(target_container_id,'read')",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": false,
+      "implementation_phase": "KB-B1"
+    },
+    {
+      "name": "kb_asset_versions",
+      "columns": {
+        "id": "uuid NOT NULL",
+        "created_at": "timestamptz NOT NULL DEFAULT now()",
+        "asset_id": "uuid NOT NULL",
+        "container_id": "uuid NOT NULL",
+        "version_number": "bigint NOT NULL",
+        "storage_provider": "text NOT NULL",
+        "immutable_storage_key": "text NOT NULL",
+        "content_sha256": "char(64) NOT NULL",
+        "size_bytes": "bigint NOT NULL",
+        "mime_type": "text NOT NULL",
+        "created_by": "uuid NOT NULL"
+      },
+      "primary_key": [
+        "id"
+      ],
+      "unique": [
+        [
+          "asset_id",
+          "version_number"
+        ],
+        [
+          "storage_provider",
+          "immutable_storage_key"
+        ]
+      ],
+      "foreign_keys": [
+        {
+          "columns": [
+            "asset_id"
+          ],
+          "target_table": "user_assets",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "container_id"
+          ],
+          "target_table": "kb_containers",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "created_by"
+          ],
+          "target_table": "users",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "size_bytes >= 0",
+        "content_sha256 ~ '^[0-9a-f]{64}$'",
+        "underlying content is immutable before binding (transaction/storage verifier)"
+      ],
+      "indexes": [
+        [
+          "asset_id",
+          "created_at"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "exists authorized binding or snapshot item that pins this asset version; also live source ACL",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": true,
+      "implementation_phase": "KB-B2"
+    },
+    {
+      "name": "kb_object_assets",
+      "columns": {
+        "id": "uuid NOT NULL",
+        "created_at": "timestamptz NOT NULL DEFAULT now()",
+        "object_id": "uuid NOT NULL",
+        "container_id": "uuid NOT NULL",
+        "asset_id": "uuid NOT NULL",
+        "asset_version_id": "uuid NOT NULL",
+        "binding_revision": "bigint NOT NULL DEFAULT 1",
+        "sort_order": "integer NOT NULL DEFAULT 0",
+        "removed_at": "timestamptz NULL"
+      },
+      "primary_key": [
+        "id"
+      ],
+      "unique": [
+        [
+          "object_id",
+          "asset_id"
+        ]
+      ],
+      "foreign_keys": [
+        {
+          "columns": [
+            "container_id",
+            "object_id"
+          ],
+          "target_table": "kb_objects",
+          "target_columns": [
+            "container_id",
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "asset_id"
+          ],
+          "target_table": "user_assets",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "asset_version_id"
+          ],
+          "target_table": "kb_asset_versions",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "binding asset_id agrees with version asset_id (transaction)",
+        "source asset read/distribution and target write checked before first binding"
+      ],
+      "indexes": [
+        [
+          "asset_id"
+        ],
+        [
+          "object_id",
+          "sort_order"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "kb_can(container_id, 'read')",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": false,
+      "implementation_phase": "KB-B2"
+    },
+    {
+      "name": "kb_version_assets",
+      "columns": {
+        "object_id": "uuid NOT NULL",
+        "object_revision": "bigint NOT NULL",
+        "container_id": "uuid NOT NULL",
+        "binding_id": "uuid NOT NULL",
+        "asset_version_id": "uuid NOT NULL"
+      },
+      "primary_key": [
+        "object_id",
+        "object_revision",
+        "binding_id"
+      ],
+      "unique": [],
+      "foreign_keys": [
+        {
+          "columns": [
+            "object_id",
+            "object_revision"
+          ],
+          "target_table": "kb_object_versions",
+          "target_columns": [
+            "object_id",
+            "revision"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "binding_id"
+          ],
+          "target_table": "kb_object_assets",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "asset_version_id"
+          ],
+          "target_table": "kb_asset_versions",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [],
+      "indexes": [
+        [
+          "asset_version_id"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "kb_can(container_id, 'read')",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": true,
+      "implementation_phase": "KB-B2"
+    },
+    {
+      "name": "kb_context_snapshots",
+      "columns": {
+        "id": "uuid NOT NULL",
+        "created_at": "timestamptz NOT NULL DEFAULT now()",
+        "execution_id": "uuid NOT NULL",
+        "input_message_id": "uuid NOT NULL",
+        "actor_user_id": "uuid NOT NULL",
+        "container_id": "uuid NOT NULL",
+        "root_kind": "text NOT NULL",
+        "root_id": "uuid NOT NULL",
+        "container_revision": "bigint NOT NULL",
+        "authorization_revision": "bigint NOT NULL",
+        "state": "text NOT NULL DEFAULT ready"
+      },
+      "primary_key": [
+        "id"
+      ],
+      "unique": [
+        [
+          "execution_id",
+          "root_kind",
+          "root_id"
+        ]
+      ],
+      "foreign_keys": [
+        {
+          "columns": [
+            "input_message_id"
+          ],
+          "target_table": "messages",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "actor_user_id"
+          ],
+          "target_table": "users",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "container_id"
+          ],
+          "target_table": "kb_containers",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "root_kind IN ('object','container')",
+        "root exists and is top-level in authorized container (transaction)",
+        "state IN ('ready','revoked','expired')"
+      ],
+      "indexes": [
+        [
+          "actor_user_id",
+          "execution_id"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "actor_user_id = app.actor_user_id AND kb_can(container_id,'read')",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": false,
+      "implementation_phase": "KB-B4"
+    },
+    {
+      "name": "kb_context_items",
+      "columns": {
+        "snapshot_id": "uuid NOT NULL",
+        "object_id": "uuid NOT NULL",
+        "object_revision": "bigint NOT NULL",
+        "container_id": "uuid NOT NULL",
+        "parent_id_in_snapshot": "uuid NULL",
+        "depth": "integer NOT NULL",
+        "provenance_link_id": "uuid NULL"
+      },
+      "primary_key": [
+        "snapshot_id",
+        "object_id"
+      ],
+      "unique": [],
+      "foreign_keys": [
+        {
+          "columns": [
+            "snapshot_id"
+          ],
+          "target_table": "kb_context_snapshots",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "object_id",
+            "object_revision"
+          ],
+          "target_table": "kb_object_versions",
+          "target_columns": [
+            "object_id",
+            "revision"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "depth >= 0",
+        "item is descendant or was admitted by verified reference traversal"
+      ],
+      "indexes": [
+        [
+          "snapshot_id",
+          "parent_id_in_snapshot",
+          "object_id"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "snapshot belongs to current actor/execution AND kb_can(container_id,'read') AND live object not trashed",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": true,
+      "implementation_phase": "KB-B4"
+    },
+    {
+      "name": "kb_context_reads",
+      "columns": {
+        "id": "uuid NOT NULL",
+        "created_at": "timestamptz NOT NULL DEFAULT now()",
+        "snapshot_id": "uuid NOT NULL",
+        "object_id": "uuid NOT NULL",
+        "container_id": "uuid NOT NULL",
+        "coverage": "text NOT NULL",
+        "locator": "jsonb NOT NULL DEFAULT {}",
+        "status": "text NOT NULL"
+      },
+      "primary_key": [
+        "id"
+      ],
+      "unique": [],
+      "foreign_keys": [
+        {
+          "columns": [
+            "snapshot_id"
+          ],
+          "target_table": "kb_context_snapshots",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "object_id"
+          ],
+          "target_table": "kb_objects",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "coverage IN ('outline_seen','snippet_read','body_partial','body_complete')",
+        "status IN ('ready','processing','unavailable','not_supported')"
+      ],
+      "indexes": [
+        [
+          "snapshot_id",
+          "object_id",
+          "coverage"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "snapshot belongs to current actor AND kb_can(container_id,'read')",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": true,
+      "implementation_phase": "KB-B4"
+    },
+    {
+      "name": "kb_task_targets",
+      "columns": {
+        "id": "uuid NOT NULL",
+        "created_at": "timestamptz NOT NULL DEFAULT now()",
+        "work_item_id": "uuid NOT NULL",
+        "container_id": "uuid NOT NULL",
+        "target_object_id": "uuid NULL",
+        "target_node_id": "uuid NULL",
+        "target_binding_id": "uuid NULL",
+        "region": "jsonb NULL"
+      },
+      "primary_key": [
+        "id"
+      ],
+      "unique": [],
+      "foreign_keys": [
+        {
+          "columns": [
+            "work_item_id"
+          ],
+          "target_table": "kb_work_items",
+          "target_columns": [
+            "object_id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "container_id"
+          ],
+          "target_table": "kb_containers",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "target_object_id"
+          ],
+          "target_table": "kb_objects",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "target_node_id"
+          ],
+          "target_table": "kb_canvas_nodes",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "target_binding_id"
+          ],
+          "target_table": "kb_object_assets",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "at least one target selector exists",
+        "region is a navigation anchor, not a resource authorization grant"
+      ],
+      "indexes": [
+        [
+          "work_item_id"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "kb_can(container_id, 'read')",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": false,
+      "implementation_phase": "KB-B2"
+    },
+    {
+      "name": "kb_schedule_bindings",
+      "columns": {
+        "scheduled_task_id": "uuid NOT NULL",
+        "task_revision": "bigint NOT NULL",
+        "container_id": "uuid NOT NULL",
+        "source_selector": "jsonb NOT NULL",
+        "version_policy": "text NOT NULL",
+        "output_container_id": "uuid NOT NULL",
+        "output_anchor_id": "uuid NULL",
+        "approved_by": "uuid NOT NULL"
+      },
+      "primary_key": [
+        "scheduled_task_id",
+        "task_revision"
+      ],
+      "unique": [],
+      "foreign_keys": [
+        {
+          "columns": [
+            "scheduled_task_id"
+          ],
+          "target_table": "scheduled_tasks",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "container_id"
+          ],
+          "target_table": "kb_containers",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "output_container_id"
+          ],
+          "target_table": "kb_containers",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "approved_by"
+          ],
+          "target_table": "users",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "version_policy IN ('latest','pinned')",
+        "source selector included in approved definition hash and claim snapshot",
+        "pinned refers to immutable versions"
+      ],
+      "indexes": [
+        [
+          "container_id",
+          "scheduled_task_id"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "original scheduled-task permission AND live source ACL AND output ACL",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": true,
+      "implementation_phase": "KB-B5"
+    },
+    {
+      "name": "kb_run_outputs",
+      "columns": {
+        "run_id": "uuid NOT NULL",
+        "output_key": "text NOT NULL",
+        "container_id": "uuid NOT NULL",
+        "object_id": "uuid NOT NULL",
+        "status": "text NOT NULL",
+        "created_at": "timestamptz NOT NULL DEFAULT now()"
+      },
+      "primary_key": [
+        "run_id",
+        "output_key"
+      ],
+      "unique": [],
+      "foreign_keys": [
+        {
+          "columns": [
+            "run_id"
+          ],
+          "target_table": "scheduled_task_runs",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "container_id",
+            "object_id"
+          ],
+          "target_table": "kb_objects",
+          "target_columns": [
+            "container_id",
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "status IN ('ready','failed')"
+      ],
+      "indexes": [
+        [
+          "object_id"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "kb_can(container_id, 'read')",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": false,
+      "implementation_phase": "KB-B5"
+    },
+    {
+      "name": "kb_mutation_receipts",
+      "columns": {
+        "actor_user_id": "uuid NOT NULL",
+        "command_id": "uuid NOT NULL",
+        "container_id": "uuid NOT NULL",
+        "request_hash": "char(64) NOT NULL",
+        "response": "jsonb NOT NULL",
+        "created_at": "timestamptz NOT NULL DEFAULT now()"
+      },
+      "primary_key": [
+        "actor_user_id",
+        "command_id"
+      ],
+      "unique": [],
+      "foreign_keys": [
+        {
+          "columns": [
+            "actor_user_id"
+          ],
+          "target_table": "users",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "container_id"
+          ],
+          "target_table": "kb_containers",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "same key and different request_hash is a conflict",
+        "receipt replay rechecks live ACL"
+      ],
+      "indexes": [
+        [
+          "container_id",
+          "created_at"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "actor_user_id = app.actor_user_id AND kb_can(container_id,'read')",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": true,
+      "implementation_phase": "KB-B1"
+    },
+    {
+      "name": "kb_events",
+      "columns": {
+        "id": "uuid NOT NULL",
+        "created_at": "timestamptz NOT NULL DEFAULT now()",
+        "container_id": "uuid NOT NULL",
+        "sequence": "bigint NOT NULL",
+        "actor_user_id": "uuid NOT NULL",
+        "object_id": "uuid NULL",
+        "event_type": "text NOT NULL",
+        "safe_payload": "jsonb NOT NULL",
+        "created_revision": "bigint NOT NULL"
+      },
+      "primary_key": [
+        "id"
+      ],
+      "unique": [
+        [
+          "container_id",
+          "sequence"
+        ]
+      ],
+      "foreign_keys": [
+        {
+          "columns": [
+            "container_id"
+          ],
+          "target_table": "kb_containers",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "actor_user_id"
+          ],
+          "target_table": "users",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        },
+        {
+          "columns": [
+            "object_id"
+          ],
+          "target_table": "kb_objects",
+          "target_columns": [
+            "id"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "safe_payload never includes credentials, full private body or static private URL"
+      ],
+      "indexes": [
+        [
+          "container_id",
+          "sequence"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "kb_can(container_id, 'read')",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": true,
+      "implementation_phase": "KB-B1"
+    },
+    {
+      "name": "kb_index_jobs",
+      "columns": {
+        "id": "uuid NOT NULL",
+        "created_at": "timestamptz NOT NULL DEFAULT now()",
+        "container_id": "uuid NOT NULL",
+        "object_id": "uuid NOT NULL",
+        "object_revision": "bigint NOT NULL",
+        "state": "text NOT NULL",
+        "attempts": "integer NOT NULL DEFAULT 0",
+        "lease_token": "uuid NULL",
+        "lease_until": "timestamptz NULL"
+      },
+      "primary_key": [
+        "id"
+      ],
+      "unique": [
+        [
+          "object_id",
+          "object_revision"
+        ]
+      ],
+      "foreign_keys": [
+        {
+          "columns": [
+            "object_id",
+            "object_revision"
+          ],
+          "target_table": "kb_object_versions",
+          "target_columns": [
+            "object_id",
+            "revision"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "state IN ('pending','processing','ready','failed')",
+        "attempts >= 0"
+      ],
+      "indexes": [
+        [
+          "state",
+          "lease_until",
+          "created_at"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "kb_can(container_id, 'read')",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": false,
+      "implementation_phase": "KB-B2"
+    },
+    {
+      "name": "kb_search_chunks",
+      "columns": {
+        "id": "uuid NOT NULL",
+        "created_at": "timestamptz NOT NULL DEFAULT now()",
+        "container_id": "uuid NOT NULL",
+        "object_id": "uuid NOT NULL",
+        "object_revision": "bigint NOT NULL",
+        "chunk_number": "integer NOT NULL",
+        "body": "text NOT NULL",
+        "locator": "jsonb NOT NULL",
+        "embedding": "vector NULL; dimensions match existing embedding model"
+      },
+      "primary_key": [
+        "id"
+      ],
+      "unique": [
+        [
+          "object_id",
+          "object_revision",
+          "chunk_number"
+        ]
+      ],
+      "foreign_keys": [
+        {
+          "columns": [
+            "object_id",
+            "object_revision"
+          ],
+          "target_table": "kb_object_versions",
+          "target_columns": [
+            "object_id",
+            "revision"
+          ],
+          "on_delete": "RESTRICT",
+          "deferrable": false
+        }
+      ],
+      "checks": [
+        "chunk_number >= 0",
+        "query filters container ACL and source revision before ranking"
+      ],
+      "indexes": [
+        [
+          "container_id",
+          "object_id",
+          "object_revision"
+        ]
+      ],
+      "row_level_security": {
+        "enabled": true,
+        "force": true,
+        "select": "kb_can(container_id, 'read')",
+        "insert_update_delete": "controlled_transaction_rpc"
+      },
+      "immutable": false,
+      "implementation_phase": "KB-B2"
+    }
+  ],
+  "existing_table_extensions": {
+    "messages": {
+      "add_columns": {
+        "knowledge_refs": "jsonb NOT NULL DEFAULT []"
+      },
+      "checks": [
+        "jsonb_typeof(knowledge_refs) = array",
+        "validated RootReference array with max 8 on acceptance; no actor/org supplied"
+      ],
+      "legacy": "old messages use []"
+    },
+    "scheduled_tasks": "source_binding must be included in change adapter, definition hash, config snapshot and atomic publication; existing rows keep template_file behavior"
+  },
+  "unique_null_policy": {
+    "personal_container": "unique organization-context + owner where kind=personal, with NULL-safe organization equality",
+    "team_container": "unique organization where kind=team"
+  },
+  "deferred_constraints": [
+    {
+      "table": "kb_objects",
+      "foreign_key": [
+        "id",
+        "current_revision"
+      ],
+      "references": "kb_object_versions(object_id,revision)",
+      "reason": "object and first immutable version created together; initially deferred"
+    }
+  ],
+  "transaction_invariants": [
+    "all object mutations lock container, compare revision, update immutable version and container revision, append event and receipt atomically",
+    "parent changes serialize on container and reject cycles, including concurrent inverse moves",
+    "no workspace path alone counts as immutable asset version",
+    "snapshot creation enumerates object versions under repeatable-read and ordered container locks; no model or external network under lock",
+    "live authorization is checked on each outline/search/read/follow operation despite immutable snapshot",
+    "physical deletion forbidden while active bindings, snapshots, run outputs or retention rules require the data"
+  ],
+  "rls_implementation_gate": "policy expressions are design contracts, not SQL. Authorization helper role, search_path, privilege grants and non-recursive membership access must be implemented and verified using actual runtime DB roles; no service-account blanket bypass.",
+  "not_executed": [
+    "CREATE TABLE",
+    "ALTER TABLE",
+    "data backfill",
+    "production schema checks"
+  ],
+  "phase_note": "21 tables describe the core planned domain, not one initial migration. B1 creates only its 9 tables. CRDT persistence is finalized separately in B3 after dependency/service selection.",
+  "scope_note": "21 planned tables across phases; B1 remains 9. Canvas chat, branch conversations, kb_conversation_links and knowledge conversation scope are excluded. Existing main-chat knowledge_refs remain in scope."
+}

@@ -15,8 +15,4 @@ description: 配置或启动 EVERYDAYAIONE 的 Codex 云端开发环境，以及
 开发 bootstrap 仅允许当前工作树散列对应的私有实例；数据目录与密码按任务隔离，Redis 使用独立进程及 DB 15，不能用逻辑 DB 号替代进程隔离。未知非空库、损坏 receipt/checksum 或结构漂移会明确拒绝，禁止覆盖数据或伪造“历史迁移已应用”。现有用户配置不属于此实例时保留并停止。详见 `docs/development/CLOUD_SCHEMA_BOOTSTRAP.md`。外部模型/短信/OSS、沙盒与外部自动化没有单独授权与开发凭据时均不启用。
 日志在忽略目录 `.cloud-dev/`，可能包含连接信息，禁止完整贴到对话或提交。
 
-日常测试和页面预览留在本任务环境；普通开发与检查通过不触发部署。用户明确在当前任务说“提交部署”后，按AGENTS使用 `python3 scripts/ci/task_delivery.py deploy --authorization '提交部署' --message ... --file ...`，无新改动不传message/file。它整合最新main、推送最终SHA、等待范围分类、汇总门禁及所有必要GitHub检查（分档规则见PRE_RELEASE_CHECKS.md，未知/核心改动完整检查）、请求排队发布并等待结果，无需GitHub点批准。冲突保留后由Codex理解双方需求解决、测试并提交再继续，不直接丢弃一边。失败不得换成旧候选或绕过锁。
-
-用户明确“清理工作树”时，先停止本任务已核实的开发进程，然后 `python3 scripts/ci/task_delivery.py accept --authorization '清理工作树'`。仅在远端成功验收、main树及当前任务SHA匹配后自动关闭原任务，不重复部署、不改其他任务代码。等待中断先查已有请求，成功后用finalize收尾，不盲目重复请求。跨VM不推送实时工作区修改；B自己的部署入口会fetch并整合最新main。
-
-仅配置/演练授权不允许创建production/accept/verification请求；只能使用rehearsal及临时Git/fake SSH。生产开关false时不尝试本地凭据。Codex不持有生产SSH、.env、数据库或Redis凭据，GitHub凭据仅在受限环境中供正式job使用。详见 `docs/development/APPROVED_DELIVERY.md`。
+日常测试和页面预览留在云端本任务环境。生产发布、验收和恢复统一由本地 `deploy/release.sh` 执行；云端任务只推送代码和交付记录，由本地接续原任务分支。不要创建 GitHub production/accept/verification 请求，不读取生产凭据或直连生产。详见 AGENTS.md 和 docs/development/APPROVED_DELIVERY.md。

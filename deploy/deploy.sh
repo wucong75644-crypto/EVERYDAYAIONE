@@ -6,6 +6,7 @@
 # 使用方法：./deploy/deploy.sh [选项]
 # TASK_DEPLOY_PROTOCOL=2
 # TASK_DEPLOY_RESULT_PROTOCOL=1
+# TASK_DEPLOY_INVALIDATION_PROTOCOL=1
 ###############################################################################
 
 set -e  # 遇到错误立即退出
@@ -255,6 +256,8 @@ build_backend() {
     # 运行测试（可选）
     if [ "$SKIP_TEST" != true ]; then
         log_info "运行后端测试..."
+        # Populate the sandbox font cache before bounded kernel readiness tests.
+        "$venv_python" -c 'import subprocess,sys; from services.sandbox.functions import build_sandbox_environment; subprocess.run([sys.executable,"-c","import matplotlib.font_manager"],env=build_sandbox_environment(),check=True)'
         # 隔离发布工作树不带生产 .env；使用无副作用的测试配置，且不触发
         # 需要真实数据库并会写入数据的企微并发集成测试。
         local test_mpl_config_dir="${TMPDIR:-/tmp}/everydayai-mpl-cache"
@@ -708,6 +711,7 @@ EOF
         exit 1
     fi
 
+    echo "DEPLOY_STAGE stage=preflight"
     # 检查配置和依赖
     check_config
     require_controlled_release
@@ -726,6 +730,7 @@ EOF
             < deploy/verify_migration_executor.py
     fi
 
+    echo "DEPLOY_STAGE stage=tests_and_build"
     # Complete all selected local tests/builds before any production mutation.
     if [ "$BACKEND_ONLY" != true ]; then
         build_frontend
@@ -733,19 +738,25 @@ EOF
     if [ "$FRONTEND_ONLY" != true ]; then
         build_backend
     fi
+    echo "DEPLOY_STAGE stage=remote_mutation"
     deploy_phase=remote_mutation
+    release_remote_state invalidate || exit 1
     if [ "$SETUP_MODE" = true ]; then
         setup_server
     fi
     if [ "$BACKEND_ONLY" != true ]; then
+        echo "DEPLOY_STAGE stage=frontend_sync"
         sync_frontend
         deploy_frontend
     fi
     if [ "$FRONTEND_ONLY" != true ]; then
         prepare_scheduled_task_cutover
         prepare_skill_personal_mount
+        echo "DEPLOY_STAGE stage=backend_sync"
         sync_backend
+        echo "DEPLOY_STAGE stage=database_migrations"
         apply_migrations
+        echo "DEPLOY_STAGE stage=services_and_readiness"
         deploy_backend
     fi
 
@@ -755,6 +766,7 @@ EOF
     # The parent release.sh establishes provenance only after this entire
     # executor has completed successfully, while retaining the production lock.
 
+    echo "DEPLOY_STAGE stage=completed"
     deploy_phase=completed
     # 完成提示
     echo ""

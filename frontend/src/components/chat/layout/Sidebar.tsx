@@ -15,6 +15,7 @@ import { useClickOutside } from '../../../hooks/useClickOutside';
 import { useLogout } from '../../../hooks/useLogout';
 import { BookOpen, Brain, Images, NotebookPen, Settings2, Search, ChevronsLeft, Plus, X, Settings, LogOut } from 'lucide-react';
 import ConversationList from './ConversationList';
+import { useKnowledgeAvailability } from '../../knowledge/useKnowledgeAvailability';
 import SettingsModal from '../modals/SettingsModal';
 import MemoryModal from '../modals/MemoryModal';
 import { useMemoryStore } from '../../../stores/useMemoryStore';
@@ -71,6 +72,7 @@ export default function Sidebar({
   const { user, currentOrg } = useAuthStore();
   const logout = useLogout();
   const navigate = useNavigate();
+  const knowledgeAvailable = useKnowledgeAvailability();
   const showAdminEntry =
     user?.role === 'super_admin' ||
     (currentOrg && ['owner', 'admin'].includes(currentOrg.role));
@@ -205,6 +207,12 @@ export default function Sidebar({
           <span className="ml-auto px-1.5 py-0.5 rounded-full bg-accent/10 text-accent text-[10px]">新</span>
         </button>
       </div>
+
+      {knowledgeAvailable && <div className="px-3">
+        <button onClick={() => navigate('/knowledge')} className="w-full h-8 flex items-center gap-2 px-3 text-sm text-text-secondary hover:bg-hover rounded-lg transition-base">
+          <BookOpen className="w-4 h-4" /><span>知识画布</span>
+        </button>
+      </div>}
 
       {/* 记忆入口 */}
       <div className="px-3">

@@ -1,0 +1,3120 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "统一知识画布 B0 契约（未实施）",
+    "version": "0.1.0-design"
+  },
+  "paths": {
+    "/api/knowledge/references": {
+      "get": {
+        "operationId": "knowledgeRootReferences",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "授权后的结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "const": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/ReferencesPage"
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "版本或幂等冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "依赖不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "动作不允许",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求或执行额度超限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "沿用现有身份认证失败响应"
+          }
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "personal",
+                "projects",
+                "project",
+                "team"
+              ]
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 500
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          {
+            "name": "X-Org-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "沿用现有组织上下文校验；省略仅允许本人个人内容"
+          }
+        ]
+      }
+    },
+    "/api/knowledge/navigation": {
+      "get": {
+        "operationId": "knowledgeNavigation",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "授权后的结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "const": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/NavigationPage"
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "版本或幂等冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "依赖不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "动作不允许",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求或执行额度超限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "沿用现有身份认证失败响应"
+          }
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "personal",
+                "projects",
+                "project",
+                "team"
+              ]
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          {
+            "name": "parent_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "container_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Org-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "沿用现有组织上下文校验；省略仅允许本人个人内容"
+          }
+        ]
+      }
+    },
+    "/api/knowledge/canvas": {
+      "get": {
+        "operationId": "knowledgeCanvas",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "授权后的结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "const": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/CanvasPage"
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "版本或幂等冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "依赖不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "动作不允许",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求或执行额度超限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "沿用现有身份认证失败响应"
+          }
+        },
+        "parameters": [
+          {
+            "name": "viewport",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          {
+            "name": "X-Org-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "沿用现有组织上下文校验；省略仅允许本人个人内容"
+          }
+        ]
+      }
+    },
+    "/api/knowledge/objects/{id}": {
+      "get": {
+        "operationId": "knowledgeObject",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "授权后的结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "const": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/ObjectView"
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "版本或幂等冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "依赖不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "动作不允许",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求或执行额度超限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "沿用现有身份认证失败响应"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Org-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "沿用现有组织上下文校验；省略仅允许本人个人内容"
+          }
+        ]
+      }
+    },
+    "/api/knowledge/commands": {
+      "post": {
+        "operationId": "knowledgeCommand",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "授权后的结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "const": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/CommandReceipt"
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "版本或幂等冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "依赖不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "动作不允许",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求或执行额度超限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "沿用现有身份认证失败响应"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "X-Org-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "沿用现有组织上下文校验；省略仅允许本人个人内容"
+          }
+        ]
+      }
+    },
+    "/api/knowledge/search": {
+      "get": {
+        "operationId": "knowledgeScopedSearch",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "授权后的结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "const": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/ScopedSearchPage"
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "版本或幂等冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "依赖不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "动作不允许",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求或执行额度超限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "沿用现有身份认证失败响应"
+          }
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "personal",
+                "projects",
+                "project",
+                "team"
+              ]
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 500,
+              "minLength": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          {
+            "name": "X-Org-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "沿用现有组织上下文校验；省略仅允许本人个人内容"
+          }
+        ]
+      }
+    },
+    "/api/knowledge/locate": {
+      "get": {
+        "operationId": "knowledgeLocate",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "授权后的结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "const": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/LocateResponse"
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "版本或幂等冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "依赖不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "动作不允许",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求或执行额度超限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "沿用现有身份认证失败响应"
+          }
+        },
+        "parameters": [
+          {
+            "name": "object_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Org-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "沿用现有组织上下文校验；省略仅允许本人个人内容"
+          }
+        ]
+      }
+    },
+    "/api/knowledge/objects/{id}/assets/{binding_id}/access": {
+      "get": {
+        "operationId": "knowledgeAssetAccess",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "授权后的结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "const": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/AccessResponse"
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "版本或幂等冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "依赖不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "动作不允许",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求或执行额度超限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "沿用现有身份认证失败响应"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "binding_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Org-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "沿用现有组织上下文校验；省略仅允许本人个人内容"
+          }
+        ]
+      }
+    },
+    "/api/knowledge/context/resolve": {
+      "post": {
+        "operationId": "knowledgeResolveContext",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "授权后的结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "const": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/ContextResponse"
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "data"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "版本或幂等冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "依赖不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "动作不允许",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求或执行额度超限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "沿用现有身份认证失败响应"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContextRequest"
+              }
+            }
+          }
+        },
+        "x-internal-server-adapter": true,
+        "parameters": [
+          {
+            "name": "X-Org-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "沿用现有组织上下文校验；省略仅允许本人个人内容"
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "RootRef": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "enum": [
+              "object",
+              "container"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "RootReference": {
+        "type": "object",
+        "properties": {
+          "root": {
+            "$ref": "#/components/schemas/RootRef"
+          },
+          "policy": {
+            "const": "latest_saved"
+          }
+        },
+        "required": [
+          "root",
+          "policy"
+        ],
+        "additionalProperties": false
+      },
+      "KnowledgeEnvelope": {
+        "type": "object",
+        "properties": {
+          "knowledge_refs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RootReference"
+            },
+            "maxItems": 8
+          }
+        },
+        "required": [
+          "knowledge_refs"
+        ],
+        "additionalProperties": false
+      },
+      "Position": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "additionalProperties": false
+      },
+      "Source": {
+        "type": "object",
+        "properties": {
+          "object_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "object_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "binding_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "asset_version_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "locator": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "object_id",
+          "object_revision",
+          "title"
+        ],
+        "additionalProperties": false
+      },
+      "Rule": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 12000
+          },
+          "applies_to": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 300,
+              "minLength": 1
+            },
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "source",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "Candidate": {
+        "type": "object",
+        "properties": {
+          "root": {
+            "$ref": "#/components/schemas/RootRef"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "breadcrumb": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "maxItems": 20
+          },
+          "container_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "root",
+          "title",
+          "breadcrumb",
+          "container_id",
+          "revision"
+        ],
+        "additionalProperties": false
+      },
+      "ReferencesPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Candidate"
+            },
+            "maxItems": 100
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "additionalProperties": false
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "maxLength": 100
+              },
+              "message": {
+                "type": "string",
+                "maxLength": 1000
+              },
+              "details": {}
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false
+      },
+      "ContextRequest": {
+        "type": "object",
+        "properties": {
+          "execution_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "input_message_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "knowledge_refs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RootReference"
+            },
+            "maxItems": 8
+          }
+        },
+        "required": [
+          "execution_id",
+          "input_message_id",
+          "knowledge_refs"
+        ],
+        "additionalProperties": false
+      },
+      "ResolvedRoot": {
+        "type": "object",
+        "properties": {
+          "root_handle": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1
+          },
+          "root": {
+            "$ref": "#/components/schemas/RootRef"
+          },
+          "snapshot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "container_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 3000
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rule"
+            },
+            "maxItems": 100
+          },
+          "outline_status": {
+            "enum": [
+              "ready",
+              "empty",
+              "partial"
+            ]
+          }
+        },
+        "required": [
+          "root_handle",
+          "root",
+          "snapshot_id",
+          "container_revision",
+          "title",
+          "summary",
+          "rules",
+          "outline_status"
+        ],
+        "additionalProperties": false
+      },
+      "ContextResponse": {
+        "type": "object",
+        "properties": {
+          "execution_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "roots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResolvedRoot"
+            },
+            "maxItems": 8
+          }
+        },
+        "required": [
+          "execution_id",
+          "roots"
+        ],
+        "additionalProperties": false
+      },
+      "OutlineRequest": {
+        "type": "object",
+        "properties": {
+          "root_handle": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1
+          },
+          "parent_handle": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1
+          },
+          "cursor": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 30
+          }
+        },
+        "required": [
+          "root_handle"
+        ],
+        "additionalProperties": false
+      },
+      "OutlineItem": {
+        "type": "object",
+        "properties": {
+          "item_handle": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "kind": {
+            "enum": [
+              "topic",
+              "document",
+              "file",
+              "rule",
+              "work_item",
+              "automation"
+            ]
+          },
+          "has_children": {
+            "type": "boolean"
+          },
+          "processing_state": {
+            "enum": [
+              "ready",
+              "processing",
+              "not_supported",
+              "failed"
+            ]
+          }
+        },
+        "required": [
+          "item_handle",
+          "title",
+          "kind",
+          "has_children",
+          "processing_state"
+        ],
+        "additionalProperties": false
+      },
+      "OutlineResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OutlineItem"
+            },
+            "maxItems": 100
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rule"
+            },
+            "maxItems": 100
+          },
+          "coverage": {
+            "const": "outline_seen"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "rules",
+          "coverage"
+        ],
+        "additionalProperties": false
+      },
+      "SearchRequest": {
+        "type": "object",
+        "properties": {
+          "root_handle": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1
+          },
+          "cursor": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 30
+          }
+        },
+        "required": [
+          "root_handle",
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "SearchHit": {
+        "type": "object",
+        "properties": {
+          "item_handle": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          },
+          "snippet": {
+            "type": "string",
+            "maxLength": 3000
+          },
+          "coverage": {
+            "const": "snippet_read"
+          }
+        },
+        "required": [
+          "item_handle",
+          "source",
+          "snippet",
+          "coverage"
+        ],
+        "additionalProperties": false
+      },
+      "SearchResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            },
+            "maxItems": 100
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          },
+          "unindexed_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "processing_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "unindexed_count",
+          "processing_count"
+        ],
+        "additionalProperties": false
+      },
+      "ReadRequest": {
+        "type": "object",
+        "properties": {
+          "root_handle": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1
+          },
+          "item_handles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 300,
+              "minLength": 1
+            },
+            "minItems": 1,
+            "maxItems": 10
+          },
+          "cursor": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "root_handle",
+          "item_handles"
+        ],
+        "additionalProperties": false
+      },
+      "ReadItem": {
+        "type": "object",
+        "properties": {
+          "item_handle": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 12000
+          },
+          "state": {
+            "enum": [
+              "ready",
+              "processing",
+              "not_supported",
+              "unavailable"
+            ]
+          },
+          "coverage": {
+            "enum": [
+              "body_partial",
+              "body_complete",
+              "unread"
+            ]
+          },
+          "reference_links": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "link_handle": {
+                  "type": "string",
+                  "maxLength": 300,
+                  "minLength": 1
+                },
+                "title": {
+                  "type": "string",
+                  "maxLength": 200
+                }
+              },
+              "required": [
+                "link_handle",
+                "title"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "item_handle",
+          "state",
+          "coverage"
+        ],
+        "additionalProperties": false
+      },
+      "ReadResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReadItem"
+            },
+            "maxItems": 10
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rule"
+            },
+            "maxItems": 100
+          },
+          "rule_conflicts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 1000
+            },
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "rules",
+          "rule_conflicts"
+        ],
+        "additionalProperties": false
+      },
+      "FollowRequest": {
+        "type": "object",
+        "properties": {
+          "root_handle": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1
+          },
+          "link_handle": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1
+          }
+        },
+        "required": [
+          "root_handle",
+          "link_handle"
+        ],
+        "additionalProperties": false
+      },
+      "FollowResponse": {
+        "type": "object",
+        "properties": {
+          "item_handle": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          },
+          "provenance_link": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1
+          },
+          "scope": {
+            "const": "referenced_object_only"
+          }
+        },
+        "required": [
+          "item_handle",
+          "source",
+          "provenance_link",
+          "scope"
+        ],
+        "additionalProperties": false
+      },
+      "Node": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "object_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "container_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "kind": {
+            "type": "string",
+            "maxLength": 30
+          },
+          "position": {
+            "$ref": "#/components/schemas/Position"
+          },
+          "layout_revision": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "id",
+          "object_id",
+          "container_id",
+          "title",
+          "kind",
+          "position",
+          "layout_revision"
+        ],
+        "additionalProperties": false
+      },
+      "CanvasPage": {
+        "type": "object",
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Node"
+            },
+            "maxItems": 500
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "source": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "target": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "kind": {
+                  "enum": [
+                    "contains",
+                    "reference",
+                    "related",
+                    "dependency"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "source",
+                "target",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 1000
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "nodes",
+          "edges",
+          "next_cursor"
+        ],
+        "additionalProperties": false
+      },
+      "ObjectView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "container_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "maxLength": 30
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 200000
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "maxItems": 30
+          }
+        },
+        "required": [
+          "id",
+          "container_id",
+          "parent_id",
+          "kind",
+          "title",
+          "revision",
+          "capabilities"
+        ],
+        "additionalProperties": false
+      },
+      "CreatePayload": {
+        "type": "object",
+        "properties": {
+          "container_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "kind": {
+            "enum": [
+              "topic",
+              "document",
+              "rule",
+              "work_item",
+              "file"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 200000
+          },
+          "position": {
+            "$ref": "#/components/schemas/Position"
+          }
+        },
+        "required": [
+          "container_id",
+          "kind",
+          "title",
+          "position"
+        ],
+        "additionalProperties": false
+      },
+      "DocumentPayload": {
+        "type": "object",
+        "properties": {
+          "object_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 200000
+          }
+        },
+        "required": [
+          "object_id",
+          "expected_revision",
+          "body"
+        ],
+        "additionalProperties": false
+      },
+      "ReparentPayload": {
+        "type": "object",
+        "properties": {
+          "object_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "object_id",
+          "expected_revision",
+          "parent_id"
+        ],
+        "additionalProperties": false
+      },
+      "BindPayload": {
+        "type": "object",
+        "properties": {
+          "object_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "asset_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "asset_version_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "object_id",
+          "expected_revision",
+          "asset_id",
+          "asset_version_id"
+        ],
+        "additionalProperties": false
+      },
+      "MovePayload": {
+        "type": "object",
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "properties": {
+                "node_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "expected_revision": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "position": {
+                  "$ref": "#/components/schemas/Position"
+                }
+              },
+              "required": [
+                "node_id",
+                "expected_revision",
+                "position"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "nodes"
+        ],
+        "additionalProperties": false
+      },
+      "TitlePayload": {
+        "type": "object",
+        "properties": {
+          "object_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1
+          }
+        },
+        "required": [
+          "object_id",
+          "expected_revision",
+          "title"
+        ],
+        "additionalProperties": false
+      },
+      "ConnectPayload": {
+        "type": "object",
+        "properties": {
+          "source_object_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "target_object_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "relation_type": {
+            "enum": [
+              "reference",
+              "related",
+              "dependency"
+            ]
+          }
+        },
+        "required": [
+          "source_object_id",
+          "target_object_id",
+          "relation_type"
+        ],
+        "additionalProperties": false
+      },
+      "ObjectMutation": {
+        "type": "object",
+        "properties": {
+          "object_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "object_id",
+          "expected_revision"
+        ],
+        "additionalProperties": false
+      },
+      "ProjectPayload": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1
+          },
+          "position": {
+            "$ref": "#/components/schemas/Position"
+          }
+        },
+        "required": [
+          "title",
+          "position"
+        ],
+        "additionalProperties": false
+      },
+      "CommandRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "command_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "operation": {
+                "const": "create_object"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/CreatePayload"
+              }
+            },
+            "required": [
+              "command_id",
+              "operation",
+              "payload"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "command_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "operation": {
+                "const": "create_project"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/ProjectPayload"
+              }
+            },
+            "required": [
+              "command_id",
+              "operation",
+              "payload"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "command_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "operation": {
+                "const": "save_document"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/DocumentPayload"
+              }
+            },
+            "required": [
+              "command_id",
+              "operation",
+              "payload"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "command_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "operation": {
+                "const": "reparent"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/ReparentPayload"
+              }
+            },
+            "required": [
+              "command_id",
+              "operation",
+              "payload"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "command_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "operation": {
+                "const": "bind_asset"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/BindPayload"
+              }
+            },
+            "required": [
+              "command_id",
+              "operation",
+              "payload"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "command_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "operation": {
+                "const": "move_nodes"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/MovePayload"
+              }
+            },
+            "required": [
+              "command_id",
+              "operation",
+              "payload"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "command_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "operation": {
+                "const": "update_title"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/TitlePayload"
+              }
+            },
+            "required": [
+              "command_id",
+              "operation",
+              "payload"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "command_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "operation": {
+                "const": "connect"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/ConnectPayload"
+              }
+            },
+            "required": [
+              "command_id",
+              "operation",
+              "payload"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "command_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "operation": {
+                "const": "trash"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/ObjectMutation"
+              }
+            },
+            "required": [
+              "command_id",
+              "operation",
+              "payload"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "command_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "operation": {
+                "const": "restore"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/ObjectMutation"
+              }
+            },
+            "required": [
+              "command_id",
+              "operation",
+              "payload"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "CommandReceipt": {
+        "type": "object",
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "enum": [
+              "applied",
+              "replayed"
+            ]
+          },
+          "object_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "event_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "command_id",
+          "status",
+          "object_id",
+          "revision",
+          "event_id"
+        ],
+        "additionalProperties": false
+      },
+      "AccessResponse": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "preview",
+                "download"
+              ]
+            },
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "url",
+          "expires_at",
+          "capabilities"
+        ],
+        "additionalProperties": false
+      },
+      "LocateResponse": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "object_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ancestor_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 100
+          },
+          "bounds": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "width": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "height": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "width",
+              "height"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "node_id",
+          "object_id",
+          "ancestor_ids",
+          "bounds"
+        ],
+        "additionalProperties": false
+      },
+      "ScopedSearchHit": {
+        "type": "object",
+        "properties": {
+          "object_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          },
+          "snippet": {
+            "type": "string",
+            "maxLength": 3000
+          },
+          "processing_state": {
+            "enum": [
+              "ready",
+              "processing",
+              "failed"
+            ]
+          }
+        },
+        "required": [
+          "object_id",
+          "title",
+          "source",
+          "snippet",
+          "processing_state"
+        ],
+        "additionalProperties": false
+      },
+      "ScopedSearchPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScopedSearchHit"
+            },
+            "maxItems": 100
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          },
+          "index_state": {
+            "enum": [
+              "ready",
+              "partial",
+              "processing"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "index_state"
+        ],
+        "additionalProperties": false
+      },
+      "NavigationEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "object_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "container_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "kind": {
+            "type": "string",
+            "maxLength": 30
+          },
+          "has_children": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "object_id",
+          "container_id",
+          "title",
+          "kind",
+          "has_children"
+        ],
+        "additionalProperties": false
+      },
+      "NavigationPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NavigationEntry"
+            },
+            "maxItems": 100
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "x-existing-contract-extensions": {
+    "GenerateRequest": {
+      "endpoint": "POST /api/conversations/{conversation_id}/messages/generate",
+      "add_properties": {
+        "knowledge_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/RootReference"
+          },
+          "maxItems": 8
+        }
+      },
+      "omitted_default": [],
+      "server_derived_only": [
+        "actor",
+        "org",
+        "snapshot_id",
+        "acl"
+      ]
+    },
+    "Message": {
+      "add_properties": {
+        "knowledge_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/RootReference"
+          },
+          "maxItems": 8
+        }
+      },
+      "persistence": "messages.knowledge_refs JSONB NOT NULL DEFAULT []",
+      "retry": "same attempt preserves refs and snapshot; regenerate opens latest snapshot"
+    },
+    "Scope": "Preserve existing user/channel conversation scopes. Main-chat knowledge references use live actor ACL; no knowledge conversation scope or canvas chat in this release."
+  },
+  "x-model-tools": [
+    {
+      "name": "knowledge_outline",
+      "capability": "knowledge_workspace.outline",
+      "input_schema": {
+        "$ref": "#/components/schemas/OutlineRequest"
+      },
+      "output_schema": {
+        "$ref": "#/components/schemas/OutlineResponse"
+      }
+    },
+    {
+      "name": "knowledge_search",
+      "capability": "knowledge_workspace.search",
+      "input_schema": {
+        "$ref": "#/components/schemas/SearchRequest"
+      },
+      "output_schema": {
+        "$ref": "#/components/schemas/SearchResponse"
+      }
+    },
+    {
+      "name": "knowledge_read",
+      "capability": "knowledge_workspace.read",
+      "input_schema": {
+        "$ref": "#/components/schemas/ReadRequest"
+      },
+      "output_schema": {
+        "$ref": "#/components/schemas/ReadResponse"
+      }
+    },
+    {
+      "name": "knowledge_follow_reference",
+      "capability": "knowledge_workspace.follow_reference",
+      "input_schema": {
+        "$ref": "#/components/schemas/FollowRequest"
+      },
+      "output_schema": {
+        "$ref": "#/components/schemas/FollowResponse"
+      }
+    }
+  ],
+  "x-contract-tests": [
+    {
+      "name": "root_reference",
+      "schema": "RootReference",
+      "valid": true,
+      "value": {
+        "root": {
+          "kind": "object",
+          "id": "10000000-0000-4000-8000-000000000001"
+        },
+        "policy": "latest_saved"
+      }
+    },
+    {
+      "name": "reject_child_range_ui",
+      "schema": "RootReference",
+      "valid": false,
+      "value": {
+        "root": {
+          "kind": "object",
+          "id": "10000000-0000-4000-8000-000000000001"
+        },
+        "policy": "latest_saved",
+        "range": "content"
+      }
+    },
+    {
+      "name": "reject_arbitrary_kind",
+      "schema": "RootRef",
+      "valid": false,
+      "value": {
+        "kind": "file",
+        "id": "10000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "name": "reject_actor_injection",
+      "schema": "RootReference",
+      "valid": false,
+      "value": {
+        "root": {
+          "kind": "object",
+          "id": "10000000-0000-4000-8000-000000000001"
+        },
+        "policy": "latest_saved",
+        "actor_user_id": "10000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "name": "reject_invalid_uuid",
+      "schema": "RootRef",
+      "valid": false,
+      "value": {
+        "kind": "object",
+        "id": "same-name"
+      }
+    },
+    {
+      "name": "legacy_empty_refs",
+      "schema": "KnowledgeEnvelope",
+      "valid": true,
+      "value": {
+        "knowledge_refs": []
+      }
+    },
+    {
+      "name": "root_only_outline",
+      "schema": "OutlineRequest",
+      "valid": true,
+      "value": {
+        "root_handle": "opaque-root"
+      }
+    },
+    {
+      "name": "reject_outline_limit",
+      "schema": "OutlineRequest",
+      "valid": false,
+      "value": {
+        "root_handle": "r",
+        "limit": 101
+      }
+    },
+    {
+      "name": "reject_tool_actor",
+      "schema": "ReadRequest",
+      "valid": false,
+      "value": {
+        "root_handle": "r",
+        "item_handles": [
+          "i"
+        ],
+        "actor_user_id": "u"
+      }
+    },
+    {
+      "name": "read_items",
+      "schema": "ReadRequest",
+      "valid": true,
+      "value": {
+        "root_handle": "r",
+        "item_handles": [
+          "i1",
+          "i2"
+        ]
+      }
+    },
+    {
+      "name": "reject_follow_target_uuid",
+      "schema": "FollowRequest",
+      "valid": false,
+      "value": {
+        "root_handle": "r",
+        "target_id": "10000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "name": "follow_opaque_link",
+      "schema": "FollowRequest",
+      "valid": true,
+      "value": {
+        "root_handle": "r",
+        "link_handle": "link1"
+      }
+    },
+    {
+      "name": "create_root",
+      "schema": "CommandRequest",
+      "valid": true,
+      "value": {
+        "command_id": "10000000-0000-4000-8000-000000000001",
+        "operation": "create_object",
+        "payload": {
+          "container_id": "10000000-0000-4000-8000-000000000001",
+          "kind": "topic",
+          "title": "售后处理",
+          "position": {
+            "x": 10,
+            "y": 20
+          }
+        }
+      }
+    },
+    {
+      "name": "reject_empty_title",
+      "schema": "CreatePayload",
+      "valid": false,
+      "value": {
+        "container_id": "10000000-0000-4000-8000-000000000001",
+        "kind": "topic",
+        "title": "",
+        "position": {
+          "x": 1,
+          "y": 1
+        }
+      }
+    },
+    {
+      "name": "reject_unversioned_edit",
+      "schema": "DocumentPayload",
+      "valid": false,
+      "value": {
+        "object_id": "10000000-0000-4000-8000-000000000001",
+        "body": "new"
+      }
+    },
+    {
+      "name": "reject_too_many_refs",
+      "schema": "KnowledgeEnvelope",
+      "valid": false,
+      "value": {
+        "knowledge_refs": [
+          {
+            "root": {
+              "kind": "object",
+              "id": "10000000-0000-4000-8000-000000000001"
+            },
+            "policy": "latest_saved"
+          },
+          {
+            "root": {
+              "kind": "object",
+              "id": "10000000-0000-4000-8000-000000000001"
+            },
+            "policy": "latest_saved"
+          },
+          {
+            "root": {
+              "kind": "object",
+              "id": "10000000-0000-4000-8000-000000000001"
+            },
+            "policy": "latest_saved"
+          },
+          {
+            "root": {
+              "kind": "object",
+              "id": "10000000-0000-4000-8000-000000000001"
+            },
+            "policy": "latest_saved"
+          },
+          {
+            "root": {
+              "kind": "object",
+              "id": "10000000-0000-4000-8000-000000000001"
+            },
+            "policy": "latest_saved"
+          },
+          {
+            "root": {
+              "kind": "object",
+              "id": "10000000-0000-4000-8000-000000000001"
+            },
+            "policy": "latest_saved"
+          },
+          {
+            "root": {
+              "kind": "object",
+              "id": "10000000-0000-4000-8000-000000000001"
+            },
+            "policy": "latest_saved"
+          },
+          {
+            "root": {
+              "kind": "object",
+              "id": "10000000-0000-4000-8000-000000000001"
+            },
+            "policy": "latest_saved"
+          },
+          {
+            "root": {
+              "kind": "object",
+              "id": "10000000-0000-4000-8000-000000000001"
+            },
+            "policy": "latest_saved"
+          }
+        ]
+      }
+    }
+  ],
+  "x-semantic-validation": [
+    "project scope requires project_id; personal/team scope rejects unrelated project_id",
+    "object root must have no parent at context resolution; container root must be accessible",
+    "all opaque handles bind current actor, execution, root and snapshot; cursor binds query too",
+    "knowledge session rejects private or other-container roots",
+    "request idempotency includes normalized refs; same key with different refs returns 409",
+    "worker cannot bypass current ACL; processing attachments cannot count as fully read",
+    "body and knowledge refs are persisted atomically; unknown new-reference fields cannot be silently ignored",
+    "object root eligibility: kind topic and parent_id NULL; independent documents remain readable via container root",
+    "resolve_context compares supplied roots with the persisted input message; mismatch rejected",
+    "top-level reserved actor/org/snapshot/acl inputs are rejected explicitly; legacy unrelated fields keep existing compatibility",
+    "navigation parent_id belongs to the selected container; main-chat knowledge roots are independently authorized under existing conversation identity",
+    "success responses use existing success/data envelope; error responses use existing error/code/message/details envelope"
+  ],
+  "x-product-scope": {
+    "canvas_chat": false,
+    "branch_chat": false,
+    "knowledge_mentions": "existing main conversation area only",
+    "branch_context_menu": "schedule task configuration and authorized push recipients"
+  }
+}

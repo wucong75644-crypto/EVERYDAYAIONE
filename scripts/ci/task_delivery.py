@@ -184,8 +184,25 @@ def main():
         cmd.add_argument('--file',action='append',default=[])
     args=parser.parse_args()
     if args.action=='prepare':prepare()
-    elif args.action=='finalize':finalize_acceptance(args.run,args.authorization)
-    else:submit({'deploy':'production','accept':'accept','rehearsal':'rehearsal'}[args.action],args.authorization,
-                check_run=args.check_run,message=args.message,files=args.file,check_mode=args.check_mode)
+    elif args.action=='finalize':raise RuntimeError('Historical GitHub acceptance is retired; use local release.sh --accept-and-close')
+    elif args.action in ('deploy', 'accept'):
+        expected = '提交部署' if args.action == 'deploy' else '清理工作树'
+        if args.authorization != expected:
+            raise RuntimeError('Explicit task authorization required')
+        if args.check_run or args.check_mode != 'scoped':
+            raise RuntimeError('Local release runs its checks; GitHub run IDs are not deployment authorization')
+        command = ['bash', 'deploy/release.sh']
+        if args.action == 'accept':
+            if args.message or args.file:
+                raise RuntimeError('Acceptance cannot submit edits')
+            command += ['--accept-and-close']
+        elif args.file:
+            if not args.message:
+                raise RuntimeError('Scoped commit message required')
+            command += ['--message', args.message, *[v for p in args.file for v in ('--file', p)]]
+        else:
+            command += ['--deploy-task', delivery.git('rev-parse', 'HEAD')]
+        subprocess.run(command, cwd=ROOT, check=True)
+    else:raise RuntimeError('Rehearsal is a read-only GitHub workflow_dispatch; no delivery tags are used')
 
 if __name__=='__main__':main()
