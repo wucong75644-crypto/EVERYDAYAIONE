@@ -1,3 +1,7 @@
+# 可选 GitHub 代码检查
+
+生产已统一走本地 deploy/release.sh；本文描述可选 CI 检查机制，不是生产发布授权或执行入口。不要创建 delivery-production/accept 标签。当前发布流程以 [APPROVED_DELIVERY.md](APPROVED_DELIVERY.md) 为准。下文保留历史检查机制细节供维护参考。
+
 # 发布前 GitHub 检查
 
 日常开发和预览留在独立 Codex 任务工作树。用户说“提交部署”后，入口整合最新 main，对最终完整 SHA 选择检查，再请求生产发布。检查不持有生产凭据，不连接生产。部署和验收规则见 [APPROVED_DELIVERY.md](APPROVED_DELIVERY.md)。
@@ -37,7 +41,7 @@
 # 用户明确说“提交部署”后，由 Codex 使用默认入口：
 python3 scripts/ci/task_delivery.py deploy --authorization '提交部署' --message 'type: description' --file path/to/task-file
 # 主动要求完整检查：
-python3 scripts/ci/task_delivery.py deploy --authorization '提交部署' --check-mode full
+python3 scripts/ci/request-check.py --mode full
 # 仅请求检查，无生产请求（须有对应推送授权）：
 python3 scripts/ci/request-check.py --mode shadow
 python3 scripts/ci/request-check.py --mode full

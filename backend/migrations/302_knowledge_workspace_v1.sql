@@ -1,4 +1,8 @@
 -- Additive V1 knowledge workspace. No changes to agent knowledge or detail projects.
+-- Existing identity tables belong to everydayai. The workspace owner needs
+-- only REFERENCES on their keys to create the scoped foreign keys below.
+SET LOCAL ROLE everydayai;
+GRANT REFERENCES (id) ON public.organizations, public.users TO everydayai_owner;
 SET LOCAL ROLE everydayai_owner;
 CREATE TABLE public.kb_containers (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), org_id uuid REFERENCES public.organizations(id),

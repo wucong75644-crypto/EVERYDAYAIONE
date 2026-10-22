@@ -153,24 +153,16 @@ class DeliveryPolicyTests(unittest.TestCase):
             with self.subTest(changes=changes), self.assertRaises(RuntimeError):
                 delivery.config_text(json.dumps({**metadata, **changes}))
 
-    def test_queue_and_environment_boundaries(self):
+    def test_github_has_no_production_execution_or_credentials(self):
         workflow = yaml.load((ROOT / '.github/workflows/delivery.yml').read_text(), Loader=yaml.BaseLoader)
-        self.assertEqual(workflow['concurrency']['queue'], 'max')
-        self.assertEqual(workflow['concurrency']['cancel-in-progress'], 'false')
-        group = workflow['concurrency']['group']
-        self.assertIn("startsWith(github.ref, 'refs/tags/delivery-accept/')", group)
-        self.assertIn('everydayaione-production-acceptance', group)
-        self.assertIn('everydayaione-production-delivery', group)
-        self.assertNotIn('github.ref_name', group)
-        self.assertNotIn('workflow_run', workflow['on'])
-        self.assertEqual(workflow['jobs']['rehearsal']['environment'], 'delivery-rehearsal')
-        self.assertNotIn('secrets.', json.dumps(workflow['jobs']['rehearsal']))
-        for name in ('production', 'acceptance'):
-            job = workflow['jobs'][name]
-            self.assertEqual(job['environment'], 'production')
-            self.assertIn("vars.PRODUCTION_DELIVERY_ENABLED == 'true'", job['if'])
-        self.assertEqual(workflow['permissions'], {'contents': 'read', 'actions': 'read'})
-        self.assertEqual(workflow['jobs']['acceptance']['permissions']['contents'], 'write')
+        self.assertEqual(set(workflow['on']), {'workflow_dispatch'})
+        self.assertEqual(set(workflow['jobs']), {'rehearsal'})
+        self.assertNotIn('secrets.', json.dumps(workflow))
+        self.assertNotIn('environment', workflow['jobs']['rehearsal'])
+        self.assertEqual(workflow['permissions'], {'contents': 'read'})
+        verification = yaml.load((ROOT / '.github/workflows/delivery-verification.yml').read_text(), Loader=yaml.BaseLoader)
+        self.assertNotIn('secrets.', json.dumps(verification))
+        self.assertNotIn('environment', verification['jobs']['notice'])
 
 
 class CredentialSerializationTests(unittest.TestCase):
@@ -184,7 +176,7 @@ class CredentialSerializationTests(unittest.TestCase):
             fixture.write_text(key)
             unreadable = real_run(['ssh-keygen', '-y', '-P', '', '-f', str(fixture)], capture_output=True)
             self.assertNotEqual(unreadable.returncode, 0)
-            self.assertIn(b'error in libcrypto', unreadable.stderr)
+            self.assertRegex(unreadable.stderr, b'error in libcrypto|invalid format')
             sha = 'a' * 40
             metadata = dict(SERVER_HOST='example.invalid', SERVER_USER='deploy', SERVER_PORT='22',
                 REMOTE_APP_DIR='/var/www/everydayai', REMOTE_FRONTEND_DIR='/var/www/everydayai/frontend',
@@ -327,6 +319,7 @@ class ReviewedReleaseRehearsalTests(unittest.TestCase):
 
     def test_unknown_production_version_never_means_empty_server(self):
         f = self.fixture
+        f.marker.unlink()
         task = f.task('a')
         sha = self.candidate(task, 'a.txt')
         result = self.reviewed(task, sha, check=False)

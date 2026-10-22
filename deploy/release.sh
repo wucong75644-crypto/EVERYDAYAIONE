@@ -27,6 +27,7 @@ usage() {
   ./deploy/release.sh --message "type: description" --file path/to/file --migration-file backend/migrations/NNN_name.sql
   ./deploy/release.sh --message "type: description" --file-list /tmp/release-files.txt
   ./deploy/release.sh --deploy-task <commit-sha> [--migration-file backend/migrations/NNN_name.sql]
+  ./deploy/release.sh --recover-lock <old-owner> --failed-commit <full-sha>
   ./deploy/release.sh --accept-and-close
   ./deploy/release.sh --deploy-main <commit-sha>
   ./deploy/release.sh --rollback <commit-sha>
@@ -56,6 +57,8 @@ main_repo_root=$(git -C "$repo_root" worktree list --porcelain \
 [[ -n "$main_repo_root" ]] || fail "无法确定仓库主工作树"
 cd "$repo_root"
 
+recover_owner=''
+failed_commit=''
 message=''
 rollback_sha=''
 deploy_task_sha=''
@@ -71,6 +74,12 @@ declare -a migration_files=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --recover-lock)
+            [[ $# -ge 2 ]] || fail "--recover-lock 缺少原锁所有者"
+            recover_owner=$2; shift 2 ;;
+        --failed-commit)
+            [[ $# -ge 2 ]] || fail "--failed-commit 缺少完整SHA"
+            failed_commit=$2; shift 2 ;;
         --message)
             [[ $# -ge 2 ]] || fail "--message 缺少参数"
             message=$2
@@ -144,6 +153,39 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Configuration stays local; never copy application .env into a release tree.
+if [[ ! -f "$repo_root/deploy/config.env" && -f "$main_repo_root/deploy/config.env" ]]; then
+    cp "$main_repo_root/deploy/config.env" "$repo_root/deploy/config.env"
+    chmod 600 "$repo_root/deploy/config.env"
+fi
+if [[ -n "$recover_owner" ]]; then
+    [[ "$recover_owner" =~ ^[A-Za-z0-9-]+$ && "$failed_commit" =~ ^[0-9a-f]{40}$ ]] || fail "恢复要求原锁所有者和完整失败提交"
+    set +u
+    [[ -z "$message$rollback_sha$deploy_task_sha$deploy_main_sha$reviewed_sha" && "$accept_and_close" == false && ${#task_files[@]} -eq 0 && ${#source_only_files[@]} -eq 0 && ${#migration_files[@]} -eq 0 && "$frontend_only" == false && "$backend_only" == false && "$skip_test" == false ]] || fail "恢复必须独立执行，不与部署混用"
+    set -u
+    branch=$(git symbolic-ref --quiet --short HEAD) || fail "恢复必须在原任务分支"
+    [[ "$branch" =~ ^codex/task/[A-Za-z0-9_.-]+$ ]] || fail "恢复必须在原任务分支"
+    git merge-base --is-ancestor "$failed_commit" HEAD || fail "失败提交不属于当前任务"
+    source "$repo_root/deploy/release-coordination.sh"
+    load_release_coordination_config "$repo_root/deploy/config.env" || fail "恢复配置缺失"
+    manifest=$(python3 - "$failed_commit" <<'MANIFEST'
+import base64, hashlib, json, subprocess, sys
+sha=sys.argv[1]
+base=subprocess.check_output(['git','merge-base','origin/main',sha],text=True).strip()
+paths=subprocess.check_output(['git','diff','--name-only','--diff-filter=AM',base,sha,'--','backend/','deploy/'],text=True).splitlines()
+values={p:hashlib.sha256(subprocess.check_output(['git','show',sha+':'+p])).hexdigest() for p in paths}
+print(base64.b64encode(json.dumps(values).encode()).decode())
+MANIFEST
+    ) || fail "无法核验失败候选文件"
+    ssh -p "$SERVER_PORT" -o ConnectTimeout=10 -o BatchMode=yes "$SERVER_USER@$SERVER_HOST" \
+        /var/www/everydayai/backend/venv/bin/python - "$recover_owner" "$failed_commit" "$branch" "$manifest" \
+        < "$repo_root/deploy/recover-release.py"
+    exit $?
+fi
+[[ -z "$failed_commit" ]] || fail "--failed-commit 必须与 --recover-lock 配合"
+# Retain one local production route, including historical task CLIs.
+[[ "${GITHUB_ACTIONS:-}" != true ]] || fail "生产发布统一在本地受控入口执行"
 
 if [[ -n "$reviewed_sha" ]]; then
     [[ "$reviewed_sha" =~ ^[0-9a-f]{40}$ && -n "$deploy_task_sha" ]] \
@@ -323,6 +365,25 @@ verify_reviewed_release() {
         source=$(release_remote_state read-source) || fail "待验收生产任务来源未知"
         [[ "$source" == "$branch" ]] \
             || fail "其他任务仍待生产验收，先验收合入main；禁止覆盖"
+    fi
+}
+
+verify_local_production() {
+    [[ -z "$reviewed_sha" && "$release_mode" == preview ]] || return 0
+    local current source recovery
+    if current=$(read_production_release_commit 2>/dev/null); then
+        [[ "$current" =~ ^[0-9a-f]{40}$ ]] || fail "生产版本标记格式无效"
+        git merge-base --is-ancestor "$current" "$commit_sha" || fail "当前候选未包含生产版本"
+        if ! git merge-base --is-ancestor "$current" origin/main; then
+            source=$(release_remote_state read-source) || fail "生产任务来源未知"
+            [[ "$source" == "$branch" ]] || fail "其他任务仍待验收，禁止覆盖"
+        fi
+    else
+        recovery=$(release_remote_state read-recovery) || fail "生产状态未知；先显式核查并恢复失败发布"
+        current=$(printf '%s\n' "$recovery" | head -n 1)
+        source=$(printf '%s\n' "$recovery" | tail -n 1)
+        [[ "$current" =~ ^[0-9a-f]{40}$ && "$source" == "$branch" ]] || fail "恢复记录不属于当前任务"
+        git merge-base --is-ancestor "$current" "$commit_sha" || fail "候选未包含已核查的失败版本"
     fi
 }
 
@@ -532,6 +593,10 @@ sync_task_branch_with_latest_main
 collect_task_branch_migrations
 ensure_supported_release_tree "$commit_sha"
 verify_reviewed_release
+verify_local_production
+if [[ "$release_mode" == preview ]]; then
+    release_remote_state begin "$commit_sha" "$branch" || fail "无法记录本次发布归属"
+fi
 
 set +u
 for migration_file in "${migration_files[@]}"; do
@@ -548,7 +613,13 @@ else
     fail "缺少 deploy/config.env，不能执行生产发布"
 fi
 
-release_log="${TMPDIR:-/tmp}/everydayai-release-${commit_sha}.log"
+log_root=$(git rev-parse --path-format=absolute --git-common-dir)/release-logs
+mkdir -p "$log_root"
+chmod 700 "$log_root"
+release_log="$log_root/$(date -u +%Y%m%dT%H%M%SZ)-${commit_sha}-$$.log"
+(umask 077; : > "$release_log")
+chmod 600 "$release_log"
+info "本次私有发布日志：$release_log"
 deploy_status_file="$release_worktree/.deploy-execution-status"
 pushd "$release_worktree" >/dev/null
 chmod +x deploy/deploy.sh
@@ -600,8 +671,9 @@ database_guard=deploy/verify-production-database.py
 ssh -p "$SERVER_PORT" -o ConnectTimeout=10 -o BatchMode=yes \
     "$SERVER_USER@$SERVER_HOST" /var/www/everydayai/backend/venv/bin/python - \
     < "$database_guard" || fail '生产数据库身份核验失败，保留原生产候选，未启动部署'
-release_remote_state invalidate \
-    || fail "无法使旧生产候选失效，未启动部署"
+if ! grep -q '^# TASK_DEPLOY_INVALIDATION_PROTOCOL=1$' deploy/deploy.sh; then
+    release_remote_state invalidate || fail "无法使旧生产候选失效，未启动部署"
+fi
 release_executor_state=in_flight
 if ! EVERYDAYAI_RELEASE_CONTEXT="$executor_context" \
     EVERYDAYAI_RELEASE_PROTOCOL=2 \
@@ -616,8 +688,10 @@ if ! EVERYDAYAI_RELEASE_CONTEXT="$executor_context" \
         && [[ "$(cat "$deploy_status_file")" == preflight_failed ]]; then
         release_executor_state=failed_safe
     fi
-    release_remote_state invalidate \
+    if [[ "$release_executor_state" != failed_safe ]]; then
+        release_remote_state invalidate \
         || echo 'RELEASE_CANDIDATE_RESULT status=unknown; 无法确认失败部署后的候选已清除，禁止验收' >&2
+    fi
     echo "RELEASE_RESULT status=failed executor_state=$release_executor_state commit=$commit_sha log=$release_log" >&2
     tail -n 160 "$release_log" >&2
     exit 1

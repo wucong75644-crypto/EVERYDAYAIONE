@@ -59,7 +59,20 @@ fi
     || { echo "发布锁所有权无法确认：${lock_dir}；停止操作" >&2; exit 1; }
 case "$action" in
     assert) ;;
+    begin)
+        [[ "${4:-}" =~ ^[0-9a-f]{40}$ && "${5:-}" =~ ^codex/task/[A-Za-z0-9_.-]+$ ]] || exit 1
+        printf 'commit=%s\nsource=%s\n' "$4" "$5" > "$lock_dir/attempt"
+        ;;
+    read-recovery)
+        python3 - "$app_dir/.release-recovery" <<'READ_RECOVERY'
+import json, sys
+r=json.load(open(sys.argv[1]))
+assert r['status']=='recovered_not_deployed'
+print(r['failed_commit']); print(r['source'])
+READ_RECOVERY
+        ;;
     release)
+        rm -f -- "$lock_dir/attempt"
         rm -- "$lock_dir/owner"
         rmdir -- "$lock_dir"
         ;;
@@ -88,6 +101,7 @@ case "$action" in
             printf 'recorded_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         } > "$temporary"
         mv -- "$temporary" "$marker"
+        rm -f -- "$app_dir/.release-recovery"
         ;;
     *) echo '未知的发布协调操作' >&2; exit 1 ;;
 esac
