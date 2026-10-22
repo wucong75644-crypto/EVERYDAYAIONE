@@ -256,6 +256,8 @@ build_backend() {
     # 运行测试（可选）
     if [ "$SKIP_TEST" != true ]; then
         log_info "运行后端测试..."
+        # Populate the sandbox font cache before bounded kernel readiness tests.
+        "$venv_python" -c 'import subprocess,sys; from services.sandbox.functions import build_sandbox_environment; subprocess.run([sys.executable,"-c","import matplotlib.font_manager"],env=build_sandbox_environment(),check=True)'
         # 隔离发布工作树不带生产 .env；使用无副作用的测试配置，且不触发
         # 需要真实数据库并会写入数据的企微并发集成测试。
         local test_mpl_config_dir="${TMPDIR:-/tmp}/everydayai-mpl-cache"

@@ -349,6 +349,23 @@ class ReleaseCoordinationTests(unittest.TestCase):
         self.deploy(a, "retry")
         self.assertTrue(self.marker.exists())
 
+    def test_recovered_candidate_only_allows_original_task_and_consumes_receipt(self):
+        import json
+        a, b = self.task("recover-a"), self.task("recover-b")
+        self.marker.unlink()
+        receipt = self.production / '.release-recovery'
+        receipt.write_text(json.dumps({'failed_commit': self.base,
+            'source': self.git('branch','--show-current',cwd=a).stdout.strip(),
+            'status':'recovered_not_deployed'}))
+        blocked = self.deploy(b, 'blocked', check=False)
+        self.assertNotEqual(blocked.returncode, 0)
+        self.assertTrue(receipt.exists())
+        self.assertFalse((self.production/'written').exists())
+        self.deploy(a, 'resume')
+        self.assertTrue(self.marker.exists())
+        self.assertFalse(receipt.exists())
+        self.assertFalse(self.lock.exists())
+
     def test_current_executor_rejects_uncontrolled_execution(self) -> None:
         result = self.run_command(["bash", str(SOURCE / "deploy/deploy.sh"), "--frontend-only"], check=False)
         self.assertNotEqual(result.returncode, 0)

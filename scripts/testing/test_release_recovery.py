@@ -40,6 +40,11 @@ class RecoveryTests(unittest.TestCase):
         self.writers.return_value=[123]
         with self.assertRaisesRegex(RuntimeError,'writer'):self.run_recovery()
         self.assertTrue(self.lock.exists());self.assertFalse((self.app/'.release-recovery').exists())
+    def test_writer_appearing_during_snapshot_keeps_lock(self):
+        self.writers.side_effect=[[],[123]]
+        with self.assertRaisesRegex(RuntimeError,'Writer appeared'):self.run_recovery()
+        self.assertTrue(self.lock.exists())
+        self.assertFalse((self.app/'.release-recovery').exists())
     def test_foreign_owner_keeps_lock(self):
         (self.lock/'owner').write_text('new-owner')
         with self.assertRaisesRegex(RuntimeError,'owner changed'):self.run_recovery()

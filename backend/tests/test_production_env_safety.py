@@ -158,6 +158,8 @@ release_remote_state() { rm -- "$marker"; }
     result = subprocess.run(['bash', '-c', setup + release[start:end], 'bash', str(ROOT),
                              str(marker), str(guard_status)], cwd=ROOT, capture_output=True)
     assert result.returncode == guard_status
-    assert marker.exists() == bool(guard_status)
+    # Current executors invalidate only immediately before remote mutation,
+    # so both a successful identity guard and a rejected one preserve provenance.
+    assert marker.exists()
     if marker.exists():
         assert marker.read_text() == 'previously-tested-commit'
