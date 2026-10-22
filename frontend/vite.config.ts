@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { pdfWorkerPath } from './pdf-worker.config'
 
 const MARKDOWN_PACKAGES = [
   'bail',
@@ -28,6 +29,8 @@ const MARKDOWN_PACKAGES = [
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  optimizeDeps: { exclude: ['pdfjs-dist/build/pdf.worker.min.mjs', 'pdfjs-dist/build/pdf.worker.min.mjs?url'] },
+  resolve: { alias: [{ find: /^pdfjs-dist\/build\/pdf\.worker\.min\.mjs(?=\?|$)/, replacement: pdfWorkerPath }] },
   build: {
     rollupOptions: {
       output: {

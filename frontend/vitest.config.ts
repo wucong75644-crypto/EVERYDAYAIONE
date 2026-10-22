@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import { pdfWorkerPath } from './pdf-worker.config';
 
 export default defineConfig({
   plugins: [react()],
@@ -28,8 +29,9 @@ export default defineConfig({
     },
   },
   resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-    },
+    alias: [
+      { find: /^pdfjs-dist\/build\/pdf\.worker\.min\.mjs(?=\?|$)/, replacement: pdfWorkerPath },
+      { find: '@', replacement: path.resolve(__dirname, './src') },
+    ],
   },
 });

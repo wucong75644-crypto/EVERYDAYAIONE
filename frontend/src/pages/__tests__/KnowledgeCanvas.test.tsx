@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import KnowledgeCanvas from '../KnowledgeCanvas';
-const f = vi.hoisted(() => ({ api: { available: vi.fn(), initialize: vi.fn(), scene: vi.fn(), object: vi.fn(), command: vi.fn(), members: vi.fn() }, auth: { user: { id: 'u' }, currentOrgId: 'org' as string | null } }));
+const f = vi.hoisted(() => ({ api: { available: vi.fn(), initialize: vi.fn(), scene: vi.fn(), object: vi.fn(), command: vi.fn(), members: vi.fn(), versions: vi.fn(), version: vi.fn(), search: vi.fn() }, auth: { user: { id: 'u' }, currentOrgId: 'org' as string | null } }));
 vi.mock('../../services/knowledge', () => ({ knowledgeApi: f.api }));
 vi.mock('../../stores/useAuthStore', () => ({ useAuthStore: (selector: (s: typeof f.auth) => unknown) => selector(f.auth) }));
 const node = { id: 'root', node_id: 'placement', container_id: 'p', parent_id: null, kind: 'topic', title: '项目总纲', revision: 1, layout_revision: 1, x: 20, y: 40 };
@@ -18,7 +18,19 @@ beforeEach(() => {
   f.api.scene.mockResolvedValue(structuredClone(initial)); f.api.command.mockResolvedValue({ success: true, data: { object_id: 'new' } });
   f.api.object.mockResolvedValue({ ...node, body: '原文', can_write: true });
 });
-describe('知识画布 V1', () => {
+describe('知识画布', () => {
+  it('keeps an unsaved body while reading a previous version', async () => {
+    f.api.versions.mockResolvedValue({ items: [{ revision: 1, title: '原始标题', created_at: '2026-10-22T00:00:00Z' }], next_cursor: null });
+    f.api.version.mockResolvedValue({ revision: 1, title: '原始标题', body: '历史正文' });
+    show(); await ready(); fireEvent.click(screen.getByRole('button', { name: '展开编辑' }));
+    const dialog = await screen.findByRole('dialog', { name: '编辑内容' });
+    fireEvent.change(within(dialog).getByLabelText('正文'), { target: { value: '未保存的新正文' } });
+    fireEvent.click(within(dialog).getByText('查看历史版本'));
+    fireEvent.click(await within(dialog).findByRole('button', { name: /版本 1/ }));
+    expect(await within(dialog).findByLabelText('历史版本正文')).toHaveValue('历史正文');
+    expect(within(dialog).getByLabelText('正文')).toHaveValue('未保存的新正文');
+    expect(f.api.command).not.toHaveBeenCalled();
+  });
   it('shows three tabs, no sidebar creation and no canvas chat', async () => {
     show(); await ready();
     expect(screen.getAllByRole('tab')).toHaveLength(3);
