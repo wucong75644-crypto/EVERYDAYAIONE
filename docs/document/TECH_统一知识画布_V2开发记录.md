@@ -81,3 +81,11 @@ V2 分支：`codex/task/20261022223520-knowledge-canvas-v2`，从上述 main 创
 - 自审覆盖输入、事务、权限、文件生命周期、失败/并发和前端状态；未发现剩余高置信阻断项。未测试生产迁移/发布、生产数据规模性能及高级 Office 保真；开发阶段未连接生产；用户现已明确授权“提交部署 V2”，由本地受控入口执行，不据此验收合并或关闭任务。
 
 本地截图和详细日志保留在忽略目录 `frontend/.cloud-dev/knowledge-v2-qa/`。临时测试服务和数据库在验收结束后关闭，V2 工作树与代码保留。
+
+## 2026-10-23 生产 PDF 预览修复
+
+生产用户验收发现 PDF 上传、正文提取成功，但预览报 worker 动态导入失败。该静态资源 HTTP 200，Content-Type 为 application/octet-stream；生产 Nginx 的 MIME 映射未识别 .mjs，浏览器模块加载因而拒绝。开发服务器能够识别 .mjs，原组件测试和本地预览不能覆盖此生产差异。
+
+在构建产物边界将显式 PDF worker URL 资产输出为带内容哈希的 .js，使用服务器已有 JavaScript MIME 映射；worker 原始内容、react-pdf 依赖版本解析及其他资产命名均不变。新 URL 也避免复用旧 .mjs 响应的一年缓存。不修改权限、文件数据或数据库；回退应用代码即可回退本次改动。
+
+构建后自动检查所有 PDF worker 扩展名、显式资产与 react-pdf 依赖原件字节一致、应用 bundle 引用正确输出；保留对 PDF.js bundled fallback chunk 的兼容。复现旧 .mjs 产物时检查拒绝，修复产物通过。预览定向测试 68 项通过，TypeScript/Vite 构建和定向 ESLint 通过。最终部署和生产页面复验结果以本次发布日志及验收截图为准。

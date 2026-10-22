@@ -34,6 +34,13 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
+        // Production Nginx maps .js to JavaScript but older mime.types files do
+        // not recognize .mjs. Module workers require a JavaScript MIME type.
+        assetFileNames(asset) {
+          return asset.names.includes('pdf.worker.min.mjs')
+            ? 'assets/pdf.worker.min-[hash].js'
+            : 'assets/[name]-[hash][extname]';
+        },
         manualChunks(id) {
           const normalizedId = id.replaceAll('\\', '/');
           const packageName = normalizedId.match(/\/node_modules\/((?:@[^/]+\/)?[^/]+)\//)?.[1];
