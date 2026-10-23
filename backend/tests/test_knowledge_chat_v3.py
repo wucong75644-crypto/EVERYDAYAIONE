@@ -20,6 +20,7 @@ def v3_db(local_db):
         c.execute("GRANT SELECT ON messages TO everydayai_runtime; ALTER TABLE messages ENABLE ROW LEVEL SECURITY; CREATE POLICY test_message_scope ON messages USING(actor_id=NULLIF(current_setting('app.actor_user_id',true),'')::uuid AND org_id IS NOT DISTINCT FROM NULLIF(current_setting('app.org_id',true),'')::uuid)")
         c.execute('RESET ROLE')
         c.execute((Path(__file__).resolve().parents[1]/'migrations/305_knowledge_chat_v3.sql').read_text())
+        c.execute((Path(__file__).resolve().parents[1]/'migrations/306_knowledge_chat_application_role.sql').read_text())
     return make,actors
 
 def start(make,repo,refs,input_id=None,conversation_id=None):
@@ -284,3 +285,33 @@ async def test_retry_restores_saved_reference_and_rejects_nonpersonal_context(mo
     q.execute.side_effect=[SimpleNamespace(data={'role':'user','knowledge_refs':[reference]}),SimpleNamespace(data={'scope_type':'channel','user_id':'actor'})]
     with pytest.raises(HTTPException) as exc:await prepare_knowledge_intent(db,body,'actor','org','conversation',GenerationType.CHAT)
     assert exc.value.status_code==403
+
+
+@pytest.mark.parametrize('role',['everydayai','everydayai_runtime'])
+def test_application_and_runtime_roles_read_with_same_rls(v3_db,file_client,role):
+    from psycopg_pool import ConnectionPool
+    from services.knowledge_workspace.repository import Repository
+    client,ctx,settings,owner,make=file_client
+    source=document(owner);uploaded(client,source['id'],'应用连接角色附件验证')
+    with ConnectionPool(kwargs={**make.admin_args,'options':'-c role='+role},min_size=1,max_size=2) as pool:
+        repo=Repository(pool,owner.scope)
+        run,mid,cid=start(make,repo,[ref(source)])
+        root=run.snapshot['roots'][0]['handle']
+        assert run.execute('outline',{'root_handle':root})['items']
+        fh=next(i['handle'] for i in run.snapshot['items'] if i['type']=='file')
+        result=run.execute('read',{'root_handle':root,'item_handles':[fh]})
+        assert result['items'][0]['body']=='应用连接角色附件验证'
+        assert '本次实际读取' in run.evidence_footer()
+        assert KnowledgeRun.start(repo,conversation_id=cid,input_message_id=mid).id==run.id
+        with repo.cursor() as c:
+            c.execute("SELECT current_user,has_table_privilege(current_user,'public.kb_read_snapshots','UPDATE') AS can_update,has_table_privilege(current_user,'public.kb_read_receipts','DELETE') AS can_delete")
+            identity=c.fetchone();assert identity['current_user']==role
+            assert not identity['can_update'] and not identity['can_delete']
+            c.execute("SELECT has_table_privilege(current_user,'public.kb_read_snapshots','UPDATE') AS allowed")
+            assert not c.fetchone()['allowed']
+        for scope in (make(1).scope,make(0,1).scope):
+            foreign=Repository(pool,scope)
+            with foreign.cursor() as c:
+                c.execute('SELECT id FROM kb_read_snapshots WHERE id=%s',(run.id,))
+                assert c.fetchone() is None
+            with pytest.raises(AppException):KnowledgeRun.start(foreign,conversation_id=cid,input_message_id=mid)

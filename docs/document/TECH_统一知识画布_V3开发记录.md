@@ -59,3 +59,11 @@
 - 模型可能漏写链接；最终回答使用与执行内核相同的回执来源尾注补齐固定版本链接。定向内核测试另验证原答案保留、尾注进入输出事件并在 flush 前完成。模型错误调用（例如对非文件要求物化）通过受控错误结果返回供其纠正，不扩大权限。
 - 原始模型文本、工具参数/结果、来源与快照 ID 保存在忽略目录 `model-initial.json`、`model-replay.json`、`model-new-turn.json`、`model-conflict.json`；测试入口与结果为 `test_real_model_v3.py`、`real-model.log`，不进入默认 CI、不自动消耗模型额度。
 - 这是提供商 + 知识工具链的真实联调，不是完整生产 Web/Actor/WS 浏览器测试。未测试所有提供商、多轮超长目录、OCR、音视频或任意 Office 原件分析；这些不在本次已通过证据范围。
+
+## 首次生产验收与角色修复（2026-10-23）
+
+首次候选 `be1bc55ff89630e49084156c38a9a18b6bfcb017` 完整部署、305 迁移与 readiness 成功（前端 1885、后端 12507 项通过），但生产用户验收未通过：Safari 的现有第二测试账号能上传、预览 TXT、选择总分支并保存消息引用，真正执行时报 `permission denied for table kb_read_snapshots`。
+
+只读生产身份检查确认：应用池 current_user 为 `everydayai`，不是 `everydayai_runtime` 成员，对新表没有 SELECT/INSERT；305 的新表策略与函数授权只包含后者。302/303 已同时支持两个角色；隔离测试仅覆盖专用 runtime 角色，未覆盖应用真实连接角色，因此未检出。
+
+新增前向 306，不改已应用的 305 摘要：快照、回执沿用完全相同的 actor/org/kb_actor_valid RLS，给应用角色最小 SELECT/INSERT、回执序列与两函数 EXECUTE。不授予 UPDATE/DELETE、不授予 runtime 角色成员、不修改业务数据。新增参数化真实角色回归，两个角色分别验证快照建立/复用、附件正文、来源、跨用户/企业隔离及不可更新/删除。V3 共 21 项通过；等待修复候选重新部署后继续同一生产对话复验。合成项目 `V3线上验收1023-售后`，只改本次测试资料，未更改原业务资料。
