@@ -8,10 +8,10 @@ let host: HTMLDivElement;
 let frames: Map<number, FrameRequestCallback>;
 let counter: number;
 function rect(x: number, y: number, width: number, height: number) { return { x, y, left: x, top: y, right: x + width, bottom: y + height, width, height, toJSON: () => ({}) } as DOMRect; }
-function setup(container = 'space') {
+function setup(container = 'space', onTap = vi.fn()) {
   return renderHook(({ identity, enabled }) => {
     const [view, setView] = useState({ x: 0, y: 0, z: 1 });
-    return { ...useCanvasConnection({ viewport: { current: host }, view, setView, nodes: [root, { ...root, id: 'b', container_id: container }], identity, enabled }), view };
+    return { ...useCanvasConnection({ viewport: { current: host }, view, setView, nodes: [root, { ...root, id: 'b', container_id: container }], identity, enabled, onTap }), view };
   }, { initialProps: { identity: 'first', enabled: true } });
 }
 beforeEach(() => {
@@ -30,6 +30,14 @@ beforeEach(() => {
 afterEach(() => { cleanup(); host.remove(); vi.unstubAllGlobals(); });
 function frame(time: number) { const callbacks = [...frames.values()]; frames.clear(); act(() => callbacks.forEach(callback => callback(time))); }
 describe('canvas connection gesture', () => {
+  it('treats a small pointer release as one tap, but never taps after dragging or cancellation', () => {
+    const onTap = vi.fn(); const { result } = setup('space', onTap);
+    act(() => { result.current.begin('a', 1, { x: 290, y: 155 }); result.current.finish(1, { x: 292, y: 156 }); });
+    expect(onTap).toHaveBeenCalledExactlyOnceWith('a');
+    act(() => { result.current.begin('a', 2, { x: 290, y: 155 }); result.current.move(2, { x: 400, y: 350 }); result.current.finish(2, { x: 290, y: 155 }); });
+    act(() => { result.current.begin('a', 3, { x: 290, y: 155 }); result.current.cancel(); result.current.finish(3, { x: 290, y: 155 }); });
+    expect(onTap).toHaveBeenCalledTimes(1);
+  });
   it('follows the pointer then returns a blank drop in world coordinates', () => {
     const { result } = setup(); act(() => result.current.begin('a', 1, { x: 290, y: 155 }));
     act(() => result.current.move(1, { x: 400, y: 350 }));

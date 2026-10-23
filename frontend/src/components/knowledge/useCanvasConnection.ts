@@ -8,7 +8,7 @@ type View = Point & { z: number };
 type Preview = { source: string; target: string | null; start: Point; end: Point; valid: boolean; inside: boolean; path: string; reconnect?: { relation: KnowledgeRelation; endpoint: 'source' | 'target'; revision: number }; reason?: string };
 type Options = {
   viewport: RefObject<HTMLDivElement | null>; view: View; setView: (view: View) => void;
-  nodes: KnowledgeNode[]; relations?: KnowledgeRelation[]; identity: string; enabled: boolean;
+  nodes: KnowledgeNode[]; relations?: KnowledgeRelation[]; identity: string; enabled: boolean; onTap?: (source: string) => void;
 };
 type Session = { source: string; pointer: number; origin: Point; cursor: Point; moved: boolean; reconnect?: Preview['reconnect'] };
 export function useCanvasConnection(options: Options) {
@@ -106,7 +106,9 @@ export function useCanvasConnection(options: Options) {
     const element = document.elementFromPoint?.(cursor.x, cursor.y);
     const overControl = element?.closest('button,input,textarea,.kc-location,.kc-zoom,.kc-quick');
     const allowed = s.moved && result?.valid && drop && !overControl && latest.current.enabled;
-    cancel(); return allowed ? { ...result, position: drop } : null;
+    const tap = !s.moved && !s.reconnect && latest.current.enabled;
+    cancel(); if (tap) latest.current.onTap?.(s.source);
+    return allowed ? { ...result, position: drop } : null;
   };
   useEffect(() => {
     const escape = (event: KeyboardEvent) => { if (event.key === 'Escape' && session.current) { event.preventDefault(); cancel(); } };

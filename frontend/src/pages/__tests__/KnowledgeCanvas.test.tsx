@@ -135,12 +135,12 @@ describe('知识画布', () => {
   });
   it('places repeated children outside occupied cards and reveals a folded branch', async () => {
     persistCreatedNodes(); show(); await ready(); selectRoot();
-    fireEvent.click(screen.getByRole('button', { name: '为 项目总纲 创建子级' }));
+    fireEvent.keyDown(screen.getByLabelText('知识画布'), { key: 'Tab' });
     fireEvent.change(screen.getByLabelText('新主题标题'), { target: { value: '第一个' } });
     fireEvent.blur(screen.getByLabelText('新主题标题'));
     await screen.findByRole('article', { name: '第一个' });
     fireEvent.click(screen.getByRole('button', { name: '折叠或展开 项目总纲' })); selectRoot();
-    fireEvent.click(screen.getByRole('button', { name: '为 项目总纲 创建子级' }));
+    fireEvent.keyDown(screen.getByLabelText('知识画布'), { key: 'Tab' });
     expect(screen.getByRole('article', { name: '第一个' })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('新主题标题'), { target: { value: '第二个' } }); fireEvent.blur(screen.getByLabelText('新主题标题'));
     await screen.findByRole('article', { name: '第二个' });
@@ -1271,5 +1271,26 @@ describe('Shift combinations and safe browsing while saving', () => {
     const id = f.api.command.mock.calls[0][2]; pick('B'); fireEvent.keyDown(canvas, { key: 'ArrowRight' }); expect(screen.getByRole('article', { name: 'Child' })).toHaveClass('selected');
     fireEvent.keyDown(canvas, { key: 'Delete' }); expect(f.api.command).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button', { name: '刷新', exact: true })); await waitFor(() => expect(f.api.command).toHaveBeenCalledTimes(2)); expect(f.api.command.mock.calls[1][2]).toBe(id);
+  });
+});
+
+// The same visual dot owns click-to-fold and drag-to-create; no extra plus controls.
+describe('unified branch dot', () => {
+  beforeEach(() => { vi.stubGlobal('PointerEvent', class extends MouseEvent { pointerId: number; constructor(type: string, init: PointerEventInit = {}) { super(type, init); this.pointerId = init.pointerId ?? 1; } }); });
+  it('removes plus controls and folds exactly once on a pointer tap', async () => {
+    f.api.scene.mockResolvedValue({ ...initial, nodes: [node, { ...node, id: 'child', node_id: 'child-layout', parent_id: 'root', title: '子主题', x: 350 }] });
+    show(); await ready();
+    const canvas = screen.getByLabelText('知识画布');
+    const dot = screen.getByLabelText('折叠或展开 项目总纲');
+    expect(dot).toHaveClass('kc-handle');
+    expect(document.querySelector('.kc-add-child,.kc-add-sibling')).toBeNull();
+    expect(screen.queryByRole('button', { name: '收起分支' })).toBeNull();
+    fireEvent.pointerDown(dot, { button: 0, pointerId: 1, clientX: 240, clientY: 90 });
+    fireEvent.pointerUp(canvas, { pointerId: 1, clientX: 240, clientY: 90 });
+    fireEvent.click(dot, { detail: 1 });
+    expect(dot).toHaveAttribute('aria-expanded', 'false');
+    expect(f.api.command).not.toHaveBeenCalled();
+    fireEvent.click(dot, { detail: 0 });
+    expect(dot).toHaveAttribute('aria-expanded', 'true');
   });
 });
