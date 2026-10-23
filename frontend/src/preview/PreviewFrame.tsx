@@ -25,6 +25,8 @@ interface PreviewFrameProps {
   loading?: boolean;
   /** 自定义 loading 文案（默认仅显示 spinner，不显示文字）*/
   loadingText?: string;
+  /** Resource-rendering children such as PDF must mount before they can finish loading. */
+  mountWhileLoading?: boolean;
   /** 错误文案，非空时显示红色错误（覆盖 children） */
   error?: string | null;
   /** 自定义下载行为；默认走 downloadFile(CDN URL or 后端代理) */
@@ -40,6 +42,7 @@ export default function PreviewFrame({
   onClose,
   loading = false,
   loadingText,
+  mountWhileLoading = false,
   error = null,
   onDownload,
   children,
@@ -131,7 +134,7 @@ export default function PreviewFrame({
           </div>
         )}
 
-        {!loading && !error && children}
+        {mountWhileLoading ? <div hidden={loading || !!error}>{children}</div> : !loading && !error && children}
       </div>
 
       {/* 底部工具栏（可选，Excel Sheet tab 等） */}

@@ -8,6 +8,10 @@ export interface KnowledgeRelation { id: string; container_id: string; source_ob
 export interface KnowledgeScene { containers: KnowledgeContainer[]; nodes: KnowledgeNode[]; relations: KnowledgeRelation[] }
 interface Page extends KnowledgeScene { next_cursor: string | null }
 export interface KnowledgeMember { user_id: string; nickname: string; org_role: string; role: KnowledgeRole | null; status: 'active' | 'removed' | null }
+export interface KnowledgeVersion { revision: number; title: string; created_at: string }
+export interface KnowledgeVersionDetail extends KnowledgeVersion { object_id: string; body: string }
+export interface KnowledgeSearchHit { id: string; title: string; kind: KnowledgeNode['kind']; revision: number; excerpt: string }
+export interface KnowledgeResults<T, C = string> { items: T[]; next_cursor: C | null }
 interface Envelope<T> { success: true; data: T }
 async function get<T>(url: string, signal?: AbortSignal) { return (await request<Envelope<T>>({ url, signal })).data; }
 export const knowledgeApi = {
@@ -24,7 +28,31 @@ export const knowledgeApi = {
     throw new Error('未能加载画布');
   },
   object: (id: string) => get<KnowledgeObject>('/knowledge/objects/' + id),
+  versions: (id: string, before?: number, signal?: AbortSignal) => get<KnowledgeResults<KnowledgeVersion, number>>('/knowledge/objects/' + id + '/versions' + (before ? '?before=' + before : ''), signal),
+  version: (id: string, revision: number, signal?: AbortSignal) => get<KnowledgeVersionDetail>('/knowledge/objects/' + id + '/versions/' + revision, signal),
+  search: (id: string, query: string, cursor?: string, signal?: AbortSignal) => get<KnowledgeResults<KnowledgeSearchHit>>('/knowledge/containers/' + id + '/search?' + new URLSearchParams({ q: query, ...(cursor ? { cursor } : {}) }), signal),
   members: (id: string) => get<KnowledgeMember[]>('/knowledge/containers/' + id + '/members'),
   command: (operation: string, payload: Record<string, unknown>, commandId: string = crypto.randomUUID()) =>
     request<Envelope<{ object_id: string | null }>>({ url: '/knowledge/commands', method: 'POST', data: { command_id: commandId, operation, payload } }),
+};
+
+export interface KnowledgeFileVersion {
+  binding_id: string; revision: number; version_id: string; asset_id: string; name: string;
+  mime_type: string; size: number; sha256: string; text_status: 'ready' | 'unsupported' | 'failed' | 'truncated'; created_at: string;
+}
+export interface KnowledgeFile { id: string; title: string; current_revision: number; version: KnowledgeFileVersion }
+export interface KnowledgeFileTarget { binding_id?: string; expected_revision?: number }
+export const knowledgeFilesApi = {
+  list: (objectId: string, signal?: AbortSignal) => get<KnowledgeFile[]>('/knowledge/objects/' + objectId + '/files', signal),
+  versions: (objectId: string, bindingId: string, before?: number, signal?: AbortSignal) => get<KnowledgeResults<KnowledgeFileVersion, number>>('/knowledge/objects/' + objectId + '/files/' + bindingId + '/versions' + (before ? '?before=' + before : ''), signal),
+  upload: (objectId: string, file: File, commandId: string, target: KnowledgeFileTarget = {}) => {
+    const data = new FormData(); data.append('file', file); data.append('command_id', commandId);
+    if (target.binding_id) data.append('binding_id', target.binding_id);
+    if (target.expected_revision) data.append('expected_revision', String(target.expected_revision));
+    return request<Envelope<unknown>>({ url: '/knowledge/objects/' + objectId + '/files', method: 'POST', data, timeout: 120000 });
+  },
+  snapshot: (objectId: string, path: string, commandId: string) => request<Envelope<unknown>>({ url: '/knowledge/objects/' + objectId + '/files/from-workspace', method: 'POST', data: { command_id: commandId, workspace_path: path }, timeout: 120000 }),
+  reference: (objectId: string, sourceObject: string, sourceBinding: string, revision: number, commandId: string) => request<Envelope<unknown>>({ url: '/knowledge/objects/' + objectId + '/files/reference', method: 'POST', data: { command_id: commandId, source_object_id: sourceObject, source_binding_id: sourceBinding, source_revision: revision } }),
+  remove: (objectId: string, binding: KnowledgeFile, commandId: string) => request<Envelope<unknown>>({ url: '/knowledge/objects/' + objectId + '/files/' + binding.id, method: 'DELETE', data: { command_id: commandId, expected_revision: binding.current_revision } }),
+  content: (objectId: string, bindingId: string, revision: number, signal?: AbortSignal) => request<Blob>({ url: '/knowledge/objects/' + objectId + '/files/' + bindingId + '/versions/' + revision + '/content', responseType: 'blob', signal, timeout: 120000 }),
 };

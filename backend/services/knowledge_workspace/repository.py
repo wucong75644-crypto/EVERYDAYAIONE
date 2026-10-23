@@ -67,3 +67,73 @@ class Repository:
                          WHERE m.org_id=%s AND m.status='active' AND u.status='active' ORDER BY m.user_id''',
                       (container_id,self.scope.org_id))
             return c.fetchall()
+
+    def versions(self, object_id, before=None):
+        with self.cursor() as c:
+            c.execute("SELECT id FROM public.kb_objects WHERE id=%s AND deleted_at IS NULL", (object_id,))
+            if c.fetchone() is None:
+                return None
+            c.execute('''SELECT revision,title,created_at FROM public.kb_object_versions
+                         WHERE object_id=%s AND (%s::bigint IS NULL OR revision<%s::bigint)
+                         ORDER BY revision DESC LIMIT 51''', (object_id, before, before))
+            rows = c.fetchall()
+            return {'items': rows[:50], 'next_cursor': rows[49]['revision'] if len(rows)>50 else None}
+
+    def version(self, object_id, revision):
+        with self.cursor() as c:
+            c.execute('''SELECT v.object_id,v.revision,v.title,v.body,v.created_at
+                         FROM public.kb_object_versions v JOIN public.kb_objects o ON o.id=v.object_id
+                         WHERE v.object_id=%s AND v.revision=%s AND o.deleted_at IS NULL''',
+                      (object_id, revision))
+            return c.fetchone()
+
+    def search(self, container_id, query, cursor=None):
+        # RLS is applied before a result can leave the database, including old ACL grants.
+        # Literal substring matching also supports Chinese; %, _ are ordinary characters.
+        with self.cursor() as c:
+            c.execute("SELECT id FROM public.kb_containers WHERE id=%s AND deleted_at IS NULL", (container_id,))
+            if c.fetchone() is None:
+                return None
+            c.execute('''SELECT o.id,o.title,o.kind,o.current_revision AS revision,
+                         COALESCE(f.excerpt,substring(v.body FROM greatest(1,strpos(lower(v.body),lower(%s))-60) FOR 240)) AS excerpt
+                         FROM public.kb_objects o JOIN public.kb_object_versions v
+                           ON v.object_id=o.id AND v.revision=o.current_revision
+                         LEFT JOIN LATERAL (SELECT public.kb_search_file(o.id,%s) AS excerpt) f ON true
+                         WHERE o.container_id=%s AND o.deleted_at IS NULL
+                           AND (%s::uuid IS NULL OR o.id>%s::uuid)
+                           AND (strpos(lower(o.title),lower(%s))>0 OR strpos(lower(v.body),lower(%s))>0 OR f.excerpt IS NOT NULL)
+                         ORDER BY o.id LIMIT 51''', (query, query, container_id, cursor, cursor, query, query))
+            rows = c.fetchall()
+            return {'items': rows[:50], 'next_cursor': str(rows[49]['id']) if len(rows)>50 else None}
+
+    def file_command(self, command_id, operation, payload):
+        with self.cursor() as c:
+            c.execute('SELECT public.kb_apply_file_command(%s,%s,%s) AS result',
+                      (command_id, operation, Jsonb(payload)))
+            return c.fetchone()['result']
+
+    def files(self, object_id):
+        with self.cursor() as c:
+            c.execute('SELECT id FROM public.kb_objects WHERE id=%s AND deleted_at IS NULL', (object_id,))
+            if c.fetchone() is None:
+                return None
+            c.execute('''SELECT b.id,b.title,b.current_revision,public.kb_file_version(b.object_id,b.id) AS version
+                         FROM public.kb_file_bindings b WHERE b.object_id=%s ORDER BY b.id LIMIT 101''', (object_id,))
+            return c.fetchall()
+
+    def file_versions(self, object_id, binding_id, before=None):
+        with self.cursor() as c:
+            c.execute('SELECT public.kb_file_version(%s,%s) AS version', (object_id, binding_id))
+            if c.fetchone()['version'] is None:
+                return None
+            c.execute('''SELECT public.kb_file_version(%s,binding_id,revision) AS version
+                         FROM public.kb_file_binding_versions WHERE binding_id=%s
+                         AND (%s::bigint IS NULL OR revision<%s::bigint) ORDER BY revision DESC LIMIT 51''',
+                      (object_id, binding_id, before, before))
+            rows = [r['version'] for r in c.fetchall()]
+            return {'items': rows[:50], 'next_cursor': rows[49]['revision'] if len(rows)>50 else None}
+
+    def file_version(self, object_id, binding_id, revision):
+        with self.cursor() as c:
+            c.execute('SELECT public.kb_file_version(%s,%s,%s) AS version', (object_id, binding_id, revision))
+            return c.fetchone()['version']

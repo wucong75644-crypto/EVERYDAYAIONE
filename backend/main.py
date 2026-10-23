@@ -494,8 +494,9 @@ def register_routers(app: FastAPI) -> None:
     # 认证
     app.include_router(auth.router, prefix="/api")
 
-    from api.routes import knowledge
+    from api.routes import knowledge, knowledge_files
     app.include_router(knowledge.router, prefix="/api")
+    app.include_router(knowledge_files.router, prefix="/api")
 
     # 对话
     app.include_router(conversation.router, prefix="/api")

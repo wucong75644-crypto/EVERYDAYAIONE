@@ -5,6 +5,9 @@ import { useAuthStore } from '../stores/useAuthStore';
 import { knowledgeApi } from '../services/knowledge';
 import type { KnowledgeScene, KnowledgeNode, KnowledgeObject, KnowledgeScope, KnowledgeMember, KnowledgeRole } from '../services/knowledge';
 import './KnowledgeCanvas.css';
+import { KnowledgeFiles } from '../components/knowledge/KnowledgeFiles';
+import { KnowledgeHistory } from '../components/knowledge/KnowledgeHistory';
+import { KnowledgeSearch } from '../components/knowledge/KnowledgeSearch';
 import { Dialog } from '../components/primitives/Dialog';
 const empty: KnowledgeScene = { containers: [], nodes: [], relations: [] };
 const scopes = { personal: '个人知识库', project: '项目', team: '团队知识库' };
@@ -27,6 +30,7 @@ export default function KnowledgeCanvas() {
   const [pan, setPan] = useState({ x: 60, y: 95, z: 1 }); const [previous, setPrevious] = useState<typeof pan | null>(null);
   const [folded, setFolded] = useState<Set<string>>(new Set()); const [menu, setMenu] = useState<Menu | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null); const [editing, setEditing] = useState<KnowledgeObject | null>(null);
+  const [fileObject, setFileObject] = useState<KnowledgeObject | null>(null); const [filePending, setFilePending] = useState(false);
   const [renaming, setRenaming] = useState<KnowledgeNode | null>(null); const [newTitle, setNewTitle] = useState('');
   const [memberPanel, setMemberPanel] = useState<{ id: string; title: string; rows: KnowledgeMember[] } | null>(null);
   const viewport = useRef<HTMLDivElement>(null); const drag = useRef<Drag | null>(null); const space = useRef(false);
@@ -42,7 +46,7 @@ export default function KnowledgeCanvas() {
   }, [identity]);
   useEffect(() => {
     const controller = new AbortController(); const current = () => !controller.signal.aborted && identityRef.current === identity;
-    setLoadedIdentity(identity); unconfirmed.current = null; setScene(empty); setStatus('loading'); setDraft(null); setEditing(null); setRenaming(null); setMemberPanel(null); setMenu(null); setSelected(null); setQuery(''); setProject(''); setError('');
+    setFileObject(null); setFilePending(false); setLoadedIdentity(identity); unconfirmed.current = null; setScene(empty); setStatus('loading'); setDraft(null); setEditing(null); setRenaming(null); setMemberPanel(null); setMenu(null); setSelected(null); setQuery(''); setProject(''); setError('');
     void (async () => {
       try {
         const availability = await knowledgeApi.available(controller.signal);
@@ -87,10 +91,11 @@ export default function KnowledgeCanvas() {
     }
     finally { busy.current = false; setPending(false); }
   };
-  const locate = (id: string) => {
-    const n = byId.get(id), r = viewport.current?.getBoundingClientRect(); if (!n || !r) return;
+  const locate = (id: string, source: KnowledgeNode[] = sceneRef.current.nodes) => {
+    const index = new Map(source.map(n => [n.id, n]));
+    const n = index.get(id), r = viewport.current?.getBoundingClientRect(); if (!n || !r) return;
     setPrevious(pan); setPan({ x: r.width / 2 - (n.x + 120), y: r.height / 2 - (n.y + 65), z: 1 }); setSelected(id);
-    setFolded(old => { const next = new Set(old); let p = n.parent_id; const seen = new Set<string>(); while (p && !seen.has(p)) { seen.add(p); next.delete(p); p = byId.get(p)?.parent_id ?? null; } return next; });
+    setFolded(old => { const next = new Set(old); let p = n.parent_id; const seen = new Set<string>(); while (p && !seen.has(p)) { seen.add(p); next.delete(p); p = index.get(p)?.parent_id ?? null; } return next; });
   };
   const hidden = (n: KnowledgeNode) => { let p = n.parent_id; const seen = new Set<string>(); while (p && !seen.has(p)) { if (folded.has(p)) return true; seen.add(p); p = byId.get(p)?.parent_id ?? null; } return false; };
   const point = (x: number, y: number) => { const r = viewport.current!.getBoundingClientRect(); return { x: (x - r.left - pan.x) / pan.z, y: (y - r.top - pan.y) / pan.z }; };
@@ -99,8 +104,8 @@ export default function KnowledgeCanvas() {
     setError(''); setMenu(null); setDraft({ type: type ?? (tab === 'project' && !c ? 'project' : 'topic'), container: c?.id ?? '', parent, title: '', body: '', position });
   };
   const openEditor = async (n: KnowledgeNode) => {
-    if (busy.current) return; const key = identity; setError('');
-    try { const object = await knowledgeApi.object(n.id); if (identityRef.current === key) setEditing(object); }
+    if (busy.current || filePending) return; const key = identity; setError('');
+    try { const object = await knowledgeApi.object(n.id); if (identityRef.current === key) { setFileObject(null); setEditing(object); } }
     catch (e) { if (identityRef.current === key) setError(message(e)); }
   };
   const rename = (n: KnowledgeNode) => { setMenu(null); setRenaming(n); setNewTitle(n.title); setError(''); };
@@ -140,7 +145,7 @@ export default function KnowledgeCanvas() {
   const selectContainer = (id: string) => { setProject(id); setQuery(''); };
   const visibleStatus = loadedIdentity === identity ? status : 'loading';
   return <div className="kc-page" onKeyDown={onKey} onKeyUp={e => { if (e.code === 'Space') space.current = false; }} onBlur={() => { space.current = false; }}>
-    <header className="kc-header"><Link to="/chat">← 主对话</Link><strong>知识画布</strong><span>V1 · 内容与布局保存</span><button disabled={pending || status !== 'ready'} onClick={() => { const attempt = unconfirmed.current; if (attempt) void act(attempt.operation, attempt.payload).then(ok => { if (ok) { setDraft(null); setEditing(null); setRenaming(null); } }); else { setError(''); void refresh().catch(e => setError(message(e))); } }}>刷新</button><span role="status">{pending ? '正在保存…' : status === 'ready' ? '已连接' : ''}</span></header>
+    <header className="kc-header"><Link to="/chat">← 主对话</Link><strong>知识画布</strong><span>V2 · 资料工作台</span><button disabled={pending || status !== 'ready'} onClick={() => { const attempt = unconfirmed.current; if (attempt) void act(attempt.operation, attempt.payload).then(ok => { if (ok) { setDraft(null); setEditing(null); setRenaming(null); } }); else { setError(''); void refresh().catch(e => setError(message(e))); } }}>刷新</button><span role="status">{pending ? '正在保存…' : status === 'ready' ? '已连接' : ''}</span></header>
     {error && <div className="kc-error" role="alert">{error}</div>}
     {visibleStatus !== 'ready' ? <div className="kc-state">{visibleStatus === 'loading' ? '正在加载知识画布…' : status === 'unavailable' ? '知识画布尚未向当前账号开放' : '加载失败，请重新打开页面重试'}</div> : <main className="kc-main">
       <div className="kc-workspace" ref={viewport} tabIndex={0} aria-label="知识画布" onPointerDown={e => pointerDown(e)} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => { drag.current = null; void refresh().catch(e => setError(message(e))); }}
@@ -152,7 +157,7 @@ export default function KnowledgeCanvas() {
         <div className="kc-world" style={{ transform: `translate(${pan.x}px,${pan.y}px) scale(${pan.z})` }}>
           <svg className="kc-edges" aria-hidden="true">{nodes.filter(n => n.parent_id && !hidden(n)).map(n => { const p = byId.get(n.parent_id!); return p && <path key={n.id} d={path(p, n)} />; })}{scene.relations.map(r => { const a = byId.get(r.source_object_id), b = byId.get(r.target_object_id); return a && b && !hidden(a) && !hidden(b) && <path key={r.id} className="association" d={path(a, b)} />; })}</svg>
           {nodes.filter(n => !hidden(n)).map(n => <article key={n.id} data-node-id={n.id} aria-label={n.title} className={'kc-node ' + (selected === n.id ? 'selected' : '')} style={{ left: n.x, top: n.y }} onPointerDown={e => { e.stopPropagation(); pointerDown(e, n); }} onDoubleClick={e => { e.stopPropagation(); void openEditor(n); }}>
-            <small>{kinds[n.kind]} · {container(n.container_id)?.title}</small><h3>{n.title}</h3><button onClick={() => void openEditor(n)}>展开{writable(n) ? '编辑' : '查看'}</button>
+            <small>{kinds[n.kind]} · {container(n.container_id)?.title}</small><h3>{n.title}</h3><button onClick={() => void openEditor(n)}>展开{writable(n) ? '编辑' : '查看'}</button><button disabled={filePending} onClick={() => { const key = identity; void knowledgeApi.object(n.id).then(object => { if (identityRef.current === key) setFileObject(object); }).catch(e => { if (identityRef.current === key) setError(message(e)); }); }}>文件资料</button>
             {nodes.some(c => c.parent_id === n.id) && <button aria-label={'折叠或展开 ' + n.title} onClick={() => setFolded(f => { const next = new Set(f); if (next.has(n.id)) next.delete(n.id); else next.add(n.id); return next; })}>{folded.has(n.id) ? '展开分支' : '收起分支'}</button>}
             {writable(n) && <button className="kc-handle" aria-label={'从 ' + n.title + ' 拉线创建'} onPointerDown={e => { e.stopPropagation(); e.preventDefault(); drag.current = { type: 'connect', id: n.id }; viewport.current?.setPointerCapture(e.pointerId); }} />}
           </article>)}
@@ -161,11 +166,13 @@ export default function KnowledgeCanvas() {
         <div className="kc-hint">双击创建 · 拉线创建分支 · Tab 子级 · Enter 同级 · F2 改名 · 空格拖动画布</div>
       </div>
       <aside className="kc-sidebar" aria-label="知识目录"><div role="tablist" className="kc-tabs">{(Object.keys(scopes) as KnowledgeScope[]).map(s => <button key={s} role="tab" aria-selected={tab === s} onClick={() => { setTab(s); setQuery(''); setMenu(null); }}>{scopes[s]}</button>)}</div>
-        <div className="kc-search"><input aria-label="筛选当前范围标题" value={query} placeholder={'筛选' + (active?.title ?? scopes[tab]) + '标题…'} onChange={e => setQuery(e.target.value)} /><small>当前范围：{active?.title ?? scopes[tab]} · 标题筛选</small></div>
+        <div className="kc-search"><input aria-label="搜索当前范围标题与正文" maxLength={200} value={query} placeholder={'搜索' + (active?.title ?? scopes[tab]) + '标题与正文…'} onChange={e => setQuery(e.target.value)} /><small>当前范围：{active?.title ?? scopes[tab]} · 标题与正文</small></div>
         {!orgId && tab !== 'personal' && <p className="kc-muted">请先在主页面选择企业</p>}
-        {scopeContainers.map(c => <section key={c.id}><button className={'kc-container ' + (c.id === active?.id ? 'active' : '')} onClick={() => selectContainer(c.id)}>{c.title}<small>{c.role === 'viewer' ? '只读' : c.role === 'manager' ? '可管理' : '可编辑'}</small></button>{(!query || c.id === active?.id) && (query ? nodes.filter(n => n.container_id === c.id && n.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map(n => nav({ ...n }, 0)) : nodes.filter(n => n.container_id === c.id && !n.parent_id).map(n => nav(n)))}</section>)}
+        {query.trim() && active && <KnowledgeSearch key={identity + active.id + query.trim()} containerId={active.id} query={query.trim()} onLocate={id => { const key = identity; void refresh().then(next => { if (identityRef.current === key) locate(id, next.nodes); }).catch(e => { if (identityRef.current === key) setError(message(e)); }); }} />}
+        {scopeContainers.map(c => <section key={c.id}><button className={'kc-container ' + (c.id === active?.id ? 'active' : '')} onClick={() => selectContainer(c.id)}>{c.title}<small>{c.role === 'viewer' ? '只读' : c.role === 'manager' ? '可管理' : '可编辑'}</small></button>{!query.trim() && nodes.filter(n => n.container_id === c.id && !n.parent_id).map(n => nav(n))}</section>)}
       </aside>
     </main>}
+    {fileObject && loadedIdentity === identity && <KnowledgeFiles key={identity+fileObject.id} object={fileObject} nodes={nodes} onClose={() => setFileObject(null)} onBusyChange={setFilePending} />}
     {menu && <div className="kc-menu" role="menu" style={{ left: Math.min(menu.x, window.innerWidth - 230), top: Math.max(70, Math.min(menu.y, window.innerHeight - 250)) }}>
       {(!menu.parent || (byId.get(menu.parent) && writable(byId.get(menu.parent)!))) && <>{(['topic', 'document', 'rule'] as const).map(type => <button key={type} onClick={() => openCreate(menu.point, menu.parent, type)}>创建{kinds[type]}</button>)}{orgId && !menu.parent && <button onClick={() => openCreate(menu.point, null, 'project')}>创建项目</button>}</>}
       {menu.parent && byId.get(menu.parent) && <><button onClick={() => { const n = byId.get(menu.parent!)!; setMenu(null); void openEditor(n); }}>展开查看</button>{writable(byId.get(menu.parent)!) && <button onClick={() => rename(byId.get(menu.parent!)!)}>修改标题</button>}{container(byId.get(menu.parent)!.container_id)?.kind === 'project' && container(byId.get(menu.parent)!.container_id)?.role === 'manager' && <button onClick={() => { const c = container(byId.get(menu.parent!)!.container_id)!; setMenu(null); const key = identity; knowledgeApi.members(c.id).then(rows => { if (identityRef.current === key) setMemberPanel({ id: c.id, title: c.title, rows }); }).catch(e => setError(message(e))); }}>项目成员权限</button>}</>}
@@ -177,7 +184,7 @@ export default function KnowledgeCanvas() {
       <label>标题<input autoFocus required maxLength={200} value={draft.title} onChange={e => setDraft({ ...draft, title: e.target.value })} /></label>{draft.type !== 'project' && <label>正文<textarea value={draft.body} maxLength={200000} onChange={e => setDraft({ ...draft, body: e.target.value })} /></label>}
       {error && <p role="alert">{error}</p>}<footer><button type="button" disabled={pending} onClick={() => setDraft(null)}>取消</button><button className="primary" disabled={pending}>保存到画布</button></footer>
     </form></div></Dialog>}
-    {editing && <Dialog open title="编辑内容" hideTitleVisually showClose={false} closeOnOutsideClick={false} closeOnEscape={!pending} onOpenChange={open => { if (!open && !pending) setEditing(null); }} className="kc-modal"><div className="kc-form"><form onSubmit={e => { e.preventDefault(); void act('save_document', { object_id: editing.id, expected_revision: editing.revision, body: editing.body }).then(ok => { if (ok) setEditing(null); }); }}><h2>{editing.title}</h2><small>版本 {editing.revision} · {editing.can_write ? '可编辑' : '只读'}</small><label htmlFor="kc-edit-body">正文</label><textarea id="kc-edit-body" maxLength={200000} readOnly={!editing.can_write} value={editing.body} onChange={e => setEditing({ ...editing, body: e.target.value })} />{error && <p role="alert">{error}。编辑内容仍保留，可先复制再重新打开最新版本。</p>}<footer><button type="button" disabled={pending} onClick={() => setEditing(null)}>关闭</button>{editing.can_write && <button className="primary" disabled={pending}>保存正文</button>}</footer></form></div></Dialog>}
+    {editing && <Dialog open title="编辑内容" hideTitleVisually showClose={false} closeOnOutsideClick={false} closeOnEscape={!pending} onOpenChange={open => { if (!open && !pending) setEditing(null); }} className="kc-modal"><div className="kc-form"><form onSubmit={e => { e.preventDefault(); void act('save_document', { object_id: editing.id, expected_revision: editing.revision, body: editing.body }).then(ok => { if (ok) setEditing(null); }); }}><h2>{editing.title}</h2><small>版本 {editing.revision} · {editing.can_write ? '可编辑' : '只读'}</small><label htmlFor="kc-edit-body">正文</label><textarea id="kc-edit-body" maxLength={200000} readOnly={!editing.can_write} value={editing.body} onChange={e => setEditing({ ...editing, body: e.target.value })} /><KnowledgeHistory key={identity + editing.id} objectId={editing.id} />{error && <p role="alert">{error}。编辑内容仍保留，可先复制再重新打开最新版本。</p>}<footer><button type="button" disabled={pending} onClick={() => setEditing(null)}>关闭</button>{editing.can_write && <button className="primary" disabled={pending}>保存正文</button>}</footer></form></div></Dialog>}
     {renaming && <Dialog open title="修改标题" hideTitleVisually showClose={false} closeOnOutsideClick={false} closeOnEscape={!pending} onOpenChange={open => { if (!open && !pending) setRenaming(null); }} className="kc-modal"><div className="kc-form"><form onSubmit={e => { e.preventDefault(); void act('update_title', { object_id: renaming.id, expected_revision: renaming.revision, title: newTitle.trim() }).then(ok => { if (ok) setRenaming(null); }); }}><h2>修改标题</h2><input aria-label="新标题" autoFocus required maxLength={200} value={newTitle} onChange={e => setNewTitle(e.target.value)} />{error && <p role="alert">{error}</p>}<footer><button type="button" disabled={pending} onClick={() => setRenaming(null)}>取消</button><button className="primary" disabled={pending}>保存标题</button></footer></form></div></Dialog>}
     {memberPanel && <Dialog open title="项目成员权限" hideTitleVisually showClose={false} closeOnOutsideClick={false} closeOnEscape={!pending} onOpenChange={open => { if (!open && !pending) setMemberPanel(null); }} className="kc-modal"><div className="kc-form"><h2>{memberPanel.title} · 成员权限</h2>{memberPanel.rows.map(m => <div className="kc-member" key={m.user_id}><span>{m.nickname || m.user_id.slice(0, 8)}{m.user_id === userId ? '（你）' : ''}</span><select aria-label={'权限 ' + m.nickname} disabled={pending || m.user_id === userId} value={m.status === 'active' ? m.role ?? '' : ''} onChange={e => { const role = e.target.value as KnowledgeRole | ''; const key = identity; void act('set_member', { container_id: memberPanel.id, user_id: m.user_id, role: role || 'viewer', status: role ? 'active' : 'removed' }).then(async ok => { if (ok) { const rows = await knowledgeApi.members(memberPanel.id); if (identityRef.current === key) setMemberPanel(p => p ? { ...p, rows } : p); } }).catch(e => setError(message(e))); }}><option value="">未加入</option><option value="viewer">查看</option><option value="editor">编辑</option><option value="manager">管理</option></select></div>)}{error && <p role="alert">{error}</p>}<footer><button disabled={pending} onClick={() => setMemberPanel(null)}>关闭</button></footer></div></Dialog>}
   </div>;
