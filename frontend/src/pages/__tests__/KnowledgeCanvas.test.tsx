@@ -227,6 +227,29 @@ describe('知识画布', () => {
     expect(screen.getByRole('button', { name: '从 继续延伸 拉线创建' })).toBeInTheDocument();
     expect(f.api.command.mock.calls.map(c => c[1].parent_id)).toEqual(['root', 'created-1']);
   });
+  it('keeps the exact line drop despite nearby occupied layout and permits replacing an empty draft', async () => {
+    prepareLineGesture(); persistCreatedNodes();
+    f.api.scene.mockResolvedValue({ ...initial, nodes: [node, { ...node, id: 'occupied', node_id: 'occupied-layout', title: '已有节点', x: 400, y: 300 }] });
+    show(); await ready(); const canvas = lineGeometry();
+    fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 450, clientY: 400 }); fireEvent.pointerUp(canvas, { pointerId: 1, clientX: 450, clientY: 400 });
+    expect(screen.getByLabelText('新主题标题')).toBeInTheDocument();
+    fireEvent.pointerDown(screen.getByLabelText('从 项目总纲 拉线创建'), { button: 0, pointerId: 2, clientX: 320, clientY: 190 });
+    fireEvent.pointerMove(canvas, { pointerId: 2, clientX: 460, clientY: 390 }); fireEvent.pointerUp(canvas, { pointerId: 2, clientX: 460, clientY: 390 });
+    expect(f.api.command).not.toHaveBeenCalled();
+    const draft = document.querySelector<HTMLElement>('.kc-quick')!;
+    const wanted = { x: parseFloat(draft.style.left), y: parseFloat(draft.style.top) };
+    fireEvent.change(screen.getByLabelText('新主题标题'), { target: { value: '落点主题' } }); fireEvent.keyDown(screen.getByLabelText('新主题标题'), { key: 'Enter' });
+    await waitFor(() => expect(f.api.command).toHaveBeenCalledWith('create_object', expect.objectContaining({ position: wanted, title: '落点主题' }), expect.any(String)));
+    expect(screen.queryByText('主题 · 项目总纲')).toBeNull();
+  });
+  it('continues an empty new topic with Tab using its default title', async () => {
+    prepareLineGesture(); persistCreatedNodes(); show(); await ready(); const canvas = lineGeometry();
+    fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 450, clientY: 400 }); fireEvent.pointerUp(canvas, { pointerId: 1, clientX: 450, clientY: 400 });
+    fireEvent.keyDown(screen.getByLabelText('新主题标题'), { key: 'Tab' });
+    await screen.findByRole('article', { name: '新主题' });
+    expect(screen.getByLabelText('新主题标题')).toBeInTheDocument();
+    expect(f.api.command.mock.calls[0][1].title).toBe('新主题');
+  });
   it('snaps to an existing node and sends related rather than reparent', async () => {
     prepareLineGesture(true); show(); await ready(); const canvas = lineGeometry();
     fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 545, clientY: 180 });

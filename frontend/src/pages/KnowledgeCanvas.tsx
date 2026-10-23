@@ -137,7 +137,7 @@ export default function KnowledgeCanvas() {
   const active = tab === 'project' ? (scopeContainers.find(c => c.id === project) ?? scopeContainers[0]) : scopeContainers[0];
   const nodes = scene.nodes.filter(n => n.container_id === active?.id); const byId = new Map(nodes.map(n => [n.id, n]));
   useEffect(() => { const belongs = (id: string | null) => scene.nodes.some(n => n.id === id && n.container_id === active?.id); setSelected(id => belongs(id) ? id : null); setMulti(old => new Set([...old].filter(belongs))); setMenu(null); }, [active?.id, scene.nodes]);
-  const connection = useCanvasConnection({ viewport, view: pan, setView: updateView, nodes, relations: scene.relations, identity, onTap: id => { if (nodes.some(n => n.parent_id === id)) toggleFold(id); }, enabled: status === 'ready' && !pending && !unconfirmed.current && !quick && !draft && !editing && !memberPanel && !fileObject && !branchPreview });
+  const connection = useCanvasConnection({ viewport, view: pan, setView: updateView, nodes, relations: scene.relations, identity, onTap: id => { if (nodes.some(n => n.parent_id === id)) toggleFold(id); }, enabled: status === 'ready' && !pending && !unconfirmed.current && (!quick || (!quick.node && !quick.title.trim())) && !draft && !editing && !memberPanel && !fileObject && !branchPreview });
   const presence = useCanvasPresence(identity + ':' + active?.id, reducedMotion);
   const motionContext = useRef({ active, scene, folded, presence, nodeMotion }); motionContext.current = { active, scene, folded, presence, nodeMotion };
   const refresh = useCallback(async (motion?: string) => {
@@ -411,7 +411,7 @@ export default function KnowledgeCanvas() {
   const createFromLine = (source: KnowledgeNode, position: Point) => {
     setSelected(source.id); setMenu(null); setError(''); cancelQuick.current = false;
     setFolded(old => { const next = new Set(old); next.delete(source.id); return next; });
-    const placement = freePosition(position, 170, source.container_id);
+    const placement = position;
     setQuick({ node: null, container: source.container_id, parent: source.id, position: placement, title: '', fromLine: true });
     revealQuick(placement);
   };
@@ -424,15 +424,15 @@ export default function KnowledgeCanvas() {
   const saveQuick = async (next?: 'sibling' | 'child') => {
     if (!quick || quickSaving.current || cancelQuick.current) return;
     if (unconfirmed.current) { await checkSave(); return; }
-    const title = quick.title.trim();
-    if (!title) { if (!next) { setQuick(null); focusCanvas(); } return; }
+    const title = quick.title.trim() || (next && !quick.node ? '新主题' : '');
+    if (!title) { setQuick(null); focusCanvas(); return; }
     quickSaving.current = true; const key = identity;
     let ok = true; createdNode.current = null;
     if (quick.node) {
       if (title !== quick.node.title) ok = await act('update_title', { object_id: quick.node.id, expected_revision: quick.node.revision, title });
     } else {
       // Reserve space for a long title before its card is rendered. Retries retain the original payload.
-      const position = freePosition(quick.position, Math.max(170, 100 + Math.ceil([...title].length / 14) * 24), quick.container);
+      const position = quick.fromLine ? quick.position : freePosition(quick.position, Math.max(170, 100 + Math.ceil([...title].length / 14) * 24), quick.container);
       let placement = position; let insertion: Record<string, unknown> = {};
       if (quick.after || quick.before) {
         const latestNodes = sceneRef.current.nodes.filter(n => n.container_id === quick.container);
@@ -822,8 +822,8 @@ export default function KnowledgeCanvas() {
             cancelView(); connection.beginReconnect(relation, endpoint, active.revision, e.pointerId, { x: e.clientX, y: e.clientY });
           }} />
           {[...nodes.filter(n => !hidden(n)), ...presence.leaving.filter(n => !liveVisibleIds.has(n.id))].map(n => <article key={n.id} inert={departingIds.has(n.id) || undefined} aria-hidden={departingIds.has(n.id) || undefined} data-node-id={departingIds.has(n.id) ? undefined : n.id} data-departure-id={departingIds.has(n.id) ? n.id : undefined} aria-label={departingIds.has(n.id) ? undefined : n.title} className={'kc-node ' + (presence.entering.has(n.id) ? 'kc-node-enter ' : '') + (presence.emphasis.has(n.id) ? 'kc-node-emphasis ' : '') + (departingIds.has(n.id) ? 'kc-node-exit ' : '') + (chosen.has(n.id) ? 'selected' : '') + (clipboard?.mode === 'cut' && clipboard.objects.some(o => o.object_id === n.id) ? ' kc-cut-source' : '') + (branchPreview?.moving.has(n.id) ? ' kc-branch-moving' : '') + (branchPreview?.target === n.id ? branchPreview.valid ? ' kc-drop-target' : ' kc-drop-invalid' : '') + (connection.preview?.target === n.id ? connection.preview.valid ? ' kc-drop-target' : ' kc-drop-invalid' : '') + (connection.preview?.source === n.id ? ' kc-connect-source' : '')} style={{ left: drawnById.get(n.id)?.x ?? n.x, top: drawnById.get(n.id)?.y ?? n.y, '--kc-presence-opacity': presence.starts[n.id]?.opacity ?? (departingIds.has(n.id) ? 1 : 0), '--kc-presence-scale': presence.starts[n.id]?.scale ?? (departingIds.has(n.id) ? 1 : .97) } as CSSProperties} onPointerDown={e => { e.stopPropagation(); pointerDown(e, n); }} onDoubleClick={e => { e.stopPropagation(); if (!(e.target as HTMLElement).closest('button,input')) { if (writable(n)) rename(n); else void openEditor(n); } }}>
-            <small>{kinds[n.kind]} · {container(n.container_id)?.title}</small><h3>{n.title}</h3><button onClick={() => void openEditor(n)}>展开{writable(n) ? '编辑' : '查看'}</button><button disabled={filePending || pending || !!unconfirmed.current} onClick={() => { const key = identity; void knowledgeApi.object(n.id).then(object => { if (identityRef.current === key) setFileObject(object); }).catch(e => { if (identityRef.current === key) setError(message(e)); }); }}>文件资料</button>
-            {(writable(n) || nodes.some(c => c.parent_id === n.id)) && <button className="kc-handle" aria-label={nodes.some(c => c.parent_id === n.id) ? '折叠或展开 ' + n.title : '从 ' + n.title + ' 拉线创建'} aria-expanded={nodes.some(c => c.parent_id === n.id) ? !folded.has(n.id) : undefined} title={writable(n) ? '单击折叠/展开分支，拖动创建子主题' : '单击折叠/展开分支'} onClick={e => { if ((e.detail === 0 || !writable(n) || pending || !!unconfirmed.current) && nodes.some(c => c.parent_id === n.id)) toggleFold(n.id); }} onPointerDown={e => { e.stopPropagation(); e.preventDefault(); if (e.button !== 0 || !writable(n) || busy.current || quick) return; cancelView(); setSelected(n.id); setMenu(null); connection.begin(n.id, e.pointerId, { x: e.clientX, y: e.clientY }); }} />}
+            {n.kind !== 'topic' && <small>{kinds[n.kind]}</small>}<h3>{n.title}</h3><button onClick={() => void openEditor(n)}>展开{writable(n) ? '编辑' : '查看'}</button><button disabled={filePending || pending || !!unconfirmed.current} onClick={() => { const key = identity; void knowledgeApi.object(n.id).then(object => { if (identityRef.current === key) setFileObject(object); }).catch(e => { if (identityRef.current === key) setError(message(e)); }); }}>文件资料</button>
+            {(writable(n) || nodes.some(c => c.parent_id === n.id)) && <button className="kc-handle" aria-label={nodes.some(c => c.parent_id === n.id) ? '折叠或展开 ' + n.title : '从 ' + n.title + ' 拉线创建'} aria-expanded={nodes.some(c => c.parent_id === n.id) ? !folded.has(n.id) : undefined} title={writable(n) ? '单击折叠/展开分支，拖动创建子主题' : '单击折叠/展开分支'} onClick={e => { if ((e.detail === 0 || !writable(n) || pending || !!unconfirmed.current) && nodes.some(c => c.parent_id === n.id)) toggleFold(n.id); }} onPointerDown={e => { e.stopPropagation(); e.preventDefault(); if (e.button !== 0 || !writable(n) || busy.current || (quick && (quick.node || quick.title.trim()))) return; if (quick) { cancelQuick.current = true; setQuick(null); } cancelView(); setSelected(n.id); setMenu(null); connection.begin(n.id, e.pointerId, { x: e.clientX, y: e.clientY }); }} />}
           </article>)}
           {marquee && <div className="kc-marquee" style={{ left: Math.min(marquee.start.x, marquee.end.x), top: Math.min(marquee.start.y, marquee.end.y), width: Math.abs(marquee.end.x - marquee.start.x), height: Math.abs(marquee.end.y - marquee.start.y) }} />}
           {branchPreview?.valid && branchPreview.placement !== 'free' && drag.current?.type === 'node' && drag.current.sources.map(id => { const slot = branchPreview.nodes.find(n => n.id === id); const size = drag.current?.type === 'node' ? drag.current.sizes.get(id) : undefined; return slot && <div key={id} className="kc-drop-slot" aria-label="分支落点预览" style={{ left: slot.x, top: slot.y, width: size?.width ?? 272, height: size?.height ?? 170 }} />; })}
