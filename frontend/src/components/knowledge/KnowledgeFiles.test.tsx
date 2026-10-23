@@ -85,3 +85,19 @@ describe('knowledge private files', () => {
     await Promise.resolve();expect(URL.createObjectURL).not.toHaveBeenCalled();
   });
 });
+
+it('focuses the file panel close control and supports Escape when idle',async()=>{
+  const close=vi.fn();render(<KnowledgeFiles object={object} nodes={[source]} onClose={close} onBusyChange={vi.fn()}/>);await ready();
+  expect(screen.getByRole('button',{name:'关闭文件资料'})).toHaveFocus();
+  fireEvent.keyDown(screen.getByRole('button',{name:'关闭文件资料'}),{key:'Escape'});expect(close).toHaveBeenCalledTimes(1);
+});
+it('keeps the file panel open while an upload result is unknown or its preview is active',async()=>{
+  const close=vi.fn();api.upload.mockRejectedValueOnce(new Error('unknown result'));
+  render(<KnowledgeFiles object={object} nodes={[source]} onClose={close} onBusyChange={vi.fn()}/>);await ready();
+  fireEvent.click(screen.getByRole('button',{name:'预览此版本'}));const preview=await screen.findByRole('dialog',{name:'文件预览'});
+  fireEvent.keyDown(preview,{key:'Escape'});expect(close).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button',{name:'关闭预览'}));
+  fireEvent.change(screen.getByLabelText('上传并绑定文件'),{target:{files:[new File(['body'],'new.txt')]}});
+  await screen.findByRole('button',{name:'重试同一操作'});
+  fireEvent.keyDown(screen.getByLabelText('上传并绑定文件'),{key:'Escape'});expect(close).not.toHaveBeenCalled();
+});

@@ -1,3 +1,4 @@
+import { useCanvasSurfaceMotion } from './useCanvasSurfaceMotion';
 import { useEffect, useRef, useState } from 'react';
 import PreviewHost from '../../preview/PreviewHost';
 import { resolveAdapter } from '../../preview/registry';
@@ -140,7 +141,11 @@ export function KnowledgeFiles({ object, nodes, onClose, onBusyChange }: { objec
     finally { if (alive.current && !c.signal.aborted) setReading(false); }
   };
   const disabled = pending || !!attempt;
-  return <aside className="kc-file-panel" aria-label="文件资料">
+  const panel = useRef<HTMLElement>(null);
+  useEffect(() => { panel.current?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true }); }, [object.id]);
+
+  const attachPanel = useCanvasSurfaceMotion(panel, 'panel');
+  return <aside ref={attachPanel} className="kc-file-panel" aria-label="文件资料" onKeyDown={event => { if (event.key !== 'Escape' || event.defaultPrevented || preview || !event.currentTarget.contains(event.target as Node)) return; event.preventDefault(); event.stopPropagation(); if (!disabled) onClose(); }}>
     <header><h2>{object.title} · 文件资料</h2><button type="button" disabled={pending || !!attempt} onClick={onClose}>关闭文件资料</button></header>
     <p>上传与引用均固定到内容版本。移除附件不会删除源文件或其他节点的引用。</p>
     <small>单文件最多 20MB；文本须为 UTF-8。支持图片、PDF、Word、表格和 MP4 的只读预览；旧版 Office、PPT 和 ZIP 仅下载。扫描件与音视频未提供 OCR/转写。</small>

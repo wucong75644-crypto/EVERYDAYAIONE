@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { KnowledgeSource } from './KnowledgeSource';
 import { KnowledgeReferenceTags } from './KnowledgeReferenceTags';
@@ -40,4 +40,12 @@ describe('knowledge answer sources',()=>{
     await waitFor(()=>expect(screen.queryByText('◇ 私人知识')).not.toBeInTheDocument());
     expect(screen.getByText('知识引用不可用')).toBeInTheDocument();
   });
+});
+
+
+it('focuses the source close control and supports Escape without substituting the source version',async()=>{
+  vi.mocked(knowledgeApi.version).mockResolvedValue({object_id:'o1',revision:2,title:'旧规则',body:'历史依据',created_at:'2026-10-23'});
+  const close=vi.fn();render(<KnowledgeSource objectId="o1" revision={2} bindingId={null} onClose={close}/>);
+  await screen.findByLabelText('回答来源正文');expect(screen.getByRole('button',{name:'关闭回答来源'})).toHaveFocus();
+  fireEvent.keyDown(screen.getByLabelText('回答来源正文'),{key:'Escape'});expect(close).toHaveBeenCalledTimes(1);
 });

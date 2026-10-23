@@ -21,6 +21,10 @@ class CreatePayload(ProjectPayload):
     parent_id: UUID | None = None
     kind: Literal['topic', 'document', 'rule']
     body: str = Field(default='', max_length=200000)
+    after_object_id: UUID | None = None
+    before_object_id: UUID | None = None
+    expected_container_revision: int | None = Field(default=None, ge=1)
+    nodes: list['MoveNode'] = Field(default_factory=list, max_length=10000)
 
 class ObjectMutation(StrictModel):
     object_id: UUID
@@ -31,6 +35,9 @@ class DocumentPayload(ObjectMutation):
 
 class TitlePayload(ObjectMutation):
     title: Title
+
+    expected_container_revision: int | None = Field(default=None, ge=1)
+    nodes: list['MoveNode'] | None = Field(default=None, max_length=10000)
 
 class ReparentPayload(ObjectMutation):
     parent_id: UUID | None
@@ -43,10 +50,81 @@ class MoveNode(StrictModel):
 class MovePayload(StrictModel):
     nodes: list[MoveNode] = Field(min_length=1, max_length=100)
 
+class BranchPayload(ObjectMutation):
+    expected_container_revision: int = Field(ge=1)
+    target_id: UUID | None
+    placement: Literal['free', 'child', 'before', 'after']
+    nodes: list[MoveNode] = Field(min_length=1, max_length=10000)
+
+class BranchCommand(StrictModel):
+    command_id: UUID
+    operation: Literal['move_branch']
+    payload: BranchPayload
+
+class HistoryPayload(StrictModel):
+    history_id: UUID
+
+class HistoryCommand(StrictModel):
+    command_id: UUID
+    operation: Literal['undo_canvas', 'redo_canvas']
+    payload: HistoryPayload
+
+class BranchSelection(StrictModel):
+    object_id: UUID
+    expected_revision: int = Field(ge=1)
+
+class BatchPayload(StrictModel):
+    snapshot_id: UUID | None = None
+    container_id: UUID
+    expected_container_revision: int = Field(ge=1)
+    objects: list[BranchSelection] = Field(min_length=1, max_length=1000)
+    parent_id: UUID | None = None
+    offset: Position = Field(default_factory=lambda: Position(x=40, y=40))
+
+class BranchSnapshotRequest(BatchPayload):
+    snapshot_id: UUID
+
+class BatchCommand(StrictModel):
+    command_id: UUID
+    operation: Literal['copy_branches', 'delete_branches']
+    payload: BatchPayload
+
+class GroupMovePayload(StrictModel):
+    container_id: UUID
+    expected_container_revision: int = Field(ge=1)
+    objects: list[BranchSelection] = Field(min_length=1, max_length=1000)
+    target_id: UUID | None
+    placement: Literal['free', 'child', 'before', 'after', 'root']
+    nodes: list[MoveNode] = Field(min_length=1, max_length=10000)
+
+class GroupMoveCommand(StrictModel):
+    command_id: UUID
+    operation: Literal['move_branches']
+    payload: GroupMovePayload
+
 class ConnectPayload(StrictModel):
     source_object_id: UUID
     target_object_id: UUID
     relation_type: Literal['reference', 'related', 'dependency']
+
+class RelationPayload(StrictModel):
+    container_id: UUID
+    expected_container_revision: int = Field(ge=1)
+    relation_id: UUID
+
+class ReconnectPayload(RelationPayload):
+    source_object_id: UUID
+    target_object_id: UUID
+
+class DeleteRelationCommand(StrictModel):
+    command_id: UUID
+    operation: Literal['delete_relation']
+    payload: RelationPayload
+
+class ReconnectCommand(StrictModel):
+    command_id: UUID
+    operation: Literal['reconnect_relation']
+    payload: ReconnectPayload
 
 class MemberPayload(StrictModel):
     container_id: UUID
@@ -95,4 +173,4 @@ class MemberCommand(StrictModel):
     payload: MemberPayload
 
 Command = Annotated[Union[CreateCommand, ProjectCommand, DocumentCommand, TitleCommand,
-                         ReparentCommand, MoveCommand, ConnectCommand, MemberCommand], Field(discriminator='operation')]
+                         ReparentCommand, MoveCommand, BranchCommand, HistoryCommand, BatchCommand, GroupMoveCommand, ConnectCommand, DeleteRelationCommand, ReconnectCommand, MemberCommand], Field(discriminator='operation')]

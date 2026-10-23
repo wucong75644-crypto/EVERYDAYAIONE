@@ -1,5 +1,5 @@
-import { useEffect, lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { useEffect, useState, lazy, Suspense } from 'react';
+import { createBrowserRouter, RouterProvider, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { Toaster } from 'react-hot-toast';
 import { useAuthStore } from './stores/useAuthStore';
@@ -33,12 +33,14 @@ const DetailPage = lazy(() => import('./pages/DetailPage'));
  * 路由动画包装器
  * - useLocation 拿当前 location（key 用于触发 AnimatePresence enter/exit）
  * - <AnimatePresence mode="wait"> 让旧页面退场动画播完再 mount 新页面
- * - 必须放在 <BrowserRouter> 内部才能调用 useLocation
+ * - 必须放在 RouterProvider 内部才能调用 useLocation
  *
  * 关键：route key 用"路由段"而非完整 pathname，避免在动态参数路由内
  * 切换时整个页面 unmount（例如 /chat/abc → /chat/xyz 应该是 Chat 内部
  * 状态变化，而不是整页 fade in/out）。
  */
+// Shared with the existing route-key regression tests.
+// eslint-disable-next-line react-refresh/only-export-components
 export function getRouteKey(pathname: string): string {
   // 取第一段作为 key：'/' / '/chat' / '/forgot-password' / '/auth' 等
   // /chat 和 /chat/xxx 都是 'chat'，不会触发 unmount
@@ -126,10 +128,24 @@ function App() {
     return <LoadingScreen message="初始化中..." />;
   }
 
+  return <ErrorBoundary><AppRouter /></ErrorBoundary>;
+}
+
+function AppRouter() {
+  const [router, setRouter] = useState<ReturnType<typeof createBrowserRouter> | null>(null);
+  useEffect(() => {
+    const instance = createBrowserRouter([{ path: '*', element: <AppLayout /> }]);
+    // The router owns a browser history listener; dispose it on unmount and StrictMode replay.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setRouter(instance);
+    return () => instance.dispose();
+  }, []);
+  return router ? <RouterProvider router={router} /> : <LoadingScreen message="加载中..." />;
+}
+
+function AppLayout() {
   return (
-    <ErrorBoundary>
-    <BrowserRouter>
-      <WebSocketProvider>
+    <WebSocketProvider>
         {/* 全局认证弹窗 */}
         <AuthModal />
 
@@ -163,9 +179,7 @@ function App() {
         />
 
         <AnimatedRoutes />
-      </WebSocketProvider>
-    </BrowserRouter>
-    </ErrorBoundary>
+    </WebSocketProvider>
   );
 }
 

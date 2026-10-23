@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useCanvasSurfaceMotion } from './useCanvasSurfaceMotion';
+import { useEffect, useRef, useState } from 'react';
 import { knowledgeApi, knowledgeFilesApi } from '../../services/knowledge';
 import type { KnowledgeVersionDetail, KnowledgeFileVersion } from '../../services/knowledge';
 import PreviewHost from '../../preview/PreviewHost';
@@ -11,6 +12,9 @@ export function KnowledgeSource({objectId,revision,bindingId,onClose}: {objectId
   const [error,setError] = useState('');
   const [preview,setPreview] = useState<PreviewItem>();
   const [open,setOpen] = useState(true);
+  const panel = useRef<HTMLElement>(null);
+  const closable = !!onClose;
+  useEffect(() => { if (closable) panel.current?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true }); }, [objectId, revision, closable]);
   useEffect(() => {
     const c=new AbortController();let blobUrl:string|undefined;
     void (async () => {
@@ -34,7 +38,8 @@ export function KnowledgeSource({objectId,revision,bindingId,onClose}: {objectId
     })().catch(() => {if (!c.signal.aborted)setError('来源已移除、无权访问或版本不可用，请重新选择知识引用。');});
     return () => {c.abort();if (blobUrl)URL.revokeObjectURL(blobUrl);};
   },[objectId,revision,bindingId]);
-  return <aside aria-label="回答来源版本" className="kc-source">
+  const attachPanel = useCanvasSurfaceMotion(panel, 'panel');
+  return <aside ref={attachPanel} aria-label="回答来源版本" className="kc-source" onKeyDown={event => { if (event.key !== 'Escape' || event.defaultPrevented || (open && preview) || !event.currentTarget.contains(event.target as Node)) return; event.preventDefault(); event.stopPropagation(); onClose?.(); }}>
     {onClose && <button aria-label="关闭回答来源" onClick={onClose}>关闭</button>}
     <h2>回答依据 · 版本 {revision}</h2><p>这是本次回答使用的历史版本，当前内容更新不会改变此依据。</p>
     {error && <p role="alert">{error}</p>}

@@ -1,3 +1,4 @@
+import { useCanvasSurfaceScope, useCanvasSurfaceMotion } from '../../knowledge/useCanvasSurfaceMotion';
 /**
  * 视频全屏预览弹窗
  *
@@ -5,7 +6,7 @@
  * 内容简化为浏览器原生 <video controls>，不做缩放/拖拽。
  */
 
-import { useEffect, useCallback, useState, memo } from 'react';
+import { useEffect, useCallback, useState, memo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Download, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { downloadFile } from '../../../utils/downloadFile';
@@ -29,18 +30,21 @@ export default memo(function VideoPreviewModal({
   hasPrev = false,
   hasNext = false,
 }: VideoPreviewModalProps) {
+  const surface = useRef<HTMLDivElement>(null), canvas = useCanvasSurfaceScope();
+  const attach = useCanvasSurfaceMotion(surface, 'dialog', canvas && !!videoUrl);
   const [isClosing, setIsClosing] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [loadError, setLoadError] = useState(false);
 
   // 关闭动画
   const handleClose = useCallback(() => {
+    if (canvas) { onClose(); return; }
     setIsClosing(true);
     setTimeout(() => {
       setIsClosing(false);
       onClose();
     }, 150);
-  }, [onClose]);
+  }, [onClose, canvas]);
 
   // 切视频时重置错误态
   useEffect(() => {
@@ -77,7 +81,7 @@ export default memo(function VideoPreviewModal({
   if (!videoUrl) return null;
 
   return createPortal(
-    <div
+    <div ref={attach} data-canvas-preview={canvas || undefined}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
       onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
       style={{

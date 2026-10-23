@@ -6,7 +6,7 @@ from psycopg import Error as DatabaseError
 from api.deps import Database, OrgCtx
 from core.config import get_settings
 from core.db_scope import DatabaseScope, DatabaseAccessKind
-from services.knowledge_workspace.contracts import Command
+from services.knowledge_workspace.contracts import Command, BranchSnapshotRequest
 from services.knowledge_workspace.repository import Repository
 
 router = APIRouter(prefix='/knowledge', tags=['知识画布'])
@@ -37,11 +37,16 @@ def call(ctx, db, response, method, *args):
     except DatabaseError as e:
         message = str(e.diag.message_primary or '')
         errors = {
+            'KB_SNAPSHOT_EXPIRED': (409,'CLIPBOARD_SNAPSHOT_EXPIRED','复制快照已过期或未完成，请重新复制'),
+            'KB_SNAPSHOT_CAPACITY': (422,'CLIPBOARD_SNAPSHOT_CAPACITY','复制内容超过16MB，请减少选中分支'),
+            'KB_RELATION_DUPLICATE': (422,'RELATION_DUPLICATE','这些节点之间已有同类型关联线，请选择其他节点'),
+            'KB_INVALID_RELATION': (422,'INVALID_RELATION','关联线需连接同一空间内的两个不同节点'),
             'KB_NOT_FOUND': (404,'KNOWLEDGE_NOT_FOUND','内容不存在或无权访问'),
             'KB_ACCESS_DENIED': (403,'KNOWLEDGE_ACCESS_DENIED','没有修改权限'),
             'KB_ORG_REQUIRED': (403,'KNOWLEDGE_ORG_REQUIRED','请先选择企业'),
             'KB_VERSION_CONFLICT': (409,'VERSION_CONFLICT','内容已由其他操作更新，请刷新后重试'),
             'KB_IDEMPOTENCY_PAYLOAD_CONFLICT': (409,'IDEMPOTENCY_PAYLOAD_CONFLICT','重试内容与原操作不同'),
+            'KB_HISTORY_CONFLICT': (409,'HISTORY_CONFLICT','知识或撤销记录已更新，请刷新核对；未覆盖新修改'),
             'KB_TREE_CYCLE': (422,'TREE_CYCLE','分支不能移到自身或后代中'),
             'KB_FILE_CAPACITY': (422,'KNOWLEDGE_FILE_CAPACITY','每个节点最多绑定 100 个文件'),
             'KB_INVALID_FILE': (422,'KNOWLEDGE_INVALID_FILE','文件信息不符合约束'),
@@ -121,3 +126,11 @@ def search(container_id: UUID, ctx: OrgCtx, db: Database, response: Response,
     if not query:
         return failure(422,'KNOWLEDGE_INVALID_QUERY','请输入搜索关键词')
     return call(ctx,db,response,'search',container_id,query,cursor)
+
+@router.get('/canvas-history')
+def canvas_history(ctx: OrgCtx, db: Database, response: Response):
+    return call(ctx,db,response,'canvas_history')
+
+@router.post('/branch-snapshots')
+def capture_branch_snapshot(body: BranchSnapshotRequest, ctx: OrgCtx, db: Database, response: Response):
+    return call(ctx,db,response,'branch_snapshot',body.snapshot_id,body.model_dump(mode='json'))
