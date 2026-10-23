@@ -5,6 +5,7 @@
  * 使用统一的 sendMessage API
  */
 
+import type { KnowledgeReference } from '../../services/knowledgeReferences';
 import { type UnifiedModel } from '../../constants/models';
 import { type Message } from '../../stores/useMessageStore';
 import {
@@ -59,6 +60,7 @@ export function useTextMessageHandler({
     selectedSkill?: SkillSelection,
   ) => {
     try {
+      const {knowledge_refs: knowledgeRefs, ...modelExtraParams} = extraParams ?? {};
       const content = orderedAttachments?.length
         ? createTextWithAttachments(messageContent, orderedAttachments)
         : files?.length
@@ -87,6 +89,7 @@ export function useTextMessageHandler({
         generationType: 'chat',
         model: selectedModel.id,
         selectedSkill,
+        knowledgeRefs: knowledgeRefs as KnowledgeReference[] | undefined,
         params: {
           thinking_effort: thinkingEffort,
           thinking_mode: deepThinkMode ? 'deep_think' : undefined,
@@ -95,7 +98,7 @@ export function useTextMessageHandler({
           top_p: topP,
           top_k: topK,
           max_output_tokens: maxOutputTokens,
-          ...extraParams,  // 电商图模式: image_task_meta 等
+          ...modelExtraParams,  // 电商图模式: image_task_meta 等
         },
         subscribeTask: subscribeTaskWithMapping,
         unsubscribeTask,

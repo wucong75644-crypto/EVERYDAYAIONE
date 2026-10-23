@@ -109,7 +109,7 @@ def test_complete_helpers_handlers_and_schema_order(catalog, org):
             expected[key].sort(key=BASELINE['helpers'][str(org)]['chat'].index
                                if key == 'core' else None)
     view = 'helpers/' + str(org) + '/'
-    chat_skill_tools = {
+    chat_skill_tools = {'knowledge_outline','knowledge_search','knowledge_read','knowledge_follow_reference',
         'list_personal_skills_for_edit', 'prepare_skill_draft', 'get_personal_skill_for_edit',
         # The planner is an intentional new public tool; keep the frozen legacy
         # catalog assertions focused on the pre-existing tool contracts.
@@ -168,7 +168,8 @@ def test_old_imports_signatures_and_constant_values(module):
                              'get_personal_skill_for_edit': 'general',
                              'plan_ecommerce_images': 'general', 'agent_reach': 'general',
                              'list_personal_skills_for_edit': 'general'})
-            assert value == expected
+            assert {k:v for k,v in value.items() if not k.startswith("knowledge_")} == expected
+            assert all(value[k]=="general" for k in ("knowledge_outline","knowledge_search","knowledge_read","knowledge_follow_reference"))
             continue
         if module == 'agent_tools' and name == 'SMART_CONFIG':
             # 387af4a5 authorized the image-model upgrade after block 07.
@@ -433,9 +434,9 @@ importlib.import_module(sys.argv[1])
 from config.chat_tools import get_chat_tools
 from services.tools import build_tool_catalog
 from services.tool_executor import ToolExecutor
-assert len(get_chat_tools('org-a')) == 37
-assert len(build_tool_catalog().specs()) == 40
-assert len(ToolExecutor(None, 'actor-a', 'c1', 'org-a')._handlers) == 40
+assert len(get_chat_tools('org-a')) == 41
+assert len(build_tool_catalog().specs()) == 44
+assert len(ToolExecutor(None, 'actor-a', 'c1', 'org-a')._handlers) == 44
 '''
     run = subprocess.run([sys.executable, '-c', script, first], text=True, capture_output=True, timeout=30)
     assert run.returncode == 0, run.stderr

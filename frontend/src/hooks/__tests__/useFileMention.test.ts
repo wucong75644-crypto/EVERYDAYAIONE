@@ -12,7 +12,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { extractMentionQuery, useFileMention } from '../useFileMention';
+import { searchKnowledgeRoots } from '../../services/knowledgeReferences';
 import { searchWorkspace } from '../../services/workspace';
+
+vi.mock('../../services/knowledgeReferences', () => ({searchKnowledgeRoots: vi.fn().mockResolvedValue([])}));
 
 // Mock searchWorkspace — 避免真实 API 调用
 vi.mock('../../services/workspace', () => ({
@@ -248,5 +251,28 @@ describe('useFileMention', () => {
       act(() => result.current.setActiveIndex(3));
       expect(result.current.activeIndex).toBe(3);
     });
+  });
+});
+
+
+describe('knowledge root mentions', () => {
+  it('returns typed root candidates with scope, separate from Workspace paths', async () => {
+    vi.mocked(searchKnowledgeRoots).mockResolvedValueOnce([{kind:'object',id:'root-1',title:'售后知识',scope_title:'售后项目'}]);
+    const {result}=renderHook(()=>useFileMention());
+    act(()=>result.current.handleInputChange('@',1));
+    await waitFor(()=>expect(result.current.results[0]?.knowledge_ref?.root.id).toBe('root-1'));
+    expect(result.current.results[0].scope_title).toBe('售后项目');
+    expect(result.current.results[0].workspace_path).toBe('knowledge:object:root-1');
+    act(()=>result.current.close());
+  });
+  it('cannot repopulate a closed mention from a late root response', async () => {
+    let finish!: (roots: Awaited<ReturnType<typeof searchKnowledgeRoots>>) => void;
+    vi.mocked(searchKnowledgeRoots).mockReturnValueOnce(new Promise(resolve=>{finish=resolve;}));
+    const {result}=renderHook(()=>useFileMention());
+    act(()=>result.current.handleInputChange('@',1));
+    act(()=>result.current.close());
+    await act(async()=>finish([{kind:'container',id:'private',title:'迟到结果',scope_title:'个人'}]));
+    expect(result.current.results).toEqual([]);
+    expect(result.current.showDropdown).toBe(false);
   });
 });

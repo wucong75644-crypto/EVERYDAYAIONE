@@ -1,3 +1,4 @@
+import { KnowledgeReferenceTags } from '../../knowledge/KnowledgeReferenceTags';
 /**
  * 单条消息组件
  *
@@ -381,6 +382,7 @@ export default memo(function MessageItem({
           }`}
           style={isUser ? { boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.22), 0 4px 16px rgba(0,0,0,0.06)' } : undefined}
         >
+          <KnowledgeReferenceTags references={message.knowledge_refs} />
           <MessageBubbleContent
             message={message}
             isUser={isUser}

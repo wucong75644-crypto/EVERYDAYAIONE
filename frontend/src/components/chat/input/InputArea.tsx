@@ -4,7 +4,7 @@ import { chatColumnLayout } from '../message/messageContentLayout';
  *
  * 统一聊天和图像生成界面，根据选择的模型自动判断功能
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 // lucide-react icons moved to InputControls (AI button now inside input)
 import { createConversation, updateConversation } from '../../../services/conversation';
 import { supportsSkillMode, type SkillTaskMode } from '../../../services/skills';
@@ -20,7 +20,8 @@ import { isSmartModel } from '../../../constants/smartModel';
 import { useMessageStore, type Message } from '../../../stores/useMessageStore';
 import { useAuthStore } from '../../../stores/useAuthStore';
 import { logger } from '../../../utils/logger';
-import { useFileMention } from '../../../hooks/useFileMention';
+import { useFileMention, type MentionResult } from '../../../hooks/useFileMention';
+import type { KnowledgeReference } from '../../../services/knowledgeReferences';
 import ConflictAlert from './ConflictAlert';
 import InputControls from './InputControls';
 import UploadErrorBar from './UploadErrorBar';
@@ -120,14 +121,14 @@ export default function InputArea({
 
   // @ 文件提及 Hook
   const fileMention = useFileMention();
+  const orgKey = useAuthStore(s => s.currentOrgId);
+  const referenceKey = `${settingsUserId}:${orgKey ?? 'personal'}:${conversationId ?? 'new'}`;
+  const [knowledgeDrafts, setKnowledgeDrafts] = useState<Record<string, Array<{ref: KnowledgeReference; title: string}>>>({});
+  const knowledgeDraft = useMemo(() => knowledgeDrafts[referenceKey] ?? [], [knowledgeDrafts,referenceKey]);
+  const knowledgeRefs = knowledgeDraft.map(x => x.ref);
   const consumeMention = fileMention.consumeMention;
-  // @ 提及选中文件：添加到 workspaceFiles + 用 hook 精准移除 @keyword
-  const handleMentionSelect = useCallback((file: { name: string; workspace_path: string; cdn_url: string | null; thumbnail_url?: string | null; mime_type: string | null; size: number }) => {
-    addWorkspaceFile(file);
-    // consumeMention 用 hook 内部记录的精准 @ 起始位置做替换，不依赖 lastIndexOf
-    setPrompt(consumeMention(prompt));
-  }, [addWorkspaceFile, consumeMention, prompt, setPrompt]);
-
+  const closeMention = fileMention.close;
+  useEffect(() => {closeMention();}, [referenceKey,closeMention]);
   // 构建当前 chat_settings 快照（创建对话时保存）
   const buildChatSettingsPayload = useCallback(() => ({
     smart_sub_mode: chatSettings.smartSubMode,
@@ -154,8 +155,9 @@ export default function InputArea({
       // Preserve the draft while the new conversation's detail request is loading.
       saveConversationSettings(settingsUserId, id, settings);
     }
+    setKnowledgeDrafts(previous => ({...previous,[`${settingsUserId}:${orgKey ?? 'personal'}:${id}`]: previous[referenceKey] ?? []}));
     onConversationCreated(id, title);
-  }, [settingsUserId, buildChatSettingsPayload, onConversationCreated]);
+  }, [settingsUserId, orgKey, referenceKey, buildChatSettingsPayload, onConversationCreated]);
 
   // 自动保存模型到对话的回调
   const handleAutoSaveModel = useCallback((modelId: string) => {
@@ -209,6 +211,24 @@ export default function InputArea({
     ? (smartSubMode.startsWith('image') ? 'image'  // 图生图/文生图/电商图都走 image 路径
       : smartSubMode as ModelType)
     : selectedModel.type;
+  // @ 提及选中文件：添加到 workspaceFiles + 用 hook 精准移除 @keyword
+  const handleMentionSelect = useCallback((file: MentionResult) => {
+    if (file.knowledge_ref) {
+      if (effectiveModelType !== 'chat') {setSendError('知识引用仅支持主对话问答，请先切换到聊天模式。');return;}
+      const ref = file.knowledge_ref;
+      if (knowledgeDraft.length >= 8 && !knowledgeDraft.some(x => x.ref.root.kind === ref.root.kind && x.ref.root.id === ref.root.id)) {
+        setSendError('每次最多引用 8 个知识总分支，请先移除一个引用。');return;
+      }
+      setKnowledgeDrafts(previous => {
+        const current = previous[referenceKey] ?? [];
+        if (current.length >= 8 || current.some(x => x.ref.root.id === ref.root.id && x.ref.root.kind === ref.root.kind)) return previous;
+        return {...previous, [referenceKey]: [...current, {ref, title: file.name}]};
+      });
+    } else addWorkspaceFile(file);
+    // consumeMention 用 hook 内部记录的精准 @ 起始位置做替换，不依赖 lastIndexOf
+    setPrompt(consumeMention(prompt));
+  }, [addWorkspaceFile, consumeMention, prompt, setPrompt, referenceKey, knowledgeDraft, effectiveModelType]);
+
   const isEcomMode = smartSubMode === 'image-ecom';
   // 切换到非智能模型时重置子模式
   useEffect(() => {
@@ -299,6 +319,7 @@ export default function InputArea({
     prompt, setPrompt,
   });
   const { handleAudioSubmit, handleSubmit } = useInputSubmission({
+    knowledgeRefs: effectiveModelType === 'chat' ? knowledgeRefs : [],
     takeSelectedSkill: turnSkill.take,
     hasSkillIntent, skillTaskMode: skillUiVisible && effectiveModelType !== 'chat' ? skillTaskMode : undefined, skillScopeBlocked: skillBindings.blocked,
     conversationId, selectedModel, prompt, clearPromptForSubmission,
@@ -314,6 +335,7 @@ export default function InputArea({
 
   // 键盘快捷键（Tab 补全用模块级常量 ECOM_TAB_COMPLETIONS / ECOM_TAB_KEYS_SORTED）
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     // @ 提及键盘导航优先拦截
     if (fileMention.showDropdown) {
       const handled = fileMention.handleKeyDown(e);
@@ -382,6 +404,11 @@ export default function InputArea({
         />
 
         {/* 主输入控件 */}
+        {effectiveModelType === 'chat' && knowledgeDraft.length > 0 && <div aria-label="已引用知识总分支" className="flex flex-wrap gap-2 px-3 py-2">
+          {knowledgeDraft.map(({ref,title}) => <button type="button" key={`${ref.root.kind}:${ref.root.id}`} aria-label={`移除知识引用 ${title}`}
+            onClick={() => setKnowledgeDrafts(previous => ({...previous,[referenceKey]: (previous[referenceKey] ?? []).filter(x => x.ref !== ref)}))}
+            className="text-sm border rounded px-2 py-1">◇ {title} ×</button>)}
+        </div>}
         <InputControls
           skillBindingsState={skillBindings}
           skillSelector={skillUiVisible ? {

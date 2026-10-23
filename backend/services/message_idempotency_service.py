@@ -153,6 +153,8 @@ class MessageIdempotencyService:
             "assistant_message_id": body.assistant_message_id,
             "client_task_id": body.client_task_id,
         }
+        if body.knowledge_refs:
+            payload["knowledge_refs"] = [r.model_dump(mode="json") for r in body.knowledge_refs]
         if body.skill_task_mode is not None:
             payload["skill_task_mode"] = body.skill_task_mode
         if body.selected_skill is not None:

@@ -1,3 +1,4 @@
+import { KnowledgeSource } from '../components/knowledge/KnowledgeSource';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { Link } from 'react-router-dom';
@@ -91,6 +92,26 @@ export default function KnowledgeCanvas() {
     }
     finally { busy.current = false; setPending(false); }
   };
+  const sourceLocated = useRef('');
+  const [sourceClosed,setSourceClosed] = useState(false);
+  const sourceQuery = new URLSearchParams(window.location.search);
+  const sourceId = sourceQuery.get('object'); const sourceRevision = Number(sourceQuery.get('revision'));
+  useEffect(() => {
+    if (status !== 'ready' || loadedIdentity !== identity) return;
+    const key = identity + ':' + window.location.search;
+    if (sourceLocated.current === key) return;
+    sourceLocated.current = key;
+    const q = new URLSearchParams(window.location.search); const id=q.get('object');
+    const node=scene.nodes.find(n => n.id===id);
+    const scope=scene.containers.find(c => c.id===(node?.container_id ?? q.get('container')));
+    if (id && !node) {setError('来源已移除或无权访问');return;}
+    if (scope) {setTab(scope.kind);if (scope.kind==='project')setProject(scope.id);}
+    if (node) {
+      const rect=viewport.current?.getBoundingClientRect();
+      if (rect)setPan({x:rect.width/2-(node.x+120),y:rect.height/2-(node.y+65),z:1});
+      setSelected(node.id);setFolded(new Set());
+    }
+  }, [status,loadedIdentity,identity,scene]);
   const locate = (id: string, source: KnowledgeNode[] = sceneRef.current.nodes) => {
     const index = new Map(source.map(n => [n.id, n]));
     const n = index.get(id), r = viewport.current?.getBoundingClientRect(); if (!n || !r) return;
@@ -145,7 +166,8 @@ export default function KnowledgeCanvas() {
   const selectContainer = (id: string) => { setProject(id); setQuery(''); };
   const visibleStatus = loadedIdentity === identity ? status : 'loading';
   return <div className="kc-page" onKeyDown={onKey} onKeyUp={e => { if (e.code === 'Space') space.current = false; }} onBlur={() => { space.current = false; }}>
-    <header className="kc-header"><Link to="/chat">← 主对话</Link><strong>知识画布</strong><span>V2 · 资料工作台</span><button disabled={pending || status !== 'ready'} onClick={() => { const attempt = unconfirmed.current; if (attempt) void act(attempt.operation, attempt.payload).then(ok => { if (ok) { setDraft(null); setEditing(null); setRenaming(null); } }); else { setError(''); void refresh().catch(e => setError(message(e))); } }}>刷新</button><span role="status">{pending ? '正在保存…' : status === 'ready' ? '已连接' : ''}</span></header>
+    <header className="kc-header"><Link to="/chat">← 主对话</Link><strong>知识画布</strong><span>V3 · 主对话知识引用</span><button disabled={pending || status !== 'ready'} onClick={() => { const attempt = unconfirmed.current; if (attempt) void act(attempt.operation, attempt.payload).then(ok => { if (ok) { setDraft(null); setEditing(null); setRenaming(null); } }); else { setError(''); void refresh().catch(e => setError(message(e))); } }}>刷新</button><span role="status">{pending ? '正在保存…' : status === 'ready' ? '已连接' : ''}</span></header>
+    {!sourceClosed && status==='ready' && sourceId && sourceRevision>0 && scene.nodes.some(n=>n.id===sourceId) && <KnowledgeSource key={identity+sourceId+sourceRevision+sourceQuery.get('binding')} objectId={sourceId} revision={sourceRevision} bindingId={sourceQuery.get('binding')} onClose={()=>setSourceClosed(true)} />}
     {error && <div className="kc-error" role="alert">{error}</div>}
     {visibleStatus !== 'ready' ? <div className="kc-state">{visibleStatus === 'loading' ? '正在加载知识画布…' : status === 'unavailable' ? '知识画布尚未向当前账号开放' : '加载失败，请重新打开页面重试'}</div> : <main className="kc-main">
       <div className="kc-workspace" ref={viewport} tabIndex={0} aria-label="知识画布" onPointerDown={e => pointerDown(e)} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => { drag.current = null; void refresh().catch(e => setError(message(e))); }}

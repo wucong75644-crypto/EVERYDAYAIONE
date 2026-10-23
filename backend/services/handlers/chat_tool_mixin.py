@@ -100,6 +100,7 @@ class ChatToolMixin(ChatToolResultMixin):
             workspace_user_id=getattr(self, "_workspace_user_id", user_id),
             resource_manifest=getattr(self, "_resource_manifest", None),
             web_link_refs=getattr(self, "_web_link_refs", None),
+            knowledge_run=getattr(self, "_knowledge_run", None),
             resource_manifest_loader=getattr(self, "_tool_resource_manifest_loader", None),
             resource_access_boundary=getattr(self, "_resource_access_boundary", None),
             execution_budget=budget,

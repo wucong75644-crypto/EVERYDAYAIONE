@@ -90,6 +90,7 @@ async def prepare_generation_request(
                 db=db, conversation_id=conversation_id, content=body.content,
                 created_at=body.created_at, client_request_id=body.client_request_id,
                 turn_id=turn_id,
+                **({"knowledge_refs": [r.model_dump(mode="json") for r in body.knowledge_refs]} if body.knowledge_refs else {}),
             )
     elif needs_user_message:
         conversation, user_message = await asyncio.gather(
@@ -98,6 +99,7 @@ async def prepare_generation_request(
                 db=db, conversation_id=conversation_id, content=body.content,
                 created_at=body.created_at, client_request_id=body.client_request_id,
                 turn_id=turn_id,
+                **({"knowledge_refs": [r.model_dump(mode="json") for r in body.knowledge_refs]} if body.knowledge_refs else {}),
             ),
         )
     else:

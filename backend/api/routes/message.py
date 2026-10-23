@@ -310,6 +310,8 @@ async def _do_generate_message(
         )
         body.selected_skill = skill_intent.selected_skill
         body.skill_task_mode = skill_intent.task_mode
+    from services.knowledge_workspace.message_intent import prepare_knowledge_intent
+    await prepare_knowledge_intent(db, body, user_id, ctx.org_id, conversation_id, gen_type)
     skill_task_mode = resolve_task_mode(gen_type.value, body.skill_task_mode, body.content)
     requested_turn_id = str(uuid.uuid4())
 

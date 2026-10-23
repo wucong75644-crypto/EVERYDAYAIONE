@@ -8,7 +8,8 @@ def build_specs():
     from .general import build_specs as general
     from .skills import build_specs as skills
     from .ecommerce_planner import build_specs as ecommerce_planner
-    families = (erp(), file_sandbox(), media(), task(), general(), skills(), ecommerce_planner())
+    from .knowledge import build_specs as knowledge
+    families = (knowledge(), erp(), file_sandbox(), media(), task(), general(), skills(), ecommerce_planner())
     return tuple(sorted(
         (spec for family in families for spec in family),
         key=lambda spec: spec.catalog_order,

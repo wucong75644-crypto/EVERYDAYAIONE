@@ -47,6 +47,7 @@ async def create_user_message(
     created_at: Optional[datetime] = None,
     client_request_id: Optional[str] = None,
     turn_id: Optional[str] = None,
+    knowledge_refs: Optional[list] = None,
 ) -> Message:
     """创建用户消息"""
     message_id = str(uuid.uuid4())
@@ -69,6 +70,8 @@ async def create_user_message(
         "status": MessageStatus.COMPLETED.value,
         "credits_cost": 0,
     }
+    if knowledge_refs:
+        message_data["knowledge_refs"] = knowledge_refs
     if turn_id:
         message_data["turn_id"] = turn_id
 
@@ -93,6 +96,7 @@ async def create_user_message(
         created_at=datetime.fromisoformat(msg_data["created_at"].replace("Z", "+00:00")),
         client_request_id=msg_data.get("client_request_id"),
         turn_id=msg_data.get("turn_id", turn_id),
+        knowledge_refs=msg_data.get("knowledge_refs",knowledge_refs or []),
     )
 
 

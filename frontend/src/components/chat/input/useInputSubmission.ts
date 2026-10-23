@@ -1,3 +1,4 @@
+import type { KnowledgeReference } from '../../../services/knowledgeReferences';
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
 import { toast } from 'react-hot-toast';
 import { uploadAudio } from '../../../services/audio';
@@ -14,6 +15,7 @@ import type {
 } from '../attachments/ChatAttachment.types';
 
 export interface UseInputSubmissionOptions {
+  knowledgeRefs?: KnowledgeReference[];
   takeSelectedSkill?: () => SkillSelection | undefined;
   hasSkillIntent?: boolean;
   skillTaskMode?: SkillTaskMode;
@@ -143,7 +145,7 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
     // 判断 pause/resume/cancel，普通文本则作为 steer 注入原任务。
     // 成功发出 steer 后不能再创建第二个 HTTP turn，否则“暂停”会变成
     // 暂停旧任务 + 新建任务。
-    if (options.isStreaming && message && !hasAttachments) {
+    if (options.isStreaming && message && !hasAttachments && !options.knowledgeRefs?.length) {
       if (options.sendSteer(message)) {
         options.clearPromptForSubmission();
         return;
@@ -179,7 +181,9 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
           await options.handleImageGeneration(currentId, message, imageInputs, params);
         }
       } else if (options.effectiveModelType === 'chat') {
-        if (selectedSkill) {
+        if (options.knowledgeRefs?.length) {
+          await options.handleChatMessage(message, currentId, imageInputs, fileData, {knowledge_refs: options.knowledgeRefs}, attachments.orderedAttachments, selectedSkill);
+        } else if (selectedSkill) {
           await options.handleChatMessage(message, currentId, imageInputs, fileData,
             null, attachments.orderedAttachments, selectedSkill);
         } else if (attachments.orderedAttachments.length > 0) {

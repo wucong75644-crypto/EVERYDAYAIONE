@@ -65,7 +65,7 @@ export default function FileMentionDropdown({
                   onSelect(file);
                 }}
               >
-                <span className="text-base shrink-0">{getFileIcon(file.name)}</span>
+                <span className="text-base shrink-0">{file.knowledge_ref ? '◇' : getFileIcon(file.name)}</span>
                 <span className="truncate text-sm font-medium">{file.name}</span>
                 {/* 显示路径（如果文件在子目录中） */}
                 {file.workspace_path !== file.name && (
@@ -73,7 +73,7 @@ export default function FileMentionDropdown({
                     'ml-auto text-xs truncate max-w-[200px] shrink-0',
                     index === activeIndex ? 'text-text-on-accent/70' : 'text-text-tertiary',
                   )}>
-                    {file.workspace_path}
+                    {file.knowledge_ref ? `知识 · ${file.scope_title} · ${file.knowledge_ref.root.kind === 'container' ? '整个空间' : '总分支'}` : file.workspace_path}
                   </span>
                 )}
               </button>
