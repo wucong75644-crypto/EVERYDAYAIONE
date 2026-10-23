@@ -78,7 +78,8 @@ class LegacyAdvertisement:
         # still apply current flags, scope and execution mode.
         from .mcp_allowlist import TOOL_NAME
         mcp_names = {TOOL_NAME} if context.feature_flags.get("mcp_connectors_enabled") is True else set()
-        return initial | discovered_names | mcp_names
+        knowledge_names = {'knowledge_outline','knowledge_search','knowledge_read','knowledge_follow_reference'} if context.feature_flags.get('knowledge_refs_present') else set()
+        return initial | discovered_names | mcp_names | knowledge_names
 
 
 def build_legacy_catalog() -> ToolRegistry:

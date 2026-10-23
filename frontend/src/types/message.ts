@@ -293,6 +293,7 @@ export interface Message {
   updated_at?: string;
   client_request_id?: string;
   turn_id?: string;
+  knowledge_refs?: import('../services/knowledgeReferences').KnowledgeReference[];
   reply_to_message_id?: string;
   context_revision?: number;
   message_kind?: 'conversation' | 'synthetic' | 'tool_internal';

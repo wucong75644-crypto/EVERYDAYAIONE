@@ -49,6 +49,7 @@ class ToolExecutor(
         workspace_user_id: str | None = None,
         resource_manifest=None,
         web_link_refs=None,
+        knowledge_run=None,
         allowed_tool_names: Iterable[str] | None = None,
         execution_budget=None,
         cancellation_event=None,
@@ -76,6 +77,7 @@ class ToolExecutor(
         self.conversation_id = conversation_id
         self.org_id = org_id
         self.web_link_refs = dict(web_link_refs or {})
+        self.knowledge_run = knowledge_run
         self.resource_manifest = resource_manifest
         self.allowed_tool_names = (
             frozenset(allowed_tool_names) if allowed_tool_names is not None else None
@@ -126,6 +128,8 @@ class ToolExecutor(
             "image_agent": self._image_agent,
             "prepare_skill_draft": self._prepare_skill_draft,
         }
+        for action in ('outline','search','read','follow_reference'):
+            self._handlers['knowledge_'+action] = self._knowledge_handler(action)
         # 注册文件操作工具
         for tool_name in FILE_INFO_TOOLS:
             self._handlers[tool_name] = self._make_file_handler(tool_name)
@@ -190,6 +194,16 @@ class ToolExecutor(
     # ========================================
     # 通用工具实现
     # ========================================
+
+    def _knowledge_handler(self, action):
+        async def execute(args):
+            import asyncio, json
+            from services.agent.agent_result import AgentResult
+            from services.knowledge_workspace.chat import unavailable
+            if self.knowledge_run is None or not self.personal_context_allowed: unavailable()
+            result = await asyncio.to_thread(self.knowledge_run.execute, action, args)
+            return AgentResult(summary=json.dumps(result, ensure_ascii=False), status='success')
+        return execute
 
     async def _search_knowledge(self, args: Dict[str, Any]) -> "AgentResult":
         """查询 AI 知识库"""

@@ -77,6 +77,13 @@ async def prepare_chat_stream(
     messages, handler._web_link_refs = prepare_links(
         messages, org_id=handler.org_id, user_id=user_id, conversation_id=conversation_id,
     )
+    from services.knowledge_workspace.runtime import prepare_knowledge_run
+    await prepare_knowledge_run(handler, context_anchor, user_id, conversation_id, required=params.get('_knowledge_refs_required') is True)
+    if getattr(handler, '_knowledge_run', None):
+        import json
+        prefix='知识画布运行快照：'
+        messages=[m for m in messages if not (m.get('role')=='system' and str(m.get('content','')).startswith(prefix))]
+        messages.insert(0, {'role':'system','content':prefix+json.dumps(handler._knowledge_run.introduction(), ensure_ascii=False)})
     context_ready_at = time.monotonic()
     from services.handlers.context_snapshot import ContextAnchor
     if isinstance(context_anchor, ContextAnchor):
@@ -86,12 +93,18 @@ async def prepare_chat_stream(
                          for part in content]
 
         async def load_resources():
-            return await asyncio.to_thread(
+            manifest = await asyncio.to_thread(
                 build_resource_manifest, handler.db, task_id=context_anchor.task_id,
                 input_message_id=context_anchor.input_message_id,
                 conversation_id=context_anchor.conversation_id, turn_id=context_anchor.turn_id,
                 org_id=context_anchor.org_id, input_content=input_content,
             )
+            run=getattr(handler,'_knowledge_run',None)
+            if run:
+                from dataclasses import replace
+                assets=await asyncio.to_thread(run.materialized_assets)
+                manifest=replace(manifest,assets=manifest.assets+assets)
+            return manifest
 
         handler._tool_resource_manifest_loader = load_resources
         if replay_context is not None:

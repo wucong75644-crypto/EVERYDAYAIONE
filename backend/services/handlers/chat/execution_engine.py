@@ -362,12 +362,23 @@ async def execute_chat(
         )
         await _apply_budget_stop(prepared, totals, blocks, output)
         await _consume_emit_payloads(handler, blocks, output)
-        await output.flush()
         parts = build_content_parts(
             blocks,
             fallback_text=totals.text,
             fallback_thinking=totals.thinking,
         )
+        from services.knowledge_workspace.chat import KnowledgeRun
+        knowledge_run=getattr(handler,'_knowledge_run',None)
+        if isinstance(knowledge_run,KnowledgeRun):
+            footer=await asyncio.to_thread(knowledge_run.evidence_footer)
+            parts.append(TextPart(text=footer)); totals.text += footer
+            if blocks:
+                evidence={'type':'text','text':footer}
+                blocks.append(evidence)
+                await output.on_block(evidence)
+            else:
+                await output.on_text(footer)
+        await output.flush()
         if form_hint:
             parts.append(TextPart(text=form_hint))
         return ChatExecutionResult(
@@ -408,6 +419,14 @@ async def execute_chat(
                 await flush_progress()
         raise
     finally:
+        from services.knowledge_workspace.chat import KnowledgeRun
+        knowledge_run=getattr(handler,'_knowledge_run',None)
+        if isinstance(knowledge_run,KnowledgeRun):
+            from services.knowledge_workspace.materialize import cleanup
+            try:
+                await asyncio.to_thread(cleanup,knowledge_run)
+            except Exception:
+                logger.warning("knowledge input cleanup failed")
         if getattr(handler, "_tool_executor_scope", None) == (request.task_id, request.conversation_id, request.user_id, handler.org_id):
             handler._tool_executor = None
             handler._tool_executor_scope = None

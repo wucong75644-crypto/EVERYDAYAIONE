@@ -51,6 +51,7 @@ def format_message(message: dict) -> dict:
         "task_id": message.get("task_id"),
         "client_request_id": message.get("client_request_id"),
         "turn_id": message.get("turn_id"),
+        "knowledge_refs": message.get("knowledge_refs") or [],
         "reply_to_message_id": message.get("reply_to_message_id"),
         "context_revision": message.get("context_revision"),
         "message_kind": message.get("message_kind", "conversation"),

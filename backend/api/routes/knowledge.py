@@ -69,6 +69,28 @@ def initialize(ctx: OrgCtx, db: Database, response: Response):
 def canvas(ctx: OrgCtx, db: Database, response: Response, cursor: UUID | None = None):
     return call(ctx,db,response,'canvas',cursor)
 
+@router.get('/roots')
+def root_candidates(ctx: OrgCtx, db: Database, response: Response, query: str = Query(default='', max_length=500)):
+    from services.knowledge_workspace.chat import roots
+    response.headers['Cache-Control']='no-store'
+    if not enabled(ctx): return failure(404,'KNOWLEDGE_UNAVAILABLE','知识画布尚未向当前账号开放')
+    return {'success':True,'data':roots(Repository(db.pool, DatabaseScope(ctx.user_id,ctx.org_id,DatabaseAccessKind.RUNTIME)),query)}
+
+@router.get('/roots/{kind}/{root_id}')
+def root_label(kind: str, root_id: UUID, ctx: OrgCtx, db: Database, response: Response):
+    from services.knowledge_workspace.chat import check_roots
+    from core.exceptions import AppException
+    response.headers['Cache-Control']='no-store'
+    if not enabled(ctx) or kind not in {'object','container'}:return failure(404,'KNOWLEDGE_NOT_FOUND','知识引用不可用')
+    repo=Repository(db.pool,DatabaseScope(ctx.user_id,ctx.org_id,DatabaseAccessKind.RUNTIME))
+    try:
+        with repo.cursor() as c:
+            check_roots(c,[{'root':{'kind':kind,'id':str(root_id)}}])
+            table='kb_objects' if kind=='object' else 'kb_containers'
+            c.execute('SELECT title FROM public.'+table+' WHERE id=%s',(root_id,))
+            return {'success':True,'data':c.fetchone()}
+    except AppException:return failure(404,'KNOWLEDGE_NOT_FOUND','知识引用不可用')
+
 @router.get('/objects/{object_id}')
 def object_detail(object_id: UUID, ctx: OrgCtx, db: Database, response: Response):
     return call(ctx,db,response,'object',object_id)

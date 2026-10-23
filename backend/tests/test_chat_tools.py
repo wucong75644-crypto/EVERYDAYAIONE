@@ -148,7 +148,7 @@ class TestGetChatTools:
         """企业用户工具总数在合理范围"""
         from config.chat_tools import get_chat_tools
         tools = get_chat_tools(org_id="test_org")
-        assert 20 <= len(tools) <= 40, f"Got {len(tools)} tools"
+        assert 20 <= len([t for t in tools if not t["function"]["name"].startswith("knowledge_")]) <= 40, f"Got {len(tools)} tools"
 
     def test_guest_no_erp_tools(self):
         """散客不加载ERP工具"""

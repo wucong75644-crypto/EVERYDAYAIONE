@@ -17,3 +17,5 @@
 .kc-file-panel label { display:block; margin:10px 0; font-size:12px; }.kc-file-panel details { margin:12px 0; }.kc-file-panel summary { cursor:pointer; font-size:13px; }
 .kc-file-card { margin:16px 0; padding:14px; border:1px solid #74829950; border-radius:8px; }.kc-file-card h3 { font-size:14px; overflow-wrap:anywhere; }.kc-file-add { border-top:1px solid #74829940; margin-top:12px; }
 .kc-file-versions button { margin:4px; }.kc-file-panel select option { background:var(--color-surface-card,#171a20); }
+
+.kc-source{position:fixed;z-index:18;right:0;top:62px;bottom:0;width:min(420px,90vw);padding:20px;overflow:auto;border-left:1px solid #74829960;background:var(--color-surface,#fff);color:inherit;box-shadow:-8px 0 24px #0002}.kc-source>button{float:right}.kc-source h2{font-size:17px;margin:0 0 14px}.kc-source p{font-size:12px;line-height:1.6;margin-bottom:14px;opacity:.8}.kc-source h3{font-size:15px;margin:12px 0}.kc-source textarea{width:100%;min-height:280px;resize:vertical;border:1px solid #74829960;border-radius:8px;padding:12px;background:transparent;color:inherit;line-height:1.7}

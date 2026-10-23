@@ -8,8 +8,11 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { searchWorkspace } from '../services/workspace';
+import { searchKnowledgeRoots, type KnowledgeReference } from '../services/knowledgeReferences';
 
 export interface MentionResult {
+  knowledge_ref?: KnowledgeReference;
+  scope_title?: string;
   name: string;
   workspace_path: string;
   cdn_url: string | null;
@@ -78,6 +81,8 @@ export function useFileMention(): UseFileMentionReturn {
   }, []);
 
   const close = useCallback(() => {
+    seqRef.current += 1;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
     setShowDropdown(false);
     setResults([]);
     setActiveIndex(0);
@@ -92,6 +97,7 @@ export function useFileMention(): UseFileMentionReturn {
       return;
     }
 
+    seqRef.current += 1;
     mentionStartRef.current = mention.start;
     setShowDropdown(true);
     setActiveIndex(0);
@@ -105,16 +111,22 @@ export function useFileMention(): UseFileMentionReturn {
       const seq = seqRef.current;
 
       try {
-        const resp = await searchWorkspace(mention.query, 10);
+        const [files, roots] = await Promise.allSettled([searchWorkspace(mention.query, 10), searchKnowledgeRoots(mention.query)]);
+        const resp = files.status === 'fulfilled' ? files.value : {items: []};
+        const knowledge = roots.status === 'fulfilled' ? roots.value.map(root => ({
+          name: root.title, workspace_path: `knowledge:${root.kind}:${root.id}`,
+          cdn_url: null, mime_type: null, size: 0, scope_title: root.scope_title,
+          knowledge_ref: {root: {kind: root.kind, id: root.id}, policy: 'latest_saved' as const},
+        })) : [];
         if (seq !== seqRef.current) return;
-        setResults(resp.items.map((item) => ({
+        setResults([...knowledge, ...resp.items.map((item) => ({
           name: item.name,
           workspace_path: item.workspace_path || item.name,
           cdn_url: item.cdn_url,
           thumbnail_url: item.thumbnail_url,
           mime_type: item.mime_type,
           size: item.size,
-        })));
+        }))]);
       } catch {
         if (seq !== seqRef.current) return;
         setResults([]);
@@ -149,7 +161,9 @@ export function useFileMention(): UseFileMentionReturn {
   }, [close]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent): boolean => {
-    if (!showDropdown || results.length === 0) return false;
+    if (!showDropdown) return false;
+    if (loading && e.key === 'Enter') {e.preventDefault();return true;}
+    if (results.length === 0) return false;
 
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -171,7 +185,7 @@ export function useFileMention(): UseFileMentionReturn {
       return true;
     }
     return false;
-  }, [showDropdown, results, close]);
+  }, [showDropdown, results, close, loading]);
 
   return {
     showDropdown,

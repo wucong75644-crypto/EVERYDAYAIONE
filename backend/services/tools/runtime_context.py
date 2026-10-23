@@ -41,6 +41,7 @@ def chat_context(handler, *, user_id, conversation_id, task_id, permission_mode,
         allowed_tool_names=None, tool_policy_snapshot={},
         resource_manifest=getattr(handler, "_resource_manifest", None),
         web_link_refs=getattr(handler, "_web_link_refs", None),
+        knowledge_run=getattr(handler, "_knowledge_run", None),
         execution_budget=budget, cancellation_event=cancellation,
         tool_entrypoint="model", tool_confirmer=True,
     ))
@@ -57,6 +58,7 @@ def executor_context(executor, *, call_id=None) -> ToolContext:
         "mcp_connectors_enabled", "skill_catalog_enabled", "skill_chat_creation_enabled", "chat_image_async_enabled",
         "agent_reach_enabled",
     )}
+    feature_flags["knowledge_refs_present"] = getattr(executor, "knowledge_run", None) is not None
     feature_flags["skill_org_admin"] = False
     feature_flags["chat_image_async_enabled"] = chat_image_acceptance_allowed(settings, executor.user_id)
     feature_flags["ecom_image_planning_enabled"] = settings.ecom_image_planning_enabled is True
@@ -139,6 +141,8 @@ async def refresh_context(executor, context, registry):
     org_chat_creation_enabled = False
     try:
         identity = await asyncio.to_thread(_check_identity, executor, context)
+        knowledge_run=getattr(executor,'knowledge_run',None)
+        if knowledge_run:await asyncio.to_thread(knowledge_run.revalidate)
         skill_org_admin, org_chat_creation_enabled = _identity_flags(identity)
         from .mcp_org import connector_is_enabled
         flags["mcp_connector_test_readonly_enabled"] = (

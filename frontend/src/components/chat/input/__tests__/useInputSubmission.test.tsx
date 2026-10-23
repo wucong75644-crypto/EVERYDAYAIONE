@@ -466,3 +466,22 @@ describe('Skill media submission', () => {
     expect(options.takeSelectedSkill).not.toHaveBeenCalled();
   });
 });
+
+
+describe('knowledge input submission',()=>{
+  it('captures structured refs alongside attachments and Skill selection',async()=>{
+    const refs=[{root:{kind:'object' as const,id:'root-1'},policy:'latest_saved' as const}];
+    const options=makeOptions({knowledgeRefs:refs});
+    const {result}=renderHook(()=>useInputSubmission(options));
+    await act(()=>result.current.handleSubmit());
+    expect(options.handleChatMessage).toHaveBeenCalledWith('保留这段输入','conversation-1',null,null,{knowledge_refs:refs},[],undefined);
+  });
+  it('does not turn a knowledge-scoped submission into a plain steer',async()=>{
+    const refs=[{root:{kind:'container' as const,id:'root-1'},policy:'latest_saved' as const}];
+    const options=makeOptions({knowledgeRefs:refs,isStreaming:true,sendSteer:vi.fn(()=>true)});
+    const {result}=renderHook(()=>useInputSubmission(options));
+    await act(()=>result.current.handleSubmit());
+    expect(options.sendSteer).not.toHaveBeenCalled();
+    expect(options.handleChatMessage).toHaveBeenCalled();
+  });
+});

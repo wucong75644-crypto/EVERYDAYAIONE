@@ -1,5 +1,6 @@
 /** 消息发送的乐观状态、响应替换和错误回滚。 */
 
+import type { KnowledgeReference } from './knowledgeReferences';
 import { getPlaceholderText } from '../constants/placeholder';
 import { useMessageStore, type ContentPart, type Message } from '../stores/useMessageStore';
 import { logger } from '../utils/logger';
@@ -10,6 +11,7 @@ export type GenerationType = 'chat' | 'image' | 'image_ecom' | 'video' | 'audio'
 export type MessageOperation = 'send' | 'regenerate' | 'retry' | 'regenerate_single';
 
 export interface SendOptions {
+  knowledgeRefs?: KnowledgeReference[];
   selectedSkill?: SkillSelection;
   skillTaskMode?: SkillTaskMode;
   conversationId: string;
@@ -87,6 +89,7 @@ export function applyOptimisticUpdate(options: SendOptions, ctx: SendContext): v
       id: ctx.userMessageId,
       conversation_id: conversationId,
       role: 'user',
+      knowledge_refs: options.knowledgeRefs,
       content,
       status: 'completed',
       created_at: ctx.now.toISOString(),

@@ -37,6 +37,7 @@ const RETRY_DELAYS_MS = [500, 1500] as const;
 
 /** API 请求格式 */
 interface GenerateRequest {
+  knowledge_refs?: import('./knowledgeReferences').KnowledgeReference[];
   selected_skill?: SkillSelection;
   skill_task_mode?: SkillTaskMode;
   operation: MessageOperation;
@@ -110,6 +111,7 @@ export async function sendMessage(options: SendOptions): Promise<string> {
       timeout: 60000,
       headers: { 'Idempotency-Key': ctx.clientRequestId },
       data: {
+        ...(options.knowledgeRefs?.length ? {knowledge_refs: options.knowledgeRefs} : {}),
         operation, content, generation_type: generationType,
         model, params, original_message_id: originalMessageId,
         ...(options.selectedSkill ? { selected_skill: options.selectedSkill } : {}),

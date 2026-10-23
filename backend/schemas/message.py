@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, field_validator
 import json
 
 from config.message_presentation import validate_cell_styles
+from schemas.knowledge_reference import KnowledgeReference
 from schemas.chart import ChartPart
 from schemas.diagram import DiagramPart
 from services.skills.selection import SkillSelection
@@ -280,6 +281,7 @@ class Message(BaseModel):
     所有类型（text/image/video/audio）使用相同数据结构。
     content 为 ContentPart 数组，支持多模态内容。
     """
+    knowledge_refs: List[KnowledgeReference] = Field(default_factory=list, max_length=8)
     id: str
     conversation_id: str
     role: MessageRole
@@ -365,6 +367,13 @@ class GenerateRequest(BaseModel):
     - retry: 重试失败的 AI 消息（不创建用户消息 + 原地更新）
     - regenerate: 重新生成成功的 AI 消息（创建用户消息 + 创建 AI 消息）
     """
+    knowledge_refs: List[KnowledgeReference] = Field(default_factory=list, max_length=8)
+
+    @field_validator("knowledge_refs")
+    @classmethod
+    def deduplicate_knowledge_refs(cls, refs):
+        return list({(r.root.kind, str(r.root.id)): r for r in refs}.values())
+
     # 操作类型
     operation: MessageOperation = MessageOperation.SEND
 
@@ -450,6 +459,7 @@ class MessageResponse(BaseModel):
 
     使用统一的新格式：content 数组
     """
+    knowledge_refs: List[KnowledgeReference] = Field(default_factory=list, max_length=8)
     id: str
     conversation_id: str
     role: MessageRole
