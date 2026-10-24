@@ -114,7 +114,7 @@ class TestGetDueTypes:
         assert s._first_round is True
         due = s._get_due_types("org1")
         from services.kuaimai.erp_sync_scheduler import HIGH_FREQ_TYPES
-        assert due == list(HIGH_FREQ_TYPES)
+        assert due == ["nightly"]
         # No low-freq or special types
         assert "platform_map" not in due
         assert "stock_full" not in due
@@ -125,9 +125,9 @@ class TestGetDueTypes:
         s._first_round = False
         due = s._get_due_types("org1")
         # First time → all intervals are due
-        assert "platform_map" in due
-        assert "stock_full" in due
-        assert "daily_maintenance" in due
+        assert "nightly" in due
+        assert "stock_full" not in due
+        assert "daily_maintenance" not in due
 
     def test_second_round_low_freq_not_due(self):
         s = self._make_scheduler()
@@ -203,7 +203,7 @@ class TestScheduleRound:
         await s._schedule_round()
 
         # 2 orgs × 9 high-freq types = 18 calls (first round)
-        assert s._enqueue_task.call_count == 18
+        assert s._enqueue_task.call_count == 2
         assert s._first_round is False  # Marked after first round
 
     @pytest.mark.asyncio
@@ -279,8 +279,8 @@ class TestReconcileScheduling:
         s = self._make_scheduler(reconcile_hour=3)
         s._first_round = False
         due = s._get_due_types("org1")
-        assert "order_reconcile" in due
-        assert "aftersale_reconcile" in due
+        assert due == ["nightly"]
+        assert "aftersale_reconcile" not in due
 
     @patch("services.kuaimai.erp_sync_scheduler.now_cn")
     def test_reconcile_not_due_wrong_hour(self, mock_now):

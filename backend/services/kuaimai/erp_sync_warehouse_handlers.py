@@ -48,6 +48,8 @@ async def sync_allocate(
     # allocate detail 用 code 而非 id
     detail_result = await _fetch_allocate_details(client, docs)
     if detail_result.failed:
+        if getattr(svc, "strict_sync", False) is True:
+            raise RuntimeError(f"Incomplete detail batch: {len(detail_result.failed)} failures")
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
         await record_dead_letter(
             svc.db, "allocate", "erp.allocate.task.detail.query",
@@ -137,6 +139,8 @@ async def sync_allocate_in(
 
     detail_result = await _fetch_details(client, "allocate.in.task.get", docs)
     if detail_result.failed:
+        if getattr(svc, "strict_sync", False) is True:
+            raise RuntimeError(f"Incomplete detail batch: {len(detail_result.failed)} failures")
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
         await record_dead_letter(
             svc.db, "allocate_in", "allocate.in.task.get",
@@ -166,6 +170,8 @@ async def sync_allocate_out(
 
     detail_result = await _fetch_details(client, "allocate.out.task.get", docs)
     if detail_result.failed:
+        if getattr(svc, "strict_sync", False) is True:
+            raise RuntimeError(f"Incomplete detail batch: {len(detail_result.failed)} failures")
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
         await record_dead_letter(
             svc.db, "allocate_out", "allocate.out.task.get",
@@ -195,6 +201,8 @@ async def sync_other_in(
 
     detail_result = await _fetch_details(client, "other.in.order.get", docs)
     if detail_result.failed:
+        if getattr(svc, "strict_sync", False) is True:
+            raise RuntimeError(f"Incomplete detail batch: {len(detail_result.failed)} failures")
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
         await record_dead_letter(
             svc.db, "other_in", "other.in.order.get",
@@ -224,6 +232,8 @@ async def sync_other_out(
 
     detail_result = await _fetch_details(client, "other.out.order.get", docs)
     if detail_result.failed:
+        if getattr(svc, "strict_sync", False) is True:
+            raise RuntimeError(f"Incomplete detail batch: {len(detail_result.failed)} failures")
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
         await record_dead_letter(
             svc.db, "other_out", "other.out.order.get",
@@ -254,6 +264,8 @@ async def sync_inventory_sheet(
     # 盘点单 detail 用 code 而非 id
     detail_result = await _fetch_inventory_details(client, docs)
     if detail_result.failed:
+        if getattr(svc, "strict_sync", False) is True:
+            raise RuntimeError(f"Incomplete detail batch: {len(detail_result.failed)} failures")
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
         await record_dead_letter(
             svc.db, "inventory_sheet", "inventory.sheet.get",
@@ -355,6 +367,8 @@ async def sync_unshelve(
 
     detail_result = await _fetch_details(client, "erp.wms.unshelve.order.get", docs)
     if detail_result.failed:
+        if getattr(svc, "strict_sync", False) is True:
+            raise RuntimeError(f"Incomplete detail batch: {len(detail_result.failed)} failures")
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
         await record_dead_letter(
             svc.db, "unshelve", "erp.wms.unshelve.order.get",
@@ -385,6 +399,8 @@ async def sync_process_order(
     # process_order detail 用 productOrderId
     detail_result = await _fetch_process_details(client, docs)
     if detail_result.failed:
+        if getattr(svc, "strict_sync", False) is True:
+            raise RuntimeError(f"Incomplete detail batch: {len(detail_result.failed)} failures")
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
         await record_dead_letter(
             svc.db, "process_order", "erp.stock.product.order.get",

@@ -55,7 +55,11 @@ class ErpSyncWorkerPool:
     async def start(self) -> None:
         """启动 N 个 Worker 协程"""
         self.is_running = True
-        n = self.settings.erp_sync_worker_count
+        # Each active batch holds one DB lock connection and needs another for
+        # staging/checkpoints. Reserve capacity for health and failure recovery.
+        size = self.settings.db_pool_max
+        capacity = max(1, (size - 2) // 2) if isinstance(size, int) else 9
+        n = min(self.settings.erp_sync_worker_count, capacity)
         logger.info(f"ErpSyncWorkerPool started | workers={n}")
 
         workers = [
@@ -97,6 +101,10 @@ class ErpSyncWorkerPool:
         from services.kuaimai.erp_sync_scheduler import parse_task_id
 
         org_id, sync_type = parse_task_id(task_id)
+        # Drain stale tasks left by the retired high-frequency scheduler.
+        if sync_type not in {"nightly", "token_refresh"}:
+            logger.info(f"Discard retired periodic task | type={sync_type}")
+            return
         lock_key = f"erp_sync:{org_id or '__default__'}:{sync_type}"
 
         # 1. 检查企业并发上限
@@ -199,7 +207,7 @@ class ErpSyncWorkerPool:
             logger.warning(
                 f"Skip task: client creation failed | org_id={org_id} sync_type={sync_type}"
             )
-            return
+            raise RuntimeError("ERP credentials unavailable")
 
         # 锁丢失信号（后台续期协程 set → extend_fn 检测 raise）
         lock_lost_event = asyncio.Event()
@@ -213,7 +221,11 @@ class ErpSyncWorkerPool:
         )
 
         try:
-            if sync_type == "token_refresh":
+            if sync_type == "nightly":
+                from services.kuaimai.erp_sync_nightly import NightlySync
+                if await NightlySync(self.db, org_id, client, extend_fn).run():
+                    await self._throttled_kit_refresh()
+            elif sync_type == "token_refresh":
                 await self._run_token_refresh(org_id, client)
             elif sync_type == "daily_maintenance":
                 await self._run_daily_maintenance(

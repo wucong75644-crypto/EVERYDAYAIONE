@@ -185,9 +185,9 @@ class TestProcessTask:
         pool._check_org_concurrency = AsyncMock(return_value=False)
         pool._requeue_task = AsyncMock()
 
-        await pool._process_task(0, "org1:product")
+        await pool._process_task(0, "org1:nightly")
 
-        pool._requeue_task.assert_called_once_with("org1:product")
+        pool._requeue_task.assert_called_once_with("org1:nightly")
 
     @pytest.mark.asyncio
     async def test_lock_failure_requeues(self):
@@ -197,9 +197,9 @@ class TestProcessTask:
         pool._decr_org_concurrency = AsyncMock()
         pool._requeue_task = AsyncMock()
 
-        await pool._process_task(0, "org1:product")
+        await pool._process_task(0, "org1:nightly")
 
-        pool._requeue_task.assert_called_once_with("org1:product")
+        pool._requeue_task.assert_called_once_with("org1:nightly")
         pool._decr_org_concurrency.assert_called_once()
 
     @pytest.mark.asyncio
@@ -212,7 +212,7 @@ class TestProcessTask:
         pool._release_task_lock = AsyncMock()
         pool._decr_org_concurrency = AsyncMock()
 
-        await pool._process_task(0, "org1:product")
+        await pool._process_task(0, "org1:nightly")
 
         pool.scheduler.mark_completed.assert_not_called()
         pool._release_task_lock.assert_called_once()
@@ -226,9 +226,9 @@ class TestProcessTask:
         pool._release_task_lock = AsyncMock()
         pool._decr_org_concurrency = AsyncMock()
 
-        await pool._process_task(0, "org1:platform_map")
+        await pool._process_task(0, "org1:nightly")
 
-        pool.scheduler.mark_completed.assert_called_once_with("org1", "platform_map")
+        pool.scheduler.mark_completed.assert_called_once_with("org1", "nightly")
 
 
 # ── _create_client ───────────────────────────────────

@@ -20,7 +20,7 @@ from utils.time_context import CN_TZ  # noqa: F401  (re-export for backward comp
 def check_sync_health(db, sync_types: list[str], org_id: str | None = None) -> str:
     """检查同步健康状态，返回警告文本（无异常返回空字符串）
 
-    设计文档 §6.0：error_count>=3 或 last_run_at>5分钟 时附加警告。
+    设计文档 §6.0：error_count>=3 或超过一个夜间周期 时附加警告。
     """
     warnings: list[str] = []
     try:
@@ -30,7 +30,7 @@ def check_sync_health(db, sync_types: list[str], org_id: str | None = None) -> s
             .in_("sync_type", sync_types)
         )
         result = q.execute()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(CN_TZ)
         for row in result.data or []:
             st = row["sync_type"]
             if not row.get("is_initial_done"):
@@ -42,7 +42,7 @@ def check_sync_health(db, sync_types: list[str], org_id: str | None = None) -> s
                 warnings.append(
                     f"⚠ {st} 数据可能未及时更新"
                     f"（连续失败{row['error_count']}次，"
-                    f"最后成功：{row.get('last_run_at', '未知')}）"
+                    f"最近尝试：{row.get('last_run_at', '未知')}）"
                 )
             elif row.get("last_run_at"):
                 last = datetime.fromisoformat(
@@ -50,13 +50,24 @@ def check_sync_health(db, sync_types: list[str], org_id: str | None = None) -> s
                 )
                 # 统一为 naive datetime 比较（避免 aware/naive 混用）
                 if last.tzinfo is not None:
-                    last = last.replace(tzinfo=None)
+                    last = last.astimezone(CN_TZ).replace(tzinfo=None)
                 now_naive = now.replace(tzinfo=None) if now.tzinfo else now
-                if (now_naive - last).total_seconds() > 300:
+                if (now_naive - last).total_seconds() > 36 * 3600:
                     warnings.append(
                         f"⚠ {st} 数据可能未及时更新"
-                        f"（最后成功：{row['last_run_at']}）"
+                        f"（最近尝试：{row['last_run_at']}）"
                     )
+        batches = db.table("erp_sync_batches").select(
+            "business_date,status,source_as_of,last_error").order("business_date",desc=True).limit(1)
+        batches = batches.eq("org_id",org_id) if org_id else batches.is_("org_id","null")
+        latest = batches.execute()
+        for batch in latest.data or []:
+            if not batch.get('business_date'):
+                continue
+            if batch.get('status') == 'complete':
+                warnings.append(f"ℹ 本地单据快照：业务日 {batch['business_date']}，变更拉取上界 {batch.get('source_as_of')}")
+            else:
+                warnings.append(f"⚠ {batch['business_date']} 夜间批次尚未完成，单据仍可能为上次已发布数据")
     except Exception as e:
         logger.warning(f"Health check failed | error={e}")
         return "⚠ 同步状态检查失败，数据可能不完整"

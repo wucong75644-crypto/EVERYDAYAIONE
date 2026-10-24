@@ -156,6 +156,7 @@ async def upsert_document_items(db, rows: list[dict[str, Any]], org_id: str | No
                 f"Doc write failed | doc_type={doc_type} | "
                 f"doc_id={doc_id} | rows={len(doc_rows)} | error={e}"
             )
+            raise
     return total
 
 
@@ -218,6 +219,7 @@ async def _run_aggregation_async(
                 f"Aggregation failed | outer_id={outer_id} | "
                 f"date={stat_date} | error={e}"
             )
+            raise
 
 
 def collect_affected_keys(

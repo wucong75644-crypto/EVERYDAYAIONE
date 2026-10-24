@@ -44,10 +44,12 @@ class ErpSyncExecutor:
         """执行日维护：归档 → 聚合兜底 → 删除检测（按企业隔离）"""
         logger.info(f"ERP daily maintenance started | org_id={org_id}")
         archived, reagg, deleted = 0, 0, 0
+        errors = []
 
         try:
             archived = await self._run_archive(org_id=org_id)
         except Exception as e:
+            errors.append(e)
             logger.error(
                 f"Daily maintenance: archive failed | org_id={org_id} | error={e}",
                 exc_info=True,
@@ -56,6 +58,7 @@ class ErpSyncExecutor:
         try:
             reagg = await self._run_daily_reaggregation(org_id=org_id)
         except Exception as e:
+            errors.append(e)
             logger.error(
                 f"Daily maintenance: reaggregation failed | org_id={org_id} | error={e}",
                 exc_info=True,
@@ -68,10 +71,14 @@ class ErpSyncExecutor:
                 )
                 self._org_last_deletion[org_id] = now_cn()
         except Exception as e:
+            errors.append(e)
             logger.error(
                 f"Daily maintenance: deletion detection failed | org_id={org_id} | error={e}",
                 exc_info=True,
             )
+
+        if errors:
+            raise RuntimeError("Daily maintenance incomplete") from errors[0]
 
         logger.info(
             f"ERP daily maintenance done | org_id={org_id} | archived={archived} | "
@@ -99,6 +106,11 @@ class ErpSyncExecutor:
         cutoff = (
             now_cn() - timedelta(days=int(self.settings.erp_archive_retention_days))
         ).isoformat()
+
+        from psycopg_pool import AsyncConnectionPool
+        pool = getattr(self.db, '_pool', None)
+        if isinstance(pool, AsyncConnectionPool):
+            return await self._archive_transactional(pool, cutoff, org_id)
 
         total_archived = 0
         # 166列×300行=49800参数 < PG上限65535；1000行会超限
@@ -131,12 +143,50 @@ class ErpSyncExecutor:
                 total_archived += len(rows)
             except Exception as e:
                 logger.error(f"Archive batch failed | error={e}")
-                break
+                raise
 
         if total_archived >= max_per_run:
             logger.info(f"Archive hit per-run limit | archived={total_archived} max={max_per_run}")
 
         return total_archived
+
+    async def _archive_transactional(self, pool, cutoff, org_id):
+        """Copy and remove a bounded batch in one transaction; exclude surrogate IDs."""
+        from psycopg import sql
+        total = 0
+        async with pool.connection() as conn:
+            await conn.set_autocommit(True)
+            cur = await conn.execute(
+                "SELECT h.attname AS column_name FROM pg_attribute h JOIN pg_attribute a "
+                "ON a.attname=h.attname AND a.attrelid='erp_document_items_archive'::regclass "
+                "AND NOT a.attisdropped WHERE h.attrelid='erp_document_items'::regclass "
+                "AND h.attnum>0 AND NOT h.attisdropped AND h.attname<>'id' ORDER BY h.attnum")
+            columns = [row['column_name'] for row in await cur.fetchall()]
+            names = sql.SQL(',').join(map(sql.Identifier,columns))
+            updates = sql.SQL(',').join(sql.SQL('{}=EXCLUDED.{}').format(sql.Identifier(c),sql.Identifier(c))
+                                       for c in columns if c not in {'doc_type','doc_id','item_index','org_id'})
+            while total < 100_000:
+                async with conn.transaction():
+                    cur = await conn.execute(
+                        "SELECT id FROM erp_document_items WHERE org_id IS NOT DISTINCT FROM %s "
+                        "AND doc_created_at<%s AND COALESCE(source_updated_at,doc_modified_at,doc_created_at)<%s "
+                        "ORDER BY id LIMIT 300 FOR UPDATE",(org_id,cutoff,cutoff))
+                    ids = [row['id'] for row in await cur.fetchall()]
+                    if not ids:
+                        break
+                    # NULL org_id does not conflict in the legacy unique index.
+                    # Replace the exact cold keys explicitly, inside this transaction.
+                    await conn.execute(
+                        'DELETE FROM erp_document_items_archive a USING erp_document_items h '
+                        'WHERE h.id=ANY(%s) AND a.doc_type=h.doc_type AND a.doc_id=h.doc_id '
+                        'AND a.item_index=h.item_index AND a.org_id IS NOT DISTINCT FROM h.org_id',(ids,))
+                    await conn.execute(sql.SQL(
+                        'INSERT INTO erp_document_items_archive ({}) SELECT {} FROM erp_document_items '
+                        'WHERE id=ANY(%s) ON CONFLICT(doc_type,doc_id,item_index,org_id) DO UPDATE SET {}'
+                    ).format(names,names,updates),(ids,))
+                    await conn.execute('DELETE FROM erp_document_items WHERE id=ANY(%s)',(ids,))
+                total += len(ids)
+        return total
 
     # ── 聚合兜底 ───────────────────────────────────────
 
@@ -184,7 +234,7 @@ class ErpSyncExecutor:
             return len(keys)
         except Exception as e:
             logger.error(f"Fallback reaggregation failed | error={e}")
-            return 0
+            raise
 
     # ── 删除检测 ───────────────────────────────────────
 
@@ -238,7 +288,7 @@ class ErpSyncExecutor:
             return count
         except Exception as e:
             logger.error(f"Deletion detection failed | error={e}")
-            return 0
+            raise
 
     @staticmethod
     def _collect_api_product_ids(
@@ -297,6 +347,7 @@ class ErpSyncExecutor:
                 logger.warning(
                     f"Mark deleted failed | {id_col}={item_id} | error={e}"
                 )
+                raise
         return count
 
     # ── 对账 ──────────────────────────────────────────────

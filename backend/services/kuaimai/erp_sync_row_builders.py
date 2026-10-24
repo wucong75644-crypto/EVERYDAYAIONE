@@ -62,14 +62,14 @@ def _build_aftersale_rows(
         "platform_refund_id": doc.get("platformId"),
         "short_id": doc.get("shortId"),
         # ── 081 新增：售后头级别 ──
-        "order_sid": doc.get("orderSid"),
+        "order_sid": str(doc.get("sid") or doc.get("orderSid") or "") or None,
         "reason": doc.get("reason"),
         "order_type_ref": doc.get("orderType"),
         "buyer_name": doc.get("buyerName"),
         "buyer_phone": doc.get("buyerPhone"),
         "wangwang_num": doc.get("wangwangNum"),
         "apply_date": _safe_ts(doc.get("applyDate")),
-        "after_sale_app_time": _safe_ts(doc.get("afterSaleAppTime")),
+        "after_sale_app_time": _safe_ts(doc.get("afterSaleApplicationTime") or doc.get("afterSaleAppTime")),
         "platform_complete_time": _safe_ts(doc.get("platformCompleteTime")),
         "online_status": doc.get("onlineStatus"),
         "online_status_text": doc.get("onlineStatusText"),
@@ -133,7 +133,7 @@ def _build_order_rows(
     """从单个订单 doc 构建 DB 行（供 sync_order 和死信重试共用）"""
     items = doc.get("orders") or []
     if not items:
-        return []
+        items = [{}]  # Preserve a header when the last SKU was removed.
     items = svc.sort_and_assign_index(items, "order")
 
     total_discount = _to_float(doc.get("discountFee"))
@@ -185,6 +185,7 @@ def _build_order_rows(
         rows.append({
             "doc_type": "order",
             "doc_id": str(doc.get("sid", "")),
+            "source_updated_at": _safe_ts(doc.get("updTime")),
             "doc_status": doc.get("sysStatus"),
             "doc_created_at": _safe_ts(doc.get("created")),
             "doc_modified_at": _safe_ts(doc.get("modified")),

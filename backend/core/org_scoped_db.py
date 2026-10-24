@@ -70,6 +70,7 @@ TENANT_TABLES: frozenset[str] = frozenset({
     "erp_order_logs", "erp_order_packages", "erp_aftersale_logs",
     # ERP 同步
     "erp_sync_state", "erp_sync_dead_letter",
+    "erp_sync_batches", "erp_sync_staged_documents", "erp_registered_refunds", "erp_registered_refund_daily",
     # ERP 物化视图
     "mv_kit_stock",
     # 审计

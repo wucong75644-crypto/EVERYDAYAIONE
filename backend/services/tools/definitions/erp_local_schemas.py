@@ -329,10 +329,10 @@ def build_local_tools() -> List[Dict[str, Any]]:
         # 10. 手动触发同步
         _tool(
             "trigger_erp_sync",
-            "手动触发ERP数据同步。"
+            "请求检查ERP夜间同步批次或恢复失败批次；不会启动白天全量同步。"
             "仅在 local 工具返回 ⚠ 同步警告或查不到预期数据时使用。"
             "商品/库存查不到不要用此工具（local_product_identify 会自动兜底）。"
-            "同步完成后重新调用原查询工具。"
+            "入队回执不代表同步完成，须检查批次状态后再查询。"
             "相关工具：同步后用原查询工具（如 local_data/local_stock_query）验证数据。",
             {
                 "sync_type": _enum(

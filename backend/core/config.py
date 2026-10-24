@@ -240,11 +240,16 @@ class Settings(BaseSettings):
 
     # 快麦ERP 本地索引同步配置
     erp_sync_enabled: bool = True              # 同步总开关（False 时不启动 ErpSyncWorker）
-    erp_sync_interval: int = 60                # 增量同步间隔（秒），默认1分钟
+    erp_sync_interval: int = 60                # 调度/失败恢复扫描间隔；不再代表业务同步频率
     erp_archive_retention_days: int = 90       # 热表保留天数，超过后归档到冷表
     erp_platform_map_interval: int = 21600     # 平台映射同步间隔（秒），默认6小时
+    erp_sync_nightly_hour: int = Field(default=2, ge=0, le=23)  # 北京时间凌晨2点
+    erp_sync_overlap_hours: int = Field(default=24, ge=1, le=168)
+    erp_sync_retry_seconds: int = Field(default=300, ge=60, le=3600)
+    erp_sync_history_recent_days: int = Field(default=7, ge=1, le=90)
+    erp_sync_history_days_per_batch: int = Field(default=7, ge=1, le=90)
     erp_sync_lock_ttl: int = 300               # Redis 分布式锁 TTL（秒），默认5分钟
-    erp_sync_initial_days: int = 1825          # 首次全量回溯天数（5年覆盖全部历史）
+    erp_sync_initial_days: int = 1825          # 历史回查范围上限；不代表已覆盖全部历史
     erp_sync_shard_days: int = 1               # 时间窗口分片大小（天），快麦API单次查询数据量有限
     erp_warehouse_ids: str = "87227,436208"  # 库存同步仓库ID列表（逗号分隔），排除虚拟仓444522
     erp_stock_full_refresh_interval: int = 21600    # 库存全量刷新间隔（秒），默认6小时（增量已足够准确）
@@ -254,8 +259,8 @@ class Settings(BaseSettings):
     erp_sync_task_lock_ttl: int = 60              # per-(org, sync_type) 任务锁 TTL（秒），配合续期
     erp_sync_kit_refresh_throttle: int = 30       # 套件库存物化视图刷新节流（秒）
     erp_sync_queue_key: str = "erp_tasks"         # Redis Sorted Set 队列名
-    erp_reconcile_interval: int = 86400           # 订单对账间隔（秒），默认24小时
-    erp_reconcile_hour: int = 3                   # 对账触发时间（0-23），默认凌晨3点
+    erp_reconcile_interval: int = 86400           # 旧调度兼容配置；夜间统一协调器不再使用
+    erp_reconcile_hour: int = 3                   # 旧调度兼容配置；使用 erp_sync_nightly_hour
     erp_reconcile_tolerance: int = 5              # COUNT对账容差，≤此值视为一致
 
     # 快麦奇门自定义接口配置（淘宝网关，需单独申请凭证）

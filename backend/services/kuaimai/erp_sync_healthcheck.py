@@ -94,6 +94,22 @@ async def _scan_and_alert(db: Any) -> None:
         org_id = r.get("org_id") or "system"
         by_org.setdefault(org_id, []).append(r)
 
+    # Nightly batches own completeness; legacy last_run_at includes failed attempts.
+    try:
+        batches = await db.table("erp_sync_batches").select(
+            "org_id,status,attempts,last_error,source_as_of").neq("status", "complete").execute()
+        for batch in batches.data or []:
+            attempts = batch.get("attempts") or 0
+            if attempts >= ALERT_THRESHOLD:
+                oid = batch.get("org_id") or "system"
+                by_org.setdefault(oid, []).append({
+                    "org_id": oid, "sync_type": "nightly",
+                    "error_count": attempts, "last_error": batch.get("last_error") or "Nightly batch incomplete",
+                    "last_run_at": None,
+                })
+    except Exception as e:
+        logger.error(f"Nightly completeness scan failed | error={e}")
+
     # === 2) Token DB 持久化失败扫描（隐性失败兜底）===
     try:
         from core.redis import get_redis

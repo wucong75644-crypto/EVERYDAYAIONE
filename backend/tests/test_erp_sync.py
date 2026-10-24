@@ -1242,7 +1242,7 @@ class TestRunAggregationAsync:
         # 空列表直接返回
 
     @pytest.mark.asyncio
-    async def test_error_does_not_stop_iteration(self):
+    async def test_aggregation_failure_blocks_success(self):
         """单条聚合失败不阻塞其他"""
         from services.kuaimai.erp_sync_persistence import _run_aggregation_async
 
@@ -1268,9 +1268,9 @@ class TestRunAggregationAsync:
 
         db.rpc = failing_rpc
         keys = [("A01", "2026-03-18"), ("B02", "2026-03-19")]
-        # 不应抛异常
-        await _run_aggregation_async(db, keys)
-        assert call_count[0] == 2
+        with pytest.raises(Exception, match="boom"):
+            await _run_aggregation_async(db, keys)
+        assert call_count[0] == 1
 
 
 class TestCollectApiProductIds:

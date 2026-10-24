@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Any
 
 from loguru import logger
+from utils.time_context import CN_TZ
 
 
 # ── 时间格式化 ──────────────────────────────────────────
@@ -53,7 +54,7 @@ def _safe_ts(val: Any) -> str | None:
         # 超过 year-3000 的秒值一定是毫秒时间戳
         if ts > 32503680000:  # 3000-01-01 00:00:00 UTC in seconds
             ts = ts / 1000
-        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+        return datetime.fromtimestamp(ts, CN_TZ).strftime("%Y-%m-%d %H:%M:%S")
     except (TypeError, ValueError, OSError):
         return str(val)
 
@@ -64,7 +65,7 @@ def _ms_to_iso(val: Any) -> str | None:
         return None
     try:
         ts = int(val) / 1000
-        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+        return datetime.fromtimestamp(ts, CN_TZ).strftime("%Y-%m-%d %H:%M:%S")
     except (TypeError, ValueError, OSError):
         return None
 
@@ -216,6 +217,7 @@ async def _batch_upsert(
                 f"Upsert {table} failed | batch={i // batch_size} | "
                 f"rows={len(batch)} | error={e}"
             )
+            raise
     return total
 
 

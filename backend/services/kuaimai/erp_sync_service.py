@@ -56,17 +56,21 @@ from services.kuaimai.erp_sync_piggyback_handlers import (
 )
 from services.kuaimai.erp_sync_persistence import (
     collect_affected_keys as _collect_affected_keys,
-    run_aggregation as _run_aggregation,
     sort_and_assign_index as _sort_and_assign_index,
     upsert_document_items as _upsert_document_items,
 )
 from services.kuaimai.erp_sync_utils import _API_SEM
 
 
+class PageLimitError(RuntimeError):
+    """The caller must split the time window instead of accepting truncated data."""
+
+
+
 class ErpSyncService:
     """ERP 同步核心服务"""
 
-    # 各类型首次同步天数覆盖（订单/售后只需近90天，其他走全局 erp_sync_initial_days）
+    # 首次同步范围：订单/售后先取90天，更早数据由夜间历史轮查逐步补齐
     INITIAL_DAYS_OVERRIDE: dict[str, int] = {
         "order": 90,
         "aftersale": 90,
@@ -95,6 +99,8 @@ class ErpSyncService:
         self._lock_extend_fn = lock_extend_fn
         self._aggregation_queue = aggregation_queue
         self._aggregation_pending = aggregation_pending
+        self.document_sink = None
+        self.strict_sync = False
 
     def _get_client(self) -> KuaiMaiClient:
         if self._client is None:
@@ -477,87 +483,57 @@ class ErpSyncService:
         终止判断：返回条数 < 请求 pageSize 或返回空列表。
         限速：通过全局 _API_SEM 信号量控制并发（类型并行时共享限流）。
         """
-        client = self._get_client()
-        all_items: list[dict[str, Any]] = []
-        page = 0
-
-        while page < self.MAX_PAGES:
-            page += 1
-            params["pageNo"] = page
-            params["pageSize"] = page_size
-            async with _API_SEM:
-                data = await client.request_with_retry(method, params)
-            items = data.get(response_key) or []
-            all_items.extend(items)
-
-            # 终止：返回条数 < 请求的 pageSize，说明已到最后一页
-            if len(items) < page_size:
-                break
-        else:
-            logger.warning(
-                f"fetch_all_pages hit limit | method={method} | "
-                f"pages={page} | total_items={len(all_items)}"
-            )
-
-        if all_items:
-            logger.info(
-                f"fetch_all_pages done | method={method} | "
-                f"pages={page} | total={len(all_items)}"
-            )
-        else:
-            logger.debug(
-                f"fetch_all_pages empty | method={method} | "
-                f"pages={page} | params={params}"
-            )
-
-        return all_items
+        result = []
+        async for items in self.fetch_pages_streaming(method, params, response_key, page_size):
+            result.extend(items)
+        return result
 
     async def fetch_pages_streaming(
-        self,
-        method: str,
-        params: dict[str, Any],
-        response_key: str = "list",
-        page_size: int = 50,
+        self, method: str, params: dict[str, Any], response_key: str = "list", page_size: int = 50,
     ) -> AsyncGenerator[list[dict[str, Any]], None]:
-        """逐页拉取数据（流式），每次 yield 一页，避免全量堆积在内存
-
-        与 fetch_all_pages 相同的翻页/限流/终止逻辑，
-        但每页拉完立刻 yield 给调用方处理，内存峰值 = 1页数据。
-        """
+        import hashlib
+        import json
+        params = dict(params)
         client = self._get_client()
-        page = 0
-        total = 0
-
-        while page < self.MAX_PAGES:
-            page += 1
-            params["pageNo"] = page
-            params["pageSize"] = page_size
+        count, expected, previous = 0, None, None
+        seen_ids = set()
+        for page in range(1, self.MAX_PAGES + 1):
+            if self._lock_extend_fn:
+                await self._lock_extend_fn()
+            params.update(pageNo=page, pageSize=page_size)
             async with _API_SEM:
                 data = await client.request_with_retry(method, params)
+            if not isinstance(data, dict) or data.get("success") is False:
+                raise RuntimeError(f"Invalid sync response: {method}")
+            if self.strict_sync and response_key not in data and data.get('total') != 0:
+                raise RuntimeError(f"Missing sync response list: {method}")
             items = data.get(response_key) or []
-            total += len(items)
-
+            if not isinstance(items, list):
+                raise RuntimeError(f"Invalid sync list: {method}")
+            if page == 1 and data.get("total") is not None:
+                expected = int(data["total"])
+            if method in {'erp.trade.outstock.simple.query','erp.aftersale.list.query'}:
+                key = 'sid' if method == 'erp.trade.outstock.simple.query' else 'id'
+                for item in items:
+                    identity = item.get(key)
+                    if identity is None or str(identity) in seen_ids:
+                        raise RuntimeError(f"Missing or repeated document ID: {method} page={page}")
+                    seen_ids.add(str(identity))
             if items:
+                digest = hashlib.sha256(json.dumps(items,sort_keys=True,default=str).encode()).hexdigest()
+                if digest == previous:
+                    raise RuntimeError(f"Repeated sync page: {method} page={page}")
+                previous = digest
+                count += len(items)
                 yield items
-
-            if len(items) < page_size:
-                break
-        else:
-            logger.warning(
-                f"fetch_pages_streaming hit limit | method={method} | "
-                f"pages={page} | total_items={total}"
-            )
-
-        if total > 0:
-            logger.info(
-                f"fetch_all_pages done | method={method} | "
-                f"pages={page} | total={total}"
-            )
-        else:
-            logger.debug(
-                f"fetch_all_pages empty | method={method} | "
-                f"pages={page} | params={params}"
-            )
+            has_next = data.get("hasNext")
+            if has_next is False or (has_next is not True and len(items) < page_size):
+                if expected is not None and count != expected:
+                    raise RuntimeError(f"Incomplete sync pages: {method} expected={expected} received={count}")
+                return
+            if has_next is True and not items:
+                raise RuntimeError(f"Empty nonterminal sync page: {method}")
+        raise PageLimitError(f"Sync page limit reached: {method}")
 
     # ── 委托到 erp_sync_persistence ─────────────────────
 
@@ -570,15 +546,17 @@ class ErpSyncService:
 
     async def upsert_document_items(self, rows: list[dict[str, Any]]) -> int:
         """事务性写入 erp_document_items（按单据分组：删旧→插新）"""
+        if self.document_sink is not None:
+            return await self.document_sink(rows)
         return await _upsert_document_items(self.db, rows, org_id=self.org_id)
 
     async def run_aggregation(self, affected_keys: list[tuple[str, str]]) -> None:
         """将受影响的 (outer_id, stat_date) 推入聚合队列"""
-        return _run_aggregation(
-            self.db, self._aggregation_queue, affected_keys,
-            pending=self._aggregation_pending,
-            org_id=self.org_id,
-        )
+        if self.document_sink is not None:
+            # Publication recomputes old and new keys in its own DB transaction.
+            return
+        from services.kuaimai.erp_sync_persistence import _run_aggregation_async
+        await _run_aggregation_async(self.db, affected_keys, org_id=self.org_id)
 
     def collect_affected_keys(self, rows: list[dict[str, Any]]) -> list[tuple[str, str]]:
         """从入库行中收集受影响的 (outer_id, stat_date) 对"""

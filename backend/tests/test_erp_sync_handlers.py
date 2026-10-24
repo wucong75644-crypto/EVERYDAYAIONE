@@ -415,12 +415,12 @@ class TestSyncOrder:
         assert rows[1]["discount_fee"] == 20.0   # 30-10 兜底
 
     @pytest.mark.asyncio
-    async def test_no_orders_skipped(self):
-        """无 orders 的单据跳过"""
+    async def test_no_orders_retains_header(self):
+        """无商品明细时保留单头，删除旧SKU不能留下旧金额。"""
         from services.kuaimai.erp_sync_handlers import sync_order
         docs = [{"sid": "S003", "orders": None}]
         svc = _mock_svc(pages=docs)
-        assert await sync_order(svc, START, END) == 0
+        assert await sync_order(svc, START, END) == 1
 
     @pytest.mark.asyncio
     async def test_post_fee_only_on_first_item(self):

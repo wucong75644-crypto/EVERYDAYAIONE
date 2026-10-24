@@ -131,7 +131,7 @@ class TestBatchUpsert:
         assert count == 250
 
     @pytest.mark.asyncio
-    async def test_exception_continues(self):
+    async def test_exception_blocks_success(self):
         """批次异常跳过继续（async mock 下用 side_effect 模拟异常）"""
         from services.kuaimai.erp_sync_utils import _batch_upsert
         db = MagicMock()
@@ -146,8 +146,8 @@ class TestBatchUpsert:
         mt.upsert.return_value.execute = _mock_execute
         db.table.return_value = mt
         rows = [{"id": i} for i in range(200)]
-        count = await _batch_upsert(db, "t", rows, "id", batch_size=100)
-        assert count == 100
+        with pytest.raises(Exception, match="fail"):
+            await _batch_upsert(db, "t", rows, "id", batch_size=100)
 
 
 # ============================================================
@@ -590,7 +590,8 @@ class TestSyncStockFullDbError:
         async def _raise_execute():
             raise Exception("DB down")
         tbl.execute = _raise_execute
-        assert await sync_stock_full(svc) == 0
+        with pytest.raises(Exception, match="DB down"):
+            await sync_stock_full(svc)
 
 
 class TestFetchStockByCodes:

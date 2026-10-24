@@ -134,52 +134,21 @@ class ErpSyncWorker:
 
     async def _run_org_sync(self, org_id: str | None, client) -> None:
         """单个企业的完整同步周期"""
-        logger.info(f"ERP sync org start | org_id={org_id}")
+        from services.kuaimai.erp_sync_nightly import NightlySync
+        from services.kuaimai.erp_sync_scheduler import TOKEN_REFRESH_AGE_THRESHOLD, _parse_utc_timestamp
+        from datetime import timezone
 
-        # 高频同步
-        for sync_type in self.HIGH_FREQ_TYPES:
-            if not self.is_running:
-                return
-            await self._extend_lock()
-            await self._execute_sync(sync_type, org_id=org_id, client=client)
-
-        # 仓库单据同步（每 5 分钟）
-        if self.is_running and self._should_run_warehouse(org_id):
-            for wh_type in self.WAREHOUSE_TYPES:
-                if not self.is_running:
-                    break
-                await self._extend_lock()
-                await self._execute_sync(wh_type, org_id=org_id, client=client)
-            self._org_last_warehouse[org_id] = now_cn()
-
-        # 库存全量刷新 — 已禁用（套件商品无独立库存，由 mv_kit_stock 计算）
-        # if self.is_running and self._should_run_stock_full(org_id):
-        #     await self._extend_lock()
-        #     await self._execute_stock_full_refresh(org_id=org_id, client=client)
-        #     self._org_last_stock_full[org_id] = now_cn()
-
-        # 低频同步（platform_map）
-        if self.is_running and self._should_run_low_freq(org_id):
-            await self._extend_lock()
-            await self._execute_sync("platform_map", org_id=org_id, client=client)
-            self._org_last_platform_map[org_id] = now_cn()
-
-        # 配置数据同步（shop/warehouse/tag/category/logistics_company）
-        if self.is_running and self._should_run_config(org_id):
-            for config_type in self.CONFIG_TYPES:
-                if not self.is_running:
-                    break
-                await self._extend_lock()
-                await self._execute_sync(config_type, org_id=org_id, client=client)
-            self._org_last_config[org_id] = now_cn()
-
-        # 日维护（归档+聚合兜底+删除检测）
-        if self.is_running and self._should_run_daily(org_id):
-            await self._extend_lock()
-            await self._run_daily_maintenance(org_id=org_id, client=client)
-            self._org_last_daily[org_id] = now_cn()
-
-        logger.info(f"ERP sync org done | org_id={org_id}")
+        # Token renewal stays alive even while no business batch is due.
+        if org_id:
+            result = await self.db.table("org_configs").select("updated_at").eq(
+                "org_id", org_id).eq("config_key", "kuaimai_access_token").execute()
+            if result.data:
+                updated = _parse_utc_timestamp(result.data[0]["updated_at"])
+                if updated and (datetime.now(timezone.utc)-updated).total_seconds() >= TOKEN_REFRESH_AGE_THRESHOLD:
+                    if not await client.refresh_token():
+                        raise RuntimeError("ERP token renewal failed")
+        if await NightlySync(self.db, org_id, client, self._extend_lock).run():
+            await self._refresh_kit_stock()
 
     async def _load_erp_orgs(self) -> list[tuple[str | None, "KuaiMaiClient | None"]]:
         """加载所有 ERP 功能已开启的企业，返回 (org_id, client) 列表。

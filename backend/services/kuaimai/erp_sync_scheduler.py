@@ -21,6 +21,7 @@ TOKEN_REFRESH_AGE_THRESHOLD = 20 * 86400  # 20 天
 
 # 同步类型优先级权重（越大 → score 越小 → 越先执行）
 PRIORITY_WEIGHTS: dict[str, int] = {
+    "nightly": 100,
     "order": 100,
     "aftersale": 100,
     "stock": 50,
@@ -57,7 +58,8 @@ PRIORITY_WEIGHTS: dict[str, int] = {
     "token_refresh": 200,
 }
 
-# 高频同步类型（每轮都入队）
+# 以下类型常量仅保留兼容旧导入；调度不再按这些频率产生任务。
+# 原高频同步类型
 HIGH_FREQ_TYPES = [
     "product", "stock", "supplier",
     "purchase", "receipt", "shelf",
@@ -180,69 +182,12 @@ class ErpSyncScheduler:
     def _get_due_types(self, org_id: str | None) -> list[str]:
         """判断该企业哪些 sync_type 到期需要入队。
 
-        首轮启动只入队高频类型，低频/特殊任务延迟到第二轮，
-        避免启动风暴（所有企业的所有任务一次性入队）。
+        仅唤醒统一夜间协调器；是否到时或需要续传由持久批次决定。
+        不再产生独立高频、中频或对账任务。
         """
-        due: list[str] = []
-
-        # 高频类型：每轮都入队
-        due.extend(HIGH_FREQ_TYPES)
-
-        # 首轮只入队高频任务，低频/特殊任务延迟
-        if self._first_round:
-            return due
-
-        # 仓库单据类型：每 5 分钟入队
-        if self._is_interval_due(
-            self._org_last_warehouse, org_id,
-            self.WAREHOUSE_INTERVAL,
-        ):
-            due.extend(WAREHOUSE_TYPES)
-
-        # 配置数据类型：每 12 小时入队
-        if self._is_interval_due(
-            self._org_last_config, org_id,
-            self.CONFIG_INTERVAL,
-        ):
-            due.extend(CONFIG_TYPES)
-
-        # 低频类型：按间隔判断
-        if self._is_interval_due(
-            self._org_last_platform_map, org_id,
-            self.settings.erp_platform_map_interval,
-        ):
-            due.extend(LOW_FREQ_TYPES)
-
-        # 库存全量刷新 — 按仓库遍历所有活跃商品，兜底增量同步的遗漏
-        if self._is_interval_due(
-            self._org_last_stock_full, org_id,
-            self.settings.erp_stock_full_refresh_interval,
-        ):
-            due.append("stock_full")
-
-        # 日维护
-        if self._is_interval_due(
-            self._org_last_daily, org_id,
-            self.DAILY_INTERVAL,
-        ):
-            due.append("daily_maintenance")
-
-        # 订单+售后对账：仅在指定时点触发（默认凌晨3点），独立追踪
-        # PR3 修复：用 now_cn() 替代 datetime.now()，防止容器 TZ 漂移
-        # 导致对账触发时点偏离北京时间
-        reconcile_hour = self.settings.erp_reconcile_hour
-        reconcile_interval = self.settings.erp_reconcile_interval
-        if now_cn().hour == reconcile_hour:
-            if self._is_interval_due(
-                self._org_last_order_reconcile, org_id, reconcile_interval,
-            ):
-                due.append("order_reconcile")
-            if self._is_interval_due(
-                self._org_last_aftersale_reconcile, org_id, reconcile_interval,
-            ):
-                due.append("aftersale_reconcile")
-
-        return due
+        # Wake-up only: durable DB state decides whether this is a new nightly
+        # batch or failed-batch recovery. No business API is called on idle rounds.
+        return ["nightly"]
 
     @staticmethod
     def _is_interval_due(

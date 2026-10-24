@@ -178,7 +178,9 @@ async def _fetch_stock_by_codes(
                     svc, batch_str, int(wh_id), page, rate_limiter=stock_full_limiter,
                 )
                 if data is None:
-                    break  # 无法恢复，跳过此批
+                    if getattr(svc, 'strict_sync', False) is True:
+                        raise RuntimeError('Incomplete full stock batch')
+                    break  # legacy repair path
                 items = data.get("stockStatusVoList") or []
                 for item in items:
                     row = _map_stock_item(item)
@@ -186,6 +188,8 @@ async def _fetch_stock_by_codes(
                         buffer.append(row)
                 if len(items) < 100:
                     break
+            else:
+                raise RuntimeError("Full stock pagination limit reached")
 
             # 每批间延迟（全量同步非紧急，优先稳定性）
             await asyncio.sleep(1.0)
@@ -238,6 +242,8 @@ async def sync_stock(
         logger.warning(
             f"sync_stock: warehouse IDs empty | org_id={svc.org_id}, skip incremental"
         )
+        if getattr(svc, "strict_sync", False) is True:
+            raise RuntimeError("Warehouse IDs not configured")
         return 0
 
     # 遍历每个仓库，时间查询直接收集库存行并 upsert
@@ -265,10 +271,14 @@ async def sync_stock(
                         rows.append(row)
                 if len(items) < 100:
                     break
+            else:
+                raise RuntimeError('Stock pagination limit reached')
         except Exception as e:
             logger.warning(
                 f"sync_stock: warehouse {wh_id} query failed, skip | error={e}"
             )
+            if getattr(svc, "strict_sync", False) is True:
+                raise
 
     if not rows:
         return 0
@@ -289,15 +299,23 @@ async def sync_stock_full(svc: ErpSyncService) -> int:
     warehouse_ids = await _get_warehouse_ids(svc)
     if not warehouse_ids:
         logger.warning("sync_stock_full: no warehouse_ids configured, skip")
+        if getattr(svc, "strict_sync", False) is True:
+            raise RuntimeError("Warehouse IDs not configured")
         return 0
 
     try:
         q = svc.db.table("erp_products").select("outer_id").eq("active_status", 1)
-        result = await q.limit(50000).execute()
-        codes = [r["outer_id"] for r in (result.data or []) if r.get("outer_id")]
+        codes = []
+        offset = 0
+        while True:
+            result = await svc.db.table("erp_products").select("outer_id").eq("active_status",1).order("outer_id").range(offset,offset+999).execute()
+            codes.extend(r["outer_id"] for r in (result.data or []) if r.get("outer_id"))
+            if len(result.data or []) < 1000:
+                break
+            offset += 1000
     except Exception as e:
         logger.error(f"sync_stock_full: failed to load product codes | error={e}")
-        return 0
+        raise
 
     if not codes:
         return 0

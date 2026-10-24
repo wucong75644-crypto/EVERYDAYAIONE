@@ -127,6 +127,8 @@ async def _process_platform_map_batch(
                     f"size={len(batch)} | depth={depth} | "
                     f"sku_ids={batch}"
                 )
+                if getattr(svc, "strict_sync", False) is True:
+                    raise
                 return
             mid = len(batch) // 2
             logger.warning(
@@ -147,6 +149,8 @@ async def _process_platform_map_batch(
             f"platform_map: business error → DLQ | "
             f"code={e.error_code} | size={len(batch)} | msg={e}"
         )
+        if getattr(svc, "strict_sync", False) is True:
+            raise
         await _enqueue_failed_batch_to_dlq(
             svc, batch, error_msg=f"code={e.error_code} msg={e}",
         )
@@ -162,6 +166,8 @@ async def _process_platform_map_batch(
             f"platform_map: unexpected error | "
             f"type={type(e).__name__} | size={len(batch)} | error={e}"
         )
+        if getattr(svc, "strict_sync", False) is True:
+            raise
 
 
 async def _enqueue_failed_batch_to_dlq(
@@ -239,6 +245,8 @@ async def _select_skus_for_round(
         return sku_ids
     except Exception as e:
         logger.warning(f"platform_map: failed to load SKU list | error={e}")
+        if getattr(svc, "strict_sync", False) is True:
+            raise
         return []
 
 
