@@ -216,6 +216,26 @@ describe('知识画布', () => {
     fireEvent.pointerDown(screen.getByRole('button', { name: '从 项目总纲 拉线创建' }), { button: 0, pointerId: 1, clientX: 320, clientY: 190 });
     return canvas;
   }
+  it.each([false,true])('keeps the round-dot drop through title confirmation with continued typing=%s',async continued=>{
+    prepareLineGesture();const state={...structuredClone(initial),nodes:[{...node,canvas_data:{structure:'right' as const}}] as import('../../services/knowledge').KnowledgeNode[]};
+    f.api.scene.mockImplementation(async()=>structuredClone(state));let release!:()=>void;
+    f.api.command.mockImplementation(async(op,payload)=>{
+      if(op==='create_object'){
+        if(continued)await new Promise<void>(r=>{release=r;});
+        state.nodes.push({...node,id:'dragged',node_id:'dragged-layout',title:payload.title,parent_id:payload.parent_id,...payload.position,canvas_data:{manual_layout:payload.manual_layout}});
+        return{success:true,data:{object_id:'dragged'}};
+      }
+      if(op==='update_title'){const saved=state.nodes.find(n=>n.id===payload.object_id)!;saved.title=payload.title;for(const move of payload.nodes??[]){const placed=state.nodes.find(n=>n.node_id===move.node_id)!;Object.assign(placed,move.position);}}
+      return{success:true,data:{object_id:null}};
+    });
+    show();await ready();const canvas=lineGeometry();fireEvent.pointerMove(canvas,{pointerId:1,clientX:600,clientY:480});fireEvent.pointerUp(canvas,{pointerId:1,clientX:600,clientY:480});
+    const draft=document.querySelector<HTMLElement>('.kc-quick')!,wanted={x:parseFloat(draft.style.left),y:parseFloat(draft.style.top)};
+    const input=screen.getByLabelText('新主题标题');changeField(input,{target:{value:'手动落点'}});fireEvent.keyDown(input,{key:'Enter'});
+    if(continued){changeField(input,{target:{value:'手动落点补充'}});await act(async()=>release());const editing=await screen.findByLabelText('节点标题');fireEvent.keyDown(editing,{key:'Enter'});}
+    await waitFor(()=>expect(screen.queryByLabelText('节点标题')).toBeNull());const saved=await screen.findByRole('article',{name:continued?'手动落点补充':'手动落点'});expect(saved.style.left).toBe(wanted.x+'px');expect(saved.style.top).toBe(wanted.y+'px');
+    expect(f.api.command.mock.calls[0][1].position).toEqual(wanted);expect(f.api.command.mock.calls[0][1].manual_layout).toEqual({source_anchor:{x:1,y:.5},target_anchor:{x:0,y:.5}});
+    const update=f.api.command.mock.calls.find(c=>c[0]==='update_title');if(update)expect(update[1].nodes??[]).not.toEqual(expect.arrayContaining([expect.objectContaining({node_id:'dragged-layout'})]));
+  });
   it('creates from a dragged line inline, then continues child extensions and returns to the new handle', async () => {
     prepareLineGesture(); persistCreatedNodes(); show(); await ready(); const canvas = lineGeometry();
     fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 450, clientY: 400 });

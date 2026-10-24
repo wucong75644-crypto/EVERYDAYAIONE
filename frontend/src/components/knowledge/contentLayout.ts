@@ -1,3 +1,4 @@
+import {keepManualPositions} from './manualLayout';
 import {followSummaryPositions} from './summaryLayout';
 import type { KnowledgeNode } from '../../services/knowledge';
 import { branchIds, siblingCompare } from './branchLayout';
@@ -20,7 +21,7 @@ export function reflowContent(nodes: KnowledgeNode[], sizes: Map<string, CardSiz
       floor = Math.max(...group.map(n => n.y + height(n))) + 32;
     }
   }
-  return followSummaryPositions(nodes,next,sizes);
+  return keepManualPositions(nodes,followSummaryPositions(nodes,next,sizes));
 }
 /** Reserve the complete translated branch, rather than only its first card. */
 export function placeContent(source: KnowledgeNode[], occupied: KnowledgeNode[], sizes: Map<string, CardSize>, wanted: { x: number; y: number }) {

@@ -1,3 +1,4 @@
+import {keepManualPositions} from './manualLayout';
 import {summaryParent} from './summaryScope';
 import { balancedSides, siblingGroups } from "./structureDirection";
 export { effectiveStructure } from "./structureDirection";
@@ -92,7 +93,7 @@ export function arrangeStructure(
   }
   path.delete(n.id);const result=bounds(items);memo.set(key,result);return result;
  };
- const box=visit(root,root.canvas_data?.structure??'right'),arranged=new Map(shift(box,root.x,root.y).map(n=>[n.id,n]));return nodes.map(n=>arranged.get(n.id)??n);
+ const box=visit(root,root.canvas_data?.structure??'right'),arranged=new Map(shift(box,root.x,root.y).map(n=>[n.id,n]));return keepManualPositions(nodes,nodes.map(n=>arranged.get(n.id)??n));
 }
 
 export function structureMoves(

@@ -121,5 +121,7 @@
 .kc-inline-title>small{display:none}.kc-node:has(.kc-inline-title){z-index:9}.kc-node-tools{box-sizing:border-box;flex-wrap:wrap}
 
 .kc-card-actions{display:flex;flex-wrap:wrap;gap:5px;margin-top:12px}
-.kc-card-actions button{font-size:11px;padding:3px 6px;background:#8daaff10;white-space:nowrap}
+.kc-card-actions button{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:3px 6px;background:#8daaff10;white-space:nowrap}
 .kc-node .kc-image-wrap{margin:0 0 12px}
+
+.kc-card-actions button svg{flex-shrink:0}

@@ -10,7 +10,9 @@ export interface CanvasVideo { binding_id:string; revision:number; title:string 
 export interface CanvasLink { url:string; title:string; kind:'auto'|'video'|'web' }
 export interface TitleRun { text: string; bold?: boolean; italic?: boolean; color?: string; font_size?: number }
 export interface TitleFormat { runs: TitleRun[]; align: 'left'|'center'|'right' }
+export interface ManualLayout {source_anchor?:RelationPoint;target_anchor?:RelationPoint}
 export interface CanvasData {
+  manual_layout?:ManualLayout;
   boundaries?:{id:string;members:string[];title:string}[]; title_format?: TitleFormat; width?: number | null; structure?: import("../components/knowledge/topicStructure").TopicStructure; video?:CanvasVideo|null; link?:CanvasLink|null; style?: CanvasStyle | null; image?: CanvasImage | null; note?: string; labels?: string[]; task?: { progress: number; priority: number; start: string; due: string; assignee: string } | null; summary?: { members: string[]; title: string } | null; boundary?: { members: string[]; title: string } | null }
 export interface KnowledgeNode { canvas_data?: CanvasData; id: string; container_id: string; parent_id: string | null; kind: 'topic' | 'document' | 'rule'; title: string; revision: number; node_id: string; x: number; y: number; layout_revision: number; sort_order?: number | null }
 export interface KnowledgeObject extends Pick<KnowledgeNode, 'id' | 'container_id' | 'parent_id' | 'kind' | 'title' | 'revision'> { body: string; can_write: boolean }

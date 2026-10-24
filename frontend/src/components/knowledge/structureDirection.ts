@@ -1,3 +1,4 @@
+import {anchorDirection} from './manualLayout';
 import {summaryParent} from './summaryScope';
 import {boundaryEntries} from './canvasGroups';
 import type { KnowledgeNode } from "../../services/knowledge";
@@ -95,6 +96,8 @@ export function branchDirection(nodes: KnowledgeNode[], id: string): Direction {
   );
 }
 export function childDirection(nodes: KnowledgeNode[], id: string): Direction {
+  const pinned=nodes.filter(n=>n.parent_id===id&&n.canvas_data?.manual_layout?.source_anchor).sort(siblingCompare)[0];
+  const origin=anchorDirection(pinned?.canvas_data?.manual_layout?.source_anchor);if(origin)return origin;
   const kind = effectiveStructure(nodes, id);
   return kind === "balanced"
     ? nodes.filter((n) => n.parent_id === id && !n.canvas_data?.summary)

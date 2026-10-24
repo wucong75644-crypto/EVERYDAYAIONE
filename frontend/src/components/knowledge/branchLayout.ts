@@ -190,10 +190,11 @@ export function planBranches(
         siblings.forEach((s, i) => {
           index.get(s.id)!.sort_order = (i + 1) * 1024;
         });
-        let arranged = next;
+        // A deliberate reparent/reorder may place the moved branch; retain other manual anchors.
+        let arranged = next.map(n=>moving.has(n.id)?{...n,canvas_data:{...n.canvas_data,manual_layout:undefined}}:n);
         for (const id of structured)
           arranged = arrangeStructure(arranged, id, sizes,options,theme);
-        for (const n of arranged) Object.assign(index.get(n.id)!, n);
+        for (const n of arranged) {const data=index.get(n.id)!.canvas_data;Object.assign(index.get(n.id)!,n,{canvas_data:data});}
       }
       const children = childrenIndex(next);
       let floor = Math.min(...siblings.map((n) => index.get(n.id)!.y));

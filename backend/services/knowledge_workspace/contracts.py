@@ -174,6 +174,20 @@ class RelationAnchor(StrictModel):
             raise ValueError('端点必须位于节点边缘')
         return self
 
+class ManualLayout(StrictModel):
+    source_anchor: RelationAnchor | None = None
+    target_anchor: RelationAnchor | None = None
+
+    @model_validator(mode='after')
+    def paired_anchors(self):
+        if (self.source_anchor is None) != (self.target_anchor is None):
+            raise ValueError('手动连线端点必须成对保存')
+        return self
+
+    @model_serializer(mode='wrap')
+    def compact(self, handler):
+        return {k:v for k,v in handler(self).items() if v is not None}
+
 class RelationControl(StrictModel):
     x: float = Field(ge=-4000, le=4000, allow_inf_nan=False)
     y: float = Field(ge=-4000, le=4000, allow_inf_nan=False)
@@ -205,6 +219,7 @@ class CanvasBoundary(CanvasGroup):
     id: UUID
 
 class CanvasData(StrictModel):
+    manual_layout: ManualLayout | None = None
     boundaries: list[CanvasBoundary] | None = Field(default=None, max_length=100)
     title_format: TitleFormat | None = None
     width: int | None = Field(default=None, ge=80, le=800)
@@ -253,6 +268,7 @@ class ProjectPayload(StrictModel):
     position: Position
 
 class CreatePayload(ProjectPayload):
+    manual_layout: ManualLayout | None = None
     title_format: TitleFormat | None = None
     container_id: UUID
     parent_id: UUID | None = None

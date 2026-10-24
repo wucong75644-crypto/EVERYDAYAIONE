@@ -1,3 +1,4 @@
+import {anchorForDirection} from './manualLayout';
 import { portDirection, edgePoint, vectors } from "./structureDirection";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
@@ -189,6 +190,7 @@ export function useCanvasConnection(options: Options) {
             y: (handle.top + handle.bottom) / 2 - bounds.top,
           };
         curve.start = { ...start, nx: v.x, ny: v.y };
+        const end={x:s.cursor.x-bounds.left,y:s.cursor.y-bounds.top};curve.end={...curve.end,...end};
         curve.path = `M ${start.x} ${start.y} C ${start.x + v.x * 50} ${start.y + v.y * 50},${curve.end.x + curve.end.nx * 50} ${curve.end.y + curve.end.ny * 50},${curve.end.x} ${curve.end.y}`;
       }
     }
@@ -348,7 +350,10 @@ export function useCanvasConnection(options: Options) {
       if (s.port) latest.current.onTap?.(s.source, s.port);
       else latest.current.onTap?.(s.source);
     }
-    return allowed ? { ...result, position: drop } : null;
+    const direction=portDirection(latest.current.nodes,s.source,'child');
+    const oppositeDirection=({right:'left',left:'right',down:'up',up:'down'} as const)[direction];
+    const manualLayout=s.port==='sibling'?{}:{source_anchor:anchorForDirection(direction),target_anchor:anchorForDirection(oppositeDirection)};
+    return allowed ? { ...result, position: drop,manualLayout } : null;
   };
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {

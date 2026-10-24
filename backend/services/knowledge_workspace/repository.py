@@ -51,6 +51,8 @@ class Repository:
 
     def command(self, command):
         payload = command.payload.model_dump(mode='json')
+        if payload.get('manual_layout') is None:
+            payload.pop('manual_layout', None)
         if getattr(command.payload, 'title_format', None) is not None:
             payload['title_format'] = command.payload.title_format.model_dump(mode='json', exclude_none=True)
         if payload.get('title_format') is None:

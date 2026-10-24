@@ -27,6 +27,8 @@ export function planStructuredPaste(
   );
   const virtual = source.map((n) => {
     const data = structuredClone(n.canvas_data ?? {});
+    // Pasting is an explicit new placement; source coordinates must not pin the copy.
+    delete data.manual_layout;
     for (const key of ["summary", "boundary"] as const) {
       const g = data[key];
       if (g) {
