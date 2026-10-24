@@ -1,3 +1,4 @@
+import {nodeHidden} from './summaryScope';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { KnowledgeNode, KnowledgeRelation } from '../../services/knowledge';
 export type CanvasSnapshot = { nodes: KnowledgeNode[]; relations: KnowledgeRelation[]; sizes?: Record<string, { width: number; height: number }>; visuals?: Record<string, { opacity: number; scale: number }> };
@@ -25,13 +26,7 @@ export function useCanvasPresence(identity: string, reduced: boolean) {
   return { ...(state.identity === identity && !reduced ? state : empty), transition, cancel };
 }
 export function canvasSnapshot(nodes: KnowledgeNode[], relations: KnowledgeRelation[], scope: string | undefined, folds: Set<string>, viewport?: HTMLElement | null): CanvasSnapshot {
-  const index = new Map(nodes.map(n => [n.id, n]));
-  const visible = nodes.filter(n => {
-    if (n.container_id !== scope) return false;
-    let p = n.parent_id; const seen = new Set<string>();
-    while (p && !seen.has(p)) { if (folds.has(p)) return false; seen.add(p); p = index.get(p)?.parent_id ?? null; }
-    return true;
-  });
+  const visible=nodes.filter(n=>n.container_id===scope&&!nodeHidden(nodes,folds,n));
   const ids = new Set(visible.map(n => n.id));
   const sizes = viewport ? Object.fromEntries([...viewport.querySelectorAll<HTMLElement>('[data-node-id]')].map(el => [el.dataset.nodeId!, { width: el.offsetWidth || 272, height: el.offsetHeight || 170 }])) : undefined;
   const visuals = viewport ? Object.fromEntries([...viewport.querySelectorAll<HTMLElement>('[data-node-id],[data-departure-id]')].map(el => {

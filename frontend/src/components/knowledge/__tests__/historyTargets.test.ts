@@ -18,3 +18,12 @@ it('reveals both old and new endpoints after same-ID reconnect, including a chil
   const changed={...edge,target_object_id:'b'};
   expect(historyTargets(scene([root,child,grandchild],[edge]),scene([root,child,grandchild],[changed]),'p').map(n=>n.id)).toEqual(['r','a','b']);
 });
+
+it('focuses the node whose notes, labels or task changed without using its parent as a fallback',()=>{
+ expect(historyTargets(scene([root,child]),scene([root,{...child,canvas_data:{note:'更改备注'}}]),'p').map(n=>n.id)).toEqual(['a']);
+});
+
+it('returns focus to the summarized branches when undo removes an independent summary topic',()=>{
+ const summary={...root,id:'summary',canvas_data:{summary:{members:['a'],title:'概要'}}};
+ expect(historyTargets(scene([root,child,summary]),scene([root,child]),'p').map(n=>n.id)).toEqual(['a']);
+});

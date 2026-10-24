@@ -21,18 +21,18 @@ class Repository:
 
     def canvas(self, cursor=None):
         with self.cursor() as c:
-            c.execute('''SELECT c.id,c.kind,c.title,c.revision,c.acl_revision,
+            c.execute('''SELECT c.id,c.kind,c.title,c.revision,c.acl_revision,COALESCE(to_jsonb(c)->'canvas_theme','{}'::jsonb) AS canvas_theme,
                          public.kb_role(c.id) AS role FROM public.kb_containers c WHERE NOT COALESCE((to_jsonb(c)->>'undo_hidden')::boolean,false) ORDER BY c.id LIMIT 1001''')
             containers = c.fetchall()
             if len(containers) > 1000:
                 raise ValueError('当前预览版本最多加载 1000 个空间')
             c.execute('''SELECT o.id,o.container_id,o.parent_id,o.kind,o.title,(to_jsonb(o)->>'sort_order')::bigint AS sort_order,o.current_revision AS revision,
-                         n.id AS node_id,n.x,n.y,n.revision AS layout_revision
+                         n.id AS node_id,n.x,n.y,COALESCE(to_jsonb(n)->'canvas_data','{}'::jsonb) AS canvas_data,n.revision AS layout_revision
                          FROM public.kb_objects o JOIN public.kb_canvas_nodes n ON n.object_id=o.id
                          WHERE o.deleted_at IS NULL AND NOT COALESCE((to_jsonb(o)->>'undo_hidden')::boolean,false) AND NOT EXISTS(SELECT 1 FROM public.kb_containers c WHERE c.id=o.container_id AND COALESCE((to_jsonb(c)->>'undo_hidden')::boolean,false)) AND (%s::uuid IS NULL OR o.id>%s::uuid)
                          ORDER BY o.id LIMIT 501''', (cursor, cursor))
             rows = c.fetchall()
-            c.execute('''SELECT id,container_id,source_object_id,target_object_id,relation_type
+            c.execute('''SELECT id,container_id,source_object_id,target_object_id,relation_type,COALESCE(to_jsonb(r)->'appearance','{}'::jsonb) AS appearance
                          FROM public.kb_relations r WHERE NOT EXISTS(SELECT 1 FROM public.kb_objects o JOIN public.kb_containers c ON c.id=o.container_id WHERE o.id IN (r.source_object_id,r.target_object_id) AND (COALESCE((to_jsonb(o)->>'undo_hidden')::boolean,false) OR COALESCE((to_jsonb(c)->>'undo_hidden')::boolean,false))) ORDER BY id LIMIT 2001''')
             relations = c.fetchall()
             if len(relations) > 2000:
@@ -51,9 +51,29 @@ class Repository:
 
     def command(self, command):
         payload = command.payload.model_dump(mode='json')
+        if getattr(command.payload, 'title_format', None) is not None:
+            payload['title_format'] = command.payload.title_format.model_dump(mode='json', exclude_none=True)
+        if payload.get('title_format') is None:
+            payload.pop('title_format', None)
+        if hasattr(command.payload, 'topics'):
+            for topic, item in zip(payload['topics'], command.payload.topics):
+                if item.title_format is None:
+                    topic.pop('title_format', None)
+                else:
+                    topic['title_format'] = item.title_format.model_dump(mode='json', exclude_none=True)
         # Optional title layout fields must not alter receipts issued by older clients.
         if command.operation == 'create_object' and payload.get('before_object_id') is None:
             payload.pop('before_object_id', None)
+        if command.operation in ('copy_branches','delete_branches'):
+            for key in ('snapshot_positions','nodes'):
+                if not payload.get(key): payload.pop(key, None)
+        if command.operation == 'create_template':
+            for key in ('nodes', 'after_object_id', 'before_object_id'):
+                if not payload.get(key): payload.pop(key, None)
+            payload['topics'] = [item.model_dump(mode='json', exclude_none=True) for item in command.payload.topics]
+        if command.operation == 'update_canvas_data':
+            if not payload.get('nodes'): payload.pop('nodes', None)
+            payload['updates'] = [item.model_dump(mode='json', exclude_none=True) for item in command.payload.updates]
         if command.operation == 'update_title':
             payload = {key: value for key, value in payload.items() if value is not None}
         with self.cursor() as c:
@@ -71,6 +91,8 @@ class Repository:
             return c.fetchone()['result']
 
     def branch_snapshot(self, snapshot_id, payload=None):
+        if payload is not None:
+            payload = {key: value for key, value in payload.items() if key not in ('nodes','snapshot_positions') or value}
         with self.cursor() as c:
             c.execute('SELECT public.kb_branch_snapshot(%s,%s) AS result', (snapshot_id, Jsonb(payload) if payload is not None else None))
             return c.fetchone()['result']

@@ -1,66 +1,248 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { RefObject } from 'react';
-import { relationCurve, relationLane } from './relationGeometry';
-import type { KnowledgeNode, KnowledgeRelation } from '../../services/knowledge';
+import { portDirection, edgePoint, vectors } from "./structureDirection";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { RefObject } from "react";
+import { relationCurve, relationLane, nearestAnchor } from "./relationGeometry";
+import type {
+  KnowledgeNode,
+  KnowledgeRelation,
+} from "../../services/knowledge";
 
 type Point = { x: number; y: number };
 type View = Point & { z: number };
-type Preview = { source: string; target: string | null; start: Point; end: Point; valid: boolean; inside: boolean; path: string; reconnect?: { relation: KnowledgeRelation; endpoint: 'source' | 'target'; revision: number }; reason?: string };
-type Options = {
-  viewport: RefObject<HTMLDivElement | null>; view: View; setView: (view: View) => void;
-  nodes: KnowledgeNode[]; relations?: KnowledgeRelation[]; identity: string; enabled: boolean; onTap?: (source: string) => void;
+export type CreationPort = "child" | "sibling";
+type Preview = {
+  relationType?: string;
+  anchor?: Point;
+  port?: CreationPort;
+  source: string;
+  target: string | null;
+  start: Point;
+  end: Point;
+  valid: boolean;
+  inside: boolean;
+  path: string;
+  reconnect?: {
+    relation: KnowledgeRelation;
+    endpoint: "source" | "target";
+    revision: number;
+  };
+  reason?: string;
 };
-type Session = { source: string; pointer: number; origin: Point; cursor: Point; moved: boolean; reconnect?: Preview['reconnect'] };
+type Options = {
+  viewport: RefObject<HTMLDivElement | null>;
+  view: View;
+  setView: (view: View) => void;
+  nodes: KnowledgeNode[];
+  relations?: KnowledgeRelation[];
+  identity: string;
+  enabled: boolean;
+  onTap?: (source: string, port?: CreationPort) => void;
+};
+type Session = {
+  relationType?: string;
+  anchor?: Point;
+  port?: CreationPort;
+  source: string;
+  pointer: number;
+  origin: Point;
+  cursor: Point;
+  moved: boolean;
+  reconnect?: Preview["reconnect"];
+};
 export function useCanvasConnection(options: Options) {
   const latest = useRef(options);
   const view = useRef(options.view);
-  useLayoutEffect(() => { latest.current = options; view.current = options.view; });
-  const session = useRef<Session | null>(null); const frame = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    latest.current = options;
+    view.current = options.view;
+  });
+  const session = useRef<Session | null>(null);
+  const frame = useRef<number | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const inspect = (s: Session): Preview | null => {
-    const { viewport, nodes } = latest.current; const host = viewport.current;
-    const index = new Map(nodes.map(node => [node.id, node]));
-    const source = index.get(s.source); if (!host || !source) return null;
+    const { viewport, nodes } = latest.current;
+    const host = viewport.current;
+    const index = new Map(nodes.map((node) => [node.id, node]));
+    const source = index.get(s.source);
+    if (!host || !source) return null;
     const bounds = host.getBoundingClientRect();
-    const sourceElement = host.querySelector<HTMLElement>(`[data-node-id="${source.id}"]`);
+    const sourceElement = host.querySelector<HTMLElement>(
+      `[data-node-id="${source.id}"]`,
+    );
     if (!sourceElement) return null;
     const a = sourceElement.getBoundingClientRect();
-    const inside = s.cursor.x >= bounds.left && s.cursor.x <= bounds.right && s.cursor.y >= bounds.top && s.cursor.y <= bounds.bottom;
-    let candidate: { node: KnowledgeNode; rect: DOMRect; distance: number } | null = null;
-    for (const element of host.querySelectorAll<HTMLElement>('[data-node-id]')) {
-      const node = index.get(element.dataset.nodeId ?? ''); if (!node) continue;
+    const inside =
+      s.cursor.x >= bounds.left &&
+      s.cursor.x <= bounds.right &&
+      s.cursor.y >= bounds.top &&
+      s.cursor.y <= bounds.bottom;
+    let candidate: {
+      node: KnowledgeNode;
+      rect: DOMRect;
+      distance: number;
+    } | null = null;
+    for (const element of host.querySelectorAll<HTMLElement>(
+      "[data-node-id]",
+    )) {
+      const node = index.get(element.dataset.nodeId ?? "");
+      if (!node) continue;
       const rect = element.getBoundingClientRect();
       const dx = Math.max(rect.left - s.cursor.x, 0, s.cursor.x - rect.right);
       const dy = Math.max(rect.top - s.cursor.y, 0, s.cursor.y - rect.bottom);
       const distance = Math.hypot(dx, dy);
-      if (distance <= 20 && (!candidate || distance < candidate.distance)) candidate = { node, rect, distance };
+      if (distance <= 20 && (!candidate || distance < candidate.distance))
+        candidate = { node, rect, distance };
     }
     const target = candidate?.node ?? null;
     const hit = document.elementFromPoint?.(s.cursor.x, s.cursor.y);
-    const blocked = !!hit?.closest('button,input,textarea,.kc-location,.kc-zoom,.kc-quick');
-    const fixed = { x: a.left - bounds.left, y: a.top - bounds.top, width: a.width, height: a.height };
-    const destination = candidate ? { x: candidate.rect.left - bounds.left, y: candidate.rect.top - bounds.top, width: candidate.rect.width, height: candidate.rect.height } : { x: s.cursor.x - bounds.left, y: s.cursor.y - bounds.top, width: 0, height: 0 };
-    const sourceId = s.reconnect?.endpoint === 'source' ? target?.id : source.id;
-    const targetId = s.reconnect?.endpoint === 'source' ? source.id : target?.id;
-    const proposed = s.reconnect ? { ...s.reconnect.relation, source_object_id: sourceId ?? '', target_object_id: targetId ?? '' } : { id: 'preview', container_id: source.container_id, source_object_id: sourceId ?? '', target_object_id: targetId ?? '', relation_type: 'related' };
-    const lane = target ? relationLane(latest.current.relations ?? [], proposed, 1).offset : 0;
-    const curve = s.reconnect?.endpoint === 'source' ? relationCurve(destination, fixed, lane, view.current.z) : relationCurve(fixed, destination, lane, view.current.z);
-    const duplicate = target && (latest.current.relations ?? []).some(r => r.id !== s.reconnect?.relation.id && r.source_object_id === sourceId && r.target_object_id === targetId && r.relation_type === (s.reconnect?.relation.relation_type ?? 'related'));
-    const reason = !inside ? '请在画布内选择节点' : blocked ? '请移到节点边缘' : target?.id === source.id ? '不能连接节点自身' : target && target.container_id !== source.container_id ? '不能跨空间连接' : duplicate ? '已有关联线，请选择其他节点' : s.reconnect && !target ? '请拖到节点上；空白处松手保留原线' : '';
-    return { source: s.source, target: target?.id ?? null, start: curve.start, end: curve.end, path: curve.path, inside, valid: !reason, reconnect: s.reconnect, reason };
-
+    const blocked = !!hit?.closest(
+      "button,input,textarea,.kc-location,.kc-zoom,.kc-quick",
+    );
+    const fixed = {
+      x: a.left - bounds.left,
+      y: a.top - bounds.top,
+      width: a.width,
+      height: a.height,
+    };
+    const destination = candidate
+      ? {
+          x: candidate.rect.left - bounds.left,
+          y: candidate.rect.top - bounds.top,
+          width: candidate.rect.width,
+          height: candidate.rect.height,
+        }
+      : {
+          x: s.cursor.x - bounds.left,
+          y: s.cursor.y - bounds.top,
+          width: 0,
+          height: 0,
+        };
+    const sourceId =
+      s.reconnect?.endpoint === "source" ? target?.id : source.id;
+    const targetId =
+      s.reconnect?.endpoint === "source" ? source.id : target?.id;
+    const proposed = s.reconnect
+      ? {
+          ...s.reconnect.relation,
+          source_object_id: sourceId ?? "",
+          target_object_id: targetId ?? "",
+        }
+      : {
+          id: "preview",
+          container_id: source.container_id,
+          source_object_id: sourceId ?? "",
+          target_object_id: targetId ?? "",
+          relation_type: s.relationType ?? "related",
+        };
+    const lane = target
+      ? relationLane(latest.current.relations ?? [], proposed, 1).offset
+      : 0;
+    const appearance = s.reconnect ? {...s.reconnect.relation.appearance, [s.reconnect.endpoint+'_anchor']:candidate?nearestAnchor(destination,{x:s.cursor.x-bounds.left,y:s.cursor.y-bounds.top}):null} : undefined;
+    const curve =
+      s.reconnect?.endpoint === "source"
+        ? relationCurve(destination, fixed, lane+(appearance?.bend??0)*view.current.z, view.current.z,appearance)
+        : relationCurve(fixed, destination, lane+(appearance?.bend??0)*view.current.z, view.current.z,appearance);
+    const duplicate =
+      target &&
+      (latest.current.relations ?? []).some(
+        (r) =>
+          r.id !== s.reconnect?.relation.id &&
+          r.source_object_id === sourceId &&
+          r.target_object_id === targetId &&
+          r.relation_type ===
+            (s.reconnect?.relation.relation_type ?? s.relationType ?? "related"),
+      );
+    if (s.port) {
+      const handle = sourceElement
+        .querySelector<HTMLElement>(`[data-creation-port="${s.port}"]`)
+        ?.getBoundingClientRect();
+      const direction = portDirection(nodes, source.id, s.port),
+        v = vectors[direction],
+        fallback = edgePoint(
+          { width: a.width, height: a.height },
+          direction,
+          (s.port === "child" ? 24 : 16) * view.current.z,
+        );
+      const start = handle?.width
+        ? {
+            x: handle.left + handle.width / 2 - bounds.left,
+            y: handle.top + handle.height / 2 - bounds.top,
+          }
+        : {
+            x: a.left - bounds.left + fallback.x,
+            y: a.top - bounds.top + fallback.y,
+          };
+      curve.start = { ...start, nx: v.x, ny: v.y };
+      const end = { x: s.cursor.x - bounds.left, y: s.cursor.y - bounds.top };
+      curve.end = { ...curve.end, ...end };
+      curve.path = `M ${start.x} ${start.y} C ${start.x + v.x * 50} ${start.y + v.y * 50},${end.x - v.x * 50} ${end.y - v.y * 50},${end.x} ${end.y}`;
+    }
+    if (!s.port && !s.reconnect && !s.relationType) {
+      const handle = sourceElement
+        .querySelector<HTMLElement>(".kc-handle")
+        ?.getBoundingClientRect();
+      if (handle?.width) {
+        const direction = portDirection(nodes, source.id, "child"),
+          v = vectors[direction],
+          start = {
+            x: (handle.left + handle.right) / 2 - bounds.left,
+            y: (handle.top + handle.bottom) / 2 - bounds.top,
+          };
+        curve.start = { ...start, nx: v.x, ny: v.y };
+        curve.path = `M ${start.x} ${start.y} C ${start.x + v.x * 50} ${start.y + v.y * 50},${curve.end.x + curve.end.nx * 50} ${curve.end.y + curve.end.ny * 50},${curve.end.x} ${curve.end.y}`;
+      }
+    }
+    const reason =
+      s.port && target
+        ? "请在空白处松手创建主题"
+        : !inside
+          ? "请在画布内选择节点"
+          : blocked
+            ? "请移到节点边缘"
+            : target?.id === source.id
+              ? "不能连接节点自身"
+              : target && target.container_id !== source.container_id
+                ? "不能跨空间连接"
+                : duplicate
+                  ? "已有关联线，请选择其他节点"
+                  : "";
+    return {
+      relationType:s.relationType,
+      anchor:candidate?nearestAnchor(destination,{x:s.cursor.x-bounds.left,y:s.cursor.y-bounds.top}):undefined,
+      port: s.port,
+      source: s.source,
+      target: target?.id ?? null,
+      start: curve.start,
+      end: curve.end,
+      path: curve.path,
+      inside,
+      valid: !reason,
+      reconnect: s.reconnect,
+      reason,
+    };
   };
   const cancel = () => {
-    const s = session.current; session.current = null;
-    if (frame.current !== null) cancelAnimationFrame(frame.current); frame.current = null;
+    const s = session.current;
+    session.current = null;
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
+    frame.current = null;
     const host = latest.current.viewport.current;
-    if (s && host?.hasPointerCapture(s.pointer)) host.releasePointerCapture(s.pointer);
+    if (s && s.pointer>=0 && host?.hasPointerCapture(s.pointer))
+      host.releasePointerCapture(s.pointer);
     setPreview(null);
   };
   const tick = (time: number, previous = time) => {
-    const s = session.current; if (!s) return;
-    if (!latest.current.enabled) { cancel(); return; }
-    const host = latest.current.viewport.current; if (!host) { cancel(); return; }
+    const s = session.current;
+    if (!s) return;
+    if (!latest.current.enabled) {
+      cancel();
+      return;
+    }
+    const host = latest.current.viewport.current;
+    if (!host) {
+      cancel();
+      return;
+    }
     const bounds = host.getBoundingClientRect();
     const speed = (cursor: number, low: number, high: number) => {
       if (cursor < low || cursor > high) return 0;
@@ -73,49 +255,117 @@ export function useCanvasConnection(options: Options) {
       const dx = speed(s.cursor.x, bounds.left, bounds.right) * dt;
       const dy = speed(s.cursor.y, bounds.top, bounds.bottom) * dt;
       if (dx || dy) {
-        view.current = { ...view.current, x: view.current.x + dx, y: view.current.y + dy };
-        latest.current.setView(view.current); setPreview(inspect(s));
+        view.current = {
+          ...view.current,
+          x: view.current.x + dx,
+          y: view.current.y + dy,
+        };
+        latest.current.setView(view.current);
+        setPreview(inspect(s));
       }
     }
-    frame.current = requestAnimationFrame(next => tick(next, time));
+    frame.current = requestAnimationFrame((next) => tick(next, time));
   };
-  const begin = (source: string, pointer: number, cursor: Point) => {
+  const begin = (
+    source: string,
+    pointer: number,
+    cursor: Point,
+    port?: CreationPort,
+  ) => {
     if (!latest.current.enabled || session.current) return false;
-    session.current = { source, pointer, cursor, origin: cursor, moved: false };
+    session.current = {
+      port,
+      source,
+      pointer,
+      cursor,
+      origin: cursor,
+      moved: false,
+    };
     latest.current.viewport.current?.focus({ preventScroll: true });
     latest.current.viewport.current?.setPointerCapture(pointer);
-    frame.current = requestAnimationFrame(tick); return true;
+    frame.current = requestAnimationFrame(tick);
+    return true;
   };
-  const beginReconnect = (relation: KnowledgeRelation, endpoint: 'source' | 'target', revision: number, pointer: number, cursor: Point) => {
-    const source = endpoint === 'source' ? relation.target_object_id : relation.source_object_id;
+  const beginRelation=(source:string,relationType='related')=>{
+    if(!latest.current.enabled || session.current)return;
+    const el=latest.current.viewport.current?.querySelector<HTMLElement>(`[data-node-id="${source}"]`);if(!el)return;
+    const a=el.getBoundingClientRect(),cursor={x:a.right+80,y:a.top+a.height/2};
+    session.current={source,relationType,pointer:-1,origin:cursor,cursor,moved:true};
+    latest.current.viewport.current?.focus({preventScroll:true});setPreview(inspect(session.current));frame.current=requestAnimationFrame(tick);
+  };
+  const beginReconnect = (
+    relation: KnowledgeRelation,
+    endpoint: "source" | "target",
+    revision: number,
+    pointer: number,
+    cursor: Point,
+  ) => {
+    const source =
+      endpoint === "source"
+        ? relation.target_object_id
+        : relation.source_object_id;
     if (!begin(source, pointer, cursor)) return;
     const s = session.current;
-    if (s && s.pointer === pointer && !s.reconnect) { s.reconnect = { relation, endpoint, revision }; setPreview(inspect(s)); }
+    if (s && s.pointer === pointer && !s.reconnect) {
+      s.reconnect = { relation, endpoint, revision };
+      setPreview(inspect(s));
+    }
   };
   const move = (pointer: number, cursor: Point) => {
-    const s = session.current; if (!s || s.pointer !== pointer) return false;
-    s.cursor = cursor; if (Math.hypot(cursor.x - s.origin.x, cursor.y - s.origin.y) > 4) s.moved = true;
+    const s = session.current;
+    if (!s || (s.pointer !== -1 && s.pointer !== pointer)) return false;
+    s.cursor = cursor;
+    if (Math.hypot(cursor.x - s.origin.x, cursor.y - s.origin.y) > 4)
+      s.moved = true;
     if (s.moved) setPreview(inspect(s));
     return true;
   };
   const finish = (pointer: number, cursor: Point) => {
-    const s = session.current; if (!s || s.pointer !== pointer) return null;
-    move(pointer, cursor); const result = inspect(s);
+    const s = session.current;
+    if (!s || (s.pointer !== -1 && s.pointer !== pointer)) return null;
+    move(pointer, cursor);
+    const result = inspect(s);
     const bounds = latest.current.viewport.current?.getBoundingClientRect();
-    const drop = bounds ? { x: (cursor.x - bounds.left - view.current.x) / view.current.z, y: (cursor.y - bounds.top - view.current.y) / view.current.z } : null;
+    const drop = bounds
+      ? {
+          x: (cursor.x - bounds.left - view.current.x) / view.current.z,
+          y: (cursor.y - bounds.top - view.current.y) / view.current.z,
+        }
+      : null;
     const element = document.elementFromPoint?.(cursor.x, cursor.y);
-    const overControl = element?.closest('button,input,textarea,.kc-location,.kc-zoom,.kc-quick');
-    const allowed = s.moved && result?.valid && drop && !overControl && latest.current.enabled;
+    const overControl = element?.closest(
+      "button,input,textarea,.kc-location,.kc-zoom,.kc-quick",
+    );
+    const allowed =
+      s.moved &&
+      result?.valid &&
+      drop &&
+      !overControl &&
+      latest.current.enabled;
     const tap = !s.moved && !s.reconnect && latest.current.enabled;
-    cancel(); if (tap) latest.current.onTap?.(s.source);
+    cancel();
+    if (tap) {
+      if (s.port) latest.current.onTap?.(s.source, s.port);
+      else latest.current.onTap?.(s.source);
+    }
     return allowed ? { ...result, position: drop } : null;
   };
   useEffect(() => {
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape' && session.current) { event.preventDefault(); cancel(); } };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && session.current) {
+        event.preventDefault();
+        cancel();
+      }
+    };
     const blur = () => cancel();
-    document.addEventListener('keydown', escape); window.addEventListener('blur', blur);
-    return () => { document.removeEventListener('keydown', escape); window.removeEventListener('blur', blur); cancel(); };
+    document.addEventListener("keydown", escape);
+    window.addEventListener("blur", blur);
+    return () => {
+      document.removeEventListener("keydown", escape);
+      window.removeEventListener("blur", blur);
+      cancel();
+    };
     // The session is intentionally cancelled when the account changes or the component unmounts.
   }, [options.identity]);
-  return { preview, begin, beginReconnect, move, finish, cancel };
+  return { preview, begin, beginRelation, beginReconnect, move, finish, cancel };
 }

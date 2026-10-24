@@ -1,10 +1,22 @@
 import { request } from './api';
 export type KnowledgeScope = 'personal' | 'project' | 'team';
 export type KnowledgeRole = 'viewer' | 'editor' | 'manager';
-export interface KnowledgeContainer { id: string; kind: KnowledgeScope; title: string; revision: number; acl_revision: number; role: KnowledgeRole }
-export interface KnowledgeNode { id: string; container_id: string; parent_id: string | null; kind: 'topic' | 'document' | 'rule'; title: string; revision: number; node_id: string; x: number; y: number; layout_revision: number; sort_order?: number | null }
+export interface MapLayout { auto_balance:boolean; compact:boolean; equal_width:boolean }
+export interface MapTheme { layout?:MapLayout; palette: 'none'|'ocean'|'forest'|'sunset'|'mono'; background: string; grid: boolean; font: NonNullable<CanvasStyle['font']>; font_size: number; levels: {depth:number;style:CanvasStyle}[] }
+export interface KnowledgeContainer { canvas_theme?: Partial<MapTheme>; id: string; kind: KnowledgeScope; title: string; revision: number; acl_revision: number; role: KnowledgeRole }
+export interface CanvasStyle { color: string; background: string; border: string; font_size: number; bold: boolean; italic: boolean; shape: 'rounded' | 'rectangle' | 'pill'; font?: 'system'|'sans'|'serif'|'mono'; underline?: boolean; strike?: boolean; border_width?: number; border_style?: 'solid'|'dashed'|'dotted' }
+export interface CanvasImage { binding_id: string; revision: number; width: number; placement: 'top' | 'bottom'; aspect?: number; alt: string }
+export interface CanvasVideo { binding_id:string; revision:number; title:string }
+export interface CanvasLink { url:string; title:string; kind:'auto'|'video'|'web' }
+export interface TitleRun { text: string; bold?: boolean; italic?: boolean; color?: string; font_size?: number }
+export interface TitleFormat { runs: TitleRun[]; align: 'left'|'center'|'right' }
+export interface CanvasData {
+  boundaries?:{id:string;members:string[];title:string}[]; title_format?: TitleFormat; width?: number | null; structure?: import("../components/knowledge/topicStructure").TopicStructure; video?:CanvasVideo|null; link?:CanvasLink|null; style?: CanvasStyle | null; image?: CanvasImage | null; note?: string; labels?: string[]; task?: { progress: number; priority: number; start: string; due: string; assignee: string } | null; summary?: { members: string[]; title: string } | null; boundary?: { members: string[]; title: string } | null }
+export interface KnowledgeNode { canvas_data?: CanvasData; id: string; container_id: string; parent_id: string | null; kind: 'topic' | 'document' | 'rule'; title: string; revision: number; node_id: string; x: number; y: number; layout_revision: number; sort_order?: number | null }
 export interface KnowledgeObject extends Pick<KnowledgeNode, 'id' | 'container_id' | 'parent_id' | 'kind' | 'title' | 'revision'> { body: string; can_write: boolean }
-export interface KnowledgeRelation { id: string; container_id: string; source_object_id: string; target_object_id: string; relation_type: string }
+export type RelationPoint = {x:number;y:number};
+export type RelationAppearance = {text:string;bend:number;source_anchor?:RelationPoint|null;target_anchor?:RelationPoint|null;source_control?:RelationPoint|null;target_control?:RelationPoint|null};
+export interface KnowledgeRelation { id: string; container_id: string; source_object_id: string; target_object_id: string; relation_type: string; appearance?: RelationAppearance }
 export interface KnowledgeScene { containers: KnowledgeContainer[]; nodes: KnowledgeNode[]; relations: KnowledgeRelation[] }
 export interface CanvasHistoryEntry { container_id?: string; container_title?: string; container_kind?: KnowledgeScope; history_id: string; operation: string; can_apply: boolean; reason: string }
 export interface CanvasHistory { undo: CanvasHistoryEntry | null; redo: CanvasHistoryEntry | null }

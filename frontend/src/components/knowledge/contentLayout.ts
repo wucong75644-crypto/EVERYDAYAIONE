@@ -1,3 +1,4 @@
+import {followSummaryPositions} from './summaryLayout';
 import type { KnowledgeNode } from '../../services/knowledge';
 import { branchIds, siblingCompare } from './branchLayout';
 import type { CardSize } from './branchLayout';
@@ -6,7 +7,7 @@ export function reflowContent(nodes: KnowledgeNode[], sizes: Map<string, CardSiz
   const next = nodes.map(n => ({ ...n })), index = new Map(next.map(n => [n.id, n]));
   const height = (n: KnowledgeNode) => sizes.get(n.id)?.height ?? 170;
   const children = new Map<string | null, KnowledgeNode[]>();
-  for (const n of next) { const peers = children.get(n.parent_id) ?? []; peers.push(n); children.set(n.parent_id, peers); }
+  for (const n of next.filter(n=>!n.canvas_data?.summary)) { const peers = children.get(n.parent_id) ?? []; peers.push(n); children.set(n.parent_id, peers); }
   const order: (string | null)[] = [null], visited = new Set<string>();
   for (let i = 0; i < order.length; i++) for (const n of children.get(order[i]) ?? []) if (!visited.has(n.id)) { visited.add(n.id); order.push(n.id); }
   for (const parent of order.reverse()) {
@@ -19,7 +20,7 @@ export function reflowContent(nodes: KnowledgeNode[], sizes: Map<string, CardSiz
       floor = Math.max(...group.map(n => n.y + height(n))) + 32;
     }
   }
-  return next;
+  return followSummaryPositions(nodes,next,sizes);
 }
 /** Reserve the complete translated branch, rather than only its first card. */
 export function placeContent(source: KnowledgeNode[], occupied: KnowledgeNode[], sizes: Map<string, CardSize>, wanted: { x: number; y: number }) {

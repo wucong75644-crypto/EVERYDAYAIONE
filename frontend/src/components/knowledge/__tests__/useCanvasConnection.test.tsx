@@ -38,6 +38,18 @@ describe('canvas connection gesture', () => {
     act(() => { result.current.begin('a', 3, { x: 290, y: 155 }); result.current.cancel(); result.current.finish(3, { x: 290, y: 155 }); });
     expect(onTap).toHaveBeenCalledTimes(1);
   });
+  it.each(['child','sibling'] as const)('anchors the %s preview to its own plus and returns that creation intent',port=>{
+    const tap=vi.fn(),{result}=setup('space',tap);const source=host.querySelector('[data-node-id="a"]')!;const button=document.createElement('button');button.dataset.creationPort=port;button.getBoundingClientRect=()=>port==='child'?rect(294,148,24,24):rect(158,224,24,24);source.append(button);
+    act(()=>result.current.begin('a',1,{x:300,y:160},port));act(()=>result.current.move(1,{x:400,y:350}));
+    expect(result.current.preview?.start).toMatchObject(port==='child'?{x:296,y:140}:{x:160,y:216});
+    let drop;act(()=>{drop=result.current.finish(1,{x:400,y:350});});expect(drop).toMatchObject({port,position:{x:390,y:330}});expect(tap).not.toHaveBeenCalled();
+  });
+  it('taps create the matching hierarchy, while creation ports never turn a node hit into a relation',()=>{
+    const tap=vi.fn(),{result}=setup('space',tap);
+    act(()=>{result.current.begin('a',1,{x:300,y:160},'sibling');result.current.finish(1,{x:300,y:160});});expect(tap).toHaveBeenCalledExactlyOnceWith('a','sibling');
+    act(()=>{result.current.begin('a',2,{x:300,y:160},'child');result.current.move(2,{x:550,y:150});});expect(result.current.preview?.valid).toBe(false);
+    let drop;act(()=>{drop=result.current.finish(2,{x:550,y:150});});expect(drop).toBeNull();expect(tap).toHaveBeenCalledTimes(1);
+  });
   it('follows the pointer then returns a blank drop in world coordinates', () => {
     const { result } = setup(); act(() => result.current.begin('a', 1, { x: 290, y: 155 }));
     act(() => result.current.move(1, { x: 400, y: 350 }));
@@ -111,7 +123,7 @@ describe('association endpoint reconnect', () => {
     let drop;act(()=>{drop=result.current.finish(1,{x:550,y:380});});
     expect(drop).toMatchObject({target:'c',source:endpoint==='source'?'b':'a',reconnect:{relation:edge,endpoint,revision:12}});
   });
-  it.each(['blank','self','duplicate','other-space','outside'])('rejects %s without returning a creation drop', kind => {
+  it.each(['self','duplicate','other-space','outside'])('rejects %s without returning a creation drop', kind => {
     const {result}=reconnectSetup(kind==='duplicate',kind==='other-space');
     act(()=>result.current.beginReconnect(edge,'target',12,1,{x:500,y:150}));
     const cursor=kind==='blank'?{x:380,y:500}:kind==='self'?{x:150,y:150}:kind==='outside'?{x:900,y:400}:{x:550,y:380};
@@ -135,4 +147,14 @@ describe('association endpoint reconnect', () => {
     rerender({identity:'two',enabled:true});
     expect(result.current.preview).toBeNull();expect(frames.size).toBe(0);
   });
+});
+
+it('arms single-node relationship mode and returns floating-topic intent on blank click',()=>{
+ const {result}=setup();act(()=>result.current.beginRelation('a','dependency'));expect(result.current.preview?.relationType).toBe('dependency');act(()=>result.current.move(7,{x:400,y:350}));let drop;act(()=>{drop=result.current.finish(7,{x:400,y:350});});expect(drop).toMatchObject({relationType:'dependency',source:'a',target:null,position:{x:390,y:330}});expect(frames.size).toBe(0);
+});
+it('moves an endpoint along its original topic edge and returns normalized coordinates',()=>{
+ const {result}=setup();const edge={id:'edge',container_id:'space',source_object_id:'a',target_object_id:'b',relation_type:'related'};act(()=>result.current.beginReconnect(edge,'target',12,1,{x:500,y:160}));act(()=>result.current.move(1,{x:600,y:100}));let drop;act(()=>{drop=result.current.finish(1,{x:600,y:100});});expect(drop).toMatchObject({target:'b',anchor:{x:100/240,y:0}});
+});
+it('allows a reconnect to blank while Escape still cancels without a creation drop',()=>{
+ const {result}=setup();const edge={id:'edge',container_id:'space',source_object_id:'a',target_object_id:'b',relation_type:'related'};act(()=>result.current.beginReconnect(edge,'target',12,1,{x:500,y:160}));let drop;act(()=>{drop=result.current.finish(1,{x:400,y:500});});expect(drop).toMatchObject({target:null,reconnect:{endpoint:'target'}});act(()=>result.current.beginRelation('a'));act(()=>document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'})));expect(result.current.finish(1,{x:400,y:500})).toBeNull();
 });
