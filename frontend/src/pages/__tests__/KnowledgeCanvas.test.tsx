@@ -11,12 +11,12 @@ const TestContent = createContext<React.ReactNode>(null);
 function Content() { return useContext(TestContent); }
 function MemoryRouter({ children }: { children: React.ReactNode }) { const [router] = useState(() => createMemoryRouter([{ path: '*', element: <Content /> }])); return <TestContent.Provider value={children}><RouterProvider router={router} /></TestContent.Provider>; }
 
-const f = vi.hoisted(() => ({ api: { captureSnapshot: vi.fn(), history: vi.fn(), available: vi.fn(), initialize: vi.fn(), scene: vi.fn(), object: vi.fn(), command: vi.fn(), members: vi.fn(), versions: vi.fn(), version: vi.fn(), search: vi.fn() }, files: { list: vi.fn(), upload: vi.fn(), content: vi.fn() }, auth: { user: { id: 'u' }, currentOrgId: 'org' as string | null } }));
+const f = vi.hoisted(() => ({ api: { captureSnapshot: vi.fn(), history: vi.fn(), available: vi.fn(), initialize: vi.fn(), scene: vi.fn(), object: vi.fn(), command: vi.fn(), members: vi.fn(), versions: vi.fn(), version: vi.fn(), search: vi.fn() }, files: { list: vi.fn(), upload: vi.fn(), content: vi.fn(),remove:vi.fn() }, auth: { user: { id: 'u' }, currentOrgId: 'org' as string | null } }));
 vi.mock('../../services/knowledge', () => ({ knowledgeApi: f.api, knowledgeFilesApi: f.files }));
 vi.mock('../../stores/useAuthStore', () => ({ useAuthStore: (selector: (s: typeof f.auth) => unknown) => selector(f.auth) }));
 const node = { id: 'root', node_id: 'placement', container_id: 'p', parent_id: null, kind: 'topic', title: '项目总纲', revision: 1, layout_revision: 1, x: 20, y: 40 };
 const initial = { containers: [{ id: 'p', kind: 'project', title: '客户项目', role: 'manager', revision: 12 }, { id: 'personal', kind: 'personal', title: '个人知识库', role: 'manager' }], nodes: [node], relations: [] };
-function clickNodeAction(name:string){if(!screen.queryByRole('button',{name,exact:true})){const article=screen.queryByRole('article',{name:node.title,exact:true})??screen.getAllByRole('article')[0];fireEvent.pointerDown(article,{button:0,pointerId:1});fireEvent.pointerUp(screen.getByLabelText('知识画布'),{pointerId:1});}fireEvent.click(screen.getByRole('button',{name,exact:true}));}
+function clickNodeAction(name:string){if(!screen.queryByRole('button',{name,exact:true})){const article=screen.queryByRole('article',{name:node.title,exact:true})??screen.getAllByRole('article')[0];fireEvent.pointerDown(article,{button:0,pointerId:1});fireEvent.pointerUp(screen.getByLabelText('知识画布'),{pointerId:1});}const button=screen.getByRole('button',{name,exact:true});if(name==='文件资料'&&button.getAttribute('aria-haspopup')==='menu'){fireEvent.keyDown(button,{key:'ArrowDown'});fireEvent.click(screen.getByRole('menuitem',{name:'查看全部附件'}));}else fireEvent.click(button);}
 function show() { return render(<MemoryRouter><KnowledgeCanvas /></MemoryRouter>); }
 async function snapshotSettled() { await waitFor(() => expect(screen.queryByText('正在固定复制内容快照…')).not.toBeInTheDocument()); }
 async function ready() { await screen.findByText('已连接'); }
@@ -1769,4 +1769,20 @@ it('shows bound attachment names and opens the exact version directly from the n
  f.api.scene.mockResolvedValue({...initial,nodes:[{...node,attachments:{total:3,items:[{id:'summary-image',title:'绑定图片.png',current_revision:3,version}]}}]});f.files.content.mockResolvedValue(new Blob(['image'],{type:'image/png'}));
  show();await ready();expect(screen.getByRole('button',{name:'共 3 个附件'})).toBeInTheDocument();fireEvent.click(screen.getByRole('button',{name:'绑定图片.png'}));
  expect(await screen.findByAltText('预览图片')).toBeInTheDocument();expect(f.files.content).toHaveBeenCalledWith('root','summary-image',3,expect.any(AbortSignal));expect(f.api.object).not.toHaveBeenCalled();expect(f.api.command).not.toHaveBeenCalled();
+});
+
+it('opens direct add actions and uploads without opening the file drawer',async()=>{
+ show();await ready();const button=screen.getByRole('button',{name:'文件资料',exact:true});fireEvent.keyDown(button,{key:'ArrowDown'});expect(screen.getByRole('menuitem',{name:'上传文件'})).toBeInTheDocument();expect(screen.getByRole('menu')).toHaveAttribute('data-side','bottom');expect(screen.getByRole('menu')).toHaveAttribute('data-align','start');expect(screen.getByRole('menuitem',{name:'从工作区选择'})).toBeInTheDocument();expect(screen.queryByRole('complementary',{name:'文件资料'})).not.toBeInTheDocument();expect(f.api.object).not.toHaveBeenCalled();
+ fireEvent.click(screen.getByRole('menuitem',{name:'上传文件'}));const file=new File(['body'],'直接上传.txt',{type:'text/plain'});fireEvent.change(screen.getByLabelText('上传文件到 '+node.title),{target:{files:[file]}});
+ await waitFor(()=>expect(f.files.upload).toHaveBeenCalledWith('root',file,expect.any(String),{}));await waitFor(()=>expect(screen.queryByRole('dialog',{name:'添加文件'})).not.toBeInTheDocument());expect(screen.queryByRole('complementary',{name:'文件资料'})).not.toBeInTheDocument();
+});
+it('removes a displayed image without deleting its attachment or source',async()=>{
+ f.api.scene.mockResolvedValue({...initial,nodes:[{...node,canvas_data:{image:{binding_id:'pic',revision:1,width:200,aspect:2,placement:'bottom'}}}]});f.files.content.mockResolvedValue(new Blob(['image'],{type:'image/png'}));show();await ready();fireEvent.click(screen.getByRole('button',{name:'移除节点图片 '+node.title}));await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('update_canvas_data',expect.objectContaining({updates:[expect.objectContaining({canvas_data:expect.objectContaining({image:null})})]}),expect.any(String)));expect(f.files.remove).not.toHaveBeenCalled();
+});
+
+it('does not let a late file drawer response replace a newer direct upload target',async()=>{
+ const other={...node,id:'other',node_id:'other-place',title:'另一个节点',x:500};f.api.scene.mockResolvedValue({...initial,nodes:[node,other]});let finish!: (value:unknown)=>void;f.api.object.mockImplementation(id=>id==='root'?new Promise(resolve=>{finish=resolve;}):Promise.resolve({...other,body:'',can_write:true}));show();await ready();
+ const rootButton=within(screen.getByRole('article',{name:node.title})).getByRole('button',{name:'文件资料'});fireEvent.keyDown(rootButton,{key:'ArrowDown'});fireEvent.click(screen.getByRole('menuitem',{name:'查看全部附件'}));
+ const file=new File(['new'],'另一个节点.txt',{type:'text/plain'});fireEvent.change(screen.getByLabelText('上传文件到 另一个节点'),{target:{files:[file]}});await waitFor(()=>expect(f.files.upload).toHaveBeenCalledWith('other',file,expect.any(String),{}));
+ await act(async()=>finish({...node,body:'',can_write:true}));expect(screen.queryByRole('complementary',{name:'文件资料'})).not.toBeInTheDocument();
 });

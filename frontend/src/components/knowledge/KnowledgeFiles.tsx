@@ -4,13 +4,14 @@ import {Plus,X,MoreHorizontal,RefreshCw} from 'lucide-react';
 import {Dialog} from '../primitives/Dialog';
 import {FileThumbnail,WorkspaceFilePicker} from './KnowledgeAttachmentUI';
 import { useCanvasSurfaceMotion } from './useCanvasSurfaceMotion';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect,useLayoutEffect, useRef, useState } from 'react';
 import PreviewHost from '../../preview/PreviewHost';
 import { resolveAdapter } from '../../preview/registry';
 import type { PreviewItem } from '../../preview/types';
 import { knowledgeFilesApi } from '../../services/knowledge';
 import type { KnowledgeFile, KnowledgeFileVersion, KnowledgeNode, KnowledgeObject } from '../../services/knowledge';
 
+export type FileEntryAction={kind:'upload';file:File}|{kind:'workspace'|'reference'}|{kind:'remove';binding:KnowledgeFile};
 type Attempt = { id: string } & (
   { kind: 'upload'; file: File; binding?: KnowledgeFile } |
   { kind: 'snapshot'; path: string } |
@@ -90,11 +91,11 @@ function ReferencePicker({ nodes, disabled, onReference }: { nodes: KnowledgeNod
   </details>;
 }
 
-export function KnowledgeFiles({ object, nodes, onClose, onBusyChange,onFilesChanged }: { object: KnowledgeObject; nodes: KnowledgeNode[]; onClose: () => void; onBusyChange: (busy: boolean) => void;onFilesChanged?:(files:KnowledgeFile[])=>void }) {
+export function KnowledgeFiles({ object, nodes, onClose, onBusyChange,onFilesChanged,entry,position }: { object: KnowledgeObject; nodes: KnowledgeNode[]; onClose: () => void; onBusyChange: (busy: boolean) => void;onFilesChanged?:(files:KnowledgeFile[])=>void;entry?:FileEntryAction;position?:{left:number;top:number} }) {
   const [rows, setRows] = useState<KnowledgeFile[]>([]); const [loading, setLoading] = useState(true);
   const [reading, setReading] = useState(false); const listController = useRef<AbortController | null>(null);
   const [pending, setPending] = useState(false); const busy = useRef(false);
-  const [error, setError] = useState(''); const [mode,setMode]=useState<'workspace'|'reference'|null>(null);const [historyId,setHistoryId]=useState<string|null>(null),[removeTarget,setRemoveTarget]=useState<KnowledgeFile|null>(null);const upload=useRef<HTMLInputElement>(null); const [attempt, setAttempt] = useState<Attempt | null>(null);
+  const [error, setError] = useState(''); const [mode,setMode]=useState<'workspace'|'reference'|null>(entry?.kind==='workspace'||entry?.kind==='reference'?entry.kind:null);const [historyId,setHistoryId]=useState<string|null>(null),[removeTarget,setRemoveTarget]=useState<KnowledgeFile|null>(entry?.kind==='remove'?entry.binding:null);const upload=useRef<HTMLInputElement>(null); const [attempt, setAttempt] = useState<Attempt | null>(null);
   const [preview, setPreview] = useState<PreviewItem | null>(null); const blobUrl = useRef<string | null>(null);
   const previewFocus=useRef<HTMLElement|null>(null);
   const alive = useRef(true); const readController = useRef<AbortController | null>(null);
@@ -117,7 +118,7 @@ export function KnowledgeFiles({ object, nodes, onClose, onBusyChange,onFilesCha
       if (next.kind === 'reference') await knowledgeFilesApi.reference(object.id,next.source,next.binding,next.revision,next.id);
       if (next.kind === 'remove') await knowledgeFilesApi.remove(object.id,next.binding,next.id);
       const list = await knowledgeFilesApi.list(object.id);
-      if (alive.current) { setRows(list); setAttempt(null);setMode(null);onFilesChanged?.(list); }
+      if (alive.current) { setRows(list); setAttempt(null);setMode(null);onFilesChanged?.(list);if(entry){onBusyChange(false);onClose();} }
     } catch (e) {
       if (alive.current) {
         const rejected = typeof e === 'object' && e !== null && 'status' in e && typeof e.status === 'number' && e.status>=400 && e.status<500;
@@ -130,10 +131,13 @@ export function KnowledgeFiles({ object, nodes, onClose, onBusyChange,onFilesCha
     } finally { busy.current = false; if (alive.current) { setPending(false); onBusyChange(uncertain); } }
   };
   const start = (action: Omit<Extract<Attempt,{kind:'upload'}>,'id'> | Omit<Extract<Attempt,{kind:'snapshot'}>,'id'> | Omit<Extract<Attempt,{kind:'reference'}>,'id'> | Omit<Extract<Attempt,{kind:'remove'}>,'id'>) => {
+    if(!object.can_write){setError('当前节点为只读，无法修改附件');return;}
     if (attempt) { setError('请先重试核对上次操作。'); return; }
     if (action.kind === 'upload' && (!action.file.size || action.file.size>20*1024*1024)) { setError('文件不能为空且不能超过 20MB'); return; }
     void execute({ ...action,id:crypto.randomUUID() });
   };
+  const launched=useRef(false),latestStart=useRef(start);useLayoutEffect(()=>{latestStart.current=start;});
+  useEffect(()=>{let active=true;queueMicrotask(()=>{if(active&&!launched.current&&entry?.kind==='upload'){launched.current=true;latestStart.current({kind:'upload',file:entry.file});}});return()=>{active=false;};},[entry]);
   const read = async (v: KnowledgeFileVersion, download: boolean) => {
     readController.current?.abort(); const c = new AbortController(); readController.current = c;
     closePreview();previewFocus.current=document.activeElement instanceof HTMLElement?document.activeElement:null; setReading(true); setError('');
@@ -150,22 +154,23 @@ export function KnowledgeFiles({ object, nodes, onClose, onBusyChange,onFilesCha
   const panel = useRef<HTMLElement>(null);
   useEffect(() => { panel.current?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true }); }, [object.id]);
 
-  const attachPanel = useCanvasSurfaceMotion(panel, 'panel');
-  return <aside ref={attachPanel} className="kc-file-panel" aria-label="文件资料" onKeyDown={event => { if (event.key !== 'Escape' || event.defaultPrevented || preview || !event.currentTarget.contains(event.target as Node)) return; event.preventDefault(); event.stopPropagation(); if (!disabled) onClose(); }}>
-    <header><h2>文件资料 · {rows.length}</h2><button type="button" aria-label="关闭文件资料" disabled={disabled} onClick={onClose}><X size={18}/></button></header>
-    <div className="kc-files-subhead"><span title={object.title}>{object.title}</span><button type="button" aria-label="刷新文件列表" title="刷新文件列表" disabled={disabled} onClick={()=>{listController.current?.abort();const c=new AbortController();listController.current=c;setLoading(true);setError('');void knowledgeFilesApi.list(object.id,c.signal).then(list=>{if(!c.signal.aborted){setRows(list);onFilesChanged?.(list);}}).catch(e=>{if(!c.signal.aborted)setError(errorMessage(e));}).finally(()=>{if(!c.signal.aborted)setLoading(false);});}}><RefreshCw size={16}/></button>
-    {object.can_write&&<Menu.Root><Menu.Trigger asChild><button type="button" disabled={disabled} aria-label="添加文件"><Plus size={16}/>添加</button></Menu.Trigger><Menu.Portal><Menu.Content className="kc-tools-menu" collisionPadding={10}><Menu.Item onSelect={()=>upload.current?.click()}>上传文件</Menu.Item><Menu.Item onSelect={()=>setMode('workspace')}>从工作区选择</Menu.Item><Menu.Item onSelect={()=>setMode('reference')}>引用其他节点文件</Menu.Item></Menu.Content></Menu.Portal></Menu.Root>}</div>
+  const attachPanel = useCanvasSurfaceMotion(panel, entry?'menu':'panel');
+  return <aside ref={attachPanel} className={entry?"kc-file-panel kc-file-popover":"kc-file-panel"} style={entry&&position?{...position,maxHeight:`max(80px, calc(100vh - ${position.top+8}px))`}:undefined} role={entry?"dialog":undefined} aria-label={entry?"添加文件":"文件资料"} onKeyDown={event => { if (event.key !== 'Escape' || event.defaultPrevented || preview || !event.currentTarget.contains(event.target as Node)) return; event.preventDefault(); event.stopPropagation(); if (!disabled) onClose(); }}>
+    <header><h2>{entry?entry.kind==='remove'?'移除附件':'添加文件':<>文件资料 · {rows.length}</>}</h2><button type="button" aria-label="关闭文件资料" disabled={disabled} onClick={onClose}><X size={18}/></button></header>
+    {!entry&&<div className="kc-files-subhead"><span title={object.title}>{object.title}</span><button type="button" aria-label="刷新文件列表" title="刷新文件列表" disabled={disabled} onClick={()=>{listController.current?.abort();const c=new AbortController();listController.current=c;setLoading(true);setError('');void knowledgeFilesApi.list(object.id,c.signal).then(list=>{if(!c.signal.aborted){setRows(list);onFilesChanged?.(list);}}).catch(e=>{if(!c.signal.aborted)setError(errorMessage(e));}).finally(()=>{if(!c.signal.aborted)setLoading(false);});}}><RefreshCw size={16}/></button>
+    {object.can_write&&<Menu.Root><Menu.Trigger asChild><button type="button" disabled={disabled} aria-label="添加文件"><Plus size={16}/>添加</button></Menu.Trigger><Menu.Portal><Menu.Content className="kc-tools-menu" collisionPadding={10}><Menu.Item onSelect={()=>upload.current?.click()}>上传文件</Menu.Item><Menu.Item onSelect={()=>setMode('workspace')}>从工作区选择</Menu.Item><Menu.Item onSelect={()=>setMode('reference')}>引用其他节点文件</Menu.Item></Menu.Content></Menu.Portal></Menu.Root>}</div>}
     {error&&<p role="alert">{error}</p>}{pending&&<p role="status">正在保存文件…</p>}{reading&&<p role="status">正在读取文件…</p>}
     {attempt&&<button type="button" disabled={pending} onClick={()=>void execute(attempt)}>重试同一操作</button>}
     {object.can_write&&<input ref={upload} hidden aria-label="上传并绑定文件" type="file" disabled={disabled} onChange={e=>{const file=e.target.files?.[0];e.target.value='';if(file)start({kind:'upload',file});}}/>}
     {mode==='workspace'&&<WorkspaceFilePicker disabled={disabled} onClose={()=>setMode(null)} onSelect={path=>start({kind:'snapshot',path})}/>}
     {mode==='reference'&&<section className="kc-file-pick" aria-label="引用其他节点文件"><button type="button" aria-label="关闭文件引用" onClick={()=>setMode(null)}><X size={16}/></button><ReferencePicker nodes={nodes} disabled={disabled} onReference={(source,binding,revision)=>start({kind:'reference',source,binding,revision})}/></section>}
-    {loading&&<p role="status">正在加载文件…</p>}{!loading&&!rows.length&&!error&&<p>暂无附件，点击添加上传文件</p>}
-    {rows.map(binding=><article key={binding.id} className="kc-file-list-item"><div className="kc-file-list-row"><button type="button" className="kc-file-open" title={binding.title} aria-label={'预览文件 '+binding.title} disabled={pending||reading} onClick={()=>void read(binding.version,false)}><FileThumbnail objectId={object.id} file={binding}/><span><h3>{binding.title}</h3><small>{fileMeta(binding.version)}</small></span></button>
+    {!entry&&loading&&<p role="status">正在加载文件…</p>}{!entry&&!loading&&!rows.length&&!error&&<p>暂无附件，点击添加上传文件</p>}
+    {!entry&&rows.map(binding=><article key={binding.id} className="kc-file-list-item"><div className="kc-file-list-row"><button type="button" className="kc-file-open" title={binding.title} aria-label={'预览文件 '+binding.title} disabled={pending||reading} onClick={()=>void read(binding.version,false)}><FileThumbnail objectId={object.id} file={binding}/><span><h3>{binding.title}</h3><small>{fileMeta(binding.version)}</small></span></button>
+      {object.can_write&&<button type="button" className="kc-remove-affordance" aria-label={'移除附件 '+binding.title} title="移除附件" disabled={disabled} onClick={()=>setRemoveTarget(binding)}><X size={14}/></button>}
       <Menu.Root><Menu.Trigger asChild><button type="button" aria-label={'更多操作 '+binding.title} disabled={disabled}><MoreHorizontal size={20}/></button></Menu.Trigger><Menu.Portal><Menu.Content className="kc-tools-menu" collisionPadding={10}><Menu.Item disabled={reading} onSelect={()=>void read(binding.version,true)}>下载</Menu.Item>{object.can_write&&<Menu.Item onSelect={()=>document.getElementById('kc-file-update-'+binding.id)?.click()}>更新版本</Menu.Item>}<Menu.Item onSelect={()=>setHistoryId(historyId===binding.id?null:binding.id)}>历史版本</Menu.Item>{object.can_write&&<Menu.Item className="kc-danger" onSelect={()=>setRemoveTarget(binding)}>移除附件</Menu.Item>}</Menu.Content></Menu.Portal></Menu.Root>
       {object.can_write&&<input id={'kc-file-update-'+binding.id} hidden aria-label={'上传新版 '+binding.title} type="file" disabled={disabled} onChange={e=>{const file=e.target.files?.[0];e.target.value='';if(file)start({kind:'upload',file,binding});}}/>}</div>
       {historyId===binding.id&&<FileVersions key={binding.id+':'+binding.current_revision} objectId={object.id} binding={binding} disabled={pending||reading} onRead={(v,download)=>void read(v,download)}/>}</article>)}
-    {removeTarget&&<Dialog open title="移除附件" onOpenChange={open=>{if(!open)setRemoveTarget(null);}}><p>从此节点移除“{removeTarget.title}”？源文件和其他节点的引用不会删除。</p><button type="button" onClick={()=>setRemoveTarget(null)}>取消</button><button type="button" disabled={disabled} onClick={()=>{start({kind:'remove',binding:removeTarget});setRemoveTarget(null);}}>移除附件</button></Dialog>}
+    {removeTarget&&<Dialog open title="移除附件" onOpenChange={open=>{if(!open){setRemoveTarget(null);if(entry?.kind==='remove')onClose();}}}><p>从此节点移除“{removeTarget.title}”？源文件和其他节点的引用不会删除。</p><button type="button" onClick={()=>{setRemoveTarget(null);if(entry?.kind==='remove')onClose();}}>取消</button><button type="button" disabled={disabled} onClick={()=>{start({kind:'remove',binding:removeTarget});setRemoveTarget(null);}}>移除附件</button></Dialog>}
     <PreviewHost state={preview ? {kind:'open',items:[preview],index:0} : {kind:'closed'}} onClose={closePreview} onIndexChange={() => {}} />
   </aside>;
 }

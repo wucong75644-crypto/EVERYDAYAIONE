@@ -1,3 +1,4 @@
+import {X} from 'lucide-react';
 import {RichTitle} from './TitleText';
 import type {TextMark} from './titleEditing';
 import { branchDirection } from "./structureDirection";
@@ -19,13 +20,13 @@ import type {
 } from "../../services/knowledge";
 export function CanvasNodeImage({
   node,
-  onPreview,
+  onPreview,onRemove,
   onResize,
   zoom = 1,
   disabled = false,
 }: {
   node: KnowledgeNode;
-  onPreview: (src:string) => void;
+  onPreview: (src:string) => void;onRemove?:()=>void;
   onResize?: (width: number) => void;
   zoom?: number;
   disabled?: boolean;
@@ -62,7 +63,7 @@ export function CanvasNodeImage({
   }, [node.id, image?.binding_id, image?.revision, key,reload]);
   if (!image) return null;
   return (
-    <div className="kc-image-wrap">
+    <div className="kc-image-wrap" style={{width:preview??image.width,maxWidth:'100%'}}>
       <button
         className="kc-inline-image"
         style={{
@@ -91,6 +92,7 @@ export function CanvasNodeImage({
           <span>{failed ? "图片无法读取，点击重试" : "图片加载中…"}</span>
         )}
       </button>
+      {onRemove&&<button type="button" className="kc-remove-affordance kc-image-remove" aria-label={'移除节点图片 '+node.title} title="移除节点图片" onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();onRemove();}}><X size={14}/></button>}
       {!disabled && onResize && (
         <button
           className="kc-image-resize"
