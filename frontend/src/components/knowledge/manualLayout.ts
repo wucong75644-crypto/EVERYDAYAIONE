@@ -7,8 +7,10 @@ export const anchorForDirection=(d:Direction):RelationPoint=>({x:d==='right'?1:d
 export function anchorDirection(p?:RelationPoint):Direction|undefined{
  return !p?undefined:p.x===1?'right':p.x===0?'left':p.y===1?'down':p.y===0?'up':undefined;
 }
-export function manualTopicPath(source:RelationBox,target:RelationBox,layout?:ManualLayout){
- return relationCurve(source,target,0,1,layout?.source_anchor&&layout.target_anchor?{source_anchor:layout.source_anchor,target_anchor:layout.target_anchor}:undefined).path;
+export function manualTopicPath(source:RelationBox,target:RelationBox,layout?:ManualLayout,direction?:Direction){
+ const reverse={right:'left',left:'right',up:'down',down:'up'} as const;
+ const anchors=layout?.source_anchor&&layout.target_anchor?layout:direction?{source_anchor:anchorForDirection(direction),target_anchor:anchorForDirection(reverse[direction])}:undefined;
+ return relationCurve(source,target,0,1,anchors).path;
 }
 /** Manual creation is a position choice, not a temporary editor coordinate. */
 export function keepManualPositions(before:KnowledgeNode[],after:KnowledgeNode[]):KnowledgeNode[]{

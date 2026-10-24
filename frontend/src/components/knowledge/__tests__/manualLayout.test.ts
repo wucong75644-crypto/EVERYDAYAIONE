@@ -36,3 +36,11 @@ describe('manual creation placement and endpoints',()=>{
  });
 
 });
+
+ it.each(['right','left','up','down'] as const)('keeps automatic %s tree anchors stable across off-axis siblings and changed sizes',direction=>{
+  const reverse={right:'left',left:'right',up:'down',down:'up'} as const;
+  const source={x:100,y:100,width:500,height:600},target={x:800,y:1500,width:272,height:146};
+  const a=anchorForDirection(direction),b=anchorForDirection(reverse[direction]);const path=manualTopicPath(source,target,undefined,direction);
+  expect(path.startsWith(`M ${source.x+source.width*a.x} ${source.y+source.height*a.y} C `)).toBe(true);expect(path.endsWith(`${target.x+target.width*b.x} ${target.y+target.height*b.y}`)).toBe(true);
+  const manual={source_anchor:anchorForDirection(reverse[direction]),target_anchor:a};expect(manualTopicPath(source,target,manual,direction)).toBe(manualTopicPath(source,target,manual));
+ });
