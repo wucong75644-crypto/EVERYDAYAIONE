@@ -156,3 +156,5 @@
 .kc-page .kc-remove-affordance{display:inline-grid;place-items:center;flex-shrink:0;width:22px;height:22px;padding:3px;margin:0;border:0;border-radius:50%;background:var(--color-surface-card,#fff);box-shadow:0 1px 5px #0002;color:var(--color-text-secondary,#657080);opacity:0;pointer-events:none;z-index:5}.kc-image-remove{position:absolute;right:3px;top:3px}.kc-image-wrap:hover>.kc-remove-affordance,.kc-image-wrap:focus-within>.kc-remove-affordance,.kc-summary-file:hover>.kc-remove-affordance,.kc-summary-file:focus-within>.kc-remove-affordance,.kc-file-list-row:hover>.kc-remove-affordance,.kc-file-list-row:focus-within>.kc-remove-affordance,.kc-page .kc-remove-affordance:focus-visible{opacity:1;pointer-events:auto}.kc-page .kc-remove-affordance:hover{color:var(--color-error,#c33)}@media(hover:none){.kc-page .kc-remove-affordance{opacity:1;pointer-events:auto}}
 
 .kc-node-files-dropdown{max-width:calc(100vw - 16px);max-height:var(--radix-dropdown-menu-content-available-height);overflow-y:auto}
+
+.kc-node-files-dropdown{font-size:13px;line-height:1.4;min-width:160px;padding:4px}.kc-node-files-dropdown [role=menuitem]{min-height:30px;padding:6px 10px}
