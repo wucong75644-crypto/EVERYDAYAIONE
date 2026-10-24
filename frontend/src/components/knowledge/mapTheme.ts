@@ -187,7 +187,7 @@ export function mapNodeStyle(
   theme?: Partial<MapTheme>,
 ):CSSProperties {
   const data = mapAppearance(node, nodes, theme),
-    style = {...nodeStyle(data),width:topicWidth({...node,canvas_data:data})};
+    style = {...nodeStyle(data),...(data?.height?{minHeight:Math.max(146,data.height)}:{}),width:topicWidth({...node,canvas_data:data})};
   if (
     theme &&
     Object.keys(theme).length &&

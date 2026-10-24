@@ -22,6 +22,7 @@ async function snapshotSettled() { await waitFor(() => expect(screen.queryByText
 async function ready() { await screen.findByText('已连接'); }
 beforeEach(() => {
   vi.resetAllMocks();
+  URL.createObjectURL=vi.fn(()=> 'blob:knowledge-preview');URL.revokeObjectURL=vi.fn();
   vi.stubGlobal('matchMedia', vi.fn((query: string) => ({ matches: true, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
   sessionStorage.clear(); localStorage.clear();
   HTMLElement.prototype.setPointerCapture = vi.fn();
@@ -36,17 +37,13 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 describe('知识画布', () => {
-  it('keeps an unsaved body while reading a previous version', async () => {
-    f.api.versions.mockResolvedValue({ items: [{ revision: 1, title: '原始标题', created_at: '2026-10-22T00:00:00Z' }], next_cursor: null });
-    f.api.version.mockResolvedValue({ revision: 1, title: '原始标题', body: '历史正文' });
-    show(); await ready(); clickNodeAction('展开编辑');
-    const dialog = await screen.findByRole('dialog', { name: '编辑内容' });
-    changeField(within(dialog).getByLabelText('正文'), { target: { value: '未保存的新正文' } });
-    fireEvent.click(within(dialog).getByText('查看历史版本'));
-    fireEvent.click(await within(dialog).findByRole('button', { name: /版本 1/ }));
-    expect(fieldValue(await within(dialog).findByLabelText('历史版本正文'))).toBe('历史正文');
-    expect(fieldValue(within(dialog).getByLabelText('正文'))).toBe('未保存的新正文');
-    expect(f.api.command).not.toHaveBeenCalled();
+  it('opens version history from the node context menu',async()=>{
+    f.api.versions.mockResolvedValue({items:[{revision:1,title:'原始标题',created_at:'2026-10-22T00:00:00Z'}],next_cursor:null});
+    f.api.version.mockResolvedValue({revision:1,title:'原始标题',body:'历史正文'});
+    show();await ready();fireEvent.contextMenu(screen.getByRole('article',{name:'项目总纲'}),{clientX:200,clientY:200});
+    fireEvent.click(screen.getByRole('menuitem',{name:'历史版本'}));const history=await screen.findByRole('dialog',{name:'历史版本'});
+    fireEvent.click(within(history).getByText('查看历史版本'));fireEvent.click(await within(history).findByRole('button',{name:/版本 1/}));
+    expect(fieldValue(await within(history).findByLabelText('历史版本正文'))).toBe('历史正文');expect(f.api.command).not.toHaveBeenCalled();
   });
   it('shows three tabs, no sidebar creation and no canvas chat', async () => {
     show(); await ready();
@@ -72,7 +69,7 @@ describe('知识画布', () => {
     const dialog = await screen.findByRole('dialog', { name: '编辑内容' });
     changeField(within(dialog).getByLabelText('正文'), { target: { value: '我尚未保存的修改' } });
     f.api.command.mockRejectedValue(new Error('内容已更新，请刷新'));
-    fireEvent.click(within(dialog).getByRole('button', { name: '保存正文' }));
+    fireEvent.blur(within(dialog).getByLabelText('正文'));
     await within(dialog).findByRole('alert');
     expect(fieldValue(within(dialog).getByLabelText('正文'))).toBe('我尚未保存的修改');
     expect(f.api.command).toHaveBeenCalledWith('save_document', { object_id: 'root', expected_revision: 1, body: '我尚未保存的修改' }, expect.any(String));
@@ -81,10 +78,11 @@ describe('知识画布', () => {
     show(); await ready(); clickNodeAction('展开编辑');
     const dialog = await screen.findByRole('dialog', { name: '编辑内容' });
     f.api.command.mockRejectedValueOnce(new Error('network unavailable'));
-    fireEvent.click(within(dialog).getByRole('button', { name: '保存正文' }));
+    changeField(within(dialog).getByLabelText('正文'),{target:{value:'自动保存正文'}});
+    fireEvent.blur(within(dialog).getByLabelText('正文'));
     await within(dialog).findByRole('alert');
     const firstId = f.api.command.mock.calls[0][2];
-    fireEvent.click(within(dialog).getByRole('button', { name: '保存正文' }));
+    fireEvent.click(within(dialog).getByRole('button',{name:'核对保存结果'}));
     await waitFor(() => expect(f.api.command).toHaveBeenCalledTimes(2));
     expect(f.api.command.mock.calls[1][2]).toBe(firstId);
   });
@@ -682,7 +680,7 @@ describe('草稿保护与刷新后的剪切安全', () => {
     f.api.object.mockResolvedValue({ ...node, revision: 5, body: '别人的新正文', can_write: true });
     show(); await ready(); fireEvent.click(await screen.findByRole('button', { name: '恢复草稿' }));
     expect(fieldValue(await screen.findByLabelText('正文'))).toBe('我的旧版本草稿');
-    fireEvent.click(screen.getByRole('button', { name: '保存正文' }));
+    expect(f.api.command).not.toHaveBeenCalled();fireEvent.click(screen.getByRole('button',{name:'重试保存'}));
     await waitFor(() => expect(f.api.command).toHaveBeenCalledWith('save_document', expect.objectContaining({ expected_revision: 1 }), expect.any(String)));
   });
   it('checks current write permission before revealing a recovered body', async () => {
@@ -702,10 +700,10 @@ describe('草稿保护与刷新后的剪切安全', () => {
   it('reuses the original command ID after refreshing an uncertain save', async () => {
     const view = show(); await ready(); clickNodeAction('展开编辑');
     changeField(await screen.findByLabelText('正文'), { target: { value: '未知结果' } });
-    f.api.command.mockRejectedValueOnce(new Error('network')); fireEvent.click(screen.getByRole('button', { name: '保存正文' }));
+    f.api.command.mockRejectedValueOnce(new Error('network')); fireEvent.blur(screen.getByLabelText('正文'));
     await screen.findAllByRole('alert'); const commandId = f.api.command.mock.calls[0][2]; view.unmount();
     show(); await ready(); fireEvent.click(await screen.findByRole('button', { name: '恢复草稿' }));
-    await screen.findByLabelText('正文'); fireEvent.click(screen.getByRole('button', { name: '保存正文' }));
+    await screen.findByLabelText('正文'); fireEvent.click(screen.getByRole('button',{name:'核对保存结果'}));
     await waitFor(() => expect(f.api.command).toHaveBeenLastCalledWith('save_document', expect.objectContaining({ body: '未知结果' }), commandId));
   });
   it('rejects the old cut token after cancel and remount', async () => {
@@ -832,13 +830,13 @@ describe('P1 save and readonly regressions', () => {
     show(); await ready(); clickNodeAction('展开编辑');
     const dialog = await screen.findByRole('dialog', {name:'编辑内容'});
     changeField(within(dialog).getByLabelText('正文'), {target:{value:'first'}});
-    fireEvent.click(within(dialog).getByText('保存正文'));
+    fireEvent.blur(within(dialog).getByLabelText('正文'));
     changeField(within(dialog).getByLabelText('正文'), {target:{value:'first plus more'}});
     // A third-party update observed by refresh must not be silently adopted.
     f.api.scene.mockResolvedValue({...initial,nodes:[{...node,revision:8}]});
     await act(async () => finish({success:true,data:{object_id:'root'}}));
     expect(fieldValue(within(dialog).getByLabelText('正文'))).toBe('first plus more');
-    fireEvent.click(within(dialog).getByText('保存正文'));
+    fireEvent.blur(within(dialog).getByLabelText('正文'));
     await waitFor(()=>expect(f.api.command).toHaveBeenCalledTimes(2));
     expect(f.api.command.mock.calls[1][1]).toMatchObject({body:'first plus more',expected_revision:2});
   });
@@ -847,7 +845,7 @@ describe('P1 save and readonly regressions', () => {
     show(); await ready(); clickNodeAction('展开编辑');
     const dialog = await screen.findByRole('dialog', {name:'编辑内容'});
     changeField(within(dialog).getByLabelText('正文'), {target:{value:'sent'}});
-    fireEvent.click(within(dialog).getByText('保存正文'));
+    fireEvent.blur(within(dialog).getByLabelText('正文'));
     await within(dialog).findByRole('alert');
     changeField(within(dialog).getByLabelText('正文'), {target:{value:'newer'}});
     fireEvent.click(within(dialog).getByText('核对保存结果'));
@@ -1090,10 +1088,10 @@ describe('menu and focus lifecycle',()=>{
     await waitFor(()=>expect(screen.getByLabelText('知识画布')).toHaveFocus());
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
-  it('returns focus after a successful body save closes the editor',async()=>{
+  it('keeps the inline editor open after automatic saving',async()=>{
     show();await ready();clickNodeAction('展开编辑');
-    const dialog=await screen.findByRole('dialog',{name:'编辑内容'});fireEvent.click(within(dialog).getByRole('button',{name:'保存正文'}));
-    await waitFor(()=>expect(screen.getByLabelText('知识画布')).toHaveFocus());
+    const dialog=await screen.findByRole('dialog',{name:'编辑内容'});changeField(within(dialog).getByLabelText('正文'),{target:{value:'自动保存'}});fireEvent.blur(within(dialog).getByLabelText('正文'));
+    await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('save_document',expect.objectContaining({body:'自动保存'}),expect.any(String)));expect(dialog).toBeInTheDocument();
   });
   it.each(['button','Escape'])('focuses file controls on opening and returns to canvas after closing via %s',async method=>{
     show();await ready();clickNodeAction('文件资料');
@@ -1620,8 +1618,9 @@ it('keeps edit and file actions inside standard cards before and after selection
  expect(screen.getAllByRole('button',{name:'展开编辑',exact:true})).toHaveLength(1);expect(screen.getAllByRole('button',{name:'文件资料',exact:true})).toHaveLength(1);
 });
 it.each(['top','bottom'] as const)('renders %s stored images between title and card actions',async placement=>{
+ f.files.content.mockResolvedValue(new Blob(['image'],{type:'image/png'}));
  f.files.content.mockResolvedValue(new Blob(['image'],{type:'image/png'}));f.api.scene.mockResolvedValue({...initial,nodes:[{...node,canvas_data:{image:{binding_id:'picture',revision:1,width:240,aspect:2,placement}}}]});
- show();await ready();const card=screen.getByRole('article',{name:node.title}),title=within(card).getByRole('heading'),image=within(card).getByRole('button',{name:'调整图片 '+node.title}),action=within(card).getByRole('button',{name:'展开编辑',exact:true});
+ show();await ready();const card=screen.getByRole('article',{name:node.title}),title=within(card).getByRole('heading'),image=within(card).getByRole('button',{name:'放大图片 '+node.title}),action=within(card).getByRole('button',{name:'展开编辑',exact:true});
  expect(title.compareDocumentPosition(image)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();expect(image.compareDocumentPosition(action)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();expect(card.style.width).toBe('272px');
 });
 
@@ -1752,4 +1751,22 @@ it('shows a persisted root-level summary only under its logical parent and hides
 
 it('keeps an inline title readable when an unknown save is reported globally',async()=>{
  f.api.command.mockRejectedValueOnce(new Error('应答丢失'));show();await ready();fireEvent.doubleClick(screen.getByRole('article',{name:node.title}));const input=screen.getByLabelText('节点标题');changeField(input,{target:{value:'短标题草稿'}});fireEvent.keyDown(input,{key:'Enter'});await screen.findAllByRole('alert');expect(fieldValue(input)).toBe('短标题草稿');expect(document.querySelector('.kc-inline-title [role="alert"]')).toBeNull();expect(screen.getByRole('alert')).toHaveTextContent('保存结果尚未确认');
+});
+
+describe('node image preview',()=>{
+ it.each([false,true])('opens the shared viewer without image settings, readonly=%s',async readonly=>{
+  f.api.scene.mockResolvedValue({...initial,containers:initial.containers.map(c=>({...c,role:readonly?'viewer':'manager'})),nodes:[{...node,canvas_data:{image:{binding_id:'picture',revision:3,width:200,aspect:2,placement:'bottom'}}}]});f.files.content.mockResolvedValue(new Blob(['image'],{type:'image/png'}));
+  show();await ready();const button=screen.getByRole('button',{name:'放大图片 '+node.title});await waitFor(()=>expect(button).not.toBeDisabled());fireEvent.click(button);
+  expect(await screen.findByAltText('预览图片')).toHaveAttribute('src',expect.stringContaining('blob:'));expect(screen.queryByRole('dialog',{name:'节点图片'})).not.toBeInTheDocument();
+  fireEvent.click(screen.getByTitle('放大'));expect(screen.getByAltText('预览图片').style.transform).toContain('1.25');
+  fireEvent.click(screen.getByTitle('关闭 (ESC)'));await waitFor(()=>expect(screen.queryByAltText('预览图片')).not.toBeInTheDocument());
+  expect(f.files.content).toHaveBeenCalledWith('root','picture',3,expect.any(AbortSignal));expect(f.api.command).not.toHaveBeenCalled();
+ });
+});
+
+it('shows bound attachment names and opens the exact version directly from the node',async()=>{
+ const version={binding_id:'summary-image',revision:3,version_id:'immutable-3',asset_id:'asset',name:'绑定图片.png',mime_type:'image/png',size:256,sha256:'a'.repeat(64),text_status:'unsupported' as const,created_at:'2026-10-24'};
+ f.api.scene.mockResolvedValue({...initial,nodes:[{...node,attachments:{total:3,items:[{id:'summary-image',title:'绑定图片.png',current_revision:3,version}]}}]});f.files.content.mockResolvedValue(new Blob(['image'],{type:'image/png'}));
+ show();await ready();expect(screen.getByRole('button',{name:'共 3 个附件'})).toBeInTheDocument();fireEvent.click(screen.getByRole('button',{name:'绑定图片.png'}));
+ expect(await screen.findByAltText('预览图片')).toBeInTheDocument();expect(f.files.content).toHaveBeenCalledWith('root','summary-image',3,expect.any(AbortSignal));expect(f.api.object).not.toHaveBeenCalled();expect(f.api.command).not.toHaveBeenCalled();
 });

@@ -223,6 +223,7 @@ class CanvasData(StrictModel):
     boundaries: list[CanvasBoundary] | None = Field(default=None, max_length=100)
     title_format: TitleFormat | None = None
     width: int | None = Field(default=None, ge=80, le=800)
+    height: int | None = Field(default=None, ge=80, le=1600)
     structure: TopicStructure | None = None
     style: CanvasStyle | None = None
     image: CanvasImage | None = None

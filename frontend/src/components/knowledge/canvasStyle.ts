@@ -69,7 +69,7 @@ export function visualSizeChanged(
   after: CanvasData = {},
 ) {
   const metrics = (data: CanvasData) => [
-    data.width??272,
+    data.width??272, data.height??146,
     data.style?.font_size ?? 15,
     data.style?.bold ?? true,
     data.style?.italic ?? false,

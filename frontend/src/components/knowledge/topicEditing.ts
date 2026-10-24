@@ -26,7 +26,7 @@ export function titleHeight(title: string, width = 272, font = 15) {
 }
 export function topicSize(n:KnowledgeNode){
  const width=topicWidth(n),d=n.canvas_data;
- return {width,height:Math.max(146,78+titleHeight(n.title,width,Math.max(d?.style?.font_size??15,...(d?.title_format?.runs??[]).map(r=>r.font_size??15)))+(d?.image?d.image.width/(d.image.aspect??1)+10:0)+(d?.video?84:0)+(d?.link?84:0)+(d?.note||d?.labels?.length||d?.task?28:0))};
+ return {width,height:Math.max(146,d?.height??0,78+titleHeight(n.title,width,Math.max(d?.style?.font_size??15,...(d?.title_format?.runs??[]).map(r=>r.font_size??15)))+(d?.image?d.image.width/(d.image.aspect??1)+10:0)+(d?.video?84:0)+(d?.link?84:0)+(d?.note||d?.labels?.length||d?.task?28:0)+(n.attachments?.total?Math.min(2,n.attachments.total)*38+24:0))};
 }
 export function editSelection(title: string, replace: boolean) {
   const placeholder = [

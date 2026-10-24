@@ -19,17 +19,18 @@ import type {
 } from "../../services/knowledge";
 export function CanvasNodeImage({
   node,
-  onEdit,
+  onPreview,
   onResize,
   zoom = 1,
   disabled = false,
 }: {
   node: KnowledgeNode;
-  onEdit: () => void;
+  onPreview: (src:string) => void;
   onResize?: (width: number) => void;
   zoom?: number;
   disabled?: boolean;
 }) {
+  const [reload,setReload]=useState(0);
   const [preview, setPreview] = useState<number | null>(null);
   const resize = useRef<{ x: number; width: number } | null>(null);
   const image = node.canvas_data?.image;
@@ -58,7 +59,7 @@ export function CanvasNodeImage({
       controller.abort();
       if (url) URL.revokeObjectURL(url);
     };
-  }, [node.id, image?.binding_id, image?.revision, key]);
+  }, [node.id, image?.binding_id, image?.revision, key,reload]);
   if (!image) return null;
   return (
     <div className="kc-image-wrap">
@@ -69,8 +70,11 @@ export function CanvasNodeImage({
           height: (preview ?? image.width) / (image.aspect ?? 1),
         }}
         onPointerDown={(e) => e.stopPropagation()}
-        onClick={onEdit}
-        aria-label={"调整图片 " + node.title}
+        onClick={e=>{e.stopPropagation();if(src)onPreview(src);else if(failed)setReload(n=>n+1);}}
+        onDoubleClick={e=>e.stopPropagation()}
+        disabled={!src&&!failed}
+        title={failed?"重试加载图片":"放大查看"}
+        aria-label={(failed?"重试加载图片 ":"放大图片 ") + node.title}
       >
         {src ? (
           <img
@@ -84,7 +88,7 @@ export function CanvasNodeImage({
             draggable={false}
           />
         ) : (
-          <span>{failed ? "图片无法读取，点击检查" : "图片加载中…"}</span>
+          <span>{failed ? "图片无法读取，点击重试" : "图片加载中…"}</span>
         )}
       </button>
       {!disabled && onResize && (

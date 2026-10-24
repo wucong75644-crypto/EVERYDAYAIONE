@@ -239,6 +239,7 @@ export default memo(function ImagePreviewModal({
         if (e.target === e.currentTarget) handleClose();
       }}
       style={{
+        backgroundColor: 'rgba(0,0,0,0.9)',
         animation: isClosing
           ? 'preview-backdrop-exit 150ms ease-out forwards'
           : 'preview-backdrop 200ms ease-out forwards',

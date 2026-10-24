@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from core.db_scope import SET_DATABASE_SCOPE_SQL
+from services.knowledge_workspace.files import public_version
 
 class Repository:
     def __init__(self, pool, scope):
@@ -32,6 +33,21 @@ class Repository:
                          WHERE o.deleted_at IS NULL AND NOT COALESCE((to_jsonb(o)->>'undo_hidden')::boolean,false) AND NOT EXISTS(SELECT 1 FROM public.kb_containers c WHERE c.id=o.container_id AND COALESCE((to_jsonb(c)->>'undo_hidden')::boolean,false)) AND (%s::uuid IS NULL OR o.id>%s::uuid)
                          ORDER BY o.id LIMIT 501''', (cursor, cursor))
             rows = c.fetchall()
+            # One permission-scoped batch for visible-page attachment summaries, never file bytes.
+            c.execute("SELECT to_regprocedure('public.kb_file_version(uuid,uuid,bigint)') IS NOT NULL AS enabled")
+            if c.fetchone()['enabled'] and rows:
+                c.execute('''SELECT object_id,id,title,current_revision,total,
+                             public.kb_file_version(object_id,id) AS version FROM (
+                             SELECT b.*,count(*) OVER(PARTITION BY object_id) AS total,
+                             row_number() OVER(PARTITION BY object_id ORDER BY id) AS rank
+                             FROM public.kb_file_bindings b WHERE object_id=ANY(%s::uuid[])) files
+                             WHERE rank<=2 ORDER BY object_id,id''', ([r['id'] for r in rows[:500]],))
+                summaries = {}
+                for item in c.fetchall():
+                    summary = summaries.setdefault(item['object_id'], {'total':item['total'],'items':[]})
+                    summary['items'].append({**{k:item[k] for k in ('id','title','current_revision')},'version':public_version(item['version'])})
+                for row in rows:
+                    row['attachments'] = summaries.get(row['id'], {'total':0,'items':[]})
             c.execute('''SELECT id,container_id,source_object_id,target_object_id,relation_type,COALESCE(to_jsonb(r)->'appearance','{}'::jsonb) AS appearance
                          FROM public.kb_relations r WHERE NOT EXISTS(SELECT 1 FROM public.kb_objects o JOIN public.kb_containers c ON c.id=o.container_id WHERE o.id IN (r.source_object_id,r.target_object_id) AND (COALESCE((to_jsonb(o)->>'undo_hidden')::boolean,false) OR COALESCE((to_jsonb(c)->>'undo_hidden')::boolean,false))) ORDER BY id LIMIT 2001''')
             relations = c.fetchall()
