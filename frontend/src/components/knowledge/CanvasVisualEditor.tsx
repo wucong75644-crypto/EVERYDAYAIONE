@@ -293,7 +293,7 @@ export function CanvasVisualEditor({
             binding_id: added.id,
             revision: added.current_revision,
             width: 220,
-            placement: "top",
+            placement: "bottom",
             aspect,
             alt: file.name,
           },
@@ -582,7 +582,7 @@ export function CanvasVisualEditor({
                               binding_id: f.id,
                               revision: f.current_revision,
                               width: 220,
-                              placement: "top",
+                              placement: "bottom",
                               aspect,
                               alt: f.title,
                             },
@@ -634,24 +634,7 @@ export function CanvasVisualEditor({
                     />
                     {data.image.width}px
                   </label>
-                  <label>
-                    位置
-                    <select
-                      value={data.image.placement}
-                      onChange={(e) =>
-                        setData({
-                          ...data,
-                          image: {
-                            ...data.image!,
-                            placement: e.target.value as "top" | "bottom",
-                          },
-                        })
-                      }
-                    >
-                      <option value="top">标题上方</option>
-                      <option value="bottom">标题下方</option>
-                    </select>
-                  </label>
+                  <p>图片显示在标题与操作按钮之间。</p>
                   <button onClick={() => setData({ ...data, image: null })}>
                     移除节点图片
                   </button>

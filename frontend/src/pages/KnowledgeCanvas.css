@@ -104,9 +104,9 @@
 .kc-title-input{min-height:2.8em;max-height:320px;overflow:auto;width:100%;padding:7px;border:1px solid #8daaff;border-radius:4px;outline:none;box-sizing:border-box;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;cursor:text;background:var(--color-surface-card,#fff)}.kc-title-input:focus{outline:2px solid #8daaff;outline-offset:1px}.kc-title-format button[aria-pressed=mixed]{background:repeating-linear-gradient(135deg,#8daaff30,#8daaff30 3px,transparent 3px,transparent 6px)}
 .kc-boundary[role=button]{pointer-events:auto;cursor:pointer}.kc-boundary.selected{border-color:#527fff;box-shadow:0 0 0 2px #527fff40}.kc-summary-bracket.selected path{stroke:#527fff;stroke-width:3}.kc-group-tools{position:absolute;left:20px;bottom:54px;z-index:12;display:flex;align-items:center;gap:8px;max-width:calc(100% - 40px);flex-wrap:wrap;padding:8px 12px;background:var(--color-surface-card,#fff);border:1px solid #8daaff;border-radius:10px;box-shadow:0 3px 12px #0001}.kc-group-tools strong{font-size:12px}.kc-group-tools button{font-size:12px}
 
-/* Content controls float outside compact cards, so selection never changes geometry. */
-.kc-node:not(.kc-quick){min-height:48px;min-width:80px;padding:12px 15px}
-.kc-node:not(.kc-quick) h3{line-height:1.6;margin:0}
+/* Cards retain the original reading surface; actions do not depend on selection. */
+.kc-node:not(.kc-quick){min-height:146px;min-width:80px;padding:14px 15px}
+.kc-node:not(.kc-quick) h3{line-height:1.6;margin:8px 0 12px}
 .kc-node-annotations:not(:empty){margin:8px 0 0}
 .kc-media-cards:empty{display:none}
 .kc-edges .kc-control-guide{stroke:#8daaff;stroke-width:1;stroke-dasharray:3 4;pointer-events:none}
@@ -119,3 +119,7 @@
 .kc-inline-title .kc-title-format{position:absolute;top:100%;left:0;width:340px;max-width:75vw;padding:8px;background:var(--color-surface-card,#fff);border:1px solid #74829960;border-radius:8px;box-shadow:0 4px 18px #0002;z-index:9;font-weight:400}
 .kc-inline-title>small,.kc-inline-title>p{position:absolute;top:100%;left:0;transform:translateY(-100%);pointer-events:none;font-size:10px;background:var(--color-surface-card,#fff)}
 .kc-inline-title>small{display:none}.kc-node:has(.kc-inline-title){z-index:9}.kc-node-tools{box-sizing:border-box;flex-wrap:wrap}
+
+.kc-card-actions{display:flex;flex-wrap:wrap;gap:5px;margin-top:12px}
+.kc-card-actions button{font-size:11px;padding:3px 6px;background:#8daaff10;white-space:nowrap}
+.kc-node .kc-image-wrap{margin:0 0 12px}

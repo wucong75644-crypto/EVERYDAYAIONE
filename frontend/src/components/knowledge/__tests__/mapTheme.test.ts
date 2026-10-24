@@ -30,9 +30,9 @@ const n = (
 });
 const nodes = [n("r", null), n("a", "r"), n("b", "r", 2), n("child", "a")];
 describe("map theme inheritance", () => {
-  it("preserves legacy appearance while applying content-sized width", () => {
+  it("preserves legacy appearance while restoring the standard card width", () => {
     expect(mapAppearance(nodes[0], nodes, {})).toBeUndefined();
-    expect(mapNodeStyle(nodes[0], nodes, {})).toEqual({width:80});
+    expect(mapNodeStyle(nodes[0], nodes, {})).toEqual({width:272});
   });
   it("inherits branch colors and gives siblings different palette colors", () => {
     const t = { ...defaultMapTheme, palette: "ocean" as const };
