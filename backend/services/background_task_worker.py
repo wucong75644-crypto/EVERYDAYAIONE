@@ -151,7 +151,6 @@ class BackgroundTaskWorker:
                     await self._scheduled_scanner.poll()  # 定时任务扫描
                     await self._social_ops.poll()
                     await self.check_data_consistency()
-                    await self._run_model_scoring()
                     await self.check_wecom_duplicates()
 
             except Exception as e:
@@ -578,7 +577,8 @@ class BackgroundTaskWorker:
     async def _run_model_scoring(self):
         """每小时执行模型评分聚合"""
         from core.config import get_settings
-        if not get_settings().kb_legacy_scoring_enabled:
+        from services.knowledge_workspace import retirement
+        if retirement.RETIRED or not get_settings().kb_legacy_scoring_enabled:
             return
         now = datetime.now(timezone.utc)
         if self._last_scoring_aggregation is not None:

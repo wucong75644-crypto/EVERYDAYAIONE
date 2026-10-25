@@ -65,7 +65,7 @@ def get_capability_manifest() -> dict:
         "dont_use_when": [
             {"场景": "写操作（创建/修改/取消）", "替代": "erp_execute"},
             {"场景": "非 ERP 数据（天气/新闻）", "替代": "web_search"},
-            {"场景": "业务规则/操作流程", "替代": "search_knowledge"},
+            {"场景": "业务规则/操作流程", "替代": "knowledge_search"},
         ],
         "returns": [
             "summary 模式：{status:'ok', summary:'统计文本', data:[{维度:值, 指标:数字}...]}，直接内联",

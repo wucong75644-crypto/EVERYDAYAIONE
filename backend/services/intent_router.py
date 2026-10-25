@@ -503,22 +503,7 @@ class IntentRouter:
         )
 
     async def _enhance_with_knowledge(self, text: str, org_id: str | None = None) -> str:
-        """查询知识库，将相关知识注入路由 system prompt"""
-        try:
-            from services.knowledge_service import search_relevant
-
-            knowledge_items = await search_relevant(query=text, limit=5, org_id=org_id)
-            if knowledge_items:
-                knowledge_text = "\n".join(
-                    f"- {k['title']}: {k['content']}" for k in knowledge_items
-                )
-                return (
-                    ROUTER_SYSTEM_PROMPT
-                    + f"\n\n你已掌握的经验知识：\n{knowledge_text}"
-                )
-        except Exception as e:
-            logger.debug(f"Knowledge injection skipped | error={e}")
-
+        """Legacy routing injection is retired; task knowledge is bound in chat runtime."""
         return ROUTER_SYSTEM_PROMPT
 
     def _extract_text(self, content: List[ContentPart]) -> str:

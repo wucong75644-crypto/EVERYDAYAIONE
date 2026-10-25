@@ -86,4 +86,5 @@ class TestCommonToolsIntegration:
         tools = get_chat_tools(org_id=None)
         names = {t["function"]["name"] for t in tools}
         assert "web_search" in names
-        assert "search_knowledge" in names
+        assert "search_knowledge" not in names
+        assert "knowledge_search" in names

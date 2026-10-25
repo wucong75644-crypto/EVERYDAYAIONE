@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from loguru import logger
+from services.knowledge_workspace import retirement
 
 from core.config import settings
 from services.dashscope_client import DashScopeClient
@@ -144,7 +145,7 @@ async def extract_and_save(
         保存的知识条目数
     """
     from core.config import get_settings
-    if not settings.kb_enabled or not get_settings().kb_legacy_extraction_enabled or not settings.dashscope_api_key:
+    if retirement.RETIRED or not settings.kb_enabled or not get_settings().kb_legacy_extraction_enabled or not settings.dashscope_api_key:
         return 0
 
     retry_info = None

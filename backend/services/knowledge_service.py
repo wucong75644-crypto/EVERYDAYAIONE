@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 from core.config import settings, get_settings
+from services.knowledge_workspace import retirement
 from services.graph_service import graph_service
 from services.knowledge_config import (
     compute_content_hash,
@@ -177,6 +178,8 @@ async def add_knowledge(
     Returns:
         节点 ID（新增或已有），None 表示 DB 写入失败
     """
+    if retirement.RETIRED:
+        return None
     _validate_node_schema(category, node_type, source, title)
     flags = get_settings()
     flag = {'seed': flags.kb_legacy_seed_enabled, 'aggregated': flags.kb_legacy_scoring_enabled}.get(source, flags.kb_legacy_extraction_enabled)
@@ -281,7 +284,7 @@ async def search_relevant(
     Returns:
         格式化的知识列表，按加权得分降序
     """
-    if not get_settings().kb_legacy_search_enabled or not is_kb_available():
+    if retirement.RETIRED or not get_settings().kb_legacy_search_enabled or not is_kb_available():
         return []
 
     limit = limit or settings.kb_search_limit
@@ -380,6 +383,8 @@ async def get_node_by_metadata(
     db_source: Any = None,
 ) -> Optional[Dict[str, Any]]:
     """根据 metadata 字段查找节点（用于查找模型/工具实体节点）"""
+    if retirement.RETIRED:
+        return None
     if not is_kb_available():
         return None
 
@@ -429,7 +434,7 @@ async def load_seed_knowledge(seed_file: Optional[str] = None) -> int:
     Returns:
         成功导入的条目数
     """
-    if not get_settings().kb_legacy_seed_enabled or not is_kb_available():
+    if retirement.RETIRED or not get_settings().kb_legacy_seed_enabled or not is_kb_available():
         return 0
 
     if seed_file is None:

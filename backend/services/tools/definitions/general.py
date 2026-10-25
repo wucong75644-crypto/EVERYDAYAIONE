@@ -119,7 +119,7 @@ def build_specs():
             domain='general', availability=ToolAvailability(feature_flags=('kb_legacy_search_enabled',)),
             risk_level='safe', parallelizable=True, cacheable=True,
             effects=('none',), executor_type="legacy", handler_key='search_knowledge',
-            exposure=Exposure.PUBLIC,
+            exposure=Exposure.LEGACY_INTERNAL,
             source="services.tools.definitions.general.build_specs", definition_kind="explicit",
             catalog_order=27, catalog_groups=('common_tools',), core=True, legacy_plan_visible=True,
             compatibility_notes=(),

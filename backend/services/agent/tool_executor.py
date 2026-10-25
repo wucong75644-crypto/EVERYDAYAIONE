@@ -245,7 +245,8 @@ class ToolExecutor(
         from services.knowledge_service import search_relevant
 
         from core.config import get_settings
-        if not get_settings().kb_legacy_search_enabled:
+        from services.knowledge_workspace import retirement
+        if retirement.RETIRED or not get_settings().kb_legacy_search_enabled:
             return AgentResult(summary="旧经验库检索已停用，请使用个人知识库检索。", status="error", error_message="LEGACY_KNOWLEDGE_DISABLED", metadata={"retryable": False})
         query = args.get("query", "")
         if not query:

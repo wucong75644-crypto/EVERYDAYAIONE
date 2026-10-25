@@ -221,7 +221,7 @@ code_execute 直接 pd.read_parquet('staging/x.parquet') 即可。
 ### restore_file — 恢复已删除的文件
 从 OSS 恢复已删除的文件。file_delete 删除后 30 天内可恢复。
 
-### search_knowledge — 知识库搜索
+### knowledge_search — 知识库搜索
 查找企业内部业务规则、SOP、操作流程、培训文档、历史经验。
 基于语义检索，传自然语言问题比关键词效果更好。
 不查数据（数据用 erp_agent），不查实时信息（用 web_search）。
@@ -313,9 +313,11 @@ def get_chat_tools(org_id: str | None = None) -> List[Dict[str, Any]]:
     here. Runtime Registry.resolve still applies availability, identity and policy.
     """
     from services.tools.spec import Exposure
+    from services.knowledge_workspace import retirement
     return [
         spec.to_schema() for spec in definition_registry().specs()
         if spec.exposure is Exposure.PUBLIC
+        and not (retirement.RETIRED and spec.name in retirement.RETIRED_TOOLS)
         and (org_id is not None or "erp_tools" not in spec.catalog_groups)
     ]
 

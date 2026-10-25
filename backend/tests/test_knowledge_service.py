@@ -21,8 +21,10 @@ if str(_backend_dir) not in sys.path:
 
 
 @pytest.fixture(autouse=True)
-def reset_kb_globals():
+def reset_kb_globals(monkeypatch):
     """每个测试前重置知识库全局状态"""
+    from services.knowledge_workspace import retirement
+    monkeypatch.setattr(retirement, "RETIRED", False)  # historical unit contracts only
     import services.knowledge_config as cfg
 
     cfg._pg_pool = None

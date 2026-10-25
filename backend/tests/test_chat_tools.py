@@ -74,7 +74,7 @@ class TestIsConcurrencySafe:
         safe_tools = [
             "erp_product_query", "erp_trade_query",
             "local_stock_query", "local_data",
-            "erp_api_search", "search_knowledge", "web_search",
+            "erp_api_search", "web_search",
             "social_crawler", "code_execute",
         ]
         for tool in safe_tools:
@@ -137,7 +137,7 @@ class TestGetChatTools:
         tools = get_chat_tools(org_id="test_org")
         names = {t["function"]["name"] for t in tools}
         expected = {
-            "erp_api_search", "search_knowledge", "web_search",
+            "erp_api_search", "knowledge_search", "web_search",
             "generate_image", "generate_video",
             "erp_product_query", "local_stock_query",
         }
@@ -233,7 +233,7 @@ class TestToolsForMode:
         from config.chat_tools import get_tools_for_mode
         plan = get_tools_for_mode("plan", org_id="test")
         plan_names = {t["function"]["name"] for t in plan}
-        assert "search_knowledge" in plan_names
+        assert "search_knowledge" not in plan_names
         assert "web_search" in plan_names
 
     def test_plan_mode_tool_count(self):

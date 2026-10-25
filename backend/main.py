@@ -209,25 +209,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         logger.warning(f"Mem0 pre-warm failed (non-critical) | error={e}")
 
-    # 预热知识库连接 + 导入种子知识（用锁避免多 worker 重复加载）
+    # This pool is also used by memory, metrics and file-asset auditing.
+    # Warm shared infrastructure without loading any retired knowledge/seed.
     try:
-        from services.knowledge_config import _get_pg_pool, is_kb_available
-        pool = await _get_pg_pool()
-        if pool and is_kb_available() and settings.kb_legacy_seed_enabled:
-            lock_token = await RedisClient.acquire_lock("seed_knowledge_load", timeout=60)
-            if lock_token:
-                try:
-                    from services.knowledge_service import load_seed_knowledge
-                    imported = await load_seed_knowledge()
-                    logger.info(f"Knowledge base ready | seed_imported={imported}")
-                finally:
-                    await RedisClient.release_lock("seed_knowledge_load", lock_token)
-            else:
-                logger.info("Knowledge base seed loading skipped (another worker is loading)")
-        else:
-            logger.info("Knowledge base not configured or disabled")
+        from services.knowledge_config import _get_pg_pool
+        await _get_pg_pool()
     except Exception as e:
-        logger.warning(f"Knowledge base init failed (non-critical) | error={e}")
+        logger.warning(f"Shared telemetry database warmup failed | error={type(e).__name__}")
 
     # 启动后台任务工作器
     from core.database import get_db

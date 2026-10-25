@@ -973,6 +973,8 @@ class TestWebSearchInline:
 
 @pytest.fixture(autouse=True)
 def legacy_knowledge_compatibility(monkeypatch):
+    from services.knowledge_workspace import retirement
+    monkeypatch.setattr(retirement, "RETIRED", False)  # historical private-handler contracts
     """Exercise retained compatibility only; production defaults are tested separately."""
     from core.config import get_settings
     settings = get_settings()

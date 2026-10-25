@@ -27,6 +27,17 @@ WEB_SEARCH_UPGRADE['function']['description'] = WEB_SEARCH_UPGRADE['function']['
 ERP_SCOPE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/erp_order_scope_schema_upgrade.json').read_text())
 CHAT_IMAGE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/chat_image_default_tool_upgrade.json').read_text())
 
+def _knowledge_guidance_upgrade(value):
+    if isinstance(value, dict):
+        for k,v in value.items():
+            if k == 'description' and isinstance(v,str):value[k]=v.replace('search_knowledge','knowledge_search')
+            else:_knowledge_guidance_upgrade(v)
+    elif isinstance(value,list):
+        for v in value:_knowledge_guidance_upgrade(v)
+_knowledge_guidance_upgrade(BASELINE)
+_knowledge_guidance_upgrade(ERP_SCOPE_UPGRADE)
+
+
 
 @pytest.fixture(scope='module', autouse=True)
 def image_upgrade_settings():
@@ -75,6 +86,8 @@ def test_full_spec_contract_unchanged(catalog, name):
         if key not in {'source', 'definition_kind'}:
             if key in CHAT_IMAGE_UPGRADE['spec_changes'].get(name, {}):
                 value = CHAT_IMAGE_UPGRADE['spec_changes'][name][key]
+            if name == 'search_knowledge' and key == 'exposure':
+                value = 'legacy_internal'
             if name == 'search_knowledge' and key == 'availability':
                 value = {**value, 'feature_flags': ['kb_legacy_search_enabled']}
             if name == 'manage_scheduled_task' and key == 'effects':
@@ -107,6 +120,7 @@ def test_complete_helpers_handlers_and_schema_order(catalog, org):
     expected = deepcopy(BASELINE['helpers'][str(org)])
     # Async image orchestration adds exact-history reads to the same helpers.
     expected['chat'].append('get_conversation_context')
+    expected = {k:[n for n in names if n!='search_knowledge'] for k,names in expected.items()}
     # Authorized routing change: models get generate_image, never image_agent.
     for key, names in expected.items():
         expected[key] = [name for name in names if name != 'image_agent']
@@ -192,6 +206,7 @@ def test_old_imports_signatures_and_constant_values(module):
             value['chat']['models'][0] = qwen['legacy_model']
             value['chat']['default'] = qwen['legacy_default']
         if module == 'chat_tools' and name == 'TOOL_SYSTEM_PROMPT':
+            value = value.replace('### knowledge_search — 知识库搜索','### search_knowledge — 知识库搜索')
             from config.image_agent_prompt import IMAGE_AGENT_PROMPT
             assert 'image_agent' not in value
             # Authorized ST-26 changes only this obsolete scheduling guidance.
@@ -332,7 +347,7 @@ def test_planner_preflight_and_frozen_authorization_agree(catalog, monkeypatch):
     for flag in ('file_workspace_enabled', 'sandbox_enabled', 'crawler_enabled', 'agent_reach_enabled'):
         monkeypatch.setattr(settings, flag, True)
     names = preflight_allowed_tool_names('org-a')
-    capabilities = CapabilityRegistry.from_specs(s for s in catalog.specs() if s.core)
+    capabilities = CapabilityRegistry.from_specs(s for s in catalog.specs() if s.core and s.name != 'search_knowledge')
     assert names == {name for name, d in capabilities.as_dict().items() if d['supports_readonly_preflight']}
     assert not names & {'restore_file', 'image_agent', 'manage_scheduled_task', 'file_delete'}
     for name in names:
@@ -354,7 +369,7 @@ def test_preflight_obeys_legacy_knowledge_retirement(monkeypatch, enabled):
     from core.config import get_settings
     from services.scheduler.scheduled_task_workflow import preflight_allowed_tool_names
     monkeypatch.setattr(get_settings(), 'kb_legacy_search_enabled', enabled)
-    assert ('search_knowledge' in preflight_allowed_tool_names('org-a')) is enabled
+    assert 'search_knowledge' not in preflight_allowed_tool_names('org-a')
 
 
 @pytest.mark.parametrize('name,args,domain', [
@@ -430,7 +445,7 @@ def test_legacy_diagnostic_imports_are_compatible_projections(catalog):
                             'fetch_all_pages', 'get_conversation_context'}
     assert all(value == catalog.require(name).effects for name, value in _EFFECTS.items())
     assert _INTERNAL_SOURCES == {
-        name: catalog.require(name).source if name == 'image_agent' else BASELINE['specs'][name]['source']
+        name: catalog.require(name).source if name in {'image_agent','search_knowledge'} else BASELINE['specs'][name]['source']
         for name in _INTERNAL_SOURCES
     }
     assert legacy_policy_rules('file_search', frozenset({'file_search'})) == catalog.require('file_search').policy_rules
@@ -448,7 +463,7 @@ importlib.import_module(sys.argv[1])
 from config.chat_tools import get_chat_tools
 from services.tools import build_tool_catalog
 from services.tool_executor import ToolExecutor
-assert len(get_chat_tools('org-a')) == 42
+assert len(get_chat_tools('org-a')) == 41
 assert len(build_tool_catalog().specs()) == 45
 assert len(ToolExecutor(None, 'actor-a', 'c1', 'org-a')._handlers) == 45
 '''

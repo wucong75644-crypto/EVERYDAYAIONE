@@ -1519,6 +1519,8 @@ class TestRecordAgentExperience:
 
     @pytest.fixture(autouse=True)
     def enable_retained_legacy_experience(self, monkeypatch):
+        from services.knowledge_workspace import retirement
+        monkeypatch.setattr(retirement, 'RETIRED', False)  # historical compatibility only
         from core.config import get_settings
         monkeypatch.setattr(get_settings(), 'kb_legacy_extraction_enabled', True)
 

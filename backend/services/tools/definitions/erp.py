@@ -86,7 +86,7 @@ def _schema_erp_api_search():
                 "搜索 ERP API 文档的语义搜索工具。"
                 "不确定用哪个工具、action 或参数格式时先调此工具，返回结果可直接用于下一步调用。"
                 "支持关键词（如'退货'）和精确查询（如'erp_trade_query:order_list'）。"
-                "不要用于：查询实际数据 → erp_agent；搜索知识库 → search_knowledge。"
+                "不要用于：查询实际数据 → erp_agent；搜索知识库 → knowledge_search。"
             ),
             "parameters": {
                 "type": "object",
