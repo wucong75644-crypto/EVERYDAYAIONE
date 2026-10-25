@@ -91,7 +91,7 @@ CREATE TABLE public.kb_ai_events (
 );
 CREATE INDEX kb_ai_events_due ON public.kb_ai_events(retry_at,id) WHERE state IN ('queued','failed');
 CREATE INDEX kb_ai_events_expired ON public.kb_ai_events(lease_until,id) WHERE state='processing';
-CREATE INDEX kb_ai_tasks_terminal ON public.tasks(updated_at,id) WHERE status IN ('completed','failed','cancelled','paused');
+CREATE INDEX kb_ai_tasks_terminal ON public.tasks(completed_at,id) WHERE status IN ('completed','failed','cancelled','paused');
 ALTER TABLE public.kb_ai_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.kb_ai_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY ai_event_owner ON public.kb_ai_events TO everydayai USING(true) WITH CHECK(true);
@@ -112,18 +112,40 @@ BEGIN
  THEN RAISE EXCEPTION 'KB_ACCESS_DENIED' USING ERRCODE='42501'; END IF;
  INSERT INTO public.kb_ai_events(task_id,actor_id,org_id,task_status)
  SELECT t.id,c.user_id,c.org_id,t.status FROM public.tasks t JOIN public.conversations c ON c.id=t.conversation_id
- WHERE ((COALESCE(current_setting('app.knowledge_users',true),'')='' AND COALESCE(current_setting('app.knowledge_orgs',true),'')='') OR c.user_id::text=ANY(string_to_array(current_setting('app.knowledge_users',true),',')) OR c.org_id::text=ANY(string_to_array(current_setting('app.knowledge_orgs',true),','))) AND t.status IN ('completed','failed','cancelled','paused') AND t.updated_at>=(SELECT started_at FROM public.kb_ai_epoch)
+ WHERE ((COALESCE(current_setting('app.knowledge_users',true),'')='' AND COALESCE(current_setting('app.knowledge_orgs',true),'')='') OR c.user_id::text=ANY(string_to_array(current_setting('app.knowledge_users',true),',')) OR c.org_id::text=ANY(string_to_array(current_setting('app.knowledge_orgs',true),','))) AND t.status IN ('completed','failed','cancelled','paused') AND COALESCE(t.completed_at,t.created_at)>=(SELECT started_at FROM public.kb_ai_epoch)
  AND COALESCE(c.scope_type,'user')='user' AND c.user_id IS NOT NULL AND c.user_id=t.user_id
  AND c.org_id IS NOT DISTINCT FROM t.org_id AND t.input_message_id IS NOT NULL
  AND EXISTS(SELECT 1 FROM public.users u WHERE u.id=c.user_id AND u.status='active')
  AND (c.org_id IS NULL OR EXISTS(SELECT 1 FROM public.org_members m WHERE m.user_id=c.user_id AND m.org_id=c.org_id AND m.status='active'))
  AND NOT EXISTS(SELECT 1 FROM public.kb_ai_events e WHERE e.task_id=t.id AND e.task_status=t.status)
- ORDER BY t.updated_at LIMIT 50 ON CONFLICT DO NOTHING;
+ ORDER BY COALESCE(t.completed_at,t.created_at),t.id LIMIT 50 ON CONFLICT DO NOTHING;
  RETURN (SELECT COALESCE(jsonb_agg(to_jsonb(q)),'[]') FROM (
   SELECT e.id,e.actor_id,e.org_id FROM public.kb_ai_events e
   WHERE ((COALESCE(current_setting('app.knowledge_users',true),'')='' AND COALESCE(current_setting('app.knowledge_orgs',true),'')='') OR e.actor_id::text=ANY(string_to_array(current_setting('app.knowledge_users',true),',')) OR e.org_id::text=ANY(string_to_array(current_setting('app.knowledge_orgs',true),','))) AND ((e.state IN ('queued','failed') AND e.retry_at<=now()) OR (e.state='processing' AND e.lease_until<now())) AND e.attempts<5
   ORDER BY e.retry_at,e.id LIMIT 50) q);
 END $$;
+
+
+-- tasks has no updated_at. Terminal transitions, including pauses without a
+-- completed_at, enqueue durably in the same transaction as the actual state.
+CREATE FUNCTION public.kb_ai_task_terminal() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+BEGIN
+ IF NEW.status NOT IN ('completed','failed','cancelled','paused') THEN RETURN NEW; END IF;
+ IF TG_OP='UPDATE' AND NEW.status IS NOT DISTINCT FROM OLD.status THEN RETURN NEW; END IF;
+ INSERT INTO public.kb_ai_events(task_id,actor_id,org_id,task_status)
+ SELECT NEW.id,c.user_id,c.org_id,NEW.status FROM public.conversations c
+ WHERE c.id=NEW.conversation_id AND COALESCE(c.scope_type,'user')='user'
+ AND c.user_id=NEW.user_id AND c.org_id IS NOT DISTINCT FROM NEW.org_id
+ AND NEW.input_message_id IS NOT NULL
+ AND EXISTS(SELECT 1 FROM public.users u WHERE u.id=c.user_id AND u.status='active')
+ AND (c.org_id IS NULL OR EXISTS(SELECT 1 FROM public.org_members m WHERE m.user_id=c.user_id AND m.org_id=c.org_id AND m.status='active'))
+ ON CONFLICT(task_id,task_status) DO NOTHING;
+ RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.kb_ai_task_terminal() FROM PUBLIC,everydayai_runtime;
+CREATE TRIGGER kb_ai_task_terminal AFTER INSERT OR UPDATE OF status ON public.tasks
+ FOR EACH ROW EXECUTE FUNCTION public.kb_ai_task_terminal();
 
 CREATE FUNCTION public.kb_ai_claim(p_id uuid) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$

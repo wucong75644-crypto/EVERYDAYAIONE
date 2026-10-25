@@ -22,7 +22,7 @@ def journal_db(derived_db):
     with psycopg.connect(**make.admin_args) as c:
         c.execute('SET LOCAL ROLE everydayai')
         c.execute('ALTER TABLE messages ADD COLUMN content text')
-        c.execute("ALTER TABLE tasks ADD COLUMN user_id uuid, ADD COLUMN org_id uuid, ADD COLUMN conversation_id uuid, ADD COLUMN status text DEFAULT 'completed', ADD COLUMN input_message_id uuid, ADD COLUMN assistant_message_id uuid, ADD COLUMN updated_at timestamptz DEFAULT now()")
+        c.execute("ALTER TABLE tasks ADD COLUMN user_id uuid, ADD COLUMN org_id uuid, ADD COLUMN conversation_id uuid, ADD COLUMN status text DEFAULT 'completed', ADD COLUMN input_message_id uuid, ADD COLUMN assistant_message_id uuid, ADD COLUMN created_at timestamptz DEFAULT now(), ADD COLUMN completed_at timestamptz DEFAULT now()")
         c.execute("ALTER TABLE conversations ADD COLUMN user_id uuid, ADD COLUMN org_id uuid, ADD COLUMN scope_type text DEFAULT 'user'")
         c.execute("CREATE TABLE tool_audit_log(task_id text,tool_name text,status text,tool_call_id text,created_at timestamptz DEFAULT now())")
         c.execute("CREATE TABLE tool_invocations(task_id uuid,conversation_id uuid,tool_call_id text,tool_name text,status text,result jsonb,updated_at timestamptz DEFAULT now())")
@@ -43,7 +43,7 @@ def event(make, repo, user='以后报告先给结论再给明细', status='compl
                   (tid, repo.scope.actor_user_id, repo.scope.org_id, cid, mid, aid, status))
         for name, tool_status in tools:
             c.execute('INSERT INTO tool_audit_log(task_id,tool_name,status) VALUES(%s,%s,%s)', (tid, name, tool_status))
-        result = c.execute('INSERT INTO kb_ai_events(task_id,actor_id,org_id,task_status) VALUES(%s,%s,%s,%s) RETURNING id',
+        result = c.execute('INSERT INTO kb_ai_events(task_id,actor_id,org_id,task_status) VALUES(%s,%s,%s,%s) ON CONFLICT(task_id,task_status) DO UPDATE SET task_id=excluded.task_id RETURNING id',
                   (tid, repo.scope.actor_user_id, repo.scope.org_id, status))
         eid = result.fetchone()[0]
     return eid
@@ -405,3 +405,22 @@ def test_durable_actor_results_precede_async_audit_and_business_errors_are_not_s
     assert next(t for t in claimed['tools'] if t['name'] == 'uncertain')['status'] == 'uncertain'
     assert next(t for t in claimed['tools'] if t['name'] == 'safe_read')['source'] == 'audit'
     assert len(claimed['tools']) == len(variants) + 1
+
+
+def test_terminal_transition_uses_real_task_schema_and_captures_old_task_pause(journal_db):
+    make, _ = journal_db
+    repo = make()
+    eid = event(make, repo)
+    with psycopg.connect(**make.admin_args) as c:
+        tid, cid = c.execute('SELECT task_id,t.conversation_id FROM kb_ai_events e JOIN tasks t ON t.id=e.task_id WHERE e.id=%s', (eid,)).fetchone()
+        c.execute('DELETE FROM kb_ai_events WHERE task_id=%s', (tid,))
+        c.execute("UPDATE tasks SET status='running',created_at=now()-interval '1 day',completed_at=NULL WHERE id=%s", (tid,))
+        assert not c.execute("SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='tasks' AND column_name='updated_at'").fetchone()
+        c.execute("UPDATE tasks SET status='paused' WHERE id=%s", (tid,))
+        assert c.execute('SELECT task_status FROM kb_ai_events WHERE task_id=%s', (tid,)).fetchall() == [('paused',)]
+        c.execute("UPDATE tasks SET status='paused' WHERE id=%s", (tid,))
+        assert c.execute('SELECT count(*) FROM kb_ai_events WHERE task_id=%s', (tid,)).fetchone()[0] == 1
+        c.execute("UPDATE tasks SET status='running' WHERE id=%s", (tid,))
+        c.execute("UPDATE conversations SET scope_type='channel' WHERE id=%s", (cid,))
+        c.execute("UPDATE tasks SET status='completed',completed_at=now() WHERE id=%s", (tid,))
+        assert c.execute('SELECT task_status FROM kb_ai_events WHERE task_id=%s', (tid,)).fetchall() == [('paused',)]

@@ -94,3 +94,5 @@ python backend/scripts/migrate_knowledge_journal.py --actor USER_UUID --org ORG_
 发布前补充核验发现Actor持久调用与异步审计并存，已把持久记录作为优先事实源，并新增旧/新结果协议、业务错误、uncertain优先级测试。首次候选061bd4ee在tests_and_build阶段主动停止，执行器返回failed_safe，未同步生产文件、未执行333；修正后重新提交正常完整发布。完整测试还发现模块缓存导致旧开关测试取到不同Settings实例，新开关改为从get_settings读取；兼容测试显式打开旧功能，不改变默认退役状态。
 
 完整发布检查两轮分别12910项断言通过，但macOS/Python3.12在Py_FinalizeEx清理生成器时崩溃，原生栈进入_time_machine_time；发布入口均返回failed_safe，未继续生产同步或迁移。提前gc.collect未解决，已撤销。现有时间冻结依赖从2.14.1固定更新至2.19.0（保持2.x API）；上游2.18起在最后一次travel结束后还原C函数补丁，并补齐NULL错误处理，参见[更新记录](https://time-machine.readthedocs.io/en/latest/changelog.html)及[issue532](https://github.com/adamchainz/time-machine/issues/532)。最终仍要求统一发布入口全量检查正常退出，不忽略退出码、不跳过测试。
+
+随后80d9a8fe全量测试正常通过并进入生产同步，333迁移因真实tasks没有updated_at而事务回滚（kb_ai_events不存在、333账本记录为0），服务未重启且健康。已修正夹具以使用真实created_at/completed_at字段，扫描按真实时间兜底，并在任务状态事务内通过触发器入队，覆盖老任务首次暂停而没有completed_at的情况；22项真实PostgreSQL定向验证通过，包含暂停重复幂等和群聊隔离。只有核实原锁、无在途写入、迁移和服务状态后才走受控恢复，再正常提交发布。
