@@ -213,7 +213,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         from services.knowledge_config import _get_pg_pool, is_kb_available
         pool = await _get_pg_pool()
-        if pool and is_kb_available():
+        if pool and is_kb_available() and settings.kb_legacy_seed_enabled:
             lock_token = await RedisClient.acquire_lock("seed_knowledge_load", timeout=60)
             if lock_token:
                 try:
@@ -286,6 +286,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from services.knowledge_workspace.derivation_jobs import DerivationWorker
     knowledge_worker = DerivationWorker(db.pool)
     knowledge_worker_task = asyncio.create_task(knowledge_worker.run())
+    from services.knowledge_workspace.ai_journal_worker import JournalWorker
+    journal_worker = JournalWorker(db.pool)
+    journal_worker_task = asyncio.create_task(journal_worker.run())
 
     # 全局错误监控（loguru ERROR sink → DB 持久化 + 致命级推企微）
     import os
@@ -318,6 +321,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     await knowledge_worker.stop(knowledge_worker_task)
+    await journal_worker.stop(journal_worker_task)
     from services.model_gateway import get_model_gateway
     await get_model_gateway().close()
 

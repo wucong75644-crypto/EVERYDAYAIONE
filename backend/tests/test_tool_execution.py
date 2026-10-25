@@ -23,7 +23,7 @@ def context(**changes):
         context_scope="user", personal_context_allowed=True, agent_domain="general",
         permission_mode="ask", execution_mode="interactive", conversation_id="conversation",
         call_id="call", confirmation_available=True,
-        feature_flags={"file_workspace_enabled": True, "sandbox_enabled": True, "crawler_enabled": True},
+        feature_flags={"file_workspace_enabled": True, "sandbox_enabled": True, "crawler_enabled": True, "kb_legacy_search_enabled": True},
     )
     return ToolContext(**(fields | changes))
 
@@ -340,3 +340,9 @@ async def test_noninteractive_dangerous_names_are_not_execution_grants(mode):
     ))
     assert result.status == "denied" and result.execution.status == "not_started"
     handler.assert_not_awaited()
+
+
+@pytest.fixture(autouse=True)
+def legacy_execution_compatibility(monkeypatch):
+    from core.config import get_settings
+    monkeypatch.setattr(get_settings(), 'kb_legacy_search_enabled', True)

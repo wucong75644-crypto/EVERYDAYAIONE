@@ -504,3 +504,12 @@ class TestAggregateModelScores:
 
             # model-bad 失败，model-ok 应该正常处理
             assert call_count["log"] == 1
+
+
+@pytest.fixture(autouse=True)
+def legacy_knowledge_compatibility(monkeypatch):
+    """Exercise retained compatibility only; production defaults are tested separately."""
+    from core.config import get_settings
+    settings = get_settings()
+    for name in ('kb_legacy_search_enabled', 'kb_legacy_extraction_enabled', 'kb_legacy_scoring_enabled', 'kb_legacy_seed_enabled'):
+        monkeypatch.setattr(settings, name, True)

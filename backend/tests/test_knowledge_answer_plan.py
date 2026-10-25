@@ -10,6 +10,7 @@ from services.knowledge_workspace.answer_plan import collect,eligible,prepare,in
 @pytest.fixture(autouse=True)
 def settings(monkeypatch):
  from core.config import get_settings
+ monkeypatch.setattr('services.knowledge_workspace.evidence_assessment.assess', lambda q, items: {'status':'resolved','needs':[{'question':q,'status':'resolved','handles':[i['handle'] for i in items]}]})
  s=get_settings();monkeypatch.setattr(s,'knowledge_derivation_enabled',True);monkeypatch.setattr(s,'knowledge_semantic_enabled',False);monkeypatch.setattr(s,'dashscope_api_key',None)
 
 
@@ -38,7 +39,7 @@ def test_program_reads_evidence_once_and_preserves_conditions_and_fixed_links(de
 def test_no_match_is_bounded_and_does_not_import_other_root(derived_db):
  r=derived_db[0]();empty=create(r,title='空目录');other,_=fixture(r)
  run,_,_=start(derived_db[0],r,[ref(empty)])
- assert collect(run,'拼多多漏发如何处理？')['mode']=='missing'
+ assert collect(run,'拼多多漏发如何处理？')['mode']=='expand'
  from core.exceptions import AppException
  with pytest.raises(AppException):start(derived_db[0],derived_db[0](1),[ref(other)])
 
@@ -105,9 +106,9 @@ def test_frozen_production_corpus_prefetches_originals_without_rollup_speculatio
  text='\n'.join(i['body'] for i in plan['items'])
  assert '食品拆封' in text and '照片' in text
  media=collect(run,'扫描资料验证码是什么？食品拆封是否适用补寄？')
- assert media['mode']=='answer' and 'SCAN-1025' in '\n'.join(i['body'] for i in media['items'])
+ assert media['mode']=='expand' and 'SCAN-1025' in '\n'.join(i['body'] for i in media['items'])
  assert '照片是否与' not in text
- missing,_,_=start(derived_db[0],r,[ref(roots['missing'])]);assert collect(missing,'橙鹿换货期限是多少？蓝鲸预约提前多久？')['mode']=='missing'
+ missing,_,_=start(derived_db[0],r,[ref(roots['missing'])]);assert collect(missing,'橙鹿换货期限是多少？蓝鲸预约提前多久？')['mode']=='expand'
 
 
 @pytest.mark.asyncio
@@ -162,7 +163,8 @@ def test_queries_use_saved_media_chunks_without_original_io_or_derivation(derive
   monkeypatch.setattr(module,name,forbidden)
  run,_,_=start(derived_db[0],r,[ref(roots['normal'])])
  question='视频里要求核对什么？扫描资料验证码是什么？食品拆封可以吗？'
- plan=collect(run,question);assert plan['mode']=='answer'
+ plan=collect(run,question);assert plan['mode']=='expand'
+ assert any(i['status'] != 'complete' for i in plan['items'])
  assert 'SCAN-1025' in '\n'.join(i['body'] for i in plan['items'])
  assert collect(run,question)['cache_hit']
  result=run.execute('search',{'root_handle':run.introduction()['roots'][0]['handle'],'query':'核对'})

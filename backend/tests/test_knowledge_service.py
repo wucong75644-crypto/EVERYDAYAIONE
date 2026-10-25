@@ -175,21 +175,23 @@ class TestRecordMetric:
     """指标记录测试"""
 
     @pytest.mark.asyncio
-    async def test_record_metric_skips_when_disabled(self):
-        """知识库未启用时跳过"""
-        with patch("services.knowledge_service.is_kb_available", return_value=False):
+    async def test_record_metric_skips_when_disabled(self, monkeypatch):
+        """指标有独立开关，不依赖旧经验库开关。"""
+        from core.config import get_settings
+        monkeypatch.setattr(get_settings(), "kb_metrics_enabled", False)
+        with patch("services.knowledge_metrics.get_pg_connection", new_callable=AsyncMock) as connection:
             from services.knowledge_service import record_metric
 
             # 不应抛异常
             await record_metric(
                 task_type="chat", model_id="test", status="success",
             )
+            connection.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_record_metric_success(self, mock_pg_connection, mock_conn, mock_cursor):
         """成功记录指标"""
-        with patch("services.knowledge_metrics.is_kb_available", return_value=True), \
-             patch("services.knowledge_metrics.get_pg_connection", return_value=mock_pg_connection):
+        with patch("services.knowledge_metrics.get_pg_connection", return_value=mock_pg_connection):
             from services.knowledge_metrics import record_metric
 
             await record_metric(
@@ -819,3 +821,12 @@ class TestSearchRelevantWeighted:
             await search_relevant("test query", node_type="routing_pattern")
             sql = str(cursor.execute.call_args_list[0])
             assert "node_type = %(node_type)s" in sql
+
+
+@pytest.fixture(autouse=True)
+def legacy_knowledge_compatibility(monkeypatch):
+    """Exercise retained compatibility only; production defaults are tested separately."""
+    from core.config import get_settings
+    settings = get_settings()
+    for name in ('kb_legacy_search_enabled', 'kb_legacy_extraction_enabled', 'kb_legacy_scoring_enabled', 'kb_legacy_seed_enabled'):
+        monkeypatch.setattr(settings, name, True)

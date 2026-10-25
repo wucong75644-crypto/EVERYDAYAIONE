@@ -25,7 +25,7 @@ def context(**changes):
         actor_user_id="actor-a", workspace_owner_id="actor-a", org_id="org-a",
         context_scope="user", personal_context_allowed=True, agent_domain="general",
         permission_mode="ask", execution_mode="interactive",
-        feature_flags=dict(file_workspace_enabled=True, sandbox_enabled=True, crawler_enabled=True),
+        feature_flags=dict(file_workspace_enabled=True, sandbox_enabled=True, crawler_enabled=True, kb_legacy_search_enabled=True),
     )
     values.update(changes)
     return ToolContext(**values)

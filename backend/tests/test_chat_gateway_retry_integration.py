@@ -60,6 +60,7 @@ def environment(monkeypatch):
     ))
     from services.handlers.permission_mode import PermissionMode
     monkeypatch.setattr(stream_setup, "_prepare_permission_and_tools", lambda *_args, **_kwargs: (PermissionMode("ask"), []))
+    monkeypatch.setattr('services.knowledge_workspace.ai_journal.apply_preferences', AsyncMock(side_effect=lambda messages, *_: messages))
     events, sessions = [], []
     def configure(*adapters, max_concurrency=None):
         factory = Mock(side_effect=adapters)

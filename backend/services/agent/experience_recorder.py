@@ -85,6 +85,9 @@ class ExperienceRecorder:
             budget: ExecutionBudget（取 elapsed）
             confidence: 初始置信度
         """
+        from core.config import get_settings
+        if not get_settings().kb_legacy_extraction_enabled:
+            return
         try:
             from services.knowledge_service import add_knowledge
 

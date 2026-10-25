@@ -38,6 +38,7 @@ class ChatHarness(ChatToolMixin):
 @pytest.fixture
 def setup(monkeypatch, tmp_path):
     from core.config import get_settings
+    monkeypatch.setattr(get_settings(), 'kb_legacy_search_enabled', True)
     settings = get_settings()
     monkeypatch.setattr(settings, "file_workspace_root", str(tmp_path))
     monkeypatch.setattr(settings, "file_workspace_enabled", True)
