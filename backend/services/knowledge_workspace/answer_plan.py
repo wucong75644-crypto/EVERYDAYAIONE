@@ -22,14 +22,18 @@ def eligible(question):
                 and not COMPLEX.search(question) and not ACTION.search(question) and not ANALYTICS.search(question))
 
 
+def named_titles(question):
+    if not isinstance(question,str) or not 0<len(question)<=2000:return set()
+    return set(re.findall(r'[“「《"]([^”」》"\n]{6,180})[”」》"]',question))
+
+
 def named_source_plan(run, question):
     """Bind explicit document names across the frozen scope before model routing.
 
     This only supplies evidence. Actions, analytics and ambiguous names retain
     the normal tool loop; a document name never grants access or proves a rule.
     """
-    if not isinstance(question,str) or not 0<len(question)<=2000:return None
-    names=set(re.findall(r'[“「《"]([^”」》"\n]{6,180})[”」》"]',question))
+    names=named_titles(question)
     if not names:return None
     matches={}
     for item in run.snapshot['items']:
@@ -105,10 +109,10 @@ def collect(run,question):
             parts.setdefault(key,[]).append(item)
             lexical=sum(word in text.lower() for word in words)
             if not lexical and semantic<0.62:continue
-            if item.get('journal_category') in ('method','work'):
-                return {'mode':'expand','reason':'journal_requires_context'}
             from .retrieval import path_for
             if not platform_allowed(question,item['title']+path_for(run.snapshot['items'],item)+text):continue
+            if item.get('journal_category') in ('method','work'):
+                return {'mode':'expand','reason':'journal_requires_context'}
             key=(item['root_handle'],item['id'],source)
             score=lexical+semantic
             previous=groups.get(key)
@@ -176,6 +180,7 @@ async def prepare(handler,prepared,request,skills=None):
     if not getattr(handler,'_personal_context_allowed',True):return
     if len(request.content)!=1 or getattr(request.content[0],'type',None)!='text':return
     question=request.content[0].text
+    if not eligible(question) and not named_titles(question):return
     if str(run.repo.scope.actor_user_id)!=str(request.user_id) or run.repo.scope.org_id!=handler.org_id:
         from .chat import unavailable
         unavailable()

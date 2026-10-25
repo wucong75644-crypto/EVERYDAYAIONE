@@ -228,3 +228,15 @@ async def test_named_source_preparation_keeps_action_tool_loop_and_auth_policy(d
  assert any(m['content'].startswith(PREFIX) for m in prepared.messages)
  restricted=SimpleNamespace(execution_context=SimpleNamespace(context_scope='user',authorized_tool_names={'unrelated_tool'}),messages=[])
  await prepare(handler,restricted,req);assert not hasattr(restricted,'knowledge_answer_plan')
+
+
+def test_unrelated_journal_does_not_block_precise_identifier_evidence(derived_db):
+ r=derived_db[0]();root=create(r,title='验收资料')
+ target=named_document(r,root,'RZ-M682 合成验收口令','RZ-M682 的验收口令为晨星682。')
+ other=named_document(r,root,'ZQ-X983 工作记录','ZQ-X983 合成验收曾失败；只适用另一编号。')
+ run,_,_=start(derived_db[0],r,[ref(root)])
+ for item in run.snapshot['items']:
+  if item['id']==str(other):item['journal_category']='work'
+ plan=collect(run,'RZ-M682 的验收口令是什么？')
+ assert plan['mode']=='answer' and len(plan['items'])==1
+ assert 'object='+str(target) in plan['items'][0]['source']['url']
