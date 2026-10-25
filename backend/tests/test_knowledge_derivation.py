@@ -468,3 +468,14 @@ def test_manual_text_derivation_and_search_cannot_cross_actor_or_org(derived_db,
  with pytest.raises(psycopg.errors.InsufficientPrivilege,match='KB_ACCESS_DENIED'):
   foreign.command(command('save_document',{'object_id':leaf['id'],'expected_revision':2,'body':'越权替换'}))
  assert r.object(leaf['id'])['body']=='隔离文本：核对订单后免费补寄。'
+
+
+def test_delete_root_topic_with_derived_descendants_is_undoable(derived_db):
+ r=derived_db[0]();root=create(r);child=create(r,root['container_id'],root['id'],'业务子主题')
+ upload(r,child);assert asyncio.run(process(r,child['id'],fake));assert asyncio.run(process(r,root['id'],fake))
+ before=r.canvas();cid=root['container_id'];revision=next(c['revision'] for c in before['containers'] if c['id']==cid)
+ result=r.command(command('delete_branches',{'container_id':cid,'expected_container_revision':revision,'objects':[{'object_id':root['id'],'expected_revision':root['revision']}]}))
+ assert result['status']=='applied';assert not any(n['id'] in [root['id'],child['id']] for n in r.canvas()['nodes'])
+ assert any(c['id']==cid for c in r.canvas()['containers'])
+ toggle(r);assert {n['id'] for n in r.canvas()['nodes']}=={n['id'] for n in before['nodes']}
+ toggle(r,'redo');assert not any(n['id'] in [root['id'],child['id']] for n in r.canvas()['nodes'])

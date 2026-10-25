@@ -512,5 +512,14 @@ class DeleteTopicCommand(StrictModel):
     operation: Literal['delete_topic']
     payload: DeleteTopicPayload
 
-Command = Annotated[Union[RelationTopicCommand, MapThemeCommand, DeleteTopicCommand, TopicForestCommand, InsertParentCommand, TemplateCommand, RelationAppearanceCommand, SummaryCommand, CanvasDataCommand, CreateCommand, ProjectCommand, DocumentCommand, TitleCommand,
+class DeleteProjectPayload(StrictModel):
+    container_id: UUID
+    expected_container_revision: int = Field(ge=1)
+
+class DeleteProjectCommand(StrictModel):
+    command_id: UUID
+    operation: Literal['delete_project']
+    payload: DeleteProjectPayload
+
+Command = Annotated[Union[DeleteProjectCommand, RelationTopicCommand, MapThemeCommand, DeleteTopicCommand, TopicForestCommand, InsertParentCommand, TemplateCommand, RelationAppearanceCommand, SummaryCommand, CanvasDataCommand, CreateCommand, ProjectCommand, DocumentCommand, TitleCommand,
                          ReparentCommand, MoveCommand, BranchCommand, HistoryCommand, BatchCommand, GroupMoveCommand, ConnectCommand, DeleteRelationCommand, ReconnectCommand, MemberCommand], Field(discriminator='operation')]

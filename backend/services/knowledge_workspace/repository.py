@@ -95,6 +95,9 @@ class Repository:
         if command.operation == 'update_title':
             payload = {key: value for key, value in payload.items() if value is not None}
         with self.cursor() as c:
+            if command.operation == 'delete_project':
+                c.execute('SELECT public.kb_delete_project(%s,%s) AS result',(command.command_id,Jsonb(payload)))
+                return c.fetchone()['result']
             c.execute("SELECT to_regprocedure('public.kb_canvas_command(uuid,text,jsonb)') IS NOT NULL AS enabled")
             if c.fetchone()['enabled']:
                 function = 'kb_canvas_restore' if command.operation in ('undo_canvas','redo_canvas') else 'kb_canvas_command'

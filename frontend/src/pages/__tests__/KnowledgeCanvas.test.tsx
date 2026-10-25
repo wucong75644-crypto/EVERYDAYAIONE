@@ -1867,3 +1867,42 @@ describe('collapsible directory actions',()=>{
   for(const item of screen.getAllByRole('menuitem'))expect(item).toHaveAttribute('data-disabled');expect(f.api.command).not.toHaveBeenCalled();
  });
 });
+
+
+describe('project header deletion',()=>{
+ afterEach(()=>vi.restoreAllMocks());
+ it('deletes exactly the chosen project with confirmation and supports undo',async()=>{
+  const other={id:'other-project',kind:'project',title:'另一项目',role:'manager',revision:19};
+  const scene={...initial,containers:[...initial.containers,other]};f.api.scene.mockResolvedValue(scene);show();await ready();
+  const confirm=vi.spyOn(window,'confirm').mockReturnValue(true);
+  f.api.scene.mockResolvedValue(initial);f.api.history.mockResolvedValue({undo:{history_id:'project-delete',container_id:other.id,container_kind:'project',operation:'delete_project',can_apply:true},redo:null});
+  fireEvent.click(screen.getByRole('button',{name:'删除项目 另一项目'}));
+  await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('delete_project',{container_id:other.id,expected_container_revision:19},expect.any(String)));
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining('全部分支'));expect(screen.getByRole('article',{name:node.title})).toBeInTheDocument();
+  const undo=await screen.findByRole('button',{name:/^撤销.*删除项目$/});await waitFor(()=>expect(undo).toBeEnabled());f.api.scene.mockResolvedValue(scene);fireEvent.click(undo);
+  await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('undo_canvas',{history_id:'project-delete'},expect.any(String)));expect(await screen.findByRole('button',{name:'删除项目 另一项目'})).toBeInTheDocument();
+ });
+ it('removes the active project header and restores it through undo then redo',async()=>{
+  show();await ready();vi.spyOn(window,'confirm').mockReturnValue(true);
+  const removed={...initial,containers:initial.containers.filter(c=>c.id!=='p'),nodes:[]};
+  const entry={history_id:'active-project-delete',container_id:'p',container_kind:'project',container_title:'客户项目',operation:'delete_project',can_apply:true};
+  f.api.scene.mockResolvedValue(removed);f.api.history.mockResolvedValue({undo:entry,redo:null});fireEvent.click(screen.getByRole('button',{name:'删除项目 客户项目'}));
+  await waitFor(()=>expect(screen.queryByRole('button',{name:'删除项目 客户项目'})).toBeNull());expect(screen.queryByRole('article',{name:node.title})).toBeNull();
+  f.api.scene.mockResolvedValue(initial);f.api.history.mockResolvedValue({undo:null,redo:entry});fireEvent.click(screen.getByRole('button',{name:/^撤销.*删除项目$/}));
+  expect(await screen.findByRole('article',{name:node.title})).toBeInTheDocument();
+  f.api.scene.mockResolvedValue(removed);fireEvent.click(screen.getByRole('button',{name:/^重做.*删除项目$/}));await waitFor(()=>expect(screen.queryByRole('button',{name:'删除项目 客户项目'})).toBeNull());
+  expect(f.api.command).toHaveBeenCalledWith('redo_canvas',{history_id:entry.history_id},expect.any(String));
+ });
+ it('can cancel project removal without sending a write',async()=>{
+  show();await ready();vi.spyOn(window,'confirm').mockReturnValue(false);fireEvent.click(screen.getByRole('button',{name:'删除项目 客户项目'}));expect(f.api.command).not.toHaveBeenCalled();
+ });
+ it('offers project deletion on the project header context menu',async()=>{
+  show();await ready();vi.spyOn(window,'confirm').mockReturnValue(true);const dir=screen.getByLabelText('知识目录');fireEvent.contextMenu(within(dir).getByRole('button',{name:/客户项目\s*可管理/}),{clientX:1000,clientY:200});
+  fireEvent.click(screen.getByRole('menuitem',{name:'删除项目及全部分支'}));await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('delete_project',{container_id:'p',expected_container_revision:12},expect.any(String)));
+ });
+ it.each(['editor','viewer'])('does not offer project deletion to %s',async role=>{
+  f.api.scene.mockResolvedValue({...initial,containers:initial.containers.map(c=>c.id==='p'?{...c,role}:c)});show();await ready();const dir=screen.getByLabelText('知识目录');expect(within(dir).queryByRole('button',{name:'删除项目 客户项目'})).toBeNull();
+  fireEvent.contextMenu(within(dir).getByRole('button',{name:new RegExp('客户项目\\s*'+(role==='editor'?'可编辑':'只读'))}),{clientX:1000,clientY:200});expect(screen.getByRole('menuitem',{name:'删除项目及全部分支'})).toHaveAttribute('data-disabled');
+  expect(f.api.command).not.toHaveBeenCalled();
+ });
+});
