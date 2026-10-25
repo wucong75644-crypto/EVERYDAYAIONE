@@ -195,3 +195,10 @@ class TestBudgetIntegration:
         )
 
         budget.tool_timeout.assert_called_once_with(30.0)
+
+
+@pytest.fixture(autouse=True)
+def legacy_cache_contract(monkeypatch):
+    """The cache contract deliberately exercises the retained cacheable legacy tool."""
+    from core.config import get_settings
+    monkeypatch.setattr(get_settings(), 'kb_legacy_search_enabled', True)

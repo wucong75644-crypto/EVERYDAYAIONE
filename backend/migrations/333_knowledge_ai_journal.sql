@@ -138,8 +138,26 @@ BEGIN
  IF NOT FOUND OR t.status<>e.task_status THEN UPDATE public.kb_ai_events SET state='skipped',finished_at=now() WHERE id=e.id; RETURN NULL; END IF;
  SELECT content INTO input_text FROM public.messages WHERE id=t.input_message_id AND conversation_id=t.conversation_id AND role='user';
  SELECT content INTO output_text FROM public.messages WHERE id=t.assistant_message_id AND conversation_id=t.conversation_id AND role='assistant';
- SELECT COALESCE(jsonb_agg(jsonb_build_object('name',tool_name,'status',status)),'[]') INTO tools
- FROM (SELECT tool_name,status FROM public.tool_audit_log WHERE task_id=e.task_id::text ORDER BY created_at DESC LIMIT 20) q;
+ -- Durable Actor results take precedence; succeeded means a return, so the
+ -- business-result status must independently be successful. The audit fallback
+ -- covers legacy/safe calls, but never overrides an uncertain/error invocation.
+ SELECT COALESCE(jsonb_agg(jsonb_build_object('name',tool_name,'status',status,'source',source)),'[]') INTO tools
+ FROM (
+  SELECT * FROM (
+   SELECT i.tool_name,
+    CASE WHEN i.status='succeeded' AND (
+     (i.result#>>'{tool_result,status}'='success' AND i.result#>>'{tool_result,execution,status}'='succeeded'
+      AND COALESCE(i.result#>>'{tool_result,execution,cancelled}','false')='false'
+      AND COALESCE(i.result#>'{tool_result,error}','null'::jsonb)='null'::jsonb)
+     OR (NOT (i.result ? 'tool_result') AND i.result->>'kind'='agent_result' AND i.result->>'status'='success'))
+     THEN 'success' WHEN i.status IN ('running','uncertain') THEN 'uncertain' ELSE 'error' END AS status,
+    'invocation'::text AS source,i.updated_at AS at
+   FROM public.tool_invocations i WHERE i.task_id=e.task_id AND i.conversation_id=t.conversation_id
+   UNION ALL
+   SELECT a.tool_name,a.status,'audit',a.created_at FROM public.tool_audit_log a WHERE a.task_id=e.task_id::text
+   AND NOT EXISTS(SELECT 1 FROM public.tool_invocations i WHERE i.task_id=e.task_id AND i.tool_call_id=a.tool_call_id)
+  ) all_calls ORDER BY at DESC LIMIT 20
+ ) q;
  UPDATE public.kb_ai_events SET state='processing',token=gen_random_uuid(),lease_until=now()+interval '4 minutes',attempts=attempts+1 WHERE id=e.id RETURNING * INTO e;
  RETURN to_jsonb(e)||jsonb_build_object('conversation_id',t.conversation_id,'input_message_id',t.input_message_id,
  'input',left(COALESCE(input_text,''),200000),'output',left(COALESCE(output_text,''),200000),'tools',tools);

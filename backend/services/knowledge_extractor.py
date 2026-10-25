@@ -143,7 +143,8 @@ async def extract_and_save(
     Returns:
         保存的知识条目数
     """
-    if not settings.kb_enabled or not settings.kb_legacy_extraction_enabled or not settings.dashscope_api_key:
+    from core.config import get_settings
+    if not settings.kb_enabled or not get_settings().kb_legacy_extraction_enabled or not settings.dashscope_api_key:
         return 0
 
     retry_info = None

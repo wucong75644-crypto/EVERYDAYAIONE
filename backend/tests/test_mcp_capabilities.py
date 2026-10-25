@@ -141,7 +141,7 @@ async def test_mcp_cannot_bypass_policy_or_execute_injected_handler():
     service = ToolExecutionService(ToolRegistry([spec]), ToolDispatcher({('mcp', spec.handler_key): handler}))
     disabled = await service.execute(ToolCall('disabled', spec.name, {}), context())
     assert disabled.decision.reason == 'feature_unavailable:mcp_connectors_enabled'
-    enabled = context(feature_flags={'mcp_connectors_enabled': True})
+    enabled = context(feature_flags={'mcp_connectors_enabled': True, 'kb_legacy_search_enabled': True})
     denied = await service.execute(ToolCall('denied', spec.name, {}), replace(enabled, authorized_tool_names=frozenset()))
     assert denied.decision.outcome == 'deny'
     allowed = await service.execute(ToolCall('allowed', spec.name, {}), enabled)

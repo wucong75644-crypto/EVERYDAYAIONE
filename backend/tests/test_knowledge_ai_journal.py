@@ -24,7 +24,8 @@ def journal_db(derived_db):
         c.execute('ALTER TABLE messages ADD COLUMN content text')
         c.execute("ALTER TABLE tasks ADD COLUMN user_id uuid, ADD COLUMN org_id uuid, ADD COLUMN conversation_id uuid, ADD COLUMN status text DEFAULT 'completed', ADD COLUMN input_message_id uuid, ADD COLUMN assistant_message_id uuid, ADD COLUMN updated_at timestamptz DEFAULT now()")
         c.execute("ALTER TABLE conversations ADD COLUMN user_id uuid, ADD COLUMN org_id uuid, ADD COLUMN scope_type text DEFAULT 'user'")
-        c.execute("CREATE TABLE tool_audit_log(task_id text,tool_name text,status text,created_at timestamptz DEFAULT now())")
+        c.execute("CREATE TABLE tool_audit_log(task_id text,tool_name text,status text,tool_call_id text,created_at timestamptz DEFAULT now())")
+        c.execute("CREATE TABLE tool_invocations(task_id uuid,conversation_id uuid,tool_call_id text,tool_name text,status text,result jsonb,updated_at timestamptz DEFAULT now())")
         c.execute("CREATE TABLE knowledge_nodes(id uuid PRIMARY KEY,category text,title text,content text,scope text,org_id uuid,source text,is_deleted boolean DEFAULT false,updated_at timestamptz DEFAULT now())")
         c.execute('RESET ROLE')
         c.execute((Path(__file__).resolve().parents[1] / 'migrations/333_knowledge_ai_journal.sql').read_text())
@@ -379,3 +380,28 @@ def test_offline_cli_dry_run_reviewed_apply_and_replay(journal_db, tmp_path):
         subprocess.run([*args, '--apply-reviewed', str(reviewed), '--report', str(path)], env=env, check=True, capture_output=True)
         imported = next(r for r in json.loads(path.read_text())['items'] if r['id'] == lid)
         assert imported['result']['status'] == expected
+
+
+def test_durable_actor_results_precede_async_audit_and_business_errors_are_not_success(journal_db):
+    make, _ = journal_db; repo = make(); eid = event(make, repo)
+    variants = [
+        ('legacy_ok', 'succeeded', {'kind': 'agent_result', 'status': 'success'}),
+        ('legacy_error', 'succeeded', {'kind': 'agent_result', 'status': 'error'}),
+        ('v1_ok', 'succeeded', {'tool_result': {'status': 'success', 'execution': {'status': 'succeeded', 'cancelled': False}, 'error': None}}),
+        ('v1_business_error', 'succeeded', {'status': 'success', 'tool_result': {'status': 'error', 'execution': {'status': 'succeeded'}}}),
+        ('v1_execution_error', 'succeeded', {'tool_result': {'status': 'success', 'execution': {'status': 'failed'}}}),
+        ('uncertain', 'uncertain', {'kind': 'agent_result', 'status': 'success'}),
+        ('unstructured', 'succeeded', {'kind': 'scalar', 'value': 'cannot establish business outcome'}),
+    ]
+    with psycopg.connect(**make.admin_args) as c:
+        tid = c.execute('SELECT task_id FROM kb_ai_events WHERE id=%s', (eid,)).fetchone()[0]
+        cid = c.execute('SELECT conversation_id FROM tasks WHERE id=%s', (tid,)).fetchone()[0]
+        for name, state, result in variants:
+            c.execute('INSERT INTO tool_invocations(task_id,conversation_id,tool_call_id,tool_name,status,result) VALUES(%s,%s,%s,%s,%s,%s)', (tid, cid, name, name, state, Jsonb(result)))
+        c.execute("INSERT INTO tool_audit_log(task_id,tool_name,status,tool_call_id) VALUES(%s,'uncertain','success','uncertain')", (str(tid),))
+        c.execute("INSERT INTO tool_audit_log(task_id,tool_name,status,tool_call_id) VALUES(%s,'safe_read','success','audit-only')", (str(tid),))
+    claimed = JournalStore(repo).claim(eid)
+    assert {t['name'] for t in claimed['tools'] if t['status'] == 'success'} == {'legacy_ok', 'v1_ok', 'safe_read'}
+    assert next(t for t in claimed['tools'] if t['name'] == 'uncertain')['status'] == 'uncertain'
+    assert next(t for t in claimed['tools'] if t['name'] == 'safe_read')['source'] == 'audit'
+    assert len(claimed['tools']) == len(variants) + 1
