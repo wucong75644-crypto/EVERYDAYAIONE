@@ -8,6 +8,13 @@ from psycopg.types.json import Jsonb
 from tests.test_knowledge_attachment_cleanup import cleanup_db,resize_db,manual_db,summary_db,geometry_db,groups_db,editing_db,entry_db,rev,directional_db,structure_db,current,visual_db,tools_db,payload,local_db,command,layout_db,before_db,create,toggle,theme_db,rich_db
 from services.knowledge_workspace.derivation import process
 
+@pytest.fixture(autouse=True)
+def isolated_model_configuration(monkeypatch):
+ """Unit tests never inherit a fake or real provider credential from the suite."""
+ from core.config import get_settings
+ monkeypatch.setattr(get_settings(),'dashscope_api_key',None)
+
+
 @pytest.fixture(scope='module')
 def derived_db(cleanup_db):
  make,actors=cleanup_db
