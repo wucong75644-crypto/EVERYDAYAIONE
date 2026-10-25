@@ -72,3 +72,61 @@ def test_empty_pagination_is_not_a_root_miss_and_route_hit_clears_stale_footer_s
  assert state['last_search_empty_stop']
  feedback(state,'r',None,True,{'query':'有效目录','mode':'route'},result(['route']))
  assert not state['last_search_empty_stop']
+
+
+def test_context_reads_conditions_and_exception_from_same_source_not_other_attachments(derived_db):
+ import asyncio
+ from services.knowledge_workspace.derivation import process
+ from tests.test_knowledge_derivation import upload
+ r=derived_db[0]();n=create(r,title='多媒体售后')
+ a=upload(r,n,'拼多多漏发先核对订单与照片后补寄。\n\n期限为签收后7天。\n\n食品拆封不适用，需人工确认。')
+ upload(r,n,'其他附件：淘宝退款，绝密不同来源测试。')
+ async def sections(sources,*_):
+  key=next(x['key'] for x in sources if '食品' in x['text'])
+  return {'sections':[{'title':'步骤','text':'拼多多漏发先核对订单与照片后补寄。','source_refs':[key]},{'title':'例外','text':'食品拆封不适用，需人工确认。','source_refs':[key]}],'tags':['漏发']}
+ assert asyncio.run(process(r,n['id'],sections))
+ run,mid,cid=start(derived_db[0],r,[ref(n)]);rh=run.introduction()['roots'][0]['handle']
+ found=run.execute('search',{'root_handle':rh,'query':'漏发'})
+ target=next(x for x in found['items'] if x['title'].endswith(' · 步骤'))
+ reply=run.execute('read',{'root_handle':rh,'item_handles':[target['handle']],'context':True})
+ body=reply['items'][0]['body'];assert all(x in body for x in ['核对订单','7天','食品拆封','人工确认'])
+ assert '绝密不同来源测试' not in body
+ with r.cursor() as c:
+  c.execute('SELECT state FROM kb_retrieval_states WHERE snapshot_id=%s',(run.id,));state=c.fetchone()['state']
+ assert state['read_chars']==len(body)
+ from services.knowledge_workspace.chat import KnowledgeRun
+ replay=KnowledgeRun.start(r,conversation_id=cid,input_message_id=mid)
+ # Charges persist across replays; a short read never consumes 12k characters.
+ other=next(x for x in found['items'] if x['title'].endswith(' · 例外'))
+ second=replay.execute('read',{'root_handle':rh,'item_handles':[other['handle']],'context':True})
+ with r.cursor() as c:
+  c.execute('SELECT state FROM kb_retrieval_states WHERE snapshot_id=%s',(run.id,));assert c.fetchone()['state']['read_chars']==len(body)+len(second['items'][0]['body'])
+ r.file_command(__import__('uuid').uuid4(),'file_remove',{'object_id':str(n['id']),'binding_id':a['binding_id'],'expected_revision':1})
+ with pytest.raises(Exception):replay.execute('read',{'root_handle':rh,'item_handles':[target['handle']],'context':True})
+
+
+def test_long_same_source_context_keeps_cursor_and_does_not_hide_late_exception(derived_db):
+ import asyncio
+ from services.knowledge_workspace.derivation import process
+ from tests.test_knowledge_derivation import upload
+ r=derived_db[0]();n=create(r,title='长文件')
+ upload(r,n,'\n'.join(f'核对记录{i}：补寄前确认订单数量与照片。' for i in range(500))+'\n\n末尾必要例外：食品拆封必须人工确认。')
+ async def summary(sources,*_):
+  key=sources[0]['key'];return {'sections':[{'title':'步骤','text':'补寄前核对订单。','source_refs':[key]}],'tags':['补寄']}
+ assert asyncio.run(process(r,n['id'],summary))
+ run,_,_=start(derived_db[0],r,[ref(n)]);rh=run.introduction()['roots'][0]['handle']
+ item=next(i for i in run.snapshot['items'] if i['type']=='generated' and i['title'].endswith(' · 步骤'))
+ first=run.execute('read',{'root_handle':rh,'item_handles':[item['handle']],'context':True})['items'][0]
+ assert first['next_cursor'] and first['status']=='partial'
+ second=run.execute('read',{'root_handle':rh,'item_handles':[item['handle']],'context':True,'cursor':first['next_cursor']})['items'][0]
+ assert '末尾必要例外' in second['body'] and not second['next_cursor']
+
+
+def test_snippet_only_citations_cannot_bypass_fixed_source_url_validation(derived_db):
+ r=derived_db[0]();n=create(r,title='来源验证');r.command(command('save_document',{'object_id':n['id'],'expected_revision':1,'body':'核对订单后补寄。'}))
+ run,_,_=start(derived_db[0],r,[ref(n)]);rh=run.introduction()['roots'][0]['handle']
+ found=run.execute('search',{'root_handle':rh,'query':'补寄'});assert found['items']
+ url=found['items'][0]['source']['url'];bad=url+'&chunk=invented'
+ normalized=run.normalize_citations('[正确]('+url+') [错误]('+bad+')')
+ assert url in normalized and bad not in normalized and '来源未核验' in normalized
+ assert '尚未读取' in run.evidence_footer()

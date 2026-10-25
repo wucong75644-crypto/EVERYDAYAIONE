@@ -287,7 +287,7 @@ class KnowledgeRun(DerivedChat):
         from .citations import normalize
         # Unrelated conversation text is not a source-citation surface.
         with self.repo.cursor() as c:
-            c.execute("SELECT 1 FROM public.kb_read_receipts WHERE snapshot_id=%s AND state IN ('body_partial','body_complete') LIMIT 1",(self.id,))
+            c.execute("SELECT 1 FROM public.kb_read_receipts WHERE snapshot_id=%s AND state IN ('snippet_read','body_partial','body_complete') LIMIT 1",(self.id,))
             if not c.fetchone():return text
         self.revalidate()
         return normalize(text,[self._source(item)['url'] for item in self.snapshot['items']])
@@ -383,7 +383,7 @@ class KnowledgeRun(DerivedChat):
                             self._receipt(c,rule,'body_complete' if len(shown)==len(text) else 'body_partial',0,len(shown))
                             rules.append({'handle':rule['handle'],'body':shown,'truncated':len(shown)<len(text),'source':self._source(rule)})
                     out.append({'handle':handle,'body':body[start:end],'status':'unavailable' if item.get('text_status') in ('failed','unsupported') else 'partial' if end<len(body) or item.get('text_status')=='truncated' else 'complete',
-                      'text_status':item.get('text_status','ready'),'source':self._source(item),'rules':rules,'rules_complete':rules_complete,'rule_conflict_assessment':'比较显式业务规则；若互相矛盾，指出来源并询问，不声称按全部规则完成',
+                      'text_status':item.get('text_status','ready'),'source':self._source(item),'rules':rules,'rules_complete':rules_complete,'rule_conflict_assessment':'只按实际业务条款判断冲突；章节名含冲突或状态未判定不等于存在冲突。条款确实矛盾时指出差异并询问，不擅自选一方。',
                       'next_cursor':self._next(end,key) if end<len(body) else None})
                     if args.get('materialize'):
                         if item['type']!='file':unavailable('KNOWLEDGE_NOT_A_FILE')
@@ -393,7 +393,8 @@ class KnowledgeRun(DerivedChat):
                         out[-1]['canonical_asset_id']=version['asset_id']
                         out[-1]['attachment_ref_id']=item['binding_id']
                         self._receipt(c,item,'file_materialized')
-                return {'items':out,'coverage':self._coverage(c,items),'snapshot_id':self.id,'read_guidance':'coverage是整个快照的读取统计，不是具体问题的完成条件。只需补读与问题相关的条件、例外和显式规则；不要为清空missing_count读取无关资料。用户明确要求全框架审阅时才继续遍历。'}
+                self._settle_read_charge(c,out)
+                return {'items':out,'coverage':self._coverage(c,items),'snapshot_id':self.id,'read_guidance':'对具体简短问题，正文直接用2–4句回答重点，避免逐份罗列来源。context已含同文件步骤、条件和例外时，引用本次已读source.url即可，不必为每个章节再列一条链接；链接文字用简短名称，不重复完整目录和章节路径。用户要求详述或对比时正常展开。缺资料时只说明当前依据不足，不复述历史回答中的业务数值，即使作为否定或反例也不要复述，更不能推断旧规则失效。先检查当前正文是否已覆盖提问的结论、适用条件和例外；已覆盖就直接简短回答并引用来源，停止outline和read，不为了查看其他媒体、人工备注或冲突状态章节继续读取。仅有影响当前结论的具体冲突或尚缺的必要条件才定向补读。context=true已补同来源章节，不需要逐节重复读；媒体采样或整库coverage部分读取不等于当前问题缺少条件，不因这些元数据重复读或扩展其他文件；但当前段有next_cursor、rules_complete=false或确实缺必要条件时应按需补读；目录节点或人工保留占位正文不是业务依据，应改用search mode=evidence定位正文，不继续outline穷举。coverage是整个快照的读取统计，不是具体问题的完成条件。只需补读与问题相关的条件、例外和显式规则；不要为清空missing_count读取无关资料。用户明确要求全框架审阅时才继续遍历。'}
             if action=='follow_reference':
                 link=next((l for l in self.snapshot['links'] if l['handle']==args.get('link_handle') and l['root_handle']==root),None)
                 if not link:unavailable()
@@ -445,6 +446,8 @@ class KnowledgeRun(DerivedChat):
             result={'items':out,'next_cursor':self._next(end,key) if end<len(candidates) else None,'snapshot_id':self.id,
                     'coverage':'outline_only' if action=='outline' else 'snippets_only','scope_handle':scope if action=='search' else None,'stop_reason':'not_found_in_scope' if not candidates and action=='search' else None}
 
+            if action=='outline':
+                result['navigation_guidance']='这里只是目录。针对具体问题下一步使用search mode=evidence查正文，读取最相关命中并设置context=true补同来源条件和例外。已有足够依据就回答，不逐个展开所有子目录。'
             if action=='search':
                 from .retrieval_policy import scoped
                 effective,_=scoped(visible,args.get('scope_handle'),args.get('expand',False))

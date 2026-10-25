@@ -49,7 +49,16 @@ class DerivedChat:
         chunk=next((v for v in data['chunks'] if v['id']==item['chunk_id']),None)
         if not chunk:unavailable()
         if context:
-            return '\n\n'.join(v['text'] for v in data['chunks'] if v.get('section_id')==chunk.get('section_id'))
+            # A business condition/exception is often a separate section of the same
+            # file. Do not expand into the entire directory or other attachments.
+            refs=set(chunk.get('source_refs',[]))
+            related=[v for v in data['chunks'] if v['id']!=chunk['id'] and
+                     (v.get('section_id')==chunk.get('section_id') or refs.intersection(v.get('source_refs',[])))]
+            parts=[chunk['text']];seen={chunk['text']}
+            for value in related:
+                if value['text'] not in seen:
+                    parts.append(value['title']+'：'+value['text']);seen.add(value['text'])
+            return '\n\n'.join(parts)
         return chunk['text']
 
     def _retrieval_charge(self,action,args):
@@ -72,6 +81,15 @@ class DerivedChat:
             state.update(calls=calls+1,seen=seen,read_chars=state.get('read_chars',0)+(12000 if action=='read' else 0))
             c.execute('UPDATE public.kb_retrieval_states SET state=%s WHERE snapshot_id=%s',(Jsonb(state),self.id))
         return None
+
+    def _settle_read_charge(self,c,result):
+        # Reserve the existing worst-case allowance before a concurrent read,
+        # then account for actual returned text, not a flat 12k per short read.
+        actual=sum(len(i['body'])+sum(len(r['body']) for r in i['rules']) for i in result)
+        refund=max(0,12000-actual)
+        c.execute("SELECT to_regclass('public.kb_retrieval_states') IS NOT NULL AS enabled")
+        if c.fetchone()['enabled']:
+            c.execute("UPDATE public.kb_retrieval_states SET state=jsonb_set(state,'{read_chars}',to_jsonb(GREATEST(0,COALESCE((state->>'read_chars')::int,0)-%s))) WHERE snapshot_id=%s",(refund,self.id))
 
     def _search_candidates(self,c,visible,args):
         from .chat import unavailable
