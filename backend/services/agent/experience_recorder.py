@@ -12,6 +12,7 @@ import re
 from typing import Any, List, Optional
 
 from loguru import logger
+from services.knowledge_workspace import retirement
 
 
 # 业务域白名单：从 tool_name 推断 subcategory
@@ -85,6 +86,9 @@ class ExperienceRecorder:
             budget: ExecutionBudget（取 elapsed）
             confidence: 初始置信度
         """
+        from core.config import get_settings
+        if retirement.RETIRED or not get_settings().kb_legacy_extraction_enabled:
+            return
         try:
             from services.knowledge_service import add_knowledge
 

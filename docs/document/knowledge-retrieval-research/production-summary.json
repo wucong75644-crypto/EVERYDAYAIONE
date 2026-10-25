@@ -1,0 +1,1220 @@
+{
+  "checked_at_utc": "2026-10-25T07:13:42.400551+00:00",
+  "database_identity_verified": true,
+  "application_role": [
+    "everydayai",
+    false,
+    false
+  ],
+  "database_url_from_live_process": true,
+  "flags": {
+    "KB_ENABLED": "default",
+    "KNOWLEDGE_WORKSPACE_ENABLED": "default",
+    "KB_EXTRACTION_MODEL": "default",
+    "KB_EXTRACTION_FALLBACK_MODEL": "default"
+  },
+  "tables": [
+    [
+      {
+        "relname": "kb_branch_snapshots",
+        "estimated_rows": -1,
+        "bytes": 32768
+      },
+      {
+        "relname": "kb_canvas_history",
+        "estimated_rows": 43,
+        "bytes": 245760
+      },
+      {
+        "relname": "kb_canvas_history_heads",
+        "estimated_rows": 5,
+        "bytes": 57344
+      },
+      {
+        "relname": "kb_canvas_nodes",
+        "estimated_rows": 57,
+        "bytes": 81920
+      },
+      {
+        "relname": "kb_container_members",
+        "estimated_rows": -1,
+        "bytes": 32768
+      },
+      {
+        "relname": "kb_containers",
+        "estimated_rows": 9,
+        "bytes": 81920
+      },
+      {
+        "relname": "kb_derivation_jobs",
+        "estimated_rows": 35,
+        "bytes": 114688
+      },
+      {
+        "relname": "kb_derived_generations",
+        "estimated_rows": 52,
+        "bytes": 2023424
+      },
+      {
+        "relname": "kb_derived_heads",
+        "estimated_rows": 31,
+        "bytes": 24576
+      },
+      {
+        "relname": "kb_events",
+        "estimated_rows": 170,
+        "bytes": 131072
+      },
+      {
+        "relname": "kb_file_binding_versions",
+        "estimated_rows": -1,
+        "bytes": 40960
+      },
+      {
+        "relname": "kb_file_bindings",
+        "estimated_rows": -1,
+        "bytes": 49152
+      },
+      {
+        "relname": "kb_file_versions",
+        "estimated_rows": -1,
+        "bytes": 49152
+      },
+      {
+        "relname": "kb_knowledge_overrides",
+        "estimated_rows": -1,
+        "bytes": 16384
+      },
+      {
+        "relname": "kb_media_extractions",
+        "estimated_rows": -1,
+        "bytes": 32768
+      },
+      {
+        "relname": "kb_mutation_receipts",
+        "estimated_rows": 170,
+        "bytes": 335872
+      },
+      {
+        "relname": "kb_object_versions",
+        "estimated_rows": 51,
+        "bytes": 65536
+      },
+      {
+        "relname": "kb_objects",
+        "estimated_rows": 72,
+        "bytes": 98304
+      },
+      {
+        "relname": "kb_projects",
+        "estimated_rows": -1,
+        "bytes": 32768
+      },
+      {
+        "relname": "kb_read_receipts",
+        "estimated_rows": 321,
+        "bytes": 155648
+      },
+      {
+        "relname": "kb_read_snapshots",
+        "estimated_rows": -1,
+        "bytes": 204800
+      },
+      {
+        "relname": "kb_relations",
+        "estimated_rows": -1,
+        "bytes": 49152
+      },
+      {
+        "relname": "kb_retrieval_states",
+        "estimated_rows": 7,
+        "bytes": 98304
+      },
+      {
+        "relname": "knowledge_edges",
+        "estimated_rows": 35,
+        "bytes": 147456
+      },
+      {
+        "relname": "knowledge_metrics",
+        "estimated_rows": 7632,
+        "bytes": 3653632
+      },
+      {
+        "relname": "knowledge_nodes",
+        "estimated_rows": 655,
+        "bytes": 14442496
+      },
+      {
+        "relname": "messages",
+        "estimated_rows": 58523,
+        "bytes": 98705408
+      },
+      {
+        "relname": "scheduled_tasks",
+        "estimated_rows": 1,
+        "bytes": 245760
+      },
+      {
+        "relname": "scoring_audit_log",
+        "estimated_rows": 46849,
+        "bytes": 21266432
+      },
+      {
+        "relname": "tool_audit_log",
+        "estimated_rows": -1,
+        "bytes": 0
+      },
+      {
+        "relname": "tool_invocations",
+        "estimated_rows": 496,
+        "bytes": 2260992
+      }
+    ]
+  ],
+  "containers": [
+    [
+      {
+        "kind": "personal",
+        "deleted": false,
+        "count": 3
+      },
+      {
+        "kind": "project",
+        "deleted": false,
+        "count": 5
+      },
+      {
+        "kind": "team",
+        "deleted": false,
+        "count": 1
+      }
+    ]
+  ],
+  "objects": [
+    [
+      {
+        "kind": "document",
+        "deleted": false,
+        "count": 3
+      },
+      {
+        "kind": "rule",
+        "deleted": false,
+        "count": 2
+      },
+      {
+        "kind": "topic",
+        "deleted": false,
+        "count": 67
+      }
+    ]
+  ],
+  "current_bodies": [
+    [
+      {
+        "objects": 72,
+        "body_chars": 674,
+        "nonempty": 18,
+        "largest_body_chars": 168
+      }
+    ]
+  ],
+  "versions": [
+    [
+      {
+        "versions": 94,
+        "body_chars": 850,
+        "earliest": "2026-10-22T21:45:05.386905+08:00",
+        "latest": "2026-10-25T15:06:10.346865+08:00"
+      }
+    ]
+  ],
+  "file_versions": [
+    [
+      {
+        "text_status": "ready",
+        "versions": 13,
+        "file_bytes": 9264901,
+        "text_chars": 3164,
+        "max_text_chars": 2181
+      },
+      {
+        "text_status": "unsupported",
+        "versions": 6,
+        "file_bytes": 750064,
+        "text_chars": 0,
+        "max_text_chars": 0
+      }
+    ]
+  ],
+  "file_bindings": [
+    [
+      {
+        "removed": false,
+        "bindings": 14
+      },
+      {
+        "removed": true,
+        "bindings": 1
+      }
+    ]
+  ],
+  "snapshots": [
+    [
+      {
+        "snapshots": 15,
+        "actors": 2,
+        "conversations": 12,
+        "earliest": "2026-10-23T14:46:50.135999+08:00",
+        "latest": "2026-10-25T14:41:36.669939+08:00",
+        "last7d": 15
+      }
+    ]
+  ],
+  "receipts": [
+    [
+      {
+        "state": "body_complete",
+        "receipts": 78,
+        "snapshots": 11,
+        "earliest": "2026-10-23T14:47:02.435259+08:00",
+        "latest": "2026-10-25T13:33:01.188661+08:00"
+      },
+      {
+        "state": "outline_seen",
+        "receipts": 98,
+        "snapshots": 6,
+        "earliest": "2026-10-23T14:46:54.568915+08:00",
+        "latest": "2026-10-25T12:47:41.037624+08:00"
+      },
+      {
+        "state": "snippet_read",
+        "receipts": 225,
+        "snapshots": 10,
+        "earliest": "2026-10-25T11:23:55.53863+08:00",
+        "latest": "2026-10-25T13:32:54.983729+08:00"
+      }
+    ]
+  ],
+  "old_nodes": [
+    [
+      {
+        "source": "aggregated",
+        "node_type": "performance",
+        "scope": "global",
+        "global_org": false,
+        "is_deleted": false,
+        "nodes": 32,
+        "embedded": 6,
+        "hit_count": 5851,
+        "earliest": "2026-04-09T12:42:24.981135+08:00",
+        "latest_created": "2026-10-19T20:13:46.047471+08:00",
+        "latest_updated": "2026-10-24T01:28:12.379057+08:00"
+      },
+      {
+        "source": "aggregated",
+        "node_type": "performance",
+        "scope": "global",
+        "global_org": true,
+        "is_deleted": false,
+        "nodes": 5,
+        "embedded": 5,
+        "hit_count": 5628,
+        "earliest": "2026-03-12T10:20:00.323072+08:00",
+        "latest_created": "2026-07-15T15:16:21.572001+08:00",
+        "latest_updated": "2026-10-25T15:04:11.023349+08:00"
+      },
+      {
+        "source": "auto",
+        "node_type": "capability",
+        "scope": "global",
+        "global_org": true,
+        "is_deleted": false,
+        "nodes": 7,
+        "embedded": 7,
+        "hit_count": 4,
+        "earliest": "2026-04-13T15:11:56.723857+08:00",
+        "latest_created": "2026-07-02T08:10:56.82871+08:00",
+        "latest_updated": "2026-07-02T08:10:56.82871+08:00"
+      },
+      {
+        "source": "auto",
+        "node_type": "failure_pattern",
+        "scope": "org",
+        "global_org": false,
+        "is_deleted": false,
+        "nodes": 42,
+        "embedded": 42,
+        "hit_count": 2,
+        "earliest": "2026-04-13T09:37:37.439132+08:00",
+        "latest_created": "2026-04-22T15:35:18.486782+08:00",
+        "latest_updated": "2026-04-22T15:38:11.606212+08:00"
+      },
+      {
+        "source": "auto",
+        "node_type": "parameter",
+        "scope": "global",
+        "global_org": true,
+        "is_deleted": false,
+        "nodes": 311,
+        "embedded": 311,
+        "hit_count": 1544,
+        "earliest": "2026-03-13T13:39:23.539415+08:00",
+        "latest_created": "2026-10-17T01:08:34.725279+08:00",
+        "latest_updated": "2026-10-17T01:08:34.725279+08:00"
+      },
+      {
+        "source": "auto",
+        "node_type": "pattern",
+        "scope": "global",
+        "global_org": true,
+        "is_deleted": false,
+        "nodes": 32,
+        "embedded": 32,
+        "hit_count": 8,
+        "earliest": "2026-04-08T09:14:10.222072+08:00",
+        "latest_created": "2026-10-16T20:32:08.48652+08:00",
+        "latest_updated": "2026-10-16T20:32:08.48652+08:00"
+      },
+      {
+        "source": "auto",
+        "node_type": "routing_pattern",
+        "scope": "org",
+        "global_org": false,
+        "is_deleted": false,
+        "nodes": 189,
+        "embedded": 187,
+        "hit_count": 54,
+        "earliest": "2026-04-11T21:59:34.607766+08:00",
+        "latest_created": "2026-09-08T09:00:32.882598+08:00",
+        "latest_updated": "2026-10-25T14:42:05.18911+08:00"
+      },
+      {
+        "source": "seed",
+        "node_type": "model",
+        "scope": "global",
+        "global_org": true,
+        "is_deleted": false,
+        "nodes": 13,
+        "embedded": 13,
+        "hit_count": 0,
+        "earliest": "2026-10-25T15:03:27.275416+08:00",
+        "latest_created": "2026-10-25T15:03:33.544904+08:00",
+        "latest_updated": "2026-10-25T15:03:33.544904+08:00"
+      },
+      {
+        "source": "seed",
+        "node_type": "parameter",
+        "scope": "global",
+        "global_org": true,
+        "is_deleted": false,
+        "nodes": 2,
+        "embedded": 2,
+        "hit_count": 0,
+        "earliest": "2026-10-25T15:03:30.304545+08:00",
+        "latest_created": "2026-10-25T15:03:31.674026+08:00",
+        "latest_updated": "2026-10-25T15:03:31.674026+08:00"
+      },
+      {
+        "source": "seed",
+        "node_type": "pattern",
+        "scope": "global",
+        "global_org": true,
+        "is_deleted": false,
+        "nodes": 3,
+        "embedded": 3,
+        "hit_count": 0,
+        "earliest": "2026-10-25T15:03:31.927064+08:00",
+        "latest_created": "2026-10-25T15:03:33.774408+08:00",
+        "latest_updated": "2026-10-25T15:03:33.774408+08:00"
+      },
+      {
+        "source": "seed",
+        "node_type": "routing_pattern",
+        "scope": "global",
+        "global_org": true,
+        "is_deleted": false,
+        "nodes": 19,
+        "embedded": 19,
+        "hit_count": 0,
+        "earliest": "2026-10-25T15:03:34.004039+08:00",
+        "latest_created": "2026-10-25T15:03:38.822363+08:00",
+        "latest_updated": "2026-10-25T15:03:38.822363+08:00"
+      }
+    ]
+  ],
+  "old_recent_nodes": [
+    [
+      {
+        "source": "seed",
+        "created1d": 37,
+        "created7d": 37,
+        "created30d": 37
+      },
+      {
+        "source": "aggregated",
+        "created1d": 0,
+        "created7d": 6,
+        "created30d": 6
+      },
+      {
+        "source": "auto",
+        "created1d": 0,
+        "created7d": 0,
+        "created30d": 13
+      }
+    ]
+  ],
+  "old_edges": [
+    [
+      {
+        "edges": 40,
+        "earliest": "2026-04-21T12:01:00.287515+08:00",
+        "latest": "2026-09-14T11:08:33.226997+08:00"
+      }
+    ]
+  ],
+  "old_metrics": [
+    [
+      {
+        "task_type": "chat",
+        "events": 2685,
+        "earliest": "2026-03-08T21:18:28.703504+08:00",
+        "latest": "2026-08-22T18:14:28.924089+08:00",
+        "last7d": 0,
+        "last30d": 0
+      },
+      {
+        "task_type": "intent_confirmed",
+        "events": 1,
+        "earliest": "2026-03-23T10:21:32.021023+08:00",
+        "latest": "2026-03-23T10:21:32.021023+08:00",
+        "last7d": 0,
+        "last30d": 0
+      },
+      {
+        "task_type": "intent_pending",
+        "events": 1,
+        "earliest": "2026-03-23T10:06:51.68096+08:00",
+        "latest": "2026-03-23T10:06:51.68096+08:00",
+        "last7d": 0,
+        "last30d": 0
+      },
+      {
+        "task_type": "memory_search",
+        "events": 93,
+        "earliest": "2026-04-15T21:30:27.978414+08:00",
+        "latest": "2026-05-15T21:31:36.768073+08:00",
+        "last7d": 0,
+        "last30d": 0
+      },
+      {
+        "task_type": "routing",
+        "events": 62,
+        "earliest": "2026-03-10T20:27:26.099081+08:00",
+        "latest": "2026-04-03T10:59:53.044441+08:00",
+        "last7d": 0,
+        "last30d": 0
+      },
+      {
+        "task_type": "sandbox_execution",
+        "events": 2791,
+        "earliest": "2026-03-23T10:05:28.414194+08:00",
+        "latest": "2026-10-25T14:42:28.701566+08:00",
+        "last7d": 10,
+        "last30d": 144
+      },
+      {
+        "task_type": "user_feedback",
+        "events": 2086,
+        "earliest": "2026-04-07T23:08:31.588373+08:00",
+        "latest": "2026-10-24T11:32:17.449966+08:00",
+        "last7d": 106,
+        "last30d": 303
+      }
+    ]
+  ],
+  "scoring": [
+    [
+      {
+        "status": "auto_applied",
+        "events": 18479,
+        "earliest": "2026-03-12T10:20:01.502512+08:00",
+        "latest": "2026-10-25T15:04:11.022162+08:00"
+      },
+      {
+        "status": "pending_review",
+        "events": 29765,
+        "earliest": "2026-03-10T10:01:30.556992+08:00",
+        "latest": "2026-10-25T15:04:11.302124+08:00"
+      }
+    ]
+  ],
+  "knowledge_tool_audit": [
+    [
+      {
+        "tool_name": "knowledge_outline",
+        "status": "success",
+        "calls": 3,
+        "earliest": "2026-10-23T14:46:54.697368+08:00",
+        "latest": "2026-10-23T14:57:39.55566+08:00",
+        "last1d": 0,
+        "last7d": 3,
+        "last30d": 3
+      },
+      {
+        "tool_name": "knowledge_read",
+        "status": "error",
+        "calls": 1,
+        "earliest": "2026-10-23T14:46:59.189825+08:00",
+        "latest": "2026-10-23T14:46:59.189825+08:00",
+        "last1d": 0,
+        "last7d": 1,
+        "last30d": 1
+      },
+      {
+        "tool_name": "knowledge_read",
+        "status": "success",
+        "calls": 4,
+        "earliest": "2026-10-23T14:47:02.453858+08:00",
+        "latest": "2026-10-23T14:57:48.298705+08:00",
+        "last1d": 0,
+        "last7d": 4,
+        "last30d": 4
+      },
+      {
+        "tool_name": "search_knowledge",
+        "status": "empty",
+        "calls": 2,
+        "earliest": "2026-05-04T16:30:29.466945+08:00",
+        "latest": "2026-05-04T16:30:37.15385+08:00",
+        "last1d": 0,
+        "last7d": 0,
+        "last30d": 0
+      },
+      {
+        "tool_name": "search_knowledge",
+        "status": "success",
+        "calls": 9,
+        "earliest": "2026-05-05T18:24:25.072323+08:00",
+        "latest": "2026-09-24T13:40:09.664136+08:00",
+        "last1d": 0,
+        "last7d": 0,
+        "last30d": 0
+      }
+    ]
+  ],
+  "audit_coverage": [
+    [
+      {
+        "earliest": "2026-05-01T08:10:30.188039+08:00",
+        "latest": "2026-10-25T14:42:28.711549+08:00",
+        "last30d": 775
+      }
+    ]
+  ],
+  "knowledge_invocations": [
+    []
+  ],
+  "message_refs": [
+    [
+      {
+        "user_messages_with_refs": 14,
+        "earliest": "2026-10-23T14:25:54.872+08:00",
+        "latest": "2026-10-25T13:33:11.891607+08:00"
+      }
+    ]
+  ],
+  "effective_flags": {
+    "KNOWLEDGE_DERIVATION_ENABLED": {
+      "value": "true",
+      "origin": "live_environment"
+    },
+    "KNOWLEDGE_DEFAULT_SCOPE_ENABLED": {
+      "value": true,
+      "origin": "code_default"
+    },
+    "KNOWLEDGE_SEMANTIC_ENABLED": {
+      "value": "true",
+      "origin": "live_environment"
+    },
+    "KNOWLEDGE_MEDIA_ENABLED": {
+      "value": "true",
+      "origin": "live_environment"
+    },
+    "KNOWLEDGE_EMBEDDING_MODEL": {
+      "value": "text-embedding-v3",
+      "origin": "code_default"
+    },
+    "KNOWLEDGE_RETRIEVAL_MAX_CALLS": {
+      "value": 32,
+      "origin": "code_default"
+    },
+    "KNOWLEDGE_RETRIEVAL_MAX_CHARS": {
+      "value": 48000,
+      "origin": "code_default"
+    },
+    "KNOWLEDGE_RETRIEVAL_TIMEOUT": {
+      "value": 180.0,
+      "origin": "code_default"
+    },
+    "KB_ENABLED": {
+      "value": true,
+      "origin": "code_default"
+    }
+  },
+  "production_hashes": {
+    "backend/services/knowledge_workspace/chat.py": "b64e4ef01e2319b27e4dc7f55a62f7ae263c2a4dd0e3015217c68bc1d14486ee",
+    "backend/services/knowledge_workspace/runtime.py": "762a2fe51ccc0bb847742c7a4855ad0abc7f3fd27b4c5b01721bc2cd375c536b",
+    "backend/services/knowledge_workspace/answer_plan.py": "ddcfb445131b591388b990a4448ba86e18905c896ef2da91b7535887e02d9b40",
+    "backend/services/knowledge_workspace/derived_chat.py": "c3b330eba1dd05eea5aea6ff578eac1cf1a41a04560a94be69006cec8c793350",
+    "backend/services/knowledge_workspace/retrieval.py": "1dfaee586ce82272994249de3f93d1d32b264d319acaf33171542df0ef8f73f2",
+    "backend/services/knowledge_workspace/semantic.py": "ce581fcc5d92cafbe09072815e97f63d2a24fedfda170f8c07e449403aa6313f",
+    "backend/core/config.py": "d21544381e238ea156e214da440f5efb2290b70ec71e53bd07fc368a5b6e7855",
+    "backend/services/handlers/chat/execution_engine.py": "621cd0f6bb362976a75e3342666e290887f7ffda28f7cc9fda32327e77914bde",
+    "backend/services/knowledge_service.py": "b03a09c3895f2cf380fde4e0491bc3c5f24a8ba491731c3151e9af23ff6e3b00"
+  },
+  "automatic_snapshots": [
+    [
+      {
+        "automatic": false,
+        "snapshots": 14,
+        "earliest": "2026-10-23T14:46:50.135999+08:00",
+        "latest": "2026-10-25T13:33:11.898901+08:00"
+      },
+      {
+        "automatic": true,
+        "snapshots": 1,
+        "earliest": "2026-10-25T14:41:36.669939+08:00",
+        "latest": "2026-10-25T14:41:36.669939+08:00"
+      }
+    ]
+  ],
+  "snapshots_without_receipts": [
+    [
+      {
+        "snapshots_without_receipts": 3
+      }
+    ]
+  ],
+  "current_file_text": [
+    [
+      {
+        "text_status": "ready",
+        "current_bindings": 7,
+        "file_bytes": 42817,
+        "text_chars": 703
+      },
+      {
+        "text_status": "unsupported",
+        "current_bindings": 6,
+        "file_bytes": 750064,
+        "text_chars": 0
+      }
+    ]
+  ],
+  "visible_objects": [
+    [
+      {
+        "kind": "topic",
+        "visible": 24
+      },
+      {
+        "kind": "document",
+        "visible": 3
+      },
+      {
+        "kind": "rule",
+        "visible": 2
+      }
+    ]
+  ],
+  "scoring_recent": [
+    [
+      {
+        "status": "auto_applied",
+        "last1d": 124,
+        "last7d": 996,
+        "last30d": 3148,
+        "latest_input_period_end": "2026-10-24T11:32:17.449966+08:00"
+      },
+      {
+        "status": "pending_review",
+        "last1d": 186,
+        "last7d": 564,
+        "last30d": 5066,
+        "latest_input_period_end": "2026-10-25T14:42:28.701566+08:00"
+      }
+    ]
+  ],
+  "scheduled_legacy_dependencies": [
+    [
+      {
+        "status": "active",
+        "tasks": 1,
+        "with_legacy_search": 0
+      }
+    ]
+  ],
+  "old_hit_distribution": [
+    [
+      {
+        "source": "seed",
+        "zero_hit": 37,
+        "positive_hit": 0,
+        "summed_hits": 0
+      },
+      {
+        "source": "aggregated",
+        "zero_hit": 24,
+        "positive_hit": 13,
+        "summed_hits": 11479
+      },
+      {
+        "source": "auto",
+        "zero_hit": 476,
+        "positive_hit": 105,
+        "summed_hits": 1612
+      }
+    ]
+  ],
+  "journal_summary": {
+    "window": "30 days",
+    "returncode": 0,
+    "scanned_lines": 215211,
+    "first_line_timestamp": "--",
+    "last_line_timestamp": "2026-10-25T15:16:03+0800",
+    "events": {
+      "scoring_completed": {
+        "lines": 76,
+        "earliest": "2026-10-25T00:00:36+0800",
+        "latest": "2026-10-25T15:04:11+0800"
+      },
+      "old_knowledge_added": {
+        "lines": 222,
+        "earliest": "2026-10-25T09:22:04+0800",
+        "latest": "2026-10-25T15:03:39+0800"
+      },
+      "seed_imported": {
+        "lines": 6,
+        "earliest": "2026-10-25T09:22:14+0800",
+        "latest": "2026-10-25T15:03:39+0800"
+      }
+    }
+  },
+  "visible_bodies": [
+    [
+      {
+        "objects": 29,
+        "body_chars": 616,
+        "nonempty": 16
+      }
+    ]
+  ],
+  "derived_generations": [
+    [
+      {
+        "coverage": "complete",
+        "generations": 37,
+        "chunks": 192,
+        "chunk_chars": 20555
+      },
+      {
+        "coverage": "partial",
+        "generations": 33,
+        "chunks": 242,
+        "chunk_chars": 32857
+      }
+    ]
+  ],
+  "current_derived_generations": [
+    [
+      {
+        "coverage": "complete",
+        "visible_objects": 23,
+        "chunks": 105,
+        "chunk_chars": 9263
+      },
+      {
+        "coverage": "partial",
+        "visible_objects": 6,
+        "chunks": 58,
+        "chunk_chars": 8632
+      }
+    ]
+  ],
+  "current_chunk_embeddings": [
+    [
+      {
+        "kind": "source",
+        "chunks": 59,
+        "embedded": 59
+      },
+      {
+        "kind": "material",
+        "chunks": 70,
+        "embedded": 70
+      },
+      {
+        "kind": "rollup",
+        "chunks": 34,
+        "embedded": 34
+      }
+    ]
+  ],
+  "derivation_jobs": [
+    [
+      {
+        "state": "ready",
+        "jobs": 29,
+        "latest": "2026-10-25T15:06:41.361101+08:00"
+      },
+      {
+        "state": "blocked",
+        "jobs": 6,
+        "latest": "2026-10-25T15:06:17.774196+08:00"
+      }
+    ]
+  ],
+  "media": [
+    [
+      {
+        "coverage": "partial",
+        "extractions": 3,
+        "text_chars": 258,
+        "earliest": "2026-10-25T11:21:01.172047+08:00",
+        "latest": "2026-10-25T11:23:06.227437+08:00"
+      },
+      {
+        "coverage": "complete",
+        "extractions": 3,
+        "text_chars": 560,
+        "earliest": "2026-10-25T11:20:40.824144+08:00",
+        "latest": "2026-10-25T11:22:24.916227+08:00"
+      }
+    ]
+  ],
+  "retrieval_states": [
+    [
+      {
+        "program_mode": null,
+        "snapshots": 12,
+        "calls": 64,
+        "read_chars": 236456
+      }
+    ]
+  ],
+  "legacy_message_mentions": [
+    [
+      {
+        "structured_legacy_markers": 0,
+        "params_legacy_markers": 0
+      }
+    ]
+  ],
+  "migrations": [
+    [
+      {
+        "migration_path": "backend/migrations/302_knowledge_workspace_v1.sql",
+        "checksum": "ec25a004178c9b4f9ae15ac823cee94b841daedcb65005b56641269381651dee",
+        "applied_at": "2026-10-22T20:49:27.398294+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/303_knowledge_files_v2.sql",
+        "checksum": "310adf6dc002f72a82913f6c86e7f5e28acc73a94fc1b02ce7b347acab828212",
+        "applied_at": "2026-10-23T00:06:04.974389+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/304_knowledge_asset_visibility.sql",
+        "checksum": "cd8ffeab734eab03d5c62a93ea4b61a9c4a0f034b322f7d90777eb103e24529d",
+        "applied_at": "2026-10-23T00:06:05.121774+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/305_knowledge_chat_v3.sql",
+        "checksum": "90a94ddfb4f3a3336561730383d2c9f64cf53603514bfc01022f1abec3f6b9df",
+        "applied_at": "2026-10-23T14:07:26.186705+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/306_knowledge_chat_application_role.sql",
+        "checksum": "6d196fb146b3c0df7d277ecd0d68cd999dd4509967adda1ba5560eccc77edf29",
+        "applied_at": "2026-10-23T14:45:01.332017+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/307_knowledge_branch_drag.sql",
+        "checksum": "97161bd5f9a810a0b811a32ccb8466df9ec7a2e78dc355441e8ae89a6e9e6268",
+        "applied_at": "2026-10-24T00:32:36.932355+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/308_knowledge_canvas_undo.sql",
+        "checksum": "ff3b928eba7365841ce8bb365b95e7bb9d427c74564689c123cda58e78295a81",
+        "applied_at": "2026-10-24T00:32:37.045692+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/309_knowledge_branch_batch.sql",
+        "checksum": "b10022534b938d4f84757bed4547a6c99a5fa749a2d0f3d240b0b6fb9026fe4c",
+        "applied_at": "2026-10-24T00:32:37.166473+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/310_knowledge_group_move.sql",
+        "checksum": "48bad5d0ae7c97560573f9ffa7efd2584f5f6684dd4fcbc6b103212444d07332",
+        "applied_at": "2026-10-24T00:32:37.197251+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/311_knowledge_insert_after.sql",
+        "checksum": "42662089f11162dcccbe71d86b1502aa5b7104f062433f92667a2c22c020e0ed",
+        "applied_at": "2026-10-24T00:32:37.227943+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/312_knowledge_clipboard_snapshots.sql",
+        "checksum": "d51b19b9e825fdd16a874bcc327d40e4b974069b7048d2c170c07ef660d8ab95",
+        "applied_at": "2026-10-24T00:32:37.25871+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/313_knowledge_relation_editing.sql",
+        "checksum": "3357a4f140610baf435e3961f1f5d3b9fb0f651549d1ea6621a5c80a29e2ffc3",
+        "applied_at": "2026-10-24T00:32:37.303313+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/314_knowledge_title_layout.sql",
+        "checksum": "f14b802fb91bee2a6db49a9051a72048f0ff7015915d99c59c9864d4e510bb6f",
+        "applied_at": "2026-10-24T00:32:37.333215+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/315_knowledge_insert_before.sql",
+        "checksum": "3a0b1d7f4da56fc32def95acaa52ed4be134c8d5c5d9ae5939f454f59ea06851",
+        "applied_at": "2026-10-24T00:32:37.36175+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/316_knowledge_canvas_tools.sql",
+        "checksum": "8cfcf51c3df36b1dce904d439deaae21f52374421471e5f10200df924853d352",
+        "applied_at": "2026-10-24T18:45:41.618654+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/317_knowledge_canvas_visual_editing.sql",
+        "checksum": "eab7606f781cce65f0c7320eca97db9f06dca650c8009408aad3d1c92a354362",
+        "applied_at": "2026-10-24T18:45:41.781142+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/318_knowledge_canvas_media_templates.sql",
+        "checksum": "c06276dff4c9b02a1c85e0aeff7a64602913aab64a3d27b953288d30e0c8cfda",
+        "applied_at": "2026-10-24T18:45:41.818202+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/319_knowledge_topic_structure.sql",
+        "checksum": "14b69dbe902388b2896b8d9655fc403878a8bfc33c118a869c8dbc6eec2ee4c7",
+        "applied_at": "2026-10-24T18:45:41.849977+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/320_knowledge_directional_paste.sql",
+        "checksum": "e06962c2fd1f114bc9281dc3d665c9f1adeeabea552f1099420459fa63b62936",
+        "applied_at": "2026-10-24T18:45:41.877994+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/321_knowledge_topic_entry.sql",
+        "checksum": "8878ca16a05ad487e0a9b0b17420a7c8cb174d800305b0c6b3a7c69a7d6f2b8f",
+        "applied_at": "2026-10-24T18:45:41.907797+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/322_knowledge_topic_editing.sql",
+        "checksum": "6c503d9a5e8f27c8807602df12145879f537586b238b62ea1067c9c3e7e5e8a3",
+        "applied_at": "2026-10-24T18:45:41.939582+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/323_knowledge_map_theme.sql",
+        "checksum": "b4db69c16fee68e15285f95e687c81ec33cbed132b6b59ec9f1c59c97002a464",
+        "applied_at": "2026-10-24T18:45:41.971779+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/324_knowledge_rich_titles.sql",
+        "checksum": "9a3c9e8d78e78fdf6186f22f1240c12c9eeb50e4a4ba46dec7f7af3ee99435fc",
+        "applied_at": "2026-10-24T18:45:42.007941+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/325_knowledge_independent_boundaries.sql",
+        "checksum": "048c6b1a53f901371f8e2f9e7751a8c4bf92c1d1dd705649d7fba7fd5fe59d0c",
+        "applied_at": "2026-10-24T18:45:42.039783+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/326_knowledge_relation_geometry.sql",
+        "checksum": "833be8e5d290f3a9a99ea5f30dbffe1d7864761bc7bcd8692165190fdd67ccae",
+        "applied_at": "2026-10-24T18:45:42.0734+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/327_knowledge_summary_scope.sql",
+        "checksum": "98f27f9eb55a81ab999ecc7d612e7a858260f9ab3b9c7f883f5495ff0de97e61",
+        "applied_at": "2026-10-24T18:45:42.105281+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/328_knowledge_manual_creation_layout.sql",
+        "checksum": "dd7d29b200411c8e63b054da8b864838c957240b3f1f381b0cbc2fe076569cc1",
+        "applied_at": "2026-10-24T19:57:45.169996+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/329_knowledge_topic_resize.sql",
+        "checksum": "ad69efb4692eb0b87c5364a64d0f15d08839d41d803d599e9531039b8f83534d",
+        "applied_at": "2026-10-24T21:19:22.744361+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/330_knowledge_attachment_media_cleanup.sql",
+        "checksum": "6c2ec47314f23ad92c5a1f89de944fad7a613196169886e55bb778a8fc72c61a",
+        "applied_at": "2026-10-24T22:15:48.345534+08:00"
+      },
+      {
+        "migration_path": "backend/migrations/331_knowledge_derivations.sql",
+        "checksum": "0d91460f2078de28518e33255ebf4184d5650c9a935d68926c67b9ec1ce58736",
+        "applied_at": "2026-10-25T09:21:49.118735+08:00"
+      }
+    ]
+  ],
+  "node_and_size_totals": [
+    [
+      {
+        "old_nodes": 655,
+        "old_edges": 40,
+        "old_nodes_edges_bytes": 14589952,
+        "metric_events": 7719,
+        "scoring_events": 48244
+      }
+    ]
+  ],
+  "ending_provenance": {
+    "commit": "2a82500ab058c0bcd5abc6c46310f91840dd848e",
+    "mode": "preview",
+    "source": "codex/task/20261023152609-knowledge-canvas-interactions",
+    "recorded_at": "2026-10-25T07:03:36Z"
+  },
+  "ending_lock_present": true,
+  "journal_retention": {
+    "earliest": "2026-10-24T23:15:45+0800",
+    "latest": "2026-10-25T15:17:07+0800",
+    "lines_by_day": {
+      "2026-10-24": 8015,
+      "2026-10-25": 207004
+    },
+    "audit_failure_counts": {}
+  },
+  "message_tool_markers": [
+    [
+      {
+        "tool_name": "knowledge_outline",
+        "markers": 3,
+        "messages": 2,
+        "earliest": "2026-10-23T14:25:54.873+08:00",
+        "latest": "2026-10-23T14:57:27.355+08:00"
+      },
+      {
+        "tool_name": "knowledge_read",
+        "markers": 5,
+        "messages": 2,
+        "earliest": "2026-10-23T14:25:54.873+08:00",
+        "latest": "2026-10-23T14:57:27.355+08:00"
+      }
+    ]
+  ],
+  "job_block_reasons": [
+    [
+      {
+        "state": "blocked",
+        "reason": "non_enum_redacted",
+        "jobs": 6
+      },
+      {
+        "state": "ready",
+        "reason": "non_enum_redacted",
+        "jobs": 29
+      }
+    ]
+  ],
+  "change_set_legacy_dependencies": [
+    [
+      {
+        "rows": 67,
+        "legacy_mentions": 2
+      }
+    ]
+  ],
+  "derived_freshness": [
+    [
+      {
+        "visible_heads": 29,
+        "ready_jobs": 29,
+        "nonready_jobs": 0
+      }
+    ]
+  ],
+  "finished_at_utc": "2026-10-25T07:18:08.158777+00:00",
+  "legacy_changesets_by_state": [
+    [
+      {
+        "status": "applied",
+        "rows": 2
+      }
+    ]
+  ],
+  "scoring_by_task_recent": [
+    [
+      {
+        "task_type": "sandbox_execution",
+        "status": "auto_applied",
+        "events": 1016,
+        "latest_input_event": "2026-10-23T16:30:01.840183+08:00"
+      },
+      {
+        "task_type": "sandbox_execution",
+        "status": "pending_review",
+        "events": 578,
+        "latest_input_event": "2026-10-25T14:42:28.701566+08:00"
+      },
+      {
+        "task_type": "user_feedback",
+        "status": "auto_applied",
+        "events": 2132,
+        "latest_input_event": "2026-10-24T11:32:17.449966+08:00"
+      },
+      {
+        "task_type": "user_feedback",
+        "status": "pending_review",
+        "events": 4488,
+        "latest_input_event": "2026-10-24T10:52:13.885794+08:00"
+      }
+    ]
+  ],
+  "file_type_current": [
+    [
+      {
+        "category": "document_or_text",
+        "bindings": 8
+      },
+      {
+        "category": "image",
+        "bindings": 3
+      },
+      {
+        "category": "video",
+        "bindings": 2
+      }
+    ]
+  ],
+  "skill_storage_dependency_summary": {
+    "configured": true,
+    "files_scanned": 38,
+    "legacy_tool_mentions": 0,
+    "legacy_capability_mentions": 0,
+    "bounded": false
+  },
+  "current_provenance": {
+    "commit": "2a82500ab058c0bcd5abc6c46310f91840dd848e",
+    "mode": "preview",
+    "source": "codex/task/20261023152609-knowledge-canvas-interactions",
+    "recorded_at": "2026-10-25T07:03:36Z"
+  },
+  "release_lock_present": true,
+  "final_recheck": {
+    "checked_at_utc": "2026-10-25T07:22:36.608431+00:00",
+    "successful_commit": "2a82500ab058c0bcd5abc6c46310f91840dd848e",
+    "backend_active": true,
+    "release_lock_present": true,
+    "core_5_hashes_unchanged": true
+  }
+}

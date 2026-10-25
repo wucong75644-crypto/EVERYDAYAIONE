@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
+from services.knowledge_workspace import retirement
 
 from services.knowledge_config import create_dedicated_connection, is_kb_available
 from services.knowledge_service import add_knowledge
@@ -55,7 +56,8 @@ async def aggregate_model_scores(org_id: str | None = None) -> None:
 
     流程：聚合 SQL → 计算 raw_score → EMA → 审核判断 → 写入知识库/日志
     """
-    if not is_kb_available():
+    from core.config import get_settings
+    if retirement.RETIRED or not get_settings().kb_legacy_scoring_enabled or not is_kb_available():
         return
 
     conn = await create_dedicated_connection(statement_timeout_s=15)

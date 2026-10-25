@@ -209,25 +209,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         logger.warning(f"Mem0 pre-warm failed (non-critical) | error={e}")
 
-    # 预热知识库连接 + 导入种子知识（用锁避免多 worker 重复加载）
+    # This pool is also used by memory, metrics and file-asset auditing.
+    # Warm shared infrastructure without loading any retired knowledge/seed.
     try:
-        from services.knowledge_config import _get_pg_pool, is_kb_available
-        pool = await _get_pg_pool()
-        if pool and is_kb_available():
-            lock_token = await RedisClient.acquire_lock("seed_knowledge_load", timeout=60)
-            if lock_token:
-                try:
-                    from services.knowledge_service import load_seed_knowledge
-                    imported = await load_seed_knowledge()
-                    logger.info(f"Knowledge base ready | seed_imported={imported}")
-                finally:
-                    await RedisClient.release_lock("seed_knowledge_load", lock_token)
-            else:
-                logger.info("Knowledge base seed loading skipped (another worker is loading)")
-        else:
-            logger.info("Knowledge base not configured or disabled")
+        from services.knowledge_config import _get_pg_pool
+        await _get_pg_pool()
     except Exception as e:
-        logger.warning(f"Knowledge base init failed (non-critical) | error={e}")
+        logger.warning(f"Shared telemetry database warmup failed | error={type(e).__name__}")
 
     # 启动后台任务工作器
     from core.database import get_db
@@ -286,6 +274,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from services.knowledge_workspace.derivation_jobs import DerivationWorker
     knowledge_worker = DerivationWorker(db.pool)
     knowledge_worker_task = asyncio.create_task(knowledge_worker.run())
+    from services.knowledge_workspace.ai_journal_worker import JournalWorker
+    journal_worker = JournalWorker(db.pool)
+    journal_worker_task = asyncio.create_task(journal_worker.run())
 
     # 全局错误监控（loguru ERROR sink → DB 持久化 + 致命级推企微）
     import os
@@ -318,6 +309,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     await knowledge_worker.stop(knowledge_worker_task)
+    await journal_worker.stop(journal_worker_task)
     from services.model_gateway import get_model_gateway
     await get_model_gateway().close()
 

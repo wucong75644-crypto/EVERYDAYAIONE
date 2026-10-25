@@ -15,8 +15,10 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def reset_kb_globals():
+def reset_kb_globals(monkeypatch):
     """每个测试前重置知识库全局状态"""
+    from services.knowledge_workspace import retirement
+    monkeypatch.setattr(retirement, "RETIRED", False)  # historical unit contracts only
     import services.knowledge_config as cfg
 
     cfg._pg_pool = None
@@ -412,3 +414,12 @@ class TestRunModelScoring:
 
 # 注：意图提炼调度（_run_intent_distillation）已于 2026-04-11 删除，
 # 见 docs/document/DEPRECATED_intent_learning.md。原 4 个集成测试随之移除。
+
+
+@pytest.fixture(autouse=True)
+def legacy_knowledge_compatibility(monkeypatch):
+    """Exercise retained compatibility only; production defaults are tested separately."""
+    from core.config import get_settings
+    settings = get_settings()
+    for name in ('kb_legacy_search_enabled', 'kb_legacy_extraction_enabled', 'kb_legacy_scoring_enabled', 'kb_legacy_seed_enabled'):
+        monkeypatch.setattr(settings, name, True)

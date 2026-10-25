@@ -21,7 +21,7 @@ def catalog_context(org_id, permission_mode="auto", personal_context_allowed=Tru
         feature_flags={**{key: getattr(settings, key, False) is True for key in (
             "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled",
             "mcp_connectors_enabled", "skill_catalog_enabled", "skill_chat_creation_enabled",
-            "skill_org_admin", "agent_reach_enabled",
+            "skill_org_admin", "agent_reach_enabled", "kb_legacy_search_enabled",
         )}, "chat_image_async_enabled": chat_image_acceptance_allowed(settings, None),
         "ecom_image_planning_enabled": settings.ecom_image_planning_enabled is True},
     )
@@ -56,8 +56,14 @@ def executor_context(executor, *, call_id=None) -> ToolContext:
     feature_flags = {name: getattr(settings, name, False) is True for name in (
         "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "scheduled_task_direct_enabled",
         "mcp_connectors_enabled", "skill_catalog_enabled", "skill_chat_creation_enabled", "chat_image_async_enabled",
-        "agent_reach_enabled",
+        "agent_reach_enabled", "kb_legacy_search_enabled",
     )}
+    from types import SimpleNamespace
+    from api.routes.knowledge import enabled as knowledge_enabled
+    feature_flags['knowledge_auto_discovery'] = bool(
+        settings.knowledge_default_scope_enabled and settings.knowledge_derivation_enabled
+        and executor.personal_context_allowed and executor.context_scope == 'user'
+        and knowledge_enabled(SimpleNamespace(user_id=executor.user_id, org_id=executor.org_id)))
     feature_flags["knowledge_refs_present"] = getattr(executor, "knowledge_run", None) is not None
     feature_flags["skill_org_admin"] = False
     feature_flags["chat_image_async_enabled"] = chat_image_acceptance_allowed(settings, executor.user_id)

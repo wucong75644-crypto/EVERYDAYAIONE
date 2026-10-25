@@ -123,6 +123,9 @@ class ToolRegistry:
 
     @staticmethod
     def _unavailable_reason(spec: ToolSpec, context: ToolContext) -> str | None:
+        from services.knowledge_workspace import retirement
+        if retirement.RETIRED and spec.name in retirement.RETIRED_TOOLS:
+            return "tool_retired"
         if spec.exposure is Exposure.LEGACY_INTERNAL and context.entrypoint != "legacy_internal":
             return "legacy_internal_only"
         if spec.domain not in {"shared", context.agent_domain}:

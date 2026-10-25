@@ -65,7 +65,7 @@ class TestNormalExecution:
         cache = _mock_cache()
 
         result, status, is_cached, ms = await invoke_tool_with_cache(
-            executor, cache, "search_knowledge", {"file": "x"},
+            executor, cache, "social_crawler", {"file": "x"},
             budget=None, default_timeout=30.0,
         )
 
@@ -80,7 +80,7 @@ class TestNormalExecution:
         cache = _mock_cache()
 
         result, status, is_cached, ms = await invoke_tool_with_cache(
-            executor, cache, "search_knowledge", {"sql": "bad"},
+            executor, cache, "social_crawler", {"sql": "bad"},
             budget=None, default_timeout=30.0,
         )
 
@@ -95,7 +95,7 @@ class TestNormalExecution:
         cache = _mock_cache()
 
         result, status, is_cached, ms = await invoke_tool_with_cache(
-            executor, cache, "search_knowledge", {},
+            executor, cache, "social_crawler", {},
             budget=None, default_timeout=30.0,
         )
 
@@ -110,7 +110,7 @@ class TestNormalExecution:
         cache = _mock_cache()
 
         result, status, is_cached, ms = await invoke_tool_with_cache(
-            executor, cache, "search_knowledge", {},
+            executor, cache, "social_crawler", {},
             budget=None, default_timeout=30.0,
         )
 
@@ -129,7 +129,7 @@ class TestCacheHit:
         cache = _mock_cache(hit_value=cached_ar)
 
         result, status, is_cached, ms = await invoke_tool_with_cache(
-            executor, cache, "search_knowledge", {"file": "x"},
+            executor, cache, "social_crawler", {"file": "x"},
             budget=None, default_timeout=30.0,
         )
 
@@ -149,7 +149,7 @@ class TestExceptionHandling:
         cache = _mock_cache()
 
         result, status, is_cached, ms = await invoke_tool_with_cache(
-            executor, cache, "search_knowledge", {},
+            executor, cache, "social_crawler", {},
             budget=None, default_timeout=5.0,
         )
 
@@ -166,7 +166,7 @@ class TestExceptionHandling:
         cache = _mock_cache()
 
         result, status, is_cached, ms = await invoke_tool_with_cache(
-            executor, cache, "search_knowledge", {},
+            executor, cache, "social_crawler", {},
             budget=None, default_timeout=30.0,
         )
 
@@ -190,8 +190,25 @@ class TestBudgetIntegration:
         cache = _mock_cache()
 
         await invoke_tool_with_cache(
-            executor, cache, "search_knowledge", {},
+            executor, cache, "social_crawler", {},
             budget=budget, default_timeout=30.0,
         )
 
         budget.tool_timeout.assert_called_once_with(30.0)
+
+
+@pytest.fixture(autouse=True)
+def legacy_cache_contract(monkeypatch):
+    """The cache contract deliberately exercises the retained cacheable legacy tool."""
+    from core.config import get_settings
+    monkeypatch.setattr(get_settings(), 'crawler_enabled', True)
+
+
+@pytest.mark.asyncio
+async def test_retired_knowledge_cannot_replay_a_cached_result():
+    executor=_mock_executor(AgentResult(summary='must not run',status='success'))
+    cache=_mock_cache(hit_value=AgentResult(summary='old cached answer',status='success'))
+    result,status,cached,_=await invoke_tool_with_cache(executor,cache,'search_knowledge',{'query':'old'},budget=None,default_timeout=5)
+    assert result.status=='error' and not cached
+    executor.handler.assert_not_awaited()
+    cache.get.assert_not_called()

@@ -1,5 +1,7 @@
 """Scope routing is server-owned: a handle narrows an existing root, never grants access."""
 from hashlib import sha256
+import re
+from .query_terms import keywords
 
 
 def subtree(items, scope):
@@ -24,14 +26,24 @@ def scoped(items, scope_handle=None, expand=False):
 
 def terms(query):
     values=[query.lower()]
+    # Short lookup strings keep their phrase identity. Natural questions also
+    # use Chinese terms; semantic recall remains a separate channel.
+    if len(query)>8 or re.search(r'请|查询|查找|搜索|怎么|如何|什么|多少|哪些|是否|能否|吗',query):
+        values.extend(keywords(query))
     for group in [('漏发','缺件','少收到','少发','补寄'),('退款','退钱'),('拼多多','pdd'),('淘宝','taobao')]:
         if any(v in query.lower() for v in group):values.extend(group)
     return list(dict.fromkeys(values))
 
 
 def platform_allowed(query,text):
-    platforms=[p for p in ('拼多多','淘宝') if p in query]
-    return not platforms or any(p in text for p in platforms)
+    query, text = query.casefold(), text.casefold()
+    platforms = [group for group in (('拼多多','pdd'),('淘宝','taobao')) if any(p in query for p in group)]
+    if platforms and not any(any(p in text for p in group) for group in platforms):
+        return False
+    # A precise mixed letter/number model or SKU must not be relaxed into a
+    # semantically similar product. Several requested models may yield one each.
+    identifiers = re.findall(r'(?<![a-z0-9_.-])[a-z][a-z0-9_.-]*\d[a-z0-9_.-]*(?![a-z0-9_.-])', query)
+    return not identifiers or any(re.search(r'(?<![a-z0-9_.-])'+re.escape(value)+r'(?![a-z0-9_.-])', text) for value in identifiers)
 
 
 def rank(query,title,text,path=''):

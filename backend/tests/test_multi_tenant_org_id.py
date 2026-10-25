@@ -167,8 +167,8 @@ class TestIntentRouterOrgId:
     """IntentRouter.route 正确传递 org_id"""
 
     @pytest.mark.asyncio
-    async def test_enhance_with_knowledge_passes_org_id(self):
-        """_enhance_with_knowledge(org_id) → search_relevant(org_id)"""
+    async def test_router_no_longer_reads_retired_knowledge(self):
+        """Task-bound V3 retrieval replaces the retired routing injection."""
         from services.intent_router import IntentRouter
 
         router = IntentRouter()
@@ -177,9 +177,7 @@ class TestIntentRouterOrgId:
             mock_search.return_value = []
             await router._enhance_with_knowledge("测试", org_id="org-z")
 
-            mock_search.assert_awaited_once()
-            call_kwargs = mock_search.call_args[1]
-            assert call_kwargs.get("org_id") == "org-z"
+            mock_search.assert_not_awaited()
 
         await router.close()
 

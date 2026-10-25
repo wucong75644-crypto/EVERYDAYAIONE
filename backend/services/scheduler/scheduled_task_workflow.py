@@ -54,6 +54,7 @@ def preflight_allowed_tool_names(org_id: str) -> set[str]:
         authorization_snapshot={"version": 1, "allowed_tools": sorted(names)},
         feature_flags={key: getattr(settings, key) is True for key in (
             "file_workspace_enabled", "sandbox_enabled", "crawler_enabled", "agent_reach_enabled",
+            "kb_legacy_search_enabled",
         )},
     )
     return set(registry.resolve(context, policy=ToolPolicy(registry),

@@ -17,7 +17,7 @@
 
 **允许的操作**：
 - 调 `erp_analyze` 分析任务结构
-- 调 `search_knowledge` / `web_search` 辅助分析
+- 调 `knowledge_search` / `web_search` 辅助分析
 - 调 `code_execute` 做辅助计算
 - 检索文件（`file_search` / `file_analyze`；图片走 `file_search` 自动多模态）
 

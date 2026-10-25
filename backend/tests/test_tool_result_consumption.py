@@ -283,7 +283,7 @@ async def test_long_model_projection_keeps_full_file_and_payload(setup,consumer,
     finally: clear_staging_dir()
 
 
-@pytest.mark.parametrize('tool',['search_knowledge','generate_image'])
+@pytest.mark.parametrize('tool',['web_search','generate_image'])
 @pytest.mark.parametrize('failure',['error','timeout','cancel'])
 async def test_exception_timeout_cancel_and_effect_certainty(setup,tool,failure):
     from services.agent.tool_loop_helpers import invoke_tool_result_with_cache
@@ -307,7 +307,9 @@ async def test_exception_timeout_cancel_and_effect_certainty(setup,tool,failure)
         assert result.execution.status=='uncertain'
         assert classify_tool_result(result,'success')==ResultClass.FATAL
         assert '不要重复执行' in result.model_content('tool_loop')
-    else: assert result.execution.status=='failed'
+    else:
+        assert result.execution.status=='uncertain'
+        assert not result.error.safe_to_retry
     assert result.error.safe_to_retry is False
     executor.handler.assert_awaited_once()
 
@@ -322,7 +324,7 @@ async def test_cache_failure_state_and_single_audit_per_consumption(setup,monkey
     async def audit(_db,entry): writes.append(entry)
     monkeypatch.setattr('services.agent.tool_audit.record_tool_audit',audit)
     for id in ('first','cached'):
-        await loop._execute_tools([tc('search_knowledge',{'file':'overview'},id)],[],'',ctx)
+        await loop._execute_tools([tc('social_crawler',{'file':'overview'},id)],[],'',ctx)
         result=loop._turn_tool_outcomes[0][1]
         assert result.status=='error' and result.is_failure
         assert result.raw.summary==raw.summary and result.agent_context['tokens_used']==raw.tokens_used
@@ -416,7 +418,7 @@ async def test_steer_keeps_completed_artifacts_and_audits(setup,monkeypatch):
     writes=[]
     async def audit(_db,entry): writes.append(entry)
     monkeypatch.setattr('services.agent.tool_audit.record_tool_audit',audit)
-    await loop._execute_tools([tc('web_search',{'query':'x'},'a'),tc('search_knowledge',{'file':'overview'},'b')],[],'',ctx)
+    await loop._execute_tools([tc('web_search',{'query':'x'},'a'),tc('social_crawler',{'file':'overview'},'b')],[],'',ctx)
     await asyncio.sleep(0)
     assert executor.handler.await_count==2 and len(loop._emit_payloads)==2 and len(writes)==2
     assert {w.tool_call_id for w in writes}=={'a','b'}

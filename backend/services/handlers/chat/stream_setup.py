@@ -79,14 +79,17 @@ async def prepare_chat_stream(
         messages, org_id=handler.org_id, user_id=user_id, conversation_id=conversation_id,
     )
     from services.knowledge_workspace.runtime import prepare_knowledge_run
-    await prepare_knowledge_run(handler, context_anchor, user_id, conversation_id, required=params.get('_knowledge_refs_required') is True)
+    await prepare_knowledge_run(handler, context_anchor, user_id, conversation_id, required=params.get('_knowledge_refs_required') is True, question=text_content)
     if getattr(handler, '_knowledge_run', None):
         import json
         prefix='知识画布运行快照：'
         messages=[m for m in messages if not (m.get('role')=='system' and str(m.get('content','')).startswith(prefix))]
         messages.insert(0, {'role':'system','content':prefix+json.dumps(handler._knowledge_run.introduction(), ensure_ascii=False)})
-    context_ready_at = time.monotonic()
     from services.handlers.context_snapshot import ContextAnchor
+    if isinstance(context_anchor, ContextAnchor):
+        from services.knowledge_workspace.ai_journal import apply_preferences
+        messages = await apply_preferences(messages, handler, user_id)
+    context_ready_at = time.monotonic()
     if isinstance(context_anchor, ContextAnchor):
         import asyncio
         from services.handlers.resource_manifest import build_resource_manifest

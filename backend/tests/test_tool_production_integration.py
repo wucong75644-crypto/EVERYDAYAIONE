@@ -38,6 +38,7 @@ class ChatHarness(ChatToolMixin):
 @pytest.fixture
 def setup(monkeypatch, tmp_path):
     from core.config import get_settings
+    monkeypatch.setattr(get_settings(), 'crawler_enabled', True)
     settings = get_settings()
     monkeypatch.setattr(settings, "file_workspace_root", str(tmp_path))
     monkeypatch.setattr(settings, "file_workspace_enabled", True)
@@ -320,10 +321,10 @@ async def test_cache_cannot_survive_revoked_membership(setup):
     executor = MockHandlerExecutor(agent_domain="general")
     runtime = executor.tool_runtime
     args = {"query": "x"}
-    first = await runtime.execute("search_knowledge", args, call_id="a", cache=cache)
-    cached = await runtime.execute("search_knowledge", args, call_id="b", cache=cache)
+    first = await runtime.execute("social_crawler", args, call_id="a", cache=cache)
+    cached = await runtime.execute("social_crawler", args, call_id="b", cache=cache)
     executor.db.active = False
-    denied = await runtime.execute("search_knowledge", args, call_id="c", cache=cache)
+    denied = await runtime.execute("social_crawler", args, call_id="c", cache=cache)
     assert first.execution.handler_started and cached.execution.cached
     assert denied.execution.status == "not_started"
     assert executor.handler.await_count == 1
@@ -755,9 +756,9 @@ async def test_declared_permission_is_loaded_without_trusting_a_prior_boolean(se
 async def test_cache_write_failure_preserves_completed_business_and_single_use(setup):
     executor = MockHandlerExecutor(agent_domain="general")
     cache = Mock(get=Mock(return_value=None), put=Mock(side_effect=RuntimeError("cache unavailable")))
-    result = await executor.tool_runtime.execute("search_knowledge", {"query": "x"}, call_id="cached", cache=cache)
+    result = await executor.tool_runtime.execute("social_crawler", {"query": "x"}, call_id="cached", cache=cache)
     assert result.execution.status == "succeeded" and result.execution.handler_started
-    duplicate = await executor.tool_runtime.execute("search_knowledge", {"query": "x"}, call_id="cached", cache=cache)
+    duplicate = await executor.tool_runtime.execute("social_crawler", {"query": "x"}, call_id="cached", cache=cache)
     assert duplicate.execution.status == "not_started"
     executor.handler.assert_awaited_once()
     cache.put.assert_called_once()

@@ -76,6 +76,8 @@ class Settings(BaseSettings):
     # V1 rollout: owner explicitly authorized all signed-in accounts on 2026-10-19.
     # An explicit false remains the operational kill switch.
     knowledge_derivation_enabled: bool = False
+    knowledge_ai_journal_enabled: bool = True  # Personal knowledge branch; requires migration 333.
+    knowledge_evidence_assessment_enabled: bool = True
     knowledge_default_scope_enabled: bool = True
     knowledge_media_enabled: bool = True
     knowledge_vision_model: str = "qwen3.8-flash"
@@ -231,7 +233,12 @@ class Settings(BaseSettings):
     dag_global_timeout: float = 180.0   # ERP 查询全局兜底超时（秒）
 
     # Agent 知识库配置
-    kb_enabled: bool = True                              # 知识库总开关
+    kb_enabled: bool = True                              # 旧经验库兼容总开关，不控制新画布或指标
+    kb_legacy_search_enabled: bool = False               # Compatibility only; not the new workspace.
+    kb_legacy_extraction_enabled: bool = False
+    kb_legacy_scoring_enabled: bool = False
+    kb_legacy_seed_enabled: bool = False
+    kb_metrics_enabled: bool = True                     # Independent of legacy knowledge retirement.
     kb_extraction_model: str = "qwen3.8-flash"           # 知识提取模型
     kb_extraction_fallback_model: str = "qwen3.8-max"   # 降级模型
     kb_extraction_timeout: float = 30.0                # 知识提取读取超时（秒），connect=5s
