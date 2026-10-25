@@ -1,3 +1,4 @@
+vi.mock('../DerivedDirectory',()=>({DerivedDirectory:()=>null,DerivedTags:()=>null}));
 import { fireEvent,render,screen,waitFor,cleanup } from '@testing-library/react';
 import { afterEach,describe,it,expect,vi } from 'vitest';
 import { CanvasAnnotationDialog,CanvasGroupOverlays } from '../CanvasAnnotations';

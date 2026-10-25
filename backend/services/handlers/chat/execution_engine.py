@@ -370,14 +370,22 @@ async def execute_chat(
         from services.knowledge_workspace.chat import KnowledgeRun
         knowledge_run=getattr(handler,'_knowledge_run',None)
         if isinstance(knowledge_run,KnowledgeRun):
+            for part in parts:
+                if isinstance(part,TextPart):
+                    part.text=await asyncio.to_thread(knowledge_run.normalize_citations,part.text)
+            totals.text=await asyncio.to_thread(knowledge_run.normalize_citations,totals.text)
+            for block in blocks:
+                if block.get('type')=='text' and isinstance(block.get('text'),str):
+                    block['text']=await asyncio.to_thread(knowledge_run.normalize_citations,block['text'])
             footer=await asyncio.to_thread(knowledge_run.evidence_footer)
-            parts.append(TextPart(text=footer)); totals.text += footer
-            if blocks:
-                evidence={'type':'text','text':footer}
-                blocks.append(evidence)
-                await output.on_block(evidence)
-            else:
-                await output.on_text(footer)
+            if footer:
+                parts.append(TextPart(text=footer)); totals.text += footer
+                if blocks:
+                    evidence={'type':'text','text':footer}
+                    blocks.append(evidence)
+                    await output.on_block(evidence)
+                else:
+                    await output.on_text(footer)
         await output.flush()
         if form_hint:
             parts.append(TextPart(text=form_hint))

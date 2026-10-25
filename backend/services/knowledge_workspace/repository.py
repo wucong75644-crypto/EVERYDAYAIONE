@@ -156,6 +156,13 @@ class Repository:
             return c.fetchone()
 
     def search(self, container_id, query, cursor=None):
+        with self.cursor() as c:
+            c.execute("SELECT to_regprocedure('public.kb_derived_document(uuid,uuid)') IS NOT NULL AS enabled")
+            derived_enabled=c.fetchone()['enabled']
+        from core.config import get_settings
+        if derived_enabled and get_settings().knowledge_derivation_enabled:
+            from .retrieval import search_nodes
+            return search_nodes(self,container_id,query,cursor)
         # RLS is applied before a result can leave the database, including old ACL grants.
         # Literal substring matching also supports Chinese; %, _ are ordinary characters.
         with self.cursor() as c:
@@ -205,3 +212,35 @@ class Repository:
         with self.cursor() as c:
             c.execute('SELECT public.kb_file_version(%s,%s,%s) AS version', (object_id, binding_id, revision))
             return c.fetchone()['version']
+
+    def document(self, object_id, generation_id=None):
+        from .derived_document import effective_document, source_links
+        obj=self.object(object_id)
+        if not obj:return None
+        from core.config import get_settings
+        if generation_id is None and not get_settings().knowledge_derivation_enabled:
+            return {**obj, 'derived': None}
+        with self.cursor() as c:
+            c.execute("SELECT to_regprocedure('public.kb_derived_document(uuid,uuid)') IS NOT NULL AS enabled")
+            if not c.fetchone()['enabled']:return {**obj,'derived':None}
+            c.execute('SELECT public.kb_derived_document(%s,%s) AS value',(object_id,generation_id));value=c.fetchone()['value']
+            if value is None:return None
+            c.execute('SELECT canvas_data FROM public.kb_canvas_nodes WHERE object_id=%s',(object_id,));row=c.fetchone()
+            data=effective_document(value,(row or {}).get('canvas_data',{}).get('labels',[]))
+            data['source_links']=source_links(data,object_id)
+            return {**obj,'derived':data}
+
+    def knowledge_override(self, object_id, key, value, revision, command_id):
+        with self.cursor() as c:
+            c.execute('SELECT public.kb_set_knowledge_override(%s,%s,%s,%s,%s) AS revision',(object_id,key,Jsonb(value),revision,command_id))
+            return c.fetchone()
+
+    def organize(self, container_id, cursor=None):
+        """Explicit bounded retry/backfill; authorization is checked by each enqueue."""
+        with self.cursor() as c:
+            c.execute("SELECT id FROM public.kb_containers WHERE id=%s AND public.kb_can(id,'write') AND deleted_at IS NULL AND NOT undo_hidden",(container_id,))
+            if not c.fetchone():return None
+            c.execute("SELECT id FROM public.kb_objects WHERE container_id=%s AND deleted_at IS NULL AND NOT undo_hidden AND (%s::uuid IS NULL OR id>%s::uuid) ORDER BY id LIMIT 51",(container_id,cursor,cursor))
+            rows=c.fetchall()
+            for row in rows[:50]:c.execute('SELECT public.kb_enqueue_derivation(%s)',(row['id'],))
+            return {'queued':len(rows[:50]),'next_cursor':str(rows[49]['id']) if len(rows)>50 else None}

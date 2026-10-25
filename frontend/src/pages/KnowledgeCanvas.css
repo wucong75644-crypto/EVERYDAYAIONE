@@ -158,3 +158,5 @@
 .kc-node-files-dropdown{max-width:calc(100vw - 16px);max-height:var(--radix-dropdown-menu-content-available-height);overflow-y:auto}
 
 .kc-node-files-dropdown{font-size:13px;line-height:1.4;min-width:160px;padding:4px}.kc-node-files-dropdown [role=menuitem]{min-height:30px;padding:6px 10px}
+
+.kc-derived-directory{overflow:auto;max-height:55%;flex:0 1 auto;padding:6px 0;font-size:13px}.kc-derived-directory h4{margin:8px 0 4px}.kc-derived-directory p{white-space:pre-wrap;margin:4px 0}.kc-derived-directory a,.kc-derived-directory button{font-size:12px;margin-right:8px}.kc-derived-edit textarea{min-height:70px!important}.kc-derived-tags{display:flex;gap:6px;flex-wrap:wrap}.kc-derived-tags>span{background:#8daaff20;border-radius:6px;padding:3px 6px}

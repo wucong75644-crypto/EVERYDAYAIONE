@@ -202,7 +202,8 @@ class ToolExecutor(
             from services.knowledge_workspace.chat import unavailable
             if self.knowledge_run is None or not self.personal_context_allowed: unavailable()
             result = await asyncio.to_thread(self.knowledge_run.execute, action, args)
-            return AgentResult(summary=json.dumps(result, ensure_ascii=False), status='success')
+            from services.knowledge_workspace.model_view import present
+            return AgentResult(summary=json.dumps(present(result), ensure_ascii=False), status='success')
         return execute
 
     async def _search_knowledge(self, args: Dict[str, Any]) -> "AgentResult":

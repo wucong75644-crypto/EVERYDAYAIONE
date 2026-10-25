@@ -91,7 +91,7 @@ function ReferencePicker({ nodes, disabled, onReference }: { nodes: KnowledgeNod
   </details>;
 }
 
-export function KnowledgeFiles({ object, nodes, onClose, onBusyChange,onFilesChanged,entry,position }: { object: KnowledgeObject; nodes: KnowledgeNode[]; onClose: () => void; onBusyChange: (busy: boolean) => void;onFilesChanged?:(files:KnowledgeFile[])=>void;entry?:FileEntryAction;position?:{left:number;top:number} }) {
+export function KnowledgeFiles({ object, nodes, onClose, onBusyChange,onFilesChanged,entry,position,onLabels }: { object: KnowledgeObject; nodes: KnowledgeNode[]; onClose: () => void; onBusyChange: (busy: boolean) => void;onFilesChanged?:(files:KnowledgeFile[])=>void;onLabels?:()=>void;entry?:FileEntryAction;position?:{left:number;top:number} }) {
   const [rows, setRows] = useState<KnowledgeFile[]>([]); const [loading, setLoading] = useState(true);
   const [reading, setReading] = useState(false); const listController = useRef<AbortController | null>(null);
   const [pending, setPending] = useState(false); const busy = useRef(false);
@@ -156,7 +156,7 @@ export function KnowledgeFiles({ object, nodes, onClose, onBusyChange,onFilesCha
 
   const attachPanel = useCanvasSurfaceMotion(panel, entry?'menu':'panel');
   return <aside ref={attachPanel} className={entry?"kc-file-panel kc-file-popover":"kc-file-panel"} style={entry&&position?{...position,maxHeight:`max(80px, calc(100vh - ${position.top+8}px))`}:undefined} role={entry?"dialog":undefined} aria-label={entry?"添加文件":"文件资料"} onKeyDown={event => { if (event.key !== 'Escape' || event.defaultPrevented || preview || !event.currentTarget.contains(event.target as Node)) return; event.preventDefault(); event.stopPropagation(); if (!disabled) onClose(); }}>
-    <header><h2>{entry?entry.kind==='remove'?'移除附件':'添加文件':<>文件资料 · {rows.length}</>}</h2><button type="button" aria-label="关闭文件资料" disabled={disabled} onClick={onClose}><X size={18}/></button></header>
+    <header><h2>{entry?entry.kind==='remove'?'移除附件':'添加文件':<>文件资料 · {rows.length}</>}</h2><button type="button" aria-label="关闭文件资料" disabled={disabled} onClick={onClose}><X size={18}/></button>{onLabels&&<button type="button" disabled={disabled} onClick={onLabels}>标签</button>}</header>
     {!entry&&<div className="kc-files-subhead"><span title={object.title}>{object.title}</span><button type="button" aria-label="刷新文件列表" title="刷新文件列表" disabled={disabled} onClick={()=>{listController.current?.abort();const c=new AbortController();listController.current=c;setLoading(true);setError('');void knowledgeFilesApi.list(object.id,c.signal).then(list=>{if(!c.signal.aborted){setRows(list);onFilesChanged?.(list);}}).catch(e=>{if(!c.signal.aborted)setError(errorMessage(e));}).finally(()=>{if(!c.signal.aborted)setLoading(false);});}}><RefreshCw size={16}/></button>
     {object.can_write&&<Menu.Root><Menu.Trigger asChild><button type="button" disabled={disabled} aria-label="添加文件"><Plus size={16}/>添加</button></Menu.Trigger><Menu.Portal><Menu.Content className="kc-tools-menu" collisionPadding={10}><Menu.Item onSelect={()=>upload.current?.click()}>上传文件</Menu.Item><Menu.Item onSelect={()=>setMode('workspace')}>从工作区选择</Menu.Item><Menu.Item onSelect={()=>setMode('reference')}>引用其他节点文件</Menu.Item></Menu.Content></Menu.Portal></Menu.Root>}</div>}
     {error&&<p role="alert">{error}</p>}{pending&&<p role="status">正在保存文件…</p>}{reading&&<p role="status">正在读取文件…</p>}

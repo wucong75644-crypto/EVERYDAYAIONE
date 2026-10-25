@@ -283,6 +283,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     worker = BackgroundTaskWorker(db)
     worker_task = asyncio.create_task(worker.start())
     logger.info("BackgroundTaskWorker started")
+    from services.knowledge_workspace.derivation_jobs import DerivationWorker
+    knowledge_worker = DerivationWorker(db.pool)
+    knowledge_worker_task = asyncio.create_task(knowledge_worker.run())
 
     # 全局错误监控（loguru ERROR sink → DB 持久化 + 致命级推企微）
     import os
@@ -314,6 +317,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
+    await knowledge_worker.stop(knowledge_worker_task)
     from services.model_gateway import get_model_gateway
     await get_model_gateway().close()
 

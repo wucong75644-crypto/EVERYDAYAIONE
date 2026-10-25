@@ -5,7 +5,7 @@ import { KnowledgeReferenceTags } from './KnowledgeReferenceTags';
 import { knowledgeApi, knowledgeFilesApi } from '../../services/knowledge';
 import { request } from '../../services/api';
 import { useAuthStore } from '../../stores/useAuthStore';
-vi.mock('../../services/knowledge',()=>({knowledgeApi:{version:vi.fn()},knowledgeFilesApi:{versions:vi.fn(),content:vi.fn()}}));
+vi.mock('../../services/knowledge',()=>({knowledgeApi:{version:vi.fn(),document:vi.fn()},knowledgeFilesApi:{versions:vi.fn(),content:vi.fn()}}));
 vi.mock('../../services/api',()=>({request:vi.fn()}));
 vi.mock('../../preview/PreviewHost',()=>({default:({state}:{state:{kind:string;items?:{filename:string}[]}})=><div>{state.kind==='open' && `预览 ${state.items?.[0].filename}`}</div>}));
 beforeEach(()=>{vi.clearAllMocks();useAuthStore.setState({user:null,currentOrgId:null});});
@@ -48,4 +48,22 @@ it('focuses the source close control and supports Escape without substituting th
   const close=vi.fn();render(<KnowledgeSource objectId="o1" revision={2} bindingId={null} onClose={close}/>);
   await screen.findByLabelText('回答来源正文');expect(screen.getByRole('button',{name:'关闭回答来源'})).toHaveFocus();
   fireEvent.keyDown(screen.getByLabelText('回答来源正文'),{key:'Escape'});expect(close).toHaveBeenCalledTimes(1);
+});
+
+
+it('clears historical source content immediately across account or organization changes',async()=>{
+ vi.mocked(knowledgeApi.version).mockResolvedValueOnce({object_id:'o1',revision:2,title:'旧资料',body:'仅原企业可见',created_at:'2026-10-23'}).mockRejectedValueOnce(new Error('denied'));
+ render(<KnowledgeSource objectId="o1" revision={2} bindingId={null}/>);
+ await screen.findByDisplayValue('仅原企业可见');
+ act(()=>useAuthStore.setState({currentOrgId:'other-org'}));
+ expect(screen.queryByDisplayValue('仅原企业可见')).toBeNull();
+ expect(await screen.findByRole('alert')).toHaveTextContent('无权访问');
+});
+
+it('opens an exact generated source without substituting the current manual body',async()=>{
+ vi.mocked(knowledgeApi.document).mockResolvedValue({id:'o1',body:'当前人工内容',derived:{generation_id:'g1',status:'ready',tags:[],sections:[{id:'s',title:'当时的整理',text:'旧文件处理步骤',source_refs:[],kind:'material'}]}} as never);
+ render(<KnowledgeSource objectId="o1" revision={2} bindingId={null} generation="g1"/>);
+ expect(await screen.findByText('旧文件处理步骤')).toBeInTheDocument();
+ expect(screen.queryByText('当前人工内容')).toBeNull();
+ expect(knowledgeApi.document).toHaveBeenCalledWith('o1',expect.any(AbortSignal),'g1');
 });

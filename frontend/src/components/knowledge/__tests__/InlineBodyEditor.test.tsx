@@ -1,3 +1,4 @@
+vi.mock('../DerivedDirectory',()=>({DerivedDirectory:()=>null,DerivedTags:()=>null}));
 import {act,fireEvent,render,screen,cleanup} from '@testing-library/react';
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 import {InlineBodyEditor} from '../InlineBodyEditor';

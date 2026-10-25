@@ -1,4 +1,5 @@
 """V1 knowledge canvas. Server-side rollout and ACL apply to every request."""
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from uuid import UUID
 from fastapi import APIRouter, Query, Response
 from fastapi.responses import JSONResponse
@@ -31,7 +32,7 @@ def call(ctx, db, response, method, *args):
     repo = Repository(db.pool, DatabaseScope(ctx.user_id, ctx.org_id, DatabaseAccessKind.RUNTIME))
     try:
         data = getattr(repo, method)(*args)
-        if data is None and method in {'object', 'members', 'versions', 'version', 'search'}:
+        if data is None and method in {'object', 'members', 'versions', 'version', 'search', 'document', 'organize'}:
             return failure(404,'KNOWLEDGE_NOT_FOUND','内容不存在或无权访问')
         return {'success': True, 'data': data}
     except DatabaseError as e:
@@ -134,3 +135,33 @@ def canvas_history(ctx: OrgCtx, db: Database, response: Response):
 @router.post('/branch-snapshots')
 def capture_branch_snapshot(body: BranchSnapshotRequest, ctx: OrgCtx, db: Database, response: Response):
     return call(ctx,db,response,'branch_snapshot',body.snapshot_id,body.model_dump(mode='json'))
+
+
+class KnowledgeOverrideRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    command_id: UUID
+    key: str = Field(min_length=1,max_length=160,pattern=r'^(section:|tag:)')
+    value: dict
+    expected_revision: int = Field(ge=0)
+
+    @model_validator(mode='after')
+    def validate_value(self):
+        if set(self.value)-{'text','hidden'} or not self.value or ('text' in self.value and (not isinstance(self.value['text'],str) or len(self.value['text'])>12000)) or ('hidden' in self.value and type(self.value['hidden']) is not bool):
+            raise ValueError('invalid manual knowledge override')
+        if self.key.startswith('tag:') and set(self.value)!={'hidden'}:raise ValueError('tag override only supports hiding')
+        return self
+
+@router.get('/objects/{object_id}/document')
+def directory_document(object_id: UUID, ctx: OrgCtx, db: Database, response: Response, generation: UUID | None = None):
+    return call(ctx,db,response,'document',object_id,generation)
+
+@router.post('/objects/{object_id}/knowledge-overrides')
+def knowledge_override(object_id: UUID, body: KnowledgeOverrideRequest, ctx: OrgCtx, db: Database, response: Response):
+    return call(ctx,db,response,'knowledge_override',object_id,body.key,body.value,body.expected_revision,body.command_id)
+
+
+@router.post('/containers/{container_id}/organize')
+def organize(container_id: UUID, ctx: OrgCtx, db: Database, response: Response, cursor: UUID | None = None):
+    if not get_settings().knowledge_derivation_enabled:
+        return failure(404,'KNOWLEDGE_UNAVAILABLE','自动整理尚未启用')
+    return call(ctx,db,response,'organize',container_id,cursor)
