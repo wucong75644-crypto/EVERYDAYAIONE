@@ -22,6 +22,8 @@ FILE_SEARCH_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/file_search_
 TASK_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/scheduled_task_structured_schema.json').read_text())
 SMART_IMAGE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/smart_image_25_config_upgrade.json').read_text())
 WEB_SEARCH_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/web_search_protocol_01_schema.json').read_text())
+# The approved knowledge retirement changes only this routing reference.
+WEB_SEARCH_UPGRADE['function']['description'] = WEB_SEARCH_UPGRADE['function']['description'].replace('查询企业知识库 → search_knowledge', '查询知识库 → knowledge_search')
 ERP_SCOPE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/erp_order_scope_schema_upgrade.json').read_text())
 CHAT_IMAGE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/chat_image_default_tool_upgrade.json').read_text())
 
@@ -35,6 +37,8 @@ def image_upgrade_settings():
         'chat_image_async_enabled': True, 'chat_image_allowed_user_ids': '',
         'chat_image_transparent_enabled': False, 'chat_image_max_requests': 4,
         'chat_image_max_credits': 100,
+        # Exercise retained compatibility explicitly; production defaults stay off.
+        'kb_legacy_search_enabled': True,
     })
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr('core.config.get_settings', lambda: settings)
@@ -71,6 +75,8 @@ def test_full_spec_contract_unchanged(catalog, name):
         if key not in {'source', 'definition_kind'}:
             if key in CHAT_IMAGE_UPGRADE['spec_changes'].get(name, {}):
                 value = CHAT_IMAGE_UPGRADE['spec_changes'][name][key]
+            if name == 'search_knowledge' and key == 'availability':
+                value = {**value, 'feature_flags': ['kb_legacy_search_enabled']}
             if name == 'manage_scheduled_task' and key == 'effects':
                 # User-authorized lifecycle upgrade after block 07: trusted chat
                 # can now submit task definitions. Keep the frozen 07 baseline.
@@ -109,7 +115,7 @@ def test_complete_helpers_handlers_and_schema_order(catalog, org):
             expected[key].sort(key=BASELINE['helpers'][str(org)]['chat'].index
                                if key == 'core' else None)
     view = 'helpers/' + str(org) + '/'
-    chat_skill_tools = {'knowledge_outline','knowledge_search','knowledge_read','knowledge_follow_reference',
+    chat_skill_tools = {'knowledge_discover','knowledge_outline','knowledge_search','knowledge_read','knowledge_follow_reference',
         'list_personal_skills_for_edit', 'prepare_skill_draft', 'get_personal_skill_for_edit',
         # The planner is an intentional new public tool; keep the frozen legacy
         # catalog assertions focused on the pre-existing tool contracts.
@@ -287,7 +293,7 @@ def test_entire_context_matrix_preserves_authorization(catalog, baseline_catalog
         authorized_tool_names=frozenset(BASELINE['specs']),
         authorization_snapshot={'version': 1, 'allowed_tools': list(BASELINE['specs'])},
     )
-    context = replace(context, feature_flags={**context.feature_flags, 'chat_image_async_enabled': True})
+    context = replace(context, feature_flags={**context.feature_flags, 'chat_image_async_enabled': True, 'kb_legacy_search_enabled': True})
     def result(registry):
         resolved = registry.resolve(context, policy=ToolPolicy(registry),
                                     advertisement=LegacyAdvertisement(BASELINE['specs']))
@@ -341,6 +347,14 @@ def test_planner_preflight_and_frozen_authorization_agree(catalog, monkeypatch):
     assert ScheduledExecutionPolicy.from_dict(policy.as_dict(), timeout_sec=120).as_dict() == policy.as_dict()
     assert set(policy.as_dict()) == {'version', 'allowed_tools', 'required_tools', 'tool_timeout_sec',
                                     'erp_step_timeout_sec', 'final_reserve_sec', 'allow_empty_result'}
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+def test_preflight_obeys_legacy_knowledge_retirement(monkeypatch, enabled):
+    from core.config import get_settings
+    from services.scheduler.scheduled_task_workflow import preflight_allowed_tool_names
+    monkeypatch.setattr(get_settings(), 'kb_legacy_search_enabled', enabled)
+    assert ('search_knowledge' in preflight_allowed_tool_names('org-a')) is enabled
 
 
 @pytest.mark.parametrize('name,args,domain', [
@@ -434,9 +448,9 @@ importlib.import_module(sys.argv[1])
 from config.chat_tools import get_chat_tools
 from services.tools import build_tool_catalog
 from services.tool_executor import ToolExecutor
-assert len(get_chat_tools('org-a')) == 41
-assert len(build_tool_catalog().specs()) == 44
-assert len(ToolExecutor(None, 'actor-a', 'c1', 'org-a')._handlers) == 44
+assert len(get_chat_tools('org-a')) == 42
+assert len(build_tool_catalog().specs()) == 45
+assert len(ToolExecutor(None, 'actor-a', 'c1', 'org-a')._handlers) == 45
 '''
     run = subprocess.run([sys.executable, '-c', script, first], text=True, capture_output=True, timeout=30)
     assert run.returncode == 0, run.stderr
