@@ -521,5 +521,40 @@ class DeleteProjectCommand(StrictModel):
     operation: Literal['delete_project']
     payload: DeleteProjectPayload
 
-Command = Annotated[Union[DeleteProjectCommand, RelationTopicCommand, MapThemeCommand, DeleteTopicCommand, TopicForestCommand, InsertParentCommand, TemplateCommand, RelationAppearanceCommand, SummaryCommand, CanvasDataCommand, CreateCommand, ProjectCommand, DocumentCommand, TitleCommand,
+class ContentChild(StrictModel):
+    title: Title
+    body: str = Field(min_length=1, max_length=24000)
+    position: Position
+
+class ContentPayload(StrictModel):
+    container_id: UUID
+    expected_container_revision: int = Field(ge=1)
+    object_id: UUID | None = None
+    expected_revision: int | None = Field(default=None, ge=1)
+    parent_id: UUID | None = None
+    position: Position
+    title: Title
+    body: str = Field(min_length=1, max_length=100000)
+    children: list[ContentChild] = Field(default_factory=list, max_length=12)
+    nodes: list[MoveNode] = Field(default_factory=list, max_length=10000)
+    after_object_id: UUID | None = None
+    before_object_id: UUID | None = None
+    manual_layout: ManualLayout | None = None
+    structure: TopicStructure | None = None
+    input_text: str | None = Field(default=None, max_length=12000)
+
+    @model_validator(mode='after')
+    def existing_revision(self):
+        if (self.object_id is None) != (self.expected_revision is None):
+            raise ValueError('已有节点必须提供版本')
+        if self.after_object_id and self.before_object_id:
+            raise ValueError('不能同时指定前后位置')
+        return self
+
+class ContentCommand(StrictModel):
+    command_id: UUID
+    operation: Literal['apply_content']
+    payload: ContentPayload
+
+Command = Annotated[Union[ContentCommand, DeleteProjectCommand, RelationTopicCommand, MapThemeCommand, DeleteTopicCommand, TopicForestCommand, InsertParentCommand, TemplateCommand, RelationAppearanceCommand, SummaryCommand, CanvasDataCommand, CreateCommand, ProjectCommand, DocumentCommand, TitleCommand,
                          ReparentCommand, MoveCommand, BranchCommand, HistoryCommand, BatchCommand, GroupMoveCommand, ConnectCommand, DeleteRelationCommand, ReconnectCommand, MemberCommand], Field(discriminator='operation')]

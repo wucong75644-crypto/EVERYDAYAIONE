@@ -2,6 +2,7 @@ import {quickPlacement} from '../components/knowledge/quickPlacement';
 import {AttachmentSummary,BoundFilePreview,NodeFileMenu} from '../components/knowledge/KnowledgeAttachmentUI';
 import type {KnowledgeFileVersion} from '../services/knowledge';
 import ImagePreviewModal from '../components/chat/media/ImagePreviewModal';
+import {DirectoryPanel} from '../components/knowledge/DirectoryPanel';
 import {InlineBodyEditor} from '../components/knowledge/InlineBodyEditor';
 import {manualTopicPath} from '../components/knowledge/manualLayout';
 import type {ManualLayout} from '../services/knowledge';
@@ -79,8 +80,8 @@ import { KnowledgeHistory } from '../components/knowledge/KnowledgeHistory';
 import { KnowledgeSearch } from '../components/knowledge/KnowledgeSearch';
 import { Dialog } from '../components/primitives/Dialog';
 const noHistory: CanvasHistory = { undo: null, redo: null };
-const createsNode=(operation:string)=>operation.startsWith('create_')||operation==='insert_parent';
-const historyLabels: Record<string, string> = { delete_project:'删除项目', create_relation_topic:'浮动主题与关联线',update_map_theme:'全图样式',delete_topic:'删除主题（保留子主题）',create_topics:'批量创建主题',insert_parent:'插入父主题', create_template:'创建主题', update_relation: '关联线文字与弯曲', update_canvas_data: '排列、节点信息与样式', create_summaries: '创建概要', create_project: '创建项目', create_object: '创建节点', update_title: '改名', connect: '连线', delete_relation: '删除关联线', reconnect_relation: '重连关联线', move_branches: '批量移动分支', move_branch: '分支调整', reparent: '层级调整', move_nodes: '移动', copy_branches: '粘贴分支', delete_branches: '删除分支' };
+const createsNode=(operation:string)=>operation.startsWith('create_')||operation==='insert_parent'||operation==='apply_content';
+const historyLabels: Record<string, string> = { apply_content:'整理节点内容',delete_project:'删除项目', create_relation_topic:'浮动主题与关联线',update_map_theme:'全图样式',delete_topic:'删除主题（保留子主题）',create_topics:'批量创建主题',insert_parent:'插入父主题', create_template:'创建主题', update_relation: '关联线文字与弯曲', update_canvas_data: '排列、节点信息与样式', create_summaries: '创建概要', create_project: '创建项目', create_object: '创建节点', update_title: '改名', connect: '连线', delete_relation: '删除关联线', reconnect_relation: '重连关联线', move_branches: '批量移动分支', move_branch: '分支调整', reparent: '层级调整', move_nodes: '移动', copy_branches: '粘贴分支', delete_branches: '删除分支' };
 const empty: KnowledgeScene = { containers: [], nodes: [], relations: [] };
 const scopes = { personal: '个人知识库', project: '项目', team: '团队知识库' };
 const kinds = { topic: '主题', document: '文档', rule: '规则', project: '新项目' };
@@ -141,9 +142,11 @@ export default function KnowledgeCanvas() {
   const [fileEntry,setFileEntry]=useState<{action:FileEntryAction;position:{left:number;top:number}}|null>(null);const fileOpenGeneration=useRef(0);
   const [fileObject, setFileObject] = useState<KnowledgeObject | null>(null); const [filePending, setFilePending] = useState(false);
   const [quick, setQuick] = useState<QuickDraft | null>(null);
+  const [contentText,setContentText]=useState(''),[contentInput,setContentInput]=useState(false);
+  const [,snapshotAttempt]=useState(0);
   const editingBase = useRef('');
   const editors = useRef({ quick, draft, editing }); editors.current = { quick, draft, editing };
-  type SavedDraft = {relationText?:RelationLabelDraft|null;visual?:typeof visual;annotation?:typeof annotation;mediaEditor?:typeof mediaEditor; mapEditor?:MapThemeDraft|null; quick: QuickDraft | null; draft: Draft | null; editing: KnowledgeObject | null; base: string; attempt: typeof unconfirmed.current };
+  type SavedDraft = {contentText?:string;relationText?:RelationLabelDraft|null;visual?:typeof visual;annotation?:typeof annotation;mediaEditor?:typeof mediaEditor; mapEditor?:MapThemeDraft|null; quick: QuickDraft | null; draft: Draft | null; editing: KnowledgeObject | null; base: string; attempt: typeof unconfirmed.current };
   const [mediaEditor,setMediaEditor]=useState<{node:KnowledgeNode;mode:'video'|'link';draft?:MediaDraft;containerRevision?:number}|null>(null);
   const [relationText,setRelationText]=useState<RelationLabelDraft|null>(null);
   const [mediaView,setMediaView]=useState<{node:KnowledgeNode;source:'video'|'link'}|null>(null);
@@ -152,8 +155,8 @@ export default function KnowledgeCanvas() {
   const [brush,setBrush]=useState(false);
   const [styleClipboard, setStyleClipboard] = useState<StyleSnapshot | undefined>();
   const [annotation, setAnnotation] = useState<{ node: KnowledgeNode; mode: AnnotationMode;draft?:AnnotationDraft;containerRevision?:number } | null>(null);
-  const dirty = !!relationText || !!mapEditor || !!mediaEditor || !!visual || !!annotation || !!unconfirmed.current || !!(quick && (!quick.node || (quick.title !== quick.node.title || JSON.stringify(quick.titleFormat)!==JSON.stringify(quick.node.canvas_data?.title_format)))) || !!(draft && (draft.title || draft.body)) || !!(editing?.can_write && editing.body !== editingBase.current);
-  const savedDraft: SavedDraft | null = dirty ? {relationText,visual,annotation,mediaEditor, mapEditor,quick, draft, editing, base: editingBase.current, attempt: unconfirmed.current } : null;
+  const dirty = !!contentText || !!relationText || !!mapEditor || !!mediaEditor || !!visual || !!annotation || !!unconfirmed.current || !!(quick && (!quick.node || (quick.title !== quick.node.title || JSON.stringify(quick.titleFormat)!==JSON.stringify(quick.node.canvas_data?.title_format)))) || !!(draft && (draft.title || draft.body)) || !!(editing?.can_write && editing.body !== editingBase.current);
+  const savedDraft: SavedDraft | null = dirty ? {contentText,relationText,visual,annotation,mediaEditor, mapEditor,quick, draft, editing, base: editingBase.current, attempt: unconfirmed.current } : null;
   const draftStore = useCanvasDraft(identity, savedDraft, status === 'ready' && loadedIdentity === identity);
   const closeDraft = (close: () => void) => { if (unconfirmed.current) { setError('保存结果尚未确认，请先点击刷新核对。'); return; } if (!dirty || window.confirm('放弃尚未保存的修改？')) { if (draftStore.clear()) close(); else setError('草稿未能安全清理，请保留页面并重试。'); } };
   const restoreDraft = async () => {
@@ -203,7 +206,7 @@ export default function KnowledgeCanvas() {
       if(record.annotation)setAnnotation(record.annotation);
       if(record.mediaEditor)setMediaEditor(record.mediaEditor);
       if(record.mapEditor)setMapEditor({...record.mapEditor,theme:normalizeMapTheme(record.mapEditor.theme)});
-      if (recoveredBody) { editingBase.current = record.base; setEditing(recoveredBody); }
+      if (recoveredBody) { editingBase.current = record.base; setEditing(recoveredBody); setContentText(record.contentText??'');setContentInput(!!record.contentText); }
       if (versionChanged) setError('内容已有新版本，草稿已恢复；保存仍会进行版本校验，请先对照最新内容。');
       cancelQuick.current = false; setQuick(record.quick); setDraft(record.draft); unconfirmed.current = record.attempt;
       if (record.quick) revealQuick(record.quick.position);
@@ -215,6 +218,7 @@ export default function KnowledgeCanvas() {
   const clickCaret=useRef<number|undefined>(undefined);
   const typingCaret=useRef(false),imeActive=useRef(false),imeEndAt=useRef(-Infinity),imeCanvasNode=useRef<string|null>(null);
   const mountQuickInput = useCallback((input: TitleEditorHandle | null) => { quickInput.current = input; input?.focus({ preventScroll: true }); if(typingCaret.current){input?.setSelectionRange(input.value.length,input.value.length);typingCaret.current=false;}else if(input){const range=editSelection(input.value,false);const offset=clickCaret.current;input.setSelectionRange(offset??range.start,offset??range.end);clickCaret.current=undefined;} }, []);
+  const mountContentInput=useCallback((input:HTMLTextAreaElement|null)=>mountQuickInput(input as unknown as TitleEditorHandle),[mountQuickInput]);
   const quickSaving = useRef(false); const cancelQuick = useRef(false);
   const createdNode = useRef<KnowledgeNode | null>(null);
 
@@ -259,7 +263,7 @@ export default function KnowledgeCanvas() {
   useEffect(() => {
     const controller = new AbortController();invalidateWriteSession();busy.current=false;quickSaving.current=false;setPending(false); const current = () => !controller.signal.aborted && identityRef.current === identity;
     suppressReveal.current = false; browseEpoch.current++;
-    setDirectoryOpen({}); setAnnotation(null); setGroupSelection(null); setSelectedRelation(null); setHistory(noHistory); setHistoryUnavailable(false); setBranchPreview(null); setFolded(new Set()); setQuick(null); setFileObject(null);setFileEntry(null); setFilePending(false); setLoadedIdentity(identity); unconfirmed.current = null; setScene(empty); setStatus('loading'); setDraft(null); setEditing(null);setBodyHistory(null);setImageView(null);setFilePreview(null); setMemberPanel(null); setMenu(null); setSelected(null); setQuery(''); setProject(''); setError('');
+    setDirectoryOpen({}); setAnnotation(null); setGroupSelection(null); setSelectedRelation(null); setHistory(noHistory); setHistoryUnavailable(false); setBranchPreview(null); setFolded(new Set()); setQuick(null); setFileObject(null);setFileEntry(null); setFilePending(false); setLoadedIdentity(identity); unconfirmed.current = null; setScene(empty); setStatus('loading'); setDraft(null); setEditing(null);setContentText('');setContentInput(false);setBodyHistory(null);setImageView(null);setFilePreview(null); setMemberPanel(null); setMenu(null); setSelected(null); setQuery(''); setProject(''); setError('');
     void (async () => {
       try {
         const availability = await knowledgeApi.available(controller.signal);
@@ -291,6 +295,8 @@ export default function KnowledgeCanvas() {
     }
     const attempt = unconfirmed.current ?? { operation, payload, id: crypto.randomUUID(), key: requestKey };
     unconfirmed.current = attempt;
+    // Model preparation may already be pending; still persist this exact write receipt.
+    snapshotAttempt(value=>value+1);
     busy.current = true; setPending(true); setError(''); setHistoryNotice(''); const key = identity, session=writeSession.current, browseAtStart = browseEpoch.current;
     try {
       const result = await knowledgeApi.command(operation, payload, attempt.id);
@@ -320,6 +326,11 @@ export default function KnowledgeCanvas() {
   // Reconcile the exact acknowledged payload, never the text typed after it was sent.
   const reconcileSaved = (operation: string, payload: Record<string, unknown>) => {
     const current = editors.current;
+    if(operation==='apply_content'){
+      setContentText('');setContentInput(false);setQuick(null);
+      if(current.editing&&current.editing.id===payload.object_id){const body=String(payload.body);editingBase.current=body;setEditing({...current.editing,body,revision:sceneRef.current.nodes.find(n=>n.id===payload.object_id)?.revision??Number(payload.expected_revision)+1});}
+      return;
+    }
     if(operation==='create_relation_topic')payload={...payload,title:'自由主题'};
     if(operation==='create_template'||operation==='create_topics'||operation==='insert_parent')payload={...payload,title:(payload.topics as {title:string;title_format?:TitleFormat}[])?.[0]?.title,title_format:(payload.topics as {title_format?:TitleFormat}[])?.[0]?.title_format};
     const created = createdNode.current ? { ...createdNode.current, title: String(payload.title), revision: 1 } : null;
@@ -469,18 +480,18 @@ export default function KnowledgeCanvas() {
     const n = parent ? byId.get(parent) : undefined; const c = n ? container(n.container_id) : inheritContainer ? container(inheritContainer) : active;
     setError(''); setMenu(null); setDraft({ type: type ?? (tab === 'project' && !c ? 'project' : 'topic'), container: c?.id ?? '', parent, title: '', body: '', position: freePosition(position) });
   };
-  const openFiles=async(n:KnowledgeNode)=>{if(busy.current||filePending||editors.current.editing&&editors.current.editing.body!==editingBase.current)return;const key=identity,generation=++fileOpenGeneration.current;try{const object=await knowledgeApi.object(n.id);if(identityRef.current===key&&generation===fileOpenGeneration.current){setFileEntry(null);setEditing(null);setSelected(n.id);setMulti(new Set());setFileObject(object);}}catch(e){if(identityRef.current===key&&generation===fileOpenGeneration.current)setError(message(e));}};
+  const openFiles=async(n:KnowledgeNode)=>{if(busy.current||filePending||contentText||unconfirmed.current||editors.current.editing&&editors.current.editing.body!==editingBase.current)return;const key=identity,generation=++fileOpenGeneration.current;try{const object=await knowledgeApi.object(n.id);if(identityRef.current===key&&generation===fileOpenGeneration.current){setFileEntry(null);setEditing(null);setSelected(n.id);setMulti(new Set());setFileObject(object);}}catch(e){if(identityRef.current===key&&generation===fileOpenGeneration.current)setError(message(e));}};
   const openFileAction=async(n:KnowledgeNode,action:FileEntryAction)=>{
-    if(busy.current||filePending||editors.current.editing&&editors.current.editing.body!==editingBase.current)return;
+    if(busy.current||filePending||contentText||unconfirmed.current||editors.current.editing&&editors.current.editing.body!==editingBase.current)return;
     const generation=++fileOpenGeneration.current,key=identity;
     try{const object=await knowledgeApi.object(n.id);if(identityRef.current!==key||generation!==fileOpenGeneration.current)return;if(!object.can_write){setError('当前节点已无编辑权限');return;}
       const rect=viewport.current?.querySelector<HTMLElement>(`[data-node-id="${n.id}"] [aria-label="文件资料"]`)?.getBoundingClientRect();
       setEditing(null);setSelected(n.id);setMulti(new Set());setFileEntry({action,position:{left:Math.max(8,Math.min(rect?.left??100,window.innerWidth-410)),top:Math.max(70,(rect?.bottom??150)+8)}});setFileObject(object);
     }catch(e){if(identityRef.current===key)setError(message(e));}
   };
-  const openEditor = async (n: KnowledgeNode) => {
-    if (busy.current || filePending) return;if(editors.current.editing?.id===n.id)return;if(editors.current.editing&&editors.current.editing.body!==editingBase.current)return; const key = identity; setError('');
-    try { const object = await knowledgeApi.object(n.id); if (identityRef.current === key) { setFileObject(null); editingBase.current = object.body; setEditing(object); } }
+  const openEditor = async (n: KnowledgeNode, inputMode=false) => {
+    if (busy.current || filePending || quick) return;if(editors.current.editing?.id===n.id){setContentInput(inputMode);return;}if(contentText||unconfirmed.current)return;if(editors.current.editing&&editors.current.editing.body!==editingBase.current)return; const key = identity; setError('');
+    try { const object = await knowledgeApi.object(n.id); if (identityRef.current === key) { setFileObject(null);setContentInput(inputMode);setContentText(''); editingBase.current = object.body; setEditing(object); } }
     catch (e) { if (identityRef.current === key) setError(message(e)); }
   };
   const focusFrame = useRef<number | null>(null);
@@ -568,9 +579,48 @@ export default function KnowledgeCanvas() {
     const sample:KnowledgeNode={id:'draft-style',node_id:'draft-style',container_id:q.container,parent_id:q.parent,kind:'topic',title:q.title,revision:1,layout_revision:1,x:0,y:0};
     const data=mapAppearance(sample,nodes,active?.canvas_theme);return {...displayedTitleStyle(viewport.current),fontSize:newTopicFont(q.parent,q.container),fontWeight:400,...titleStyle(data),...(data?.style?.color?{color:data.style.color}:{})};
   };
+  const submitContent = async (text:string, object:KnowledgeObject|null, entry:QuickDraft|null) => {
+    if(busy.current||!text.trim()||(!object&&!entry))return false;
+    if(unconfirmed.current){await checkSave();return false;}
+    const key=identity,session=writeSession.current;
+    busy.current=true;setPending(true);setError('');
+    try{
+      const cid=object?.container_id??entry!.container;
+      const expectedContainer=sceneRef.current.containers.find(c=>c.id===cid)!.revision;
+      const plan=await knowledgeApi.contentPlan({container_id:cid,...(object?{object_id:object.id,expected_revision:object.revision}:{}),text});
+      if(identityRef.current!==key||writeSession.current!==session)return false;
+      const current=sceneRef.current.nodes.filter(n=>n.container_id===cid),target=object?current.find(n=>n.id===object.id):entry?.parent?current.find(n=>n.id===entry.parent):undefined;
+      const outline=object?plan.children.map(child=>({title:child.title,parent_index:-1})):[{title:plan.title,parent_index:-1,...(entry?.structure?{structure:entry.structure}:{})},...plan.children.map(child=>({title:child.title,parent_index:0}))];
+      const theme=sceneRef.current.containers.find(c=>c.id===cid)?.canvas_theme;
+      const measured=contentSizes(current);
+      for(const node of current){const size=measured.get(node.id)!;size.height=Math.max(size.height,topicSize({...node,canvas_data:mapAppearance(node,current,theme)}).height);}
+      const placement=outline.length?planTopicOutline(outline,current,cid,target,entry?.position??{x:target?.x??0,y:target?.y??0},measured,theme?.font_size??15,theme):null;
+      if(placement&&entry&&!entry.fixedPosition&&(entry.after||entry.before)){
+        const anchor=current.find(n=>n.id===(entry.before??entry.after));
+        if(!anchor)throw new Error('同级插入目标已更新，请刷新后重试');
+        const combined=[...current,...placement.virtual],sizes=new Map([...contentSizes(combined),...measured]);
+        const inserted=planBranch(combined,'entry:0',{x:0,y:0},{x:anchor.x+50,y:entry.before?anchor.y+1:anchor.y+(sizes.get(anchor.id)?.height??170)-1},sizes,new Set([anchor.id]),theme?.layout,theme);
+        if(!inserted.valid)throw new Error(inserted.message);
+        placement.topics=placement.topics.map((topic,i)=>{const at=inserted.nodes.find(n=>n.id==='entry:'+i)!;return {...topic,position:{x:at.x,y:at.y}};});
+        placement.nodes=inserted.changed.filter(n=>current.some(old=>old.id===n.id)).map(n=>({node_id:n.node_id,expected_revision:n.layout_revision,position:{x:n.x,y:n.y}}));
+      }
+      if(placement&&entry?.fixedPosition){const root=placement.topics[0].position,dx=entry.position.x-root.x,dy=entry.position.y-root.y;placement.topics=placement.topics.map(topic=>({...topic,position:{x:topic.position.x+dx,y:topic.position.y+dy}}));placement.nodes=[];}
+      const offset=object?0:1;
+      const payload={input_text:text,container_id:cid,expected_container_revision:expectedContainer,...(object?{object_id:object.id,expected_revision:object.revision}:{}),parent_id:object?.parent_id??entry?.parent??null,title:object?.title??plan.title,body:plan.body,position:object?{x:target!.x,y:target!.y}:placement!.topics[0].position,children:plan.children.map((child,i)=>({...child,position:placement!.topics[i+offset].position})),nodes:placement?.nodes??[],...(!object?{after_object_id:entry?.after??null,before_object_id:entry?.before??null,...(entry?.fixedPosition?{manual_layout:entry.manualLayout??{}}:{}),...(entry?.structure?{structure:entry.structure}:{})}:{})};
+      busy.current=false;setPending(false);
+      const ok=await act('apply_content',payload);
+      if(ok)reconcileSaved('apply_content',payload);
+      return ok;
+    }catch(e){if(identityRef.current===key&&writeSession.current===session)setError(message(e));return false;}
+    finally{if(identityRef.current===key&&writeSession.current===session){busy.current=false;setPending(false);}}
+  };
   const saveQuick = async (next?: 'sibling' | 'child') => {
     if (!quick || quickSaving.current || cancelQuick.current) return;
     if (unconfirmed.current) { await checkSave(); return; }
+    if(!quick.node&&!quick.wrap&&quick.title.trim()){
+      quickSaving.current=true;const entry=quick,key=identity,session=writeSession.current;const ok=await submitContent(quick.title,null,quick);if(identityRef.current!==key||writeSession.current!==session)return;quickSaving.current=false;
+      if(ok){const node=createdNode.current;if(next&&node)startQuick(node,next==='child',!!entry.fromLine&&next==='child');else focusCanvas();}return;
+    }
     const title = quick.title.trim() || (!quick.node ? '新主题' : '');
     const titleFormat=quick.titleFormat?editRuns(quick.title,title,quick.titleFormat):undefined;
     const presentation=titleFormat?{title_format:titleFormat}:{};
@@ -988,6 +1038,7 @@ export default function KnowledgeCanvas() {
     if(connection.preview?.relationType){e.preventDefault();return;}
     if (brush && node && e.button===0 && !historyBlocked && writable(node)) { e.preventDefault();void saveAnnotations([{node,data:pasteTopicStyle(node.title,node.canvas_data,styleClipboard!)}]);setBrush(false);return; }
     if (drag.current?.type === 'node' && drag.current.moved) return;
+    if(editing&&!node&&e.button!==2){cancelView();browseEpoch.current++;drag.current={type:'pan',start:{x:e.clientX,y:e.clientY},pan:viewRef.current};viewport.current?.setPointerCapture(e.pointerId);e.preventDefault();return;}
     if (browseBlocked || e.button === 2 || (e.target as HTMLElement).closest('button')) return;
     setGroupSelection(null);browseEpoch.current++; suppressReveal.current = false; cancelView();
     const drawn = node ? nodeMotion.coordinates.current?.[node.id] : undefined;
@@ -1114,7 +1165,7 @@ export default function KnowledgeCanvas() {
   };
   useEffect(() => {
     const host = viewport.current; if (!host) return;
-    const wheel = (event: WheelEvent) => { if ((event.target as HTMLElement).closest('input,textarea,select,[contenteditable]')) return;
+    const wheel = (event: WheelEvent) => { if ((event.target as HTMLElement).closest('input,textarea,select,[contenteditable],.kc-directory-panel')) return;
       event.preventDefault(); if (drag.current || marqueeRef.current || connection.preview) return;
       browseEpoch.current++; suppressReveal.current = true; const box = host.getBoundingClientRect(); updateView(wheelView(viewRef.current, event, { x: event.clientX - box.left, y: event.clientY - box.top }, box.height));
     };
@@ -1177,15 +1228,16 @@ export default function KnowledgeCanvas() {
     const position=toolsPosition(card,{width:area?.width??1000,height:area?.height??800,top:viewport.current?canvasSafeArea(viewport.current).y:100},ports,size,[...obstacles,...(viewport.current?canvasObstacles(viewport.current):[])]);
     return {left:(position.left-card.x)/pan.z,top:(position.top-card.y)/pan.z,maxWidth:Math.max(80,((area?.width??1000)-24)/pan.z)};
   };
-  const renderQuickEditor=(inline:boolean)=>(quick && <div className={inline?"kc-inline-title":"kc-quick kc-node"} style={inline?undefined:{ left: quick.position.x, top: quick.position.y }} onPointerDown={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()} onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget as Node)&&!cancelQuick.current&&!imeActive.current)void saveQuick();}}>
+  const renderQuickEditor=(inline:boolean)=>(quick && <div className={inline?"kc-inline-title":"kc-quick kc-node"} style={inline?undefined:{ left: quick.position.x, top: quick.position.y }} onPointerDown={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()} onBlur={e=>{if((quick.node||quick.wrap||!quick.title.trim())&&!e.currentTarget.contains(e.relatedTarget as Node)&&!cancelQuick.current&&!imeActive.current)void saveQuick();}}>
             <label htmlFor="kc-quick-title">{quick.wrap?'插入父主题':quick.node ? '修改标题' : '新主题'}</label>
-            <RichTitleEditor toolsRef={inline?titleToolsMeasure.ref:undefined} toolsStyle={inline?inlineToolsStyle():undefined} key={`${quick.container}:${quick.position.x}:${quick.position.y}`} ref={mountQuickInput} id="kc-quick-title" label={quick.wrap?'父主题标题':quick.node?'节点标题':'新主题标题'} text={quick.title} format={quick.titleFormat} style={quickTitleStyle(quick)} onChange={(title,titleFormat)=>setQuick(q=>q?{...q,title,titleFormat}:q)}
+            {!quick.node&&!quick.wrap?<textarea ref={mountContentInput} id="kc-quick-title" aria-label="新节点内容" placeholder="输入内容，AI 将整理并按需拆分" value={quick.title} maxLength={12000} readOnly={pending||!!unconfirmed.current} onChange={e=>{if(!pending&&!unconfirmed.current)setQuick(q=>q?{...q,title:e.target.value}:q);}} onCompositionStart={()=>{imeActive.current=true;}} onCompositionEnd={()=>{imeActive.current=false;imeEndAt.current=Date.now();}} onKeyDown={e=>{e.stopPropagation();if(e.nativeEvent.isComposing||imeActive.current||e.keyCode===229||e.repeat||(e.key==='Enter'&&Date.now()-imeEndAt.current<30))return;if(e.key==='Escape'&&!pending){e.preventDefault();cancelQuick.current=true;setQuick(null);}else if(e.key==='Enter'&&!e.shiftKey&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&!pending){e.preventDefault();void saveQuick(quick.fromLine?undefined:'sibling');}else if(e.key==='Tab'&&!pending){e.preventDefault();void saveQuick('child');}}}/>:<RichTitleEditor toolsRef={inline?titleToolsMeasure.ref:undefined} toolsStyle={inline?inlineToolsStyle():undefined} key={`${quick.container}:${quick.position.x}:${quick.position.y}`} ref={mountQuickInput} id="kc-quick-title" label={quick.wrap?'父主题标题':quick.node?'节点标题':'新主题标题'} text={quick.title} format={quick.titleFormat} style={quickTitleStyle(quick)} onChange={(title,titleFormat)=>setQuick(q=>q?{...q,title,titleFormat}:q)}
               onCompositionStart={()=>{imeActive.current=true;}} onCompositionEnd={()=>{imeActive.current=false;imeCanvasNode.current=null;imeEndAt.current=Date.now();}}
               onKeyDown={e=>{e.stopPropagation();if(e.nativeEvent.isComposing||imeActive.current||e.keyCode===229||e.repeat||(e.key==='Enter'&&Date.now()-imeEndAt.current<30))return;
                 if(e.key==='Escape'&&!pending){e.preventDefault();cancelQuick.current=true;setQuick(null);focusCanvas();}
                 if(!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.shiftKey&&(e.key==='Enter'||e.key==='Tab')){e.preventDefault();void saveQuick((quick.node||quick.fromLine||quick.wrap)&&e.key==='Enter'?undefined:e.key==='Tab'?'child':'sibling');}
-              }}/>
-            <small>{pending ? '正在保存…' : quick.node||quick.wrap ? 'Enter 确认 · Esc 取消' : quick.fromLine ? 'Enter 完成 · Tab 继续延伸 · Esc 取消' : 'Enter 继续同级 · Tab 创建子级 · Esc 取消'}</small>
+              }}/>}
+            {!quick.node&&!quick.wrap&&<button disabled={pending||!quick.title.trim()} onClick={()=>void saveQuick()}>{pending?'AI 正在整理…':'提交并整理'}</button>}
+            <small>{pending ? '正在保存…' : quick.node||quick.wrap ? 'Enter 确认 · Esc 取消' : 'Enter 提交并继续同级 · Shift+Enter 换行 · Tab 继续子级 · Esc 取消'}</small>
             {error && !inline && <p role="alert">{error}</p>}
           </div>);
   const toolbarKeys = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -1232,7 +1284,7 @@ export default function KnowledgeCanvas() {
             cancelView(); connection.beginReconnect(relation, endpoint, active.revision, e.pointerId, { x: e.clientX, y: e.clientY });
           }} />
           {[...nodes.filter(n => !hidden(n)), ...presence.leaving.filter(n => !liveVisibleIds.has(n.id))].map(n => <article key={n.id} inert={departingIds.has(n.id) || undefined} aria-hidden={departingIds.has(n.id) || undefined} data-node-id={departingIds.has(n.id) ? undefined : n.id} data-departure-id={departingIds.has(n.id) ? n.id : undefined} aria-label={departingIds.has(n.id) ? undefined : n.title} className={'kc-node ' + (presence.entering.has(n.id) ? 'kc-node-enter ' : '') + (presence.emphasis.has(n.id) ? 'kc-node-emphasis ' : '') + (departingIds.has(n.id) ? 'kc-node-exit ' : '') + (chosen.has(n.id) ? 'selected' : '') + (clipboard?.mode === 'cut' && clipboard.objects.some(o => o.object_id === n.id) ? ' kc-cut-source' : '') + (branchPreview?.moving.has(n.id) ? ' kc-branch-moving' : '') + (branchPreview?.target === n.id ? branchPreview.valid ? ' kc-drop-target' : ' kc-drop-invalid' : '') + (connection.preview?.target === n.id ? connection.preview.valid ? ' kc-drop-target' : ' kc-drop-invalid' : '') + (connection.preview?.source === n.id ? ' kc-connect-source' : '')} style={{ ...mapNodeStyle(quick?.node?.id===n.id?{...n,title:quick.title,canvas_data:{...n.canvas_data,title_format:quick.titleFormat}}:n,quick?.node?nodes.map(v=>v.id===quick.node!.id?{...v,title:quick.title,canvas_data:{...v.canvas_data,title_format:quick.titleFormat}}:v):nodes,active?.canvas_theme), left: drawnById.get(n.id)?.x ?? n.x, top: drawnById.get(n.id)?.y ?? n.y, '--kc-presence-opacity': presence.starts[n.id]?.opacity ?? (departingIds.has(n.id) ? 1 : 0), '--kc-presence-scale': presence.starts[n.id]?.scale ?? (departingIds.has(n.id) ? 1 : .97) } as CSSProperties} onDragOver={e=>{if(!historyBlocked&&writable(n)&&e.dataTransfer.types.includes('Files')){e.preventDefault();e.stopPropagation();e.dataTransfer.dropEffect='copy';}}} onDrop={e=>{e.preventDefault();e.stopPropagation();const file=e.dataTransfer.files[0];if(file)void uploadNodeImage(n,file);}} onPointerDown={e => { e.stopPropagation(); pointerDown(e, n); }} onDoubleClick={e => { e.stopPropagation(); if (!(e.target as HTMLElement).closest('button,input')) { if (writable(n)) rename(n,undefined,titleCaretAt((e.target as HTMLElement).closest('h3'),e.clientX,e.clientY)); else void openEditor(n); } }}>
-            {n.kind !== 'topic' && <small>{kinds[n.kind]}</small>}<h3 style={{fontWeight:400,...titleStyle(mapAppearance(n,nodes,active?.canvas_theme))}}>{quick?.node?.id===n.id&&!quick.standalone?renderQuickEditor(true):<RichTitle text={n.title} format={n.canvas_data?.title_format}/>}</h3>{n.canvas_data?.image&&<CanvasNodeImage node={n} zoom={pan.z} disabled={historyBlocked||!writable(n)||!chosen.has(n.id)} onResize={width=>{if(n.canvas_data?.image)void saveAnnotations([{node:n,data:{...n.canvas_data,image:{...n.canvas_data.image,width}}}]);}} onRemove={writable(n)&&!historyBlocked?()=>void saveAnnotations([{node:n,data:{...n.canvas_data,image:null}}]):undefined} onPreview={src=>{if(!browseBlocked)setImageView({identity,id:n.id,src,key:n.canvas_data!.image!.binding_id+':'+n.canvas_data!.image!.revision,title:n.title});}}/>}<CanvasMediaCard node={n} writable={chosen.has(n.id)&&writable(n)&&!historyBlocked} onView={source=>{if(!browseBlocked)setMediaView({node:n,source});}} onEdit={mode=>openMedia(mode,n)}/><AttachmentSummary node={n} onRemove={writable(n)&&!historyBlocked?file=>void openFileAction(n,{kind:'remove',binding:file}):undefined} onMore={()=>void openFiles(n)} onPreview={version=>{if(!pending&&!quick&&!editing&&!unconfirmed.current){setSelected(n.id);setMulti(new Set());setFilePreview({id:n.id,version,identity});}}}/><div className="kc-card-actions" onPointerDown={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()}><button title={writable(n)?"目录资料":"展开查看"} aria-label={writable(n)?"目录资料":"展开查看"} disabled={pending||!!quick} onClick={()=>void openEditor(n)}><FileText size={14} aria-hidden="true" focusable="false"/>{writable(n)?"目录资料":"展开查看"}</button><NodeFileMenu onLabels={()=>openAnnotation('labels',n)} node={n} canWrite={writable(n)} disabled={filePending||pending||!!unconfirmed.current||!!quick||!!editing} onMore={()=>void openFiles(n)} onAction={action=>void openFileAction(n,action)}/></div><div className="kc-node-annotations">{n.canvas_data?.note && <button aria-label={'查看备注 '+n.title} title={n.canvas_data.note.slice(0,200)} onClick={()=>openAnnotation('note',n)}><StickyNote size={14}/></button>}{n.canvas_data?.labels?.slice(0,2).map(tag=><button title={tag} key={tag} onClick={()=>openAnnotation('labels',n)}>{tag}</button>)}{(n.canvas_data?.labels?.length ?? 0)>2 && <button aria-label={'查看全部标签 '+n.title} onClick={()=>openAnnotation('labels',n)}>+{n.canvas_data!.labels!.length-2}</button>}{n.canvas_data?.task && <button aria-label={'查看任务 '+n.title} onClick={()=>openAnnotation('task',n)}>{n.canvas_data.task.progress===100?'☑':'☐'} {n.canvas_data.task.progress}%{n.canvas_data.task.priority?' · P'+n.canvas_data.task.priority:''}{n.canvas_data.task.due?' · '+n.canvas_data.task.due:''}</button>}</div>
+            {n.kind !== 'topic' && <small>{kinds[n.kind]}</small>}<h3 style={{fontWeight:400,...titleStyle(mapAppearance(n,nodes,active?.canvas_theme))}}>{quick?.node?.id===n.id&&!quick.standalone?renderQuickEditor(true):<RichTitle text={n.title} format={n.canvas_data?.title_format}/>}</h3>{n.canvas_data?.image&&<CanvasNodeImage node={n} zoom={pan.z} disabled={historyBlocked||!writable(n)||!chosen.has(n.id)} onResize={width=>{if(n.canvas_data?.image)void saveAnnotations([{node:n,data:{...n.canvas_data,image:{...n.canvas_data.image,width}}}]);}} onRemove={writable(n)&&!historyBlocked?()=>void saveAnnotations([{node:n,data:{...n.canvas_data,image:null}}]):undefined} onPreview={src=>{if(!browseBlocked)setImageView({identity,id:n.id,src,key:n.canvas_data!.image!.binding_id+':'+n.canvas_data!.image!.revision,title:n.title});}}/>}<CanvasMediaCard node={n} writable={chosen.has(n.id)&&writable(n)&&!historyBlocked} onView={source=>{if(!browseBlocked)setMediaView({node:n,source});}} onEdit={mode=>openMedia(mode,n)}/><AttachmentSummary node={n} onRemove={writable(n)&&!historyBlocked?file=>void openFileAction(n,{kind:'remove',binding:file}):undefined} onMore={()=>void openFiles(n)} onPreview={version=>{if(!pending&&!quick&&!editing&&!unconfirmed.current){setSelected(n.id);setMulti(new Set());setFilePreview({id:n.id,version,identity});}}}/><div className="kc-card-actions" onPointerDown={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()}><button title={writable(n)?"目录资料":"展开查看"} aria-label={writable(n)?"目录资料":"展开查看"} disabled={pending||!!quick} onClick={()=>void openEditor(n)}><FileText size={14} aria-hidden="true" focusable="false"/>{writable(n)?"目录资料":"展开查看"}</button><NodeFileMenu onLabels={()=>openAnnotation('labels',n)} node={n} canWrite={writable(n)} disabled={filePending||pending||!!unconfirmed.current||!!quick||!!editing} onMore={()=>void openFiles(n)} onAction={action=>void openFileAction(n,action)}/>{writable(n)&&<button disabled={pending||!!quick||!!unconfirmed.current} onClick={()=>void openEditor(n,true)}>补充 / 修改</button>}</div><div className="kc-node-annotations">{n.canvas_data?.note && <button aria-label={'查看备注 '+n.title} title={n.canvas_data.note.slice(0,200)} onClick={()=>openAnnotation('note',n)}><StickyNote size={14}/></button>}{n.canvas_data?.labels?.slice(0,2).map(tag=><button title={tag} key={tag} onClick={()=>openAnnotation('labels',n)}>{tag}</button>)}{(n.canvas_data?.labels?.length ?? 0)>2 && <button aria-label={'查看全部标签 '+n.title} onClick={()=>openAnnotation('labels',n)}>+{n.canvas_data!.labels!.length-2}</button>}{n.canvas_data?.task && <button aria-label={'查看任务 '+n.title} onClick={()=>openAnnotation('task',n)}>{n.canvas_data.task.progress===100?'☑':'☐'} {n.canvas_data.task.progress}%{n.canvas_data.task.priority?' · P'+n.canvas_data.task.priority:''}{n.canvas_data.task.due?' · '+n.canvas_data.task.due:''}</button>}</div>
             {writable(n) && chosen.size===1 && chosen.has(n.id) && !quick && !annotation && !draft && !editing && !branchPreview && <>{(['child',...(n.parent_id?['sibling']:[])] as ('child'|'sibling')[]).map(port=><button key={port} data-creation-port={port} style={portStyle(nodes,n.id,port,12,port==='child'?24:16)} className={'kc-create-plus kc-create-'+port} aria-label={'为 '+n.title+' 创建'+(port==='child'?'子级':'同级')} title={port==='child'?'创建子主题 · 点击自动排布，拖动指定位置':'创建同级主题 · 点击自动排布，拖动指定位置'} disabled={historyBlocked} onClick={e=>{if(e.detail===0)startQuick(n,port==='child');}} onPointerDown={e=>{e.stopPropagation();e.preventDefault();if(e.button!==0||historyBlocked)return;cancelView();connection.begin(n.id,e.pointerId,{x:e.clientX,y:e.clientY},port);}}>＋</button>)}</>}
             {writable(n)&&chosen.size===1&&chosen.has(n.id)&&!quick&&!historyBlocked&&<TopicWidthHandle width={contentSizes([n]).get(n.id)!.width} zoom={pan.z} height={contentSizes([n]).get(n.id)!.height} onPreview={()=>{}} onCommit={()=>{}} onResizePreview={size=>{cancelView();nodeMotion.cancel();const base=sceneRef.current.nodes.find(v=>v.id===n.id)!;setWidthPreview({id:n.id,...size,x:base.x+size.dx,y:base.y+size.dy});}} onCancel={()=>setWidthPreview(null)} onResizeCommit={size=>void setTopicSize(n,size)}/>}
             {(writable(n) || nodes.some(c => c.parent_id === n.id)) && <button className="kc-handle" style={foldStyle(nodes,n.id)} aria-label={nodes.some(c => c.parent_id === n.id) ? '折叠或展开 ' + n.title : '从 ' + n.title + ' 拉线创建'} aria-expanded={nodes.some(c => c.parent_id === n.id) ? !folded.has(n.id) : undefined} title={writable(n) ? '单击折叠/展开分支，拖动创建子主题' : '单击折叠/展开分支'} onClick={e => { if ((e.detail === 0 || !writable(n) || pending || !!unconfirmed.current) && nodes.some(c => c.parent_id === n.id)) toggleFold(n.id); }} onPointerDown={e => { e.stopPropagation(); e.preventDefault(); if (e.button !== 0 || !writable(n) || busy.current || (quick && (quick.node || quick.title.trim()))) return; if (quick) { void saveQuick(); return; } cancelView(); setSelected(n.id); setMenu(null); connection.begin(n.id, e.pointerId, { x: e.clientX, y: e.clientY }); }} />}
@@ -1241,7 +1293,7 @@ export default function KnowledgeCanvas() {
           {branchPreview?.alignment&&<SmartGuideOverlay feedback={branchPreview.alignment} zoom={pan.z}/>}
           {branchPreview?.valid && branchPreview.placement !== 'free' && drag.current?.type === 'node' && drag.current.sources.map(id => { const slot = branchPreview.nodes.find(n => n.id === id); const size = drag.current?.type === 'node' ? drag.current.sizes.get(id) : undefined; return slot && <div key={id} className="kc-drop-slot" aria-label="分支落点预览" style={{ left: slot.x, top: slot.y, width: size?.width ?? 272, height: size?.height ?? 170 }} />; })}
           {branchPreview?.marker && <div className={'kc-insert-marker ' + (branchPreview.valid ? '' : 'invalid')+(branchPreview.marker.height?' vertical':'')} style={{ left: branchPreview.marker.x, top: branchPreview.marker.y, width: branchPreview.marker.width,height:branchPreview.marker.height??4 }} />}
-          {editing&&byId.has(editing.id)&&(()=>{const n=drawnById.get(editing.id)??byId.get(editing.id)!;const size=contentSizes([n]).get(n.id)!;return <InlineBodyEditor key={identity+editing.id} zoom={pan.z} object={editing} base={editingBase.current} pending={pending} error={error} unknown={!!unconfirmed.current} style={{left:n.x,top:n.y+size.height+12,width:Math.max(300,size.width)}} onChange={body=>setEditing(current=>current?{...current,body}:current)} onReveal={()=>revealQuick({x:n.x,y:n.y+size.height+12},{width:Math.max(300,size.width),height:240})} onSave={saveBody} onCheck={()=>void checkSave()} onClose={()=>{setEditing(null);focusCanvas();}}/>;})()}
+          {editing&&byId.has(editing.id)&&(()=>{const n=drawnById.get(editing.id)??byId.get(editing.id)!;const size=contentSizes([n]).get(n.id)!;const path:string[]=[];const seen=new Set<string>();let ancestor:KnowledgeNode|undefined=n;while(ancestor&&!seen.has(ancestor.id)){seen.add(ancestor.id);path.unshift(ancestor.title);ancestor=ancestor.parent_id?byId.get(ancestor.parent_id):undefined;}return editing.body!==editingBase.current?<InlineBodyEditor key={identity+editing.id} zoom={pan.z} object={editing} base={editingBase.current} pending={pending} error={error} unknown={!!unconfirmed.current} style={{left:n.x,top:n.y+size.height+12,width:860}} onChange={body=>setEditing(current=>current?{...current,body}:current)} onSave={saveBody} onCheck={()=>void checkSave()} onClose={()=>setEditing(null)}/>:<DirectoryPanel key={identity+editing.id} zoom={pan.z} object={editing} path={path} style={{left:n.x,top:n.y+size.height+12,width:860}} inputMode={contentInput} text={contentText} pending={pending} error={error} unknown={!!unconfirmed.current} onText={setContentText} onInputMode={setContentInput} onSubmit={()=>void submitContent(contentText,editing,null)} onCheck={()=>void checkSave()} onClose={()=>{if(pending)return;closeDraft(()=>{setContentText('');setEditing(null);focusCanvas();});}}/>;})()}
           {quick && !quick.node && (quick.lineSource || quick.parent) && byId.has((quick.lineSource || quick.parent)!) && <svg className="kc-edges kc-draft-edge" aria-hidden="true"><path d={(()=>{const source=drawnById.get((quick.lineSource || quick.parent)!)??byId.get((quick.lineSource || quick.parent)!)!;if(!quick.linePort)return path(source,{...source,id:'new-draft',node_id:'new-draft',parent_id:quick.parent,sort_order:(quick.after||quick.before)?((byId.get((quick.before||quick.after)!)?.sort_order??byId.get((quick.before||quick.after)!)?.y??0)+(quick.before?-0.5:0.5)):Math.max(0,...nodes.filter(n=>n.parent_id===quick.parent).map(n=>n.sort_order??n.y))+1024,title:quick.title||'新主题',x:quick.position.x,y:quick.position.y,canvas_data:{manual_layout:quick.manualLayout,title_format:quick.titleFormat},attachments:undefined});const size=contentSizes([source]).get(source.id)!;const d=portDirection(nodes,source.id,quick.linePort),v=vectors[d],p=edgePoint(size,d,quick.linePort==='child'?24:16),start={x:source.x+p.x,y:source.y+p.y},tip=edgePoint({width:272,height:170},d==='right'?'left':d==='left'?'right':d==='up'?'down':'up'),end={x:quick.position.x+tip.x,y:quick.position.y+tip.y};return `M ${start.x} ${start.y} C ${start.x+v.x*50} ${start.y+v.y*50},${end.x-v.x*50} ${end.y-v.y*50},${end.x} ${end.y}`;})()} /></svg>}
           {(!quick?.node||quick.standalone) && renderQuickEditor(false)}
         </div>
