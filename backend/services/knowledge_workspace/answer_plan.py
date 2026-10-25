@@ -22,6 +22,36 @@ def eligible(question):
                 and not COMPLEX.search(question) and not ACTION.search(question) and not ANALYTICS.search(question))
 
 
+def named_source_plan(run, question):
+    """Bind explicit document names across the frozen scope before model routing.
+
+    This only supplies evidence. Actions, analytics and ambiguous names retain
+    the normal tool loop; a document name never grants access or proves a rule.
+    """
+    if not isinstance(question,str) or not 0<len(question)<=2000:return None
+    names=set(re.findall(r'[“「《"]([^”」》"\n]{6,180})[”」》"]',question))
+    if not names:return None
+    matches={}
+    for item in run.snapshot['items']:
+        if (item['type']!='object' or item.get('kind') not in ('document','rule')
+                or item.get('reference_only') or item.get('support_only') or item['title'] not in names):continue
+        matches.setdefault(item['title'],{}).setdefault(item['id'],item)
+    # Same title in multiple libraries is a real ambiguity, never first-hit wins.
+    if not matches or any(len(items)>1 for items in matches.values()):return None
+    selected=[next(iter(items.values())) for items in matches.values()]
+    if len(selected)>3:return None
+    evidence=[]
+    for item in selected:
+        result=run.execute('read',{'root_handle':item['root_handle'],'item_handles':[item['handle']],'context':True})
+        if result.get('stop_reason'):break
+        evidence.extend({**entry,'root_handle':item['root_handle']} for entry in result['items'])
+    if not evidence:return None
+    run.revalidate()
+    return {'mode':'expand','reason':'explicit_named_sources','items':evidence,
+            'scope':'current_authorized_snapshot','source_count':len(evidence),
+            'assessment':{'status':'unresolved','needs':[]}}
+
+
 def collect(run,question):
     """Only original text/manual corrections enter the concise evidence packet.
 
@@ -146,7 +176,6 @@ async def prepare(handler,prepared,request,skills=None):
     if not getattr(handler,'_personal_context_allowed',True):return
     if len(request.content)!=1 or getattr(request.content[0],'type',None)!='text':return
     question=request.content[0].text
-    if not eligible(question):return
     if str(run.repo.scope.actor_user_id)!=str(request.user_id) or run.repo.scope.org_id!=handler.org_id:
         from .chat import unavailable
         unavailable()
@@ -159,7 +188,10 @@ async def prepare(handler,prepared,request,skills=None):
             await asyncio.to_thread(run.revalidate)
             prepared.knowledge_answer_plan={'mode':mode,'replay':True}
         return
-    plan=await asyncio.to_thread(collect,run,question)
+    plan=await asyncio.to_thread(named_source_plan,run,question)
+    if plan is None:
+        if not eligible(question):return
+        plan=await asyncio.to_thread(collect,run,question)
     prepared.knowledge_answer_plan=plan
     if plan['mode'] in ('answer','missing'):
         prepared.messages[:]=[m for m in prepared.messages if not(m.get('role')=='system' and str(m.get('content','')).startswith('知识画布运行快照：'))]

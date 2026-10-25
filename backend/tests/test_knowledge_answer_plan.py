@@ -170,3 +170,61 @@ def test_queries_use_saved_media_chunks_without_original_io_or_derivation(derive
  result=run.execute('search',{'root_handle':run.introduction()['roots'][0]['handle'],'query':'核对'})
  saved=next(i for i in result['items'] if i['type']=='generated')
  assert run.execute('read',{'root_handle':run.introduction()['roots'][0]['handle'],'item_handles':[saved['handle']],'context':True})['items'][0]['body']
+
+
+def named_document(r,root,title='查询失败：全量库存分组历史记录',body='历史失败；需补充商品关键词，不代表当前规则。'):
+ return r.command(command('create_object',{'container_id':root['container_id'],'parent_id':root['id'],'kind':'document','title':title,'body':body,'position':{'x':300,'y':0}}))['object_id']
+
+
+def test_named_source_reads_matching_other_root_before_model_routing(derived_db):
+ from services.knowledge_workspace.answer_plan import named_source_plan
+ r=derived_db[0]();personal=create(r,title='个人知识库');team=create(r,title='团队知识库');oid=named_document(r,team)
+ run,_,_=start(derived_db[0],r,[ref(personal),ref(team)])
+ plan=named_source_plan(run,'请看“查询失败：全量库存分组历史记录”，这是成功方法吗？')
+ assert plan['mode']=='expand' and plan['reason']=='explicit_named_sources'
+ assert len(plan['items'])==1 and '历史失败' in plan['items'][0]['body']
+ assert 'object='+str(oid) in plan['items'][0]['source']['url']
+ assert plan['items'][0]['source']['url'] in run.evidence_footer()
+ with r.cursor() as c:
+  c.execute("SELECT count(*) n FROM kb_read_receipts WHERE snapshot_id=%s AND state='body_complete'",(run.id,));assert c.fetchone()['n']==1
+ outside,_,_=start(derived_db[0],r,[ref(personal)])
+ assert named_source_plan(outside,'请看“查询失败：全量库存分组历史记录”') is None
+
+
+def test_named_source_ambiguity_and_directory_titles_do_not_guess(derived_db):
+ from services.knowledge_workspace.answer_plan import named_source_plan
+ r=derived_db[0]();a=create(r,title='团队知识库');b=create(r,title='另一个项目')
+ named_document(r,a);named_document(r,b)
+ run,_,_=start(derived_db[0],r,[ref(a),ref(b)])
+ assert named_source_plan(run,'请看“查询失败：全量库存分组历史记录”') is None
+ assert named_source_plan(run,'请看“团队知识库”') is None
+ with r.cursor() as c:
+  c.execute('SELECT count(*) n FROM kb_read_receipts WHERE snapshot_id=%s',(run.id,));assert c.fetchone()['n']==0
+
+
+def test_named_source_keeps_pagination_rules_and_revocation(derived_db):
+ from services.knowledge_workspace.answer_plan import named_source_plan
+ from core.exceptions import AppException
+ make,actors=derived_db;r=make();root=create(r,title='历史资料');oid=named_document(r,root,body='历史资料正文'*2000)
+ r.command(command('set_member',{'container_id':root['container_id'],'user_id':actors[1],'role':'viewer','status':'active'}))
+ run,_,_=start(make,make(1),[ref(root)])
+ plan=named_source_plan(run,'按“查询失败：全量库存分组历史记录”核对。')
+ assert plan['items'][0]['status']=='partial' and plan['items'][0]['next_cursor']
+ r.command(command('set_member',{'container_id':root['container_id'],'user_id':actors[1],'role':'viewer','status':'removed'}))
+ with pytest.raises(AppException):named_source_plan(run,'查阅“查询失败：全量库存分组历史记录”')
+
+
+@pytest.mark.asyncio
+async def test_named_source_preparation_keeps_action_tool_loop_and_auth_policy(derived_db):
+ from tests.test_chat_execution_engine import _request
+ from schemas.message import TextPart
+ r=derived_db[0]();root=create(r,title='历史资料');named_document(r,root);run,_,_=start(derived_db[0],r,[ref(root)])
+ req=replace(_request(),content=[TextPart(text='参考“查询失败：全量库存分组历史记录”，查询今天库存。')],user_id=r.scope.actor_user_id)
+ assert not eligible(req.content[0].text)
+ handler=SimpleNamespace(_knowledge_run=run,org_id=r.scope.org_id,_personal_context_allowed=True)
+ prepared=SimpleNamespace(execution_context=SimpleNamespace(context_scope='user',authorized_tool_names=None),messages=[])
+ await prepare(handler,prepared,req)
+ assert prepared.knowledge_answer_plan['mode']=='expand'
+ assert any(m['content'].startswith(PREFIX) for m in prepared.messages)
+ restricted=SimpleNamespace(execution_context=SimpleNamespace(context_scope='user',authorized_tool_names={'unrelated_tool'}),messages=[])
+ await prepare(handler,restricted,req);assert not hasattr(restricted,'knowledge_answer_plan')
