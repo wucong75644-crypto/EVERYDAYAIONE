@@ -473,6 +473,10 @@ prepare_skill_personal_mount() {
 deploy_backend() {
     log_info "在服务器上部署后端..."
 
+    if [ "$ENABLE_KNOWLEDGE" = true ]; then
+        remote_exec /var/www/everydayai/backend/venv/bin/python \
+            /var/www/everydayai/deploy/enable-knowledge.py --lock-token "$EVERYDAYAI_RELEASE_LOCK_TOKEN"
+    fi
     remote_exec bash << 'ENDSSH'
         set -e
         cd /var/www/everydayai/backend
@@ -662,6 +666,7 @@ EOF
     BACKEND_ONLY=false
     SKIP_BUILD=false
     SKIP_TEST=false
+    ENABLE_KNOWLEDGE=false
     MIGRATION_FILES=()
 
     while [[ $# -gt 0 ]]; do
@@ -692,6 +697,10 @@ EOF
                 ;;
             --skip-build)
                 SKIP_BUILD=true
+                shift
+                ;;
+            --enable-knowledge)
+                ENABLE_KNOWLEDGE=true
                 shift
                 ;;
             --skip-test)

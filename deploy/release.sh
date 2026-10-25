@@ -44,6 +44,7 @@ usage() {
   --deploy-main SHA      从已合并到 origin/main 的确定提交部署
   --frontend-only        仅部署前端
   --backend-only         仅部署后端
+  --enable-knowledge     安装知识解析依赖并启用自动整理及历史回填（包含后端发布）
   --skip-test            复用已完成的定向测试，跳过执行器全量测试；保留构建/迁移/健康检查
   --rollback SHA         从 origin/main 历史中的提交回滚应用版本，不回滚数据库迁移
   -h, --help             显示帮助
@@ -68,6 +69,7 @@ accept_and_close=false
 frontend_only=false
 backend_only=false
 skip_test=false
+enable_knowledge=false
 declare -a task_files=()
 declare -a source_only_files=()
 declare -a migration_files=()
@@ -116,6 +118,8 @@ while [[ $# -gt 0 ]]; do
             backend_only=true
             shift
             ;;
+        --enable-knowledge)
+            enable_knowledge=true; shift ;;
         --skip-test)
             skip_test=true
             shift
@@ -153,6 +157,11 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ "$enable_knowledge" == true ]]; then
+    [[ "$frontend_only" == false && "$accept_and_close" == false && -z "$rollback_sha" && -z "$recover_owner" ]] \
+        || fail "--enable-knowledge 只用于包含后端的正常发布"
+fi
 
 # Configuration stays local; never copy application .env into a release tree.
 if [[ ! -f "$repo_root/deploy/config.env" && -f "$main_repo_root/deploy/config.env" ]]; then
@@ -624,6 +633,10 @@ deploy_status_file="$release_worktree/.deploy-execution-status"
 pushd "$release_worktree" >/dev/null
 chmod +x deploy/deploy.sh
 deploy_args=()
+if [[ "$enable_knowledge" == true ]]; then
+    [[ "$frontend_only" == false ]] || fail "--enable-knowledge 需要后端发布"
+    deploy_args+=(--enable-knowledge)
+fi
 [[ "$frontend_only" == true ]] && deploy_args+=(--frontend-only)
 [[ "$backend_only" == true ]] && deploy_args+=(--backend-only)
 if [[ "$skip_test" == true ]]; then
