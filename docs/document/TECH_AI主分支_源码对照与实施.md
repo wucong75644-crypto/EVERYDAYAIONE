@@ -92,3 +92,5 @@ python backend/scripts/migrate_knowledge_journal.py --actor USER_UUID --org ORG_
 2026-10-25本地21个定向测试模块合计1191通过（15.06秒）；追加完整条目预算边界后，journal模块20项通过（包含CLI只读审阅、apply和重放实跑）。真实配置模型的三组opt-in测试分别通过：四类沉淀案例43.02秒、四类充分性案例6.08秒、自动命名项目→原文→评估→最终来源答案8.16秒。以上是单次合成验证耗时，不能据此宣称生产p95或大样本正确率。Python编译和`git diff --check`通过。没有执行生产迁移、发布、旧表删除或工作树关闭。
 
 发布前补充核验发现Actor持久调用与异步审计并存，已把持久记录作为优先事实源，并新增旧/新结果协议、业务错误、uncertain优先级测试。首次候选061bd4ee在tests_and_build阶段主动停止，执行器返回failed_safe，未同步生产文件、未执行333；修正后重新提交正常完整发布。完整测试还发现模块缓存导致旧开关测试取到不同Settings实例，新开关改为从get_settings读取；兼容测试显式打开旧功能，不改变默认退役状态。
+
+完整发布检查两轮分别12910项断言通过，但macOS/Python3.12在Py_FinalizeEx清理生成器时崩溃，原生栈进入_time_machine_time；发布入口均返回failed_safe，未继续生产同步或迁移。提前gc.collect未解决，已撤销。现有时间冻结依赖从2.14.1固定更新至2.19.0（保持2.x API）；上游2.18起在最后一次travel结束后还原C函数补丁，并补齐NULL错误处理，参见[更新记录](https://time-machine.readthedocs.io/en/latest/changelog.html)及[issue532](https://github.com/adamchainz/time-machine/issues/532)。最终仍要求统一发布入口全量检查正常退出，不忽略退出码、不跳过测试。

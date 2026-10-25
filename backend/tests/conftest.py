@@ -18,18 +18,6 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 
-def pytest_unconfigure(config):
-    """Finalize traceback cycles before native clock hooks are unloaded.
-
-    On macOS/Python 3.12, time-machine's patched time() can otherwise be
-    called by generator finalizers during Py_FinalizeEx after its module is
-    cleared. Keep collection inside the live interpreter; errors and pytest's
-    exit status are not suppressed or rewritten.
-    """
-    import gc
-    gc.collect()
-
-
 # ============ 时间事实层 fixtures ============
 # 设计文档：docs/document/TECH_ERP时间准确性架构.md §8.4
 
