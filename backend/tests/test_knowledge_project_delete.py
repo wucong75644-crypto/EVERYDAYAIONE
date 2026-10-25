@@ -6,6 +6,15 @@ import psycopg
 import pytest
 from tests.test_knowledge_derivation import (derived_db,cleanup_db,resize_db,manual_db,summary_db,geometry_db,groups_db,editing_db,entry_db,rev,directional_db,structure_db,current,visual_db,tools_db,payload,local_db,command,layout_db,before_db,create,toggle,theme_db,rich_db,upload,document,fake,process)
 
+@pytest.fixture(autouse=True)
+def isolated_model_configuration(monkeypatch):
+ # These database lifecycle tests use a deterministic generator, never a provider.
+ from core.config import get_settings
+ settings=get_settings()
+ monkeypatch.setattr(settings,'dashscope_api_key',None)
+ monkeypatch.setattr(settings,'knowledge_semantic_enabled',False)
+
+
 @pytest.fixture(scope='module')
 def project_delete_db(derived_db):
  make,actors=derived_db
