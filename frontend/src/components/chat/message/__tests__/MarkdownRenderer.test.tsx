@@ -268,3 +268,9 @@ describe('MarkdownRenderer — 分析结果中的 HTML 格式兼容', () => {
     expect(container.querySelector('script, img, [onclick], [onerror], [style]')).toBeNull();
   });
 });
+
+it('opens streamed knowledge citations in the local permission checked viewer',()=>{
+ const path='/knowledge?object=12345678-1234-1234-1234-123456789abc&revision=2';
+ render(<MarkdownRenderer content={`[知识来源](https://km.example.com${path})`}/>);
+ expect(screen.getByRole('link',{name:'知识来源'})).toHaveAttribute('href',path);
+});

@@ -348,6 +348,8 @@ async def execute_chat(
                 ))
         if workflow:
             await workflow.activated()
+        from services.knowledge_workspace.answer_plan import prepare as prepare_knowledge_answer
+        await prepare_knowledge_answer(handler,prepared,request,skills)
         form_hint = await _run_loop(
             handler=handler,
             request=request,
@@ -370,14 +372,22 @@ async def execute_chat(
         from services.knowledge_workspace.chat import KnowledgeRun
         knowledge_run=getattr(handler,'_knowledge_run',None)
         if isinstance(knowledge_run,KnowledgeRun):
+            for part in parts:
+                if isinstance(part,TextPart):
+                    part.text=await asyncio.to_thread(knowledge_run.normalize_citations,part.text)
+            totals.text=await asyncio.to_thread(knowledge_run.normalize_citations,totals.text)
+            for block in blocks:
+                if block.get('type')=='text' and isinstance(block.get('text'),str):
+                    block['text']=await asyncio.to_thread(knowledge_run.normalize_citations,block['text'])
             footer=await asyncio.to_thread(knowledge_run.evidence_footer)
-            parts.append(TextPart(text=footer)); totals.text += footer
-            if blocks:
-                evidence={'type':'text','text':footer}
-                blocks.append(evidence)
-                await output.on_block(evidence)
-            else:
-                await output.on_text(footer)
+            if footer:
+                parts.append(TextPart(text=footer)); totals.text += footer
+                if blocks:
+                    evidence={'type':'text','text':footer}
+                    blocks.append(evidence)
+                    await output.on_block(evidence)
+                else:
+                    await output.on_text(footer)
         await output.flush()
         if form_hint:
             parts.append(TextPart(text=form_hint))
@@ -504,10 +514,11 @@ async def _run_loop(
                 prepared.messages,
                 runtime.consume_subtask_completions(),
             )
-            _inject_steer_messages(
-                prepared.messages,
-                runtime.consume_steer_messages(),
-            )
+            steers=runtime.consume_steer_messages()
+            _inject_steer_messages(prepared.messages,steers)
+            if steers and getattr(prepared,'knowledge_answer_plan',None):
+                from services.knowledge_workspace.answer_plan import invalidate_for_steer
+                invalidate_for_steer(prepared,handler._knowledge_run)
         await _check_cancelled(
             cancellation_event, request, prepared.messages, blocks,
             totals, "loop_top",
@@ -531,6 +542,11 @@ async def _run_loop(
             if any(key != runtime.skill_runtime.manual_skill_id and key not in runtime.skill_runtime.session_skill_ids
                    for key in runtime.skill_runtime.active):
                 tools.append(DEACTIVATE_SKILL_SCHEMA)
+        knowledge_plan=getattr(prepared,'knowledge_answer_plan',None)
+        fast_knowledge=knowledge_plan and knowledge_plan.get('mode') in ('answer','missing')
+        if fast_knowledge:
+            await asyncio.to_thread(handler._knowledge_run.revalidate)
+            tools=[]
         current_model_round = model_round
         before_usage = dict(totals.usage) if correcting else {}
         try:
@@ -546,6 +562,8 @@ async def _run_loop(
             if image_metrics is not None:
                 totals.usage["image_argument_metrics"] = image_metrics
         model_round += 1
+        if fast_knowledge and calls:
+            raise RuntimeError('KNOWLEDGE_ANSWER_UNEXPECTED_TOOL_CALL')
         if runtime:
             await runtime.safe_point(SafePoint.AFTER_MODEL)
         if prepared.defer_ecom_narrative:

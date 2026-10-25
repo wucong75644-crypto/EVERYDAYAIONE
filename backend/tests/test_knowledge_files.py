@@ -240,3 +240,19 @@ def test_concurrent_file_updates_do_not_silently_overwrite(file_client):
     with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(update,[1,2]))
     assert sorted(results)==['KB_VERSION_CONFLICT','applied']
     versions=r.file_versions(obj['id'],bid)['items'];assert [v['revision'] for v in versions]==[2,1]
+
+def test_canvas_attachment_summary_is_bounded_current_and_permission_scoped(file_client,local_db):
+    client,ctx,_,r,make=file_client;_,actors=local_db;obj=document(r);oid=obj['id']
+    bids=[uploaded(client,oid,name=f'附件{i}.txt')['binding_id'] for i in range(3)]
+    summary=next(n for n in r.canvas()['nodes'] if n['id']==oid)['attachments']
+    assert summary['total']==3 and len(summary['items'])==2
+    assert {str(item['id']) for item in summary['items']}==set(sorted(bids)[:2])
+    assert all(item['version']['revision']==1 for item in summary['items'])
+    assert all('storage_owner' not in item['version'] and 'storage_org' not in item['version'] for item in summary['items'])
+    bid=str(summary['items'][0]['id']);uploaded(client,oid,body='新版',binding_id=bid,expected_revision=1)
+    summary=next(n for n in r.canvas()['nodes'] if n['id']==oid)['attachments']
+    assert next(item for item in summary['items'] if str(item['id'])==bid)['version']['revision']==2
+    client.request('DELETE',f'/api/knowledge/objects/{oid}/files/{bid}',json={'command_id':str(uuid4()),'expected_revision':2})
+    summary=next(n for n in r.canvas()['nodes'] if n['id']==oid)['attachments'];assert summary['total']==2 and all(str(item['id'])!=bid for item in summary['items'])
+    assert not any(n['id']==oid for n in make(1).canvas()['nodes'])
+    assert not any(n['id']==oid for n in make(0,1).canvas()['nodes'])

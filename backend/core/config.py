@@ -75,6 +75,18 @@ class Settings(BaseSettings):
 
     # V1 rollout: owner explicitly authorized all signed-in accounts on 2026-10-19.
     # An explicit false remains the operational kill switch.
+    knowledge_derivation_enabled: bool = False
+    knowledge_default_scope_enabled: bool = True
+    knowledge_media_enabled: bool = True
+    knowledge_vision_model: str = "qwen3.8-flash"
+    knowledge_asr_model: str = "qwen3-asr-flash"
+    knowledge_semantic_enabled: bool = True
+    knowledge_embedding_model: str = "text-embedding-v3"
+    knowledge_derivation_model: str = "qwen3.8-flash"
+    knowledge_derivation_timeout: float = 90.0
+    knowledge_retrieval_max_calls: int = 32
+    knowledge_retrieval_max_chars: int = 48000
+    knowledge_retrieval_timeout: float = 180.0
     knowledge_workspace_enabled: bool = True
     knowledge_workspace_user_ids: str = ""
     knowledge_workspace_org_ids: str = ""

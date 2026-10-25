@@ -1,3 +1,4 @@
+import { useCanvasSurfaceMotion } from '../knowledge/useCanvasSurfaceMotion';
 /**
  * Dialog Primitive
  *
@@ -30,7 +31,7 @@
  * Phase 4：提供底座。Phase 7 将 common/Modal 内部换成这个，外部 API 保留。
  */
 
-import { forwardRef, type ReactNode } from 'react';
+import { forwardRef, useRef, type ReactNode } from 'react';
 import * as RadixDialog from '@radix-ui/react-dialog';
 import { AnimatePresence, m } from 'framer-motion';
 import { X } from 'lucide-react';
@@ -43,6 +44,7 @@ export type DialogBackdrop = 'dim' | 'glass';
 export type DialogPadding = 'default' | 'none';
 
 interface DialogProps {
+  motionPreset?: 'default' | 'canvas';
   /** 受控打开状态 */
   open: boolean;
   /** 打开状态变更（ESC / backdrop 点击 / close 按钮） */
@@ -74,6 +76,8 @@ interface DialogProps {
    * false 时拦截 Radix 默认的 outside click 关闭行为
    */
   closeOnOutsideClick?: boolean;
+  /** 可选关闭后的焦点归还；默认沿用 Radix 行为。 */
+  onCloseAutoFocus?: RadixDialog.DialogContentProps['onCloseAutoFocus'];
   /** 自定义 className（追加到 content 容器） */
   className?: string;
   /** 内容 */
@@ -102,7 +106,13 @@ export function Dialog({
   closeOnOutsideClick = true,
   className,
   children,
+  onCloseAutoFocus,
+  motionPreset = 'default',
 }: DialogProps) {
+  const content = useRef<HTMLDivElement>(null), backdropRef = useRef<HTMLDivElement>(null);
+  const attachContent = useCanvasSurfaceMotion(content, 'dialog', motionPreset === 'canvas' && open);
+  const attachBackdrop = useCanvasSurfaceMotion(backdropRef, 'backdrop', motionPreset === 'canvas' && open);
+  const canvas = motionPreset === 'canvas';
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <AnimatePresence>
@@ -110,22 +120,24 @@ export function Dialog({
           <RadixDialog.Portal forceMount>
             <RadixDialog.Overlay asChild forceMount>
               <m.div
+                ref={attachBackdrop}
                 className={cn(
                   'fixed inset-0 z-40',
                   backdrop === 'glass'
                     ? 'glass-strong'
                     : 'bg-black/50 backdrop-blur-sm',
                 )}
-                variants={fadeVariants}
-                initial="initial"
-                animate="animate"
-                exit="exit"
+                variants={canvas ? undefined : fadeVariants}
+                initial={canvas ? false : "initial"}
+                animate={canvas ? undefined : "animate"}
+                exit={canvas ? undefined : "exit"}
               />
             </RadixDialog.Overlay>
 
             <RadixDialog.Content
               asChild
               forceMount
+              onCloseAutoFocus={onCloseAutoFocus}
               // 拦截 ESC：preventDefault 阻止 Radix 默认关闭
               onEscapeKeyDown={(e) => {
                 if (!closeOnEscape) e.preventDefault();
@@ -140,6 +152,7 @@ export function Dialog({
               }}
             >
               <m.div
+                ref={attachContent}
                 className={cn(
                   'fixed left-1/2 top-1/2 z-50 w-[92vw]',
                   'bg-[var(--c-modal-bg)]',
@@ -156,10 +169,10 @@ export function Dialog({
                   translate: '-50% -50%',
                   maxHeight: 'min(90vh, 800px)',
                 }}
-                variants={scaleVariants}
-                initial="initial"
-                animate="animate"
-                exit="exit"
+                variants={canvas ? undefined : scaleVariants}
+                initial={canvas ? false : "initial"}
+                animate={canvas ? undefined : "animate"}
+                exit={canvas ? undefined : "exit"}
               >
                 {/* 标题（可选）
                     - hideTitleVisually=true 时渲染 sr-only（a11y 但不显示）

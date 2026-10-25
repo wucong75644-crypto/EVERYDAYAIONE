@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { Dialog, DialogFooter } from '../Dialog';
 
 describe('Dialog', () => {
@@ -132,4 +132,12 @@ describe('Dialog', () => {
     // Radix 通过 Content.asChild 透传到 motion.div，
     // aria-modal 由 Radix 在内部元素设置，此处只验证 role
   });
+});
+
+
+it('allows the canvas to override the close autofocus destination',async()=>{
+  const restored=vi.fn((event:Event)=>event.preventDefault());
+  const view=render(<Dialog open title="焦点归还" onOpenChange={vi.fn()} onCloseAutoFocus={restored}><button>内容</button></Dialog>);
+  view.unmount();await waitFor(()=>expect(restored).toHaveBeenCalledTimes(1));
+  expect(restored.mock.calls[0][0].defaultPrevented).toBe(true);
 });

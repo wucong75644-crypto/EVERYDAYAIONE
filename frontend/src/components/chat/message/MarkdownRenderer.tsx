@@ -1,3 +1,4 @@
+import {knowledgeCitationHref} from '../../knowledge/knowledgeCitation';
 /**
  * Markdown 渲染器
  *
@@ -159,12 +160,14 @@ const markdownComponents: Components = {
   // 链接：workspace/CDN 文件链接走 downloadFile()，其他新窗口打开
   a({ children, node, href, ...rest }) {
     void node;
+    href=knowledgeCitationHref(href);
     // 匹配文件后缀 或 workspace/CDN 路径（中文编码后后缀可能丢失）
     const isFileUrl = href && (
       /\.(xlsx|xls|csv|pdf|zip|txt|parquet|json)(\?|$)/i.test(href) ||
       /\/workspace\//.test(href)
     );
-    if (isFileUrl) {
+    if (isFileUrl && href) {
+      const fileHref=href;
       // 从 URL 提取文件名，处理中文编码
       const rawName = href.split('/').pop()?.split('?')[0] || 'download';
       const filename = decodeURIComponent(rawName);
@@ -174,7 +177,7 @@ const markdownComponents: Components = {
           href={href}
           onClick={(e) => {
             e.preventDefault();
-            downloadFile(href, filename);
+            downloadFile(fileHref, filename);
           }}
           className="text-accent hover:underline cursor-pointer"
         >

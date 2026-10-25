@@ -1,3 +1,4 @@
+import { useCanvasSurfaceScope, useCanvasSurfaceMotion } from '../../knowledge/useCanvasSurfaceMotion';
 /**
  * 图片预览弹窗组件
  *
@@ -63,6 +64,8 @@ export default memo(function ImagePreviewModal({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [isDownloading, setIsDownloading] = useState(false);
+  const surface = useRef<HTMLDivElement>(null), canvas = useCanvasSurfaceScope();
+  const attach = useCanvasSurfaceMotion(surface, 'dialog', canvas && !!imageUrl);
   const [isClosing, setIsClosing] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -71,12 +74,13 @@ export default memo(function ImagePreviewModal({
 
   // 处理关闭动画
   const handleClose = useCallback(() => {
+    if (canvas) { onClose(); return; }
     setIsClosing(true);
     setTimeout(() => {
       setIsClosing(false);
       onClose();
     }, 150);
-  }, [onClose]);
+  }, [onClose, canvas]);
 
   // 缩放限制
   const MIN_SCALE = 0.5;
@@ -229,12 +233,13 @@ export default memo(function ImagePreviewModal({
   if (!imageUrl) return null;
 
   return createPortal(
-    <div
+    <div ref={attach} data-canvas-preview={canvas || undefined}
       className="fixed inset-0 z-50 flex items-center justify-center"
       onClick={(e) => {
         if (e.target === e.currentTarget) handleClose();
       }}
       style={{
+        backgroundColor: 'rgba(0,0,0,0.9)',
         animation: isClosing
           ? 'preview-backdrop-exit 150ms ease-out forwards'
           : 'preview-backdrop 200ms ease-out forwards',

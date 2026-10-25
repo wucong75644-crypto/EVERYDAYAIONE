@@ -1,0 +1,14 @@
+import {render,screen,fireEvent} from '@testing-library/react';
+import {it,expect,vi,beforeEach,afterEach} from 'vitest';
+import {CanvasRelations} from '../CanvasRelations';
+import type {KnowledgeNode,KnowledgeRelation} from '../../../services/knowledge';
+const node:KnowledgeNode={id:'a',node_id:'a',container_id:'p',parent_id:null,title:'A',kind:'topic',x:0,y:0,revision:1,layout_revision:1};
+const edge:KnowledgeRelation={id:'r',container_id:'p',source_object_id:'a',target_object_id:'b',relation_type:'related',appearance:{text:'标签',bend:0,source_control:{x:100,y:-50},target_control:{x:-60,y:20}}};
+function show(){const save=vi.fn(()=>true);render(<CanvasRelations nodes={[node,{...node,id:'b',title:'B',x:500}]} relations={[edge]} viewport={{current:null}} selected="r" writable disabled={false} zoom={2} dragging={null} onAppearance={save} onSelect={()=>{}} onReconnect={()=>{}}/>);return save;}
+beforeEach(()=>{class P extends MouseEvent{pointerId:number;constructor(type:string,o:PointerEventInit={}){super(type,o);this.pointerId=o.pointerId??1;}}vi.stubGlobal('PointerEvent',P);Element.prototype.setPointerCapture=vi.fn();});
+afterEach(()=>vi.unstubAllGlobals());
+it('drags each control independently at zoom and preserves text and the other control',()=>{const save=show(),control=screen.getByLabelText('调整关联线起点控制点');fireEvent.pointerDown(control,{button:0,pointerId:1,clientX:100,clientY:100});fireEvent.pointerMove(control,{pointerId:1,clientX:140,clientY:160});expect(save).not.toHaveBeenCalled();fireEvent.pointerUp(control,{pointerId:1,clientX:140,clientY:160});expect(save).toHaveBeenCalledWith(edge,{...edge.appearance,source_control:{x:120,y:-20}});});
+it('Escape cancels an unfinished control drag without saving',()=>{const save=show(),control=screen.getByLabelText('调整关联线终点控制点');fireEvent.pointerDown(control,{button:0,pointerId:1,clientX:100,clientY:100});fireEvent.pointerMove(control,{pointerId:1,clientX:200,clientY:160});fireEvent.keyDown(window,{key:'Escape'});fireEvent.pointerUp(control,{pointerId:1,clientX:200,clientY:160});expect(save).not.toHaveBeenCalled();});
+it('keyboard arrows and Home adjust or reset one control only',()=>{const save=show(),control=screen.getByLabelText('调整关联线终点控制点');fireEvent.keyDown(control,{key:'ArrowLeft',shiftKey:true});expect(save).toHaveBeenLastCalledWith(edge,{...edge.appearance,target_control:{x:-80,y:20}});fireEvent.keyDown(control,{key:'Home'});expect(save).toHaveBeenLastCalledWith(edge,{...edge.appearance,target_control:null});});
+
+it('allows endpoint keyboard travel around the border without changing the relationship identity',()=>{const save=show();fireEvent.keyDown(screen.getByLabelText('拖动关联线终点重新连接'),{key:'ArrowDown'});expect(save).toHaveBeenCalledWith(edge,expect.objectContaining({text:'标签',target_anchor:{x:0,y:80/170}}));});

@@ -1,4 +1,5 @@
 """V1 knowledge canvas. Server-side rollout and ACL apply to every request."""
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from uuid import UUID
 from fastapi import APIRouter, Query, Response
 from fastapi.responses import JSONResponse
@@ -6,7 +7,7 @@ from psycopg import Error as DatabaseError
 from api.deps import Database, OrgCtx
 from core.config import get_settings
 from core.db_scope import DatabaseScope, DatabaseAccessKind
-from services.knowledge_workspace.contracts import Command
+from services.knowledge_workspace.contracts import Command, BranchSnapshotRequest
 from services.knowledge_workspace.repository import Repository
 
 router = APIRouter(prefix='/knowledge', tags=['知识画布'])
@@ -31,17 +32,22 @@ def call(ctx, db, response, method, *args):
     repo = Repository(db.pool, DatabaseScope(ctx.user_id, ctx.org_id, DatabaseAccessKind.RUNTIME))
     try:
         data = getattr(repo, method)(*args)
-        if data is None and method in {'object', 'members', 'versions', 'version', 'search'}:
+        if data is None and method in {'object', 'members', 'versions', 'version', 'search', 'document', 'organize'}:
             return failure(404,'KNOWLEDGE_NOT_FOUND','内容不存在或无权访问')
         return {'success': True, 'data': data}
     except DatabaseError as e:
         message = str(e.diag.message_primary or '')
         errors = {
+            'KB_SNAPSHOT_EXPIRED': (409,'CLIPBOARD_SNAPSHOT_EXPIRED','复制快照已过期或未完成，请重新复制'),
+            'KB_SNAPSHOT_CAPACITY': (422,'CLIPBOARD_SNAPSHOT_CAPACITY','复制内容超过16MB，请减少选中分支'),
+            'KB_RELATION_DUPLICATE': (422,'RELATION_DUPLICATE','这些节点之间已有同类型关联线，请选择其他节点'),
+            'KB_INVALID_RELATION': (422,'INVALID_RELATION','关联线需连接同一空间内的两个不同节点'),
             'KB_NOT_FOUND': (404,'KNOWLEDGE_NOT_FOUND','内容不存在或无权访问'),
             'KB_ACCESS_DENIED': (403,'KNOWLEDGE_ACCESS_DENIED','没有修改权限'),
             'KB_ORG_REQUIRED': (403,'KNOWLEDGE_ORG_REQUIRED','请先选择企业'),
             'KB_VERSION_CONFLICT': (409,'VERSION_CONFLICT','内容已由其他操作更新，请刷新后重试'),
             'KB_IDEMPOTENCY_PAYLOAD_CONFLICT': (409,'IDEMPOTENCY_PAYLOAD_CONFLICT','重试内容与原操作不同'),
+            'KB_HISTORY_CONFLICT': (409,'HISTORY_CONFLICT','知识或撤销记录已更新，请刷新核对；未覆盖新修改'),
             'KB_TREE_CYCLE': (422,'TREE_CYCLE','分支不能移到自身或后代中'),
             'KB_FILE_CAPACITY': (422,'KNOWLEDGE_FILE_CAPACITY','每个节点最多绑定 100 个文件'),
             'KB_INVALID_FILE': (422,'KNOWLEDGE_INVALID_FILE','文件信息不符合约束'),
@@ -121,3 +127,41 @@ def search(container_id: UUID, ctx: OrgCtx, db: Database, response: Response,
     if not query:
         return failure(422,'KNOWLEDGE_INVALID_QUERY','请输入搜索关键词')
     return call(ctx,db,response,'search',container_id,query,cursor)
+
+@router.get('/canvas-history')
+def canvas_history(ctx: OrgCtx, db: Database, response: Response):
+    return call(ctx,db,response,'canvas_history')
+
+@router.post('/branch-snapshots')
+def capture_branch_snapshot(body: BranchSnapshotRequest, ctx: OrgCtx, db: Database, response: Response):
+    return call(ctx,db,response,'branch_snapshot',body.snapshot_id,body.model_dump(mode='json'))
+
+
+class KnowledgeOverrideRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    command_id: UUID
+    key: str = Field(min_length=1,max_length=160,pattern=r'^(section:|tag:)')
+    value: dict
+    expected_revision: int = Field(ge=0)
+
+    @model_validator(mode='after')
+    def validate_value(self):
+        if set(self.value)-{'text','hidden'} or not self.value or ('text' in self.value and (not isinstance(self.value['text'],str) or len(self.value['text'])>12000)) or ('hidden' in self.value and type(self.value['hidden']) is not bool):
+            raise ValueError('invalid manual knowledge override')
+        if self.key.startswith('tag:') and set(self.value)!={'hidden'}:raise ValueError('tag override only supports hiding')
+        return self
+
+@router.get('/objects/{object_id}/document')
+def directory_document(object_id: UUID, ctx: OrgCtx, db: Database, response: Response, generation: UUID | None = None):
+    return call(ctx,db,response,'document',object_id,generation)
+
+@router.post('/objects/{object_id}/knowledge-overrides')
+def knowledge_override(object_id: UUID, body: KnowledgeOverrideRequest, ctx: OrgCtx, db: Database, response: Response):
+    return call(ctx,db,response,'knowledge_override',object_id,body.key,body.value,body.expected_revision,body.command_id)
+
+
+@router.post('/containers/{container_id}/organize')
+def organize(container_id: UUID, ctx: OrgCtx, db: Database, response: Response, cursor: UUID | None = None):
+    if not get_settings().knowledge_derivation_enabled:
+        return failure(404,'KNOWLEDGE_UNAVAILABLE','自动整理尚未启用')
+    return call(ctx,db,response,'organize',container_id,cursor)

@@ -1,3 +1,4 @@
+import { useCanvasSurfaceScope, useCanvasSurfaceMotion } from '../components/knowledge/useCanvasSurfaceMotion';
 /**
  * PreviewFrame — 全屏 shell（遮罩 + 顶部工具栏 + loading + error），
  * 共享给所有「文档类」adapter：Pdf / Spreadsheet / Text / Docx / Pptx / Fallback。
@@ -9,7 +10,7 @@
  * 确保用户感知零差异。
  */
 
-import { type ReactNode, useEffect } from 'react';
+import { type ReactNode, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Download, Loader2, X } from 'lucide-react';
 import { toast } from 'react-hot-toast';
@@ -48,6 +49,8 @@ export default function PreviewFrame({
   children,
   footer,
 }: PreviewFrameProps) {
+  const surface = useRef<HTMLDivElement>(null), canvas = useCanvasSurfaceScope();
+  const attach = useCanvasSurfaceMotion(surface, 'dialog', canvas);
   // ESC 关闭
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -84,7 +87,7 @@ export default function PreviewFrame({
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex flex-col bg-black/80">
+    <div ref={attach} data-canvas-preview={canvas || undefined} className="fixed inset-0 z-50 flex flex-col bg-black/80">
       {/* 点击遮罩关闭（独立层，不影响内容区点击）*/}
       <div className="absolute inset-0 -z-10" onClick={onClose} />
 

@@ -140,10 +140,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://wwcdn.weixin.qq.com; "  # Vite HMR + 企微 SDK
                 "style-src 'self' 'unsafe-inline'; "  # Vite 样式注入需要
                 "img-src 'self' data: https://*.aliyuncs.com https://cdn.everydayai.com.cn; "
-                "media-src 'self' https://*.aliyuncs.com https://cdn.everydayai.com.cn; "
+                "media-src 'self' blob: https:; "
                 "font-src 'self' data:; "
                 "connect-src 'self' https://api.kie.ai ws://localhost:*; "
-                "frame-src https://login.work.weixin.qq.com; "  # 企微扫码 iframe
+                "frame-src https://login.work.weixin.qq.com https://www.youtube-nocookie.com https://player.bilibili.com https://player.vimeo.com; "  # 企微扫码和受控视频播放器
                 "object-src 'none'; "
                 "base-uri 'self'; "
                 "form-action 'self'; "
@@ -157,10 +157,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "script-src 'self' https://wwcdn.weixin.qq.com; "  # 企微扫码 SDK
                 "style-src 'self'; "
                 "img-src 'self' data: https://*.aliyuncs.com https://cdn.everydayai.com.cn; "
-                "media-src 'self' https://*.aliyuncs.com https://cdn.everydayai.com.cn; "
+                "media-src 'self' blob: https:; "
                 "font-src 'self' data:; "
                 "connect-src 'self' https://api.kie.ai; "
-                "frame-src https://login.work.weixin.qq.com; "  # 企微扫码 iframe
+                "frame-src https://login.work.weixin.qq.com https://www.youtube-nocookie.com https://player.bilibili.com https://player.vimeo.com; "  # 企微扫码和受控视频播放器
                 "object-src 'none'; "
                 "base-uri 'self'; "
                 "form-action 'self'; "
@@ -283,6 +283,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     worker = BackgroundTaskWorker(db)
     worker_task = asyncio.create_task(worker.start())
     logger.info("BackgroundTaskWorker started")
+    from services.knowledge_workspace.derivation_jobs import DerivationWorker
+    knowledge_worker = DerivationWorker(db.pool)
+    knowledge_worker_task = asyncio.create_task(knowledge_worker.run())
 
     # 全局错误监控（loguru ERROR sink → DB 持久化 + 致命级推企微）
     import os
@@ -314,6 +317,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
+    await knowledge_worker.stop(knowledge_worker_task)
     from services.model_gateway import get_model_gateway
     await get_model_gateway().close()
 

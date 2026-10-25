@@ -1,0 +1,20 @@
+import { useState } from 'react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { Link } from 'react-router-dom';
+import { useCanvasDraft } from '../components/knowledge/useCanvasDraft';
+import App from '../App';
+vi.mock('../stores/useAuthStore', () => ({ useAuthStore: () => ({ initAuth: () => {}, isLoading: false }) }));
+vi.mock('../contexts/WebSocketContext', () => ({ WebSocketProvider: ({ children }: { children: React.ReactNode }) => children }));
+vi.mock('../components/auth/ProtectedRoute', () => ({ default: ({ children }: { children: React.ReactNode }) => children }));
+vi.mock('../components/auth/AuthModal', () => ({ default: () => null }));
+vi.mock('../pages/Home', () => ({ default: () => <p>首页路由</p> }));
+vi.mock('../pages/Chat', () => ({ default: () => <p>对话路由</p> }));
+vi.mock('../pages/KnowledgeCanvas', () => ({ default: () => { const [dirty, setDirty] = useState(false); useCanvasDraft('routing-test', dirty ? { body: '草稿' } : null, true); return <><button onClick={() => setDirty(true)}>编辑草稿</button><Link to="/chat/one">回对话</Link></>; } }));
+beforeEach(() => { sessionStorage.clear(); localStorage.clear(); window.history.replaceState(null, '', '/knowledge'); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+describe('application router with canvas draft protection', () => {
+  it('blocks leaving knowledge through the production route tree', async () => { vi.spyOn(window, 'confirm').mockReturnValue(false); render(<App />); fireEvent.click(await screen.findByText('编辑草稿')); fireEvent.click(screen.getByText('回对话')); await waitFor(() => expect(window.confirm).toHaveBeenCalledOnce()); expect(window.location.pathname).toBe('/knowledge'); expect(screen.getByText('回对话')).toBeInTheDocument(); });
+  it('continues to the dynamic chat route after confirmation', async () => { vi.spyOn(window, 'confirm').mockReturnValue(true); render(<App />); fireEvent.click(await screen.findByText('编辑草稿')); fireEvent.click(screen.getByText('回对话')); expect(await screen.findByText('对话路由')).toBeInTheDocument(); expect(window.location.pathname).toBe('/chat/one'); });
+  it('preserves legacy route redirects', async () => { window.history.replaceState(null, '', '/prompt-gallery'); render(<App />); expect(await screen.findByText('首页路由')).toBeInTheDocument(); expect(window.location.pathname).toBe('/'); });
+});

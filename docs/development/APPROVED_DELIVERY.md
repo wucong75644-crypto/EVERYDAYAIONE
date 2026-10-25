@@ -43,3 +43,10 @@ bash deploy/release.sh --accept-and-close
 ## 历史云端发布
 
 旧 GitHub SSH 网关和脚本保留作历史诊断材料，非日常生产路径。历史生产总开关保持 false，生产/验收工作流已移除；不要同时启用本地和 GitHub 两条生产路径。生产环境 secrets 不再由新工作流引用，不复制到开发环境。
+
+### 知识整理依赖与启用
+
+用户明确授权启用自动整理及历史回填时，在正常发布入口追加 `--enable-knowledge`。
+受控锁内安装 FFmpeg/FFprobe、Poppler；Alibaba Cloud Linux 3 使用校验 SHA256 的 RPM Fusion EL8 仓库包，后续 RPM 保留软件源签名校验。解析程序逐一检查通过、模型及知识画布已配置后，仅更新 `KNOWLEDGE_DERIVATION_ENABLED`、`KNOWLEDGE_MEDIA_ENABLED`、`KNOWLEDGE_SEMANTIC_ENABLED` 三个键，保留私有备份及其他配置。随后按正常流程重启并检查 readiness。失败停止且不宣称启用成功。
+
+历史回填由持久化 worker 按现有 actor/org 及实时写权限处理，无需批量修改正文或权限。关闭时仅通过受控配置入口将 `KNOWLEDGE_DERIVATION_ENABLED=false` 并正常发布重启；已生成内容及人工内容不删除。

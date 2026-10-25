@@ -1,11 +1,30 @@
 import { request } from './api';
 export type KnowledgeScope = 'personal' | 'project' | 'team';
 export type KnowledgeRole = 'viewer' | 'editor' | 'manager';
-export interface KnowledgeContainer { id: string; kind: KnowledgeScope; title: string; revision: number; acl_revision: number; role: KnowledgeRole }
-export interface KnowledgeNode { id: string; container_id: string; parent_id: string | null; kind: 'topic' | 'document' | 'rule'; title: string; revision: number; node_id: string; x: number; y: number; layout_revision: number }
+export interface MapLayout { auto_balance:boolean; compact:boolean; equal_width:boolean }
+export interface MapTheme { layout?:MapLayout; palette: 'none'|'ocean'|'forest'|'sunset'|'mono'; background: string; grid: boolean; font: NonNullable<CanvasStyle['font']>; font_size: number; levels: {depth:number;style:CanvasStyle}[] }
+export interface KnowledgeContainer { canvas_theme?: Partial<MapTheme>; id: string; kind: KnowledgeScope; title: string; revision: number; acl_revision: number; role: KnowledgeRole }
+export interface CanvasStyle { color: string; background: string; border: string; font_size: number; bold: boolean; italic: boolean; shape: 'rounded' | 'rectangle' | 'pill'; font?: 'system'|'sans'|'serif'|'mono'; underline?: boolean; strike?: boolean; border_width?: number; border_style?: 'solid'|'dashed'|'dotted' }
+export interface CanvasImage { binding_id: string; revision: number; width: number; placement: 'top' | 'bottom'; aspect?: number; alt: string }
+export interface CanvasVideo { binding_id:string; revision:number; title:string }
+export interface CanvasLink { url:string; title:string; kind:'auto'|'video'|'web' }
+export interface TitleRun { text: string; bold?: boolean; italic?: boolean; color?: string; font_size?: number }
+export interface TitleFormat { runs: TitleRun[]; align: 'left'|'center'|'right' }
+export interface ManualLayout {source_anchor?:RelationPoint;target_anchor?:RelationPoint}
+export interface CanvasData {
+  manual_layout?:ManualLayout;
+  boundaries?:{id:string;members:string[];title:string}[]; title_format?: TitleFormat; width?: number | null; height?: number | null; structure?: import("../components/knowledge/topicStructure").TopicStructure; video?:CanvasVideo|null; link?:CanvasLink|null; style?: CanvasStyle | null; image?: CanvasImage | null; note?: string; labels?: string[]; task?: { progress: number; priority: number; start: string; due: string; assignee: string } | null; summary?: { members: string[]; title: string } | null; boundary?: { members: string[]; title: string } | null }
+export interface KnowledgeNode { attachments?:{total:number;items:KnowledgeFile[]}; canvas_data?: CanvasData; id: string; container_id: string; parent_id: string | null; kind: 'topic' | 'document' | 'rule'; title: string; revision: number; node_id: string; x: number; y: number; layout_revision: number; sort_order?: number | null }
+export interface DerivedSection {id:string;title:string;text:string;source_refs:string[];kind:string;manual?:boolean}
+export interface DerivedKnowledge {generation_id:string|null;sections:DerivedSection[];tags:string[];auto_tags?:string[];status:string;coverage?:string;overrides?:Record<string,{text?:string;hidden?:boolean}>;override_revisions?:Record<string,number>;source_links?:Record<string,string>}
+export interface DirectoryDocument extends KnowledgeObject {derived:DerivedKnowledge|null}
 export interface KnowledgeObject extends Pick<KnowledgeNode, 'id' | 'container_id' | 'parent_id' | 'kind' | 'title' | 'revision'> { body: string; can_write: boolean }
-export interface KnowledgeRelation { id: string; container_id: string; source_object_id: string; target_object_id: string; relation_type: string }
+export type RelationPoint = {x:number;y:number};
+export type RelationAppearance = {text:string;bend:number;source_anchor?:RelationPoint|null;target_anchor?:RelationPoint|null;source_control?:RelationPoint|null;target_control?:RelationPoint|null};
+export interface KnowledgeRelation { id: string; container_id: string; source_object_id: string; target_object_id: string; relation_type: string; appearance?: RelationAppearance }
 export interface KnowledgeScene { containers: KnowledgeContainer[]; nodes: KnowledgeNode[]; relations: KnowledgeRelation[] }
+export interface CanvasHistoryEntry { container_id?: string; container_title?: string; container_kind?: KnowledgeScope; history_id: string; operation: string; can_apply: boolean; reason: string }
+export interface CanvasHistory { undo: CanvasHistoryEntry | null; redo: CanvasHistoryEntry | null }
 interface Page extends KnowledgeScene { next_cursor: string | null }
 export interface KnowledgeMember { user_id: string; nickname: string; org_role: string; role: KnowledgeRole | null; status: 'active' | 'removed' | null }
 export interface KnowledgeVersion { revision: number; title: string; created_at: string }
@@ -15,6 +34,10 @@ export interface KnowledgeResults<T, C = string> { items: T[]; next_cursor: C | 
 interface Envelope<T> { success: true; data: T }
 async function get<T>(url: string, signal?: AbortSignal) { return (await request<Envelope<T>>({ url, signal })).data; }
 export const knowledgeApi = {
+  document:(id:string,signal?:AbortSignal,generation?:string)=>get<DirectoryDocument>('/knowledge/objects/'+id+'/document'+(generation?'?generation='+encodeURIComponent(generation):''),signal),
+  override:(id:string,key:string,value:{text?:string;hidden?:boolean},revision:number,commandId:string)=>request<Envelope<{revision:number}>>({url:'/knowledge/objects/'+id+'/knowledge-overrides',method:'POST',data:{key,value,expected_revision:revision,command_id:commandId}}),
+  captureSnapshot: (payload: Record<string, unknown>) => request<Envelope<{ snapshot_id: string; nodes: KnowledgeNode[] }>>({ url: '/knowledge/branch-snapshots', method: 'POST', data: payload }),
+  history: (signal?: AbortSignal) => get<CanvasHistory>('/knowledge/canvas-history', signal),
   available: (signal?: AbortSignal) => get<{ enabled: boolean }>('/knowledge/availability', signal),
   initialize: () => request<Envelope<null>>({ url: '/knowledge/initialize', method: 'POST' }),
   async scene(signal?: AbortSignal): Promise<KnowledgeScene> {
