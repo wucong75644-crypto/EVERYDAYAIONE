@@ -87,7 +87,7 @@ const kinds = { topic: '主题', document: '文档', rule: '规则', project: '�
 type QuickDraft = { manualLayout?:ManualLayout; standalone?:boolean; titleFormat?:TitleFormat; wrap?:KnowledgeNode; structure?: TopicStructure; node: KnowledgeNode | null; container: string; parent: string | null; position: Point; title: string; fromLine?: boolean; fixedPosition?: boolean; lineSource?: string; linePort?: 'child'|'sibling'; after?: string; before?: string };
 type Point = { x: number; y: number };
 type Draft = { created?: KnowledgeNode; type: keyof typeof kinds; container: string; parent: string | null; title: string; body: string; position: Point };
-type Menu = { group?:GroupSelection; x: number; y: number; point: Point; parent: string | null };
+type Menu = { directory?:boolean; group?:GroupSelection; x: number; y: number; point: Point; parent: string | null };
 type BranchClipboard = { identity: string; container: string; revision: number; objects: { object_id: string; expected_revision: number }[]; mode?: 'copy' | 'cut'; token?: string; snapshot_id?: string; snapshot_nodes?: KnowledgeNode[] };
 type Drag = { type: 'pan'; start: Point; pan: Point } | { type: 'node'; snapDisabled?:boolean; snapLocks?:{x?:string;y?:string}; id: string; sources: string[]; identity: string; remeasure?: boolean; cursor?: Point; origin: Point; foldedBase: Set<string>; hover?: { id: string; since: number }; start: Point; position: Point; moved?: boolean; base: KnowledgeScene; sizes: Map<string, CardSize>; visible: Set<string>; pointer: number; offsets?: Map<string, Point>; plan?: BranchPlan };
 function message(e: unknown) { return e instanceof Error ? e.message : '操作失败，请重试'; }
@@ -132,6 +132,7 @@ export default function KnowledgeCanvas() {
   const nodeMotion = useCanvasNodeMotion(identity, reducedMotion);
   const marqueeRef = useRef(marquee); marqueeRef.current = marquee;
   const [previous, setPrevious] = useState<typeof pan | null>(null);
+  const [directoryOpen,setDirectoryOpen]=useState<Record<string,boolean>>({});
   const [folded, setFolded] = useState<Set<string>>(new Set()); const foldsRef = useRef(folded); foldsRef.current = folded; const [menu, setMenu] = useState<Menu | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null); const [editing, setEditing] = useState<KnowledgeObject | null>(null);
   const [filePreview,setFilePreview]=useState<{id:string;version:KnowledgeFileVersion;identity:string}|null>(null);
@@ -258,7 +259,7 @@ export default function KnowledgeCanvas() {
   useEffect(() => {
     const controller = new AbortController();invalidateWriteSession();busy.current=false;quickSaving.current=false;setPending(false); const current = () => !controller.signal.aborted && identityRef.current === identity;
     suppressReveal.current = false; browseEpoch.current++;
-    setAnnotation(null); setGroupSelection(null); setSelectedRelation(null); setHistory(noHistory); setHistoryUnavailable(false); setBranchPreview(null); setFolded(new Set()); setQuick(null); setFileObject(null);setFileEntry(null); setFilePending(false); setLoadedIdentity(identity); unconfirmed.current = null; setScene(empty); setStatus('loading'); setDraft(null); setEditing(null);setBodyHistory(null);setImageView(null);setFilePreview(null); setMemberPanel(null); setMenu(null); setSelected(null); setQuery(''); setProject(''); setError('');
+    setDirectoryOpen({}); setAnnotation(null); setGroupSelection(null); setSelectedRelation(null); setHistory(noHistory); setHistoryUnavailable(false); setBranchPreview(null); setFolded(new Set()); setQuick(null); setFileObject(null);setFileEntry(null); setFilePending(false); setLoadedIdentity(identity); unconfirmed.current = null; setScene(empty); setStatus('loading'); setDraft(null); setEditing(null);setBodyHistory(null);setImageView(null);setFilePreview(null); setMemberPanel(null); setMenu(null); setSelected(null); setQuery(''); setProject(''); setError('');
     void (async () => {
       try {
         const availability = await knowledgeApi.available(controller.signal);
@@ -403,6 +404,7 @@ export default function KnowledgeCanvas() {
     const n = index.get(id), r = viewport.current?.getBoundingClientRect(); if (!n || !r) return;
     const owner = container(n.container_id); if (owner) { setTab(owner.kind); setProject(owner.id); }
     setMulti(new Set()); setSelectedRelation(null); setMenu(null); focusCanvas();
+    setDirectoryOpen(old=>{const next={...old,['container:'+n.container_id]:true};let parent=summaryParent(source,n);const seen=new Set<string>();while(parent&&!seen.has(parent)){seen.add(parent);next[parent]=true;const ancestor=index.get(parent);parent=ancestor?summaryParent(source,ancestor):null;}return next;});
     setPrevious(viewRef.current); animateView(()=>{const safe=canvasSafeArea(viewport.current!),el=viewport.current?.querySelector<HTMLElement>(`[data-node-id="${n.id}"]`);return {x:safe.x+safe.width/2-(n.x+(el?.offsetWidth||240)/2),y:safe.y+safe.height/2-(n.y+(el?.offsetHeight||130)/2),z:1};}); setSelected(id);
     setFolded(old => { const next = new Set(old); let p = summaryParent(source,n); const seen = new Set<string>(); while (p && !seen.has(p)) { seen.add(p); next.delete(p); const parent=index.get(p);p=parent?summaryParent(source,parent):null; } return next; });
   };
@@ -675,8 +677,8 @@ export default function KnowledgeCanvas() {
     if (await act('delete_relation', { container_id: currentRelation.container_id, expected_container_revision: active.revision, relation_id: currentRelation.id })) setSelectedRelation(null);
     focusCanvas();
   };
-  const selectionPayload = () => {
-    const items = nodes.filter(n => chosen.has(n.id)); const cid = items[0]?.container_id;
+  const selectionPayload = (ids:ReadonlySet<string> = chosen) => {
+    const items = nodes.filter(n => ids.has(n.id)); const cid = items[0]?.container_id;
     if (!items.length || items.some(n => n.container_id !== cid || !writable(n))) { setError('请选择同一空间内可编辑的分支'); return null; }
     return { container_id: cid, expected_container_revision: container(cid)!.revision,
       objects: items.map(n => ({ object_id: n.id, expected_revision: n.revision })) };
@@ -782,10 +784,10 @@ export default function KnowledgeCanvas() {
     const current=sceneRef.current.nodes.filter(v=>v.container_id===n.container_id),plan=reorderTopic(current,n,step,contentSizes(current),active?.canvas_theme?.layout,active?.canvas_theme),epoch=browseEpoch.current;if(!plan)return;
     if(await act('move_branch',{object_id:n.id,expected_revision:n.revision,expected_container_revision:container(n.container_id)!.revision,target_id:plan.target,placement:plan.placement,nodes:plan.changed.map(v=>({node_id:v.node_id,expected_revision:v.layout_revision,position:{x:v.x,y:v.y}}))})&&browseEpoch.current===epoch){setSelected(n.id);setMulti(new Set());setNavigationTick(t=>t+1);focusCanvas();}
   };
-  const deleteSelection = async () => {
+  const deleteSelection = async (ids:ReadonlySet<string> = chosen) => {
     if (historyBlocked) return;
-    const payload = selectionPayload(); if (!payload) return; const epoch = browseEpoch.current;
-    const removed=branchScope(nodes,chosen),remaining=reconcileSummaries(nodes,nodes.filter(n=>!removed.has(n.id))),sizes=contentSizes(nodes);
+    const payload = selectionPayload(ids); if (!payload) return; const epoch = browseEpoch.current;
+    const removed=branchScope(nodes,ids),remaining=reconcileSummaries(nodes,nodes.filter(n=>!removed.has(n.id))),sizes=contentSizes(nodes);
     let arranged=followSummaryPositions(nodes,remaining,sizes);
     for(const root of arranged.filter(n=>(n.canvas_data?.structure||Object.values(active?.canvas_theme?.layout??{}).some(Boolean))&&!structureRoot(arranged,summaryParent(arranged,n)??'',active?.canvas_theme?.layout)))arranged=arrangeStructure(arranged,root.id,sizes,active?.canvas_theme?.layout,active?.canvas_theme);
     const moves=structureMoves(nodes,arranged);
@@ -1139,7 +1141,23 @@ export default function KnowledgeCanvas() {
   const zoomBy = (factor: number) => { browseEpoch.current++; suppressReveal.current = false; const box = viewport.current?.getBoundingClientRect(); if (box) animateView(current => zoomAt(current, current.z * factor, { x: box.width / 2, y: box.height / 2 })); };
   const resetZoom = () => { browseEpoch.current++; suppressReveal.current = false; const box = viewport.current?.getBoundingClientRect(); if (box) animateView(current => zoomAt(current, 1, { x: box.width / 2, y: box.height / 2 })); };
   const path = (a: KnowledgeNode, b: KnowledgeNode) => { const sizes=contentSizes([a,b]);return manualTopicPath({...a,...sizes.get(a.id)!},{...b,...sizes.get(b.id)!},b.canvas_data?.manual_layout,branchDirection(nodes.some(n=>n.id===b.id)?nodes:[...nodes,b],b.id)); };
-  const nav = (n: KnowledgeNode, depth = 0): React.ReactNode => <div key={n.id}><button className={'kc-tree-row ' + (chosen.has(n.id) ? 'active' : '')} style={{ paddingLeft: 12 + depth * 14 }} onClick={() => { setMulti(new Set()); const c = container(n.container_id); if (c) { setTab(c.kind); if (c.kind === 'project') setProject(c.id); } locate(n.id); }}>{summaryParent(nodes,n) ? '└ ' : '◇ '}{n.title}</button>{!query && !folded.has(n.id) && nodes.filter(c => summaryParent(nodes,c) === n.id).sort(siblingCompare).map(c => nav(c, depth + 1))}</div>;
+  const directoryMenu = (n:KnowledgeNode,x:number,y:number) => {
+    if(browseBlocked)return;
+    setMulti(new Set());setSelected(n.id);setSelectedRelation(null);setGroupSelection(null);
+    setMenu({directory:true,x,y,point:{x:n.x,y:n.y},parent:n.id});
+  };
+  const nav = (n: KnowledgeNode, depth = 0): React.ReactNode => {
+    const children=nodes.filter(c=>summaryParent(nodes,c)===n.id).sort(siblingCompare);
+    const expanded=directoryOpen[n.id]??depth===0;
+    return <div key={n.id}>
+      <div className={'kc-directory-row '+(chosen.has(n.id)?'active':'')} style={{paddingLeft:8+depth*14}} onContextMenu={e=>{e.preventDefault();directoryMenu(n,e.clientX,e.clientY);}}>
+        {children.length?<button className="kc-directory-toggle" aria-label={(expanded?'折叠目录 ':'展开目录 ')+n.title} aria-expanded={expanded} disabled={browseBlocked} onClick={()=>setDirectoryOpen(old=>({...old,[n.id]:!expanded}))}>{expanded?'▾':'▸'}</button>:<span className="kc-directory-spacer"/>}
+        <button className="kc-tree-row" disabled={browseBlocked} onClick={()=>locate(n.id)}>{n.title}</button>
+        {writable(n)&&<button className="kc-directory-delete" aria-label={'删除目录分支 '+n.title} title="删除整条分支，可撤销" disabled={historyBlocked} onClick={()=>void deleteSelection(new Set([n.id]))}><Trash2 size={14}/></button>}
+      </div>
+      {!query&&expanded&&children.map(c=>nav(c,depth+1))}
+    </div>;
+  };
   const selectContainer = (id: string) => { if (browseBlocked) return; browseEpoch.current++; suppressReveal.current = false; cancelView(); nodeMotion.cancel(); setProject(id); setQuery(''); };
   const inlineToolsStyle=()=>{
     if(!quick?.node)return undefined;
@@ -1233,7 +1251,7 @@ export default function KnowledgeCanvas() {
         <div className="kc-search"><input aria-label="搜索当前范围标题与正文" maxLength={200} value={query} placeholder={'搜索' + (active?.title ?? scopes[tab]) + '标题与正文…'} onChange={e => setQuery(e.target.value)} /><small>当前范围：{active?.title ?? scopes[tab]} · 标题与正文</small></div>
         {!orgId && tab !== 'personal' && <p className="kc-muted">请先在主页面选择企业</p>}
         {query.trim() && active && <KnowledgeSearch key={identity + active.id + query.trim()} containerId={active.id} query={query.trim()} onLocate={id => { if (busy.current || unconfirmed.current) { locate(id); return; } const key = identity; void refresh().then(next => { if (identityRef.current === key) locate(id, next.nodes); }).catch(e => { if (identityRef.current === key) setError(message(e)); }); }} />}
-        {scopeContainers.map(c => <section key={c.id}><button className={'kc-container ' + (c.id === active?.id ? 'active' : '')} onClick={() => selectContainer(c.id)}>{c.title}<small>{c.role === 'viewer' ? '只读' : c.role === 'manager' ? '可管理' : '可编辑'}</small></button>{!query.trim() && nodes.filter(n => n.container_id === c.id && !summaryParent(nodes,n)).sort(siblingCompare).map(n => nav(n))}</section>)}
+        {scopeContainers.map(c => {const expanded=c.id===active?.id&&(directoryOpen['container:'+c.id]??true);return <section key={c.id}><div className="kc-directory-container"><button className="kc-directory-toggle" aria-label={(expanded?'折叠项目目录 ':'展开项目目录 ')+c.title} aria-expanded={expanded} disabled={browseBlocked} onClick={()=>{setDirectoryOpen(old=>({...old,['container:'+c.id]:!expanded}));if(!expanded)selectContainer(c.id);}}>{expanded?'▾':'▸'}</button><button className={'kc-container ' + (c.id === active?.id ? 'active' : '')} disabled={browseBlocked} onClick={() => {selectContainer(c.id);setDirectoryOpen(old=>({...old,['container:'+c.id]:true}));}}>{c.title}<small>{c.role === 'viewer' ? '只读' : c.role === 'manager' ? '可管理' : '可编辑'}</small></button></div>{!query.trim() && expanded && nodes.filter(n => n.container_id === c.id && !summaryParent(nodes,n)).sort(siblingCompare).map(n => nav(n))}</section>;})}
       </aside>
     </main>}
     {mediaView&&<CanvasMediaPreview key={identity+mediaView.node.id+mediaView.source} node={mediaView.node} source={mediaView.source} onClose={()=>{setMediaView(null);focusCanvas();}}/>}
@@ -1243,7 +1261,11 @@ export default function KnowledgeCanvas() {
     {annotation && <CanvasAnnotationDialog restored={annotation.draft} onDraft={annotationDraft} key={identity+annotation.node.id+annotation.mode} node={annotation.node} mode={annotation.mode} pending={pending} unknown={!!unconfirmed.current} saveError={error} onCheck={()=>void checkSave()} writable={writable(annotation.node)} onSave={data=>saveAnnotations([{node:annotation.node,data}])} onClose={()=>{setAnnotation(null);focusCanvas();}}/>}
     {fileObject && loadedIdentity === identity && <KnowledgeFiles key={identity+fileObject.id} object={fileObject} nodes={nodes} onLabels={()=>{const n=byId.get(fileObject.id);if(n){setFileObject(null);setFileEntry(null);openAnnotation('labels',n);}}} entry={fileEntry?.action} position={fileEntry?.position} onClose={() => { setFileObject(null);setFileEntry(null); focusCanvas(); }} onBusyChange={setFilePending} onFilesChanged={files=>{const next={...sceneRef.current,nodes:sceneRef.current.nodes.map(n=>n.id===fileObject.id?{...n,attachments:{total:files.length,items:files.slice(0,2)}}:n)};sceneRef.current=next;setScene(next);void refresh().catch(()=>setError('附件已更新，画布同步失败，请刷新'));}} />}
     {menu && <CanvasContextMenu key={`${menu.x}:${menu.y}:${menu.parent}`} position={menu} onClose={() => setMenu(null)} onReturnFocus={focusCanvas}>
-      {menu.group?<><CanvasMenuItem disabled={historyBlocked||!byId.get(menu.group.node)||!writable(byId.get(menu.group.node)!)} onSelect={()=>editGroup(menu.group)}>修改{menu.group.kind==='boundary'?'外框':'概要'}名称</CanvasMenuItem><CanvasMenuItem disabled={historyBlocked||!byId.get(menu.group.node)||!writable(byId.get(menu.group.node)!)} onSelect={()=>openVisual(menu.group!.kind,byId.get(menu.group!.node),menu.group!.key)}>调整范围</CanvasMenuItem><CanvasMenuItem disabled={historyBlocked||!byId.get(menu.group.node)||!writable(byId.get(menu.group.node)!)} onSelect={()=>void deleteGroup(menu.group)}>删除{menu.group.kind==='boundary'?'外框（保留主题）':'概要（保留原分支）'}</CanvasMenuItem></>:<>
+      {menu.directory?<>
+        <CanvasMenuItem disabled={historyBlocked||!toolNodes.length||toolNodes.some(n=>!writable(n))} onSelect={()=>copyToSystem()}>复制整条分支 · {shortcut('⌘C','Ctrl+C')}</CanvasMenuItem>
+        <CanvasMenuItem disabled={historyBlocked||!clipboard||!menu.parent||!byId.get(menu.parent)||!writable(byId.get(menu.parent)!)} onSelect={()=>void pasteSelection(clipboard,menu)}>粘贴分支 · {shortcut('⌘V','Ctrl+V')}</CanvasMenuItem>
+        <CanvasMenuItem disabled={historyBlocked||!toolNodes.length||toolNodes.some(n=>!writable(n))} onSelect={()=>void deleteSelection()}>删除整条分支 · {shortcut('⌫','Delete')}</CanvasMenuItem>
+      </>:menu.group?<><CanvasMenuItem disabled={historyBlocked||!byId.get(menu.group.node)||!writable(byId.get(menu.group.node)!)} onSelect={()=>editGroup(menu.group)}>修改{menu.group.kind==='boundary'?'外框':'概要'}名称</CanvasMenuItem><CanvasMenuItem disabled={historyBlocked||!byId.get(menu.group.node)||!writable(byId.get(menu.group.node)!)} onSelect={()=>openVisual(menu.group!.kind,byId.get(menu.group!.node),menu.group!.key)}>调整范围</CanvasMenuItem><CanvasMenuItem disabled={historyBlocked||!byId.get(menu.group.node)||!writable(byId.get(menu.group.node)!)} onSelect={()=>void deleteGroup(menu.group)}>删除{menu.group.kind==='boundary'?'外框（保留主题）':'概要（保留原分支）'}</CanvasMenuItem></>:<>
       {(!menu.parent || (byId.get(menu.parent) && writable(byId.get(menu.parent)!))) && <>{menu.parent?<CanvasSubMenu label="修改排列类型" disabled={historyBlocked}>{topicStructures.map(type=><CanvasMenuItem key={type.id} onSelect={()=>void changeStructure(byId.get(menu.parent!)!,type.id)}>{type.title}{effectiveStructure(nodes,menu.parent!)===type.id?' ✓':''}</CanvasMenuItem>)}</CanvasSubMenu>:<CanvasSubMenu label="创建主题" disabled={historyBlocked||!active||active.role==='viewer'}>{topicStructures.map(type=><CanvasMenuItem key={type.id} onSelect={()=>createDefaultTopic(menu,type.id)}>{type.title}{type.id==='right'?' · 默认':''}</CanvasMenuItem>)}</CanvasSubMenu>}<CanvasSubMenu label="创建" disabled={historyBlocked}>{(['document', 'rule'] as const).map(type => <CanvasMenuItem key={type} onSelect={() => openCreate(menu.point, menu.parent, type)}>创建{kinds[type]}</CanvasMenuItem>)}{orgId && !menu.parent && <CanvasMenuItem onSelect={() => openCreate(menu.point, null, 'project')}>创建项目</CanvasMenuItem>}{menu.parent && writable(byId.get(menu.parent)!) && <CanvasMenuItem disabled={historyBlocked||toolNodes.length!==1} onSelect={()=>startParent(byId.get(menu.parent!)!)}>插入父主题 · {shortcut('⌘Enter','Ctrl+Enter')}</CanvasMenuItem>}</CanvasSubMenu></>}
       {menu.parent && byId.get(menu.parent) && <><CanvasMenuItem disabled={historyBlocked} onSelect={()=>openAnnotation('note',byId.get(menu.parent!)!)}>备注</CanvasMenuItem></>}
       <CanvasMenuItem disabled={historyBlocked || !chosen.size} onSelect={() => copyToSystem('cut')}>剪切整条分支 · {shortcut('⌘X','Ctrl+X')}</CanvasMenuItem><CanvasMenuItem disabled={historyBlocked || !chosen.size} onSelect={() => copyToSystem()}>复制整条分支 · {shortcut('⌘C','Ctrl+C')}</CanvasMenuItem><CanvasMenuItem disabled={historyBlocked || !clipboard} onSelect={() => void pasteSelection(clipboard, menu)}>粘贴分支 · {shortcut('⌘V','Ctrl+V')}</CanvasMenuItem><CanvasSubMenu label="删除" disabled={historyBlocked||!chosen.size}><CanvasMenuItem disabled={historyBlocked||toolNodes.length!==1||!writable(toolNodes[0])} onSelect={()=>void deleteSingle(toolNodes[0])}>只删除当前主题（保留子主题） · {shortcut('⌘⌫','Ctrl+Delete')}</CanvasMenuItem><CanvasMenuItem disabled={historyBlocked || !chosen.size} onSelect={() => void deleteSelection()}>删除整条分支 · {shortcut('⌫','Delete')}</CanvasMenuItem></CanvasSubMenu>

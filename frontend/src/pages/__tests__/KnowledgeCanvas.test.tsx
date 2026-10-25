@@ -1071,7 +1071,7 @@ describe('menu and focus lifecycle',()=>{
     fireEvent.keyDown(first,{key:'Escape'});await waitFor(()=>expect(screen.getByLabelText('知识画布')).toHaveFocus());
   });
   it('returns focus from directory navigation so the next Enter creates at the selected node',async()=>{
-    show();await ready();const row=screen.getByRole('button',{name:'◇ 项目总纲'});row.focus();fireEvent.click(row);
+    show();await ready();const row=screen.getByRole('button',{name:'项目总纲',exact:true});row.focus();fireEvent.click(row);
     await waitFor(()=>expect(screen.getByLabelText('知识画布')).toHaveFocus());
     fireEvent.keyDown(document.activeElement!,{key:'Enter'});expect(screen.getByLabelText('新主题标题')).toBeInTheDocument();
   });
@@ -1745,10 +1745,11 @@ it('recovers text typed during an interrupted pending creation and replays the e
  fireEvent.keyDown(restored,{key:'Enter'});await waitFor(()=>expect(f.api.command).toHaveBeenCalledTimes(3));expect(f.api.command.mock.calls[2]).toEqual(['update_title',expect.objectContaining({object_id:'made',expected_revision:1,title:'发送之后继续输入'}),expect.any(String)]);await act(async()=>finish({success:true,data:{object_id:'made'}}));
 });
 
-it('shows a persisted root-level summary only under its logical parent and hides its directory entry on fold',async()=>{
+it('keeps summary directory folding independent from canvas folding',async()=>{
  const a={...node,id:'member-a',node_id:'member-a',parent_id:'root',title:'成员A'},b={...a,id:'member-b',node_id:'member-b',title:'成员B'},summary={...node,id:'summary-dir',node_id:'summary-dir',parent_id:null,title:'范围概要',canvas_data:{summary:{title:'范围概要',members:['member-a','member-b']}}};
- f.api.scene.mockResolvedValue({...initial,nodes:[node,a,b,summary]});show();await ready();const directory=screen.getByLabelText('知识目录');expect(within(directory).getAllByRole('button',{name:/范围概要/})).toHaveLength(1);
- fireEvent.click(screen.getByLabelText('折叠或展开 '+node.title));expect(within(directory).queryByRole('button',{name:/范围概要/})).toBeNull();expect(screen.queryByRole('article',{name:'范围概要'})).toBeNull();
+ f.api.scene.mockResolvedValue({...initial,nodes:[node,a,b,summary]});show();await ready();const directory=screen.getByLabelText('知识目录');expect(within(directory).getByRole('button',{name:'范围概要',exact:true})).toBeInTheDocument();
+ fireEvent.click(screen.getByLabelText('折叠或展开 '+node.title));expect(within(directory).getByRole('button',{name:'范围概要',exact:true})).toBeInTheDocument();expect(screen.queryByRole('article',{name:'范围概要'})).toBeNull();
+ fireEvent.click(within(directory).getByRole('button',{name:'折叠目录 '+node.title}));expect(within(directory).queryByRole('button',{name:'范围概要',exact:true})).toBeNull();
 });
 
 it('keeps an inline title readable when an unknown save is reported globally',async()=>{
@@ -1818,4 +1819,51 @@ it.each(['Enter','Tab'])('keeps the same right-side parent port before and after
  show();await ready();const root=screen.getByRole('article',{name:node.title});Object.defineProperty(root,'offsetWidth',{value:500,configurable:true});Object.defineProperty(root,'offsetHeight',{value:600,configurable:true});const selected=key==='Tab'?root:screen.getByRole('article',{name:'末尾子主题'});fireEvent.pointerDown(selected,{button:0,pointerId:1});fireEvent.pointerUp(screen.getByLabelText('知识画布'),{pointerId:1});fireEvent.keyDown(screen.getByLabelText('知识画布'),{key});
  const draftPath=document.querySelector('.kc-draft-edge path')!;expect(draftPath.getAttribute('d')).toMatch(/^M 520 340 C /);const input=screen.getByLabelText('新主题标题');changeField(input,{target:{value:'新增主题'}});fireEvent.keyDown(input,{key:'Enter'});await screen.findByRole('article',{name:'新增主题'});expect(current.nodes.at(-1)?.parent_id).toBe('root');
  const finalPath=()=>document.querySelector('.kc-world > .kc-edges:not(.kc-draft-edge) path:last-child')??document.querySelector('.kc-edges:not(.kc-draft-edge) path:last-child');expect(finalPath()?.getAttribute('d')).toMatch(/^M 520 340 C /);fireEvent.click(screen.getByRole('button',{name:'刷新',exact:true}));await waitFor(()=>expect(finalPath()?.getAttribute('d')).toMatch(/^M 520 340 C /));
+});
+
+
+describe('collapsible directory actions',()=>{
+ const child={...node,id:'dir-child',node_id:'dir-child',parent_id:'root',title:'目录子项',x:420,y:40};
+ const grandchild={...child,id:'dir-grandchild',node_id:'dir-grandchild',parent_id:'dir-child',title:'目录孙项',x:820};
+ it('limits default depth and toggles branches and project independently of the canvas',async()=>{
+  f.api.scene.mockResolvedValue({...initial,nodes:[node,child,grandchild]});show();await ready();const dir=screen.getByLabelText('知识目录');
+  expect(within(dir).getByRole('button',{name:child.title,exact:true})).toBeInTheDocument();expect(within(dir).queryByRole('button',{name:grandchild.title,exact:true})).toBeNull();
+  fireEvent.click(within(dir).getByRole('button',{name:'展开目录 '+child.title}));expect(within(dir).getByRole('button',{name:grandchild.title,exact:true})).toBeInTheDocument();
+  fireEvent.click(within(dir).getByRole('button',{name:'折叠目录 '+node.title}));expect(within(dir).queryByRole('button',{name:child.title,exact:true})).toBeNull();expect(screen.getByRole('article',{name:grandchild.title})).toBeInTheDocument();
+  fireEvent.click(within(dir).getByRole('button',{name:'折叠项目目录 客户项目'}));expect(within(dir).queryByRole('button',{name:node.title,exact:true})).toBeNull();
+  fireEvent.click(within(dir).getByRole('button',{name:'展开项目目录 客户项目'}));expect(within(dir).getByRole('button',{name:node.title,exact:true})).toBeInTheDocument();expect(f.api.command).not.toHaveBeenCalled();
+ });
+ it('keeps inactive project headers collapsed when switching projects',async()=>{
+  const other={...node,id:'other',node_id:'other',container_id:'other-project',title:'另一项目主题'};
+  f.api.scene.mockResolvedValue({...initial,containers:[...initial.containers,{id:'other-project',kind:'project',title:'另一项目',role:'manager',revision:1}],nodes:[node,other]});show();await ready();const dir=screen.getByLabelText('知识目录');
+  fireEvent.click(within(dir).getByRole('button',{name:'展开项目目录 另一项目'}));
+  expect(within(dir).getByRole('button',{name:'展开项目目录 客户项目'})).toHaveAttribute('aria-expanded','false');
+  expect(within(dir).getByRole('button',{name:other.title,exact:true})).toBeInTheDocument();expect(within(dir).queryByRole('button',{name:node.title,exact:true})).toBeNull();
+ });
+ it('reveals collapsed ancestors in the directory when locating a search result',async()=>{
+  f.api.scene.mockResolvedValue({...initial,nodes:[node,child,grandchild]});f.api.search.mockResolvedValue({items:[{...grandchild,excerpt:'命中'}],next_cursor:null});show();await ready();const dir=screen.getByLabelText('知识目录');
+  fireEvent.click(within(dir).getByRole('button',{name:'折叠目录 '+node.title}));changeField(screen.getByLabelText('搜索当前范围标题与正文'),{target:{value:'目录孙项'}});
+  fireEvent.click(await screen.findByRole('button',{name:'目录孙项 命中'}));await waitFor(()=>expect(screen.getByLabelText('知识画布')).toHaveFocus());
+  changeField(screen.getByLabelText('搜索当前范围标题与正文'),{target:{value:''}});expect(await within(dir).findByRole('button',{name:grandchild.title,exact:true})).toBeInTheDocument();
+ });
+ it('deletes the clicked branch rather than an unrelated canvas selection and can undo',async()=>{
+  f.api.scene.mockResolvedValue({...initial,nodes:[node,child,grandchild]});show();await ready();fireEvent.click(within(screen.getByLabelText('知识目录')).getByRole('button',{name:node.title,exact:true}));
+  f.api.history.mockResolvedValue({undo:{history_id:'directory-delete',operation:'delete_branches',can_apply:true},redo:null});
+  fireEvent.click(screen.getByRole('button',{name:'删除目录分支 '+child.title}));await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('delete_branches',expect.objectContaining({objects:[{object_id:child.id,expected_revision:1}]}),expect.any(String)));
+  const undo=await screen.findByRole('button',{name:'撤销 删除分支'});await waitFor(()=>expect(undo).toBeEnabled());fireEvent.click(undo);await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('undo_canvas',{history_id:'directory-delete'},expect.any(String)));
+ });
+ it.each(['MacIntel','Win32'])('copies and pastes through the compact directory menu on %s',async platform=>{
+  Object.defineProperty(window.navigator,'platform',{configurable:true,value:platform});f.api.scene.mockResolvedValue({...initial,nodes:[node,child]});show();await ready();const dir=screen.getByLabelText('知识目录');
+  fireEvent.contextMenu(within(dir).getByRole('button',{name:child.title,exact:true}),{clientX:1050,clientY:400});
+  expect(screen.getAllByRole('menuitem')).toHaveLength(3);expect(screen.getByRole('menuitem',{name:/粘贴分支/})).toHaveAttribute('data-disabled');
+  const chord=platform==='MacIntel'?'⌘C':'Ctrl+C';fireEvent.click(screen.getByRole('menuitem',{name:'复制整条分支 · '+chord}));await snapshotSettled();
+  expect(f.api.captureSnapshot).toHaveBeenCalledWith(expect.objectContaining({objects:[{object_id:child.id,expected_revision:1}]}));
+  fireEvent.contextMenu(within(dir).getByRole('button',{name:node.title,exact:true}),{clientX:1050,clientY:300});fireEvent.click(screen.getByRole('menuitem',{name:/粘贴分支/}));
+  await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('copy_branches',expect.objectContaining({parent_id:'root'}),expect.any(String)));
+ });
+ it('does not expose delete or enable mutations for a read-only branch',async()=>{
+  f.api.scene.mockResolvedValue({...initial,containers:initial.containers.map(c=>c.id==='p'?{...c,role:'viewer'}:c),nodes:[node,child]});show();await ready();const dir=screen.getByLabelText('知识目录');
+  expect(within(dir).queryByRole('button',{name:/删除目录分支/})).toBeNull();fireEvent.contextMenu(within(dir).getByRole('button',{name:child.title,exact:true}),{clientX:1000,clientY:300});
+  for(const item of screen.getAllByRole('menuitem'))expect(item).toHaveAttribute('data-disabled');expect(f.api.command).not.toHaveBeenCalled();
+ });
 });

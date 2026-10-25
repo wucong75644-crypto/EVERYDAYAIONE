@@ -24,6 +24,7 @@ class PreparedChatStream:
     skill_host_authorized_tool_names: Any = None
     skill_context_applied: bool = False
     skill_host_scope_captured: bool = False
+    knowledge_answer_plan: Any = None
 
     @property
     def adapter(self) -> Any:

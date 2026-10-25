@@ -348,6 +348,8 @@ async def execute_chat(
                 ))
         if workflow:
             await workflow.activated()
+        from services.knowledge_workspace.answer_plan import prepare as prepare_knowledge_answer
+        await prepare_knowledge_answer(handler,prepared,request,skills)
         form_hint = await _run_loop(
             handler=handler,
             request=request,
@@ -512,10 +514,11 @@ async def _run_loop(
                 prepared.messages,
                 runtime.consume_subtask_completions(),
             )
-            _inject_steer_messages(
-                prepared.messages,
-                runtime.consume_steer_messages(),
-            )
+            steers=runtime.consume_steer_messages()
+            _inject_steer_messages(prepared.messages,steers)
+            if steers and getattr(prepared,'knowledge_answer_plan',None):
+                from services.knowledge_workspace.answer_plan import invalidate_for_steer
+                invalidate_for_steer(prepared,handler._knowledge_run)
         await _check_cancelled(
             cancellation_event, request, prepared.messages, blocks,
             totals, "loop_top",
@@ -539,6 +542,11 @@ async def _run_loop(
             if any(key != runtime.skill_runtime.manual_skill_id and key not in runtime.skill_runtime.session_skill_ids
                    for key in runtime.skill_runtime.active):
                 tools.append(DEACTIVATE_SKILL_SCHEMA)
+        knowledge_plan=getattr(prepared,'knowledge_answer_plan',None)
+        fast_knowledge=knowledge_plan and knowledge_plan.get('mode') in ('answer','missing')
+        if fast_knowledge:
+            await asyncio.to_thread(handler._knowledge_run.revalidate)
+            tools=[]
         current_model_round = model_round
         before_usage = dict(totals.usage) if correcting else {}
         try:
@@ -554,6 +562,8 @@ async def _run_loop(
             if image_metrics is not None:
                 totals.usage["image_argument_metrics"] = image_metrics
         model_round += 1
+        if fast_knowledge and calls:
+            raise RuntimeError('KNOWLEDGE_ANSWER_UNEXPECTED_TOOL_CALL')
         if runtime:
             await runtime.safe_point(SafePoint.AFTER_MODEL)
         if prepared.defer_ecom_narrative:

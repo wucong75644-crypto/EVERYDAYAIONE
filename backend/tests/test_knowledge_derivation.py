@@ -364,3 +364,107 @@ def test_bounded_video_decoder_preserves_actual_time_range(tmp_path):
  images,audio,partial=prepare(target.read_bytes(),'video/mp4')
  assert images and audio and partial
  assert audio[0][0]==0 and 1.9<=audio[0][1]<=2.1
+
+
+def test_media_extraction_reuses_version_cache_before_opening_original(derived_db,monkeypatch):
+ from core.config import get_settings
+ from services.knowledge_workspace import media
+ settings=get_settings();monkeypatch.setattr(settings,'knowledge_media_enabled',True);monkeypatch.setattr(settings,'dashscope_api_key','local-test-not-a-provider-key')
+ r=derived_db[0]();n=create(r);b=upload(r,n)
+ calls=[]
+ monkeypatch.setattr(media,'read_version',lambda *args:b'local synthetic image')
+ async def recognize(content,mime,authorize=None):
+  if authorize:authorize()
+  calls.append(content);return {'text':'媒体核对照片','coverage':'partial'}
+ monkeypatch.setattr(media,'recognize',recognize)
+ first=asyncio.run(media.extract(r,n['id'],b['binding_id'],1));assert len(calls)==1
+ def forbidden(*args,**kwargs):raise AssertionError('cached version must not reopen original')
+ monkeypatch.setattr(media,'read_version',forbidden);monkeypatch.setattr(media,'recognize',forbidden)
+ assert asyncio.run(media.extract(r,n['id'],b['binding_id'],1))==first
+ assert asyncio.run(media.extract(derived_db[0](1),n['id'],b['binding_id'],1)) is None
+
+
+def test_file_update_and_remove_refresh_entire_chain_without_overwriting_manual(derived_db):
+ r=derived_db[0]();root=create(r);middle=create(r,root['container_id'],root['id'],'中间目录');leaf=create(r,root['container_id'],middle['id'],'业务目录');chain=[leaf,middle,root]
+ r.command(command('save_document',{'object_id':leaf['id'],'expected_revision':1,'body':'人工内容必须保留'}))
+ b=upload(r,leaf,'旧版核对订单')
+ async def summarize(sources,title,path):
+  return {'sections':[{'title':'来源汇总','text':'\n'.join(s['text'] for s in sources),'source_refs':[s['key'] for s in sources]}] if sources else [],'tags':['新版'] if any('新版' in s['text'] for s in sources) else ['旧版'] if any('旧版' in s['text'] for s in sources) else []}
+ def drain():
+  for n in chain:assert asyncio.run(process(r,n['id'],summarize))
+ drain()
+ r.file_command(uuid4(),'file_upload',{'object_id':str(leaf['id']),'binding_id':b['binding_id'],'expected_revision':1,'version_id':str(uuid4()),'name':'处理.txt','mime_type':'text/plain','size':12,'sha256':'b'*64,'text_status':'ready','extracted_text':'新版核对订单照片'})
+ for n in chain:assert document(r,n['id'])['generation_id'] is None
+ drain()
+ for n in chain:
+  d=document(r,n['id']);assert d['tags']==['新版'];assert '新版核对订单照片' in d['sections'][0]['text'];assert '旧版' not in d['sections'][0]['text']
+ r.file_command(uuid4(),'file_remove',{'object_id':str(leaf['id']),'binding_id':b['binding_id'],'expected_revision':2})
+ drain()
+ for n in chain:
+  d=document(r,n['id']);assert d['tags']==[];assert '新版核对订单照片' not in d['sections'][0]['text'];assert '人工内容必须保留' in d['sections'][0]['text']
+ assert r.object(leaf['id'])['body']=='人工内容必须保留'
+
+
+@pytest.mark.parametrize('initial_at_creation',[False,True])
+def test_manual_text_create_edit_clear_refreshes_chunks_tags_and_ancestors(derived_db,monkeypatch,initial_at_creation):
+ from core.config import get_settings
+ from services.knowledge_workspace.derived_document import effective_document
+ from tests.test_knowledge_chat_v3 import start,ref
+ monkeypatch.setattr(get_settings(),'knowledge_derivation_enabled',True)
+ r=derived_db[0]();root=create(r,title='人工资料总目录');middle=create(r,root['container_id'],root['id'],'业务分类')
+ old='独有旧条款：漏发核对订单后补寄，食品拆封不适用。';new='独有新条款：漏发核对照片后退款，食品拆封转人工。'
+ result=r.command(command('create_object',{'container_id':root['container_id'],'parent_id':middle['id'],'kind':'topic','title':'直接输入','body':old if initial_at_creation else '', 'position':{'x':600,'y':0}}));leaf=r.object(result['object_id'])
+ if not initial_at_creation:r.command(command('save_document',{'object_id':leaf['id'],'expected_revision':leaf['revision'],'body':old}))
+ r.command(command('update_canvas_data',payload(r,[leaf],{'labels':['人工保留标签']})))
+ chain=[leaf,middle,root]
+ async def summarize(sources,title,path):
+  text='\n'.join(s['text'] for s in sources)
+  return {'sections':[{'title':'已保存正文汇总','text':text,'source_refs':[s['key'] for s in sources]}] if sources else [],'tags':['自动新条款'] if '独有新条款' in text else ['自动旧条款'] if '独有旧条款' in text else []}
+ def drain(expected,absent,tag):
+  manual=[r.object(n['id']) for n in chain];history=r.canvas_history()
+  for n in chain:assert asyncio.run(process(r,n['id'],summarize))
+  assert [r.object(n['id']) for n in chain]==manual and r.canvas_history()==history
+  for n in chain:
+   d=document(r,n['id']);combined='\n'.join(c['text'] for c in d['chunks'])
+   if expected:assert expected in combined
+   assert absent not in combined;assert d['tags']==tag
+  assert current(r,leaf['id'])['canvas_data']['labels']==['人工保留标签']
+  assert '人工保留标签' in effective_document(document(r,leaf['id']),['人工保留标签'])['tags']
+ def search(query):
+  run,_,_=start(derived_db[0],r,[ref(root)])
+  return run.execute('search',{'root_handle':run.introduction()['roots'][0]['handle'],'query':query})['items']
+ assert search('独有旧条款') # 原文无需等待后台整理即能检索。
+ drain('独有旧条款','独有新条款',['自动旧条款'])
+ assert any(i['type']=='generated' for i in search('独有旧条款'))
+ r.command(command('save_document',{'object_id':leaf['id'],'expected_revision':r.object(leaf['id'])['revision'],'body':new}))
+ for n in chain:assert document(r,n['id'])['generation_id'] is None
+ assert not search('独有旧条款');assert search('独有新条款')
+ drain('独有新条款','独有旧条款',['自动新条款'])
+ r.command(command('save_document',{'object_id':leaf['id'],'expected_revision':r.object(leaf['id'])['revision'],'body':''}))
+ for n in chain:assert document(r,n['id'])['generation_id'] is None
+ assert not search('独有新条款')
+ drain(None,'独有新条款',[])
+ assert r.object(leaf['id'])['body']=='' and document(r,leaf['id'])['chunks']==[]
+ assert not search('独有旧条款') and not search('独有新条款')
+
+
+@pytest.mark.parametrize('foreign_scope',[(1,0),(0,1)])
+def test_manual_text_derivation_and_search_cannot_cross_actor_or_org(derived_db,monkeypatch,foreign_scope):
+ from core.config import get_settings
+ from core.exceptions import AppException
+ from tests.test_knowledge_chat_v3 import start,ref
+ monkeypatch.setattr(get_settings(),'knowledge_derivation_enabled',True)
+ make,_=derived_db;r=make();root=create(r);leaf=create(r,root['container_id'],root['id'],'人工私有资料')
+ r.command(command('save_document',{'object_id':leaf['id'],'expected_revision':1,'body':'隔离文本：核对订单后免费补寄。'}))
+ assert asyncio.run(process(r,leaf['id'],fake));assert asyncio.run(process(r,root['id'],fake))
+ foreign=make(*foreign_scope)
+ for n in [root,leaf]:assert document(foreign,n['id']) is None
+ with pytest.raises(AppException):start(make,foreign,[ref(root)])
+ calls=[]
+ async def forbidden(*args):calls.append(1);raise AssertionError('unauthorized text must never reach model')
+ try:asyncio.run(process(foreign,leaf['id'],forbidden))
+ except psycopg.errors.InsufficientPrivilege:pass
+ assert not calls
+ with pytest.raises(psycopg.errors.InsufficientPrivilege,match='KB_ACCESS_DENIED'):
+  foreign.command(command('save_document',{'object_id':leaf['id'],'expected_revision':2,'body':'越权替换'}))
+ assert r.object(leaf['id'])['body']=='隔离文本：核对订单后免费补寄。'
