@@ -9,6 +9,7 @@ from core.config import get_settings
 from core.db_scope import DatabaseScope, DatabaseAccessKind
 from services.knowledge_workspace.contracts import Command, BranchSnapshotRequest
 from services.knowledge_workspace.repository import Repository
+from services.knowledge_workspace.content_input import ContentInput
 
 router = APIRouter(prefix='/knowledge', tags=['知识画布'])
 
@@ -108,6 +109,25 @@ def members(container_id: UUID, ctx: OrgCtx, db: Database, response: Response):
 @router.post('/commands')
 def command(body: Command, ctx: OrgCtx, db: Database, response: Response):
     return call(ctx,db,response,'command',body)
+
+
+@router.post('/content-plan')
+async def content_plan(body: ContentInput, ctx: OrgCtx, db: Database, response: Response):
+    from services.knowledge_workspace.content_input import prepare
+    response.headers['Cache-Control'] = 'no-store'
+    if not enabled(ctx):
+        return failure(404, 'KNOWLEDGE_UNAVAILABLE', '知识画布尚未向当前账号开放')
+    repo = Repository(db.pool, DatabaseScope(ctx.user_id, ctx.org_id, DatabaseAccessKind.RUNTIME))
+    try:
+        return {'success': True, 'data': await prepare(repo, body)}
+    except PermissionError:
+        return failure(403, 'KNOWLEDGE_ACCESS_DENIED', '内容不存在或无权修改')
+    except LookupError:
+        return failure(409, 'VERSION_CONFLICT', '内容已更新，请重新打开后重试')
+    except ValueError:
+        return failure(422, 'KNOWLEDGE_CONTENT_INVALID', '输入或整理结果超出容量，请缩小本次输入后重试')
+    except Exception:
+        return failure(502, 'KNOWLEDGE_CONTENT_FAILED', 'AI 整理暂未完成，输入已保留，请稍后重试')
 
 @router.get('/objects/{object_id}/versions')
 def object_versions(object_id: UUID, ctx: OrgCtx, db: Database, response: Response,
