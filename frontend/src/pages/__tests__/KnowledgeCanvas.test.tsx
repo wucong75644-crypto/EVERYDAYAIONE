@@ -1877,3 +1877,23 @@ describe('节点资料阅读与 AI 输入',()=>{
   f.api.contentPlan.mockRejectedValue(new Error('AI 暂不可用'));show();await ready();clickNodeAction('补充 / 修改');const input=await screen.findByLabelText('补充 / 修改内容');changeField(input,{target:{value:'待整理的事实'}});fireEvent.click(screen.getByRole('button',{name:'提交给 AI 整理'}));await screen.findAllByRole('alert');expect(input).toHaveValue('待整理的事实');expect(input).not.toHaveAttribute('readonly');expect(f.api.command).not.toHaveBeenCalled();expect(Object.values(localStorage).join('')).toContain('待整理的事实');
  });
 });
+
+
+describe('knowledge browsing scope restoration',()=>{
+ it('restores the last accessible project after leaving and reopening the canvas',async()=>{
+  const personal={...node,id:'personal-node',node_id:'personal-place',container_id:'personal',title:'个人资料'};
+  f.api.scene.mockResolvedValue({...initial,containers:[initial.containers[1],initial.containers[0]],nodes:[personal,node]});
+  const view=show();await ready();expect(screen.getByRole('tab',{name:'个人知识库',exact:true})).toHaveAttribute('aria-selected','true');
+  fireEvent.click(screen.getByRole('tab',{name:'项目',exact:true}));fireEvent.click(screen.getByRole('button',{name:/客户项目\s*可管理/}));await screen.findByRole('article',{name:'项目总纲'});
+  view.unmount();show();await ready();expect(screen.getByRole('tab',{name:'项目',exact:true})).toHaveAttribute('aria-selected','true');expect(screen.getByRole('article',{name:'项目总纲'})).toBeVisible();expect(screen.queryByRole('article',{name:'个人资料'})).toBeNull();
+ });
+});
+
+it('does not restore a project after access disappears or for another account',async()=>{
+ const personal={...node,id:'personal-node',node_id:'personal-place',container_id:'personal',title:'个人资料'};
+ f.api.scene.mockResolvedValue({...initial,containers:[initial.containers[1],initial.containers[0]],nodes:[personal,node]});
+ const first=show();await ready();fireEvent.click(screen.getByRole('tab',{name:'项目',exact:true}));fireEvent.click(screen.getByRole('button',{name:/客户项目\s*可管理/}));await screen.findByRole('article',{name:'项目总纲'});first.unmount();
+ f.auth.user.id='different-user';const second=show();await ready();expect(screen.getByRole('tab',{name:'个人知识库',exact:true})).toHaveAttribute('aria-selected','true');second.unmount();
+ f.auth.user.id='u';f.auth.currentOrgId='different-org';const third=show();await ready();expect(screen.getByRole('tab',{name:'个人知识库',exact:true})).toHaveAttribute('aria-selected','true');third.unmount();
+ f.auth.currentOrgId='org';f.api.scene.mockResolvedValue({containers:[initial.containers[1]],nodes:[personal],relations:[]});show();await ready();expect(screen.getByRole('tab',{name:'个人知识库',exact:true})).toHaveAttribute('aria-selected','true');expect(screen.queryByRole('article',{name:'项目总纲'})).toBeNull();
+});

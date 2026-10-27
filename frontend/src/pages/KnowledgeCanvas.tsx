@@ -1,3 +1,4 @@
+import {restoredScope,rememberScope} from '../components/knowledge/browsingScope';
 import {XmindImport} from '../components/knowledge/XmindImport';
 import {quickPlacement} from '../components/knowledge/quickPlacement';
 import {AttachmentSummary,BoundFilePreview,NodeFileMenu} from '../components/knowledge/KnowledgeAttachmentUI';
@@ -273,11 +274,12 @@ export default function KnowledgeCanvas() {
         if (!availability.enabled) { setStatus('unavailable'); return; }
         await knowledgeApi.initialize(); if (!current()) return;
         const [next, record] = await Promise.all([knowledgeApi.scene(controller.signal), knowledgeApi.history(controller.signal).catch(() => null)]);
-        if (current()) { const first = next.containers.find(c => next.nodes.some(n => n.container_id === c.id)) ?? next.containers[0]; if (first) { setTab(first.kind); setProject(first.id); } setScene(next); setHistory(record ?? noHistory); setHistoryUnavailable(!record); setStatus('ready'); }
+        if (current()) { const first = restoredScope(identity,next); if (first) { setTab(first.kind); setProject(first.id); } setScene(next); setHistory(record ?? noHistory); setHistoryUnavailable(!record); setStatus('ready'); }
       } catch (e) { if (current()) { setError(message(e)); setStatus('error'); } }
     })();
     return () => {controller.abort();invalidateWriteSession();};
   }, [identity,invalidateWriteSession]);
+  useEffect(()=>{if(status==='ready'&&loadedIdentity===identity)rememberScope(identity,scene,tab,active?.id??'');},[identity,loadedIdentity,status,scene,tab,active?.id]);
   const act = async (operation: string, payload: Record<string, unknown>, onFailure?: () => void) => {
     if (busy.current || status !== 'ready') { onFailure?.(); return false; }
     if (operation === 'update_title' && !unconfirmed.current && !payload.nodes) {
