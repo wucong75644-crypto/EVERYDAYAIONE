@@ -1,3 +1,4 @@
+import {LazyMotion,domAnimation} from 'framer-motion';
 import {restoreTitleSelection,titleSelection} from '../../components/knowledge/titleEditing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import KnowledgeCanvas from '../KnowledgeCanvas';
@@ -1842,14 +1843,14 @@ describe('Xmind project import integration',()=>{
     vi.stubGlobal('crypto',{randomUUID:()=> '12345678-1234-1234-1234-123456789012',subtle:{digest:vi.fn().mockResolvedValue(new Uint8Array([1,2,3]).buffer)}});
     show();await ready();
     f.api.history.mockResolvedValue({undo:{history_id:'import-history',operation:'import_xmind',can_apply:true},redo:null});
-    const imported={...node,id:'imported-root',node_id:'imported-placement',container_id:'imported-project',title:'导入项目总纲',y:4000};
-    const branch={...node,id:'imported-fold',node_id:'fold-placement',container_id:'imported-project',parent_id:'imported-root',title:'折叠分支',x:420,y:4000};
-    f.files.importXmind.mockResolvedValue({data:{status:'applied',container_id:'imported-project',object_id:'imported-root',folded_ids:['imported-fold'],report:{topics:3,images:0,links:0,summaries:0,warnings:[]}}});
-    f.api.scene.mockResolvedValue({...initial,containers:[...initial.containers,{id:'imported-project',kind:'project',title:'导入项目',role:'manager',revision:2}],nodes:[...initial.nodes,imported,branch,{...branch,id:'imported-child',node_id:'child-placement',parent_id:'imported-fold',title:'隐藏子主题',x:840}]});
-    fireEvent.click(screen.getByRole('button',{name:'导入 Xmind'}));
+    const imported={...node,id:'imported-root',node_id:'imported-placement',container_id:'p',title:'导入项目总纲',y:4000};
+    const branch={...node,id:'imported-fold',node_id:'fold-placement',container_id:'p',parent_id:'imported-root',title:'折叠分支',x:420,y:4000};
+    f.files.importXmind.mockResolvedValue({data:{status:'applied',container_id:'p',object_id:'imported-root',folded_ids:['imported-fold'],report:{topics:3,images:0,links:0,summaries:0,warnings:[]}}});
+    f.api.scene.mockResolvedValue({...initial,containers:initial.containers,nodes:[...initial.nodes,imported,branch,{...branch,id:'imported-child',node_id:'child-placement',parent_id:'imported-fold',title:'隐藏子主题',x:840}]});
+    fireEvent.click(screen.getByRole('button',{name:'导入 Xmind 到 客户项目'}));
     fireEvent.keyDown(screen.getByLabelText('知识画布'),{key:'z',ctrlKey:true});expect(f.api.command).not.toHaveBeenCalled();
     const file=new File(['synthetic'],'map.xmind');Object.defineProperty(file,'arrayBuffer',{value:async()=>new TextEncoder().encode('synthetic').buffer});
-    fireEvent.change(screen.getByLabelText('选择 Xmind 文件'),{target:{files:[file]}});fireEvent.click(screen.getByRole('button',{name:'导入为新项目'}));
+    fireEvent.change(screen.getByLabelText('选择 Xmind 文件'),{target:{files:[file]}});fireEvent.click(screen.getByRole('button',{name:'导入到当前空间'}));
     await screen.findByText(/共 3 个主题/);fireEvent.click(screen.getByRole('button',{name:'完成'}));
     await screen.findByRole('article',{name:'导入项目总纲'});
     expect(screen.getByRole('tab',{name:'项目',exact:true})).toHaveAttribute('aria-selected','true');
@@ -1896,4 +1897,19 @@ it('does not restore a project after access disappears or for another account',a
  f.auth.user.id='different-user';const second=show();await ready();expect(screen.getByRole('tab',{name:'个人知识库',exact:true})).toHaveAttribute('aria-selected','true');second.unmount();
  f.auth.user.id='u';f.auth.currentOrgId='different-org';const third=show();await ready();expect(screen.getByRole('tab',{name:'个人知识库',exact:true})).toHaveAttribute('aria-selected','true');third.unmount();
  f.auth.currentOrgId='org';f.api.scene.mockResolvedValue({containers:[initial.containers[1]],nodes:[personal],relations:[]});show();await ready();expect(screen.getByRole('tab',{name:'个人知识库',exact:true})).toHaveAttribute('aria-selected','true');expect(screen.queryByRole('article',{name:'项目总纲'})).toBeNull();
+});
+
+it.each(['personal','team','project'] as const)('places import inside the current %s space and submits its identity',async kind=>{
+ const scope={id:'current-scope',kind,title:'当前空间',role:'manager',revision:7,acl_revision:1};
+ f.auth.currentOrgId=kind==='personal'?null:'org';f.api.scene.mockResolvedValue({containers:[scope],nodes:[],relations:[]});
+ vi.stubGlobal('crypto',{randomUUID:()=> '12345678-1234-1234-1234-123456789012',subtle:{digest:vi.fn().mockResolvedValue(new Uint8Array([1,2,3]).buffer)}});
+ f.files.importXmind.mockResolvedValue({data:{status:'applied',container_id:scope.id,object_id:'root',folded_ids:[],report:{topics:1,images:0,links:0,summaries:0,warnings:[]}}});
+ render(<LazyMotion features={domAnimation}><MemoryRouter><KnowledgeCanvas/></MemoryRouter></LazyMotion>);await ready();const sidebar=screen.getByLabelText('知识目录');const button=within(sidebar).getByRole('button',{name:'导入 Xmind 到 当前空间'});expect(button.closest('section')).not.toBeNull();
+ fireEvent.click(button);await waitFor(()=>expect(screen.getByText(/导入到“当前空间”/)).toBeVisible());
+ const file=new File(['synthetic'],'map.xmind');Object.defineProperty(file,'arrayBuffer',{value:async()=>new TextEncoder().encode('synthetic').buffer});fireEvent.change(screen.getByLabelText('选择 Xmind 文件'),{target:{files:[file]}});fireEvent.click(screen.getByRole('button',{name:'导入到当前空间'}));
+ await screen.findByText(/共 1 个主题/);expect(f.files.importXmind).toHaveBeenCalledWith(file,expect.any(String),scope.id,7);fireEvent.click(screen.getByRole('button',{name:'完成'}));expect(screen.getByRole('tab',{name:kind==='personal'?'个人知识库':kind==='team'?'团队知识库':'项目',exact:true})).toHaveAttribute('aria-selected','true');
+});
+
+it('does not expose import in a readonly space',async()=>{
+ f.api.scene.mockResolvedValue({containers:[{id:'readonly',kind:'team',title:'只读团队',role:'viewer',revision:1,acl_revision:1}],nodes:[],relations:[]});show();await ready();expect(screen.queryByRole('button',{name:/^导入 Xmind 到 /})).toBeNull();
 });

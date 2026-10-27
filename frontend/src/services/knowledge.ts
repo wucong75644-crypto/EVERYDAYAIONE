@@ -72,8 +72,8 @@ export interface ImportProgress {framework:string;nodes:number;files:Record<stri
 export const knowledgeFilesApi = {
   progress:(containerId:string,signal?:AbortSignal)=>get<ImportProgress>('/knowledge/containers/'+containerId+'/import-progress',signal),
   retry:(objectId:string,bindingId:string,revision:number)=>request({url:'/knowledge/objects/'+objectId+'/files/'+bindingId+'/versions/'+revision+'/retry',method:'POST'}),
-  importXmind: (file:File, commandId:string) => {
-    const data=new FormData(); data.append('file',file); data.append('command_id',commandId);
+  importXmind: (file:File, commandId:string, containerId:string, expectedRevision:number) => {
+    const data=new FormData(); data.append('file',file); data.append('command_id',commandId); data.append('container_id',containerId); data.append('expected_container_revision',String(expectedRevision));
     return request<Envelope<XmindImportResult>>({url:'/knowledge/imports/xmind',method:'POST',data,timeout:120000});
   },
   list: (objectId: string, signal?: AbortSignal) => get<KnowledgeFile[]>('/knowledge/objects/' + objectId + '/files', signal),

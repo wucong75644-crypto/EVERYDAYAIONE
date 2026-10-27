@@ -184,13 +184,12 @@ async def content(object_id: UUID, binding_id: UUID, revision: int, ctx: OrgCtx,
 
 @router.post('/imports/xmind')
 async def import_xmind(ctx: OrgCtx, db: Database, response: Response,
-                       command_id: Annotated[UUID,Form()], file: Annotated[UploadFile,File()]):
+                       command_id: Annotated[UUID,Form()], file: Annotated[UploadFile,File()],
+                       container_id: Annotated[UUID,Form()], expected_container_revision: Annotated[int,Form(ge=1)]):
     from services.knowledge_workspace import xmind
     response.headers['Cache-Control'] = 'no-store'
     if not enabled(ctx):
         return failure(404,'KNOWLEDGE_UNAVAILABLE','知识画布尚未向当前账号开放')
-    if not ctx.org_id:
-        return failure(403,'KNOWLEDGE_ORG_REQUIRED','请先选择企业，导入将新建独立项目')
     settings = get_settings()
     if not settings.file_workspace_enabled:
         return failure(503,'KNOWLEDGE_FILE_UNAVAILABLE','文件服务暂未启用')
@@ -198,6 +197,9 @@ async def import_xmind(ctx: OrgCtx, db: Database, response: Response,
     if not filename.lower().endswith('.xmind'):
         return failure(422,'KNOWLEDGE_INVALID_XMIND','请选择 .xmind 文件')
     name = storage.clean_name(filename)
+    target=await finish_file_io(call,ctx,db,response,'import_target',container_id)
+    if isinstance(target,Response):return target
+    if target['data'] is None:return failure(403,'KNOWLEDGE_ACCESS_DENIED','目标空间不存在或没有修改权限')
     # Bounded reads avoid materializing an untrusted upload without a limit.
     data = bytearray()
     while chunk := await file.read(1024*1024):
@@ -205,7 +207,7 @@ async def import_xmind(ctx: OrgCtx, db: Database, response: Response,
         if len(data)>storage.MAX_BYTES:
             return failure(413,'KNOWLEDGE_FILE_SIZE','Xmind 文件不能超过 20MB')
     import hashlib
-    receipt = await finish_file_io(call,ctx,db,response,'xmind_receipt',command_id,hashlib.sha256(data).hexdigest(),name)
+    receipt = await finish_file_io(call,ctx,db,response,'xmind_receipt',command_id,hashlib.sha256(data).hexdigest(),name,container_id,expected_container_revision)
     if isinstance(receipt,Response) or receipt['data'] is not None:
         return receipt
     plan = await finish_file_io(xmind.parse,bytes(data))
@@ -215,6 +217,7 @@ async def import_xmind(ctx: OrgCtx, db: Database, response: Response,
     async with workspace_lock(lock,write=True):
         payload = await finish_file_io(xmind.prepare,plan,bytes(data),name,settings.file_workspace_root,
                                       ctx.user_id,ctx.org_id,command_id)
+        payload.update(container_id=str(container_id),expected_container_revision=expected_container_revision)
         return await finish_file_io(call,ctx,db,response,'import_xmind',command_id,payload)
 
 

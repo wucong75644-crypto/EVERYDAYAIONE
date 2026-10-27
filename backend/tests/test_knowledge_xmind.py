@@ -212,8 +212,9 @@ def test_upload_route_applies_rollout_enterprise_and_file_service_guards(import_
     r=import_db[0]();ctx=SimpleNamespace(user_id=r.scope.actor_user_id,org_id=r.scope.org_id);db=SimpleNamespace(pool=r.pool)
     settings=get_settings();monkeypatch.setattr(settings,'file_workspace_root',str(tmp_path));monkeypatch.setattr(settings,'file_workspace_enabled',True)
     monkeypatch.setattr(route,'enabled',lambda _:True)
+    target=create(r,title='现有空间');revision=next(c['revision'] for c in r.canvas()['containers'] if c['id']==target['container_id'])
     def run(name='test.xmind',data=None):
-        return asyncio.run(route.import_xmind(ctx,db,Response(),uuid4(),UploadFile(filename=name,file=io.BytesIO(data or archive()))))
+        return asyncio.run(route.import_xmind(ctx,db,Response(),uuid4(),UploadFile(filename=name,file=io.BytesIO(data or archive())),target['container_id'],revision))
     before=r.canvas()
     assert run('bad.zip').status_code==422 and r.canvas()==before
     ctx.org_id=None;assert run().status_code==403;ctx.org_id=r.scope.org_id
@@ -237,9 +238,10 @@ def test_multipart_endpoint_replays_without_reparsing_and_handles_errors(import_
     app=FastAPI();app.include_router(route.router)
     app.dependency_overrides[deps.get_org_context]=lambda:SimpleNamespace(user_id=r.scope.actor_user_id,org_id=r.scope.org_id)
     app.dependency_overrides[deps.get_db]=lambda:SimpleNamespace(pool=r.pool)
+    target=create(r,title='现有目标');revision=next(c['revision'] for c in r.canvas()['containers'] if c['id']==target['container_id'])
     key=str(uuid4());data=archive()
     with TestClient(app) as client:
-        def post(body=data,command_id=key):return client.post('/knowledge/imports/xmind',data={'command_id':command_id},files={'file':('synthetic.xmind',body,'application/octet-stream')})
+        def post(body=data,command_id=key):return client.post('/knowledge/imports/xmind',data={'command_id':command_id,'container_id':str(target['container_id']),'expected_container_revision':revision},files={'file':('synthetic.xmind',body,'application/octet-stream')})
         first=post();assert first.status_code==200 and first.json()['data']['status']=='applied'
         assert first.headers['cache-control']=='no-store'
         monkeypatch.setattr(xmind,'parse',lambda _:pytest.fail('committed retry must not parse the archive again'))

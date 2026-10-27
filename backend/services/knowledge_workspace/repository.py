@@ -189,19 +189,25 @@ class Repository:
             rows = c.fetchall()
             return {'items': rows[:50], 'next_cursor': str(rows[49]['id']) if len(rows)>50 else None}
 
-    def xmind_receipt(self, command_id, digest, name):
+    def import_target(self,container_id):
+        with self.cursor() as c:
+            c.execute("SELECT id,title,kind,revision FROM public.kb_containers WHERE id=%s AND public.kb_can(id,'write') AND deleted_at IS NULL AND NOT undo_hidden",(container_id,))
+            return c.fetchone()
+
+    def xmind_receipt(self, command_id, digest, name, container_id=None, expected_revision=None):
         from .files import fail
         with self.cursor() as c:
-            c.execute("""SELECT r.request_payload,r.result,public.kb_can(r.container_id,'manage') AS allowed,
-                         c.undo_hidden FROM public.kb_mutation_receipts r JOIN public.kb_containers c ON c.id=r.container_id
+            c.execute("""SELECT r.request_payload,r.result,public.kb_can(r.container_id,'write') AS allowed,
+                         (c.undo_hidden OR COALESCE(o.undo_hidden,true) OR o.deleted_at IS NOT NULL) AS undo_hidden FROM public.kb_mutation_receipts r JOIN public.kb_containers c ON c.id=r.container_id
+                         LEFT JOIN public.kb_objects o ON o.id=(r.result->>'object_id')::uuid
                          WHERE r.actor_id=%s AND r.command_id=%s AND r.org_id IS NOT DISTINCT FROM %s::uuid""",
                       (self.scope.actor_user_id,command_id,self.scope.org_id))
             row=c.fetchone()
             if not row:return None
             request=row['request_payload'];payload=request.get('payload',{})
-            if request.get('operation')!='import_xmind' or payload.get('sha256')!=digest or (payload.get('files') or [{}])[0].get('metadata',{}).get('name')!=name:
+            if (container_id is not None and payload.get('container_id')!=str(container_id)) or (expected_revision is not None and payload.get('expected_container_revision')!=expected_revision) or request.get('operation')!='import_xmind' or payload.get('sha256')!=digest or (payload.get('files') or [{}])[0].get('metadata',{}).get('name')!=name:
                 fail('IDEMPOTENCY_PAYLOAD_CONFLICT','重试文件与原导入不同，请重新选择原文件',409)
-            if not row['allowed']:fail('KNOWLEDGE_ACCESS_DENIED','没有项目管理权限',403)
+            if not row['allowed']:fail('KNOWLEDGE_ACCESS_DENIED','没有目标空间的修改权限',403)
             return {**row['result'],'status':'replayed','hidden':row['undo_hidden']}
 
     def import_xmind(self, command_id, payload):
