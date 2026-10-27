@@ -107,7 +107,7 @@ class KnowledgeRun(DerivedChat):
                 if row is None:unavailable()
                 expected_revisions[cid]=row['revision']
             check_roots(c,refs)
-            c.execute('''SELECT o.id,o.container_id,o.parent_id,o.kind,o.sort_order,v.title,v.revision,n.canvas_data->'link' AS external_link
+            c.execute('''SELECT o.id,o.container_id,o.parent_id,o.kind,COALESCE((to_jsonb(o)->>'sort_order')::bigint,0) AS sort_order,v.title,v.revision,to_jsonb(n)->'canvas_data'->'link' AS external_link
               FROM public.kb_objects o JOIN public.kb_object_versions v ON v.object_id=o.id AND v.revision=o.current_revision
               LEFT JOIN public.kb_canvas_nodes n ON n.object_id=o.id
               WHERE o.container_id=ANY(%s::uuid[]) AND o.deleted_at IS NULL AND NOT COALESCE((to_jsonb(o)->>'undo_hidden')::boolean,false) ORDER BY o.id LIMIT 10001''',(containers,))
@@ -572,7 +572,7 @@ class KnowledgeRun(DerivedChat):
                     from .navigation import INSTRUCTIONS
                     for shown,handle in zip(out,handles):shown['content_scope']='node_only' if by_handle[handle]['type']=='object' else 'file_text'
                     return {'items':out,'coverage':{'scope':'requested_items','complete':all(not i.get('next_cursor') and i.get('rules_complete') and i.get('status')=='complete' for i in out)},'snapshot_id':self.id,'read_guidance':'适用规则未读全时应先补读rules中的规则入口。node_only不含任何附件内容；有附件时单独read对应附件，长文件沿next_cursor继续。已经读到问题所需原文就立即回答；若指定外链内容未导入，立即说明无法确认，不再改找其他视频。未读取不等于无权限。用户给出的名称、日期等前提若无法从已读原文确认，说明该项不能确认，回答已有依据的部分，不为补齐未证前提遍历无关分支。'}
-                return {'items':out,'coverage':{'scope':'requested_items','complete':all(not i.get('next_cursor') and i.get('rules_complete') and i.get('status')=='complete' for i in out)},'snapshot_id':self.id,'read_guidance':'对具体简短问题，正文直接用2–4句回答重点，避免逐份罗列来源。context已含同文件步骤、条件和例外时，引用本次已读source.url即可，不必为每个章节再列一条链接；链接文字用简短名称，不重复完整目录和章节路径。用户要求详述或对比时正常展开。缺资料时只说明当前依据不足，不复述历史回答中的业务数值，即使作为否定或反例也不要复述，更不能推断旧规则失效。先检查当前正文是否已覆盖提问的结论、适用条件和例外；已覆盖就直接简短回答并引用来源，停止outline和read，不为了查看其他媒体、人工备注或冲突状态章节继续读取。仅有影响当前结论的具体冲突或尚缺的必要条件才定向补读。context=true已补同来源章节，不需要逐节重复读；媒体采样或整库coverage部分读取不等于当前问题缺少条件，不因这些元数据重复读或扩展其他文件；但当前段有next_cursor、rules_complete=false或确实缺必要条件时应按需补读；目录节点或人工保留占位正文不是业务依据，请返回当前层目录定位相关节点，再读取具体资料；不要穷举无关分支。coverage是整个快照的读取统计，不是具体问题的完成条件。只需补读与问题相关的条件、例外和显式规则；不要为清空missing_count读取无关资料。用户明确要求全框架审阅时才继续遍历。'}
+                return {'items':out,'coverage':self._coverage(c,items),'snapshot_id':self.id,'read_guidance':'对具体简短问题，正文直接用2–4句回答重点，避免逐份罗列来源。context已含同文件步骤、条件和例外时，引用本次已读source.url即可，不必为每个章节再列一条链接；链接文字用简短名称，不重复完整目录和章节路径。用户要求详述或对比时正常展开。缺资料时只说明当前依据不足，不复述历史回答中的业务数值，即使作为否定或反例也不要复述，更不能推断旧规则失效。先检查当前正文是否已覆盖提问的结论、适用条件和例外；已覆盖就直接简短回答并引用来源，停止outline和read，不为了查看其他媒体、人工备注或冲突状态章节继续读取。仅有影响当前结论的具体冲突或尚缺的必要条件才定向补读。context=true已补同来源章节，不需要逐节重复读；媒体采样或整库coverage部分读取不等于当前问题缺少条件，不因这些元数据重复读或扩展其他文件；但当前段有next_cursor、rules_complete=false或确实缺必要条件时应按需补读；目录节点或人工保留占位正文不是业务依据，请返回当前层目录定位相关节点，再读取具体资料；不要穷举无关分支。coverage是整个快照的读取统计，不是具体问题的完成条件。只需补读与问题相关的条件、例外和显式规则；不要为清空missing_count读取无关资料。用户明确要求全框架审阅时才继续遍历。'}
             if action=='follow_reference':
                 link=next((l for l in self.snapshot['links'] if l['handle']==args.get('link_handle') and l['root_handle']==root),None)
                 if not link:unavailable()
