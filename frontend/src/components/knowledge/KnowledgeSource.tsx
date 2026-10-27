@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { knowledgeApi, knowledgeFilesApi } from '../../services/knowledge';
 import type { KnowledgeVersionDetail, KnowledgeFileVersion, DerivedKnowledge } from '../../services/knowledge';
 import PreviewHost from '../../preview/PreviewHost';
+import { DerivedVerificationNotice } from './DerivedDirectory';
 import type { PreviewItem } from '../../preview/types';
 
 /** Historical sources are read-only; opening them never replaces editor drafts. */
@@ -57,7 +58,7 @@ function SourceContent({objectId,revision,bindingId,onClose,generation}:SourcePr
     {error && <p role="alert">{error}</p>}
     {body && <><h3>{body.title}</h3><textarea aria-label="回答来源正文" value={body.body} readOnly /></>}
     {file && <><p>{file.name}</p><button onClick={()=>setOpen(true)}>预览引用版本</button></>}
-    {derived&&<section aria-label="回答来源目录资料">{derived.sections.map(s=><section key={s.id}><h3>{s.title}</h3><p style={{whiteSpace:'pre-wrap'}}>{s.text}</p>{s.source_refs.map(ref=>derived.source_links?.[ref]&&<a key={ref} href={derived.source_links[ref]}>原始资料</a>)}</section>)}</section>}
+    {derived&&<section aria-label="回答来源目录资料"><DerivedVerificationNotice sections={derived.sections}/>{derived.sections.map(s=><section key={s.id}><h3>{s.title}</h3><p style={{whiteSpace:'pre-wrap'}}>{s.text}</p>{s.source_refs.map(ref=>derived.source_links?.[ref]&&<a key={ref} href={derived.source_links[ref]}>原始资料</a>)}</section>)}</section>}
     {!derived && !body && !file && !error && <p role="status">正在读取来源…</p>}
     <PreviewHost state={open && preview ? {kind:'open',items:[preview],index:0} : {kind:'closed'}} onClose={()=>setOpen(false)} onIndexChange={()=>{}} />
   </aside>;

@@ -26,3 +26,35 @@ it('preserves correction text after a definite version conflict',async()=>{
  expect(screen.getByLabelText('人工更正')).not.toHaveAttribute('readonly');
  expect(JSON.parse(localStorage.getItem('kc-section:u:o:n:section:s')!).text).toBe('不能丢失的更正');
 });
+
+
+it('distinguishes legacy summaries from verified output',async()=>{
+ const first=render(<DerivedDirectory objectId="legacy" writable={false}/>);
+ expect(await screen.findByText('此处包含尚未核验的旧整理，请对照原文查看。')).toBeInTheDocument();
+ first.unmount();f.document.mockResolvedValue({derived:{...derived,sections:derived.sections.map(s=>({...s,verification:'verified'}))}});
+ render(<DerivedDirectory objectId="verified" writable={false}/>);
+ await screen.findByText('核对数量后补寄');
+ expect(screen.queryByText('此处包含尚未核验的旧整理，请对照原文查看。')).toBeNull();
+});
+
+it('labels the original-excerpt fallback instead of claiming summary verification',async()=>{
+ f.document.mockResolvedValue({derived:{...derived,sections:derived.sections.map(s=>({...s,verification:'extractive'}))}});
+ render(<DerivedDirectory objectId="excerpt" writable={false}/>);
+ expect(await screen.findByText('部分内容为原文摘录，自动整理未通过核验。')).toBeInTheDocument();
+});
+
+it('shows branch navigation when overview verification fails without claiming original excerpts',async()=>{
+ f.document.mockResolvedValue({derived:{...derived,sections:[{...derived.sections[0],text:'采购分支',verification:'navigation'}]}});
+ render(<DerivedDirectory objectId="navigation" writable={false}/>);
+ expect(await screen.findByText('自动概览未通过核验，以下保留分支入口，请进入分支查看原文。')).toBeInTheDocument();
+ expect(screen.queryByText('部分内容为原文摘录，自动整理未通过核验。')).toBeNull();
+ expect(await screen.findByText('采购分支')).toBeInTheDocument();
+});
+
+it('labels local parsed originals without presenting them as AI summaries',async()=>{
+ f.document.mockResolvedValue({derived:{...derived,sections:derived.sections.map(s=>({...s,verification:'source'}))}});
+ render(<DerivedDirectory objectId="local" writable={false}/>);
+ expect(await screen.findByRole('region',{name:'节点解析资料'})).toBeInTheDocument();
+ expect(screen.getByText('以下为本节点原文及附件解析文字，未生成 AI 摘要。')).toBeInTheDocument();
+ expect(screen.queryByText('此处包含尚未核验的旧整理，请对照原文查看。')).toBeNull();
+});

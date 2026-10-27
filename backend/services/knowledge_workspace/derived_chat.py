@@ -93,6 +93,25 @@ class DerivedChat:
 
     def _search_candidates(self,c,visible,args):
         from .chat import unavailable
+        if self.snapshot.get('read_protocol')=='hierarchical-v1':
+            from .navigation import layer
+            items,owner=layer(self,c,visible,args.get('scope_handle'),args.get('expand',False))
+            if not owner:
+                root=next(r for r in self.snapshot['roots'] if r['handle']==args['root_handle'])
+                if root['root']['kind']=='object':items=[i for i in visible if i['type']=='object' and i['id']==root['root']['id']]
+            import re
+            from .retrieval_policy import platform_allowed
+            from .directory import scoped_query
+            match_query=scoped_query(visible,owner,args['query'])
+            words=[word for word in re.split(r'[\s，,、；;]+',match_query.strip()) if word][:8]
+            ranked=[]
+            for item in items:
+                path=path_for(visible,item);labels=' '.join(item.get('labels',[]))
+                score=sum(rank(word,item['title'],labels,path) for word in words)
+                from .directory import route_score
+                score+=route_score(visible,item,match_query)
+                if platform_allowed(args['query'],item['title']+path+labels):ranked.append((score,item))
+            return [i for score,i in sorted(ranked,key=lambda pair:(-pair[0],pair[1]['handle'])) if score],owner['handle'] if owner else None
         try:items,scope=scoped(visible,args.get('scope_handle'),args.get('expand',False))
         except ValueError:unavailable('KNOWLEDGE_INVALID_SCOPE')
         query=args['query'].strip();route=args.get('mode')=='route';candidates=[]

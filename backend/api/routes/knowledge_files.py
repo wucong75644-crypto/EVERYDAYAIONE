@@ -180,3 +180,50 @@ async def content(object_id: UUID, binding_id: UUID, revision: int, ctx: OrgCtx,
         'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"sandbox; default-src 'none'",
         'Content-Disposition':"attachment; filename*=UTF-8''"+quote(version['name'],safe=''),
     })
+
+
+@router.post('/imports/xmind')
+async def import_xmind(ctx: OrgCtx, db: Database, response: Response,
+                       command_id: Annotated[UUID,Form()], file: Annotated[UploadFile,File()]):
+    from services.knowledge_workspace import xmind
+    response.headers['Cache-Control'] = 'no-store'
+    if not enabled(ctx):
+        return failure(404,'KNOWLEDGE_UNAVAILABLE','知识画布尚未向当前账号开放')
+    if not ctx.org_id:
+        return failure(403,'KNOWLEDGE_ORG_REQUIRED','请先选择企业，导入将新建独立项目')
+    settings = get_settings()
+    if not settings.file_workspace_enabled:
+        return failure(503,'KNOWLEDGE_FILE_UNAVAILABLE','文件服务暂未启用')
+    filename = str(file.filename or '')
+    if not filename.lower().endswith('.xmind'):
+        return failure(422,'KNOWLEDGE_INVALID_XMIND','请选择 .xmind 文件')
+    name = storage.clean_name(filename)
+    # Bounded reads avoid materializing an untrusted upload without a limit.
+    data = bytearray()
+    while chunk := await file.read(1024*1024):
+        data.extend(chunk)
+        if len(data)>storage.MAX_BYTES:
+            return failure(413,'KNOWLEDGE_FILE_SIZE','Xmind 文件不能超过 20MB')
+    import hashlib
+    receipt = await finish_file_io(call,ctx,db,response,'xmind_receipt',command_id,hashlib.sha256(data).hexdigest(),name)
+    if isinstance(receipt,Response) or receipt['data'] is not None:
+        return receipt
+    plan = await finish_file_io(xmind.parse,bytes(data))
+    # Serialize publication for identical retries; all registrations are atomic.
+    lock = storage.private_path(settings.file_workspace_root,ctx.org_id,ctx.user_id,
+                                storage.version_id(ctx.user_id,ctx.org_id,command_id),create=True).parent
+    async with workspace_lock(lock,write=True):
+        payload = await finish_file_io(xmind.prepare,plan,bytes(data),name,settings.file_workspace_root,
+                                      ctx.user_id,ctx.org_id,command_id)
+        return await finish_file_io(call,ctx,db,response,'import_xmind',command_id,payload)
+
+
+@router.get('/containers/{container_id}/import-progress')
+def import_progress(container_id:UUID,ctx:OrgCtx,db:Database,response:Response):
+    return call(ctx,db,response,'import_progress',container_id)
+
+
+@router.post('/objects/{object_id}/files/{binding_id}/versions/{revision}/retry')
+def retry_parse(object_id:UUID,binding_id:UUID,revision:int,ctx:OrgCtx,db:Database,response:Response):
+    if revision<1 or revision>9223372036854775807:return failure(422,'KNOWLEDGE_INVALID_REVISION','版本号无效')
+    return call(ctx,db,response,'retry_file',object_id,binding_id,revision)

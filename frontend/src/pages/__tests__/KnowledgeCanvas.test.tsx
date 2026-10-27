@@ -11,7 +11,7 @@ const TestContent = createContext<React.ReactNode>(null);
 function Content() { return useContext(TestContent); }
 function MemoryRouter({ children }: { children: React.ReactNode }) { const [router] = useState(() => createMemoryRouter([{ path: '*', element: <Content /> }])); return <TestContent.Provider value={children}><RouterProvider router={router} /></TestContent.Provider>; }
 
-const f = vi.hoisted(() => ({ api: { captureSnapshot: vi.fn(), history: vi.fn(), available: vi.fn(), initialize: vi.fn(), scene: vi.fn(), object: vi.fn(), command: vi.fn(), members: vi.fn(), versions: vi.fn(), version: vi.fn(), search: vi.fn() }, files: { list: vi.fn(), upload: vi.fn(), content: vi.fn(),remove:vi.fn() }, auth: { user: { id: 'u' }, currentOrgId: 'org' as string | null } }));
+const f = vi.hoisted(() => ({ api: { captureSnapshot: vi.fn(), history: vi.fn(), available: vi.fn(), initialize: vi.fn(), scene: vi.fn(), object: vi.fn(), command: vi.fn(), members: vi.fn(), versions: vi.fn(), version: vi.fn(), search: vi.fn() }, files: { importXmind:vi.fn(), list: vi.fn(), upload: vi.fn(), content: vi.fn(),remove:vi.fn() }, auth: { user: { id: 'u' }, currentOrgId: 'org' as string | null } }));
 vi.mock('../../services/knowledge', () => ({ knowledgeApi: f.api, knowledgeFilesApi: f.files }));
 vi.mock('../../stores/useAuthStore', () => ({ useAuthStore: (selector: (s: typeof f.auth) => unknown) => selector(f.auth) }));
 const node = { id: 'root', node_id: 'placement', container_id: 'p', parent_id: null, kind: 'topic', title: '项目总纲', revision: 1, layout_revision: 1, x: 20, y: 40 };
@@ -1905,4 +1905,27 @@ describe('project header deletion',()=>{
   fireEvent.contextMenu(within(dir).getByRole('button',{name:new RegExp('客户项目\\s*'+(role==='editor'?'可编辑':'只读'))}),{clientX:1000,clientY:200});expect(screen.getByRole('menuitem',{name:'删除项目及全部分支'})).toHaveAttribute('data-disabled');
   expect(f.api.command).not.toHaveBeenCalled();
  });
+});
+
+
+describe('Xmind project import integration',()=>{
+  it('selects the imported project, restores folds and blocks canvas undo while the import dialog is open',async()=>{
+    vi.stubGlobal('crypto',{randomUUID:()=> '12345678-1234-1234-1234-123456789012',subtle:{digest:vi.fn().mockResolvedValue(new Uint8Array([1,2,3]).buffer)}});
+    show();await ready();
+    f.api.history.mockResolvedValue({undo:{history_id:'import-history',operation:'import_xmind',can_apply:true},redo:null});
+    const imported={...node,id:'imported-root',node_id:'imported-placement',container_id:'imported-project',title:'导入项目总纲',y:4000};
+    const branch={...node,id:'imported-fold',node_id:'fold-placement',container_id:'imported-project',parent_id:'imported-root',title:'折叠分支',x:420,y:4000};
+    f.files.importXmind.mockResolvedValue({data:{status:'applied',container_id:'imported-project',object_id:'imported-root',folded_ids:['imported-fold'],report:{topics:3,images:0,links:0,summaries:0,warnings:[]}}});
+    f.api.scene.mockResolvedValue({...initial,containers:[...initial.containers,{id:'imported-project',kind:'project',title:'导入项目',role:'manager',revision:2}],nodes:[...initial.nodes,imported,branch,{...branch,id:'imported-child',node_id:'child-placement',parent_id:'imported-fold',title:'隐藏子主题',x:840}]});
+    fireEvent.click(screen.getByRole('button',{name:'导入 Xmind'}));
+    fireEvent.keyDown(screen.getByLabelText('知识画布'),{key:'z',ctrlKey:true});expect(f.api.command).not.toHaveBeenCalled();
+    const file=new File(['synthetic'],'map.xmind');Object.defineProperty(file,'arrayBuffer',{value:async()=>new TextEncoder().encode('synthetic').buffer});
+    fireEvent.change(screen.getByLabelText('选择 Xmind 文件'),{target:{files:[file]}});fireEvent.click(screen.getByRole('button',{name:'导入为新项目'}));
+    await screen.findByText(/共 3 个主题/);fireEvent.click(screen.getByRole('button',{name:'完成'}));
+    await screen.findByRole('article',{name:'导入项目总纲'});
+    expect(screen.getByRole('tab',{name:'项目',exact:true})).toHaveAttribute('aria-selected','true');
+    expect(screen.getByRole('button',{name:'折叠或展开 折叠分支'})).toHaveAttribute('aria-expanded','false');
+    expect(screen.queryByRole('article',{name:'隐藏子主题'})).not.toBeInTheDocument();
+    expect(document.querySelector('.kc-world')?.getAttribute('style')).toMatch(/-4[0-9]{3}/);
+  });
 });
