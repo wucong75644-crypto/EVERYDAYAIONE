@@ -117,6 +117,7 @@ class DerivedChat:
         query=args['query'].strip();route=args.get('mode')=='route';candidates=[]
         from .semantic import query_embedding,cosine
         vector=query_embedding(query) if not route else None
+        self._semantic_degraded = bool(not route and get_settings().knowledge_semantic_enabled and get_settings().dashscope_api_key and vector is None)
         for item in items:
             if route and item['type']!='object':continue
             self._authorize(c,item)

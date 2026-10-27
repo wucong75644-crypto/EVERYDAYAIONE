@@ -196,7 +196,7 @@ class ChatContextMixin:
     # 配合 session_memory_cache 实现"新会话首查 + 整会话固定"
     #
     # V2 阶段 6.6 (2026-06-14): _fetch_knowledge 已删除
-    # 知识库召回走 LLM 主动调工具路径 (search_knowledge / erp_analyze),
+    # 知识库召回走 LLM 主动调工具路径 (knowledge_search / erp_analyze),
     # 不再在 prompt 预注入. 按需召回优于无脑塞.
 
     async def _extract_memories_async(

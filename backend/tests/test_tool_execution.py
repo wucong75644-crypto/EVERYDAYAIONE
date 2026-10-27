@@ -23,12 +23,12 @@ def context(**changes):
         context_scope="user", personal_context_allowed=True, agent_domain="general",
         permission_mode="ask", execution_mode="interactive", conversation_id="conversation",
         call_id="call", confirmation_available=True,
-        feature_flags={"file_workspace_enabled": True, "sandbox_enabled": True, "crawler_enabled": True},
+        feature_flags={"file_workspace_enabled": True, "sandbox_enabled": True, "crawler_enabled": True, "kb_legacy_search_enabled": True},
     )
     return ToolContext(**(fields | changes))
 
 
-def stack(name="search_knowledge", output="ok", registry=None):
+def stack(name="web_search", output="ok", registry=None):
     registry = registry or build_legacy_catalog()
     executor = ToolExecutor(None, "actor", "conversation", "org")
     executor._handlers = {name: AsyncMock(return_value=output)}
@@ -44,8 +44,8 @@ def receipt(service, call, ctx, status="approved"):
 
 
 REPRESENTATIVE_CASES = [
-    ("search_knowledge", "ask", None, False, "allow", 1),
-    ("search_knowledge", "ask", None, True, "deny", 0),
+    ("web_search", "ask", None, False, "allow", 1),
+    ("web_search", "ask", None, True, "deny", 0),
     ("file_search", "ask", None, False, "allow", 1),
     ("file_search", "ask", None, True, "deny", 0),
     ("file_delete", "ask", None, False, "require_confirmation", 0),
@@ -63,9 +63,10 @@ async def test_representatives_complete_chain_real_internal_handlers(
     name, mode, confirmation, denied_scope, outcome, count,
 ):
     """Real registry/policy/dispatcher/adapter AND internal methods; only IO is mocked."""
+    from services.agent.web_search.contracts import SearchResponse
     registry = build_legacy_catalog()
     ctx = context(permission_mode=mode, authorized_tool_names=set() if denied_scope else None)
-    args = {"query": "经验"} if name == "search_knowledge" else (
+    args = {"query": "经验"} if name == "web_search" else (
         {"file_ids": ["fixture-id"], "files": ["fixture.txt"]} if name == "file_delete" else {"keyword": "fixture"}
     )
     call = ToolCall("call", name, args)
@@ -75,7 +76,7 @@ async def test_representatives_complete_chain_real_internal_handlers(
     executor._handlers = {name: internal}
     executor.execute = AsyncMock(side_effect=AssertionError("recursive execute"))
     io = AsyncMock(return_value=(
-        [{"title": "fixture", "content": "experience"}] if name == "search_knowledge"
+        SearchResponse(answer="fixture experience") if name == "web_search"
         else FileReadResult(type="image", text="fixture image", image_url="https://example.test/image.png")
         if name == "file_search" else AgentResult("mock deleted", source="file_delete")
     ))
@@ -84,7 +85,7 @@ async def test_representatives_complete_chain_real_internal_handlers(
     settings = MagicMock(file_workspace_enabled=True, file_workspace_root="/unavailable-test-workspace")
     service = ToolExecutionService(registry, ToolDispatcher(build_legacy_handlers(executor)))
     approved = receipt(service, call, ctx, confirmation) if confirmation else None
-    with patch("services.knowledge_service.search_relevant", io), \
+    with patch("services.agent.web_search.service.search_web", io), \
          patch("core.config.get_settings", return_value=settings), \
          patch("services.file_executor.FileExecutor") as files:
         resolution = registry.resolve(ctx, policy=service.policy, advertisement=LegacyAdvertisement([name]))
@@ -96,12 +97,12 @@ async def test_representatives_complete_chain_real_internal_handlers(
     assert result.execution.attempts == count
     assert result.execution.status == ("succeeded" if count else "not_started")
     executor.execute.assert_not_awaited()
-    assert files.call_count == (count if name != "search_knowledge" else 0)
+    assert files.call_count == (count if name != "web_search" else 0)
     if count:
         internal.assert_awaited_once_with(args)
-        if name == "search_knowledge":
-            io.assert_awaited_once_with(query="经验", limit=5, org_id="org")
-            assert result.to_legacy().summary == "- fixture: experience"
+        if name == "web_search":
+            io.assert_awaited_once_with("经验", timeout=60.0)
+            assert "fixture experience" in result.to_legacy().summary
         else:
             assert result.to_legacy() is io.return_value
             assert io.await_args.args[1] == args
@@ -113,7 +114,7 @@ async def test_representatives_complete_chain_real_internal_handlers(
 @pytest.mark.parametrize("kind", ["explicit", "legacy"])
 @pytest.mark.parametrize("risk", ["safe", "dangerous"])
 async def test_new_and_legacy_specs_use_same_policy_and_handler_key(kind, risk):
-    original = build_legacy_catalog().require("search_knowledge")
+    original = build_legacy_catalog().require("web_search")
     schema = original.to_schema()
     schema["function"]["name"] = "new_tool"
     spec = replace(original, name="new_tool", schema=schema, handler_key="internal_key",
@@ -135,7 +136,7 @@ async def test_new_and_legacy_specs_use_same_policy_and_handler_key(kind, risk):
     blocked.assert_not_awaited()
 
 
-@pytest.mark.parametrize("name,missing", [("missing_tool", False), ("search_knowledge", True)])
+@pytest.mark.parametrize("name,missing", [("missing_tool", False), ("web_search", True)])
 async def test_unknown_tool_or_missing_handler_preserves_value_error(name, missing):
     service, executor, handler = stack()
     if missing:
@@ -157,7 +158,7 @@ async def test_unknown_tool_or_missing_handler_preserves_value_error(name, missi
 
 async def test_dispatcher_only_consumes_own_allow_permit_once():
     service, _, handler = stack()
-    call, ctx = ToolCall("call", "search_knowledge", {}), context()
+    call, ctx = ToolCall("call", "web_search", {}), context()
     decision = service.policy.decide(call.name, ctx, call.arguments)
     for invalid in [None, call, decision, {"outcome": "allow"}]:
         with pytest.raises(PermissionError):
@@ -252,22 +253,22 @@ async def test_real_internal_handler_returned_error_vs_propagated_exception():
     service = ToolExecutionService(registry, ToolDispatcher(build_legacy_handlers(executor)))
     with patch("core.config.get_settings", return_value=MagicMock(file_workspace_enabled=True)), \
          patch("services.file_executor.FileExecutor"), \
-         patch("services.knowledge_service.search_relevant", AsyncMock(side_effect=error)):
+         patch("services.agent.web_search.service.search_web", AsyncMock(side_effect=error)):
         returned = await service.execute(ToolCall("file", "file_search", {}), context())
-        raised = await service.execute(ToolCall("knowledge", "search_knowledge", {"query": "x"}), context())
+        raised = await service.execute(ToolCall("knowledge", "web_search", {"query": "x"}), context())
     assert returned.to_legacy().status == "error"
     assert returned.error.message == "PermissionError: fixture denied"
     assert returned.execution.status == "succeeded"
     assert returned.error.retryable is False
     assert raised.exception is error
-    assert raised.execution.status == "failed"  # declared effects=(none,)
+    assert raised.execution.status == "uncertain"  # an external search may already have billed
 
 
 @pytest.mark.parametrize("when", ["before", "handler", "task"])
 async def test_cancellation_propagates_without_retry(when):
     service, _, handler = stack()
     event, entered = asyncio.Event(), asyncio.Event()
-    ctx, call = context(cancellation=event), ToolCall("call", "search_knowledge", {})
+    ctx, call = context(cancellation=event), ToolCall("call", "web_search", {})
     cancelled = asyncio.CancelledError("fixture cancelled")
     if when == "before":
         event.set()
@@ -293,7 +294,7 @@ async def test_cancellation_propagates_without_retry(when):
 
 async def test_policy_exception_and_cancellation_during_decision_fail_closed():
     service, _, handler = stack()
-    call, ctx = ToolCall("call", "search_knowledge", {}), context()
+    call, ctx = ToolCall("call", "web_search", {}), context()
     with patch.object(service.policy, "decide", side_effect=RuntimeError("policy unavailable")):
         with pytest.raises(RuntimeError, match="policy unavailable"):
             await service.execute(call, ctx)
@@ -312,7 +313,7 @@ async def test_policy_exception_and_cancellation_during_decision_fail_closed():
 @pytest.mark.parametrize("raw", [AgentResult("fixture"), FileReadResult(text="fixture"),
                                  FormBlockResult({"form_id": "fixture"}, "hint"), "fixture"])
 async def test_entrypoint_and_legacy_exit_return_all_supported_types(raw):
-    call = ToolCall("call", "search_knowledge", {"query": "fixture"})
+    call = ToolCall("call", "web_search", {"query": "fixture"})
     service, _, handler = stack(output=raw)
     result = await service.execute(call, context())
     assert result.to_legacy() is raw
@@ -324,9 +325,9 @@ async def test_entrypoint_and_legacy_exit_return_all_supported_types(raw):
 
 async def test_unknown_executor_type_mapping_cannot_fall_back_to_same_key():
     handler = AsyncMock(return_value="unexpected")
-    service = ToolExecutionService(build_legacy_catalog(), ToolDispatcher({("other", "search_knowledge"): handler}))
-    result = await service.execute(ToolCall("call", "search_knowledge", {}), context())
-    with pytest.raises(ValueError, match="Unknown sync tool: search_knowledge"):
+    service = ToolExecutionService(build_legacy_catalog(), ToolDispatcher({("other", "web_search"): handler}))
+    result = await service.execute(ToolCall("call", "web_search", {}), context())
+    with pytest.raises(ValueError, match="Unknown sync tool: web_search"):
         result.to_legacy()
     handler.assert_not_awaited()
 
@@ -340,3 +341,9 @@ async def test_noninteractive_dangerous_names_are_not_execution_grants(mode):
     ))
     assert result.status == "denied" and result.execution.status == "not_started"
     handler.assert_not_awaited()
+
+
+@pytest.fixture(autouse=True)
+def legacy_execution_compatibility(monkeypatch):
+    from core.config import get_settings
+    monkeypatch.setattr(get_settings(), 'kb_legacy_search_enabled', True)

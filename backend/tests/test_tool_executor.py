@@ -969,3 +969,14 @@ class TestWebSearchInline:
             result = await exe._web_search({"query": "预算已耗尽"})
         assert result.status == "timeout"
         search.assert_not_awaited()
+
+
+@pytest.fixture(autouse=True)
+def legacy_knowledge_compatibility(monkeypatch):
+    from services.knowledge_workspace import retirement
+    monkeypatch.setattr(retirement, "RETIRED", False)  # historical private-handler contracts
+    """Exercise retained compatibility only; production defaults are tested separately."""
+    from core.config import get_settings
+    settings = get_settings()
+    for name in ('kb_legacy_search_enabled', 'kb_legacy_extraction_enabled', 'kb_legacy_scoring_enabled', 'kb_legacy_seed_enabled'):
+        monkeypatch.setattr(settings, name, True)

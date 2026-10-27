@@ -216,6 +216,7 @@ class ChatToolMixin(ChatToolResultMixin):
         if executor._pending_schemas:
             executor._pending_schemas.clear()
 
+        self._knowledge_run = executor.knowledge_run
         return results
 
     async def _execute_single_tool(

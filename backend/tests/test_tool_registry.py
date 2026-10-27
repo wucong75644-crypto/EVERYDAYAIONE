@@ -25,7 +25,7 @@ def context(**changes):
         actor_user_id="actor-a", workspace_owner_id="actor-a", org_id="org-a",
         context_scope="user", personal_context_allowed=True, agent_domain="general",
         permission_mode="ask", execution_mode="interactive",
-        feature_flags=dict(file_workspace_enabled=True, sandbox_enabled=True, crawler_enabled=True),
+        feature_flags=dict(file_workspace_enabled=True, sandbox_enabled=True, crawler_enabled=True, kb_legacy_search_enabled=True),
     )
     values.update(changes)
     return ToolContext(**values)
@@ -59,7 +59,7 @@ def test_catalog_matches_actual_full_directory_and_handler_bindings(registry):
     # The planner adds one separately gated definition to the runtime catalog.
     assert all(s.definition_kind == "explicit" for s in registry.specs())
     assert {s.name for s in registry.specs() if s.exposure is Exposure.LEGACY_INTERNAL} == {
-        "fetch_all_pages", "get_conversation_context", "image_agent",
+        "fetch_all_pages", "get_conversation_context", "image_agent", "search_knowledge",
     }
     assert all(callable(executor._handlers[s.handler_key]) for s in registry.specs())
 
@@ -129,7 +129,7 @@ def test_duplicate_registration_and_unknown_tool_fail_explicitly(registry):
 ])
 def test_required_spec_fields_are_validated(registry, change):
     with pytest.raises(ValueError):
-        replace(registry.require("search_knowledge"), **change)
+        replace(registry.require("web_search"), **change)
 
 
 def test_original_schema_required_and_name_validation(registry):
@@ -177,7 +177,7 @@ def test_schema_context_and_result_snapshots_cannot_leak_mutations(registry):
 
 def test_three_representative_parameter_contracts_field_by_field(registry):
     expected = {
-        "search_knowledge": ({"query": "string"}, ["query"]),
+        "web_search": ({"query": "string"}, ["query"]),
         "file_search": ({"path": "string", "keyword": "string", "file_pattern": "string", "scope": "string"}, []),
         "file_delete": ({"file_ids": "array", "files": "array", "resource_refs": "array"}, []),
     }
@@ -198,7 +198,6 @@ def test_three_representative_parameter_contracts_field_by_field(registry):
 
 
 @pytest.mark.parametrize("name,args", [
-    ("search_knowledge", {"query": "退货流程"}), ("search_knowledge", {}),
     ("file_search", {}), ("file_search", {"path": "reports", "keyword": "销售", "file_pattern": "*.csv", "scope": "workspace"}),
     ("file_search", {"scope": "current"}),
     ("file_delete", {"files": ["report.csv"]}), ("file_delete", {"file_ids": ["fid_12345678"]}),
@@ -221,7 +220,7 @@ def test_internal_existing_schema_is_preserved_without_new_schema(registry):
 
 
 @pytest.mark.parametrize("org,scope,personal,domain,name,allowed,reason", [
-    (None, "user", True, "general", "search_knowledge", True, None),
+    (None, "user", True, "general", "search_knowledge", False, "tool_retired"),
     (None, "user", True, "general", "file_search", True, None),
     (None, "user", True, "general", "manage_scheduled_task", False, "organization_required"),
     (None, "user", True, "erp", "erp_trade_query", False, "organization_required"),
@@ -231,7 +230,7 @@ def test_internal_existing_schema_is_preserved_without_new_schema(registry):
     ("org-a", "user", True, "general", "manage_scheduled_task", True, None),
     ("org-a", "channel", False, "general", "manage_scheduled_task", False, "personal_context_required"),
     ("org-a", "channel", False, "general", "file_search", True, None),
-    ("org-a", "channel", False, "general", "search_knowledge", True, None),
+    ("org-a", "channel", False, "general", "search_knowledge", False, "tool_retired"),
     ("org-a", "channel", False, "erp", "erp_trade_query", True, None),
     ("org-a", "user", False, "general", "manage_scheduled_task", False, "personal_context_required"),
     ("org-a", "user", True, "erp", "code_execute", True, None),

@@ -528,6 +528,10 @@ async def _run_loop(
         )
         prepared.budget.use_turn()
         turn = prepared.budget.turns_used - 1
+        if getattr(handler, '_knowledge_run', None) is not None and prepared.execution_context is not None:
+            from dataclasses import replace
+            prepared.execution_context = replace(prepared.execution_context, feature_flags={
+                **prepared.execution_context.feature_flags, 'knowledge_refs_present': True})
         tools = prepare_tool_turn(
             core_tools=prepared.core_tools,
             discovered_names=prepared.tool_context.discovered_tools,

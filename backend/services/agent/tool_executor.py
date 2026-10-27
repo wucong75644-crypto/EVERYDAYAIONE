@@ -113,6 +113,7 @@ class ToolExecutor(
             "list_personal_skills_for_edit": self._list_personal_skills_for_edit,
             "get_personal_skill_for_edit": self._get_personal_skill_for_edit,
             "search_knowledge": self._search_knowledge,
+            "knowledge_discover": self._knowledge_discover,
             "social_crawler": self._social_crawler,
             "erp_api_search": self._erp_api_search,
             "code_execute": self._code_execute,
@@ -195,6 +196,38 @@ class ToolExecutor(
     # 通用工具实现
     # ========================================
 
+    async def _knowledge_discover(self, args):
+        import asyncio, json
+        from services.agent.agent_result import AgentResult
+        from services.knowledge_workspace.chat import KnowledgeRun, repository, unavailable
+        from api.routes.knowledge import enabled
+        from types import SimpleNamespace
+        from core.config import get_settings
+        settings = get_settings()
+        if (not self.personal_context_allowed or self.context_scope != 'user'
+                or not settings.knowledge_default_scope_enabled or not settings.knowledge_derivation_enabled
+                or not enabled(SimpleNamespace(user_id=self.user_id, org_id=self.org_id))):
+            unavailable()
+        if self.knowledge_run is None:
+            repo = repository(self.db, self.user_id, self.org_id)
+            def start():
+                with repo.cursor() as c:
+                    c.execute("SELECT t.input_message_id,m.content FROM public.tasks t JOIN public.messages m ON m.id=t.input_message_id AND m.conversation_id=t.conversation_id WHERE t.id=%s AND t.conversation_id=%s AND t.user_id=%s AND t.org_id IS NOT DISTINCT FROM %s::uuid",
+                              (self.task_id, self.conversation_id, self.user_id, self.org_id))
+                    task = c.fetchone()
+                if not task or not task['input_message_id']:unavailable()
+                from services.knowledge_workspace.scope_selection import SOURCE_ONLY
+                from services.knowledge_workspace.ai_journal_extract import message_text
+                if SOURCE_ONLY.search(message_text(task['content'])):
+                    return None
+                return KnowledgeRun.start(repo, conversation_id=self.conversation_id,
+                    input_message_id=task['input_message_id'], default_scope=True, question=args['query'])
+            self.knowledge_run = await asyncio.to_thread(start)
+        if self.knowledge_run is None:
+            return AgentResult(summary='当前任务未找到可用知识范围，不能据此断言整个知识库没有资料。', status='empty')
+        await asyncio.to_thread(self.knowledge_run.revalidate)
+        return AgentResult(summary=json.dumps(self.knowledge_run.introduction(), ensure_ascii=False), status='success')
+
     def _knowledge_handler(self, action):
         async def execute(args):
             import asyncio, json
@@ -211,6 +244,10 @@ class ToolExecutor(
         from services.agent.agent_result import AgentResult
         from services.knowledge_service import search_relevant
 
+        from core.config import get_settings
+        from services.knowledge_workspace import retirement
+        if retirement.RETIRED or not get_settings().kb_legacy_search_enabled:
+            return AgentResult(summary="旧经验库检索已停用，请使用个人知识库检索。", status="error", error_message="LEGACY_KNOWLEDGE_DISABLED", metadata={"retryable": False})
         query = args.get("query", "")
         if not query:
             return AgentResult(

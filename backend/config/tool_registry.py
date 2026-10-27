@@ -41,13 +41,13 @@ def get_domain_tools(domain: str) -> List[ToolEntry]:
     """获取指定 domain 的所有工具（含 always_include）"""
     return [
         t for t in TOOL_REGISTRY.values()
-        if t.domain == domain or t.always_include
+        if (t.domain == domain or t.always_include) and t.name != "search_knowledge"
     ]
 
 
 def get_all_tools() -> List[ToolEntry]:
     """获取所有已注册工具"""
-    return list(TOOL_REGISTRY.values())
+    return [t for t in TOOL_REGISTRY.values() if t.name != "search_knowledge"]
 
 
 # ============================================================

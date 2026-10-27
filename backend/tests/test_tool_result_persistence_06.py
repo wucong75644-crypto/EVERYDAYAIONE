@@ -249,9 +249,9 @@ async def test_cache_snapshot_preserves_business_state_and_no_handler_or_tokens(
     executor = MockHandlerExecutor(agent_domain='general'); cache = ToolResultCache()
     raw = AgentResult('result',status=status,error_message='bad',tokens_used=12,thinking_text='trace',metadata={'retryable':False})
     executor.handler.return_value = raw
-    first = await executor.tool_runtime.execute('search_knowledge',{'file':'overview'},call_id='a',cache=cache)
+    first = await executor.tool_runtime.execute('social_crawler',{'file':'overview'},call_id='a',cache=cache)
     raw.summary = 'mutated after caching'
-    second = await executor.tool_runtime.execute('search_knowledge',{'file':'overview'},call_id='b',cache=cache)
+    second = await executor.tool_runtime.execute('social_crawler',{'file':'overview'},call_id='b',cache=cache)
     assert second.raw.summary == 'result' and second.status == status
     assert second.error == first.error and second.execution.cached and second.chargeable_tokens == 0
     assert second.agent_context['tokens_used'] == 12 and second.agent_context['thinking_text'] == 'trace'
@@ -262,12 +262,12 @@ async def test_cache_scope_isolation_and_permission_revocation(setup):
     cache = ToolResultCache()
     a = MockHandlerExecutor(user_id='u1',agent_domain='general'); b = MockHandlerExecutor(user_id='u2',agent_domain='general')
     a.handler.return_value = AgentResult('u1'); b.handler.return_value = AgentResult('u2')
-    await a.tool_runtime.execute('search_knowledge',{'file':'overview'},call_id='a',cache=cache)
-    out = await b.tool_runtime.execute('search_knowledge',{'file':'overview'},call_id='b',cache=cache)
+    await a.tool_runtime.execute('social_crawler',{'file':'overview'},call_id='a',cache=cache)
+    out = await b.tool_runtime.execute('social_crawler',{'file':'overview'},call_id='b',cache=cache)
     assert out.raw.summary == 'u2' and not out.execution.cached
     a.db.active = False
     read = Mock(wraps=cache.get); cache.get = read
-    denied = await a.tool_runtime.execute('search_knowledge',{'file':'overview'},call_id='c',cache=cache)
+    denied = await a.tool_runtime.execute('social_crawler',{'file':'overview'},call_id='c',cache=cache)
     assert denied.is_failure; read.assert_not_called()
 
 
@@ -282,7 +282,7 @@ async def test_failures_observable_and_never_redo_business(setup, monkeypatch, f
         if failure.startswith('cache'):
             cache=Mock(get=Mock(return_value=None),put=Mock())
             getattr(cache,'get' if failure=='cache_read' else 'put').side_effect=RuntimeError('offline')
-            out=await executor.tool_runtime.execute('search_knowledge',{'file':'overview'},cache=cache)
+            out=await executor.tool_runtime.execute('social_crawler',{'file':'overview'},cache=cache)
             assert executor.handler.await_count==(0 if failure=='cache_read' else 1)
             assert out.is_failure==(failure=='cache_read')
         else:
@@ -319,7 +319,7 @@ async def test_loop_audit_once_per_consumption_and_model_tokens_once_per_turn(se
     async def record(db,entry): entries.append(entry)
     monkeypatch.setattr('services.agent.tool_audit.record_tool_audit',record)
     for suffix in ('a','b'):
-        await loop._execute_tools([tc('search_knowledge',{'query':'overview'},suffix),tc('search_knowledge',{'query':'external info'},suffix+'2')],[], '',ctx,
+        await loop._execute_tools([tc('social_crawler',{'query':'overview'},suffix),tc('social_crawler',{'query':'external info'},suffix+'2')],[], '',ctx,
                                   turn_prompt_tokens=7,turn_completion_tokens=3)
     await asyncio.sleep(0)
     assert len(entries)==4 and executor.handler.await_count==2
@@ -397,7 +397,7 @@ async def test_loop_delivery_failure_still_audits_completed_calls_once(setup,mon
     monkeypatch.setattr('services.agent.tool_audit.record_tool_audit',record)
     loop._register_result_files=Mock(side_effect=ConnectionError('artifact delivery unavailable'))
     with pytest.raises(ConnectionError):
-        await loop._execute_tools([tc('search_knowledge',{'file':'overview'},'a'),tc('web_search',{'query':'x'},'b')],[], '',ctx)
+        await loop._execute_tools([tc('social_crawler',{'file':'overview'},'a'),tc('web_search',{'query':'x'},'b')],[], '',ctx)
     await asyncio.sleep(0)
     assert executor.handler.await_count==2 and len(entries)==2
     assert [entry.status for entry in entries]==['success','success']
@@ -433,7 +433,7 @@ def test_exception_payload_contains_descriptors_only(exception,started):
 async def test_corrupt_cache_never_falls_back_to_business(setup):
     result,_=envelope('ok');payload=encode_result(result);payload['tool_result']['version']=999
     executor=MockHandlerExecutor(agent_domain='general');cache=Mock(get=Mock(return_value=payload))
-    out=await executor.tool_runtime.execute('search_knowledge',{'file':'overview'},cache=cache)
+    out=await executor.tool_runtime.execute('social_crawler',{'file':'overview'},cache=cache)
     assert out.is_failure and out.execution.status=='not_started'
     executor.handler.assert_not_awaited();cache.put.assert_not_called()
 
@@ -453,8 +453,8 @@ def test_reader_first_writer_also_excludes_runtime_handles(monkeypatch,write_ver
 def test_cache_bounds_include_artifacts_even_with_small_summary(setup):
     cache=ToolResultCache()
     result,_=envelope(AgentResult('ok',emit_payloads=[{'kind':'diagram','source':'x'*8100}]))
-    cache.put('search_knowledge',{'file':'overview'},result)
-    assert cache.get('search_knowledge',{'file':'overview'}) is None
+    cache.put('social_crawler',{'file':'overview'},result)
+    assert cache.get('social_crawler',{'file':'overview'}) is None
 
 
 def test_legacy_shell_of_cancelled_result_is_never_success():

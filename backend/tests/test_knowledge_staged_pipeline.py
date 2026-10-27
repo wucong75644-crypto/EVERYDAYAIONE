@@ -452,3 +452,28 @@ def test_pending_snapshot_observes_same_version_parse_completion_and_reopens_too
  assert owner['attachments'][0]['has_readable_text'] is True
  assert file_item.get('text_status')==frozen
  with r.cursor() as c:assert run._coverage(c,run.snapshot['items'])['full_framework_ready']
+
+
+@pytest.mark.asyncio
+async def test_merged_preparation_routes_named_hierarchical_sources_without_reading_body(staged_db):
+ from types import SimpleNamespace
+ from dataclasses import replace
+ from tests.test_knowledge_chat_v3 import start,ref
+ from tests.test_chat_execution_engine import _request
+ from schemas.message import TextPart
+ from services.knowledge_workspace.answer_plan import prepare
+ r=staged_db[0]();root=create(r,title='共享规范目录')
+ doc_id=r.command(command('create_object',{'container_id':root['container_id'],'parent_id':root['id'],'kind':'document','title':'内部申请填写说明资料','position':{'x':0,'y':0}}))['object_id']
+ r.command(command('save_document',{'object_id':doc_id,'expected_revision':1,'body':'填写申请必须保留原始附件。'}))
+ run,_,_=start(staged_db[0],r,[ref(root)])
+ handler=SimpleNamespace(_knowledge_run=run,org_id=r.scope.org_id,_personal_context_allowed=True)
+ prepared=SimpleNamespace(execution_context=SimpleNamespace(context_scope='user',authorized_tool_names=None),messages=[])
+ req=replace(_request(),content=[TextPart(text='“内部申请填写说明资料”有什么要求？')],user_id=r.scope.actor_user_id)
+ await prepare(handler,prepared,req)
+ assert prepared.knowledge_answer_plan['reason']=='hierarchical_route'
+ assert '填写申请必须保留原始附件' not in str(prepared.messages)
+ with r.cursor() as c:
+  c.execute("SELECT count(*) AS n FROM kb_read_receipts WHERE snapshot_id=%s AND state IN ('body_partial','body_complete')",(run.id,));assert c.fetchone()['n']==0
+ step=prepared.knowledge_answer_plan['items'][0]['next_step']
+ read=run.execute('read',{k:v for k,v in step.items() if k!='tool'})
+ assert any(i['body']=='填写申请必须保留原始附件。' for i in read['items'])

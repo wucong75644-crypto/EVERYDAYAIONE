@@ -1515,7 +1515,14 @@ class TestErrorPrefixDetection:
 
 
 class TestRecordAgentExperience:
-    """F1/F2: ExperienceRecorder（从 ERPAgent 提取）"""
+    """F1/F2: retained legacy ExperienceRecorder compatibility."""
+
+    @pytest.fixture(autouse=True)
+    def enable_retained_legacy_experience(self, monkeypatch):
+        from services.knowledge_workspace import retirement
+        monkeypatch.setattr(retirement, 'RETIRED', False)  # historical compatibility only
+        from core.config import get_settings
+        monkeypatch.setattr(get_settings(), 'kb_legacy_extraction_enabled', True)
 
     def _make_recorder(self):
         from services.agent.experience_recorder import ExperienceRecorder

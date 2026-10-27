@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 from loguru import logger
 
-from services.knowledge_config import get_pg_connection, is_kb_available
+from services.knowledge_config import get_pg_connection
 
 
 async def record_metric(
@@ -26,7 +26,8 @@ async def record_metric(
     org_id: Optional[str] = None,
 ) -> None:
     """记录任务执行指标（fire-and-forget，不抛异常）"""
-    if not is_kb_available():
+    from core.config import get_settings
+    if not get_settings().kb_metrics_enabled:
         return
 
     conn_ctx = await get_pg_connection(db_source)

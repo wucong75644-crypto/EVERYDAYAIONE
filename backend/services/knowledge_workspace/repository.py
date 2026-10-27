@@ -97,6 +97,9 @@ class Repository:
         if command.operation == 'update_title':
             payload = {key: value for key, value in payload.items() if value is not None}
         with self.cursor() as c:
+            if command.operation == 'apply_content':
+                c.execute('SELECT public.kb_apply_content(%s,%s) AS result', (command.command_id, Jsonb(payload)))
+                return c.fetchone()['result']
             if command.operation == 'delete_project':
                 c.execute('SELECT public.kb_delete_project(%s,%s) AS result',(command.command_id,Jsonb(payload)))
                 return c.fetchone()['result']

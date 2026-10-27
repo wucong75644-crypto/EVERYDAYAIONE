@@ -127,7 +127,8 @@ class TestPlanModeE2E:
         names = _tool_names("plan")
         assert "erp_analyze" in names
         assert "code_execute" in names
-        assert "search_knowledge" in names
+        assert "search_knowledge" not in names
+        # Knowledge navigation is advertised only with a live task-bound scope.
         assert "web_search" in names
 
     def test_request1_step5_full_prompt_injected(self):

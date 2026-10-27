@@ -11,7 +11,7 @@ import {
   structureRoot,
 } from "./topicStructure";
 import { effectiveStructure } from "./structureDirection";
-export type OutlineTopic = { title: string; parent_index: number };
+export type OutlineTopic = { title: string; parent_index: number; structure?: import("./topicStructure").TopicStructure };
 function entryRoot(nodes: KnowledgeNode[], id: string,options:Partial<MapLayout>={}) {
   const structured = structureRoot(nodes, id,options);
   if (structured) return structured.id;
@@ -79,6 +79,7 @@ export function planTopicOutline(
     parent_id:
       t.parent_index < 0 ? (target?.id ?? null) : "entry:" + t.parent_index,
     kind: "topic",
+    canvas_data: t.structure?{structure:t.structure}:undefined,
     title: t.title,
     revision: 1,
     layout_revision: 1,
