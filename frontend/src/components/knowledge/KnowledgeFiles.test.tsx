@@ -112,3 +112,11 @@ it('confirms removal and refreshes the attachment summary without deleting a sou
  const changed=vi.fn();api.list.mockResolvedValueOnce([file]).mockResolvedValue([]);render(<KnowledgeFiles object={object} nodes={[source]} onClose={vi.fn()} onBusyChange={vi.fn()} onFilesChanged={changed}/>);await ready();await menu('更多操作 资料.txt');fireEvent.click(await screen.findByRole('menuitem',{name:'移除附件'}));expect(api.remove).not.toHaveBeenCalled();expect(screen.getByText(/源文件和其他节点的引用不会删除/)).toBeInTheDocument();fireEvent.click(screen.getByRole('button',{name:'移除附件'}));await waitFor(()=>expect(changed).toHaveBeenCalledWith([]));expect(api.remove).toHaveBeenCalledWith('target',file,expect.any(String));expect(api.upload).not.toHaveBeenCalled();
 });
 it('executes a direct upload once and closes without leaving the canvas busy',async()=>{const closed=vi.fn(),busy=vi.fn(),entry={kind:'upload' as const,file:new File(['file'],'直接.txt')};render(<KnowledgeFiles object={object} nodes={[source]} entry={entry} position={{left:50,top:200}} onClose={closed} onBusyChange={busy}/>);await waitFor(()=>expect(api.upload).toHaveBeenCalledExactlyOnceWith('target',entry.file,expect.any(String),{}));await waitFor(()=>expect(closed).toHaveBeenCalledOnce());expect(busy).toHaveBeenLastCalledWith(false);expect(screen.queryByRole('complementary',{name:'文件资料'})).not.toBeInTheDocument();});
+
+it('keeps originals viewable and hides parsing retries while AI processing is off',async()=>{
+ api.list.mockResolvedValue([{...file,version:{...version,text_status:'unsupported',parse_state:'failed',ai_processing_enabled:false}}]);
+ show();await ready();expect(screen.getByText(/AI 解析未启用，原件可查看/)).toBeVisible();expect(screen.queryByRole('button',{name:'重试解析'})).toBeNull();fireEvent.click(screen.getByRole('button',{name:'预览文件 资料.txt'}));await waitFor(()=>expect(api.content).toHaveBeenCalled());
+});
+it('retains available extracted content when AI processing is off',async()=>{
+ api.list.mockResolvedValue([{...file,version:{...version,parse_state:'disabled',ai_processing_enabled:false}}]);show();await ready();expect(screen.getByText(/正文已解析/)).toBeVisible();expect(screen.queryByText(/AI 解析未启用/)).toBeNull();
+});

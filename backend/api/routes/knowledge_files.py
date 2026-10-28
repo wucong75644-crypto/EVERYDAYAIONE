@@ -229,4 +229,6 @@ def import_progress(container_id:UUID,ctx:OrgCtx,db:Database,response:Response):
 @router.post('/objects/{object_id}/files/{binding_id}/versions/{revision}/retry')
 def retry_parse(object_id:UUID,binding_id:UUID,revision:int,ctx:OrgCtx,db:Database,response:Response):
     if revision<1 or revision>9223372036854775807:return failure(422,'KNOWLEDGE_INVALID_REVISION','版本号无效')
+    if not get_settings().knowledge_ai_processing_enabled:
+        return failure(409,'KNOWLEDGE_AI_PROCESSING_DISABLED','原始附件已保留，AI 解析暂未启用')
     return call(ctx,db,response,'retry_file',object_id,binding_id,revision)

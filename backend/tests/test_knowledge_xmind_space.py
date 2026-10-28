@@ -12,7 +12,8 @@ from tests.test_knowledge_xmind import (import_db,prepared,archive,project_delet
 @pytest.fixture(scope='module')
 def space_db(import_db):
  make,actors=import_db
- with psycopg.connect(**make.admin_args) as c:c.execute((Path(__file__).resolve().parents[1]/'migrations/337_knowledge_import_current_space.sql').read_text())
+ with psycopg.connect(**make.admin_args) as c:
+  for name in ['337_knowledge_import_current_space.sql','338_knowledge_source_presentation.sql']:c.execute((Path(__file__).resolve().parents[1]/'migrations'/name).read_text())
  return make,actors
 
 def request(r,tmp_path,cid,key=None):
@@ -100,3 +101,34 @@ def test_multipart_import_uses_target_receipt_and_rejects_missing_or_readonly_ta
   assert post().json()['data']['status']=='replayed'
   assert post({'command_id':key}).status_code==422
   ctx.user_id=actors[2];assert post().status_code==403
+
+
+def test_source_presentation_and_relationships_are_atomic_and_reversible(space_db,tmp_path):
+ from services.knowledge_workspace import xmind
+ from tests.test_knowledge_source_canvas import source_archive
+ r=space_db[0]();target=create(r,title='保留已有内容');key=uuid4();raw=source_archive()
+ p=xmind.prepare(xmind.parse(raw),raw,'source.xmind',tmp_path,r.scope.actor_user_id,r.scope.org_id,key)
+ p.update(container_id=str(target['container_id']),expected_container_revision=rev(r,target['container_id']))
+ result=r.import_xmind(key,p);scene=r.canvas();root=next(n for n in scene['nodes'] if str(n['id'])==result['object_id'])
+ assert root['canvas_data']['boundaries'][0]['title']=='原始外框'
+ assert len(root['canvas_data']['boundaries'][0]['members'])==2
+ assert root['canvas_data']['structure']=='left'
+ assert root['canvas_data']['style']['font_size']==32
+ child=next(n for n in scene['nodes'] if n['title']=='ERP编码 XYDSLBQB01-01')
+ assert child['x']<root['x']
+ assert child['canvas_data']['width']==300
+ assert child['canvas_data']['title_format']['runs'][1]['color']=='#F22816'
+ relation=next(a for a in scene['relations'] if str(a['source_object_id'])==str(child['id']))
+ assert relation['appearance']['text']=='人工建立的关联'
+ assert r.import_xmind(key,p)['status']=='replayed'
+ toggle(r);assert not any(str(a['id'])==str(relation['id']) for a in r.canvas()['relations'])
+ toggle(r,'redo');restored=r.canvas();assert any(str(a['id'])==str(relation['id']) for a in restored['relations'])
+ assert next(n for n in restored['nodes'] if str(n['id'])==str(child['id']))['canvas_data']==child['canvas_data']
+
+
+def test_invalid_source_presentation_and_relationship_cannot_partially_import(space_db,tmp_path):
+ r=space_db[0]();target=create(r,title='目标');key,p=request(r,tmp_path,target['container_id']);before=r.canvas()
+ for changes in [dict(relations=[{'source_index':0,'target_index':999,'appearance':{}}]),
+                 dict(topics=[{**t,'presentation':{'width':9999}} for t in p['topics']])]:
+  with pytest.raises(psycopg.Error):r.import_xmind(key,{**p,**changes})
+  assert r.canvas()==before

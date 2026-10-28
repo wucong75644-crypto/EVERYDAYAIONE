@@ -23,7 +23,7 @@ BINARY_MIMES = {
     '.png':'image/png', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.gif':'image/gif', '.webp':'image/webp', '.mp4':'video/mp4',
 }
 DOWNLOAD_EXTENSIONS = {'.doc','.xls','.ppt','.pptx','.zip','.xmind'}
-PUBLIC_VERSION_KEYS = {'binding_id','revision','version_id','asset_id','name','mime_type','size','sha256','text_status','created_at','parse_state'}
+PUBLIC_VERSION_KEYS = {'binding_id','revision','version_id','asset_id','name','mime_type','size','sha256','text_status','created_at','parse_state','ai_processing_enabled'}
 
 
 def fail(code, message, status=422):

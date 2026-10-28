@@ -304,4 +304,5 @@ class Repository:
             state=v.get('parse_state') or ('ready' if v['text_status']=='ready' else 'partial' if v['text_status']=='truncated' else 'unsupported' if v['name'].lower().endswith(('.zip','.pptx','.doc','.xls','.ppt')) else 'pending')
             state='failed' if state in ('failed','blocked','blocked_permission') else 'pending' if state in ('queued','processing') else state
             states[state if state in states else 'unsupported']+=1
-        return {'framework':'complete','nodes':counts['count'],'files':states,'links_unread':counts['links']}
+        from core.config import get_settings
+        return {'framework':'complete','nodes':counts['count'],'files':states,'links_unread':counts['links'],'ai_processing_enabled':get_settings().knowledge_ai_processing_enabled}

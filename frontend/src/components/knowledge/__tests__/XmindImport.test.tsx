@@ -77,3 +77,7 @@ it('clears only a rejected version-conflict attempt so a refreshed target can re
  show('user:org',vi.fn().mockResolvedValue(undefined),{id:'project',title:'当前团队',revision:9});choose();await screen.findByText(/共 5 个主题/);
  expect(api.importXmind.mock.calls[1].slice(2)).toEqual(['project',9]);
 });
+
+it('reports saved originals and stops pending-job polling when AI processing is off',async()=>{
+ const timers=vi.spyOn(globalThis,'setTimeout');api.progress.mockResolvedValue({ai_processing_enabled:false,framework:'complete',nodes:5,files:{ready:0,pending:1},links_unread:1});show();choose();await screen.findByText(/原始附件已保存，AI 解析未启用/);expect(api.progress).toHaveBeenCalledOnce();expect(timers.mock.calls.some(([,ms])=>ms===3000)).toBe(false);expect(screen.queryByText(/待处理 1/)).toBeNull();
+});

@@ -62,13 +62,13 @@ export const knowledgeApi = {
 };
 
 export interface KnowledgeFileVersion {
-  parse_state?:string; binding_id: string; revision: number; version_id: string; asset_id: string; name: string;
+  ai_processing_enabled?:boolean;parse_state?:string; binding_id: string; revision: number; version_id: string; asset_id: string; name: string;
   mime_type: string; size: number; sha256: string; text_status: 'ready' | 'unsupported' | 'failed' | 'truncated'; created_at: string;
 }
 export interface KnowledgeFile { id: string; title: string; current_revision: number; version: KnowledgeFileVersion }
 export interface KnowledgeFileTarget { binding_id?: string; expected_revision?: number }
 export interface XmindImportResult { status:string; container_id:string; object_id:string; folded_ids:string[]; hidden?:boolean; report:{topics:number;images:number;links:number;summaries:number;warnings:string[]} }
-export interface ImportProgress {framework:string;nodes:number;files:Record<string,number>;links_unread:number}
+export interface ImportProgress {ai_processing_enabled?:boolean;framework:string;nodes:number;files:Record<string,number>;links_unread:number}
 export const knowledgeFilesApi = {
   progress:(containerId:string,signal?:AbortSignal)=>get<ImportProgress>('/knowledge/containers/'+containerId+'/import-progress',signal),
   retry:(objectId:string,bindingId:string,revision:number)=>request({url:'/knowledge/objects/'+objectId+'/files/'+bindingId+'/versions/'+revision+'/retry',method:'POST'}),

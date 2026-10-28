@@ -29,7 +29,11 @@ def no_real_models(monkeypatch):
 def archive(sheets=None,extra=None):
     output=io.BytesIO()
     with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as z:
-        z.writestr('content.json',json.dumps(sheets or [{'rootTopic':{'id':'root','title':'合成培训','children':{'attached':[
+        # Retrying the same synthetic file must not change its archive timestamp/hash.
+        def write(name,data):
+            info=zipfile.ZipInfo(name,(2020,1,1,0,0,0));info.compress_type=zipfile.ZIP_DEFLATED
+            z.writestr(info,data)
+        write('content.json',json.dumps(sheets or [{'rootTopic':{'id':'root','title':'合成培训','children':{'attached':[
           {'id':'a','title':'完整多行\n先核对单号，再确认收货。','branch':'folded','children':{'attached':[{'id':'long','title':'长主题'*100}]}},
           {'id':'b','image':{'src':'xap:resources/pixel.png'},'href':'https://example.test/document'},
         ],'summary':[{'id':'s','title':'合成概要'}]},'summaries':[{'range':'(0,1)','topicId':'s'}]}}],ensure_ascii=False))
@@ -37,7 +41,7 @@ def archive(sheets=None,extra=None):
             # Valid tiny PNG, generated from a synthetic pixel.
             from PIL import Image
             b=io.BytesIO();Image.new('RGB',(2,3),'red').save(b,format='PNG');extra={'resources/pixel.png':b.getvalue()}
-        for key,value in extra.items():z.writestr(key,value)
+        for key,value in extra.items():write(key,value)
     return output.getvalue()
 
 

@@ -1,4 +1,3 @@
-import {DerivedDirectory} from './DerivedDirectory';
 import {TopicWidthHandle} from './TopicWidthHandle';
 import {useEffect,useLayoutEffect,useRef,useState} from 'react';
 import type {CSSProperties} from 'react';
@@ -35,7 +34,6 @@ export function InlineBodyEditor({object,base,pending,error,unknown,style,onChan
  return <div ref={panel} role="dialog" aria-label="编辑内容" aria-modal="false" data-state="open" className="kc-inline-body" style={{...style,left:Number(style.left??0)+box.dx,top:Number(style.top??0)+box.dy,width:box.width,height:box.height,...(closing&&!error?{visibility:'hidden',pointerEvents:'none'}:{})}} onPointerDown={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()} onKeyDown={e=>e.stopPropagation()}>
   <button type="button" className="kc-inline-close" aria-label="关闭" title="关闭" onClick={()=>setClosing(true)}><X aria-hidden="true" size={16}/></button>
   <textarea ref={input} aria-label="正文" maxLength={200000} readOnly={!object.can_write} value={object.body} onCompositionStart={()=>setComposing(true)} onCompositionEnd={()=>setComposing(false)} onChange={e=>onChange(e.target.value)} onBlur={()=>{if(dirty&&!pending&&!composing&&!error&&!unknown)void onSave();}}/>
-  <DerivedDirectory objectId={object.id} writable={object.can_write}/>
   <TopicWidthHandle width={box.width} height={box.height} zoom={zoom} minWidth={220} maxWidth={1000} minHeight={120} maxHeight={1200} measureContent={false} scopeLabel="正文框" onPreview={()=>{}} onCommit={()=>{}} onStart={()=>{boxBase.current=box;}} onResizePreview={size=>setBox({...size,dx:boxBase.current.dx+size.dx,dy:boxBase.current.dy+size.dy})} onResizeCommit={size=>setBox(size?{...size,dx:boxBase.current.dx+size.dx,dy:boxBase.current.dy+size.dy}:{width:Math.max(220,Number(style.width)||300),height:220,dx:0,dy:0})} onEnd={()=>input.current?.focus({preventScroll:true})} onEscapeIdle={()=>setClosing(true)} onCancel={()=>{setBox(boxBase.current);input.current?.focus({preventScroll:true});}}/>
   {error&&<div className="kc-inline-save-error"><p role="alert">{error}</p>{object.can_write&&<button type="button" disabled={pending} onClick={()=>unknown?onCheck():void onSave()}>{unknown?'核对保存结果':'重试保存'}</button>}</div>}
  </div>;

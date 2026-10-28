@@ -1,6 +1,6 @@
 """Bounded, offline Xmind reader. Archive member names never become disk paths."""
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import io
 import json
@@ -30,6 +30,7 @@ class ImportPlan:
     resources: dict[str, bytes]
     warnings: list[str]
     sha256: str
+    relations: list[dict] = field(default_factory=list)
 
     def report(self):
         return {'topics': len(self.topics), 'images': sum(bool(t.get('image')) for t in self.topics),
@@ -138,7 +139,8 @@ def parse(data: bytes) -> ImportPlan:
                 except AppException: invalid('内嵌资源格式暂不支持，未创建项目')
                 if path not in resources: resources[path] = archive.read(path)
                 return path
-            def visit(t, parent, order, depth):
+            def visit(t, parent, order, depth, theme=None, kind="attached"):
+                from .xmind_presentation import presentation
                 nonlocal total_text
                 if not isinstance(t,dict) or depth>MAX_DEPTH or len(topics)>=MAX_TOPICS: invalid('主题结构无效、超过 1000 个主题或 64 层')
                 source_id = t.get('id')
@@ -162,7 +164,9 @@ def parse(data: bytes) -> ImportPlan:
                     body += '\n\n'+note_text
                 item = {'parent_index':parent,'sort_order':(order+1)*1024,'title':title.strip()[:200] or ('图片' if t.get('image') else '链接' if t.get('href') else '未命名主题'),
                         'body':body,'depth':depth,'folded':t.get('branch')=='folded'}
-                if len(title.strip())>200: warn('长主题在画布显示前 200 字，完整文字保存在正文并参与检索')
+                item['presentation']=presentation(t,theme,depth,kind,warn)
+                item['source_id']=source_id
+                if len(title.strip())>200: warn('长主题在画布显示前 200 字，完整文字保存在正文')
                 image = t.get('image')
                 if image:
                     if not isinstance(image,dict): invalid()
@@ -185,7 +189,7 @@ def parse(data: bytes) -> ImportPlan:
                     else:
                         item['body'] += '\n\n原始标签：'+json.dumps(labels,ensure_ascii=False)
                         warn('部分标签超出现有标签限制，完整内容保留在正文')
-                if any(t.get(k) for k in ('boundaries','relationships','markers','marker-refs','task')):
+                if any(t.get(k) for k in ('relationships','markers','marker-refs','task')) or t.get('boundaries') and not isinstance(t['boundaries'],list):
                     warn('外框、关联线、标记或任务属性未还原到画布，原始信息保留在 Xmind 原件')
                 if len(item['body'])>200000 or '\x00' in item['body']: invalid('单个主题正文超过 20 万字或含无效字符')
                 total_text += len(item['body'])
@@ -200,9 +204,20 @@ def parse(data: bytes) -> ImportPlan:
                     if not isinstance(values,list): invalid()
                     groups[kind] = []
                     for c in values:
-                        groups[kind].append((c,visit(c,index,sibling_order,depth+1)))
+                        groups[kind].append((c,visit(c,-1 if kind=='detached' else index,sibling_order,0 if kind=='detached' else depth+1,theme,kind)))
                         sibling_order += 1
-                    if kind=='detached' and values: warn('自由主题保留在所属主题下，原始位置见原件')
+                    if kind=='detached' and values: warn('自由主题保留为独立主题，当前使用画布自动排版，原始位置见原件')
+                boundaries=t.get('boundaries',[])
+                if isinstance(boundaries,list):
+                    if len(boundaries)>100:invalid('单个主题外框超过 100 个')
+                    for boundary in boundaries:
+                        if not isinstance(boundary,dict):invalid('外框格式无效')
+                        match=re.fullmatch(r'\((\d+),(\d+)\)',str(boundary.get('range','')))
+                        title=boundary.get('title','外框')
+                        if not match or not isinstance(title,str) or len(title)>200:invalid('外框范围或标题无效')
+                        a,b=map(int,match.groups())
+                        if not 0<=a<=b<len(groups['attached']):invalid('外框范围超出分支')
+                        item.setdefault('boundaries',[]).append({'title':title,'members':[idx for _,idx in groups['attached'][a:b+1]]})
                 summaries = t.get('summaries',[])
                 if not isinstance(summaries,list): invalid()
                 mapped = set()
@@ -219,8 +234,23 @@ def parse(data: bytes) -> ImportPlan:
                 return index
             for sheet_index, sheet in enumerate(sheets):
                 if not isinstance(sheet,dict) or 'rootTopic' not in sheet: invalid()
-                if sheet.get('relationships'): warn('关联线未还原到画布，原始信息保留在 Xmind 原件')
-                visit(sheet['rootTopic'],-1,sheet_index,0)
+                visit(sheet['rootTopic'],-1,sheet_index,0,sheet.get('theme'))
+            for order,topic in enumerate(t for t in topics if t['parent_index']==-1):topic['sort_order']=(order+1)*1024
+            relations=[]
+            by_source={topic['source_id']:i for i,topic in enumerate(topics)}
+            for sheet in sheets:
+                raw_relations=sheet.get('relationships',[])
+                if not isinstance(raw_relations,list):invalid('关联线格式无效')
+                for relation in raw_relations:
+                    if not isinstance(relation,dict):invalid('关联线格式无效')
+                    source=by_source.get(relation.get('end1Id'));target=by_source.get(relation.get('end2Id'))
+                    if source is None or target is None or source==target:invalid('关联线引用的主题无效')
+                    text=relation.get('title','')
+                    if not isinstance(text,str) or len(text)>200:invalid('关联线文字超过 200 字')
+                    if any(r['source_index']==source and r['target_index']==target for r in relations):
+                        warn('同一对主题的重复关联线合并显示，原始信息保留在原件');continue
+                    relations.append({'source_index':source,'target_index':target,'appearance':{'text':text}})
+                    if len(relations)>1000:invalid('关联线超过 1000 条')
             # Allocate nonoverlapping subtree bands. Original styling/positions
             # are deliberately not used as authoritative knowledge structure.
             children = {i: [] for i in range(-1,len(topics))}
@@ -238,12 +268,14 @@ def parse(data: bytes) -> ImportPlan:
                     place(c,top);top+=spans[c]+60
             top=0
             for i in children[-1]:place(i,top);top+=spans[i]+120
-            if top>1000000: invalid('导图尺寸超出现有画布范围')
+            from .xmind_presentation import arrange
+            top=arrange(topics,heights)
+            if top>1000000 or any(abs(t['x'])>1000000 or abs(t['y'])>1000000 for t in topics): invalid('导图尺寸超出现有画布范围')
             if any(t.get('link') for t in topics): warn('外部链接未读取，无法据此检索链接内的视频或文档内容')
-            warn('保留主题、正文、图片、附件与概要；原图样式未对齐，原始文件可下载')
-            warn('Xmind 原件作为备份；框架与节点先完成，附件独立解析，外部链接保持未解析状态')
+            warn('保留支持的字号、颜色、文字格式、方向与关联线；字体、线型和自动排版不保证与 Xmind 完全一致，原始文件可下载')
+            warn('Xmind 原件和附件原样保留；AI 处理独立于导图保存，外部链接仅保留入口')
             title = topics[0]['title'] if len(sheets)==1 else (str(sheets[0].get('title') or 'Xmind 导入')[:190]+' 等导图')
-            return ImportPlan(title,topics,resources,warnings,hashlib.sha256(data).hexdigest())
+            return ImportPlan(title,topics,resources,warnings,hashlib.sha256(data).hexdigest(),relations)
     except (zipfile.BadZipFile,RuntimeError,NotImplementedError,ValueError,TypeError,KeyError,RecursionError,ET.ParseError,UnicodeError,OverflowError,zlib.error,EOFError):
         invalid()
 
@@ -256,7 +288,7 @@ def prepare(plan, original, name, root, user_id, org_id, command_id):
     """
     from uuid import UUID, uuid5, uuid4
     from . import files as storage
-    payload = {'title':plan.title,'sha256':plan.sha256,'topics':plan.topics,'report':plan.report(),'files':[]}
+    payload = {'title':plan.title,'sha256':plan.sha256,'topics':plan.topics,'relations':plan.relations,'report':plan.report(),'files':[]}
     entries = [(0,'source',name,original)]
     for index, topic in enumerate(plan.topics):
         for kind in ('image','attachment'):

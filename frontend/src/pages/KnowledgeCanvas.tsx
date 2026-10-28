@@ -149,7 +149,7 @@ export default function KnowledgeCanvas() {
   const [,snapshotAttempt]=useState(0);
   const editingBase = useRef('');
   const editors = useRef({ quick, draft, editing }); editors.current = { quick, draft, editing };
-  type SavedDraft = {contentText?:string;relationText?:RelationLabelDraft|null;visual?:typeof visual;annotation?:typeof annotation;mediaEditor?:typeof mediaEditor; mapEditor?:MapThemeDraft|null; quick: QuickDraft | null; draft: Draft | null; editing: KnowledgeObject | null; base: string; attempt: typeof unconfirmed.current };
+  type SavedDraft = {contentInput?:boolean;contentText?:string;relationText?:RelationLabelDraft|null;visual?:typeof visual;annotation?:typeof annotation;mediaEditor?:typeof mediaEditor; mapEditor?:MapThemeDraft|null; quick: QuickDraft | null; draft: Draft | null; editing: KnowledgeObject | null; base: string; attempt: typeof unconfirmed.current };
   const [mediaEditor,setMediaEditor]=useState<{node:KnowledgeNode;mode:'video'|'link';draft?:MediaDraft;containerRevision?:number}|null>(null);
   const [relationText,setRelationText]=useState<RelationLabelDraft|null>(null);
   const [mediaView,setMediaView]=useState<{node:KnowledgeNode;source:'video'|'link'}|null>(null);
@@ -158,8 +158,9 @@ export default function KnowledgeCanvas() {
   const [brush,setBrush]=useState(false);
   const [styleClipboard, setStyleClipboard] = useState<StyleSnapshot | undefined>();
   const [annotation, setAnnotation] = useState<{ node: KnowledgeNode; mode: AnnotationMode;draft?:AnnotationDraft;containerRevision?:number } | null>(null);
-  const dirty = !!contentText || !!relationText || !!mapEditor || !!mediaEditor || !!visual || !!annotation || !!unconfirmed.current || !!(quick && (!quick.node || (quick.title !== quick.node.title || JSON.stringify(quick.titleFormat)!==JSON.stringify(quick.node.canvas_data?.title_format)))) || !!(draft && (draft.title || draft.body)) || !!(editing?.can_write && editing.body !== editingBase.current);
-  const savedDraft: SavedDraft | null = dirty ? {contentText,relationText,visual,annotation,mediaEditor, mapEditor,quick, draft, editing, base: editingBase.current, attempt: unconfirmed.current } : null;
+  const contentDirty=!!editing&&contentText!==editing.body;
+  const dirty = contentDirty || !!relationText || !!mapEditor || !!mediaEditor || !!visual || !!annotation || !!unconfirmed.current || !!(quick && (!quick.node || (quick.title !== quick.node.title || JSON.stringify(quick.titleFormat)!==JSON.stringify(quick.node.canvas_data?.title_format)))) || !!(draft && (draft.title || draft.body)) || !!(editing?.can_write && editing.body !== editingBase.current);
+  const savedDraft: SavedDraft | null = dirty ? {contentInput,contentText,relationText,visual,annotation,mediaEditor, mapEditor,quick, draft, editing, base: editingBase.current, attempt: unconfirmed.current } : null;
   const draftStore = useCanvasDraft(identity, savedDraft, status === 'ready' && loadedIdentity === identity);
   const closeDraft = (close: () => void) => { if (unconfirmed.current) { setError('保存结果尚未确认，请先点击刷新核对。'); return; } if (!dirty || window.confirm('放弃尚未保存的修改？')) { if (draftStore.clear()) close(); else setError('草稿未能安全清理，请保留页面并重试。'); } };
   const restoreDraft = async () => {
@@ -209,7 +210,7 @@ export default function KnowledgeCanvas() {
       if(record.annotation)setAnnotation(record.annotation);
       if(record.mediaEditor)setMediaEditor(record.mediaEditor);
       if(record.mapEditor)setMapEditor({...record.mapEditor,theme:normalizeMapTheme(record.mapEditor.theme)});
-      if (recoveredBody) { editingBase.current = record.base; setEditing(recoveredBody); setContentText(record.contentText??'');setContentInput(!!record.contentText); }
+      if (recoveredBody) { editingBase.current = record.base; setEditing(recoveredBody); setContentText(record.contentText??recoveredBody.body);setContentInput(record.contentInput??!!record.contentText); }
       if (versionChanged) setError('内容已有新版本，草稿已恢复；保存仍会进行版本校验，请先对照最新内容。');
       cancelQuick.current = false; setQuick(record.quick); setDraft(record.draft); unconfirmed.current = record.attempt;
       if (record.quick) revealQuick(record.quick.position);
@@ -356,8 +357,8 @@ export default function KnowledgeCanvas() {
       setDraft(operation === 'save_document' && d.body === payload.body && d.title.trim() === n?.title ? null : { ...d, created: n ?? d.created });
     }
     if (current.editing && operation === 'save_document') {
-      editingBase.current = String(payload.body);
-      if(current.editing.id===payload.object_id)setEditing({ ...current.editing, revision: Number(payload.expected_revision) + 1 });
+      editingBase.current = String(payload.body);setContentText(String(payload.body));setContentInput(false);
+      if(current.editing.id===payload.object_id)setEditing({ ...current.editing, body:String(payload.body), revision: Number(payload.expected_revision) + 1 });
     }
   };
   const checkSave = async () => {
@@ -484,9 +485,9 @@ export default function KnowledgeCanvas() {
     const n = parent ? byId.get(parent) : undefined; const c = n ? container(n.container_id) : inheritContainer ? container(inheritContainer) : active;
     setError(''); setMenu(null); setDraft({ type: type ?? (tab === 'project' && !c ? 'project' : 'topic'), container: c?.id ?? '', parent, title: '', body: '', position: freePosition(position) });
   };
-  const openFiles=async(n:KnowledgeNode)=>{if(busy.current||filePending||contentText||unconfirmed.current||editors.current.editing&&editors.current.editing.body!==editingBase.current)return;const key=identity,generation=++fileOpenGeneration.current;try{const object=await knowledgeApi.object(n.id);if(identityRef.current===key&&generation===fileOpenGeneration.current){setFileEntry(null);setEditing(null);setSelected(n.id);setMulti(new Set());setFileObject(object);}}catch(e){if(identityRef.current===key&&generation===fileOpenGeneration.current)setError(message(e));}};
+  const openFiles=async(n:KnowledgeNode)=>{if(busy.current||filePending||contentDirty||unconfirmed.current||editors.current.editing&&editors.current.editing.body!==editingBase.current)return;const key=identity,generation=++fileOpenGeneration.current;try{const object=await knowledgeApi.object(n.id);if(identityRef.current===key&&generation===fileOpenGeneration.current){setFileEntry(null);setEditing(null);setSelected(n.id);setMulti(new Set());setFileObject(object);}}catch(e){if(identityRef.current===key&&generation===fileOpenGeneration.current)setError(message(e));}};
   const openFileAction=async(n:KnowledgeNode,action:FileEntryAction)=>{
-    if(busy.current||filePending||contentText||unconfirmed.current||editors.current.editing&&editors.current.editing.body!==editingBase.current)return;
+    if(busy.current||filePending||contentDirty||unconfirmed.current||editors.current.editing&&editors.current.editing.body!==editingBase.current)return;
     const generation=++fileOpenGeneration.current,key=identity;
     try{const object=await knowledgeApi.object(n.id);if(identityRef.current!==key||generation!==fileOpenGeneration.current)return;if(!object.can_write){setError('当前节点已无编辑权限');return;}
       const rect=viewport.current?.querySelector<HTMLElement>(`[data-node-id="${n.id}"] [aria-label="文件资料"]`)?.getBoundingClientRect();
@@ -494,8 +495,8 @@ export default function KnowledgeCanvas() {
     }catch(e){if(identityRef.current===key)setError(message(e));}
   };
   const openEditor = async (n: KnowledgeNode, inputMode=false) => {
-    if (busy.current || filePending || quick) return;if(editors.current.editing?.id===n.id){setContentInput(inputMode);return;}if(contentText||unconfirmed.current)return;if(editors.current.editing&&editors.current.editing.body!==editingBase.current)return; const key = identity; setError('');
-    try { const object = await knowledgeApi.object(n.id); if (identityRef.current === key) { setFileObject(null);setContentInput(inputMode);setContentText(''); editingBase.current = object.body; setEditing(object); } }
+    if (busy.current || filePending || quick) return;if(editors.current.editing?.id===n.id){setContentInput(inputMode);return;}if(contentDirty||unconfirmed.current)return;if(editors.current.editing&&editors.current.editing.body!==editingBase.current)return; const key = identity; setError('');
+    try { const object = await knowledgeApi.object(n.id); if (identityRef.current === key) { setFileObject(null);setContentInput(inputMode);setContentText(object.body); editingBase.current = object.body; setEditing(object); } }
     catch (e) { if (identityRef.current === key) setError(message(e)); }
   };
   const focusFrame = useRef<number | null>(null);
@@ -583,48 +584,17 @@ export default function KnowledgeCanvas() {
     const sample:KnowledgeNode={id:'draft-style',node_id:'draft-style',container_id:q.container,parent_id:q.parent,kind:'topic',title:q.title,revision:1,layout_revision:1,x:0,y:0};
     const data=mapAppearance(sample,nodes,active?.canvas_theme);return {...displayedTitleStyle(viewport.current),fontSize:newTopicFont(q.parent,q.container),fontWeight:400,...titleStyle(data),...(data?.style?.color?{color:data.style.color}:{})};
   };
-  const submitContent = async (text:string, object:KnowledgeObject|null, entry:QuickDraft|null) => {
-    if(busy.current||!text.trim()||(!object&&!entry))return false;
+  const submitContent = async (text:string, object:KnowledgeObject) => {
+    if(busy.current||!object.can_write)return false;
     if(unconfirmed.current){await checkSave();return false;}
-    const key=identity,session=writeSession.current;
-    busy.current=true;setPending(true);setError('');
-    try{
-      const cid=object?.container_id??entry!.container;
-      const expectedContainer=sceneRef.current.containers.find(c=>c.id===cid)!.revision;
-      const plan=await knowledgeApi.contentPlan({container_id:cid,...(object?{object_id:object.id,expected_revision:object.revision}:{}),text});
-      if(identityRef.current!==key||writeSession.current!==session)return false;
-      const current=sceneRef.current.nodes.filter(n=>n.container_id===cid),target=object?current.find(n=>n.id===object.id):entry?.parent?current.find(n=>n.id===entry.parent):undefined;
-      const outline=object?plan.children.map(child=>({title:child.title,parent_index:-1})):[{title:plan.title,parent_index:-1,...(entry?.structure?{structure:entry.structure}:{})},...plan.children.map(child=>({title:child.title,parent_index:0}))];
-      const theme=sceneRef.current.containers.find(c=>c.id===cid)?.canvas_theme;
-      const measured=contentSizes(current);
-      for(const node of current){const size=measured.get(node.id)!;size.height=Math.max(size.height,topicSize({...node,canvas_data:mapAppearance(node,current,theme)}).height);}
-      const placement=outline.length?planTopicOutline(outline,current,cid,target,entry?.position??{x:target?.x??0,y:target?.y??0},measured,theme?.font_size??15,theme):null;
-      if(placement&&entry&&!entry.fixedPosition&&(entry.after||entry.before)){
-        const anchor=current.find(n=>n.id===(entry.before??entry.after));
-        if(!anchor)throw new Error('同级插入目标已更新，请刷新后重试');
-        const combined=[...current,...placement.virtual],sizes=new Map([...contentSizes(combined),...measured]);
-        const inserted=planBranch(combined,'entry:0',{x:0,y:0},{x:anchor.x+50,y:entry.before?anchor.y+1:anchor.y+(sizes.get(anchor.id)?.height??170)-1},sizes,new Set([anchor.id]),theme?.layout,theme);
-        if(!inserted.valid)throw new Error(inserted.message);
-        placement.topics=placement.topics.map((topic,i)=>{const at=inserted.nodes.find(n=>n.id==='entry:'+i)!;return {...topic,position:{x:at.x,y:at.y}};});
-        placement.nodes=inserted.changed.filter(n=>current.some(old=>old.id===n.id)).map(n=>({node_id:n.node_id,expected_revision:n.layout_revision,position:{x:n.x,y:n.y}}));
-      }
-      if(placement&&entry?.fixedPosition){const root=placement.topics[0].position,dx=entry.position.x-root.x,dy=entry.position.y-root.y;placement.topics=placement.topics.map(topic=>({...topic,position:{x:topic.position.x+dx,y:topic.position.y+dy}}));placement.nodes=[];}
-      const offset=object?0:1;
-      const payload={input_text:text,container_id:cid,expected_container_revision:expectedContainer,...(object?{object_id:object.id,expected_revision:object.revision}:{}),parent_id:object?.parent_id??entry?.parent??null,title:object?.title??plan.title,body:plan.body,position:object?{x:target!.x,y:target!.y}:placement!.topics[0].position,children:plan.children.map((child,i)=>({...child,position:placement!.topics[i+offset].position})),nodes:placement?.nodes??[],...(!object?{after_object_id:entry?.after??null,before_object_id:entry?.before??null,...(entry?.fixedPosition?{manual_layout:entry.manualLayout??{}}:{}),...(entry?.structure?{structure:entry.structure}:{})}:{})};
-      busy.current=false;setPending(false);
-      const ok=await act('apply_content',payload);
-      if(ok)reconcileSaved('apply_content',payload);
-      return ok;
-    }catch(e){if(identityRef.current===key&&writeSession.current===session)setError(message(e));return false;}
-    finally{if(identityRef.current===key&&writeSession.current===session){busy.current=false;setPending(false);}}
+    const payload={object_id:object.id,expected_revision:object.revision,body:text};
+    const ok=await act('save_document',payload);
+    if(ok)reconcileSaved('save_document',payload);
+    return ok;
   };
   const saveQuick = async (next?: 'sibling' | 'child') => {
     if (!quick || quickSaving.current || cancelQuick.current) return;
     if (unconfirmed.current) { await checkSave(); return; }
-    if(!quick.node&&!quick.wrap&&quick.title.trim()){
-      quickSaving.current=true;const entry=quick,key=identity,session=writeSession.current;const ok=await submitContent(quick.title,null,quick);if(identityRef.current!==key||writeSession.current!==session)return;quickSaving.current=false;
-      if(ok){const node=createdNode.current;if(next&&node)startQuick(node,next==='child',!!entry.fromLine&&next==='child');else focusCanvas();}return;
-    }
     const title = quick.title.trim() || (!quick.node ? '新主题' : '');
     const titleFormat=quick.titleFormat?editRuns(quick.title,title,quick.titleFormat):undefined;
     const presentation=titleFormat?{title_format:titleFormat}:{};
@@ -1234,13 +1204,13 @@ export default function KnowledgeCanvas() {
   };
   const renderQuickEditor=(inline:boolean)=>(quick && <div className={inline?"kc-inline-title":"kc-quick kc-node"} style={inline?undefined:{ left: quick.position.x, top: quick.position.y }} onPointerDown={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()} onBlur={e=>{if((quick.node||quick.wrap||!quick.title.trim())&&!e.currentTarget.contains(e.relatedTarget as Node)&&!cancelQuick.current&&!imeActive.current)void saveQuick();}}>
             <label htmlFor="kc-quick-title">{quick.wrap?'插入父主题':quick.node ? '修改标题' : '新主题'}</label>
-            {!quick.node&&!quick.wrap?<textarea ref={mountContentInput} id="kc-quick-title" aria-label="新节点内容" placeholder="输入内容，AI 将整理并按需拆分" value={quick.title} maxLength={12000} readOnly={pending||!!unconfirmed.current} onChange={e=>{if(!pending&&!unconfirmed.current)setQuick(q=>q?{...q,title:e.target.value}:q);}} onCompositionStart={()=>{imeActive.current=true;}} onCompositionEnd={()=>{imeActive.current=false;imeEndAt.current=Date.now();}} onKeyDown={e=>{e.stopPropagation();if(e.nativeEvent.isComposing||imeActive.current||e.keyCode===229||e.repeat||(e.key==='Enter'&&Date.now()-imeEndAt.current<30))return;if(e.key==='Escape'&&!pending){e.preventDefault();cancelQuick.current=true;setQuick(null);}else if(e.key==='Enter'&&!e.shiftKey&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&!pending){e.preventDefault();void saveQuick(quick.fromLine?undefined:'sibling');}else if(e.key==='Tab'&&!pending){e.preventDefault();void saveQuick('child');}}}/>:<RichTitleEditor toolsRef={inline?titleToolsMeasure.ref:undefined} toolsStyle={inline?inlineToolsStyle():undefined} key={`${quick.container}:${quick.position.x}:${quick.position.y}`} ref={mountQuickInput} id="kc-quick-title" label={quick.wrap?'父主题标题':quick.node?'节点标题':'新主题标题'} text={quick.title} format={quick.titleFormat} style={quickTitleStyle(quick)} onChange={(title,titleFormat)=>setQuick(q=>q?{...q,title,titleFormat}:q)}
+            {!quick.node&&!quick.wrap?<textarea ref={mountContentInput} id="kc-quick-title" aria-label="新节点内容" placeholder="输入主题文字；分支由你创建，正文可在节点中编辑" value={quick.title} maxLength={200} readOnly={pending||!!unconfirmed.current} onChange={e=>{if(!pending&&!unconfirmed.current)setQuick(q=>q?{...q,title:e.target.value}:q);}} onCompositionStart={()=>{imeActive.current=true;}} onCompositionEnd={()=>{imeActive.current=false;imeEndAt.current=Date.now();}} onKeyDown={e=>{e.stopPropagation();if(e.nativeEvent.isComposing||imeActive.current||e.keyCode===229||e.repeat||(e.key==='Enter'&&Date.now()-imeEndAt.current<30))return;if(e.key==='Escape'&&!pending){e.preventDefault();cancelQuick.current=true;setQuick(null);}else if(e.key==='Enter'&&!e.shiftKey&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&!pending){e.preventDefault();void saveQuick(quick.fromLine?undefined:'sibling');}else if(e.key==='Tab'&&!pending){e.preventDefault();void saveQuick('child');}}}/>:<RichTitleEditor toolsRef={inline?titleToolsMeasure.ref:undefined} toolsStyle={inline?inlineToolsStyle():undefined} key={`${quick.container}:${quick.position.x}:${quick.position.y}`} ref={mountQuickInput} id="kc-quick-title" label={quick.wrap?'父主题标题':quick.node?'节点标题':'新主题标题'} text={quick.title} format={quick.titleFormat} style={quickTitleStyle(quick)} onChange={(title,titleFormat)=>setQuick(q=>q?{...q,title,titleFormat}:q)}
               onCompositionStart={()=>{imeActive.current=true;}} onCompositionEnd={()=>{imeActive.current=false;imeCanvasNode.current=null;imeEndAt.current=Date.now();}}
               onKeyDown={e=>{e.stopPropagation();if(e.nativeEvent.isComposing||imeActive.current||e.keyCode===229||e.repeat||(e.key==='Enter'&&Date.now()-imeEndAt.current<30))return;
                 if(e.key==='Escape'&&!pending){e.preventDefault();cancelQuick.current=true;setQuick(null);focusCanvas();}
                 if(!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.shiftKey&&(e.key==='Enter'||e.key==='Tab')){e.preventDefault();void saveQuick((quick.node||quick.fromLine||quick.wrap)&&e.key==='Enter'?undefined:e.key==='Tab'?'child':'sibling');}
               }}/>}
-            {!quick.node&&!quick.wrap&&<button disabled={pending||!quick.title.trim()} onClick={()=>void saveQuick()}>{pending?'AI 正在整理…':'提交并整理'}</button>}
+            {!quick.node&&!quick.wrap&&<button disabled={pending||!quick.title.trim()} onClick={()=>void saveQuick()}>{pending?'正在保存…':'创建主题'}</button>}
             <small>{pending ? '正在保存…' : quick.node||quick.wrap ? 'Enter 确认 · Esc 取消' : 'Enter 提交并继续同级 · Shift+Enter 换行 · Tab 继续子级 · Esc 取消'}</small>
             {error && !inline && <p role="alert">{error}</p>}
           </div>);
@@ -1297,7 +1267,7 @@ export default function KnowledgeCanvas() {
           {branchPreview?.alignment&&<SmartGuideOverlay feedback={branchPreview.alignment} zoom={pan.z}/>}
           {branchPreview?.valid && branchPreview.placement !== 'free' && drag.current?.type === 'node' && drag.current.sources.map(id => { const slot = branchPreview.nodes.find(n => n.id === id); const size = drag.current?.type === 'node' ? drag.current.sizes.get(id) : undefined; return slot && <div key={id} className="kc-drop-slot" aria-label="分支落点预览" style={{ left: slot.x, top: slot.y, width: size?.width ?? 272, height: size?.height ?? 170 }} />; })}
           {branchPreview?.marker && <div className={'kc-insert-marker ' + (branchPreview.valid ? '' : 'invalid')+(branchPreview.marker.height?' vertical':'')} style={{ left: branchPreview.marker.x, top: branchPreview.marker.y, width: branchPreview.marker.width,height:branchPreview.marker.height??4 }} />}
-          {editing&&byId.has(editing.id)&&(()=>{const n=drawnById.get(editing.id)??byId.get(editing.id)!;const size=contentSizes([n]).get(n.id)!;const path:string[]=[];const seen=new Set<string>();let ancestor:KnowledgeNode|undefined=n;while(ancestor&&!seen.has(ancestor.id)){seen.add(ancestor.id);path.unshift(ancestor.title);ancestor=ancestor.parent_id?byId.get(ancestor.parent_id):undefined;}return editing.body!==editingBase.current?<InlineBodyEditor key={identity+editing.id} zoom={pan.z} object={editing} base={editingBase.current} pending={pending} error={error} unknown={!!unconfirmed.current} style={{left:n.x,top:n.y+size.height+12,width:860}} onChange={body=>setEditing(current=>current?{...current,body}:current)} onSave={saveBody} onCheck={()=>void checkSave()} onClose={()=>setEditing(null)}/>:<DirectoryPanel key={identity+editing.id} zoom={pan.z} object={editing} path={path} style={{left:n.x,top:n.y+size.height+12,width:860}} inputMode={contentInput} text={contentText} pending={pending} error={error} unknown={!!unconfirmed.current} onText={setContentText} onInputMode={setContentInput} onSubmit={()=>void submitContent(contentText,editing,null)} onCheck={()=>void checkSave()} onClose={()=>{if(pending)return;closeDraft(()=>{setContentText('');setEditing(null);focusCanvas();});}}/>;})()}
+          {editing&&byId.has(editing.id)&&(()=>{const n=drawnById.get(editing.id)??byId.get(editing.id)!;const size=contentSizes([n]).get(n.id)!;const path:string[]=[];const seen=new Set<string>();let ancestor:KnowledgeNode|undefined=n;while(ancestor&&!seen.has(ancestor.id)){seen.add(ancestor.id);path.unshift(ancestor.title);ancestor=ancestor.parent_id?byId.get(ancestor.parent_id):undefined;}return editing.body!==editingBase.current?<InlineBodyEditor key={identity+editing.id} zoom={pan.z} object={editing} base={editingBase.current} pending={pending} error={error} unknown={!!unconfirmed.current} style={{left:n.x,top:n.y+size.height+12,width:860}} onChange={body=>setEditing(current=>current?{...current,body}:current)} onSave={saveBody} onCheck={()=>void checkSave()} onClose={()=>setEditing(null)}/>:<DirectoryPanel key={identity+editing.id} zoom={pan.z} object={editing} path={path} style={{left:n.x,top:n.y+size.height+12,width:860}} inputMode={contentInput} text={contentText} pending={pending} error={error} unknown={!!unconfirmed.current} onText={setContentText} onInputMode={setContentInput} onSubmit={()=>void submitContent(contentText,editing)} onCheck={()=>void checkSave()} onClose={()=>{if(pending)return;closeDraft(()=>{setContentText('');setEditing(null);focusCanvas();});}}/>;})()}
           {quick && !quick.node && (quick.lineSource || quick.parent) && byId.has((quick.lineSource || quick.parent)!) && <svg className="kc-edges kc-draft-edge" aria-hidden="true"><path d={(()=>{const source=drawnById.get((quick.lineSource || quick.parent)!)??byId.get((quick.lineSource || quick.parent)!)!;if(!quick.linePort)return path(source,{...source,id:'new-draft',node_id:'new-draft',parent_id:quick.parent,sort_order:(quick.after||quick.before)?((byId.get((quick.before||quick.after)!)?.sort_order??byId.get((quick.before||quick.after)!)?.y??0)+(quick.before?-0.5:0.5)):Math.max(0,...nodes.filter(n=>n.parent_id===quick.parent).map(n=>n.sort_order??n.y))+1024,title:quick.title||'新主题',x:quick.position.x,y:quick.position.y,canvas_data:{manual_layout:quick.manualLayout,title_format:quick.titleFormat},attachments:undefined});const size=contentSizes([source]).get(source.id)!;const d=portDirection(nodes,source.id,quick.linePort),v=vectors[d],p=edgePoint(size,d,quick.linePort==='child'?24:16),start={x:source.x+p.x,y:source.y+p.y},tip=edgePoint({width:272,height:170},d==='right'?'left':d==='left'?'right':d==='up'?'down':'up'),end={x:quick.position.x+tip.x,y:quick.position.y+tip.y};return `M ${start.x} ${start.y} C ${start.x+v.x*50} ${start.y+v.y*50},${end.x-v.x*50} ${end.y-v.y*50},${end.x} ${end.y}`;})()} /></svg>}
           {(!quick?.node||quick.standalone) && renderQuickEditor(false)}
         </div>

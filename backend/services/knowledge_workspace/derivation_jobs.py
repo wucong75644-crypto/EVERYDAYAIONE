@@ -15,6 +15,7 @@ class DerivationWorker:
         self.jobs = FairBackgroundJobs('knowledge-derivation', 2, timeout=280)
 
     def candidates(self):
+        if not get_settings().knowledge_ai_processing_enabled:return []
         repo = Repository(self.pool, DatabaseScope(None,None,DatabaseAccessKind.WORKER))
         with repo.cursor() as c:
             c.execute("SELECT to_regprocedure('public.kb_derivation_candidates()') IS NOT NULL AS enabled")
@@ -38,6 +39,7 @@ class DerivationWorker:
                 or str(job['actor_id']) in users or str(job['org_id']) in orgs]
 
     async def execute(self, job):
+        if not get_settings().knowledge_ai_processing_enabled:return None
         repo=Repository(self.pool,DatabaseScope(str(job['actor_id']),str(job['org_id']) if job['org_id'] else None,DatabaseAccessKind.RUNTIME))
         if job.get('phase')=='file':
             from .file_jobs import process as process_file

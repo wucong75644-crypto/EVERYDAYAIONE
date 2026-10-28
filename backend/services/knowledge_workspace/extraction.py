@@ -26,6 +26,8 @@ def resolve(version,result):
 
 def hydrate(cursor,items):
     """Batch the already authorized (object, version) pairs; never use another config."""
+    for _,version in items:
+        if version:version['ai_processing_enabled']=get_settings().knowledge_ai_processing_enabled
     pairs=[{'object_id':str(oid),'binding_id':str(v['binding_id']),'revision':v['revision'],'config':config_for(v),'use_result':get_settings().knowledge_media_enabled or config_for(v)=='native-v1'} for oid,v in items
            if v and v.get('text_status')!='ready']
     if not pairs:return

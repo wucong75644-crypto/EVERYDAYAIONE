@@ -75,6 +75,8 @@ class Settings(BaseSettings):
 
     # V1 rollout: owner explicitly authorized all signed-in accounts on 2026-10-19.
     # An explicit false remains the operational kill switch.
+    # Human source editing stays independent while the AI projection is rebuilt.
+    knowledge_ai_processing_enabled: bool = False
     knowledge_derivation_enabled: bool = False
     knowledge_ai_journal_enabled: bool = True  # Personal knowledge branch; requires migration 333.
     knowledge_evidence_assessment_enabled: bool = True
