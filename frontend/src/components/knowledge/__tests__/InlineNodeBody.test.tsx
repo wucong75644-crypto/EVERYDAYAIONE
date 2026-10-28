@@ -16,3 +16,5 @@ it('preserves an existing title prefix without inserting a duplicate heading int
  const {input,container,onChange}=setup('售后方法\n\n完整正文');expect(input.value).toBe('完整正文');expect(container.querySelector('.kc-body-measure')).toHaveTextContent('完整正文');fireEvent.change(input,{target:{value:'完整正文补充'}});expect(onChange).toHaveBeenCalledWith('售后方法\n\n完整正文补充');
 });
 it('retains the Enter save and Shift+Enter newline contract',()=>{const {input,onSave}=setup('完整正文');fireEvent.keyDown(input,{key:'Enter',shiftKey:true});expect(onSave).not.toHaveBeenCalled();fireEvent.keyDown(input,{key:'Enter'});expect(onSave).toHaveBeenCalledOnce();});
+
+it('shows saving feedback beside the editor only while the write is pending',()=>{const {props,rerender,input}=setup('原始正文');expect(screen.queryByRole('status')).toBeNull();rerender(<InlineNodeBody {...props} pending/>);expect(screen.getByRole('status')).toHaveTextContent('正在保存');expect(input).toHaveValue('原始正文');rerender(<InlineNodeBody {...props}/>);expect(screen.queryByRole('status')).toBeNull();});

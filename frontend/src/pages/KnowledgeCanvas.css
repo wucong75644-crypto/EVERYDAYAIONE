@@ -213,3 +213,9 @@
 .kc-body-edit-surface{position:relative;margin-top:8px;font-size:15px;line-height:1.6}
 .kc-body-edit-surface>.kc-body-measure{visibility:hidden;margin:0;min-height:1.6em;pointer-events:none}
 .kc-node-editing .kc-inline-node-body .kc-body-edit-surface>textarea{position:absolute;inset:0;display:block;width:100%;height:100%;min-height:0;max-height:none;margin:0;padding:0;border:0;overflow:hidden;font:inherit;line-height:inherit;white-space:pre-wrap;overflow-wrap:anywhere;box-sizing:border-box}
+
+.kc-page .kc-save-feedback{position:absolute;right:8px;bottom:calc(100% + 6px);z-index:12;display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border:1px solid #74829940;border-radius:6px;background:var(--color-surface-card,#fff);color:var(--color-text-primary,#202938);font-size:12px;font-weight:400;line-height:1.4;white-space:nowrap;pointer-events:none;box-shadow:0 2px 8px #0001}
+.kc-save-feedback::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--color-primary,#638aff)}
+
+.kc-page .kc-file-badge{display:flex;align-items:center;gap:0;width:100%;min-width:0;max-width:100%;margin:8px 0 0;padding:7px 9px;border:1px solid #74829940;border-radius:6px;background:transparent;color:inherit;text-align:left;font-size:13px;font-weight:400;line-height:1.4}
+.kc-file-badge>svg{flex-shrink:0;margin-right:7px}.kc-file-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.kc-file-extension{flex-shrink:0;white-space:nowrap}

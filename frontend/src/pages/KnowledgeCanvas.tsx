@@ -1242,6 +1242,7 @@ export default function KnowledgeCanvas() {
                 if(!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.shiftKey&&(e.key==='Enter'||e.key==='Tab')){e.preventDefault();void saveQuick((quick.node||quick.fromLine||quick.wrap)&&e.key==='Enter'?undefined:e.key==='Tab'?'child':'sibling');}
               }}/>}
 
+            {pending&&<span className="kc-save-feedback" role="status">正在保存…</span>}
             <small>{pending ? '正在保存…' : quick.node||quick.wrap ? 'Enter 确认 · Esc 取消' : 'Enter 保存 · Shift+Enter 换行 · Tab 创建子级 · Esc 取消'}</small>
             {error && !inline && <p role="alert">{error}</p>}
           </div>);
