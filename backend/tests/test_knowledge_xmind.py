@@ -320,3 +320,12 @@ def test_import_tags_respect_existing_manual_limits_without_losing_text():
     long='长'*51
     plan=xmind.parse(archive([{'rootTopic':{'id':'r','title':'Topic','labels':[long]}}],{}))
     assert long in plan.topics[0]['body'] and 'labels' not in plan.topics[0]
+
+
+def test_inherited_foreground_remains_readable_on_source_topic_fill():
+    from services.knowledge_workspace.xmind_presentation import presentation
+    for fill,expected in [('#000000','#ffffff'),('#ed2814','#ffffff'),('#2634df','#ffffff'),('#ff8000','#202938')]:
+        result=presentation({'style':{'properties':{'svg:fill':fill}}},{},1,'attached',lambda _:None)
+        assert result['style']['color']==expected
+    explicit=presentation({'style':{'properties':{'svg:fill':'#000000','fo:color':'#abcdef'}}},{},1,'attached',lambda _:None)
+    assert explicit['style']['color']=='#abcdef'

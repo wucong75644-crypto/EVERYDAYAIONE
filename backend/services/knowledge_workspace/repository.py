@@ -29,6 +29,7 @@ class Repository:
             if len(containers) > 1000:
                 raise ValueError('当前预览版本最多加载 1000 个空间')
             c.execute('''SELECT o.id,o.container_id,o.parent_id,o.kind,o.title,(to_jsonb(o)->>'sort_order')::bigint AS sort_order,o.current_revision AS revision,
+                         EXISTS(SELECT 1 FROM public.kb_object_versions v WHERE v.object_id=o.id AND v.revision=o.current_revision AND v.body<>'' AND v.body<>o.title) AS has_body,
                          n.id AS node_id,n.x,n.y,COALESCE(to_jsonb(n)->'canvas_data','{}'::jsonb) AS canvas_data,n.revision AS layout_revision
                          FROM public.kb_objects o JOIN public.kb_canvas_nodes n ON n.object_id=o.id
                          WHERE o.deleted_at IS NULL AND NOT COALESCE((to_jsonb(o)->>'undo_hidden')::boolean,false) AND NOT EXISTS(SELECT 1 FROM public.kb_containers c WHERE c.id=o.container_id AND COALESCE((to_jsonb(c)->>'undo_hidden')::boolean,false)) AND (%s::uuid IS NULL OR o.id>%s::uuid)

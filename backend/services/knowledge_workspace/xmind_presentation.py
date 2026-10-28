@@ -33,6 +33,9 @@ def presentation(topic, theme, depth, kind, warn):
         size=round(float(value[:-2])*(4/3 if value.endswith('pt') else 1))
         style['font_size']=max(10,min(48,size))
         if not 10<=size<=48:warn('部分字号超出现有画布范围，已使用最接近字号，原值保留在原件')
+    if 'color' not in style and 'background' in style:
+        background=style['background'];brightness=sum(int(background[i:i+2],16)*weight for i,weight in ((1,299),(3,587),(5,114)))/1000
+        style['color']='#ffffff' if brightness<128 else '#202938'
     if props.get('fo:font-weight') not in (None,'inherited'):style['bold']=props['fo:font-weight'] in ('bold','600','700','800','900')
     if props.get('fo:font-style') not in (None,'inherited'):style['italic']=props['fo:font-style']=='italic'
     if isinstance(props.get('fo:text-decoration'),str) and props['fo:text-decoration']!='inherited':

@@ -132,3 +132,14 @@ def test_invalid_source_presentation_and_relationship_cannot_partially_import(sp
                  dict(topics=[{**t,'presentation':{'width':9999}} for t in p['topics']])]:
   with pytest.raises(psycopg.Error):r.import_xmind(key,{**p,**changes})
   assert r.canvas()==before
+
+
+def test_scene_exposes_body_availability_without_copying_text_or_leaking_other_spaces(space_db):
+ r=space_db[0]();n=create(r,title='原始主题');oid=str(n['id'])
+ assert next(x for x in r.canvas()['nodes'] if str(x['id'])==oid)['has_body'] is False
+ r.command(command('save_document',{'object_id':oid,'expected_revision':1,'body':'原始主题'}))
+ assert next(x for x in r.canvas()['nodes'] if str(x['id'])==oid)['has_body'] is False
+ r.command(command('save_document',{'object_id':oid,'expected_revision':2,'body':'需要直接显示的完整正文'}))
+ assert next(x for x in r.canvas()['nodes'] if str(x['id'])==oid)['has_body'] is True
+ assert '需要直接显示的完整正文' not in str(r.canvas())
+ assert not any(str(x['id'])==oid for x in space_db[0](1).canvas()['nodes'])

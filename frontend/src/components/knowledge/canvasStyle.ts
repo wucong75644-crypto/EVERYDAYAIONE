@@ -14,12 +14,19 @@ export const defaultStyle: CanvasStyle = {
   border_width: 1,
   border_style: "solid",
 };
+/** Legacy Xmind imports used the default foreground for inherited text colors. */
+export function readableTopicColor(style:CanvasStyle){
+ if(style.color.toLowerCase()!==defaultStyle.color)return style.color;
+ const hex=style.background.replace('#','');if(!/^[0-9a-f]{6}$/i.test(hex))return style.color;
+ const brightness=(parseInt(hex.slice(0,2),16)*299+parseInt(hex.slice(2,4),16)*587+parseInt(hex.slice(4,6),16)*114)/1000;
+ return brightness<128?'#ffffff':style.color;
+}
 export function nodeStyle(data?: CanvasData): CSSProperties {
   const s = data?.style;
   if (!s) return data?.width?{width:data.width,boxSizing:'border-box'}:{};
   return {
     width: data?.width??272,boxSizing:'border-box',
-    color: s.color,
+    color: readableTopicColor(s),
     background: s.background,
     borderColor: s.border,
     borderWidth: s.border_width ?? 1,

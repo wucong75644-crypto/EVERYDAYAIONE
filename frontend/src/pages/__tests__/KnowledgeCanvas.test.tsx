@@ -17,8 +17,10 @@ vi.mock('../../services/knowledge', () => ({ knowledgeApi: f.api, knowledgeFiles
 vi.mock('../../stores/useAuthStore', () => ({ useAuthStore: (selector: (s: typeof f.auth) => unknown) => selector(f.auth) }));
 const node = { id: 'root', node_id: 'placement', container_id: 'p', parent_id: null, kind: 'topic', title: '项目总纲', revision: 1, layout_revision: 1, x: 20, y: 40 };
 const initial = { containers: [{ id: 'p', kind: 'project', title: '客户项目', role: 'manager', revision: 12 }, { id: 'personal', kind: 'personal', title: '个人知识库', role: 'manager' }], nodes: [node], relations: [] };
-function clickNodeAction(name:string){if(!screen.queryByRole('button',{name,exact:true})){const article=screen.queryByRole('article',{name:node.title,exact:true})??screen.getAllByRole('article')[0];fireEvent.pointerDown(article,{button:0,pointerId:1});fireEvent.pointerUp(screen.getByLabelText('知识画布'),{pointerId:1});}const button=screen.getByRole('button',{name,exact:true});if(name==='文件资料'&&button.getAttribute('aria-haspopup')==='menu'){fireEvent.keyDown(button,{key:'ArrowDown'});fireEvent.click(screen.getByRole('menuitem',{name:'查看全部附件'}));}else fireEvent.click(button);}
-function openLabels(){const card=document.querySelector('.kc-node.selected')??screen.getByRole('article',{name:node.title,exact:true});const trigger=within(card as HTMLElement).getByRole('button',{name:'文件资料',exact:true});fireEvent.keyDown(trigger,{key:'ArrowDown'});fireEvent.click(screen.getByRole('menuitem',{name:'标签',exact:true}));}
+function clickNodeAction(name:string){const article=screen.queryByRole('article',{name:node.title,exact:true})??screen.getAllByRole('article')[0];fireEvent.contextMenu(article,{clientX:200,clientY:200});fireEvent.click(screen.getByRole('menuitem',{name:name==='文件资料'?'管理附件':'编辑文字内容',exact:true}));}
+
+function openLabels(){const card=document.querySelector('.kc-node.selected')??screen.getByRole('article',{name:node.title,exact:true});fireEvent.contextMenu(card as HTMLElement,{clientX:200,clientY:200});fireEvent.click(screen.getByRole('menuitem',{name:'标签',exact:true}));}
+
 function openNote(){fireEvent.contextMenu(screen.getByRole('article',{name:node.title,exact:true}),{clientX:200,clientY:200});fireEvent.click(screen.getByRole('menuitem',{name:'备注',exact:true}));}
 function show() { return render(<MemoryRouter><KnowledgeCanvas /></MemoryRouter>); }
 async function snapshotSettled() { await waitFor(() => expect(screen.queryByText('正在固定复制内容快照…')).not.toBeInTheDocument()); }
@@ -70,27 +72,27 @@ describe('知识画布', () => {
   });
   it('preserves an editing draft when another writer caused a version conflict', async () => {
     show(); await ready(); clickNodeAction('补充 / 修改');
-    const dialog = await screen.findByRole('dialog', { name: '目录资料' });
-    changeField(within(dialog).getByLabelText('补充 / 修改内容'), { target: { value: '我尚未保存的修改' } });
+    const dialog = await screen.findByRole('article', {name:node.title});
+    changeField(within(dialog).getByLabelText('编辑节点正文 项目总纲'), { target: { value: '我尚未保存的修改' } });
     f.api.command.mockRejectedValue(new Error('内容已更新，请刷新'));
-    fireEvent.click(screen.getByRole('button',{name:'保存正文'}));
+    fireEvent.keyDown(screen.getByLabelText('编辑节点正文 项目总纲'),{key:'Enter'});
     await within(dialog).findByRole('alert');
-    expect(fieldValue(within(dialog).getByLabelText('补充 / 修改内容'))).toBe('我尚未保存的修改');
+    expect(fieldValue(within(dialog).getByLabelText('编辑节点正文 项目总纲'))).toBe('我尚未保存的修改');
     expect(f.api.command).toHaveBeenCalledWith('save_document', expect.objectContaining({ object_id: 'root', expected_revision: 1, body: '我尚未保存的修改' }), expect.any(String));
   });
   it('reuses a command identity after an uncertain response instead of creating twice', async () => {
     show(); await ready(); clickNodeAction('补充 / 修改');
-    const dialog = await screen.findByRole('dialog', { name: '目录资料' });
+    const dialog = await screen.findByRole('article', {name:node.title});
     f.api.command.mockRejectedValueOnce(new Error('network unavailable'));
-    changeField(within(dialog).getByLabelText('补充 / 修改内容'),{target:{value:'自动保存正文'}});
-    fireEvent.click(screen.getByRole('button',{name:'保存正文'}));
+    changeField(within(dialog).getByLabelText('编辑节点正文 项目总纲'),{target:{value:'自动保存正文'}});
+    fireEvent.keyDown(screen.getByLabelText('编辑节点正文 项目总纲'),{key:'Enter'});
     await within(dialog).findByRole('alert');
     const firstId = f.api.command.mock.calls[0][2];
     fireEvent.click(within(dialog).getByRole('button',{name:'核对保存结果'}));
     await waitFor(() => expect(f.api.command).toHaveBeenCalledTimes(2));
     expect(f.api.command.mock.calls[1][2]).toBe(firstId);
   });
-  it('offers only readonly directory content to a viewer',async()=>{f.api.scene.mockResolvedValue({...initial,containers:[{...initial.containers[0],role:'viewer'}]});f.api.object.mockResolvedValue({...node,body:'只读内容',can_write:false});show();await ready();clickNodeAction('展开查看');const panel=await screen.findByRole('dialog',{name:'目录资料'});expect(within(panel).getByText('只读内容')).toBeVisible();expect(within(panel).queryByRole('textbox')).toBeNull();expect(within(panel).queryByRole('button',{name:'补充 / 修改'})).toBeNull();expect(document.querySelector('.kc-handle')).toBeNull();});
+  it('shows original content directly without exposing editing to viewers',async()=>{f.api.scene.mockResolvedValue({...initial,containers:[{...initial.containers[0],role:'viewer'}],nodes:[{...node,has_body:true}]});f.api.object.mockResolvedValue({...node,body:'只读内容',can_write:false});show();await ready();expect(await screen.findByText('只读内容')).toBeVisible();const card=screen.getByRole('article',{name:node.title});fireEvent.doubleClick(card);expect(within(card).queryByRole('textbox')).toBeNull();for(const name of ['目录资料','文件资料','补充 / 修改'])expect(within(card).queryByRole('button',{name,exact:true})).toBeNull();expect(f.api.command).not.toHaveBeenCalled();});;
   it('Enter on a root inherits its project even while personal navigation is active', async () => {
     show(); await ready(); const canvas = screen.getByLabelText('知识画布');
     fireEvent.contextMenu(screen.getByRole('article', { name: '项目总纲' }), { clientX: 200, clientY: 200 });
@@ -123,6 +125,7 @@ describe('知识画布', () => {
     expect(input).toHaveFocus();
     changeField(input, { target: { value: '第一条' } }); fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() => expect(screen.getByRole('article', { name: '第一条' })).toBeInTheDocument());
+    expect(screen.queryByLabelText('新节点内容')).toBeNull();fireEvent.keyDown(screen.getByLabelText('知识画布'),{key:'Enter'});
     input = screen.getByLabelText('新节点内容');
     expect(fieldValue(input)).toBe(''); expect(input).toHaveFocus();
     changeField(input, { target: { value: '第二条' } }); fireEvent.keyDown(input, { key: 'Tab' });
@@ -136,13 +139,13 @@ describe('知识画布', () => {
     persistCreatedNodes(); show(); await ready(); selectRoot();
     fireEvent.keyDown(screen.getByLabelText('知识画布'), { key: 'Tab' });
     changeField(screen.getByLabelText('新节点内容'), { target: { value: '第一个' } });
-    fireEvent.click(screen.getByRole('button',{name:'创建主题'}));
+    fireEvent.keyDown(screen.getByLabelText('新节点内容'),{key:'Enter'});
     await screen.findByRole('article', { name: '第一个' });
     const measuredFirst=screen.getByRole('article',{name:'第一个'});Object.defineProperty(measuredFirst,'offsetWidth',{value:parseFloat(measuredFirst.style.width),configurable:true});Object.defineProperty(measuredFirst,'offsetHeight',{value:146,configurable:true});
     fireEvent.click(screen.getByRole('button', { name: '折叠或展开 项目总纲' })); selectRoot();
     fireEvent.keyDown(screen.getByLabelText('知识画布'), { key: 'Tab' });
     expect(screen.getByRole('article', { name: '第一个' })).toBeInTheDocument();
-    changeField(screen.getByLabelText('新节点内容'), { target: { value: '第二个' } }); fireEvent.click(screen.getByRole('button',{name:'创建主题'}));
+    changeField(screen.getByLabelText('新节点内容'), { target: { value: '第二个' } }); fireEvent.keyDown(screen.getByLabelText('新节点内容'),{key:'Enter'});
     await screen.findByRole('article', { name: '第二个' });
     const firstCard=screen.getByRole('article',{name:'第一个'}),secondCard=screen.getByRole('article',{name:'第二个'});const first={x:parseFloat(firstCard.style.left),y:parseFloat(firstCard.style.top)},second={x:parseFloat(secondCard.style.left),y:parseFloat(secondCard.style.top)};
     expect(second.x).toBe(first.x); expect(second.y - first.y).toBeGreaterThanOrEqual(measuredFirst.offsetHeight+32);
@@ -154,7 +157,7 @@ describe('知识画布', () => {
     await waitFor(() => expect(f.api.command).toHaveBeenCalledWith('update_title', { object_id: 'root', expected_revision: 1, title: '新总纲' }, expect.any(String)));
     await waitFor(() => expect(screen.getByLabelText('知识画布')).toHaveFocus());
     expect(f.api.object).not.toHaveBeenCalled(); clickNodeAction('目录资料');
-    expect(await screen.findByRole('dialog', { name: '目录资料' })).toBeInTheDocument();
+    expect(await screen.findByRole('article', {name:node.title})).toBeInTheDocument();
   });
   it('ignores IME confirmation and modified Enter on both platforms', async () => {
     show(); await ready(); selectRoot(); fireEvent.keyDown(screen.getByLabelText('知识画布'), { key: 'Tab' });
@@ -177,7 +180,7 @@ describe('知识画布', () => {
   it('does not offer inline edits or creation for a viewer', async () => {
     f.api.scene.mockResolvedValue({ ...initial, containers: [{ ...initial.containers[0], role: 'viewer' }] });
     show(); await ready(); fireEvent.doubleClick(screen.getByRole('article', { name: '项目总纲' }));
-    expect(await screen.findByRole('dialog', { name: '目录资料' })).toBeInTheDocument();
+    expect(await screen.findByRole('article', {name:node.title})).toBeInTheDocument();
     expect(screen.queryByLabelText('节点标题')).not.toBeInTheDocument(); expect(screen.queryByRole('button', { name: /创建子级/ })).not.toBeInTheDocument();
     fireEvent.keyDown(screen.getByLabelText('知识画布'), { key: 'Tab' }); expect(screen.queryByLabelText('新节点内容')).not.toBeInTheDocument();
   });
@@ -360,7 +363,7 @@ describe('知识画布', () => {
     const title = screen.getByLabelText('节点标题'), nativeTitleUndo = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true });
     fireEvent(title, nativeTitleUndo); expect(nativeTitleUndo.defaultPrevented).toBe(true); expect(f.api.command).not.toHaveBeenCalled();
     fireEvent.keyDown(title, { key: 'Escape' }); clickNodeAction('补充 / 修改');
-    const body = await screen.findByLabelText('补充 / 修改内容'); const nativeBodyUndo = new KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true, cancelable: true });
+    const body = await screen.findByLabelText('编辑节点正文 项目总纲'); const nativeBodyUndo = new KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true, cancelable: true });
     fireEvent(body, nativeBodyUndo); expect(nativeBodyUndo.defaultPrevented).toBe(false); expect(f.api.command).not.toHaveBeenCalled();
   });
   it('disables stale history after a conflict without optimistically popping it', async () => {
@@ -665,43 +668,43 @@ describe('滚轮、边缘平移、悬停展开和视野',()=>{
 describe('草稿保护与刷新后的剪切安全', () => {
   it('recovers the unsaved body after remount, without issuing a save', async () => {
     const view = show(); await ready(); clickNodeAction('补充 / 修改');
-    changeField(await screen.findByLabelText('补充 / 修改内容'), { target: { value: '离页保留的草稿' } });
+    changeField(await screen.findByLabelText('编辑节点正文 项目总纲'), { target: { value: '离页保留的草稿' } });
     await waitFor(() => expect(Object.values(localStorage).join('')).toContain('离页保留的草稿'));
     const event = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(event); expect(event.defaultPrevented).toBe(true);
     view.unmount(); show(); await ready(); fireEvent.click(await screen.findByRole('button', { name: '恢复草稿' }));
-    expect(fieldValue(await screen.findByLabelText('补充 / 修改内容'))).toBe('离页保留的草稿');
+    expect(fieldValue(await screen.findByLabelText('编辑节点正文 项目总纲'))).toBe('离页保留的草稿');
     expect(f.api.command).not.toHaveBeenCalled();
   });
   it('keeps the original expected revision when restoring a stale body', async () => {
     const view = show(); await ready(); clickNodeAction('补充 / 修改');
-    changeField(await screen.findByLabelText('补充 / 修改内容'), { target: { value: '我的旧版本草稿' } }); view.unmount();
+    changeField(await screen.findByLabelText('编辑节点正文 项目总纲'), { target: { value: '我的旧版本草稿' } }); view.unmount();
     f.api.object.mockResolvedValue({ ...node, revision: 5, body: '别人的新正文', can_write: true });
     show(); await ready(); fireEvent.click(await screen.findByRole('button', { name: '恢复草稿' }));
-    expect(fieldValue(await screen.findByLabelText('补充 / 修改内容'))).toBe('我的旧版本草稿');
-    expect(f.api.command).not.toHaveBeenCalled();fireEvent.click(screen.getByRole('button',{name:'保存正文'}));
+    expect(fieldValue(await screen.findByLabelText('编辑节点正文 项目总纲'))).toBe('我的旧版本草稿');
+    expect(f.api.command).not.toHaveBeenCalled();fireEvent.keyDown(screen.getByLabelText('编辑节点正文 项目总纲'),{key:'Enter'});
     await waitFor(() => expect(f.api.command).toHaveBeenCalledWith('save_document', expect.objectContaining({ expected_revision: 1 }), expect.any(String)));
   });
   it('checks current write permission before revealing a recovered body', async () => {
     const view = show(); await ready(); clickNodeAction('补充 / 修改');
-    changeField(await screen.findByLabelText('补充 / 修改内容'), { target: { value: '不可越权恢复' } }); view.unmount();
+    changeField(await screen.findByLabelText('编辑节点正文 项目总纲'), { target: { value: '不可越权恢复' } }); view.unmount();
     f.api.object.mockResolvedValue({ ...node, body: '', can_write: false });
     show(); await ready(); fireEvent.click(await screen.findByRole('button', { name: '恢复草稿' }));
     expect((await screen.findAllByRole('alert')).some(e => e.textContent?.includes('已无编辑权限'))).toBe(true);
-    expect(screen.queryByLabelText('补充 / 修改内容')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('编辑节点正文 项目总纲')).not.toBeInTheDocument();
   });
   it('isolates recovery from a different organization', async () => {
     const view = show(); await ready(); clickNodeAction('补充 / 修改');
-    changeField(await screen.findByLabelText('补充 / 修改内容'), { target: { value: '企业一的草稿' } }); view.unmount();
+    changeField(await screen.findByLabelText('编辑节点正文 项目总纲'), { target: { value: '企业一的草稿' } }); view.unmount();
     f.auth.currentOrgId = 'another-org'; show(); await ready();
     expect(screen.queryByRole('button', { name: '恢复草稿' })).not.toBeInTheDocument();
   });
   it('reuses the original command ID after refreshing an uncertain save', async () => {
     const view = show(); await ready(); clickNodeAction('补充 / 修改');
-    changeField(await screen.findByLabelText('补充 / 修改内容'), { target: { value: '未知结果' } });
-    f.api.command.mockRejectedValueOnce(new Error('network')); fireEvent.click(screen.getByRole('button',{name:'保存正文'}));
+    changeField(await screen.findByLabelText('编辑节点正文 项目总纲'), { target: { value: '未知结果' } });
+    f.api.command.mockRejectedValueOnce(new Error('network')); fireEvent.keyDown(screen.getByLabelText('编辑节点正文 项目总纲'),{key:'Enter'});
     await screen.findAllByRole('alert'); const commandId = f.api.command.mock.calls[0][2]; view.unmount();
     show(); await ready(); fireEvent.click(await screen.findByRole('button', { name: '恢复草稿' }));
-    await screen.findByLabelText('补充 / 修改内容'); fireEvent.click(screen.getByRole('button',{name:'核对保存结果'}));
+    await screen.findByLabelText('编辑节点正文 项目总纲'); fireEvent.click(screen.getByRole('button',{name:'核对保存结果'}));
     await waitFor(() => expect(f.api.command).toHaveBeenLastCalledWith('save_document', expect.objectContaining({ body: '未知结果' }), commandId));
   });
   it('rejects the old cut token after cancel and remount', async () => {
@@ -748,21 +751,21 @@ it('recovers inline creation after refresh without automatically creating a node
 
 it('preserves drafts when switching organization away and back without unmounting', async () => {
   const view = show(); await ready(); clickNodeAction('补充 / 修改');
-  changeField(await screen.findByLabelText('补充 / 修改内容'), { target: { value: '返回原企业后恢复' } });
+  changeField(await screen.findByLabelText('编辑节点正文 项目总纲'), { target: { value: '返回原企业后恢复' } });
   f.auth.currentOrgId = 'other-org'; view.rerender(<MemoryRouter><KnowledgeCanvas /></MemoryRouter>); await ready();
   expect(screen.queryByRole('button', { name: '恢复草稿' })).not.toBeInTheDocument();
   f.auth.currentOrgId = 'org'; view.rerender(<MemoryRouter><KnowledgeCanvas /></MemoryRouter>); await ready();
   fireEvent.click(await screen.findByRole('button', { name: '恢复草稿' }));
-  expect(fieldValue(await screen.findByLabelText('补充 / 修改内容'))).toBe('返回原企业后恢复');
+  expect(fieldValue(await screen.findByLabelText('编辑节点正文 项目总纲'))).toBe('返回原企业后恢复');
 });
 it('rechecks container permission at restore time instead of using the loaded scene', async () => {
   const view = show(); await ready(); clickNodeAction('补充 / 修改');
-  changeField(await screen.findByLabelText('补充 / 修改内容'), { target: { value: '不可恢复的草稿' } }); view.unmount(); sessionStorage.clear();
+  changeField(await screen.findByLabelText('编辑节点正文 项目总纲'), { target: { value: '不可恢复的草稿' } }); view.unmount(); sessionStorage.clear();
   show(); await ready(); await screen.findByRole('button', { name: '恢复草稿' });
   f.api.scene.mockResolvedValue({ ...structuredClone(initial), containers: [{ ...initial.containers[0], role: 'viewer' }] });
   fireEvent.click(screen.getByRole('button', { name: '恢复草稿' }));
   await waitFor(() => expect(screen.getAllByRole('alert').some(e => e.textContent?.includes('无编辑权限'))).toBe(true));
-  expect(screen.queryByLabelText('补充 / 修改内容')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('编辑节点正文 项目总纲')).not.toBeInTheDocument();
 });
 
 describe('复制内容快照和历史限制', () => {
@@ -823,8 +826,8 @@ it('rejects malformed clipboard snapshot geometry without issuing a mutation', a
 
 describe('P1 save and readonly regressions', () => {
   it('freezes submitted instructions until acknowledgment and uses the fresh node revision next time',async()=>{
-let finish!:(v:unknown)=>void;f.api.command.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));show();await ready();clickNodeAction('补充 / 修改');const input=await screen.findByLabelText('补充 / 修改内容');changeField(input,{target:{value:'first'}});fireEvent.click(screen.getByRole('button',{name:'保存正文'}));await waitFor(()=>expect(f.api.command).toHaveBeenCalledTimes(1));expect(input).toHaveAttribute('readonly');changeField(input,{target:{value:'cannot overwrite pending input'}});expect(fieldValue(input)).toBe('first');f.api.scene.mockResolvedValue({...initial,nodes:[{...node,revision:2}]});await act(async()=>finish({success:true,data:{object_id:'root'}}));await waitFor(()=>expect(screen.queryByLabelText('补充 / 修改内容')).toBeNull());fireEvent.click(within(screen.getByRole('dialog',{name:'目录资料'})).getByRole('button',{name:'补充 / 修改'}));changeField(screen.getByLabelText('补充 / 修改内容'),{target:{value:'second'}});fireEvent.click(screen.getByRole('button',{name:'保存正文'}));await waitFor(()=>expect(f.api.command).toHaveBeenCalledTimes(2));expect(f.api.command.mock.calls[1][1]).toMatchObject({body:'second',expected_revision:2});});
-  it('freezes uncertain content and checks the exact original command without regenerating',async()=>{f.api.command.mockRejectedValueOnce(new Error('network lost'));show();await ready();clickNodeAction('补充 / 修改');const input=await screen.findByLabelText('补充 / 修改内容');changeField(input,{target:{value:'sent'}});fireEvent.click(screen.getByRole('button',{name:'保存正文'}));await screen.findAllByRole('alert');expect(input).toHaveAttribute('readonly');changeField(input,{target:{value:'newer'}});expect(fieldValue(input)).toBe('sent');fireEvent.click(screen.getByRole('button',{name:'核对保存结果'}));await waitFor(()=>expect(f.api.command).toHaveBeenCalledTimes(2));expect(f.api.command.mock.calls[1]).toEqual(f.api.command.mock.calls[0]);expect(f.api.contentPlan).not.toHaveBeenCalled();});
+let finish!:(v:unknown)=>void;f.api.command.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));show();await ready();clickNodeAction('补充 / 修改');const input=await screen.findByLabelText('编辑节点正文 项目总纲');changeField(input,{target:{value:'first'}});fireEvent.keyDown(screen.getByLabelText('编辑节点正文 项目总纲'),{key:'Enter'});await waitFor(()=>expect(f.api.command).toHaveBeenCalledTimes(1));expect(input).toHaveAttribute('readonly');changeField(input,{target:{value:'cannot overwrite pending input'}});expect(fieldValue(input)).toBe('first');f.api.scene.mockResolvedValue({...initial,nodes:[{...node,revision:2}]});await act(async()=>finish({success:true,data:{object_id:'root'}}));await waitFor(()=>expect(screen.queryByLabelText('编辑节点正文 项目总纲')).toBeNull());f.api.object.mockResolvedValue({...node,revision:2,body:'first',can_write:true});clickNodeAction('补充 / 修改');await screen.findByLabelText('编辑节点正文 项目总纲');changeField(screen.getByLabelText('编辑节点正文 项目总纲'),{target:{value:'second'}});fireEvent.keyDown(screen.getByLabelText('编辑节点正文 项目总纲'),{key:'Enter'});await waitFor(()=>expect(f.api.command).toHaveBeenCalledTimes(2));expect(f.api.command.mock.calls[1][1]).toMatchObject({body:'second',expected_revision:2});});
+  it('freezes uncertain content and checks the exact original command without regenerating',async()=>{f.api.command.mockRejectedValueOnce(new Error('network lost'));show();await ready();clickNodeAction('补充 / 修改');const input=await screen.findByLabelText('编辑节点正文 项目总纲');changeField(input,{target:{value:'sent'}});fireEvent.keyDown(screen.getByLabelText('编辑节点正文 项目总纲'),{key:'Enter'});await screen.findAllByRole('alert');expect(input).toHaveAttribute('readonly');changeField(input,{target:{value:'newer'}});expect(fieldValue(input)).toBe('sent');fireEvent.click(screen.getByRole('button',{name:'核对保存结果'}));await waitFor(()=>expect(f.api.command).toHaveBeenCalledTimes(2));expect(f.api.command.mock.calls[1]).toEqual(f.api.command.mock.calls[0]);expect(f.api.contentPlan).not.toHaveBeenCalled();});
   it('keeps uncertain first input readonly and replays creation without a second model call',async()=>{f.api.command.mockRejectedValueOnce(new Error('network lost'));show();await ready();fireEvent.doubleClick(screen.getByLabelText('知识画布'),{clientX:500,clientY:500});const input=screen.getByLabelText('新节点内容');changeField(input,{target:{value:'sent'}});fireEvent.keyDown(input,{key:'Enter'});await screen.findAllByRole('alert');expect(input).toHaveAttribute('readonly');changeField(input,{target:{value:'changed'}});expect(fieldValue(input)).toBe('sent');fireEvent.keyDown(input,{key:'Enter'});await waitFor(()=>expect(f.api.command).toHaveBeenCalledTimes(2));expect(f.api.command.mock.calls[1]).toEqual(f.api.command.mock.calls[0]);expect(f.api.contentPlan).not.toHaveBeenCalled();});
   it('keeps title and body typed during creation and saves onto the created node', async () => {
     let finish!: (v: unknown) => void;
@@ -851,7 +854,7 @@ let finish!:(v:unknown)=>void;f.api.command.mockImplementationOnce(()=>new Promi
     expect(f.api.command.mock.calls[2]).toEqual(['save_document',expect.objectContaining({object_id:'new',body:'later body',expected_revision:2}),expect.any(String)]);
     expect(f.api.command.mock.calls.filter(c=>c[0]==='create_object')).toHaveLength(1);
   });
-  it('holds first input stable while its atomic creation is pending',async()=>{let finish!:(v:unknown)=>void;f.api.command.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));show();await ready();fireEvent.doubleClick(screen.getByLabelText('知识画布'),{clientX:500,clientY:500});const input=screen.getByLabelText('新节点内容');changeField(input,{target:{value:'sent'}});fireEvent.click(screen.getByRole('button',{name:'创建主题'}));await waitFor(()=>expect(f.api.command).toHaveBeenCalledTimes(1));expect(input).toHaveAttribute('readonly');changeField(input,{target:{value:'later'}});expect(fieldValue(input)).toBe('sent');await act(async()=>finish({success:true,data:{object_id:'new'}}));await waitFor(()=>expect(screen.queryByLabelText('新节点内容')).toBeNull());expect(f.api.command).toHaveBeenCalledOnce();});
+  it('holds first input stable while its atomic creation is pending',async()=>{let finish!:(v:unknown)=>void;f.api.command.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));show();await ready();fireEvent.doubleClick(screen.getByLabelText('知识画布'),{clientX:500,clientY:500});const input=screen.getByLabelText('新节点内容');changeField(input,{target:{value:'sent'}});fireEvent.keyDown(screen.getByLabelText('新节点内容'),{key:'Enter'});await waitFor(()=>expect(f.api.command).toHaveBeenCalledTimes(1));expect(input).toHaveAttribute('readonly');changeField(input,{target:{value:'later'}});expect(fieldValue(input)).toBe('sent');await act(async()=>finish({success:true,data:{object_id:'new'}}));await waitFor(()=>expect(screen.queryByLabelText('新节点内容')).toBeNull());expect(f.api.command).toHaveBeenCalledOnce();});
   it('checks uncertain modal creation with the original receipt and keeps changed content', async () => {
     f.api.command.mockRejectedValueOnce(new Error('network lost'));
     show();await ready();fireEvent.contextMenu(screen.getByLabelText('知识画布'),{clientX:600,clientY:500});
@@ -1025,16 +1028,10 @@ describe('menu and focus lifecycle',()=>{
     expect(screen.getByRole('article',{name:'项目总纲'})).toHaveClass('selected');
     fireEvent.keyDown(document.activeElement!,{key:'F2'});expect(screen.getByLabelText('节点标题')).toBeInTheDocument();
   });
-  it.each(['button','Escape'])('returns focus after closing the body editor using %s',async method=>{
-    show();await ready();clickNodeAction('目录资料');
-    const dialog=await screen.findByRole('dialog',{name:'目录资料'});
-    if(method==='button')fireEvent.click(within(dialog).getByRole('button',{name:'关闭目录资料'}));else { fireEvent.keyDown(dialog, {key:'Escape'}); }
-    await waitFor(()=>expect(screen.getByLabelText('知识画布')).toHaveFocus());
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  });
+  it.each(['Enter','Escape'])('returns focus after finishing inline body editing with %s',async key=>{show();await ready();clickNodeAction('目录资料');const input=await screen.findByLabelText('编辑节点正文 项目总纲');fireEvent.keyDown(input,{key});await waitFor(()=>expect(screen.getByLabelText('知识画布')).toHaveFocus());expect(screen.queryByLabelText('编辑节点正文 项目总纲')).toBeNull();expect(screen.queryByRole('dialog')).toBeNull();});;
   it('keeps the inline editor open after automatic saving',async()=>{
     show();await ready();clickNodeAction('补充 / 修改');
-    const dialog=await screen.findByRole('dialog',{name:'目录资料'});changeField(within(dialog).getByLabelText('补充 / 修改内容'),{target:{value:'自动保存'}});fireEvent.click(screen.getByRole('button',{name:'保存正文'}));
+    const dialog=await screen.findByRole('article', {name:node.title});changeField(within(dialog).getByLabelText('编辑节点正文 项目总纲'),{target:{value:'自动保存'}});fireEvent.keyDown(screen.getByLabelText('编辑节点正文 项目总纲'),{key:'Enter'});
     await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('save_document',expect.objectContaining({body:'自动保存'}),expect.any(String)));expect(dialog).toBeInTheDocument();
   });
   it.each(['button','Escape'])('focuses file controls on opening and returns to canvas after closing via %s',async method=>{
@@ -1138,7 +1135,7 @@ describe('continuous canvas motion', () => {
     const input = screen.getByLabelText('新节点内容'); changeField(input, { target: { value: '新节点' } });
     f.api.scene.mockResolvedValue({ ...initial, nodes: [node, { ...node, id: 'new', node_id: 'ln', title: '新节点', x: 540, y: 305 }] });
     fireEvent.keyDown(input, { key: 'Enter' }); const created = await screen.findByRole('article', { name: '新节点' }); expect(created).toHaveClass('kc-node-enter');
-    await waitFor(() => expect(fieldValue(screen.getByLabelText('新节点内容'))).toBe('')); expect(screen.getByLabelText('新节点内容')).toHaveFocus(); fireEvent.keyDown(screen.getByLabelText('新节点内容'), { key: 'Escape' }); fireEvent.keyDown(canvas, { key: 'F2' }); expect(fieldValue(screen.getByLabelText('节点标题'))).toBe('新节点');
+    await waitFor(()=>expect(screen.queryByLabelText('新节点内容')).toBeNull());frame(200);expect(canvas).toHaveFocus(); fireEvent.keyDown(canvas, { key: 'F2' }); expect(fieldValue(screen.getByLabelText('节点标题'))).toBe('新节点');
   });
   it('grabs an interrupted landing at its visible position and cancels back without another command', async () => {
     f.api.history.mockResolvedValue({ undo: { history_id: 'h', operation: 'move_branch', can_apply: true, container_id: 'p' } });
@@ -1185,7 +1182,7 @@ describe('continuous canvas motion', () => {
     const hit = await screen.findByRole('button', { name: '项目总纲 搜索命中' }); const before = world.getAttribute('style');
     hit.focus(); await act(async () => { fireEvent.click(hit); }); expect(world.getAttribute('style')).toBe(before);
     frame(0); frame(110); expect(world.getAttribute('style')).not.toBe(before); frame(220);
-    expect(world.getAttribute('style')).toContain('translate(360px,295px) scale(1)'); expect(canvas).toHaveFocus();
+    expect(world.getAttribute('style')).toContain('translate(434px,336px) scale(1)'); expect(canvas).toHaveFocus();
     expect(screen.getByRole('article', { name: '项目总纲' })).toHaveClass('selected');
   });
   it('places relation selection feedback inside the viewport rather than the page flow', async () => {
@@ -1465,7 +1462,7 @@ describe('multiline, width and structural editing',()=>{
  it('appends in ordinary edit, replaces by typing, and preserves manual newlines',async()=>{const user=userEvent.setup();show();await ready();const canvas=pick();fireEvent.keyDown(canvas,{key:'F2'});const input=screen.getByLabelText('节点标题')as HTMLTextAreaElement;expect(input).toHaveAttribute('contenteditable','true');expect(titleSelection(input).start).toBe(4);expect(titleSelection(input).end).toBe(4);await user.keyboard('{Shift>}{Enter}{/Shift}后续');expect(input.textContent).toBe('项目总纲\n后续');expect(f.api.command).not.toHaveBeenCalled();fireEvent.keyDown(input,{key:'Enter'});await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('update_title',expect.objectContaining({title:'项目总纲\n后续'}),expect.any(String)));});
  it.each([{metaKey:true,key:'Backspace'},{ctrlKey:true,key:'Delete'}])('deletes only one topic with platform chord %j',async chord=>{const child={...node,id:'child',node_id:'lc',title:'子主题',parent_id:'root'};f.api.scene.mockResolvedValue({...initial,nodes:[node,child]});show();await ready();fireEvent.keyDown(pick(),chord);await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('delete_topic',expect.objectContaining({object_id:'root',expected_container_revision:12}),expect.any(String)));expect(f.api.command).not.toHaveBeenCalledWith('delete_branches',expect.anything(),expect.anything());});
  it.each(['left','right','up','down','balanced']as const)('sorts by Alt+Up under %s without changing parent',async structure=>{const a={...node,id:'a',node_id:'la',title:'A',parent_id:'root',sort_order:1,x:400,y:100},b={...a,id:'b',node_id:'lb',title:'B',sort_order:2,y:350};f.api.scene.mockResolvedValue({...initial,nodes:[{...node,canvas_data:{structure}},a,b]});show();await ready();fireEvent.keyDown(pick('B'),{key:'ArrowUp',altKey:true});await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('move_branch',expect.objectContaining({object_id:'b',target_id:'a',placement:'before'}),expect.any(String)));});
- it('resizes with keyboard as one canvas command and allows restoring default width',async()=>{show();await ready();pick();fireEvent.keyDown(screen.getByRole('slider',{name:'调整节点宽度'}),{key:'ArrowRight'});await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('update_canvas_data',expect.objectContaining({updates:[expect.objectContaining({object_id:'root',canvas_data:expect.objectContaining({width:282})})]}),expect.any(String)));});
+ it('resizes with keyboard as one canvas command and allows restoring default width',async()=>{show();await ready();pick();fireEvent.keyDown(screen.getByRole('slider',{name:'调整节点宽度'}),{key:'ArrowRight'});await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('update_canvas_data',expect.objectContaining({updates:[expect.objectContaining({object_id:'root',canvas_data:expect.objectContaining({width:102})})]}),expect.any(String)));});
  it('does not change structure or width in read-only mode',async()=>{f.api.scene.mockResolvedValue({...initial,containers:initial.containers.map(c=>({...c,role:'viewer'}))});show();await ready();const canvas=pick();fireEvent.keyDown(canvas,{key:'Delete',ctrlKey:true});fireEvent.keyDown(canvas,{key:'ArrowUp',altKey:true});expect(screen.queryByRole('slider')).toBeNull();expect(f.api.command).not.toHaveBeenCalled();});
 });
 
@@ -1555,18 +1552,8 @@ describe('independent groups and unified text scopes',()=>{
  it('reset removes local text overrides together with node style without removing content metadata',async()=>{f.api.scene.mockResolvedValue({...initial,nodes:[node,{...a,canvas_data:{note:'备注',title_format:{align:'right',runs:[{text:'A',bold:false,color:'#ff0000'}]}}}]});show();await ready();pick('A');fireEvent.pointerDown(screen.getByLabelText('插入'),{button:0,ctrlKey:false,pointerType:'mouse'});fireEvent.click(await screen.findByRole('menuitem',{name:'恢复所选主题默认样式与文字格式'}));await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('update_canvas_data',expect.objectContaining({updates:[expect.objectContaining({object_id:'a',canvas_data:{note:'备注',style:null}})]}),expect.any(String)));});
 });
 
-it('keeps edit and file actions inside standard cards before and after selection',async()=>{
- show();await ready();const card=screen.getByRole('article',{name:'项目总纲'});expect(card.style.width).toBe('272px');
- expect(within(card).getByRole('button',{name:'目录资料',exact:true})).toBeVisible();expect(within(card).getByRole('button',{name:'文件资料',exact:true})).toBeVisible();
- fireEvent.pointerDown(card,{button:0,pointerId:1});fireEvent.pointerUp(screen.getByLabelText('知识画布'),{pointerId:1});expect(card.style.width).toBe('272px');
- expect(screen.getAllByRole('button',{name:'目录资料',exact:true})).toHaveLength(1);expect(screen.getAllByRole('button',{name:'文件资料',exact:true})).toHaveLength(1);
-});
-it.each(['top','bottom'] as const)('renders %s stored images between title and card actions',async placement=>{
- f.files.content.mockResolvedValue(new Blob(['image'],{type:'image/png'}));
- f.files.content.mockResolvedValue(new Blob(['image'],{type:'image/png'}));f.api.scene.mockResolvedValue({...initial,nodes:[{...node,canvas_data:{image:{binding_id:'picture',revision:1,width:240,aspect:2,placement}}}]});
- show();await ready();const card=screen.getByRole('article',{name:node.title}),title=within(card).getByRole('heading'),image=within(card).getByRole('button',{name:'放大图片 '+node.title}),action=within(card).getByRole('button',{name:'目录资料',exact:true});
- expect(title.compareDocumentPosition(image)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();expect(image.compareDocumentPosition(action)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();expect(card.style.width).toBe('272px');
-});
+it('keeps topic content compact and permanent document buttons absent before and after selection',async()=>{show();await ready();const card=screen.getByRole('article',{name:node.title});expect(parseFloat(card.style.width)).toBeLessThan(272);for(const name of ['目录资料','文件资料','补充 / 修改'])expect(within(card).queryByRole('button',{name,exact:true})).toBeNull();fireEvent.pointerDown(card,{button:0,pointerId:1});fireEvent.pointerUp(screen.getByLabelText('知识画布'),{pointerId:1});for(const name of ['目录资料','文件资料','补充 / 修改'])expect(within(card).queryByRole('button',{name,exact:true})).toBeNull();expect(screen.getByRole('button',{name:'插入文件',exact:true})).toBeEnabled();});;
+it.each(['top','bottom'] as const)('renders stored images directly in their %s position',async placement=>{f.api.scene.mockResolvedValue({...initial,nodes:[{...node,canvas_data:{image:{binding_id:'pic',revision:1,width:200,aspect:2,placement}}}]});f.files.content.mockResolvedValue(new Blob(['image'],{type:'image/png'}));show();await ready();const card=screen.getByRole('article',{name:node.title});const image=await within(card).findByRole('img');const heading=within(card).getByRole('heading');expect(card.contains(image)).toBe(true);expect(Boolean(heading.compareDocumentPosition(image)&Node.DOCUMENT_POSITION_FOLLOWING)).toBe(placement==='bottom');expect(within(card).queryByRole('button',{name:'目录资料'})).toBeNull();});;
 
 describe('remaining P1 durable dialog drafts and persisted groups',()=>{
  function selectRoot(){const card=screen.getByRole('article',{name:'项目总纲',exact:true});fireEvent.pointerDown(card,{button:0,pointerId:1});fireEvent.pointerUp(screen.getByLabelText('知识画布'),{pointerId:1});}
@@ -1697,28 +1684,14 @@ describe('node image preview',()=>{
  });
 });
 
-it('shows bound attachment names and opens the exact version directly from the node',async()=>{
- const version={binding_id:'summary-image',revision:3,version_id:'immutable-3',asset_id:'asset',name:'绑定图片.png',mime_type:'image/png',size:256,sha256:'a'.repeat(64),text_status:'unsupported' as const,created_at:'2026-10-24'};
- f.api.scene.mockResolvedValue({...initial,nodes:[{...node,attachments:{total:3,items:[{id:'summary-image',title:'绑定图片.png',current_revision:3,version}]}}]});f.files.content.mockResolvedValue(new Blob(['image'],{type:'image/png'}));
- show();await ready();expect(screen.getByRole('button',{name:'共 3 个附件'})).toBeInTheDocument();fireEvent.click(screen.getByRole('button',{name:'绑定图片.png'}));
- expect(await screen.findByAltText('预览图片')).toBeInTheDocument();expect(f.files.content).toHaveBeenCalledWith('root','summary-image',3,expect.any(AbortSignal));expect(f.api.object).not.toHaveBeenCalled();expect(f.api.command).not.toHaveBeenCalled();
-});
+it('embeds bound documents and expands their exact immutable version on demand',async()=>{vi.stubGlobal('IntersectionObserver',undefined);const version={binding_id:'proof',revision:3,version_id:'v3',asset_id:'asset',name:'规则.txt',mime_type:'text/plain',size:12,sha256:'a'.repeat(64),text_status:'ready',created_at:''},file={id:'proof',title:'规则.txt',current_revision:3,version};f.api.scene.mockResolvedValue({...initial,nodes:[{...node,attachments:{total:1,items:[file]}}]});f.files.content.mockResolvedValue(new Blob(['原始文档']));show();await ready();const card=screen.getByRole('article',{name:node.title});expect(await within(card).findByRole('region',{name:'预览 规则.txt'})).toBeVisible();expect(f.files.content).toHaveBeenCalledWith('root','proof',3,expect.any(AbortSignal));fireEvent.click(within(card).getByRole('button',{name:'放大预览 规则.txt'}));await waitFor(()=>expect(f.files.content).toHaveBeenCalledTimes(2));expect(screen.queryByRole('complementary',{name:'文件资料'})).toBeNull();});;
 
-it('opens direct add actions and uploads without opening the file drawer',async()=>{
- show();await ready();const button=screen.getByRole('button',{name:'文件资料',exact:true});fireEvent.keyDown(button,{key:'ArrowDown'});expect(screen.getByRole('menuitem',{name:'上传文件'})).toBeInTheDocument();expect(screen.getByRole('menu')).toHaveAttribute('data-side','bottom');expect(screen.getByRole('menu')).toHaveAttribute('data-align','start');expect(screen.getByRole('menuitem',{name:'从工作区选择'})).toBeInTheDocument();expect(screen.queryByRole('complementary',{name:'文件资料'})).not.toBeInTheDocument();expect(f.api.object).not.toHaveBeenCalled();
- fireEvent.click(screen.getByRole('menuitem',{name:'上传文件'}));const file=new File(['body'],'直接上传.txt',{type:'text/plain'});fireEvent.change(screen.getByLabelText('上传文件到 '+node.title),{target:{files:[file]}});
- await waitFor(()=>expect(f.files.upload).toHaveBeenCalledWith('root',file,expect.any(String),{}));await waitFor(()=>expect(screen.queryByRole('dialog',{name:'添加文件'})).not.toBeInTheDocument());expect(screen.queryByRole('complementary',{name:'文件资料'})).not.toBeInTheDocument();
-});
+it('pastes a document directly into the selected topic without opening its file drawer',async()=>{show();await ready();fireEvent.pointerDown(screen.getByRole('article',{name:node.title}),{button:0,pointerId:1});fireEvent.pointerUp(screen.getByLabelText('知识画布'),{pointerId:1});const file=new File(['培训'],'培训.txt',{type:'text/plain'});fireEvent.paste(screen.getByLabelText('知识画布'),{clipboardData:{files:[file],getData:()=>''}});await waitFor(()=>expect(f.files.upload).toHaveBeenCalledWith('root',file,expect.any(String),{}));expect(screen.queryByRole('complementary',{name:'文件资料'})).toBeNull();});;
 it('removes a displayed image without deleting its attachment or source',async()=>{
  f.api.scene.mockResolvedValue({...initial,nodes:[{...node,canvas_data:{image:{binding_id:'pic',revision:1,width:200,aspect:2,placement:'bottom'}}}]});f.files.content.mockResolvedValue(new Blob(['image'],{type:'image/png'}));show();await ready();fireEvent.click(screen.getByRole('button',{name:'移除节点图片 '+node.title}));await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('update_canvas_data',expect.objectContaining({updates:[expect.objectContaining({canvas_data:expect.objectContaining({image:null})})]}),expect.any(String)));expect(f.files.remove).not.toHaveBeenCalled();
 });
 
-it('does not let a late file drawer response replace a newer direct upload target',async()=>{
- const other={...node,id:'other',node_id:'other-place',title:'另一个节点',x:500};f.api.scene.mockResolvedValue({...initial,nodes:[node,other]});let finish!: (value:unknown)=>void;f.api.object.mockImplementation(id=>id==='root'?new Promise(resolve=>{finish=resolve;}):Promise.resolve({...other,body:'',can_write:true}));show();await ready();
- const rootButton=within(screen.getByRole('article',{name:node.title})).getByRole('button',{name:'文件资料'});fireEvent.keyDown(rootButton,{key:'ArrowDown'});fireEvent.click(screen.getByRole('menuitem',{name:'查看全部附件'}));
- const file=new File(['new'],'另一个节点.txt',{type:'text/plain'});fireEvent.change(screen.getByLabelText('上传文件到 另一个节点'),{target:{files:[file]}});await waitFor(()=>expect(f.files.upload).toHaveBeenCalledWith('other',file,expect.any(String),{}));
- await act(async()=>finish({...node,body:'',can_write:true}));expect(screen.queryByRole('complementary',{name:'文件资料'})).not.toBeInTheDocument();
-});
+it('ignores a late attachment-manager response after a paste targets another topic',async()=>{const other={...node,id:'other',node_id:'other-place',title:'另一个节点',x:500};f.api.scene.mockResolvedValue({...initial,nodes:[node,other]});let finish!:(value:unknown)=>void;f.api.object.mockImplementation(id=>id==='root'?new Promise(resolve=>{finish=resolve;}):Promise.resolve({...other,body:'',can_write:true}));show();await ready();clickNodeAction('文件资料');fireEvent.pointerDown(screen.getByRole('article',{name:'另一个节点'}),{button:0,pointerId:1});fireEvent.pointerUp(screen.getByLabelText('知识画布'),{pointerId:1});const file=new File(['文档'],'另一个节点.txt',{type:'text/plain'});fireEvent.paste(screen.getByLabelText('知识画布'),{clipboardData:{files:[file],getData:()=>''}});await waitFor(()=>expect(f.files.upload).toHaveBeenCalledWith('other',file,expect.any(String),{}));await act(async()=>finish({...node,body:'',can_write:true}));expect(screen.queryByRole('complementary',{name:'文件资料'})).toBeNull();});;
 
  it('keeps labels in toolbars and edits existing notes from the node context menu',async()=>{
   f.api.scene.mockResolvedValue({...initial,nodes:[{...node,canvas_data:{note:'已有备注',labels:['平台'],task:{status:'todo'}}}]});show();await ready();
@@ -1729,7 +1702,7 @@ it('does not let a late file drawer response replace a newer direct upload targe
 
  it.each([{platform:'MacIntel',copy:'⌘C',parent:'⌘Enter',single:'⌘⌫',branch:'⌫'},{platform:'Win32',copy:'Ctrl+C',parent:'Ctrl+Enter',single:'Ctrl+Delete',branch:'Delete'}])('organizes context actions and shows only $platform shortcuts',async({platform,copy,parent,single,branch})=>{
   vi.spyOn(window.navigator,'platform','get').mockReturnValue(platform);show();await ready();fireEvent.contextMenu(screen.getByRole('article',{name:node.title}),{clientX:200,clientY:200});
-  const menu=screen.getByRole('menu',{name:'画布右键菜单'});expect(within(menu).getAllByRole('menuitem')).toHaveLength(9);
+  const menu=screen.getByRole('menu',{name:'画布右键菜单'});expect(within(menu).getAllByRole('menuitem')).toHaveLength(13);
   for(const name of ['展开查看','修改标题','回到中心主题 · Home','关闭菜单','历史版本','创建文档'])expect(within(menu).queryByRole('menuitem',{name,exact:true})).toBeNull();
   expect(within(menu).getByRole('menuitem',{name:'复制整条分支 · '+copy})).toBeInTheDocument();
   const create=screen.getByRole('menuitem',{name:'创建',exact:true});fireEvent.keyDown(create,{key:'ArrowRight'});expect(await screen.findByRole('menuitem',{name:'插入父主题 · '+parent})).toBeInTheDocument();fireEvent.keyDown(screen.getByRole('menuitem',{name:'创建文档'}),{key:'Escape'});await waitFor(()=>expect(create).toHaveFocus());
@@ -1861,30 +1834,23 @@ describe('Xmind project import integration',()=>{
 });
 
 describe('节点原文阅读与手动编辑',()=>{
- it('anchors the large readonly reader below its node and leaves canvas panning available',async()=>{
-  show();await ready();clickNodeAction('目录资料');const panel=await screen.findByRole('dialog',{name:'目录资料'}),card=screen.getByRole('article',{name:node.title});
-  expect(panel.style.left).toBe(card.style.left);expect(parseFloat(panel.style.top)).toBeGreaterThan(parseFloat(card.style.top));expect(panel).toHaveStyle({width:'860px',height:'640px'});expect(within(panel).queryByRole('textbox')).toBeNull();
-  class P extends MouseEvent{pointerId:number;constructor(type:string,init:PointerEventInit={}){super(type,init);this.pointerId=init.pointerId??1;}}vi.stubGlobal('PointerEvent',P);
-  const canvas=screen.getByLabelText('知识画布'),world=document.querySelector('.kc-world')!,before=world.getAttribute('style');fireEvent.pointerDown(canvas,{button:0,pointerId:1,clientX:100,clientY:200});fireEvent.pointerMove(canvas,{pointerId:1,clientX:200,clientY:250});fireEvent.pointerUp(canvas,{pointerId:1});expect(world.getAttribute('style')).not.toBe(before);expect(panel).toBeInTheDocument();expect(f.api.command).not.toHaveBeenCalled();
- });
+ it('shows existing body inside the topic without opening a reader window',async()=>{f.api.scene.mockResolvedValue({...initial,nodes:[{...node,has_body:true}]});show();await ready();const card=screen.getByRole('article',{name:node.title});expect(await within(card).findByText('原文')).toBeVisible();expect(screen.queryByRole('dialog')).toBeNull();expect(within(card).queryByRole('textbox')).toBeNull();expect(f.api.command).not.toHaveBeenCalled();});;
  it('saves a single literal topic without asking AI to split or rewrite it',async()=>{
-  f.api.contentPlan.mockRejectedValue(new Error('模型不可用'));show();await ready();fireEvent.doubleClick(screen.getByLabelText('知识画布'),{clientX:500,clientY:300});const literal='整理漏发补寄和退货两个事项';changeField(screen.getByLabelText('新节点内容'),{target:{value:literal}});fireEvent.click(screen.getByRole('button',{name:'创建主题'}));
+  f.api.contentPlan.mockRejectedValue(new Error('模型不可用'));show();await ready();fireEvent.doubleClick(screen.getByLabelText('知识画布'),{clientX:500,clientY:300});const literal='整理漏发补寄和退货两个事项';changeField(screen.getByLabelText('新节点内容'),{target:{value:literal}});fireEvent.keyDown(screen.getByLabelText('新节点内容'),{key:'Enter'});
   await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('create_object',expect.objectContaining({title:literal,body:''}),expect.any(String)));expect(f.api.command).toHaveBeenCalledOnce();expect(f.api.contentPlan).not.toHaveBeenCalled();
  });
  it('edits the complete original body literally without changing the title',async()=>{
-  show();await ready();clickNodeAction('补充 / 修改');const input=await screen.findByLabelText('补充 / 修改内容');expect(input).toHaveValue('原文');const literal='ERP编码 XYDSLBQB01-01\n保留限制，时间为最近30天。';changeField(input,{target:{value:literal}});expect(f.api.command).not.toHaveBeenCalled();fireEvent.click(screen.getByRole('button',{name:'保存正文'}));await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('save_document',expect.objectContaining({object_id:'root',expected_revision:1,body:literal}),expect.any(String)));await waitFor(()=>expect(screen.queryByLabelText('补充 / 修改内容')).toBeNull());expect(f.api.contentPlan).not.toHaveBeenCalled();expect(within(screen.getByRole('dialog',{name:'目录资料'})).getByText(/ERP编码 XYDSLBQB01-01/)).toBeVisible();
+  show();await ready();clickNodeAction('补充 / 修改');const input=await screen.findByLabelText('编辑节点正文 项目总纲');expect(input).toHaveValue('原文');const literal='ERP编码 XYDSLBQB01-01\n保留限制，时间为最近30天。';changeField(input,{target:{value:literal}});expect(f.api.command).not.toHaveBeenCalled();fireEvent.keyDown(screen.getByLabelText('编辑节点正文 项目总纲'),{key:'Enter'});await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('save_document',expect.objectContaining({object_id:'root',expected_revision:1,body:literal}),expect.any(String)));await waitFor(()=>expect(screen.queryByLabelText('编辑节点正文 项目总纲')).toBeNull());expect(f.api.contentPlan).not.toHaveBeenCalled();expect(screen.queryByRole('dialog')).toBeNull();
  });
  it('keeps a failed manual edit as a draft for retry',async()=>{
-  f.api.command.mockRejectedValue(new Error('保存失败'));show();await ready();clickNodeAction('补充 / 修改');const input=await screen.findByLabelText('补充 / 修改内容');changeField(input,{target:{value:'尚未保存的事实'}});fireEvent.click(screen.getByRole('button',{name:'保存正文'}));await screen.findAllByRole('alert');expect(input).toHaveValue('尚未保存的事实');expect(f.api.contentPlan).not.toHaveBeenCalled();expect(Object.values(localStorage).join('')).toContain('尚未保存的事实');
+  f.api.command.mockRejectedValue(new Error('保存失败'));show();await ready();clickNodeAction('补充 / 修改');const input=await screen.findByLabelText('编辑节点正文 项目总纲');changeField(input,{target:{value:'尚未保存的事实'}});fireEvent.keyDown(screen.getByLabelText('编辑节点正文 项目总纲'),{key:'Enter'});await screen.findAllByRole('alert');expect(input).toHaveValue('尚未保存的事实');expect(f.api.contentPlan).not.toHaveBeenCalled();expect(Object.values(localStorage).join('')).toContain('尚未保存的事实');
  });
- it('keeps an unsaved full-body edit when switching between reading and editing',async()=>{
-  show();await ready();clickNodeAction('补充 / 修改');changeField(await screen.findByLabelText('补充 / 修改内容'),{target:{value:'人工输入的完整正文'}});fireEvent.click(screen.getByRole('button',{name:'返回资料'}));expect(within(screen.getByRole('dialog',{name:'目录资料'})).getByText('原文')).toBeVisible();fireEvent.click(within(screen.getByRole('dialog',{name:'目录资料'})).getByRole('button',{name:'补充 / 修改'}));expect(screen.getByLabelText('补充 / 修改内容')).toHaveValue('人工输入的完整正文');expect(f.api.command).not.toHaveBeenCalled();
- });
+ it('edits content in the topic without a separate read/edit panel',async()=>{show();await ready();clickNodeAction('补充 / 修改');const input=await screen.findByLabelText('编辑节点正文 项目总纲');changeField(input,{target:{value:'人工输入的完整正文'}});expect(screen.getByRole('article',{name:node.title}).contains(input)).toBe(true);expect(screen.queryByRole('button',{name:'返回资料'})).toBeNull();expect(screen.queryByRole('dialog')).toBeNull();expect(f.api.command).not.toHaveBeenCalled();});;
  it('restores an intentionally empty body draft after reopening',async()=>{
-  const view=show();await ready();clickNodeAction('补充 / 修改');changeField(await screen.findByLabelText('补充 / 修改内容'),{target:{value:''}});view.unmount();show();await ready();fireEvent.click(await screen.findByRole('button',{name:'恢复草稿'}));expect(await screen.findByLabelText('补充 / 修改内容')).toHaveValue('');fireEvent.click(screen.getByRole('button',{name:'保存正文'}));await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('save_document',expect.objectContaining({body:'',expected_revision:1}),expect.any(String)));
+  const view=show();await ready();clickNodeAction('补充 / 修改');changeField(await screen.findByLabelText('编辑节点正文 项目总纲'),{target:{value:''}});view.unmount();show();await ready();fireEvent.click(await screen.findByRole('button',{name:'恢复草稿'}));expect(await screen.findByLabelText('编辑节点正文 项目总纲')).toHaveValue('');fireEvent.keyDown(screen.getByLabelText('编辑节点正文 项目总纲'),{key:'Enter'});await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('save_document',expect.objectContaining({body:'',expected_revision:1}),expect.any(String)));
  });
  it('allows clearing the original body explicitly',async()=>{
-  show();await ready();clickNodeAction('补充 / 修改');changeField(await screen.findByLabelText('补充 / 修改内容'),{target:{value:''}});fireEvent.click(screen.getByRole('button',{name:'保存正文'}));await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('save_document',expect.objectContaining({object_id:'root',body:''}),expect.any(String)));expect(f.api.contentPlan).not.toHaveBeenCalled();
+  show();await ready();clickNodeAction('补充 / 修改');changeField(await screen.findByLabelText('编辑节点正文 项目总纲'),{target:{value:''}});fireEvent.keyDown(screen.getByLabelText('编辑节点正文 项目总纲'),{key:'Enter'});await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('save_document',expect.objectContaining({object_id:'root',body:''}),expect.any(String)));expect(f.api.contentPlan).not.toHaveBeenCalled();
  });
 
 });
