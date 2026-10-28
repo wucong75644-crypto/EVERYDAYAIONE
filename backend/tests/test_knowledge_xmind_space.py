@@ -143,3 +143,16 @@ def test_scene_exposes_body_availability_without_copying_text_or_leaking_other_s
  assert next(x for x in r.canvas()['nodes'] if str(x['id'])==oid)['has_body'] is True
  assert '需要直接显示的完整正文' not in str(r.canvas())
  assert not any(str(x['id'])==oid for x in space_db[0](1).canvas()['nodes'])
+
+
+def test_new_import_after_undo_uses_new_command_without_resurrecting_old_receipt(space_db,tmp_path):
+ make,_=space_db;r=make();r.initialize();cid=next(c['id'] for c in r.canvas()['containers'] if c['kind']=='team')
+ baseline={n['id'] for n in r.canvas()['nodes'] if n['container_id']==cid}
+ first_key,first_payload=request(r,tmp_path,cid);first=r.import_xmind(first_key,first_payload);toggle(r)
+ assert r.xmind_receipt(first_key,first_payload['sha256'],'synthetic.xmind',cid,first_payload['expected_container_revision'])['hidden']
+ new_key,new_payload=request(r,tmp_path,cid);second=r.import_xmind(new_key,new_payload)
+ assert second['object_id']!=first['object_id'] and r.object(second['object_id'])
+ assert first['object_id'] not in {str(n['id']) for n in r.canvas()['nodes']}
+ assert len({n['id'] for n in r.canvas()['nodes'] if n['container_id']==cid}-baseline)==5
+ assert r.import_xmind(new_key,new_payload)['status']=='replayed'
+ assert r.xmind_receipt(first_key,first_payload['sha256'],'synthetic.xmind',cid,first_payload['expected_container_revision'])['hidden']

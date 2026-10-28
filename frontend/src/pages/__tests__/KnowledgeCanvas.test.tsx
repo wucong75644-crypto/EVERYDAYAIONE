@@ -1879,7 +1879,7 @@ it('does not restore a project after access disappears or for another account',a
 
 it.each(['personal','team','project'] as const)('places import at the top and submits the current %s space identity',async kind=>{
  const scope={id:'current-scope',kind,title:'当前空间',role:'manager',revision:7,acl_revision:1};
- f.auth.currentOrgId=kind==='personal'?null:'org';f.api.scene.mockResolvedValue({containers:[scope],nodes:[],relations:[]});
+ f.auth.currentOrgId=kind==='personal'?null:'org';f.api.scene.mockResolvedValueOnce({containers:[scope],nodes:[],relations:[]}).mockResolvedValue({containers:[{...scope,revision:8}],nodes:[{...node,container_id:scope.id}],relations:[]});
  vi.stubGlobal('crypto',{randomUUID:()=> '12345678-1234-1234-1234-123456789012',subtle:{digest:vi.fn().mockResolvedValue(new Uint8Array([1,2,3]).buffer)}});
  f.files.importXmind.mockResolvedValue({data:{status:'applied',container_id:scope.id,object_id:'root',folded_ids:[],report:{topics:1,images:0,links:0,summaries:0,warnings:[]}}});
  render(<LazyMotion features={domAnimation}><MemoryRouter><KnowledgeCanvas/></MemoryRouter></LazyMotion>);await ready();const sidebar=screen.getByLabelText('知识目录');const button=screen.getByRole('button',{name:'导入 Xmind 到 当前空间'});expect(button.closest('.kc-header')).not.toBeNull();expect(within(sidebar).queryByRole('button',{name:/^导入 Xmind 到 /})).toBeNull();
@@ -1965,4 +1965,11 @@ it('keeps fold preferences for both projects when switching and reopening',async
  const other={...node,id:'space-b-root',node_id:'space-b-root',container_id:'other-space',title:'第二项目根'};
  const otherChild={...other,id:'space-b-child',node_id:'space-b-child',parent_id:other.id,title:'第二项目子项'};
  f.api.scene.mockResolvedValue({...initial,containers:[...initial.containers,{...initial.containers[0],id:'other-space',title:'第二项目'}],nodes:[node,child,other,otherChild]});const view=show();await ready();fireEvent.click(screen.getByRole('button',{name:'折叠或展开 '+node.title}));fireEvent.click(screen.getByRole('button',{name:/第二项目\s*可管理/}));expect(screen.getByRole('article',{name:otherChild.title})).toBeInTheDocument();fireEvent.click(screen.getByRole('button',{name:'折叠或展开 '+other.title}));view.unmount();show();await ready();expect(screen.queryByRole('article',{name:otherChild.title})).toBeNull();fireEvent.click(screen.getByRole('button',{name:/客户项目\s*可管理/}));expect(screen.queryByRole('article',{name:child.title})).toBeNull();expect(f.api.command).not.toHaveBeenCalled();
+});
+
+it('confirms the imported root in the authorized scene before reporting completion',async()=>{
+ vi.stubGlobal('crypto',{randomUUID:()=> '12345678-1234-1234-1234-123456789012',subtle:{digest:vi.fn().mockResolvedValue(new Uint8Array([1,2,3]).buffer)}});
+ const imported={...node,id:'confirmed-import-root',node_id:'confirmed-import-node',title:'复验导入可见根节点'};const result={status:'applied',container_id:'p',object_id:imported.id,folded_ids:[],report:{topics:1,images:0,links:0,summaries:0,warnings:[]}};
+ f.files.importXmind.mockResolvedValue({data:result});render(<LazyMotion features={domAnimation}><MemoryRouter><KnowledgeCanvas/></MemoryRouter></LazyMotion>);await ready();fireEvent.click(screen.getByRole('button',{name:'导入 Xmind 到 客户项目'}));const file=new File(['synthetic'],'map.xmind');Object.defineProperty(file,'arrayBuffer',{value:async()=>new TextEncoder().encode('synthetic').buffer});fireEvent.change(screen.getByLabelText('选择 Xmind 文件'),{target:{files:[file]}});fireEvent.click(screen.getByRole('button',{name:'导入到当前空间'}));await screen.findByRole('alert');const original=f.files.importXmind.mock.calls[0][1];expect(screen.queryByRole('button',{name:'完成'})).toBeNull();expect(screen.queryByText(/框架与节点已建立/)).toBeNull();
+ f.api.scene.mockResolvedValue({...initial,nodes:[node,imported]});f.files.importXmind.mockResolvedValue({data:{...result,status:'replayed'}});fireEvent.click(screen.getByRole('button',{name:'重新核对导入结果'}));fireEvent.click(await screen.findByRole('button',{name:'完成'}));expect(await screen.findByRole('article',{name:imported.title})).toBeInTheDocument();expect(f.files.importXmind.mock.calls[1][1]).toBe(original);
 });

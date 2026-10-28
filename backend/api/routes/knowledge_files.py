@@ -1,7 +1,7 @@
 """Private files are authorized through a specific current knowledge binding."""
 from functools import wraps
 import io
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
@@ -255,20 +255,26 @@ async def thumbnail(object_id:UUID,binding_id:UUID,revision:int,ctx:OrgCtx,db:Da
 
 
 @router.post('/objects/{object_id}/files/{binding_id}/versions/{revision}/playback')
-async def playback(object_id:UUID,binding_id:UUID,revision:int,ctx:OrgCtx,db:Database,response:Response,request:Request):
+async def playback(object_id:UUID,binding_id:UUID,revision:int,ctx:OrgCtx,db:Database,response:Response,request:Request,quality:Literal['preview','original']='original'):
     if revision<1 or revision>9223372036854775807:return failure(422,'KNOWLEDGE_INVALID_REVISION','版本号无效')
     from services.knowledge_workspace import media_delivery as media
     from core.config import get_settings as security_settings
     result=await finish_file_io(call,ctx,db,response,'file_version',object_id,binding_id,revision)
     if isinstance(result,Response):return result
     if not result['data'] or result['data']['mime_type']!='video/mp4':return failure(404,'KNOWLEDGE_NOT_FOUND','视频不存在或无权访问')
+    if quality=='preview':
+        from services.knowledge_workspace import video_preview
+        await finish_file_io(video_preview.prepare,get_settings().file_workspace_root,result['data'])
+        check=await finish_file_io(call,ctx,db,response,'file_version',object_id,binding_id,revision)
+        if isinstance(check,Response):return check
+        if not check['data']:return failure(404,'KNOWLEDGE_NOT_FOUND','视频不存在或无权访问')
     path=request.url.path.removesuffix('/playback')+'/stream'
     response.set_cookie('kb_media',media.lease(security_settings().jwt_secret_key,ctx,object_id,binding_id,revision),max_age=media.LEASE_SECONDS,path=path,httponly=True,secure=request.url.scheme=='https',samesite='strict')
-    return {'success':True,'data':{'url':path,'expires_in':media.LEASE_SECONDS}}
+    return {'success':True,'data':{'url':path+('?quality=preview' if quality=='preview' else ''),'expires_in':media.LEASE_SECONDS}}
 
 
 @router.api_route('/objects/{object_id}/files/{binding_id}/versions/{revision}/stream',methods=['GET','HEAD'])
-async def stream_video(object_id:UUID,binding_id:UUID,revision:int,request:Request,db:Database,response:Response):
+async def stream_video(object_id:UUID,binding_id:UUID,revision:int,request:Request,db:Database,response:Response,quality:Literal['preview','original']='original'):
     if revision<1 or revision>9223372036854775807:return failure(422,'KNOWLEDGE_INVALID_REVISION','版本号无效')
     from fastapi.responses import StreamingResponse
     from starlette.background import BackgroundTask
@@ -281,12 +287,18 @@ async def stream_video(object_id:UUID,binding_id:UUID,revision:int,request:Reque
     if isinstance(result,Response):return result
     version=result['data']
     if not version or version['mime_type']!='video/mp4':return failure(404,'KNOWLEDGE_NOT_FOUND','视频不存在或无权访问')
-    etag='"'+version['sha256']+'"';header=request.headers.get('range')
+    rendition=None
+    if quality=='preview':
+        from services.knowledge_workspace import video_preview
+        rendition=await finish_file_io(video_preview.prepare,get_settings().file_workspace_root,version)
+    size=rendition['size'] if rendition else version['size']
+    digest=rendition['sha256'] if rendition else version['sha256']
+    etag='"'+digest+'"';header=request.headers.get('range')
     if request.headers.get('if-range') not in (None,etag):header=None
     headers={'X-Accel-Buffering':'no','Accept-Ranges':'bytes','ETag':etag,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}
-    try:start,end=media.byte_range(header,version['size'])
-    except ValueError:return Response(status_code=416,headers={**headers,'Content-Range':'bytes */'+str(version['size'])})
-    stream=await finish_file_io(media.verified_file,get_settings().file_workspace_root,version)
+    try:start,end=media.byte_range(header,size)
+    except ValueError:return Response(status_code=416,headers={**headers,'Content-Range':'bytes */'+str(size)})
+    stream=io.BytesIO(rendition['data']) if rendition and rendition['data'] is not None else await finish_file_io(media.verified_file,get_settings().file_workspace_root,version)
     try:
         check=await finish_file_io(call,ctx,db,response,'file_version',object_id,binding_id,revision)
     except BaseException:
@@ -294,6 +306,6 @@ async def stream_video(object_id:UUID,binding_id:UUID,revision:int,request:Reque
     if isinstance(check,Response) or not check['data']:
         stream.close();return check if isinstance(check,Response) else failure(404,'KNOWLEDGE_NOT_FOUND','视频不存在或无权访问')
     headers['Content-Length']=str(end-start+1)
-    if header:headers['Content-Range']=f"bytes {start}-{end}/{version['size']}"
+    if header:headers['Content-Range']=f"bytes {start}-{end}/{size}"
     if request.method=='HEAD':stream.close();return Response(status_code=206 if header else 200,headers=headers,media_type='video/mp4')
     return StreamingResponse(media.chunks(stream,start,end),status_code=206 if header else 200,headers=headers,media_type='video/mp4',background=BackgroundTask(stream.close))
