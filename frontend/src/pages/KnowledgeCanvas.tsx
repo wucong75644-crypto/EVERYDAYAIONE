@@ -151,7 +151,7 @@ export default function KnowledgeCanvas() {
   const [fileObject, setFileObject] = useState<KnowledgeObject | null>(null); const [filePending, setFilePending] = useState(false);
   const [quick, setQuick] = useState<QuickDraft | null>(null);
   const [contentText,setContentText]=useState(''),[contentInput,setContentInput]=useState(false);
-  const [,snapshotAttempt]=useState(0);
+  const [contentGeometryVersion,snapshotAttempt]=useState(0);
   const contentChanged=useCallback(()=>snapshotAttempt(n=>n+1),[]);
   const topicUpload=useRef<HTMLInputElement>(null);
   const [uploadBatch,setUploadBatch]=useState<{identity:string;object:KnowledgeObject;files:File[]}|null>(null);
@@ -250,6 +250,7 @@ export default function KnowledgeCanvas() {
     return mindmapView(items,folds,sizes,appearance);
   },[]);
   const nodes = viewGraph(scene.nodes.filter(n => n.container_id === active?.id).map(n=>widthPreview?.id===n.id?{...n,x:widthPreview.x,y:widthPreview.y,canvas_data:{...n.canvas_data,width:widthPreview.width,height:widthPreview.height}}:n),folded,active?.canvas_theme); const byId = new Map(nodes.map(n => [n.id, n]));
+  const renderedNodesRef=useRef(nodes);renderedNodesRef.current=nodes;
   useEffect(() => { const belongs = (id: string | null) => scene.nodes.some(n => n.id === id && n.container_id === active?.id); setSelected(id => belongs(id) ? id : null); setMulti(old => new Set([...old].filter(belongs))); setMenu(null); }, [active?.id, scene.nodes]);
   const connection = useCanvasConnection({ viewport, view: pan, setView: updateView, nodes, relations: scene.relations, identity, onTap: (id,port) => { const n=nodes.find(n=>n.id===id);if(port && n) startQuick(n,port==='child');else if(nodes.some(n=>n.parent_id===id)) toggleFold(id); }, enabled: status === 'ready' && !pending && !unconfirmed.current && !quick && !draft && !editing && !memberPanel && !fileObject && !branchPreview });
   const presence = useCanvasPresence(identity + ':' + active?.id, reducedMotion);
@@ -445,6 +446,7 @@ export default function KnowledgeCanvas() {
   };
   const hidden = (n: KnowledgeNode) => nodeHidden(nodes,folded,n);
   const navigationId = selected ?? [...multi].filter(id => byId.has(id)).at(-1) ?? null;
+  const navigationX=byId.get(navigationId??'')?.x,navigationY=byId.get(navigationId??'')?.y;
   const drawnScene = () => nodeMotion.project(nodes);
   const toggleFold = (id: string, expand?: boolean) => {
     browseEpoch.current++; suppressReveal.current = false;
@@ -492,18 +494,19 @@ export default function KnowledgeCanvas() {
   useEffect(() => {
     if (suppressReveal.current) return;
     if (!navigationId || quick || editing || branchPreview || connection.preview || drag.current || marqueeRef.current || nodeMotion.active || status !== 'ready') return;
-    const node = scene.nodes.find(n => n.id === navigationId), area = viewport.current;
+    // Camera targets must use the same arranged positions as the visible cards.
+    const node = renderedNodesRef.current.find(n => n.id === navigationId), area = viewport.current;
     if (!node || !area) return;
     const element = area.querySelector<HTMLElement>(`[data-node-id="${node.id}"]`);
     if (!element) return;
     const box = area.getBoundingClientRect(); if (box.width < 100 || box.height < 150) return;
     animateView(view => { const safe=canvasSafeArea(area),shifted={...view,x:view.x-safe.x,y:view.y-safe.y},revealed=revealNode(shifted, node, { width: element.offsetWidth || 272, height: element.offsetHeight || 170 }, safe),next={...revealed,x:revealed.x+safe.x,y:revealed.y+safe.y}; return next.x === view.x && next.y === view.y ? view : next; });
-  }, [navigationId, navigationTick, multi, folded, scene, status, quick, editing, branchPreview, connection.preview, nodeMotion.active, animateView,occlusionStamp]);
+  }, [navigationId, navigationTick,navigationX,navigationY,contentGeometryVersion, multi, folded, scene, status, quick, editing, branchPreview, connection.preview, nodeMotion.active, animateView,occlusionStamp]);
   useLayoutEffect(() => {
     if (!historyFocus.length) return;
     const area = viewport.current, box = area?.getBoundingClientRect();
     if (area && box) {
-      const cards = historyFocus.flatMap(id => { const n = scene.nodes.find(n => n.id === id), el = area.querySelector<HTMLElement>(`[data-node-id="${id}"]`); return n ? [{ ...n, width: el?.offsetWidth || 272, height: el?.offsetHeight || 170 }] : []; });
+      const cards = historyFocus.flatMap(id => { const n = renderedNodesRef.current.find(n => n.id === id), el = area.querySelector<HTMLElement>(`[data-node-id="${id}"]`); return n ? [{ ...n, width: el?.offsetWidth || 272, height: el?.offsetHeight || 170 }] : []; });
       const safe=canvasSafeArea(area!);const fit = fitSafeView(cards, safe);
       if (fit) animateView(current => { const z = Math.min(fit.z, current.z); return { z, x: safe.x+safe.width / 2 - (safe.x+safe.width / 2 - fit.x) / fit.z * z, y: safe.y+safe.height / 2 - (safe.y+safe.height / 2 - fit.y) / fit.z * z }; });
     }
