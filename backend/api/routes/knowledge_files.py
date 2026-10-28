@@ -5,7 +5,7 @@ from typing import Annotated
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, File, Form, Query, Response, UploadFile
+from fastapi import APIRouter, File, Form, Query, Request, Response, UploadFile
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -26,7 +26,8 @@ class PrivateFileRoute(APIRoute):
         async def handler(request):
             try:
                 result = await original(request)
-                result.headers['Cache-Control'] = 'no-store'
+                if not (request.url.path.endswith('/thumbnail') and result.status_code in (200,304)):
+                    result.headers['Cache-Control'] = 'no-store'
                 return result
             except AppException as e:
                 return failure(e.status_code,e.code,e.message)
@@ -232,3 +233,67 @@ def retry_parse(object_id:UUID,binding_id:UUID,revision:int,ctx:OrgCtx,db:Databa
     if not get_settings().knowledge_ai_processing_enabled:
         return failure(409,'KNOWLEDGE_AI_PROCESSING_DISABLED','原始附件已保留，AI 解析暂未启用')
     return call(ctx,db,response,'retry_file',object_id,binding_id,revision)
+
+
+@router.get('/objects/{object_id}/files/{binding_id}/versions/{revision}/thumbnail')
+async def thumbnail(object_id:UUID,binding_id:UUID,revision:int,ctx:OrgCtx,db:Database,response:Response,request:Request):
+    if revision<1 or revision>9223372036854775807:return failure(422,'KNOWLEDGE_INVALID_REVISION','版本号无效')
+    from services.knowledge_workspace import media_delivery as media
+    result=await finish_file_io(call,ctx,db,response,'file_version',object_id,binding_id,revision)
+    if isinstance(result,Response):return result
+    version=result['data']
+    if not version or not version['mime_type'].startswith('image/'):return failure(404,'KNOWLEDGE_NOT_FOUND','图片不存在或无权访问')
+    stream=await finish_file_io(media.verified_file,get_settings().file_workspace_root,version)
+    try:
+        headers={'ETag':'"'+version['sha256']+'-thumb512-v1"','Cache-Control':'private, max-age=0, must-revalidate','Vary':'Authorization, X-Org-Id','X-Content-Type-Options':'nosniff'}
+        data=None if request.headers.get('if-none-match')==headers['ETag'] else await finish_file_io(media.thumbnail,stream,version)
+        check=await finish_file_io(call,ctx,db,response,'file_version',object_id,binding_id,revision)
+        if isinstance(check,Response):return check
+        if not check['data']:return failure(404,'KNOWLEDGE_NOT_FOUND','图片不存在或无权访问')
+        return Response(data,status_code=304 if data is None else 200,media_type='image/webp',headers=headers)
+    finally:stream.close()
+
+
+@router.post('/objects/{object_id}/files/{binding_id}/versions/{revision}/playback')
+async def playback(object_id:UUID,binding_id:UUID,revision:int,ctx:OrgCtx,db:Database,response:Response,request:Request):
+    if revision<1 or revision>9223372036854775807:return failure(422,'KNOWLEDGE_INVALID_REVISION','版本号无效')
+    from services.knowledge_workspace import media_delivery as media
+    from core.config import get_settings as security_settings
+    result=await finish_file_io(call,ctx,db,response,'file_version',object_id,binding_id,revision)
+    if isinstance(result,Response):return result
+    if not result['data'] or result['data']['mime_type']!='video/mp4':return failure(404,'KNOWLEDGE_NOT_FOUND','视频不存在或无权访问')
+    path=request.url.path.removesuffix('/playback')+'/stream'
+    response.set_cookie('kb_media',media.lease(security_settings().jwt_secret_key,ctx,object_id,binding_id,revision),max_age=media.LEASE_SECONDS,path=path,httponly=True,secure=request.url.scheme=='https',samesite='strict')
+    return {'success':True,'data':{'url':path,'expires_in':media.LEASE_SECONDS}}
+
+
+@router.api_route('/objects/{object_id}/files/{binding_id}/versions/{revision}/stream',methods=['GET','HEAD'])
+async def stream_video(object_id:UUID,binding_id:UUID,revision:int,request:Request,db:Database,response:Response):
+    if revision<1 or revision>9223372036854775807:return failure(422,'KNOWLEDGE_INVALID_REVISION','版本号无效')
+    from fastapi.responses import StreamingResponse
+    from starlette.background import BackgroundTask
+    from api.deps import OrgContext
+    from services.knowledge_workspace import media_delivery as media
+    from core.config import get_settings as security_settings
+    user,org=media.read_lease(security_settings().jwt_secret_key,request.cookies.get('kb_media',''),object_id,binding_id,revision)
+    ctx=OrgContext(user,org)
+    result=await finish_file_io(call,ctx,db,response,'file_version',object_id,binding_id,revision)
+    if isinstance(result,Response):return result
+    version=result['data']
+    if not version or version['mime_type']!='video/mp4':return failure(404,'KNOWLEDGE_NOT_FOUND','视频不存在或无权访问')
+    etag='"'+version['sha256']+'"';header=request.headers.get('range')
+    if request.headers.get('if-range') not in (None,etag):header=None
+    headers={'X-Accel-Buffering':'no','Accept-Ranges':'bytes','ETag':etag,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}
+    try:start,end=media.byte_range(header,version['size'])
+    except ValueError:return Response(status_code=416,headers={**headers,'Content-Range':'bytes */'+str(version['size'])})
+    stream=await finish_file_io(media.verified_file,get_settings().file_workspace_root,version)
+    try:
+        check=await finish_file_io(call,ctx,db,response,'file_version',object_id,binding_id,revision)
+    except BaseException:
+        stream.close();raise
+    if isinstance(check,Response) or not check['data']:
+        stream.close();return check if isinstance(check,Response) else failure(404,'KNOWLEDGE_NOT_FOUND','视频不存在或无权访问')
+    headers['Content-Length']=str(end-start+1)
+    if header:headers['Content-Range']=f"bytes {start}-{end}/{version['size']}"
+    if request.method=='HEAD':stream.close();return Response(status_code=206 if header else 200,headers=headers,media_type='video/mp4')
+    return StreamingResponse(media.chunks(stream,start,end),status_code=206 if header else 200,headers=headers,media_type='video/mp4',background=BackgroundTask(stream.close))

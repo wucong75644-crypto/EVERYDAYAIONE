@@ -17,6 +17,7 @@ vi.mock("../../../services/knowledge", () => ({
   knowledgeFilesApi: {
     list: vi.fn().mockResolvedValue([]),
     content: vi.fn(),
+    playback: vi.fn(),
     upload: vi.fn(),
   },
 }));
@@ -221,45 +222,10 @@ it("rejects unsafe URLs and locks unknown saves while offering receipt checking"
   expect(check).toHaveBeenCalled();
 });
 
-it("reads the exact private version and revokes its blob after closing", async () => {
-  const base = URL,
-    create = vi.fn().mockReturnValue("blob:private-video"),
-    revoke = vi.fn();
-  vi.stubGlobal(
-    "URL",
-    class extends base {
-      static createObjectURL = create;
-      static revokeObjectURL = revoke;
-    },
-  );
-  vi.mocked(knowledgeFilesApi.content).mockResolvedValue(
-    new Blob(["video"], { type: "video/mp4" }),
-  );
-  const { unmount } = render(
-    <CanvasMediaPreview
-      node={{
-        ...node,
-        canvas_data: {
-          video: { binding_id: "file", revision: 3, title: "课程" },
-        },
-      }}
-      source="video"
-      onClose={vi.fn()}
-    />,
-  );
-  expect(await screen.findByLabelText("节点视频播放器")).toHaveAttribute(
-    "src",
-    "blob:private-video",
-  );
-  expect(knowledgeFilesApi.content).toHaveBeenCalledWith(
-    "a",
-    "file",
-    3,
-    expect.any(AbortSignal),
-  );
-  unmount();
-  expect(revoke).toHaveBeenCalledWith("blob:private-video");
-  vi.unstubAllGlobals();
+it("streams the exact version only after clicking and releases the player on close", async () => {
+ vi.stubGlobal('IntersectionObserver',undefined);vi.mocked(knowledgeFilesApi.playback).mockResolvedValue({url:'/private/stream',expires_in:300});const pause=vi.spyOn(HTMLMediaElement.prototype,'pause').mockImplementation(()=>{}),load=vi.spyOn(HTMLMediaElement.prototype,'load').mockImplementation(()=>{});
+ const view=render(<CanvasMediaPreview node={{...node,canvas_data:{video:{binding_id:'file',revision:3,title:'课程'}}}} source="video" onClose={vi.fn()}/>);
+ expect(knowledgeFilesApi.playback).not.toHaveBeenCalled();fireEvent.click(screen.getByRole('button',{name:'播放视频 课程'}));await waitFor(()=>expect(document.querySelector('video')).toBeTruthy());const video=document.querySelector('video')!;expect(video).toHaveAttribute('src','/private/stream');expect(knowledgeFilesApi.content).not.toHaveBeenCalled();expect(knowledgeFilesApi.playback).toHaveBeenCalledWith('a','file',3,expect.any(AbortSignal));view.unmount();expect(pause).toHaveBeenCalled();expect(load).toHaveBeenCalled();expect(video).not.toHaveAttribute('src');vi.unstubAllGlobals();
 });
 it("retries an uncertain upload with the same command id before enabling save", async () => {
   vi.mocked(knowledgeFilesApi.upload)
@@ -297,7 +263,7 @@ it("retries an uncertain upload with the same command id before enabling save", 
   expect(vi.mocked(knowledgeFilesApi.upload).mock.calls[1][2]).toBe(first[2]);
 });
 it("reports revoked file access instead of displaying a public fallback", async () => {
-  vi.mocked(knowledgeFilesApi.content).mockRejectedValue(new Error("403"));
+  vi.stubGlobal("IntersectionObserver",undefined);vi.mocked(knowledgeFilesApi.playback).mockRejectedValue(new Error("检查权限"));
   render(
     <CanvasMediaPreview
       node={{
@@ -310,6 +276,7 @@ it("reports revoked file access instead of displaying a public fallback", async 
       onClose={vi.fn()}
     />,
   );
+  fireEvent.click(screen.getByRole("button",{name:"播放视频 课程"}));
   expect(await screen.findByRole("alert")).toHaveTextContent("检查权限");
   expect(screen.queryByRole("link")).toBeNull();
 });

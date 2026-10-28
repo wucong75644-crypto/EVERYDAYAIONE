@@ -2,7 +2,7 @@ import * as Menu from '@radix-ui/react-dropdown-menu';
 import {fileMeta} from './filePresentation';
 import {Plus,X,MoreHorizontal,RefreshCw} from 'lucide-react';
 import {Dialog} from '../primitives/Dialog';
-import {FileThumbnail,WorkspaceFilePicker} from './KnowledgeAttachmentUI';
+import {BoundFilePreview,FileThumbnail,WorkspaceFilePicker} from './KnowledgeAttachmentUI';
 import { useCanvasSurfaceMotion } from './useCanvasSurfaceMotion';
 import { useEffect,useLayoutEffect, useRef, useState } from 'react';
 import PreviewHost from '../../preview/PreviewHost';
@@ -101,10 +101,11 @@ export function KnowledgeFiles({ object, nodes, onClose, onBusyChange,onFilesCha
   const [reading, setReading] = useState(false); const listController = useRef<AbortController | null>(null);
   const [pending, setPending] = useState(false); const busy = useRef(false);
   const [error, setError] = useState(''); const [mode,setMode]=useState<'workspace'|'reference'|null>(entry?.kind==='workspace'||entry?.kind==='reference'?entry.kind:null);const [historyId,setHistoryId]=useState<string|null>(null),[removeTarget,setRemoveTarget]=useState<KnowledgeFile|null>(entry?.kind==='remove'?entry.binding:null);const upload=useRef<HTMLInputElement>(null); const [attempt, setAttempt] = useState<Attempt | null>(null);
+  const [videoPreview,setVideoPreview]=useState<KnowledgeFileVersion|null>(null);
   const [preview, setPreview] = useState<PreviewItem | null>(null); const blobUrl = useRef<string | null>(null);
   const previewFocus=useRef<HTMLElement|null>(null);
   const alive = useRef(true); const readController = useRef<AbortController | null>(null);
-  const closePreview = () => {const wasOpen=!!blobUrl.current;if(blobUrl.current)URL.revokeObjectURL(blobUrl.current);blobUrl.current=null;setPreview(null);if(wasOpen&&previewFocus.current?.isConnected)previewFocus.current.focus({preventScroll:true});};
+  const closePreview = () => {const wasOpen=!!blobUrl.current||!!videoPreview;if(blobUrl.current)URL.revokeObjectURL(blobUrl.current);blobUrl.current=null;setPreview(null);setVideoPreview(null);if(wasOpen&&previewFocus.current?.isConnected)previewFocus.current.focus({preventScroll:true});};
   useEffect(() => {
     alive.current = true; const c = new AbortController(); listController.current = c;
     knowledgeFilesApi.list(object.id,c.signal).then(list => { if (!c.signal.aborted) setRows(list); })
@@ -146,6 +147,7 @@ export function KnowledgeFiles({ object, nodes, onClose, onBusyChange,onFilesCha
   const read = async (v: KnowledgeFileVersion, download: boolean) => {
     readController.current?.abort(); const c = new AbortController(); readController.current = c;
     closePreview();previewFocus.current=document.activeElement instanceof HTMLElement?document.activeElement:null; setReading(true); setError('');
+    if(!download&&v.mime_type==='video/mp4'){setVideoPreview(v);setReading(false);return;}
     try {
       const blob = await knowledgeFilesApi.content(object.id,v.binding_id,v.revision,c.signal);
       if (!alive.current || c.signal.aborted) return;
@@ -160,7 +162,7 @@ export function KnowledgeFiles({ object, nodes, onClose, onBusyChange,onFilesCha
   useEffect(() => { panel.current?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true }); }, [object.id]);
 
   const attachPanel = useCanvasSurfaceMotion(panel, entry?'menu':'panel');
-  return <aside ref={attachPanel} className={entry?"kc-file-panel kc-file-popover":"kc-file-panel"} style={entry&&position?{...position,maxHeight:`max(80px, calc(100vh - ${position.top+8}px))`}:undefined} role={entry?"dialog":undefined} aria-label={entry?"添加文件":"文件资料"} onKeyDown={event => { if (event.key !== 'Escape' || event.defaultPrevented || preview || !event.currentTarget.contains(event.target as Node)) return; event.preventDefault(); event.stopPropagation(); if (!disabled) onClose(); }}>
+  return <aside ref={attachPanel} className={entry?"kc-file-panel kc-file-popover":"kc-file-panel"} style={entry&&position?{...position,maxHeight:`max(80px, calc(100vh - ${position.top+8}px))`}:undefined} role={entry?"dialog":undefined} aria-label={entry?"添加文件":"文件资料"} onKeyDown={event => { if (event.key !== 'Escape' || event.defaultPrevented || preview || videoPreview || !event.currentTarget.contains(event.target as Node)) return; event.preventDefault(); event.stopPropagation(); if (!disabled) onClose(); }}>
     <header><h2>{entry?entry.kind==='remove'?'移除附件':'添加文件':<>文件资料 · {rows.length}</>}</h2><button type="button" aria-label="关闭文件资料" disabled={disabled} onClick={onClose}><X size={18}/></button>{onLabels&&<button type="button" disabled={disabled} onClick={onLabels}>标签</button>}</header>
     {!entry&&<div className="kc-files-subhead"><span title={object.title}>{object.title}</span><button type="button" aria-label="刷新文件列表" title="刷新文件列表" disabled={disabled} onClick={()=>{listController.current?.abort();const c=new AbortController();listController.current=c;setLoading(true);setError('');void knowledgeFilesApi.list(object.id,c.signal).then(list=>{if(!c.signal.aborted){setRows(list);onFilesChanged?.(list);}}).catch(e=>{if(!c.signal.aborted)setError(errorMessage(e));}).finally(()=>{if(!c.signal.aborted)setLoading(false);});}}><RefreshCw size={16}/></button>
     {object.can_write&&<Menu.Root><Menu.Trigger asChild><button type="button" disabled={disabled} aria-label="添加文件"><Plus size={16}/>添加</button></Menu.Trigger><Menu.Portal><Menu.Content className="kc-tools-menu" collisionPadding={10}><Menu.Item onSelect={()=>upload.current?.click()}>上传文件</Menu.Item><Menu.Item onSelect={()=>setMode('workspace')}>从工作区选择</Menu.Item><Menu.Item onSelect={()=>setMode('reference')}>引用其他节点文件</Menu.Item></Menu.Content></Menu.Portal></Menu.Root>}</div>}
@@ -176,6 +178,7 @@ export function KnowledgeFiles({ object, nodes, onClose, onBusyChange,onFilesCha
       {object.can_write&&<input id={'kc-file-update-'+binding.id} hidden aria-label={'上传新版 '+binding.title} type="file" disabled={disabled} onChange={e=>{const file=e.target.files?.[0];e.target.value='';if(file)start({kind:'upload',file,binding});}}/>}</div>
       {object.can_write&&binding.version.ai_processing_enabled!==false&&['failed','blocked','blocked_permission'].includes(binding.version.parse_state??'')&&<button type="button" disabled={pending||reading} onClick={()=>void knowledgeFilesApi.retry(object.id,binding.id,binding.current_revision).then(()=>knowledgeFilesApi.list(object.id)).then(list=>setRows(list)).catch(e=>setError(errorMessage(e)))}>重试解析</button>}{historyId===binding.id&&<FileVersions key={binding.id+':'+binding.current_revision} objectId={object.id} binding={binding} disabled={pending||reading} onRead={(v,download)=>void read(v,download)}/>}</article>)}
     {removeTarget&&<Dialog open title="移除附件" onOpenChange={open=>{if(!open){setRemoveTarget(null);if(entry?.kind==='remove')onClose();}}}><p>从此节点移除“{removeTarget.title}”？源文件和其他节点的引用不会删除。</p><button type="button" onClick={()=>{setRemoveTarget(null);if(entry?.kind==='remove')onClose();}}>取消</button><button type="button" disabled={disabled} onClick={()=>{start({kind:'remove',binding:removeTarget});setRemoveTarget(null);}}>移除附件</button></Dialog>}
+    {videoPreview&&<BoundFilePreview objectId={object.id} version={videoPreview} onClose={closePreview}/>}
     <PreviewHost state={preview ? {kind:'open',items:[preview],index:0} : {kind:'closed'}} onClose={closePreview} onIndexChange={() => {}} />
   </aside>;
 }

@@ -12,7 +12,7 @@ const TestContent = createContext<React.ReactNode>(null);
 function Content() { return useContext(TestContent); }
 function MemoryRouter({ children }: { children: React.ReactNode }) { const [router] = useState(() => createMemoryRouter([{ path: '*', element: <Content /> }])); return <TestContent.Provider value={children}><RouterProvider router={router} /></TestContent.Provider>; }
 
-const f = vi.hoisted(() => ({ api: { contentPlan:vi.fn(), captureSnapshot: vi.fn(), history: vi.fn(), available: vi.fn(), initialize: vi.fn(), scene: vi.fn(), object: vi.fn(), command: vi.fn(), members: vi.fn(), versions: vi.fn(), version: vi.fn(), search: vi.fn() }, files: { importXmind:vi.fn(), list: vi.fn(), upload: vi.fn(), content: vi.fn(),remove:vi.fn() }, auth: { user: { id: 'u' }, currentOrgId: 'org' as string | null } }));
+const f = vi.hoisted(() => ({ api: { contentPlan:vi.fn(), captureSnapshot: vi.fn(), history: vi.fn(), available: vi.fn(), initialize: vi.fn(), scene: vi.fn(), object: vi.fn(), command: vi.fn(), members: vi.fn(), versions: vi.fn(), version: vi.fn(), search: vi.fn() }, files: { importXmind:vi.fn(), list: vi.fn(), upload: vi.fn(), thumbnail:vi.fn(),playback:vi.fn(), content: vi.fn(),remove:vi.fn() }, auth: { user: { id: 'u' }, currentOrgId: 'org' as string | null } }));
 vi.mock('../../services/knowledge', () => ({ knowledgeApi: f.api, knowledgeFilesApi: f.files }));
 vi.mock('../../stores/useAuthStore', () => ({ useAuthStore: (selector: (s: typeof f.auth) => unknown) => selector(f.auth) }));
 const node = { id: 'root', node_id: 'placement', container_id: 'p', parent_id: null, kind: 'topic', title: '项目总纲', revision: 1, layout_revision: 1, x: 20, y: 40 };
@@ -27,6 +27,8 @@ async function snapshotSettled() { await waitFor(() => expect(screen.queryByText
 async function ready() { await screen.findByText('已连接'); }
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.stubGlobal('IntersectionObserver',undefined);
+  f.files.thumbnail.mockResolvedValue(new Blob(['thumb'],{type:'image/webp'}));
   URL.createObjectURL=vi.fn(()=> 'blob:knowledge-preview');URL.revokeObjectURL=vi.fn();
   vi.stubGlobal('matchMedia', vi.fn((query: string) => ({ matches: true, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
   sessionStorage.clear(); localStorage.clear();
@@ -1928,3 +1930,39 @@ it('shows local saving feedback immediately and keeps it through the post-save s
  let acknowledge!:(v:unknown)=>void,finishRefresh!:(v:unknown)=>void;f.api.command.mockReturnValueOnce(new Promise(resolve=>{acknowledge=resolve;}));f.api.scene.mockResolvedValueOnce(structuredClone(initial)).mockReturnValueOnce(new Promise(resolve=>{finishRefresh=resolve;}));show();await ready();fireEvent.doubleClick(screen.getByRole('article',{name:node.title}));const input=screen.getByLabelText('节点标题');changeField(input,{target:{value:'慢网保存'}});fireEvent.keyDown(input,{key:'Enter'});expect(document.querySelector('.kc-inline-title .kc-save-feedback')).toHaveTextContent('正在保存');expect(screen.getByLabelText('节点标题')).toBe(input);await act(async()=>acknowledge({success:true,data:{object_id:'root'}}));expect(document.querySelector('.kc-inline-title .kc-save-feedback')).toHaveTextContent('正在保存');await act(async()=>finishRefresh({...initial,nodes:[{...node,title:'慢网保存',revision:2}]}));await waitFor(()=>expect(screen.queryByLabelText('节点标题')).toBeNull());expect(document.querySelector('.kc-save-feedback')).toBeNull();
 });
 it('keeps the new-topic input and local saving feedback until the creation is confirmed',async()=>{let done!:(v:unknown)=>void;f.api.command.mockReturnValueOnce(new Promise(resolve=>{done=resolve;}));show();await ready();fireEvent.pointerDown(screen.getByRole('article',{name:node.title}),{button:0,pointerId:1});fireEvent.keyDown(screen.getByLabelText('知识画布'),{key:'Tab'});const input=screen.getByLabelText('新节点内容');changeField(input,{target:{value:'新建保存反馈'}});fireEvent.keyDown(input,{key:'Enter'});expect(document.querySelector('.kc-quick .kc-save-feedback')).toHaveTextContent('正在保存');expect(input).toHaveValue('新建保存反馈');await act(async()=>done({success:true,data:{object_id:'new'}}));await waitFor(()=>expect(screen.queryByLabelText('新节点内容')).toBeNull());});
+
+describe('persistent canvas and directory folding',()=>{
+ const child={...node,id:'persist-child',node_id:'persist-child',parent_id:'root',title:'记忆子节点',x:420,y:40};
+ const grandchild={...child,id:'persist-grandchild',node_id:'persist-grandchild',parent_id:child.id,title:'记忆孙节点',x:820};
+ it('restores canvas folds and explicit directory open/closed choices after reopening',async()=>{
+  f.api.scene.mockResolvedValue({...initial,nodes:[node,child,grandchild]});let view=show();await ready();let dir=screen.getByLabelText('知识目录');
+  fireEvent.click(within(dir).getByRole('button',{name:'展开目录 '+child.title}));
+  fireEvent.click(within(dir).getByRole('button',{name:'折叠目录 '+node.title}));
+  fireEvent.click(within(dir).getByRole('button',{name:'折叠项目目录 客户项目'}));
+  fireEvent.click(screen.getByRole('button',{name:'折叠或展开 '+node.title}));expect(screen.queryByRole('article',{name:child.title})).toBeNull();view.unmount();
+  view=show();await ready();dir=screen.getByLabelText('知识目录');expect(screen.queryByRole('article',{name:child.title})).toBeNull();
+  expect(within(dir).getByRole('button',{name:'展开项目目录 客户项目'})).toHaveAttribute('aria-expanded','false');
+  fireEvent.click(within(dir).getByRole('button',{name:'展开项目目录 客户项目'}));expect(within(dir).getByRole('button',{name:'展开目录 '+node.title})).toHaveAttribute('aria-expanded','false');
+  fireEvent.click(within(dir).getByRole('button',{name:'展开目录 '+node.title}));expect(within(dir).getByRole('button',{name:grandchild.title,exact:true})).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button',{name:'折叠或展开 '+node.title}));expect(screen.getByRole('article',{name:child.title})).toBeInTheDocument();view.unmount();
+  show();await ready();expect(screen.getByRole('article',{name:grandchild.title})).toBeInTheDocument();expect(within(screen.getByLabelText('知识目录')).getByRole('button',{name:grandchild.title,exact:true})).toBeInTheDocument();expect(f.api.command).not.toHaveBeenCalled();
+ });
+ it('does not carry folds into a different account or organization, then restores the original identity',async()=>{
+  f.api.scene.mockResolvedValue({...initial,nodes:[node,child]});let view=show();await ready();fireEvent.click(screen.getByRole('button',{name:'折叠或展开 '+node.title}));view.unmount();
+  f.auth.user.id='another-user';view=show();await ready();expect(screen.getByRole('article',{name:child.title})).toBeInTheDocument();view.unmount();
+  f.auth.user.id='u';f.auth.currentOrgId='another-org';view=show();await ready();expect(screen.getByRole('article',{name:child.title})).toBeInTheDocument();view.unmount();
+  f.auth.currentOrgId='org';show();await ready();expect(screen.queryByRole('article',{name:child.title})).toBeNull();
+ });
+});
+
+it('restores the correct fold state when the mounted canvas changes identity',async()=>{
+ const child={...node,id:'live-fold-child',node_id:'live-fold-child',parent_id:node.id,title:'切换身份子项'};f.api.scene.mockResolvedValue({...initial,nodes:[node,child]});const view=show();await ready();fireEvent.click(screen.getByRole('button',{name:'折叠或展开 '+node.title}));
+ f.auth.user.id='other-user';view.rerender(<MemoryRouter><KnowledgeCanvas/></MemoryRouter>);await screen.findByRole('article',{name:child.title});
+ f.auth.user.id='u';view.rerender(<MemoryRouter><KnowledgeCanvas/></MemoryRouter>);await ready();expect(screen.queryByRole('article',{name:child.title})).toBeNull();view.unmount();show();await ready();expect(screen.queryByRole('article',{name:child.title})).toBeNull();
+});
+it('keeps fold preferences for both projects when switching and reopening',async()=>{
+ const child={...node,id:'space-a-child',node_id:'space-a-child',parent_id:node.id,title:'第一项目子项'};
+ const other={...node,id:'space-b-root',node_id:'space-b-root',container_id:'other-space',title:'第二项目根'};
+ const otherChild={...other,id:'space-b-child',node_id:'space-b-child',parent_id:other.id,title:'第二项目子项'};
+ f.api.scene.mockResolvedValue({...initial,containers:[...initial.containers,{...initial.containers[0],id:'other-space',title:'第二项目'}],nodes:[node,child,other,otherChild]});const view=show();await ready();fireEvent.click(screen.getByRole('button',{name:'折叠或展开 '+node.title}));fireEvent.click(screen.getByRole('button',{name:/第二项目\s*可管理/}));expect(screen.getByRole('article',{name:otherChild.title})).toBeInTheDocument();fireEvent.click(screen.getByRole('button',{name:'折叠或展开 '+other.title}));view.unmount();show();await ready();expect(screen.queryByRole('article',{name:otherChild.title})).toBeNull();fireEvent.click(screen.getByRole('button',{name:/客户项目\s*可管理/}));expect(screen.queryByRole('article',{name:child.title})).toBeNull();expect(f.api.command).not.toHaveBeenCalled();
+});

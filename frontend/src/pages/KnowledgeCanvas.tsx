@@ -1,3 +1,4 @@
+import {restoreBrowsingState,rememberBrowsingState} from '../components/knowledge/browsingState';
 import {mindmapConnector} from '../components/knowledge/mindmapConnector';
 import {mindmapView} from '../components/knowledge/mindmapView';
 import {restoredScope,rememberScope} from '../components/knowledge/browsingScope';
@@ -143,7 +144,7 @@ export default function KnowledgeCanvas() {
   const [folded, setFolded] = useState<Set<string>>(new Set()); const foldsRef = useRef(folded); foldsRef.current = folded; const [menu, setMenu] = useState<Menu | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null); const [editing, setEditing] = useState<KnowledgeObject | null>(null);
   const [filePreview,setFilePreview]=useState<{id:string;version:KnowledgeFileVersion;identity:string}|null>(null);
-  const [imageView,setImageView]=useState<{id:string;src:string;key:string;title:string;identity:string}|null>(null);
+  const [imageView,setImageView]=useState<{id:string;src:string;release?:()=>void;key:string;title:string;identity:string}|null>(null);
   const [bodyHistory,setBodyHistory]=useState<string|null>(null);
   const [fileEntry,setFileEntry]=useState<{action:FileEntryAction;position:{left:number;top:number}}|null>(null);const fileOpenGeneration=useRef(0);
   const [xmindOpen,setXmindOpen]=useState(false);
@@ -287,12 +288,13 @@ export default function KnowledgeCanvas() {
         if (!availability.enabled) { setStatus('unavailable'); return; }
         await knowledgeApi.initialize(); if (!current()) return;
         const [next, record] = await Promise.all([knowledgeApi.scene(controller.signal), knowledgeApi.history(controller.signal).catch(() => null)]);
-        if (current()) { const first = restoredScope(identity,next); if (first) { setTab(first.kind); setProject(first.id); } setScene(next); setHistory(record ?? noHistory); setHistoryUnavailable(!record); setStatus('ready'); }
+        if (current()) { const browsing=restoreBrowsingState(identity,next);foldsRef.current=browsing.folded;setFolded(browsing.folded);setDirectoryOpen(browsing.directory); const first = restoredScope(identity,next); if (first) { setTab(first.kind); setProject(first.id); } setScene(next); setHistory(record ?? noHistory); setHistoryUnavailable(!record); setStatus('ready'); }
       } catch (e) { if (current()) { setError(message(e)); setStatus('error'); } }
     })();
     return () => {controller.abort();invalidateWriteSession();};
   }, [identity,invalidateWriteSession]);
   useEffect(()=>{if(status==='ready'&&loadedIdentity===identity)rememberScope(identity,scene,tab,active?.id??'');},[identity,loadedIdentity,status,scene,tab,active?.id]);
+  useEffect(()=>{if(status==='ready'&&loadedIdentity===identity)rememberBrowsingState(identity,sceneRef.current,folded,directoryOpen);},[identity,loadedIdentity,status,folded,directoryOpen]);
   const act = async (operation: string, payload: Record<string, unknown>, onFailure?: () => void) => {
     if (busy.current || status !== 'ready') { onFailure?.(); return false; }
     if (operation === 'update_title' && !unconfirmed.current && !payload.nodes) {
@@ -422,9 +424,11 @@ export default function KnowledgeCanvas() {
     if (scope) {setTab(scope.kind);if (scope.kind==='project')setProject(scope.id);}
     if (node) {
       const rect=viewport.current?.getBoundingClientRect();
-      const painted=viewGraph(scene.nodes.filter(n=>n.container_id===node.container_id),new Set()).find(n=>n.id===node.id)??node;
+      const nextFolds=new Set(foldsRef.current),index=new Map(scene.nodes.map(n=>[n.id,n])),seen=new Set<string>();let parent=summaryParent(scene.nodes,node);
+      while(parent&&!seen.has(parent)){seen.add(parent);nextFolds.delete(parent);const ancestor=index.get(parent);parent=ancestor?summaryParent(scene.nodes,ancestor):null;}
+      const painted=viewGraph(scene.nodes.filter(n=>n.container_id===node.container_id),nextFolds).find(n=>n.id===node.id)??node;
       if (rect)updateView({x:rect.width/2-(painted.x+120),y:rect.height/2-(painted.y+65),z:1});
-      setSelected(node.id);setFolded(new Set());
+      setSelected(node.id);foldsRef.current=nextFolds;setFolded(nextFolds);
     }
   }, [status,loadedIdentity,identity,scene,updateView,viewGraph]);
   const locate = (id: string, source: KnowledgeNode[] = sceneRef.current.nodes) => {
@@ -661,6 +665,7 @@ export default function KnowledgeCanvas() {
     setQuick(null); if (node) setSelected(node.id);
     if (next && node) startQuick(node, next === 'child', !!quick.fromLine && next === 'child'); else focusCanvas();
   };
+  useEffect(()=>()=>imageView?.release?.(),[imageView]);
   const historyBlocked = xmindOpen || !!filePreview || !!imageView || !!relationText || !!mapEditor || !!mediaEditor || !!mediaView || filePending || !!visual || !!annotation || copyPending || pending || status !== 'ready' || !!quick || !!draft || !!editing || !!memberPanel || !!fileObject || !!branchPreview || !!connection.preview || !!unconfirmed.current;
   const browseBlocked = xmindOpen || !!filePreview || !!imageView || !!relationText || !!mapEditor || !!mediaEditor || !!mediaView || !!visual || !!annotation || status !== 'ready' || !!quick || !!draft || !!editing || !!memberPanel || !!fileObject || !!branchPreview || !!connection.preview || !!draftStore.recovery;
   const historyReason = (direction: 'undo' | 'redo') => pending ? '正在保存，请完成后再试' : unconfirmed.current ? '上次保存结果尚未确认，请先刷新核对' : copyPending ? '正在固定复制快照，请稍候' : status !== 'ready' ? '画布尚未连接' : quick || draft || editing ? '请先完成或取消当前编辑；输入框内的快捷键仅撤销文字编辑' : memberPanel || fileObject ? '请先关闭当前面板' : branchPreview || connection.preview ? '请先结束或取消拖动/拉线' : historyUnavailable ? '撤销记录暂不可用，请刷新' : !history[direction] ? direction === 'undo' ? '暂无可撤销的画布操作' : '暂无可重做的画布操作；撤销后进行新修改会清空重做' : !history[direction]!.can_apply ? history[direction]!.reason || '知识或权限已更新，旧操作无法恢复' : '';
@@ -1232,7 +1237,7 @@ export default function KnowledgeCanvas() {
     const position=toolsPosition(card,{width:area?.width??1000,height:area?.height??800,top:viewport.current?canvasSafeArea(viewport.current).y:100},ports,size,[...obstacles,...(viewport.current?canvasObstacles(viewport.current):[])]);
     return {left:(position.left-card.x)/pan.z,top:(position.top-card.y)/pan.z,maxWidth:Math.max(80,((area?.width??1000)-24)/pan.z)};
   };
-  const renderTopicImage=(n:KnowledgeNode)=>(n.canvas_data?.image&&<CanvasNodeImage node={n} zoom={pan.z} disabled={historyBlocked||!writable(n)||!chosen.has(n.id)} onResize={width=>{if(n.canvas_data?.image)void saveAnnotations([{node:n,data:{...n.canvas_data,image:{...n.canvas_data.image,width}}}]);}} onRemove={writable(n)&&!historyBlocked?()=>void saveAnnotations([{node:n,data:{...n.canvas_data,image:null}}]):undefined} onPreview={src=>{if(!browseBlocked)setImageView({identity,id:n.id,src,key:n.canvas_data!.image!.binding_id+':'+n.canvas_data!.image!.revision,title:n.title});}}/>);
+  const renderTopicImage=(n:KnowledgeNode)=>(n.canvas_data?.image&&<CanvasNodeImage node={n} zoom={pan.z} disabled={historyBlocked||!writable(n)||!chosen.has(n.id)} onResize={width=>{if(n.canvas_data?.image)void saveAnnotations([{node:n,data:{...n.canvas_data,image:{...n.canvas_data.image,width}}}]);}} onRemove={writable(n)&&!historyBlocked?()=>void saveAnnotations([{node:n,data:{...n.canvas_data,image:null}}]):undefined} onPreview={(src,release)=>{if(!browseBlocked)setImageView({identity,id:n.id,src,release,key:n.canvas_data!.image!.binding_id+':'+n.canvas_data!.image!.revision,title:n.title});else release?.();}}/>);
   const renderQuickEditor=(inline:boolean)=>(quick && <div className={inline?"kc-inline-title":"kc-quick kc-node"} style={inline?undefined:{...quickTitleStyle(quick),width:topicSize({id:'draft',node_id:'draft',container_id:quick.container,parent_id:quick.parent,kind:'topic',title:quick.title||'主题',revision:1,layout_revision:1,x:0,y:0,canvas_data:{style:{...defaultStyle,font_size:newTopicFont(quick.parent,quick.container)}}}).width,left:quick.position.x,top:quick.position.y}} onPointerDown={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()} onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget as Node)&&!cancelQuick.current&&!imeActive.current)void saveQuick();}}>
             <label htmlFor="kc-quick-title">{quick.wrap?'插入父主题':quick.node ? '修改标题' : '新主题'}</label>
             {!quick.node&&!quick.wrap?<textarea ref={mountContentInput} id="kc-quick-title" aria-label="新节点内容" placeholder="主题" style={quickTitleStyle(quick)} value={quick.title} maxLength={200} readOnly={pending||!!unconfirmed.current} onChange={e=>{if(!pending&&!unconfirmed.current)setQuick(q=>q?{...q,title:e.target.value}:q);}} onCompositionStart={()=>{imeActive.current=true;}} onCompositionEnd={()=>{imeActive.current=false;imeEndAt.current=Date.now();}} onKeyDown={e=>{e.stopPropagation();if(e.nativeEvent.isComposing||imeActive.current||e.keyCode===229||e.repeat||(e.key==='Enter'&&Date.now()-imeEndAt.current<30))return;if(e.key==='Escape'&&!pending){e.preventDefault();cancelQuick.current=true;setQuick(null);}else if(e.key==='Enter'&&!e.shiftKey&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&!pending){e.preventDefault();void saveQuick();}else if(e.key==='Tab'&&!pending){e.preventDefault();void saveQuick('child');}}}/>:<RichTitleEditor contextualTools toolsRef={inline?titleToolsMeasure.ref:undefined} toolsStyle={inline?inlineToolsStyle():undefined} key={`${quick.container}:${quick.position.x}:${quick.position.y}`} ref={mountQuickInput} id="kc-quick-title" label={quick.wrap?'父主题标题':quick.node?'节点标题':'新主题标题'} text={quick.title} format={quick.titleFormat} style={quickTitleStyle(quick)} onChange={(title,titleFormat)=>setQuick(q=>q?{...q,title,titleFormat}:q)}

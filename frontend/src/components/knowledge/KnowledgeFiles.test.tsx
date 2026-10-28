@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { KnowledgeFiles } from './KnowledgeFiles';
 const workspace=vi.hoisted(()=>({list:vi.fn()}));
 vi.mock('../../services/workspace',()=>({listWorkspace:workspace.list}));
-const api = vi.hoisted(() => ({ list:vi.fn(),versions:vi.fn(),upload:vi.fn(),snapshot:vi.fn(),reference:vi.fn(),remove:vi.fn(),content:vi.fn() }));
+const api = vi.hoisted(() => ({ list:vi.fn(),versions:vi.fn(),upload:vi.fn(),snapshot:vi.fn(),reference:vi.fn(),remove:vi.fn(),content:vi.fn(),thumbnail:vi.fn(),playback:vi.fn() }));
 vi.mock('../../services/knowledge', () => ({ knowledgeFilesApi:api }));
 vi.mock('../../preview/registry', () => ({ resolveAdapter:() => ({id:'text'}) }));
 vi.mock('../../preview/PreviewHost', () => ({ default:({state,onClose}: {state:{kind:string;items?:{filename:string}[]};onClose:()=>void}) => state.kind==='open' ? <div role="dialog" aria-label="文件预览"><span>{state.items?.[0]?.filename}</span><button onClick={onClose}>关闭预览</button></div> : null }));
@@ -12,7 +12,7 @@ const version = { binding_id:'binding',revision:2,version_id:'immutable-v2',asse
 const file = { id:'binding',title:'资料.txt',current_revision:2,version };
 const source = { id:'source',title:'来源节点',container_id:'p',parent_id:null,kind:'document' as const,revision:1,node_id:'node',x:0,y:0,layout_revision:1 };
 beforeEach(() => {
-  vi.resetAllMocks();workspace.list.mockResolvedValue({path:'.',items:[{name:'来源.txt',is_dir:false,size:12,mime_type:'text/plain'}],total:1}); api.list.mockResolvedValue([file]); api.versions.mockResolvedValue({items:[version,{...version,revision:1,version_id:'immutable-v1'}],next_cursor:null});
+  vi.resetAllMocks();api.thumbnail.mockResolvedValue(new Blob(['thumb']));api.playback.mockResolvedValue({url:'/private/stream',expires_in:300});workspace.list.mockResolvedValue({path:'.',items:[{name:'来源.txt',is_dir:false,size:12,mime_type:'text/plain'}],total:1}); api.list.mockResolvedValue([file]); api.versions.mockResolvedValue({items:[version,{...version,revision:1,version_id:'immutable-v1'}],next_cursor:null});
   api.upload.mockResolvedValue({});api.reference.mockResolvedValue({});api.remove.mockResolvedValue({});api.snapshot.mockResolvedValue({});api.content.mockResolvedValue(new Blob(['file']));
   URL.createObjectURL=vi.fn(()=>'blob:private-file');URL.revokeObjectURL=vi.fn();
 });
@@ -119,4 +119,8 @@ it('keeps originals viewable and hides parsing retries while AI processing is of
 });
 it('retains available extracted content when AI processing is off',async()=>{
  api.list.mockResolvedValue([{...file,version:{...version,parse_state:'disabled',ai_processing_enabled:false}}]);show();await ready();expect(screen.getByText(/正文已解析/)).toBeVisible();expect(screen.queryByText(/AI 解析未启用/)).toBeNull();
+});
+
+it('opens uploaded video preview without materializing content bytes',async()=>{
+ const movie={...file,title:'课程.mp4',version:{...version,name:'课程.mp4',mime_type:'video/mp4'}};api.list.mockResolvedValue([movie]);show();await screen.findByRole('heading',{name:'课程.mp4'});fireEvent.click(screen.getByRole('button',{name:'预览文件 课程.mp4'}));await waitFor(()=>expect(screen.getByRole('button',{name:'播放视频 课程.mp4'})).toBeVisible());expect(api.content).not.toHaveBeenCalled();expect(api.playback).not.toHaveBeenCalled();
 });

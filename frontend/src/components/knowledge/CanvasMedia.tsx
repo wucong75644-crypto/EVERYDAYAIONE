@@ -1,3 +1,4 @@
+import {KnowledgeMediaPlayer} from './KnowledgeMediaPlayer';
 import { useEffect, useRef, useState } from "react";
 import { Dialog } from "../primitives/Dialog";
 import { knowledgeFilesApi } from "../../services/knowledge";
@@ -95,29 +96,8 @@ export function CanvasMediaPreview({
   const video = source === "video" ? node.canvas_data?.video : null,
     link = source === "link" ? node.canvas_data?.link : null;
   const resolved = link ? resolveCanvasLink(link.url, link.kind) : null;
-  const [blobUrl, setBlobUrl] = useState(""),
-    [error, setError] = useState("");
-  useEffect(() => {
-    if (!video) return;
-    const c = new AbortController();
-    let url = "";
-    void knowledgeFilesApi
-      .content(node.id, video.binding_id, video.revision, c.signal)
-      .then((blob) => {
-        if (c.signal.aborted) return;
-        url = URL.createObjectURL(blob);
-        setBlobUrl(url);
-      })
-      .catch(() => {
-        if (!c.signal.aborted)
-          setError("视频读取失败，请检查权限和文件版本后重试。");
-      });
-    return () => {
-      c.abort();
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [node.id, video]);
-  const src = video ? blobUrl : resolved?.mode === "direct" ? resolved.url : "";
+  const [error, setError] = useState("");
+  const src = resolved?.mode === "direct" ? resolved.url : "";
   return (
     <Dialog
       motionPreset="canvas"
@@ -136,7 +116,7 @@ export function CanvasMediaPreview({
       }}
     >
       <div className="kc-video-content">
-        {video && !src && !error && <p role="status">正在读取视频固定版本…</p>}
+        {video && <KnowledgeMediaPlayer objectId={node.id} version={{binding_id:video.binding_id,revision:video.revision,name:video.title||'上传的视频.mp4'}} expanded/>}
         {src && (
           <video
             aria-label="节点视频播放器"
@@ -170,11 +150,6 @@ export function CanvasMediaPreview({
         {resolved && (
           <a href={resolved.url} target="_blank" rel="noopener noreferrer">
             前往原平台观看 ↗
-          </a>
-        )}
-        {video && blobUrl && (
-          <a href={blobUrl} download={(video.title || "视频") + ".mp4"}>
-            下载此视频版本
           </a>
         )}
         <button onClick={onClose}>关闭视频</button>
