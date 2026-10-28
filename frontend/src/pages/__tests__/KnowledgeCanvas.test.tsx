@@ -1636,7 +1636,7 @@ it('reveals keyboard selection below the measured wrapped global toolbar',async(
  show();await ready();const canvas=screen.getByLabelText('知识画布'),toolbar=screen.getByRole('toolbar',{name:'画布操作'});
  canvas.getBoundingClientRect=()=>({x:0,y:0,left:0,top:0,right:800,bottom:700,width:800,height:700,toJSON:()=>({})});
  toolbar.getBoundingClientRect=()=>({x:12,y:56,left:12,top:56,right:788,bottom:220,width:776,height:164,toJSON:()=>({})});
- const card=screen.getByRole('article',{name:node.title,exact:true});fireEvent.pointerDown(card,{button:0,pointerId:1});fireEvent.pointerUp(canvas,{pointerId:1});
+ const card=screen.getByRole('article',{name:node.title,exact:true});fireEvent.pointerDown(card,{button:0,pointerId:1});fireEvent.pointerUp(canvas,{pointerId:1});fireEvent.keyDown(canvas,{key:'ArrowRight'});
  await waitFor(()=>{const values=(document.querySelector('.kc-world') as HTMLElement).style.transform.match(/translate\(([-\d.e]+)px,\s*([-\d.e]+)px\)/)!;expect(Number(values[2])+node.y).toBeGreaterThanOrEqual(232);});
  expect(f.api.command).not.toHaveBeenCalled();
 });
@@ -1906,4 +1906,20 @@ it('edits inside one topic surface, hides connection affordances and reveals for
 
 it('places the double-click caret at the end even on placeholder titles',async()=>{
  f.api.scene.mockResolvedValue({...initial,nodes:[{...node,title:'新主题'}]});show();await screen.findByRole('article',{name:'新主题'});fireEvent.doubleClick(screen.getByRole('heading',{name:'新主题'}),{clientX:1,clientY:1});const input=screen.getByLabelText('节点标题');expect(titleSelection(input)).toMatchObject({start:3,end:3});expect(f.api.command).not.toHaveBeenCalled();
+});
+
+
+function editingPointerEvents(){class Pointer extends MouseEvent {pointerId:number;constructor(type:string,options:PointerEventInit={}){super(type,options);this.pointerId=options.pointerId??1;}}vi.stubGlobal('PointerEvent',Pointer);}
+it('commits body editing on a plain blank click instead of starting a pan',async()=>{
+ editingPointerEvents();show();await ready();clickNodeAction('目录资料');const input=await screen.findByLabelText('编辑节点正文 项目总纲');fireEvent.change(input,{target:{value:'空白点击保存正文'}});
+ const canvas=screen.getByLabelText('知识画布'),before=(document.querySelector('.kc-world') as HTMLElement).style.transform;fireEvent.pointerDown(canvas,{button:0,pointerId:30,clientX:700,clientY:300});fireEvent.pointerMove(canvas,{pointerId:30,clientX:730,clientY:340});fireEvent.pointerUp(canvas,{pointerId:30});
+ await waitFor(()=>expect(f.api.command).toHaveBeenCalledWith('save_document',expect.objectContaining({body:'空白点击保存正文'}),expect.any(String)));await waitFor(()=>expect(screen.queryByLabelText('编辑节点正文 项目总纲')).toBeNull());expect((document.querySelector('.kc-world') as HTMLElement).style.transform).toBe(before);expect(f.api.command).toHaveBeenCalledTimes(1);
+});
+it('commits title editing when blank is clicked and retains the draft if the save result is unknown',async()=>{
+ editingPointerEvents();f.api.command.mockRejectedValueOnce(new Error('断网'));show();await ready();fireEvent.doubleClick(screen.getByRole('article',{name:node.title}));const input=screen.getByLabelText('节点标题');changeField(input,{target:{value:'空白保存标题'}});fireEvent.pointerDown(screen.getByLabelText('知识画布'),{button:0,pointerId:31,clientX:700,clientY:300});await waitFor(()=>expect(f.api.command).toHaveBeenCalledTimes(1));expect(fieldValue(screen.getByLabelText('节点标题'))).toBe('空白保存标题');expect(screen.getByRole('alert')).toHaveTextContent('保存结果尚未确认');
+});
+it('keeps the current viewport while double-clicking a partially obscured topic and editing its title',async()=>{
+ editingPointerEvents();show();await ready();const canvas=screen.getByLabelText('知识画布');canvas.getBoundingClientRect=()=>({x:0,y:0,left:0,top:0,right:800,bottom:700,width:800,height:700,toJSON:()=>({})});
+ const card=screen.getByRole('article',{name:node.title}),before=(document.querySelector('.kc-world') as HTMLElement).style.transform;
+ fireEvent.pointerDown(card,{button:0,pointerId:32});fireEvent.pointerUp(canvas,{pointerId:32});fireEvent.doubleClick(card);const input=screen.getByLabelText('节点标题');changeField(input,{target:{value:'原地输入'}});await act(async()=>{await new Promise(resolve=>setTimeout(resolve,35));});expect((document.querySelector('.kc-world') as HTMLElement).style.transform).toBe(before);
 });

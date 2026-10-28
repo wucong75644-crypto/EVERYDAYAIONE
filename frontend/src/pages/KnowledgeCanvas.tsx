@@ -484,17 +484,17 @@ export default function KnowledgeCanvas() {
     setPrevious(viewRef.current);animateView(current=>{const safe=canvasSafeArea(viewport.current!),next=centerTopicView(current,painted,{width:element?.offsetWidth||topicWidth(root),height:element?.offsetHeight||170},safe);return {...next,x:next.x+safe.x,y:next.y+safe.y};});focusCanvas();
   };
   const occlusionStamp=useCanvasOcclusion(viewport,identity,status==='ready'&&loadedIdentity===identity);
-  useCanvasEditingVisibility(viewport,!!quick,identity,viewRef,updateView,imeActive,JSON.stringify([quick?.title,quick?.titleFormat,quick?.node?.id,occlusionStamp,titleToolsMeasure.size]));
+  useCanvasEditingVisibility(viewport,!!quick&&!quick.node,identity,viewRef,updateView,imeActive,JSON.stringify([quick?.title,quick?.titleFormat,quick?.node?.id,occlusionStamp,titleToolsMeasure.size]));
   useEffect(() => {
     if (suppressReveal.current) return;
-    if (!navigationId || quick || branchPreview || connection.preview || drag.current || marqueeRef.current || nodeMotion.active || status !== 'ready') return;
+    if (!navigationId || quick || editing || branchPreview || connection.preview || drag.current || marqueeRef.current || nodeMotion.active || status !== 'ready') return;
     const node = scene.nodes.find(n => n.id === navigationId), area = viewport.current;
     if (!node || !area) return;
     const element = area.querySelector<HTMLElement>(`[data-node-id="${node.id}"]`);
     if (!element) return;
     const box = area.getBoundingClientRect(); if (box.width < 100 || box.height < 150) return;
     animateView(view => { const safe=canvasSafeArea(area),shifted={...view,x:view.x-safe.x,y:view.y-safe.y},revealed=revealNode(shifted, node, { width: element.offsetWidth || 272, height: element.offsetHeight || 170 }, safe),next={...revealed,x:revealed.x+safe.x,y:revealed.y+safe.y}; return next.x === view.x && next.y === view.y ? view : next; });
-  }, [navigationId, navigationTick, multi, folded, scene, status, quick, branchPreview, connection.preview, nodeMotion.active, animateView,occlusionStamp]);
+  }, [navigationId, navigationTick, multi, folded, scene, status, quick, editing, branchPreview, connection.preview, nodeMotion.active, animateView,occlusionStamp]);
   useLayoutEffect(() => {
     if (!historyFocus.length) return;
     const area = viewport.current, box = area?.getBoundingClientRect();
@@ -520,7 +520,7 @@ export default function KnowledgeCanvas() {
     }catch(e){if(identityRef.current===key)setError(message(e));}
   };
   const openEditor = async (n: KnowledgeNode, inputMode=false) => {
-    if (busy.current || filePending || quick) return;if(editors.current.editing?.id===n.id)return;if(contentDirty||unconfirmed.current)return;if(editors.current.editing&&editors.current.editing.body!==editingBase.current)return; const key = identity; setError('');
+    if (busy.current || filePending || quick) return;if(editors.current.editing?.id===n.id)return;if(contentDirty||unconfirmed.current)return;if(editors.current.editing&&editors.current.editing.body!==editingBase.current)return; const key = identity; setError('');cancelView();suppressReveal.current=true;
     try { const object = await knowledgeApi.object(n.id); if (identityRef.current === key) { setFileObject(null);setContentInput(inputMode);setContentText(object.body); editingBase.current = object.body; setEditing(object); } }
     catch (e) { if (identityRef.current === key) setError(message(e)); }
   };
@@ -593,9 +593,8 @@ export default function KnowledgeCanvas() {
   };
   const rename = (n: KnowledgeNode,seed?:string,caret?:number) => {
     if (busy.current || unconfirmed.current || copyPending || !writable(n)) return;
-    setMenu(null); setError(''); cancelQuick.current = false;
+    setMenu(null); setError(''); cancelQuick.current = false;cancelView();suppressReveal.current=true;
     clickCaret.current=caret;typingCaret.current=seed!==undefined;setQuick({ node: n, container: n.container_id, parent: n.parent_id, position: { x: n.x, y: n.y }, title: seed??n.title, titleFormat:seed===undefined?n.canvas_data?.title_format:n.canvas_data?.title_format?{runs:[],align:n.canvas_data.title_format.align}:undefined });
-    revealQuick({ x: n.x, y: n.y },contentSizes([n]).get(n.id));
   };
   const startParent=(n:KnowledgeNode)=>{
     if(historyBlocked||!writable(n)||toolNodes.length!==1)return;
@@ -1042,9 +1041,10 @@ export default function KnowledgeCanvas() {
     if(connection.preview?.relationType){e.preventDefault();return;}
     if (brush && node && e.button===0 && !historyBlocked && writable(node)) { e.preventDefault();void saveAnnotations([{node,data:pasteTopicStyle(node.title,node.canvas_data,styleClipboard!)}]);setBrush(false);return; }
     if (drag.current?.type === 'node' && drag.current.moved) return;
+    if((editing||quick)&&!node&&e.button===0&&!space.current&&!e.altKey){e.preventDefault();cancelView();if(!imeActive.current){if(editing)void saveBody();else void saveQuick();}return;}
     if(editing&&!node&&e.button!==2){cancelView();browseEpoch.current++;drag.current={type:'pan',start:{x:e.clientX,y:e.clientY},pan:viewRef.current};viewport.current?.setPointerCapture(e.pointerId);e.preventDefault();return;}
     if (browseBlocked || e.button === 2 || (e.target as HTMLElement).closest('button')) return;
-    setGroupSelection(null);browseEpoch.current++; suppressReveal.current = false; cancelView();
+    setGroupSelection(null);browseEpoch.current++; suppressReveal.current = !!node; cancelView();
     const drawn = node ? nodeMotion.coordinates.current?.[node.id] : undefined;
     setSelectedRelation(null);
     if (node && e.button === 0 && !space.current && (e.shiftKey || e.ctrlKey || e.metaKey)) { const next = new Set(chosen); if (next.has(node.id)) next.delete(node.id); else next.add(node.id); setMulti(next); setSelected(null); viewport.current?.focus({ preventScroll: true }); return; }
