@@ -1896,3 +1896,10 @@ it('updates the top import target when switching libraries or selected projects'
  fireEvent.click(screen.getByRole('button',{name:/项目乙\s*可管理/}));expect(screen.getByRole('button',{name:'导入 Xmind 到 项目乙'})).toBeVisible();expect(screen.queryByRole('button',{name:'导入 Xmind 到 项目甲'})).toBeNull();
  fireEvent.click(screen.getByRole('tab',{name:'团队知识库',exact:true}));expect(screen.getByRole('button',{name:'导入 Xmind 到 团队资料'})).toBeVisible();
 });
+
+it('edits inside one topic surface, hides connection affordances and reveals formatting on selection',async()=>{
+ show();await ready();const article=screen.getByRole('article',{name:'项目总纲'});fireEvent.doubleClick(article);
+ expect(article).toHaveClass('kc-node-editing');expect(screen.queryByRole('toolbar',{name:'标题文字格式'})).toBeNull();
+ const input=screen.getByLabelText('节点标题');act(()=>{restoreTitleSelection(input,{start:0,end:2});document.dispatchEvent(new Event('selectionchange'));});
+ expect(screen.getByRole('toolbar',{name:'标题文字格式'})).toBeVisible();fireEvent.keyDown(input,{key:'Escape'});expect(article).not.toHaveClass('kc-node-editing');
+});
