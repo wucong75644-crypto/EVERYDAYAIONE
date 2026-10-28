@@ -1903,3 +1903,7 @@ it('edits inside one topic surface, hides connection affordances and reveals for
  const input=screen.getByLabelText('节点标题');act(()=>{restoreTitleSelection(input,{start:0,end:2});document.dispatchEvent(new Event('selectionchange'));});
  expect(screen.getByRole('toolbar',{name:'标题文字格式'})).toBeVisible();fireEvent.keyDown(input,{key:'Escape'});expect(article).not.toHaveClass('kc-node-editing');
 });
+
+it('places the double-click caret at the end even on placeholder titles',async()=>{
+ f.api.scene.mockResolvedValue({...initial,nodes:[{...node,title:'新主题'}]});show();await screen.findByRole('article',{name:'新主题'});fireEvent.doubleClick(screen.getByRole('heading',{name:'新主题'}),{clientX:1,clientY:1});const input=screen.getByLabelText('节点标题');expect(titleSelection(input)).toMatchObject({start:3,end:3});expect(f.api.command).not.toHaveBeenCalled();
+});
