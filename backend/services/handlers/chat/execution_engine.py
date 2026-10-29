@@ -222,6 +222,11 @@ async def execute_chat(
         selection_error = None
         from services.agent.image.ecommerce_planner.workflow import EcommerceWorkflow
         prepared.ecom_workflow = None
+        if runtime is not None:
+            saved_skill_state = (request.replay_context or {}).get('skill_runtime')
+            runtime.skill_coordination = not request.replay_context or (
+                isinstance(saved_skill_state, dict) and saved_skill_state.get('version') == 2)
+            runtime.committed_composition_revision = ((saved_skill_state or {}).get('composition') or {}).get('revision', 0)
         if (runtime is not None and hasattr(handler, "db")
                 and prepared.execution_context.feature_flags.get("ecom_image_planning_enabled") is True
                 and prepared.execution_context.context_scope == "user"
@@ -262,6 +267,9 @@ async def execute_chat(
                 blocks.append(block)
                 await output.on_block(block)
         if skills is not None and not request.replay_context:
+            if prepared.ecom_workflow:
+                # Pin the action before a pause can freeze the initial empty set.
+                await prepared.ecom_workflow.coordinate(skills)
             # Freeze session configuration before the first pause/cancel
             # boundary, including the empty binding set. Resume never rereads it.
             await runtime.safe_point(
@@ -273,9 +281,26 @@ async def execute_chat(
                 ),
             )
         if skills is not None:
+            # Freeze configuration before loading bodies; activate the complete
+            # locked set together, including when resuming its initial snapshot.
+            manual_finished = any(b.get('step_id') == 'manual-skill' for b in blocks)
+            if skills.checkpoint_version == 2 and not manual_finished:
+                required = await skills.activate_required()
+                if not required['ok']:
+                    reason = skill_step(required, skills, step_id='required-skills')['reason']
+                    if skills.session_skill_ids:
+                        raise SkillBindingError('会话固定的 Skill 无法启用：' + reason)
+                    if required.get('code') in {'SKILL_WORKFLOW_CONFLICT', 'SKILL_DEPENDENCY_UNAVAILABLE'}:
+                        raise SkillBindingError(reason)
+                    # Preserve the existing safe manual-selection feedback. A
+                    # failed load must not be retried or silently called active.
+                    selection_error = required
+                if prepared.ecom_workflow:
+                    await prepared.ecom_workflow.coordinate(skills)
+                _apply_skill_context(prepared, skills)
             for skill_id in skills.session_skill_ids:
                 step_id = "session-skill:" + skill_id
-                if skill_id in skills.active:
+                if any(b.get('step_id') == step_id for b in blocks):
                     continue
                 await runtime.safe_point(SafePoint.BEFORE_TOOL)
                 await _check_cancelled(event, request, prepared.messages, blocks, totals, "before_skill")
@@ -303,7 +328,7 @@ async def execute_chat(
                 await runtime.safe_point(SafePoint.BEFORE_TOOL)
             await _check_cancelled(event, request, prepared.messages, blocks, totals, "before_skill")
             result = selection_error or control_result("SKILL_RUNTIME_DISABLED")
-            if skills is not None:
+            if skills is not None and selection_error is None:
                 result = await skills.activate_manual(request.selected_skill)
             block = skill_step(result, skills, step_id="manual-skill")
             blocks.append(block)
@@ -331,7 +356,7 @@ async def execute_chat(
         if workflow and workflow.value and workflow.value.kind == "main_images":
             if skills is None:
                 raise SkillBindingError("原主图工作流的 Skill 当前不可用，已停止执行。")
-            if "ecommerce-main-images" not in skills.active:
+            if workflow.server_skill_key() is None:
                 await runtime.safe_point(SafePoint.BEFORE_TOOL)
                 await _check_cancelled(event, request, prepared.messages, blocks, totals, "before_workflow_skill")
                 result = await skills.activate(json.dumps({"skill_id": "ecommerce-main-images"}))
@@ -993,6 +1018,16 @@ async def _execute_tools(
     repeated_tool_call_nudge: str | None = None,
 ) -> str | None:
     totals = totals or StreamTotals()
+    coordination_error = None
+    if (runtime and runtime.skill_runtime is not None and runtime.skill_runtime.checkpoint_version == 2
+            and not any(c['name'] in SKILL_CONTROL_TOOLS for c in calls)):
+        from services.skills.contracts import SkillError
+        try:
+            runtime.skill_runtime.prepare_tool_action(calls)
+            _apply_skill_context(prepared, runtime.skill_runtime)
+        except SkillError as exc:
+            coordination_error = control_result(str(exc), state_unchanged=True,
+                conflicting_skills=list(getattr(exc, 'keys', ())))
     assistant = _assistant_tool_message(turn_text, calls)
     if getattr(prepared, "last_provider_output", None):
         assistant["_dashscope_output"] = prepared.last_provider_output
@@ -1018,7 +1053,14 @@ async def _execute_tools(
             blocks.append(block)
             await sink.on_block(block)
     guard = getattr(prepared, "image_arguments", None)
-    ready_calls, rejected = guard.filter_calls(calls) if guard else (calls, [])
+    if coordination_error:
+        from services.agent.agent_result import AgentResult
+        message = skill_step(coordination_error, runtime.skill_runtime, step_id='action-coordination')['reason']
+        ready_calls = []
+        rejected = [(call, AgentResult(message, status='error', error_message=coordination_error['code']),
+                     True, message) for call in calls]
+    else:
+        ready_calls, rejected = guard.filter_calls(calls) if guard else (calls, [])
     ecom_arguments = getattr(prepared, "ecom_arguments", None)
     if ecom_arguments:
         ready_calls, ecom_rejected = ecom_arguments.filter_calls(ready_calls)
@@ -1043,7 +1085,8 @@ async def _execute_tools(
             raise RuntimeError("IMAGE_ARGUMENT_CORRECTION_CHECKPOINT_REQUIRED")
     if runtime:
         runtime.set_state(ConversationState.WAITING_TOOL)
-        if ((guard and guard.repair and guard.repair.get("dispatch_reserved"))
+        if ((runtime.skill_runtime is not None and runtime.skill_runtime.checkpoint_version == 2)
+                or (guard and guard.repair and guard.repair.get("dispatch_reserved"))
                 or (ecom_arguments and ecom_arguments.state and ecom_arguments.state.get("dispatch_reserved"))):
             # Commit the paid correction boundary before any business IO. A
             # restart stops here; it cannot change the batch index/call ID.
@@ -1076,6 +1119,15 @@ async def _execute_tools(
         if block.get("type") == "tool_step" and block.get("tool_name") == "file_search"
         and block.get("status") == "completed"
     )
+    async def persist_workflow_binding(value):
+        workflow = getattr(prepared, 'ecom_workflow', None)
+        if workflow is None or runtime is None:
+            raise RuntimeError('SKILL_COMPOSITION_OWNER_UNAVAILABLE')
+        await workflow.commit_binding(value)
+        await runtime.safe_point(SafePoint.BEFORE_TOOL, replay_payload=_build_replay_context(
+            prepared.messages, blocks, turn, next_model_round=next_model_round,
+            repeated_tool_call_guard=repeated_tool_call_guard))
+
     results = await handler._execute_tool_calls(
         ready_calls,
         request.task_id,
@@ -1094,6 +1146,9 @@ async def _execute_tools(
                 for active in runtime.skill_runtime.active.values())}
            if runtime and runtime.skill_runtime is not None and runtime.skill_runtime.has_active_skills
            else {}),
+        **({'image_composition': runtime.skill_runtime.checkpoint()['composition'],
+            'image_binding_writer': persist_workflow_binding}
+           if runtime and runtime.skill_runtime is not None and runtime.skill_runtime.checkpoint_version == 2 else {}),
     ) if ready_calls else []
     if rejected:
         by_call = {item[0]["id"]: item for item in [*results, *rejected]}
@@ -1198,7 +1253,6 @@ async def _execute_tools(
 
 
 def _apply_skill_context(prepared: Any, skills: Any) -> None:
-    skills.ensure_messages(prepared.messages)
     if not getattr(prepared, "skill_host_scope_captured", False):
         prepared.skill_host_scope_captured = True
         prepared.skill_host_authorized_tool_names = prepared.execution_context.authorized_tool_names
@@ -1206,7 +1260,7 @@ def _apply_skill_context(prepared: Any, skills: Any) -> None:
         prepared.skill_context_applied = True
         current = prepared.skill_host_authorized_tool_names
         if current is not None:
-            skills.effective_allowed_tool_names &= current
+            skills.restrict_tools(current)
         snapshot = dict(prepared.execution_context.authorization_snapshot)
         if skills.scheduled_snapshot is not None:
             required = set(snapshot.get("required_permissions") or ())
@@ -1220,17 +1274,70 @@ def _apply_skill_context(prepared: Any, skills: Any) -> None:
         if prepared.execution_context.execution_mode == "interactive":
             # Registry/Policy still filter this already authorized ceiling.
             prepared.tool_context.discovered_tools.update(skills.effective_allowed_tool_names)
+    skills.ensure_messages(prepared.messages)
 
 
-async def _execute_skill_batch(
+async def _execute_skill_batch(**kwargs) -> None:
+    """Do not expose staged state if preparation or persistence fails."""
+    import copy
+    runtime, prepared = kwargs['runtime'], kwargs['prepared']
+    original = runtime.skill_runtime if runtime else None
+    messages = copy.deepcopy(prepared.messages)
+    blocks = copy.deepcopy(kwargs['blocks'])
+    context = prepared.execution_context
+    discovered = set(prepared.tool_context.discovered_tools)
+    workflow = getattr(prepared, 'ecom_workflow', None)
+    old_workflow = {name: copy.deepcopy(getattr(workflow, name))
+                    for name in ('value', 'route', '_coordinated') if hasattr(workflow, name)}
+    request_params = getattr(getattr(workflow, 'request', None), 'params', None)
+    old_params = copy.deepcopy(request_params) if request_params is not None else None
+    context_flags = {name: getattr(prepared, name) for name in (
+        'skill_host_scope_captured', 'skill_host_authorized_tool_names', 'skill_context_applied')
+        if hasattr(prepared, name)}
+    projection = copy.deepcopy(getattr(runtime, 'workflow_projection', None)) if runtime else None
+    try:
+        await _execute_skill_batch_impl(**kwargs)
+    except BaseException:
+        if runtime:
+            runtime.skill_runtime = original
+            runtime.workflow_projection = projection
+        prepared.messages[:] = messages
+        kwargs['blocks'][:] = blocks
+        prepared.execution_context = context
+        prepared.tool_context.discovered_tools.clear()
+        prepared.tool_context.discovered_tools.update(discovered)
+        if workflow is not None:
+            for name in ('value', 'route', '_coordinated'):
+                if name in old_workflow:
+                    setattr(workflow, name, old_workflow[name])
+                elif hasattr(workflow, name):
+                    delattr(workflow, name)
+        if request_params is not None:
+            request_params.clear()
+            request_params.update(old_params)
+        for name in ('skill_host_scope_captured', 'skill_host_authorized_tool_names', 'skill_context_applied'):
+            if name in context_flags:
+                setattr(prepared, name, context_flags[name])
+            elif hasattr(prepared, name):
+                delattr(prepared, name)
+        raise
+
+
+async def _execute_skill_batch_impl(
     *, prepared, calls, runtime, blocks, sink, start_times, turn,
     next_model_round, repeated_tool_call_guard,
 ) -> None:
     """Whole model batch barrier, including invalid/disabled activations."""
     skills = runtime.skill_runtime if runtime else None
+    original_skills = skills
+    if skills is not None and hasattr(skills, 'staged'):
+        skills = skills.staged()
+        runtime.skill_runtime = skills
     results = []
     skill_blocks = []
-    for call in calls:
+    ordered_calls = skills.ordered_control_calls(calls) if skills is not None else calls
+    for call in ordered_calls:
+        key = None
         if call["name"] not in SKILL_CONTROL_TOOLS:
             result = control_result("SKILL_ACTIVATION_BARRIER", message="请下一轮重新请求")
         elif prepared.execution_context.execution_mode in {"scheduled", "preflight"}:
@@ -1244,19 +1351,24 @@ async def _execute_skill_batch(
             except (ValueError, TypeError, KeyError):
                 key = None
             if call["name"] == DEACTIVATE_SKILL:
-                if workflow and workflow.value and workflow.value.kind == "main_images" and key == "ecommerce-main-images":
+                if (workflow and workflow.value and workflow.value.kind == "main_images"
+                        and key in {workflow.server_skill_key(), workflow.value.skill.get('skill_key')}):
                     result = control_result("SKILL_BINDING_LOCKED")
                 else:
                     old_messages = skills.messages()
                     result = await skills.deactivate(call.get("arguments", ""))
                     if result["ok"]:
                         prepared.messages[:] = [m for m in prepared.messages if m not in old_messages]
-            elif key == "ecommerce-main-images" and workflow and not await workflow.allows_planning():
+            elif (key == "ecommerce-main-images" and workflow
+                    and skills.workflow_method('image.planning') != 'ecommerce.inline'
+                    and not await workflow.allows_planning()):
                 result = control_result("SKILL_ROUTING_UNAVAILABLE" if workflow.route and workflow.route["kind"] == "unavailable" else "SKILL_NOT_APPLICABLE",
                     message="电商策划路由暂不可用。" if workflow.route and workflow.route["kind"] == "unavailable" else "当前任务不需要电商策划；已有提示词直接生图，必要时使用聊天图片编排方法。")
             else:
                 result = await skills.activate(call.get("arguments", ""))
-        if call["name"] == ACTIVATE_SKILL:
+        optional_conflict = (result.get('code') in {'SKILL_WORKFLOW_CONFLICT', 'SKILL_DEPENDENCY_UNAVAILABLE'}
+            and skills is not None and key != skills.manual_skill_id and key not in skills.session_skill_ids)
+        if call["name"] == ACTIVATE_SKILL and not optional_conflict:
             skill_blocks.append(skill_step(result, skills, step_id=call["id"]))
         text = json.dumps(result, ensure_ascii=False)
         results.append((call, text, not result["ok"], text))
@@ -1267,17 +1379,28 @@ async def _execute_skill_batch(
     blocks.extend(skill_blocks)
     if skills is not None:
         _apply_skill_context(prepared, skills)
+        workflow = getattr(prepared, 'ecom_workflow', None)
+        if workflow and hasattr(workflow, 'coordinate'):
+            await workflow.coordinate(skills)
+            await workflow.activated()
     if runtime:
         # Save completed call/result pairs, rendered text and scope atomically
         # before pause/cancel reduction or any external delivery can interrupt.
-        await runtime.safe_point(
-            SafePoint.AFTER_SKILL_ACTIVATION,
-            replay_payload=_build_replay_context(
-                prepared.messages, blocks, turn, tool_call_ids=[c["id"] for c in calls],
-                next_model_round=next_model_round,
-                repeated_tool_call_guard=repeated_tool_call_guard,
-            ),
-        )
+        try:
+            await runtime.safe_point(
+                SafePoint.AFTER_SKILL_ACTIVATION,
+                replay_payload=_build_replay_context(
+                    prepared.messages, blocks, turn, tool_call_ids=[c["id"] for c in calls],
+                    next_model_round=next_model_round,
+                    repeated_tool_call_guard=repeated_tool_call_guard,
+                ),
+            )
+        except BaseException:
+            runtime.skill_runtime = original_skills
+            raise  # No business IO may follow an unconfirmed composition save.
+        if original_skills is not None and skills is not original_skills:
+            original_skills.adopt(skills)
+            runtime.skill_runtime = original_skills
         _inject_steer_messages(prepared.messages, runtime.consume_steer_messages())
     for block in skill_blocks:
         await sink.on_block(block)

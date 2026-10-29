@@ -7,6 +7,7 @@ import { contentName } from './presentation';
 import { SkillAssetEditor, SkillTemplateEditor } from './SkillAssets';
 import { SkillTemplateInput, SkillTemplateNotice } from './SkillTemplateInput';
 import { SkillToolPolicy } from './SkillToolPolicy';
+import { SkillCoordination } from './SkillCoordination';
 
 const lists = [
   ['triggers', '触发提示', '每行一项，描述适合使用这项 Skill 的任务。'],
@@ -50,6 +51,7 @@ export function SkillDraftEditor({ content, busy, dirty, onChange, onUpload }: {
     </div>
     <SkillAssetEditor content={content} busy={busy} onChange={onChange} onUpload={onUpload} />
     <SkillToolPolicy content={content} busy={busy} onChange={onChange} />
+    <SkillCoordination content={content} busy={busy} onChange={onChange} />
     <details className="border-t border-[var(--s-border-default)] pt-4">
       <summary className="cursor-pointer text-sm font-medium text-[var(--s-text-secondary)]">高级设置</summary>
       <div className="mt-4 space-y-4">

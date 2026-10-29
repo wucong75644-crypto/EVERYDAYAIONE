@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LazyMotion, domAnimation } from 'framer-motion';
 import SessionSkillBindings from '../SessionSkillBindings';
 import { useSkillBindings } from '../useSkillBindings';
+import { ApiRequestError } from '../../../../services/api';
 import { addSkillBinding, getAvailableSkills, getSkillBindings, removeSkillBinding,
   type SkillBinding, type SkillSummary } from '../../../../services/skills';
 
@@ -35,6 +36,34 @@ beforeEach(() => {
   vi.mocked(getSkillBindings).mockResolvedValue([]);
   vi.mocked(addSkillBinding).mockResolvedValue({ binding_id: 'binding-1' });
   vi.mocked(removeSkillBinding).mockResolvedValue(undefined);
+});
+
+it('keeps the draft selected and allows adjustment after a confirmed conflict', async () => {
+  vi.mocked(addSkillBinding).mockRejectedValueOnce(new ApiRequestError('SKILL_WORKFLOW_CONFLICT',
+    '当前固定方法与本次方法冲突，请调整选择。',409,{state_unchanged:true}));
+  render(<Panel draft={skill} />);
+  await scope();
+  fireEvent.click(screen.getByRole('button',{name:/固定到当前会话/}));
+  await screen.findByText(/当前固定方法与本次方法冲突/);
+  expect(screen.getByRole('group',{name:'已选择的 Skill'})).toBeInTheDocument();
+  expect(screen.getByRole('button',{name:'发送'})).not.toBeDisabled();
+  expect(screen.queryByRole('button',{name:'刷新重试'})).not.toBeInTheDocument();
+  expect(selectionChanged).not.toHaveBeenCalled();
+});
+
+it('opens the existing fixed-method controls without removing a binding', async () => {
+  const other={...skill,skill_id:'other',name:'另一方法'};
+  vi.mocked(getSkillBindings).mockResolvedValue([binding]);
+  vi.mocked(addSkillBinding).mockRejectedValueOnce(new ApiRequestError('SKILL_WORKFLOW_CONFLICT',
+    '方法冲突，原设置已保留。',409,{state_unchanged:true}));
+  render(<Panel draft={other} />);
+  await waitFor(() => expect(screen.getAllByRole('button',{name:/^使用范围/})).toHaveLength(2));
+  fireEvent.click(screen.getByRole('button',{name:/使用范围：另一方法/}));
+  fireEvent.click(screen.getByRole('button',{name:/固定到当前会话/}));
+  fireEvent.click(await screen.findByRole('button',{name:'管理会话固定方法'}));
+  await screen.findByRole('button',{name:/仅本条消息/});
+  expect(removeSkillBinding).not.toHaveBeenCalled();
+  expect(screen.getByRole('group',{name:'会话固定的 Skill'})).toBeInTheDocument();
 });
 
 describe('Skill tags and explicit scope changes', () => {

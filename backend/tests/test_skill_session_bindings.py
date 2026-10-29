@@ -98,7 +98,8 @@ async def test_pause_mid_binding_list_resume_ignores_deleted_and_added_bindings(
         await execute_chat(handler=handler(), request=_request(), runtime=first)
     model.assert_not_awaited()
     saved = checkpoints[-1]
-    assert [a["skill_key"] for a in saved["skill_runtime"]["active"]] == ["first"]
+    # v2 commits the mandatory set atomically before publishing its steps.
+    assert [a["skill_key"] for a in saved["skill_runtime"]["active"]] == ["first", "second"]
     assert saved["skill_runtime"]["session_skill_ids"] == ["first", "second"]
     source.session_bindings.return_value = [item("new-binding", revision="v2")]
     source.discover.side_effect = AssertionError("resume must not query latest")

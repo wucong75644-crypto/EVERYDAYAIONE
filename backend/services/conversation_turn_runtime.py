@@ -154,6 +154,10 @@ class ConversationTurnRuntime:
 
         if point == SafePoint.BEFORE_TOOL and replay_payload is not None and self._replay_checkpoint_callback is None:
             raise RuntimeError("ACTOR_TOOL_DISPATCH_CHECKPOINT_UNAVAILABLE")
+        if (replay_payload is not None and self._replay_checkpoint_callback is None
+                and self.skill_runtime is not None
+                and getattr(self.skill_runtime, 'checkpoint_version', 1) == 2):
+            raise RuntimeError('SKILL_COMPOSITION_CHECKPOINT_UNAVAILABLE')
 
         if (
             replay_payload is not None
@@ -169,6 +173,11 @@ class ConversationTurnRuntime:
             payload = dict(replay_payload)
             if self.skill_runtime is not None:
                 payload["skill_runtime"] = self.skill_runtime.checkpoint()
+                if payload['skill_runtime'].get('version') == 2:
+                    payload['_skill_composition'] = payload['skill_runtime']['composition']
+                    payload['_skill_composition_expected_revision'] = getattr(self, 'committed_composition_revision', 0)
+                    if getattr(self, 'workflow_projection', None) is not None:
+                        payload['_ecom_workflow'] = self.workflow_projection
             if self.mcp_invocations:
                 payload["mcp_invocations"] = list(self.mcp_invocations.values())
             result = await self._replay_checkpoint_callback(point, payload)
@@ -179,6 +188,10 @@ class ConversationTurnRuntime:
                 raise ConversationStopRequested("ownership_lost")
             if point == SafePoint.BEFORE_TOOL and result.get("outcome") != "saved":
                 raise RuntimeError("ACTOR_TOOL_DISPATCH_CHECKPOINT_NOT_SAVED")
+            if '_skill_composition' in payload:
+                if result.get('outcome') != 'saved':
+                    raise RuntimeError('SKILL_COMPOSITION_NOT_SAVED')
+                self.committed_composition_revision = payload['_skill_composition']['revision']
 
         # MODEL_CHUNK 每个 token 都会经过，不能在这里访问数据库。
         if (

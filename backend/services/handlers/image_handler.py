@@ -75,9 +75,20 @@ class ImageHandler(BaseHandler):
         scoped=ScopedDatabaseClient(self.db,DatabaseScope(owner.user_id,owner.org_id,DatabaseAccessKind.RUNTIME))
         from services.agent.image.ecommerce_planner.workflow import binding, KEY
         workflow = binding((parent.get("request_params") or {}).get(KEY))
+        composition = (parent.get('request_params') or {}).get('_skill_composition')
+        if composition is not None:
+            from services.skills.coordination import Composition
+            composition = Composition.model_validate(composition)
+            expected = getattr(owner, 'image_composition', None)
+            if (not isinstance(expected, dict) or expected != composition.model_dump(mode='json')):
+                raise ChatImageNotAcceptedError('SKILL_COMPOSITION_STALE',
+                    '当前方法状态已变化，已停止重复提交，请核对原任务。')
         plan_source=args.get("plan_source")
         if plan_source is None:
-            active_ecom = any(entry.get("skill_key") == "ecommerce-main-images"
+            from services.skills.coordination import method_for
+            active_ecom = (method_for(composition,'image.planning') == 'ecommerce.server_plan'
+                or method_for(composition,'image.submission') == 'image.plan_source') if composition else any(
+                entry.get("skill_key") == "ecommerce-main-images"
                 for entry in getattr(owner, "image_skill_snapshot", ()))
             attempted_plan = (await asyncio.to_thread(lambda: scoped.table("ecom_image_plans")
                 .select("id").eq("parent_task_id", owner.task_id).limit(1).execute().data)
@@ -176,6 +187,8 @@ class ImageHandler(BaseHandler):
                 "input_message_id":str(parent["input_message_id"]),
                 "base_context_revision":parent["base_context_revision"]}
             origin["skills"] = list(getattr(owner, "image_skill_snapshot", ()))
+            if composition is not None:
+                origin['skill_composition_revision'] = composition.revision
             if plan_proof:
                 origin["plan_source"] = plan_proof
             snapshot=freeze_image_request(normalized,refs,origin=origin,

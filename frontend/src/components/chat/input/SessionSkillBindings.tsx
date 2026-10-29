@@ -16,7 +16,10 @@ interface Props {
 function SkillTag({ skill, binding, selected, state, disabled, onSelect, onComplete }: Props & {
   skill: SkillSummary; binding?: SkillBinding;
 }) {
-  const [open, setOpen] = useState(false);
+  const [popover, setPopover] = useState({ request: state.managementRequest, open: false });
+  const open = popover.request === state.managementRequest ? popover.open
+    : !!binding && state.manageBindingId === binding.binding_id;
+  const setOpen = (next: boolean) => setPopover({ request: state.managementRequest, open: next });
   const focusInput = useRef(false);
   const locked = disabled || state.blocked;
   const scope = binding ? '会话固定' : '仅本条';
@@ -85,8 +88,13 @@ export function SkillBindingFeedback({ state, disabled }: Pick<Props, 'state' | 
   return <>
     {state.pending && <p role="status" className="basis-full text-xs text-text-tertiary">正在保存使用范围…</p>}
     {state.error && <div role="alert" className="basis-full text-xs text-text-secondary">
-      {state.error}<button type="button" disabled={disabled || state.pending || state.loading}
+      {state.error}{state.rejected ? state.bindings.length > 0 ? <button type="button" disabled={disabled || state.pending}
+        onClick={state.manageBindings}
+        className="ml-2 text-accent dark:text-[color-mix(in_srgb,var(--color-accent),white_45%)] disabled:opacity-40">管理会话固定方法</button>
+        : <span className="ml-2">输入已保留，请调整本次方法。</span>
+        : <button type="button" disabled={disabled || state.pending || state.loading}
         onClick={() => void state.refresh()} className="ml-2 text-accent dark:text-[color-mix(in_srgb,var(--color-accent),white_45%)] disabled:opacity-40">刷新重试</button>
+      }
     </div>}
   </>;
 }

@@ -101,14 +101,23 @@ class EcommerceImagePlanner(PageDelivery):
         value = self.workflow or WorkflowBinding(kind="main_images", root_task_id=self.owner.task_id,
             window_task_id=self.owner.task_id, generation_run_id=str(uuid4()))
         value.plan_id = plan_id
-        self.workflow = await store_binding(self.scope, self.owner.task_id, self.owner.image_execution_token, value)
+        writer = getattr(self.owner, 'image_binding_writer', None)
+        self.workflow = (await writer(value) if writer is not None else
+            await store_binding(self.scope, self.owner.task_id, self.owner.image_execution_token, value))
 
     async def _run(self, args, *, fixed_settings=None):
         # This keyword is supplied by the server/page caller, never by the LLM
         # tool schema. Existing trusted-task and credit boundaries still apply.
         fixed = FixedSettings.model_validate(fixed_settings) if fixed_settings is not None else None
-        if not any(entry.get("skill_key") == "ecommerce-main-images"
-                for entry in getattr(self.owner, "image_skill_snapshot", ())):
+        raw_composition = getattr(self.owner, 'image_composition', None)
+        if raw_composition is not None:
+            from services.skills.coordination import Composition, method_for
+            composition = Composition.model_validate(raw_composition)
+            planner_active = method_for(composition, 'image.planning') == 'ecommerce.server_plan'
+        else:
+            planner_active = any(entry.get('skill_key') == 'ecommerce-main-images'
+                                 for entry in getattr(self.owner, 'image_skill_snapshot', ()))
+        if not planner_active:
             return AgentResult("请先调用 activate_skill，skill_id 使用 ecommerce-main-images，读取正文后再调用主图策划工具。",
                 status="error", error_message="ECOM_PLAN_SKILL_REQUIRED")
         if self.settings.ecom_image_planning_enabled is not True:
@@ -161,6 +170,9 @@ class EcommerceImagePlanner(PageDelivery):
             return AgentResult("主图策划仅可从当前交互聊天发起。", status="error", error_message="ECOM_PLAN_MODE_DENIED")
 
         self.workflow = binding((parent.get("request_params") or {}).get(KEY))
+        if raw_composition is not None and raw_composition != (parent.get('request_params') or {}).get('_skill_composition'):
+            return AgentResult('当前方法状态已变化，未开始策划，请核对原任务。',status='error',
+                               error_message='SKILL_COMPOSITION_STALE')
         if self.workflow and self.workflow.plan_id and not continue_plan_id:
             return AgentResult("当前主图任务已有方案，请使用返回的 continue_plan_id 续接，不能重新传图绕过已有阶段。",
                 status="error", error_message="ECOM_PLAN_CONTINUATION_REQUIRED",
@@ -255,9 +267,8 @@ class EcommerceImagePlanner(PageDelivery):
             intent, previous = await asyncio.to_thread(resolver.size_context)
             if previous_plan:
                 previous = {**(previous or {}), **previous_plan["target_size"]}
-            size_refs = [ref for ref in refs if (ref["role"].strip().lower() in {
-                "product", "product_image", "product_detail", "商品", "商品图", "商品参考"
-            } or ref["role"].strip().startswith(("商品", "产品")))]
+            from services.agent.image.reference_roles import is_product
+            size_refs = [ref for ref in refs if is_product(ref["role"])]
             if not size_refs:
                 return AgentResult("请把至少一张参考图标记为商品图，风格参考图请标记为风格图。", status="error",
                     error_message="ECOM_PLAN_PRODUCT_REFERENCE_REQUIRED")

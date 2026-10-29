@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import Field
 
 from .contracts import StrictModel, source_id
+from services.agent.image.reference_roles import is_product
 
 
 class FixedSettings(StrictModel):
@@ -15,12 +16,6 @@ class FixedSettings(StrictModel):
     aspect_ratio: str = Field(min_length=1, max_length=20)
     resolution: Literal["1K", "2K", "4K"]
     image_count: int = Field(ge=1, le=15)
-
-
-def is_product(role):
-    role = role.strip().lower()
-    return (role in {"product", "product_image", "product_detail", "detail", "商品", "商品图", "商品参考"}
-        or role.startswith(("商品", "产品")))
 
 
 def source_bindings(snapshot):

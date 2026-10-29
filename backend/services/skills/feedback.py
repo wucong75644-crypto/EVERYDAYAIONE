@@ -10,7 +10,21 @@ def skill_step(result: dict, skills, *, step_id: str) -> dict:
                     "name": candidate.catalog_metadata.name or candidate.skill_key,
                     "revision": candidate.revision}
     code = result.get("code", "")
-    if code == "SKILL_NOT_APPLICABLE":
+    if code == 'SKILL_WORKFLOW_CONFLICT':
+        names = [skills.directory[k].catalog_metadata.name or k for k in result.get('conflicting_skills', [])
+                 if skills is not None and k in skills.directory]
+        reason = '、'.join(names) + ' 对当前步骤使用不同制作流程。已保留原设置，请调整本次选择或管理会话固定方法。'
+    elif code == 'SKILL_ACTION_BATCH_CONFLICT':
+        reason = '当前批次混合了策划和图片提交，请按当前步骤分别执行。原设置已保留。'
+    elif code == 'SKILL_DEPENDENCY_UNAVAILABLE':
+        reason = '该方法依赖的其他方法当前不可用，已保留原设置，请检查选择。'
+    elif code == 'SKILL_REQUIRED_CAPABILITY_UNAVAILABLE':
+        reason = '该组合缺少当前步骤必需的能力，已保留原设置，请调整方法或检查权限。'
+    elif code == 'SKILL_WORKFLOW_METHOD_UNAVAILABLE':
+        reason = '该方法声明的执行方式尚不受支持，请检查方法配置。'
+    elif code == 'SKILL_COMPOSITION_INCONSISTENT':
+        reason = '原任务的方法状态无法核实，已停止自动提交，请查看原任务状态后继续。'
+    elif code == "SKILL_NOT_APPLICABLE":
         reason = "当前请求不需要此策划方法，将按你的最新要求继续处理。"
     elif code == "SKILL_ROUTING_UNAVAILABLE":
         reason = "电商策划入口暂不可用，普通生图仍可继续。"

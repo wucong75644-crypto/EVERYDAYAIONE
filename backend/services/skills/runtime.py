@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 from typing import Any, Literal
 
@@ -18,6 +19,10 @@ from services.skills.renderer import (
 from services.skills.resolver import SkillCandidate, skill_tool_ceiling
 from services.skills.context import instruction_message, model_messages
 from services.skills.selection import SkillSelection
+from services.skills.coordination import (
+    ActionContext, Composition, CompositionConflict, Participant, build_composition, method_for,
+)
+from services.skills.workflow_contracts import contract_for, required_protocol_tools
 
 
 ACTIVATE_SKILL = "activate_skill"
@@ -82,7 +87,7 @@ class ActiveSkill(Contract):
 
 
 class RuntimeCheckpoint(Contract):
-    version: int = Field(default=1, ge=1, le=1)
+    version: int = Field(default=1, ge=1, le=2)
     turn_id: str
     directory: tuple[SkillCandidate, ...] = Field(max_length=MAX_DIRECTORY_ENTRIES)
     active: tuple[ActiveSkill, ...] = Field(max_length=MAX_ACTIVE_SKILLS)
@@ -92,6 +97,7 @@ class RuntimeCheckpoint(Contract):
     host_allowed_tool_names: frozenset[str] | None = None
     context_version: Literal[1, 2] = 1
     scheduled_snapshot: dict | None = None
+    composition: Composition | None = None
 
     @field_serializer("effective_allowed_tool_names", "host_allowed_tool_names", when_used="json")
     def serialize_effective_allowed_tool_names(self, value):
@@ -127,10 +133,165 @@ class SkillRuntime:
         self.directory: dict[str, SkillCandidate] = {}
         self.active: dict[str, ActiveSkill] = {}
         self.manual_skill_id: str | None = None
+        self.manual_selection: SkillSelection | None = None
         self.session_skill_ids: tuple[str, ...] = ()
         self.template_context = dict(template_context or {})
         self.context_version = 2
         self.recommendation_batch = None
+        self.checkpoint_version = 2
+        self.action_context = ActionContext()
+        self.composition = build_composition(turn_id=turn_id, action=self.action_context,
+                                             participants=[], tools=self.effective_allowed_tool_names)
+
+    def _participants(self, active=None):
+        result = []
+        for key, item in (self.active if active is None else active).items():
+            candidate = self.directory[key]
+            sources = []
+            if key == self.manual_skill_id:
+                sources.append('user')
+            if key in self.session_skill_ids:
+                sources.append('session')
+            if self.scheduled_snapshot is not None:
+                sources.append('scheduled')
+            result.append(Participant(package_id=str(candidate.package_id), skill_key=key,
+                revision=item.revision, body_sha256=item.body_sha256, sources=tuple(sources or ['model']),
+                contract=contract_for(candidate, item.body_sha256) if self.checkpoint_version == 2 else None))
+        return result
+
+    def _compose(self, active=None, tools=None, action=None):
+        return build_composition(turn_id=self.turn_id, action=action or self.action_context,
+            participants=self._participants(active), tools=self.effective_allowed_tool_names if tools is None else tools,
+            previous=self.composition)
+
+    def set_action(self, action: ActionContext):
+        composition = self._compose(action=action)
+        if not required_protocol_tools(composition) <= self.effective_allowed_tool_names:
+            raise SkillError('SKILL_REQUIRED_CAPABILITY_UNAVAILABLE')
+        self.action_context, self.composition = action, composition
+
+    def prepare_tool_action(self, calls):
+        actions = set()
+        for call in calls:
+            if call['name'] == 'plan_ecommerce_images':
+                actions.add('plan')
+            elif call['name'] == 'generate_image':
+                try:
+                    args = json.loads(call.get('arguments') or '{}')
+                except (ValueError, TypeError):
+                    continue  # The existing argument-correction boundary owns malformed input.
+                if isinstance(args, dict):
+                    actions.add('execute_ready' if args.get('plan_source') else 'execute_prompt')
+        if len(actions) > 1:
+            raise SkillError('SKILL_ACTION_BATCH_CONFLICT')
+        if actions:
+            self.set_action(ActionContext(action=actions.pop(), source='host',
+                                          plan_id=self.action_context.plan_id))
+
+    def restrict_tools(self, host_ceiling):
+        ceiling = self.effective_allowed_tool_names & frozenset(host_ceiling)
+        if ceiling == self.effective_allowed_tool_names:
+            return
+        composition = self._compose(tools=ceiling)
+        for key in self.active:
+            skill_tool_ceiling(self.directory[key].catalog_metadata, self.platform_tool_names, ceiling,
+                               available_tool_names=self.available_tool_names)
+        if not required_protocol_tools(composition) <= ceiling:
+            raise SkillError('SKILL_REQUIRED_CAPABILITY_UNAVAILABLE')
+        self.effective_allowed_tool_names, self.composition = ceiling, composition
+
+    def bind_workflow(self, projection):
+        if self.checkpoint_version == 2:
+            self.composition = build_composition(turn_id=self.turn_id, action=self.action_context,
+                participants=self._participants(), tools=self.effective_allowed_tool_names,
+                previous=self.composition, workflow_links={'ecommerce': copy.deepcopy(projection)} if projection else {})
+
+    def workflow_method(self, scope):
+        return method_for(self.composition, scope)
+
+    def staged(self):
+        staged = copy.copy(self)
+        staged.active = dict(self.active)
+        staged.recommendation_batch = None
+        return staged
+
+    def ordered_control_calls(self, calls):
+        """Order adjacent activations by dependencies; preserve other barriers."""
+        ordered, available = [], set(self.active)
+        pending = []
+
+        def flush():
+            while pending:
+                def ready(call):
+                    try:
+                        key = json.loads(call.get('arguments') or '{}').get('skill_id')
+                        candidate = self.directory.get(key)
+                        contract = getattr(getattr(candidate, 'catalog_metadata', None), 'coordination', None)
+                        return contract is None or set(contract.requires) <= available
+                    except (ValueError, TypeError, AttributeError):
+                        return True
+                index = next((i for i, call in enumerate(pending) if ready(call)), 0)
+                call = pending.pop(index)
+                ordered.append(call)
+                try:
+                    available.add(json.loads(call.get('arguments') or '{}').get('skill_id'))
+                except (ValueError, TypeError, AttributeError):
+                    pass
+
+        for call in calls:
+            if call['name'] == ACTIVATE_SKILL:
+                pending.append(call)
+                continue
+            flush()
+            ordered.append(call)
+            if call['name'] == DEACTIVATE_SKILL:
+                try:
+                    available.discard(json.loads(call.get('arguments') or '{}').get('skill_id'))
+                except (ValueError, TypeError, AttributeError):
+                    pass
+        flush()
+        return ordered
+
+    def adopt(self, staged):
+        self.active = staged.active
+        self.effective_allowed_tool_names = staged.effective_allowed_tool_names
+        self.composition = staged.composition
+        self.action_context = staged.action_context
+
+    async def activate_required(self):
+        """Validate the complete locked set without exposing partial activation."""
+        if self.manual_selection is not None:
+            selected = self.directory.get(self.manual_selection.skill_id)
+            if selected is None:
+                return control_result('SKILL_NOT_AVAILABLE')
+            if selected.revision != self.manual_selection.revision:
+                return control_result('SKILL_SESSION_REVISION_LOCKED' if selected.skill_key in self.session_skill_ids
+                                      else 'SKILL_SELECTION_CHANGED')
+        staged = self.staged()
+        keys = list(self.session_skill_ids)
+        if self.manual_skill_id and self.manual_skill_id not in keys:
+            keys.append(self.manual_skill_id)
+        if self.scheduled_snapshot is not None:
+            keys = list(self.directory)
+        ordered = []
+        waiting = list(keys)
+        while waiting:
+            ready = next((key for key in waiting if not (
+                set(getattr(self.directory[key].catalog_metadata.coordination, 'requires', ()))
+                - set(ordered) - set(self.active))), None)
+            if ready is None:
+                return control_result('SKILL_DEPENDENCY_UNAVAILABLE', state_unchanged=True)
+            ordered.append(ready)
+            waiting.remove(ready)
+        for key in ordered:
+            result = await staged.activate(encoded({'skill_id': key}),
+                manual=key == self.manual_skill_id, session=key in self.session_skill_ids,
+                scheduled=self.scheduled_snapshot is not None)
+            if not result['ok']:
+                return result
+        staged.composition = staged._compose()
+        self.adopt(staged)
+        return control_result('SKILL_REQUIRED_SET_ACTIVATED', ok=True)
 
     def _check_cancelled(self):
         if self.cancellation_event.is_set():
@@ -170,6 +331,7 @@ class SkillRuntime:
             raise
         self._check_cancelled()
         self.manual_skill_id = selection.skill_id if selection else None
+        self.manual_selection = selection
         # Reserve bounded directory capacity for the explicit user selection.
         candidates = sorted(candidates, key=lambda c: c.skill_key != self.manual_skill_id)
         selected = list(bindings)
@@ -201,6 +363,9 @@ class SkillRuntime:
             await self._restore(checkpoint)
         else:
             self.directory = {p.candidate.skill_key: p.candidate for p in parsed.skills}
+            required = await self.activate_required()
+            if not required['ok']:
+                raise SkillReplayError(required['code'])
         for pin in parsed.skills:
             if pin.candidate.skill_key not in self.active:
                 result = await self.activate(encoded({"skill_id": pin.candidate.skill_key}), scheduled=True)
@@ -223,9 +388,21 @@ class SkillRuntime:
                 session=active.skill_key in self.session_skill_ids,
                 scheduled=self.scheduled_snapshot is not None,
             ))
+        if self.composition and any(p.contract for p in self.composition.participants):
+            messages.append({'role': 'system', 'content': '[Current Skill composition]\n' + encoded({
+                'action': self.action_context.action, 'stage': self.action_context.stage,
+                'owners': self.composition.owners,
+                'instruction': '只执行当前动作适用的方法段。已加载或会话固定不等于必须重跑完整流程；解释问题不启动制作。',
+            })})
         return messages
 
     def ensure_messages(self, messages: list[dict[str, Any]]):
+        if self.checkpoint_version == 2:
+            current = self.messages()
+            prefixes = ('[Turn Skill instructions:', '[Current Skill composition]')
+            messages[:] = [m for m in messages if not (
+                m.get('role') == 'system' and isinstance(m.get('content'), str)
+                and m['content'].startswith(prefixes) and m not in current)]
         # Compression may remove earlier system messages; restore exact bounded text.
         missing = [message for message in self.messages() if message not in messages]
         if self.context_version == 1:
@@ -239,6 +416,7 @@ class SkillRuntime:
 
     def checkpoint(self) -> dict:
         return RuntimeCheckpoint(
+            version=self.checkpoint_version,
             turn_id=self.turn_id, directory=tuple(self.directory.values()),
             active=tuple(self.active.values()),
             effective_allowed_tool_names=self.effective_allowed_tool_names,
@@ -246,11 +424,13 @@ class SkillRuntime:
             session_skill_ids=self.session_skill_ids,
             context_version=self.context_version, scheduled_snapshot=self.scheduled_snapshot,
             host_allowed_tool_names=self._initial_ceiling,
+            composition=self._compose() if self.checkpoint_version == 2 else None,
         ).model_dump(mode="json", exclude=(
             ({'manual_skill_id'} if self.manual_skill_id is None else set())
             | ({'context_version'} if self.context_version == 1 else set())
             | ({'session_skill_ids'} if not self.session_skill_ids else set())
             | ({'scheduled_snapshot'} if self.scheduled_snapshot is None else set())
+            | ({'composition'} if self.checkpoint_version == 1 else set())
         ))
 
     def model_messages(self, messages, tools):
@@ -325,9 +505,13 @@ class SkillRuntime:
                     self._initial_ceiling, available_tool_names=self.available_tool_names)
                 updated[k] = active.model_copy(update={"effective_allowed_tool_names": declared})
                 ceiling &= declared
+            composition = self._compose(active=updated, tools=ceiling)
             self.active = updated
             self.effective_allowed_tool_names = ceiling
+            self.composition = composition
             return control_result("SKILL_DEACTIVATED", ok=True, skill_id=key)
+        except CompositionConflict as error:
+            return control_result(str(error), conflicting_skills=list(error.keys), state_unchanged=True)
         except (ValueError, TypeError, SkillError):
             return control_result("SKILL_ACTIVATION_INVALID")
 
@@ -391,6 +575,12 @@ class SkillRuntime:
                                       revision=previous.revision)
             if len(self.active) >= MAX_ACTIVE_SKILLS:
                 raise SkillError("SKILL_TURN_BUDGET_EXCEEDED")
+            if self.checkpoint_version == 2 and candidate.catalog_metadata.coordination is not None:
+                probe = Participant(package_id=str(candidate.package_id), skill_key=candidate.skill_key,
+                    revision=candidate.revision, body_sha256='', sources=('model',),
+                    contract=contract_for(candidate, ''))
+                from services.skills.coordination import owners_for
+                owners_for([*self._participants(), probe], self.action_context)
             validated = await self.source.load(candidate)
             self._check_cancelled()
             self._validate_identity(candidate, validated)
@@ -408,17 +598,29 @@ class SkillRuntime:
                 validated.catalog_metadata, self.platform_tool_names, self.effective_allowed_tool_names,
                 available_tool_names=self.available_tool_names,
             )
-            self.active[candidate.skill_key] = ActiveSkill(
+            proposed = dict(self.active)
+            proposed[candidate.skill_key] = ActiveSkill(
                 skill_key=candidate.skill_key, revision=candidate.revision,
                 body_sha256=validated.body_sha256, rendered=rendered,
                 rendered_sha256=digest(rendered), args_summary=summary,
                 effective_allowed_tool_names=ceiling,
                 asset_manifest_sha256=asset_manifest_digest(validated.resources), loaded_asset_ids=ids,
             )
+            composition = self._compose(active=proposed, tools=ceiling)
+            for key in proposed:
+                skill_tool_ceiling(self.directory[key].catalog_metadata, self.platform_tool_names, ceiling,
+                                   available_tool_names=self.available_tool_names)
+            if not required_protocol_tools(composition) <= ceiling:
+                raise SkillError('SKILL_REQUIRED_CAPABILITY_UNAVAILABLE')
+            self.active = proposed
             self.effective_allowed_tool_names = ceiling
+            self.composition = composition
             return control_result("SKILL_ACTIVATED", ok=True, skill_id=candidate.skill_key,
                                   revision=candidate.revision,
                                   effective_allowed_tool_names=sorted(ceiling))
+        except CompositionConflict as error:
+            return control_result(str(error), conflicting_skills=list(error.keys), state_unchanged=True,
+                                  recovery_actions=['adjust_selection', 'manage_bindings'])
         except SkillTemplateArgsError as error:
             return control_result(str(error), required_args=error.required_args)
         except SkillError as error:
@@ -520,6 +722,23 @@ class SkillRuntime:
             self.session_skill_ids = checkpoint.session_skill_ids
             self.context_version = checkpoint.context_version
             self.effective_allowed_tool_names = ceiling
+            self.checkpoint_version = checkpoint.version
+            if checkpoint.version == 2:
+                saved_composition = checkpoint.composition
+                if saved_composition is None or saved_composition.turn_id != self.turn_id:
+                    raise SkillError('SKILL_COMPOSITION_INCONSISTENT')
+                self.action_context = saved_composition.action_context
+                recomputed = self._compose()
+                # Revalidate identities/contracts, while preserving the saved
+                # revision and the existing permission narrowing on restore.
+                if (recomputed.participants != saved_composition.participants
+                        or recomputed.owners != saved_composition.owners
+                        or not ceiling <= set(saved_composition.effective_allowed_tool_names)):
+                    raise SkillError('SKILL_COMPOSITION_INCONSISTENT')
+                self.composition = saved_composition.model_copy(update={
+                    'effective_allowed_tool_names': tuple(sorted(ceiling))})
+            else:
+                self.composition = self._compose()
         except SkillError as error:
             raise SkillReplayError(str(error)) from None
         except (ValidationError, ValueError, TypeError):

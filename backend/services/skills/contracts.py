@@ -36,6 +36,29 @@ AgentDomain = Literal["general", "erp"]
 ExecutionMode = Literal["interactive", "scheduled", "preflight"]
 SkillFileType = Literal["pdf", "docx", "xlsx", "csv", "pptx", "image", "text"]
 SkillTaskMode = Literal['smart', 'image-i2i', 'image-t2i', 'image-ecom', 'video']
+SkillAction = Literal['plan', 'execute_ready', 'execute_prompt', 'edit', 'explain', 'other']
+
+
+class WorkflowClaim(Contract):
+    scope: CapabilityKey
+    method: CapabilityKey
+    actions: tuple[SkillAction, ...] = Field(min_length=1, max_length=6)
+
+
+class CoordinationContract(Contract):
+    version: Literal[1] = 1
+    kind: Literal['guidance', 'workflow']
+    claims: tuple[WorkflowClaim, ...] = Field(default=(), max_length=16)
+    requires: tuple[SkillKey, ...] = Field(default=(), max_length=4)
+
+    @model_validator(mode='after')
+    def valid_claims(self):
+        if (self.kind == 'guidance' and self.claims) or (self.kind == 'workflow' and not self.claims):
+            raise ValueError('SKILL_COORDINATION_INVALID')
+        pairs = [(c.scope, action) for c in self.claims for action in c.actions]
+        if len(pairs) != len(set(pairs)) or len(self.requires) != len(set(self.requires)):
+            raise ValueError('SKILL_COORDINATION_INVALID')
+        return self
 
 
 class SkillCapabilityStatus(Contract):
@@ -66,6 +89,7 @@ class SkillCatalogMetadata(Contract):
     allowed_capabilities: tuple[CapabilityKey, ...] = Field(default=(), max_length=64)
     recommended_file_types: tuple[SkillFileType, ...] = Field(default=(), max_length=7)
     tool_policy: Literal['restricted', 'platform'] = 'restricted'
+    coordination: CoordinationContract | None = None
 
     @model_validator(mode='after')
     def unambiguous_tool_policy(self):
@@ -88,6 +112,8 @@ class SkillCatalogMetadata(Contract):
             result.pop('task_modes', None)
         if self.tool_policy == 'restricted':
             result.pop('tool_policy', None)
+        if self.coordination is None:
+            result.pop('coordination', None)
         return result
 
 

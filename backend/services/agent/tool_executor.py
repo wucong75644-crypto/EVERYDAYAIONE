@@ -70,6 +70,8 @@ class ToolExecutor(
         scheduled_publish_grant=None,
         image_execution_token=None,
         image_skill_snapshot=(),
+        image_composition=None,
+        image_binding_writer=None,
     ) -> None:
         self.db = db
         self.user_id = user_id
@@ -100,6 +102,8 @@ class ToolExecutor(
         self.scheduled_publish_grant = scheduled_publish_grant
         self.image_execution_token = image_execution_token
         self.image_skill_snapshot = tuple(image_skill_snapshot)
+        self.image_composition = image_composition
+        self.image_binding_writer = image_binding_writer
         self._tool_runtime = None
         self.erp_step_timeout_sec = erp_step_timeout_sec
         self.tool_policy_snapshot = dict(tool_policy_snapshot or {})

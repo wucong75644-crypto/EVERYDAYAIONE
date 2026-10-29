@@ -62,6 +62,18 @@ async def binding_operation(operation, *args):
         return await operation(*args)
     except SkillError as error:
         code = str(error)
+        if code in {'SKILL_WORKFLOW_CONFLICT', 'SKILL_DEPENDENCY_UNAVAILABLE',
+                    'SKILL_REQUIRED_CAPABILITY_UNAVAILABLE'}:
+            from core.exceptions import AppException
+            names = []
+            service = getattr(operation, '__self__', None)
+            if service is not None and hasattr(service, 'list'):
+                visible = await service.list()
+                names = [s.name for s in visible if s.skill_id in getattr(error, 'keys', ())]
+            message = (('、'.join(names) or '当前方法') + '与本次选择的制作流程不能同时使用。请调整本次选择或管理会话固定方法。'
+                       if code == 'SKILL_WORKFLOW_CONFLICT' else '该组合缺少必需的方法或能力，请调整选择。')
+            raise AppException(code, message, status_code=409,
+                details={'state_unchanged': True, 'recovery_actions': ['adjust_selection', 'manage_bindings']}) from None
         message = {
             "SKILL_NOT_AVAILABLE": "该 Skill 当前不可用或你暂无使用权限",
             "SKILL_SELECTION_CHANGED": "Skill 版本已更新，请刷新后重新添加",

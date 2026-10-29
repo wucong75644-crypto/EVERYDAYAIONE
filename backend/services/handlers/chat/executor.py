@@ -254,12 +254,31 @@ class ChatGenerationExecutor:
         }.get(point)
         if boundary is None:
             return {"outcome": "ignored"}
-        result = await self._replay_checkpoint_store.write(
-            task_id=claim.task_id,
-            execution_token=claim.execution_token,
-            boundary=boundary,
-            payload=dict(payload),
-        )
+        try:
+            result = await self._replay_checkpoint_store.write(
+                task_id=claim.task_id,
+                execution_token=claim.execution_token,
+                boundary=boundary,
+                payload=dict(payload),
+            )
+        except Exception:
+            # An acknowledgement can be lost after commit. Reconcile the whole
+            # checkpoint, not merely a matching composition ID, before proceeding.
+            if '_skill_composition' not in payload:
+                raise
+            read = getattr(self._replay_checkpoint_store, 'read_latest', None)
+            if read is None:
+                raise
+            expected = dict(payload)
+            expected.setdefault('safe_point', boundary.value)
+            try:
+                saved = await read(task_id=claim.task_id, execution_token=claim.execution_token,
+                                   boundary=boundary)
+            except Exception:
+                raise RuntimeError('SKILL_COMPOSITION_SAVE_UNCONFIRMED') from None
+            if saved.get('outcome') != 'found' or saved.get('payload') != expected:
+                raise RuntimeError('SKILL_COMPOSITION_SAVE_UNCONFIRMED') from None
+            result = {'outcome':'saved','reconciled':True}
         if result.get("outcome") in {
             "ownership_lost", "lease_expired", "terminal",
         }:

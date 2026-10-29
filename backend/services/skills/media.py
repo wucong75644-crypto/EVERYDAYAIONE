@@ -77,6 +77,13 @@ async def load_media_skills(handler, *, conversation_id, user_id, params, metada
                                               if intent is not None else {}))
         if state is None:
             raise HTTPException(409, 'Skill 功能暂未开放')
+        from services.skills.coordination import ActionContext
+        state.set_action(ActionContext(action='plan' if task_mode.startswith('image-') else 'other',
+                                       source='media'))
+        required = await state.activate_required()
+        if not required['ok']:
+            from services.skills.feedback import skill_step
+            raise HTTPException(409, '所选 Skill 无法启用：' + skill_step(required, state, step_id='media-methods')['reason'])
         for key in state.session_skill_ids:
             result = await state.activate_session(key)
             if not result['ok']:
@@ -100,6 +107,7 @@ async def load_media_skills(handler, *, conversation_id, user_id, params, metada
          'selection': 'session' if a.skill_key in state.session_skill_ids else 'user'}
         for a in state.active.values()
     ]
+    params['_media_skill_composition'] = state.checkpoint().get('composition')
     return state
 
 

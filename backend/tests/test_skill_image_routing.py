@@ -64,6 +64,7 @@ def flow():
     value.previous = None
     value.input = [{'type': 'text', 'text': '你就用我的六个提示词开始生成就好了'}]
     value.handler = SimpleNamespace(org_id=None)
+    value.runtime = SimpleNamespace(skill_runtime=None, skill_coordination=False)
     value.request = SimpleNamespace(task_id=str(uuid4()))
     value.save = AsyncMock()
     return value

@@ -1,0 +1,248 @@
+{
+  "version": 1,
+  "verified_on": "2026-10-29",
+  "entries": [
+    {
+      "package_id": "4c7d133e-33e5-455a-9216-4b6cff0ce892",
+      "skill_key": "ecommerce-image-prompts",
+      "revision": "v5d3a01973e41404981324860769e3750",
+      "body_sha256": "7f8e8de78b18105a2456a327e8bb9ee38edee9ed5d1ddae48a2e0a2c634df69e",
+      "contract": {
+        "version": 1,
+        "kind": "workflow",
+        "claims": [
+          {
+            "scope": "image.planning",
+            "method": "ecommerce.inline",
+            "actions": [
+              "plan"
+            ]
+          },
+          {
+            "scope": "image.submission",
+            "method": "image.direct",
+            "actions": [
+              "execute_prompt",
+              "edit"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "package_id": "4c7d133e-33e5-455a-9216-4b6cff0ce892",
+      "skill_key": "ecommerce-image-prompts",
+      "revision": "v61e62ee689a24e28986a63244e03a874",
+      "body_sha256": "a152fe46d277fa8b898b17cc2f728bef55ca54757d94c297e5b1f51d30e4424c",
+      "contract": {
+        "version": 1,
+        "kind": "workflow",
+        "claims": [
+          {
+            "scope": "image.planning",
+            "method": "ecommerce.inline",
+            "actions": [
+              "plan"
+            ]
+          },
+          {
+            "scope": "image.submission",
+            "method": "image.direct",
+            "actions": [
+              "execute_prompt",
+              "edit"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "package_id": "4c7d133e-33e5-455a-9216-4b6cff0ce892",
+      "skill_key": "ecommerce-image-prompts",
+      "revision": "ve1b616b4340644d0bd1fd394e62c791e",
+      "body_sha256": "3709b3ddebb8089aa3de43620599ac544f858b499d5a7017e5aa75a6976960d8",
+      "contract": {
+        "version": 1,
+        "kind": "workflow",
+        "claims": [
+          {
+            "scope": "image.planning",
+            "method": "ecommerce.inline",
+            "actions": [
+              "plan"
+            ]
+          },
+          {
+            "scope": "image.submission",
+            "method": "image.direct",
+            "actions": [
+              "execute_prompt",
+              "edit"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "package_id": "7c1cedb1-83ed-4c0f-a9ea-d183260880c8",
+      "skill_key": "ecommerce-main-images",
+      "revision": "vf147c0c57e1b4bbdb780e4f8bd2ff8fe",
+      "body_sha256": "297dc20bcb9454d6923bdadce6a1746f29283d427c5b7a38c8a44eacc5d2b948",
+      "contract": {
+        "version": 1,
+        "kind": "workflow",
+        "claims": [
+          {
+            "scope": "image.planning",
+            "method": "ecommerce.server_plan",
+            "actions": [
+              "plan"
+            ]
+          },
+          {
+            "scope": "image.submission",
+            "method": "image.plan_source",
+            "actions": [
+              "execute_ready"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "package_id": "7c1cedb1-83ed-4c0f-a9ea-d183260880c8",
+      "skill_key": "ecommerce-main-images",
+      "revision": "v3",
+      "body_sha256": "bdcec1dd3dbd64a9693ea575809ded7a3f13af1d2e9000d5b1a769e570b6b79b",
+      "contract": {
+        "version": 1,
+        "kind": "workflow",
+        "claims": [
+          {
+            "scope": "image.planning",
+            "method": "ecommerce.server_plan",
+            "actions": [
+              "plan"
+            ]
+          },
+          {
+            "scope": "image.submission",
+            "method": "image.plan_source",
+            "actions": [
+              "execute_ready"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "package_id": "7c1cedb1-83ed-4c0f-a9ea-d183260880c8",
+      "skill_key": "ecommerce-main-images",
+      "revision": "v2",
+      "body_sha256": "531ab800782cf9ea0ad3ad2ba03919440553dd5684fc5e7a6e5181a7d92d1fc0",
+      "contract": {
+        "version": 1,
+        "kind": "workflow",
+        "claims": [
+          {
+            "scope": "image.planning",
+            "method": "ecommerce.server_plan",
+            "actions": [
+              "plan"
+            ]
+          },
+          {
+            "scope": "image.submission",
+            "method": "image.plan_source",
+            "actions": [
+              "execute_ready"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "package_id": "7c1cedb1-83ed-4c0f-a9ea-d183260880c8",
+      "skill_key": "ecommerce-main-images",
+      "revision": "v1",
+      "body_sha256": "9334e1c45104059df7a0f10b9d785c4cbe6eeaf11d9a9a000e1c9dddd0ce92b0",
+      "contract": {
+        "version": 1,
+        "kind": "workflow",
+        "claims": [
+          {
+            "scope": "image.planning",
+            "method": "ecommerce.server_plan",
+            "actions": [
+              "plan"
+            ]
+          },
+          {
+            "scope": "image.submission",
+            "method": "image.plan_source",
+            "actions": [
+              "execute_ready"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "package_id": "725d179e-a6fe-4282-9e8a-83876c336ff4",
+      "skill_key": "reference-image-prompts",
+      "revision": "vf540a7eb0eff4862b924d9af0f7032bd",
+      "body_sha256": "dd85988f88e96ae446ff5588866b0d2641113d96b9a73bae332c947606e6e90e",
+      "contract": {
+        "version": 1,
+        "kind": "workflow",
+        "claims": [
+          {
+            "scope": "image.prompting",
+            "method": "image.prompt",
+            "actions": [
+              "plan"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "package_id": "725d179e-a6fe-4282-9e8a-83876c336ff4",
+      "skill_key": "reference-image-prompts",
+      "revision": "v2",
+      "body_sha256": "1031460567131a72acc591b8e6cc707dcdf8e3b20bb45a280c5ce8c47bb01069",
+      "contract": {
+        "version": 1,
+        "kind": "workflow",
+        "claims": [
+          {
+            "scope": "image.prompting",
+            "method": "image.prompt",
+            "actions": [
+              "plan"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "package_id": "725d179e-a6fe-4282-9e8a-83876c336ff4",
+      "skill_key": "reference-image-prompts",
+      "revision": "v1",
+      "body_sha256": "7a6380545a478fbdde31c415c8df716fa381a824ef405c7c07b261e80d6a99cf",
+      "contract": {
+        "version": 1,
+        "kind": "workflow",
+        "claims": [
+          {
+            "scope": "image.prompting",
+            "method": "image.prompt",
+            "actions": [
+              "plan"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
