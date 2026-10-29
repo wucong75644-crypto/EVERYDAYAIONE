@@ -356,7 +356,7 @@ async def test_unconfirmed_checkpoint_prevents_correction_io(monkeypatch, enable
     monkeypatch.setattr(ChatToolMixin, "_execute_tool_calls", dispatch)
     async def checkpoint(point, payload):
         return {"outcome": outcome}
-    with pytest.raises(RuntimeError, match="ACTOR_TOOL_DISPATCH_CHECKPOINT_NOT_SAVED"):
+    with pytest.raises(RuntimeError, match="SKILL_COMPOSITION_NOT_SAVED"):
         await run_actor(monkeypatch, enabled, {"mode": "text_to_image", "prompt": "  exact\n", "resolution": "1K", "output_format": "png"},
             checkpoint=checkpoint, replay_blocks=blocks, model_round=1)
     dispatch.assert_not_awaited()
@@ -364,8 +364,10 @@ async def test_unconfirmed_checkpoint_prevents_correction_io(monkeypatch, enable
 
 async def test_missing_checkpoint_callback_cannot_claim_dispatch_persisted():
     from services.conversation_commands import SafePoint
+    runtime = actor()
+    runtime._replay_checkpoint_callback = None
     with pytest.raises(RuntimeError, match="ACTOR_TOOL_DISPATCH_CHECKPOINT_UNAVAILABLE"):
-        await actor().safe_point(SafePoint.BEFORE_TOOL, replay_payload={"content_blocks": []})
+        await runtime.safe_point(SafePoint.BEFORE_TOOL, replay_payload={"content_blocks": []})
 
 
 async def test_reserved_model_round_is_not_repeated_after_restart(monkeypatch, enabled):
