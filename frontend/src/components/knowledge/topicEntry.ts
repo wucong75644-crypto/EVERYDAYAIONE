@@ -91,7 +91,7 @@ export function planTopicOutline(
   for (const n of virtual)
     measured.set(n.id, {
       width: topicWidth(n,mapAppearance(n,[...nodes,...virtual],theme)?.style?.font_size??fontSize),
-      height: Math.max(146,78+titleHeight(n.title,topicWidth(n,mapAppearance(n,[...nodes,...virtual],theme)?.style?.font_size??fontSize),mapAppearance(n,[...nodes,...virtual],theme)?.style?.font_size??fontSize)),
+      height: Math.max(48,titleHeight(n.title,topicWidth(n,mapAppearance(n,[...nodes,...virtual],theme)?.style?.font_size??fontSize),mapAppearance(n,[...nodes,...virtual],theme)?.style?.font_size??fontSize)),
     });
   let arranged = [...nodes, ...virtual];
   if (target)
@@ -207,7 +207,7 @@ export function planParentTopic(
   const measured = new Map(sizes);
   measured.set(id, {
     width: topicWidth(parent,mapAppearance(parent,next,theme)?.style?.font_size??fontSize),
-    height: Math.max(146,78+titleHeight(title,topicWidth(parent,mapAppearance(parent,next,theme)?.style?.font_size??fontSize),richFont(titleFormat,mapAppearance(parent,next,theme)?.style?.font_size??fontSize))),
+    height: Math.max(48,titleHeight(title,topicWidth(parent,mapAppearance(parent,next,theme)?.style?.font_size??fontSize),richFont(titleFormat,mapAppearance(parent,next,theme)?.style?.font_size??fontSize))),
   });
   let root = structureRoot(next, id,theme?.layout)?.id ?? id;
   if (!structureRoot(next, id,theme?.layout)) {

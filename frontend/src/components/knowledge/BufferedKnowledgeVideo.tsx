@@ -1,0 +1,9 @@
+import {useCallback,useRef,useState} from 'react';
+import type {MutableRefObject} from 'react';
+import {PlaybackBuffer} from './playbackBuffer';
+import type {BufferStatus} from './playbackBuffer';
+export function BufferedKnowledgeVideo({src,name,startAt,resume,mediaRef,onIntent,onEnded,onError}:{src:string;name:string;startAt:number;resume:boolean;mediaRef:MutableRefObject<HTMLVideoElement|null>;onIntent:(value:boolean)=>void;onEnded:()=>void;onError:()=>void}){
+ const controller=useRef<PlaybackBuffer|null>(null),[status,setStatus]=useState<BufferStatus>({kind:resume?'buffering':'paused',ahead:0});
+ const attach=useCallback((element:HTMLVideoElement|null)=>{controller.current?.dispose();controller.current=null;mediaRef.current=element;if(element)controller.current=new PlaybackBuffer(element,setStatus,onIntent,startAt,resume);},[mediaRef,onIntent,startAt,resume]);
+ return <><video ref={attach} src={src} controls playsInline preload="auto" aria-label={name} onLoadedMetadata={()=>controller.current?.metadata()} onProgress={()=>controller.current?.update()} onCanPlay={()=>controller.current?.update()} onLoadedData={()=>controller.current?.update()} onTimeUpdate={()=>controller.current?.update()} onSeeked={()=>controller.current?.update()} onSeeking={()=>controller.current?.seek()} onWaiting={()=>controller.current?.wait()} onStalled={()=>controller.current?.update()} onPlay={()=>controller.current?.play()} onPause={()=>controller.current?.pause()} onEnded={onEnded} onError={onError}/>{status.kind==='buffering'&&<div className="kc-video-buffer" role="status">正在缓冲，已准备 {status.ahead.toFixed(1)} 秒… <button type="button" onClick={()=>controller.current?.cancel()}>暂停等待</button></div>}{status.kind==='blocked'&&<div className="kc-video-buffer" role="status">已缓冲，请点击播放器继续</div>}</>;
+}

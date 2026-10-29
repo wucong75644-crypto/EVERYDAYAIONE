@@ -370,7 +370,7 @@ def test_media_extraction_reuses_version_cache_before_opening_original(derived_d
  from core.config import get_settings
  from services.knowledge_workspace import media
  settings=get_settings();monkeypatch.setattr(settings,'knowledge_media_enabled',True);monkeypatch.setattr(settings,'dashscope_api_key','local-test-not-a-provider-key')
- r=derived_db[0]();n=create(r);b=upload(r,n)
+ r=derived_db[0]();n=create(r);b=r.file_command(uuid4(),'file_upload',{'object_id':str(n['id']),'version_id':str(uuid4()),'name':'合成.png','mime_type':'image/png','size':10,'sha256':'f'*64,'text_status':'unsupported','extracted_text':None})
  calls=[]
  monkeypatch.setattr(media,'read_version',lambda *args:b'local synthetic image')
  async def recognize(content,mime,authorize=None):
@@ -479,3 +479,104 @@ def test_delete_root_topic_with_derived_descendants_is_undoable(derived_db):
  assert any(c['id']==cid for c in r.canvas()['containers'])
  toggle(r);assert {n['id'] for n in r.canvas()['nodes']}=={n['id'] for n in before['nodes']}
  toggle(r,'redo');assert not any(n['id'] in [root['id'],child['id']] for n in r.canvas()['nodes'])
+
+
+def test_media_strategy_change_prevents_reusing_old_derived_generation(derived_db,monkeypatch):
+ from services.knowledge_workspace import media
+ r=derived_db[0]();n=create(r);upload(r,n);calls=[]
+ async def counted(sources,title,path):
+  calls.append(title)
+  return await fake(sources,title,path)
+ first=asyncio.run(process(r,n['id'],counted))
+ with r.cursor() as c:c.execute('SELECT public.kb_enqueue_derivation(%s)',(n['id'],))
+ assert asyncio.run(process(r,n['id'],counted))==first and len(calls)==1
+ monkeypatch.setattr(media,'MEDIA_CONFIG_VERSION','synthetic-next-strategy')
+ with r.cursor() as c:c.execute('SELECT public.kb_enqueue_derivation(%s)',(n['id'],))
+ assert asyncio.run(process(r,n['id'],counted))!=first and len(calls)==2
+
+
+def test_media_strategy_change_does_not_reuse_old_ocr(derived_db,monkeypatch):
+ from core.config import get_settings
+ from services.knowledge_workspace import media
+ settings=get_settings();monkeypatch.setattr(settings,'knowledge_media_enabled',True);monkeypatch.setattr(settings,'dashscope_api_key','synthetic')
+ r=derived_db[0]();n=create(r)
+ b=r.file_command(uuid4(),'file_upload',{'object_id':str(n['id']),'version_id':str(uuid4()),'name':'synthetic.png','mime_type':'image/png','size':1,'sha256':'a'*64,'text_status':'unsupported'})
+ calls=[]
+ monkeypatch.setattr(media,'read_version',lambda *args:b'synthetic')
+ async def recognize(content,mime,authorize=None):
+  if authorize:authorize()
+  calls.append(True)
+  return {'text':f'synthetic pass {len(calls)}','coverage':'complete'}
+ monkeypatch.setattr(media,'recognize',recognize)
+ first=asyncio.run(media.extract(r,n['id'],b['binding_id'],1))
+ assert asyncio.run(media.extract(r,n['id'],b['binding_id'],1))==first and len(calls)==1
+ monkeypatch.setattr(media,'MEDIA_CONFIG_VERSION','synthetic-next-strategy')
+ assert asyncio.run(media.extract(r,n['id'],b['binding_id'],1))!=first and len(calls)==2
+
+
+def test_grounding_reads_exact_context_and_rejects_legacy_rollup_as_fact(derived_db,monkeypatch):
+ from core.config import get_settings
+ from tests.test_knowledge_chat_v3 import start,ref
+ monkeypatch.setattr(get_settings(),'knowledge_derivation_enabled',True)
+ r=derived_db[0]();n=create(r);upload(r,n,'第一段：未拆封可退。'+'背景说明。'*110+'\n\n第二段：超过24小时需人工核实。'+'更多说明。'*110);asyncio.run(process(r,n['id'],fake))
+ run,_,_=start(derived_db[0],r,[ref(n)]);root=run.introduction()['roots'][0]['handle']
+ target=next(v for v in run.snapshot['items'] if v['type']=='generated' and v['evidence_kind']=='source')
+ read=run.execute('read',{'root_handle':root,'item_handles':[target['handle']],'context':True})
+ facts=run.grounding_sources();assert facts and all(f['text'] in read['items'][0]['body'] for f in facts)
+ assert '超过24小时' in '\n'.join(f['text'] for f in facts)
+ # A legacy parent summary contains invented text but cannot turn that text into evidence.
+ parent=create(r,title='父目录');child=create(r,parent['container_id'],parent['id'],'子资料');upload(r,child,'原文只写需要申请。')
+ async def invented(sources,title,path):return {'sections':[{'title':'步骤','text':'经理必定自动批准。','source_refs':[sources[0]['key']]}],'tags':[]}
+ asyncio.run(process(r,child['id'],invented));asyncio.run(process(r,parent['id'],invented))
+ run,_,_=start(derived_db[0],r,[ref(parent)]);root=run.introduction()['roots'][0]['handle']
+ item=next(v for v in run.snapshot['items'] if v['type']=='generated' and v['id']==str(parent['id']) and v['evidence_kind']=='rollup')
+ run.execute('read',{'root_handle':root,'item_handles':[item['handle']]})
+ assert '经理必定自动批准' not in '\n'.join(f['text'] for f in run.grounding_sources())
+ assert derived_db[0](1).object(parent['id']) is None
+
+
+def test_default_provider_outage_saves_only_labelled_originals(derived_db,monkeypatch):
+ import httpx
+ from services.knowledge_workspace import derivation,grounding
+ r=derived_db[0]();n=create(r);upload(r,n,'仅限未拆封商品，超过24小时需人工核实。')
+ async def outage(*args,**kwargs):raise httpx.ConnectError('synthetic outage')
+ # Replace only the provider's HTTP boundary; production generate and publish still run.
+ from core.config import get_settings
+ monkeypatch.setattr(get_settings(),'dashscope_api_key','synthetic')
+ async def client():return type('Client',(),{'post':outage})()
+ monkeypatch.setattr(derivation._client,'get',client)
+ gid=asyncio.run(process(r,n['id']));assert gid
+ value=document(r,n['id']);assert value['coverage']=='partial' and value['tags']==[]
+ assert all(s['grounding_mode']=='extractive_fallback' and s['grounding_reason']=='service_unavailable' for s in value['sections'])
+ assert '自动整理暂不可用' in value['sections'][0]['title']
+ assert value['sections'][0]['text']=='仅限未拆封商品，超过24小时需人工核实。'
+
+
+def test_verifier_replays_declared_original_not_just_short_model_quote(derived_db,monkeypatch):
+ import json,httpx
+ from core.config import get_settings
+ from services.knowledge_workspace import derivation
+ from tests.test_knowledge_chat_v3 import start,ref
+ settings=get_settings();monkeypatch.setattr(settings,'dashscope_api_key','synthetic');monkeypatch.setattr(settings,'knowledge_derivation_enabled',True);monkeypatch.setattr(settings,'knowledge_semantic_enabled',False)
+ r=derived_db[0]();n=create(r);binding=upload(r,n,'字段甲必填。\n字段乙发生后须人工核实。');upload(r,n,'未引用的其他附件内容。')
+ key='file:'+binding['binding_id']
+ async def respond(request):
+  body=json.loads(request.content)
+  if '独立的来源一致性审查员' in body['messages'][0]['content']:
+   value={'checks':[{'index':0,'supported':True,'relevant':True,'evidence':[{'key':key,'quote':'字段甲必填。'}]}]}
+  else:value={'sections':[{'title':'表单要求','text':'字段甲必填。字段乙发生后须人工核实。','source_refs':[key]}],'tags':[]}
+  return httpx.Response(200,json={'choices':[{'message':{'content':json.dumps(value)}}]})
+ async def scenario():
+  async with httpx.AsyncClient(transport=httpx.MockTransport(respond),base_url='https://synthetic.invalid') as client:
+   async def get():return client
+   monkeypatch.setattr(derivation._client,'get',get)
+   assert await process(r,n['id'])
+ asyncio.run(scenario())
+ run,_,_=start(derived_db[0],r,[ref(n)]);root=run.introduction()['roots'][0]['handle']
+ section=next(i for i in run.snapshot['items'] if i['type']=='generated' and i['evidence_kind']=='material')
+ run.execute('read',{'root_handle':root,'item_handles':[section['handle']]})
+ facts=run.grounding_sources();text='\n'.join(f['text'] for f in facts)
+ assert '字段乙发生后须人工核实。' in text and '未引用的其他附件内容' not in text
+ with r.cursor() as c:
+  c.execute('SELECT state FROM kb_retrieval_states WHERE snapshot_id=%s',(run.id,))
+  assert c.fetchone()['state']['grounding_source_chars']>0

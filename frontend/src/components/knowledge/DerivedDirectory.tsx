@@ -2,9 +2,17 @@ import {useDerivedDirectory} from './useDerivedDirectory';
 import {useEffect,useRef,useState} from 'react';
 import {ApiRequestError} from '../../services/api';
 import {knowledgeApi} from '../../services/knowledge';
+import type {DerivedSection} from '../../services/knowledge';
 import {useAuthStore} from '../../stores/useAuthStore';
 
-const statusText:Record<string,string>={queued:'资料整理中…',processing:'资料整理中…',failed:'资料整理失败，原文件仍可查看',blocked:'资料整理未完成',blocked_permission:'资料权限已变化',partial:'部分资料尚未完成解析',disabled:'自动整理尚未启用'};
+const statusText:Record<string,string>={queued:'资料整理中…',processing:'资料整理中…',failed:'资料整理失败，原文件仍可查看',blocked:'资料整理未完成',blocked_permission:'资料权限已变化',partial:'部分附件尚未完成解析',disabled:'自动整理尚未启用'};
+
+export function DerivedVerificationNotice({sections}:{sections:DerivedSection[]}){
+ const unverified=sections.some(s=>!s.manual&&(!s.verification||s.verification==='unverified'));
+ const navigation=sections.some(s=>s.verification==='navigation');
+ const extractive=sections.some(s=>s.verification==='extractive');
+ return <>{navigation&&<small role="status">自动概览未通过核验，以下保留分支入口，请进入分支查看原文。</small>}{unverified&&<small role="status">此处包含尚未核验的旧整理，请对照原文查看。</small>}{extractive&&<small role="status">部分内容为原文摘录，自动整理未通过核验。</small>}</>;
+}
 
 function ManualSection({objectId,sectionId,text,revision,onDone}:{objectId:string;sectionId:string;text:string;revision:number;onDone:()=>void}){
  const uid=useAuthStore(s=>s.user?.id),org=useAuthStore(s=>s.currentOrgId);const key='kc-section:'+uid+':'+org+':'+objectId+':'+sectionId;
@@ -18,7 +26,7 @@ function ManualSection({objectId,sectionId,text,revision,onDone}:{objectId:strin
 export function DerivedDirectory({objectId,writable}:{objectId:string;writable:boolean}){
  const {data,error,refresh}=useDerivedDirectory(objectId);
  if(!data&&!error)return null;
- return <section className="kc-derived-directory" aria-label="自动目录资料">{error&&<p role="alert">{error}</p>}{data&&statusText[data.status]&&<small role="status">{statusText[data.status]}</small>}{data?.sections.map(section=><section key={section.id}><h4>{section.title}{section.manual?' · 人工更正':''}</h4><p>{section.text}</p>{section.source_refs.map(ref=>data.source_links?.[ref]&&<a key={ref} href={data.source_links[ref]}>查看来源</a>)}{writable&&<ManualSection objectId={objectId} sectionId={section.id} text={section.text} revision={data.override_revisions?.[section.id]??0} onDone={refresh}/>}</section>)}</section>;
+ return <section className="kc-derived-directory" aria-label={data?.sections.some(s=>s.verification==='source')?'节点解析资料':'自动目录资料'}>{error&&<p role="alert">{error}</p>}{data&&statusText[data.status]&&<small role="status">{statusText[data.status]}</small>}{data?.sections.some(s=>s.verification==='source')&&<small>以下为本节点原文及附件解析文字，未生成 AI 摘要。</small>}{data&&<DerivedVerificationNotice sections={data.sections}/>} {data?.sections.map(section=><section key={section.id}><h4>{section.title}{section.manual?' · 人工更正':''}</h4><p>{section.text}</p>{section.source_refs.map(ref=>data.source_links?.[ref]&&<a key={ref} href={data.source_links[ref]}>查看来源</a>)}{writable&&<ManualSection objectId={objectId} sectionId={section.id} text={section.text} revision={data.override_revisions?.[section.id]??0} onDone={refresh}/>}</section>)}</section>;
 }
 export function DerivedTags({objectId,writable}:{objectId:string;writable:boolean}){
  const {data,error,refresh}=useDerivedDirectory(objectId);const [failure,setFailure]=useState(''),[busy,setBusy]=useState(false);const attempt=useRef<{tag:string;id:string;revision:number}|null>(null);

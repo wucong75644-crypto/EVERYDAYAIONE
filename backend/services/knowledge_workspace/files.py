@@ -22,8 +22,8 @@ BINARY_MIMES = {
     '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     '.png':'image/png', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.gif':'image/gif', '.webp':'image/webp', '.mp4':'video/mp4',
 }
-DOWNLOAD_EXTENSIONS = {'.doc','.xls','.ppt','.pptx','.zip'}
-PUBLIC_VERSION_KEYS = {'binding_id','revision','version_id','asset_id','name','mime_type','size','sha256','text_status','created_at'}
+DOWNLOAD_EXTENSIONS = {'.doc','.xls','.ppt','.pptx','.zip','.xmind'}
+PUBLIC_VERSION_KEYS = {'binding_id','revision','version_id','asset_id','name','mime_type','size','sha256','text_status','created_at','parse_state','ai_processing_enabled'}
 
 
 def fail(code, message, status=422):
@@ -65,20 +65,22 @@ def private_path(root, org_id, owner, version, *, create=False):
     return current / 'content'
 
 
-def inspect_file(path, name):
+def inspect_file(path, name, *, extract_text=True):
     name = clean_name(name); extension = Path(name).suffix.lower()
     data = Path(path).read_bytes()
     if not data or len(data)>MAX_BYTES:
         fail('KNOWLEDGE_FILE_SIZE','文件不能为空且不能超过 20MB',413)
     text = ''; status = 'unsupported'
     if extension in TEXT_EXTENSIONS:
-        try: text = data.decode('utf-8-sig')
-        except UnicodeDecodeError: fail('KNOWLEDGE_FILE_ENCODING','文本文件请使用 UTF-8 编码')
-        if '\x00' in text: fail('KNOWLEDGE_INVALID_FILE','文本文件包含无效字符')
-        status = 'truncated' if len(text)>200000 else 'ready'
-        text = text[:200000]; mime = 'text/plain'
+        mime='text/plain'
+        if extract_text:
+            try:text=data.decode('utf-8-sig')
+            except UnicodeDecodeError:fail('KNOWLEDGE_FILE_ENCODING','文本文件请使用 UTF-8 编码')
+            if '\x00' in text:fail('KNOWLEDGE_INVALID_FILE','文本文件包含无效字符')
+            status='truncated' if len(text)>200000 else 'ready';text=text[:200000]
+
     else:
-        if extension in {'.docx','.xlsx','.pptx','.zip'}:
+        if extension in {'.docx','.xlsx','.pptx','.zip','.xmind'}:
             try:
                 with zipfile.ZipFile(io.BytesIO(data)) as archive:
                     infos = archive.infolist()
@@ -88,7 +90,7 @@ def inspect_file(path, name):
         mime = BINARY_MIMES.get(extension, 'application/octet-stream')
         if extension in BINARY_MIMES and identify_file(data,stable_id='kb',provider_name=name).detected_mime_type != mime:
             fail('KNOWLEDGE_INVALID_FILE','文件内容与扩展名不符')
-        if extension in {'.pdf','.docx','.xlsx'}:
+        if extract_text and extension in {'.pdf','.docx','.xlsx'}:
             try:
                 worker = Path(__file__).with_name('file_extract.py')
                 result = subprocess.run([sys.executable,str(worker),str(Path(path).resolve()),extension],

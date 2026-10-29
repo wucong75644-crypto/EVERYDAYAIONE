@@ -1,3 +1,5 @@
+import {useAuthStore} from '../../stores/useAuthStore';
+import {useKnowledgeThumbnail,useNearViewport} from './useKnowledgeThumbnail';
 import {X} from 'lucide-react';
 import {RichTitle} from './TitleText';
 import type {TextMark} from './titleEditing';
@@ -26,44 +28,26 @@ export function CanvasNodeImage({
   disabled = false,
 }: {
   node: KnowledgeNode;
-  onPreview: (src:string) => void;onRemove?:()=>void;
+  onPreview: (src:string,release?:()=>void) => void;onRemove?:()=>void;
   onResize?: (width: number) => void;
   zoom?: number;
   disabled?: boolean;
 }) {
-  const [reload,setReload]=useState(0);
+
   const [preview, setPreview] = useState<number | null>(null);
   const resize = useRef<{ x: number; width: number } | null>(null);
   const image = node.canvas_data?.image;
-  const [loaded, setLoaded] = useState({ key: "", src: "", failed: false });
-  const key = node.id + ":" + image?.binding_id + ":" + image?.revision;
-  const src = loaded.key === key ? loaded.src : "",
-    failed = loaded.key === key && loaded.failed;
-  useEffect(() => {
-    const binding = image?.binding_id,
-      revision = image?.revision;
-    if (!binding || !revision) return;
-    const controller = new AbortController();
-    let url = "";
-    void knowledgeFilesApi
-      .content(node.id, binding, revision, controller.signal)
-      .then((blob) => {
-        if (controller.signal.aborted) return;
-        url = URL.createObjectURL(blob);
-        setLoaded({ key, src: url, failed: false });
-      })
-      .catch(() => {
-        if (!controller.signal.aborted)
-          setLoaded({ key, src: "", failed: true });
-      });
-    return () => {
-      controller.abort();
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [node.id, image?.binding_id, image?.revision, key,reload]);
+  const {ref:visibilityRef,near}=useNearViewport();
+  const thumbnail=useKnowledgeThumbnail(node.id,image?.binding_id??'',image?.revision??0,near&&!!image);
+  const src=thumbnail.src,failed=!!thumbnail.error;
+  const identity=useAuthStore(s=>(s.user?.id??'')+':'+(s.currentOrgId??''));
+  const key=identity+':'+node.id+':'+image?.binding_id+':'+image?.revision;
+  const full=useRef<{key:string;url:string;controller:AbortController}|null>(null);
+  useEffect(()=>()=>{const resource=full.current;resource?.controller.abort();if(resource?.url)URL.revokeObjectURL(resource.url);full.current=null;},[key]);
+  const previewOriginal=()=>{if(!image)return;if(full.current?.key===key&&full.current.url){const resource=full.current;onPreview(resource.url,()=>{URL.revokeObjectURL(resource.url);if(full.current===resource)full.current=null;});return;}full.current?.controller.abort();const controller=new AbortController();full.current={key,url:'',controller};void knowledgeFilesApi.content(node.id,image.binding_id,image.revision,controller.signal).then(blob=>{if(controller.signal.aborted)return;const url=URL.createObjectURL(blob);const resource={key,url,controller};full.current=resource;onPreview(url,()=>{URL.revokeObjectURL(url);if(full.current===resource)full.current=null;});}).catch(()=>{if(!controller.signal.aborted)thumbnail.retry();});};
   if (!image) return null;
   return (
-    <div className="kc-image-wrap" style={{width:preview??image.width,maxWidth:'100%'}}>
+    <div ref={visibilityRef} className="kc-image-wrap" style={{width:preview??image.width,maxWidth:'100%'}}>
       <button
         className="kc-inline-image"
         style={{
@@ -71,7 +55,7 @@ export function CanvasNodeImage({
           height: (preview ?? image.width) / (image.aspect ?? 1),
         }}
         onPointerDown={(e) => e.stopPropagation()}
-        onClick={e=>{e.stopPropagation();if(src)onPreview(src);else if(failed)setReload(n=>n+1);}}
+        onClick={e=>{e.stopPropagation();if(src)previewOriginal();else if(failed)thumbnail.retry();}}
         onDoubleClick={e=>e.stopPropagation()}
         disabled={!src&&!failed}
         title={failed?"重试加载图片":"放大查看"}

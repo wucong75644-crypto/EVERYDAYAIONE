@@ -14,16 +14,16 @@ it('opens a large readonly document below the supplied node coordinates',()=>{
  fireEvent.click(screen.getByRole('button',{name:'补充 / 修改'}));expect(props.onInputMode).toHaveBeenCalledWith(true);
  fireEvent.click(screen.getByRole('button',{name:'关闭目录资料'}));expect(props.onClose).toHaveBeenCalledOnce();
 });
-it('submits a separate instruction without making the document editable',()=>{
+it('submits the literal complete body for explicit saving',()=>{
  render(<DirectoryPanel {...props} inputMode text="把时间改成昨天"/>);
  const input=screen.getByRole('textbox',{name:'补充 / 修改内容'});expect(input).toHaveFocus();expect(input).toHaveValue('把时间改成昨天');
  fireEvent.change(input,{target:{value:'补充一步：核对订单'}});expect(props.onText).toHaveBeenCalledWith('补充一步：核对订单');
- fireEvent.click(screen.getByRole('button',{name:'提交给 AI 整理'}));expect(props.onSubmit).toHaveBeenCalledOnce();
+ fireEvent.click(screen.getByRole('button',{name:'保存正文'}));expect(props.onSubmit).toHaveBeenCalledOnce();
 });
-it('keeps saved body primary and generated sections available without duplicate editing',()=>{
+it('shows source body without mixing in AI-generated sections',()=>{
  derived.data={status:'ready',sections:[{id:'s',title:'节点与资料状态',text:'历史资料，需要核对。',source_refs:[]}]};
  render(<DirectoryPanel {...props}/>);expect(screen.getByRole('heading',{name:'导出步骤'})).toBeVisible();
- fireEvent.click(screen.getByText('文件与分支自动整理'));expect(screen.getByRole('heading',{name:'节点与资料状态'})).toBeVisible();expect(screen.queryByRole('button',{name:'修改此段'})).toBeNull();
+ expect(screen.queryByText('文件与分支自动整理')).toBeNull();expect(screen.queryByRole('heading',{name:'节点与资料状态'})).toBeNull();expect(screen.queryByRole('button',{name:'修改此段'})).toBeNull();
 });
 it('never exposes editing to viewers and freezes uncertain submissions',()=>{
  const view=render(<DirectoryPanel {...props} object={{...object,can_write:false}}/>);expect(screen.queryByRole('button',{name:'补充 / 修改'})).toBeNull();

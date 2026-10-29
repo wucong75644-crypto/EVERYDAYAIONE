@@ -2,7 +2,7 @@
 from hashlib import sha256
 import re
 
-CONFIG_VERSION = 'directory-v1'
+CONFIG_VERSION = 'directory-v9-canonical-originals'
 MAX_CHARS = 120000
 
 
@@ -26,19 +26,25 @@ def split_text(text, limit=800):
 
 
 def source_chunks(sources):
-    chunks, remaining = [], MAX_CHARS
+    from .originals import records,bound_sources
+    sources,_=bound_sources(sources,MAX_CHARS)
+    chunks=[]
     for source in sources:
-        text = source['text'][:remaining]; remaining -= len(text)
-        for i, part in enumerate(split_text(text)):
-            chunks.append({'id': sha256((source['key'] + ':' + str(i) + ':' + part).encode()).hexdigest()[:32],
-                           'section_id': source['key'], 'text': part, 'title': source['title'],
-                           'source_refs': [source['key']], 'position': {'part': i}, 'kind': 'source'})
-        if remaining <= 0:
-            break
+        for record in records(source):
+            text=record['text']
+            for start in range(0,len(text),720):
+                part=text[start:start+800]
+                if not part:continue
+                offset=record['start']+start
+                chunks.append({'id':sha256((source['key']+':'+record['origin']+':'+str(offset)+':'+part).encode()).hexdigest()[:32],
+                    'section_id':source['key'],'text':part,'title':source['title'],'source_refs':[source['key']],
+                    'position':{'part':len(chunks)},'kind':'source',
+                    'provenance':{'origin':record['origin'],'start':offset},
+                    **({'origin_version':'grounding-v1'} if 'grounding_text' in source else {})})
     return chunks
 
 
-def validate_output(value, sources):
+def validate_output(value, sources, *, verified=False):
     if not isinstance(value, dict) or set(value) - {'sections', 'tags'}:
         raise ValueError('INVALID_MODEL_STRUCTURE')
     allowed = {s['key'] for s in sources}
@@ -47,7 +53,7 @@ def validate_output(value, sources):
         raise ValueError('INVALID_MODEL_SECTIONS')
     clean, seen = [], set()
     for section in sections:
-        if not isinstance(section, dict) or set(section) - {'title', 'text', 'source_refs', 'kind'}:
+        if not isinstance(section, dict) or set(section) - ({'title', 'text', 'source_refs', 'kind'} | ({'evidence','grounding_version','grounding_mode','grounding_reason'} if verified else set())):
             raise ValueError('INVALID_MODEL_SECTION')
         title, text, refs = section.get('title'), section.get('text'), section.get('source_refs')
         if not isinstance(title, str) or not 1 <= len(title) <= 120 or not isinstance(text, str) or not 1 <= len(text) <= 12000:
@@ -58,7 +64,8 @@ def validate_output(value, sources):
         if key in seen:raise ValueError('DUPLICATE_MODEL_SECTION')
         seen.add(key)
         clean.append({'id': key, 'title': title, 'text': text, 'source_refs': list(dict.fromkeys(refs)),
-                      'kind': 'rollup' if all(s['kind'] == 'child' for s in sources if s['key'] in refs) else 'material'})
+                      'kind': 'rollup' if all(s['kind'] == 'child' for s in sources if s['key'] in refs) else 'material',
+                      **({k:section[k] for k in ('evidence','grounding_version','grounding_mode','grounding_reason') if k in section} if verified else {})})
     if sum(len(s['text']) for s in clean)>MAX_CHARS:raise ValueError('MODEL_OUTPUT_CAPACITY')
     tags = value.get('tags', [])
     if not isinstance(tags, list) or len(tags) > 12 or any(not isinstance(t, str) or not t.strip() or len(t)>40 for t in tags):

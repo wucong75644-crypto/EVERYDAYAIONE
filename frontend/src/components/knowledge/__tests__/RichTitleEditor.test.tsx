@@ -6,7 +6,7 @@ import {RichTitleEditor} from '../RichTitleEditor';
 import type {TitleEditorHandle} from '../RichTitleEditor';
 import type {TitleFormat} from '../../../services/knowledge';
 import {restoreTitleSelection,titleSelection,TitleEditHistory,selectionValue} from '../titleEditing';
-function setup(text='售后方法',format?:TitleFormat,style={fontWeight:700,color:'#123456',fontSize:18}){const ref=createRef<TitleEditorHandle>(),change=vi.fn(),keys=vi.fn();function Harness(){const [value,setValue]=useState({text,format});return <RichTitleEditor id="title" label="编辑标题" ref={ref} {...value} style={style} onChange={(text,format)=>{change(text,format);setValue({text,format});}} onKeyDown={keys} onCompositionStart={()=>{}} onCompositionEnd={()=>{}}/>;}render(<Harness/>);const el=screen.getByRole('textbox',{name:'编辑标题'});act(()=>{ref.current?.focus();ref.current?.setSelectionRange(text.length,text.length);});return {el,ref,change,keys};}
+function setup(text='售后方法',format?:TitleFormat,style={fontWeight:700,color:'#123456',fontSize:18},contextualTools=false){const ref=createRef<TitleEditorHandle>(),change=vi.fn(),keys=vi.fn();function Harness(){const [value,setValue]=useState({text,format});return <RichTitleEditor contextualTools={contextualTools} id="title" label="编辑标题" ref={ref} {...value} style={style} onChange={(text,format)=>{change(text,format);setValue({text,format});}} onKeyDown={keys} onCompositionStart={()=>{}} onCompositionEnd={()=>{}}/>;}render(<Harness/>);const el=screen.getByRole('textbox',{name:'编辑标题'});act(()=>{ref.current?.focus();ref.current?.setSelectionRange(text.length,text.length);});return {el,ref,change,keys};}
 function select(el:HTMLElement,start:number,end:number,backward=false){act(()=>{restoreTitleSelection(el,{start,end,backward});document.dispatchEvent(new Event('selectionchange'));});}
 describe('WYSIWYG title editor',()=>{
  it('resolves inherited formatting and toggles the visible bold off',()=>{const {el}=setup();select(el,0,2);expect(screen.getByLabelText('选中文字加粗')).toHaveAttribute('aria-pressed','true');expect(screen.getByLabelText('选中文字字号')).toHaveValue('18');expect(screen.getByLabelText('选中文字颜色')).toHaveValue('#123456');fireEvent.click(screen.getByLabelText('选中文字加粗'));expect(el.querySelector('span')).toHaveStyle({fontWeight:400});expect(screen.queryByLabelText('标题格式预览')).toBeNull();fireEvent.click(screen.getByLabelText('清除文字格式'));expect(screen.getByLabelText('选中文字加粗')).toHaveAttribute('aria-pressed','true');expect(el.textContent).toBe('售后方法');});
@@ -22,3 +22,14 @@ describe('WYSIWYG title editor',()=>{
 it('shows a pending style on an empty title before typing and applies it to the next input',async()=>{const user=userEvent.setup(),{el}=setup('');fireEvent.click(screen.getByLabelText('选中文字加粗'));expect(screen.getByLabelText('选中文字加粗')).toHaveAttribute('aria-pressed','false');await user.keyboard('A');expect(el.querySelector('span')).toHaveStyle({fontWeight:400});});
 
 it('enters the formatting toolbar without stealing Tab from child creation and navigates buttons by keyboard',()=>{const {el}=setup();select(el,0,2);fireEvent.keyDown(el,{key:'F10',altKey:true});const bold=screen.getByLabelText('选中文字加粗'),italic=screen.getByLabelText('选中文字斜体');expect(bold).toHaveFocus();fireEvent.keyDown(bold,{key:'ArrowRight'});expect(italic).toHaveFocus();fireEvent.click(italic);expect(titleSelection(el)).toMatchObject({start:0,end:2});});
+
+it('keeps formatting out of normal typing and shows it only for a text selection',()=>{
+ const {el}=setup('售后方法',undefined,undefined,true);expect(screen.queryByRole('toolbar',{name:'标题文字格式'})).toBeNull();
+ select(el,0,2);expect(screen.getByRole('toolbar',{name:'标题文字格式'})).toBeVisible();
+ select(el,2,2);expect(screen.queryByRole('toolbar',{name:'标题文字格式'})).toBeNull();
+});
+it('opens contextual formatting from the keyboard without altering the caret or submitting',()=>{
+ const {el,keys}=setup('售后方法',undefined,undefined,true);expect(titleSelection(el)).toMatchObject({start:4,end:4});fireEvent.keyDown(el,{key:'F10',altKey:true});
+ expect(screen.getByRole('toolbar',{name:'标题文字格式'})).toBeVisible();expect(screen.getByLabelText('选中文字加粗')).toHaveFocus();expect(keys).not.toHaveBeenCalled();
+ act(()=>el.focus());expect(screen.queryByRole('toolbar',{name:'标题文字格式'})).toBeNull();expect(titleSelection(el)).toMatchObject({start:4,end:4});
+});
