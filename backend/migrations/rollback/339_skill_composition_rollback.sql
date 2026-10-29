@@ -1,5 +1,6 @@
 -- Refuse destructive rollback while v2 task records exist.
 DO $$ BEGIN IF EXISTS(SELECT 1 FROM public.tasks WHERE request_params ? '_skill_composition') THEN RAISE EXCEPTION 'SKILL_COMPOSITION_ROLLBACK_REQUIRES_DUAL_READER'; END IF; END $$;
+SET LOCAL ROLE everydayai;
 CREATE OR REPLACE FUNCTION public.save_generation_checkpoint(
     p_task_id UUID, p_execution_token UUID, p_safe_point TEXT, p_state JSONB
 )

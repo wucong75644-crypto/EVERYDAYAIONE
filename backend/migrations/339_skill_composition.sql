@@ -1,4 +1,6 @@
 -- Atomic Skill composition/checkpoint projection; v1 calls retain their contract.
+-- The release executor starts as everydayai_owner; retain each existing function owner.
+SET LOCAL ROLE everydayai;
 CREATE OR REPLACE FUNCTION public.save_generation_checkpoint(
     p_task_id UUID, p_execution_token UUID, p_safe_point TEXT, p_state JSONB
 )

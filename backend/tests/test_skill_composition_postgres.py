@@ -20,6 +20,8 @@ def composition_db(ecom_db):
         table=schema[schema.index('CREATE TABLE IF NOT EXISTS public.conversation_turn_checkpoints'):schema.index('CREATE OR REPLACE FUNCTION public.append_conversation_control_command')]
         c.execute(table)
         c.execute('GRANT SELECT,INSERT,UPDATE ON conversation_turn_checkpoints TO everydayai')
+        # Match the production runner role; superuser-only execution hid owner drift.
+        c.execute('SET LOCAL ROLE everydayai_owner')
         c.execute((ROOT/'migrations/339_skill_composition.sql').read_text())
     return ecom_db
 
@@ -159,3 +161,12 @@ def test_workflow_projection_and_composition_identity_are_one_transaction(compos
         assert save(c,f,p)['outcome']=='saved'
         stored=c.execute("SELECT request_params FROM tasks WHERE id=%s",(f['task'],)).fetchone()[0]
         assert stored['_skill_composition']['workflow_links']['ecommerce']==stored['_ecom_workflow']==value
+
+
+def test_migration_preserves_existing_function_owners_under_release_runner_role(composition_db):
+    with psycopg.connect(composition_db) as c:
+        owners=dict(c.execute("""SELECT proname,pg_get_userbyid(proowner) FROM pg_proc
+            WHERE oid IN ('public.save_generation_checkpoint(uuid,uuid,text,jsonb)'::regprocedure,
+                          'public.accept_chat_image_request(uuid,uuid,jsonb,uuid)'::regprocedure)""").fetchall())
+        assert owners=={'save_generation_checkpoint':'everydayai',
+                        'accept_chat_image_request':'everydayai_owner'}
