@@ -30,6 +30,7 @@ ROOT=Path(__file__).parents[1]
 def format_db(delivery_db):
     with psycopg.connect(delivery_db) as db:
         db.execute((ROOT/'migrations/287_ecommerce_format_recovery.sql').read_text())
+        db.execute((ROOT/'migrations/303_detail_inflight_format_after_retry_stop.sql').read_text())
     return delivery_db
 
 
@@ -64,6 +65,40 @@ def test_format_attempt_state_compare_and_swap_has_one_winner(format_db):
     with ThreadPoolExecutor(4) as pool:results=list(pool.map(save,range(4)))
     assert results.count('saved')==1
     assert all(r=='saved' or 'DRAFT_CONFLICT' in r for r in results)
+
+
+@pytest.mark.parametrize('stage', [1, 2, 3])
+def test_stopping_auto_retry_preserves_inflight_format_save_and_completion(format_db, stage):
+    user,project,_,plan,lease,draft=seed_draft(format_db,stage)
+    with scoped(format_db,user) as db:
+        assert db.execute('SELECT stop_detail_delivery_recovery(%s)',(project,)).fetchone()[0]
+    changed={**draft,'format_attempted':True}
+    with scoped(format_db,user) as db:
+        assert db.execute('SELECT persist_ecom_plan_format_state(%s,%s,%s,%s,%s)',
+            (plan,lease,stage,Jsonb(draft),Jsonb(changed))).fetchone()[0]['outcome']=='saved'
+        assert complete(db,plan,lease,changed,stage)['outcome']=='saved'
+    with scoped(format_db,user) as db:
+        with pytest.raises(psycopg.Error, match='DETAIL_SCOPE_DENIED'):
+            db.execute("SELECT claim_detail_delivery_retry(%s,'plan','initial:0:1',%s,'TEST',false)",
+                (plan,str(uuid4())))
+
+
+def test_retry_stop_migration_rollback_and_reapply(format_db):
+    user,project,_,plan,lease,draft=seed_draft(format_db)
+    with scoped(format_db,user) as db:
+        db.execute('SELECT stop_detail_delivery_recovery(%s)',(project,))
+    with psycopg.connect(format_db) as db:
+        db.execute((ROOT/'migrations/rollback/303_detail_inflight_format_after_retry_stop_rollback.sql').read_text())
+    try:
+        with scoped(format_db,user) as db:
+            with pytest.raises(psycopg.Error, match='ECOM_PLAN_SCOPE_DENIED'):
+                complete(db,plan,lease,draft)
+    finally:
+        with psycopg.connect(format_db) as db:
+            db.execute((ROOT/'migrations/303_detail_inflight_format_after_retry_stop.sql').read_text())
+    with scoped(format_db,user) as db:
+        assert complete(db,plan,lease,draft)['outcome']=='saved'
+        assert db.execute("SELECT prosecdef,pg_get_userbyid(proowner) FROM pg_proc WHERE oid='lock_ecom_format_plan(uuid)'::regprocedure").fetchone()==(False,'everydayai_owner')
 
 
 @pytest.mark.parametrize('stage',[1,2,3])
@@ -111,7 +146,8 @@ def test_local_completion_rejects_untrusted_stale_or_unknown_execution(format_db
 
 
 @pytest.mark.parametrize('kind,count',[('main_images',7),('detail_page',7),('main_images',15),('detail_page',15)])
-async def test_v4_pipeline_repairs_only_missing_item_and_accepts_exact_image_requests(format_db,kind,count):
+@pytest.mark.parametrize('stop_stage', [None, 1, 2, 3])
+async def test_v4_pipeline_repairs_only_missing_item_and_accepts_exact_image_requests(format_db,kind,count,stop_stage):
     user,project,run,plan=seed(format_db,count);opt_in(format_db,plan)
     _,evidence,bodies,prompts,_=fixture(count,kind)
     snapshot=evidence['input_snapshot']
@@ -130,6 +166,9 @@ async def test_v4_pipeline_repairs_only_missing_item_and_accepts_exact_image_req
     async def model_call(row,lease,stage,prompt,messages):
         reservation=await planner._reserve(row,lease,stage,attempt:=str(uuid4()),600)
         calls.append((stage,messages))
+        if stage==stop_stage:
+            with scoped(format_db,user) as db:
+                db.execute('SELECT stop_detail_delivery_recovery(%s)',(project,))
         if stage==1:
             output=deepcopy(evidence['product_selling_points']);output.pop('schema_version')
             output['facts'][0]['nonbusiness_extra']=None
@@ -172,6 +211,7 @@ def test_migration_roundtrip_is_invoker_only_and_not_public(format_db):
     with psycopg.connect(format_db) as db:
         db.execute((ROOT/'migrations/rollback/287_ecommerce_format_recovery_rollback.sql').read_text())
         db.execute((ROOT/'migrations/287_ecommerce_format_recovery.sql').read_text())
+        db.execute((ROOT/'migrations/303_detail_inflight_format_after_retry_stop.sql').read_text())
         rows=db.execute("SELECT prosecdef,has_function_privilege('image_untrusted',oid,'EXECUTE'),has_function_privilege('everydayai',oid,'EXECUTE') FROM pg_proc WHERE proname IN ('lock_ecom_format_plan','persist_ecom_plan_format_state','complete_ecom_plan_local_draft')").fetchall()
         assert len(rows)==3 and all(row==(False,False,True) for row in rows)
 
