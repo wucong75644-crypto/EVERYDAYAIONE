@@ -14,8 +14,8 @@ export interface ManualLayout {source_anchor?:RelationPoint;target_anchor?:Relat
 export interface CanvasData {
   manual_layout?:ManualLayout;
   boundaries?:{id:string;members:string[];title:string}[]; title_format?: TitleFormat; width?: number | null; height?: number | null; structure?: import("../components/knowledge/topicStructure").TopicStructure; video?:CanvasVideo|null; link?:CanvasLink|null; style?: CanvasStyle | null; image?: CanvasImage | null; note?: string; labels?: string[]; task?: { progress: number; priority: number; start: string; due: string; assignee: string } | null; summary?: { members: string[]; title: string } | null; boundary?: { members: string[]; title: string } | null }
-export interface KnowledgeNode { attachments?:{total:number;items:KnowledgeFile[]}; canvas_data?: CanvasData; id: string; container_id: string; parent_id: string | null; kind: 'topic' | 'document' | 'rule'; title: string; revision: number; node_id: string; x: number; y: number; layout_revision: number; sort_order?: number | null }
-export interface DerivedSection {id:string;title:string;text:string;source_refs:string[];kind:string;manual?:boolean}
+export interface KnowledgeNode { has_body?:boolean;attachments?:{total:number;items:KnowledgeFile[]}; canvas_data?: CanvasData; id: string; container_id: string; parent_id: string | null; kind: 'topic' | 'document' | 'rule'; title: string; revision: number; node_id: string; x: number; y: number; layout_revision: number; sort_order?: number | null }
+export interface DerivedSection {id:string;title:string;text:string;source_refs:string[];kind:string;manual?:boolean;verification?:'manual'|'verified'|'extractive'|'navigation'|'source'|'unverified'}
 export interface DerivedKnowledge {generation_id:string|null;sections:DerivedSection[];tags:string[];auto_tags?:string[];status:string;coverage?:string;overrides?:Record<string,{text?:string;hidden?:boolean}>;override_revisions?:Record<string,number>;source_links?:Record<string,string>}
 export interface DirectoryDocument extends KnowledgeObject {derived:DerivedKnowledge|null}
 export interface ContentPlan {title:string;body:string;children:{title:string;body:string}[]}
@@ -62,12 +62,20 @@ export const knowledgeApi = {
 };
 
 export interface KnowledgeFileVersion {
-  binding_id: string; revision: number; version_id: string; asset_id: string; name: string;
+  ai_processing_enabled?:boolean;parse_state?:string; binding_id: string; revision: number; version_id: string; asset_id: string; name: string;
   mime_type: string; size: number; sha256: string; text_status: 'ready' | 'unsupported' | 'failed' | 'truncated'; created_at: string;
 }
 export interface KnowledgeFile { id: string; title: string; current_revision: number; version: KnowledgeFileVersion }
 export interface KnowledgeFileTarget { binding_id?: string; expected_revision?: number }
+export interface XmindImportResult { status:string; container_id:string; object_id:string; folded_ids:string[]; hidden?:boolean; report:{topics:number;images:number;links:number;summaries:number;warnings:string[]} }
+export interface ImportProgress {ai_processing_enabled?:boolean;framework:string;nodes:number;files:Record<string,number>;links_unread:number}
 export const knowledgeFilesApi = {
+  progress:(containerId:string,signal?:AbortSignal)=>get<ImportProgress>('/knowledge/containers/'+containerId+'/import-progress',signal),
+  retry:(objectId:string,bindingId:string,revision:number)=>request({url:'/knowledge/objects/'+objectId+'/files/'+bindingId+'/versions/'+revision+'/retry',method:'POST'}),
+  importXmind: (file:File, commandId:string, containerId:string, expectedRevision:number) => {
+    const data=new FormData(); data.append('file',file); data.append('command_id',commandId); data.append('container_id',containerId); data.append('expected_container_revision',String(expectedRevision));
+    return request<Envelope<XmindImportResult>>({url:'/knowledge/imports/xmind',method:'POST',data,timeout:120000});
+  },
   list: (objectId: string, signal?: AbortSignal) => get<KnowledgeFile[]>('/knowledge/objects/' + objectId + '/files', signal),
   versions: (objectId: string, bindingId: string, before?: number, signal?: AbortSignal) => get<KnowledgeResults<KnowledgeFileVersion, number>>('/knowledge/objects/' + objectId + '/files/' + bindingId + '/versions' + (before ? '?before=' + before : ''), signal),
   upload: (objectId: string, file: File, commandId: string, target: KnowledgeFileTarget = {}) => {
@@ -79,5 +87,7 @@ export const knowledgeFilesApi = {
   snapshot: (objectId: string, path: string, commandId: string) => request<Envelope<unknown>>({ url: '/knowledge/objects/' + objectId + '/files/from-workspace', method: 'POST', data: { command_id: commandId, workspace_path: path }, timeout: 120000 }),
   reference: (objectId: string, sourceObject: string, sourceBinding: string, revision: number, commandId: string) => request<Envelope<unknown>>({ url: '/knowledge/objects/' + objectId + '/files/reference', method: 'POST', data: { command_id: commandId, source_object_id: sourceObject, source_binding_id: sourceBinding, source_revision: revision } }),
   remove: (objectId: string, binding: KnowledgeFile, commandId: string) => request<Envelope<unknown>>({ url: '/knowledge/objects/' + objectId + '/files/' + binding.id, method: 'DELETE', data: { command_id: commandId, expected_revision: binding.current_revision } }),
+  thumbnail: (objectId:string,bindingId:string,revision:number,signal?:AbortSignal)=>request<Blob>({url:'/knowledge/objects/'+objectId+'/files/'+bindingId+'/versions/'+revision+'/thumbnail',responseType:'blob',signal,timeout:30000}),
+  playback: (objectId:string,bindingId:string,revision:number,signal?:AbortSignal,quality:'preview'|'original'='preview')=>request<Envelope<{url:string;expires_in:number}>>({url:'/knowledge/objects/'+objectId+'/files/'+bindingId+'/versions/'+revision+'/playback?quality='+quality,method:'POST',signal,timeout:60000}).then(result=>result.data),
   content: (objectId: string, bindingId: string, revision: number, signal?: AbortSignal) => request<Blob>({ url: '/knowledge/objects/' + objectId + '/files/' + bindingId + '/versions/' + revision + '/content', responseType: 'blob', signal, timeout: 120000 }),
 };

@@ -205,7 +205,7 @@ async def test_plain_model_answer_and_evidence_survive_finalization(v3_db,monkey
     root=run.snapshot['roots'][0]['handle'];h=run.execute('outline',{'root_handle':root})['items'][0]['handle']
     source=run.execute('read',{'root_handle':root,'item_handles':[h]})['items'][0]['source']['url']
     async def stream(**kwargs):
-        yield SimpleNamespace(content='保留模型原答案',thinking_content=None,tool_calls=None,prompt_tokens=3,completion_tokens=2,credits_consumed=None,finish_reason='stop')
+        yield SimpleNamespace(content='中文正文中的验收关键词',thinking_content=None,tool_calls=None,prompt_tokens=3,completion_tokens=2,credits_consumed=None,finish_reason='stop')
     prepared=SimpleNamespace(execution_context=catalog_context('org-1'),adapter=SimpleNamespace(stream_chat=stream,close=AsyncMock()),
         permission=SimpleNamespace(mode=SimpleNamespace(value='auto'),need_exit_attachment=False,get_reminder=lambda _:''),
         core_tools=[],stream_kwargs={},tool_context=SimpleNamespace(discovered_tools=set(),build_context_prompt=lambda:''),messages=[],
@@ -214,11 +214,18 @@ async def test_plain_model_answer_and_evidence_survive_finalization(v3_db,monkey
     monkeypatch.setattr('services.handlers.chat.execution_engine.prepare_chat_stream',AsyncMock(return_value=prepared))
     # Cleanup settings are separate from the real database fixture.
     monkeypatch.setattr('services.knowledge_workspace.materialize.cleanup',lambda value:None)
+    audited=[]
+    async def audit(candidate,facts,*args,**kwargs):
+        assert candidate==['中文正文中的验收关键词']
+        assert any('中文正文中的验收关键词' in fact['text'] for fact in facts)
+        audited.append(candidate)
+    monkeypatch.setattr('services.knowledge_workspace.grounding.audit',audit)
     handler=SimpleNamespace(org_id='org-1',_adapter=None,_knowledge_run=run,_calculate_credits=lambda u:u['completion_tokens'])
     sink=CollectingExecutionSink();sink.flush=AsyncMock(side_effect=lambda:None)
     runtime=ConversationTurnRuntime(conversation_id='conv-1',task_id='task-1',turn_id='turn-1',cancellation_event=asyncio.Event())
     result=await execute_chat(handler=handler,request=_request(),runtime=runtime,sink=sink)
-    assert result.parts[0].text=='保留模型原答案'
+    assert result.parts[0].text=='中文正文中的验收关键词'
+    assert len(audited)==1
     assert source in result.parts[-1].text
     assert source in sink.text+json.dumps(sink.blocks,ensure_ascii=False)
     sink.flush.assert_awaited_once()

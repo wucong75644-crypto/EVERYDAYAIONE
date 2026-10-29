@@ -1,3 +1,5 @@
+import {useKnowledgeThumbnail,useNearViewport} from './useKnowledgeThumbnail';
+import {KnowledgeMediaPlayer} from './KnowledgeMediaPlayer';
 import * as Menu from '@radix-ui/react-dropdown-menu';
 import {Paperclip} from 'lucide-react';
 import type {FileEntryAction} from './KnowledgeFiles';
@@ -13,10 +15,8 @@ import {Dialog} from '../primitives/Dialog';
 export function FileIcon({mime}:{mime:string}){const Icon=mime.startsWith('image/')?FileImage:mime.startsWith('video/')?FileVideo:mime==='application/pdf'||mime.startsWith('text/')?FileText:File;return <Icon size={22} aria-hidden="true"/>;}
 
 export function FileThumbnail({objectId,file}:{objectId:string;file:KnowledgeFile}){
- const host=useRef<HTMLSpanElement>(null),[visible,setVisible]=useState(typeof IntersectionObserver==='undefined'),[loaded,setLoaded]=useState({key:'',src:''});const key=objectId+':'+file.id+':'+file.current_revision,src=loaded.key===key?loaded.src:'';
- useEffect(()=>{if(!host.current)return;if(typeof IntersectionObserver==='undefined')return;const observer=new IntersectionObserver(entries=>{if(entries.some(e=>e.isIntersecting)){setVisible(true);observer.disconnect();}});observer.observe(host.current);return()=>observer.disconnect();},[]);
- useEffect(()=>{if(!visible||!file.version.mime_type.startsWith('image/')||file.version.size>2*1024*1024)return;const c=new AbortController();let url='';void(async()=>{try{const blob=await knowledgeFilesApi.content(objectId,file.id,file.current_revision,c.signal);if(!c.signal.aborted){url=URL.createObjectURL(blob);setLoaded({key,src:url});}}catch{/* Keep the file-type icon if thumbnail reading fails. */}})();return()=>{c.abort();if(url)URL.revokeObjectURL(url);};},[visible,objectId,file.id,file.current_revision,file.version.mime_type,file.version.size,key]);
- return <span ref={host} className="kc-file-thumb">{src?<img src={src} alt=""/>:<FileIcon mime={file.version.mime_type}/>}</span>;
+ const {ref,near}=useNearViewport<HTMLSpanElement>();const image=useKnowledgeThumbnail(objectId,file.id,file.current_revision,near&&file.version.mime_type.startsWith('image/'));
+ return <span ref={ref} className="kc-file-thumb">{image.src?<img src={image.src} alt=""/>:<FileIcon mime={file.version.mime_type}/>}</span>;
 }
 export function NodeFileMenu({node,disabled,canWrite,onMore,onAction,onLabels}:{node:KnowledgeNode;disabled:boolean;canWrite:boolean;onMore:()=>void;onAction:(action:FileEntryAction)=>void;onLabels?:()=>void}){
  const upload=useRef<HTMLInputElement>(null),selectedAction=useRef(false);
@@ -27,7 +27,11 @@ export function NodeFileMenu({node,disabled,canWrite,onMore,onAction,onLabels}:{
 }
 export function AttachmentSummary({node,onPreview,onMore,onRemove}:{node:KnowledgeNode;onPreview:(v:KnowledgeFileVersion)=>void;onMore:()=>void;onRemove?:(file:KnowledgeFile)=>void}){const data=node.attachments;if(!data?.total)return null;return <div className="kc-attachment-summary" onPointerDown={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()}>{data.items.map(file=><div className="kc-summary-file" key={file.id}><button title={file.title} onClick={()=>onPreview(file.version)}><FileThumbnail objectId={node.id} file={file}/><span>{file.title}</span></button>{onRemove&&<button type="button" className="kc-remove-affordance" aria-label={'移除附件 '+file.title} title="移除附件" onClick={()=>onRemove(file)}><X size={14}/></button>}</div>)}<button className="kc-attachment-count" onClick={onMore}>共 {data.total} 个附件</button></div>;}
 
-export function BoundFilePreview({objectId,version,onClose}:{objectId:string;version:KnowledgeFileVersion;onClose:()=>void}){
+export function BoundFilePreview(props:{objectId:string;version:KnowledgeFileVersion;onClose:()=>void}){
+ if(props.version.mime_type==='video/mp4')return <Dialog motionPreset="canvas" open title={props.version.name} onOpenChange={open=>{if(!open)props.onClose();}}><KnowledgeMediaPlayer objectId={props.objectId} version={props.version} expanded/></Dialog>;
+ return <DocumentFilePreview {...props}/>;
+}
+function DocumentFilePreview({objectId,version,onClose}:{objectId:string;version:KnowledgeFileVersion;onClose:()=>void}){
  const [item,setItem]=useState<PreviewItem|null>(null),[error,setError]=useState('');
  useEffect(()=>{const c=new AbortController();let url='';void(async()=>{try{const blob=await knowledgeFilesApi.content(objectId,version.binding_id,version.revision,c.signal);if(c.signal.aborted)return;url=URL.createObjectURL(blob);setItem({url,filename:version.name,mimeType:version.mime_type,size:version.size});}catch(e){if(!c.signal.aborted)setError(e instanceof Error?e.message:'文件无法读取');}})();return()=>{c.abort();if(url)URL.revokeObjectURL(url);};},[objectId,version]);
  return <>{!item&&<Dialog open title="文件预览" onOpenChange={open=>{if(!open)onClose();}}>{error?<p role="alert">{error}</p>:<p role="status">正在读取文件…</p>}</Dialog>}<PreviewHost state={item?{kind:'open',items:[item],index:0}:{kind:'closed'}} onClose={onClose} onIndexChange={()=>{}}/></>;

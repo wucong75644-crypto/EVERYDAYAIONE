@@ -1,4 +1,3 @@
-import {DerivedTags} from './DerivedDirectory';
 import {boundaryEntries} from './canvasGroups';
 import type {GroupSelection,CanvasGroup} from './canvasGroups';
 import { summaryPath } from "./groupGeometry";
@@ -119,14 +118,14 @@ export function CanvasAnnotationDialog({
             </label>
           )}
           {mode === "labels" && (
-            <><DerivedTags objectId={node.id} writable={writable&&!pending}/><label>
+            <label>
               标签（逗号分隔）
               <textarea
                 aria-label="标签内容"
                 value={tags}
                 onChange={(e) => setTags(e.target.value)}
               />
-            </label></>
+            </label>
           )}
           {mode === "boundary" && (
             <label>

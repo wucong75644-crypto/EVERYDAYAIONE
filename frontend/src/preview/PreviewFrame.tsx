@@ -10,7 +10,8 @@ import { useCanvasSurfaceScope, useCanvasSurfaceMotion } from '../components/kno
  * 确保用户感知零差异。
  */
 
-import { type ReactNode, useEffect, useRef } from 'react';
+import { type ReactNode, useContext, useEffect, useRef } from 'react';
+import {InlinePreviewContext} from './InlinePreviewContext';
 import { createPortal } from 'react-dom';
 import { Download, Loader2, X } from 'lucide-react';
 import { toast } from 'react-hot-toast';
@@ -49,24 +50,27 @@ export default function PreviewFrame({
   children,
   footer,
 }: PreviewFrameProps) {
+  const inline=useContext(InlinePreviewContext);
   const surface = useRef<HTMLDivElement>(null), canvas = useCanvasSurfaceScope();
   const attach = useCanvasSurfaceMotion(surface, 'dialog', canvas);
   // ESC 关闭
   useEffect(() => {
+    if(inline)return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose,inline]);
 
   // 打开时禁止背景滚动
   useEffect(() => {
+    if(inline)return;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = '';
     };
-  }, []);
+  }, [inline]);
 
   const handleDownload = async () => {
     if (onDownload) {
@@ -86,6 +90,10 @@ export default function PreviewFrame({
     }
   };
 
+  if(inline)return <section className="kc-inline-preview" aria-label={'预览 '+item.filename}>
+    <header><span>{item.filename}</span><button type="button" aria-label={'放大预览 '+item.filename} onClick={inline.onOpen}>↗</button></header>
+    <div className="kc-inline-preview-content">{loading&&<p role="status">{loadingText||'正在加载预览…'}</p>}{!loading&&error&&<p role="alert">{error}</p>}{mountWhileLoading?<div hidden={loading||!!error}>{children}</div>:!loading&&!error&&children}</div>{footer}
+  </section>;
   return createPortal(
     <div ref={attach} data-canvas-preview={canvas || undefined} className="fixed inset-0 z-50 flex flex-col bg-black/80">
       {/* 点击遮罩关闭（独立层，不影响内容区点击）*/}

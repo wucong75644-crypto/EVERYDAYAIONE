@@ -18,7 +18,7 @@ export function topicWidth(n:KnowledgeNode,font=n.canvas_data?.style?.font_size?
  });
  const longest=Math.max(0,...lines);
  const data=n.canvas_data;
- return Math.ceil(Math.max(272,Math.min(320,Math.max(longest+32,(data?.image?.width??0)+32,data?.video||data?.link?240:0,data?.task?150:0,data?.labels?.length?130:0))));
+ return Math.ceil(Math.max(80,Math.min(320,Math.max(longest+32,(data?.image?.width??0)+32,data?.video||data?.link?240:0,data?.task?150:0,data?.labels?.length?130:0,n.attachments?.total?240:0,n.has_body?272:0))));
 }
 export function titleHeight(title: string, width = 272, font = 15) {
  const columns=Math.max(1,Math.floor((width-32)/font));
@@ -26,7 +26,7 @@ export function titleHeight(title: string, width = 272, font = 15) {
 }
 export function topicSize(n:KnowledgeNode){
  const width=topicWidth(n),d=n.canvas_data;
- return {width,height:Math.max(146,d?.height??0,78+titleHeight(n.title,width,Math.max(d?.style?.font_size??15,...(d?.title_format?.runs??[]).map(r=>r.font_size??15)))+(d?.image?d.image.width/(d.image.aspect??1)+10:0)+(d?.video?84:0)+(d?.link?84:0)+(d?.note||d?.labels?.length||d?.task?28:0)+(n.attachments?.total?Math.min(2,n.attachments.total)*38+24:0))};
+ return {width,height:Math.max(d?.height??0,titleHeight(n.title,width,Math.max(d?.style?.font_size??15,...(d?.title_format?.runs??[]).map(r=>r.font_size??15)))+(d?.image?d.image.width/(d.image.aspect??1)+10:0)+(d?.video?84:0)+(d?.link?84:0)+(d?.note||d?.labels?.length||d?.task?28:0)+(n.attachments?.total?Math.min(2,n.attachments.total)*38+24:0))};
 }
 export function editSelection(title: string, replace: boolean) {
   const placeholder = [

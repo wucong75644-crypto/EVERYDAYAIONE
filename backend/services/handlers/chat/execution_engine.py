@@ -350,6 +350,9 @@ async def execute_chat(
             await workflow.activated()
         from services.knowledge_workspace.answer_plan import prepare as prepare_knowledge_answer
         await prepare_knowledge_answer(handler,prepared,request,skills)
+        from services.knowledge_workspace.chat import KnowledgeRun
+        active_knowledge=getattr(handler,'_knowledge_run',None)
+        prepared.knowledge_grounding_run=active_knowledge if isinstance(active_knowledge,KnowledgeRun) else None
         form_hint = await _run_loop(
             handler=handler,
             request=request,
@@ -362,7 +365,7 @@ async def execute_chat(
             model_round=_initial_model_round(request.replay_context),
             repeated_tool_call_guard=repeated_tool_call_guard,
         )
-        await _apply_budget_stop(prepared, totals, blocks, output)
+        await _apply_budget_stop(prepared, totals, blocks, output,cancellation_event=event,runtime=runtime)
         await _consume_emit_payloads(handler, blocks, output)
         parts = build_content_parts(
             blocks,
@@ -551,6 +554,8 @@ async def _run_loop(
         if fast_knowledge:
             await asyncio.to_thread(handler._knowledge_run.revalidate)
             tools=[]
+        from services.knowledge_workspace.answer_plan import constrain_route_tools
+        tools=await constrain_route_tools(prepared,getattr(handler,'_knowledge_run',None),tools)
         current_model_round = model_round
         before_usage = dict(totals.usage) if correcting else {}
         try:
@@ -578,6 +583,17 @@ async def _run_loop(
                 await sink.on_block(blocks[-1])
                 return None
             turn_text, turn_thinking = "", ""
+        grounding_run=getattr(prepared,'knowledge_grounding_run',None)
+        if grounding_run is not None:
+            # Tool-round narratives and reasoning are drafts, not user-visible facts.
+            turn_thinking=''
+            if calls:
+                turn_text=''
+            else:
+                turn_text=await _verify_knowledge_answer(grounding_run,turn_text,getattr(prepared,'text_content',''.join(p.text for p in request.content if isinstance(p,TextPart))),totals.usage,cancellation_event,runtime,other_tools=_completed_other_tools(blocks))
+                await _check_cancelled(cancellation_event,request,prepared.messages,blocks,totals,'knowledge_verification')
+                totals.text+=turn_text
+                await sink.on_text(turn_text)
         await _append_turn_blocks(
             blocks,
             sink,
@@ -659,6 +675,31 @@ async def _run_loop(
         if form_hint:
             return form_hint
     return None
+
+
+def _completed_other_tools(blocks):
+    return sorted({b['tool_name'] for b in blocks if b.get('type')=='tool_step' and b.get('status')=='completed' and isinstance(b.get('tool_name'),str) and not b['tool_name'].startswith('knowledge_') and b['tool_name'] not in SKILL_CONTROL_TOOLS})
+
+
+async def _verify_knowledge_answer(run,text,question,usage,cancellation_event,runtime,*,other_tools=()):
+    from services.knowledge_workspace.grounding import release_answer
+    task=asyncio.create_task(release_answer(run,text,question,usage=usage,other_tools=other_tools))
+    cancel=asyncio.create_task(cancellation_event.wait())
+    command=asyncio.create_task(runtime.wait_for_command()) if runtime else None
+    try:
+        while True:
+            waits={task,cancel}
+            if command is not None:waits.add(command)
+            done,_=await asyncio.wait(waits,return_when=asyncio.FIRST_COMPLETED)
+            if cancel in done:raise asyncio.CancelledError()
+            if command is not None and command in done:
+                await runtime.safe_point(SafePoint.MODEL_CHUNK)
+                command=asyncio.create_task(runtime.wait_for_command())
+            if task in done:return task.result()
+    finally:
+        for pending in (task,cancel,command):
+            if pending is not None and not pending.done():pending.cancel()
+        await asyncio.gather(*(t for t in (task,cancel,command) if t is not None),return_exceptions=True)
 
 
 async def _read_turn(
@@ -787,12 +828,12 @@ async def _read_turn(
                 builtin_sources[source["url"]] = source.get("title") or source["url"]
         if chunk.thinking_content:
             turn_thinking += chunk.thinking_content
-            if not getattr(prepared, "defer_ecom_narrative", False):
+            if not getattr(prepared, "defer_ecom_narrative", False) and getattr(prepared,"knowledge_grounding_run",None) is None:
                 totals.thinking += chunk.thinking_content
                 await sink.on_thinking(chunk.thinking_content)
         if chunk.content:
             turn_text += chunk.content
-            if not getattr(prepared, "defer_ecom_narrative", False):
+            if not getattr(prepared, "defer_ecom_narrative", False) and getattr(prepared,"knowledge_grounding_run",None) is None:
                 totals.text += chunk.content
                 await sink.on_text(chunk.content)
         if chunk.tool_calls:
@@ -826,8 +867,9 @@ async def _read_turn(
         from services.handlers.chat.builtin_tools import source_text
         references = source_text(builtin_sources)
         turn_text += references
-        totals.text += references
-        await sink.on_text(references)
+        if getattr(prepared,'knowledge_grounding_run',None) is None:
+            totals.text += references
+            await sink.on_text(references)
     ordered_indices = sorted(calls)
     ordered_calls = [calls[index] for index in ordered_indices]
     previewed_call_ids: set[str] = set()
@@ -1411,6 +1453,7 @@ async def _apply_budget_stop(
     totals: StreamTotals,
     blocks: list[dict[str, Any]],
     sink: ExecutionSink,
+    *,cancellation_event=None,runtime=None,
 ) -> None:
     if not prepared.budget.stop_reason:
         return
@@ -1424,6 +1467,9 @@ async def _apply_budget_stop(
         reason=stop_message(prepared.budget.stop_reason),
     )
     if synthesis:
+        run=getattr(prepared,'knowledge_grounding_run',None)
+        if run is not None:
+            synthesis=await _verify_knowledge_answer(run,synthesis,getattr(prepared,'text_content',''),totals.usage,cancellation_event or asyncio.Event(),runtime,other_tools=_completed_other_tools(blocks))
         totals.text = synthesis
         block = {"type": "text", "text": synthesis}
         blocks.append(block)

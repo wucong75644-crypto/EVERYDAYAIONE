@@ -117,6 +117,8 @@ async def content_plan(body: ContentInput, ctx: OrgCtx, db: Database, response: 
     response.headers['Cache-Control'] = 'no-store'
     if not enabled(ctx):
         return failure(404, 'KNOWLEDGE_UNAVAILABLE', '知识画布尚未向当前账号开放')
+    if not get_settings().knowledge_ai_processing_enabled:
+        return failure(409,'KNOWLEDGE_AI_PROCESSING_DISABLED','请直接编辑节点原文，AI 整理暂未启用')
     repo = Repository(db.pool, DatabaseScope(ctx.user_id, ctx.org_id, DatabaseAccessKind.RUNTIME))
     try:
         return {'success': True, 'data': await prepare(repo, body)}
@@ -182,6 +184,6 @@ def knowledge_override(object_id: UUID, body: KnowledgeOverrideRequest, ctx: Org
 
 @router.post('/containers/{container_id}/organize')
 def organize(container_id: UUID, ctx: OrgCtx, db: Database, response: Response, cursor: UUID | None = None):
-    if not get_settings().knowledge_derivation_enabled:
+    if not get_settings().knowledge_ai_processing_enabled or not get_settings().knowledge_derivation_enabled:
         return failure(404,'KNOWLEDGE_UNAVAILABLE','自动整理尚未启用')
     return call(ctx,db,response,'organize',container_id,cursor)

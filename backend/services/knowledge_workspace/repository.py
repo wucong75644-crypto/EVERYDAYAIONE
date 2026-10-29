@@ -4,6 +4,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from core.db_scope import SET_DATABASE_SCOPE_SQL
 from services.knowledge_workspace.files import public_version
+from .extraction import hydrate
 
 class Repository:
     def __init__(self, pool, scope):
@@ -28,6 +29,7 @@ class Repository:
             if len(containers) > 1000:
                 raise ValueError('当前预览版本最多加载 1000 个空间')
             c.execute('''SELECT o.id,o.container_id,o.parent_id,o.kind,o.title,(to_jsonb(o)->>'sort_order')::bigint AS sort_order,o.current_revision AS revision,
+                         EXISTS(SELECT 1 FROM public.kb_object_versions v WHERE v.object_id=o.id AND v.revision=o.current_revision AND v.body<>'' AND v.body<>o.title) AS has_body,
                          n.id AS node_id,n.x,n.y,COALESCE(to_jsonb(n)->'canvas_data','{}'::jsonb) AS canvas_data,n.revision AS layout_revision
                          FROM public.kb_objects o JOIN public.kb_canvas_nodes n ON n.object_id=o.id
                          WHERE o.deleted_at IS NULL AND NOT COALESCE((to_jsonb(o)->>'undo_hidden')::boolean,false) AND NOT EXISTS(SELECT 1 FROM public.kb_containers c WHERE c.id=o.container_id AND COALESCE((to_jsonb(c)->>'undo_hidden')::boolean,false)) AND (%s::uuid IS NULL OR o.id>%s::uuid)
@@ -42,8 +44,9 @@ class Repository:
                              row_number() OVER(PARTITION BY object_id ORDER BY id) AS rank
                              FROM public.kb_file_bindings b WHERE object_id=ANY(%s::uuid[])) files
                              WHERE rank<=2 ORDER BY object_id,id''', ([r['id'] for r in rows[:500]],))
+                items=c.fetchall();hydrate(c,[(item['object_id'],item['version']) for item in items])
                 summaries = {}
-                for item in c.fetchall():
+                for item in items:
                     summary = summaries.setdefault(item['object_id'], {'total':item['total'],'items':[]})
                     summary['items'].append({**{k:item[k] for k in ('id','title','current_revision')},'version':public_version(item['version'])})
                 for row in rows:
@@ -187,6 +190,32 @@ class Repository:
             rows = c.fetchall()
             return {'items': rows[:50], 'next_cursor': str(rows[49]['id']) if len(rows)>50 else None}
 
+    def import_target(self,container_id):
+        with self.cursor() as c:
+            c.execute("SELECT id,title,kind,revision FROM public.kb_containers WHERE id=%s AND public.kb_can(id,'write') AND deleted_at IS NULL AND NOT undo_hidden",(container_id,))
+            return c.fetchone()
+
+    def xmind_receipt(self, command_id, digest, name, container_id=None, expected_revision=None):
+        from .files import fail
+        with self.cursor() as c:
+            c.execute("""SELECT r.request_payload,r.result,public.kb_can(r.container_id,'write') AS allowed,
+                         (c.undo_hidden OR COALESCE(o.undo_hidden,true) OR o.deleted_at IS NOT NULL) AS undo_hidden FROM public.kb_mutation_receipts r JOIN public.kb_containers c ON c.id=r.container_id
+                         LEFT JOIN public.kb_objects o ON o.id=(r.result->>'object_id')::uuid
+                         WHERE r.actor_id=%s AND r.command_id=%s AND r.org_id IS NOT DISTINCT FROM %s::uuid""",
+                      (self.scope.actor_user_id,command_id,self.scope.org_id))
+            row=c.fetchone()
+            if not row:return None
+            request=row['request_payload'];payload=request.get('payload',{})
+            if (container_id is not None and payload.get('container_id')!=str(container_id)) or (expected_revision is not None and payload.get('expected_container_revision')!=expected_revision) or request.get('operation')!='import_xmind' or payload.get('sha256')!=digest or (payload.get('files') or [{}])[0].get('metadata',{}).get('name')!=name:
+                fail('IDEMPOTENCY_PAYLOAD_CONFLICT','重试文件与原导入不同，请重新选择原文件',409)
+            if not row['allowed']:fail('KNOWLEDGE_ACCESS_DENIED','没有目标空间的修改权限',403)
+            return {**row['result'],'status':'replayed','hidden':row['undo_hidden']}
+
+    def import_xmind(self, command_id, payload):
+        with self.cursor() as c:
+            c.execute('SELECT public.kb_import_xmind(%s,%s) AS result', (command_id, Jsonb(payload)))
+            return c.fetchone()['result']
+
     def file_command(self, command_id, operation, payload):
         with self.cursor() as c:
             c.execute('SELECT public.kb_apply_file_command(%s,%s,%s) AS result',
@@ -200,7 +229,8 @@ class Repository:
                 return None
             c.execute('''SELECT b.id,b.title,b.current_revision,public.kb_file_version(b.object_id,b.id) AS version
                          FROM public.kb_file_bindings b WHERE b.object_id=%s ORDER BY b.id LIMIT 101''', (object_id,))
-            return c.fetchall()
+            rows=c.fetchall();hydrate(c,[(object_id,row['version']) for row in rows])
+            return rows
 
     def file_versions(self, object_id, binding_id, before=None):
         with self.cursor() as c:
@@ -211,13 +241,14 @@ class Repository:
                          FROM public.kb_file_binding_versions WHERE binding_id=%s
                          AND (%s::bigint IS NULL OR revision<%s::bigint) ORDER BY revision DESC LIMIT 51''',
                       (object_id, binding_id, before, before))
-            rows = [r['version'] for r in c.fetchall()]
+            rows = [r['version'] for r in c.fetchall()];hydrate(c,[(object_id,v) for v in rows[:50]])
             return {'items': rows[:50], 'next_cursor': rows[49]['revision'] if len(rows)>50 else None}
 
     def file_version(self, object_id, binding_id, revision):
         with self.cursor() as c:
             c.execute('SELECT public.kb_file_version(%s,%s,%s) AS version', (object_id, binding_id, revision))
-            return c.fetchone()['version']
+            version=c.fetchone()['version'];hydrate(c,[(object_id,version)])
+            return version
 
     def document(self, object_id, generation_id=None):
         from .derived_document import effective_document, source_links
@@ -225,7 +256,8 @@ class Repository:
         if not obj:return None
         from core.config import get_settings
         if generation_id is None and not get_settings().knowledge_derivation_enabled:
-            return {**obj, 'derived': None}
+            from .local_pipeline import enabled
+            if not enabled(self):return {**obj,'derived':None}
         with self.cursor() as c:
             c.execute("SELECT to_regprocedure('public.kb_derived_document(uuid,uuid)') IS NOT NULL AS enabled")
             if not c.fetchone()['enabled']:return {**obj,'derived':None}
@@ -250,3 +282,28 @@ class Repository:
             rows=c.fetchall()
             for row in rows[:50]:c.execute('SELECT public.kb_enqueue_derivation(%s)',(row['id'],))
             return {'queued':len(rows[:50]),'next_cursor':str(rows[49]['id']) if len(rows)>50 else None}
+
+    def retry_file(self,object_id,binding_id,revision):
+        from .extraction import config_for
+        version=self.file_version(object_id,binding_id,revision)
+        if not version:return None
+        with self.cursor() as c:c.execute('SELECT public.kb_file_enqueue(%s,%s,%s,%s,true)',(object_id,binding_id,revision,config_for(version)))
+        return {'queued':True}
+
+    def import_progress(self,container_id):
+        with self.cursor() as c:
+            c.execute("SELECT id FROM public.kb_containers WHERE id=%s AND deleted_at IS NULL AND NOT undo_hidden",(container_id,))
+            if not c.fetchone():return None
+            c.execute("SELECT count(*) AS count,count(*) FILTER(WHERE n.canvas_data ? 'link') AS links FROM public.kb_objects o JOIN public.kb_canvas_nodes n ON n.object_id=o.id WHERE o.container_id=%s AND o.deleted_at IS NULL AND NOT o.undo_hidden",(container_id,));counts=c.fetchone()
+            c.execute("""SELECT b.object_id,public.kb_file_version(b.object_id,b.id,b.current_revision) AS version FROM public.kb_file_bindings b JOIN public.kb_objects o ON o.id=b.object_id
+                WHERE o.container_id=%s AND o.deleted_at IS NULL AND NOT o.undo_hidden AND b.removed_at IS NULL""",(container_id,));files=c.fetchall()
+            hydrate(c,[(f['object_id'],f['version']) for f in files])
+        states={'ready':0,'partial':0,'failed':0,'pending':0,'unsupported':0,'disabled':0}
+        for f in files:
+            v=f['version']
+            if v['name'].lower().endswith('.xmind'):continue
+            state=v.get('parse_state') or ('ready' if v['text_status']=='ready' else 'partial' if v['text_status']=='truncated' else 'unsupported' if v['name'].lower().endswith(('.zip','.pptx','.doc','.xls','.ppt')) else 'pending')
+            state='failed' if state in ('failed','blocked','blocked_permission') else 'pending' if state in ('queued','processing') else state
+            states[state if state in states else 'unsupported']+=1
+        from core.config import get_settings
+        return {'framework':'complete','nodes':counts['count'],'files':states,'links_unread':counts['links'],'ai_processing_enabled':get_settings().knowledge_ai_processing_enabled}
