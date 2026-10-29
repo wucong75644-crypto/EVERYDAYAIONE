@@ -305,3 +305,17 @@ async def test_mixed_business_actions_return_errors_without_dispatch_or_state_ch
     h._execute_tool_calls.assert_not_awaited()
     assert skills.checkpoint() == before
     assert any(b.get('status') == 'error' for b in blocks)
+
+
+def test_reviewed_legacy_image_execution_can_follow_server_plan_without_claiming_planning():
+    from services.skills.coordination import Participant, owners_for
+    participants=[]
+    for key in ('chat-image-orchestration','ecommerce-main-images'):
+        identity,(_,contract)=next((identity,value) for identity,value in legacy_contracts().items()
+                                   if value[0]==key)
+        package,revision,sha=identity
+        participants.append(Participant(package_id=package,skill_key=key,revision=revision,
+            body_sha256=sha,sources=('model',),contract=contract))
+    assert owners_for(participants,ActionContext(action='plan'))=={'image.planning':'ecommerce-main-images'}
+    assert owners_for(participants,ActionContext(action='execute_ready'))=={'image.submission':'ecommerce-main-images'}
+    assert owners_for(participants,ActionContext(action='execute_prompt'))=={'image.submission':'chat-image-orchestration'}

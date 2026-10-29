@@ -243,6 +243,245 @@
           }
         ]
       }
+    },
+    {
+      "package_id": "342dd558-4051-49a6-aefb-72adb3666b7c",
+      "skill_key": "taobao-product-white-background",
+      "revision": "ve3409ed7f7db45c293f3af347e14d789",
+      "body_sha256": "c71eb35537ba5fe8ff3d32893c67bd3161ec646985d931c1eb04ac8685bcb6e5",
+      "contract": {
+        "version": 1,
+        "kind": "guidance",
+        "claims": []
+      }
+    },
+    {
+      "package_id": "c7515062-97aa-4f31-b42c-7d5f696b7218",
+      "skill_key": "asset-test-0921",
+      "revision": "v51eb9e5958f14994a1f452e07b29779c",
+      "body_sha256": "7a19bb1ca1a9aeebca9a899f643942647dc1b5407b8ab1bcc00a9d024ae8bda6",
+      "contract": {
+        "version": 1,
+        "kind": "guidance",
+        "claims": []
+      }
+    },
+    {
+      "package_id": "8422fe07-35a3-41b7-b47f-facecfda54d7",
+      "skill_key": "a001",
+      "revision": "v60652919b91549f292e67767fc7199de",
+      "body_sha256": "f8551b04bac161bdccff4f319336f2c5c0c2cb3df27f2099457af78cc90299ef",
+      "contract": {
+        "version": 1,
+        "kind": "guidance",
+        "claims": []
+      }
+    },
+    {
+      "package_id": "8422fe07-35a3-41b7-b47f-facecfda54d7",
+      "skill_key": "a001",
+      "revision": "va740338316c54864b6099959bef329f8",
+      "body_sha256": "5c129fd73cf41dd95a4d3a161e443ceda1e5365338aa042c01d5e05f29726d24",
+      "contract": {
+        "version": 1,
+        "kind": "guidance",
+        "claims": []
+      }
+    },
+    {
+      "package_id": "e118d32b-75ba-44c8-8b11-f8741bad053b",
+      "skill_key": "chat-image-orchestration",
+      "revision": "v533471bf144641bab38f369d9e5333c1",
+      "body_sha256": "ef6135f24995b860e7775948a4a4ce547f36da91591ac9a33e7784fed45fcb91",
+      "contract": {
+        "version": 1,
+        "kind": "workflow",
+        "claims": [
+          {
+            "scope": "image.submission",
+            "method": "image.direct",
+            "actions": [
+              "execute_prompt",
+              "edit"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "package_id": "e118d32b-75ba-44c8-8b11-f8741bad053b",
+      "skill_key": "chat-image-orchestration",
+      "revision": "v0b89c04f1df64626ae86000cc4961a63",
+      "body_sha256": "83b64d96da3cc0802f0dda6e5255d208197bdc1b991e661be19a33c138cb3764",
+      "contract": {
+        "version": 1,
+        "kind": "workflow",
+        "claims": [
+          {
+            "scope": "image.submission",
+            "method": "image.direct",
+            "actions": [
+              "execute_prompt",
+              "edit"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "package_id": "42f3d353-e64d-46af-9447-e5772743124f",
+      "skill_key": "chat-skill-e4090d45ce9b",
+      "revision": "vab4dcc2e02e549a9bbb2e94705a14f6a",
+      "body_sha256": "ddd75586023fd7a2acec6a909e10d1aeff43f510a8458277f531b7ad81e8cb78",
+      "contract": {
+        "version": 1,
+        "kind": "guidance",
+        "claims": []
+      }
+    },
+    {
+      "package_id": "800a445c-c792-43b8-a88d-8189c3aff957",
+      "skill_key": "easel-competitor-analysis",
+      "revision": "vae8b79cf025f4c36b06f29925f9734aa",
+      "body_sha256": "0a4788a2f525ad0bf7164769574742e17f191c5a21c42ceb30fd629a3a58a557",
+      "contract": {
+        "version": 1,
+        "kind": "guidance",
+        "claims": []
+      }
+    },
+    {
+      "package_id": "6dc618cd-93d7-42fb-9192-982d38c580ad",
+      "skill_key": "easel-content-calendar",
+      "revision": "v3a874853167a463daf01379ccaccd522",
+      "body_sha256": "4bbd738a991c80bc7cfc54293f1d399497e622af0fb72245e5ec7db640679ec1",
+      "contract": {
+        "version": 1,
+        "kind": "guidance",
+        "claims": []
+      }
+    },
+    {
+      "package_id": "e7f6449f-ca0b-464a-8750-1e069d1fa0e0",
+      "skill_key": "easel-content-gap-analysis",
+      "revision": "va8995ff7dd164ef897aae89bc18e68e7",
+      "body_sha256": "c566a61df394afbd72d423cb0d96a1345993ea0da56b3eaa095b3f41917a14e6",
+      "contract": {
+        "version": 1,
+        "kind": "guidance",
+        "claims": []
+      }
+    },
+    {
+      "package_id": "30548572-8079-4b6a-a3fa-146f9b439354",
+      "skill_key": "easel-quality-gate",
+      "revision": "vf3a1896ddaed4640be1ee8e4b426ae64",
+      "body_sha256": "1b5a98285e771eb5b3e57c309a6be96dcdeeeb5727f0de12bef25ba0355a1fa3",
+      "contract": {
+        "version": 1,
+        "kind": "guidance",
+        "claims": []
+      }
+    },
+    {
+      "package_id": "8ba27468-b6e3-455c-8e4d-30033e25fd18",
+      "skill_key": "easel-risk-scanner",
+      "revision": "vc61548d320de477cbe4ffc5c5bf6f525",
+      "body_sha256": "1e21307584ffd21eab18cd955741e13717138b1f00f87d00875dde8eecc98c31",
+      "contract": {
+        "version": 1,
+        "kind": "guidance",
+        "claims": []
+      }
+    },
+    {
+      "package_id": "791cce3f-3c72-4020-a512-6025ec5e1e43",
+      "skill_key": "easel-text-polisher",
+      "revision": "v91228a75c0d943f2bc821d134e408d82",
+      "body_sha256": "fc1fb8ee26bed5c3bdd0f376bc3105817296742bb266beac33d57651e9e45944",
+      "contract": {
+        "version": 1,
+        "kind": "guidance",
+        "claims": []
+      }
+    },
+    {
+      "package_id": "10290917-6d9f-4966-99d9-bb0529f77d82",
+      "skill_key": "easel-topic-evaluator",
+      "revision": "vcd7f0e023306459cb0e7fc8b212f34ff",
+      "body_sha256": "d301e80fd154d91478212fa4ae0892738d6dfbdfe03eb3d83f115abc3e1b319a",
+      "contract": {
+        "version": 1,
+        "kind": "guidance",
+        "claims": []
+      }
+    },
+    {
+      "package_id": "da316791-6c7b-4e21-871c-526085f644f3",
+      "skill_key": "easel-xhs-note-creator",
+      "revision": "vf9a331d7e01b4406ab3f6cd6e4b2e125",
+      "body_sha256": "ef029959cfd681d0743d26444ec22c64dce3fde3ae77ec9bf07d3eea2eaa9921",
+      "contract": {
+        "version": 1,
+        "kind": "guidance",
+        "claims": []
+      }
+    },
+    {
+      "package_id": "85796259-62b7-4d5f-b3e0-28c5c46802bf",
+      "skill_key": "easel-card-design",
+      "revision": "ve2b22a2413304a7f82ec6ceda4f43b39",
+      "body_sha256": "ef42aee98bd0bae0e3b811619874d36d7e73eeba855b0101f8fa788988205d3b",
+      "contract": {
+        "version": 1,
+        "kind": "guidance",
+        "claims": []
+      }
+    },
+    {
+      "package_id": "907435a8-c940-43ac-8780-0a9054e2bef1",
+      "skill_key": "easel-card-xiaohongshu",
+      "revision": "vf113f13379bb44d2815b5a14fcc35007",
+      "body_sha256": "3fa22dc4212e808c54680e9580266d007fcf1ab5e08669dff8d1353f71573a06",
+      "contract": {
+        "version": 1,
+        "kind": "guidance",
+        "claims": []
+      }
+    },
+    {
+      "package_id": "d79f1333-21de-49bd-81c7-7afc2d3bac47",
+      "skill_key": "easel-content-postmortem",
+      "revision": "ve77b398ac8814b7fa99b364a7f9122db",
+      "body_sha256": "4df8714e19df6d89ac1553aef8531a82dcb0d1eb8ba33c8cf2d815fb1050985b",
+      "contract": {
+        "version": 1,
+        "kind": "guidance",
+        "claims": []
+      }
+    },
+    {
+      "package_id": "3eb4e48f-9f2f-423a-844b-00b9ea5c7b2a",
+      "skill_key": "easel-comment-insights",
+      "revision": "vc851edb6b28542af9c38639fd7702382",
+      "body_sha256": "2fb21aec41a5e93ab69c99dcd89983c1357a90b65d0eb1ab67a0672f720682f1",
+      "contract": {
+        "version": 1,
+        "kind": "guidance",
+        "claims": []
+      }
+    },
+    {
+      "package_id": "ab8c6703-988d-408b-8d22-2f67ec057b3e",
+      "skill_key": "easel-strategy-advisor",
+      "revision": "v1318ffd2cfe04f3cadde2a5fc6b4fe1d",
+      "body_sha256": "ae443d4d36f89563bb6b7b8c25347e84e71af9258c6c438122d122ef14a7f630",
+      "contract": {
+        "version": 1,
+        "kind": "guidance",
+        "claims": []
+      }
     }
-  ]
+  ],
+  "inventory_note": "2026-10-29 complete read-only inventory with privileged read: 29 published revisions and one deprecated bound revision; two existing single-Skill bindings, no bound scheduled configuration. Non-image guidance retains original tools and host execution behavior."
 }

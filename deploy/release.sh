@@ -178,15 +178,10 @@ if [[ -n "$recover_owner" ]]; then
     git merge-base --is-ancestor "$failed_commit" HEAD || fail "失败提交不属于当前任务"
     source "$repo_root/deploy/release-coordination.sh"
     load_release_coordination_config "$repo_root/deploy/config.env" || fail "恢复配置缺失"
-    manifest=$(python3 - "$failed_commit" <<'MANIFEST'
-import base64, hashlib, json, subprocess, sys
-sha=sys.argv[1]
-base=subprocess.check_output(['git','merge-base','origin/main',sha],text=True).strip()
-paths=subprocess.check_output(['git','diff','--name-only','--diff-filter=AM',base,sha,'--','backend/','deploy/'],text=True).splitlines()
-values={p:hashlib.sha256(subprocess.check_output(['git','show',sha+':'+p])).hexdigest() for p in paths}
-print(base64.b64encode(json.dumps(values).encode()).decode())
-MANIFEST
-    ) || fail "无法核验失败候选文件"
+    release_lock_token=$recover_owner
+    previous_commit=$(release_remote_state read 2>/dev/null || true)
+    manifest=$(python3 "$repo_root/deploy/recovery-evidence.py" "$repo_root" "$recover_owner" "$failed_commit" "$previous_commit") \
+        || fail "无法核验失败候选及发布前阶段证据"
     ssh -p "$SERVER_PORT" -o ConnectTimeout=10 -o BatchMode=yes "$SERVER_USER@$SERVER_HOST" \
         /var/www/everydayai/backend/venv/bin/python - "$recover_owner" "$failed_commit" "$branch" "$manifest" \
         < "$repo_root/deploy/recover-release.py"

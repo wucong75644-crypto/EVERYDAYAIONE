@@ -69,6 +69,39 @@ class RecoveryTests(unittest.TestCase):
         (self.app/'.release-provenance').write_text('commit='+'b'*40+'\nsource=codex/task/other\n')
         with self.assertRaisesRegex(RuntimeError,'Another task'):self.run_recovery()
         self.assertTrue(self.lock.exists())
+    def pre_mutation(self):
+        (self.lock/'attempt').write_text('commit='+'a'*40+'\nsource=codex/task/canvas\n')
+        (self.app/'.release-provenance').write_text('commit='+'b'*40+'\nsource=codex/task/accepted-other\n')
+        self.manifest=dict(recovery_mode='pre_mutation',previous_commit='b'*40,
+            files={**self.manifest,'backend/new.py':None},
+            local_log=dict(name='private.log',sha256='c'*64,stages=['preflight','tests_and_build']))
+    def test_pre_mutation_preserves_previous_provenance_and_archives_own_lock(self):
+        self.pre_mutation();self.run_recovery()
+        self.assertFalse(self.lock.exists())
+        self.assertIn('b'*40,(self.app/'.release-provenance').read_text())
+        receipt=json.loads((self.app/'.release-recovery').read_text())
+        self.assertEqual(receipt['manifest']['recovery_mode'],'pre_mutation')
+        self.assertEqual(receipt['status'],'recovered_not_deployed')
+    def test_pre_mutation_requires_own_recorded_attempt(self):
+        self.pre_mutation();(self.lock/'attempt').unlink()
+        with self.assertRaisesRegex(RuntimeError,'recorded attempt'):self.run_recovery()
+        self.assertTrue(self.lock.exists())
+    def test_pre_mutation_rejects_remote_stage_or_changed_production(self):
+        self.pre_mutation()
+        self.manifest['local_log']['stages'].append('remote_mutation')
+        with self.assertRaisesRegex(RuntimeError,'stage evidence'):self.run_recovery()
+        self.manifest['local_log']['stages']=['preflight']
+        self.manifest['previous_commit']='d'*40
+        with self.assertRaisesRegex(RuntimeError,'Production changed'):self.run_recovery()
+        self.assertTrue(self.lock.exists())
+    def test_pre_mutation_refuses_candidate_files_or_applied_migration(self):
+        self.pre_mutation();(self.app/'backend/new.py').write_text('partially synced')
+        with self.assertRaisesRegex(RuntimeError,'already exists'):self.run_recovery()
+        (self.app/'backend/new.py').unlink()
+        self.manifest['files']['backend/migrations/new.sql']=None
+        with patch.object(r,'database_snapshot',return_value=[['backend/migrations/new.sql','abc']]):
+            with self.assertRaisesRegex(RuntimeError,'migration was already applied'):self.run_recovery()
+        self.assertTrue(self.lock.exists())
     def test_symlink_and_path_escape_rejected(self):
         for path in ('backend/../secret','/etc/passwd'):
             with self.assertRaisesRegex(RuntimeError,'Unsafe'):r.validate_manifest(self.app,{path:'a'*64})
