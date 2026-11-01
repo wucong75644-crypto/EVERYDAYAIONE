@@ -41,6 +41,7 @@ class ContextSnapshot:
     summary_revision: int
     conversation_source: str
     resource_manifest: "ResourceManifest | None" = None
+    input_content: List[Dict[str, Any]] | None = None
 
 
 def context_anchor_from_binding(
@@ -160,6 +161,7 @@ async def build_context_snapshot(
         summary_revision=summary_revision,
         conversation_source=conversation_source,
         resource_manifest=resource_manifest,
+        input_content=input_message.get("content"),
     )
 
 

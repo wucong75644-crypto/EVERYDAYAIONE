@@ -68,6 +68,8 @@ class ConversationTurnRuntime:
         self.task_artifact_reader = None
         self.committed_task_execution_revision = 0
         self.checkpoint_base = {}
+        self.knowledge_input_provider = None
+        self.knowledge_input_changed = False
         self.replay_save_sequence = 0  # Confirmed saves, including unchanged logical revisions.
         self.inbox = CommandInbox()
         self._command_event = asyncio.Event()
@@ -194,6 +196,10 @@ class ConversationTurnRuntime:
         ):
             import copy
             payload = {**copy.deepcopy(self.checkpoint_base),**dict(replay_payload)}
+            knowledge_input_provider = getattr(self, 'knowledge_input_provider', None)
+            if knowledge_input_provider is not None:
+                from services.knowledge_workspace.input_facts import CHECKPOINT_KEY
+                payload[CHECKPOINT_KEY] = knowledge_input_provider()
             for key in ('checkpoint_kind','result_content','usage','credits_cost','tool_digest'):
                 if key not in replay_payload:payload.pop(key,None)
             if self.task_revision_review is None:payload.pop('_task_revision_review',None)
@@ -266,6 +272,7 @@ class ConversationTurnRuntime:
                 self._record_subtask_completion(command)
             captured_steer = False
             if command.command_type is CommandType.STEER:
+                self.knowledge_input_changed = True
                 message = (command.payload or {}).get("message")
                 if not isinstance(message, str) or not message.strip():
                     raise RuntimeError("ACTOR_STEER_PAYLOAD_INVALID")

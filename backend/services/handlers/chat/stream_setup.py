@@ -27,6 +27,7 @@ class PreparedChatStream:
     knowledge_answer_plan: Any = None
     knowledge_question: str | None = None
     knowledge_answer_policy: Any = None
+    knowledge_input_facts: Any = None
 
     @property
     def adapter(self) -> Any:
@@ -57,6 +58,8 @@ async def prepare_chat_stream(
     chat_phase('context.begin', task_id=task_id)
     started_at = time.monotonic()
     text_content = handler._extract_text_content(content)
+    # A handler may serve another request; never inherit its old exemption.
+    handler._knowledge_input_facts = None
     permission_mode = _normalize_permission_mode(permission_mode)
     if replay_context is not None:
         raw_messages = replay_context.get("messages")
@@ -84,15 +87,26 @@ async def prepare_chat_stream(
         messages, org_id=handler.org_id, user_id=user_id, conversation_id=conversation_id,
     )
     from services.knowledge_workspace.scope_selection import self_contained_reason, latest_user_text
+    from services.knowledge_workspace.input_facts import KnowledgeInputFacts, restore_facts
+    facts = (restore_facts(replay_context, context_anchor) if replay_context is not None
+             else getattr(handler, '_knowledge_input_facts', None))
+    if not isinstance(facts, KnowledgeInputFacts):
+        facts = None
     source_reason = self_contained_reason(text_content, content, messages,
-        required=params.get('_knowledge_refs_required') is True)
-    knowledge_question = latest_user_text(messages) or text_content
+        required=params.get('_knowledge_refs_required') is True, input_facts=facts)
+    # A legacy replay cannot establish that host/user changes were accounted for.
+    from services.handlers.context_snapshot import ContextAnchor
+    if facts is None and (replay_context is not None or isinstance(context_anchor, ContextAnchor)):
+        source_reason = None
+    knowledge_question = facts.question if facts else (latest_user_text(messages) or text_content)
     knowledge_started_at = time.monotonic()
     from services.knowledge_workspace.runtime import prepare_knowledge_run
     await prepare_knowledge_run(handler, context_anchor, user_id, conversation_id, required=params.get('_knowledge_refs_required') is True, question=knowledge_question, self_contained=source_reason is not None, defer_default=True)
-    logger.info('Chat knowledge preparation | task={} | self_contained={} | active={} | elapsed_ms={}',
+    logger.info('Chat knowledge preparation | task={} | self_contained={} | active={} | elapsed_ms={} | input_facts={} | input_changed={} | history_evidence={}',
                 task_id, source_reason, getattr(handler, '_knowledge_run', None) is not None,
-                round((time.monotonic() - knowledge_started_at) * 1000, 3))
+                round((time.monotonic() - knowledge_started_at) * 1000, 3),
+                facts.version if facts else None, facts.changed if facts else None,
+                (facts.history_evidence or facts.knowledge_used) if facts else None)
     chat_phase('context.knowledge', task_id=task_id)
     handler._knowledge_self_contained = source_reason is not None and getattr(handler, '_knowledge_run', None) is None
     if getattr(handler,'_knowledge_answer_guard',None) is not None:
@@ -200,6 +214,7 @@ async def prepare_chat_stream(
             task_id,
         )
         prepared = PreparedChatStream(
+            knowledge_input_facts=facts,
             knowledge_question=knowledge_question,
             text_content=text_content,
             messages=messages,

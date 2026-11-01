@@ -68,6 +68,7 @@ async def test_snapshot_uses_revision_boundary_and_keeps_duplicate_text():
         "conversation_id": "conv-1",
         "role": "user",
         "turn_id": "turn-1",
+        "content": [{"type": "text", "text": "冻结的用户原文"}],
     })
     history_query = _query([
         {
@@ -98,6 +99,7 @@ async def test_snapshot_uses_revision_boundary_and_keeps_duplicate_text():
     assert "更早的事实" in (snapshot.summary_prompt or "")
     assert snapshot.summary_revision == 2
     assert snapshot.conversation_source == "wecom"
+    assert snapshot.input_content == [{"type": "text", "text": "冻结的用户原文"}]
 
 
 @pytest.mark.asyncio

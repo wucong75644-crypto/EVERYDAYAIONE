@@ -447,3 +447,31 @@ async def test_original_task_plan_cross_stage_import_preserves_history_and_rejec
         with pytest.raises(psycopg.Error,match='DRAIN_REQUIRED'):
             with c.transaction():c.execute((ROOT/'migrations/rollback/368_agent_task_saved_plan_handoff_rollback.sql').read_text())
         assert c.execute("SELECT relforcerowsecurity FROM pg_class WHERE oid='public.agent_task_states'::regclass").fetchone()[0]
+
+
+def test_knowledge_input_extension_survives_original_followup_adoption(followup_db):
+    from services.knowledge_workspace.input_facts import CHECKPOINT_KEY, KnowledgeInputFacts, restore_facts
+    from services.handlers.context_snapshot import ContextAnchor
+    old,new,_,obs,_=new_turn(followup_db)
+    previous=KnowledgeInputFacts(old['conv'],old['message'],None,'原要求',('text',),False,knowledge_used=True)
+    current=KnowledgeInputFacts(new['conv'],new['message'],None,'继续原任务，保留之前的成果',('text',),False)
+    with psycopg.connect(followup_db) as c:
+        c.execute('UPDATE conversation_turn_checkpoints SET state=state || %s WHERE task_id=%s',
+            (Jsonb({CHECKPOINT_KEY:previous.checkpoint()}),old['task']))
+    with connect(new) as c:
+        fresh=c.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',(new['task'],)).fetchone()[0]
+        fresh[CHECKPOINT_KEY]=current.checkpoint()
+        assert c.execute("SELECT save_generation_checkpoint(%s,%s,'before_model',%s)",
+            (new['task'],new['token'],Jsonb(fresh))).fetchone()[0]['outcome']=='saved'
+        source=c.execute('SELECT read_agent_task_followup(%s,%s)',(new['task'],new['token'])).fetchone()[0]['source']
+        merged=payload(source,fresh,task_id=new['task'],turn_id=new['turn'],model_round=1,usage={},
+            observation=FollowupObservation.model_validate(obs))
+        reply=adopt(c,new,source,obs,merged)
+        assert reply['outcome']=='saved'
+        checkpoint=reply['payload']
+        assert checkpoint[CHECKPOINT_KEY]==previous.checkpoint()
+        assert checkpoint['_task_followup_input_checkpoint'][CHECKPOINT_KEY]==current.checkpoint()
+        restored=restore_facts(checkpoint,ContextAnchor(new['task'],new['conv'],new['turn'],new['message'],0,None,None))
+        assert restored.input_message_id==new['message'] and restored.history_evidence and restored.changed
+        assert checkpoint['opaque_context']=={'keep':True}
+        assert c.execute('SELECT count(*) FROM credit_transactions WHERE task_id=%s',(new['task'],)).fetchone()[0]==0

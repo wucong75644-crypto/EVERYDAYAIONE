@@ -70,22 +70,32 @@ def has_knowledge_evidence(messages):
     return False
 
 
-def self_contained_reason(question, content, messages, *, required=False):
+def self_contained_reason(question, content, messages, *, required=False, input_facts=None):
     """No answer/Skill/tool result can grant this exemption.
 
     Persisted explicit refs are checked again by KnowledgeRun.start. Historical
     knowledge packets/citations keep verification even on a new short question.
     """
+    if input_facts is not None:
+        if input_facts.changed or input_facts.history_evidence or input_facts.knowledge_used:
+            return None
+        question = input_facts.question
+        kinds = input_facts.kinds
+    else:
+        # Legacy callers have no authenticated provenance. Keep their existing
+        # conservative boundary; production snapshot/replay uses input facts.
+        if required or not isinstance(question, str) or len(question) > 2000:
+            return None
+        latest = latest_user_text(messages)
+        if latest and latest.strip() != question.strip():
+            return None
+        if has_knowledge_evidence(messages):
+            return None
+        kinds = [getattr(part, 'type', None) for part in content]
     if required or not isinstance(question, str) or len(question) > 2000:
         return None
     if PRIVATE_CONTEXT.search(question):
         return None
-    latest = latest_user_text(messages)
-    if latest and latest.strip() != question.strip():
-        return None
-    if has_knowledge_evidence(messages):
-        return None
-    kinds = [getattr(part, 'type', None) for part in content]
     if any(kind not in ('text', 'image') for kind in kinds):
         return None
     if 'image' in kinds:

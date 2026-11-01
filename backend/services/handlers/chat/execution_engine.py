@@ -198,6 +198,15 @@ async def execute_chat(
         retry_context=request.retry_context,
         on_model_retry=request.on_model_retry,
     )
+    if runtime is not None:
+        runtime.knowledge_input_provider = None
+    if runtime is not None and getattr(prepared, 'knowledge_input_facts', None) is not None:
+        # Use the existing opaque checkpoint extension, including checkpoints
+        # produced by task/Skill safe points outside this module.
+        runtime.knowledge_input_provider = lambda: prepared.knowledge_input_facts.checkpoint(
+            changed=getattr(runtime, 'knowledge_input_changed', False) is True,
+            knowledge_used=getattr(handler, '_knowledge_run', None) is not None,
+        )
     model_gateway = _get_model_gateway(prepared)
     handler._adapter = model_gateway
     previous_sink = getattr(handler, "_execution_sink", None)
@@ -2190,6 +2199,10 @@ def _inject_steer_messages(
 ) -> None:
     if prepared is not None and any(steer_messages):
         prepared.knowledge_steer_pending = True
+        prepared.knowledge_pending_directives = [
+            *getattr(prepared, 'knowledge_pending_directives', []),
+            *(message for message in steer_messages if message),
+        ]
     for message in steer_messages:
         if message:
             messages.append({"role": "user", "content": message})
@@ -2198,9 +2211,15 @@ def _inject_steer_messages(
 async def _refresh_knowledge_after_steer(handler, request, prepared):
     if not getattr(prepared, 'knowledge_steer_pending', False):
         return
-    from services.knowledge_workspace.scope_selection import latest_user_text
-    question = latest_user_text(prepared.messages)
+    # Only authenticated runtime directives change the question. Attachment
+    # locators, preferences and other rendered packets are not directives.
+    directives = getattr(prepared, 'knowledge_pending_directives', [])
+    question = directives[-1] if directives else ''
     prepared.knowledge_question = question or getattr(prepared, 'text_content', '')
+    if getattr(prepared, 'knowledge_input_facts', None) is not None:
+        from dataclasses import replace
+        prepared.knowledge_input_facts = replace(prepared.knowledge_input_facts,
+            question=prepared.knowledge_question, changed=True)
     if getattr(handler, '_knowledge_self_contained', False) or getattr(handler,'_knowledge_answer_guard',None) is not None:
         from services.knowledge_workspace.runtime import prepare_knowledge_run
         await prepare_knowledge_run(handler, request.context_anchor, request.user_id,
@@ -2214,6 +2233,7 @@ async def _refresh_knowledge_after_steer(handler, request, prepared):
         from services.knowledge_workspace.answer_plan import invalidate_for_steer
         invalidate_for_steer(prepared, handler._knowledge_run)
     prepared.knowledge_steer_pending = False
+    prepared.knowledge_pending_directives = []
 
 
 def _last_tool_output(blocks: list[dict[str, Any]]) -> str:
