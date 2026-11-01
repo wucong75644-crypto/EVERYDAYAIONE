@@ -1,4 +1,5 @@
 """Public grounding contracts use synthetic facts and isolated provider transports."""
+from services.knowledge_workspace.answer_policy import KnowledgeAnswerPolicy
 import asyncio
 import json
 from types import SimpleNamespace
@@ -96,7 +97,7 @@ async def test_draft_and_reasoning_never_stream_or_enter_checkpoint_totals():
  from services.handlers.chat.stream_session import StreamTotals
  async def stream(**kwargs):
   yield SimpleNamespace(content='未经支持的结论',thinking_content='猜测业务含义',tool_calls=None,prompt_tokens=1,completion_tokens=1,credits_consumed=None,finish_reason='stop')
- prepared=SimpleNamespace(adapter=SimpleNamespace(stream_chat=stream),messages=[],stream_kwargs={},knowledge_grounding_run=object())
+ prepared=SimpleNamespace(adapter=SimpleNamespace(stream_chat=stream),messages=[],stream_kwargs={},knowledge_answer_policy=KnowledgeAnswerPolicy('audit_claims','test',object()))
  sink=CollectingExecutionSink();totals=StreamTotals();blocks=[]
  text,thinking,_,_=await _read_turn(prepared,[],asyncio.Event(),sink,totals,blocks,None)
  assert text=='未经支持的结论' and thinking=='猜测业务含义'
@@ -135,7 +136,7 @@ async def test_budget_wrap_up_passes_same_gate(monkeypatch):
  monkeypatch.setattr('services.agent.stop_policy.synthesize_wrap_up',lambda **kwargs:asyncio.sleep(0,result='未经支持的停止总结'))
  async def release(*args,**kwargs):return '只有这个结果已经核验'
  monkeypatch.setattr(grounding,'release_answer',release)
- prepared=SimpleNamespace(budget=SimpleNamespace(stop_reason='max_turns'),knowledge_grounding_run=object(),text_content='question',adapter=object(),messages=[])
+ prepared=SimpleNamespace(budget=SimpleNamespace(stop_reason='max_turns'),knowledge_answer_policy=KnowledgeAnswerPolicy('audit_claims','test',object()),text_content='question',adapter=object(),messages=[])
  sink=CollectingExecutionSink();totals=StreamTotals();blocks=[]
  await _apply_budget_stop(prepared,totals,blocks,sink)
  assert totals.text=='只有这个结果已经核验'

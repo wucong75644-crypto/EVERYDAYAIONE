@@ -26,6 +26,7 @@ class PreparedChatStream:
     skill_host_scope_captured: bool = False
     knowledge_answer_plan: Any = None
     knowledge_question: str | None = None
+    knowledge_answer_policy: Any = None
 
     @property
     def adapter(self) -> Any:
@@ -88,12 +89,16 @@ async def prepare_chat_stream(
     knowledge_question = latest_user_text(messages) or text_content
     knowledge_started_at = time.monotonic()
     from services.knowledge_workspace.runtime import prepare_knowledge_run
-    await prepare_knowledge_run(handler, context_anchor, user_id, conversation_id, required=params.get('_knowledge_refs_required') is True, question=knowledge_question, self_contained=source_reason is not None)
+    await prepare_knowledge_run(handler, context_anchor, user_id, conversation_id, required=params.get('_knowledge_refs_required') is True, question=knowledge_question, self_contained=source_reason is not None, defer_default=True)
     logger.info('Chat knowledge preparation | task={} | self_contained={} | active={} | elapsed_ms={}',
                 task_id, source_reason, getattr(handler, '_knowledge_run', None) is not None,
                 round((time.monotonic() - knowledge_started_at) * 1000, 3))
     chat_phase('context.knowledge', task_id=task_id)
     handler._knowledge_self_contained = source_reason is not None and getattr(handler, '_knowledge_run', None) is None
+    if getattr(handler,'_knowledge_answer_guard',None) is not None:
+        from services.knowledge_workspace.answer_policy import INSTRUCTIONS
+        if not any(m.get('role')=='system' and m.get('content')==INSTRUCTIONS for m in messages):
+            messages.append({'role':'system','content':INSTRUCTIONS})
     if getattr(handler, '_knowledge_run', None):
         import json
         prefix='知识画布运行快照：'
@@ -207,6 +212,8 @@ async def prepare_chat_stream(
             budget=budget,
             execution_context=execution_context,
         )
+        from services.knowledge_workspace.answer_policy import bind_answer_policy
+        bind_answer_policy(prepared, handler)
         chat_phase('context.ready', task_id=task_id)
         return prepared
     except BaseException:

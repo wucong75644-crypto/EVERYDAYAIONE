@@ -65,7 +65,7 @@ class KnowledgeRun(DerivedChat):
         self.repo,self.id,self.snapshot=repo,str(snapshot_id),snapshot
 
     @classmethod
-    def start(cls, repo, *, conversation_id, input_message_id, default_scope=False, question=None, allow_self_contained=True):
+    def start(cls, repo, *, conversation_id, input_message_id, default_scope=False, question=None, allow_self_contained=True, defer_default=False):
         with repo.cursor() as c:
             # Message visibility verifies conversation ownership. Refs are loaded
             # from persistence, not restored from an untrusted params dictionary.
@@ -99,6 +99,9 @@ class KnowledgeRun(DerivedChat):
                     from .scope_selection import roots
                     refs, scope_reason = roots(c, question, allow_self_contained=allow_self_contained)
                 if not refs: return None
+                if defer_default:
+                    from .answer_policy import DeferredKnowledgeScope
+                    return DeferredKnowledgeScope(repo, str(conversation_id), str(input_message_id), tuple(refs))
             containers=check_roots(c,refs)
             # Collect metadata optimistically, then lock containers in sorted
             # order and verify these revisions before persisting the snapshot.

@@ -12,6 +12,7 @@ from typing import Any, Awaitable, Callable
 from loguru import logger
 
 from schemas.message import ContentPart, TextPart
+from services.knowledge_workspace.answer_policy import bind_answer_policy, policy_for
 from services.handlers.chat.execution_sink import (
     CollectingExecutionSink,
     ExecutionSink,
@@ -407,9 +408,7 @@ async def execute_chat(
         chat_phase('answer.prepare.begin', task_id=request.task_id)
         await prepare_knowledge_answer(handler,prepared,request,skills)
         chat_phase('answer.prepare.end', task_id=request.task_id)
-        from services.knowledge_workspace.chat import KnowledgeRun
-        active_knowledge=getattr(handler,'_knowledge_run',None)
-        prepared.knowledge_grounding_run=active_knowledge if isinstance(active_knowledge,KnowledgeRun) else None
+        bind_answer_policy(prepared, handler)
         finalized_parts = None
 
         async def finalize_output(form_hint=None):
@@ -494,9 +493,13 @@ async def execute_chat(
 async def _finalize_output_parts(*, handler, prepared, totals, blocks, sink,
                                  cancellation_event, runtime, form_hint=None):
     """Canonical output finalization, shared by normal return and logical commit."""
+    # The final tool may have acquired evidence on the last budgeted round.
+    # Bind before wrap-up even when no next model-loop boundary will run.
+    bind_answer_policy(prepared, handler)
     # New tasks already saved an explicit bounded partial result; do not invoke
     # an extra uncounted synthesis model after their task budget is exhausted.
-    if runtime is None or (runtime.task_execution_state is None and getattr(runtime,'task_requirement_review',None) is None):
+    if (not getattr(prepared,'knowledge_repair_exhausted',False)
+            and (runtime is None or (runtime.task_execution_state is None and getattr(runtime,'task_requirement_review',None) is None))):
         await _apply_budget_stop(prepared, totals, blocks, sink,
             cancellation_event=cancellation_event, runtime=runtime)
     await _consume_emit_payloads(handler, blocks, sink)
@@ -766,10 +769,7 @@ async def _run_loop(
             continue
         # A knowledge tool can introduce a run after initial setup. Re-evaluate
         # at the next model boundary so its evidence is never streamed unaudited.
-        from services.knowledge_workspace.chat import KnowledgeRun
-        active_knowledge = getattr(handler, '_knowledge_run', None)
-        if isinstance(active_knowledge, KnowledgeRun):
-            prepared.knowledge_grounding_run = active_knowledge
+        bind_answer_policy(prepared, handler)
         if getattr(handler, '_knowledge_run', None) is not None and prepared.execution_context is not None:
             from dataclasses import replace
             prepared.execution_context = replace(prepared.execution_context, feature_flags={
@@ -850,7 +850,7 @@ async def _run_loop(
                 await sink.on_block(blocks[-1])
                 return None
             turn_text, turn_thinking = "", ""
-        grounding_run=getattr(prepared,'knowledge_grounding_run',None)
+        grounding_run=policy_for(prepared).verifier
         if grounding_run is not None:
             # Tool-round narratives and reasoning are drafts, not user-visible facts.
             turn_thinking=''
@@ -869,7 +869,36 @@ async def _run_loop(
                 else:
                     existing.update(knowledge_stage);knowledge_stage=existing
                     await sink.on_block_update(knowledge_stage)
-                turn_text=await _verify_knowledge_answer(grounding_run,turn_text,(getattr(prepared,'knowledge_question',None) or getattr(prepared,'text_content',''.join(p.text for p in request.content if isinstance(p,TextPart)))),totals.usage,cancellation_event,runtime,other_tools=_completed_other_tools(blocks))
+                from services.knowledge_workspace.answer_policy import KnowledgeEvidenceRequired
+                try:
+                    turn_text=await _verify_knowledge_answer(grounding_run,turn_text,(getattr(prepared,'knowledge_question',None) or getattr(prepared,'text_content',''.join(p.text for p in request.content if isinstance(p,TextPart)))),totals.usage,cancellation_event,runtime,other_tools=_completed_other_tools(blocks),source_context={'has_user_images':any(getattr(p,'type',None)=='image' for p in request.content)})
+                except KnowledgeEvidenceRequired:
+                    # The independently audited draft is never sent to the
+                    # user. Allow one bounded repair in the existing loop.
+                    marker='[Knowledge evidence repair]'
+                    repeated=any(m.get('role')=='system' and isinstance(m.get('content'),str)
+                        and m['content'].startswith(marker) for m in prepared.messages)
+                    knowledge_stage.update(status='completed',output='草稿需要原文依据，尚未发布；正在补充资料。' if not repeated else '尚无足够依据，未发布草稿。')
+                    await sink.on_block_update(knowledge_stage)
+                    if repeated:
+                        from services.knowledge_workspace.grounding import fallback
+                        notice={'type':'text','text':fallback([])}
+                        blocks.append(notice);await sink.on_block(notice)
+                        if runtime and runtime.task_execution_state is not None:
+                            from services.task_execution.model_bridge import review_model_completion
+                            await review_model_completion(runtime=runtime,prepared=prepared,blocks=blocks,
+                                build_checkpoint=_build_replay_context,turn=turn,next_model_round=model_round,
+                                repeated_tool_call_guard=repeated_tool_call_guard,exhausted=True,
+                                sink=sink,terminal_result=terminal_task_result)
+                        return None
+                    prepared.messages.append({'role':'system','content':marker+'\n独立依据核对发现草稿需要企业私有资料，草稿未发布。'
+                        '根据用户原目标使用knowledge_discover及返回入口补充真实依据；不得重复无依据的结论。'
+                        '若无相关来源或工具不可用，说明具体缺口，不能把它推断为整个知识库为空。'})
+                    if runtime:
+                        await runtime.safe_point(SafePoint.BEFORE_MODEL,replay_payload=_build_replay_context(
+                            prepared.messages,blocks,prepared.budget.turns_used,next_model_round=model_round,
+                            repeated_tool_call_guard=repeated_tool_call_guard))
+                    continue
                 await _check_cancelled(cancellation_event,request,prepared.messages,blocks,totals,'knowledge_verification')
                 if knowledge_stage is not None:
                     knowledge_stage.update(status='completed', output='依据检查已结束，可展示的回答见正文。')
@@ -977,6 +1006,12 @@ async def _run_loop(
             'task_status':'partial'}
         blocks.append(notice)
         await sink.on_block(notice)
+    elif any(m.get('role')=='system' and isinstance(m.get('content'),str)
+             and m['content'].startswith('[Knowledge evidence repair]') for m in prepared.messages):
+        prepared.knowledge_repair_exhausted=True
+        notice={'type':'text','text':'已达到本次执行预算，尚未取得足够的原文依据；原请求和已完成结果已保留，未发布未经核验的结论。','task_status':'partial'}
+        blocks.append(notice)
+        await sink.on_block(notice)
     return None
 
 
@@ -984,12 +1019,12 @@ def _completed_other_tools(blocks):
     return sorted({b['tool_name'] for b in blocks if b.get('type')=='tool_step' and b.get('status')=='completed' and isinstance(b.get('tool_name'),str) and not b['tool_name'].startswith('knowledge_') and b['tool_name'] not in SKILL_CONTROL_TOOLS})
 
 
-async def _verify_knowledge_answer(run,text,question,usage,cancellation_event,runtime,*,other_tools=()):
+async def _verify_knowledge_answer(run,text,question,usage,cancellation_event,runtime,*,other_tools=(),source_context=None):
     from services.knowledge_workspace.grounding import release_answer
     from services.agent.observability.chat_lifecycle import chat_phase
     chat_phase('verification.begin')
     started = time.monotonic()
-    task=asyncio.create_task(release_answer(run,text,question,usage=usage,other_tools=other_tools))
+    task=asyncio.create_task(release_answer(run,text,question,usage=usage,other_tools=other_tools,source_context=source_context))
     cancel=asyncio.create_task(cancellation_event.wait())
     command=asyncio.create_task(runtime.wait_for_command()) if runtime else None
     try:
@@ -1145,7 +1180,7 @@ async def _read_turn(
                 builtin_sources[source["url"]] = source.get("title") or source["url"]
         if chunk.thinking_content:
             turn_thinking += chunk.thinking_content
-            if not getattr(prepared, "defer_ecom_narrative", False) and getattr(prepared,"knowledge_grounding_run",None) is None:
+            if not getattr(prepared, "defer_ecom_narrative", False) and not policy_for(prepared).hold_body:
                 totals.thinking += chunk.thinking_content
                 await sink.on_thinking(chunk.thinking_content)
         if chunk.content:
@@ -1153,7 +1188,7 @@ async def _read_turn(
             if model_timing.chunks == 1:
                 chat_phase('model.first_body', task_id=request.task_id if request else None, model_round=model_round)
             turn_text += chunk.content
-            if not getattr(prepared, "defer_ecom_narrative", False) and getattr(prepared,"knowledge_grounding_run",None) is None:
+            if not getattr(prepared, "defer_ecom_narrative", False) and not policy_for(prepared).hold_body:
                 totals.text += chunk.content
                 await sink.on_text(chunk.content)
         if chunk.tool_calls:
@@ -1187,7 +1222,7 @@ async def _read_turn(
         from services.handlers.chat.builtin_tools import source_text
         references = source_text(builtin_sources)
         turn_text += references
-        if getattr(prepared,'knowledge_grounding_run',None) is None:
+        if not policy_for(prepared).hold_body:
             totals.text += references
             await sink.on_text(references)
     ordered_indices = sorted(calls)
@@ -1209,7 +1244,7 @@ async def _read_turn(
     else:
         ordered_calls.sort(key=lambda call: call.get("id", ""))
     chat_phase('model.end', task_id=request.task_id if request else None, model_round=model_round)
-    timing = model_timing.summary(held=getattr(prepared, 'knowledge_grounding_run', None) is not None,
+    timing = model_timing.summary(held=policy_for(prepared).hold_body,
                                   review=task_review)
     if not hasattr(prepared, 'model_turn_timings'):
         prepared.model_turn_timings = []
@@ -2060,9 +2095,14 @@ async def _apply_budget_stop(
         reason=stop_message(prepared.budget.stop_reason),
     )
     if synthesis:
-        run=getattr(prepared,'knowledge_grounding_run',None)
+        run=policy_for(prepared).verifier
         if run is not None:
-            synthesis=await _verify_knowledge_answer(run,synthesis,getattr(prepared,'text_content',''),totals.usage,cancellation_event or asyncio.Event(),runtime,other_tools=_completed_other_tools(blocks))
+            from services.knowledge_workspace.answer_policy import KnowledgeEvidenceRequired
+            try:
+                synthesis=await _verify_knowledge_answer(run,synthesis,getattr(prepared,'text_content',''),totals.usage,cancellation_event or asyncio.Event(),runtime,other_tools=_completed_other_tools(blocks))
+            except KnowledgeEvidenceRequired:
+                from services.knowledge_workspace.grounding import fallback
+                synthesis=fallback([])
         totals.text = synthesis
         block = {"type": "text", "text": synthesis}
         blocks.append(block)
@@ -2161,11 +2201,11 @@ async def _refresh_knowledge_after_steer(handler, request, prepared):
     from services.knowledge_workspace.scope_selection import latest_user_text
     question = latest_user_text(prepared.messages)
     prepared.knowledge_question = question or getattr(prepared, 'text_content', '')
-    if getattr(handler, '_knowledge_self_contained', False):
+    if getattr(handler, '_knowledge_self_contained', False) or getattr(handler,'_knowledge_answer_guard',None) is not None:
         from services.knowledge_workspace.runtime import prepare_knowledge_run
         await prepare_knowledge_run(handler, request.context_anchor, request.user_id,
             request.conversation_id, required=request.params.get('_knowledge_refs_required') is True,
-            question=prepared.knowledge_question)
+            question=prepared.knowledge_question,defer_default=True)
         handler._knowledge_self_contained = False
         if getattr(handler, '_knowledge_run', None) is not None:
             prepared.messages.append({'role': 'system', 'content': '知识画布运行快照：' +

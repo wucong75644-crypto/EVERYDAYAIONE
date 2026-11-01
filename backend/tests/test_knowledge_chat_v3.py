@@ -417,3 +417,105 @@ async def test_full_prompt_greeting_skips_default_snapshot_but_restores_explicit
         r.scope.actor_user_id,new_conv,question='你好',self_contained=True)
     assert handler._knowledge_run.id==pinned.id
     assert handler._knowledge_run.snapshot['roots']==pinned.snapshot['roots']
+
+
+def test_default_scope_can_defer_snapshot_but_explicit_and_saved_versions_cannot(current_snapshot_db):
+    from services.knowledge_workspace.answer_policy import DeferredKnowledgeScope
+    make,_=current_snapshot_db;r=make();r.initialize();obj=document(r)
+    _,message,conversation=start(make,r,[])
+    deferred=KnowledgeRun.start(r,conversation_id=conversation,input_message_id=message,
+        default_scope=True,question='公司规则是什么',defer_default=True,allow_self_contained=False)
+    assert isinstance(deferred,DeferredKnowledgeScope)
+    deferred.revalidate();assert deferred.grounding_sources() is None
+    with psycopg.connect(**make.admin_args) as c:
+        assert c.execute('SELECT count(*) FROM kb_read_snapshots WHERE input_message_id=%s',(message,)).fetchone()[0]==0
+    # First real use freezes through the unchanged transaction. Replays restore
+    # that exact snapshot even when the new chat entry requests deferral.
+    actual=KnowledgeRun.start(r,conversation_id=conversation,input_message_id=message,
+        default_scope=True,question='公司规则是什么',allow_self_contained=False)
+    assert isinstance(actual,KnowledgeRun)
+    restored=KnowledgeRun.start(r,conversation_id=conversation,input_message_id=message,
+        default_scope=True,question='新的说法',defer_default=True)
+    assert isinstance(restored,KnowledgeRun) and restored.id==actual.id and restored.snapshot==actual.snapshot
+    pinned,new_input,new_conv=start(make,r,[ref(obj)])
+    explicit=KnowledgeRun.start(r,conversation_id=new_conv,input_message_id=new_input,defer_default=True)
+    assert isinstance(explicit,KnowledgeRun) and explicit.id==pinned.id
+
+
+def test_deferred_policy_is_actor_bound_and_cannot_downgrade_new_explicit_refs(current_snapshot_db):
+    from dataclasses import replace
+    from services.knowledge_workspace.answer_policy import DeferredKnowledgeScope
+    make,_=current_snapshot_db;r=make();r.initialize();obj=document(r)
+    _,message,conversation=start(make,r,[])
+    deferred=KnowledgeRun.start(r,conversation_id=conversation,input_message_id=message,
+        default_scope=True,question='公司规则是什么',defer_default=True,allow_self_contained=False)
+    assert isinstance(deferred,DeferredKnowledgeScope)
+    with pytest.raises(AppException):replace(deferred,repo=make(1,0)).revalidate()
+    with psycopg.connect(**make.admin_args) as c:
+        c.execute('UPDATE messages SET knowledge_refs=%s WHERE id=%s',(json.dumps([ref(obj)]),message))
+    with pytest.raises(AppException,match='知识引用'):deferred.revalidate()
+
+
+@pytest.mark.asyncio
+async def test_runtime_default_deferral_does_not_enter_program_retrieval(current_snapshot_db,monkeypatch):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from core.config import get_settings
+    from services.handlers.context_snapshot import ContextAnchor
+    from services.knowledge_workspace.runtime import prepare_knowledge_run
+    from services.knowledge_workspace.answer_policy import DeferredKnowledgeScope
+    from services.knowledge_workspace.answer_plan import prepare
+    make,_=current_snapshot_db;r=make();r.initialize();obj=document(r)
+    _,message,conversation=start(make,r,[])
+    settings=get_settings().model_copy(update={'knowledge_derivation_enabled':True,'knowledge_default_scope_enabled':True})
+    monkeypatch.setattr('core.config.get_settings',lambda:settings)
+    monkeypatch.setattr('api.routes.knowledge.enabled',lambda _:True)
+    monkeypatch.setattr('services.knowledge_workspace.runtime.repository',lambda *_:r)
+    monkeypatch.setattr('services.knowledge_workspace.answer_plan.collect',lambda *_:pytest.fail('pre-model retrieval'))
+    anchor=ContextAnchor(task_id=str(uuid4()),conversation_id=conversation,turn_id=str(uuid4()),
+        input_message_id=message,base_revision=0,through_message_id=None,org_id=r.scope.org_id)
+    h=SimpleNamespace(org_id=r.scope.org_id,db=object())
+    await prepare_knowledge_run(h,anchor,r.scope.actor_user_id,conversation,question='公司规则是什么',defer_default=True)
+    assert h._knowledge_run is None and isinstance(h._knowledge_answer_guard,DeferredKnowledgeScope)
+    await prepare(h,SimpleNamespace(),SimpleNamespace())
+    # The default strategy must not weaken a new explicitly pinned request.
+    pinned,new_input,new_conv=start(make,r,[ref(obj)])
+    await prepare_knowledge_run(h,replace(anchor,input_message_id=new_input,conversation_id=new_conv),
+        r.scope.actor_user_id,new_conv,question='公司规则是什么',required=True,defer_default=True)
+    assert h._knowledge_answer_guard is None and h._knowledge_run.id==pinned.id
+
+
+def test_default_preparation_query_comparison_uses_same_native_source(current_snapshot_db):
+    from contextlib import contextmanager
+    import time
+    from services.knowledge_workspace.answer_policy import DeferredKnowledgeScope
+    make,_=current_snapshot_db;r=make();r.initialize();document(r)
+    metrics={}
+    for deferred in (False,True):
+        _,mid,cid=start(make,r,[]);queries=[]
+        class Cursor:
+            def __init__(self,value):self.value=value
+            def execute(self,query,*args,**kwargs):
+                queries.append(str(query))
+                return self.value.execute(query,*args,**kwargs)
+            def __getattr__(self,name):return getattr(self.value,name)
+        class Traced:
+            @contextmanager
+            def cursor(self):
+                with r.cursor() as cursor:yield Cursor(cursor)
+            def __getattr__(self,name):return getattr(r,name)
+        begin=time.perf_counter()
+        result=KnowledgeRun.start(Traced(),conversation_id=cid,input_message_id=mid,default_scope=True,
+            question='公司规范如何',allow_self_contained=False,defer_default=deferred)
+        elapsed=round((time.perf_counter()-begin)*1000,3)
+        enumerations=sum('SELECT o.id,o.container_id,o.parent_id' in q for q in queries)
+        with psycopg.connect(**make.admin_args) as c:
+            snapshots=c.execute('SELECT count(*) FROM kb_read_snapshots WHERE input_message_id=%s',(mid,)).fetchone()[0]
+        metrics['deferred' if deferred else 'baseline']={
+            'scope_prepare_ms':elapsed,'sql_calls':len(queries),'object_enumerations':enumerations,'snapshots':snapshots}
+        assert isinstance(result,DeferredKnowledgeScope) is deferred
+        assert snapshots==(0 if deferred else 1)
+        assert enumerations==(0 if deferred else 1)
+    assert metrics['deferred']['sql_calls']<metrics['baseline']['sql_calls']
+    # Component-local loopback evidence, not a live-provider or page latency SLO.
+    print('LOCAL_PREPARATION_COMPARISON '+json.dumps(metrics))

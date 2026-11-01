@@ -1,4 +1,5 @@
 """Host source scope and real incremental read boundary; no paid transports."""
+from services.knowledge_workspace.answer_policy import KnowledgeAnswerPolicy
 import asyncio
 from types import SimpleNamespace
 
@@ -58,7 +59,7 @@ async def test_real_read_loop_delivers_before_generation_finishes_only_without_g
         finished.set()
 
     p = SimpleNamespace(adapter=SimpleNamespace(stream_chat=stream), messages=[], stream_kwargs={},
-                        knowledge_grounding_run=object() if held else None)
+                        knowledge_answer_policy=KnowledgeAnswerPolicy('audit_claims','test',object()) if held else None)
     sink, totals = CollectingExecutionSink(), StreamTotals()
     run = asyncio.create_task(_read_turn(p, [], asyncio.Event(), sink, totals, [], None))
     try:
@@ -195,7 +196,7 @@ async def test_tool_round_is_not_presented_as_answer_audit_and_final_body_stays_
         budget=ExecutionBudget(max_turns=4,wrap_up_turns_reserved=0),core_tools=[],messages=[],
         tool_context=SimpleNamespace(discovered_tools=set(),build_context_prompt=lambda:''),
         permission=SimpleNamespace(mode=SimpleNamespace(value='auto'),need_exit_attachment=False,get_reminder=lambda _:''),
-        knowledge_grounding_run=object())
+        knowledge_answer_policy=KnowledgeAnswerPolicy('audit_claims','test',object()))
     async def tools(**kwargs):
         assert not any(b.get('tool_name')=='knowledge_answer_verification' for b in blocks)
         assert sink.text=='' and sink.thinking==''
@@ -208,7 +209,8 @@ async def test_tool_round_is_not_presented_as_answer_audit_and_final_body_stays_
     audit=AsyncMock(side_effect=verify)
     monkeypatch.setattr('services.handlers.chat.execution_engine._execute_tools',execute)
     monkeypatch.setattr('services.handlers.chat.execution_engine._verify_knowledge_answer',audit)
-    await _run_loop(handler=SimpleNamespace(org_id=None),request=_request(),prepared=prepared,
+    await _run_loop(handler=SimpleNamespace(org_id=None,
+        _knowledge_answer_guard=prepared.knowledge_answer_policy.verifier),request=_request(),prepared=prepared,
         cancellation_event=asyncio.Event(),sink=sink,totals=StreamTotals(),blocks=blocks,runtime=None)
     assert len(rounds)==2
     execute.assert_awaited_once();audit.assert_awaited_once()

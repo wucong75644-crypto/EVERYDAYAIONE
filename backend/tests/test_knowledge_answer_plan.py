@@ -96,6 +96,35 @@ async def test_skill_host_restrictions_and_other_actor_do_not_enter_fast_path(de
  with pytest.raises(AppException):await prepare(handler,prepared,replace(req,user_id='another-user'))
 
 
+@pytest.mark.asyncio
+async def test_saved_automatic_answer_reuses_exact_snapshot_and_question_without_search(derived_db,monkeypatch):
+ from uuid import uuid4
+ from services.knowledge_workspace.chat import KnowledgeRun
+ from tests.test_chat_execution_engine import _request
+ from schemas.message import TextPart
+ r=derived_db[0]();title='复用验收'+uuid4().hex
+ root=create(r,title=title);leaf=create(r,root['container_id'],root['id'],'拼多多漏发')
+ r.command(command('save_document',{'object_id':leaf['id'],'expected_revision':1,
+     'body':'拼多多漏发：先核对订单数量和照片，免费补寄；食品拆封不适用，需人工确认。'}))
+ _,mid,cid=start(derived_db[0],r,[])
+ question=title+'中拼多多漏发如何处理？食品拆封可以吗？'
+ run=KnowledgeRun.start(r,conversation_id=cid,input_message_id=mid,default_scope=True,
+     question=question,allow_self_contained=False)
+ assert run.snapshot['automatic']
+ original=collect(run,question)
+ assert original['mode']=='answer'
+ monkeypatch.setattr('services.knowledge_workspace.answer_plan.collect',lambda *_:pytest.fail('duplicate search'))
+ req=replace(_request(),content=[TextPart(text=question)],user_id=r.scope.actor_user_id)
+ p=SimpleNamespace(execution_context=SimpleNamespace(context_scope='user',authorized_tool_names=None),messages=[])
+ h=SimpleNamespace(_knowledge_run=run,org_id=r.scope.org_id)
+ await prepare(h,p,req)
+ assert p.knowledge_answer_plan['cache_hit']
+ assert p.knowledge_answer_plan['items']==original['items']
+ other=SimpleNamespace(execution_context=p.execution_context,messages=[])
+ await prepare(h,other,replace(req,content=[TextPart(text='普通文案怎么写？')]))
+ assert not hasattr(other,'knowledge_answer_plan')
+
+
 def test_frozen_production_corpus_prefetches_originals_without_rollup_speculation(derived_db):
  from tests.knowledge_corpus import clone
  r=derived_db[0]();roots=clone(r);run,_,_=start(derived_db[0],r,[ref(roots['normal'])])
