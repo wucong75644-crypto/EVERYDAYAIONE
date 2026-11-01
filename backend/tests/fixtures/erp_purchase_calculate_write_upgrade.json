@@ -1,0 +1,95 @@
+{
+  "reason": "Purchase strategy calculation starts an asynchronous write, not a read. Preserve original ERP Agent and require existing write confirmation.",
+  "schemas": {
+    "erp_purchase_query": {
+      "type": "function",
+      "function": {
+        "name": "erp_purchase_query",
+        "description": "远程API查询ERP供应商/采购单/收货单/采退单/上架单/采购建议。适合本地工具不支持的操作。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "supplier_list",
+                "purchase_order_list",
+                "purchase_order_detail",
+                "purchase_return_list",
+                "purchase_return_detail",
+                "warehouse_entry_list",
+                "warehouse_entry_detail",
+                "shelf_list",
+                "shelf_detail",
+                "purchase_strategy",
+                "purchase_progress",
+                "purchase_order_history",
+                "purchase_order_history_detail",
+                "warehouse_entry_history",
+                "warehouse_entry_history_detail",
+                "purchase_return_history",
+                "purchase_return_history_detail",
+                "shelf_history",
+                "shelf_history_detail"
+              ],
+              "description": "supplier_list=查询供应商列表（供应商基础信息）。按启用/停用状态筛选。查商品关联的供应商用item_supplier_list(status), purchase_order_list=查询采购单列表（向供应商下的采购订单）。按状态/单号/时间筛选。查三个月前的用purchase_order_history(code/outer_code/purchase_id/status/time_type/start_date/end_date), purchase_order_detail=查询采购单完整详情（含采购商品明细/数量/价格/到货情况）。需要采购单ID（从purchase_order_list获取）(purchase_id/pt_order_id), purchase_return_list=查询采购退货单列表（向供应商退货）。与售后退货不同，这是采购方向的退货(status/code/outer_code/time_type/tag_name/finance_status/start_date/end_date), purchase_return_detail=查询采购退货单完整详情。需要采退单ID（从purchase_return_list获取）(*return_id), warehouse_entry_list=查询采购收货单列表（供应商送货到仓的收货记录）。按状态/单号/财务状态筛选(status/code/outer_code/finance_status/tag_name/flag/prein_order_id/start_date/end_date), warehouse_entry_detail=查询收货单完整详情（收货商品/数量/差异）。需要收货单ID（从warehouse_entry_list获取）(*entry_id), shelf_list=查询上架单列表（采购收货后的上架任务）。按状态/收货单号/时间筛选(status/time_type/we_code/start_date/end_date), shelf_detail=查询上架单完整详情（上架商品/数量/货位）。需要上架单ID（从shelf_list获取）(*shelf_id), purchase_strategy=查询采购建议（根据销售数据推荐补货商品和数量）。按商品名称或编码搜索。不是查采购单，查采购单用purchase_order_list(*query_key), purchase_progress=查询采购建议计算进度（配合purchase_strategy_calculate使用）。不是查采购单进度(progress_type), purchase_order_history=查询归档采购单（三个月前的历史采购单）。必须传起止日期。近期采购单用purchase_order_list（⚠️必传start_date+end_date）(code/purchase_id/status/time_type/*start_date/*end_date), purchase_order_history_detail=查询归档采购单完整详情。需要采购单ID（从purchase_order_history获取）（⚠️必传start_date+end_date）(*purchase_id), warehouse_entry_history=查询归档收货单列表（三个月前的历史收货单）。必须传起止日期（⚠️必传start_date+end_date）(code/status/time_type/finance_status/*start_date/*end_date), warehouse_entry_history_detail=查询归档收货单完整详情。需要收货单ID（从warehouse_entry_history获取）（⚠️必传start_date+end_date）(*entry_id), purchase_return_history=查询归档采退单列表（三个月前的历史采购退货单）。必须传起止日期（⚠️必传start_date+end_date）(code/status/time_type/finance_status/*start_date/*end_date), purchase_return_history_detail=查询归档采退单完整详情。需要采退单ID（从purchase_return_history获取）（⚠️必传start_date+end_date）(*return_id), shelf_history=查询归档上架单列表（三个月前的历史上架单）。必须传起止日期（⚠️必传start_date+end_date）(status/time_type/we_code/*start_date/*end_date), shelf_history_detail=查询归档上架单完整详情。需要上架单ID（从shelf_history获取）（⚠️必传start_date+end_date）(*shelf_id)"
+            },
+            "params": {
+              "type": "object",
+              "description": "操作参数（key 必须用下划线格式如 time_type/start_date，禁止驼峰如 timeType/startTime）。不确定参数时只传 action 可获取完整参数文档。"
+            },
+            "page": {
+              "type": "integer",
+              "description": "页码（默认1）"
+            },
+            "page_size": {
+              "type": "integer",
+              "description": "每页条数（默认20，最小20）"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      }
+    },
+    "erp_execute": {
+      "type": "function",
+      "function": {
+        "name": "erp_execute",
+        "description": "执行ERP写操作（新增/修改/删除/作废等）。操作前需用户确认。分类: basic(基础): customer_create=新增/修改客户基本信息(customer_id/code/nick/name/type/level/province/city/area/address/remark/email/payment_method/discount_rate/invoice_title/tax_number/bank_name/bank_account/type_code/qq/fax/url/zip_code); product(商品): tag_add=新增商品标签(*name/style), tag_batch_update=设置商品标签(tag_names/tag_ids/*type/*item_info_list), cat_add=新增商品分类, classify_add=新增商品类目, brand_add=新增/修改商品品牌(*name/brand_id), supplier_update=商品关联供应商信息更新, supplier_add=添加商品供应商关系(item_id/outer_id/sku_outer_id/sku_id/suppliers), supplier_modify=修改商品供应商关系, supplier_delete=删除商品供应商关系(item_id/outer_id/supplier_ids/supplier_codes/sku_outer_id/sku_id), product_add_update=修改/新增商品V2, product_add_update_simple=修改/新增普通商品(*outer_id/*title/item_id/skus/short_title/barcode/purchase_price/selling_price/weight/remark/brand/brand_id/cat_id/seller_cids/active_status/unit/make_gift/unique_code_type), import_platform_item=导入平台商品信息, update_history_price=更新商品历史成本价(outer_id/item_id/sku_id/*price/date), stock_update=修改实际库存（编码最多20个）(outer_ids/sku_outer_ids/*warehouse_id/stock_num/over_stock_num/under_stock_num), virtual_stock_update=修改虚拟库存（编码最多20个）(item_ids/*warehouse_id/*stock_num/sku_outer_ids/outer_ids), virtual_stock_batch_update=批量修改虚拟库存, item_type_change=商品类型转换; trade(交易): order_create=创建系统手工单(*shop_id/*warehouse_id/*orders/*payment/order_id/*receiver_name/*receiver_state/*receiver_city/*receiver_district/*receiver_street/*receiver_address/receiver_mobile/receiver_phone/receiver_zip/post_fee/buyer/seller_memo/express_code/force), order_create_new=创建自建平台订单, receiver_update=修改订单收货地址(order_id/system_id/*receiver_name/*receiver_state/*receiver_city/*receiver_district/*receiver_address/receiver_mobile/receiver_phone/receiver_zip), seller_memo_update=修改订单卖家备注与旗帜(order_id/system_id/seller_memo/flag), tag_batch_update=批量修改订单标签(order_ids/system_ids/*tag_ids/*type), order_cancel=订单作废(order_ids/system_ids), order_intercept=订单发货拦截(system_ids), trade_consign=上传发货(system_ids/consign_type/express_code/express_no/operate_type), trade_pack=包装验货(system_id/unique_codes/*can_force/express_no/order_scan_infos), wave_pick_hand=波次手动拣选, unique_code_receive=订单唯一码收货(*unique_code), wave_seed=波次播种回传, unique_code_generate=新增商品唯一码(*generate_params), unique_code_validate=校验波次唯一码(unique_codes/start_time/end_time), unique_code_update=商品唯一码更新(*generate_params), change_warehouse=修改订单仓库(*system_ids/*warehouse_id/force), logistics_template_update=更新订单物流模板(system_ids/logistics_company_id), fast_stock_update=即入即出匹配(outer_id/num/type/need_goods_section/warehouse_code), order_remark_update=修改订单商品备注(*order_id/*remark), order_remark_batch_update=批量修改订单商品备注(system_id/order_id/orders), trade_halt=订单挂起(order_ids/system_ids/*auto_unhalt/unhalt_type/halt_time_unit/halt_time_val/is_urgent), trade_unhalt=订单解挂(order_ids/system_ids); aftersales(售后): workorder_create=创建售后工单(order_id/system_id/shop_id/*warehouse_id/*reason/*after_sale_type/*reissue_list/has_owner/remark/platform_id/buyer_name/buyer_phone/explains/force), workorder_cancel=作废售后工单(*work_order_ids), workorder_resolve=解决售后工单(*work_order_ids), workorder_goods_received=售后工单退货入仓(warehouse_id/external_warehouse_code/*received_orders), workorder_tag_update=更新售后工单标记(*type/*work_order_id/tag_names/tag_ids), workorder_explains_update=更新售后单售后说明(*work_order_id/*explains/*is_append), workorder_batch_change_type=批量修改售后类型(*work_order_ids/*change_type), repair_process=维修单处理(*repair_no/*has_fee/*failure_cause/repair_remark/accessory_url), repair_edit_money=维修单修改费用(*repair_no/*repair_money), repair_pay=维修单付款(*repair_no/*received_time/received_way/*current_price/trade_number/operator_name/operator_time), workorder_remark_update=修改售后工单备注(*work_order_id/*remark), update_platform_refund_money=更新工单平台实退金额(*work_order_id/*platform_refund_money/item_snapshot), update_express=更新工单退货快递信息(*work_order_id/platform_id/express_name/express_id); warehouse(仓储): allocate_add=新增完成的调拨单, allocate_create=新增调拨单, allocate_in_receive=调拨入库单收货(*allocate_id/*receive_details/outer_code), allocate_out_direct=调拨出库单直接出库, other_in_add=新增其他入库单(*items/*warehouse_code/outer_code/custom_type/remark/status/code/in_location), other_in_cancel=作废其他入库单(*ids), other_out_add=新增其他出库单(*items/*warehouse_code/custom_type/outer_code/remark/status/out_location), other_out_cancel=作废其他出库单(*ids), inventory_batch_update=盘点单库存盘点, unshelve_save=新建/修改下架单, unshelve_execute=下架单下架(*unshelve_id), upshelf_batch=暂存区批量上架; purchase(采购): purchase_strategy_calculate=触发采购建议计算任务（异步写操作，请用erp_execute category=purchase）。用purchase_progress查进度，计算完成后用purchase_strategy查看结果(*warehouse_code/ignore_trade_out/ignore_refund), warehouse_entry_receive=收货单收货, warehouse_entry_fast_receive=采购快速收货, warehouse_entry_revert=收货单打回(*entry_ids), shelf_save=上架单上架, supplier_add_update=新建/修改供应商(*code/*name/remark/contact_name/mobile/phone/email/address/category_name/status), purchase_add=新增采购单, purchase_add_update=新建/修改采购单(*supplier_code/*items/*warehouse_code/outer_code/remark/purchase_id/delivery_date/status/pt_order_id/template_name/express_no), purchase_status_update=采购单状态更新, purchase_update_special=更新采购单特殊字段(*purchase_id/outer_code/template_name/express_no/supplier_code), purchase_un_audit=采购单反审核, purchase_return_save=采退单保存(*supplier_code/*items/*warehouse_code/outer_code/purchase_order_id/return_id/remark), purchase_return_out=采退单出库, purchase_return_cancel=采退单作废(*return_id), warehouse_entry_add_update=收货单新增/修改, warehouse_entry_cancel=收货单作废(*entry_ids), pre_in_order_add=预约入库单新增, pre_in_order_update=预约入库单修改, pre_in_order_anti_audit=预约入库单反审核; distribution(分销): add_distributor_money=增加分销余额(*supplier_company_id/*distributor_company_id/*payment_type/*amount), add_distribution_item=添加分销商品(*supplier_company_id/*distributor_company_id/*item_outer_id/item_sku_outer_id_list), add_distributor=注册分销商(*supplier_company_id/*distributor_company_name/*source/*main_phone/*default_user_name/*default_password/version_number), submit_sync_item=提交分销小店商品的同步(*supplier_company_id/*shop_id/item_type)",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "category": {
+              "type": "string",
+              "enum": [
+                "basic",
+                "product",
+                "trade",
+                "aftersales",
+                "warehouse",
+                "purchase",
+                "distribution"
+              ],
+              "description": "操作分类"
+            },
+            "action": {
+              "type": "string",
+              "description": "操作名称（见各分类的写操作列表）"
+            },
+            "params": {
+              "type": "object",
+              "description": "操作参数（根据具体操作传入）"
+            }
+          },
+          "required": [
+            "category",
+            "action"
+          ]
+        }
+      }
+    }
+  },
+  "registry_description": "触发采购建议计算任务（异步写操作，请用erp_execute category=purchase）。用purchase_progress查进度，计算完成后用purchase_strategy查看结果"
+}

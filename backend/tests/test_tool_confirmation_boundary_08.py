@@ -69,7 +69,8 @@ async def test_confirmation_response_cannot_bypass_execution_boundary(setup, mon
     executor = MockHandlerExecutor(agent_domain="general", task_id="task1")
     executor.tool_confirmer = lambda call, ctx, decision: harness._confirm_tool_call(call, ctx, decision, "m1")
     cache = Mock()
-    lifecycle = Mock(replay=AsyncMock(return_value=None), begin=AsyncMock(return_value=None), complete=AsyncMock())
+    lifecycle = Mock(replay=AsyncMock(return_value=None), begin=AsyncMock(return_value=None), complete=AsyncMock(),
+        prepare_file_resume=None, requires_fresh_read=False, records_cache_consumption=False)
 
     async def send(*items):
         request = items[-1]

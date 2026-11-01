@@ -817,3 +817,12 @@ Chrome原页面在动作间持续被切回另一个活跃任务，工具stale-in
 ## 382 用户授权受控部署供生产验收（2026-11-01）
 
 用户在已知381未完成验收、已停付费的前提下明确要求“提交部署”。本次按现有deploy/release.sh提交完整当前任务并发布前后端，执行原测试/构建、锁、数据库身份、迁移账本和readiness门禁；不以此将未完成业务验收改为成功。默认agent_task_execution_enabled=false和agent_task_erp_write_enabled=false保留，不自动更改生产配置、扩大编排受理范围或恢复延期ERP写功能。原ERP Agent保持原路径。付费批次381的12次已满，本轮发布/健康检查不运行任何付费模型或图片调用，不重复生图。发布结果以本次受控入口结构化结果为准，工作树待验收保留，不合入main或清理。
+
+
+### 382 首候选发布检查安全拦截及测试契约修复
+
+候选c0ef7dc318263702363c517428e2af0810aed1d1由受控入口提交推送。前端242文件/2731测试与构建通过；后端13811通过、1215跳过、4xfail、11失败，入口返回failed_safe，阶段仅preflight/tests_and_build，未同步生产文件、执行迁移或重启。未绕过检查或恢复锁。
+
+11失败集中在5个旧测试文件：不安全目录mkdir权限受发布umask077掩盖（现显式chmod755后仍断言blocked）；worker.__new__夹具未初始化新增video loop/pool（现同时断言三路取消/关闭）；确认测试动态Mock把未配置prepare_file_resume当异步能力（显式None/boolean，真实确认断言保留）；旧Actor Mock动态生成新增reader/followup属性（改用真实ConversationTurnRuntime，仅safe_point为AsyncMock）；6项ERP契约期望尚未登记既有purchase_strategy_calculate从读改为异步写的安全修正。新增静态两schema升级，原不可变baseline不改，registry仅核对该条is_write/描述后还原两字段继续整表hash，其他接口/权限/确认契约不放松。原ERP Agent及延期ERP写开关未改。
+
+550项定向回归通过，独立只读窄审无阻塞发现。修复仅测试/证据文档，不改应用行为；仍按新候选重新执行完整受控发布，不能复用失败结果冒充成功。不新增付费模型调用、生图或业务写验收。最终结果以新入口结构化RELEASE_RESULT为准。

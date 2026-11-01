@@ -372,11 +372,10 @@ async def test_shared_chat_engine_passes_mode_and_retains_safe_points(setup, mon
     ]))
     runtime = None
     if actor:
-        runtime = Mock(turn_id="turn", command_store=None, execution_token="lease", skill_runtime=None,
-            task_execution_state=None, task_bootstrap=None)
+        from services.conversation_turn_runtime import ConversationTurnRuntime
+        runtime = ConversationTurnRuntime(conversation_id='c1',task_id='task1',turn_id='turn',
+            cancellation_event=event,execution_token='lease')
         runtime.safe_point = AsyncMock()
-        runtime.consume_subtask_completions.return_value = []
-        runtime.consume_steer_messages.return_value = []
     sink = AsyncMock()
     sink.emit_empty_thinking = False
     await _run_loop(handler=harness, request=ChatExecutionRequest(
