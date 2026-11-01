@@ -226,3 +226,24 @@ it('keeps selected plans but hides the old submission summary', () => {
   expect(screen.queryByText(/排队中/)).not.toBeInTheDocument();
   expect(screen.queryByText(/private-task-id/)).not.toBeInTheDocument();
 });
+
+vi.mock('../TaskProgressCard', () => ({ default: ({ rootTaskId, messageId }: { rootTaskId: string; messageId: string }) =>
+  <div data-testid="task-progress-source">{rootTaskId}:{messageId}</div> }));
+
+describe('task progress discovery', () => {
+  it('routes persisted assistant markers to the authenticated progress component', () => {
+    const root = '11111111-1111-4111-8111-111111111111';
+    const message = normalizeMessage({ id: 'assistant-progress', conversation_id: 'c1', role: 'assistant', status: 'completed',
+      content: JSON.stringify([{ type: 'task_progress', root_task_id: root, status: 'completed' }]) });
+    render(<MessageContentBlocks message={message} imageAssets={[]} fileBlocks={[]} isStreaming={false}
+      isRegenerating={false} textContent="" onImageClick={vi.fn()} />);
+    expect(screen.getByTestId('task-progress-source')).toHaveTextContent(`${root}:assistant-progress`);
+  });
+  it('does not display a progress marker uploaded as user content', () => {
+    const message = normalizeMessage({ id: 'user-marker', conversation_id: 'c1', role: 'user', status: 'completed',
+      content: [{ type: 'task_progress', root_task_id: '11111111-1111-4111-8111-111111111111' }] });
+    render(<MessageContentBlocks message={message} imageAssets={[]} fileBlocks={[]} isStreaming={false}
+      isRegenerating={false} textContent="" onImageClick={vi.fn()} />);
+    expect(screen.queryByTestId('task-progress-source')).not.toBeInTheDocument();
+  });
+});

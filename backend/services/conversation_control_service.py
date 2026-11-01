@@ -82,6 +82,29 @@ def load_control_tasks(
             running = task
         elif status == "paused" and paused is None:
             paused = task
+    if running is None and paused is None:
+        # Closed chat windows can still own a waiting logical goal. Old rows
+        # without the server marker retain the original control behavior.
+        result = (db.table('tasks').select(_TASK_FIELDS).eq('conversation_id',conversation_id)
+            .eq('user_id',user_id).eq('type','chat').eq('status','completed')
+            .order('created_at',desc=True).limit(200).execute())
+        for task in result.data or []:
+            root = (task.get('request_params') or {}).get('_agent_task_root')
+            if not root or not _org_matches(task,org_id) or not is_actor_task(task):
+                continue
+            from services.task_execution.user_control import scope_database
+            found = (scope_database(db,user_id,org_id).table('agent_task_states').select('state,owner_task_id')
+                .eq('root_task_id',root).eq('actor_user_id',user_id).eq('conversation_id',conversation_id).maybe_single().execute())
+            logical = found.data if found else None
+            if not logical or logical.get('owner_task_id') != task['id']:
+                continue
+            status = (logical.get('state') or {}).get('status')
+            if status == 'paused':
+                paused = {**task,'status':'paused'}
+                break
+            if status == 'waiting_dependencies':
+                running = {**task,'status':'running'}
+                break
     return ConversationControlTasks(running=running, paused=paused)
 
 
@@ -125,12 +148,12 @@ def _result(
 ) -> dict[str, Any]:
     return {
         "action": action.value,
-        **dict(result),
         "task_id": str(task.get("id")) if task.get("id") else None,
         "client_task_id": task.get("client_task_id"),
         "external_task_id": task.get("external_task_id"),
         "assistant_message_id": task.get("assistant_message_id"),
         "conversation_id": task.get("conversation_id"),
+        **dict(result),
     }
 
 

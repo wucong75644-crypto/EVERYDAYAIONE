@@ -56,6 +56,7 @@ class SandboxToolMixin:
         start_ms = int(_time.monotonic() * 1000)
         status = "success"
         result = ""
+        executor=None
 
         try:
             # sandbox 超时受 budget 约束（防止 sandbox 120s 但 budget 只剩 30s）
@@ -74,6 +75,9 @@ class SandboxToolMixin:
                     _cache.set_staging_dir(_staging)
 
             from services.sandbox.kernel_manager import get_kernel_manager
+            from services.task_execution.contracts import TaskState
+            task_state=getattr(self,'_task_execution_state',None)
+            managed_options={'managed_task':True} if isinstance(task_state,TaskState) and task_state.image_binding_version>=3 else {}
             executor = build_sandbox_executor(
                 timeout=_timeout,
                 max_result_chars=settings.sandbox_max_result_chars,
@@ -81,7 +85,11 @@ class SandboxToolMixin:
                 org_id=self.org_id,
                 conversation_id=self.conversation_id,
                 kernel_manager=get_kernel_manager(),
+                **managed_options,
             )
+            if managed_options and getattr(self,'image_execution_token',None) is not None:
+                from services.task_execution.requirement_changes import gate as user_change_gate
+                executor._before_managed_submit=lambda:user_change_gate(self)
             result = await executor.execute(code, description)
             # 产物透传由 tool_loop_executor._process_emit_markers 处理 (emit_payloads)
             # 此处不再需要 _chart_options/_image_dims 透传 (沙盒 IO 统一协议)
@@ -101,7 +109,8 @@ class SandboxToolMixin:
                 summary=f"沙盒执行异常: {e}",
                 status="error",
                 error_message=str(e),
-                metadata={"retryable": False},
+                metadata={"retryable": False,**(executor._execution_metadata(code) if executor is not None
+                    and getattr(executor,'_managed_task',False) is True else {})},
             )
             return result
         finally:

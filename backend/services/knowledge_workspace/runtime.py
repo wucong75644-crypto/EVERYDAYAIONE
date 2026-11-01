@@ -3,7 +3,7 @@ import asyncio
 from types import SimpleNamespace
 from .chat import KnowledgeRun, repository, unavailable
 
-async def prepare_knowledge_run(handler, anchor, user_id, conversation_id, *, required=False, question=None):
+async def prepare_knowledge_run(handler, anchor, user_id, conversation_id, *, required=False, question=None, self_contained=False):
     handler._knowledge_run=None
     # Explicit references retain priority. Default scope is enabled only with
     # the derivation rollout and is frozen per input under live actor/org RLS.
@@ -23,7 +23,7 @@ async def prepare_knowledge_run(handler, anchor, user_id, conversation_id, *, re
         if not required:return
         unavailable()
     run=await asyncio.to_thread(KnowledgeRun.start,repository(handler.db,user_id,handler.org_id),
-                                conversation_id=conversation_id,input_message_id=anchor.input_message_id,default_scope=default_scope and not required,question=question)
+                                conversation_id=conversation_id,input_message_id=anchor.input_message_id,default_scope=default_scope and not required and not self_contained,question=question,allow_self_contained=False)
     if not run:
         if not required:return
         unavailable('KNOWLEDGE_UNAVAILABLE')

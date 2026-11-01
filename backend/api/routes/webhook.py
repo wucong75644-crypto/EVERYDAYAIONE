@@ -162,6 +162,22 @@ async def handle_webhook(
     # 4. 查询任务获取类型
     service = TaskCompletionService(db)
     task = service.get_task(external_task_id)
+    if not task and request.query_params.get('video_task'):
+        # The existing callback token above authenticates this provider reply.
+        # Correlate a response-lost create only to its server-owned child/nonce.
+        try:
+            from uuid import UUID
+            from services.handlers.native_video_queue import NativeVideoQueue,is_native_video
+            local_id=str(UUID(request.query_params['video_task']))
+            claim=str(UUID(request.query_params.get('video_claim','')))
+            candidate=db.table('tasks').select('*').eq('id',local_id).maybe_single().execute().data
+            if candidate and is_native_video(candidate):
+                reply=await NativeVideoQueue(db,get_settings()).rpc(candidate,'bind_agent_video_submission',
+                    p_claim_token=claim,p_external_task_id=external_task_id)
+                if reply.get('outcome')=='accepted':task=service.get_task(external_task_id)
+        except Exception as error:
+            logger.warning('native_video_callback_binding_deferred | error_type={}',type(error).__name__)
+            return JSONResponse(status_code=503,content={'error':'Video binding not confirmed'})
     if not task:
         logger.warning(
             f"Webhook: task not found | provider={provider} | "

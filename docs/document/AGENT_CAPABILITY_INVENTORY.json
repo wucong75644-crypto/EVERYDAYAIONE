@@ -1,0 +1,1053 @@
+{
+  "baseline": "6fce2e641760b8eff62adad512f4096fb1502fed",
+  "scope": "Registered definitions at baseline. v3 adapters preserve current Policy and original domain authorities. adapted means local mechanism coverage, never per-domain end-to-end acceptance. Scheduled receipt background continuation reuses the original Actor queue/context. ERP direct completion admitted for erp.item.tag.add; exact title-only item.general.addorupdate may complete after a later native item.single.get postcondition with exact session or persisted provider-observed refresh lineage, locally verified. Other fields/methods/async finality remain unverified. File restore now binds original backups and no-clobber publication to native journal/atomic deleted_files settlement; file deletion now has per-item backup/settlement and guarded original-version remaining-item resume through the original ToolRuntime/Policy/confirmation and real native invocation ledger, locally verified. v3 generate_video now has native async queue, original ledger, single-submit uncertainty, owned asset publication and original Actor continuation, locally verified without external calls. 362 adds authenticated read-only user-chat progress and persisted discovery markers, locally verified through HTTP/message/frontend paths; accepted/uncertain is never delivery completion. 363 persists authenticated in-flight Actor steer with atomic checkpoint/ACK and same-root continuation delivery; delivery does not amend requirements or authorize new effects. 364/365 add in-flight STEER relation review, host-verified requirement revisions preserving all prior artifacts/results/operations/context, versioned planning gates and native dispatch barriers, locally verified only. Original two pinned method protocols are compared without creating Skills or calling providers. 366/367 add same-conversation personal serial new-user-turn adoption with original checkpoint/context/pins and requirement review, plus exact canonical generate_image reuse of authorized published historical images before charging; locally verified only. Late native images settle through original Actor consumers. 368 adds shared native preparation for exact ready-plan and final-prompt reuse, and committed structured task-plan handoff with fresh fact review. Stable regeneration retries reuse only matching source/variant descendants; explicit unkeyed regeneration keeps new-image semantics. Original two published body hashes match repository v3 and complete local control flows; production full export, provider and UI acceptance are still unverified. Channel progress, remaining ERP terminal contracts, multi-entry/visual UI, original two-Skill live acceptance and whole-product acceptance remain incomplete. 369 persists bounded/redacted native ERP mapped-request evidence and exposes partial item observations/provider handles after compression. Lost ACK target-state observations never complete unknown effects or unblock conflicting mutations. Method-specific batch/async terminal contracts and wakeups remain pending; no external calls. 370 adds exact acknowledged product string-field postconditions (title plus barcode/unit/remark/shortTitle) using existing item.single.get, original input/mapped equality and separate versioned read projection. Unknown and async/partial remain unresolved; no SKU/inventory/pricing coercion. Locally verified only. 371 adds original-message pause/resume/cancel UI with source-preserving logical resume, native scoped HTTP controls and local browser acceptance (fixture API/images only); completed roots are rechecked for authenticated follow-ups. Accepted ERP writes project as needs_verification rather than guaranteed pending delivery. A current 88-write method inventory identifies 2 conditional verification protocols and 86 methods needing provider-specific finality; discovery never grants completion or resend authority. Channel-specific progress and original two-Skill provider acceptance remain pending. 372 user explicitly defers new ERP write adaptation and retains original ERP Agent. Earlier 86-method finality gaps are deferred rather than completed. New-task admission is restricted to supported personal workspace scopes; existing channel Actor/Skill paths and saved bootstrap/state recovery are preserved. Current release_scope overrides earlier pending scope notes. 373 enforces deferred ERP scope in code with an independent default-false new-effect gate across planning/disclosure/dispatch/native preparation. Original ERP Agent and old effect recovery remain; non-ERP shared lifecycle and context/reuse paths locally verified. Real original-Skill availability/export/provider acceptance remains unverified.",
+  "entries": [
+    {
+      "tool_name": "erp_info_query",
+      "action_rule": "erp_query",
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_native_read_text_data_fileref_only_current_policy_allow_read_required",
+      "limits": [
+        "read_actions_only",
+        "text_data_or_native_fileref_only",
+        "no_write_receipt_or_arbitrary_file_completion",
+        "domain_end_to_end_not_verified"
+      ]
+    },
+    {
+      "tool_name": "erp_product_query",
+      "action_rule": "erp_query",
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_native_read_text_data_fileref_only_current_policy_allow_read_required",
+      "limits": [
+        "read_actions_only",
+        "text_data_or_native_fileref_only",
+        "no_write_receipt_or_arbitrary_file_completion",
+        "domain_end_to_end_not_verified"
+      ]
+    },
+    {
+      "tool_name": "erp_trade_query",
+      "action_rule": "erp_query",
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_native_read_text_data_fileref_only_current_policy_allow_read_required",
+      "limits": [
+        "read_actions_only",
+        "text_data_or_native_fileref_only",
+        "no_write_receipt_or_arbitrary_file_completion",
+        "domain_end_to_end_not_verified"
+      ]
+    },
+    {
+      "tool_name": "erp_aftersales_query",
+      "action_rule": "erp_query",
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_native_read_text_data_fileref_only_current_policy_allow_read_required",
+      "limits": [
+        "read_actions_only",
+        "text_data_or_native_fileref_only",
+        "no_write_receipt_or_arbitrary_file_completion",
+        "domain_end_to_end_not_verified"
+      ]
+    },
+    {
+      "tool_name": "erp_warehouse_query",
+      "action_rule": "erp_query",
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_native_read_text_data_fileref_only_current_policy_allow_read_required",
+      "limits": [
+        "read_actions_only",
+        "text_data_or_native_fileref_only",
+        "no_write_receipt_or_arbitrary_file_completion",
+        "domain_end_to_end_not_verified"
+      ]
+    },
+    {
+      "tool_name": "erp_purchase_query",
+      "action_rule": "erp_query",
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_native_read_text_data_fileref_only_current_policy_allow_read_required",
+      "limits": [
+        "read_actions_only",
+        "text_data_or_native_fileref_only",
+        "no_write_receipt_or_arbitrary_file_completion",
+        "domain_end_to_end_not_verified"
+      ]
+    },
+    {
+      "tool_name": "erp_taobao_query",
+      "action_rule": "erp_query",
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_native_read_text_data_fileref_only_current_policy_allow_read_required",
+      "limits": [
+        "read_actions_only",
+        "text_data_or_native_fileref_only",
+        "no_write_receipt_or_arbitrary_file_completion",
+        "domain_end_to_end_not_verified"
+      ]
+    },
+    {
+      "tool_name": "erp_execute",
+      "action_rule": "erp_write",
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "dangerous",
+      "parallelizable": false,
+      "status": "partially_adapted",
+      "reason": "native_dispatch_exact_acknowledged_product_scalar_postconditions_and_bounded_batch_lost_ack_recovery_local_only",
+      "limits": [
+        "direct_completion_method_erp.item.tag.add",
+        "title_v1_or_title_plus_barcode_unit_remark_shortTitle_string_v2_requires_exact_later_native_item.single.get_same_session_or_verified_refresh_lineage",
+        "no_cache_replay_other_tenant_or_unknown_acceptance_completion",
+        "sku_inventory_price_other_fields_methods_and_async_terminal_protocols_pending",
+        "purchase_calculation_trigger_now_requires_original_write_entry_and_confirmation",
+        "no_external_business_acceptance",
+        "mapped_request_snapshot_is_redacted_bounded_and_never_resend_authority",
+        "batch_item_observations_and_provider_handles_do_not_imply_finality",
+        "lost_ack_target_observation_keeps_effect_uncertain_and_conflicting_writes_blocked",
+        "88_registered_writes_2_conditional_verification_protocols_86_provider_contracts_required",
+        "accepted_erp_projects_as_needs_verification_not_guaranteed_future_delivery"
+      ],
+      "release_scope": "deferred_by_user_preserve_existing_recovery_records"
+    },
+    {
+      "tool_name": "local_data",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_explicit_native_read_result_adapter",
+      "limits": [
+        "current_policy_allow_read",
+        "text_data_native_fileref_only",
+        "business_handlers_remain_original",
+        "no_write_or_delegate_completion",
+        "not_live_domain_end_to_end_verified"
+      ]
+    },
+    {
+      "tool_name": "local_product_stats",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_explicit_native_read_result_adapter",
+      "limits": [
+        "current_policy_allow_read",
+        "text_data_native_fileref_only",
+        "business_handlers_remain_original",
+        "no_write_or_delegate_completion",
+        "not_live_domain_end_to_end_verified"
+      ]
+    },
+    {
+      "tool_name": "local_stock_query",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_explicit_native_read_result_adapter",
+      "limits": [
+        "current_policy_allow_read",
+        "text_data_native_fileref_only",
+        "business_handlers_remain_original",
+        "no_write_or_delegate_completion",
+        "not_live_domain_end_to_end_verified"
+      ]
+    },
+    {
+      "tool_name": "local_product_identify",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_explicit_native_read_result_adapter",
+      "limits": [
+        "current_policy_allow_read",
+        "text_data_native_fileref_only",
+        "business_handlers_remain_original",
+        "no_write_or_delegate_completion",
+        "not_live_domain_end_to_end_verified"
+      ]
+    },
+    {
+      "tool_name": "local_platform_map_query",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_explicit_native_read_result_adapter",
+      "limits": [
+        "current_policy_allow_read",
+        "text_data_native_fileref_only",
+        "business_handlers_remain_original",
+        "no_write_or_delegate_completion",
+        "not_live_domain_end_to_end_verified"
+      ]
+    },
+    {
+      "tool_name": "local_compare_stats",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_explicit_native_read_result_adapter",
+      "limits": [
+        "current_policy_allow_read",
+        "text_data_native_fileref_only",
+        "business_handlers_remain_original",
+        "no_write_or_delegate_completion",
+        "not_live_domain_end_to_end_verified"
+      ]
+    },
+    {
+      "tool_name": "local_shop_list",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_explicit_native_read_result_adapter",
+      "limits": [
+        "current_policy_allow_read",
+        "text_data_native_fileref_only",
+        "business_handlers_remain_original",
+        "no_write_or_delegate_completion",
+        "not_live_domain_end_to_end_verified"
+      ]
+    },
+    {
+      "tool_name": "local_warehouse_list",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_explicit_native_read_result_adapter",
+      "limits": [
+        "current_policy_allow_read",
+        "text_data_native_fileref_only",
+        "business_handlers_remain_original",
+        "no_write_or_delegate_completion",
+        "not_live_domain_end_to_end_verified"
+      ]
+    },
+    {
+      "tool_name": "local_supplier_list",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_explicit_native_read_result_adapter",
+      "limits": [
+        "current_policy_allow_read",
+        "text_data_native_fileref_only",
+        "business_handlers_remain_original",
+        "no_write_or_delegate_completion",
+        "not_live_domain_end_to_end_verified"
+      ]
+    },
+    {
+      "tool_name": "trigger_erp_sync",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "dangerous",
+      "parallelizable": false,
+      "status": "legacy_only",
+      "reason": "adapter_not_verified"
+    },
+    {
+      "tool_name": "social_crawler",
+      "action_rule": null,
+      "modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "legacy_only",
+      "reason": "adapter_not_verified"
+    },
+    {
+      "tool_name": "file_search",
+      "action_rule": null,
+      "modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "effects": [
+        "file_index"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_native_read_text_data_fileref_only_current_policy_allow_read_required",
+      "limits": [
+        "read_actions_only",
+        "text_data_or_native_fileref_only",
+        "no_write_receipt_or_arbitrary_file_completion",
+        "domain_end_to_end_not_verified"
+      ]
+    },
+    {
+      "tool_name": "file_analyze",
+      "action_rule": null,
+      "modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "effects": [
+        "workspace_artifacts",
+        "file_index"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_native_read_text_data_fileref_only_current_policy_allow_read_required",
+      "limits": [
+        "read_actions_only",
+        "text_data_or_native_fileref_only",
+        "no_write_receipt_or_arbitrary_file_completion",
+        "domain_end_to_end_not_verified"
+      ]
+    },
+    {
+      "tool_name": "file_delete",
+      "action_rule": null,
+      "modes": [
+        "interactive",
+        "scheduled"
+      ],
+      "effects": [
+        "workspace_delete",
+        "deletion_record"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "dangerous",
+      "parallelizable": false,
+      "status": "adapted",
+      "reason": "v3_native_original_version_remaining_resume_original_policy_confirmation_real_native_ledger_locally_verified",
+      "limits": [
+        "original_full_arguments_hash_required",
+        "current_policy_resources_confirmation_and_original_versions_rechecked",
+        "new_same_name_and_completed_files_never_redeleted",
+        "single_ready_minimum1_receipt_goal",
+        "external_oss_nas_and_whole_product_acceptance_pending"
+      ]
+    },
+    {
+      "tool_name": "restore_file",
+      "action_rule": null,
+      "modes": [
+        "interactive",
+        "scheduled"
+      ],
+      "effects": [
+        "workspace_write",
+        "deletion_record"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": false,
+      "status": "legacy_only",
+      "reason": "v3_native_restore_local_verified_for_unique_minimum1_file_or_receipt; whole_business_acceptance_pending"
+    },
+    {
+      "tool_name": "code_execute",
+      "action_rule": null,
+      "modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "effects": [
+        "kernel_state",
+        "workspace_artifacts"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "confirm",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_native_kernel_ack_effect_and_emitted_file_import",
+      "limits": [
+        "original_policy_and_workspace_boundary",
+        "unknown_execution_never_redispatched",
+        "native_stdout_or_actual_emitted_files_only",
+        "real_worker_and_domain_end_to_end_not_verified"
+      ]
+    },
+    {
+      "tool_name": "erp_agent",
+      "action_rule": null,
+      "modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "legacy_only",
+      "reason": "adapter_not_verified",
+      "release_scope": "original_entry_preserved_compatibility_verified_locally"
+    },
+    {
+      "tool_name": "erp_analyze",
+      "action_rule": null,
+      "modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "legacy_only",
+      "reason": "adapter_not_verified"
+    },
+    {
+      "tool_name": "erp_api_search",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_native_read_text_data_fileref_only_current_policy_allow_read_required",
+      "limits": [
+        "read_actions_only",
+        "text_data_or_native_fileref_only",
+        "no_write_receipt_or_arbitrary_file_completion",
+        "domain_end_to_end_not_verified"
+      ]
+    },
+    {
+      "tool_name": "search_knowledge",
+      "action_rule": null,
+      "modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "effects": [
+        "none"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_native_read_text_data_fileref_only_current_policy_allow_read_required",
+      "limits": [
+        "read_actions_only",
+        "text_data_or_native_fileref_only",
+        "no_write_receipt_or_arbitrary_file_completion",
+        "domain_end_to_end_not_verified"
+      ]
+    },
+    {
+      "tool_name": "web_search",
+      "action_rule": null,
+      "modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_native_read_text_data_fileref_only_current_policy_allow_read_required",
+      "limits": [
+        "read_actions_only",
+        "text_data_or_native_fileref_only",
+        "no_write_receipt_or_arbitrary_file_completion",
+        "domain_end_to_end_not_verified"
+      ]
+    },
+    {
+      "tool_name": "plan_ecommerce_images",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": false,
+      "status": "legacy_only",
+      "reason": "adapter_not_verified"
+    },
+    {
+      "tool_name": "generate_image",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "confirm",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_native_async_single_submit_ledger_actor_continuation_and_exact_published_image_reuse_locally_verified",
+      "limits": [
+        "personal_user_interactive_native_chat_only",
+        "current_policy_confirmation_resource_fact_size_and_version_gates_preserved",
+        "canonical_ready_plan_and_final_prompt_exact_reuse_only",
+        "stable_source_variant_retry_reuses_descendant_not_original",
+        "explicit_unkeyed_regeneration_remains_new_generation",
+        "provider_and_visual_ui_end_to_end_not_verified"
+      ]
+    },
+    {
+      "tool_name": "agent_reach",
+      "action_rule": "agent_reach",
+      "modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": false,
+      "status": "adapted",
+      "reason": "v3_linked_native_receipts_reconciliation_and_verified_not_dispatched_retry",
+      "limits": [
+        "unique_ready_receipt_minimum1",
+        "original_policy_content_confirmation",
+        "linked_positive_receipt_only_for_recovery",
+        "partial_or_unknown_never_resend",
+        "verified_not_dispatched_only_bounded_retry_with_budget_wait",
+        "no_live_platform_acceptance"
+      ]
+    },
+    {
+      "tool_name": "generate_video",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "confirm",
+      "parallelizable": false,
+      "status": "adapted",
+      "reason": "v3_original_generate_video_text_to_video_native_queue_ledger_owned_asset_actor_continuation_locally_verified",
+      "limits": [
+        "original_tool_text_prompt_10_seconds_only",
+        "legacy_non_v3_and_other_video_api_paths_retained",
+        "unknown_submission_never_recreated",
+        "persistent_asset_required_no_temporary_url_delivery",
+        "provider_and_ui_end_to_end_not_verified",
+        "paid_acceptance_requires_separate_cost_approval"
+      ]
+    },
+    {
+      "tool_name": "image_agent",
+      "action_rule": null,
+      "modes": [
+        "interactive",
+        "scheduled"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "confirm",
+      "parallelizable": false,
+      "status": "legacy_only",
+      "reason": "adapter_not_verified"
+    },
+    {
+      "tool_name": "manage_scheduled_task",
+      "action_rule": "scheduled_task",
+      "modes": [
+        "interactive",
+        "scheduled"
+      ],
+      "effects": [
+        "proposal_or_form",
+        "task_definition"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": true,
+      "status": "adapted",
+      "reason": "v3_read_results_and_stable_native_scheduled_binding_receipt_import",
+      "limits": [
+        "original_form_and_changeset_approval_required",
+        "receipt_minimum_one_per_requirement",
+        "only_original_business_commit_receipt_delivers",
+        "background_approval_cancel_continuation_incomplete",
+        "domain_end_to_end_not_verified"
+      ]
+    },
+    {
+      "tool_name": "fetch_all_pages",
+      "action_rule": "erp_raw_read",
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "workspace_artifacts",
+        "file_index"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": false,
+      "status": "adapted",
+      "reason": "v3_native_read_text_data_fileref_only_current_policy_allow_read_required",
+      "limits": [
+        "read_actions_only",
+        "text_data_or_native_fileref_only",
+        "no_write_receipt_or_arbitrary_file_completion",
+        "domain_end_to_end_not_verified"
+      ]
+    },
+    {
+      "tool_name": "get_conversation_context",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "none"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": false,
+      "status": "adapted",
+      "reason": "v3_native_read_text_data_fileref_only_current_policy_allow_read_required",
+      "limits": [
+        "read_actions_only",
+        "text_data_or_native_fileref_only",
+        "no_write_receipt_or_arbitrary_file_completion",
+        "domain_end_to_end_not_verified"
+      ]
+    },
+    {
+      "tool_name": "list_personal_skills_for_edit",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "skill_metadata_read"
+      ],
+      "replay_requirement": "record_required",
+      "risk": "safe",
+      "parallelizable": false,
+      "status": "legacy_only",
+      "reason": "adapter_not_verified"
+    },
+    {
+      "tool_name": "get_personal_skill_for_edit",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "skill_content_read"
+      ],
+      "replay_requirement": "record_required",
+      "risk": "safe",
+      "parallelizable": false,
+      "status": "legacy_only",
+      "reason": "adapter_not_verified"
+    },
+    {
+      "tool_name": "prepare_skill_draft",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "skill_candidate",
+        "changeset_proposal"
+      ],
+      "replay_requirement": "record_required",
+      "risk": "safe",
+      "parallelizable": false,
+      "status": "legacy_only",
+      "reason": "adapter_not_verified"
+    },
+    {
+      "tool_name": "knowledge_outline",
+      "action_rule": null,
+      "modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "effects": [
+        "none"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": false,
+      "status": "adapted",
+      "reason": "v3_explicit_native_read_result_adapter",
+      "limits": [
+        "current_policy_allow_read",
+        "text_data_native_fileref_only",
+        "business_handlers_remain_original",
+        "no_write_or_delegate_completion",
+        "not_live_domain_end_to_end_verified"
+      ]
+    },
+    {
+      "tool_name": "knowledge_search",
+      "action_rule": null,
+      "modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "effects": [
+        "none"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": false,
+      "status": "adapted",
+      "reason": "v3_explicit_native_read_result_adapter",
+      "limits": [
+        "current_policy_allow_read",
+        "text_data_native_fileref_only",
+        "business_handlers_remain_original",
+        "no_write_or_delegate_completion",
+        "not_live_domain_end_to_end_verified"
+      ]
+    },
+    {
+      "tool_name": "knowledge_read",
+      "action_rule": null,
+      "modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "effects": [
+        "none"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": false,
+      "status": "adapted",
+      "reason": "v3_explicit_native_read_result_adapter",
+      "limits": [
+        "current_policy_allow_read",
+        "text_data_native_fileref_only",
+        "business_handlers_remain_original",
+        "no_write_or_delegate_completion",
+        "not_live_domain_end_to_end_verified"
+      ]
+    },
+    {
+      "tool_name": "knowledge_follow_reference",
+      "action_rule": null,
+      "modes": [
+        "interactive",
+        "scheduled",
+        "preflight"
+      ],
+      "effects": [
+        "none"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": false,
+      "status": "adapted",
+      "reason": "v3_explicit_native_read_result_adapter",
+      "limits": [
+        "current_policy_allow_read",
+        "text_data_native_fileref_only",
+        "business_handlers_remain_original",
+        "no_write_or_delegate_completion",
+        "not_live_domain_end_to_end_verified"
+      ]
+    },
+    {
+      "tool_name": "knowledge_discover",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "none"
+      ],
+      "replay_requirement": "unspecified",
+      "risk": "safe",
+      "parallelizable": false,
+      "status": "adapted",
+      "reason": "v3_explicit_native_read_result_adapter",
+      "limits": [
+        "current_policy_allow_read",
+        "text_data_native_fileref_only",
+        "business_handlers_remain_original",
+        "no_write_or_delegate_completion",
+        "not_live_domain_end_to_end_verified"
+      ]
+    },
+    {
+      "tool_name": "mcp_test_lookup",
+      "action_rule": null,
+      "modes": [
+        "interactive"
+      ],
+      "effects": [
+        "none"
+      ],
+      "replay_requirement": "record_required",
+      "risk": "safe",
+      "parallelizable": false,
+      "status": "adapted",
+      "reason": "v3_exact_reviewed_synthetic_readonly_connector_native_text_result",
+      "limits": [
+        "exact_reviewed_spec_only",
+        "record_required_effects_none",
+        "connector_identity_and_current_permission_rechecked",
+        "native_tags_retained_on_same_root_reuse",
+        "no_arbitrary_or_business_mcp_adapter",
+        "no_live_transport_acceptance"
+      ]
+    }
+  ],
+  "route_adaptations": [
+    {
+      "tool_name": "generate_image",
+      "route": "new_task_canonical_method_images",
+      "status": "adapted",
+      "evidence": "image_binding/image_operations + native Policy lifecycle + 341 operation bridge + 342 acceptance child association + 343 atomic internal queue/worker consumer/published artifact continuation",
+      "limitations": [
+        "No original live-model/business acceptance yet",
+        "Whole cancellation/pause/revised-goal/resource/multi-entry continuation acceptance pending; PostgreSQL/Executor tests are not live-model acceptance",
+        "Legacy plan_source/plain final prompt imports pending",
+        "All other entry routes keep their existing paths; whole-tool entry is not verified"
+      ]
+    },
+    {
+      "tool_name": "manage_scheduled_task",
+      "route": "v3_scheduled_receipt_continuation",
+      "status": "adapted",
+      "evidence": "352 native binding/249 receipts; 353 events and scoped consumer; shared 343 internal queue; original context checkpoint; local PostgreSQL/engine tests",
+      "limitations": [
+        "No live model or actual scheduling-service acceptance; negative facts wake verification but never prove successful delivery.",
+        "Whole goal revision, multi-entry/UI and product acceptance pending."
+      ]
+    },
+    {
+      "tool_name": "erp_execute",
+      "route": "v3_erp_native_dispatch",
+      "status": "partially_adapted",
+      "evidence": "354 durable native UUID/hash/intent+one-shot dispatch nonce; original 341/139 lifecycle; actual dispatcher+single-attempt SDK with local HTTP substitute; current Policy and full-context result controls; 360 exact title postcondition from later original native detail read with exact session or 361 observed refresh lineage, current read/write Policy and frozen CP; pending verification skips stale cache; 370 exact acknowledged string-field postconditions; 371 descriptive per-method inventory and public verification projection",
+      "limitations": [
+        "Direct completion only erp.item.tag.add; exact acknowledged item.general.addorupdate title plus barcode/unit/remark/shortTitle string edits conditionally complete after native detail proof. Unknown/partial/async and other edits do not. Of 88 registered writes, 86 still require provider method or instance finality contracts.",
+        "Session/account changes are not linked automatically; original token refresh remains available. Stable ERP account identity still needed.",
+        "No domain async terminal polling/background adapter; purchase calculation is now correctly a write action through erp_execute.",
+        "No external ERP write performed; untyped/v1/v2 runtime and SDK retry behavior retained apart from deliberate purchase-trigger read-route tightening."
+      ]
+    },
+    {
+      "tool_name": "restore_file",
+      "route": "v3_native_file_restore",
+      "status": "partially_adapted",
+      "evidence": "355 original deleted_files/native invocation binding; 354 one-shot live Actor dispatch; original ToolRuntime workspace lock/PreparedFileCall/OSS If-Match/link; actual inode plus SHA reconciliation and atomic original deleted_files settlement; original context/model checkpoint tests",
+      "limitations": [
+        "Single ready requirement with minimum1 and kind file or receipt; scope and read permission for file delivery remain mandatory.",
+        "OSS is a local double in tests. No external restore performed; file deletion is not covered.",
+        "Dispatched without a verifiable publication stays unknown; it does not authorize a second restore. Unknown snapshots retained for recovery.",
+        "Whole multi-entry, revised-goal/UI and product acceptance pending."
+      ]
+    },
+    {
+      "tool_name": "file_delete",
+      "route": "v3_native_file_delete",
+      "status": "adapted",
+      "evidence": "356 per-item native proof; original immutable backup expiry addresses; all-backups-before-dispatch, per-item Actor/lease/version checks; original inode quarantine and atomic recovery-record settlement; scoped current-context controls; 359 guarded remaining-item ToolRuntime resume and real native ledger; immutable original version/SHA/backup; original Policy/confirmation/context; pending successful resume replay",
+      "limitations": [
+        "OSS is a local double; no external deletion or paid tests performed.",
+        "Remaining items require the original full arguments and exact original versions with current authorization and backup validity; read controls only reconcile facts.",
+        "Single ready minimum1 receipt goal; multi-goal/multi-entry/UI acceptance pending.",
+        "Video native mechanism locally verified; external provider/UI acceptance pending."
+      ]
+    }
+  ],
+  "current_release_scope": {
+    "revision": 373,
+    "erp_agent": "preserve_original_entry_and_compatibility",
+    "new_erp_write_adaptation": "deferred_explicit_default_false_domain_gate_old_effect_recovery_preserved",
+    "new_task_scopes": [
+      "user_own_workspace"
+    ],
+    "channel": "preserve_original_actor_skill_flow_and_saved_recovery_no_new_shared_progress_acl",
+    "paid_tests": "quote_and_explicit_confirmation_required",
+    "deployment": "after_complete_in_scope_validation_only"
+  }
+}

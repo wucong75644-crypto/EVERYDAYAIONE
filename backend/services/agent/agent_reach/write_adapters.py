@@ -18,18 +18,23 @@ def check_write(request):
         raise ReachError('UNSUPPORTED_OPERATION', '当前平台的该写入操作尚未通过接口核验，不能执行')
 
 
-async def write(request, connection, runner, http, settings, *, media=None):
+async def write(request, connection, runner, http, settings, *, media=None, before_dispatch=None):
     check_write(request)
+    async def dispatch_gate():
+        if before_dispatch is not None:await before_dispatch()
     platform = request.platform
     if platform == 'xiaohongshu':
         adapter = XHSAdapter(xhs_origins(settings), connection)
         if request.action == 'create_post':
             adapter.timeout = getattr(settings, 'agent_reach_xhs_publish_timeout_seconds', getattr(settings, 'agent_reach_timeout_seconds', 60))
+        await dispatch_gate()
         return await adapter.write(request, media=media)
     if platform == 'youtube' and request.action == 'upload_video':
         from .video_upload import youtube_upload
+        await dispatch_gate()
         return await youtube_upload(request, connection, http, media)
     if platform == 'bilibili' and request.action == 'upload_video':
+        await dispatch_gate()
         payload = await runner.run('bili-bridge', [], input_json={'request': request.model_dump(exclude={'media'}),
             'account_id': connection['account_id'], 'secret': connection['secret'], 'media': media})
         return ReachResult(platform, 'bilibili-api', receipt=payload['receipt'], status='partial',
@@ -47,10 +52,12 @@ async def write(request, connection, runner, http, settings, *, media=None):
             raise ReachError('ACCOUNT_MISMATCH', '当前授权账号与组织连接不一致')
         if request.action == 'set_like':
             url = 'https://www.googleapis.com/youtube/v3/videos/rate?id=' + video_id + '&rating=' + ('like' if request.liked else 'none')
+            await dispatch_gate()
             await http.request('POST', url, headers=headers)
             receipt = {'action': 'set_like', 'target': request.url, 'liked': request.liked}
         else:
             payload = {'snippet': {'channelId': connection['account_id'], 'videoId': video_id, 'topLevelComment': {'snippet': {'textOriginal': request.content}}}}
+            await dispatch_gate()
             data = json.loads(await http.request('POST', 'https://www.googleapis.com/youtube/v3/commentThreads?part=snippet',
                                                  headers=headers, json=payload))
             if not data.get('id'):
@@ -61,6 +68,7 @@ async def write(request, connection, runner, http, settings, *, media=None):
         credential_options(platform, connection)
         if request.action == 'create_post' and not request.title.strip():
             raise ReachError('INVALID_ARGUMENTS', 'Reddit发布需要标题和目标社区链接')
+        await dispatch_gate()
         payload = await runner.run('reddit-bridge', [], input_json={'request': request.model_dump(),
             'account_id': connection['account_id'], 'secret': connection['secret']})
         return ReachResult(platform, 'rdt-api', receipt=payload['receipt'])
@@ -73,6 +81,7 @@ async def write(request, connection, runner, http, settings, *, media=None):
     if identity.get('ok') is not True or current_id != connection['account_id']:
         raise ReachError('ACCOUNT_MISMATCH', '当前登录账号与组织连接不一致')
     if platform == 'bilibili' and request.action == 'create_comment':
+        await dispatch_gate()
         payload = await runner.run('bili-bridge', [], input_json={'request': request.model_dump(),
             'bvid': target_id(platform, request.url), 'account_id': connection['account_id'], 'secret': connection['secret']})
         return ReachResult(platform, 'bilibili-api', receipt=payload['receipt'])
@@ -82,6 +91,7 @@ async def write(request, connection, runner, http, settings, *, media=None):
         args = ['reply', '--json', '--', target_id(platform, request.url), request.content]
     else:
         args = ['like' if platform == 'bilibili' or request.liked else 'unlike', '--json', *(['--undo'] if platform == 'bilibili' and not request.liked else []), '--', target_id(platform, request.url)]
+    await dispatch_gate()
     payload = await runner.run(binary, args, **options)
     # twitter-cli's writes return a raw success receipt; bilibili wraps data.
     receipt = payload.get('data', {}) if 'ok' in payload else payload

@@ -10,6 +10,7 @@ ERP 远程 API 两步调度 + 本地查询调度。
 from typing import Any, Callable, Coroutine, Dict
 
 from loguru import logger
+from services.kuaimai.session_rotations import rotation_recorder
 
 from services.agent.agent_result import AgentResult
 
@@ -49,9 +50,14 @@ class ErpToolMixin:
         """
         # erp_execute 用 category 查找注册表（不走两步模式）
         if tool_name == "erp_execute":
+            from services.task_execution.native_writes import prepare_erp
+            native_write=await prepare_erp(self,args)
             dispatcher = await self._get_erp_dispatcher()
             if isinstance(dispatcher, AgentResult):
                 return dispatcher
+            if native_write is not None:
+                dispatcher._native_write_observer=native_write.observe
+
             try:
                 category = args.get("category", "")
                 action = args.get("action", "")
@@ -112,8 +118,9 @@ class ErpToolMixin:
                 actual_tool = cat_tool_map.get(category, "erp_execute")
                 result = await dispatcher.execute(actual_tool, action, params)
 
-                # [B5] 执行成功，标记完成（10 分钟 TTL）
-                if _redis:
+                # Preserve legacy deduplication. Managed validation failures
+                # have durable proof of no dispatch and must permit correction.
+                if _redis and (native_write is None or native_write.dispatched):
                     try:
                         await _redis.set(_result_key, "1", ex=600)
                     except Exception:
@@ -168,6 +175,10 @@ class ErpToolMixin:
         if isinstance(dispatcher, AgentResult):
             return dispatcher
         try:
+            from services.task_execution.contracts import TaskState
+            managed=getattr(self,'_task_execution_state',None)
+            if isinstance(managed,TaskState) and managed.image_binding_version>=3:
+                dispatcher._task_receipt_projection=True
             return await dispatcher.execute(tool_name, action, params)
         except Exception as e:
             logger.error(
@@ -209,6 +220,7 @@ class ErpToolMixin:
                     refresh_token=creds["kuaimai_refresh_token"],
                     org_id=self.org_id,
                     token_persister=_persist,
+                    token_rotation_recorder=rotation_recorder(self.db,self.org_id,actor_user_id=self.user_id),
                 )
                 await client.load_cached_token()  # 从 Redis 拿最新热缓存
                 return ErpDispatcher(client, db_source=self.db)

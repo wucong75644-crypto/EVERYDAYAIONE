@@ -1,3 +1,4 @@
+import { startChatTiming, acceptChatTiming } from '../utils/chatTiming';
 /**
  * 统一消息发送器
  *
@@ -94,6 +95,8 @@ export async function sendMessage(options: SendOptions): Promise<string> {
     clientRequestId: ctx.clientRequestId, clientTaskId: ctx.clientTaskId,
   });
 
+  if (generationType === 'chat' || generationType === undefined) startChatTiming(ctx.assistantMessageId, ctx.clientTaskId);
+
   // Phase 1: 乐观更新
   applyOptimisticUpdate(options, ctx);
 
@@ -132,6 +135,8 @@ export async function sendMessage(options: SendOptions): Promise<string> {
         ? response.assistant_message_id
         : response.assistant_message.id,
     });
+
+    acceptChatTiming(ctx.assistantMessageId, response.task_id, response.kind === 'control' ? response.assistant_message_id : response.assistant_message.id, ctx.clientTaskId);
 
     // Phase 3-5: 状态更新 + 任务创建 + task_id 验证
     processApiResponse(response, options, ctx);

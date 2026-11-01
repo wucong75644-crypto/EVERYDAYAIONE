@@ -22,7 +22,7 @@ from services.skills.selection import SkillSelection
 from services.skills.coordination import (
     ActionContext, Composition, CompositionConflict, Participant, build_composition, method_for,
 )
-from services.skills.workflow_contracts import contract_for, required_protocol_tools
+from services.skills.workflow_contracts import contract_for, required_protocol_tools, incompatible_protocol_tools
 
 
 ACTIVATE_SKILL = "activate_skill"
@@ -91,6 +91,7 @@ class RuntimeCheckpoint(Contract):
     turn_id: str
     directory: tuple[SkillCandidate, ...] = Field(max_length=MAX_DIRECTORY_ENTRIES)
     active: tuple[ActiveSkill, ...] = Field(max_length=MAX_ACTIVE_SKILLS)
+    resident: tuple[ActiveSkill, ...] = Field(default=(), max_length=4)
     effective_allowed_tool_names: frozenset[str]
     manual_skill_id: SkillKey | None = None
     session_skill_ids: tuple[SkillKey, ...] = Field(default=(), max_length=MAX_ACTIVE_SKILLS)
@@ -112,7 +113,7 @@ class SkillRuntime:
     def __init__(self, *, turn_id: str, source, platform_tool_names, authorized_tool_names,
                  cancellation_event: asyncio.Event, template_context: dict | None = None,
                  execution_mode: str = "interactive", available_tool_names=None, maximum_body=MAX_BODY_BYTES,
-                 maximum_rendered=MAX_RENDERED_BYTES, maximum_turn_rendered=MAX_TURN_RENDERED_BYTES):
+                 maximum_rendered=MAX_RENDERED_BYTES, maximum_turn_rendered=MAX_TURN_RENDERED_BYTES, task_execution_state=None):
         if min(maximum_body, maximum_rendered, maximum_turn_rendered) <= 0:
             raise ValueError("Skill byte budgets must be positive")
         self.maximum_body = maximum_body
@@ -132,6 +133,8 @@ class SkillRuntime:
         self.cancellation_event = cancellation_event
         self.directory: dict[str, SkillCandidate] = {}
         self.active: dict[str, ActiveSkill] = {}
+        self.resident: dict[str, ActiveSkill] = {}
+        self.task_execution_state = task_execution_state
         self.manual_skill_id: str | None = None
         self.manual_selection: SkillSelection | None = None
         self.session_skill_ids: tuple[str, ...] = ()
@@ -145,7 +148,7 @@ class SkillRuntime:
 
     def _participants(self, active=None):
         result = []
-        for key, item in (self.active if active is None else active).items():
+        for key, item in {**self.resident, **(self.active if active is None else active)}.items():
             candidate = self.directory[key]
             sources = []
             if key == self.manual_skill_id:
@@ -156,7 +159,8 @@ class SkillRuntime:
                 sources.append('scheduled')
             result.append(Participant(package_id=str(candidate.package_id), skill_key=key,
                 revision=item.revision, body_sha256=item.body_sha256, sources=tuple(sources or ['model']),
-                contract=contract_for(candidate, item.body_sha256) if self.checkpoint_version == 2 else None))
+                contract=contract_for(candidate, item.body_sha256) if self.checkpoint_version == 2 else None,
+                phase_resident=key in self.resident))
         return result
 
     def _compose(self, active=None, tools=None, action=None):
@@ -185,12 +189,31 @@ class SkillRuntime:
         if len(actions) > 1:
             raise SkillError('SKILL_ACTION_BATCH_CONFLICT')
         if actions:
-            self.set_action(ActionContext(action=actions.pop(), source='host',
-                                          plan_id=self.action_context.plan_id))
+            action = ActionContext(action=actions.pop(), source='host', plan_id=self.action_context.plan_id)
+            if incompatible_protocol_tools(self._compose(action=action)) & {call['name'] for call in calls}:
+                raise SkillError('SKILL_TOOL_PROTOCOL_CONFLICT')
+            self.set_action(action)
+
+    def filter_protocol_tools(self, tools):
+        if self.checkpoint_version != 2:
+            return tools
+        # A planning tool implies a future plan action even when the current
+        # turn is still chat/bootstrap. Do not switch the runtime action merely
+        # to disclose schemas, or make unrelated chat resolve future conflicts.
+        try:
+            composition = self._compose(action=ActionContext(
+                action='plan', source='host', plan_id=self.action_context.plan_id))
+        except CompositionConflict:
+            return tools  # The existing action barrier owns conflicting calls.
+        blocked = incompatible_protocol_tools(composition)
+        return [tool for tool in tools if tool['function']['name'] not in blocked]
 
     def restrict_tools(self, host_ceiling):
-        ceiling = self.effective_allowed_tool_names & frozenset(host_ceiling)
+        host = self._initial_ceiling & frozenset(host_ceiling)
+        ceiling = self.effective_allowed_tool_names & host
         if ceiling == self.effective_allowed_tool_names:
+            # Empty phase tools must not hide a later host permission narrowing.
+            self._initial_ceiling = host
             return
         composition = self._compose(tools=ceiling)
         for key in self.active:
@@ -198,6 +221,7 @@ class SkillRuntime:
                                available_tool_names=self.available_tool_names)
         if not required_protocol_tools(composition) <= ceiling:
             raise SkillError('SKILL_REQUIRED_CAPABILITY_UNAVAILABLE')
+        self._initial_ceiling = host
         self.effective_allowed_tool_names, self.composition = ceiling, composition
 
     def bind_workflow(self, projection):
@@ -212,12 +236,13 @@ class SkillRuntime:
     def staged(self):
         staged = copy.copy(self)
         staged.active = dict(self.active)
+        staged.resident = dict(self.resident)
         staged.recommendation_batch = None
         return staged
 
     def ordered_control_calls(self, calls):
         """Order adjacent activations by dependencies; preserve other barriers."""
-        ordered, available = [], set(self.active)
+        ordered, available = [], set(self.active) | set(self.resident)
         pending = []
 
         def flush():
@@ -253,12 +278,15 @@ class SkillRuntime:
         return ordered
 
     def adopt(self, staged):
+        self._initial_ceiling &= staged._initial_ceiling
         self.active = staged.active
+        self.resident = staged.resident
+        self.task_execution_state = staged.task_execution_state
         self.effective_allowed_tool_names = staged.effective_allowed_tool_names
         self.composition = staged.composition
         self.action_context = staged.action_context
 
-    async def activate_required(self):
+    async def activate_required(self, *, completed_phase_ids=()):
         """Validate the complete locked set without exposing partial activation."""
         if self.manual_selection is not None:
             selected = self.directory.get(self.manual_selection.skill_id)
@@ -274,11 +302,12 @@ class SkillRuntime:
         if self.scheduled_snapshot is not None:
             keys = list(self.directory)
         ordered = []
-        waiting = list(keys)
+        completed = set(completed_phase_ids)
+        waiting = [key for key in keys if key not in completed and key not in self.resident]
         while waiting:
             ready = next((key for key in waiting if not (
                 set(getattr(self.directory[key].catalog_metadata.coordination, 'requires', ()))
-                - set(ordered) - set(self.active))), None)
+                - set(ordered) - set(self.active) - set(self.resident))), None)
             if ready is None:
                 return control_result('SKILL_DEPENDENCY_UNAVAILABLE', state_unchanged=True)
             ordered.append(ready)
@@ -299,7 +328,7 @@ class SkillRuntime:
 
     @property
     def has_active_skills(self):
-        return bool(self.active)
+        return bool(self.active or self.resident)
 
     def _directory_text(self, candidates) -> str:
         return "[Turn Skill catalog]\n" + encoded([
@@ -418,7 +447,7 @@ class SkillRuntime:
         return RuntimeCheckpoint(
             version=self.checkpoint_version,
             turn_id=self.turn_id, directory=tuple(self.directory.values()),
-            active=tuple(self.active.values()),
+            active=tuple(self.active.values()), resident=tuple(self.resident.values()),
             effective_allowed_tool_names=self.effective_allowed_tool_names,
             manual_skill_id=self.manual_skill_id,
             session_skill_ids=self.session_skill_ids,
@@ -427,6 +456,7 @@ class SkillRuntime:
             composition=self._compose() if self.checkpoint_version == 2 else None,
         ).model_dump(mode="json", exclude=(
             ({'manual_skill_id'} if self.manual_skill_id is None else set())
+            | ({'resident'} if not self.resident else set())
             | ({'context_version'} if self.context_version == 1 else set())
             | ({'session_skill_ids'} if not self.session_skill_ids else set())
             | ({'scheduled_snapshot'} if self.scheduled_snapshot is None else set())
@@ -569,7 +599,7 @@ class SkillRuntime:
                 and not (scheduled and self.scheduled_snapshot is not None)
             ):
                 raise SkillError("SKILL_NOT_AVAILABLE")
-            previous = self.active.get(candidate.skill_key)
+            previous = self.active.get(candidate.skill_key) or self.resident.get(candidate.skill_key)
             if previous:
                 return control_result("SKILL_ALREADY_ACTIVE", ok=True, skill_id=candidate.skill_key,
                                       revision=previous.revision)
@@ -584,7 +614,7 @@ class SkillRuntime:
             validated = await self.source.load(candidate)
             self._check_cancelled()
             self._validate_identity(candidate, validated)
-            remaining = self.maximum_turn_rendered - sum(len(a.rendered.encode('utf-8')) for a in self.active.values())
+            remaining = self.maximum_turn_rendered - sum(len(a.rendered.encode('utf-8')) for a in (*self.active.values(), *self.resident.values()))
             maximum = min(self.maximum_rendered, remaining)
             ids, base, values = prepare_resources(validated, self.template_context, maximum,
                 maximum_body=self.maximum_body, maximum_rendered=self.maximum_rendered)
@@ -592,7 +622,7 @@ class SkillRuntime:
             self._check_cancelled()
             rendered = render_resources(validated, ids, base, values, texts, maximum)
             summary = ArgumentSummary.model_validate(argument_summary(values))
-            bounded(rendered + "".join(a.rendered for a in self.active.values()),
+            bounded(rendered + "".join(a.rendered for a in (*self.active.values(), *self.resident.values())),
                     self.maximum_turn_rendered, "SKILL_TURN_BUDGET_EXCEEDED")
             ceiling = skill_tool_ceiling(
                 validated.catalog_metadata, self.platform_tool_names, self.effective_allowed_tool_names,
@@ -669,11 +699,21 @@ class SkillRuntime:
                     "SKILL_REPLAY_DIRECTORY_INVALID")
             bounded(encoded([c.model_dump(mode="json") for c in directory.values()]), 65_536,
                     "SKILL_REPLAY_DIRECTORY_INVALID")
-            bounded(''.join(a.rendered for a in checkpoint.active), self.maximum_turn_rendered,
+            bounded(''.join(a.rendered for a in (*checkpoint.active, *checkpoint.resident)), self.maximum_turn_rendered,
                     'SKILL_REPLAY_RENDER_INVALID')
-            active = {}
+            if checkpoint.resident:
+                if checkpoint.version != 2 or self.execution_mode != 'interactive' or self.task_execution_state is None:
+                    raise SkillError('SKILL_PHASE_PROOF_REQUIRED')
+                from services.task_execution.methods import completed_phase_bindings
+                completed_bindings = {b.skill_key: b for b in completed_phase_bindings(self.task_execution_state)}
+            resident_keys = {a.skill_key for a in checkpoint.resident}
+            if (len(checkpoint.active) > MAX_ACTIVE_SKILLS
+                    or resident_keys & {a.skill_key for a in checkpoint.active}
+                    or len(resident_keys) != len(checkpoint.resident)):
+                raise SkillError('SKILL_REPLAY_IDENTITY_INVALID')
+            active, resident = {}, {}
             ceiling = self._initial_ceiling & checkpoint.effective_allowed_tool_names
-            for saved in checkpoint.active:
+            for saved in (*checkpoint.active, *checkpoint.resident):
                 bounded(saved.rendered, self.maximum_rendered, 'SKILL_REPLAY_RENDER_INVALID')
                 candidate = directory.get(saved.skill_key)
                 if candidate is None or saved.skill_key in active or saved.revision != candidate.revision:
@@ -703,22 +743,39 @@ class SkillRuntime:
                     )
                 elif metadata.tool_policy == 'restricted':
                     declared_ceiling = frozenset(metadata.allowed_tool_names)
-                if (declared_ceiling is not None
+                is_resident = saved.skill_key in resident_keys
+                if is_resident:
+                    from services.task_execution.methods import profile_for
+                    binding = completed_bindings.get(saved.skill_key)
+                    if binding is None:
+                        from services.task_execution.methods import source_phase_binding
+                        binding = source_phase_binding(self.task_execution_state,candidate,validated)
+                    if (binding is None or str(candidate.package_id) != str(binding.package_id)
+                            or (saved.revision, saved.body_sha256) != (binding.revision, binding.body_sha256)
+                            or profile_for(candidate, validated) != (binding.profile_id, True, binding.contract_source)):
+                        raise SkillError('SKILL_PHASE_PROOF_INVALID')
+                if (not is_resident and declared_ceiling is not None
                         and not saved.effective_allowed_tool_names <= declared_ceiling):
                     raise SkillError("SKILL_REPLAY_TOOL_SCOPE_INVALID")
-                if metadata.required_capabilities:
+                if not is_resident and metadata.required_capabilities:
                     skill_tool_ceiling(metadata, self.platform_tool_names, ceiling)
                 # Platform policy has no Skill-level tool declaration. Its saved
                 # ceiling is narrowed below by the current host authorization.
-                if not checkpoint.effective_allowed_tool_names <= saved.effective_allowed_tool_names:
+                if not is_resident and not checkpoint.effective_allowed_tool_names <= saved.effective_allowed_tool_names:
                     raise SkillError("SKILL_REPLAY_TOOL_SCOPE_INVALID")
                 # Preserve the saved ceiling even if deployment now offers more tools.
-                ceiling &= saved.effective_allowed_tool_names
-                active[saved.skill_key] = saved
-            bounded("".join(a.rendered for a in active.values()), self.maximum_turn_rendered,
+                if is_resident:
+                    resident[saved.skill_key] = saved
+                else:
+                    ceiling &= saved.effective_allowed_tool_names
+                    active[saved.skill_key] = saved
+            bounded("".join(a.rendered for a in (*active.values(), *resident.values())), self.maximum_turn_rendered,
                     "SKILL_REPLAY_RENDER_INVALID")
-            self.directory, self.active = directory, active
+            self.directory, self.active, self.resident = directory, active, resident
             self.manual_skill_id = checkpoint.manual_skill_id
+            selected = directory.get(checkpoint.manual_skill_id)
+            self.manual_selection = (SkillSelection(skill_id=selected.skill_key, revision=selected.revision)
+                if selected is not None else None)
             self.session_skill_ids = checkpoint.session_skill_ids
             self.context_version = checkpoint.context_version
             self.effective_allowed_tool_names = ceiling
@@ -805,6 +862,7 @@ async def create_skill_runtime(*, handler, context, runtime, replay_context=None
     currently_authorized = policy_available_tool_names(capability_registry, context)
     state = SkillRuntime(
         turn_id=runtime.turn_id, source=source, execution_mode=context.execution_mode,
+        task_execution_state=getattr(runtime, 'task_execution_state', None),
         **skill_budget_options(settings),
         platform_tool_names=(s.name for s in capability_registry.specs()),
         authorized_tool_names=currently_authorized,

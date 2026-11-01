@@ -70,6 +70,8 @@ class ChatToolMixin(ChatToolResultMixin):
         image_skill_snapshot: tuple = (),
         image_composition: dict | None = None,
         image_binding_writer=None,
+        task_image_operations=None,
+        recovery_only=False,
     ) -> List[tuple]:
         """执行工具调用：安全检查 → 并行/串行分批 → 返回结果
 
@@ -121,6 +123,7 @@ class ChatToolMixin(ChatToolResultMixin):
                 self, call, ctx, decision, message_id,
             ),
         )
+        # Request-local coordinator; never stored on a shared tool registry.
         executor_scope = (task_id, conversation_id, user_id, self.org_id)
         executor = getattr(self, "_tool_executor", None)
         if getattr(self, "_tool_executor_scope", None) != executor_scope or executor is None:
@@ -131,6 +134,9 @@ class ChatToolMixin(ChatToolResultMixin):
             # round facts, retaining consumed IDs and scoped confirmations.
             for key, value in executor_kwargs.items():
                 setattr(executor, key, value)
+        executor._task_image_operations = task_image_operations
+        executor._task_execution_state = getattr(getattr(self,'_actor_runtime',None),'task_execution_state',None)
+        executor._task_recovery_only = recovery_only
         executor.tool_runtime.context()  # clear any previous execution identity before restore
         if getattr(self, "_tool_selection_history_task_id", None) == task_id:
             executor.tool_runtime.resource_selections.restore(
@@ -237,7 +243,7 @@ class ChatToolMixin(ChatToolResultMixin):
         import time
         from dataclasses import replace
 
-        from services.handlers.chat.tool_lifecycle import ActorToolLifecycle
+        from services.task_execution.native_results import lifecycle_for
         started_at = time.monotonic()
         args = {}
         result_ctx = ToolResultContext(
@@ -259,9 +265,15 @@ class ChatToolMixin(ChatToolResultMixin):
                 raise ValueError("工具参数必须是 JSON 对象")
             result_ctx = replace(result_ctx, args=args)
             runtime = executor.tool_runtime
+            lifecycle = (executor._task_image_operations.lifecycle(self, runtime.context(tc['id']), tc['id'])
+                if getattr(executor, '_task_image_operations', None) is not None
+                and tc['id'] in executor._task_image_operations.bindings
+                else lifecycle_for(
+                    self,runtime.context(tc['id']),runtime.registry,tc['name'],
+                    recovery_only=getattr(executor, '_task_recovery_only', False)))
             envelope = await runtime.execute(
                 tc["name"], args, call_id=tc["id"],
-                lifecycle=ActorToolLifecycle(self, runtime.context(tc["id"])),
+                lifecycle=lifecycle,
             )
             from services.tools.mcp_allowlist import TOOL_NAME as MCP_TOOL_NAME
             if tc["name"] == MCP_TOOL_NAME and envelope.decision.replay_requirement == "record_required":
@@ -387,21 +399,26 @@ class ChatToolMixin(ChatToolResultMixin):
             # Install the local listener before publishing the existing dialog.
             await asyncio.sleep(0)
             description = f"AI 要执行写操作: {call.name}"
+            display_arguments=thaw(call.arguments)
             if call.name == "file_delete":
                 from core.config import get_settings
                 from services.file_executor import FileExecutor
                 files = FileExecutor(get_settings().file_workspace_root, context.workspace_owner_id,
                                      context.org_id, create_root=False)
                 from pathlib import Path
+                prepared_paths=[item[0] for item in context.resource_versions.get('files',())]
+                effective_paths=prepared_paths or call.arguments.get("files", ())
                 paths = [str(files.resolve_safe_path(path).relative_to(Path(files.workspace_root)))
-                         for path in call.arguments.get("files", ())]
-                description = f"删除 {len(paths)} 个文件：\n" + "\n".join(paths)
+                         for path in effective_paths]
+                resuming=len(paths)<len(call.arguments.get('files',()))
+                description = (f"继续删除原批次剩余 {len(paths)} 个文件：\n" if resuming else f"删除 {len(paths)} 个文件：\n") + "\n".join(paths)
+                if resuming:display_arguments={**display_arguments,'files':list(effective_paths)}
             await ws_manager.send_to_task_or_user(
                 context.task_id, context.actor_user_id,
                 build_tool_confirm_request(
                     task_id=context.task_id, conversation_id=context.conversation_id,
                     message_id=message_id, tool_call_id=confirmation_id, tool_name=call.name,
-                    arguments=thaw(call.arguments), description=description,
+                    arguments=display_arguments, description=description,
                     safety_level="dangerous",
                 ),
             )

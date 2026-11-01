@@ -61,6 +61,7 @@ class KuaiMaiClient:
         timeout: Optional[float] = None,
         org_id: Optional[str] = None,
         token_persister: Optional[TokenPersister] = None,
+        token_rotation_recorder: Optional[Callable[[str, str, str], Awaitable[None]]] = None,
     ) -> None:
         self._app_key = app_key or settings.kuaimai_app_key or ""
         self._app_secret = app_secret or settings.kuaimai_app_secret or ""
@@ -73,6 +74,7 @@ class KuaiMaiClient:
         # token 持久化回调（多租户必须注入，否则 refresh 后只写 Redis 不写 DB，
         # 一旦 Redis 丢失就回到初始 token，导致历史性 bug 重演）
         self._token_persister: Optional[TokenPersister] = token_persister
+        self._token_rotation_recorder = token_rotation_recorder
 
         # ── 咽喉处不变量保护 ──────────────────────────
         # 多租户场景（org_id 非空）必须传 token_persister，否则 refresh
@@ -165,7 +167,13 @@ class KuaiMaiClient:
         wait=wait_exponential(multiplier=1, min=1, max=4),
         retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError)),
     )
-    async def request(
+    async def request(self, method: str, biz_params: Optional[Dict[str, Any]] = None,
+                      sign_method: str = "hmac", *, base_url: Optional[str] = None,
+                      extra_system_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        return await self.request_once(method, biz_params, sign_method,
+            base_url=base_url, extra_system_params=extra_system_params)
+
+    async def request_once(
         self,
         method: str,
         biz_params: Optional[Dict[str, Any]] = None,
@@ -329,6 +337,10 @@ class KuaiMaiClient:
     async def _do_refresh_token(self) -> bool:
         """实际执行 refresh（已在并发锁内）"""
         try:
+            old_fingerprint = None
+            if self._token_rotation_recorder is not None:
+                from services.task_execution.erp_postconditions import source_fingerprint
+                old_fingerprint = source_fingerprint(self)
             # Token 刷新不经过 self.request()，避免循环
             common_params: Dict[str, Any] = {
                 "method": "open.token.refresh",
@@ -385,6 +397,26 @@ class KuaiMaiClient:
 
             # 2) 持久化到 DB org_configs（关键修复 — 防止 Redis 丢失后回退到死态 token）
             await self._persist_token_to_db()
+
+            # Preserve the original cache/persistence ordering and refresh result.
+            # Only a successful provider refresh may attest a session transition.
+            if (data.get("success") is True
+                    and isinstance(new_token, str) and new_token
+                    and old_fingerprint is not None and self._org_id):
+                from services.task_execution.erp_postconditions import source_fingerprint
+                current_fingerprint = source_fingerprint(self)
+                if current_fingerprint is not None and current_fingerprint != old_fingerprint:
+                    try:
+                        await asyncio.wait_for(
+                            self._token_rotation_recorder(
+                                self._org_id, old_fingerprint, current_fingerprint,
+                            ), timeout=2.0,
+                        )
+                    except Exception as record_error:
+                        logger.warning(
+                            'erp_session_rotation_unconfirmed | org={} | error_type={}',
+                            self._org_id, type(record_error).__name__,
+                        )
 
             logger.info(
                 f"KuaiMai token refreshed successfully | org={self._org_id}"

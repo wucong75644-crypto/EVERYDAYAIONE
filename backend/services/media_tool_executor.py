@@ -67,6 +67,17 @@ class MediaToolMixin:
         from services.adapters.factory import create_video_adapter
         from services.agent.agent_result import AgentResult
 
+        from services.task_execution.contracts import TaskState
+        state=getattr(self,'_task_execution_state',None)
+        if isinstance(state,TaskState) and state.image_binding_version>=3:
+            from services.task_execution.video_operations import accept,VideoNotAccepted
+            try:accepted=await accept(self,args)
+            except VideoNotAccepted as error:
+                return AgentResult(summary=str(error),status='error',error_message=str(error),
+                    metadata={'accepted':False,'completed':False,'submission_state':'not_accepted'})
+            return AgentResult(summary='视频任务已受理，完成后在独立视频消息交付。',status='success',
+                metadata={**accepted,'accepted':True,'completed':False})
+
         prompt = args.get("prompt", "").strip()
         if not prompt:
             return AgentResult(

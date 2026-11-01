@@ -135,7 +135,13 @@ async def execute_reach(executor, args):
                     except BaseException:
                         await asyncio.shield(asyncio.to_thread(scheduled_budget.release_not_sent, scheduled_attempt))
                         raise
-                operation_id, previous = await asyncio.to_thread(store.reserve, call_id, connection, digest)
+                from services.task_execution.contracts import TaskState
+                managed=getattr(executor,'_task_execution_state',None)
+                native_options={}
+                if isinstance(managed,TaskState) and managed.image_binding_version>=3:
+                    native_options={'native_owner':{'task_id':executor._task_id,
+                        'execution_token':executor.image_execution_token}}
+                operation_id, previous = await asyncio.to_thread(store.reserve, call_id, connection, digest,**native_options)
                 if previous:
                     if previous['state'] == 'succeeded':
                         return ReachResult(request.platform, 'receipt-replay', receipt=previous['receipt']).to_agent_result()
@@ -147,14 +153,25 @@ async def execute_reach(executor, args):
                 if grant is None and getattr(settings, "social_ops_enabled", False):
                     from .access_budget import AccessBudgetService
                     write_budget = AccessBudgetService(executor.db.pool, store.scope)
+                async def before_managed_send():
+                    from services.task_execution.requirement_changes import gate
+                    from services.task_execution.contracts import TaskError
+                    try:await gate(executor)
+                    except TaskError as error:
+                        raise ReachError('TASK_USER_CHANGE_REVIEW_REQUIRED','追加要求尚待核验，本次未派发平台写入') from error
                 try:
                     access_attempt = access_attempt or (await asyncio.to_thread(write_budget.reserve, connection, request) if write_budget else None)
-                    result = await write(request, connection, ToolRunner(settings.agent_reach_bin_dir), PublicHTTP(), settings, media=media)
+                    result = await write(request, connection, ToolRunner(settings.agent_reach_bin_dir), PublicHTTP(), settings, media=media, **({'before_dispatch':before_managed_send} if native_options else {}))
                     if write_budget:
                         await asyncio.to_thread(write_budget.settle, connection, access_attempt)
                     await asyncio.to_thread(store.settle, operation_id, 'succeeded', result.receipt)
                     return result.to_agent_result()
                 except BaseException as error:
+                    if isinstance(error,ReachError) and error.code=='TASK_USER_CHANGE_REVIEW_REQUIRED':
+                        if write_budget and access_attempt:
+                            await asyncio.shield(asyncio.to_thread(write_budget.release_not_sent,access_attempt))
+                        await asyncio.shield(asyncio.to_thread(store.settle,operation_id,'failed',{'stage':'not_dispatched','code':error.code}))
+                        raise
                     if write_budget and access_attempt and request.platform == 'xiaohongshu' and getattr(error, 'code', '') == 'CONFIG_REQUIRED':
                         await asyncio.shield(asyncio.to_thread(write_budget.release_not_sent, access_attempt))
                         await asyncio.shield(asyncio.to_thread(store.settle, operation_id, 'failed', {'stage': 'not_dispatched', 'code': error.code}))

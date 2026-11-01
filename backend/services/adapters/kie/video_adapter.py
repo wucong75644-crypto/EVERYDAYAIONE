@@ -36,6 +36,10 @@ from .models import (
 from .configs import VIDEO_MODEL_CONFIGS
 
 
+class KieVideoSubmissionUncertainError(KieAPIError):
+    """Provider acceptance cannot be disproved; never authorize a second create."""
+
+
 class KieVideoAdapter(BaseVideoAdapter):
     """
     KIE 视频生成适配器
@@ -154,6 +158,12 @@ class KieVideoAdapter(BaseVideoAdapter):
         Returns:
             VideoGenerateResult: 统一结果格式
         """
+        managed=kwargs.get('_chat_video_single_submit',False)
+        if type(managed) is not bool or (managed and wait_for_result):
+            raise ValueError('Managed video submission requires asynchronous single-shot mode')
+        observer=kwargs.get('_native_video_observer')
+        if observer is not None and (not managed or not callable(observer)):
+            raise ValueError('Native video observer requires managed submission')
         n_frames = str(duration_seconds)
 
         # 参数验证
@@ -194,6 +204,8 @@ class KieVideoAdapter(BaseVideoAdapter):
                 )
                 return self._format_result(result, duration)
             else:
+                if managed:
+                    return await self.submit_prepared_once(request,duration,observer=observer)
                 create_response = await self.client.create_task(request)
                 return VideoGenerateResult(
                     task_id=create_response.task_id,
@@ -206,11 +218,40 @@ class KieVideoAdapter(BaseVideoAdapter):
         except (KieAPIError, KieTaskFailedError, KieTaskTimeoutError, ValueError):
             raise
         except Exception as e:
+            if managed:raise  # Preserve transport/ledger errors; never enter a retry/refund path.
             logger.error(
                 f"Video generate failed: model={self.model}, "
                 f"duration={duration}s, error={e}"
             )
             raise KieAPIError(f"Video generate failed: {e}") from e
+
+    async def submit_prepared_once(self,request: CreateTaskRequest,duration: int,*,observer=None) -> VideoGenerateResult:
+        """Native worker hook: validation, fenced dispatch, one POST, durable ACK.
+
+        Callers own credit/task persistence and uncertainty reconciliation. The
+        legacy generate/create-and-wait behavior is unchanged unless opted in.
+        """
+        if request.model!=self.model_id:raise ValueError('Video snapshot model mismatch')
+        if request.input.get('n_frames')!=str(duration):raise ValueError('Video snapshot duration mismatch')
+        self.validate_frames(str(duration))
+        self.validate_prompt(request.input.get('prompt'))
+        self.validate_image_urls(request.input.get('image_urls'))
+        self.validate_aspect_ratio(request.input.get('aspect_ratio'))
+        payload=request.model_dump(mode='json',exclude_none=True)
+        if observer is not None:await observer('dispatch',request=payload)
+        try:
+            response=await self.client.create_task_once(request)
+        except KieAPIError as error:
+            if error.status_code is None or str(error.status_code).startswith('5'):
+                raise KieVideoSubmissionUncertainError('Video submission acknowledgement unavailable') from error
+            raise
+        except (ValueError,TypeError,AttributeError) as error:
+            raise KieVideoSubmissionUncertainError('Malformed video submission acknowledgement') from error
+        if not response.is_success or not isinstance(response.task_id,str) or not response.task_id.strip():
+            raise KieVideoSubmissionUncertainError('Video submission has no accepted native task ID')
+        if observer is not None:await observer('accepted',request=payload,external_task_id=response.task_id)
+        return VideoGenerateResult(task_id=response.task_id,status=TaskStatus.PENDING,video_url=None,
+            duration_seconds=duration,cost_usd=0,credits_consumed=0)
 
     def _build_input_params(
         self,

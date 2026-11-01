@@ -156,6 +156,7 @@ export interface ResumeTaskResponse {
   resumed_count: number;
   tasks?: Array<{
     outcome?: string;
+    logical_task_id?: string;
     task_id?: string;
     client_task_id?: string;
     external_task_id?: string;

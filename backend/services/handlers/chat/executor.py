@@ -26,6 +26,8 @@ from services.handlers.chat.execution_engine import (
 )
 from services.handlers.chat.execution_scope import resolve_execution_scope
 from services.handlers.context_snapshot import ContextAnchor
+from services.task_execution.followup import FollowupRestart
+from services.task_execution.bootstrap import admits_new_task
 
 
 ContentPartsAdapter = TypeAdapter(list[ContentPart])
@@ -60,6 +62,8 @@ class ChatGenerationExecutor:
         claim: GenerationClaim,
         cancellation_event: asyncio.Event,
     ) -> GenerationOutcome:
+        from services.agent.observability.chat_lifecycle import chat_phase
+        chat_phase('executor.begin', task_id=claim.task_id, turn_id=claim.turn_id, attempt=claim.execution_attempt)
         _validate_task(task, claim)
         runtime = ConversationTurnRuntime(
             conversation_id=claim.conversation_id,
@@ -78,8 +82,109 @@ class ChatGenerationExecutor:
             self._load_input_content(claim),
             resolve_execution_scope(self._db, task, claim.conversation_id),
         )
+        chat_phase('executor.inputs', task_id=claim.task_id, turn_id=claim.turn_id, attempt=claim.execution_attempt)
         replay_context = await self._load_replay_context(task, claim)
-        if (replay_context and replay_context.get("checkpoint_kind") == "commit_ready"
+        from core.config import get_settings
+        if (not (replay_context or {}).get('_task_execution') and not (replay_context or {}).get('_task_followup')
+                and not (replay_context or {}).get('_task_requirement_review') and self._replay_checkpoint_store is not None
+                and getattr(get_settings(),'agent_task_execution_enabled',False)
+                and admits_new_task(execution_scope)
+                and (task.get('delivery_context') or {}).get('input_kind')!='agent_task_continuation'):
+            from services.task_execution.database_scope import task_database
+            from types import SimpleNamespace
+            followup_db=task_database(self._db,SimpleNamespace(actor_user_id=execution_scope.actor_user_id,org_id=task.get('org_id')))
+            response=await followup_db.rpc('read_agent_task_followup',{'p_task_id':claim.task_id,'p_execution_token':claim.execution_token}).execute()
+            if not response or response.data.get('outcome') not in {'found','not_found'}:raise RuntimeError('TASK_FOLLOWUP_READ_UNCONFIRMED')
+            runtime.task_followup_candidate=response.data.get('source')
+            async def adopt_followup(source,observation,payload):
+                parameters={'p_task_id':claim.task_id,'p_execution_token':claim.execution_token,
+                    'p_root_task_id':source['state']['root_task_id'],'p_expected_revision':source['state']['revision'],
+                    'p_source_sha256':source['source_sha256'],'p_observation':observation,'p_payload':payload}
+                try:response=await followup_db.rpc('adopt_agent_task_followup',parameters).execute()
+                except Exception:
+                    # Repeating this local transaction only reconciles the same
+                    # original message/owner. It never sends a business request.
+                    response=await followup_db.rpc('adopt_agent_task_followup',parameters).execute()
+                return response.data
+            runtime.task_followup_adopt=adopt_followup
+        if (replay_context is None and (task.get('delivery_context') or {}).get('input_kind') == 'agent_task_continuation'):
+            source_kind=(task.get('delivery_context') or {}).get('source_kind','image')
+            if source_kind in {'scheduled','video'}:
+                from services.task_execution.receipt_continuation import prepare_receipt_continuation as prepare_continuation
+            elif source_kind=='image':
+                from services.task_execution.image_continuation import prepare_image_continuation as prepare_continuation
+            else:
+                raise ValueError('TASK_CONTINUATION_SOURCE_UNSUPPORTED')
+            replay_context = await prepare_continuation(self._db,task=task,claim=claim,execution_scope=execution_scope)
+        from services.task_execution.replay import restore_task_state
+        runtime.task_execution_state = restore_task_state(
+            replay_context, conversation_id=claim.conversation_id,
+            actor_user_id=execution_scope.actor_user_id, org_id=task.get('org_id'),
+            execution_scope=execution_scope,
+        ) if replay_context and '_task_execution' in replay_context else None
+        if runtime.task_execution_state is not None:
+            runtime.committed_task_execution_revision = runtime.task_execution_state.revision
+        if (replay_context or {}).get('_task_requirement_review') is not None:
+            from services.task_execution.requirement_review import restore_review,verify_review_state
+            from schemas.message import TextPart
+            state=runtime.task_execution_state
+            goal='\n'.join(p.text for p in content if isinstance(p,TextPart)).strip() or '请根据本条用户消息的附件完成任务。'
+            runtime.task_requirement_review=restore_review(replay_context['_task_requirement_review'],
+                root_task_id=state.root_task_id if state else claim.task_id,
+                actor_user_id=task['user_id'],conversation_id=claim.conversation_id,
+                source_message_id=state.source_message_ids[0] if state else claim.input_message_id,
+                original_goal=state.original_goal if state else goal)
+            verify_review_state(runtime.task_requirement_review,state)
+        if (replay_context or {}).get('_task_plan_reviews') is not None:
+            from services.task_execution.plan_facts import restore_reviews
+            runtime.task_plan_reviews=restore_reviews(replay_context['_task_plan_reviews'],runtime.task_execution_state)
+        from services.task_execution.user_changes import restore as restore_user_changes, capture as capture_user_change
+        runtime.task_user_changes = restore_user_changes(replay_context,
+            root_task_id=runtime.task_execution_state.root_task_id if runtime.task_execution_state is not None else claim.task_id,
+            owner_task_id=claim.task_id, inherited_root_task_id=(
+                task['delivery_context'].get('logical_task_id')
+                if (task.get('delivery_context') or {}).get('input_kind') in {'agent_task_continuation','agent_task_followup'} else None))
+        if runtime.task_user_changes is not None:
+            runtime._steer_messages.extend(item.message for item in runtime.task_user_changes.items if not item.delivered)
+        async def capture_change(event_id):
+            return await capture_user_change(self._db, actor_user_id=execution_scope.actor_user_id,
+                org_id=task.get('org_id'), task_id=claim.task_id, execution_token=claim.execution_token,event_id=event_id)
+        runtime.task_user_change_capture = capture_change
+        import copy
+        runtime.checkpoint_base=copy.deepcopy(replay_context or {})
+        from services.task_execution.requirement_changes import restore as restore_revision_review
+        runtime.task_revision_review=restore_revision_review((replay_context or {}).get('_task_revision_review'),runtime.task_execution_state)
+        async def read_pending_changes():
+            state=runtime.task_execution_state
+            if state is None or state.image_binding_version<3:return []
+            from services.task_execution.database_scope import task_database
+            reply=await task_database(self._db,state).rpc('read_agent_task_user_change_pending',{
+                'p_task_id':claim.task_id,'p_execution_token':claim.execution_token,'p_logical_task_id':str(state.root_task_id)}).execute()
+            if not reply or reply.data.get('outcome')!='found':raise RuntimeError('TASK_USER_CHANGE_PENDING_UNCONFIRMED')
+            return reply.data['events']
+        async def apply_revision(source,review,payload):
+            from services.task_execution.database_scope import task_database
+            from services.replay_checkpoint_store import DatabaseReplayCheckpointStore
+            database=task_database(self._db,source)
+            payload['safe_point']='after_tool'
+            try:
+                reply=await database.rpc('apply_agent_task_requirement_revision',{'p_task_id':claim.task_id,
+                    'p_execution_token':claim.execution_token,'p_logical_task_id':str(source.root_task_id),
+                    'p_expected_revision':source.revision,'p_review':review,'p_payload':payload}).execute()
+                return reply.data
+            except Exception:
+                frozen=await DatabaseReplayCheckpointStore(database).read_latest(task_id=claim.task_id,execution_token=claim.execution_token)
+                if frozen.get('outcome')!='found' or frozen.get('payload')!=payload:raise RuntimeError('TASK_REVISION_APPLY_UNCONFIRMED') from None
+                return {'outcome':'saved','state':payload['_task_execution'],'payload':payload}
+        runtime.task_user_change_pending_reader=read_pending_changes
+        runtime.task_revision_apply=apply_revision
+        if (replay_context or {}).get('_task_read_arguments') is not None:
+            from services.task_execution.native_results import restore_arguments
+            runtime.task_read_arguments=restore_arguments(replay_context['_task_read_arguments'],task_id=claim.task_id,turn_id=claim.turn_id)
+        from services.task_execution.requirement_changes import refresh as refresh_user_changes
+        await refresh_user_changes(runtime)
+        pending_user_delivery = bool(runtime.task_unreviewed_changes or runtime.task_user_changes and any(not i.delivered for i in runtime.task_user_changes.items))
+        if (not pending_user_delivery and replay_context and replay_context.get("checkpoint_kind") == "commit_ready"
                 and replay_context.get("skill_runtime") is None):
             return _generation_outcome_from_replay(replay_context)
         handler = self._handler_factory(self._handler_db_factory())
@@ -105,7 +210,7 @@ class ChatGenerationExecutor:
         from services.skills.selection import SkillSelection
         raw_selection = params.pop("_selected_skill", None)
         selected_skill = SkillSelection.model_validate(raw_selection) if raw_selection is not None else None
-        if replay_context and replay_context.get("checkpoint_kind") == "commit_ready":
+        if not pending_user_delivery and replay_context and replay_context.get("checkpoint_kind") == "commit_ready":
             if replay_context.get("skill_runtime") is not None:
                 from services.skills.runtime import create_skill_runtime
                 from services.tools.runtime_context import chat_context
@@ -117,6 +222,9 @@ class ChatGenerationExecutor:
                         cancellation=cancellation_event,
                     ),
                 )
+                if runtime.task_execution_state is not None:
+                    from services.task_execution.methods import validate_method_replay
+                    await validate_method_replay(runtime.task_execution_state, runtime.skill_runtime)
             return _generation_outcome_from_replay(replay_context)
         sink = (
             self._sink_factory(task, claim, cancellation_event)
@@ -158,6 +266,29 @@ class ChatGenerationExecutor:
         diagnostic_outcome = "failed"
         try:
             try:
+                anchor = _build_anchor(claim, task.get('org_id'), task)
+                from core.config import get_settings
+                saved_bootstrap = (replay_context or {}).get('_task_bootstrap')
+                if (runtime.task_execution_state is None and self._replay_checkpoint_store is not None
+                        and ((getattr(get_settings(), 'agent_task_execution_enabled', False) and replay_context is None
+                              and admits_new_task(execution_scope))
+                             or saved_bootstrap is not None)):
+                    from services.task_execution.bootstrap import TaskBootstrap
+                    runtime.task_bootstrap = TaskBootstrap.from_input(anchor=anchor, scope=execution_scope,
+                        content=content, task_id=claim.task_id, conversation_id=claim.conversation_id,
+                        org_id=task.get('org_id'),require_coverage_review=(
+                            saved_bootstrap.get('input',{}).get('require_coverage_review',False)
+                            if saved_bootstrap else True))
+                    if saved_bootstrap is not None and runtime.task_bootstrap.checkpoint() != saved_bootstrap:
+                        raise RuntimeError('TASK_BOOTSTRAP_REPLAY_MISMATCH')
+                if runtime.task_bootstrap is not None or runtime.task_execution_state is not None:
+                    from services.task_execution.artifact_reader import TaskArtifactReader
+                    runtime.task_artifact_reader = TaskArtifactReader(self._db,
+                        task_id=claim.task_id, execution_token=claim.execution_token)
+                    from services.task_execution.operation_store import TaskOperationStore
+                    from services.tools.catalog import build_capability_catalog
+                    runtime.task_operation_store_factory = lambda: TaskOperationStore(self._db, task_id=claim.task_id,
+                        execution_token=claim.execution_token, turn_id=claim.turn_id, registry=build_capability_catalog())
                 result = await execute_chat(
                     handler=handler,
                     request=ChatExecutionRequest(
@@ -167,7 +298,7 @@ class ChatGenerationExecutor:
                         task_id=claim.task_id,
                         message_id=str(task["assistant_message_id"]),
                         model_id=_normalize_model_id(task.get("model_id")),
-                        context_anchor=_build_anchor(claim, task.get("org_id"), task),
+                        context_anchor=anchor,
                         params=params,
                         selected_skill=selected_skill,
                         permission_mode=str(params.get("permission_mode") or "auto"),
@@ -209,6 +340,9 @@ class ChatGenerationExecutor:
                 credits_cost=result.credits_cost,
                 tool_digest=result.tool_digest,
             )
+        except FollowupRestart as restart:
+            diagnostic_outcome='followup'
+            return await self.execute({**task,'delivery_context':restart.delivery_context},claim,cancellation_event)
         except ConversationPauseRequested:
             diagnostic_outcome = "paused"
             raise
@@ -264,20 +398,23 @@ class ChatGenerationExecutor:
         except Exception:
             # An acknowledgement can be lost after commit. Reconcile the whole
             # checkpoint, not merely a matching composition ID, before proceeding.
-            if '_skill_composition' not in payload:
+            if not any(key in payload for key in ('_skill_composition', '_task_execution', '_task_bootstrap')):
                 raise
             read = getattr(self._replay_checkpoint_store, 'read_latest', None)
             if read is None:
                 raise
             expected = dict(payload)
             expected.setdefault('safe_point', boundary.value)
+            unconfirmed = ('TASK_EXECUTION_SAVE_UNCONFIRMED' if any(
+                key in payload for key in ('_task_execution', '_task_bootstrap'))
+                           else 'SKILL_COMPOSITION_SAVE_UNCONFIRMED')
             try:
                 saved = await read(task_id=claim.task_id, execution_token=claim.execution_token,
                                    boundary=boundary)
             except Exception:
-                raise RuntimeError('SKILL_COMPOSITION_SAVE_UNCONFIRMED') from None
+                raise RuntimeError(unconfirmed) from None
             if saved.get('outcome') != 'found' or saved.get('payload') != expected:
-                raise RuntimeError('SKILL_COMPOSITION_SAVE_UNCONFIRMED') from None
+                raise RuntimeError(unconfirmed) from None
             result = {'outcome':'saved','reconciled':True}
         if result.get("outcome") in {
             "ownership_lost", "lease_expired", "terminal",

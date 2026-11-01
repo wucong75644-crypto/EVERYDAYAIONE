@@ -81,6 +81,9 @@ def _build_part(block: dict[str, Any]) -> ContentPart | None:
         )
     if block_type == "text":
         return TextPart(text=block["text"])
+    if block_type == "task_progress":
+        from schemas.message import TaskProgressPart
+        return TaskProgressPart(**block)
     if block_type == "skill_step":
         return SkillStepPart(**block)
     if block_type == "tool_step":

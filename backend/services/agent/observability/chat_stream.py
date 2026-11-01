@@ -143,3 +143,37 @@ async def _publish_in_background(fields: dict[str, Any]) -> None:
 
 def _log_summary(fields: dict[str, Any]) -> None:
     logger.info("Actor stream delivery summary {}", json.dumps(fields, separators=(",", ":")))
+
+
+class ModelTurnTiming:
+    """Fixed-size model-boundary timing; excludes acceptance/queue/context.
+
+    Inter-chunk gaps include sink backpressure, so are not provider network-only.
+    No response text, references or model arguments are retained.
+    """
+    def __init__(self, *, clock=None):
+        self.clock = clock or time.monotonic
+        self.started = self.clock()
+        self.first = None
+        self.last = None
+        self.chunks = 0
+        self.max_gap_ms = 0.0
+
+    def on_text(self):
+        now = self.clock()
+        if self.first is None:
+            self.first = now
+        if self.last is not None:
+            self.max_gap_ms = max(self.max_gap_ms, (now - self.last) * 1000)
+        self.last = now
+        self.chunks += 1
+
+    def summary(self, *, held, review):
+        return {
+            'first_body_ms': round((self.first - self.started) * 1000, 3) if self.first is not None else None,
+            'elapsed_ms': round((self.clock() - self.started) * 1000, 3),
+            'body_chunks': self.chunks,
+            'max_body_gap_ms': round(self.max_gap_ms, 3),
+            'held_for_knowledge': held,
+            'review': review,
+        }

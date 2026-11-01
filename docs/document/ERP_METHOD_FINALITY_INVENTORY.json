@@ -1,0 +1,1163 @@
+{
+  "scope": "Current registered native writes; modes describe local verification, never external acceptance or dispatch permission.",
+  "counts": {
+    "provider_method_contract_required": 85,
+    "acknowledged_exact_product_readback": 1,
+    "verified_sync_receipt": 1,
+    "provider_instance_contract_required": 1
+  },
+  "methods": [
+    {
+      "category": "basic",
+      "action": "customer_create",
+      "method": "erp.customer.create",
+      "completion": {
+        "version": 1,
+        "method": "erp.customer.create",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "product",
+      "action": "brand_add",
+      "method": "item.brand.add",
+      "completion": {
+        "version": 1,
+        "method": "item.brand.add",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "product",
+      "action": "cat_add",
+      "method": "erp.item.seller.cat.add",
+      "completion": {
+        "version": 1,
+        "method": "erp.item.seller.cat.add",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "product",
+      "action": "classify_add",
+      "method": "erp.item.classify.add",
+      "completion": {
+        "version": 1,
+        "method": "erp.item.classify.add",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "product",
+      "action": "import_platform_item",
+      "method": "erp.tb.item.import",
+      "completion": {
+        "version": 1,
+        "method": "erp.tb.item.import",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "product",
+      "action": "item_type_change",
+      "method": "erp.item.type.change",
+      "completion": {
+        "version": 1,
+        "method": "erp.item.type.change",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "product",
+      "action": "product_add_update",
+      "method": "erp.item.general.addorupdate",
+      "completion": {
+        "version": 1,
+        "method": "erp.item.general.addorupdate",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "product",
+      "action": "product_add_update_simple",
+      "method": "item.general.addorupdate",
+      "completion": {
+        "version": 1,
+        "method": "item.general.addorupdate",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "acknowledged_exact_product_readback",
+        "read_method": "item.single.get",
+        "eligible_fields": [
+          "barcode",
+          "remark",
+          "shortTitle",
+          "title",
+          "unit"
+        ],
+        "requires": "host-bound exact original parameters, original ACK and fresh same-source native read; unsupported edits stay unresolved"
+      }
+    },
+    {
+      "category": "product",
+      "action": "stock_update",
+      "method": "erp.item.available.stock.update",
+      "completion": {
+        "version": 1,
+        "method": "erp.item.available.stock.update",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "product",
+      "action": "supplier_add",
+      "method": "erp.item.supplier.add",
+      "completion": {
+        "version": 1,
+        "method": "erp.item.supplier.add",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "product",
+      "action": "supplier_delete",
+      "method": "erp.item.supplier.delete",
+      "completion": {
+        "version": 1,
+        "method": "erp.item.supplier.delete",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "product",
+      "action": "supplier_modify",
+      "method": "erp.item.supplier.update",
+      "completion": {
+        "version": 1,
+        "method": "erp.item.supplier.update",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "product",
+      "action": "supplier_update",
+      "method": "erp.item.supplier.relevance",
+      "completion": {
+        "version": 1,
+        "method": "erp.item.supplier.relevance",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "product",
+      "action": "tag_add",
+      "method": "erp.item.tag.add",
+      "completion": {
+        "version": 1,
+        "method": "erp.item.tag.add",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "verified_sync_receipt",
+        "requires": "original persisted synchronous receipt without partial/async/failure markers"
+      }
+    },
+    {
+      "category": "product",
+      "action": "tag_batch_update",
+      "method": "erp.item.tag.batch.update",
+      "completion": {
+        "version": 1,
+        "method": "erp.item.tag.batch.update",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "product",
+      "action": "update_history_price",
+      "method": "erp.item.history.price.update",
+      "completion": {
+        "version": 1,
+        "method": "erp.item.history.price.update",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "product",
+      "action": "virtual_stock_batch_update",
+      "method": "erp.item.virtual.stock.updateV2",
+      "completion": {
+        "version": 1,
+        "method": "erp.item.virtual.stock.updateV2",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "product",
+      "action": "virtual_stock_update",
+      "method": "erp.item.virtual.stock.update",
+      "completion": {
+        "version": 1,
+        "method": "erp.item.virtual.stock.update",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "change_warehouse",
+      "method": "erp.trade.change.warehouse",
+      "completion": {
+        "version": 1,
+        "method": "erp.trade.change.warehouse",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "fast_stock_update",
+      "method": "erp.fast.stock.update",
+      "completion": {
+        "version": 1,
+        "method": "erp.fast.stock.update",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "logistics_template_update",
+      "method": "erp.trade.logistics.template.update",
+      "completion": {
+        "version": 1,
+        "method": "erp.trade.logistics.template.update",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "order_cancel",
+      "method": "erp.trade.cancel",
+      "completion": {
+        "version": 1,
+        "method": "erp.trade.cancel",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "order_create",
+      "method": "erp.trade.create",
+      "completion": {
+        "version": 1,
+        "method": "erp.trade.create",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "order_create_new",
+      "method": "erp.trade.create.new",
+      "completion": {
+        "version": 1,
+        "method": "erp.trade.create.new",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "order_intercept",
+      "method": "erp.trade.send.goods.intercept",
+      "completion": {
+        "version": 1,
+        "method": "erp.trade.send.goods.intercept",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "order_remark_batch_update",
+      "method": "erp.trade.order.remark.batchUpdate",
+      "completion": {
+        "version": 1,
+        "method": "erp.trade.order.remark.batchUpdate",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "order_remark_update",
+      "method": "erp.trade.order.remark.update",
+      "completion": {
+        "version": 1,
+        "method": "erp.trade.order.remark.update",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "receiver_update",
+      "method": "erp.trade.receiver.info.update",
+      "completion": {
+        "version": 1,
+        "method": "erp.trade.receiver.info.update",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "seller_memo_update",
+      "method": "erp.trade.seller.memo.upload",
+      "completion": {
+        "version": 1,
+        "method": "erp.trade.seller.memo.upload",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "tag_batch_update",
+      "method": "erp.trade.tag.batch.update",
+      "completion": {
+        "version": 1,
+        "method": "erp.trade.tag.batch.update",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "trade_consign",
+      "method": "erp.trade.consign",
+      "completion": {
+        "version": 1,
+        "method": "erp.trade.consign",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "trade_halt",
+      "method": "erp.trade.halt",
+      "completion": {
+        "version": 1,
+        "method": "erp.trade.halt",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "trade_pack",
+      "method": "erp.trade.pack",
+      "completion": {
+        "version": 1,
+        "method": "erp.trade.pack",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "trade_unhalt",
+      "method": "erp.trade.unhalt",
+      "completion": {
+        "version": 1,
+        "method": "erp.trade.unhalt",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "unique_code_generate",
+      "method": "erp.item.unique.code.generate",
+      "completion": {
+        "version": 1,
+        "method": "erp.item.unique.code.generate",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "unique_code_receive",
+      "method": "erp.trade.unique.code.receive",
+      "completion": {
+        "version": 1,
+        "method": "erp.trade.unique.code.receive",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "unique_code_update",
+      "method": "erp.item.unique.code.update",
+      "completion": {
+        "version": 1,
+        "method": "erp.item.unique.code.update",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "unique_code_validate",
+      "method": "erp.wave.unique.code.validate",
+      "completion": {
+        "version": 1,
+        "method": "erp.wave.unique.code.validate",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "wave_pick_hand",
+      "method": "erp.trade.wave.pick.hand",
+      "completion": {
+        "version": 1,
+        "method": "erp.trade.wave.pick.hand",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "trade",
+      "action": "wave_seed",
+      "method": "erp.trade.wave.seed",
+      "completion": {
+        "version": 1,
+        "method": "erp.trade.wave.seed",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "aftersales",
+      "action": "repair_edit_money",
+      "method": "erp.aftersale.repair.order.edit.repairMoney",
+      "completion": {
+        "version": 1,
+        "method": "erp.aftersale.repair.order.edit.repairMoney",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "aftersales",
+      "action": "repair_pay",
+      "method": "erp.aftersale.repair.order.pay",
+      "completion": {
+        "version": 1,
+        "method": "erp.aftersale.repair.order.pay",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "aftersales",
+      "action": "repair_process",
+      "method": "erp.aftersale.repair.order.process",
+      "completion": {
+        "version": 1,
+        "method": "erp.aftersale.repair.order.process",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "aftersales",
+      "action": "update_express",
+      "method": "erp.aftersale.update.express",
+      "completion": {
+        "version": 1,
+        "method": "erp.aftersale.update.express",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "aftersales",
+      "action": "update_platform_refund_money",
+      "method": "erp.aftersale.update.platformRefundMoney",
+      "completion": {
+        "version": 1,
+        "method": "erp.aftersale.update.platformRefundMoney",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "aftersales",
+      "action": "workorder_batch_change_type",
+      "method": "erp.aftersale.workorder.batchChangeType",
+      "completion": {
+        "version": 1,
+        "method": "erp.aftersale.workorder.batchChangeType",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "aftersales",
+      "action": "workorder_cancel",
+      "method": "erp.aftersale.workorder.cancel",
+      "completion": {
+        "version": 1,
+        "method": "erp.aftersale.workorder.cancel",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "aftersales",
+      "action": "workorder_create",
+      "method": "erp.aftersale.workorder.create",
+      "completion": {
+        "version": 1,
+        "method": "erp.aftersale.workorder.create",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "aftersales",
+      "action": "workorder_explains_update",
+      "method": "erp.aftersale.workorder.explains.update",
+      "completion": {
+        "version": 1,
+        "method": "erp.aftersale.workorder.explains.update",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "aftersales",
+      "action": "workorder_goods_received",
+      "method": "erp.aftersale.workorder.goods.received",
+      "completion": {
+        "version": 1,
+        "method": "erp.aftersale.workorder.goods.received",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "aftersales",
+      "action": "workorder_remark_update",
+      "method": "erp.aftersale.workorder.remark.update",
+      "completion": {
+        "version": 1,
+        "method": "erp.aftersale.workorder.remark.update",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "aftersales",
+      "action": "workorder_resolve",
+      "method": "erp.aftersale.workorder.resolve",
+      "completion": {
+        "version": 1,
+        "method": "erp.aftersale.workorder.resolve",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "aftersales",
+      "action": "workorder_tag_update",
+      "method": "erp.aftersale.workorder.tag.update",
+      "completion": {
+        "version": 1,
+        "method": "erp.aftersale.workorder.tag.update",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "warehouse",
+      "action": "allocate_add",
+      "method": "allocate.task.add",
+      "completion": {
+        "version": 1,
+        "method": "allocate.task.add",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "warehouse",
+      "action": "allocate_create",
+      "method": "allocate.task.status.create",
+      "completion": {
+        "version": 1,
+        "method": "allocate.task.status.create",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "warehouse",
+      "action": "allocate_in_receive",
+      "method": "allocate.in.task.receive",
+      "completion": {
+        "version": 1,
+        "method": "allocate.in.task.receive",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "warehouse",
+      "action": "allocate_out_direct",
+      "method": "erp.allocate.out.task.out",
+      "completion": {
+        "version": 1,
+        "method": "erp.allocate.out.task.out",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "warehouse",
+      "action": "inventory_batch_update",
+      "method": "inventory.sheet.batch.update",
+      "completion": {
+        "version": 1,
+        "method": "inventory.sheet.batch.update",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "warehouse",
+      "action": "other_in_add",
+      "method": "other.in.order.add",
+      "completion": {
+        "version": 1,
+        "method": "other.in.order.add",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "warehouse",
+      "action": "other_in_cancel",
+      "method": "erp.other.in.order.cancel",
+      "completion": {
+        "version": 1,
+        "method": "erp.other.in.order.cancel",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "warehouse",
+      "action": "other_out_add",
+      "method": "other.out.order.add",
+      "completion": {
+        "version": 1,
+        "method": "other.out.order.add",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "warehouse",
+      "action": "other_out_cancel",
+      "method": "erp.other.out.order.cancel",
+      "completion": {
+        "version": 1,
+        "method": "erp.other.out.order.cancel",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "warehouse",
+      "action": "unshelve_execute",
+      "method": "erp.wms.unshelve.order.unshelve",
+      "completion": {
+        "version": 1,
+        "method": "erp.wms.unshelve.order.unshelve",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "warehouse",
+      "action": "unshelve_save",
+      "method": "erp.wms.unshelve.order.save",
+      "completion": {
+        "version": 1,
+        "method": "erp.wms.unshelve.order.save",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "warehouse",
+      "action": "upshelf_batch",
+      "method": "erp.wms.upshelf.batch",
+      "completion": {
+        "version": 1,
+        "method": "erp.wms.upshelf.batch",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "purchase",
+      "action": "pre_in_order_add",
+      "method": "purchase.pre.in.order.add",
+      "completion": {
+        "version": 1,
+        "method": "purchase.pre.in.order.add",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "purchase",
+      "action": "pre_in_order_anti_audit",
+      "method": "purchase.pre.in.order.anti.audit",
+      "completion": {
+        "version": 1,
+        "method": "purchase.pre.in.order.anti.audit",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "purchase",
+      "action": "pre_in_order_update",
+      "method": "purchase.pre.in.order.update",
+      "completion": {
+        "version": 1,
+        "method": "purchase.pre.in.order.update",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "purchase",
+      "action": "purchase_add",
+      "method": "purchase.add",
+      "completion": {
+        "version": 1,
+        "method": "purchase.add",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "purchase",
+      "action": "purchase_add_update",
+      "method": "purchase.addorupdate",
+      "completion": {
+        "version": 1,
+        "method": "purchase.addorupdate",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "purchase",
+      "action": "purchase_return_cancel",
+      "method": "purchase.return.cancel",
+      "completion": {
+        "version": 1,
+        "method": "purchase.return.cancel",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "purchase",
+      "action": "purchase_return_out",
+      "method": "purchase.return.out",
+      "completion": {
+        "version": 1,
+        "method": "purchase.return.out",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "purchase",
+      "action": "purchase_return_save",
+      "method": "purchase.return.save",
+      "completion": {
+        "version": 1,
+        "method": "purchase.return.save",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "purchase",
+      "action": "purchase_status_update",
+      "method": "purchase.status.update",
+      "completion": {
+        "version": 1,
+        "method": "purchase.status.update",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "purchase",
+      "action": "purchase_strategy_calculate",
+      "method": "sale.purchase.strategy.calculate",
+      "completion": {
+        "version": 1,
+        "method": "sale.purchase.strategy.calculate",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_instance_contract_required",
+        "requires": "instance identity and terminal evidence bound to this original request; global purchase.progress.query is insufficient"
+      }
+    },
+    {
+      "category": "purchase",
+      "action": "purchase_un_audit",
+      "method": "purchase.unAudit",
+      "completion": {
+        "version": 1,
+        "method": "purchase.unAudit",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "purchase",
+      "action": "purchase_update_special",
+      "method": "purchase.update.ignore.status",
+      "completion": {
+        "version": 1,
+        "method": "purchase.update.ignore.status",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "purchase",
+      "action": "shelf_save",
+      "method": "erp.purchase.shelf.save",
+      "completion": {
+        "version": 1,
+        "method": "erp.purchase.shelf.save",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "purchase",
+      "action": "supplier_add_update",
+      "method": "supplier.addorupdate",
+      "completion": {
+        "version": 1,
+        "method": "supplier.addorupdate",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "purchase",
+      "action": "warehouse_entry_add_update",
+      "method": "warehouse.entry.addorupdate",
+      "completion": {
+        "version": 1,
+        "method": "warehouse.entry.addorupdate",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "purchase",
+      "action": "warehouse_entry_cancel",
+      "method": "warehouse.entry.cancel",
+      "completion": {
+        "version": 1,
+        "method": "warehouse.entry.cancel",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "purchase",
+      "action": "warehouse_entry_fast_receive",
+      "method": "warehouse.entry.fast.receive",
+      "completion": {
+        "version": 1,
+        "method": "warehouse.entry.fast.receive",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "purchase",
+      "action": "warehouse_entry_receive",
+      "method": "warehouse.entry.receive",
+      "completion": {
+        "version": 1,
+        "method": "warehouse.entry.receive",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "purchase",
+      "action": "warehouse_entry_revert",
+      "method": "warehouse.entry.finished.revert",
+      "completion": {
+        "version": 1,
+        "method": "warehouse.entry.finished.revert",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "distribution",
+      "action": "add_distribution_item",
+      "method": "kmt.api.dms.add.distribution.item.fromsupplier",
+      "completion": {
+        "version": 1,
+        "method": "kmt.api.dms.add.distribution.item.fromsupplier",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "distribution",
+      "action": "add_distributor",
+      "method": "kmt.api.dms.add.distributor",
+      "completion": {
+        "version": 1,
+        "method": "kmt.api.dms.add.distributor",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "distribution",
+      "action": "add_distributor_money",
+      "method": "kmt.api.dms.add.distributor.money",
+      "completion": {
+        "version": 1,
+        "method": "kmt.api.dms.add.distributor.money",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    },
+    {
+      "category": "distribution",
+      "action": "submit_sync_item",
+      "method": "kmt.api.dms.submit.sync.item",
+      "completion": {
+        "version": 1,
+        "method": "kmt.api.dms.submit.sync.item",
+        "unknown_effect_can_complete": false,
+        "can_resend": false,
+        "mode": "provider_method_contract_required",
+        "requires": "verified final receipt or instance terminal protocol bound to this original request; generic success is not completion"
+      }
+    }
+  ]
+}

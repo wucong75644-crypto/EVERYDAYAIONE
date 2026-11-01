@@ -23,13 +23,14 @@ export default function InlineChartImage({
   const displayH = (width && height) ? Math.round(displayW * height / width) : undefined;
 
   return (
-    <div className="my-3" style={{ width: displayW }}>
+    <div className="my-3" style={{ width: displayW, maxWidth: '100%' }}>
       {!loaded && (
         <div
           className="rounded-xl flex items-center justify-center"
           style={{
-            width: displayW,
-            height: displayH || 120,
+            width: '100%',
+            aspectRatio: displayH ? `${displayW} / ${displayH}` : undefined,
+            height: displayH ? undefined : 120,
             backgroundColor: '#27272a',
           }}
         >

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Literal
-from pydantic import Field, model_validator
+from pydantic import Field, model_validator, model_serializer
 
 from .contracts import Contract, CoordinationContract, SkillAction, SkillError, SkillKey
 
@@ -23,6 +23,14 @@ class Participant(Contract):
     body_sha256: str
     sources: tuple[Literal['user', 'session', 'model', 'scheduled'], ...]
     contract: CoordinationContract | None = None
+    phase_resident: bool = False
+
+    @model_serializer(mode='wrap')
+    def preserve_old_projection(self, handler):
+        value = handler(self)
+        if not self.phase_resident:
+            value.pop('phase_resident', None)
+        return value
 
 
 class Composition(Contract):
@@ -31,13 +39,15 @@ class Composition(Contract):
     policy_version: Literal['skill-composition-v1'] = POLICY_VERSION
     turn_id: str
     action_context: ActionContext = Field(default_factory=ActionContext)
-    participants: tuple[Participant, ...] = Field(default=(), max_length=4)
+    participants: tuple[Participant, ...] = Field(default=(), max_length=8)
     owners: dict[str, str] = Field(default_factory=dict)
     workflow_links: dict[str, Any] = Field(default_factory=dict)
     effective_allowed_tool_names: tuple[str, ...] = ()
 
     @model_validator(mode='after')
     def consistent(self):
+        if sum(not p.phase_resident for p in self.participants)>4 or sum(p.phase_resident for p in self.participants)>4:
+            raise ValueError('SKILL_COMPOSITION_CAPACITY_EXCEEDED')
         expected = owners_for(self.participants, self.action_context)
         if self.owners != expected or len({p.skill_key for p in self.participants}) != len(self.participants):
             raise ValueError('SKILL_COMPOSITION_INCONSISTENT')
@@ -59,6 +69,8 @@ def owners_for(participants, action: ActionContext):
             continue  # Unclassified legacy content retains its existing ceiling.
         if not set(contract.requires) <= keys:
             raise CompositionConflict([p.skill_key, *contract.requires], 'SKILL_DEPENDENCY_UNAVAILABLE')
+        if p.phase_resident:
+            continue
         for claim in contract.claims:
             if action.action not in claim.actions:
                 continue
@@ -74,7 +86,7 @@ def method_for(composition: Composition | None, scope: str):
         return None
     key = composition.owners.get(scope)
     for p in composition.participants:
-        if p.skill_key == key and p.contract:
+        if p.skill_key == key and p.contract and not p.phase_resident:
             return next(c.method for c in p.contract.claims
                         if c.scope == scope and composition.action_context.action in c.actions)
     return None

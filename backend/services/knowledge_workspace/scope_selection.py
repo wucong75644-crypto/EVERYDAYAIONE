@@ -7,13 +7,13 @@ SOURCE_ONLY = re.compile(r'(?:只|仅)(?:能|可|允许)?(?:根据|用|依据|�
 KNOWLEDGE = re.compile(r'知识库|资料|手册|规范|流程|按照|参考|以前|习惯|方法|项目|规则')
 
 
-def select(containers, question):
+def select(containers, question, *, allow_self_contained=True):
     question = question.strip()
-    if SOURCE_ONLY.search(question):
+    if allow_self_contained and SOURCE_ONLY.search(question) and re.search(r'[:：]\s*\S', question):
         return [], 'source_only'
-    if not question or TRIVIAL.fullmatch(question):
+    if not question or (allow_self_contained and TRIVIAL.fullmatch(question)):
         return [], 'no_knowledge_needed'
-    if TRANSFORM.search(question) and not KNOWLEDGE.search(question):
+    if allow_self_contained and TRANSFORM.search(question) and re.search(r'[:：]\s*\S', question) and not KNOWLEDGE.search(question):
         return [], 'self_contained_transform'
     # Personal and team are default business context. A project must be named;
     # ambiguous equal names are deliberately left out rather than silently mixed.
@@ -26,15 +26,73 @@ def select(containers, question):
     return selected, ('ambiguous_project' if ambiguous else 'project_unspecified' if '项目' in question and not projects else 'task_scope')
 
 
-def roots(cursor, question):
+def roots(cursor, question, *, allow_self_contained=True):
     cursor.execute('''SELECT id,kind,title FROM public.kb_containers WHERE deleted_at IS NULL
       AND NOT undo_hidden ORDER BY id LIMIT 1001''')
     containers = cursor.fetchall()
     if len(containers) > 1000:
         from .chat import unavailable
         unavailable('KNOWLEDGE_CAPACITY')
-    selected, reason = select(containers, question)
+    selected, reason = select(containers, question, allow_self_contained=allow_self_contained)
     if len(selected) > 100:
         from .chat import unavailable
         unavailable('KNOWLEDGE_CAPACITY')
     return [{'root': {'kind': 'container', 'id': str(c['id'])}} for c in selected], reason
+
+
+# Conservative host routing, not a model verdict or a blanket absence-of-tool
+# exemption. Unknown wording stays on the existing verified-answer path.
+PRIVATE_CONTEXT = re.compile(r'知识库|企业|公司|内部|我们|本店|本司|制度|规则|流程|规范|手册|订单|库存|客户|合同|报销|权限|项目|资料|根据之前|按照之前')
+SELF_CONTAINED_CHAT = re.compile(r'^(?:请)?(?:你是谁|你叫什么名字|你能做什么|讲(?:一)?个笑话|讲(?:一)?个睡前故事)[？?。！!\s]*$')
+IMAGE_ONLY = re.compile(r'^(?:请|帮我)?(?:只|仅)(?:根据|依据|基于|看)(?:我(?:提供|上传|发)的|这(?:张|些)|所附|上传的)?(?:图片|图像|照片|图)(?:来)?(?:分析|描述|看看|说明|识别|提取)')
+BASIC_IMAGE_ANALYSIS = re.compile(r'^(?:请|帮我)?(?:分析|描述|看看|识别|解读)(?:一下)?'
+    r'(?:这(?:张|些)|我(?:上传|发)的|上传的|所附)?(?:图片|图像|照片|图)[。！？!?\s]*$')
+
+
+def self_contained_reason(question, content, messages, *, required=False):
+    """No answer/Skill/tool result can grant this exemption.
+
+    Persisted explicit refs are checked again by KnowledgeRun.start. Historical
+    knowledge packets/citations keep verification even on a new short question.
+    """
+    import json
+    if required or not isinstance(question, str) or len(question) > 2000:
+        return None
+    if PRIVATE_CONTEXT.search(question):
+        return None
+    latest = latest_user_text(messages)
+    if latest and latest.strip() != question.strip():
+        return None
+    history = json.dumps(messages, ensure_ascii=False, default=str)
+    if any(marker in history for marker in (
+        '知识画布运行快照：', '知识库程序检索依据：', '知识查询答复阶段：',
+        '/knowledge?', 'knowledge_read', 'knowledge_search', 'knowledge_outline',
+    )):
+        return None
+    kinds = [getattr(part, 'type', None) for part in content]
+    if any(kind not in ('text', 'image') for kind in kinds):
+        return None
+    if 'image' in kinds:
+        return 'user_images_only' if (IMAGE_ONLY.search(question.strip())
+            or BASIC_IMAGE_ANALYSIS.fullmatch(question.strip())) else None
+    if TRIVIAL.fullmatch(question.strip()) or SELF_CONTAINED_CHAT.fullmatch(question.strip()):
+        return 'self_contained_chat'
+    inline_material = re.search(r'[:：]\s*\S', question) is not None
+    if inline_material and TRANSFORM.search(question.strip()) and not KNOWLEDGE.search(question):
+        return 'self_contained_transform'
+    if inline_material and SOURCE_ONLY.search(question):
+        return 'user_content_only'
+    return None
+
+
+def latest_user_text(messages):
+    for message in reversed(messages):
+        if message.get('role') != 'user':
+            continue
+        value = message.get('content')
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return '\n'.join(part.get('text', '') for part in value
+                             if isinstance(part, dict) and part.get('type') == 'text')
+    return ''

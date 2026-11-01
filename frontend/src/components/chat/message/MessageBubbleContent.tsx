@@ -32,6 +32,7 @@ interface MessageBubbleContentProps {
   agentStepHint?: string;
   streamingThinking?: string;
   thinkingStartTime?: number;
+  onTaskResume?: (messageId: string) => Promise<boolean>;
   onImageClick: (index?: number) => void;
   onRegenerateSingle?: (imageIndex: number) => void;
 }
@@ -56,6 +57,7 @@ export default function MessageBubbleContent({
   streamingThinking,
   thinkingStartTime,
   onImageClick,
+  onTaskResume,
   onRegenerateSingle,
 }: MessageBubbleContentProps) {
   const thinkingFromContent = !hasMultiBlocks
@@ -113,6 +115,7 @@ export default function MessageBubbleContent({
         ) : hasMultiBlocks ? (
           <MessageContentBlocks
             message={message}
+            onTaskResume={onTaskResume}
             imageAssets={imageAssets}
             fileBlocks={fileBlocks}
             isStreaming={isStreaming}
@@ -128,6 +131,7 @@ export default function MessageBubbleContent({
         ) : null}
         {/* Keep the presenter mounted through the empty live placeholder. */}
         {showPlainMarkdown && <MarkdownRenderer
+          timingBody
           content={textContent}
           isStreaming={isStreaming}
           streamingBaseline={streamingTextDisplayBaseline(message.content)}

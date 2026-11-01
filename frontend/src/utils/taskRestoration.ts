@@ -280,10 +280,29 @@ const RECONCILE_TASK_STATUSES = new Set(['paused', 'completed', 'failed', 'cance
  * 同一对话如果同时存在旧 terminal task 和新 active task，以 active 为准，
  * 避免旧任务的对账清掉新一轮生成。
  */
-export async function reconcileChatTaskStates(
+// All callers share one recovery lane; timer/reconnect overlap joins the same
+// fetch, while explicit restoration snapshots are queued rather than discarded.
+let reconciliationTail: Promise<unknown> = Promise.resolve();
+let pollingReconciliation: Promise<PendingTask[] | null> | undefined;
+const reconciledChats = new Map<string, { signature: string; messages: readonly Message[] }>();
+const reconciledImages = new Map<string, { signature: string; message: Message; messageId: string }>();
+
+export function reconcileChatTaskStates(providedTasks?: PendingTask[] | null): Promise<PendingTask[] | null> {
+  if (providedTasks === undefined && pollingReconciliation) return pollingReconciliation;
+  const result = reconciliationTail.then(() => reconcileChatTaskStatesOnce(providedTasks));
+  reconciliationTail = result.catch(() => undefined);
+  if (providedTasks === undefined) {
+    pollingReconciliation = result;
+    void result.finally(() => { if (pollingReconciliation === result) pollingReconciliation = undefined; }).catch(() => undefined);
+  }
+  return result;
+}
+
+async function reconcileChatTaskStatesOnce(
   providedTasks?: PendingTask[] | null,
 ): Promise<PendingTask[] | null> {
-  const streamingAtStart = new Map(useMessageStore.getState().streamingMessages);
+  const bindingsAtStart = useMessageStore.getState().streamingMessages;
+  const streamingAtStart = new Map(bindingsAtStart);
   const tasks = providedTasks === undefined ? await fetchPendingTasks() : providedTasks;
   if (!tasks) return null;
 
@@ -294,6 +313,11 @@ export async function reconcileChatTaskStates(
       .filter(Boolean),
   );
   const conversations = new Set<string>();
+  for (const conversationId of activeConversations) reconciledChats.delete(conversationId);
+  const signatureFor = (conversationId: string) => JSON.stringify(tasks
+    .filter(t => t.type === 'chat' && t.conversation_id === conversationId)
+    .map(t => [t.id, t.status, t.placeholder_message_id, t.assistant_message_id, t.message_context_revision])
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
 
   // A late child completion must merge only its own result, even while the
   // parent chat is streaming. Never replace the conversation's partial turn.
@@ -304,6 +328,9 @@ export async function reconcileChatTaskStates(
     && RECONCILE_TASK_STATUSES.has(task.status) && task.conversation_id);
   await Promise.all(childResults.map(async task => {
     const store = useMessageStore.getState();
+    const signature = JSON.stringify([task.status, task.message_context_revision]);
+    const receipt = reconciledImages.get(task.id);
+    if (receipt?.signature === signature && store.getMessage(receipt.messageId) === receipt.message) return;
     store.markForceRefresh(task.conversation_id);
     try {
       const { chatImageService } = await import('../services/chatImage');
@@ -321,6 +348,12 @@ export async function reconcileChatTaskStates(
       } as const;
       store.updateMessage(result.message_id, completedMessage);
       store.addMessage(task.conversation_id, completedMessage);
+      const cached = useMessageStore.getState().getMessage(result.message_id);
+      if (cached) {
+        reconciledImages.delete(task.id);
+        reconciledImages.set(task.id, { signature, message: cached, messageId: result.message_id });
+        if (reconciledImages.size > 200) reconciledImages.delete(reconciledImages.keys().next().value!);
+      }
     } catch (error) { logger.error('task:reconcile', '图片完成消息读取失败，保留刷新标记', error); }
   }));
 
@@ -336,6 +369,10 @@ export async function reconcileChatTaskStates(
     const streamingId = streamingAtStart.get(task.conversation_id);
     const taskMessageId = task.placeholder_message_id || task.assistant_message_id;
     if (streamingId && streamingId !== taskMessageId) continue;
+    const receipt = reconciledChats.get(task.conversation_id);
+    const current = useMessageStore.getState();
+    if (!streamingId && receipt?.signature === signatureFor(task.conversation_id)
+        && receipt.messages === current.messages?.[task.conversation_id]) continue;
     conversations.add(task.conversation_id);
   }
 
@@ -346,6 +383,10 @@ export async function reconcileChatTaskStates(
     const expectedStreamingId = streamingAtStart.get(conversationId);
     if (useMessageStore.getState().streamingMessages.get(conversationId) !== expectedStreamingId) return;
 
+    // Resume can reuse the same message ID. Its immutable binding Map changes,
+    // so ID equality alone cannot authorize an older in-flight history read.
+    if (expectedStreamingId && useMessageStore.getState().streamingMessages !== bindingsAtStart) return;
+    const bindingsBeforeRead = useMessageStore.getState().streamingMessages;
     try {
       const response = await getMessages(conversationId, 30, 0);
       if (!response?.messages) return;
@@ -353,6 +394,7 @@ export async function reconcileChatTaskStates(
       // A new send can start while either task or message reads are in flight.
       // A terminal task may reconcile only the stream it actually belongs to.
       if (useMessageStore.getState().streamingMessages.get(conversationId) !== expectedStreamingId) return;
+      if (expectedStreamingId && useMessageStore.getState().streamingMessages !== bindingsBeforeRead) return;
       store.clearConversationStreaming(conversationId);
       store.markForceRefresh(conversationId);
       const messagesAsc = [...response.messages].map(normalizeMessage).reverse();
@@ -361,6 +403,14 @@ export async function reconcileChatTaskStates(
         messagesAsc,
         response.messages.length >= 30,
       );
+      // Bind successful reconciliation to the actual cached history. Clearing,
+      // reloading or replacing it invalidates the receipt (including logout).
+      const cached = useMessageStore.getState().messages?.[conversationId];
+      if (cached) {
+        reconciledChats.delete(conversationId);
+        reconciledChats.set(conversationId, { signature: signatureFor(conversationId), messages: cached });
+        if (reconciledChats.size > 200) reconciledChats.delete(reconciledChats.keys().next().value!);
+      }
       logger.info('task:reconcile', '聊天任务状态已与数据库对账', {
         conversationId,
         messageCount: messagesAsc.length,

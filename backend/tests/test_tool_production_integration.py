@@ -372,7 +372,8 @@ async def test_shared_chat_engine_passes_mode_and_retains_safe_points(setup, mon
     ]))
     runtime = None
     if actor:
-        runtime = Mock(turn_id="turn", command_store=None, execution_token="lease", skill_runtime=None)
+        runtime = Mock(turn_id="turn", command_store=None, execution_token="lease", skill_runtime=None,
+            task_execution_state=None, task_bootstrap=None)
         runtime.safe_point = AsyncMock()
         runtime.consume_subtask_completions.return_value = []
         runtime.consume_steer_messages.return_value = []

@@ -17,6 +17,7 @@ import { TableBlock } from './TableBlock';
 import ThinkingBlock from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
 import ToolStepCard from './ToolStepCard';
+import TaskProgressCard from './TaskProgressCard';
 import ChangeSetCard from './ChangeSetCard';
 import SkillDraftCard from './SkillDraftCard';
 import SkillChatProposalCard from './SkillChatProposalCard';
@@ -38,6 +39,7 @@ interface MessageContentBlocksProps {
   agentStepHint?: string;
   streamingThinking?: string;
   thinkingStartTime?: number;
+  onTaskResume?: (messageId: string) => Promise<boolean>;
   onImageClick: (index?: number) => void;
   onRegenerateSingle?: (imageIndex: number) => void;
   animateInitialTail?: boolean;
@@ -54,6 +56,7 @@ export default function MessageContentBlocks({
   streamingThinking,
   thinkingStartTime,
   onImageClick,
+  onTaskResume,
   onRegenerateSingle,
   animateInitialTail = false,
 }: MessageContentBlocksProps) {
@@ -79,6 +82,10 @@ export default function MessageContentBlocks({
   return (
     <div className={`${MESSAGE_CONTENT_LAYOUT.fill} space-y-1`}>
       {message.content.map((part, idx) => {
+        if (part.type === 'task_progress') {
+          if (message.role !== 'assistant') return null;
+          return <TaskProgressCard key={`task-${part.root_task_id}`} rootTaskId={part.root_task_id} messageId={message.id} onResume={onTaskResume ? () => onTaskResume(message.id) : undefined} />;
+        }
         if (part.type === 'skill_step') {
           if (!isSkillUiEnabled()) return null;
           return <div key={part.step_id} role="status" className="py-1 text-xs text-text-tertiary">
@@ -124,6 +131,7 @@ export default function MessageContentBlocks({
           if (idx === liveTextIndex) return null;
           return (
             <MarkdownRenderer
+              timingBody
               key={idx}
               content={text}
             />
@@ -293,6 +301,7 @@ export default function MessageContentBlocks({
       })}
       {/* A stable empty presenter survives tool steps before the next text delta. */}
       <MarkdownRenderer
+        timingBody
         key="streaming-tail"
         content={liveText}
         isStreaming={isStreaming}

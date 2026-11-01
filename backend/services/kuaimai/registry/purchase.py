@@ -182,7 +182,8 @@ PURCHASE_REGISTRY = {
     ),
     "purchase_strategy_calculate": ApiEntry(
         method="sale.purchase.strategy.calculate",
-        description="触发采购建议计算任务（异步，用purchase_progress查进度）。计算完成后用purchase_strategy查看结果",
+        description="触发采购建议计算任务（异步写操作，请用erp_execute category=purchase）。用purchase_progress查进度，计算完成后用purchase_strategy查看结果",
+        is_write=True,
         param_map={
             "warehouse_code": "warehouseCode",
             "ignore_trade_out": "ignoreTradeOut",

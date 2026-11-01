@@ -156,3 +156,10 @@ it('keeps image task lineage and only accepts real boolean alpha evidence', () =
   expect(parseContentPart({ type: 'image', url: 'old.png', has_transparency: null, quality_checks: null }))
     .toEqual({ type: 'image', url: 'old.png' });
 });
+
+it('retains progress discovery through history and WS parsing without trusting embedded state', () => {
+  const root = '11111111-1111-4111-8111-111111111111';
+  expect(parseContentPart({ type: 'task_progress', root_task_id: root, status: 'completed', state: { private: 'secret' } }))
+    .toEqual({ type: 'task_progress', root_task_id: root });
+  expect(parseContentPart({ type: 'task_progress', root_task_id: 'invalid' })).toBeNull();
+});

@@ -1,3 +1,4 @@
+import { receiveChatChunk, finishChatTiming } from '../utils/chatTiming';
 /**
  * WebSocket 消息处理器工厂
  *
@@ -107,6 +108,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       }
       if (!projection.canProjectStreaming(conversation_id, message_id)) return;
       projection.ensureBinding(conversation_id, message_id);
+      receiveChatChunk(message_id, task_id, msg.payload?.stream_id as string | undefined, msg.payload?.execution_attempt as number | undefined);
 
       const bufferData = deps.chunkBufferRef.current.get(message_id);
       const prevChunk = bufferData?.chunk || '';
@@ -194,7 +196,10 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       deps.getStore().updateTaskProgress(task_id, progress);
     },
 
-  message_done: (deps, msg) => handleMessageDone(deps, msg),
+  message_done: (deps, msg) => {
+    if (msg.message_id) finishChatTiming(msg.message_id, msg.task_id, msg.payload?.stream_id as string | undefined, msg.payload?.execution_attempt as number | undefined);
+    handleMessageDone(deps, msg);
+  },
 
   message_error: (deps, msg) => handleMessageError(deps, msg),
 

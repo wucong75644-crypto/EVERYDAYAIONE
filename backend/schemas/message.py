@@ -6,6 +6,7 @@
 """
 
 from datetime import datetime
+from uuid import UUID
 from enum import Enum
 from typing import Annotated, Any, Dict, Iterable, List, Literal, Optional, Union
 from pydantic import BaseModel, Field, field_validator
@@ -95,6 +96,12 @@ class ToolStepPart(BaseModel):
     code: Optional[str] = None       # code_execute 专用：语法高亮用的代码
     output: Optional[str] = None     # 所有工具：完整返回结果
     elapsed_ms: Optional[int] = None
+
+
+class TaskProgressPart(BaseModel):
+    """Discovery marker only; progress is fetched through authenticated reads."""
+    type: Literal["task_progress"] = "task_progress"
+    root_task_id: UUID
 
 
 class SkillStepPart(BaseModel):
@@ -196,7 +203,7 @@ class EcomPlanPart(BaseModel):
 ContentPart = Annotated[
     Union[TextPart, ImagePart, VideoPart, AudioPart, FilePart,
           ThinkingPart, ToolStepPart, ToolResultPart, FormPart, ChangeSetPart, SkillProposalPart, ChartPart,
-          DiagramPart, TablePart, InterruptMarkerPart, EcomPlanPart, SkillStepPart],
+          DiagramPart, TablePart, InterruptMarkerPart, EcomPlanPart, SkillStepPart, TaskProgressPart],
     Field(discriminator="type"),
 ]
 

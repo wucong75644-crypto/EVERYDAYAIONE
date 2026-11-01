@@ -127,6 +127,36 @@ def test_edit_review_publish_new_revision_and_immutable_history(environment):
                         sql.Identifier(column)), (value, pid))
 
 
+def test_task_stage_uses_existing_review_publish_and_immutable_revision(environment):
+    from services.skills.contracts import SkillCatalogMetadata
+    svc = environment.service()
+    pid = create(svc)
+    v1 = publish(svc, pid)['draft']['revision']
+    original = svc.read_revision(pid, v1)
+    action(svc, pid, 'start_draft')
+    metadata = SkillCatalogMetadata.model_validate({**CONTENT.catalog_metadata.model_dump(mode='json'),
+        'task_stage': {'version': 1, 'output_profile': 'reference-prompts-v1', 'restriction_scope': 'phase'}})
+    content = CONTENT.model_copy(update={'catalog_metadata': metadata})
+    draft = svc.detail(pid)['draft']
+    svc.save(pid, SaveDraft(expected_version=draft['version'], content=content))
+    assert svc.repository.catalog_candidates()[0].catalog_metadata.task_stage is None
+    with pytest.raises(SkillError, match='TRANSITION_INVALID'):
+        action(svc, pid, 'publish')
+    v2 = publish(svc, pid)['draft']['revision']
+    candidate = svc.repository.catalog_candidates()[0]
+    assert candidate.revision == v2 and v2 != v1
+    assert candidate.catalog_metadata.task_stage == metadata.task_stage
+    revision = svc.repository.assigned_revision(pid, v2)
+    from services.skills.contracts import PublishRevision
+    validated = SkillStorage(environment.config.skill_storage_root,
+        workspace_root=environment.config.file_workspace_root).validate(svc.repository.get_package(pid),
+            PublishRevision(revision=revision.revision, content_sha256=revision.content_sha256,
+                body_sha256=revision.body_sha256), nas_path=revision.nas_path)
+    assert validated.catalog_metadata.task_stage == metadata.task_stage
+    assert svc.read_revision(pid, v1) == original
+    assert 'task_stage' not in original.catalog_metadata.model_dump(mode='json')
+
+
 def test_reject_clears_approval_and_stale_editor_conflicts(environment):
     svc = environment.service()
     pid = create(svc)

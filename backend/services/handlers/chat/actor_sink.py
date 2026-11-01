@@ -64,6 +64,7 @@ class ActorWebSink:
         self._blocks: list[dict[str, Any]] = []
         self._chunks_since_persist = 0
         self._diagnostics = ChatStreamDiagnostics()
+        self._body_events = 0
 
     async def start(self) -> None:
         await self._ensure_session()
@@ -86,12 +87,18 @@ class ActorWebSink:
         )
 
     async def on_text(self, text: str) -> None:
+        from services.agent.observability.chat_lifecycle import chat_phase
+        self._body_events += 1
+        if self._body_events == 1:
+            chat_phase('sink.first_body', task_id=self._delivery.task_id, attempt=self._delivery.execution_attempt)
         self._diagnostics.on_text(len(text))
         self._text += text
         self._chunks_since_persist += 1
         delivery_seq = await self._append_event(
             "message_chunk", {"chunk": text},
         )
+        if self._body_events == 1 and delivery_seq is not None:
+            chat_phase('sink.first_persisted', task_id=self._delivery.task_id, attempt=self._delivery.execution_attempt)
         await self._send(
             build_message_chunk(
                 task_id=self._delivery.push_task_id,
@@ -106,6 +113,8 @@ class ActorWebSink:
                 delivery_seq=delivery_seq,
             )
         )
+        if self._body_events == 1:
+            chat_phase('sink.first_push', task_id=self._delivery.task_id, attempt=self._delivery.execution_attempt)
         if self._chunks_since_persist >= _PERSIST_EVERY_CHUNKS:
             await self._persist()
 
@@ -383,6 +392,8 @@ class ActorWebSink:
             )
 
     def finish_diagnostics(self, outcome: str) -> None:
+        from services.agent.observability.chat_lifecycle import chat_phase
+        chat_phase('generation.end', task_id=self._delivery.task_id, attempt=self._delivery.execution_attempt)
         self._diagnostics.finish(
             outcome=outcome,
             task_id=self._delivery.task_id,

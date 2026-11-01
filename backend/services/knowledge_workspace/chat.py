@@ -65,7 +65,7 @@ class KnowledgeRun(DerivedChat):
         self.repo,self.id,self.snapshot=repo,str(snapshot_id),snapshot
 
     @classmethod
-    def start(cls, repo, *, conversation_id, input_message_id, default_scope=False, question=None):
+    def start(cls, repo, *, conversation_id, input_message_id, default_scope=False, question=None, allow_self_contained=True):
         with repo.cursor() as c:
             # Message visibility verifies conversation ownership. Refs are loaded
             # from persistence, not restored from an untrusted params dictionary.
@@ -74,17 +74,19 @@ class KnowledgeRun(DerivedChat):
             msg=c.fetchone()
             if msg is None: unavailable()
             refs=msg['knowledge_refs']
-            if not refs and not default_scope:return None
             c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',(f'kb-run:{repo.scope.actor_user_id}:{input_message_id}',))
             c.execute('SELECT id,snapshot FROM public.kb_read_snapshots WHERE input_message_id=%s AND conversation_id=%s',
                       (input_message_id,conversation_id))
             previous=c.fetchone()
             if previous:
-                if not refs and default_scope:
+                if not refs and (default_scope or previous['snapshot'].get('automatic') is True):
                     refs = previous['snapshot']['refs']
                 check_roots(c,refs,include_hidden=True)
                 if previous['snapshot']['refs']!=refs: unavailable('KNOWLEDGE_SNAPSHOT_MISMATCH')
                 return cls(repo,previous['id'],previous['snapshot'])
+            # A self-contained new request may avoid default snapshot work, but
+            # a saved snapshot always restores first (pause/resume and steering).
+            if not refs and not default_scope:return None
             if not refs and default_scope:
                 # Existing callers without a question retain compatibility. The
                 # chat runtime supplies the actual input for task scope selection.
@@ -95,7 +97,7 @@ class KnowledgeRun(DerivedChat):
                     refs = [{'root': {'kind': 'container', 'id': str(row['id'])}} for row in allowed]
                 else:
                     from .scope_selection import roots
-                    refs, scope_reason = roots(c, question)
+                    refs, scope_reason = roots(c, question, allow_self_contained=allow_self_contained)
                 if not refs: return None
             containers=check_roots(c,refs)
             # Collect metadata optimistically, then lock containers in sorted

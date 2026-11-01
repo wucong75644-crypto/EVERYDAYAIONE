@@ -184,6 +184,8 @@ class DashScopeChatAdapter(BaseChatAdapter):
             body["tools"] = stable_tools(kwargs["tools"]) if self._model_id in CACHE_MODELS else kwargs["tools"]
         if kwargs.get("temperature") is not None:
             body["temperature"] = kwargs["temperature"]
+        if self._model_id in {"qwen3.8-max", "qwen3.8-flash"} and kwargs.get("max_tokens") is not None:
+            body["max_tokens"] = kwargs["max_tokens"]
         if self._model_id == "kimi-k3":
             if reasoning_effort is not None:
                 if reasoning_effort not in {"low", "high", "max"}:

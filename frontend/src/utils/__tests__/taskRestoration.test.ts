@@ -359,3 +359,27 @@ describe('retry slot restoration', () => {
     expect(mockAddMessage).not.toHaveBeenCalled();
   });
 });
+
+
+describe('settled child reconciliation receipts', () => {
+  it('does not read the same saved image twice and retries when its cache is removed', async () => {
+    vi.clearAllMocks();
+    let cached: unknown;
+    mockGetMessage.mockImplementation(() => cached);
+    mockAddMessage.mockImplementation((_cid, message) => { cached = message; });
+    mockImageDetails.mockResolvedValue({ message_id: 'receipt-image', status: 'completed',
+      result: [{ type: 'image', url: 'saved' }], input: { model: 'actual' }, submission_state: 'published' });
+    const child = createPendingImageTask({ id: 'receipt-child', status: 'completed',
+      request_params: { _media_request_v1: { model: 'actual', origin: {} } } });
+    try {
+      await reconcileChatTaskStates([child]);
+      await reconcileChatTaskStates([child]);
+      expect(mockImageDetails).toHaveBeenCalledTimes(1);
+      cached = undefined;
+      await reconcileChatTaskStates([child]);
+      expect(mockImageDetails).toHaveBeenCalledTimes(2);
+    } finally {
+      mockGetMessage.mockReset(); mockAddMessage.mockReset();
+    }
+  });
+});

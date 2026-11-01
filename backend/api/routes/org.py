@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
+from services.kuaimai.session_rotations import rotation_recorder
 from pydantic import BaseModel, Field, StrictBool
 
 from api.deps import CurrentUserId, Database, ScopedDB
@@ -913,6 +914,7 @@ async def test_erp_connection(
                 refresh_token=creds["kuaimai_refresh_token"],
                 org_id=org_id,
                 token_persister=_persist_legacy,
+                token_rotation_recorder=rotation_recorder(getattr(resolver,'db',None),org_id,actor_user_id=user_id),
             )
             try:
                 await client.load_cached_token()
@@ -948,6 +950,7 @@ async def test_erp_connection(
             refresh_token=str(token["refresh_token"]),
             org_id=org_id,
             token_persister=_persist,
+            token_rotation_recorder=rotation_recorder(getattr(resolver,'db',None),org_id,actor_user_id=user_id),
         )
         try:
             await client.load_cached_token()

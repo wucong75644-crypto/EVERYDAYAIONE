@@ -47,3 +47,13 @@ def required_protocol_tools(composition):
     if method_for(composition, 'image.planning') == 'ecommerce.server_plan':
         result.add('plan_ecommerce_images')
     return result
+
+
+def incompatible_protocol_tools(composition):
+    """Protocol availability is narrower than authority; never grants permissions."""
+    from .coordination import method_for
+    # The server planner requires ecommerce.server_plan. An inline owner must
+    # not be told to activate a competing owner to use this tool.
+    if method_for(composition, 'image.planning') == 'ecommerce.inline':
+        return frozenset({'plan_ecommerce_images'})
+    return frozenset()

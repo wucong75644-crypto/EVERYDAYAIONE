@@ -224,7 +224,10 @@ async def test_plain_model_answer_and_evidence_survive_finalization(v3_db,monkey
     sink=CollectingExecutionSink();sink.flush=AsyncMock(side_effect=lambda:None)
     runtime=ConversationTurnRuntime(conversation_id='conv-1',task_id='task-1',turn_id='turn-1',cancellation_event=asyncio.Event())
     result=await execute_chat(handler=handler,request=_request(),runtime=runtime,sink=sink)
-    assert result.parts[0].text=='中文正文中的验收关键词'
+    assert [part.text for part in result.parts if part.type == 'text'][0]=='中文正文中的验收关键词'
+    assert result.parts[0].type == 'tool_step'
+    assert result.parts[0].tool_name == 'knowledge_answer_verification'
+    assert result.parts[0].status == 'completed'
     assert len(audited)==1
     assert source in result.parts[-1].text
     assert source in sink.text+json.dumps(sink.blocks,ensure_ascii=False)
@@ -322,3 +325,60 @@ def test_application_and_runtime_roles_read_with_same_rls(v3_db,file_client,role
                 c.execute('SELECT id FROM kb_read_snapshots WHERE id=%s',(run.id,))
                 assert c.fetchone() is None
             with pytest.raises(AppException):KnowledgeRun.start(foreign,conversation_id=cid,input_message_id=mid)
+
+
+@pytest.fixture(scope='module')
+def current_snapshot_db(v3_db):
+    make, actors = v3_db
+    with psycopg.connect(**make.admin_args) as c:
+        for name in ('307_knowledge_branch_drag.sql', '308_knowledge_canvas_undo.sql'):
+            c.execute((Path(__file__).resolve().parents[1] / 'migrations' / name).read_text())
+    return make, actors
+
+
+def test_self_contained_default_skip_never_discards_explicit_refs_or_saved_snapshot(current_snapshot_db):
+    make, _ = current_snapshot_db
+    r = make()
+    obj = document(r)
+    # Persisted explicit refs outrank the host default-scope optimization.
+    explicit, mid, cid = start(make, r, [ref(obj)])
+    restored = KnowledgeRun.start(r, conversation_id=cid, input_message_id=mid, default_scope=False)
+    assert restored.id == explicit.id
+    # No refs and no saved snapshot: avoid the unrelated default corpus.
+    empty, mid2, cid2 = start(make, r, [])
+    assert empty is None
+    assert KnowledgeRun.start(r, conversation_id=cid2, input_message_id=mid2, default_scope=False) is None
+    # If a later instruction entered knowledge, subsequent recovery must restore
+    # that frozen snapshot even if the original input was self-contained.
+    run = KnowledgeRun.start(r, conversation_id=cid2, input_message_id=mid2, default_scope=True)
+    assert run is not None
+    replay = KnowledgeRun.start(r, conversation_id=cid2, input_message_id=mid2, default_scope=False)
+    assert replay.id == run.id
+
+
+@pytest.mark.asyncio
+async def test_real_runtime_host_scope_cannot_be_reopened_by_legacy_selector(current_snapshot_db, monkeypatch):
+    from types import SimpleNamespace
+    from core.config import get_settings
+    from services.handlers.context_snapshot import ContextAnchor
+    from services.knowledge_workspace.runtime import prepare_knowledge_run
+    settings = get_settings().model_copy(update={'knowledge_derivation_enabled': True, 'knowledge_default_scope_enabled': True})
+    monkeypatch.setattr('core.config.get_settings', lambda: settings)
+    monkeypatch.setattr('api.routes.knowledge.enabled', lambda ctx: True)
+    make, _ = current_snapshot_db
+    r = make()
+    r.initialize()
+    document(r)
+    _, mid, cid = start(make, r, [])
+    h = SimpleNamespace(db=SimpleNamespace(pool=r.pool), org_id=r.scope.org_id, _personal_context_allowed=True)
+    anchor = ContextAnchor(task_id=str(uuid4()), conversation_id=cid, turn_id=str(uuid4()),
+        input_message_id=mid, base_revision=0, through_message_id=None, org_id=r.scope.org_id)
+    await prepare_knowledge_run(h, anchor, r.scope.actor_user_id, cid, question='你好', self_contained=True)
+    assert h._knowledge_run is None
+    # Same ambiguous transformation rejected by the host must keep a run even
+    # though the original legacy selector once treated all transforms as free.
+    await prepare_knowledge_run(h, anchor, r.scope.actor_user_id, cid, question='润色上一版', self_contained=False)
+    assert h._knowledge_run is not None
+    original = h._knowledge_run.id
+    await prepare_knowledge_run(h, anchor, r.scope.actor_user_id, cid, question='你好', self_contained=True)
+    assert h._knowledge_run.id == original

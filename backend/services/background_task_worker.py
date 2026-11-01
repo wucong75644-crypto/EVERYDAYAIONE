@@ -66,6 +66,9 @@ class BackgroundTaskWorker:
         self._social_ops = SocialOpsWorker(db)
         from services.handlers.chat_image_lifecycle import ChatImageLifecycle
         self._chat_images = ChatImageLifecycle(db, self.settings)
+        from services.handlers.native_video_queue import NativeVideoQueue
+        self._native_videos=NativeVideoQueue(db,self.settings)
+        self._native_video_loop_task=None
         self._chat_image_loop_task = None
         self._detail_page_loop_task = None
         self._social_publish_loop_task = None
@@ -74,6 +77,9 @@ class BackgroundTaskWorker:
 
     async def _chat_image_loop(self):
         await self._recovery_loop(self._chat_images, 'Chat image')
+
+    async def _native_video_loop(self):
+        await self._recovery_loop(self._native_videos,'Native video')
 
     async def _detail_page_loop(self):
         await self._recovery_loop(self._detail_pages, 'Detail page')
@@ -129,6 +135,7 @@ class BackgroundTaskWorker:
         """启动后台工作器"""
         self.is_running = True
         self._chat_image_loop_task = asyncio.create_task(self._chat_image_loop(), name="chat-image-recovery")
+        self._native_video_loop_task=asyncio.create_task(self._native_video_loop(),name='native-video-recovery')
         self._detail_page_loop_task = asyncio.create_task(self._detail_page_loop(), name="detail-page-recovery")
         self._social_publish_loop_task = asyncio.create_task(self._social_publish_loop(), name="social-publish-scan")
         mode = "fallback" if self.settings.callback_base_url else "primary"
@@ -167,12 +174,12 @@ class BackgroundTaskWorker:
                 await self._social_publish_loop_task
             self._social_publish_loop_task = None
         await self._social_ops.stop()
-        loops = [job for job in (self._chat_image_loop_task, self._detail_page_loop_task) if job is not None]
+        loops = [job for job in (self._chat_image_loop_task, self._detail_page_loop_task,self._native_video_loop_task) if job is not None]
         for job in loops:
             job.cancel()
         await asyncio.gather(*loops, return_exceptions=True)
-        self._chat_image_loop_task = self._detail_page_loop_task = None
-        await asyncio.gather(self._chat_images.close(), self._detail_pages.close())
+        self._chat_image_loop_task = self._detail_page_loop_task = self._native_video_loop_task = None
+        await asyncio.gather(self._chat_images.close(), self._detail_pages.close(),self._native_videos.close())
         logger.info("BackgroundTaskWorker stopped")
 
     async def poll_pending_tasks(self):
@@ -343,7 +350,8 @@ class BackgroundTaskWorker:
 
         for task in response.data:
             from services.handlers.chat_image_lifecycle import is_chat_image
-            if is_chat_image(task):
+            from services.handlers.native_video_queue import is_native_video
+            if is_chat_image(task) or is_native_video(task):
                 continue
             from services.conversation_task import is_actor_task
             if is_actor_task(task):

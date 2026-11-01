@@ -16,6 +16,9 @@ def skill_step(result: dict, skills, *, step_id: str) -> dict:
         reason = '、'.join(names) + ' 对当前步骤使用不同制作流程。已保留原设置，请调整本次选择或管理会话固定方法。'
     elif code == 'SKILL_ACTION_BATCH_CONFLICT':
         reason = '当前批次混合了策划和图片提交，请按当前步骤分别执行。原设置已保留。'
+    elif code == 'SKILL_TOOL_PROTOCOL_CONFLICT':
+        reason = ('已选方法要求按正文直接完成策划，不使用服务端主图策划工具。'
+                  '请保留所选方法，继续编写完整策划和逐图提示词；任务已初始化时用 save_task_text 保存。')
     elif code == 'SKILL_DEPENDENCY_UNAVAILABLE':
         reason = '该方法依赖的其他方法当前不可用，已保留原设置，请检查选择。'
     elif code == 'SKILL_REQUIRED_CAPABILITY_UNAVAILABLE':

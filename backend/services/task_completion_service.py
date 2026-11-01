@@ -112,6 +112,11 @@ class TaskCompletionService:
             logger.warning(f"Task not found | task_id={external_task_id}")
             return False
         from services.handlers.chat_image_lifecycle import ChatImageLifecycle, is_chat_image
+        from services.handlers.native_video_queue import NativeVideoQueue,is_native_video
+        if is_native_video(existing_task):
+            from core.config import get_settings
+            await NativeVideoQueue(self.db,get_settings()).record_result(existing_task,result)
+            return True
         if is_chat_image(existing_task):
             from core.config import get_settings
             lifecycle = ChatImageLifecycle(self.db, get_settings())

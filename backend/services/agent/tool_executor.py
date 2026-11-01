@@ -502,6 +502,7 @@ class ToolExecutor(
                 metadata={"retryable": False},
             )
 
+        dispatch_arguments = args
         action = (args.get("action") or "").strip()
         if not action:
             return AgentResult(
@@ -521,17 +522,24 @@ class ToolExecutor(
             description = current_creation_text(getattr(self, "_parent_messages", None))
             if description:
                 args = {**args, "description": description}
+        managed_key = None
+        if call_id and action != "list":
+            from services.task_execution.scheduled_operations import native_request_key
+            managed_key = await native_request_key(self, call_id, dispatch_arguments)
         if call_id and direct_task_management(context):
             manager = ChatTaskManager(
                 self.db, self.user_id, self.org_id, submission_mode="apply_if_allowed",
-                idempotency_key=f"task-chat:{self.user_id}:{self.conversation_id}:{call_id}",
+                idempotency_key=managed_key or f"task-chat:{self.user_id}:{self.conversation_id}:{call_id}",
                 structured_input=structured_chat,
             )
         else:
-            manager = ChatTaskManager(self.db, self.user_id, self.org_id, structured_input=structured_chat)
+            manager = ChatTaskManager(self.db, self.user_id, self.org_id, structured_input=structured_chat,
+                                      **({"idempotency_key": managed_key} if managed_key else {}))
         result = await manager.handle(action, args)
 
         if result.get("type") == "form":
+            if managed_key:
+                result = {**result, "form_id": "task_effect_" + managed_key.removeprefix("agent-task-scheduled:")}
             return FormBlockResult(
                 form=result,
                 llm_hint=f"已向用户展示{result.get('title', '表单')}，等待用户确认。不要重复展示表单内容。",

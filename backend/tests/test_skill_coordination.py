@@ -319,3 +319,52 @@ def test_reviewed_legacy_image_execution_can_follow_server_plan_without_claiming
     assert owners_for(participants,ActionContext(action='plan'))=={'image.planning':'ecommerce-main-images'}
     assert owners_for(participants,ActionContext(action='execute_ready'))=={'image.submission':'ecommerce-main-images'}
     assert owners_for(participants,ActionContext(action='execute_prompt'))=={'image.submission':'chat-image-orchestration'}
+
+
+async def test_completed_phase_exclusion_never_weakens_resident_requires_contract():
+    phase=item('phase',tools=TOOLS)
+    dependent=item('dependent',tools=TOOLS,coordination=workflow(requires=('phase',)))
+    source=Source([phase,dependent],body='method')
+    source.session_bindings.return_value=[phase,dependent]
+    runtime=state(source,platform_tool_names=TOOLS)
+    await runtime.initialize()
+    result=await runtime.activate_required(completed_phase_ids={'phase'})
+    assert not result['ok'] and result['code']=='SKILL_DEPENDENCY_UNAVAILABLE'
+    assert not runtime.active and runtime.effective_allowed_tool_names==TOOLS
+    source.load.assert_not_awaited()
+
+
+@pytest.mark.parametrize('method,hidden', [('ecommerce.inline', True), ('ecommerce.server_plan', False)])
+async def test_planning_protocol_filters_disclosure_without_changing_authority(method, hidden):
+    skills, source = await prepared(item('primary', tools=TOOLS, coordination=workflow(method)))
+    assert (await skills.activate(activate('primary')))['ok']
+    before = skills.checkpoint()
+    schemas = [{'function': {'name': name}} for name in sorted(TOOLS)]
+    names = {tool['function']['name'] for tool in skills.filter_protocol_tools(schemas)}
+    assert ('plan_ecommerce_images' not in names) == hidden
+    assert names >= {'file_search', 'web_search', 'generate_image'}
+    assert skills.checkpoint() == before
+    restored = state(source, platform_tool_names=TOOLS)
+    await restored.initialize(before)
+    assert restored.filter_protocol_tools(schemas) == skills.filter_protocol_tools(schemas)
+
+
+async def test_inline_protocol_guessed_planner_is_correctable_without_dispatch_or_state_change():
+    from tests.test_skill_runtime_actor import actor, prepared as engine_prepared, batch
+    skills, _ = await prepared(item('primary', tools=TOOLS, coordination=workflow()))
+    assert (await skills.activate(activate('primary')))['ok']
+    runtime, p = actor(), engine_prepared()
+    runtime.skill_runtime = skills
+    before = skills.checkpoint()
+    h, blocks = await batch(runtime, p, [dict(id='planner', name='plan_ecommerce_images', arguments='{}')])
+    h._execute_tool_calls.assert_not_awaited()
+    assert skills.checkpoint() == before
+    assert any('按正文直接完成策划' in str(block) for block in blocks)
+    skills.prepare_tool_action([dict(name='file_search')])
+    assert skills.checkpoint() == before
+
+
+async def test_absent_planning_owner_keeps_existing_tool_discovery():
+    skills, _ = await prepared()
+    tools = [{'function': {'name': 'plan_ecommerce_images'}}]
+    assert skills.filter_protocol_tools(tools) == tools

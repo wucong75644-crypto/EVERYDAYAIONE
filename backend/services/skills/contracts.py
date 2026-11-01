@@ -67,6 +67,13 @@ class SkillCapabilityStatus(Contract):
     available: StrictBool
 
 
+class TaskStageContract(Contract):
+    """Explicit output protocol; it never declares business authority."""
+    version: Literal[1] = 1
+    output_profile: Literal['reference-prompts-v1', 'ecommerce-image-plan-v1']
+    restriction_scope: Literal['phase', 'task'] = 'task'
+
+
 class SkillCatalogMetadata(Contract):
     """Published frontmatter `catalog`; immutable with its revision.
 
@@ -90,6 +97,7 @@ class SkillCatalogMetadata(Contract):
     recommended_file_types: tuple[SkillFileType, ...] = Field(default=(), max_length=7)
     tool_policy: Literal['restricted', 'platform'] = 'restricted'
     coordination: CoordinationContract | None = None
+    task_stage: TaskStageContract | None = None
 
     @model_validator(mode='after')
     def unambiguous_tool_policy(self):
@@ -114,6 +122,8 @@ class SkillCatalogMetadata(Contract):
             result.pop('tool_policy', None)
         if self.coordination is None:
             result.pop('coordination', None)
+        if self.task_stage is None:
+            result.pop('task_stage', None)
         return result
 
 

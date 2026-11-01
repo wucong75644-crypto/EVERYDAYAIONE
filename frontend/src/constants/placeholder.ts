@@ -162,6 +162,7 @@ const AGENT_STEP_MAP: Record<string, string> = {
   web_extractor: '正在读取网页',
   get_conversation_context: '正在查看对话',
   search_knowledge: '正在查阅知识库',
+  knowledge_answer_verification: '正在核对回答依据',
 };
 
 /** 根据工具名获取 Agent Loop 步骤展示文字 */
@@ -192,6 +193,7 @@ const TOOL_CALL_MAP: Record<string, string> = {
   // 搜索/通用
   erp_api_search: '正在搜索ERP文档',
   search_knowledge: '正在查阅知识库',
+  knowledge_answer_verification: '正在核对回答依据',
   web_search: '正在搜索互联网',
   web_extractor: '正在读取网页',
   social_crawler: '正在搜索社交平台',

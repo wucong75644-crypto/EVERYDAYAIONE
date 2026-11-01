@@ -119,6 +119,7 @@ class ErpDispatcher:
 
         # 4. 构建网关参数 + 编码宽泛化预处理 + 调用API
         base_url, system_params = self._build_gateway_params(entry)
+        receipt_parameters=dict(api_params)
         broadening = apply_code_broadening(entry, params, api_params)
 
         broadened_note = ""
@@ -137,7 +138,17 @@ class ErpDispatcher:
         else:
             # 正常模式（无编码参数、或写操作）
             try:
-                if entry.fetch_all:
+                observer=getattr(self,'_native_write_observer',None) if entry.is_write else None
+                if observer is not None:
+                    if entry.fetch_all:raise ValueError('TASK_NATIVE_WRITE_FANOUT_UNSUPPORTED')
+                    from services.task_execution.erp_postconditions import source_fingerprint
+                    await observer('dispatched',tool_name=tool_name,action=action,entry=entry,parameters=api_params,
+                        connection_fingerprint=source_fingerprint(self._client))
+                    # A managed write never enters the read/token/network retry
+                    # loop. Unknown transport outcomes stay in the native journal.
+                    data=await self._client.request_once(entry.method,api_params,base_url=base_url,extra_system_params=system_params)
+                    await observer('returned',tool_name=tool_name,action=action,entry=entry,response=data)
+                elif entry.fetch_all:
                     data = await self._fetch_all_pages(
                         entry, api_params, base_url, system_params,
                     )
@@ -186,11 +197,17 @@ class ErpDispatcher:
                 f"\n\n⚠ 忽略了无效参数: {', '.join(param_warnings)}。"
                 f"该操作支持的参数: {', '.join(valid)}"
             )
-        return ToolOutput(
-            summary=result,
-            source="erp",
-            metadata={"tool_name": tool_name, "action": action},
-        )
+        metadata={"tool_name": tool_name, "action": action}
+        exact_detail=(entry.method=='item.single.get' and entry.single_code_only and entry.response_key is None
+            and broadening==(receipt_parameters.get('outerId'),[receipt_parameters.get('outerId')],['outerId'],False))
+        if getattr(self,'_task_receipt_projection',False) and not entry.is_write and (not broadening or exact_detail) and not entry.fetch_all:
+            from services.task_execution.erp_postconditions import KEY,FIELDS_KEY,project_detail,project_fields,source_fingerprint
+            projected=project_detail(entry.method,receipt_parameters,data)
+            fingerprint=source_fingerprint(self._client)
+            if projected is not None and fingerprint is not None:metadata[KEY]={**projected,'source_fingerprint':fingerprint}
+            fields=project_fields(entry.method,receipt_parameters,data)
+            if fields is not None and fingerprint is not None:metadata[FIELDS_KEY]={**fields,'source_fingerprint':fingerprint}
+        return ToolOutput(summary=result,source="erp",metadata=metadata)
 
     @staticmethod
     def _record_param_knowledge(
