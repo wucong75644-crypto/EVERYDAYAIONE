@@ -272,11 +272,16 @@ async def gate(executor):
     token=getattr(executor,'image_execution_token',None)
     if db is None or task is None or token is None:return  # Unfenced legacy read adapters retain their original path.
     import asyncio
+    from .database_scope import task_database
+    db = task_database(db, state)
     result=await asyncio.to_thread(lambda:db.rpc('check_agent_task_revision_gate',{
         'p_task_id':str(task),'p_execution_token':str(token),'p_logical_task_id':str(state.root_task_id),
         'p_requirements_revision':state.requirements_revision}).execute())
     if not result or result.data.get('outcome')!='ready':
         raise TaskError('TASK_USER_INPUT_CHANGED' if state.model_directed else 'TASK_USER_CHANGE_REVIEW_REQUIRED')
+    # The per-turn executor owns this immutable facade, never the shared pool's
+    # identity. Native prepare/settlement and receipts need the same scope.
+    executor.db = db
 
 
 def phase_repair(runtime):

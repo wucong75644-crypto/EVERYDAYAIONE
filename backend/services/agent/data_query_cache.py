@@ -165,9 +165,13 @@ def scan_sheet_structures(excel_path: str) -> list[dict]:
     Returns:
         [{"name": "Sheet1", "columns": ["col1", "col2"], "row_count": 500}, ...]
     """
-    import fastexcel
+    from services.agent.owned_excel_reader import excel_reader
+    with excel_reader(excel_path) as reader:
+        return _scan_sheet_structures_with_reader(reader, excel_path)
 
-    reader = fastexcel.read_excel(excel_path)
+
+def _scan_sheet_structures_with_reader(reader, excel_path: str) -> list[dict]:
+
     all_names = reader.sheet_names[:_MAX_SCAN_SHEETS]
 
     # 采样：前 N 个 + 最后 1 个（去重）
@@ -712,7 +716,10 @@ async def ensure_parquet_cache(
         # 代码扫描在线程池（IO/CPU 密集）
         scanner = None
         try:
-            scanner = await finish_file_io(make_scanner, excel_path, None)
+            def create_scanner():
+                _scanner_holder[0] = make_scanner(excel_path, None)
+                return _scanner_holder[0]
+            scanner = await finish_file_io(create_scanner)
             # V3.1: 立即把 scanner 放入 holder,即使 scan() 抛异常也能让外层 finally 释放
             _scanner_holder[0] = scanner
             evidence = await finish_file_io(scanner.scan)
@@ -910,22 +917,21 @@ async def ensure_parquet_cache(
     async def _run_with_locks():
         entry = await _acquire_convert_lock(lock_key)
         try:
-            async with entry.lock:                      # 进程内互斥（修 #1）
-                async with _FileLock(lock_file_path):         # 进程间互斥（修 #5）
-                    return await _do_convert()
+            async with entry.lock:
+                async with _FileLock(lock_file_path):
+                    try:
+                        return await _do_convert()
+                    finally:
+                        # Close owned readers before releasing either file lock.
+                        scanner = _scanner_holder[0]
+                        if scanner is not None:
+                            try:
+                                scanner.release_cached()
+                            except Exception:
+                                logger.exception("file_analyze reader release failed | src={}", Path(excel_path).name)
+                            finally:
+                                _scanner_holder[0] = None
         finally:
-            # V3.1: 不管 _do_convert 成功/失败/超时取消,都释放 scanner cached_df
-            # 释放放在 lock 释放之前,避免内存堆积
-            _scanner = _scanner_holder[0]
-            if _scanner is not None:
-                try:
-                    _scanner.release_cached()
-                except Exception as _re:  # noqa: BLE001
-                    logger.warning(
-                        f"file_analyze release_cached error | "
-                        f"src={Path(excel_path).name} | {_re}"
-                    )
-                _scanner_holder[0] = None
             _release_convert_lock(lock_key)
 
     if _is_big_file:
@@ -1541,11 +1547,22 @@ def _convert_excel_to_parquet(
     V3.1: 如果 scanner 持有 _cached_df 且与 AI 决策的 header 位置一致,
     直接复用 cached_df 跳过 Excel 重读,省 ~30s/次。
     """
+    from services.agent.owned_excel_reader import excel_reader
+    with excel_reader(excel_path) as reader:
+        return _convert_excel_to_parquet_with_reader(reader, excel_path, cache_path, sheet, src_mtime, src_size, snapshot_path, ai_decision, strategy, scanner)
+
+
+def _convert_excel_to_parquet_with_reader(
+    reader,
+    excel_path: str, cache_path: str, sheet: str | None,
+    src_mtime: float, src_size: int, snapshot_path: str,
+    ai_decision=None,
+    strategy=None,
+    scanner=None,  # V3.1: scanner 实例,优先用 scanner._cached_df 避免重读 Excel
+) -> list[str]:
     import pandas as pd
-    import fastexcel
 
     start = time.monotonic()
-    reader = fastexcel.read_excel(excel_path)
     sheet_names = reader.sheet_names
 
     target_sheet: str | int
@@ -1784,74 +1801,76 @@ def _convert_excel_to_parquet(
         _col_mapping = ai_decision.column_mapping if ai_decision else {}
 
         # calamine 流式遍历 + 100K 行 chunk 处理
-        wb = python_calamine.CalamineWorkbook.from_path(excel_path)
-        # target_sheet 可能是 int 索引或 str 名字
-        if isinstance(target_sheet, int):
-            ws = wb.get_sheet_by_index(target_sheet)
-        else:
-            ws = wb.get_sheet_by_name(target_sheet)
+        try:
+            with python_calamine.CalamineWorkbook.from_path(excel_path) as wb:
+                # target_sheet 可能是 int 索引或 str 名字
+                if isinstance(target_sheet, int):
+                    ws = wb.get_sheet_by_index(target_sheet)
+                else:
+                    ws = wb.get_sheet_by_name(target_sheet)
 
-        col_names: list[str] = []
-        chunk_buf: list[list[Any]] = []
-        chunk_idx = 0
-        rows_seen = 0
-        import pandas as _pd
-        for raw_row in ws.iter_rows():
-            if rows_seen <= actual_start:
-                if rows_seen == actual_start:
-                    col_names = [str(v) for v in raw_row]
-                rows_seen += 1
-                continue
-            chunk_buf.append(list(raw_row))
-            rows_seen += 1
-            if len(chunk_buf) >= _CHUNK_SIZE:
-                df_chunk = _pd.DataFrame(chunk_buf)
-                # calamine 空值是 ""，转 NaN 让后续清洗逻辑正常
-                df_chunk = df_chunk.mask(df_chunk.eq(""), np.nan)
-                if col_names and len(df_chunk.columns) == len(col_names):
-                    df_chunk.columns = col_names
+                col_names: list[str] = []
+                chunk_buf: list[list[Any]] = []
+                chunk_idx = 0
+                rows_seen = 0
+                import pandas as _pd
+                for raw_row in ws.iter_rows():
+                    if rows_seen <= actual_start:
+                        if rows_seen == actual_start:
+                            col_names = [str(v) for v in raw_row]
+                        rows_seen += 1
+                        continue
+                    chunk_buf.append(list(raw_row))
+                    rows_seen += 1
+                    if len(chunk_buf) >= _CHUNK_SIZE:
+                        df_chunk = _pd.DataFrame(chunk_buf)
+                        # calamine 空值是 ""，转 NaN 让后续清洗逻辑正常
+                        df_chunk = df_chunk.mask(df_chunk.eq(""), np.nan)
+                        if col_names and len(df_chunk.columns) == len(col_names):
+                            df_chunk.columns = col_names
 
-                df_chunk, chunk_report = clean_excel(
-                    df_chunk, excel_path, resolved_name, actual_start,
-                    structure=structure, special_rows=_special_rows,
-                    chunk_row_offset=_CHUNK_SIZE * chunk_idx,
-                    strategy=strategy,
-                )
-                if _col_mapping:
-                    df_chunk = _apply_column_mapping(df_chunk, _col_mapping)
-                table = _cast_to_schema(df_chunk, target_schema)
-                writer.write_table(table)
-                row_count += len(df_chunk)
-                if chunk_report:
-                    merged_report.merge(chunk_report)
-                chunk_buf = []
-                chunk_idx += 1
-                del df_chunk, table
-                _gc.collect()
+                        df_chunk, chunk_report = clean_excel(
+                            df_chunk, excel_path, resolved_name, actual_start,
+                            structure=structure, special_rows=_special_rows,
+                            chunk_row_offset=_CHUNK_SIZE * chunk_idx,
+                            strategy=strategy,
+                        )
+                        if _col_mapping:
+                            df_chunk = _apply_column_mapping(df_chunk, _col_mapping)
+                        table = _cast_to_schema(df_chunk, target_schema)
+                        writer.write_table(table)
+                        row_count += len(df_chunk)
+                        if chunk_report:
+                            merged_report.merge(chunk_report)
+                        chunk_buf = []
+                        chunk_idx += 1
+                        del df_chunk, table
+                        _gc.collect()
 
-        # 收尾 chunk
-        if chunk_buf:
-            df_chunk = _pd.DataFrame(chunk_buf)
-            df_chunk = df_chunk.mask(df_chunk.eq(""), np.nan)
-            if col_names and len(df_chunk.columns) == len(col_names):
-                df_chunk.columns = col_names
-            df_chunk, chunk_report = clean_excel(
-                df_chunk, excel_path, resolved_name, actual_start,
-                structure=structure, special_rows=_special_rows,
-                chunk_row_offset=_CHUNK_SIZE * chunk_idx,
-                strategy=strategy,
-            )
-            if _col_mapping:
-                df_chunk = _apply_column_mapping(df_chunk, _col_mapping)
-            table = _cast_to_schema(df_chunk, target_schema)
-            writer.write_table(table)
-            row_count += len(df_chunk)
-            if chunk_report:
-                merged_report.merge(chunk_report)
-            del df_chunk, table
-            _gc.collect()
+                # 收尾 chunk
+                if chunk_buf:
+                    df_chunk = _pd.DataFrame(chunk_buf)
+                    df_chunk = df_chunk.mask(df_chunk.eq(""), np.nan)
+                    if col_names and len(df_chunk.columns) == len(col_names):
+                        df_chunk.columns = col_names
+                    df_chunk, chunk_report = clean_excel(
+                        df_chunk, excel_path, resolved_name, actual_start,
+                        structure=structure, special_rows=_special_rows,
+                        chunk_row_offset=_CHUNK_SIZE * chunk_idx,
+                        strategy=strategy,
+                    )
+                    if _col_mapping:
+                        df_chunk = _apply_column_mapping(df_chunk, _col_mapping)
+                    table = _cast_to_schema(df_chunk, target_schema)
+                    writer.write_table(table)
+                    row_count += len(df_chunk)
+                    if chunk_report:
+                        merged_report.merge(chunk_report)
+                    del df_chunk, table
+                    _gc.collect()
 
-        writer.close()
+        finally:
+            writer.close()
         if row_count > 0:
             os.rename(tmp_path, cache_path)
         else:
@@ -1968,11 +1987,22 @@ def _convert_all_sheets_to_parquet(
 
     decision=None 时保持向后兼容（所有 sheet 都进，clean_excel 走硬规则）。
     """
-    import fastexcel
+    from services.agent.owned_excel_reader import excel_reader
+    with excel_reader(excel_path) as reader:
+        return _convert_all_sheets_to_parquet_with_reader(reader, excel_path, cache_path, src_mtime, src_size, snapshot_path, decision, strategy, scanner)
+
+
+def _convert_all_sheets_to_parquet_with_reader(
+    reader,
+    excel_path: str, cache_path: str,
+    src_mtime: float, src_size: int, snapshot_path: str,
+    decision: Any = None,
+    strategy: Any = None,
+    scanner=None,  # V3.1: PathD scanner,优先用 _cached_sheet_dfs 避免重读每个 sheet
+) -> list[str]:
     import pandas as pd
 
     start = time.monotonic()
-    reader = fastexcel.read_excel(excel_path)
     sheet_names = reader.sheet_names
 
     # 构建 sheet name → role 映射（AI 决策的 sheets 字段）

@@ -280,3 +280,55 @@ async def test_consuming_new_input_does_not_reauthorize_an_old_native_child(disp
     with connect(f) as c:
         assert c.execute("SELECT count(*) FROM tasks WHERE type='image' AND conversation_id=%s",(f['conv'],)).fetchone()[0]==1
         assert c.execute('SELECT count(*) FROM tool_invocations WHERE task_id=%s',(f['task'],)).fetchone()[0]==1
+
+
+@pytest.mark.asyncio
+async def test_sync_handler_database_gate_scopes_each_transaction_without_leaking_identity(dispatch_db):
+    """Use the raw production handler client, not a pre-scoped test RPC adapter."""
+    import asyncio
+    from types import SimpleNamespace
+    from core.local_db import LocalDBClient
+    from core.db_scope import DatabaseScope, DatabaseAccessKind, ScopedDatabaseClient
+    from services.task_execution.database_scope import task_database
+    from services.task_execution.requirement_changes import gate as dispatch_gate
+    from services.task_execution.contracts import TaskError
+    first = initial(dispatch_db)
+    second = initial(dispatch_db)
+    db = LocalDBClient(psycopg.conninfo.make_conninfo(dispatch_db, user='everydayai'), min_size=1, max_size=2)
+    def executor(row):
+        f, _, state, _, _ = row
+        return SimpleNamespace(db=db, _task_execution_state=state, _task_id=f['task'], image_execution_token=f['token'])
+    try:
+        # The original unscoped RPC fails with precisely the production error.
+        f, _, state, _, _ = first
+        with pytest.raises(psycopg.Error, match='TASK_REVISION_SCOPE_DENIED'):
+            await asyncio.to_thread(lambda: db.rpc('check_agent_task_revision_gate', {
+                'p_task_id': f['task'], 'p_execution_token': f['token'],
+                'p_logical_task_id': f['task'], 'p_requirements_revision': 0}).execute())
+        await asyncio.gather(*(dispatch_gate(executor(row)) for row in [first, second] * 4))
+        with db.pool.connection() as connection:
+            values = connection.execute("SELECT current_setting('app.actor_user_id',true) AS actor, current_setting('app.org_id',true) AS org, current_setting('app.access_kind',true) AS access").fetchone()
+            assert all(value in (None, '') for value in values.values())
+        other = executor(second)
+        other._task_execution_state = state
+        with pytest.raises(psycopg.Error, match='TASK_REVISION_SCOPE_DENIED'):
+            await dispatch_gate(other)
+        stale = executor(first)
+        stale.image_execution_token = str(uuid4())
+        with pytest.raises(psycopg.Error, match='TASK_REVISION_SCOPE_DENIED'):
+            await dispatch_gate(stale)
+        for scope in (DatabaseScope(second[0]['user'], None, DatabaseAccessKind.RUNTIME),
+                      DatabaseScope(f['user'], str(uuid4()), DatabaseAccessKind.RUNTIME)):
+            with pytest.raises(TaskError, match='TASK_DATABASE_SCOPE_MISMATCH'):
+                task_database(ScopedDatabaseClient(db, scope), state)
+        with connect(f) as c:
+            event = steer(c, f, '先停止，保留已有成果')
+            capture(c, f, event)
+        with pytest.raises(TaskError, match='TASK_USER_INPUT_CHANGED'):
+            await dispatch_gate(executor(first))
+        with connect(f) as c:
+            cp = c.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s', (f['task'],)).fetchone()[0]
+            assert cp['opaque_context'] == {'keep': True}
+            assert c.execute('SELECT count(*) FROM tool_invocations WHERE task_id=%s', (f['task'],)).fetchone()[0] == 0
+    finally:
+        db.close()

@@ -838,12 +838,10 @@ class TestV22Fixes:
                 })(),
             })(),
         )
-        # 简化：直接验证常量
-        # 实测构造 200MB 文件太慢，仅验证防御代码已加
-        import inspect
-        from services.agent.file_scanners import make_scanner as ms
-        src = inspect.getsource(ms)
-        assert "_PATH_D_MAX_FILE_SIZE" in src or "150" in src
+        with pytest.raises(FileAnalyzeError) as caught:
+            make_scanner(str(f))
+        assert caught.value.error_category == "file_too_large"
+        assert caught.value.retryable is False
 
     def test_traversal_distinguishes_exceptions(self):
         """#8: PermissionError/OSError → retryable=False；FileNotFoundError → retryable=True"""

@@ -29,15 +29,34 @@ def direct_file_db(deletion_db,followup_db):
             c.execute((ROOT/f'migrations/rollback/{name}_rollback.sql').read_text())
 
 
+def raw_handler_client(f, request):
+    # Complete only the identity columns omitted by the original receipt fixture;
+    # unlike IdentityDB, these checks and all native RPCs use real PostgreSQL.
+    from core.local_db import LocalDBClient
+    with psycopg.connect(f['dsn']) as c:
+        c.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS features jsonb DEFAULT '{}'::jsonb")
+        c.execute("ALTER TABLE org_members ADD COLUMN IF NOT EXISTS role text DEFAULT 'member'")
+        c.execute("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS scope_type text DEFAULT 'user'")
+        c.execute("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS scope_id uuid")
+        c.execute("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS source text")
+        c.execute("UPDATE conversations SET org_id=%s WHERE id=%s", (f['org'], f['conv']))
+        c.execute("GRANT SELECT ON organizations,org_members,conversations TO everydayai")
+    db = LocalDBClient(psycopg.conninfo.make_conninfo(f['dsn'], user='everydayai'), min_size=1, max_size=2)
+    request.addfinalizer(db.close)
+    return db
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize('mode',['ok','lost_ack','lost_settlement'])
-async def test_real_restore_preserves_receipt_and_never_repeats_download(direct_file_db,tmp_path,monkeypatch,mode):
+@pytest.mark.parametrize('mode,raw_handler_db',[('ok',False),('lost_ack',False),('lost_settlement',False),('ok',True)])
+async def test_real_restore_preserves_receipt_and_never_repeats_download(direct_file_db,tmp_path,monkeypatch,mode,raw_handler_db,request):
     def state_factory(old,rid):
         b=TaskBootstrap(task_id=old.root_task_id,conversation_id=old.conversation_id,actor_user_id=old.actor_user_id,
             org_id=old.org_id,input_message_id=old.source_message_ids[0],execution_identity=old.execution_identity,
             original_goal='恢复原文件',model_directed=True)
         return record_calls(None,b,[ToolCall('restore-original','restore_file',{'record_id':rid,'filename':'原文件.txt'})],build_capability_catalog())
     f,r,executor,run,controller,target,rid,bucket,cp,body,_=await setup(direct_file_db,tmp_path,monkeypatch,mode=mode,state_factory=state_factory)
+    if raw_handler_db:
+        executor.db = raw_handler_client(f, request)
     r.checkpoint_base=cp
     async def safe_point(point,replay_payload=None):
         with scoped(f) as c:
@@ -66,10 +85,13 @@ async def test_real_restore_preserves_receipt_and_never_repeats_download(direct_
 
 
 @pytest.mark.asyncio
-async def test_direct_delete_keeps_original_confirmation_backups_and_per_item_authorizers(direct_file_db,tmp_path,monkeypatch):
+@pytest.mark.parametrize("raw_handler_db", [False, True])
+async def test_direct_delete_keeps_original_confirmation_backups_and_per_item_authorizers(direct_file_db,tmp_path,monkeypatch,raw_handler_db,request):
     from tests.test_task_execution_file_deletions_postgres import setup as deletion_setup
     f,r,executor,run,controller,paths,bucket,objects,originals=await deletion_setup(
         direct_file_db,tmp_path,monkeypatch,count=2,model_directed=True)
+    if raw_handler_db:
+        executor.db = raw_handler_client(f, request)
     result=await run()
     assert result.execution.handler_started and all(not p.exists() for p in paths),str(result.exception)
     assert r.task_execution_state.operations[0].status=='completed'

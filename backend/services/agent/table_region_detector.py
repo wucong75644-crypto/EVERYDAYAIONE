@@ -108,6 +108,7 @@ def has_multiple_regions_streaming(excel_path: str, target_sheet) -> bool:
       - 连续空行阈值=3，避免单空行误判（数据缺失常见）
       - 至少需要见过 1 个数据行 + 1 段空行 + 又 1 个数据行 才返回 True
     """
+    wb = None
     try:
         import python_calamine
         wb = python_calamine.CalamineWorkbook.from_path(excel_path)
@@ -116,26 +117,31 @@ def has_multiple_regions_streaming(excel_path: str, target_sheet) -> bool:
         else:
             ws = wb.get_sheet_by_name(target_sheet)
     except Exception:
+        if wb is not None:
+            wb.close()
         return False
 
-    seen_data_before_gap = False
-    consecutive_empty = 0
-    found_gap = False
-    EMPTY_GAP_THRESHOLD = 3
+    try:
+        seen_data_before_gap = False
+        consecutive_empty = 0
+        found_gap = False
+        EMPTY_GAP_THRESHOLD = 3
 
-    for row in ws.iter_rows():
-        is_empty = all((c is None or str(c).strip() == "") for c in row)
-        if is_empty:
-            consecutive_empty += 1
-            if seen_data_before_gap and consecutive_empty >= EMPTY_GAP_THRESHOLD:
-                found_gap = True
-        else:
-            if found_gap:
-                # 见过数据 → 空段 → 再见数据 = 多区域
-                return True
-            consecutive_empty = 0
-            seen_data_before_gap = True
-    return False
+        for row in ws.iter_rows():
+            is_empty = all((c is None or str(c).strip() == "") for c in row)
+            if is_empty:
+                consecutive_empty += 1
+                if seen_data_before_gap and consecutive_empty >= EMPTY_GAP_THRESHOLD:
+                    found_gap = True
+            else:
+                if found_gap:
+                    # 见过数据 → 空段 → 再见数据 = 多区域
+                    return True
+                consecutive_empty = 0
+                seen_data_before_gap = True
+        return False
+    finally:
+        wb.close()
 
 
 def _split_by_empty_rows(

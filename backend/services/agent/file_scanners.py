@@ -153,13 +153,16 @@ class BaseScanner(ABC):
         ...
 
     def release_cached(self) -> None:
-        """V3.1: 释放 cached df,触发 GC。
+        """释放本扫描器拥有的读取器与 cached df，必要时触发 GC。
 
         必须在调用方 finally 块调用,确保即使 AI/清洗/写盘任意环节失败,
         df 内存也立刻释放。内部异常不重抛,避免压住原始业务异常。
         """
         try:
             had_df = self._cached_df is not None or bool(self._cached_sheet_dfs)
+            from services.agent.owned_excel_reader import ExcelReaderLease
+            if isinstance(self.reader, ExcelReaderLease):
+                self.reader.close()
             self._cached_df = None
             self._cached_sheet_dfs.clear()
             if had_df:
@@ -376,9 +379,18 @@ def make_scanner(excel_path: str, reader: Any | None = None) -> BaseScanner:
     V1.1：file_analyze 工具不暴露 sheet 参数，所以 sheet 永远为 None。
     路径 D 触发条件改为代码 probe 文件 sheet 数 ≥ 2 时自动走。
     """
-    import fastexcel
-    if reader is None:
-        reader = fastexcel.read_excel(excel_path)
+    from services.agent.owned_excel_reader import ExcelReaderLease
+    owned = reader is None
+    reader = ExcelReaderLease(excel_path) if owned else reader
+    try:
+        return _select_scanner(excel_path, reader)
+    except BaseException:
+        if owned:
+            reader.close()
+        raise
+
+
+def _select_scanner(excel_path, reader):
     sheet_names = reader.sheet_names
 
     file_name = Path(excel_path).name

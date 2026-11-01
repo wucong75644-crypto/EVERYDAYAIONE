@@ -1,6 +1,6 @@
 """Keep real Actor pool transactions scoped to the already validated task."""
-from core.db_scope import AsyncScopedDatabaseClient, DatabaseScope, DatabaseAccessKind, database_scope_from_client
-from core.local_db import AsyncLocalDBClient
+from core.db_scope import AsyncScopedDatabaseClient, ScopedDatabaseClient, DatabaseScope, DatabaseAccessKind, database_scope_from_client
+from core.local_db import AsyncLocalDBClient, LocalDBClient
 from .contracts import TaskError
 
 
@@ -15,6 +15,8 @@ def task_database(db, state):
         return db
     if isinstance(db, AsyncLocalDBClient):
         return AsyncScopedDatabaseClient(db, expected)
+    if isinstance(db, LocalDBClient):
+        return ScopedDatabaseClient(db, expected)
     # Explicit store test/transport adapters own their transaction boundary.
     # Never mutate a shared client's scope or set connection-global identity.
     return db

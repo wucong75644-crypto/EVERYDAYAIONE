@@ -83,7 +83,10 @@ async def source_snapshot(source: str, staging_dir: str):
     from services.workspace_coordination import finish_file_io
     source = Path(source)
     Path(staging_dir).mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".source-", dir=staging_dir) as directory:
+    temporary = tempfile.TemporaryDirectory(prefix=".source-", dir=staging_dir)
+    directory = temporary.name
+    primary_error = None
+    try:
         snapshot = Path(directory) / source.name
         def copy():
             before = file_version(source)
@@ -99,6 +102,18 @@ async def source_snapshot(source: str, staging_dir: str):
         yield str(snapshot)
         if await finish_file_io(content_digest, source) != digest:
             raise FileTargetError("RESOURCE_CHANGED", "源文件在转换期间发生变化，请重新分析")
+
+    except BaseException as error:
+        primary_error = error
+        raise
+    finally:
+        try:
+            await finish_file_io(temporary.cleanup)
+        except OSError:
+            from loguru import logger
+            logger.exception("Source snapshot cleanup failed | directory={}", directory)
+            if primary_error is None:
+                raise
 
 
 @dataclass(frozen=True)
