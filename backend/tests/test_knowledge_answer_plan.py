@@ -57,7 +57,7 @@ def test_long_text_and_wide_matches_fall_back_instead_of_truncating_answer(deriv
 
 
 @pytest.mark.asyncio
-async def test_engine_leaves_retrieval_to_model_and_keeps_explicit_source_gate(derived_db,monkeypatch):
+async def test_engine_leaves_retrieval_and_answer_to_model_without_explicit_source_gate(derived_db,monkeypatch):
  from services.handlers.chat.execution_engine import execute_chat
  from services.handlers.chat.execution_sink import CollectingExecutionSink
  from tests.test_chat_execution_engine import _request
@@ -78,7 +78,8 @@ async def test_engine_leaves_retrieval_to_model_and_keeps_explicit_source_gate(d
  result=await execute_chat(handler=handler,request=req,sink=CollectingExecutionSink())
  assert len(seen)==1 and 'knowledge_read' in {t['function']['name'] for t in seen[0]['tools']}
  assert not any(m.get('content','').startswith(PREFIX) for m in seen[0]['messages'] if isinstance(m.get('content'),str))
- assert '免费补寄' not in ''.join(p.text for p in result.parts if isinstance(p,TextPart))
+ assert '核对订单照片后免费补寄；食品拆封转人工。' in ''.join(p.text for p in result.parts if isinstance(p,TextPart))
+ assert not any(getattr(p,'tool_name',None)=='knowledge_answer_verification' for p in result.parts)
  with r.cursor() as c:
   c.execute('SELECT count(*) AS n FROM kb_read_receipts WHERE snapshot_id=%s',(run.id,))
   assert c.fetchone()['n']==0

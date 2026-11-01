@@ -31,8 +31,6 @@ def test_canonical_input_is_parsed_without_a_wording_exemption(encoded, question
     snapshot = ContextSnapshot(anchor(), [], None, 0, '')
     value = KnowledgeInputFacts.from_snapshot(snapshot, json.dumps(parts, ensure_ascii=False) if encoded else parts)
     assert value.question == question and value.kinds == ('text',)
-    from services.knowledge_workspace.answer_policy import bind_answer_policy
-    assert bind_answer_policy(SimpleNamespace(), SimpleNamespace()).mode == 'stream'
     assert KnowledgeInputFacts.from_snapshot(snapshot, 'invalid') is None
 
 

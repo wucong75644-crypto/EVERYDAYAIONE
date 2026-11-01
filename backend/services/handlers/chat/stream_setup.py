@@ -26,7 +26,6 @@ class PreparedChatStream:
     skill_host_scope_captured: bool = False
     knowledge_answer_plan: Any = None
     knowledge_question: str | None = None
-    knowledge_answer_policy: Any = None
     knowledge_input_facts: Any = None
     knowledge_candidates: Any = None
 
@@ -219,8 +218,6 @@ async def prepare_chat_stream(
             budget=budget,
             execution_context=execution_context,
         )
-        from services.knowledge_workspace.answer_policy import bind_answer_policy
-        bind_answer_policy(prepared, handler)
         chat_phase('context.ready', task_id=task_id)
         from services.knowledge_workspace.candidates import start_preparation
         handler._knowledge_candidates = start_preparation(handler, context_anchor, user_id, conversation_id,

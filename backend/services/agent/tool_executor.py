@@ -230,7 +230,7 @@ class ToolExecutor(
         if self.knowledge_run is None:
             return AgentResult(summary='当前任务未找到可用知识范围，不能据此断言整个知识库没有资料。', status='empty')
         await asyncio.to_thread(self.knowledge_run.revalidate)
-        self.knowledge_run.answer_obligation = True  # Authenticated model tool entry.
+        self.knowledge_run.knowledge_used = True  # Checkpoint provenance, not a display gate.
         return AgentResult(summary=json.dumps(self.knowledge_run.introduction(), ensure_ascii=False), status='success')
 
     def _knowledge_handler(self, action):
@@ -240,7 +240,7 @@ class ToolExecutor(
             from services.knowledge_workspace.chat import unavailable
             if self.knowledge_run is None or not self.personal_context_allowed: unavailable()
             result = await asyncio.to_thread(self.knowledge_run.execute, action, args)
-            self.knowledge_run.answer_obligation = True
+            self.knowledge_run.knowledge_used = True
             from services.knowledge_workspace.model_view import present
             return AgentResult(summary=json.dumps(present(result), ensure_ascii=False), status='success')
         return execute

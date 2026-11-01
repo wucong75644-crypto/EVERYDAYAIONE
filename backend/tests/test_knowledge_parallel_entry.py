@@ -188,11 +188,10 @@ async def test_cancelled_preparation_does_not_free_slots_while_threads_are_runni
 
 
 @pytest.mark.asyncio
-async def test_old_automatic_navigation_restores_without_forcing_audit_but_real_read_binds(pipeline_db,monkeypatch):
+async def test_old_navigation_and_read_restore_usage_provenance_without_display_policy(pipeline_db,monkeypatch):
     from types import SimpleNamespace
     from services.knowledge_workspace.chat import KnowledgeRun
     from services.knowledge_workspace.runtime import prepare_knowledge_run
-    from services.knowledge_workspace.answer_policy import bind_answer_policy
     make,_=pipeline_db;r=make();r.initialize()
     from tests.test_knowledge_workspace_v2 import command
     oid=r.command(command('create_project',{'title':'旧导航-'+str(uuid4()),'position':{'x':0,'y':0}}))['object_id']
@@ -207,8 +206,8 @@ async def test_old_automatic_navigation_restores_without_forcing_audit_but_real_
     anchor=ContextAnchor(str(uuid4()),cid,str(uuid4()),mid,0,None,r.scope.org_id)
     await prepare_knowledge_run(handler,anchor,r.scope.actor_user_id,cid,question='任意新表达')
     assert handler._knowledge_run.id==old.id
-    assert bind_answer_policy(SimpleNamespace(),handler).mode=='stream'
+    assert handler._knowledge_run.knowledge_used is False
     item=next(i for i in old.snapshot['items'] if i['id']==str(obj['id']) and i['type']=='object')
     old.execute('read',{'root_handle':item['root_handle'],'item_handles':[item['handle']]})
     await prepare_knowledge_run(handler,anchor,r.scope.actor_user_id,cid,question='任意新表达')
-    assert bind_answer_policy(SimpleNamespace(),handler).mode=='audit_scope'
+    assert handler._knowledge_run.knowledge_used is True

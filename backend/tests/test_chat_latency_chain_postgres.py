@@ -58,7 +58,7 @@ def private_redis(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('scenario', ['chat', 'image_analysis', 'knowledge', 'tools'])
-async def test_before_after_native_delivery(latency_db, private_redis, monkeypatch, scenario, tmp_path):
+async def test_native_delivery_without_answer_review(latency_db, private_redis, monkeypatch, scenario, tmp_path):
     from core.config import get_settings, settings
     from core.local_db import LocalDBClient, AsyncLocalDBClient
     from services.handlers.chat_handler import ChatHandler
@@ -107,10 +107,9 @@ async def test_before_after_native_delivery(latency_db, private_redis, monkeypat
         from tests.fixtures.chat_latency_browser import LocalLatencyBrowser
         browser=LocalLatencyBrowser()
         await browser.start()
-    # The same payload and provider rhythm are used on each side. Only the old
-    # automatic grounding presence differs for a host-confirmed ordinary task.
+    # Current pipeline only; historical baseline evidence stays in its original artifacts.
     try:
-        for mode in (('after',) if external_result else ('before','after')):
+        for mode in ('after',):
             user, conv, mid, output, turn, external = [str(uuid4()) for _ in range(6)]
             task_id = _stable_task_id(user_id=user, conversation_id=conv, external_task_id=external)
             question = '仅根据这张图片分析颜色和构图' if scenario == 'image_analysis' else '你是谁？'
@@ -155,7 +154,7 @@ async def test_before_after_native_delivery(latency_db, private_redis, monkeypat
             run.revalidate = lambda: None
             run.normalize_citations = lambda text: text
             run.evidence_footer = lambda: ''
-            h._knowledge_run = run if mode == 'before' or scenario in ('knowledge','tools') else None
+            h._knowledge_run = run if scenario in ('knowledge','tools') else None
             if external_result and scenario=='knowledge':
                 run.grounding_sources=lambda:[{'key':'raw','kind':'original','text':'未拆封且24小时内可退。超过24小时需人工核实。'}]
             rounds = 0
@@ -166,7 +165,8 @@ async def test_before_after_native_delivery(latency_db, private_redis, monkeypat
                     messages=kwargs['messages']
                     async for chunk in probe.stream(messages):yield chunk
                     return
-                for text in ('第一段已有明确内容。', '第二段继续说明。', '第三段结束回答。'):
+                texts=('正在读取文件。',) if scenario=='tools' and rounds==1 else ('第一段已有明确内容。', '第二段继续说明。', '第三段结束回答。')
+                for text in texts:
                     await asyncio.sleep(.06)
                     yield SimpleNamespace(content=text, thinking_content=None, tool_calls=None,
                         prompt_tokens=1,completion_tokens=1,credits_consumed=None,finish_reason=None)
@@ -189,15 +189,10 @@ async def test_before_after_native_delivery(latency_db, private_redis, monkeypat
                 chat_phase('context.knowledge', task_id=task_id)
                 chat_phase('context.ready', task_id=task_id)
                 return p
-            async def release(_run,text,*args,**kwargs):
-                await asyncio.sleep(.06)
-                kwargs['usage']['grounding_outcome']='passed' if scenario=='knowledge' else 'unrelated'
-                return text
             monkeypatch.setattr('services.handlers.chat.execution_engine.prepare_chat_stream',prepare_stream)
             monkeypatch.setattr('services.knowledge_workspace.answer_plan.prepare',AsyncMock())
             if external_result:
-                # Native release/audit remain in place. Only their HTTP boundary
-                # is bound to the same durable, approved batch budget.
+                # Retained audit transport is a tripwire: current chat must never invoke it.
                 async def audit_request(messages,*,authorize=None,usage=None):
                     if authorize:authorize()
                     text,stats=await probe.request(messages,json_mode=True)
@@ -209,7 +204,7 @@ async def test_before_after_native_delivery(latency_db, private_redis, monkeypat
                     return json.loads(text)
                 monkeypatch.setattr('services.knowledge_workspace.grounding.request',audit_request)
             else:
-                monkeypatch.setattr('services.knowledge_workspace.grounding.release_answer',release)
+                monkeypatch.setattr('services.knowledge_workspace.grounding.request',AsyncMock(side_effect=AssertionError('chat answer audit removed')))
             monkeypatch.setattr('services.knowledge_workspace.materialize.cleanup',lambda _:None)
             def sink_factory(task, claim, cancel):
                 nonlocal sink
@@ -250,18 +245,17 @@ async def test_before_after_native_delivery(latency_db, private_redis, monkeypat
                     assert bodies
                     if scenario in ('chat','image_analysis'):assert len(bodies)>1
                 else:
-                    assert len(bodies)==(3 if mode=='after' and scenario in ('chat','image_analysis') else 1)
-                phases={row['phase']:row['monotonic_ns'] for row in trace}
+                    assert len(bodies)==(4 if scenario=='tools' else 3)
+                phases={}
+                for row in trace:phases.setdefault(row['phase'],row['monotonic_ns'])
                 assert phases['sink.first_body'] >= phases['model.first_body']
-                if mode=='after' and scenario in ('chat','image_analysis'):
+                assert 'verification.begin' not in phases
+                if not external_result or scenario in ('chat','image_analysis'):
                     assert phases['sink.first_push'] < phases['model.end']
-                    assert 'verification.begin' not in phases
-                else:
-                    assert phases['sink.first_body'] >= phases['verification.end']
                 with psycopg.connect(latency_db) as c:
                     assert c.execute('SELECT status FROM tasks WHERE id=%s',(task_id,)).fetchone()[0]=='completed'
-                    if external_result and scenario=='knowledge':
-                        assert c.execute("SELECT result->'usage'->>'grounding_outcome' FROM tasks WHERE id=%s",(task_id,)).fetchone()[0]=='passed'
+                    if scenario=='knowledge':
+                        assert c.execute("SELECT result->'usage'->>'grounding_outcome' FROM tasks WHERE id=%s",(task_id,)).fetchone()[0] is None
                     # The production terminal trigger compacts deltas after commit;
                     # append-before-publish was asserted by CheckedManager above.
                     assert len(persisted_chunks)==len(bodies)
@@ -272,10 +266,11 @@ async def test_before_after_native_delivery(latency_db, private_redis, monkeypat
                             expected=''.join((p['message'].get('chunk') or p['message'].get('payload',{}).get('chunk','')) for p in probe.record['packets'] if p['message']['type']=='message_chunk')
                             assert snapshot[0]==expected
                     else:
-                        assert snapshot==('第一段已有明确内容。第二段继续说明。第三段结束回答。','committed')
+                        expected=('正在读取文件。' if scenario=='tools' else '')+'第一段已有明确内容。第二段继续说明。第三段结束回答。'
+                        assert snapshot==(expected,'committed')
                     assert c.execute('SELECT content FROM messages WHERE id=%s',(mid,)).fetchone()[0]==json.dumps([p.model_dump(mode='json') for p in content])
                 client=await browser.finish() if browser else None
-                if client and mode=='after' and scenario in ('chat','image_analysis'):
+                if client and (not external_result or scenario in ('chat','image_analysis')):
                     assert client['firstDomBeforeTerminal'] is True, client
                 summaries.append({'provider':'reused_real_reply' if reuse_dir else ('real' if live else 'controlled'),'mode':mode,'scenario':scenario,'trace':trace,'packets':packets,'client':client})
             finally:

@@ -6,40 +6,9 @@ from unittest.mock import Mock
 
 import pytest
 from schemas.message import TextPart
-from services.knowledge_workspace.answer_policy import (
-    KnowledgeAnswerPolicy, DeferredKnowledgeScope, bind_answer_policy, policy_for,
-)
 from services.knowledge_workspace.chat import KnowledgeRun
 from services.knowledge_workspace import answer_plan
 from tests.test_chat_execution_engine import _request
-
-
-def test_host_policy_separates_accessibility_evidence_and_display():
-    p = SimpleNamespace()
-    h = SimpleNamespace(_knowledge_self_contained=True)
-    assert bind_answer_policy(p, h).mode == 'stream'
-    guard = DeferredKnowledgeScope(object(), 'conversation', 'input', ())
-    h._knowledge_answer_guard = guard
-    assert bind_answer_policy(p, h).mode == 'stream'
-    assert not policy_for(p).hold_body and policy_for(p).verifier is None
-    run = KnowledgeRun(object(), 'snapshot', {'automatic': True})
-    h._knowledge_run = run
-    assert bind_answer_policy(p, h).mode == 'audit_scope'
-    assert policy_for(p).verifier is run  # A real scope overrides a stale exemption.
-    run.answer_obligation = False
-    assert bind_answer_policy(p, h).mode == 'stream'  # Old navigation-only availability.
-    run.answer_obligation = True
-    assert bind_answer_policy(p, h).mode == 'audit_scope'  # Model-requested knowledge.
-    h._knowledge_run = h._knowledge_answer_guard = None
-    assert bind_answer_policy(p, h).mode == 'stream'  # No guard leaks into a new scope.
-    assert policy_for(p).verifier is None
-
-
-@pytest.mark.parametrize('mode,verifier', [('stream', object()), ('audit_claims', None),
-    ('audit_scope', None), ('model_said_safe', None)])
-def test_invalid_or_self_reported_policy_cannot_release_a_draft(mode, verifier):
-    with pytest.raises(ValueError):
-        KnowledgeAnswerPolicy(mode, 'test', verifier)
 
 
 @pytest.mark.asyncio
@@ -64,8 +33,7 @@ async def test_preparation_requires_source_binding_or_explicit_lookup(
     monkeypatch.setattr(answer_plan, 'restore_saved_plan', lambda *_: None)
     await answer_plan.prepare(h, p, request)
     assert collect.call_count == int(should_prepare)
-    # Preparation is not the authority for waiving the answer audit.
-    assert bind_answer_policy(p, h).mode == 'audit_scope'
+    assert h._knowledge_run is run  # Retrieval preparation preserves the bound source.
 
 
 @pytest.mark.asyncio

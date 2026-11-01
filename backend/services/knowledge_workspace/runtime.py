@@ -6,7 +6,7 @@ from .chat import KnowledgeRun, repository, unavailable
 async def prepare_knowledge_run(handler, anchor, user_id, conversation_id, *, required=False, question=None, self_contained=False, defer_default=False):
     handler._knowledge_run=None
     handler._knowledge_answer_guard=None
-    # Only explicit references and real previous tool snapshots bind answers.
+    # Only explicit references and real previous tool snapshots restore access.
     # Default candidates are prepared independently and never become a guard.
     from core.config import get_settings
     settings = get_settings()
@@ -36,6 +36,6 @@ async def prepare_knowledge_run(handler, anchor, user_id, conversation_id, *, re
                 c.execute('SELECT 1 FROM public.kb_read_receipts WHERE snapshot_id=%s LIMIT 1', (run.id,))
                 return c.fetchone() is not None
         # Older releases froze default navigation before the model requested
-        # knowledge. Restore its handles without inventing a reading obligation.
-        run.answer_obligation = await asyncio.to_thread(consumed)
+        # knowledge. Restore handles and usage provenance without an output-review obligation.
+        run.knowledge_used = await asyncio.to_thread(consumed)
     handler._knowledge_run=run

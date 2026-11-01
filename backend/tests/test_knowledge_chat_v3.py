@@ -205,7 +205,9 @@ async def test_plain_model_answer_and_evidence_survive_finalization(v3_db,monkey
     root=run.snapshot['roots'][0]['handle'];h=run.execute('outline',{'root_handle':root})['items'][0]['handle']
     source=run.execute('read',{'root_handle':root,'item_handles':[h]})['items'][0]['source']['url']
     async def stream(**kwargs):
-        yield SimpleNamespace(content='中文正文中的验收关键词',thinking_content=None,tool_calls=None,prompt_tokens=3,completion_tokens=2,credits_consumed=None,finish_reason='stop')
+        yield SimpleNamespace(content='中文正文中的',thinking_content=None,tool_calls=None,prompt_tokens=3,completion_tokens=0,credits_consumed=None,finish_reason=None)
+        assert sink.text=='中文正文中的'  # Actual native read, before model completion.
+        yield SimpleNamespace(content='验收关键词',thinking_content=None,tool_calls=None,prompt_tokens=0,completion_tokens=2,credits_consumed=None,finish_reason='stop')
     prepared=SimpleNamespace(execution_context=catalog_context('org-1'),adapter=SimpleNamespace(stream_chat=stream,close=AsyncMock()),
         permission=SimpleNamespace(mode=SimpleNamespace(value='auto'),need_exit_attachment=False,get_reminder=lambda _:''),
         core_tools=[],stream_kwargs={},tool_context=SimpleNamespace(discovered_tools=set(),build_context_prompt=lambda:''),messages=[],
@@ -225,10 +227,9 @@ async def test_plain_model_answer_and_evidence_survive_finalization(v3_db,monkey
     runtime=ConversationTurnRuntime(conversation_id='conv-1',task_id='task-1',turn_id='turn-1',cancellation_event=asyncio.Event())
     result=await execute_chat(handler=handler,request=_request(),runtime=runtime,sink=sink)
     assert [part.text for part in result.parts if part.type == 'text'][0]=='中文正文中的验收关键词'
-    assert result.parts[0].type == 'tool_step'
-    assert result.parts[0].tool_name == 'knowledge_answer_verification'
-    assert result.parts[0].status == 'completed'
-    assert len(audited)==1
+    assert result.parts[0].type == 'text'
+    assert not any(getattr(part,'tool_name',None)=='knowledge_answer_verification' for part in result.parts)
+    assert audited==[]
     assert source in result.parts[-1].text
     assert source in sink.text+json.dumps(sink.blocks,ensure_ascii=False)
     sink.flush.assert_awaited_once()
