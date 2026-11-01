@@ -69,7 +69,8 @@ async def test_confirmation_response_cannot_bypass_execution_boundary(setup, mon
     executor = MockHandlerExecutor(agent_domain="general", task_id="task1")
     executor.tool_confirmer = lambda call, ctx, decision: harness._confirm_tool_call(call, ctx, decision, "m1")
     cache = Mock()
-    lifecycle = Mock(replay=AsyncMock(return_value=None), begin=AsyncMock(return_value=None), complete=AsyncMock(),
+    # This legacy lifecycle does not implement the optional async binding hook.
+    lifecycle = Mock(bind_resolved_arguments=None, replay=AsyncMock(return_value=None), begin=AsyncMock(return_value=None), complete=AsyncMock(),
         prepare_file_resume=None, requires_fresh_read=False, records_cache_consumption=False)
 
     async def send(*items):
@@ -94,7 +95,7 @@ async def test_confirmation_response_cannot_bypass_execution_boundary(setup, mon
     manager.send_to_task_or_user = AsyncMock(side_effect=send)
     result = await executor.tool_runtime.execute("file_delete", {"files": ["fixture.txt"]}, call_id="danger-call", cache=cache, lifecycle=lifecycle)
     approved = scenario in {"true", "legacy_true"}
-    assert executor.handler.await_count == int(approved)
+    assert executor.handler.await_count == int(approved), repr(result.exception)
     assert lifecycle.begin.await_count == int(approved)
     if not approved:
         cache.get.assert_not_called()
