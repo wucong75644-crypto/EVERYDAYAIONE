@@ -704,6 +704,13 @@ async def _run_loop(
                 has_tool_calls=bool(review_calls),model_round=model_round-1,next_model_round=model_round,
                 build_checkpoint=_build_replay_context,turn=turn,sink=sink)
             continue
+        from services.task_execution.requirement_review import clarification_question
+        question=clarification_question(requirement_review,prepared.messages)
+        if question:
+            notice={'type':'text','text':question,'task_status':'waiting_input'}
+            blocks.append(notice)
+            await sink.on_block(notice)
+            return None
         if (isinstance(requirement_review,RequirementReview) and not requirement_review.approved_proposal_sha256
                 and len(requirement_review.attempts)>=3):
             notice={'type':'text','text':'任务交付要求尚未核对完整，已保留原请求与核对记录，未启动外部执行。',
@@ -817,22 +824,6 @@ async def _run_loop(
             tools=[REVISION_SCHEMA]
             if phase_repair(runtime):tools.extend([ACTIVATE_SKILL_SCHEMA,DEACTIVATE_SKILL_SCHEMA])
         current_model_round = model_round
-        knowledge_stage = None
-        if getattr(prepared, 'knowledge_grounding_run', None) is not None:
-            knowledge_stage = {
-                'type': 'tool_step', 'tool_name': 'knowledge_answer_verification',
-                'tool_call_id': f'knowledge-check:{runtime.turn_id if runtime else request.task_id}:{model_round}',
-                'status': 'running',
-                'output': '正在整理待核验的回答；正文将在依据检查后展示。',
-            }
-            existing = next((b for b in blocks if b.get('tool_call_id') == knowledge_stage['tool_call_id']), None)
-            if existing is None:
-                blocks.append(knowledge_stage)
-                await sink.on_block(knowledge_stage)
-            else:
-                existing.update(knowledge_stage)
-                knowledge_stage = existing
-                await sink.on_block_update(knowledge_stage)
         before_usage = dict(totals.usage) if correcting else {}
         try:
             turn_text, turn_thinking, calls, previewed_call_ids = await _read_turn(
@@ -865,12 +856,18 @@ async def _run_loop(
             turn_thinking=''
             if calls:
                 turn_text=''
-                if knowledge_stage is not None:
-                    knowledge_stage.update(status='completed', output='本轮进入工具处理；最终回答仍须核对依据。')
-                    await sink.on_block_update(knowledge_stage)
             else:
-                if knowledge_stage is not None:
-                    knowledge_stage['output'] = '草稿已生成，正在核对回答依据。'
+                # Tool selection has not verified an answer. Show an audit
+                # stage only when the actual final-answer audit starts.
+                knowledge_stage={'type':'tool_step','tool_name':'knowledge_answer_verification',
+                    'tool_call_id':f'knowledge-check:{runtime.turn_id if runtime else request.task_id}:{current_model_round}',
+                    'status':'running','output':'草稿已生成，正在核对回答依据。'}
+                existing=next((b for b in blocks if b.get('tool_call_id')==knowledge_stage['tool_call_id']),None)
+                if existing is None:
+                    blocks.append(knowledge_stage)
+                    await sink.on_block(knowledge_stage)
+                else:
+                    existing.update(knowledge_stage);knowledge_stage=existing
                     await sink.on_block_update(knowledge_stage)
                 turn_text=await _verify_knowledge_answer(grounding_run,turn_text,(getattr(prepared,'knowledge_question',None) or getattr(prepared,'text_content',''.join(p.text for p in request.content if isinstance(p,TextPart)))),totals.usage,cancellation_event,runtime,other_tools=_completed_other_tools(blocks))
                 await _check_cancelled(cancellation_event,request,prepared.messages,blocks,totals,'knowledge_verification')

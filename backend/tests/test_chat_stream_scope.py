@@ -137,3 +137,80 @@ def test_host_denied_exemption_cannot_be_reopened_by_legacy_scope_rules(question
     from services.knowledge_workspace.scope_selection import select
     corpus = [{'id': 'authorized-personal', 'kind': 'personal', 'title': '个人资料'}]
     assert select(corpus, question, allow_self_contained=False)[0] == corpus
+
+
+@pytest.mark.parametrize('cached', [False, True])
+@pytest.mark.parametrize('question,images,reason', [
+    ('你好', False, 'self_contained_chat'),
+    ('你都能帮我做什么？', False, 'self_contained_chat'),
+    ('分析这张图片', True, 'user_images_only'),
+])
+def test_real_prompt_tool_documentation_does_not_become_knowledge_evidence(monkeypatch, cached, question, images, reason):
+    from config.chat_tools import TOOL_SYSTEM_PROMPT
+    from services.prompt_builder.builder import PromptBuilder
+    monkeypatch.setattr('core.config.get_settings', lambda: SimpleNamespace(prompt_cache_control_enabled=cached))
+    assert 'knowledge_search' in TOOL_SYSTEM_PROMPT
+    messages = PromptBuilder._compose_messages(
+        TOOL_SYSTEM_PROMPT, '当前可用工具及权限', '当前时间', [], None,
+        SimpleNamespace(workspace_system_block='', attachments_system_block='',
+                        user_message={'role': 'user', 'content': question}))
+    content = [TextPart(text=question)]
+    if images:
+        content.append(ImagePart(url='https://example.invalid/original.png'))
+    assert self_contained_reason(question, content, messages) == reason
+    assert self_contained_reason(question, content, messages, required=True) is None
+
+
+@pytest.mark.parametrize('packet', [
+    {'role': 'system', 'content': '知识画布运行快照：{"roots":[]}'},
+    {'role': 'system', 'content': [{'type':'text','text':'知识库程序检索依据：实际证据'}]},
+    {'role': 'system', 'content': '知识查询答复阶段：实际证据'},
+    {'role': 'system', 'content': '以下是之前对话的摘要：已读取 knowledge_search'},
+    {'role': 'assistant', 'content': '', 'tool_calls':[{'function':{'name':'knowledge_search'}}]},
+    {'role': 'tool', 'name': 'knowledge_read', 'content': '{}'},
+    {'role': 'assistant', 'content': '[来源](/knowledge?object=old)'},
+])
+def test_real_knowledge_provenance_still_requires_verification(packet):
+    messages = [packet, {'role':'user','content':'你好'}]
+    assert self_contained_reason('你好', [TextPart(text='你好')], messages) is None
+
+
+@pytest.mark.asyncio
+async def test_tool_round_is_not_presented_as_answer_audit_and_final_body_stays_held(monkeypatch):
+    from unittest.mock import AsyncMock
+    from services.agent.execution_budget import ExecutionBudget
+    from services.tools.runtime_context import catalog_context
+    from services.handlers.chat.execution_engine import _run_loop
+    from tests.test_chat_execution_engine import _request
+    rounds=[]
+    sink=CollectingExecutionSink()
+    blocks=[]
+    async def stream(**kwargs):
+        rounds.append(len(rounds))
+        calls=[SimpleNamespace(index=0,id='lookup',name='erp_agent',arguments_delta='{}')] if len(rounds)==1 else None
+        yield SimpleNamespace(content='未经核验的草稿',thinking_content='内部思考',tool_calls=calls,
+            prompt_tokens=3,completion_tokens=2,credits_consumed=None,finish_reason='stop')
+    prepared=SimpleNamespace(execution_context=catalog_context(None),
+        adapter=SimpleNamespace(stream_chat=stream),stream_kwargs={},
+        budget=ExecutionBudget(max_turns=4,wrap_up_turns_reserved=0),core_tools=[],messages=[],
+        tool_context=SimpleNamespace(discovered_tools=set(),build_context_prompt=lambda:''),
+        permission=SimpleNamespace(mode=SimpleNamespace(value='auto'),need_exit_attachment=False,get_reminder=lambda _:''),
+        knowledge_grounding_run=object())
+    async def tools(**kwargs):
+        assert not any(b.get('tool_name')=='knowledge_answer_verification' for b in blocks)
+        assert sink.text=='' and sink.thinking==''
+    async def verify(run,draft,*args,**kwargs):
+        assert draft=='未经核验的草稿' and sink.text=='' and sink.thinking==''
+        stages=[b for b in blocks if b.get('tool_name')=='knowledge_answer_verification']
+        assert len(stages)==1 and stages[0]['status']=='running'
+        return '已核验的回答'
+    execute=AsyncMock(side_effect=tools)
+    audit=AsyncMock(side_effect=verify)
+    monkeypatch.setattr('services.handlers.chat.execution_engine._execute_tools',execute)
+    monkeypatch.setattr('services.handlers.chat.execution_engine._verify_knowledge_answer',audit)
+    await _run_loop(handler=SimpleNamespace(org_id=None),request=_request(),prepared=prepared,
+        cancellation_event=asyncio.Event(),sink=sink,totals=StreamTotals(),blocks=blocks,runtime=None)
+    assert len(rounds)==2
+    execute.assert_awaited_once();audit.assert_awaited_once()
+    assert sink.text=='已核验的回答'
+    assert [b['status'] for b in blocks if b.get('tool_name')=='knowledge_answer_verification']==['completed']

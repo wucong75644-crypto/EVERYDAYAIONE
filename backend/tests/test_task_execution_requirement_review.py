@@ -27,16 +27,19 @@ def proposal(*,images=True):
         'item_count':None if images else 5,'evidence':['五张详情图'] if images else ['五条提示词']}]}
 
 
-async def staged(*,images=True,checkpoint=None):
+async def staged(*,images=True,checkpoint=None,goal=None):
     source,state,*_=bootstrap()
-    goal='请生成五张详情图' if images else '只要五条提示词，不要生成图片'
+    goal=goal or ('请生成五张详情图' if images else '只要五条提示词，不要生成图片')
     source=replace(source,original_goal=goal,require_coverage_review=True)
     runtime,prepared,handler,sink=setup_case(initial=state,checkpoint=checkpoint)
     runtime.task_execution_state=None;runtime.task_bootstrap=source
     prepared.messages=[{'role':'system','content':'SKILL BODY must not enter reviewer'},
         {'role':'assistant','content':'固定历史方案'}, {'role':'user','content':goal}]
     prepared.last_provider_output=None
-    await execute(runtime,prepared,handler,sink,[call('start_task_execution',proposal(images=images),'start')],[])
+    value=proposal(images=images)
+    if goal not in ('请生成五张详情图','只要五条提示词，不要生成图片'):
+        value['requirements'][0]['evidence']=[goal]
+    await execute(runtime,prepared,handler,sink,[call('start_task_execution',value,'start')],[])
     return runtime,prepared,handler,sink
 
 
@@ -401,3 +404,77 @@ async def test_rejected_proposal_feedback_exposes_source_backed_expected_shape_w
     assert output['observed_requirements']['deliveries'][0]['evidence']==['五张详情图']
     assert output['task_initialized'] is False and runtime.task_execution_state is None
     handler._execute_tool_calls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_valid_source_ambiguity_asks_once_without_proposal_retry_or_business(monkeypatch):
+    from services.handlers.chat.execution_engine import _run_loop,ChatExecutionRequest,_finalize_output_parts
+    from services.handlers.chat.stream_session import StreamTotals
+    from services.task_execution.requirement_review import clarification_question,extraction_digest
+    runtime,prepared,handler,sink=await staged(goal='生成一些图片')
+    prepare_loop(runtime,prepared,handler,sink)
+    original=copy.deepcopy(prepared.messages)
+    value=json.loads(observation());value['deliveries'][0]['minimum']=1
+    value['deliveries'][0]['evidence']=['生成一些图片']
+    value['uncertainty']=['DELIVERY_COUNT_UNCLEAR']
+    model=AsyncMock(return_value=(json.dumps(value),'',[],set()))
+    monkeypatch.setattr('services.handlers.chat.execution_engine._read_turn',model)
+    request=ChatExecutionRequest(content=[],user_id=str(runtime.task_bootstrap.actor_user_id),
+        conversation_id=runtime.conversation_id,task_id=runtime.task_id,message_id='output',model_id='offline',context_anchor=None)
+    blocks=[];totals=StreamTotals()
+    await _run_loop(handler=handler,request=request,prepared=prepared,cancellation_event=runtime.cancellation_event,
+        sink=sink,totals=totals,blocks=blocks,runtime=runtime,model_round=1)
+    model.assert_awaited_once()
+    handler._execute_tool_calls.assert_not_called()
+    assert runtime.task_execution_state is None
+    assert len(runtime.task_requirement_review.attempts)==1
+    assert prepared.messages[:len(original)]==original
+    assert blocks[-1]['task_status']=='waiting_input' and '确认' in blocks[-1]['text']
+    parts=await _finalize_output_parts(handler=handler,prepared=prepared,totals=totals,blocks=blocks,sink=sink,
+        cancellation_event=runtime.cancellation_event,runtime=runtime)
+    assert parts[-1].text==blocks[-1]['text']
+    from services.conversation_commands import SafePoint
+    from services.handlers.chat.executor import _generation_outcome_from_replay
+    from schemas.message import serialize_content_parts
+    await runtime.safe_point(SafePoint.BEFORE_COMMIT,replay_payload={
+        **_build_replay_context(prepared.messages,blocks,prepared.budget.turns_used,next_model_round=2),
+        'checkpoint_kind':'commit_ready','result_content':serialize_content_parts(parts),
+        'usage':dict(totals.usage),'credits_cost':0,'tool_digest':None})
+    saved=runtime._replay_checkpoint_callback.call_args.args[1]
+    assert saved['content_blocks'][-1]['text']==blocks[-1]['text']
+    assert '_task_execution' not in saved and saved['_task_bootstrap']['input']['original_goal']=='生成一些图片'
+    record=runtime.task_requirement_review
+    restored=restore_review(saved['_task_requirement_review'],root_task_id=record.root_task_id,
+        actor_user_id=record.actor_user_id,conversation_id=record.conversation_id,
+        source_message_id=record.source_message_id,original_goal=record.original_goal)
+    assert restored==record
+    outcome=_generation_outcome_from_replay(saved)
+    assert outcome.result_content[-1]['text']==blocks[-1]['text'] and outcome.credits_cost==0
+    model.assert_awaited_once()
+    from services.task_execution.requirement_review import freeze_context,review_messages
+    next_messages=prepared.messages+[{'role':'assistant','content':blocks[-1]['text']},
+        {'role':'user','content':'三张'}]
+    next_record=record.model_copy(update={'original_goal':'三张','context':freeze_context(next_messages),
+        'pending':None,'attempts':()})
+    history=json.loads(review_messages(next_record)[1]['content'])['fixed_history']
+    assert any(m['content']=='生成一些图片' for m in history)
+    assert history[-2:]==next_messages[-2:]
+
+    assert record.attempts[-1].observation_input_sha256==extraction_digest(record,prepared.messages)
+    assert clarification_question(record,prepared.messages)==blocks[-1]['text']
+    assert clarification_question(record,prepared.messages+[{'role':'user','content':'换个要求'}]) is None
+    attempt=record.attempts[-1]
+    bad=attempt.observation.model_copy(update={'deliveries':(attempt.observation.deliveries[0].model_copy(
+        update={'evidence':('非用户原文',)}),)})
+    damaged=record.model_copy(update={'attempts':(attempt.model_copy(update={'observation':bad}),)})
+    assert clarification_question(damaged,prepared.messages) is None
+
+
+@pytest.mark.asyncio
+async def test_explicit_selection_changes_invalidate_blind_observation_cache():
+    from services.task_execution.requirement_review import extraction_digest
+    runtime,prepared,*_=await staged()
+    record=runtime.task_requirement_review
+    changed=record.model_copy(update={'selected_methods':({'skill_id':'reference-image-prompts',
+        'name':'参考图多方案提示词','revision':'original','sources':['user']},)})
+    assert extraction_digest(record,prepared.messages)!=extraction_digest(changed,prepared.messages)

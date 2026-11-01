@@ -161,3 +161,47 @@ async def test_real_loop_repairs_proposal_without_repeating_unchanged_blind_extr
     with pytest.raises(LoopObserved):await execute_chat(handler=h,request=request,runtime=runtime)
     assert len(mains)==3 and len(reviews)==1
     h._execute_tool_calls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_original_manual_prompt_method_reaches_blind_review_for_style_fragment(monkeypatch,original_source):
+    from schemas.message import ImagePart
+    from core.config import get_settings
+    settings=get_settings().model_copy(update={'skill_catalog_enabled':True,'skill_runtime_enabled':True,
+        'skill_recommendations_enabled':False})
+    monkeypatch.setattr('core.config.get_settings',lambda:settings)
+    source=original_source;key='reference-image-prompts';goal='要风景类型的'
+    monkeypatch.setattr('services.skills.runtime_source.ActorSkillSource',lambda *_:source)
+    boot,state,anchor,_=bootstrap();boot=replace(boot,original_goal=goal,require_coverage_review=True)
+    runtime=actor();runtime.task_bootstrap=boot;runtime.task_id=str(state.root_task_id)
+    p=prepared();p.messages=[{'role':'system','content':'原上下文'},
+        {'role':'user','content':[{'type':'text','text':goal},{'type':'image_url','image_url':{'url':'https://example.invalid/original.png'}}]}]
+    history=copy.deepcopy(p.messages)
+    monkeypatch.setattr('services.handlers.chat.execution_engine.prepare_chat_stream',AsyncMock(return_value=p))
+    h=handler();h.org_id=None
+    request=replace(_request(),content=[TextPart(text=goal),ImagePart(url='https://example.invalid/original.png')],
+        selected_skill=SkillSelection(skill_id=key,revision=source.values[key].revision),
+        task_id=str(state.root_task_id),conversation_id=str(state.conversation_id),user_id=str(state.actor_user_id),context_anchor=anchor)
+    rounds=[]
+    async def model(current,tools,*args,**kwargs):
+        rounds.append(kwargs.get('task_review',False))
+        if kwargs.get('task_review'):
+            data=json.loads(current.messages[1]['content'])
+            assert data['original_user_request']==goal and data['has_user_image_references']
+            assert data['explicit_user_method_choices']==[{'skill_id':key,'name':source.values[key].catalog_metadata.name,
+                'revision':source.values[key].revision}]
+            assert 'proposal' not in data
+            return json.dumps({'action':'plan','deliveries':[{'artifact_kind':'text','minimum':1,'evidence':[goal]}]}),'',[],set()
+        if len(rounds)==1:
+            return '','',[call('start_task_execution',{'action':'plan','applicable_method_ids':[key],
+                'requirements':[{'id':'prompts','description':'六套完整提示词','artifact_kind':'text','minimum':1,
+                    'item_count':6,'evidence':[goal]}]},'style-start')],set()
+        assert runtime.task_execution_state.original_goal==goal
+        assert [(r.artifact_kind,r.item_count) for r in runtime.task_execution_state.requirements if r.id.startswith('user.')]==[('text',6)]
+        assert any(b.skill_key==key for b in runtime.task_execution_state.method_bindings)
+        assert [m for m in p.messages if m in history]==history and not runtime.task_execution_state.operations
+        raise LoopObserved
+    monkeypatch.setattr('services.handlers.chat.execution_engine._read_turn',model)
+    with pytest.raises(LoopObserved):await execute_chat(handler=h,request=request,runtime=runtime)
+    assert rounds==[False,True,False]
+    h._execute_tool_calls.assert_not_called()

@@ -43,10 +43,31 @@ def roots(cursor, question, *, allow_self_contained=True):
 # Conservative host routing, not a model verdict or a blanket absence-of-tool
 # exemption. Unknown wording stays on the existing verified-answer path.
 PRIVATE_CONTEXT = re.compile(r'知识库|企业|公司|内部|我们|本店|本司|制度|规则|流程|规范|手册|订单|库存|客户|合同|报销|权限|项目|资料|根据之前|按照之前')
-SELF_CONTAINED_CHAT = re.compile(r'^(?:请)?(?:你是谁|你叫什么名字|你能做什么|讲(?:一)?个笑话|讲(?:一)?个睡前故事)[？?。！!\s]*$')
+SELF_CONTAINED_CHAT = re.compile(r'^(?:请)?(?:你是谁|你叫什么名字|你(?:都)?(?:能|可以)(?:帮我)?(?:做|干)(?:什么|啥)|讲(?:一)?个笑话|讲(?:一)?个睡前故事)[？?。！!\s]*$')
 IMAGE_ONLY = re.compile(r'^(?:请|帮我)?(?:只|仅)(?:根据|依据|基于|看)(?:我(?:提供|上传|发)的|这(?:张|些)|所附|上传的)?(?:图片|图像|照片|图)(?:来)?(?:分析|描述|看看|说明|识别|提取)')
 BASIC_IMAGE_ANALYSIS = re.compile(r'^(?:请|帮我)?(?:分析|描述|看看|识别|解读)(?:一下)?'
     r'(?:这(?:张|些)|我(?:上传|发)的|上传的|所附)?(?:图片|图像|照片|图)[。！？!?\s]*$')
+
+
+def has_knowledge_evidence(messages):
+    """System tool availability is not retrieved evidence or a prior tool call."""
+    import json
+    envelopes=('知识画布运行快照：','知识库程序检索依据：','知识查询答复阶段：')
+    markers=(*envelopes,'/knowledge?','knowledge_read','knowledge_search','knowledge_outline')
+    for message in messages:
+        content=message.get('content','')
+        text=content if isinstance(content,str) else '\n'.join(
+            p.get('text','') for p in content if isinstance(p,dict) and isinstance(p.get('text'),str)
+        ) if isinstance(content,list) else ''
+        if message.get('role')=='system' and not text.startswith('以下是之前对话的摘要'):
+            # Real host packets and citations still bind the answer. Generic
+            # capability instructions naming knowledge tools do not.
+            if text.lstrip().startswith(envelopes) or '/knowledge?' in text:
+                return True
+            continue
+        if any(marker in json.dumps(message,ensure_ascii=False,default=str) for marker in markers):
+            return True
+    return False
 
 
 def self_contained_reason(question, content, messages, *, required=False):
@@ -55,7 +76,6 @@ def self_contained_reason(question, content, messages, *, required=False):
     Persisted explicit refs are checked again by KnowledgeRun.start. Historical
     knowledge packets/citations keep verification even on a new short question.
     """
-    import json
     if required or not isinstance(question, str) or len(question) > 2000:
         return None
     if PRIVATE_CONTEXT.search(question):
@@ -63,11 +83,7 @@ def self_contained_reason(question, content, messages, *, required=False):
     latest = latest_user_text(messages)
     if latest and latest.strip() != question.strip():
         return None
-    history = json.dumps(messages, ensure_ascii=False, default=str)
-    if any(marker in history for marker in (
-        '知识画布运行快照：', '知识库程序检索依据：', '知识查询答复阶段：',
-        '/knowledge?', 'knowledge_read', 'knowledge_search', 'knowledge_outline',
-    )):
+    if has_knowledge_evidence(messages):
         return None
     kinds = [getattr(part, 'type', None) for part in content]
     if any(kind not in ('text', 'image') for kind in kinds):

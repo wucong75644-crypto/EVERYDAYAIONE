@@ -156,8 +156,31 @@ export function getPlaceholderInfo(message: Message): PlaceholderInfo {
 // Agent Loop 步骤文字映射
 // ============================================================
 
+const TASK_STEP_TEXT: Record<string, string> = {
+  start_task_execution: '正在整理任务要求',
+  propose_task_revision: '正在核对追加要求',
+  update_task_plan: '正在规划执行步骤',
+  save_task_text: '正在保存规划草稿',
+  complete_task_step: '正在确认阶段成果',
+  find_task_text: '正在查找已有方案',
+  read_task_text: '正在读取已有方案',
+  reuse_task_text: '正在复用已有方案',
+  reuse_task_image: '正在复用已有图片',
+  import_task_source: '正在接续已有方案',
+  bind_task_image_sources: '正在绑定原图素材',
+  review_task_plan: '正在核验规划',
+  import_task_result: '正在接收任务成果',
+  read_task_result: '正在核实任务结果',
+  read_task_write_result: '正在核实执行回执',
+  import_task_receipt: '正在接收执行回执',
+  read_task_scheduled_result: '正在核实计划任务结果',
+  read_task_code_result: '正在核实代码成果',
+  import_task_code_result: '正在接收代码成果',
+};
+
 /** Agent Loop 工具名 → 前端展示文字 */
 const AGENT_STEP_MAP: Record<string, string> = {
+  ...TASK_STEP_TEXT,
   web_search: '正在搜索',
   web_extractor: '正在读取网页',
   get_conversation_context: '正在查看对话',
@@ -172,6 +195,7 @@ export function getAgentStepText(toolName: string): string {
 
 /** 工具调用名 → 前端展示文字（单循环 Agent 工具循环用） */
 const TOOL_CALL_MAP: Record<string, string> = {
+  ...TASK_STEP_TEXT,
   // ERP 查询
   erp_info_query: '正在查询基础信息',
   erp_product_query: '正在查询商品信息',

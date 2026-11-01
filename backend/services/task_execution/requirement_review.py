@@ -96,6 +96,25 @@ def reusable_observation(record, messages):
     return None
 
 
+def clarification_question(record,messages):
+    """Valid source ambiguity needs user input, not an unseen proposal rewrite."""
+    if (not isinstance(record,RequirementReview) or record.version!=2 or record.pending
+            or record.approved_proposal_sha256 or not record.attempts):return None
+    attempt=record.attempts[-1];observation=attempt.observation
+    if (attempt.verdict.coverage!='uncertain' or observation is None or not observation.uncertainty
+            or attempt.observation_input_sha256!=extraction_digest(record,messages)
+            or any(not q.strip() or len(q)>1000 or q not in record.original_goal
+                for delivery in observation.deliveries for q in delivery.evidence)):return None
+    questions=[]
+    if 'DELIVERY_KIND_UNCLEAR' in observation.uncertainty:
+        questions.append('你希望得到文字方案/提示词，还是直接生成图片或其他成果？')
+    if 'DELIVERY_COUNT_UNCLEAR' in observation.uncertainty:
+        questions.append('请确认需要的成果数量。')
+    if 'SOURCE_REFERENCE_UNRESOLVED' in observation.uncertainty:
+        questions.append('请确认本次要继续使用哪份已有方案或素材。')
+    return '为保留你的原要求，需要确认：'+''.join(questions) if questions else None
+
+
 def extraction_digest(record,messages):
     # The reviewer has a bounded textual projection. Cache identity must not
     # inherit that truncation: a large or image-only new user message still

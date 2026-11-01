@@ -69,3 +69,26 @@ def test_shared_restriction_quote_resolves_only_with_distinct_source_evidence(re
     assert compare(goal,observed,[item(shared,item_count=1),item(shared,item_count=5)]).coverage=='uncertain'
     proposed[0]['item_count']=7
     assert compare(goal,observed,proposed).coverage=='missing'
+
+
+def test_blind_extractor_receives_only_host_explicit_method_metadata():
+    import json
+    from services.task_execution.requirement_extraction import extraction_messages
+    record=SimpleNamespace(original_goal='要风景类型的',context=(),has_user_image_references=True,
+        selected_methods=tuple(dict(skill_id=kind,name='参考图多方案提示词',revision='original-revision',
+            sources=[kind],phase_resident=resident,body='MUST NOT LEAK')
+            for kind,resident in [('user',False),('session',False),('auto',False),('user',True)]))
+    messages=extraction_messages(record)
+    value=json.loads(messages[1]['content'])
+    assert value['original_user_request']=='要风景类型的'
+    assert value['has_user_image_references'] is True
+    assert value['explicit_user_method_choices']==[
+        dict(skill_id=kind,name='参考图多方案提示词',revision='original-revision') for kind in ['user','session']]
+    assert 'MUST NOT LEAK' not in json.dumps(messages) and 'proposal' not in value
+
+
+def test_method_default_text_count_does_not_grant_image_delivery():
+    goal='要风景类型的'
+    assert compare(goal,[item(goal)],[item(goal,item_count=6)]).coverage=='covered'
+    assert compare(goal,[item(goal)],[item(goal,'image',6)]).coverage=='missing'
+    assert compare(goal,[item(goal,'image',6)],[item(goal,item_count=6)]).coverage=='missing'

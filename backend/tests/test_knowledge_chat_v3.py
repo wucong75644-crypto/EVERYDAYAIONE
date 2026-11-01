@@ -382,3 +382,38 @@ async def test_real_runtime_host_scope_cannot_be_reopened_by_legacy_selector(cur
     original = h._knowledge_run.id
     await prepare_knowledge_run(h, anchor, r.scope.actor_user_id, cid, question='你好', self_contained=True)
     assert h._knowledge_run.id == original
+
+
+@pytest.mark.asyncio
+async def test_full_prompt_greeting_skips_default_snapshot_but_restores_explicit_sources(v3_db,monkeypatch):
+    from types import SimpleNamespace
+    from core.config import get_settings
+    from config.chat_tools import TOOL_SYSTEM_PROMPT
+    from schemas.message import TextPart
+    from services.handlers.context_snapshot import ContextAnchor
+    from services.knowledge_workspace.runtime import prepare_knowledge_run
+    from services.knowledge_workspace.scope_selection import self_contained_reason
+    from services.prompt_builder.builder import PromptBuilder
+    make,_=v3_db;r=make()
+    run,input_id,conv=start(make,r,[])
+    assert run is None
+    settings=get_settings().model_copy(update={'knowledge_derivation_enabled':True,'knowledge_default_scope_enabled':True})
+    monkeypatch.setattr('core.config.get_settings',lambda:settings)
+    monkeypatch.setattr('api.routes.knowledge.enabled',lambda _:True)
+    monkeypatch.setattr('services.knowledge_workspace.runtime.repository',lambda *_:r)
+    messages=PromptBuilder._compose_messages(TOOL_SYSTEM_PROMPT,'工具权限','时间',[],None,
+        SimpleNamespace(workspace_system_block='',attachments_system_block='',user_message={'role':'user','content':'你好'}))
+    assert self_contained_reason('你好',[TextPart(text='你好')],messages)=='self_contained_chat'
+    anchor=ContextAnchor(task_id=str(uuid4()),conversation_id=conv,turn_id=str(uuid4()),
+        input_message_id=input_id,base_revision=0,through_message_id=None,org_id=r.scope.org_id)
+    handler=SimpleNamespace(org_id=r.scope.org_id,db=object())
+    await prepare_knowledge_run(handler,anchor,r.scope.actor_user_id,conv,question='你好',self_contained=True)
+    assert handler._knowledge_run is None
+    # A pinned source on the same greeting retains priority over default-scope routing.
+    obj=document(r)
+    pinned,new_input,new_conv=start(make,r,[ref(obj)])
+    from dataclasses import replace
+    await prepare_knowledge_run(handler,replace(anchor,input_message_id=new_input,conversation_id=new_conv),
+        r.scope.actor_user_id,new_conv,question='你好',self_contained=True)
+    assert handler._knowledge_run.id==pinned.id
+    assert handler._knowledge_run.snapshot['roots']==pinned.snapshot['roots']
