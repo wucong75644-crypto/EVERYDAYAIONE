@@ -52,3 +52,9 @@ bash deploy/release.sh --accept-and-close
 受控锁内安装 FFmpeg/FFprobe、Poppler；Alibaba Cloud Linux 3 使用校验 SHA256 的 RPM Fusion EL8 仓库包，后续 RPM 保留软件源签名校验。解析程序逐一检查通过、模型及知识画布已配置后，仅更新 `KNOWLEDGE_DERIVATION_ENABLED`、`KNOWLEDGE_MEDIA_ENABLED`、`KNOWLEDGE_SEMANTIC_ENABLED` 三个键，保留私有备份及其他配置。随后按正常流程重启并检查 readiness。失败停止且不宣称启用成功。
 
 历史回填由持久化 worker 按现有 actor/org 及实时写权限处理，无需批量修改正文或权限。关闭时仅通过受控配置入口将 `KNOWLEDGE_DERIVATION_ENABLED=false` 并正常发布重启；已生成内容及人工内容不删除。
+
+### 新编排入口的明确启用
+
+用户明确授权启用新编排供验收时，在原正常发布入口追加 `--enable-agent-task-execution`。仅用于包含后端的正常发布，不允许与前端单发、回滚、锁恢复或验收关闭混用。入口沿原受控锁在依赖准备后、四服务重启前调用已有env-patch.py，原子设置`AGENT_TASK_EXECUTION_ENABLED=true`和`AGENT_TASK_ERP_WRITE_ENABLED=false`；保留私有原配置备份及所有其他键。配置失败停止，不继续重启。未传此参数的发布不改这两个键，不自动关闭已经启用的入口。默认配置值仍false，显式启用不改变既有个人会话受理边界、原任务/上下文恢复或原ERP Agent权限。
+
+启用后的检查只读核实运行配置、服务和健康状态，不自动发送模型请求。业务验收由已获授权的实际任务另行完成，付费验收仍先报价确认。

@@ -99,6 +99,7 @@ class ReleaseCoordinationTests(unittest.TestCase):
             'fi\n'
             'printf "%s\\n" "$EVERYDAYAI_RELEASE_COMMIT" > "$REMOTE_APP_DIR/written"\n'
             'printf "%s\\n" "$EVERYDAYAI_RELEASE_CONTEXT" > "$REMOTE_APP_DIR/executor-context"\n'
+            'printf "%s\\n" "$@" > "$REMOTE_APP_DIR/executor-args"\n'
             '# Simulate a legacy executor that records too early and then fails.\n'
             'if [[ "${FAIL_AFTER_WRITE:-}" == true ]]; then\n'
             '  printf "commit=%s\\n" "$EVERYDAYAI_RELEASE_COMMIT" > "$REMOTE_APP_DIR/.release-provenance"\n'
@@ -154,6 +155,13 @@ class ReleaseCoordinationTests(unittest.TestCase):
     @property
     def lock(self) -> Path:
         return Path(f"{self.production}.release-lock")
+
+    def test_explicit_agent_task_activation_is_forwarded_under_release_lock(self):
+        task = self.task("activation")
+        result = self.deploy(task, "enable", "--enable-agent-task-execution")
+        self.assertIn("status=success", result.stdout)
+        self.assertIn("--enable-agent-task-execution", (self.production / "executor-args").read_text().splitlines())
+        self.assertFalse(self.lock.exists())
 
     def test_partial_publish_invalidates_previous_candidate_and_blocks_acceptance(self) -> None:
         a, b = self.task("a"), self.task("b")

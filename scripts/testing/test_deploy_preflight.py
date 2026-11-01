@@ -20,6 +20,7 @@ require_controlled_release() { :; }
 validate_release_python() { :; }
 test_ssh_connection() { :; }
 remote_exec() { cat >/dev/null; }
+release_remote_state() { printf '%s\\n' "release_$1" >> "$TRACE"; }
 '''
         for name in ['build_frontend', 'build_backend', 'setup_server', 'sync_frontend',
                      'deploy_frontend', 'prepare_scheduled_task_cutover', 'prepare_skill_personal_mount',
@@ -44,7 +45,7 @@ remote_exec() { cat >/dev/null; }
     def test_all_builds_pass_before_first_write(self):
         code, trace, status = self.run_main()
         self.assertEqual(code, 0)
-        self.assertEqual(trace[:3], ['build_frontend', 'build_backend', 'sync_frontend'])
+        self.assertEqual(trace[:4], ['build_frontend', 'build_backend', 'release_invalidate', 'sync_frontend'])
         self.assertEqual(status, 'completed')
 
     def test_remote_stage_failure_remains_uncertain(self):

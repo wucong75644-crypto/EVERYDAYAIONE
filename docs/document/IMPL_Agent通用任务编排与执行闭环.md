@@ -837,3 +837,12 @@ Chrome原页面在动作间持续被切回另一个活跃任务，工具stale-in
 仅为尚未应用的346补精确已核实hash，原owner/invoker/alias/未知hash守卫不变，仍rename-delegate原体并保留owner/执行ACL；不改已成功340–345。新增原生产定义静态测试夹具，无用户数据。真实隔离PG在两种表owner下验证repo/production原体与wrapper、rollback owner/body/ACL/definer一致，有效ACL不扩大，未知body拒绝无部分alias。原7条Actor协议在repo版本全过；production原7条在包装前后均6过/1既有pause marker失败，未修改原断言。进一步固定该失败最终行231及归一化失败信息，防止仅凭longtrace关键词误放行；另独立SQL roundtrip验证暂停状态/owner token释放、最后文本保留、input/output修订均1、原marker分别user_pause/user_cancel、重复暂停幂等及取消胜出，比较包装前后完全相同。该既有生产marker问题未修，不称生产7全过。最终本地20项通过、独立审查P2已关闭。
 
 已确认后端health正常、前端恢复200、无在途writer、346未记账，再由原入口恢复原锁并归档。后续新提交须以其发布结果为准，不绕过迁移或健康门，不自动启用新编排/ERP写、不追加付费验收。调用日志必须单独预建0600，不再向整个发布进程传播umask077；公共构建/迁移文件沿正常022权限。
+
+
+## 383 用户明确授权开启新编排、ERP新增写继续关闭（2026-11-01）
+
+用户指出关闭无法验收，明确要求新编排开启，用原两个Skill验收，新增ERP写继续关闭。此决定更新382保持默认关闭的操作范围；不重新设计编排或放松旧权限，不修改原Skill、上下文、既有成果或计费/幂等机制。
+
+原release入口缺少此显式配置选项。本次仅扩展原normal-release参数--enable-agent-task-execution，拒绝frontend-only/rollback/recovery/accept，转交当前executor。默认不改任何flag。deploy_backend依赖/既有准备通过后，由既有env-patch.py按原lock token校验、私有备份和原子替换，精确写两键true/false，随后原四服务重启及readiness。不新增配置交付链或数据库/业务操作，配置失败在重启前停止。
+
+新增实际shell函数本地IO替身检查prepare→patch→restart、默认不改、失败停止、精确两键及其他配置/备份600保留、错误mode在生产IO前拒绝；既有fake Git/SSH协调测试验证参数转发。旧preflight夹具缺既有invalidate IO stub，补齐并保留/增强构建先于失效及同步的断言。最终40项通过，独立只读审查无阻塞发现。应用/前端/迁移代码与已完整验证8d8e062e相同；补原包/上下文/ERP延期边界验证，受控发布复用未变应用的完整证据，仍构建、核验数据库/迁移、重启及健康检查，不执行任何付费模型/生图验收。正式启用结果以原入口结构化结果及生产只读开关检查为准。

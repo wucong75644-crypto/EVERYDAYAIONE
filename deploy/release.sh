@@ -45,6 +45,7 @@ usage() {
   --frontend-only        仅部署前端
   --backend-only         仅部署后端
   --enable-knowledge     安装知识解析依赖并启用自动整理及历史回填（包含后端发布）
+  --enable-agent-task-execution 开启新编排入口，保持新增ERP写适配关闭
   --skip-test            复用已完成的定向测试，跳过执行器全量测试；保留构建/迁移/健康检查
   --rollback SHA         从 origin/main 历史中的提交回滚应用版本，不回滚数据库迁移
   -h, --help             显示帮助
@@ -70,6 +71,7 @@ frontend_only=false
 backend_only=false
 skip_test=false
 enable_knowledge=false
+enable_agent_task_execution=false
 declare -a task_files=()
 declare -a source_only_files=()
 declare -a migration_files=()
@@ -120,6 +122,8 @@ while [[ $# -gt 0 ]]; do
             ;;
         --enable-knowledge)
             enable_knowledge=true; shift ;;
+        --enable-agent-task-execution)
+            enable_agent_task_execution=true; shift ;;
         --skip-test)
             skip_test=true
             shift
@@ -161,6 +165,10 @@ done
 if [[ "$enable_knowledge" == true ]]; then
     [[ "$frontend_only" == false && "$accept_and_close" == false && -z "$rollback_sha" && -z "$recover_owner" ]] \
         || fail "--enable-knowledge 只用于包含后端的正常发布"
+fi
+if [[ "$enable_agent_task_execution" == true ]]; then
+    [[ "$frontend_only" == false && "$accept_and_close" == false && -z "$rollback_sha" && -z "$recover_owner" ]] \
+        || fail "--enable-agent-task-execution 只用于包含后端的正常发布"
 fi
 
 # Configuration stays local; never copy application .env into a release tree.
@@ -632,6 +640,7 @@ if [[ "$enable_knowledge" == true ]]; then
     [[ "$frontend_only" == false ]] || fail "--enable-knowledge 需要后端发布"
     deploy_args+=(--enable-knowledge)
 fi
+[[ "$enable_agent_task_execution" == false ]] || deploy_args+=(--enable-agent-task-execution)
 [[ "$frontend_only" == true ]] && deploy_args+=(--frontend-only)
 [[ "$backend_only" == true ]] && deploy_args+=(--backend-only)
 if [[ "$skip_test" == true ]]; then

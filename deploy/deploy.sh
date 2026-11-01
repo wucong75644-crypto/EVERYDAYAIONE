@@ -66,6 +66,7 @@ show_help() {
     --migration-file PATH   执行本次发布明确列出的正向 SQL 迁移（可重复）
     --skip-build           跳过构建步骤
     --skip-test            跳过测试
+    --enable-agent-task-execution 开启新编排入口，保持新增ERP写适配关闭
 
 示例:
     $0 -s                   首次部署（包含服务器初始化）
@@ -470,6 +471,14 @@ prepare_skill_personal_mount() {
 }
 
 # 部署后端到服务器
+configure_agent_task_execution() {
+    [[ "$ENABLE_AGENT_TASK_EXECUTION" == true ]] || return 0
+    log_info "开启新编排入口；新增 ERP 写适配继续关闭"
+    printf '%s\n' '{"AGENT_TASK_EXECUTION_ENABLED":"true","AGENT_TASK_ERP_WRITE_ENABLED":"false"}' \
+        | remote_exec /var/www/everydayai/backend/venv/bin/python \
+            /var/www/everydayai/deploy/env-patch.py --lock-token "$EVERYDAYAI_RELEASE_LOCK_TOKEN"
+}
+
 deploy_backend() {
     log_info "在服务器上部署后端..."
 
@@ -523,6 +532,11 @@ deploy_backend() {
         venv/bin/python /var/www/everydayai/deploy/enable-exa-search.py
         # The pinned XHS scan fix must be installed under the release lock.
         venv/bin/python /var/www/everydayai/deploy/xhs/install-login-fix.py
+ENDSSH
+    configure_agent_task_execution
+    remote_exec bash << 'ENDSSH'
+        set -e
+        cd /var/www/everydayai/backend
         pkill -f kernel_worker 2>/dev/null || true
         services=(
             everydayai-backend
@@ -667,6 +681,7 @@ EOF
     SKIP_BUILD=false
     SKIP_TEST=false
     ENABLE_KNOWLEDGE=false
+    ENABLE_AGENT_TASK_EXECUTION=false
     MIGRATION_FILES=()
 
     while [[ $# -gt 0 ]]; do
@@ -703,6 +718,10 @@ EOF
                 ENABLE_KNOWLEDGE=true
                 shift
                 ;;
+            --enable-agent-task-execution)
+                ENABLE_AGENT_TASK_EXECUTION=true
+                shift
+                ;;
             --skip-test)
                 SKIP_TEST=true
                 shift
@@ -721,6 +740,10 @@ EOF
     fi
 
     echo "DEPLOY_STAGE stage=preflight"
+    if [[ "$ENABLE_AGENT_TASK_EXECUTION" == true && "$FRONTEND_ONLY" == true ]]; then
+        log_error "--enable-agent-task-execution 需要后端发布"
+        exit 1
+    fi
     # 检查配置和依赖
     check_config
     require_controlled_release
